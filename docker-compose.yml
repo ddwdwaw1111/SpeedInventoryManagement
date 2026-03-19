@@ -1,0 +1,54 @@
+services:
+  mariadb:
+    image: mariadb:11
+    container_name: speed-inventory-db
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: rootpass
+      MARIADB_DATABASE: speed_inventory_management
+      MARIADB_USER: inventory_user
+      MARIADB_PASSWORD: inventory_pass
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-uroot", "-prootpass"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - mariadb_data:/var/lib/mysql
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./database/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+
+  backend:
+    build:
+      context: ./backend
+    container_name: speed-inventory-api
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      SERVER_PORT: 8080
+      FRONTEND_ORIGIN: http://localhost:5173
+      DB_HOST: mariadb
+      DB_PORT: 3306
+      DB_NAME: speed_inventory_management
+      DB_USER: inventory_user
+      DB_PASSWORD: inventory_pass
+    ports:
+      - "8080:8080"
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: speed-inventory-web
+    depends_on:
+      - backend
+    environment:
+      VITE_API_BASE_URL: http://localhost:8080
+    ports:
+      - "5173:5173"
+
+volumes:
+  mariadb_data:
