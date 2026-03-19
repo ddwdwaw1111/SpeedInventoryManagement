@@ -6,6 +6,29 @@ export type DashboardData = {
   recentMovements: Movement[];
 };
 
+export type User = {
+  id: number;
+  email: string;
+  fullName: string;
+  createdAt: string;
+};
+
+export type AuthResponse = {
+  user: User;
+  expiresAt: string;
+};
+
+export type LoginPayload = {
+  email: string;
+  password: string;
+};
+
+export type SignUpPayload = {
+  email: string;
+  fullName: string;
+  password: string;
+};
+
 export type Location = {
   id: number;
   name: string;

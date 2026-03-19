@@ -11,13 +11,14 @@ import {
 import { BarChart, PieChart } from "@mui/x-charts";
 
 import { ActivityManagementPage } from "./components/ActivityManagementPage";
+import { AppHeaderUser, AuthPage } from "./components/AuthPage";
 import { MasterInventoryPage } from "./components/MasterInventoryPage";
 import { SettingsPage } from "./components/SettingsPage";
 import { StorageManagementPage } from "./components/StorageManagementPage";
-import { api } from "./lib/api";
+import { ApiError, api } from "./lib/api";
 import { parseDateValue } from "./lib/dates";
 import { useI18n } from "./lib/i18n";
-import type { Item, Location, Movement } from "./lib/types";
+import type { Item, Location, LoginPayload, Movement, SignUpPayload, User } from "./lib/types";
 
 type PageKey = "dashboard" | "master-inventory" | "storage-management" | "inbound-management" | "outbound-management" | "settings";
 type ReportGranularity = "day" | "month" | "year";
@@ -31,6 +32,10 @@ const yearFormatter = new Intl.DateTimeFormat("en-US", { year: "numeric" });
 
 export default function App() {
   const { language, setLanguage, t } = useI18n();
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isAuthResolved, setIsAuthResolved] = useState(false);
+  const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
+  const [authErrorMessage, setAuthErrorMessage] = useState("");
   const [activePage, setActivePage] = useState<PageKey>(() => getPageFromHash(window.location.hash));
   const [locations, setLocations] = useState<Location[]>([]);
   const [items, setItems] = useState<Item[]>([]);
@@ -44,7 +49,7 @@ export default function App() {
   const [reportEndDate, setReportEndDate] = useState(() => toDateInputString(new Date()));
   const deferredSearchTerm = useDeferredValue(searchTerm);
 
-  useEffect(() => { void loadAppData(true); }, []);
+  useEffect(() => { void bootstrapApp(); }, []);
   useEffect(() => {
     const handleHashChange = () => {
       setActivePage(getPageFromHash(window.location.hash));
@@ -53,6 +58,27 @@ export default function App() {
     window.addEventListener("hashchange", handleHashChange);
     return () => window.removeEventListener("hashchange", handleHashChange);
   }, []);
+
+  async function bootstrapApp() {
+    setIsLoading(true);
+    setErrorMessage("");
+    setAuthErrorMessage("");
+
+    try {
+      const session = await api.getCurrentSession();
+      setCurrentUser(session.user);
+      await loadAppData(false);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        setCurrentUser(null);
+      } else {
+        setErrorMessage(getErrorMessage(error, t("couldNotLoadReport")));
+      }
+    } finally {
+      setIsAuthResolved(true);
+      setIsLoading(false);
+    }
+  }
 
   async function loadAppData(showSpinner: boolean) {
     if (showSpinner) setIsLoading(true);
@@ -70,6 +96,52 @@ export default function App() {
       setErrorMessage(getErrorMessage(error, t("couldNotLoadReport")));
     } finally {
       if (showSpinner) setIsLoading(false);
+    }
+  }
+
+  async function handleLogin(payload: LoginPayload) {
+    setIsAuthSubmitting(true);
+    setAuthErrorMessage("");
+    try {
+      const session = await api.login(payload);
+      setCurrentUser(session.user);
+      await loadAppData(true);
+    } catch (error) {
+      setAuthErrorMessage(getErrorMessage(error, "Could not sign in."));
+    } finally {
+      setIsAuthSubmitting(false);
+      setIsAuthResolved(true);
+    }
+  }
+
+  async function handleSignUp(payload: SignUpPayload) {
+    setIsAuthSubmitting(true);
+    setAuthErrorMessage("");
+    try {
+      const session = await api.signUp(payload);
+      setCurrentUser(session.user);
+      await loadAppData(true);
+    } catch (error) {
+      setAuthErrorMessage(getErrorMessage(error, "Could not create your account."));
+    } finally {
+      setIsAuthSubmitting(false);
+      setIsAuthResolved(true);
+    }
+  }
+
+  async function handleLogout() {
+    setIsAuthSubmitting(true);
+    setAuthErrorMessage("");
+    try {
+      await api.logout();
+      setCurrentUser(null);
+      setLocations([]);
+      setItems([]);
+      setMovements([]);
+    } catch (error) {
+      setAuthErrorMessage(getErrorMessage(error, "Could not sign out."));
+    } finally {
+      setIsAuthSubmitting(false);
     }
   }
 
@@ -116,6 +188,28 @@ export default function App() {
     { key: "settings", label: t("settings"), description: t("settingsDesc") }
   ];
 
+  if (!isAuthResolved || (isLoading && !currentUser)) {
+    return (
+      <main className="auth-shell auth-shell--loading">
+        <section className="auth-card">
+          <p className="eyebrow">Loading</p>
+          <h2>Checking your session...</h2>
+        </section>
+      </main>
+    );
+  }
+
+  if (!currentUser) {
+    return (
+      <AuthPage
+        onLogin={handleLogin}
+        onSignUp={handleSignUp}
+        isSubmitting={isAuthSubmitting}
+        errorMessage={authErrorMessage}
+      />
+    );
+  }
+
   return (
     <div className="app-shell">
       <header className="app-topbar">
@@ -126,6 +220,7 @@ export default function App() {
             <button className={`language-switch__button ${language === "en" ? "language-switch__button--active" : ""}`} type="button" onClick={() => setLanguage("en")}>{t("english")}</button>
             <button className={`language-switch__button ${language === "zh" ? "language-switch__button--active" : ""}`} type="button" onClick={() => setLanguage("zh")}>{t("chinese")}</button>
           </div>
+          <AppHeaderUser user={currentUser} onLogout={handleLogout} isSubmitting={isAuthSubmitting} />
         </div>
         <nav className="app-topbar__nav" aria-label={t("pages")}>
           {pageItems.map((item) => (

@@ -1,11 +1,14 @@
 import type {
+  AuthResponse,
   DashboardData,
   Item,
   ItemPayload,
+  LoginPayload,
   Location,
   LocationPayload,
   Movement,
-  MovementPayload
+  MovementPayload,
+  SignUpPayload
 } from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080";
@@ -16,8 +19,19 @@ type ItemQuery = {
   lowStock?: boolean;
 };
 
+export class ApiError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers ?? {})
@@ -37,7 +51,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       // Ignore JSON parse errors for non-JSON failure responses.
     }
 
-    throw new Error(message);
+    throw new ApiError(response.status, message);
   }
 
   if (response.status === 204) {
@@ -48,6 +62,30 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  getCurrentSession() {
+    return request<AuthResponse>("/api/auth/me");
+  },
+
+  login(payload: LoginPayload) {
+    return request<AuthResponse>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  signUp(payload: SignUpPayload) {
+    return request<AuthResponse>("/api/auth/signup", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  logout() {
+    return request<void>("/api/auth/logout", {
+      method: "POST"
+    });
+  },
+
   getDashboard() {
     return request<DashboardData>("/api/dashboard");
   },

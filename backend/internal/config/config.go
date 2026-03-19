@@ -6,6 +6,7 @@ type Config struct {
 	Env            string
 	Port           string
 	FrontendOrigin string
+	SessionCookie  string
 	Database       DatabaseConfig
 }
 
@@ -22,6 +23,7 @@ func Load() Config {
 		Env:            getEnv("APP_ENV", "development"),
 		Port:           getEnv("SERVER_PORT", "8080"),
 		FrontendOrigin: getEnv("FRONTEND_ORIGIN", "http://localhost:5173"),
+		SessionCookie:  getEnv("SESSION_COOKIE_NAME", "sim_session"),
 		Database: DatabaseConfig{
 			Host:     getEnv("DB_HOST", "127.0.0.1"),
 			Port:     getEnv("DB_PORT", "3306"),

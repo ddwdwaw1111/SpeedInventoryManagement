@@ -12,21 +12,26 @@ import (
 )
 
 type Server struct {
-	store *service.Store
+	store             *service.Store
+	sessionCookieName string
 }
 
-func NewHandler(store *service.Store, frontendOrigin string) http.Handler {
-	server := &Server{store: store}
+func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName string) http.Handler {
+	server := &Server{store: store, sessionCookieName: sessionCookieName}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", server.handleHealth)
-	mux.HandleFunc("/api/dashboard", server.handleDashboard)
-	mux.HandleFunc("/api/locations", server.handleLocations)
-	mux.HandleFunc("/api/locations/", server.handleLocationByID)
-	mux.HandleFunc("/api/items", server.handleItems)
-	mux.HandleFunc("/api/items/", server.handleItemByID)
-	mux.HandleFunc("/api/movements", server.handleMovements)
-	mux.HandleFunc("/api/movements/", server.handleMovementByID)
+	mux.HandleFunc("/api/auth/signup", server.handleSignUp)
+	mux.HandleFunc("/api/auth/login", server.handleLogin)
+	mux.HandleFunc("/api/auth/me", server.requireAuth(server.handleMe))
+	mux.HandleFunc("/api/auth/logout", server.handleLogout)
+	mux.HandleFunc("/api/dashboard", server.requireAuth(server.handleDashboard))
+	mux.HandleFunc("/api/locations", server.requireAuth(server.handleLocations))
+	mux.HandleFunc("/api/locations/", server.requireAuth(server.handleLocationByID))
+	mux.HandleFunc("/api/items", server.requireAuth(server.handleItems))
+	mux.HandleFunc("/api/items/", server.requireAuth(server.handleItemByID))
+	mux.HandleFunc("/api/movements", server.requireAuth(server.handleMovements))
+	mux.HandleFunc("/api/movements/", server.requireAuth(server.handleMovementByID))
 
 	return withCORS(frontendOrigin, mux)
 }
@@ -359,6 +364,7 @@ func withCORS(frontendOrigin string, next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

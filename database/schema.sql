@@ -4,6 +4,33 @@ CREATE DATABASE IF NOT EXISTS speed_inventory_management
 
 USE speed_inventory_management;
 
+CREATE TABLE IF NOT EXISTS users (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  email VARCHAR(190) NOT NULL,
+  full_name VARCHAR(160) NOT NULL,
+  password_salt CHAR(32) NOT NULL,
+  password_hash CHAR(64) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_users_email (email)
+);
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  user_id BIGINT NOT NULL,
+  token_hash CHAR(64) NOT NULL,
+  expires_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_user_sessions_token_hash (token_hash),
+  KEY idx_user_sessions_user_id (user_id),
+  KEY idx_user_sessions_expires_at (expires_at),
+  CONSTRAINT fk_user_sessions_user
+    FOREIGN KEY (user_id) REFERENCES users (id)
+    ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS storage_locations (
   id BIGINT NOT NULL AUTO_INCREMENT,
   name VARCHAR(120) NOT NULL,
