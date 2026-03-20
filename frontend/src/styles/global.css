@@ -264,6 +264,17 @@ button {
   gap: 0.3rem;
 }
 
+.app-topbar__link-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 12px;
+  background: rgba(31, 110, 175, 0.1);
+  color: #1f6eaf;
+}
+
 .app-topbar__link span {
   font-weight: 700;
 }

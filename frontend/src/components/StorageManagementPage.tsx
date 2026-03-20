@@ -1,8 +1,13 @@
+import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
+import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
+import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
+import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import { type FormEvent, useMemo, useState } from "react";
 import { Box, Button, Chip } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
 import { api } from "../lib/api";
+import { RowActionsMenu } from "./RowActionsMenu";
 import { formatDateTimeValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
@@ -80,14 +85,17 @@ export function StorageManagementPage({ locations, items, onRefresh }: StorageMa
     {
       field: "actions",
       headerName: t("actions"),
-      minWidth: 150,
+      minWidth: 90,
       sortable: false,
       filterable: false,
       renderCell: (params) => (
-        <div className="table-actions">
-          <Button size="small" variant="outlined" onClick={() => startEdit(params.row)}>{t("edit")}</Button>
-          <Button size="small" color="error" variant="outlined" onClick={() => void handleDelete(params.row)}>{t("delete")}</Button>
-        </div>
+        <RowActionsMenu
+          ariaLabel={t("actions")}
+          actions={[
+            { key: "edit", label: t("edit"), icon: <EditOutlinedIcon fontSize="small" />, onClick: () => startEdit(params.row) },
+            { key: "delete", label: t("delete"), icon: <DeleteOutlineOutlinedIcon fontSize="small" />, danger: true, onClick: () => handleDelete(params.row) }
+          ]}
+        />
       )
     }
   ], [locationUsage, resolvedTimeZone, t]);
@@ -194,7 +202,7 @@ export function StorageManagementPage({ locations, items, onRefresh }: StorageMa
             <div className="sheet-form__wide">
               <div className="batch-lines__toolbar">
                 <strong>{t("storageSections")}</strong>
-                <Button size="small" variant="outlined" type="button" onClick={addSectionName}>{t("addSection")}</Button>
+                <Button size="small" variant="outlined" type="button" startIcon={<AddOutlinedIcon />} onClick={addSectionName}>{t("addSection")}</Button>
               </div>
               <div className="batch-lines">
                 {form.sectionNames.map((sectionName, index) => (
@@ -217,7 +225,13 @@ export function StorageManagementPage({ locations, items, onRefresh }: StorageMa
         </article>
 
         <article className="workbook-panel workbook-panel--full">
-          <div className="tab-strip" />
+          <div className="tab-strip">
+            <div className="tab-strip__toolbar">
+              <div className="tab-strip__actions">
+                <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={resetForm}>{t("addLocation")}</Button>
+              </div>
+            </div>
+          </div>
           <div className="sheet-table-wrap">
             <Box sx={{ minWidth: 0 }}>
               <DataGrid

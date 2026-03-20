@@ -1,4 +1,12 @@
 import {
+  AssessmentOutlined,
+  CategoryOutlined,
+  MoveToInboxOutlined,
+  OutboxOutlined,
+  SettingsOutlined,
+  WarehouseOutlined
+} from "@mui/icons-material";
+import {
   type Dispatch,
   type ReactNode,
   type SetStateAction,
@@ -182,14 +190,14 @@ export default function App() {
   const reportLowStockRows = useMemo(() => buildLowStockRows(filteredItems), [filteredItems]);
   const reportTrendRows = useMemo(() => buildMovementTrendRows(filteredMovements, reportGranularity), [filteredMovements, reportGranularity]);
 
-  const pageItems: Array<{ key: PageKey; label: string; description: string }> = [
-    { key: "dashboard", label: t("report"), description: t("reportDesc") },
-    { key: "inbound-management", label: t("inbound"), description: t("inboundDesc") },
-    { key: "outbound-management", label: t("outbound"), description: t("outboundDesc") },
-    { key: "sku-master", label: t("skuMaster"), description: t("skuMasterDesc") },
-    { key: "stock-by-location", label: t("stockByLocation"), description: t("stockByLocationDesc") },
-    { key: "storage-management", label: t("storageManagement"), description: t("storageManagementDesc") },
-    { key: "settings", label: t("settings"), description: t("settingsDesc") }
+  const pageItems: Array<{ key: PageKey; label: string; description: string; icon: ReactNode }> = [
+    { key: "dashboard", label: t("report"), description: t("reportDesc"), icon: <AssessmentOutlined fontSize="small" /> },
+    { key: "inbound-management", label: t("inbound"), description: t("inboundDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
+    { key: "outbound-management", label: t("outbound"), description: t("outboundDesc"), icon: <OutboxOutlined fontSize="small" /> },
+    { key: "sku-master", label: t("skuMaster"), description: t("skuMasterDesc"), icon: <CategoryOutlined fontSize="small" /> },
+    { key: "stock-by-location", label: t("stockByLocation"), description: t("stockByLocationDesc"), icon: <WarehouseOutlined fontSize="small" /> },
+    { key: "storage-management", label: t("storageManagement"), description: t("storageManagementDesc"), icon: <WarehouseOutlined fontSize="small" /> },
+    { key: "settings", label: t("settings"), description: t("settingsDesc"), icon: <SettingsOutlined fontSize="small" /> }
   ];
 
   if (!isAuthResolved || (isLoading && !currentUser)) {
@@ -234,6 +242,7 @@ export default function App() {
               type="button"
               onClick={() => navigateToPage(item.key, setActivePage)}
             >
+              <span className="app-topbar__link-icon" aria-hidden="true">{item.icon}</span>
               <span>{item.label}</span>
               <small>{item.description}</small>
             </button>

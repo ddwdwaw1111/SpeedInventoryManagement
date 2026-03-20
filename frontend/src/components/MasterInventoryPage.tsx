@@ -1,8 +1,13 @@
+import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
+import CloseIcon from "@mui/icons-material/Close";
+import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
+import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import { type FormEvent, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
 import { api } from "../lib/api";
+import { RowActionsMenu } from "./RowActionsMenu";
 import { formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import type { Item, ItemPayload, Location } from "../lib/types";
@@ -135,14 +140,17 @@ export function MasterInventoryPage({ items, locations, isLoading, onRefresh }: 
     {
       field: "actions",
       headerName: t("actions"),
-      minWidth: 170,
+      minWidth: 90,
       sortable: false,
       filterable: false,
       renderCell: (params) => (
-        <div className="table-actions">
-          <Button size="small" variant="outlined" onClick={() => openEditModal(params.row)}>{t("edit")}</Button>
-          <Button size="small" color="error" variant="outlined" onClick={() => void handleDeleteItem(params.row)}>{t("delete")}</Button>
-        </div>
+        <RowActionsMenu
+          ariaLabel={t("actions")}
+          actions={[
+            { key: "edit", label: t("edit"), icon: <EditOutlinedIcon fontSize="small" />, onClick: () => openEditModal(params.row) },
+            { key: "delete", label: t("delete"), icon: <DeleteOutlineOutlinedIcon fontSize="small" />, danger: true, onClick: () => handleDeleteItem(params.row) }
+          ]}
+        />
       )
     }
   ], [t]);
@@ -252,7 +260,7 @@ export function MasterInventoryPage({ items, locations, isLoading, onRefresh }: 
         <div className="tab-strip">
           <div className="tab-strip__toolbar">
             <div className="tab-strip__actions">
-              <Button variant="contained" onClick={openCreateModal}>{t("addNew")}</Button>
+              <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addNew")}</Button>
             </div>
           </div>
           <div className="filter-bar">
@@ -291,7 +299,7 @@ export function MasterInventoryPage({ items, locations, isLoading, onRefresh }: 
         <DialogTitle sx={{ pb: 1 }}>
           {editingItemId ? t("editStockRow") : t("addStockRow")}
           <IconButton aria-label={t("close")} onClick={closeModal} sx={{ position: "absolute", right: 16, top: 16 }}>
-            <span aria-hidden="true">x</span>
+            <CloseIcon fontSize="small" />
           </IconButton>
         </DialogTitle>
         <DialogContent dividers>
@@ -301,17 +309,17 @@ export function MasterInventoryPage({ items, locations, isLoading, onRefresh }: 
             <label className="sheet-form__wide">{t("description")}<input value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} placeholder={t("descriptionPlaceholder")} required /></label>
             <label>{t("currentStorage")}<select value={form.locationId} onChange={(event) => setForm((current) => ({ ...current, locationId: event.target.value }))} required>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
             <div className="sheet-note sheet-form__wide"><strong>{t("storageSection")}</strong> {form.storageSection || "A"}</div>
-            <label>{t("onHand")}<input type="number" min="0" value={form.quantity} onChange={(event) => setForm((current) => ({ ...current, quantity: Math.max(0, Number(event.target.value || 0)) }))} /></label>
+            <label>{t("onHand")}<input type="number" min="0" value={numberInputValue(form.quantity)} onChange={(event) => setForm((current) => ({ ...current, quantity: Math.max(0, Number(event.target.value || 0)) }))} /></label>
             <label>{t("deliveryDate")}<input type="date" value={form.deliveryDate} onChange={(event) => setForm((current) => ({ ...current, deliveryDate: event.target.value }))} /></label>
             <label>{t("containerNo")}<input value={form.containerNo} onChange={(event) => setForm((current) => ({ ...current, containerNo: event.target.value }))} placeholder="KKFU7963968" /></label>
-            <label>{t("expectedQty")}<input type="number" min="0" value={form.expectedQty} onChange={(event) => setForm((current) => ({ ...current, expectedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-            <label>{t("received")}<input type="number" min="0" value={form.receivedQty} onChange={(event) => setForm((current) => ({ ...current, receivedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-            <label>{t("pallets")}<input type="number" min="0" value={form.pallets} onChange={(event) => setForm((current) => ({ ...current, pallets: Math.max(0, Number(event.target.value || 0)) }))} /></label>
+            <label>{t("expectedQty")}<input type="number" min="0" value={numberInputValue(form.expectedQty)} onChange={(event) => setForm((current) => ({ ...current, expectedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
+            <label>{t("received")}<input type="number" min="0" value={numberInputValue(form.receivedQty)} onChange={(event) => setForm((current) => ({ ...current, receivedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
+            <label>{t("pallets")}<input type="number" min="0" value={numberInputValue(form.pallets)} onChange={(event) => setForm((current) => ({ ...current, pallets: Math.max(0, Number(event.target.value || 0)) }))} /></label>
             <label className="sheet-form__wide">{t("palletsDetail")}<input value={form.palletsDetailCtns} onChange={(event) => setForm((current) => ({ ...current, palletsDetailCtns: event.target.value }))} placeholder={suggestedPalletsDetail || "29*66+44"} /></label>
             {suggestedPalletsDetail ? <div className="sheet-note sheet-form__wide"><strong>{t("suggested")}</strong> {suggestedPalletsDetail}<button className="button button--ghost button--small" type="button" onClick={() => setForm((current) => ({ ...current, palletsDetailCtns: suggestedPalletsDetail }))}>{t("useSuggestion")}</button></div> : null}
             <label>{t("heightIn")}<input type="number" min="0" value={form.heightIn} onChange={(event) => setForm((current) => ({ ...current, heightIn: Math.max(0, Number(event.target.value || 0)) }))} /></label>
             <label>{t("outDate")}<input type="date" value={form.outDate} onChange={(event) => setForm((current) => ({ ...current, outDate: event.target.value }))} /></label>
-            <label>{t("reorderLevel")}<input type="number" min="0" value={form.reorderLevel} onChange={(event) => setForm((current) => ({ ...current, reorderLevel: Math.max(0, Number(event.target.value || 0)) }))} /></label>
+            <label>{t("reorderLevel")}<input type="number" min="0" value={numberInputValue(form.reorderLevel)} onChange={(event) => setForm((current) => ({ ...current, reorderLevel: Math.max(0, Number(event.target.value || 0)) }))} /></label>
             <div className="sheet-form__actions sheet-form__wide">
               <button className="button button--primary" type="submit" disabled={isSubmitting}>{isSubmitting ? t("saving") : editingItemId ? t("updateRow") : t("addRow")}</button>
               <button className="button button--ghost" type="button" onClick={closeModal}>{t("cancel")}</button>
@@ -327,3 +335,4 @@ function displayDescription(item: Pick<Item, "description" | "name">) { return i
 function formatDate(value: string | null) { return formatDateValue(value, dateFormatter); }
 function hasQtyMismatch(expectedQty: number, receivedQty: number) { return expectedQty > 0 && receivedQty > 0 && expectedQty !== receivedQty; }
 function toDateInputValue(value: string | null) { return value ? value.slice(0, 10) : ""; }
+function numberInputValue(value: number) { return value === 0 ? "" : String(value); }
