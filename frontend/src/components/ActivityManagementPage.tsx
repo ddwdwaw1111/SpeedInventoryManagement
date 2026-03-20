@@ -3,7 +3,7 @@ import CloseIcon from "@mui/icons-material/Close";
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import PlaylistAddOutlinedIcon from "@mui/icons-material/PlaylistAddOutlined";
-import { type Dispatch, type FormEvent, type SetStateAction, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { type Dispatch, type FormEvent, type SetStateAction, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
@@ -170,6 +170,7 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
   const [batchLines, setBatchLines] = useState<BatchInboundLineState[]>(() => [createEmptyBatchInboundLine("")]);
   const [batchSubmitting, setBatchSubmitting] = useState(false);
   const deferredSearchTerm = useDeferredValue(searchTerm);
+  const pendingBatchLineIDRef = useRef<string | null>(null);
 
   useEffect(() => {
     setForm((current) => ({ ...createEmptyActivityForm(mode), itemId: current.itemId }));
@@ -207,6 +208,26 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
       setBatchForm((current) => ({ ...current, customerId: String(customers[0].id) }));
     }
   }, [batchForm.customerId, customers]);
+
+  useEffect(() => {
+    if (!pendingBatchLineIDRef.current) {
+      return;
+    }
+
+    const nextLine = document.getElementById(`batch-line-${pendingBatchLineIDRef.current}`);
+    if (!nextLine) {
+      return;
+    }
+
+    nextLine.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    const firstInput = nextLine.querySelector("input");
+    if (firstInput instanceof HTMLInputElement) {
+      firstInput.focus();
+      firstInput.select();
+    }
+
+    pendingBatchLineIDRef.current = null;
+  }, [batchLines]);
 
   const selectedItem = items.find((item) => item.id === Number(form.itemId));
   const selectedItemLocation = locations.find((location) => location.id === selectedItem?.locationId);
@@ -604,7 +625,9 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
   }
 
   function addBatchLine() {
-    setBatchLines((current) => [...current, createEmptyBatchInboundLine("")]);
+    const nextLine = createEmptyBatchInboundLine("");
+    pendingBatchLineIDRef.current = nextLine.id;
+    setBatchLines((current) => [...current, nextLine]);
   }
 
   function removeBatchLine(lineID: string) {
@@ -824,7 +847,7 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
               </div>
 
               <div className="batch-lines">
-                <div className="batch-lines__toolbar">
+                <div className="batch-lines__toolbar batch-lines__toolbar--sticky">
                   <strong>{t("skuLines")}</strong>
                   <Button size="small" variant="outlined" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={addBatchLine}>{t("addSkuLine")}</Button>
                 </div>
@@ -839,7 +862,7 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
                   const suggestedPalletsDetail = getSuggestedPalletsDetail(line.receivedQty || line.expectedQty, line.pallets);
 
                   return (
-                    <div className="batch-line-card" key={line.id}>
+                    <div className="batch-line-card" key={line.id} id={`batch-line-${line.id}`}>
                       <div className="batch-line-card__header">
                         <div className="batch-line-card__title">
                           <strong>{t("sku")} #{index + 1}</strong>
@@ -874,6 +897,7 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
                     </div>
                   );
                 })}
+
               </div>
 
               <div className="sheet-form__actions" style={{ marginTop: "1rem" }}>

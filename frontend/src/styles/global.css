@@ -734,6 +734,16 @@ textarea:focus {
   gap: 0.75rem;
 }
 
+.batch-lines__toolbar--sticky {
+  position: sticky;
+  top: -1px;
+  z-index: 3;
+  padding: 0.8rem 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.92));
+  border-bottom: 1px solid rgba(16, 32, 51, 0.08);
+  backdrop-filter: blur(6px);
+}
+
 .batch-line-card {
   border: 1px solid rgba(16, 32, 51, 0.1);
   border-radius: 16px;
