@@ -8,6 +8,8 @@ import type {
   LocationPayload,
   Movement,
   MovementPayload,
+  SKUMaster,
+  SKUMasterPayload,
   SignUpPayload
 } from "./types";
 
@@ -17,6 +19,10 @@ type ItemQuery = {
   search?: string;
   locationId?: number;
   lowStock?: boolean;
+};
+
+type SKUMasterQuery = {
+  search?: string;
 };
 
 export class ApiError extends Error {
@@ -110,6 +116,37 @@ export const api = {
 
   deleteLocation(locationId: number) {
     return request<void>(`/api/locations/${locationId}`, {
+      method: "DELETE"
+    });
+  },
+
+  getSKUMasters(query?: SKUMasterQuery) {
+    const params = new URLSearchParams();
+
+    if (query?.search) {
+      params.set("search", query.search);
+    }
+
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    return request<SKUMaster[]>(`/api/sku-master${suffix}`);
+  },
+
+  createSKUMaster(payload: SKUMasterPayload) {
+    return request<SKUMaster>("/api/sku-master", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  updateSKUMaster(skuMasterId: number, payload: SKUMasterPayload) {
+    return request<SKUMaster>(`/api/sku-master/${skuMasterId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  deleteSKUMaster(skuMasterId: number) {
+    return request<void>(`/api/sku-master/${skuMasterId}`, {
       method: "DELETE"
     });
   },

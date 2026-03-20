@@ -38,13 +38,30 @@ CREATE TABLE IF NOT EXISTS storage_locations (
   zone VARCHAR(80) NOT NULL,
   description VARCHAR(255) DEFAULT NULL,
   capacity INT NOT NULL DEFAULT 0,
+  section_count INT NOT NULL DEFAULT 1,
+  section_names_json TEXT DEFAULT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_storage_locations_name (name)
 );
 
+CREATE TABLE IF NOT EXISTS sku_master (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  sku VARCHAR(64) NOT NULL,
+  name VARCHAR(160) NOT NULL,
+  category VARCHAR(120) NOT NULL,
+  description TEXT DEFAULT NULL,
+  unit VARCHAR(32) NOT NULL DEFAULT 'pcs',
+  reorder_level INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_sku_master_sku (sku)
+);
+
 CREATE TABLE IF NOT EXISTS inventory_items (
   id BIGINT NOT NULL AUTO_INCREMENT,
+  sku_master_id BIGINT NOT NULL,
   sku VARCHAR(64) NOT NULL,
   name VARCHAR(160) NOT NULL,
   category VARCHAR(120) NOT NULL,
@@ -66,9 +83,13 @@ CREATE TABLE IF NOT EXISTS inventory_items (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  UNIQUE KEY uq_inventory_items_sku (sku),
+  UNIQUE KEY uq_inventory_item_balance (sku_master_id, location_id, storage_section),
   KEY idx_inventory_items_category (category),
   KEY idx_inventory_items_location_id (location_id),
+  KEY idx_inventory_items_sku (sku),
+  KEY idx_inventory_items_sku_master_id (sku_master_id),
+  CONSTRAINT fk_inventory_items_sku_master
+    FOREIGN KEY (sku_master_id) REFERENCES sku_master (id),
   CONSTRAINT fk_inventory_items_location
     FOREIGN KEY (location_id) REFERENCES storage_locations (id)
 );

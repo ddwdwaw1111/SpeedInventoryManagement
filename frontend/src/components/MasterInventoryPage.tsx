@@ -224,14 +224,14 @@ export function MasterInventoryPage({ items, locations, isLoading, onRefresh }: 
       closeModal();
       await onRefresh();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveInventory"));
+      setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveStockRow"));
     } finally {
       setIsSubmitting(false);
     }
   }
 
   async function handleDeleteItem(item: Item) {
-    if (!window.confirm(t("deleteSkuConfirm", { sku: item.sku }))) {
+    if (!window.confirm(t("deleteStockRowConfirm", { sku: item.sku, storage: item.locationName, section: item.storageSection || "A" }))) {
       return;
     }
 
@@ -240,7 +240,7 @@ export function MasterInventoryPage({ items, locations, isLoading, onRefresh }: 
       await api.deleteItem(item.id);
       await onRefresh();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : t("couldNotDeleteSku"));
+      setErrorMessage(error instanceof Error ? error.message : t("couldNotDeleteStockRow"));
     }
   }
 
@@ -256,7 +256,7 @@ export function MasterInventoryPage({ items, locations, isLoading, onRefresh }: 
             </div>
           </div>
           <div className="filter-bar">
-            <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("masterTableSearchPlaceholder")} /></label>
+            <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("stockByLocationSearchPlaceholder")} /></label>
             <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
             <label>{t("stockHealth")}<select value={healthFilter} onChange={(event) => setHealthFilter(event.target.value as InventoryHealthFilter)}><option value="ALL">{t("allRows")}</option><option value="IN_STOCK">{t("healthyStock")}</option><option value="LOW_STOCK">{t("lowStock")}</option><option value="MISMATCH">{t("mismatch")}</option></select></label>
           </div>
@@ -289,7 +289,7 @@ export function MasterInventoryPage({ items, locations, isLoading, onRefresh }: 
         maxWidth="md"
       >
         <DialogTitle sx={{ pb: 1 }}>
-          {editingItemId ? t("masterDialogEdit") : t("masterDialogAdd")}
+          {editingItemId ? t("editStockRow") : t("addStockRow")}
           <IconButton aria-label={t("close")} onClick={closeModal} sx={{ position: "absolute", right: 16, top: 16 }}>
             <span aria-hidden="true">x</span>
           </IconButton>

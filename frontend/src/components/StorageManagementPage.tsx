@@ -20,6 +20,7 @@ type LocationFormState = {
   zone: string;
   description: string;
   capacity: number;
+  sectionNames: string[];
 };
 
 const emptyLocationForm: LocationFormState = {
@@ -27,7 +28,8 @@ const emptyLocationForm: LocationFormState = {
   address: "",
   zone: "",
   description: "",
-  capacity: 0
+  capacity: 0,
+  sectionNames: ["A"]
 };
 
 export function StorageManagementPage({ locations, items, onRefresh }: StorageManagementPageProps) {
@@ -51,6 +53,13 @@ export function StorageManagementPage({ locations, items, onRefresh }: StorageMa
     { field: "address", headerName: t("address"), minWidth: 260, flex: 1.5, renderCell: (params) => params.value || "-" },
     { field: "zone", headerName: t("zone"), minWidth: 140, flex: 0.9 },
     { field: "capacity", headerName: t("capacity"), minWidth: 110, type: "number" },
+    {
+      field: "sectionNames",
+      headerName: t("storageSections"),
+      minWidth: 220,
+      flex: 1.2,
+      valueGetter: (_, row) => row.sectionNames.join(", ")
+    },
     {
       field: "assignedSkuRows",
       headerName: t("assignedSkuRows"),
@@ -96,7 +105,8 @@ export function StorageManagementPage({ locations, items, onRefresh }: StorageMa
       address: location.address,
       zone: location.zone,
       description: location.description,
-      capacity: location.capacity
+      capacity: location.capacity,
+      sectionNames: location.sectionNames.length > 0 ? [...location.sectionNames] : ["A"]
     });
     setErrorMessage("");
   }
@@ -111,7 +121,8 @@ export function StorageManagementPage({ locations, items, onRefresh }: StorageMa
       address: form.address,
       zone: form.zone,
       description: form.description,
-      capacity: form.capacity
+      capacity: form.capacity,
+      sectionNames: form.sectionNames
     };
 
     try {
@@ -142,6 +153,27 @@ export function StorageManagementPage({ locations, items, onRefresh }: StorageMa
     }
   }
 
+  function updateSectionName(index: number, value: string) {
+    setForm((current) => ({
+      ...current,
+      sectionNames: current.sectionNames.map((sectionName, sectionIndex) => sectionIndex === index ? value : sectionName)
+    }));
+  }
+
+  function addSectionName() {
+    setForm((current) => ({
+      ...current,
+      sectionNames: [...current.sectionNames, ""]
+    }));
+  }
+
+  function removeSectionName(index: number) {
+    setForm((current) => ({
+      ...current,
+      sectionNames: current.sectionNames.length === 1 ? current.sectionNames : current.sectionNames.filter((_, sectionIndex) => sectionIndex !== index)
+    }));
+  }
+
   return (
     <main className="workspace-main">
       {errorMessage ? <div className="alert-banner">{errorMessage}</div> : null}
@@ -159,6 +191,23 @@ export function StorageManagementPage({ locations, items, onRefresh }: StorageMa
             <label>{t("zone")}<input value={form.zone} onChange={(event) => setForm((current) => ({ ...current, zone: event.target.value }))} placeholder="North Wing" required /></label>
             <label className="sheet-form__wide">{t("address")}<input value={form.address} onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))} placeholder="1200 Harbor Blvd, North Bergen, NJ" required /></label>
             <label>{t("capacity")}<input type="number" min="0" value={form.capacity} onChange={(event) => setForm((current) => ({ ...current, capacity: Math.max(0, Number(event.target.value || 0)) }))} /></label>
+            <div className="sheet-form__wide">
+              <div className="batch-lines__toolbar">
+                <strong>{t("storageSections")}</strong>
+                <Button size="small" variant="outlined" type="button" onClick={addSectionName}>{t("addSection")}</Button>
+              </div>
+              <div className="batch-lines">
+                {form.sectionNames.map((sectionName, index) => (
+                  <div className="batch-line-card" key={`${editingLocationId ?? "new"}-${index}`}>
+                    <div className="batch-line-card__header">
+                      <strong>{t("sectionName")} #{index + 1}</strong>
+                      <button className="button button--danger button--small" type="button" onClick={() => removeSectionName(index)} disabled={form.sectionNames.length === 1}>{t("removeLine")}</button>
+                    </div>
+                    <input value={sectionName} onChange={(event) => updateSectionName(index, event.target.value)} placeholder="A / B / Cold / Overflow" />
+                  </div>
+                ))}
+              </div>
+            </div>
             <label className="sheet-form__wide">{t("notes")}<textarea value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} placeholder={t("storageNotesPlaceholder")} rows={4} /></label>
             <div className="sheet-form__actions sheet-form__wide">
               <button className="button button--primary" type="submit" disabled={submitting}>{submitting ? t("saving") : editingLocationId ? t("updateLocation") : t("addLocation")}</button>

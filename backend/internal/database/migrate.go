@@ -33,6 +33,22 @@ func Migrate(db *sql.DB) error {
 				ON DELETE CASCADE
 		)`,
 		`ALTER TABLE storage_locations ADD COLUMN IF NOT EXISTS address VARCHAR(255) DEFAULT NULL AFTER name`,
+		`ALTER TABLE storage_locations ADD COLUMN IF NOT EXISTS section_count INT NOT NULL DEFAULT 1 AFTER capacity`,
+		`ALTER TABLE storage_locations ADD COLUMN IF NOT EXISTS section_names_json TEXT DEFAULT NULL AFTER section_count`,
+		`CREATE TABLE IF NOT EXISTS sku_master (
+			id BIGINT NOT NULL AUTO_INCREMENT,
+			sku VARCHAR(64) NOT NULL,
+			name VARCHAR(160) NOT NULL,
+			category VARCHAR(120) NOT NULL,
+			description TEXT DEFAULT NULL,
+			unit VARCHAR(32) NOT NULL DEFAULT 'pcs',
+			reorder_level INT NOT NULL DEFAULT 0,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			UNIQUE KEY uq_sku_master_sku (sku)
+		)`,
+		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS sku_master_id BIGINT NULL AFTER id`,
 		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS delivery_date DATE DEFAULT NULL AFTER location_id`,
 		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS storage_section VARCHAR(16) NOT NULL DEFAULT 'A' AFTER location_id`,
 		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS container_no VARCHAR(120) DEFAULT NULL AFTER delivery_date`,
@@ -70,5 +86,98 @@ func Migrate(db *sql.DB) error {
 		}
 	}
 
+	if _, err := db.Exec(`
+		INSERT INTO sku_master (sku, name, category, description, unit, reorder_level)
+		SELECT DISTINCT sku, name, category, description, unit, reorder_level
+		FROM inventory_items
+		WHERE sku IS NOT NULL AND sku <> ''
+		ON DUPLICATE KEY UPDATE
+			name = VALUES(name),
+			category = VALUES(category),
+			description = VALUES(description),
+			unit = VALUES(unit),
+			reorder_level = VALUES(reorder_level)
+	`); err != nil {
+		return fmt.Errorf("backfill sku master: %w", err)
+	}
+
+	if _, err := db.Exec(`
+		UPDATE inventory_items i
+		JOIN sku_master s ON s.sku = i.sku
+		SET i.sku_master_id = s.id
+		WHERE i.sku_master_id IS NULL OR i.sku_master_id = 0
+	`); err != nil {
+		return fmt.Errorf("link inventory items to sku master: %w", err)
+	}
+
+	if hasIndex, err := indexExists(db, "inventory_items", "uq_inventory_items_sku"); err != nil {
+		return fmt.Errorf("check inventory sku index: %w", err)
+	} else if hasIndex {
+		if _, err := db.Exec(`ALTER TABLE inventory_items DROP INDEX uq_inventory_items_sku`); err != nil {
+			return fmt.Errorf("drop legacy inventory sku uniqueness: %w", err)
+		}
+	}
+
+	if hasIndex, err := indexExists(db, "inventory_items", "uq_inventory_item_balance"); err != nil {
+		return fmt.Errorf("check inventory balance index: %w", err)
+	} else if !hasIndex {
+		if _, err := db.Exec(`ALTER TABLE inventory_items ADD UNIQUE INDEX uq_inventory_item_balance (sku_master_id, location_id, storage_section)`); err != nil {
+			return fmt.Errorf("create inventory balance uniqueness: %w", err)
+		}
+	}
+
+	if hasIndex, err := indexExists(db, "inventory_items", "idx_inventory_items_sku_master_id"); err != nil {
+		return fmt.Errorf("check inventory sku master index: %w", err)
+	} else if !hasIndex {
+		if _, err := db.Exec(`ALTER TABLE inventory_items ADD INDEX idx_inventory_items_sku_master_id (sku_master_id)`); err != nil {
+			return fmt.Errorf("create inventory sku master index: %w", err)
+		}
+	}
+
+	if hasIndex, err := indexExists(db, "inventory_items", "idx_inventory_items_sku"); err != nil {
+		return fmt.Errorf("check inventory sku index: %w", err)
+	} else if !hasIndex {
+		if _, err := db.Exec(`ALTER TABLE inventory_items ADD INDEX idx_inventory_items_sku (sku)`); err != nil {
+			return fmt.Errorf("create inventory sku lookup index: %w", err)
+		}
+	}
+
+	if hasFK, err := foreignKeyExists(db, "inventory_items", "fk_inventory_items_sku_master"); err != nil {
+		return fmt.Errorf("check inventory sku master foreign key: %w", err)
+	} else if !hasFK {
+		if _, err := db.Exec(`ALTER TABLE inventory_items ADD CONSTRAINT fk_inventory_items_sku_master FOREIGN KEY (sku_master_id) REFERENCES sku_master (id)`); err != nil {
+			return fmt.Errorf("create inventory sku master foreign key: %w", err)
+		}
+	}
+
 	return nil
+}
+
+func indexExists(db *sql.DB, tableName string, indexName string) (bool, error) {
+	var count int
+	if err := db.QueryRow(`
+		SELECT COUNT(*)
+		FROM information_schema.statistics
+		WHERE table_schema = DATABASE()
+			AND table_name = ?
+			AND index_name = ?
+	`, tableName, indexName).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func foreignKeyExists(db *sql.DB, tableName string, constraintName string) (bool, error) {
+	var count int
+	if err := db.QueryRow(`
+		SELECT COUNT(*)
+		FROM information_schema.table_constraints
+		WHERE constraint_schema = DATABASE()
+			AND table_name = ?
+			AND constraint_name = ?
+			AND constraint_type = 'FOREIGN KEY'
+	`, tableName, constraintName).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }

@@ -28,6 +28,8 @@ func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName s
 	mux.HandleFunc("/api/dashboard", server.requireAuth(server.handleDashboard))
 	mux.HandleFunc("/api/locations", server.requireAuth(server.handleLocations))
 	mux.HandleFunc("/api/locations/", server.requireAuth(server.handleLocationByID))
+	mux.HandleFunc("/api/sku-master", server.handleSKUMasters)
+	mux.HandleFunc("/api/sku-master/", server.handleSKUMasterByID)
 	mux.HandleFunc("/api/items", server.requireAuth(server.handleItems))
 	mux.HandleFunc("/api/items/", server.requireAuth(server.handleItemByID))
 	mux.HandleFunc("/api/movements", server.requireAuth(server.handleMovements))
@@ -135,6 +137,85 @@ func (s *Server) handleUpdateLocation(w http.ResponseWriter, r *http.Request, lo
 
 func (s *Server) handleDeleteLocation(w http.ResponseWriter, r *http.Request, locationID int64) {
 	if err := s.store.DeleteLocation(r.Context(), locationID); err != nil {
+		writeDomainError(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleSKUMasters(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleListSKUMasters(w, r)
+	case http.MethodPost:
+		s.handleCreateSKUMaster(w, r)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleSKUMasterByID(w http.ResponseWriter, r *http.Request) {
+	skuMasterID, err := parseIDFromPath(r.URL.Path, "/api/sku-master/")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPut:
+		s.handleUpdateSKUMaster(w, r, skuMasterID)
+	case http.MethodDelete:
+		s.handleDeleteSKUMaster(w, r, skuMasterID)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleListSKUMasters(w http.ResponseWriter, r *http.Request) {
+	skuMasters, err := s.store.ListSKUMasters(r.Context(), r.URL.Query().Get("search"))
+	if err != nil {
+		writeServerError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, skuMasters)
+}
+
+func (s *Server) handleCreateSKUMaster(w http.ResponseWriter, r *http.Request) {
+	var input service.CreateSKUMasterInput
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	skuMaster, err := s.store.CreateSKUMaster(r.Context(), input)
+	if err != nil {
+		writeDomainError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, skuMaster)
+}
+
+func (s *Server) handleUpdateSKUMaster(w http.ResponseWriter, r *http.Request, skuMasterID int64) {
+	var input service.CreateSKUMasterInput
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	skuMaster, err := s.store.UpdateSKUMaster(r.Context(), skuMasterID, input)
+	if err != nil {
+		writeDomainError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, skuMaster)
+}
+
+func (s *Server) handleDeleteSKUMaster(w http.ResponseWriter, r *http.Request, skuMasterID int64) {
+	if err := s.store.DeleteSKUMaster(r.Context(), skuMasterID); err != nil {
 		writeDomainError(w, err)
 		return
 	}

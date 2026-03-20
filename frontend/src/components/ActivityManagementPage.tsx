@@ -153,7 +153,6 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
   const [editingMovementId, setEditingMovementId] = useState<number | null>(null);
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
-  const [isCreatingNewSku, setIsCreatingNewSku] = useState(false);
   const [newSkuForm, setNewSkuForm] = useState<NewSkuFormState>(() => createEmptyNewSkuForm(""));
   const [batchForm, setBatchForm] = useState<BatchInboundFormState>(() => createEmptyBatchInboundForm());
   const [batchLines, setBatchLines] = useState<BatchInboundLineState[]>(() => [createEmptyBatchInboundLine("")]);
@@ -165,7 +164,6 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
     setEditingMovementId(null);
     setIsFormModalOpen(false);
     setIsBatchModalOpen(false);
-    setIsCreatingNewSku(false);
   }, [mode]);
 
   useEffect(() => {
@@ -187,12 +185,88 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
   }, [batchForm.locationId, locations]);
 
   const selectedItem = items.find((item) => item.id === Number(form.itemId));
-  const matchingNewSkuItem = useMemo(() => {
+  const selectedItemLocation = locations.find((location) => location.id === selectedItem?.locationId);
+  const selectedItemSectionOptions = getLocationSectionOptions(selectedItemLocation);
+  const newSkuLocation = locations.find((location) => location.id === Number(newSkuForm.locationId));
+  const newSkuSectionOptions = getLocationSectionOptions(newSkuLocation);
+  const batchLocation = locations.find((location) => location.id === Number(batchForm.locationId));
+  const batchSectionOptions = getLocationSectionOptions(batchLocation);
+  const matchingNewSkuTemplate = useMemo(() => {
     const normalizedSku = newSkuForm.sku.trim().toUpperCase();
     if (!normalizedSku) return undefined;
     return items.find((item) => item.sku.trim().toUpperCase() === normalizedSku);
   }, [items, newSkuForm.sku]);
+  const matchingNewSkuItem = useMemo(() => {
+    const normalizedSku = newSkuForm.sku.trim().toUpperCase();
+    const locationID = Number(newSkuForm.locationId);
+    const storageSection = newSkuForm.storageSection.trim();
+    if (!normalizedSku || !locationID || !storageSection) return undefined;
+    return items.find((item) =>
+      item.sku.trim().toUpperCase() === normalizedSku
+      && item.locationId === locationID
+      && item.storageSection === storageSection
+    );
+  }, [items, newSkuForm.locationId, newSkuForm.sku, newSkuForm.storageSection]);
   const historyRows = useMemo(() => movements.filter((movement) => movement.movementType === mode), [mode, movements]);
+  const isAutoMatchedInboundSku = mode === "IN" && editingMovementId === null && Boolean(matchingNewSkuItem);
+  const shouldAutoCreateInboundSku = mode === "IN" && editingMovementId === null && !matchingNewSkuItem && Boolean(newSkuForm.sku.trim());
+
+  useEffect(() => {
+    if (selectedItem) {
+      const fallbackSection = selectedItem.storageSection || selectedItemSectionOptions[0] || "A";
+      setForm((current) => current.storageSection === fallbackSection ? current : { ...current, storageSection: fallbackSection });
+    }
+  }, [selectedItem, selectedItemSectionOptions]);
+
+  useEffect(() => {
+    const fallbackSection = newSkuSectionOptions[0] || "A";
+    if (!newSkuSectionOptions.includes(newSkuForm.storageSection)) {
+      setNewSkuForm((current) => ({ ...current, storageSection: fallbackSection }));
+    }
+  }, [newSkuForm.storageSection, newSkuSectionOptions]);
+
+  useEffect(() => {
+    const fallbackSection = batchSectionOptions[0] || "A";
+    if (!batchSectionOptions.includes(batchForm.storageSection)) {
+      setBatchForm((current) => ({ ...current, storageSection: fallbackSection }));
+    }
+  }, [batchForm.storageSection, batchSectionOptions]);
+
+  useEffect(() => {
+    if (mode !== "IN" || editingMovementId !== null) {
+      return;
+    }
+
+    if (matchingNewSkuItem) {
+      const fallbackSection = matchingNewSkuItem.storageSection || selectedItemSectionOptions[0] || "A";
+      setForm((current) => ({
+        ...current,
+        itemId: String(matchingNewSkuItem.id),
+        storageSection: fallbackSection
+      }));
+      setNewSkuForm((current) => ({
+        ...current,
+        locationId: String(matchingNewSkuItem.locationId),
+        storageSection: fallbackSection,
+        description: current.description || displayDescription(matchingNewSkuItem)
+      }));
+      return;
+    }
+
+    setForm((current) => current.itemId === "" ? current : { ...current, itemId: "" });
+  }, [editingMovementId, matchingNewSkuItem, mode, selectedItemSectionOptions]);
+
+  useEffect(() => {
+    if (mode !== "IN" || editingMovementId !== null || matchingNewSkuItem || !matchingNewSkuTemplate) {
+      return;
+    }
+
+    setNewSkuForm((current) => ({
+      ...current,
+      description: current.description || displayDescription(matchingNewSkuTemplate),
+      reorderLevel: current.reorderLevel > 0 ? current.reorderLevel : matchingNewSkuTemplate.reorderLevel
+    }));
+  }, [editingMovementId, matchingNewSkuItem, matchingNewSkuTemplate, mode]);
 
   const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
   const filteredRows = historyRows.filter((movement) => {
@@ -294,23 +368,23 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
     const resolvedQuantity = mode === "IN"
       ? form.receivedQty || form.expectedQty
       : form.quantity;
-    if ((!itemId && !(mode === "IN" && isCreatingNewSku)) || resolvedQuantity === 0) {
+    if (resolvedQuantity === 0) {
       setErrorMessage(t("chooseSkuAndQty"));
       setSubmitting(false);
       return;
     }
 
-    if (mode === "IN" && isCreatingNewSku) {
+    if (mode === "IN" && editingMovementId === null) {
+      if (matchingNewSkuItem) {
+        itemId = matchingNewSkuItem.id;
+      } else {
       const locationId = Number(newSkuForm.locationId);
-      if (!newSkuForm.sku.trim() || !locationId || (!matchingNewSkuItem && !newSkuForm.description.trim())) {
+      if (!newSkuForm.sku.trim() || !locationId || !newSkuForm.description.trim()) {
         setErrorMessage(t("enterNewSkuRequired"));
         setSubmitting(false);
         return;
       }
 
-      if (matchingNewSkuItem) {
-        itemId = matchingNewSkuItem.id;
-      } else {
         const createItemPayload: ItemPayload = {
           sku: newSkuForm.sku.trim(),
           name: newSkuForm.description.trim(),
@@ -340,6 +414,12 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
           return;
         }
       }
+    }
+
+    if (!itemId) {
+      setErrorMessage(t("chooseSkuAndQty"));
+      setSubmitting(false);
+      return;
     }
 
     const payload: MovementPayload = {
@@ -377,7 +457,6 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
       setNewSkuForm(createEmptyNewSkuForm(locations[0] ? String(locations[0].id) : ""));
       setEditingMovementId(null);
       setIsFormModalOpen(false);
-      setIsCreatingNewSku(false);
       await onRefresh();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveActivity"));
@@ -390,7 +469,6 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
     setEditingMovementId(null);
     setForm((current) => ({ ...createEmptyActivityForm(mode), itemId: current.itemId || (items[0] ? String(items[0].id) : "") }));
     setNewSkuForm(createEmptyNewSkuForm(locations[0] ? String(locations[0].id) : ""));
-    setIsCreatingNewSku(false);
     setErrorMessage("");
     setIsFormModalOpen(true);
   }
@@ -428,7 +506,6 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
       referenceCode: movement.referenceCode
     });
     setNewSkuForm(createEmptyNewSkuForm(locations[0] ? String(locations[0].id) : ""));
-    setIsCreatingNewSku(false);
     setErrorMessage("");
     setIsFormModalOpen(true);
   }
@@ -454,7 +531,6 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
     setIsFormModalOpen(false);
     setForm((current) => ({ ...createEmptyActivityForm(mode), itemId: current.itemId }));
     setNewSkuForm(createEmptyNewSkuForm(locations[0] ? String(locations[0].id) : ""));
-    setIsCreatingNewSku(false);
     setErrorMessage("");
   }
 
@@ -493,23 +569,29 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
     try {
       for (const line of validLines) {
         const normalizedSku = line.sku.trim().toUpperCase();
-        const matchingItem = items.find((item) => item.sku.trim().toUpperCase() === normalizedSku);
+        const matchingItem = items.find((item) =>
+          item.sku.trim().toUpperCase() === normalizedSku
+          && item.locationId === Number(batchForm.locationId)
+          && item.storageSection === batchForm.storageSection
+        );
+        const matchingTemplate = items.find((item) => item.sku.trim().toUpperCase() === normalizedSku);
         let itemID = matchingItem?.id ?? 0;
 
         if (!itemID) {
           const locationId = Number(batchForm.locationId);
-          if (!locationId || !line.description.trim()) {
+          const lineDescription = line.description.trim() || displayDescription(matchingTemplate ?? { description: "", name: "" });
+          if (!locationId || !lineDescription) {
             throw new Error(t("batchInboundMissingNewSkuDetails", { sku: normalizedSku || "-" }));
           }
 
           const createdItem = await api.createItem({
             sku: normalizedSku,
-            name: line.description.trim(),
+            name: lineDescription,
             category: "General",
-            description: line.description.trim(),
+            description: lineDescription,
             unit: (batchForm.unitLabel || "PCS").toLowerCase(),
             quantity: 0,
-            reorderLevel: line.reorderLevel,
+            reorderLevel: line.reorderLevel || matchingTemplate?.reorderLevel || 0,
             locationId,
             storageSection: batchForm.storageSection || "A",
             deliveryDate: batchForm.deliveryDate || undefined,
@@ -564,9 +646,9 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
                 {mode === "IN" ? <Button variant="outlined" onClick={openBatchModal}>{t("batchInbound")}</Button> : null}
               </div>
             </div>
-            <div className="filter-bar">
-              <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={mode === "IN" ? t("searchInboundPlaceholder") : t("searchOutboundPlaceholder")} /></label>
-              <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
+              <div className="filter-bar">
+                <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={mode === "IN" ? t("searchInboundPlaceholder") : t("searchOutboundPlaceholder")} /></label>
+                <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
             </div>
           </div>
           <div className="sheet-table-wrap">
@@ -612,15 +694,17 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
               items={items}
               locations={locations}
               selectedItem={selectedItem}
+              selectedItemSectionOptions={selectedItemSectionOptions}
               matchingNewSkuItem={matchingNewSkuItem}
-              isCreatingNewSku={isCreatingNewSku}
-              setIsCreatingNewSku={setIsCreatingNewSku}
+              isAutoMatchedInboundSku={isAutoMatchedInboundSku}
+              shouldAutoCreateInboundSku={shouldAutoCreateInboundSku}
               newSkuForm={newSkuForm}
               setNewSkuForm={setNewSkuForm}
+              newSkuSectionOptions={newSkuSectionOptions}
               isEditing={editingMovementId !== null}
             />
             <div className="sheet-form__actions sheet-form__wide">
-              <button className="button button--primary" type="submit" disabled={submitting || (items.length === 0 && !(mode === "IN" && isCreatingNewSku))}>{submitting ? t("saving") : editingMovementId ? (mode === "IN" ? t("updateInboundRow") : t("updateOutboundRow")) : (mode === "IN" ? t("addInboundRow") : t("addOutboundRow"))}</button>
+              <button className="button button--primary" type="submit" disabled={submitting || (mode !== "IN" && items.length === 0)}>{submitting ? t("saving") : editingMovementId ? (mode === "IN" ? t("updateInboundRow") : t("updateOutboundRow")) : (mode === "IN" ? t("addInboundRow") : t("addOutboundRow"))}</button>
               <button className="button button--ghost" type="button" onClick={closeFormModal}>{t("cancel")}</button>
             </div>
           </form>
@@ -646,10 +730,11 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
           <DialogContent dividers>
             {errorMessage ? <div className="alert-banner">{errorMessage}</div> : null}
             <form onSubmit={handleBatchSubmit}>
-              <div className="sheet-form">
+              <div className="sheet-form sheet-form--compact">
                 <label>{t("deliveryDate")}<input type="date" value={batchForm.deliveryDate} onChange={(event) => setBatchForm((current) => ({ ...current, deliveryDate: event.target.value }))} /></label>
                 <label>{t("containerNo")}<input value={batchForm.containerNo} onChange={(event) => setBatchForm((current) => ({ ...current, containerNo: event.target.value }))} placeholder="MRSU8580370" /></label>
                 <label>{t("currentStorage")}<select value={batchForm.locationId} onChange={(event) => setBatchForm((current) => ({ ...current, locationId: event.target.value }))}>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
+                <label>{t("storageSection")}<select value={batchForm.storageSection} onChange={(event) => setBatchForm((current) => ({ ...current, storageSection: event.target.value }))}>{batchSectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}</select></label>
                 <label>{t("inboundUnit")}<select value={batchForm.unitLabel} onChange={(event) => setBatchForm((current) => ({ ...current, unitLabel: event.target.value }))}><option value="PCS">PCS</option><option value="CTN">CTN</option><option value="PALLET">PALLET</option></select></label>
                 <label className="sheet-form__wide">{t("notes")}<input value={batchForm.reason} onChange={(event) => setBatchForm((current) => ({ ...current, reason: event.target.value }))} placeholder={t("inboundNotePlaceholder")} /></label>
               </div>
@@ -661,26 +746,46 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
                 </div>
 
                 {batchLines.map((line, index) => {
-                  const selectedBatchItem = items.find((item) => item.sku.trim().toUpperCase() === line.sku.trim().toUpperCase());
+                  const selectedBatchItem = items.find((item) =>
+                    item.sku.trim().toUpperCase() === line.sku.trim().toUpperCase()
+                    && item.locationId === Number(batchForm.locationId)
+                    && item.storageSection === batchForm.storageSection
+                  );
+                  const batchSkuTemplate = items.find((item) => item.sku.trim().toUpperCase() === line.sku.trim().toUpperCase());
                   const suggestedPalletsDetail = getSuggestedPalletsDetail(line.receivedQty || line.expectedQty, line.pallets);
 
                   return (
                     <div className="batch-line-card" key={line.id}>
                       <div className="batch-line-card__header">
-                        <strong>{t("sku")} #{index + 1}</strong>
+                        <div className="batch-line-card__title">
+                          <strong>{t("sku")} #{index + 1}</strong>
+                <span className={`status-pill ${selectedBatchItem ? "status-pill--ok" : "status-pill--alert"}`}>
+                  {selectedBatchItem ? t("useExistingSku") : t("createNewSku")}
+                </span>
+              </div>
                         <button className="button button--danger button--small" type="button" onClick={() => removeBatchLine(line.id)} disabled={batchLines.length === 1}>{t("removeLine")}</button>
                       </div>
-                      <div className="sheet-form">
+                      <div className="batch-line-grid">
                         <label>{t("sku")}<input value={line.sku} onChange={(event) => updateBatchLine(line.id, { sku: event.target.value })} placeholder="023042" /></label>
                         <label>{t("reorderLevel")}<input type="number" min="0" value={line.reorderLevel} onChange={(event) => updateBatchLine(line.id, { reorderLevel: Math.max(0, Number(event.target.value || 0)) })} /></label>
-                        <label className="sheet-form__wide">{t("description")}<input value={selectedBatchItem ? displayDescription(selectedBatchItem) : line.description} onChange={(event) => updateBatchLine(line.id, { description: event.target.value })} placeholder={t("descriptionPlaceholder")} disabled={Boolean(selectedBatchItem)} /></label>
-                        <div className="sheet-note sheet-form__wide"><strong>{selectedBatchItem ? t("existingSkuDetected") : t("newSkuWillBeCreated")}</strong> {selectedBatchItem ? `${selectedBatchItem.sku} - ${displayDescription(selectedBatchItem)} | ${selectedBatchItem.locationName}` : line.sku.trim() ? line.sku.trim().toUpperCase() : t("noSkuSelected")}</div>
-                        <div className="sheet-note sheet-form__wide"><strong>{t("storageSection")}</strong> {selectedBatchItem?.storageSection || batchForm.storageSection || "A"}</div>
+                        <label className="batch-line-grid__description">{t("description")}<input value={selectedBatchItem ? displayDescription(selectedBatchItem) : (line.description || displayDescription(batchSkuTemplate ?? { description: "", name: "" }))} onChange={(event) => updateBatchLine(line.id, { description: event.target.value })} placeholder={t("descriptionPlaceholder")} disabled={Boolean(selectedBatchItem)} /></label>
                         <label>{t("expectedQty")}<input type="number" min="0" value={line.expectedQty} onChange={(event) => updateBatchLine(line.id, { expectedQty: Math.max(0, Number(event.target.value || 0)) })} /></label>
                         <label>{t("received")}<input type="number" min="0" value={line.receivedQty} onChange={(event) => updateBatchLine(line.id, { receivedQty: Math.max(0, Number(event.target.value || 0)) })} /></label>
                         <label>{t("pallets")}<input type="number" min="0" value={line.pallets} onChange={(event) => updateBatchLine(line.id, { pallets: Math.max(0, Number(event.target.value || 0)) })} /></label>
-                        <label className="sheet-form__wide">{t("palletsDetail")}<input value={line.palletsDetailCtns} onChange={(event) => updateBatchLine(line.id, { palletsDetailCtns: event.target.value })} placeholder={suggestedPalletsDetail || "28*115+110"} /></label>
-                        {suggestedPalletsDetail ? <div className="sheet-note sheet-form__wide"><strong>{t("suggested")}</strong> {suggestedPalletsDetail}<button className="button button--ghost button--small" type="button" onClick={() => updateBatchLine(line.id, { palletsDetailCtns: suggestedPalletsDetail })}>{t("useSuggestion")}</button></div> : null}
+                        <label>{t("storageSection")}<input value={selectedBatchItem?.storageSection || batchForm.storageSection || "A"} readOnly /></label>
+                        <label className="batch-line-grid__detail">{t("palletsDetail")}<input value={line.palletsDetailCtns} onChange={(event) => updateBatchLine(line.id, { palletsDetailCtns: event.target.value })} placeholder={suggestedPalletsDetail || "28*115+110"} /></label>
+                      </div>
+                      <div className="batch-line-card__meta">
+                        <span className="batch-line-card__hint">
+                          {selectedBatchItem
+                            ? `${selectedBatchItem.sku} | ${selectedBatchItem.locationName}`
+                            : (line.sku.trim() ? line.sku.trim().toUpperCase() : t("noSkuSelected"))}
+                        </span>
+                        {suggestedPalletsDetail ? (
+                          <button className="button button--ghost button--small" type="button" onClick={() => updateBatchLine(line.id, { palletsDetailCtns: suggestedPalletsDetail })}>
+                            {t("useSuggestion")}: {suggestedPalletsDetail}
+                          </button>
+                        ) : null}
                       </div>
                     </div>
                   );
@@ -706,11 +811,13 @@ function ActivityFormFields({
   items,
   locations,
   selectedItem,
+  selectedItemSectionOptions,
   matchingNewSkuItem,
-  isCreatingNewSku,
-  setIsCreatingNewSku,
+  isAutoMatchedInboundSku,
+  shouldAutoCreateInboundSku,
   newSkuForm,
   setNewSkuForm,
+  newSkuSectionOptions,
   isEditing
 }: {
   mode: ActivityMode;
@@ -719,11 +826,13 @@ function ActivityFormFields({
   items: Item[];
   locations: Location[];
   selectedItem: Item | undefined;
+  selectedItemSectionOptions: string[];
   matchingNewSkuItem: Item | undefined;
-  isCreatingNewSku: boolean;
-  setIsCreatingNewSku: Dispatch<SetStateAction<boolean>>;
+  isAutoMatchedInboundSku: boolean;
+  shouldAutoCreateInboundSku: boolean;
   newSkuForm: NewSkuFormState;
   setNewSkuForm: Dispatch<SetStateAction<NewSkuFormState>>;
+  newSkuSectionOptions: string[];
   isEditing: boolean;
 }) {
   const { t } = useI18n();
@@ -735,46 +844,71 @@ function ActivityFormFields({
     <>
       {mode === "IN" ? (
         <>
-          <div className="sheet-form__wide sheet-form__actions">
-            {!isEditing ? <button className="button button--ghost" type="button" onClick={() => setIsCreatingNewSku((current) => !current)}>{isCreatingNewSku ? t("useExistingSku") : t("createNewSku")}</button> : null}
-          </div>
-          {isCreatingNewSku ? (
-            <>
-              <label>{t("newSku")}<input value={newSkuForm.sku} onChange={(event) => setNewSkuForm((current) => ({ ...current, sku: event.target.value }))} placeholder="023042" required /></label>
-              <label>{t("currentStorage")}<select value={newSkuForm.locationId} onChange={(event) => setNewSkuForm((current) => ({ ...current, locationId: event.target.value }))} required>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
-              <label className="sheet-form__wide">{t("description")}<input value={newSkuForm.description} onChange={(event) => setNewSkuForm((current) => ({ ...current, description: event.target.value }))} placeholder={t("descriptionPlaceholder")} required /></label>
-              <label>{t("reorderLevel")}<input type="number" min="0" value={newSkuForm.reorderLevel} onChange={(event) => setNewSkuForm((current) => ({ ...current, reorderLevel: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-              <div className="sheet-note sheet-form__wide"><strong>{t("storageSection")}</strong> {newSkuForm.storageSection || "A"}</div>
-              {matchingNewSkuItem ? <div className="sheet-note sheet-form__wide"><strong>{t("existingSkuDetected")}</strong> {matchingNewSkuItem.sku} - {displayDescription(matchingNewSkuItem)} | {matchingNewSkuItem.locationName}</div> : null}
-            </>
-          ) : (
-            <>
-              <label className="sheet-form__wide">
-                {t("sku")}
-                <select value={form.itemId} onChange={(event) => setForm((current) => ({ ...current, itemId: event.target.value }))} required>
-                  {items.length === 0 ? <option value="">{t("noSkuRowsAvailable")}</option> : items.map((item) => <option key={item.id} value={item.id}>{item.sku} - {displayDescription(item)}</option>)}
-                </select>
-              </label>
-              <div className="sheet-note sheet-form__wide"><strong>{t("selectedDescription")}</strong> {selectedItem ? displayDescription(selectedItem) : t("noSkuSelected")}</div>
-              <div className="sheet-note sheet-form__wide"><strong>{t("storageSection")}</strong> {selectedItem?.storageSection || "A"}</div>
-            </>
-          )}
-          <label>{t("deliveryDate")}<input type="date" value={form.deliveryDate} onChange={(event) => setForm((current) => ({ ...current, deliveryDate: event.target.value }))} /></label>
-          <label>{t("containerNo")}<input value={form.containerNo} onChange={(event) => setForm((current) => ({ ...current, containerNo: event.target.value }))} placeholder="MRSU8580370" /></label>
-          <label>{t("expectedQty")}<input type="number" min="0" value={form.expectedQty} onChange={(event) => setForm((current) => ({ ...current, expectedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-          <label>{t("received")}<input type="number" min="0" value={form.receivedQty} onChange={(event) => setForm((current) => ({ ...current, receivedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-          <label>{t("inboundUnit")}<select value={form.unitLabel} onChange={(event) => setForm((current) => ({ ...current, unitLabel: event.target.value }))}><option value="PCS">PCS</option><option value="CTN">CTN</option><option value="PALLET">PALLET</option></select></label>
-          <label>{t("pallets")}<input type="number" min="0" value={form.pallets} onChange={(event) => setForm((current) => ({ ...current, pallets: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-          <label className="sheet-form__wide">
-            {t("palletsDetail")}
-            <input value={form.palletsDetailCtns} onChange={(event) => setForm((current) => ({ ...current, palletsDetailCtns: event.target.value }))} placeholder={suggestedPalletsDetail || "28*115+110"} />
-          </label>
-          {suggestedPalletsDetail ? (
-            <div className="sheet-note sheet-form__wide">
-              <strong>{t("suggested")}</strong> {suggestedPalletsDetail}
-              <button className="button button--ghost button--small" type="button" onClick={() => setForm((current) => ({ ...current, palletsDetailCtns: suggestedPalletsDetail }))}>{t("useSuggestion")}</button>
+          {isEditing ? (
+            <div className="batch-line-card inbound-compact-card">
+              <div className="batch-line-card__header">
+                <div className="batch-line-card__title">
+                  <strong>{t("sku")}</strong>
+                  <span className="status-pill status-pill--ok">{t("edit")}</span>
+                </div>
+              </div>
+              <div className="batch-line-grid">
+                <label className="batch-line-grid__description">
+                  {t("sku")}
+                  <select value={form.itemId} onChange={(event) => setForm((current) => ({ ...current, itemId: event.target.value }))} required>
+                    {items.length === 0 ? <option value="">{t("noSkuRowsAvailable")}</option> : items.map((item) => <option key={item.id} value={item.id}>{item.sku} - {displayDescription(item)}</option>)}
+                  </select>
+                </label>
+                <label>{t("storageSection")}<select value={form.storageSection} onChange={(event) => setForm((current) => ({ ...current, storageSection: event.target.value }))}>{selectedItemSectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}</select></label>
+                <label>{t("deliveryDate")}<input type="date" value={form.deliveryDate} onChange={(event) => setForm((current) => ({ ...current, deliveryDate: event.target.value }))} /></label>
+                <label>{t("containerNo")}<input value={form.containerNo} onChange={(event) => setForm((current) => ({ ...current, containerNo: event.target.value }))} placeholder="MRSU8580370" /></label>
+                <label>{t("expectedQty")}<input type="number" min="0" value={form.expectedQty} onChange={(event) => setForm((current) => ({ ...current, expectedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
+                <label>{t("received")}<input type="number" min="0" value={form.receivedQty} onChange={(event) => setForm((current) => ({ ...current, receivedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
+                <label>{t("inboundUnit")}<select value={form.unitLabel} onChange={(event) => setForm((current) => ({ ...current, unitLabel: event.target.value }))}><option value="PCS">PCS</option><option value="CTN">CTN</option><option value="PALLET">PALLET</option></select></label>
+                <label>{t("pallets")}<input type="number" min="0" value={form.pallets} onChange={(event) => setForm((current) => ({ ...current, pallets: Math.max(0, Number(event.target.value || 0)) }))} /></label>
+                <label className="batch-line-grid__detail">{t("palletsDetail")}<input value={form.palletsDetailCtns} onChange={(event) => setForm((current) => ({ ...current, palletsDetailCtns: event.target.value }))} placeholder={suggestedPalletsDetail || "28*115+110"} /></label>
+              </div>
+              <div className="batch-line-card__meta">
+                <span className="batch-line-card__hint">{selectedItem ? `${selectedItem.sku} | ${displayDescription(selectedItem)} | ${selectedItem.locationName}` : t("noSkuSelected")}</span>
+                {suggestedPalletsDetail ? <button className="button button--ghost button--small" type="button" onClick={() => setForm((current) => ({ ...current, palletsDetailCtns: suggestedPalletsDetail }))}>{t("useSuggestion")}: {suggestedPalletsDetail}</button> : null}
+              </div>
             </div>
-          ) : null}
+          ) : (
+            <div className="batch-line-card inbound-compact-card">
+              <div className="batch-line-card__header">
+                <div className="batch-line-card__title">
+                  <strong>{t("sku")}</strong>
+                  <span className={`status-pill ${isAutoMatchedInboundSku ? "status-pill--ok" : "status-pill--alert"}`}>
+                    {isAutoMatchedInboundSku ? t("useExistingSku") : t("createNewSku")}
+                  </span>
+                </div>
+              </div>
+              <div className="batch-line-grid">
+                <label>{t("sku")}<input value={newSkuForm.sku} onChange={(event) => setNewSkuForm((current) => ({ ...current, sku: event.target.value }))} placeholder="023042" required /></label>
+                <label>{t("currentStorage")}<select value={isAutoMatchedInboundSku ? String(matchingNewSkuItem?.locationId ?? newSkuForm.locationId) : newSkuForm.locationId} onChange={(event) => setNewSkuForm((current) => ({ ...current, locationId: event.target.value }))} required disabled={isAutoMatchedInboundSku}>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
+                <label>{t("storageSection")}<select value={isAutoMatchedInboundSku ? (matchingNewSkuItem?.storageSection || form.storageSection) : newSkuForm.storageSection} onChange={(event) => isAutoMatchedInboundSku ? setForm((current) => ({ ...current, storageSection: event.target.value })) : setNewSkuForm((current) => ({ ...current, storageSection: event.target.value }))}>{(isAutoMatchedInboundSku ? selectedItemSectionOptions : newSkuSectionOptions).map((section) => <option key={section} value={section}>{section}</option>)}</select></label>
+                <label className="batch-line-grid__description">{t("description")}<input value={isAutoMatchedInboundSku ? displayDescription(matchingNewSkuItem ?? selectedItem ?? { description: "", name: "" }) : newSkuForm.description} onChange={(event) => setNewSkuForm((current) => ({ ...current, description: event.target.value }))} placeholder={t("descriptionPlaceholder")} required={!isAutoMatchedInboundSku} disabled={isAutoMatchedInboundSku} /></label>
+                <label>{t("reorderLevel")}<input type="number" min="0" value={newSkuForm.reorderLevel} onChange={(event) => setNewSkuForm((current) => ({ ...current, reorderLevel: Math.max(0, Number(event.target.value || 0)) }))} disabled={isAutoMatchedInboundSku} /></label>
+                <label>{t("deliveryDate")}<input type="date" value={form.deliveryDate} onChange={(event) => setForm((current) => ({ ...current, deliveryDate: event.target.value }))} /></label>
+                <label>{t("containerNo")}<input value={form.containerNo} onChange={(event) => setForm((current) => ({ ...current, containerNo: event.target.value }))} placeholder="MRSU8580370" /></label>
+                <label>{t("expectedQty")}<input type="number" min="0" value={form.expectedQty} onChange={(event) => setForm((current) => ({ ...current, expectedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
+                <label>{t("received")}<input type="number" min="0" value={form.receivedQty} onChange={(event) => setForm((current) => ({ ...current, receivedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
+                <label>{t("inboundUnit")}<select value={form.unitLabel} onChange={(event) => setForm((current) => ({ ...current, unitLabel: event.target.value }))}><option value="PCS">PCS</option><option value="CTN">CTN</option><option value="PALLET">PALLET</option></select></label>
+                <label>{t("pallets")}<input type="number" min="0" value={form.pallets} onChange={(event) => setForm((current) => ({ ...current, pallets: Math.max(0, Number(event.target.value || 0)) }))} /></label>
+                <label className="batch-line-grid__detail">{t("palletsDetail")}<input value={form.palletsDetailCtns} onChange={(event) => setForm((current) => ({ ...current, palletsDetailCtns: event.target.value }))} placeholder={suggestedPalletsDetail || "28*115+110"} /></label>
+              </div>
+              <div className="batch-line-card__meta">
+                <span className="batch-line-card__hint">
+                  {isAutoMatchedInboundSku
+                    ? `${matchingNewSkuItem?.sku} | ${displayDescription(matchingNewSkuItem ?? { description: "", name: "" })} | ${matchingNewSkuItem?.locationName}`
+                    : shouldAutoCreateInboundSku
+                      ? `${newSkuForm.sku.trim().toUpperCase()} | ${(locations.find((location) => String(location.id) === newSkuForm.locationId)?.name ?? t("noSkuSelected"))}`
+                      : t("noSkuSelected")}
+                </span>
+                {suggestedPalletsDetail ? <button className="button button--ghost button--small" type="button" onClick={() => setForm((current) => ({ ...current, palletsDetailCtns: suggestedPalletsDetail }))}>{t("useSuggestion")}: {suggestedPalletsDetail}</button> : null}
+              </div>
+            </div>
+          )}
           <label className="sheet-form__wide">{t("notes")}<input value={form.reason} onChange={(event) => setForm((current) => ({ ...current, reason: event.target.value }))} placeholder={t("inboundNotePlaceholder")} /></label>
         </>
       ) : (
@@ -808,6 +942,10 @@ function displayDescription(item: Pick<Item, "description" | "name">) { return i
 function formatDate(value: string | null) { return formatDateValue(value, dateFormatter); }
 function hasQtyMismatch(expectedQty: number, receivedQty: number) { return expectedQty > 0 && receivedQty > 0 && expectedQty !== receivedQty; }
 function toDateInputValue(value: string | null) { return value ? value.slice(0, 10) : ""; }
+function getLocationSectionOptions(location: Location | undefined) {
+  const sectionNames = location?.sectionNames?.map((sectionName) => sectionName.trim()).filter(Boolean) ?? [];
+  return sectionNames.length > 0 ? sectionNames : ["A"];
+}
 
 function renderInboundStatus(
   expectedQty: number,

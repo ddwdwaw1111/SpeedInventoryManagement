@@ -36,6 +36,7 @@ export type Location = {
   zone: string;
   description: string;
   capacity: number;
+  sectionNames: string[];
   createdAt: string;
 };
 
@@ -45,6 +46,28 @@ export type LocationPayload = {
   zone: string;
   description: string;
   capacity: number;
+  sectionNames: string[];
+};
+
+export type SKUMaster = {
+  id: number;
+  sku: string;
+  name: string;
+  category: string;
+  description: string;
+  unit: string;
+  reorderLevel: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SKUMasterPayload = {
+  sku: string;
+  name: string;
+  category: string;
+  description: string;
+  unit: string;
+  reorderLevel: number;
 };
 
 export type Item = {

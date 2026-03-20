@@ -13,14 +13,15 @@ import { BarChart, PieChart } from "@mui/x-charts";
 import { ActivityManagementPage } from "./components/ActivityManagementPage";
 import { AppHeaderUser, AuthPage } from "./components/AuthPage";
 import { MasterInventoryPage } from "./components/MasterInventoryPage";
+import { SKUMasterPage } from "./components/SKUMasterPage";
 import { SettingsPage } from "./components/SettingsPage";
 import { StorageManagementPage } from "./components/StorageManagementPage";
 import { ApiError, api } from "./lib/api";
 import { parseDateValue } from "./lib/dates";
 import { useI18n } from "./lib/i18n";
-import type { Item, Location, LoginPayload, Movement, SignUpPayload, User } from "./lib/types";
+import type { Item, Location, LoginPayload, Movement, SKUMaster, SignUpPayload, User } from "./lib/types";
 
-type PageKey = "dashboard" | "master-inventory" | "storage-management" | "inbound-management" | "outbound-management" | "settings";
+type PageKey = "dashboard" | "sku-master" | "stock-by-location" | "storage-management" | "inbound-management" | "outbound-management" | "settings";
 type ReportGranularity = "day" | "month" | "year";
 type ChartTone = "blue" | "green" | "amber" | "red";
 type BarRow = { label: string; value: number; meta?: string; tone?: ChartTone };
@@ -38,6 +39,7 @@ export default function App() {
   const [authErrorMessage, setAuthErrorMessage] = useState("");
   const [activePage, setActivePage] = useState<PageKey>(() => getPageFromHash(window.location.hash));
   const [locations, setLocations] = useState<Location[]>([]);
+  const [skuMasters, setSkuMasters] = useState<SKUMaster[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [movements, setMovements] = useState<Movement[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -84,11 +86,12 @@ export default function App() {
     if (showSpinner) setIsLoading(true);
     setErrorMessage("");
     try {
-      const [locationsResponse, itemsResponse, movementsResponse] = await Promise.all([
-        api.getLocations(), api.getItems(), api.getMovements(200)
+      const [locationsResponse, skuMastersResponse, itemsResponse, movementsResponse] = await Promise.all([
+        api.getLocations(), api.getSKUMasters(), api.getItems(), api.getMovements(200)
       ]);
       startTransition(() => {
         setLocations(locationsResponse);
+        setSkuMasters(skuMastersResponse);
         setItems(itemsResponse);
         setMovements(movementsResponse);
       });
@@ -183,7 +186,8 @@ export default function App() {
     { key: "dashboard", label: t("report"), description: t("reportDesc") },
     { key: "inbound-management", label: t("inbound"), description: t("inboundDesc") },
     { key: "outbound-management", label: t("outbound"), description: t("outboundDesc") },
-    { key: "master-inventory", label: t("masterInventory"), description: t("masterInventoryDesc") },
+    { key: "sku-master", label: t("skuMaster"), description: t("skuMasterDesc") },
+    { key: "stock-by-location", label: t("stockByLocation"), description: t("stockByLocationDesc") },
     { key: "storage-management", label: t("storageManagement"), description: t("storageManagementDesc") },
     { key: "settings", label: t("settings"), description: t("settingsDesc") }
   ];
@@ -240,7 +244,8 @@ export default function App() {
       <div className="workspace-shell">
         {activePage === "inbound-management" ? <ActivityManagementPage mode="IN" items={items} locations={locations} movements={movements} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
         {activePage === "outbound-management" ? <ActivityManagementPage mode="OUT" items={items} locations={locations} movements={movements} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
-        {activePage === "master-inventory" ? <MasterInventoryPage items={items} locations={locations} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+        {activePage === "sku-master" ? <SKUMasterPage skuMasters={skuMasters} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+        {activePage === "stock-by-location" ? <MasterInventoryPage items={items} locations={locations} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
         {activePage === "storage-management" ? <StorageManagementPage locations={locations} items={items} onRefresh={() => loadAppData(false)} /> : null}
         {activePage === "settings" ? <SettingsPage /> : null}
 
@@ -604,7 +609,8 @@ function getChartColor(tone: ChartTone) {
 function getPageFromHash(hash: string): PageKey {
   if (hash === "#/inbound-management") return "inbound-management";
   if (hash === "#/outbound-management") return "outbound-management";
-  if (hash === "#/master-inventory") return "master-inventory";
+  if (hash === "#/sku-master") return "sku-master";
+  if (hash === "#/stock-by-location" || hash === "#/master-inventory") return "stock-by-location";
   if (hash === "#/storage-management") return "storage-management";
   if (hash === "#/settings") return "settings";
   return "dashboard";
@@ -615,8 +621,10 @@ function navigateToPage(page: PageKey, setter: Dispatch<SetStateAction<PageKey>>
     ? "#/inbound-management"
     : page === "outbound-management"
       ? "#/outbound-management"
-      : page === "master-inventory"
-        ? "#/master-inventory"
+      : page === "sku-master"
+        ? "#/sku-master"
+        : page === "stock-by-location"
+          ? "#/stock-by-location"
         : page === "storage-management"
           ? "#/storage-management"
           : page === "settings"
