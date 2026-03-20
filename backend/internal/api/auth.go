@@ -1,10 +1,11 @@
 package api
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"time"
+
+	"github.com/gin-gonic/gin"
 
 	"speed-inventory-management/backend/internal/service"
 )
@@ -13,110 +14,98 @@ type contextKey string
 
 const userContextKey contextKey = "authUser"
 
-func (s *Server) handleSignUp(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
+func (s *Server) handleSignUp(c *gin.Context) {
 	var input service.RegisterUserInput
-	if err := decodeJSON(r, &input); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	authPayload, token, err := s.store.RegisterUser(r.Context(), input)
+	authPayload, token, err := s.store.RegisterUser(c.Request.Context(), input)
 	if err != nil {
-		writeDomainError(w, err)
+		writeDomainError(c, err)
 		return
 	}
 
-	s.setSessionCookie(w, token, authPayload.ExpiresAt)
-	writeJSON(w, http.StatusCreated, authPayload)
+	s.setSessionCookie(c, token, authPayload.ExpiresAt)
+	writeJSON(c, http.StatusCreated, authPayload)
 }
 
-func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
+func (s *Server) handleLogin(c *gin.Context) {
 	var input service.LoginInput
-	if err := decodeJSON(r, &input); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	authPayload, token, err := s.store.Login(r.Context(), input)
+	authPayload, token, err := s.store.Login(c.Request.Context(), input)
 	if err != nil {
-		writeDomainError(w, err)
+		writeDomainError(c, err)
 		return
 	}
 
-	s.setSessionCookie(w, token, authPayload.ExpiresAt)
-	writeJSON(w, http.StatusOK, authPayload)
+	s.setSessionCookie(c, token, authPayload.ExpiresAt)
+	writeJSON(c, http.StatusOK, authPayload)
 }
 
-func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	authPayload, ok := userFromContext(r.Context())
+func (s *Server) handleMe(c *gin.Context) {
+	authPayload, ok := userFromContext(c)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication required")
+		writeError(c, http.StatusUnauthorized, "authentication required")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, authPayload)
+	writeJSON(c, http.StatusOK, authPayload)
 }
 
-func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
+func (s *Server) handleLogout(c *gin.Context) {
+	if cookie, err := c.Cookie(s.sessionCookieName); err == nil {
+		_ = s.store.Logout(c.Request.Context(), cookie)
 	}
 
-	if cookie, err := r.Cookie(s.sessionCookieName); err == nil {
-		_ = s.store.Logout(r.Context(), cookie.Value)
-	}
-
-	s.clearSessionCookie(w)
-	w.WriteHeader(http.StatusNoContent)
+	s.clearSessionCookie(c)
+	c.Status(http.StatusNoContent)
 }
 
-func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie(s.sessionCookieName)
-		if err != nil || cookie.Value == "" {
-			writeError(w, http.StatusUnauthorized, "authentication required")
+func (s *Server) requireAuth() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		cookie, err := c.Cookie(s.sessionCookieName)
+		if err != nil || cookie == "" {
+			writeError(c, http.StatusUnauthorized, "authentication required")
+			c.Abort()
 			return
 		}
 
-		authPayload, err := s.store.GetUserBySessionToken(r.Context(), cookie.Value)
+		authPayload, err := s.store.GetUserBySessionToken(c.Request.Context(), cookie)
 		if err != nil {
 			if errors.Is(err, service.ErrNotFound) || errors.Is(err, service.ErrInvalidInput) {
-				s.clearSessionCookie(w)
-				writeError(w, http.StatusUnauthorized, "authentication required")
+				s.clearSessionCookie(c)
+				writeError(c, http.StatusUnauthorized, "authentication required")
+				c.Abort()
 				return
 			}
-			writeServerError(w, err)
+			writeServerError(c, err)
+			c.Abort()
 			return
 		}
 
-		next(w, r.WithContext(context.WithValue(r.Context(), userContextKey, authPayload)))
+		c.Set(string(userContextKey), authPayload)
+		c.Next()
 	}
 }
 
-func userFromContext(ctx context.Context) (service.AuthPayload, bool) {
-	value := ctx.Value(userContextKey)
+func userFromContext(c *gin.Context) (service.AuthPayload, bool) {
+	value, ok := c.Get(string(userContextKey))
+	if !ok {
+		return service.AuthPayload{}, false
+	}
+
 	authPayload, ok := value.(service.AuthPayload)
 	return authPayload, ok
 }
 
-func (s *Server) setSessionCookie(w http.ResponseWriter, token string, expiresAt time.Time) {
-	http.SetCookie(w, &http.Cookie{
+func (s *Server) setSessionCookie(c *gin.Context, token string, expiresAt time.Time) {
+	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     s.sessionCookieName,
 		Value:    token,
 		Path:     "/",
@@ -128,8 +117,8 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, token string, expiresAt
 	})
 }
 
-func (s *Server) clearSessionCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{
+func (s *Server) clearSessionCookie(c *gin.Context) {
+	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     s.sessionCookieName,
 		Value:    "",
 		Path:     "/",

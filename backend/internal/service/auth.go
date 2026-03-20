@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -14,10 +15,36 @@ import (
 const sessionTTL = 7 * 24 * time.Hour
 
 type User struct {
-	ID        int64     `json:"id"`
-	Email     string    `json:"email"`
-	FullName  string    `json:"fullName"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID        int64     `db:"id" json:"id"`
+	Email     string    `db:"email" json:"email"`
+	FullName  string    `db:"full_name" json:"fullName"`
+	CreatedAt time.Time `db:"created_at" json:"createdAt"`
+}
+
+type userCredentialRow struct {
+	ID           int64     `db:"id"`
+	Email        string    `db:"email"`
+	FullName     string    `db:"full_name"`
+	PasswordSalt string    `db:"password_salt"`
+	PasswordHash string    `db:"password_hash"`
+	CreatedAt    time.Time `db:"created_at"`
+}
+
+func (row userCredentialRow) toUser() User {
+	return User{
+		ID:        row.ID,
+		Email:     row.Email,
+		FullName:  row.FullName,
+		CreatedAt: row.CreatedAt,
+	}
+}
+
+type sessionUserRow struct {
+	ID        int64     `db:"id"`
+	Email     string    `db:"email"`
+	FullName  string    `db:"full_name"`
+	CreatedAt time.Time `db:"created_at"`
+	ExpiresAt time.Time `db:"expires_at"`
 }
 
 type AuthPayload struct {
@@ -76,33 +103,24 @@ func (s *Store) Login(ctx context.Context, input LoginInput) (AuthPayload, strin
 		return AuthPayload{}, "", fmt.Errorf("%w: email and password are required", ErrInvalidInput)
 	}
 
-	var user User
-	var salt string
-	var passwordHash string
-	err := s.db.QueryRowContext(ctx, `
+	var row userCredentialRow
+	err := s.db.GetContext(ctx, &row, `
 		SELECT id, email, full_name, password_salt, password_hash, created_at
 		FROM users
 		WHERE email = ?
-	`, email).Scan(
-		&user.ID,
-		&user.Email,
-		&user.FullName,
-		&salt,
-		&passwordHash,
-		&user.CreatedAt,
-	)
+	`, email)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return AuthPayload{}, "", fmt.Errorf("%w: invalid email or password", ErrInvalidInput)
 		}
 		return AuthPayload{}, "", fmt.Errorf("load user for login: %w", err)
 	}
 
-	if hashPassword(password, salt) != passwordHash {
+	if hashPassword(password, row.PasswordSalt) != row.PasswordHash {
 		return AuthPayload{}, "", fmt.Errorf("%w: invalid email or password", ErrInvalidInput)
 	}
 
-	return s.createSession(ctx, user)
+	return s.createSession(ctx, row.toUser())
 }
 
 func (s *Store) GetUserBySessionToken(ctx context.Context, token string) (AuthPayload, error) {
@@ -111,27 +129,29 @@ func (s *Store) GetUserBySessionToken(ctx context.Context, token string) (AuthPa
 		return AuthPayload{}, fmt.Errorf("%w: missing session token", ErrInvalidInput)
 	}
 
-	var payload AuthPayload
-	err := s.db.QueryRowContext(ctx, `
+	var row sessionUserRow
+	err := s.db.GetContext(ctx, &row, `
 		SELECT u.id, u.email, u.full_name, u.created_at, us.expires_at
 		FROM user_sessions us
 		JOIN users u ON u.id = us.user_id
 		WHERE us.token_hash = ? AND us.expires_at > CURRENT_TIMESTAMP
-	`, tokenHash).Scan(
-		&payload.User.ID,
-		&payload.User.Email,
-		&payload.User.FullName,
-		&payload.User.CreatedAt,
-		&payload.ExpiresAt,
-	)
+	`, tokenHash)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return AuthPayload{}, ErrNotFound
 		}
 		return AuthPayload{}, fmt.Errorf("load session: %w", err)
 	}
 
-	return payload, nil
+	return AuthPayload{
+		User: User{
+			ID:        row.ID,
+			Email:     row.Email,
+			FullName:  row.FullName,
+			CreatedAt: row.CreatedAt,
+		},
+		ExpiresAt: row.ExpiresAt,
+	}, nil
 }
 
 func (s *Store) Logout(ctx context.Context, token string) error {
@@ -169,13 +189,13 @@ func (s *Store) createSession(ctx context.Context, user User) (AuthPayload, stri
 
 func (s *Store) getUser(ctx context.Context, userID int64) (User, error) {
 	var user User
-	err := s.db.QueryRowContext(ctx, `
+	err := s.db.GetContext(ctx, &user, `
 		SELECT id, email, full_name, created_at
 		FROM users
 		WHERE id = ?
-	`, userID).Scan(&user.ID, &user.Email, &user.FullName, &user.CreatedAt)
+	`, userID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return User{}, ErrNotFound
 		}
 		return User{}, fmt.Errorf("load user: %w", err)

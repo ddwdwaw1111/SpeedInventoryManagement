@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
+
 	"speed-inventory-management/backend/internal/api"
 	"speed-inventory-management/backend/internal/config"
 	"speed-inventory-management/backend/internal/database"
@@ -14,13 +16,17 @@ import (
 func main() {
 	cfg := config.Load()
 
+	if cfg.Env == "production" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
 	db, err := database.Open(cfg.Database)
 	if err != nil {
 		log.Fatalf("database connection failed: %v", err)
 	}
 	defer db.Close()
 
-	if err := database.Migrate(db); err != nil {
+	if err := database.Migrate(db.DB); err != nil {
 		log.Fatalf("database migration failed: %v", err)
 	}
 

@@ -10,11 +10,12 @@ import { api } from "../lib/api";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
-import type { Item, ItemPayload, Location } from "../lib/types";
+import type { Customer, Item, ItemPayload, Location } from "../lib/types";
 
 type MasterInventoryPageProps = {
   items: Item[];
   locations: Location[];
+  customers: Customer[];
   isLoading: boolean;
   onRefresh: () => Promise<void>;
 };
@@ -24,6 +25,7 @@ type InventoryHealthFilter = "ALL" | "IN_STOCK" | "LOW_STOCK" | "MISMATCH";
 type ItemFormState = {
   sku: string;
   description: string;
+  customerId: string;
   locationId: string;
   storageSection: string;
   quantity: number;
@@ -40,10 +42,11 @@ type ItemFormState = {
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
 
-function createEmptyItemForm(defaultLocationId = ""): ItemFormState {
+function createEmptyItemForm(defaultCustomerId = "", defaultLocationId = ""): ItemFormState {
   return {
     sku: "",
     description: "",
+    customerId: defaultCustomerId,
     locationId: defaultLocationId,
     storageSection: "A",
     quantity: 0,
@@ -70,16 +73,17 @@ function getSuggestedPalletsDetail(totalQty: number, pallets: number) {
   return `${pallets - 1}*${cartonsPerFullPallet}+${remainingCartons}`;
 }
 
-export function MasterInventoryPage({ items, locations, isLoading, onRefresh }: MasterInventoryPageProps) {
+export function MasterInventoryPage({ items, locations, customers, isLoading, onRefresh }: MasterInventoryPageProps) {
   const { t } = useI18n();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
+  const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [healthFilter, setHealthFilter] = useState<InventoryHealthFilter>("ALL");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItemId, setEditingItemId] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const [form, setForm] = useState<ItemFormState>(() => createEmptyItemForm(""));
+  const [form, setForm] = useState<ItemFormState>(() => createEmptyItemForm("", ""));
   const deferredSearchTerm = useDeferredValue(searchTerm);
   const suggestedPalletsDetail = getSuggestedPalletsDetail(form.receivedQty || form.expectedQty || form.quantity, form.pallets);
 
@@ -89,23 +93,32 @@ export function MasterInventoryPage({ items, locations, isLoading, onRefresh }: 
     }
   }, [form.locationId, locations]);
 
+  useEffect(() => {
+    if (!form.customerId && customers[0]) {
+      setForm((current) => ({ ...current, customerId: String(customers[0].id) }));
+    }
+  }, [customers, form.customerId]);
+
   const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
   const filteredItems = items.filter((item) => {
     const matchesSearch = normalizedSearch.length === 0
       || item.sku.toLowerCase().includes(normalizedSearch)
+      || item.customerName.toLowerCase().includes(normalizedSearch)
       || displayDescription(item).toLowerCase().includes(normalizedSearch)
       || item.containerNo.toLowerCase().includes(normalizedSearch);
     const matchesLocation = selectedLocationId === "all" || item.locationId === Number(selectedLocationId);
+    const matchesCustomer = selectedCustomerId === "all" || item.customerId === Number(selectedCustomerId);
     const matchesHealth = healthFilter === "ALL"
       || (healthFilter === "IN_STOCK" && item.quantity > item.reorderLevel)
       || (healthFilter === "LOW_STOCK" && item.quantity <= item.reorderLevel)
       || (healthFilter === "MISMATCH" && hasQtyMismatch(item.expectedQty, item.receivedQty));
-    return matchesSearch && matchesLocation && matchesHealth;
+    return matchesSearch && matchesLocation && matchesCustomer && matchesHealth;
   });
 
   const columns = useMemo<GridColDef<Item>[]>(() => [
     { field: "sku", headerName: t("sku"), minWidth: 120, flex: 0.8, renderCell: (params) => <span className="cell--mono">{params.value}</span> },
     { field: "description", headerName: t("description"), minWidth: 240, flex: 1.5, valueGetter: (_, row) => displayDescription(row) },
+    { field: "customerName", headerName: t("customer"), minWidth: 180, flex: 1 },
     { field: "locationName", headerName: t("currentStorage"), minWidth: 170, flex: 1 },
     { field: "storageSection", headerName: t("storageSection"), minWidth: 110, renderCell: (params) => params.row.storageSection || "A" },
     { field: "quantity", headerName: t("onHand"), minWidth: 110, type: "number" },
@@ -157,7 +170,7 @@ export function MasterInventoryPage({ items, locations, isLoading, onRefresh }: 
 
   function openCreateModal() {
     setEditingItemId(null);
-    setForm(createEmptyItemForm(locations[0] ? String(locations[0].id) : ""));
+    setForm(createEmptyItemForm(customers[0] ? String(customers[0].id) : "", locations[0] ? String(locations[0].id) : ""));
     setErrorMessage("");
     setIsModalOpen(true);
   }
@@ -167,6 +180,7 @@ export function MasterInventoryPage({ items, locations, isLoading, onRefresh }: 
     setForm({
       sku: item.sku,
       description: displayDescription(item),
+      customerId: String(item.customerId),
       locationId: String(item.locationId),
       storageSection: item.storageSection || "A",
       quantity: item.quantity,
@@ -188,7 +202,7 @@ export function MasterInventoryPage({ items, locations, isLoading, onRefresh }: 
     setEditingItemId(null);
     setIsModalOpen(false);
     setErrorMessage("");
-    setForm((current) => createEmptyItemForm(current.locationId || (locations[0] ? String(locations[0].id) : "")));
+    setForm((current) => createEmptyItemForm(current.customerId || (customers[0] ? String(customers[0].id) : ""), current.locationId || (locations[0] ? String(locations[0].id) : "")));
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -197,6 +211,13 @@ export function MasterInventoryPage({ items, locations, isLoading, onRefresh }: 
     setErrorMessage("");
 
     const locationId = Number(form.locationId);
+    const customerId = Number(form.customerId);
+    if (!customerId) {
+      setErrorMessage(t("chooseCustomerBeforeSave"));
+      setIsSubmitting(false);
+      return;
+    }
+
     if (!locationId) {
       setErrorMessage(t("chooseStorageBeforeSave"));
       setIsSubmitting(false);
@@ -211,6 +232,7 @@ export function MasterInventoryPage({ items, locations, isLoading, onRefresh }: 
       unit: "pcs",
       quantity: form.quantity,
       reorderLevel: form.reorderLevel,
+      customerId,
       locationId,
       storageSection: form.storageSection || "A",
       deliveryDate: form.deliveryDate || undefined,
@@ -265,6 +287,7 @@ export function MasterInventoryPage({ items, locations, isLoading, onRefresh }: 
           </div>
           <div className="filter-bar">
             <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("stockByLocationSearchPlaceholder")} /></label>
+            <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
             <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
             <label>{t("stockHealth")}<select value={healthFilter} onChange={(event) => setHealthFilter(event.target.value as InventoryHealthFilter)}><option value="ALL">{t("allRows")}</option><option value="IN_STOCK">{t("healthyStock")}</option><option value="LOW_STOCK">{t("lowStock")}</option><option value="MISMATCH">{t("mismatch")}</option></select></label>
           </div>
@@ -307,6 +330,7 @@ export function MasterInventoryPage({ items, locations, isLoading, onRefresh }: 
           <form className="sheet-form" onSubmit={handleSubmit}>
             <label>{t("sku")}<input value={form.sku} onChange={(event) => setForm((current) => ({ ...current, sku: event.target.value }))} placeholder="023042" required /></label>
             <label className="sheet-form__wide">{t("description")}<input value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} placeholder={t("descriptionPlaceholder")} required /></label>
+            <label>{t("customer")}<select value={form.customerId} onChange={(event) => setForm((current) => ({ ...current, customerId: event.target.value }))} required>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
             <label>{t("currentStorage")}<select value={form.locationId} onChange={(event) => setForm((current) => ({ ...current, locationId: event.target.value }))} required>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
             <div className="sheet-note sheet-form__wide"><strong>{t("storageSection")}</strong> {form.storageSection || "A"}</div>
             <label>{t("onHand")}<input type="number" min="0" value={numberInputValue(form.quantity)} onChange={(event) => setForm((current) => ({ ...current, quantity: Math.max(0, Number(event.target.value || 0)) }))} /></label>

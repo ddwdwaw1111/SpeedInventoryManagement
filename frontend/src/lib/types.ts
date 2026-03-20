@@ -49,6 +49,25 @@ export type LocationPayload = {
   sectionNames: string[];
 };
 
+export type Customer = {
+  id: number;
+  name: string;
+  contactName: string;
+  email: string;
+  phone: string;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CustomerPayload = {
+  name: string;
+  contactName: string;
+  email: string;
+  phone: string;
+  notes: string;
+};
+
 export type SKUMaster = {
   id: number;
   sku: string;
@@ -79,6 +98,8 @@ export type Item = {
   unit: string;
   quantity: number;
   reorderLevel: number;
+  customerId: number;
+  customerName: string;
   locationId: number;
   locationName: string;
   storageSection: string;
@@ -101,6 +122,8 @@ export type Movement = {
   itemName: string;
   sku: string;
   description: string;
+  customerId: number;
+  customerName: string;
   locationName: string;
   storageSection: string;
   movementType: "IN" | "OUT" | "ADJUST";
@@ -134,6 +157,7 @@ export type ItemPayload = {
   unit: string;
   quantity: number;
   reorderLevel: number;
+  customerId: number;
   locationId: number;
   storageSection?: string;
   deliveryDate?: string;

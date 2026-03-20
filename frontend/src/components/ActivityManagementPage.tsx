@@ -11,7 +11,7 @@ import { api } from "../lib/api";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
-import type { Item, ItemPayload, Location, Movement, MovementPayload } from "../lib/types";
+import type { Customer, Item, ItemPayload, Location, Movement, MovementPayload } from "../lib/types";
 
 type ActivityMode = "IN" | "OUT";
 
@@ -19,6 +19,7 @@ type ActivityManagementPageProps = {
   mode: ActivityMode;
   items: Item[];
   locations: Location[];
+  customers: Customer[];
   movements: Movement[];
   isLoading: boolean;
   onRefresh: () => Promise<void>;
@@ -51,6 +52,7 @@ type ActivityFormState = {
 type NewSkuFormState = {
   sku: string;
   description: string;
+  customerId: string;
   locationId: string;
   storageSection: string;
   reorderLevel: number;
@@ -59,6 +61,7 @@ type NewSkuFormState = {
 type BatchInboundFormState = {
   deliveryDate: string;
   containerNo: string;
+  customerId: string;
   locationId: string;
   storageSection: string;
   unitLabel: string;
@@ -104,10 +107,11 @@ function createEmptyActivityForm(mode: ActivityMode): ActivityFormState {
   };
 }
 
-function createEmptyNewSkuForm(defaultLocationId = ""): NewSkuFormState {
+function createEmptyNewSkuForm(defaultCustomerId = "", defaultLocationId = ""): NewSkuFormState {
   return {
     sku: "",
     description: "",
+    customerId: defaultCustomerId,
     locationId: defaultLocationId,
     storageSection: "A",
     reorderLevel: 0
@@ -118,6 +122,7 @@ function createEmptyBatchInboundForm(): BatchInboundFormState {
   return {
     deliveryDate: "",
     containerNo: "",
+    customerId: "",
     locationId: "",
     storageSection: "A",
     unitLabel: "CTN",
@@ -149,17 +154,18 @@ function getSuggestedPalletsDetail(totalQty: number, pallets: number) {
   return `${pallets - 1}*${cartonsPerFullPallet}+${remainingCartons}`;
 }
 
-export function ActivityManagementPage({ mode, items, locations, movements, isLoading, onRefresh }: ActivityManagementPageProps) {
+export function ActivityManagementPage({ mode, items, locations, customers, movements, isLoading, onRefresh }: ActivityManagementPageProps) {
   const { t } = useI18n();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
+  const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [form, setForm] = useState<ActivityFormState>(() => createEmptyActivityForm(mode));
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [editingMovementId, setEditingMovementId] = useState<number | null>(null);
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
-  const [newSkuForm, setNewSkuForm] = useState<NewSkuFormState>(() => createEmptyNewSkuForm(""));
+  const [newSkuForm, setNewSkuForm] = useState<NewSkuFormState>(() => createEmptyNewSkuForm("", ""));
   const [batchForm, setBatchForm] = useState<BatchInboundFormState>(() => createEmptyBatchInboundForm());
   const [batchLines, setBatchLines] = useState<BatchInboundLineState[]>(() => [createEmptyBatchInboundLine("")]);
   const [batchSubmitting, setBatchSubmitting] = useState(false);
@@ -185,10 +191,22 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
   }, [locations, newSkuForm.locationId]);
 
   useEffect(() => {
+    if (!newSkuForm.customerId && customers[0]) {
+      setNewSkuForm((current) => ({ ...current, customerId: String(customers[0].id) }));
+    }
+  }, [customers, newSkuForm.customerId]);
+
+  useEffect(() => {
     if (!batchForm.locationId && locations[0]) {
       setBatchForm((current) => ({ ...current, locationId: String(locations[0].id) }));
     }
   }, [batchForm.locationId, locations]);
+
+  useEffect(() => {
+    if (!batchForm.customerId && customers[0]) {
+      setBatchForm((current) => ({ ...current, customerId: String(customers[0].id) }));
+    }
+  }, [batchForm.customerId, customers]);
 
   const selectedItem = items.find((item) => item.id === Number(form.itemId));
   const selectedItemLocation = locations.find((location) => location.id === selectedItem?.locationId);
@@ -205,12 +223,14 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
   const matchingNewSkuItem = useMemo(() => {
     const normalizedSku = newSkuForm.sku.trim().toUpperCase();
     const locationID = Number(newSkuForm.locationId);
-    if (!normalizedSku || !locationID) return undefined;
+    const customerID = Number(newSkuForm.customerId);
+    if (!normalizedSku || !locationID || !customerID) return undefined;
     return items.find((item) =>
       item.sku.trim().toUpperCase() === normalizedSku
       && item.locationId === locationID
+      && item.customerId === customerID
     );
-  }, [items, newSkuForm.locationId, newSkuForm.sku, newSkuForm.storageSection]);
+  }, [items, newSkuForm.customerId, newSkuForm.locationId, newSkuForm.sku, newSkuForm.storageSection]);
   const historyRows = useMemo(() => movements.filter((movement) => movement.movementType === mode), [mode, movements]);
   const isAutoMatchedInboundSku = mode === "IN" && editingMovementId === null && Boolean(matchingNewSkuItem);
   const shouldAutoCreateInboundSku = mode === "IN" && editingMovementId === null && !matchingNewSkuItem && Boolean(newSkuForm.sku.trim());
@@ -274,6 +294,7 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
   const filteredRows = historyRows.filter((movement) => {
     const matchesSearch = normalizedSearch.length === 0
       || movement.sku.toLowerCase().includes(normalizedSearch)
+      || movement.customerName.toLowerCase().includes(normalizedSearch)
       || movement.description.toLowerCase().includes(normalizedSearch)
       || movement.containerNo.toLowerCase().includes(normalizedSearch)
       || movement.referenceCode.toLowerCase().includes(normalizedSearch)
@@ -282,7 +303,8 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
       || movement.itemNumber.toLowerCase().includes(normalizedSearch);
     const matchesLocation = selectedLocationId === "all"
       || items.find((item) => item.id === movement.itemId)?.locationId === Number(selectedLocationId);
-    return matchesSearch && matchesLocation;
+    const matchesCustomer = selectedCustomerId === "all" || movement.customerId === Number(selectedCustomerId);
+    return matchesSearch && matchesLocation && matchesCustomer;
   });
 
   const inboundColumns = useMemo<GridColDef<Movement>[]>(() => [
@@ -290,6 +312,7 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
     { field: "containerNo", headerName: t("containerNo"), minWidth: 170, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.containerNo || "-"}</span> },
     { field: "sku", headerName: t("sku"), minWidth: 120, renderCell: (params) => <span className="cell--mono">{params.row.sku}</span> },
     { field: "description", headerName: t("description"), minWidth: 260, flex: 1.4, renderCell: (params) => params.row.description },
+    { field: "customerName", headerName: t("customer"), minWidth: 170, flex: 1, renderCell: (params) => params.row.customerName },
     { field: "expectedQty", headerName: t("expectedQty"), minWidth: 130, type: "number", renderCell: (params) => params.row.expectedQty || "-" },
     {
       field: "receivedQty",
@@ -332,7 +355,7 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
         />
       )
     }
-  ], [items, selectedLocationId, t]);
+  ], [t]);
 
   const outboundColumns = useMemo<GridColDef<Movement>[]>(() => [
     { field: "sn", headerName: "SN", minWidth: 80, sortable: false, filterable: false, renderCell: (params) => filteredRows.findIndex((row) => row.id === params.row.id) + 1 },
@@ -341,6 +364,7 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
     { field: "itemNumber", headerName: t("itemNumber"), minWidth: 120, renderCell: (params) => <span className="cell--mono">{params.row.itemNumber || "-"}</span> },
     { field: "sku", headerName: t("sku"), minWidth: 120, renderCell: (params) => <span className="cell--mono">{params.row.sku}</span> },
     { field: "description", headerName: t("description"), minWidth: 260, flex: 1.4, renderCell: (params) => params.row.description },
+    { field: "customerName", headerName: t("customer"), minWidth: 170, flex: 1, renderCell: (params) => params.row.customerName },
     { field: "quantityChange", headerName: "QTY", minWidth: 100, type: "number", renderCell: (params) => Math.abs(params.row.quantityChange) || "-" },
     { field: "unitLabel", headerName: t("unit"), minWidth: 90, renderCell: (params) => params.row.unitLabel || "-" },
     { field: "storageSection", headerName: t("storageSection"), minWidth: 110, renderCell: (params) => params.row.storageSection || "A" },
@@ -386,12 +410,18 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
       if (matchingNewSkuItem) {
         itemId = matchingNewSkuItem.id;
       } else {
-      const locationId = Number(newSkuForm.locationId);
-      if (!newSkuForm.sku.trim() || !locationId || !newSkuForm.description.trim()) {
-        setErrorMessage(t("enterNewSkuRequired"));
-        setSubmitting(false);
-        return;
-      }
+        const locationId = Number(newSkuForm.locationId);
+        const customerId = Number(newSkuForm.customerId);
+        if (!customerId) {
+          setErrorMessage(t("chooseCustomerBeforeSave"));
+          setSubmitting(false);
+          return;
+        }
+        if (!newSkuForm.sku.trim() || !locationId || !newSkuForm.description.trim()) {
+          setErrorMessage(t("enterNewSkuRequired"));
+          setSubmitting(false);
+          return;
+        }
 
         const createItemPayload: ItemPayload = {
           sku: newSkuForm.sku.trim(),
@@ -401,6 +431,7 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
           unit: (form.unitLabel || "CTN").toLowerCase(),
           quantity: 0,
           reorderLevel: newSkuForm.reorderLevel,
+          customerId,
           locationId,
           storageSection: newSkuForm.storageSection || "A",
           deliveryDate: form.deliveryDate || undefined,
@@ -464,7 +495,10 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
         await api.createMovement(payload);
       }
       setForm((current) => ({ ...createEmptyActivityForm(mode), itemId: current.itemId }));
-      setNewSkuForm(createEmptyNewSkuForm(locations[0] ? String(locations[0].id) : ""));
+      setNewSkuForm(createEmptyNewSkuForm(
+        customers[0] ? String(customers[0].id) : "",
+        locations[0] ? String(locations[0].id) : ""
+      ));
       setEditingMovementId(null);
       setIsFormModalOpen(false);
       await onRefresh();
@@ -478,13 +512,20 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
   function openCreateModal() {
     setEditingMovementId(null);
     setForm((current) => ({ ...createEmptyActivityForm(mode), itemId: current.itemId || (items[0] ? String(items[0].id) : "") }));
-    setNewSkuForm(createEmptyNewSkuForm(locations[0] ? String(locations[0].id) : ""));
+    setNewSkuForm(createEmptyNewSkuForm(
+      customers[0] ? String(customers[0].id) : "",
+      locations[0] ? String(locations[0].id) : ""
+    ));
     setErrorMessage("");
     setIsFormModalOpen(true);
   }
 
   function openBatchModal() {
-    setBatchForm({ ...createEmptyBatchInboundForm(), locationId: locations[0] ? String(locations[0].id) : "" });
+    setBatchForm({
+      ...createEmptyBatchInboundForm(),
+      customerId: customers[0] ? String(customers[0].id) : "",
+      locationId: locations[0] ? String(locations[0].id) : ""
+    });
     setBatchLines([createEmptyBatchInboundLine(items[0]?.sku ?? "")]);
     setErrorMessage("");
     setIsBatchModalOpen(true);
@@ -515,7 +556,10 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
       reason: movement.reason,
       referenceCode: movement.referenceCode
     });
-    setNewSkuForm(createEmptyNewSkuForm(locations[0] ? String(locations[0].id) : ""));
+    setNewSkuForm(createEmptyNewSkuForm(
+      customers[0] ? String(customers[0].id) : "",
+      locations[0] ? String(locations[0].id) : ""
+    ));
     setErrorMessage("");
     setIsFormModalOpen(true);
   }
@@ -540,12 +584,19 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
     setEditingMovementId(null);
     setIsFormModalOpen(false);
     setForm((current) => ({ ...createEmptyActivityForm(mode), itemId: current.itemId }));
-    setNewSkuForm(createEmptyNewSkuForm(locations[0] ? String(locations[0].id) : ""));
+    setNewSkuForm(createEmptyNewSkuForm(
+      customers[0] ? String(customers[0].id) : "",
+      locations[0] ? String(locations[0].id) : ""
+    ));
     setErrorMessage("");
   }
 
   function closeBatchModal() {
-    setBatchForm({ ...createEmptyBatchInboundForm(), locationId: locations[0] ? String(locations[0].id) : "" });
+    setBatchForm({
+      ...createEmptyBatchInboundForm(),
+      customerId: customers[0] ? String(customers[0].id) : "",
+      locationId: locations[0] ? String(locations[0].id) : ""
+    });
     setBatchLines([createEmptyBatchInboundLine(items[0]?.sku ?? "")]);
     setBatchSubmitting(false);
     setErrorMessage("");
@@ -575,21 +626,33 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
       setBatchSubmitting(false);
       return;
     }
+    const batchLocationId = Number(batchForm.locationId);
+    const batchCustomerId = Number(batchForm.customerId);
+    if (!batchCustomerId) {
+      setErrorMessage(t("chooseCustomerBeforeSave"));
+      setBatchSubmitting(false);
+      return;
+    }
+    if (!batchLocationId) {
+      setErrorMessage(t("chooseStorageBeforeSave"));
+      setBatchSubmitting(false);
+      return;
+    }
 
     try {
       for (const line of validLines) {
         const normalizedSku = line.sku.trim().toUpperCase();
         const matchingItem = items.find((item) =>
           item.sku.trim().toUpperCase() === normalizedSku
-          && item.locationId === Number(batchForm.locationId)
+          && item.locationId === batchLocationId
+          && item.customerId === batchCustomerId
         );
         const matchingTemplate = items.find((item) => item.sku.trim().toUpperCase() === normalizedSku);
         let itemID = matchingItem?.id ?? 0;
 
         if (!itemID) {
-          const locationId = Number(batchForm.locationId);
           const lineDescription = line.description.trim() || displayDescription(matchingTemplate ?? { description: "", name: "" });
-          if (!locationId || !lineDescription) {
+          if (!lineDescription) {
             throw new Error(t("batchInboundMissingNewSkuDetails", { sku: normalizedSku || "-" }));
           }
 
@@ -601,7 +664,8 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
             unit: (batchForm.unitLabel || "CTN").toLowerCase(),
             quantity: 0,
             reorderLevel: line.reorderLevel || matchingTemplate?.reorderLevel || 0,
-            locationId,
+            customerId: batchCustomerId,
+            locationId: batchLocationId,
             storageSection: batchForm.storageSection || "A",
             deliveryDate: batchForm.deliveryDate || undefined,
             containerNo: batchForm.containerNo || undefined,
@@ -655,9 +719,10 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
                 {mode === "IN" ? <Button variant="outlined" startIcon={<PlaylistAddOutlinedIcon />} onClick={openBatchModal}>{t("batchInbound")}</Button> : null}
               </div>
             </div>
-              <div className="filter-bar">
-                <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={mode === "IN" ? t("searchInboundPlaceholder") : t("searchOutboundPlaceholder")} /></label>
-                <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
+            <div className="filter-bar">
+              <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={mode === "IN" ? t("searchInboundPlaceholder") : t("searchOutboundPlaceholder")} /></label>
+              <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
+              <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
             </div>
           </div>
           <div className="sheet-table-wrap">
@@ -710,6 +775,7 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
               setForm={setForm}
               items={items}
               locations={locations}
+              customers={customers}
               selectedItem={selectedItem}
               selectedItemSectionOptions={selectedItemSectionOptions}
               matchingNewSkuItem={matchingNewSkuItem}
@@ -750,6 +816,7 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
               <div className="sheet-form sheet-form--compact">
                 <label>{t("deliveryDate")}<input type="date" value={batchForm.deliveryDate} onChange={(event) => setBatchForm((current) => ({ ...current, deliveryDate: event.target.value }))} /></label>
                 <label>{t("containerNo")}<input value={batchForm.containerNo} onChange={(event) => setBatchForm((current) => ({ ...current, containerNo: event.target.value }))} placeholder="MRSU8580370" /></label>
+                <label>{t("customer")}<select value={batchForm.customerId} onChange={(event) => setBatchForm((current) => ({ ...current, customerId: event.target.value }))}>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
                 <label>{t("currentStorage")}<select value={batchForm.locationId} onChange={(event) => setBatchForm((current) => ({ ...current, locationId: event.target.value }))}>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
                 <label>{t("storageSection")}<select value={batchForm.storageSection} onChange={(event) => setBatchForm((current) => ({ ...current, storageSection: event.target.value }))}>{batchSectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}</select></label>
                 <label>{t("inboundUnit")}<select value={batchForm.unitLabel} onChange={(event) => setBatchForm((current) => ({ ...current, unitLabel: event.target.value }))}><option value="CTN">CTN</option><option value="PCS">PCS</option><option value="PALLET">PALLET</option></select></label>
@@ -766,6 +833,7 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
                   const selectedBatchItem = items.find((item) =>
                     item.sku.trim().toUpperCase() === line.sku.trim().toUpperCase()
                     && item.locationId === Number(batchForm.locationId)
+                    && item.customerId === Number(batchForm.customerId)
                   );
                   const batchSkuTemplate = items.find((item) => item.sku.trim().toUpperCase() === line.sku.trim().toUpperCase());
                   const suggestedPalletsDetail = getSuggestedPalletsDetail(line.receivedQty || line.expectedQty, line.pallets);
@@ -794,7 +862,7 @@ export function ActivityManagementPage({ mode, items, locations, movements, isLo
                       <div className="batch-line-card__meta">
                         <span className="batch-line-card__hint">
                           {selectedBatchItem
-                            ? `${selectedBatchItem.sku} | ${selectedBatchItem.locationName}`
+                            ? `${selectedBatchItem.customerName} | ${selectedBatchItem.sku} | ${selectedBatchItem.locationName}`
                             : (line.sku.trim() ? line.sku.trim().toUpperCase() : t("noSkuSelected"))}
                         </span>
                         {suggestedPalletsDetail ? (
@@ -826,6 +894,7 @@ function ActivityFormFields({
   setForm,
   items,
   locations,
+  customers,
   selectedItem,
   selectedItemSectionOptions,
   matchingNewSkuItem,
@@ -841,6 +910,7 @@ function ActivityFormFields({
   setForm: Dispatch<SetStateAction<ActivityFormState>>;
   items: Item[];
   locations: Location[];
+  customers: Customer[];
   selectedItem: Item | undefined;
   selectedItemSectionOptions: string[];
   matchingNewSkuItem: Item | undefined;
@@ -872,7 +942,7 @@ function ActivityFormFields({
                 <label className="batch-line-grid__description">
                   {t("sku")}
                   <select value={form.itemId} onChange={(event) => setForm((current) => ({ ...current, itemId: event.target.value }))} required>
-                    {items.length === 0 ? <option value="">{t("noSkuRowsAvailable")}</option> : items.map((item) => <option key={item.id} value={item.id}>{item.sku} - {displayDescription(item)}</option>)}
+                    {items.length === 0 ? <option value="">{t("noSkuRowsAvailable")}</option> : items.map((item) => <option key={item.id} value={item.id}>{item.customerName} | {item.locationName} | {item.sku} - {displayDescription(item)}</option>)}
                   </select>
                 </label>
                 <label>{t("storageSection")}<select value={form.storageSection} onChange={(event) => setForm((current) => ({ ...current, storageSection: event.target.value }))}>{selectedItemSectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}</select></label>
@@ -885,7 +955,7 @@ function ActivityFormFields({
                 <label className="batch-line-grid__detail">{t("palletsDetail")}<input value={form.palletsDetailCtns} onChange={(event) => setForm((current) => ({ ...current, palletsDetailCtns: event.target.value }))} placeholder={suggestedPalletsDetail || "28*115+110"} /></label>
               </div>
               <div className="batch-line-card__meta">
-                <span className="batch-line-card__hint">{selectedItem ? `${selectedItem.sku} | ${displayDescription(selectedItem)} | ${selectedItem.locationName}` : t("noSkuSelected")}</span>
+                <span className="batch-line-card__hint">{selectedItem ? `${selectedItem.customerName} | ${selectedItem.sku} | ${displayDescription(selectedItem)} | ${selectedItem.locationName}` : t("noSkuSelected")}</span>
                 {suggestedPalletsDetail ? <button className="button button--ghost button--small" type="button" onClick={() => setForm((current) => ({ ...current, palletsDetailCtns: suggestedPalletsDetail }))}>{t("useSuggestion")}: {suggestedPalletsDetail}</button> : null}
               </div>
             </div>
@@ -901,6 +971,7 @@ function ActivityFormFields({
               </div>
               <div className="batch-line-grid">
                 <label>{t("sku")}<input value={newSkuForm.sku} onChange={(event) => setNewSkuForm((current) => ({ ...current, sku: event.target.value }))} placeholder="023042" required /></label>
+                <label>{t("customer")}<select value={newSkuForm.customerId} onChange={(event) => setNewSkuForm((current) => ({ ...current, customerId: event.target.value }))} required>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
                 <label>{t("currentStorage")}<select value={newSkuForm.locationId} onChange={(event) => setNewSkuForm((current) => ({ ...current, locationId: event.target.value }))} required>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
                 <label>{t("storageSection")}<select value={newSkuForm.storageSection} onChange={(event) => setNewSkuForm((current) => ({ ...current, storageSection: event.target.value }))}>{newSkuSectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}</select></label>
                 <label className="batch-line-grid__description">{t("description")}<input value={isAutoMatchedInboundSku ? displayDescription(matchingNewSkuItem ?? selectedItem ?? { description: "", name: "" }) : newSkuForm.description} onChange={(event) => setNewSkuForm((current) => ({ ...current, description: event.target.value }))} placeholder={t("descriptionPlaceholder")} required={!isAutoMatchedInboundSku} disabled={isAutoMatchedInboundSku} /></label>
@@ -916,9 +987,9 @@ function ActivityFormFields({
               <div className="batch-line-card__meta">
                 <span className="batch-line-card__hint">
                   {isAutoMatchedInboundSku
-                    ? `${matchingNewSkuItem?.sku} | ${displayDescription(matchingNewSkuItem ?? { description: "", name: "" })} | ${matchingNewSkuItem?.locationName} | ${matchingNewSkuItem?.storageSection || "A"}`
+                    ? `${matchingNewSkuItem?.customerName} | ${matchingNewSkuItem?.sku} | ${displayDescription(matchingNewSkuItem ?? { description: "", name: "" })} | ${matchingNewSkuItem?.locationName} | ${matchingNewSkuItem?.storageSection || "A"}`
                     : shouldAutoCreateInboundSku
-                      ? `${newSkuForm.sku.trim().toUpperCase()} | ${(locations.find((location) => String(location.id) === newSkuForm.locationId)?.name ?? t("noSkuSelected"))} | ${newSkuForm.storageSection || "A"}`
+                      ? `${(customers.find((customer) => String(customer.id) === newSkuForm.customerId)?.name ?? "-")} | ${newSkuForm.sku.trim().toUpperCase()} | ${(locations.find((location) => String(location.id) === newSkuForm.locationId)?.name ?? t("noSkuSelected"))} | ${newSkuForm.storageSection || "A"}`
                       : t("noSkuSelected")}
                 </span>
                 {suggestedPalletsDetail ? <button className="button button--ghost button--small" type="button" onClick={() => setForm((current) => ({ ...current, palletsDetailCtns: suggestedPalletsDetail }))}>{t("useSuggestion")}: {suggestedPalletsDetail}</button> : null}
@@ -932,11 +1003,11 @@ function ActivityFormFields({
           <label className="sheet-form__wide">
             {t("sku")}
             <select value={form.itemId} onChange={(event) => setForm((current) => ({ ...current, itemId: event.target.value }))} required>
-              {items.length === 0 ? <option value="">{t("noSkuRowsAvailable")}</option> : items.map((item) => <option key={item.id} value={item.id}>{item.sku} - {displayDescription(item)}</option>)}
+              {items.length === 0 ? <option value="">{t("noSkuRowsAvailable")}</option> : items.map((item) => <option key={item.id} value={item.id}>{item.customerName} | {item.locationName} | {item.sku} - {displayDescription(item)}</option>)}
             </select>
           </label>
-          <div className="sheet-note sheet-form__wide"><strong>{t("selectedDescription")}</strong> {selectedItem ? displayDescription(selectedItem) : t("noSkuSelected")}</div>
-          <div className="sheet-note sheet-form__wide"><strong>{t("storageSection")}</strong> {selectedItem?.storageSection || form.storageSection || "A"}</div>
+          <div className="sheet-note sheet-form__wide"><strong>{t("selectedDescription")}</strong> {selectedItem ? `${selectedItem.customerName} | ${displayDescription(selectedItem)}` : t("noSkuSelected")}</div>
+          <div className="sheet-note sheet-form__wide"><strong>{t("storageSection")}</strong> {selectedItem ? `${selectedItem.locationName} / ${selectedItem.storageSection || form.storageSection || "A"}` : (form.storageSection || "A")}</div>
           <label>{t("packingListNo")}<input value={form.packingListNo} onChange={(event) => setForm((current) => ({ ...current, packingListNo: event.target.value }))} placeholder="TGCUS180265" /></label>
           <label>{t("orderRef")}<input value={form.orderRef} onChange={(event) => setForm((current) => ({ ...current, orderRef: event.target.value }))} placeholder="J73504" /></label>
           <label>{t("outDate")}<input type="date" value={form.outDate} onChange={(event) => setForm((current) => ({ ...current, outDate: event.target.value }))} /></label>

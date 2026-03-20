@@ -3,13 +3,13 @@ package service
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	mysql "github.com/go-sql-driver/mysql"
+	"github.com/jmoiron/sqlx"
 )
 
 var (
@@ -28,7 +28,7 @@ var acceptedDateLayouts = []string{
 }
 
 type Store struct {
-	db *sql.DB
+	db *sqlx.DB
 }
 
 type DashboardData struct {
@@ -40,14 +40,50 @@ type DashboardData struct {
 }
 
 type Location struct {
-	ID           int64     `json:"id"`
-	Name         string    `json:"name"`
-	Address      string    `json:"address"`
-	Zone         string    `json:"zone"`
-	Description  string    `json:"description"`
-	Capacity     int       `json:"capacity"`
+	ID           int64     `db:"id" json:"id"`
+	Name         string    `db:"name" json:"name"`
+	Address      string    `db:"address" json:"address"`
+	Zone         string    `db:"zone" json:"zone"`
+	Description  string    `db:"description" json:"description"`
+	Capacity     int       `db:"capacity" json:"capacity"`
 	SectionNames []string  `json:"sectionNames"`
-	CreatedAt    time.Time `json:"createdAt"`
+	CreatedAt    time.Time `db:"created_at" json:"createdAt"`
+}
+
+type locationRow struct {
+	ID               int64     `db:"id"`
+	Name             string    `db:"name"`
+	Address          string    `db:"address"`
+	Zone             string    `db:"zone"`
+	Description      string    `db:"description"`
+	Capacity         int       `db:"capacity"`
+	SectionCount     int       `db:"section_count"`
+	SectionNamesJSON string    `db:"section_names_json"`
+	CreatedAt        time.Time `db:"created_at"`
+}
+
+func (row locationRow) toLocation() Location {
+	return Location{
+		ID:           row.ID,
+		Name:         row.Name,
+		Address:      row.Address,
+		Zone:         row.Zone,
+		Description:  row.Description,
+		Capacity:     row.Capacity,
+		SectionNames: parseSectionNames(row.SectionNamesJSON, row.SectionCount),
+		CreatedAt:    row.CreatedAt,
+	}
+}
+
+type Customer struct {
+	ID          int64     `db:"id" json:"id"`
+	Name        string    `db:"name" json:"name"`
+	ContactName string    `db:"contact_name" json:"contactName"`
+	Email       string    `db:"email" json:"email"`
+	Phone       string    `db:"phone" json:"phone"`
+	Notes       string    `db:"notes" json:"notes"`
+	CreatedAt   time.Time `db:"created_at" json:"createdAt"`
+	UpdatedAt   time.Time `db:"updated_at" json:"updatedAt"`
 }
 
 type CreateLocationInput struct {
@@ -59,16 +95,24 @@ type CreateLocationInput struct {
 	SectionNames []string `json:"sectionNames"`
 }
 
+type CreateCustomerInput struct {
+	Name        string `json:"name"`
+	ContactName string `json:"contactName"`
+	Email       string `json:"email"`
+	Phone       string `json:"phone"`
+	Notes       string `json:"notes"`
+}
+
 type SKUMaster struct {
-	ID           int64     `json:"id"`
-	SKU          string    `json:"sku"`
-	Name         string    `json:"name"`
-	Category     string    `json:"category"`
-	Description  string    `json:"description"`
-	Unit         string    `json:"unit"`
-	ReorderLevel int       `json:"reorderLevel"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	ID           int64     `db:"id" json:"id"`
+	SKU          string    `db:"sku" json:"sku"`
+	Name         string    `db:"name" json:"name"`
+	Category     string    `db:"category" json:"category"`
+	Description  string    `db:"description" json:"description"`
+	Unit         string    `db:"unit" json:"unit"`
+	ReorderLevel int       `db:"reorder_level" json:"reorderLevel"`
+	CreatedAt    time.Time `db:"created_at" json:"createdAt"`
+	UpdatedAt    time.Time `db:"updated_at" json:"updatedAt"`
 }
 
 type CreateSKUMasterInput struct {
@@ -89,6 +133,8 @@ type Item struct {
 	Unit              string     `json:"unit"`
 	Quantity          int        `json:"quantity"`
 	ReorderLevel      int        `json:"reorderLevel"`
+	CustomerID        int64      `json:"customerId"`
+	CustomerName      string     `json:"customerName"`
 	LocationID        int64      `json:"locationId"`
 	LocationName      string     `json:"locationName"`
 	StorageSection    string     `json:"storageSection"`
@@ -111,6 +157,8 @@ type Movement struct {
 	ItemName          string     `json:"itemName"`
 	SKU               string     `json:"sku"`
 	Description       string     `json:"description"`
+	CustomerID        int64      `json:"customerId"`
+	CustomerName      string     `json:"customerName"`
 	LocationName      string     `json:"locationName"`
 	StorageSection    string     `json:"storageSection"`
 	MovementType      string     `json:"movementType"`
@@ -139,6 +187,7 @@ type Movement struct {
 type ItemFilters struct {
 	Search       string
 	LocationID   int64
+	CustomerID   int64
 	LowStockOnly bool
 }
 
@@ -150,6 +199,7 @@ type CreateItemInput struct {
 	Unit              string `json:"unit"`
 	Quantity          int    `json:"quantity"`
 	ReorderLevel      int    `json:"reorderLevel"`
+	CustomerID        int64  `json:"customerId"`
 	LocationID        int64  `json:"locationId"`
 	StorageSection    string `json:"storageSection"`
 	DeliveryDate      string `json:"deliveryDate"`
@@ -187,7 +237,7 @@ type CreateMovementInput struct {
 	ReferenceCode     string `json:"referenceCode"`
 }
 
-func NewStore(db *sql.DB) *Store {
+func NewStore(db *sqlx.DB) *Store {
 	return &Store{db: db}
 }
 
@@ -221,290 +271,6 @@ func (s *Store) GetDashboard(ctx context.Context) (DashboardData, error) {
 	return dashboard, nil
 }
 
-func (s *Store) ListLocations(ctx context.Context) ([]Location, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, COALESCE(address, ''), zone, COALESCE(description, ''), capacity, section_count, COALESCE(section_names_json, ''), created_at
-		FROM storage_locations
-		ORDER BY zone ASC, name ASC
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("load locations: %w", err)
-	}
-	defer rows.Close()
-
-	locations := make([]Location, 0)
-	for rows.Next() {
-		location, err := scanLocation(rows)
-		if err != nil {
-			return nil, fmt.Errorf("scan location: %w", err)
-		}
-		locations = append(locations, location)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate locations: %w", err)
-	}
-
-	return locations, nil
-}
-
-func (s *Store) CreateLocation(ctx context.Context, input CreateLocationInput) (Location, error) {
-	input = sanitizeLocationInput(input)
-	if err := validateLocationInput(input); err != nil {
-		return Location{}, err
-	}
-	sectionNamesJSON, err := marshalSectionNames(input.SectionNames)
-	if err != nil {
-		return Location{}, fmt.Errorf("marshal location section names: %w", err)
-	}
-
-	result, err := s.db.ExecContext(ctx, `
-		INSERT INTO storage_locations (name, address, zone, description, capacity, section_count, section_names_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`,
-		input.Name,
-		nullableString(input.Address),
-		input.Zone,
-		nullableString(input.Description),
-		input.Capacity,
-		len(input.SectionNames),
-		sectionNamesJSON,
-	)
-	if err != nil {
-		return Location{}, mapDBError(fmt.Errorf("create location: %w", err))
-	}
-
-	locationID, err := result.LastInsertId()
-	if err != nil {
-		return Location{}, fmt.Errorf("resolve location id: %w", err)
-	}
-
-	return s.getLocation(ctx, locationID)
-}
-
-func (s *Store) UpdateLocation(ctx context.Context, locationID int64, input CreateLocationInput) (Location, error) {
-	input = sanitizeLocationInput(input)
-	if err := validateLocationInput(input); err != nil {
-		return Location{}, err
-	}
-	sectionNamesJSON, err := marshalSectionNames(input.SectionNames)
-	if err != nil {
-		return Location{}, fmt.Errorf("marshal location section names: %w", err)
-	}
-
-	result, err := s.db.ExecContext(ctx, `
-		UPDATE storage_locations
-		SET
-			name = ?,
-			address = ?,
-			zone = ?,
-			description = ?,
-			capacity = ?,
-			section_count = ?,
-			section_names_json = ?
-		WHERE id = ?
-	`,
-		input.Name,
-		nullableString(input.Address),
-		input.Zone,
-		nullableString(input.Description),
-		input.Capacity,
-		len(input.SectionNames),
-		sectionNamesJSON,
-		locationID,
-	)
-	if err != nil {
-		return Location{}, mapDBError(fmt.Errorf("update location: %w", err))
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return Location{}, fmt.Errorf("resolve updated location rows: %w", err)
-	}
-	if rowsAffected == 0 {
-		return Location{}, ErrNotFound
-	}
-
-	return s.getLocation(ctx, locationID)
-}
-
-func (s *Store) DeleteLocation(ctx context.Context, locationID int64) error {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM storage_locations WHERE id = ?`, locationID)
-	if err != nil {
-		return mapDBError(fmt.Errorf("delete location: %w", err))
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("resolve deleted location rows: %w", err)
-	}
-	if rowsAffected == 0 {
-		return ErrNotFound
-	}
-
-	return nil
-}
-
-func (s *Store) ListSKUMasters(ctx context.Context, search string) ([]SKUMaster, error) {
-	query := `
-		SELECT id, sku, name, category, COALESCE(description, ''), unit, reorder_level, created_at, updated_at
-		FROM sku_master
-		WHERE 1 = 1
-	`
-
-	args := make([]any, 0)
-	if trimmedSearch := strings.TrimSpace(search); trimmedSearch != "" {
-		likeValue := "%" + trimmedSearch + "%"
-		query += " AND (sku LIKE ? OR name LIKE ? OR description LIKE ? OR category LIKE ?)"
-		args = append(args, likeValue, likeValue, likeValue, likeValue)
-	}
-
-	query += " ORDER BY updated_at DESC, sku ASC"
-
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("load sku masters: %w", err)
-	}
-	defer rows.Close()
-
-	masters := make([]SKUMaster, 0)
-	for rows.Next() {
-		master, err := scanSKUMaster(rows)
-		if err != nil {
-			return nil, err
-		}
-		masters = append(masters, master)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate sku masters: %w", err)
-	}
-
-	return masters, nil
-}
-
-func (s *Store) CreateSKUMaster(ctx context.Context, input CreateSKUMasterInput) (SKUMaster, error) {
-	input = sanitizeSKUMasterInput(input)
-	if err := validateSKUMasterInput(input); err != nil {
-		return SKUMaster{}, err
-	}
-
-	result, err := s.db.ExecContext(ctx, `
-		INSERT INTO sku_master (sku, name, category, description, unit, reorder_level)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`,
-		input.SKU,
-		input.Name,
-		input.Category,
-		input.Description,
-		input.Unit,
-		input.ReorderLevel,
-	)
-	if err != nil {
-		return SKUMaster{}, mapDBError(fmt.Errorf("create sku master: %w", err))
-	}
-
-	skuMasterID, err := result.LastInsertId()
-	if err != nil {
-		return SKUMaster{}, fmt.Errorf("resolve sku master id: %w", err)
-	}
-
-	return s.getSKUMaster(ctx, skuMasterID)
-}
-
-func (s *Store) UpdateSKUMaster(ctx context.Context, skuMasterID int64, input CreateSKUMasterInput) (SKUMaster, error) {
-	input = sanitizeSKUMasterInput(input)
-	if err := validateSKUMasterInput(input); err != nil {
-		return SKUMaster{}, err
-	}
-
-	result, err := s.db.ExecContext(ctx, `
-		UPDATE sku_master
-		SET
-			sku = ?,
-			name = ?,
-			category = ?,
-			description = ?,
-			unit = ?,
-			reorder_level = ?,
-			updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`,
-		input.SKU,
-		input.Name,
-		input.Category,
-		input.Description,
-		input.Unit,
-		input.ReorderLevel,
-		skuMasterID,
-	)
-	if err != nil {
-		return SKUMaster{}, mapDBError(fmt.Errorf("update sku master: %w", err))
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return SKUMaster{}, fmt.Errorf("resolve updated sku master rows: %w", err)
-	}
-	if rowsAffected == 0 {
-		return SKUMaster{}, ErrNotFound
-	}
-
-	if _, err := s.db.ExecContext(ctx, `
-		UPDATE inventory_items
-		SET
-			sku = ?,
-			name = ?,
-			category = ?,
-			description = ?,
-			unit = ?,
-			reorder_level = ?,
-			updated_at = CURRENT_TIMESTAMP
-		WHERE sku_master_id = ?
-	`,
-		input.SKU,
-		input.Name,
-		input.Category,
-		input.Description,
-		input.Unit,
-		input.ReorderLevel,
-		skuMasterID,
-	); err != nil {
-		return SKUMaster{}, mapDBError(fmt.Errorf("sync sku master to inventory items: %w", err))
-	}
-
-	return s.getSKUMaster(ctx, skuMasterID)
-}
-
-func (s *Store) DeleteSKUMaster(ctx context.Context, skuMasterID int64) error {
-	var linkedInventoryCount int
-	if err := s.db.QueryRowContext(ctx, `
-		SELECT COUNT(*)
-		FROM inventory_items
-		WHERE sku_master_id = ?
-	`, skuMasterID).Scan(&linkedInventoryCount); err != nil {
-		return fmt.Errorf("count linked inventory rows for sku master delete: %w", err)
-	}
-	if linkedInventoryCount > 0 {
-		return fmt.Errorf("%w: sku master is linked to stock by location rows", ErrInvalidInput)
-	}
-
-	result, err := s.db.ExecContext(ctx, `DELETE FROM sku_master WHERE id = ?`, skuMasterID)
-	if err != nil {
-		return mapDBError(fmt.Errorf("delete sku master: %w", err))
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("resolve deleted sku master rows: %w", err)
-	}
-	if rowsAffected == 0 {
-		return ErrNotFound
-	}
-
-	return nil
-}
-
 func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, error) {
 	query := `
 		SELECT
@@ -516,6 +282,8 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 			i.unit,
 			i.quantity,
 			i.reorder_level,
+			i.customer_id,
+			c.name,
 			i.location_id,
 			l.name,
 			i.storage_section,
@@ -531,6 +299,7 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 			i.created_at,
 			i.updated_at
 		FROM inventory_items i
+		JOIN customers c ON c.id = i.customer_id
 		JOIN storage_locations l ON l.id = i.location_id
 		WHERE 1 = 1
 	`
@@ -538,13 +307,18 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 	args := make([]any, 0)
 	if search := strings.TrimSpace(filters.Search); search != "" {
 		likeValue := "%" + search + "%"
-		query += " AND (i.sku LIKE ? OR i.name LIKE ? OR i.description LIKE ? OR i.category LIKE ?)"
-		args = append(args, likeValue, likeValue, likeValue, likeValue)
+		query += " AND (i.sku LIKE ? OR i.name LIKE ? OR i.description LIKE ? OR i.category LIKE ? OR c.name LIKE ?)"
+		args = append(args, likeValue, likeValue, likeValue, likeValue, likeValue)
 	}
 
 	if filters.LocationID > 0 {
 		query += " AND i.location_id = ?"
 		args = append(args, filters.LocationID)
+	}
+
+	if filters.CustomerID > 0 {
+		query += " AND i.customer_id = ?"
+		args = append(args, filters.CustomerID)
 	}
 
 	if filters.LowStockOnly {
@@ -611,6 +385,7 @@ func (s *Store) CreateItem(ctx context.Context, input CreateItemInput) (Item, er
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO inventory_items (
 			sku_master_id,
+			customer_id,
 			sku,
 			name,
 			category,
@@ -629,9 +404,10 @@ func (s *Store) CreateItem(ctx context.Context, input CreateItemInput) (Item, er
 			height_in,
 			out_date,
 			last_restocked_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		skuMasterID,
+		input.CustomerID,
 		input.SKU,
 		input.Name,
 		input.Category,
@@ -703,6 +479,7 @@ func (s *Store) UpdateItem(ctx context.Context, itemID int64, input CreateItemIn
 		UPDATE inventory_items
 		SET
 			sku_master_id = ?,
+			customer_id = ?,
 			sku = ?,
 			name = ?,
 			category = ?,
@@ -726,8 +503,9 @@ func (s *Store) UpdateItem(ctx context.Context, itemID int64, input CreateItemIn
 			END,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`,
+		`,
 		skuMasterID,
+		input.CustomerID,
 		input.SKU,
 		input.Name,
 		input.Category,
@@ -825,6 +603,8 @@ func (s *Store) ListMovements(ctx context.Context, limit int) ([]Movement, error
 			i.name,
 			i.sku,
 			COALESCE(m.description_snapshot, i.description, i.name, ''),
+			m.customer_id,
+			c.name,
 			l.name,
 			m.storage_section,
 			m.movement_type,
@@ -850,6 +630,7 @@ func (s *Store) ListMovements(ctx context.Context, limit int) ([]Movement, error
 			m.created_at
 		FROM stock_movements m
 		JOIN inventory_items i ON i.id = m.item_id
+		JOIN customers c ON c.id = m.customer_id
 		JOIN storage_locations l ON l.id = m.location_id
 		ORDER BY COALESCE(m.delivery_date, m.out_date, m.created_at) DESC, m.id DESC
 		LIMIT ?
@@ -926,10 +707,11 @@ func (s *Store) CreateMovement(ctx context.Context, input CreateMovementInput) (
 	defer tx.Rollback()
 
 	var currentQuantity int
+	var customerID int64
 	var locationID int64
 	var storageSection string
 	var descriptionSnapshot string
-	if currentQuantity, locationID, storageSection, descriptionSnapshot, err = s.loadLockedItemForMovement(ctx, tx, input.ItemID); err != nil {
+	if currentQuantity, customerID, locationID, storageSection, descriptionSnapshot, err = s.loadLockedItemForMovement(ctx, tx, input.ItemID); err != nil {
 		return Movement{}, err
 	}
 	if input.StorageSection == "" {
@@ -944,6 +726,7 @@ func (s *Store) CreateMovement(ctx context.Context, input CreateMovementInput) (
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO stock_movements (
 			item_id,
+			customer_id,
 			location_id,
 			storage_section,
 			movement_type,
@@ -967,9 +750,10 @@ func (s *Store) CreateMovement(ctx context.Context, input CreateMovementInput) (
 			out_date,
 			reason,
 			reference_code
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		input.ItemID,
+		customerID,
 		locationID,
 		input.StorageSection,
 		input.MovementType,
@@ -1078,7 +862,7 @@ func (s *Store) UpdateMovement(ctx context.Context, movementID int64, input Crea
 		input.StorageSection = previousStorageSection
 	}
 
-	previousQuantity, _, _, _, err := s.loadLockedItemForMovement(ctx, tx, previousItemID)
+	previousQuantity, _, _, _, _, err := s.loadLockedItemForMovement(ctx, tx, previousItemID)
 	if err != nil {
 		return Movement{}, err
 	}
@@ -1088,7 +872,7 @@ func (s *Store) UpdateMovement(ctx context.Context, movementID int64, input Crea
 	}
 
 	if previousItemID == input.ItemID {
-		_, locationID, itemStorageSection, descriptionSnapshot, err := s.loadLockedItemForMovement(ctx, tx, input.ItemID)
+		_, customerID, locationID, itemStorageSection, descriptionSnapshot, err := s.loadLockedItemForMovement(ctx, tx, input.ItemID)
 		if err != nil {
 			return Movement{}, err
 		}
@@ -1103,6 +887,7 @@ func (s *Store) UpdateMovement(ctx context.Context, movementID int64, input Crea
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE stock_movements
 			SET
+				customer_id = ?,
 				location_id = ?,
 				storage_section = ?,
 				movement_type = ?,
@@ -1128,6 +913,7 @@ func (s *Store) UpdateMovement(ctx context.Context, movementID int64, input Crea
 				reference_code = ?
 			WHERE id = ?
 		`,
+			customerID,
 			locationID,
 			input.StorageSection,
 			input.MovementType,
@@ -1160,7 +946,7 @@ func (s *Store) UpdateMovement(ctx context.Context, movementID int64, input Crea
 			return Movement{}, mapDBError(fmt.Errorf("update inventory after movement edit: %w", err))
 		}
 	} else {
-		newQuantity, newLocationID, newStorageSection, descriptionSnapshot, err := s.loadLockedItemForMovement(ctx, tx, input.ItemID)
+		newQuantity, newCustomerID, newLocationID, newStorageSection, descriptionSnapshot, err := s.loadLockedItemForMovement(ctx, tx, input.ItemID)
 		if err != nil {
 			return Movement{}, err
 		}
@@ -1184,6 +970,7 @@ func (s *Store) UpdateMovement(ctx context.Context, movementID int64, input Crea
 			UPDATE stock_movements
 			SET
 				item_id = ?,
+				customer_id = ?,
 				location_id = ?,
 				storage_section = ?,
 				movement_type = ?,
@@ -1210,6 +997,7 @@ func (s *Store) UpdateMovement(ctx context.Context, movementID int64, input Crea
 			WHERE id = ?
 		`,
 			input.ItemID,
+			newCustomerID,
 			newLocationID,
 			input.StorageSection,
 			input.MovementType,
@@ -1271,7 +1059,7 @@ func (s *Store) DeleteMovement(ctx context.Context, movementID int64) error {
 		return fmt.Errorf("load movement for delete: %w", err)
 	}
 
-	currentQuantity, _, _, _, err := s.loadLockedItemForMovement(ctx, tx, itemID)
+	currentQuantity, _, _, _, _, err := s.loadLockedItemForMovement(ctx, tx, itemID)
 	if err != nil {
 		return err
 	}
@@ -1310,6 +1098,8 @@ func (s *Store) getItem(ctx context.Context, itemID int64) (Item, error) {
 			i.unit,
 			i.quantity,
 			i.reorder_level,
+			i.customer_id,
+			c.name,
 			i.location_id,
 			l.name,
 			i.storage_section,
@@ -1325,6 +1115,7 @@ func (s *Store) getItem(ctx context.Context, itemID int64) (Item, error) {
 			i.created_at,
 			i.updated_at
 		FROM inventory_items i
+		JOIN customers c ON c.id = i.customer_id
 		JOIN storage_locations l ON l.id = i.location_id
 		WHERE i.id = ?
 	`, itemID)
@@ -1340,42 +1131,6 @@ func (s *Store) getItem(ctx context.Context, itemID int64) (Item, error) {
 	return item, nil
 }
 
-func (s *Store) getLocation(ctx context.Context, locationID int64) (Location, error) {
-	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, COALESCE(address, ''), zone, COALESCE(description, ''), capacity, section_count, COALESCE(section_names_json, ''), created_at
-		FROM storage_locations
-		WHERE id = ?
-	`, locationID)
-
-	location, err := scanLocation(row)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return Location{}, ErrNotFound
-		}
-		return Location{}, fmt.Errorf("scan location: %w", err)
-	}
-
-	return location, nil
-}
-
-func (s *Store) getSKUMaster(ctx context.Context, skuMasterID int64) (SKUMaster, error) {
-	row := s.db.QueryRowContext(ctx, `
-		SELECT id, sku, name, category, COALESCE(description, ''), unit, reorder_level, created_at, updated_at
-		FROM sku_master
-		WHERE id = ?
-	`, skuMasterID)
-
-	skuMaster, err := scanSKUMaster(row)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return SKUMaster{}, ErrNotFound
-		}
-		return SKUMaster{}, err
-	}
-
-	return skuMaster, nil
-}
-
 func (s *Store) getMovement(ctx context.Context, movementID int64) (Movement, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT
@@ -1384,6 +1139,8 @@ func (s *Store) getMovement(ctx context.Context, movementID int64) (Movement, er
 			i.name,
 			i.sku,
 			COALESCE(m.description_snapshot, i.description, i.name, ''),
+			m.customer_id,
+			c.name,
 			l.name,
 			m.storage_section,
 			m.movement_type,
@@ -1409,6 +1166,7 @@ func (s *Store) getMovement(ctx context.Context, movementID int64) (Movement, er
 			m.created_at
 		FROM stock_movements m
 		JOIN inventory_items i ON i.id = m.item_id
+		JOIN customers c ON c.id = m.customer_id
 		JOIN storage_locations l ON l.id = m.location_id
 		WHERE m.id = ?
 	`, movementID)
@@ -1450,6 +1208,24 @@ func scanLocation(scanner itemScanner) (Location, error) {
 	return location, nil
 }
 
+func scanCustomer(scanner itemScanner) (Customer, error) {
+	var customer Customer
+	if err := scanner.Scan(
+		&customer.ID,
+		&customer.Name,
+		&customer.ContactName,
+		&customer.Email,
+		&customer.Phone,
+		&customer.Notes,
+		&customer.CreatedAt,
+		&customer.UpdatedAt,
+	); err != nil {
+		return Customer{}, err
+	}
+
+	return customer, nil
+}
+
 func scanSKUMaster(scanner itemScanner) (SKUMaster, error) {
 	var skuMaster SKUMaster
 	if err := scanner.Scan(
@@ -1483,6 +1259,8 @@ func scanItem(scanner itemScanner) (Item, error) {
 		&item.Unit,
 		&item.Quantity,
 		&item.ReorderLevel,
+		&item.CustomerID,
+		&item.CustomerName,
 		&item.LocationID,
 		&item.LocationName,
 		&item.StorageSection,
@@ -1524,6 +1302,8 @@ func scanMovement(scanner itemScanner) (Movement, error) {
 		&movement.ItemName,
 		&movement.SKU,
 		&movement.Description,
+		&movement.CustomerID,
+		&movement.CustomerName,
 		&movement.LocationName,
 		&movement.StorageSection,
 		&movement.MovementType,
@@ -1587,59 +1367,6 @@ func sanitizeItemInput(input CreateItemInput) CreateItemInput {
 	return input
 }
 
-func sanitizeSKUMasterInput(input CreateSKUMasterInput) CreateSKUMasterInput {
-	input.SKU = strings.TrimSpace(strings.ToUpper(input.SKU))
-	input.Name = strings.TrimSpace(input.Name)
-	input.Category = strings.TrimSpace(input.Category)
-	input.Description = strings.TrimSpace(input.Description)
-	input.Unit = strings.TrimSpace(strings.ToLower(input.Unit))
-
-	if input.Name == "" {
-		input.Name = input.Description
-	}
-	if input.Category == "" {
-		input.Category = "General"
-	}
-	if input.Unit == "" {
-		input.Unit = "pcs"
-	}
-
-	return input
-}
-
-func sanitizeLocationInput(input CreateLocationInput) CreateLocationInput {
-	input.Name = strings.TrimSpace(input.Name)
-	input.Address = strings.TrimSpace(input.Address)
-	input.Zone = strings.TrimSpace(input.Zone)
-	input.Description = strings.TrimSpace(input.Description)
-	sectionNames := make([]string, 0, len(input.SectionNames))
-	for _, sectionName := range input.SectionNames {
-		trimmed := strings.TrimSpace(sectionName)
-		if trimmed == "" {
-			continue
-		}
-		sectionNames = append(sectionNames, trimmed)
-	}
-	if len(sectionNames) == 0 {
-		sectionNames = []string{"A"}
-	}
-	input.SectionNames = sectionNames
-	return input
-}
-
-func validateSKUMasterInput(input CreateSKUMasterInput) error {
-	switch {
-	case input.SKU == "":
-		return fmt.Errorf("%w: sku is required", ErrInvalidInput)
-	case input.Description == "":
-		return fmt.Errorf("%w: description is required", ErrInvalidInput)
-	case input.ReorderLevel < 0:
-		return fmt.Errorf("%w: reorder level cannot be negative", ErrInvalidInput)
-	default:
-		return nil
-	}
-}
-
 func validateItemInput(input CreateItemInput) error {
 	switch {
 	case input.SKU == "":
@@ -1650,27 +1377,12 @@ func validateItemInput(input CreateItemInput) error {
 		return fmt.Errorf("%w: quantity cannot be negative", ErrInvalidInput)
 	case input.ReorderLevel < 0:
 		return fmt.Errorf("%w: reorder level cannot be negative", ErrInvalidInput)
+	case input.CustomerID <= 0:
+		return fmt.Errorf("%w: customer is required", ErrInvalidInput)
 	case input.LocationID <= 0:
 		return fmt.Errorf("%w: location is required", ErrInvalidInput)
 	case input.ExpectedQty < 0 || input.ReceivedQty < 0 || input.Pallets < 0 || input.HeightIn < 0:
 		return fmt.Errorf("%w: spreadsheet quantities and height cannot be negative", ErrInvalidInput)
-	default:
-		return nil
-	}
-}
-
-func validateLocationInput(input CreateLocationInput) error {
-	switch {
-	case input.Name == "":
-		return fmt.Errorf("%w: storage name is required", ErrInvalidInput)
-	case input.Address == "":
-		return fmt.Errorf("%w: storage address is required", ErrInvalidInput)
-	case input.Zone == "":
-		return fmt.Errorf("%w: storage zone is required", ErrInvalidInput)
-	case input.Capacity < 0:
-		return fmt.Errorf("%w: capacity cannot be negative", ErrInvalidInput)
-	case len(input.SectionNames) == 0:
-		return fmt.Errorf("%w: at least one storage section is required", ErrInvalidInput)
 	default:
 		return nil
 	}
@@ -1741,27 +1453,28 @@ func defaultMovementReason(movementType string) string {
 	}
 }
 
-func (s *Store) loadLockedItemForMovement(ctx context.Context, tx *sql.Tx, itemID int64) (int, int64, string, string, error) {
+func (s *Store) loadLockedItemForMovement(ctx context.Context, tx *sql.Tx, itemID int64) (int, int64, int64, string, string, error) {
 	var quantity int
+	var customerID int64
 	var locationID int64
 	var storageSection string
 	var descriptionSnapshot string
 	if err := tx.QueryRowContext(ctx, `
-		SELECT quantity, location_id, storage_section, COALESCE(description, name, '')
+		SELECT quantity, customer_id, location_id, storage_section, COALESCE(description, name, '')
 		FROM inventory_items
 		WHERE id = ?
 		FOR UPDATE
-	`, itemID).Scan(&quantity, &locationID, &storageSection, &descriptionSnapshot); err != nil {
+	`, itemID).Scan(&quantity, &customerID, &locationID, &storageSection, &descriptionSnapshot); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return 0, 0, "", "", ErrNotFound
+			return 0, 0, 0, "", "", ErrNotFound
 		}
-		return 0, 0, "", "", fmt.Errorf("load item for movement: %w", err)
+		return 0, 0, 0, "", "", fmt.Errorf("load item for movement: %w", err)
 	}
 	if storageSection == "" {
 		storageSection = "A"
 	}
 
-	return quantity, locationID, storageSection, descriptionSnapshot, nil
+	return quantity, customerID, locationID, storageSection, descriptionSnapshot, nil
 }
 
 func (s *Store) ensureSKUMaster(ctx context.Context, tx *sql.Tx, input CreateItemInput) (int64, error) {
@@ -1931,52 +1644,3 @@ func mapDBError(err error) error {
 	return err
 }
 
-func marshalSectionNames(sectionNames []string) (string, error) {
-	payload, err := json.Marshal(sectionNames)
-	if err != nil {
-		return "", err
-	}
-	return string(payload), nil
-}
-
-func parseSectionNames(sectionNamesJSON string, sectionCount int) []string {
-	if strings.TrimSpace(sectionNamesJSON) != "" {
-		var names []string
-		if err := json.Unmarshal([]byte(sectionNamesJSON), &names); err == nil {
-			sanitized := make([]string, 0, len(names))
-			for _, name := range names {
-				trimmed := strings.TrimSpace(name)
-				if trimmed == "" {
-					continue
-				}
-				sanitized = append(sanitized, trimmed)
-			}
-			if len(sanitized) > 0 {
-				return sanitized
-			}
-		}
-	}
-
-	if sectionCount <= 0 {
-		return []string{"A"}
-	}
-
-	names := make([]string, 0, sectionCount)
-	for index := 0; index < sectionCount; index++ {
-		names = append(names, legacySectionLabel(index))
-	}
-	return names
-}
-
-func legacySectionLabel(index int) string {
-	value := index
-	label := ""
-	for {
-		label = string(rune('A'+(value%26))) + label
-		value = value/26 - 1
-		if value < 0 {
-			break
-		}
-	}
-	return label
-}

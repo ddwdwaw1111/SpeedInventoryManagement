@@ -1,6 +1,7 @@
 import {
   AssessmentOutlined,
   CategoryOutlined,
+  GroupsOutlined,
   MoveToInboxOutlined,
   OutboxOutlined,
   SettingsOutlined,
@@ -20,6 +21,7 @@ import { BarChart, PieChart } from "@mui/x-charts";
 
 import { ActivityManagementPage } from "./components/ActivityManagementPage";
 import { AppHeaderUser, AuthPage } from "./components/AuthPage";
+import { CustomerManagementPage } from "./components/CustomerManagementPage";
 import { MasterInventoryPage } from "./components/MasterInventoryPage";
 import { SKUMasterPage } from "./components/SKUMasterPage";
 import { SettingsPage } from "./components/SettingsPage";
@@ -27,9 +29,9 @@ import { StorageManagementPage } from "./components/StorageManagementPage";
 import { ApiError, api } from "./lib/api";
 import { parseDateValue } from "./lib/dates";
 import { useI18n } from "./lib/i18n";
-import type { Item, Location, LoginPayload, Movement, SKUMaster, SignUpPayload, User } from "./lib/types";
+import type { Customer, Item, Location, LoginPayload, Movement, SKUMaster, SignUpPayload, User } from "./lib/types";
 
-type PageKey = "dashboard" | "sku-master" | "stock-by-location" | "storage-management" | "inbound-management" | "outbound-management" | "settings";
+type PageKey = "dashboard" | "customers" | "sku-master" | "stock-by-location" | "storage-management" | "inbound-management" | "outbound-management" | "settings";
 type ReportGranularity = "day" | "month" | "year";
 type ChartTone = "blue" | "green" | "amber" | "red";
 type BarRow = { label: string; value: number; meta?: string; tone?: ChartTone };
@@ -47,6 +49,7 @@ export default function App() {
   const [authErrorMessage, setAuthErrorMessage] = useState("");
   const [activePage, setActivePage] = useState<PageKey>(() => getPageFromHash(window.location.hash));
   const [locations, setLocations] = useState<Location[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [skuMasters, setSkuMasters] = useState<SKUMaster[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [movements, setMovements] = useState<Movement[]>([]);
@@ -54,6 +57,7 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
+  const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [reportGranularity, setReportGranularity] = useState<ReportGranularity>("day");
   const [reportStartDate, setReportStartDate] = useState(() => toDateInputString(daysAgo(30)));
   const [reportEndDate, setReportEndDate] = useState(() => toDateInputString(new Date()));
@@ -94,11 +98,12 @@ export default function App() {
     if (showSpinner) setIsLoading(true);
     setErrorMessage("");
     try {
-      const [locationsResponse, skuMastersResponse, itemsResponse, movementsResponse] = await Promise.all([
-        api.getLocations(), api.getSKUMasters(), api.getItems(), api.getMovements(200)
+      const [locationsResponse, customersResponse, skuMastersResponse, itemsResponse, movementsResponse] = await Promise.all([
+        api.getLocations(), api.getCustomers(), api.getSKUMasters(), api.getItems(), api.getMovements(200)
       ]);
       startTransition(() => {
         setLocations(locationsResponse);
+        setCustomers(customersResponse);
         setSkuMasters(skuMastersResponse);
         setItems(itemsResponse);
         setMovements(movementsResponse);
@@ -146,6 +151,7 @@ export default function App() {
     try {
       await api.logout();
       setCurrentUser(null);
+      setCustomers([]);
       setLocations([]);
       setItems([]);
       setMovements([]);
@@ -160,18 +166,21 @@ export default function App() {
   const filteredItems = useMemo(() => items.filter((item) => {
     const matchesSearch = normalizedSearch.length === 0
       || item.sku.toLowerCase().includes(normalizedSearch)
+      || item.customerName.toLowerCase().includes(normalizedSearch)
       || displayDescription(item).toLowerCase().includes(normalizedSearch)
       || item.containerNo.toLowerCase().includes(normalizedSearch)
       || item.locationName.toLowerCase().includes(normalizedSearch);
     const matchesLocation = selectedLocationId === "all" || item.locationId === Number(selectedLocationId);
+    const matchesCustomer = selectedCustomerId === "all" || item.customerId === Number(selectedCustomerId);
     const matchesRange = matchesItemDateRange(item, reportStartDate, reportEndDate);
-    return matchesSearch && matchesLocation && matchesRange;
-  }), [items, normalizedSearch, reportEndDate, reportStartDate, selectedLocationId]);
+    return matchesSearch && matchesLocation && matchesCustomer && matchesRange;
+  }), [items, normalizedSearch, reportEndDate, reportStartDate, selectedCustomerId, selectedLocationId]);
 
   const filteredMovements = useMemo(() => movements.filter((movement) => {
     const searchBlob = [
       movement.sku,
       movement.description,
+      movement.customerName,
       movement.containerNo,
       movement.referenceCode,
       movement.packingListNo,
@@ -181,9 +190,10 @@ export default function App() {
     const matchesSearch = normalizedSearch.length === 0 || searchBlob.includes(normalizedSearch);
     const matchesLocation = selectedLocationId === "all"
       || locations.find((location) => location.id === Number(selectedLocationId))?.name === movement.locationName;
+    const matchesCustomer = selectedCustomerId === "all" || movement.customerId === Number(selectedCustomerId);
     const matchesRange = matchesMovementDateRange(movement, reportStartDate, reportEndDate);
-    return matchesSearch && matchesLocation && matchesRange;
-  }), [locations, movements, normalizedSearch, reportEndDate, reportStartDate, selectedLocationId]);
+    return matchesSearch && matchesLocation && matchesCustomer && matchesRange;
+  }), [locations, movements, normalizedSearch, reportEndDate, reportStartDate, selectedCustomerId, selectedLocationId]);
 
   const reportLocationRows = useMemo(() => buildLocationInventoryRows(filteredItems, locations), [filteredItems, locations]);
   const reportTopSkuRows = useMemo(() => buildTopSkuRows(filteredItems), [filteredItems]);
@@ -194,6 +204,7 @@ export default function App() {
     { key: "dashboard", label: t("report"), description: t("reportDesc"), icon: <AssessmentOutlined fontSize="small" /> },
     { key: "inbound-management", label: t("inbound"), description: t("inboundDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
     { key: "outbound-management", label: t("outbound"), description: t("outboundDesc"), icon: <OutboxOutlined fontSize="small" /> },
+    { key: "customers", label: t("customers"), description: t("customersDesc"), icon: <GroupsOutlined fontSize="small" /> },
     { key: "sku-master", label: t("skuMaster"), description: t("skuMasterDesc"), icon: <CategoryOutlined fontSize="small" /> },
     { key: "stock-by-location", label: t("stockByLocation"), description: t("stockByLocationDesc"), icon: <WarehouseOutlined fontSize="small" /> },
     { key: "storage-management", label: t("storageManagement"), description: t("storageManagementDesc"), icon: <WarehouseOutlined fontSize="small" /> },
@@ -251,10 +262,11 @@ export default function App() {
       </header>
 
       <div className="workspace-shell">
-        {activePage === "inbound-management" ? <ActivityManagementPage mode="IN" items={items} locations={locations} movements={movements} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
-        {activePage === "outbound-management" ? <ActivityManagementPage mode="OUT" items={items} locations={locations} movements={movements} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+        {activePage === "inbound-management" ? <ActivityManagementPage mode="IN" items={items} locations={locations} customers={customers} movements={movements} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+        {activePage === "outbound-management" ? <ActivityManagementPage mode="OUT" items={items} locations={locations} customers={customers} movements={movements} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+        {activePage === "customers" ? <CustomerManagementPage customers={customers} items={items} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
         {activePage === "sku-master" ? <SKUMasterPage skuMasters={skuMasters} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
-        {activePage === "stock-by-location" ? <MasterInventoryPage items={items} locations={locations} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+        {activePage === "stock-by-location" ? <MasterInventoryPage items={items} locations={locations} customers={customers} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
         {activePage === "storage-management" ? <StorageManagementPage locations={locations} items={items} onRefresh={() => loadAppData(false)} /> : null}
         {activePage === "settings" ? <SettingsPage /> : null}
 
@@ -270,6 +282,7 @@ export default function App() {
                 </div>
                 <div className="filter-bar">
                   <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("searchSkuPlaceholder")} /></label>
+                  <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
                   <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
                   <label>{t("groupBy")}<select value={reportGranularity} onChange={(event) => setReportGranularity(event.target.value as ReportGranularity)}><option value="day">{t("daily")}</option><option value="month">{t("monthly")}</option><option value="year">{t("yearly")}</option></select></label>
                   <label>{t("fromDate")}<input type="date" value={reportStartDate} onChange={(event) => setReportStartDate(event.target.value)} /></label>
@@ -618,6 +631,7 @@ function getChartColor(tone: ChartTone) {
 function getPageFromHash(hash: string): PageKey {
   if (hash === "#/inbound-management") return "inbound-management";
   if (hash === "#/outbound-management") return "outbound-management";
+  if (hash === "#/customers") return "customers";
   if (hash === "#/sku-master") return "sku-master";
   if (hash === "#/stock-by-location" || hash === "#/master-inventory") return "stock-by-location";
   if (hash === "#/storage-management") return "storage-management";
@@ -630,6 +644,8 @@ function navigateToPage(page: PageKey, setter: Dispatch<SetStateAction<PageKey>>
     ? "#/inbound-management"
     : page === "outbound-management"
       ? "#/outbound-management"
+      : page === "customers"
+        ? "#/customers"
       : page === "sku-master"
         ? "#/sku-master"
         : page === "stock-by-location"

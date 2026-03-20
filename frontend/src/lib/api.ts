@@ -1,5 +1,7 @@
 import type {
   AuthResponse,
+  Customer,
+  CustomerPayload,
   DashboardData,
   Item,
   ItemPayload,
@@ -13,11 +15,24 @@ import type {
   SignUpPayload
 } from "./types";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.PROD ? "/api" : "http://localhost:8080/api");
+function normalizeApiBaseUrl(baseUrl: string): string {
+  const trimmed = baseUrl.trim().replace(/\/+$/, "");
+
+  if (trimmed === "/api" || trimmed.endsWith("/api")) {
+    return trimmed;
+  }
+
+  return `${trimmed}/api`;
+}
+
+const API_BASE_URL = normalizeApiBaseUrl(
+  import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.PROD ? "/api" : "http://localhost:8080/api")
+);
 
 type ItemQuery = {
   search?: string;
   locationId?: number;
+  customerId?: number;
   lowStock?: boolean;
 };
 
@@ -100,6 +115,30 @@ export const api = {
     return request<Location[]>("/locations");
   },
 
+  getCustomers() {
+    return request<Customer[]>("/customers");
+  },
+
+  createCustomer(payload: CustomerPayload) {
+    return request<Customer>("/customers", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  updateCustomer(customerId: number, payload: CustomerPayload) {
+    return request<Customer>(`/customers/${customerId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  deleteCustomer(customerId: number) {
+    return request<void>(`/customers/${customerId}`, {
+      method: "DELETE"
+    });
+  },
+
   createLocation(payload: LocationPayload) {
     return request<Location>("/locations", {
       method: "POST",
@@ -159,6 +198,9 @@ export const api = {
     }
     if (query?.locationId) {
       params.set("locationId", String(query.locationId));
+    }
+    if (query?.customerId) {
+      params.set("customerId", String(query.customerId));
     }
     if (query?.lowStock) {
       params.set("lowStock", "true");

@@ -34,6 +34,16 @@ docker compose up --build
 - Frontend: http://localhost:5173
 - Backend API: http://localhost:8080/api/health
 
+### Local frontend API base URL
+
+For local development, set [frontend/.env.example](/c:/Users/zihao/Desktop/Projects/SpeedInventoryManagement/frontend/.env.example) or your local `frontend/.env` to:
+
+```env
+VITE_API_BASE_URL=http://localhost:8080/api
+```
+
+The backend routes are mounted under `/api`, so `http://localhost:8080/auth/me` will return `404`, while `http://localhost:8080/api/auth/me` is the correct path.
+
 ## Production deploy on a VM
 
 This repo includes a production Docker Compose file for a single VM deployment:

@@ -2,16 +2,16 @@ package database
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/jmoiron/sqlx"
 
 	"speed-inventory-management/backend/internal/config"
 )
 
-func Open(cfg config.DatabaseConfig) (*sql.DB, error) {
+func Open(cfg config.DatabaseConfig) (*sqlx.DB, error) {
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true&charset=utf8mb4&collation=utf8mb4_unicode_ci",
 		cfg.User,
 		cfg.Password,
@@ -20,7 +20,7 @@ func Open(cfg config.DatabaseConfig) (*sql.DB, error) {
 		cfg.Name,
 	)
 
-	db, err := sql.Open("mysql", dsn)
+	db, err := sqlx.Open("mysql", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}

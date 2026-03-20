@@ -45,6 +45,19 @@ CREATE TABLE IF NOT EXISTS storage_locations (
   UNIQUE KEY uq_storage_locations_name (name)
 );
 
+CREATE TABLE IF NOT EXISTS customers (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  name VARCHAR(160) NOT NULL,
+  contact_name VARCHAR(160) DEFAULT NULL,
+  email VARCHAR(190) DEFAULT NULL,
+  phone VARCHAR(64) DEFAULT NULL,
+  notes TEXT DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_customers_name (name)
+);
+
 CREATE TABLE IF NOT EXISTS sku_master (
   id BIGINT NOT NULL AUTO_INCREMENT,
   sku VARCHAR(64) NOT NULL,
@@ -62,6 +75,7 @@ CREATE TABLE IF NOT EXISTS sku_master (
 CREATE TABLE IF NOT EXISTS inventory_items (
   id BIGINT NOT NULL AUTO_INCREMENT,
   sku_master_id BIGINT NOT NULL,
+  customer_id BIGINT NOT NULL,
   sku VARCHAR(64) NOT NULL,
   name VARCHAR(160) NOT NULL,
   category VARCHAR(120) NOT NULL,
@@ -83,13 +97,16 @@ CREATE TABLE IF NOT EXISTS inventory_items (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  UNIQUE KEY uq_inventory_item_balance (sku_master_id, location_id, storage_section),
+  UNIQUE KEY uq_inventory_item_balance (sku_master_id, location_id, storage_section, customer_id),
   KEY idx_inventory_items_category (category),
   KEY idx_inventory_items_location_id (location_id),
   KEY idx_inventory_items_sku (sku),
   KEY idx_inventory_items_sku_master_id (sku_master_id),
+  KEY idx_inventory_items_customer_id (customer_id),
   CONSTRAINT fk_inventory_items_sku_master
     FOREIGN KEY (sku_master_id) REFERENCES sku_master (id),
+  CONSTRAINT fk_inventory_items_customer
+    FOREIGN KEY (customer_id) REFERENCES customers (id),
   CONSTRAINT fk_inventory_items_location
     FOREIGN KEY (location_id) REFERENCES storage_locations (id)
 );
@@ -97,6 +114,7 @@ CREATE TABLE IF NOT EXISTS inventory_items (
 CREATE TABLE IF NOT EXISTS stock_movements (
   id BIGINT NOT NULL AUTO_INCREMENT,
   item_id BIGINT NOT NULL,
+  customer_id BIGINT NOT NULL,
   location_id BIGINT NOT NULL,
   storage_section VARCHAR(16) NOT NULL DEFAULT 'A',
   movement_type ENUM('IN', 'OUT', 'ADJUST') NOT NULL,
@@ -123,11 +141,14 @@ CREATE TABLE IF NOT EXISTS stock_movements (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_stock_movements_item_id (item_id),
+  KEY idx_stock_movements_customer_id (customer_id),
   KEY idx_stock_movements_location_id (location_id),
   KEY idx_stock_movements_created_at (created_at),
   CONSTRAINT fk_stock_movements_item
     FOREIGN KEY (item_id) REFERENCES inventory_items (id)
     ON DELETE CASCADE,
+  CONSTRAINT fk_stock_movements_customer
+    FOREIGN KEY (customer_id) REFERENCES customers (id),
   CONSTRAINT fk_stock_movements_location
     FOREIGN KEY (location_id) REFERENCES storage_locations (id)
 );
