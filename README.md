@@ -34,6 +34,77 @@ docker compose up --build
 - Frontend: http://localhost:5173
 - Backend API: http://localhost:8080/api/health
 
+## Production deploy on a VM
+
+This repo includes a production Docker Compose file for a single VM deployment:
+
+- [docker-compose.prod.yml](/c:/Users/zihao/Desktop/Projects/SpeedInventoryManagement/docker-compose.prod.yml)
+- [frontend/Dockerfile.prod](/c:/Users/zihao/Desktop/Projects/SpeedInventoryManagement/frontend/Dockerfile.prod)
+- [frontend/nginx.conf](/c:/Users/zihao/Desktop/Projects/SpeedInventoryManagement/frontend/nginx.conf)
+
+Recommended use case:
+
+- One Oracle / GCP / AWS VM
+- Docker running on the VM
+- Frontend served by Nginx on port `80`
+- Backend and MariaDB kept internal to Docker
+
+### 1. Install Docker on the VM
+
+```bash
+sudo apt update
+sudo apt install -y docker.io docker-compose-v2 git
+sudo systemctl enable --now docker
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+### 2. Clone the project
+
+```bash
+git clone <your-repo-url>
+cd SpeedInventoryManagement
+```
+
+### 3. Create a production env file
+
+```bash
+cat > .env.prod <<'EOF'
+MARIADB_ROOT_PASSWORD=change-this-root-password
+MARIADB_DATABASE=speed_inventory_management
+MARIADB_USER=inventory_user
+MARIADB_PASSWORD=change-this-db-password
+FRONTEND_ORIGIN=http://YOUR_PUBLIC_IP
+VITE_API_BASE_URL=/api
+EOF
+```
+
+Replace `YOUR_PUBLIC_IP` with your VM public IP or domain.
+
+### 4. Start the production stack
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+```
+
+### 5. Verify the deployment
+
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml ps
+docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f
+```
+
+### 6. Open the app
+
+- Frontend: `http://YOUR_PUBLIC_IP`
+- Health check through Nginx proxy: `http://YOUR_PUBLIC_IP/api/health`
+
+### Security notes
+
+- Open only ports `22` and `80` on the VM firewall / cloud security rules
+- Do not expose `3306`
+- The production compose file keeps MariaDB and the Go API internal to Docker
+
 ## Manual local setup
 
 ### Database
