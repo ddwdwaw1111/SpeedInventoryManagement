@@ -13,7 +13,7 @@ import type {
   SignUpPayload
 } from "./types";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.PROD ? "/api" : "http://localhost:8080");
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.PROD ? "/api" : "http://localhost:8080/api");
 
 type ItemQuery = {
   search?: string;
@@ -69,53 +69,53 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   getCurrentSession() {
-    return request<AuthResponse>("/api/auth/me");
+    return request<AuthResponse>("/auth/me");
   },
 
   login(payload: LoginPayload) {
-    return request<AuthResponse>("/api/auth/login", {
+    return request<AuthResponse>("/auth/login", {
       method: "POST",
       body: JSON.stringify(payload)
     });
   },
 
   signUp(payload: SignUpPayload) {
-    return request<AuthResponse>("/api/auth/signup", {
+    return request<AuthResponse>("/auth/signup", {
       method: "POST",
       body: JSON.stringify(payload)
     });
   },
 
   logout() {
-    return request<void>("/api/auth/logout", {
+    return request<void>("/auth/logout", {
       method: "POST"
     });
   },
 
   getDashboard() {
-    return request<DashboardData>("/api/dashboard");
+    return request<DashboardData>("/dashboard");
   },
 
   getLocations() {
-    return request<Location[]>("/api/locations");
+    return request<Location[]>("/locations");
   },
 
   createLocation(payload: LocationPayload) {
-    return request<Location>("/api/locations", {
+    return request<Location>("/locations", {
       method: "POST",
       body: JSON.stringify(payload)
     });
   },
 
   updateLocation(locationId: number, payload: LocationPayload) {
-    return request<Location>(`/api/locations/${locationId}`, {
+    return request<Location>(`/locations/${locationId}`, {
       method: "PUT",
       body: JSON.stringify(payload)
     });
   },
 
   deleteLocation(locationId: number) {
-    return request<void>(`/api/locations/${locationId}`, {
+    return request<void>(`/locations/${locationId}`, {
       method: "DELETE"
     });
   },
@@ -128,25 +128,25 @@ export const api = {
     }
 
     const suffix = params.toString() ? `?${params.toString()}` : "";
-    return request<SKUMaster[]>(`/api/sku-master${suffix}`);
+    return request<SKUMaster[]>(`/sku-master${suffix}`);
   },
 
   createSKUMaster(payload: SKUMasterPayload) {
-    return request<SKUMaster>("/api/sku-master", {
+    return request<SKUMaster>("/sku-master", {
       method: "POST",
       body: JSON.stringify(payload)
     });
   },
 
   updateSKUMaster(skuMasterId: number, payload: SKUMasterPayload) {
-    return request<SKUMaster>(`/api/sku-master/${skuMasterId}`, {
+    return request<SKUMaster>(`/sku-master/${skuMasterId}`, {
       method: "PUT",
       body: JSON.stringify(payload)
     });
   },
 
   deleteSKUMaster(skuMasterId: number) {
-    return request<void>(`/api/sku-master/${skuMasterId}`, {
+    return request<void>(`/sku-master/${skuMasterId}`, {
       method: "DELETE"
     });
   },
@@ -165,49 +165,49 @@ export const api = {
     }
 
     const suffix = params.toString() ? `?${params.toString()}` : "";
-    return request<Item[]>(`/api/items${suffix}`);
+    return request<Item[]>(`/items${suffix}`);
   },
 
   createItem(payload: ItemPayload) {
-    return request<Item>("/api/items", {
+    return request<Item>("/items", {
       method: "POST",
       body: JSON.stringify(payload)
     });
   },
 
   updateItem(itemId: number, payload: ItemPayload) {
-    return request<Item>(`/api/items/${itemId}`, {
+    return request<Item>(`/items/${itemId}`, {
       method: "PUT",
       body: JSON.stringify(payload)
     });
   },
 
   deleteItem(itemId: number) {
-    return request<void>(`/api/items/${itemId}`, {
+    return request<void>(`/items/${itemId}`, {
       method: "DELETE"
     });
   },
 
   getMovements(limit = 12) {
-    return request<Movement[]>(`/api/movements?limit=${limit}`);
+    return request<Movement[]>(`/movements?limit=${limit}`);
   },
 
   createMovement(payload: MovementPayload) {
-    return request<Movement>("/api/movements", {
+    return request<Movement>("/movements", {
       method: "POST",
       body: JSON.stringify(payload)
     });
   },
 
   updateMovement(movementId: number, payload: MovementPayload) {
-    return request<Movement>(`/api/movements/${movementId}`, {
+    return request<Movement>(`/movements/${movementId}`, {
       method: "PUT",
       body: JSON.stringify(payload)
     });
   },
 
   deleteMovement(movementId: number) {
-    return request<void>(`/api/movements/${movementId}`, {
+    return request<void>(`/movements/${movementId}`, {
       method: "DELETE"
     });
   }

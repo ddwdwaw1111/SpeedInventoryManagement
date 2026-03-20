@@ -25,7 +25,7 @@ func main() {
 	}
 
 	store := service.NewStore(db)
-	handler := api.NewHandler(store, cfg.FrontendOrigin, cfg.SessionCookie)
+	handler := api.NewHandler(store, cfg.FrontendOrigin, cfg.SessionCookie, cfg.SessionSecure)
 
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,

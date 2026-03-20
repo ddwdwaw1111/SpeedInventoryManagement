@@ -2,11 +2,9 @@ import { type FormEvent, useState } from "react";
 
 import type { LoginPayload, SignUpPayload, User } from "../lib/types";
 
-type AuthMode = "login" | "signup";
-
 export function AuthPage({
   onLogin,
-  onSignUp,
+  onSignUp: _onSignUp,
   isSubmitting,
   errorMessage
 }: {
@@ -15,18 +13,11 @@ export function AuthPage({
   isSubmitting: boolean;
   errorMessage: string;
 }) {
-  const [mode, setMode] = useState<AuthMode>("login");
-  const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
-    if (mode === "signup") {
-      await onSignUp({ fullName, email, password });
-      return;
-    }
 
     await onLogin({ email, password });
   }
@@ -59,23 +50,12 @@ export function AuthPage({
       <section className="auth-card">
         <div className="auth-card__header">
           <div>
-            <p className="eyebrow">{mode === "login" ? "Welcome back" : "Create account"}</p>
-            <h2>{mode === "login" ? "Sign in to continue" : "Set up your workspace access"}</h2>
-          </div>
-          <div className="auth-toggle">
-            <button type="button" className={`auth-toggle__button ${mode === "login" ? "auth-toggle__button--active" : ""}`} onClick={() => setMode("login")}>Login</button>
-            <button type="button" className={`auth-toggle__button ${mode === "signup" ? "auth-toggle__button--active" : ""}`} onClick={() => setMode("signup")}>Sign up</button>
+            <p className="eyebrow">Welcome back</p>
+            <h2>Sign in to continue</h2>
           </div>
         </div>
 
         <form className="auth-form" onSubmit={(event) => { void handleSubmit(event); }}>
-          {mode === "signup" ? (
-            <label>
-              Full name
-              <input value={fullName} onChange={(event) => setFullName(event.target.value)} placeholder="Warehouse manager" autoComplete="name" />
-            </label>
-          ) : null}
-
           <label>
             Email
             <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@company.com" autoComplete="email" />
@@ -83,13 +63,13 @@ export function AuthPage({
 
           <label>
             Password
-            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" autoComplete={mode === "login" ? "current-password" : "new-password"} />
+            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" autoComplete="current-password" />
           </label>
 
           {errorMessage ? <div className="alert-banner">{errorMessage}</div> : null}
 
           <button className="button button--primary auth-submit" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Please wait..." : mode === "login" ? "Sign in" : "Create account"}
+            {isSubmitting ? "Please wait..." : "Sign in"}
           </button>
         </form>
       </section>

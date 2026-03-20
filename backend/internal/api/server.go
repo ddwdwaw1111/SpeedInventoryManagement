@@ -12,12 +12,17 @@ import (
 )
 
 type Server struct {
-	store             *service.Store
-	sessionCookieName string
+	store               *service.Store
+	sessionCookieName   string
+	sessionCookieSecure bool
 }
 
-func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName string) http.Handler {
-	server := &Server{store: store, sessionCookieName: sessionCookieName}
+func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName string, sessionCookieSecure bool) http.Handler {
+	server := &Server{
+		store:               store,
+		sessionCookieName:   sessionCookieName,
+		sessionCookieSecure: sessionCookieSecure,
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", server.handleHealth)

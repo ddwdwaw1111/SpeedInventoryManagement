@@ -1,12 +1,16 @@
 package config
 
-import "os"
+import (
+	"os"
+	"strconv"
+)
 
 type Config struct {
 	Env            string
 	Port           string
 	FrontendOrigin string
 	SessionCookie  string
+	SessionSecure  bool
 	Database       DatabaseConfig
 }
 
@@ -24,6 +28,7 @@ func Load() Config {
 		Port:           getEnv("SERVER_PORT", "8080"),
 		FrontendOrigin: getEnv("FRONTEND_ORIGIN", "http://localhost:5173"),
 		SessionCookie:  getEnv("SESSION_COOKIE_NAME", "sim_session"),
+		SessionSecure:  getEnvBool("SESSION_COOKIE_SECURE", false),
 		Database: DatabaseConfig{
 			Host:     getEnv("DB_HOST", "127.0.0.1"),
 			Port:     getEnv("DB_PORT", "3306"),
@@ -40,4 +45,18 @@ func getEnv(key, fallback string) string {
 	}
 
 	return fallback
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+
+	return parsed
 }

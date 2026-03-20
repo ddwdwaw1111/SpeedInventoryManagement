@@ -28,7 +28,8 @@ services:
     environment:
       APP_ENV: production
       SERVER_PORT: 8080
-      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://www.corgi4ever.com}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
       DB_HOST: mariadb
       DB_PORT: 3306
       DB_NAME: ${MARIADB_DATABASE:-speed_inventory_management}
@@ -43,8 +44,36 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
+    expose:
+      - "80"
+
+  reverse-proxy:
+    image: nginx:1.27-alpine
+    container_name: speed-inventory-proxy
+    restart: unless-stopped
+    depends_on:
+      - frontend
+      - backend
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:-www.corgi4ever.com}
+      SITE_DOMAIN_ALIASES: ${SITE_DOMAIN_ALIASES:-}
+    command: ["/bin/sh", "/scripts/start-proxy.sh"]
     ports:
       - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx/templates:/templates:ro
+      - ./deploy/nginx/start-proxy.sh:/scripts/start-proxy.sh:ro
+      - certbot_www:/var/www/certbot
+      - letsencrypt_certs:/etc/letsencrypt
+
+  certbot:
+    image: certbot/certbot:latest
+    volumes:
+      - certbot_www:/var/www/certbot
+      - letsencrypt_certs:/etc/letsencrypt
 
 volumes:
   mariadb_data:
+  certbot_www:
+  letsencrypt_certs:
