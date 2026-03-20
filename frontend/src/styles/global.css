@@ -714,6 +714,389 @@ textarea:focus {
   font-size: 0.92rem;
 }
 
+.warehouse-map__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.warehouse-map__header p:last-child {
+  margin: 0.45rem 0 0;
+  color: var(--ink-soft);
+}
+
+.warehouse-map__legend {
+  display: flex;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.warehouse-map__legend span {
+  display: inline-flex;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.warehouse-map__swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.warehouse-map__swatch--light {
+  background: linear-gradient(180deg, rgba(31, 110, 175, 0.18), rgba(34, 113, 74, 0.12));
+}
+
+.warehouse-map__swatch--medium {
+  background: linear-gradient(180deg, rgba(31, 110, 175, 0.28), rgba(34, 113, 74, 0.22));
+}
+
+.warehouse-map__swatch--heavy {
+  background: linear-gradient(180deg, rgba(31, 110, 175, 0.4), rgba(34, 113, 74, 0.34));
+}
+
+.warehouse-map-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1rem;
+}
+
+.warehouse-flow {
+  height: 680px;
+  border: 1px solid rgba(16, 32, 51, 0.08);
+  border-radius: 20px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at top right, rgba(31, 110, 175, 0.08), transparent 32%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(241, 247, 252, 0.94));
+}
+
+.warehouse-flow--map {
+  position: relative;
+}
+
+.warehouse-flow .react-flow__renderer,
+.warehouse-flow .react-flow__pane {
+  background:
+    radial-gradient(circle at top right, rgba(31, 110, 175, 0.07), transparent 28%),
+    linear-gradient(180deg, rgba(246, 250, 253, 0.96), rgba(240, 246, 251, 0.96));
+}
+
+.warehouse-flow .react-flow__node {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.warehouse-flow .react-flow__node.draggable {
+  cursor: grab;
+}
+
+.warehouse-flow .react-flow__node.draggable.dragging {
+  cursor: grabbing;
+}
+
+.warehouse-flow .react-flow__handle,
+.warehouse-flow .react-flow__edge,
+.warehouse-flow .react-flow__connection,
+.warehouse-flow .react-flow__edge-path,
+.warehouse-flow .react-flow__edge-textwrapper,
+.warehouse-flow .react-flow__arrowhead {
+  display: none !important;
+}
+
+.warehouse-flow .react-flow__node.selectable.selected .warehouse-flow__node-shell {
+  box-shadow: 0 0 0 3px rgba(31, 110, 175, 0.18), 0 20px 44px rgba(18, 36, 59, 0.12);
+}
+
+.warehouse-flow .react-flow__controls,
+.warehouse-flow .react-flow__minimap {
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(16, 32, 51, 0.08);
+  box-shadow: 0 12px 28px rgba(18, 36, 59, 0.08);
+}
+
+.warehouse-flow__node-shell {
+  backdrop-filter: blur(6px);
+}
+
+.warehouse-flow__node-shell--map-location {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(233, 242, 249, 0.96)),
+    repeating-linear-gradient(90deg, rgba(31, 110, 175, 0.04) 0, rgba(31, 110, 175, 0.04) 1px, transparent 1px, transparent 26px),
+    repeating-linear-gradient(rgba(31, 110, 175, 0.04) 0, rgba(31, 110, 175, 0.04) 1px, transparent 1px, transparent 26px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55), 0 18px 40px rgba(18, 36, 59, 0.12);
+}
+
+.warehouse-flow__node-shell--map-section {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(239, 246, 251, 0.92));
+  border: 1px solid rgba(31, 110, 175, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+}
+
+.warehouse-flow__node-shell--map-bin {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(246, 249, 252, 0.9));
+  border: 1px solid rgba(16, 32, 51, 0.06);
+  box-shadow: 0 6px 18px rgba(18, 36, 59, 0.06);
+  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+}
+
+.warehouse-flow__node-shell--empty {
+  opacity: 0.78;
+}
+
+.warehouse-flow .react-flow__node.draggable:hover .warehouse-flow__node-shell--map-section,
+.warehouse-flow .react-flow__node.draggable:hover .warehouse-flow__node-shell--map-bin {
+  transform: translateY(-1px);
+  border-color: rgba(31, 110, 175, 0.18);
+  box-shadow: 0 10px 24px rgba(18, 36, 59, 0.08);
+}
+
+.warehouse-flow-node {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.warehouse-flow-node strong,
+.warehouse-flow-node span,
+.warehouse-flow-node small {
+  display: block;
+}
+
+.warehouse-flow-node span,
+.warehouse-flow-node small {
+  color: var(--ink-soft);
+}
+
+.warehouse-flow-node__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  width: fit-content;
+  padding: 0.18rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--sheet-blue-dark);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.warehouse-flow-node__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.warehouse-flow-node__pill {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  padding: 0.18rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(31, 110, 175, 0.08);
+  color: var(--sheet-blue-dark);
+  font-size: 0.72rem;
+  font-style: normal;
+}
+
+.warehouse-flow-node__pill em {
+  font-style: normal;
+}
+
+.warehouse-flow-node__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #4dbb84, #22714a);
+  flex: 0 0 auto;
+}
+
+.warehouse-flow-node--location strong {
+  font-size: 1.02rem;
+  line-height: 1.1;
+}
+
+.warehouse-flow-node--location span {
+  font-size: 0.82rem;
+}
+
+.warehouse-flow-node--section strong,
+.warehouse-flow-node--bin strong {
+  font-size: 0.84rem;
+}
+
+.warehouse-flow-node--bin span {
+  font-family: "IBM Plex Mono", Consolas, monospace;
+  font-size: 0.76rem;
+  line-height: 1.25;
+}
+
+.warehouse-flow-node__bin-qty {
+  display: inline-flex;
+  gap: 0.28rem;
+  align-items: center;
+  width: fit-content;
+  padding: 0.16rem 0.38rem;
+  border-radius: 999px;
+  background: rgba(31, 110, 175, 0.08);
+  color: var(--sheet-blue-dark);
+  font-family: "IBM Plex Mono", Consolas, monospace;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.warehouse-flow-node--bin small {
+  font-size: 0.7rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.warehouse-flow-node--bin .warehouse-flow-node__row strong {
+  font-size: 0.82rem;
+}
+
+.warehouse-flow-dialog__subtitle {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.warehouse-flow-dialog__table-wrap {
+  padding: 0;
+}
+
+.warehouse-flow-dialog__table {
+  min-width: 760px;
+}
+
+.warehouse-zone-card {
+  border: 1px solid rgba(16, 32, 51, 0.08);
+  border-radius: 20px;
+  padding: 1rem;
+  background:
+    radial-gradient(circle at top right, rgba(31, 110, 175, 0.1), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(244, 248, 252, 0.92));
+}
+
+.warehouse-zone-card__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  align-items: flex-start;
+}
+
+.warehouse-zone-card__header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.warehouse-zone-card__header p:last-child {
+  margin: 0.35rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.warehouse-zone-card__stats {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 140px;
+}
+
+.warehouse-zone-card__stats span {
+  display: inline-flex;
+  justify-content: center;
+  padding: 0.36rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(16, 32, 51, 0.08);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.warehouse-section-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.warehouse-section-tile {
+  border: 1px solid rgba(16, 32, 51, 0.08);
+  border-radius: 18px;
+  padding: 0.85rem;
+  min-height: 180px;
+}
+
+.warehouse-section-tile--empty {
+  opacity: 0.86;
+}
+
+.warehouse-section-tile__header,
+.warehouse-section-tile__meta,
+.warehouse-section-tile__list-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.warehouse-section-tile__header {
+  align-items: baseline;
+}
+
+.warehouse-section-tile__header span,
+.warehouse-section-tile__meta span {
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+}
+
+.warehouse-section-tile__meta {
+  margin-top: 0.45rem;
+}
+
+.warehouse-section-tile__list {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.9rem;
+}
+
+.warehouse-section-tile__list-row {
+  align-items: center;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(16, 32, 51, 0.08);
+  font-size: 0.84rem;
+}
+
+.warehouse-section-tile__list-row strong {
+  font-family: "IBM Plex Mono", Consolas, monospace;
+}
+
+.warehouse-section-tile__list-row span:nth-child(2) {
+  color: var(--ink-soft);
+  text-align: center;
+}
+
+.warehouse-section-tile__list-row span:last-child {
+  font-family: "IBM Plex Mono", Consolas, monospace;
+  font-weight: 600;
+}
+
+.warehouse-section-tile__empty {
+  padding: 1.25rem 0.5rem 0.25rem;
+}
+
 .settings-preview {
   display: grid;
   gap: 0.75rem;
@@ -1115,6 +1498,10 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 
+  .warehouse-section-grid {
+    grid-template-columns: 1fr;
+  }
+
   .sidebar {
     grid-template-columns: 1fr;
   }
@@ -1184,6 +1571,11 @@ textarea:focus {
 
   .report-bars__row {
     grid-template-columns: 1fr;
+  }
+
+  .warehouse-map__header,
+  .warehouse-zone-card__header {
+    flex-direction: column;
   }
 
   .report-bars__value {

@@ -9,6 +9,7 @@ import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
 import { api } from "../lib/api";
 import { RowActionsMenu } from "./RowActionsMenu";
+import { WarehouseFlowExample } from "./WarehouseFlowExample";
 import { formatDateTimeValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
@@ -203,6 +204,24 @@ export function StorageManagementPage({ locations, items, onRefresh }: StorageMa
   return (
     <main className="workspace-main">
       {errorMessage && !isModalOpen ? <div className="alert-banner">{errorMessage}</div> : null}
+
+      <section className="workbook-panel">
+        <div className="workbook-panel__header warehouse-map__header">
+          <div>
+            <h2>Warehouse Map Example</h2>
+            <p>
+              A visual section-by-section inventory map showing current stock, active SKU count,
+              and the top SKUs in each area.
+            </p>
+          </div>
+          <div className="warehouse-map__legend">
+            <span><i className="warehouse-map__swatch warehouse-map__swatch--light" /> Light load</span>
+            <span><i className="warehouse-map__swatch warehouse-map__swatch--medium" /> Medium load</span>
+            <span><i className="warehouse-map__swatch warehouse-map__swatch--heavy" /> Heavy load</span>
+          </div>
+        </div>
+        <WarehouseFlowExample locations={locations} items={items} />
+      </section>
 
       <section className="workbook-panel workbook-panel--full">
         <div className="tab-strip">
