@@ -257,11 +257,23 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
   const shouldAutoCreateInboundSku = mode === "IN" && editingMovementId === null && !matchingNewSkuItem && Boolean(newSkuForm.sku.trim());
 
   useEffect(() => {
-    if (selectedItem) {
-      const fallbackSection = selectedItem.storageSection || selectedItemSectionOptions[0] || "A";
-      setForm((current) => current.storageSection === fallbackSection ? current : { ...current, storageSection: fallbackSection });
+    if (!selectedItem) {
+      return;
     }
-  }, [selectedItem, selectedItemSectionOptions]);
+
+    const fallbackSection = selectedItem.storageSection || selectedItemSectionOptions[0] || "A";
+    setForm((current) => {
+      if (editingMovementId !== null) {
+        if (selectedItemSectionOptions.includes(current.storageSection)) {
+          return current;
+        }
+
+        return { ...current, storageSection: fallbackSection };
+      }
+
+      return current.storageSection === fallbackSection ? current : { ...current, storageSection: fallbackSection };
+    });
+  }, [editingMovementId, selectedItem, selectedItemSectionOptions]);
 
   useEffect(() => {
     const fallbackSection = newSkuSectionOptions[0] || "A";
@@ -487,7 +499,11 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
       movementType: mode,
       quantity: resolvedQuantity,
       storageSection: mode === "IN"
-        ? (newSkuForm.storageSection || form.storageSection || matchingNewSkuItem?.storageSection || "A")
+        ? (
+          editingMovementId !== null
+            ? (form.storageSection || selectedItem?.storageSection || "A")
+            : (newSkuForm.storageSection || form.storageSection || matchingNewSkuItem?.storageSection || "A")
+        )
         : (form.storageSection || selectedItem?.storageSection || "A"),
       deliveryDate: form.deliveryDate || undefined,
       containerNo: form.containerNo || undefined,

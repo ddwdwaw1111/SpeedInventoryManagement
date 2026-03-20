@@ -1,9 +1,10 @@
 import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
 import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
+import CloseIcon from "@mui/icons-material/Close";
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import { type FormEvent, useMemo, useState } from "react";
-import { Box, Button, Chip } from "@mui/material";
+import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
 import { api } from "../lib/api";
@@ -41,6 +42,7 @@ export function StorageManagementPage({ locations, items, onRefresh }: StorageMa
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const [form, setForm] = useState<LocationFormState>(emptyLocationForm);
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingLocationId, setEditingLocationId] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -103,7 +105,15 @@ export function StorageManagementPage({ locations, items, onRefresh }: StorageMa
   function resetForm() {
     setForm(emptyLocationForm);
     setEditingLocationId(null);
+    setIsModalOpen(false);
     setErrorMessage("");
+  }
+
+  function openCreateModal() {
+    setForm(emptyLocationForm);
+    setEditingLocationId(null);
+    setErrorMessage("");
+    setIsModalOpen(true);
   }
 
   function startEdit(location: Location) {
@@ -117,6 +127,14 @@ export function StorageManagementPage({ locations, items, onRefresh }: StorageMa
       sectionNames: location.sectionNames.length > 0 ? [...location.sectionNames] : ["A"]
     });
     setErrorMessage("");
+    setIsModalOpen(true);
+  }
+
+  function closeModal() {
+    setForm(emptyLocationForm);
+    setEditingLocationId(null);
+    setErrorMessage("");
+    setIsModalOpen(false);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -139,7 +157,7 @@ export function StorageManagementPage({ locations, items, onRefresh }: StorageMa
       } else {
         await api.createLocation(payload);
       }
-      resetForm();
+      closeModal();
       await onRefresh();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveLocation"));
@@ -154,7 +172,7 @@ export function StorageManagementPage({ locations, items, onRefresh }: StorageMa
     setErrorMessage("");
     try {
       await api.deleteLocation(location.id);
-      if (editingLocationId === location.id) resetForm();
+      if (editingLocationId === location.id) closeModal();
       await onRefresh();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : t("couldNotDeleteLocation"));
@@ -184,16 +202,49 @@ export function StorageManagementPage({ locations, items, onRefresh }: StorageMa
 
   return (
     <main className="workspace-main">
-      {errorMessage ? <div className="alert-banner">{errorMessage}</div> : null}
+      {errorMessage && !isModalOpen ? <div className="alert-banner">{errorMessage}</div> : null}
 
-      <section className="editor-grid editor-grid--storage">
-        <article className="workbook-panel">
-          <div className="workbook-panel__header">
-            <div>
-              <p className="sheet-kicker">Storage editor</p>
-              <h2>{editingLocationId ? t("editStorageLocation") : t("addStorageLocation")}</h2>
+      <section className="workbook-panel workbook-panel--full">
+        <div className="tab-strip">
+          <div className="tab-strip__toolbar">
+            <div className="tab-strip__actions">
+              <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addLocation")}</Button>
             </div>
           </div>
+        </div>
+        <div className="sheet-table-wrap">
+          <Box sx={{ minWidth: 0 }}>
+            <DataGrid
+              rows={locations}
+              columns={columns}
+              pagination
+              pageSizeOptions={[8, 16, 32]}
+              disableRowSelectionOnClick
+              initialState={{ pagination: { paginationModel: { pageSize: 8, page: 0 } } }}
+              getRowHeight={() => 64}
+              sx={{ border: 0 }}
+            />
+          </Box>
+        </div>
+      </section>
+
+      <Dialog
+        open={isModalOpen}
+        onClose={(_, reason) => {
+          if (reason === "backdropClick") return;
+          closeModal();
+        }}
+        fullWidth
+        maxWidth="md"
+      >
+        <DialogTitle sx={{ pb: 1 }}>
+          {editingLocationId ? t("editStorageLocation") : t("addStorageLocation")}
+          <IconButton aria-label={t("close")} onClick={closeModal} sx={{ position: "absolute", right: 16, top: 16 }}>
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          {errorMessage ? <div className="alert-banner">{errorMessage}</div> : null}
           <form className="sheet-form" onSubmit={handleSubmit}>
             <label>{t("storageName")}<input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="NJ Warehouse A" required /></label>
             <label>{t("zone")}<input value={form.zone} onChange={(event) => setForm((current) => ({ ...current, zone: event.target.value }))} placeholder="North Wing" required /></label>
@@ -219,35 +270,11 @@ export function StorageManagementPage({ locations, items, onRefresh }: StorageMa
             <label className="sheet-form__wide">{t("notes")}<textarea value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} placeholder={t("storageNotesPlaceholder")} rows={4} /></label>
             <div className="sheet-form__actions sheet-form__wide">
               <button className="button button--primary" type="submit" disabled={submitting}>{submitting ? t("saving") : editingLocationId ? t("updateLocation") : t("addLocation")}</button>
-              {editingLocationId ? <button className="button button--ghost" type="button" onClick={resetForm}>{t("cancelEdit")}</button> : null}
+              <button className="button button--ghost" type="button" onClick={closeModal}>{editingLocationId ? t("cancelEdit") : t("cancel")}</button>
             </div>
           </form>
-        </article>
-
-        <article className="workbook-panel workbook-panel--full">
-          <div className="tab-strip">
-            <div className="tab-strip__toolbar">
-              <div className="tab-strip__actions">
-                <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={resetForm}>{t("addLocation")}</Button>
-              </div>
-            </div>
-          </div>
-          <div className="sheet-table-wrap">
-            <Box sx={{ minWidth: 0 }}>
-              <DataGrid
-                rows={locations}
-                columns={columns}
-                pagination
-                pageSizeOptions={[8, 16, 32]}
-                disableRowSelectionOnClick
-                initialState={{ pagination: { paginationModel: { pageSize: 8, page: 0 } } }}
-                getRowHeight={() => 64}
-                sx={{ border: 0 }}
-              />
-            </Box>
-          </div>
-        </article>
-      </section>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }
