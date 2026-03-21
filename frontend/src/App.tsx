@@ -8,9 +8,7 @@ import {
   WarehouseOutlined
 } from "@mui/icons-material";
 import {
-  type Dispatch,
   type ReactNode,
-  type SetStateAction,
   startTransition,
   useDeferredValue,
   useEffect,
@@ -29,9 +27,9 @@ import { StorageManagementPage } from "./components/StorageManagementPage";
 import { ApiError, api } from "./lib/api";
 import { parseDateValue } from "./lib/dates";
 import { useI18n } from "./lib/i18n";
+import { getPageFromPath, navigateToPage, type PageKey } from "./lib/routes";
 import type { Customer, Item, Location, LoginPayload, Movement, SKUMaster, SignUpPayload, User } from "./lib/types";
 
-type PageKey = "dashboard" | "customers" | "sku-master" | "stock-by-location" | "storage-management" | "inbound-management" | "outbound-management" | "settings";
 type ReportGranularity = "day" | "month" | "year";
 type ChartTone = "blue" | "green" | "amber" | "red";
 type BarRow = { label: string; value: number; meta?: string; tone?: ChartTone };
@@ -47,7 +45,7 @@ export default function App() {
   const [isAuthResolved, setIsAuthResolved] = useState(false);
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
   const [authErrorMessage, setAuthErrorMessage] = useState("");
-  const [activePage, setActivePage] = useState<PageKey>(() => getPageFromHash(window.location.hash));
+  const [activePage, setActivePage] = useState<PageKey>(() => getPageFromPath(window.location.pathname));
   const [locations, setLocations] = useState<Location[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [skuMasters, setSkuMasters] = useState<SKUMaster[]>([]);
@@ -65,12 +63,12 @@ export default function App() {
 
   useEffect(() => { void bootstrapApp(); }, []);
   useEffect(() => {
-    const handleHashChange = () => {
-      setActivePage(getPageFromHash(window.location.hash));
+    const handlePopState = () => {
+      setActivePage(getPageFromPath(window.location.pathname));
     };
 
-    window.addEventListener("hashchange", handleHashChange);
-    return () => window.removeEventListener("hashchange", handleHashChange);
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
   async function bootstrapApp() {
@@ -626,37 +624,4 @@ function getChartColor(tone: ChartTone) {
   if (tone === "amber") return "#c18311";
   if (tone === "red") return "#b64537";
   return "#1f6eaf";
-}
-
-function getPageFromHash(hash: string): PageKey {
-  if (hash === "#/inbound-management") return "inbound-management";
-  if (hash === "#/outbound-management") return "outbound-management";
-  if (hash === "#/customers") return "customers";
-  if (hash === "#/sku-master") return "sku-master";
-  if (hash === "#/stock-by-location" || hash === "#/master-inventory") return "stock-by-location";
-  if (hash === "#/storage-management") return "storage-management";
-  if (hash === "#/settings") return "settings";
-  return "dashboard";
-}
-
-function navigateToPage(page: PageKey, setter: Dispatch<SetStateAction<PageKey>>) {
-  const hash = page === "inbound-management"
-    ? "#/inbound-management"
-    : page === "outbound-management"
-      ? "#/outbound-management"
-      : page === "customers"
-        ? "#/customers"
-      : page === "sku-master"
-        ? "#/sku-master"
-        : page === "stock-by-location"
-          ? "#/stock-by-location"
-        : page === "storage-management"
-          ? "#/storage-management"
-          : page === "settings"
-            ? "#/settings"
-          : "#/";
-  if (window.location.hash !== hash) {
-    window.location.hash = hash;
-  }
-  setter(page);
 }

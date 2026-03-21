@@ -22,7 +22,8 @@ SERVER_HOST="${SERVER_HOST:-129.213.52.3}"
 SERVER_PATH="${SERVER_PATH:-~/SpeedInventoryManagement}"
 SSH_KEY_PATH="${SSH_KEY_PATH:-$HOME/.ssh/oracle-prod.key}"
 ENV_FILE_PATH="${ENV_FILE_PATH:-$ROOT_DIR/.env.prod}"
-REMOTE_ARCHIVE_PATH=""
+DEPLOY_STACK="${DEPLOY_STACK:-auto}"
+REMOTE_ARCHIVE_NAME=""
 
 ssh_args=()
 
@@ -48,6 +49,7 @@ Options:
   --server-path <path>       Remote app path. Default: ${SERVER_PATH}
   --ssh-key <path>           SSH private key path for scp/ssh.
   --env-file <path>          Local env file to upload. Default: ${ENV_FILE_PATH}
+  --stack <auto|http|https>  Deploy stack selection. Default: ${DEPLOY_STACK}
   --push                     Use buildx --push instead of --load. Not recommended for this workflow.
   -h, --help                 Show this help.
 
@@ -55,7 +57,7 @@ Examples:
   bash deploy_prod.sh
   bash deploy_prod.sh --platform linux/amd64
   bash deploy_prod.sh --platform linux/arm64 --tag-prefix sim
-  bash deploy_prod.sh --deploy --server-host 129.213.52.3 --ssh-key ~/oracle.key
+  bash deploy_prod.sh --deploy --stack https --server-host 129.213.52.3 --ssh-key ~/oracle.key
 EOF
 }
 
@@ -115,6 +117,10 @@ while [[ $# -gt 0 ]]; do
       ENV_FILE_PATH="$2"
       shift 2
       ;;
+    --stack)
+      DEPLOY_STACK="$2"
+      shift 2
+      ;;
     --push)
       LOAD_FLAG="--push"
       shift
@@ -131,6 +137,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+case "$DEPLOY_STACK" in
+  auto|http|https)
+    ;;
+  *)
+    echo "Invalid --stack value: $DEPLOY_STACK" >&2
+    usage
+    exit 1
+    ;;
+esac
+
 mkdir -p "$OUTPUT_DIR"
 ARCHIVE_PATH="$OUTPUT_DIR/$ARCHIVE_NAME"
 
@@ -141,6 +157,7 @@ echo "==> Archive output:  $ARCHIVE_PATH"
 if [[ "$DEPLOY_AFTER_BUILD" == "true" ]]; then
   echo "==> Deploy target:   ${SERVER_USER}@${SERVER_HOST}:${SERVER_PATH}"
   echo "==> SSH key:         ${SSH_KEY_PATH}"
+  echo "==> Deploy stack:    ${DEPLOY_STACK}"
 fi
 echo
 
@@ -205,10 +222,11 @@ Server steps:
   ssh ubuntu@<server-ip>
   docker load -i ~/"$(basename "$ARCHIVE_PATH")"
 
-Then update docker-compose.prod.yml to use:
-  backend:  image: $BACKEND_IMAGE
-  frontend: image: $FRONTEND_IMAGE
-  mariadb:  image: $MARIADB_IMAGE
+Deploy stack selection:
+  auto  -> uses docker-compose.https.yml when .env.prod contains SITE_DOMAIN
+           or SESSION_COOKIE_SECURE=true, otherwise docker-compose.prod.yml
+  http  -> always uses docker-compose.prod.yml
+  https -> always uses docker-compose.https.yml
 EOF
 
 if [[ "$DEPLOY_AFTER_BUILD" == "true" ]]; then
@@ -243,6 +261,7 @@ if [[ "$DEPLOY_AFTER_BUILD" == "true" ]]; then
   echo "    - deploy/nginx/start-proxy.sh"
   echo "    - deploy/nginx/templates/*"
   echo "    - $(basename "$ENV_FILE_PATH") as .env.prod"
+  echo "    - stack mode: ${DEPLOY_STACK}"
   echo
   read -r -p "Type 'yes' to continue deploy: " confirmation
   if [[ "$confirmation" != "yes" ]]; then
@@ -266,17 +285,42 @@ if [[ "$DEPLOY_AFTER_BUILD" == "true" ]]; then
   scp "${ssh_args[@]}" "$ROOT_DIR/deploy/nginx/templates/https.conf.template" "${SERVER_USER}@${SERVER_HOST}:${SERVER_PATH}/deploy/nginx/templates/"
   scp "${ssh_args[@]}" "$ENV_FILE_PATH" "${SERVER_USER}@${SERVER_HOST}:${SERVER_PATH}/.env.prod"
 
-  REMOTE_ARCHIVE_PATH="${SERVER_PATH}/$(basename "$ARCHIVE_PATH")"
+  REMOTE_ARCHIVE_NAME="$(basename "$ARCHIVE_PATH")"
 
   echo
   echo "==> Loading images and starting services on remote server"
-  ssh "${ssh_args[@]}" "${SERVER_USER}@${SERVER_HOST}" "cd ${SERVER_PATH} && docker load -i ${REMOTE_ARCHIVE_PATH} && docker compose --env-file .env.prod -f docker-compose.prod.yml up -d"
+  ssh "${ssh_args[@]}" "${SERVER_USER}@${SERVER_HOST}" "cd ${SERVER_PATH} && REMOTE_ARCHIVE_NAME='${REMOTE_ARCHIVE_NAME}' DEPLOY_STACK='${DEPLOY_STACK}' bash -s" <<'EOF'
+set -euo pipefail
+
+docker load -i "./$REMOTE_ARCHIVE_NAME"
+
+selected_stack="$DEPLOY_STACK"
+if [[ "$selected_stack" == "auto" ]]; then
+  if grep -Eq '^SITE_DOMAIN=[^[:space:]]+' .env.prod || grep -Eq '^SESSION_COOKIE_SECURE=true$' .env.prod; then
+    selected_stack="https"
+  else
+    selected_stack="http"
+  fi
+fi
+
+if [[ "$selected_stack" == "https" ]]; then
+  echo "==> Remote stack: https"
+  docker compose --env-file .env.prod -f docker-compose.prod.yml down || true
+  docker compose --env-file .env.prod -f docker-compose.https.yml up -d
+  echo "==> Check status with: docker compose --env-file .env.prod -f docker-compose.https.yml ps"
+else
+  echo "==> Remote stack: http"
+  docker compose --env-file .env.prod -f docker-compose.https.yml down || true
+  docker compose --env-file .env.prod -f docker-compose.prod.yml up -d
+  echo "==> Check status with: docker compose --env-file .env.prod -f docker-compose.prod.yml ps"
+fi
+EOF
 
   echo
   echo "==> Remote deployment finished"
   echo "Check status with:"
   echo "ssh ${SERVER_USER}@${SERVER_HOST}"
-  echo "cd ${SERVER_PATH} && docker compose --env-file .env.prod -f docker-compose.prod.yml ps"
+  echo "cd ${SERVER_PATH} && docker compose --env-file .env.prod -f docker-compose.<prod-or-https>.yml ps"
 fi
 
 echo
