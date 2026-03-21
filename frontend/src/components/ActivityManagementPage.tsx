@@ -130,10 +130,10 @@ function createEmptyBatchInboundForm(): BatchInboundFormState {
   };
 }
 
-function createEmptyBatchInboundLine(defaultSku = ""): BatchInboundLineState {
+function createEmptyBatchInboundLine(): BatchInboundLineState {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    sku: defaultSku,
+    sku: "",
     description: "",
     reorderLevel: 0,
     expectedQty: 0,
@@ -167,7 +167,7 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
   const [newSkuForm, setNewSkuForm] = useState<NewSkuFormState>(() => createEmptyNewSkuForm("", ""));
   const [batchForm, setBatchForm] = useState<BatchInboundFormState>(() => createEmptyBatchInboundForm());
-  const [batchLines, setBatchLines] = useState<BatchInboundLineState[]>(() => [createEmptyBatchInboundLine("")]);
+  const [batchLines, setBatchLines] = useState<BatchInboundLineState[]>(() => [createEmptyBatchInboundLine()]);
   const [batchSubmitting, setBatchSubmitting] = useState(false);
   const deferredSearchTerm = useDeferredValue(searchTerm);
   const pendingBatchLineIDRef = useRef<string | null>(null);
@@ -563,7 +563,8 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
       customerId: customers[0] ? String(customers[0].id) : "",
       locationId: locations[0] ? String(locations[0].id) : ""
     });
-    setBatchLines([createEmptyBatchInboundLine(items[0]?.sku ?? "")]);
+    pendingBatchLineIDRef.current = null;
+    setBatchLines([createEmptyBatchInboundLine()]);
     setErrorMessage("");
     setIsBatchModalOpen(true);
   }
@@ -634,14 +635,15 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
       customerId: customers[0] ? String(customers[0].id) : "",
       locationId: locations[0] ? String(locations[0].id) : ""
     });
-    setBatchLines([createEmptyBatchInboundLine(items[0]?.sku ?? "")]);
+    pendingBatchLineIDRef.current = null;
+    setBatchLines([createEmptyBatchInboundLine()]);
     setBatchSubmitting(false);
     setErrorMessage("");
     setIsBatchModalOpen(false);
   }
 
   function addBatchLine() {
-    const nextLine = createEmptyBatchInboundLine("");
+    const nextLine = createEmptyBatchInboundLine();
     pendingBatchLineIDRef.current = nextLine.id;
     setBatchLines((current) => [...current, nextLine]);
   }
