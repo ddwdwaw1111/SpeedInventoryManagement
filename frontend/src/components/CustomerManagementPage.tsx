@@ -9,12 +9,13 @@ import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 import { api } from "../lib/api";
 import { formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
-import type { Customer, CustomerPayload, Item } from "../lib/types";
+import type { Customer, CustomerPayload, Item, UserRole } from "../lib/types";
 import { RowActionsMenu } from "./RowActionsMenu";
 
 type CustomerManagementPageProps = {
   customers: Customer[];
   items: Item[];
+  currentUserRole: UserRole;
   isLoading: boolean;
   onRefresh: () => Promise<void>;
 };
@@ -39,8 +40,9 @@ function createEmptyForm(): CustomerFormState {
   };
 }
 
-export function CustomerManagementPage({ customers, items, isLoading, onRefresh }: CustomerManagementPageProps) {
+export function CustomerManagementPage({ customers, items, currentUserRole, isLoading, onRefresh }: CustomerManagementPageProps) {
   const { t } = useI18n();
+  const canManage = currentUserRole === "admin";
   const [searchTerm, setSearchTerm] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -97,7 +99,7 @@ export function CustomerManagementPage({ customers, items, isLoading, onRefresh 
       minWidth: 90,
       sortable: false,
       filterable: false,
-      renderCell: (params) => (
+      renderCell: (params) => canManage ? (
         <RowActionsMenu
           ariaLabel={t("actions")}
           actions={[
@@ -105,11 +107,12 @@ export function CustomerManagementPage({ customers, items, isLoading, onRefresh 
             { key: "delete", label: t("delete"), icon: <DeleteOutlineOutlinedIcon fontSize="small" />, danger: true, onClick: () => handleDelete(params.row) }
           ]}
         />
-      )
+      ) : null
     }
-  ], [inventorySummaryByCustomer, t]);
+  ], [canManage, inventorySummaryByCustomer, t]);
 
   function openCreateModal() {
+    if (!canManage) return;
     setEditingId(null);
     setForm(createEmptyForm());
     setErrorMessage("");
@@ -117,6 +120,7 @@ export function CustomerManagementPage({ customers, items, isLoading, onRefresh 
   }
 
   function openEditModal(row: Customer) {
+    if (!canManage) return;
     setEditingId(row.id);
     setForm({
       name: row.name,
@@ -138,6 +142,7 @@ export function CustomerManagementPage({ customers, items, isLoading, onRefresh 
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!canManage) return;
     setIsSubmitting(true);
     setErrorMessage("");
 
@@ -165,6 +170,7 @@ export function CustomerManagementPage({ customers, items, isLoading, onRefresh 
   }
 
   async function handleDelete(row: Customer) {
+    if (!canManage) return;
     if (!window.confirm(t("deleteCustomerConfirm", { name: row.name }))) {
       return;
     }
@@ -185,10 +191,13 @@ export function CustomerManagementPage({ customers, items, isLoading, onRefresh 
       <section className="workbook-panel workbook-panel--full">
         <div className="tab-strip">
           <div className="tab-strip__toolbar">
-            <div className="tab-strip__actions">
-              <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addNew")}</Button>
-            </div>
+            {canManage ? (
+              <div className="tab-strip__actions">
+                <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addNew")}</Button>
+              </div>
+            ) : null}
           </div>
+          {!canManage ? <div className="sheet-note sheet-note--readonly">{t("adminOnlyManageNotice")}</div> : null}
           <div className="filter-bar">
             <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("customerSearchPlaceholder")} /></label>
           </div>

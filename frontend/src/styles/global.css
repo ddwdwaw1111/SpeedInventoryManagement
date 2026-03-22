@@ -619,6 +619,12 @@ textarea:focus {
   font-size: 0.92rem;
 }
 
+.sheet-note--readonly {
+  margin-bottom: 0.85rem;
+  border: 1px solid rgba(39, 76, 119, 0.12);
+  background: rgba(246, 248, 251, 0.98);
+}
+
 .button {
   border: 0;
   border-radius: 999px;
@@ -1068,9 +1074,29 @@ textarea:focus {
   white-space: nowrap;
 }
 
+.sheet-table__subtle {
+  margin-top: 0.18rem;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+}
+
 .cell--mismatch {
   color: var(--danger);
   font-weight: 700;
+}
+
+.audit-log-json {
+  margin: 0.75rem 0 0;
+  padding: 0.85rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.84);
+  color: var(--gray-8);
+  font-family: "IBM Plex Mono", Consolas, monospace;
+  font-size: 0.83rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
 }
 
 .row-action-select {

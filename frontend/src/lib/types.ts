@@ -30,7 +30,21 @@ export type User = {
   email: string;
   fullName: string;
   role: UserRole;
+  isActive: boolean;
   createdAt: string;
+};
+
+export type CreateUserPayload = {
+  email: string;
+  fullName: string;
+  password: string;
+  role: UserRole;
+  isActive: boolean;
+};
+
+export type UpdateUserAccessPayload = {
+  role: UserRole;
+  isActive: boolean;
 };
 
 export type AuthResponse = {

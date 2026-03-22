@@ -10,10 +10,11 @@ import { api } from "../lib/api";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
-import type { SKUMaster, SKUMasterPayload } from "../lib/types";
+import type { SKUMaster, SKUMasterPayload, UserRole } from "../lib/types";
 
 type SKUMasterPageProps = {
   skuMasters: SKUMaster[];
+  currentUserRole: UserRole;
   isLoading: boolean;
   onRefresh: () => Promise<void>;
 };
@@ -38,8 +39,9 @@ function createEmptyForm(): SKUMasterFormState {
   };
 }
 
-export function SKUMasterPage({ skuMasters, isLoading, onRefresh }: SKUMasterPageProps) {
+export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefresh }: SKUMasterPageProps) {
   const { t } = useI18n();
+  const canManage = currentUserRole === "admin";
   const [searchTerm, setSearchTerm] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -69,7 +71,7 @@ export function SKUMasterPage({ skuMasters, isLoading, onRefresh }: SKUMasterPag
       minWidth: 90,
       sortable: false,
       filterable: false,
-      renderCell: (params) => (
+      renderCell: (params) => canManage ? (
         <RowActionsMenu
           ariaLabel={t("actions")}
           actions={[
@@ -77,11 +79,12 @@ export function SKUMasterPage({ skuMasters, isLoading, onRefresh }: SKUMasterPag
             { key: "delete", label: t("delete"), icon: <DeleteOutlineOutlinedIcon fontSize="small" />, danger: true, onClick: () => handleDelete(params.row) }
           ]}
         />
-      )
+      ) : null
     }
-  ], [t]);
+  ], [canManage, t]);
 
   function openCreateModal() {
+    if (!canManage) return;
     setEditingId(null);
     setForm(createEmptyForm());
     setErrorMessage("");
@@ -89,6 +92,7 @@ export function SKUMasterPage({ skuMasters, isLoading, onRefresh }: SKUMasterPag
   }
 
   function openEditModal(row: SKUMaster) {
+    if (!canManage) return;
     setEditingId(row.id);
     setForm({
       sku: row.sku,
@@ -110,6 +114,7 @@ export function SKUMasterPage({ skuMasters, isLoading, onRefresh }: SKUMasterPag
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!canManage) return;
     setIsSubmitting(true);
     setErrorMessage("");
 
@@ -138,6 +143,7 @@ export function SKUMasterPage({ skuMasters, isLoading, onRefresh }: SKUMasterPag
   }
 
   async function handleDelete(row: SKUMaster) {
+    if (!canManage) return;
     if (!window.confirm(t("deleteSkuMasterConfirm", { sku: row.sku }))) {
       return;
     }
@@ -158,10 +164,13 @@ export function SKUMasterPage({ skuMasters, isLoading, onRefresh }: SKUMasterPag
       <section className="workbook-panel workbook-panel--full">
         <div className="tab-strip">
           <div className="tab-strip__toolbar">
-            <div className="tab-strip__actions">
-              <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addNew")}</Button>
-            </div>
+            {canManage ? (
+              <div className="tab-strip__actions">
+                <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addNew")}</Button>
+              </div>
+            ) : null}
           </div>
+          {!canManage ? <div className="sheet-note sheet-note--readonly">{t("adminOnlyManageNotice")}</div> : null}
           <div className="filter-bar">
             <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("skuMasterSearchPlaceholder")} /></label>
           </div>

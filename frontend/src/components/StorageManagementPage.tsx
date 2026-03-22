@@ -12,11 +12,12 @@ import { RowActionsMenu } from "./RowActionsMenu";
 import { formatDateTimeValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
-import type { Item, Location, LocationPayload } from "../lib/types";
+import type { Item, Location, LocationPayload, UserRole } from "../lib/types";
 
 type StorageManagementPageProps = {
   locations: Location[];
   items: Item[];
+  currentUserRole: UserRole;
   onRefresh: () => Promise<void>;
 };
 
@@ -38,9 +39,10 @@ const emptyLocationForm: LocationFormState = {
   sectionNames: ["A"]
 };
 
-export function StorageManagementPage({ locations, items, onRefresh }: StorageManagementPageProps) {
+export function StorageManagementPage({ locations, items, currentUserRole, onRefresh }: StorageManagementPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
+  const canManage = currentUserRole === "admin";
   const [form, setForm] = useState<LocationFormState>(emptyLocationForm);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingLocationId, setEditingLocationId] = useState<number | null>(null);
@@ -90,7 +92,7 @@ export function StorageManagementPage({ locations, items, onRefresh }: StorageMa
       minWidth: 90,
       sortable: false,
       filterable: false,
-      renderCell: (params) => (
+      renderCell: (params) => canManage ? (
         <RowActionsMenu
           ariaLabel={t("actions")}
           actions={[
@@ -98,9 +100,9 @@ export function StorageManagementPage({ locations, items, onRefresh }: StorageMa
             { key: "delete", label: t("delete"), icon: <DeleteOutlineOutlinedIcon fontSize="small" />, danger: true, onClick: () => handleDelete(params.row) }
           ]}
         />
-      )
+      ) : null
     }
-  ], [locationUsage, resolvedTimeZone, t]);
+  ], [canManage, locationUsage, resolvedTimeZone, t]);
 
   function resetForm() {
     setForm(emptyLocationForm);
@@ -110,6 +112,7 @@ export function StorageManagementPage({ locations, items, onRefresh }: StorageMa
   }
 
   function openCreateModal() {
+    if (!canManage) return;
     setForm(emptyLocationForm);
     setEditingLocationId(null);
     setErrorMessage("");
@@ -117,6 +120,7 @@ export function StorageManagementPage({ locations, items, onRefresh }: StorageMa
   }
 
   function startEdit(location: Location) {
+    if (!canManage) return;
     setEditingLocationId(location.id);
     setForm({
       name: location.name,
@@ -139,6 +143,7 @@ export function StorageManagementPage({ locations, items, onRefresh }: StorageMa
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!canManage) return;
     setSubmitting(true);
     setErrorMessage("");
 
@@ -167,6 +172,7 @@ export function StorageManagementPage({ locations, items, onRefresh }: StorageMa
   }
 
   async function handleDelete(location: Location) {
+    if (!canManage) return;
     if (!window.confirm(t("deleteStorageConfirm", { name: location.name }))) return;
 
     setErrorMessage("");
@@ -207,10 +213,13 @@ export function StorageManagementPage({ locations, items, onRefresh }: StorageMa
       <section className="workbook-panel workbook-panel--full">
         <div className="tab-strip">
           <div className="tab-strip__toolbar">
-            <div className="tab-strip__actions">
-              <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addLocation")}</Button>
-            </div>
+            {canManage ? (
+              <div className="tab-strip__actions">
+                <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addLocation")}</Button>
+              </div>
+            ) : null}
           </div>
+          {!canManage ? <div className="sheet-note sheet-note--readonly">{t("adminOnlyManageNotice")}</div> : null}
         </div>
         <div className="sheet-table-wrap">
           <Box sx={{ minWidth: 0 }}>

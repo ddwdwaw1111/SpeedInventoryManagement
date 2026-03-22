@@ -4,6 +4,7 @@ import type {
   CycleCount,
   CycleCountPayload,
   CancelOutboundDocumentPayload,
+  CreateUserPayload,
   Customer,
   CustomerPayload,
   DashboardData,
@@ -24,7 +25,9 @@ import type {
   OutboundDocumentPayload,
   SKUMaster,
   SKUMasterPayload,
-  SignUpPayload
+  SignUpPayload,
+  UpdateUserAccessPayload,
+  User
 } from "./types";
 
 function normalizeApiBaseUrl(baseUrl: string): string {
@@ -125,6 +128,24 @@ export const api = {
 
   getAuditLogs(limit = 200) {
     return request<AuditLog[]>(`/audit-logs?limit=${limit}`);
+  },
+
+  getUsers() {
+    return request<User[]>("/users");
+  },
+
+  createUser(payload: CreateUserPayload) {
+    return request<User>("/users", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  updateUserAccess(userId: number, payload: UpdateUserAccessPayload) {
+    return request<User>(`/users/${userId}/access`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    });
   },
 
   getLocations() {

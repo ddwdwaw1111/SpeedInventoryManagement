@@ -202,6 +202,7 @@ export function CycleCountManagementPage({
               ) : null}
             </div>
           </div>
+          {!canManage ? <div className="sheet-note sheet-note--readonly">{t("readOnlyModeNotice")}</div> : null}
         </div>
         <div className="sheet-table-wrap">
           <Box sx={{ minWidth: 0 }}>

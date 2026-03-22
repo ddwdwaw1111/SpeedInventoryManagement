@@ -3,6 +3,7 @@ export type PageKey =
   | "all-activity"
   | "customers"
   | "audit-logs"
+  | "user-management"
   | "adjustments"
   | "transfers"
   | "cycle-counts"
@@ -18,6 +19,7 @@ export const pagePathMap: Record<PageKey, string> = {
   "all-activity": "/all-activity",
   customers: "/customers",
   "audit-logs": "/audit-logs",
+  "user-management": "/user-management",
   adjustments: "/adjustments",
   transfers: "/transfers",
   "cycle-counts": "/cycle-counts",
@@ -43,6 +45,7 @@ export function getPageFromPath(pathname: string): PageKey {
 
   if (normalized === "/all-activity") return "all-activity";
   if (normalized === "/audit-logs") return "audit-logs";
+  if (normalized === "/user-management") return "user-management";
   if (normalized === "/adjustments") return "adjustments";
   if (normalized === "/transfers") return "transfers";
   if (normalized === "/cycle-counts") return "cycle-counts";

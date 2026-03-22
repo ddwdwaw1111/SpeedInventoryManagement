@@ -25,6 +25,7 @@ type User struct {
 	Email     string    `db:"email" json:"email"`
 	FullName  string    `db:"full_name" json:"fullName"`
 	Role      string    `db:"role" json:"role"`
+	IsActive  bool      `db:"is_active" json:"isActive"`
 	CreatedAt time.Time `db:"created_at" json:"createdAt"`
 }
 
@@ -33,6 +34,7 @@ type userCredentialRow struct {
 	Email        string    `db:"email"`
 	FullName     string    `db:"full_name"`
 	Role         string    `db:"role"`
+	IsActive     bool      `db:"is_active"`
 	PasswordSalt string    `db:"password_salt"`
 	PasswordHash string    `db:"password_hash"`
 	CreatedAt    time.Time `db:"created_at"`
@@ -44,6 +46,7 @@ func (row userCredentialRow) toUser() User {
 		Email:     row.Email,
 		FullName:  row.FullName,
 		Role:      row.Role,
+		IsActive:  row.IsActive,
 		CreatedAt: row.CreatedAt,
 	}
 }
@@ -53,6 +56,7 @@ type sessionUserRow struct {
 	Email     string    `db:"email"`
 	FullName  string    `db:"full_name"`
 	Role      string    `db:"role"`
+	IsActive  bool      `db:"is_active"`
 	CreatedAt time.Time `db:"created_at"`
 	ExpiresAt time.Time `db:"expires_at"`
 }
@@ -89,20 +93,7 @@ func (s *Store) RegisterUser(ctx context.Context, input RegisterUserInput) (Auth
 		return AuthPayload{}, "", err
 	}
 
-	result, err := s.db.ExecContext(ctx, `
-		INSERT INTO users (email, full_name, role, password_salt, password_hash)
-		VALUES (?, ?, ?, ?, ?)
-	`, input.Email, input.FullName, role, salt, passwordHash)
-	if err != nil {
-		return AuthPayload{}, "", mapDBError(fmt.Errorf("create user: %w", err))
-	}
-
-	userID, err := result.LastInsertId()
-	if err != nil {
-		return AuthPayload{}, "", fmt.Errorf("resolve user id: %w", err)
-	}
-
-	user, err := s.getUser(ctx, userID)
+	user, err := s.createUserRecord(ctx, input.Email, input.FullName, passwordHash, salt, role, true)
 	if err != nil {
 		return AuthPayload{}, "", err
 	}
@@ -119,7 +110,7 @@ func (s *Store) Login(ctx context.Context, input LoginInput) (AuthPayload, strin
 
 	var row userCredentialRow
 	err := s.db.GetContext(ctx, &row, `
-		SELECT id, email, full_name, role, password_salt, password_hash, created_at
+		SELECT id, email, full_name, role, is_active, password_salt, password_hash, created_at
 		FROM users
 		WHERE email = ?
 	`, email)
@@ -133,6 +124,9 @@ func (s *Store) Login(ctx context.Context, input LoginInput) (AuthPayload, strin
 	if hashPassword(password, row.PasswordSalt) != row.PasswordHash {
 		return AuthPayload{}, "", fmt.Errorf("%w: invalid email or password", ErrInvalidInput)
 	}
+	if !row.IsActive {
+		return AuthPayload{}, "", fmt.Errorf("%w: this account is inactive", ErrInvalidInput)
+	}
 
 	return s.createSession(ctx, row.toUser())
 }
@@ -145,10 +139,10 @@ func (s *Store) GetUserBySessionToken(ctx context.Context, token string) (AuthPa
 
 	var row sessionUserRow
 	err := s.db.GetContext(ctx, &row, `
-		SELECT u.id, u.email, u.full_name, u.role, u.created_at, us.expires_at
+		SELECT u.id, u.email, u.full_name, u.role, u.is_active, u.created_at, us.expires_at
 		FROM user_sessions us
 		JOIN users u ON u.id = us.user_id
-		WHERE us.token_hash = ? AND us.expires_at > CURRENT_TIMESTAMP
+		WHERE us.token_hash = ? AND us.expires_at > CURRENT_TIMESTAMP AND u.is_active = TRUE
 	`, tokenHash)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -163,6 +157,7 @@ func (s *Store) GetUserBySessionToken(ctx context.Context, token string) (AuthPa
 			Email:     row.Email,
 			FullName:  row.FullName,
 			Role:      row.Role,
+			IsActive:  row.IsActive,
 			CreatedAt: row.CreatedAt,
 		},
 		ExpiresAt: row.ExpiresAt,
@@ -205,7 +200,7 @@ func (s *Store) createSession(ctx context.Context, user User) (AuthPayload, stri
 func (s *Store) getUser(ctx context.Context, userID int64) (User, error) {
 	var user User
 	err := s.db.GetContext(ctx, &user, `
-		SELECT id, email, full_name, role, created_at
+		SELECT id, email, full_name, role, is_active, created_at
 		FROM users
 		WHERE id = ?
 	`, userID)
@@ -217,6 +212,23 @@ func (s *Store) getUser(ctx context.Context, userID int64) (User, error) {
 	}
 
 	return user, nil
+}
+
+func (s *Store) createUserRecord(ctx context.Context, email string, fullName string, passwordHash string, salt string, role string, isActive bool) (User, error) {
+	result, err := s.db.ExecContext(ctx, `
+		INSERT INTO users (email, full_name, role, is_active, password_salt, password_hash)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, email, fullName, role, isActive, salt, passwordHash)
+	if err != nil {
+		return User{}, mapDBError(fmt.Errorf("create user: %w", err))
+	}
+
+	userID, err := result.LastInsertId()
+	if err != nil {
+		return User{}, fmt.Errorf("resolve user id: %w", err)
+	}
+
+	return s.getUser(ctx, userID)
 }
 
 func sanitizeAuthInput(email, fullName, password string) (RegisterUserInput, error) {

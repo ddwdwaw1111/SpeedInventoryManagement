@@ -10,12 +10,13 @@ import { api } from "../lib/api";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
-import type { Customer, Item, ItemPayload, Location } from "../lib/types";
+import type { Customer, Item, ItemPayload, Location, UserRole } from "../lib/types";
 
 type MasterInventoryPageProps = {
   items: Item[];
   locations: Location[];
   customers: Customer[];
+  currentUserRole: UserRole;
   isLoading: boolean;
   onRefresh: () => Promise<void>;
 };
@@ -73,8 +74,15 @@ function getSuggestedPalletsDetail(totalQty: number, pallets: number) {
   return `${pallets - 1}*${cartonsPerFullPallet}+${remainingCartons}`;
 }
 
-export function MasterInventoryPage({ items, locations, customers, isLoading, onRefresh }: MasterInventoryPageProps) {
+export function MasterInventoryPage({ items, locations, customers, currentUserRole, isLoading, onRefresh }: MasterInventoryPageProps) {
   const { t } = useI18n();
+  const canManage = currentUserRole === "admin" || currentUserRole === "operator";
+  const canDelete = currentUserRole === "admin";
+  const permissionNote = currentUserRole === "viewer"
+    ? t("readOnlyModeNotice")
+    : currentUserRole === "operator"
+      ? t("operatorCanEditStockNotice")
+      : "";
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
@@ -156,19 +164,21 @@ export function MasterInventoryPage({ items, locations, customers, isLoading, on
       minWidth: 90,
       sortable: false,
       filterable: false,
-      renderCell: (params) => (
-        <RowActionsMenu
-          ariaLabel={t("actions")}
-          actions={[
-            { key: "edit", label: t("edit"), icon: <EditOutlinedIcon fontSize="small" />, onClick: () => openEditModal(params.row) },
-            { key: "delete", label: t("delete"), icon: <DeleteOutlineOutlinedIcon fontSize="small" />, danger: true, onClick: () => handleDeleteItem(params.row) }
-          ]}
-        />
-      )
+      renderCell: (params) => {
+        const actions = [];
+        if (canManage) {
+          actions.push({ key: "edit", label: t("edit"), icon: <EditOutlinedIcon fontSize="small" />, onClick: () => openEditModal(params.row) });
+        }
+        if (canDelete) {
+          actions.push({ key: "delete", label: t("delete"), icon: <DeleteOutlineOutlinedIcon fontSize="small" />, danger: true, onClick: () => handleDeleteItem(params.row) });
+        }
+        return <RowActionsMenu ariaLabel={t("actions")} actions={actions} />;
+      }
     }
-  ], [t]);
+  ], [canDelete, canManage, t]);
 
   function openCreateModal() {
+    if (!canManage) return;
     setEditingItemId(null);
     setForm(createEmptyItemForm(customers[0] ? String(customers[0].id) : "", locations[0] ? String(locations[0].id) : ""));
     setErrorMessage("");
@@ -176,6 +186,7 @@ export function MasterInventoryPage({ items, locations, customers, isLoading, on
   }
 
   function openEditModal(item: Item) {
+    if (!canManage) return;
     setEditingItemId(item.id);
     setForm({
       sku: item.sku,
@@ -207,6 +218,7 @@ export function MasterInventoryPage({ items, locations, customers, isLoading, on
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!canManage) return;
     setIsSubmitting(true);
     setErrorMessage("");
 
@@ -261,6 +273,7 @@ export function MasterInventoryPage({ items, locations, customers, isLoading, on
   }
 
   async function handleDeleteItem(item: Item) {
+    if (!canDelete) return;
     if (!window.confirm(t("deleteStockRowConfirm", { sku: item.sku, storage: item.locationName, section: item.storageSection || "A" }))) {
       return;
     }
@@ -281,10 +294,13 @@ export function MasterInventoryPage({ items, locations, customers, isLoading, on
       <section className="workbook-panel workbook-panel--full">
         <div className="tab-strip">
           <div className="tab-strip__toolbar">
-            <div className="tab-strip__actions">
-              <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addNew")}</Button>
-            </div>
+            {canManage ? (
+              <div className="tab-strip__actions">
+                <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addNew")}</Button>
+              </div>
+            ) : null}
           </div>
+          {permissionNote ? <div className="sheet-note sheet-note--readonly">{permissionNote}</div> : null}
           <div className="filter-bar">
             <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("stockByLocationSearchPlaceholder")} /></label>
             <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>

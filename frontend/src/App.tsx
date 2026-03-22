@@ -6,6 +6,7 @@ import {
   FactCheckOutlined,
   GroupsOutlined,
   HistoryOutlined,
+  ManageAccountsOutlined,
   MoveToInboxOutlined,
   OutboxOutlined,
   SettingsOutlined,
@@ -34,6 +35,7 @@ import { SKUMasterPage } from "./components/SKUMasterPage";
 import { SettingsPage } from "./components/SettingsPage";
 import { StorageManagementPage } from "./components/StorageManagementPage";
 import { TransferManagementPage } from "./components/TransferManagementPage";
+import { UserManagementPage } from "./components/UserManagementPage";
 import { ApiError, api } from "./lib/api";
 import { parseDateValue } from "./lib/dates";
 import { useI18n } from "./lib/i18n";
@@ -58,6 +60,7 @@ export default function App() {
   const [activePage, setActivePage] = useState<PageKey>(() => getPageFromPath(window.location.pathname));
   const [locations, setLocations] = useState<Location[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [skuMasters, setSkuMasters] = useState<SKUMaster[]>([]);
   const [items, setItems] = useState<Item[]>([]);
@@ -112,7 +115,7 @@ export default function App() {
     if (showSpinner) setIsLoading(true);
     setErrorMessage("");
     try {
-      const [locationsResponse, customersResponse, skuMastersResponse, itemsResponse, movementsResponse, inboundDocumentsResponse, outboundDocumentsResponse, adjustmentsResponse, transfersResponse, cycleCountsResponse, auditLogsResponse] = await Promise.all([
+      const [locationsResponse, customersResponse, skuMastersResponse, itemsResponse, movementsResponse, inboundDocumentsResponse, outboundDocumentsResponse, adjustmentsResponse, transfersResponse, cycleCountsResponse, auditLogsResponse, usersResponse] = await Promise.all([
         api.getLocations(),
         api.getCustomers(),
         api.getSKUMasters(),
@@ -123,11 +126,13 @@ export default function App() {
         api.getInventoryAdjustments(300),
         api.getInventoryTransfers(300),
         api.getCycleCounts(300),
-        currentRole === "admin" ? api.getAuditLogs(500) : Promise.resolve([])
+        currentRole === "admin" ? api.getAuditLogs(500) : Promise.resolve([]),
+        currentRole === "admin" ? api.getUsers() : Promise.resolve([])
       ]);
       startTransition(() => {
         setLocations(locationsResponse);
         setCustomers(customersResponse);
+        setUsers(usersResponse);
         setAuditLogs(auditLogsResponse);
         setSkuMasters(skuMastersResponse);
         setItems(itemsResponse);
@@ -182,6 +187,7 @@ export default function App() {
       await api.logout();
       setCurrentUser(null);
       setCustomers([]);
+      setUsers([]);
       setAuditLogs([]);
       setLocations([]);
       setItems([]);
@@ -199,6 +205,13 @@ export default function App() {
   }
 
   const canViewAuditLogs = currentUser?.role === "admin";
+  const canManageUsers = currentUser?.role === "admin";
+
+  useEffect(() => {
+    if ((activePage === "audit-logs" && !canViewAuditLogs) || (activePage === "user-management" && !canManageUsers)) {
+      navigateToPage("dashboard", setActivePage);
+    }
+  }, [activePage, canManageUsers, canViewAuditLogs]);
   const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
   const filteredItems = useMemo(() => items.filter((item) => {
     const matchesSearch = normalizedSearch.length === 0
@@ -247,6 +260,7 @@ export default function App() {
     { key: "all-activity", label: t("allActivity"), description: t("allActivityDesc"), icon: <HistoryOutlined fontSize="small" /> },
     { key: "customers", label: t("customers"), description: t("customersDesc"), icon: <GroupsOutlined fontSize="small" /> },
     ...(canViewAuditLogs ? [{ key: "audit-logs" as PageKey, label: t("auditLogs"), description: t("auditLogsDesc"), icon: <BadgeOutlined fontSize="small" /> }] : []),
+    ...(canManageUsers ? [{ key: "user-management" as PageKey, label: t("userManagement"), description: t("userManagementDesc"), icon: <ManageAccountsOutlined fontSize="small" /> }] : []),
     { key: "sku-master", label: t("skuMaster"), description: t("skuMasterDesc"), icon: <CategoryOutlined fontSize="small" /> },
     { key: "stock-by-location", label: t("stockByLocation"), description: t("stockByLocationDesc"), icon: <WarehouseOutlined fontSize="small" /> },
     { key: "storage-management", label: t("storageManagement"), description: t("storageManagementDesc"), icon: <WarehouseOutlined fontSize="small" /> },
@@ -310,11 +324,12 @@ export default function App() {
         {activePage === "transfers" ? <TransferManagementPage transfers={transfers} items={items} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
         {activePage === "cycle-counts" ? <CycleCountManagementPage cycleCounts={cycleCounts} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
         {activePage === "all-activity" ? <AllActivityPage movements={movements} locations={locations} customers={customers} isLoading={isLoading} /> : null}
-        {activePage === "customers" ? <CustomerManagementPage customers={customers} items={items} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+        {activePage === "customers" ? <CustomerManagementPage customers={customers} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
         {activePage === "audit-logs" && canViewAuditLogs ? <AuditLogPage auditLogs={auditLogs} isLoading={isLoading} /> : null}
-        {activePage === "sku-master" ? <SKUMasterPage skuMasters={skuMasters} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
-        {activePage === "stock-by-location" ? <MasterInventoryPage items={items} locations={locations} customers={customers} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
-        {activePage === "storage-management" ? <StorageManagementPage locations={locations} items={items} onRefresh={() => loadAppData(false)} /> : null}
+        {activePage === "user-management" && canManageUsers ? <UserManagementPage users={users} currentUser={currentUser} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+        {activePage === "sku-master" ? <SKUMasterPage skuMasters={skuMasters} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+        {activePage === "stock-by-location" ? <MasterInventoryPage items={items} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+        {activePage === "storage-management" ? <StorageManagementPage locations={locations} items={items} currentUserRole={currentUser.role} onRefresh={() => loadAppData(false)} /> : null}
         {activePage === "settings" ? <SettingsPage /> : null}
 
         {activePage === "dashboard" ? (

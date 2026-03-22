@@ -15,6 +15,16 @@ type contextKey string
 const userContextKey contextKey = "authUser"
 
 func (s *Server) handleSignUp(c *gin.Context) {
+	canSelfRegister, err := s.store.CanSelfRegister(c.Request.Context())
+	if err != nil {
+		writeServerError(c, err)
+		return
+	}
+	if !canSelfRegister {
+		writeError(c, http.StatusForbidden, "self-service signup is disabled")
+		return
+	}
+
 	var input service.RegisterUserInput
 	if err := bindJSON(c, &input); err != nil {
 		writeError(c, http.StatusBadRequest, err.Error())
