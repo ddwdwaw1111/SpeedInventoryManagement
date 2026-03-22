@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -34,31 +35,49 @@ func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName s
 	api.POST("/auth/signup", server.handleSignUp)
 	api.POST("/auth/login", server.handleLogin)
 	api.POST("/auth/logout", server.handleLogout)
-	api.GET("/sku-master", server.handleListSKUMasters)
-	api.POST("/sku-master", server.handleCreateSKUMaster)
-	api.PUT("/sku-master/:id", server.handleUpdateSKUMaster)
-	api.DELETE("/sku-master/:id", server.handleDeleteSKUMaster)
 
 	protected := api.Group("")
 	protected.Use(server.requireAuth())
 	protected.GET("/auth/me", server.handleMe)
 	protected.GET("/dashboard", server.handleDashboard)
 	protected.GET("/customers", server.handleListCustomers)
-	protected.POST("/customers", server.handleCreateCustomer)
-	protected.PUT("/customers/:id", server.handleUpdateCustomer)
-	protected.DELETE("/customers/:id", server.handleDeleteCustomer)
 	protected.GET("/locations", server.handleListLocations)
-	protected.POST("/locations", server.handleCreateLocation)
-	protected.PUT("/locations/:id", server.handleUpdateLocation)
-	protected.DELETE("/locations/:id", server.handleDeleteLocation)
+	protected.GET("/sku-master", server.handleListSKUMasters)
 	protected.GET("/items", server.handleListItems)
-	protected.POST("/items", server.handleCreateItem)
-	protected.PUT("/items/:id", server.handleUpdateItem)
-	protected.DELETE("/items/:id", server.handleDeleteItem)
 	protected.GET("/movements", server.handleListMovements)
-	protected.POST("/movements", server.handleCreateMovement)
-	protected.PUT("/movements/:id", server.handleUpdateMovement)
-	protected.DELETE("/movements/:id", server.handleDeleteMovement)
+	protected.GET("/outbound-documents", server.handleListOutboundDocuments)
+	protected.GET("/inbound-documents", server.handleListInboundDocuments)
+	protected.GET("/adjustments", server.handleListInventoryAdjustments)
+	protected.GET("/transfers", server.handleListInventoryTransfers)
+	protected.GET("/cycle-counts", server.handleListCycleCounts)
+
+	operator := protected.Group("")
+	operator.Use(server.requireRoles(service.RoleAdmin, service.RoleOperator))
+	operator.POST("/items", server.handleCreateItem)
+	operator.PUT("/items/:id", server.handleUpdateItem)
+	operator.POST("/movements", server.handleCreateMovement)
+	operator.PUT("/movements/:id", server.handleUpdateMovement)
+	operator.DELETE("/movements/:id", server.handleDeleteMovement)
+	operator.POST("/outbound-documents", server.handleCreateOutboundDocument)
+	operator.POST("/outbound-documents/:id/cancel", server.handleCancelOutboundDocument)
+	operator.POST("/inbound-documents", server.handleCreateInboundDocument)
+	operator.POST("/adjustments", server.handleCreateInventoryAdjustment)
+	operator.POST("/transfers", server.handleCreateInventoryTransfer)
+	operator.POST("/cycle-counts", server.handleCreateCycleCount)
+
+	admin := protected.Group("")
+	admin.Use(server.requireRoles(service.RoleAdmin))
+	admin.POST("/customers", server.handleCreateCustomer)
+	admin.PUT("/customers/:id", server.handleUpdateCustomer)
+	admin.DELETE("/customers/:id", server.handleDeleteCustomer)
+	admin.GET("/audit-logs", server.handleListAuditLogs)
+	admin.POST("/locations", server.handleCreateLocation)
+	admin.PUT("/locations/:id", server.handleUpdateLocation)
+	admin.DELETE("/locations/:id", server.handleDeleteLocation)
+	admin.POST("/sku-master", server.handleCreateSKUMaster)
+	admin.PUT("/sku-master/:id", server.handleUpdateSKUMaster)
+	admin.DELETE("/sku-master/:id", server.handleDeleteSKUMaster)
+	admin.DELETE("/items/:id", server.handleDeleteItem)
 
 	return router
 }
@@ -103,6 +122,13 @@ func (s *Server) handleCreateCustomer(c *gin.Context) {
 		return
 	}
 
+	s.writeAuditLog(c, "CREATE", "customer", customer.ID, customer.Name, "Created customer", map[string]any{
+		"name":        customer.Name,
+		"contactName": customer.ContactName,
+		"email":       customer.Email,
+		"phone":       customer.Phone,
+	})
+
 	writeJSON(c, http.StatusCreated, customer)
 }
 
@@ -125,6 +151,13 @@ func (s *Server) handleUpdateCustomer(c *gin.Context) {
 		return
 	}
 
+	s.writeAuditLog(c, "UPDATE", "customer", customer.ID, customer.Name, "Updated customer", map[string]any{
+		"name":        customer.Name,
+		"contactName": customer.ContactName,
+		"email":       customer.Email,
+		"phone":       customer.Phone,
+	})
+
 	writeJSON(c, http.StatusOK, customer)
 }
 
@@ -139,6 +172,8 @@ func (s *Server) handleDeleteCustomer(c *gin.Context) {
 		writeDomainError(c, err)
 		return
 	}
+
+	s.writeAuditLog(c, "DELETE", "customer", customerID, fmt.Sprintf("customer:%d", customerID), "Deleted customer", nil)
 
 	c.Status(http.StatusNoContent)
 }
@@ -166,6 +201,12 @@ func (s *Server) handleCreateLocation(c *gin.Context) {
 		return
 	}
 
+	s.writeAuditLog(c, "CREATE", "location", location.ID, location.Name, "Created storage location", map[string]any{
+		"name":     location.Name,
+		"zone":     location.Zone,
+		"capacity": location.Capacity,
+	})
+
 	writeJSON(c, http.StatusCreated, location)
 }
 
@@ -188,6 +229,12 @@ func (s *Server) handleUpdateLocation(c *gin.Context) {
 		return
 	}
 
+	s.writeAuditLog(c, "UPDATE", "location", location.ID, location.Name, "Updated storage location", map[string]any{
+		"name":     location.Name,
+		"zone":     location.Zone,
+		"capacity": location.Capacity,
+	})
+
 	writeJSON(c, http.StatusOK, location)
 }
 
@@ -202,6 +249,8 @@ func (s *Server) handleDeleteLocation(c *gin.Context) {
 		writeDomainError(c, err)
 		return
 	}
+
+	s.writeAuditLog(c, "DELETE", "location", locationID, fmt.Sprintf("location:%d", locationID), "Deleted storage location", nil)
 
 	c.Status(http.StatusNoContent)
 }
@@ -229,6 +278,14 @@ func (s *Server) handleCreateSKUMaster(c *gin.Context) {
 		return
 	}
 
+	s.writeAuditLog(c, "CREATE", "sku_master", skuMaster.ID, skuMaster.SKU, "Created SKU master", map[string]any{
+		"sku":           skuMaster.SKU,
+		"name":          skuMaster.Name,
+		"category":      skuMaster.Category,
+		"reorderLevel":  skuMaster.ReorderLevel,
+		"unit":          skuMaster.Unit,
+	})
+
 	writeJSON(c, http.StatusCreated, skuMaster)
 }
 
@@ -251,6 +308,14 @@ func (s *Server) handleUpdateSKUMaster(c *gin.Context) {
 		return
 	}
 
+	s.writeAuditLog(c, "UPDATE", "sku_master", skuMaster.ID, skuMaster.SKU, "Updated SKU master", map[string]any{
+		"sku":          skuMaster.SKU,
+		"name":         skuMaster.Name,
+		"category":     skuMaster.Category,
+		"reorderLevel": skuMaster.ReorderLevel,
+		"unit":         skuMaster.Unit,
+	})
+
 	writeJSON(c, http.StatusOK, skuMaster)
 }
 
@@ -265,6 +330,8 @@ func (s *Server) handleDeleteSKUMaster(c *gin.Context) {
 		writeDomainError(c, err)
 		return
 	}
+
+	s.writeAuditLog(c, "DELETE", "sku_master", skuMasterID, fmt.Sprintf("sku_master:%d", skuMasterID), "Deleted SKU master", nil)
 
 	c.Status(http.StatusNoContent)
 }
@@ -309,6 +376,14 @@ func (s *Server) handleCreateItem(c *gin.Context) {
 		return
 	}
 
+	s.writeAuditLog(c, "CREATE", "inventory_item", item.ID, item.SKU, "Created stock by location row", map[string]any{
+		"sku":            item.SKU,
+		"customer":       item.CustomerName,
+		"location":       item.LocationName,
+		"storageSection": item.StorageSection,
+		"quantity":       item.Quantity,
+	})
+
 	writeJSON(c, http.StatusCreated, item)
 }
 
@@ -331,6 +406,14 @@ func (s *Server) handleUpdateItem(c *gin.Context) {
 		return
 	}
 
+	s.writeAuditLog(c, "UPDATE", "inventory_item", item.ID, item.SKU, "Updated stock by location row", map[string]any{
+		"sku":            item.SKU,
+		"customer":       item.CustomerName,
+		"location":       item.LocationName,
+		"storageSection": item.StorageSection,
+		"quantity":       item.Quantity,
+	})
+
 	writeJSON(c, http.StatusOK, item)
 }
 
@@ -345,6 +428,8 @@ func (s *Server) handleDeleteItem(c *gin.Context) {
 		writeDomainError(c, err)
 		return
 	}
+
+	s.writeAuditLog(c, "DELETE", "inventory_item", itemID, fmt.Sprintf("inventory_item:%d", itemID), "Deleted stock by location row", nil)
 
 	c.Status(http.StatusNoContent)
 }
@@ -382,6 +467,13 @@ func (s *Server) handleCreateMovement(c *gin.Context) {
 		return
 	}
 
+	s.writeAuditLog(c, "CREATE", "movement", movement.ID, movement.SKU, "Created standalone movement", map[string]any{
+		"movementType": movement.MovementType,
+		"quantityChange": movement.QuantityChange,
+		"location": movement.LocationName,
+		"storageSection": movement.StorageSection,
+	})
+
 	writeJSON(c, http.StatusCreated, movement)
 }
 
@@ -404,6 +496,13 @@ func (s *Server) handleUpdateMovement(c *gin.Context) {
 		return
 	}
 
+	s.writeAuditLog(c, "UPDATE", "movement", movement.ID, movement.SKU, "Updated standalone movement", map[string]any{
+		"movementType": movement.MovementType,
+		"quantityChange": movement.QuantityChange,
+		"location": movement.LocationName,
+		"storageSection": movement.StorageSection,
+	})
+
 	writeJSON(c, http.StatusOK, movement)
 }
 
@@ -414,12 +513,319 @@ func (s *Server) handleDeleteMovement(c *gin.Context) {
 		return
 	}
 
-	if err := s.store.DeleteMovement(c.Request.Context(), movementID); err != nil {
+	restoreStock := true
+	if value := strings.TrimSpace(c.Query("restoreStock")); value != "" {
+		parsed, parseErr := strconv.ParseBool(value)
+		if parseErr != nil {
+			writeError(c, http.StatusBadRequest, "restoreStock must be true or false")
+			return
+		}
+		restoreStock = parsed
+	}
+
+	if err := s.store.DeleteMovement(c.Request.Context(), movementID, restoreStock); err != nil {
 		writeDomainError(c, err)
 		return
 	}
 
+	s.writeAuditLog(c, "DELETE", "movement", movementID, fmt.Sprintf("movement:%d", movementID), "Deleted standalone movement", map[string]any{
+		"restoreStock": restoreStock,
+	})
+
 	c.Status(http.StatusNoContent)
+}
+
+func (s *Server) handleListOutboundDocuments(c *gin.Context) {
+	limit := 100
+	if value := strings.TrimSpace(c.Query("limit")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, "limit must be a number")
+			return
+		}
+		limit = parsed
+	}
+
+	documents, err := s.store.ListOutboundDocuments(c.Request.Context(), limit)
+	if err != nil {
+		writeServerError(c, err)
+		return
+	}
+
+	writeJSON(c, http.StatusOK, documents)
+}
+
+func (s *Server) handleCreateOutboundDocument(c *gin.Context) {
+	var input service.CreateOutboundDocumentInput
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	document, err := s.store.CreateOutboundDocument(c.Request.Context(), input)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "CREATE", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Created outbound document", map[string]any{
+		"packingListNo": document.PackingListNo,
+		"customer":      document.CustomerName,
+		"totalLines":    document.TotalLines,
+		"totalQty":      document.TotalQty,
+	})
+
+	writeJSON(c, http.StatusCreated, document)
+}
+
+func (s *Server) handleCancelOutboundDocument(c *gin.Context) {
+	documentID, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var input service.CancelOutboundDocumentInput
+	if c.Request.ContentLength > 0 {
+		if err := bindJSON(c, &input); err != nil {
+			writeError(c, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
+	document, err := s.store.CancelOutboundDocument(c.Request.Context(), documentID, input)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "CANCEL", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Cancelled outbound document", map[string]any{
+		"packingListNo": document.PackingListNo,
+		"reason":        input.Reason,
+		"cancelledAt":   document.CancelledAt,
+	})
+
+	writeJSON(c, http.StatusOK, document)
+}
+
+func (s *Server) handleListInboundDocuments(c *gin.Context) {
+	limit := 100
+	if value := strings.TrimSpace(c.Query("limit")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, "limit must be a number")
+			return
+		}
+		limit = parsed
+	}
+
+	documents, err := s.store.ListInboundDocuments(c.Request.Context(), limit)
+	if err != nil {
+		writeServerError(c, err)
+		return
+	}
+
+	writeJSON(c, http.StatusOK, documents)
+}
+
+func (s *Server) handleCreateInboundDocument(c *gin.Context) {
+	var input service.CreateInboundDocumentInput
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	document, err := s.store.CreateInboundDocument(c.Request.Context(), input)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "CREATE", "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), "Created inbound document", map[string]any{
+		"containerNo":  document.ContainerNo,
+		"customer":     document.CustomerName,
+		"location":     document.LocationName,
+		"totalLines":   document.TotalLines,
+		"totalReceived": document.TotalReceivedQty,
+	})
+
+	writeJSON(c, http.StatusCreated, document)
+}
+
+func (s *Server) handleListInventoryAdjustments(c *gin.Context) {
+	limit := 100
+	if value := strings.TrimSpace(c.Query("limit")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, "limit must be a number")
+			return
+		}
+		limit = parsed
+	}
+
+	adjustments, err := s.store.ListInventoryAdjustments(c.Request.Context(), limit)
+	if err != nil {
+		writeServerError(c, err)
+		return
+	}
+
+	writeJSON(c, http.StatusOK, adjustments)
+}
+
+func (s *Server) handleCreateInventoryAdjustment(c *gin.Context) {
+	var input service.CreateInventoryAdjustmentInput
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	adjustment, err := s.store.CreateInventoryAdjustment(c.Request.Context(), input)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "CREATE", "inventory_adjustment", adjustment.ID, adjustment.AdjustmentNo, "Created inventory adjustment", map[string]any{
+		"reasonCode":     adjustment.ReasonCode,
+		"totalLines":     adjustment.TotalLines,
+		"totalAdjustQty": adjustment.TotalAdjustQty,
+	})
+
+	writeJSON(c, http.StatusCreated, adjustment)
+}
+
+func (s *Server) handleListInventoryTransfers(c *gin.Context) {
+	limit := 100
+	if value := strings.TrimSpace(c.Query("limit")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, "limit must be a number")
+			return
+		}
+		limit = parsed
+	}
+
+	transfers, err := s.store.ListInventoryTransfers(c.Request.Context(), limit)
+	if err != nil {
+		writeServerError(c, err)
+		return
+	}
+
+	writeJSON(c, http.StatusOK, transfers)
+}
+
+func (s *Server) handleCreateInventoryTransfer(c *gin.Context) {
+	var input service.CreateInventoryTransferInput
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	transfer, err := s.store.CreateInventoryTransfer(c.Request.Context(), input)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "CREATE", "inventory_transfer", transfer.ID, transfer.TransferNo, "Created inventory transfer", map[string]any{
+		"totalLines": transfer.TotalLines,
+		"totalQty":   transfer.TotalQty,
+		"routes":     transfer.Routes,
+	})
+
+	writeJSON(c, http.StatusCreated, transfer)
+}
+
+func (s *Server) handleListCycleCounts(c *gin.Context) {
+	limit := 100
+	if value := strings.TrimSpace(c.Query("limit")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, "limit must be a number")
+			return
+		}
+		limit = parsed
+	}
+
+	cycleCounts, err := s.store.ListCycleCounts(c.Request.Context(), limit)
+	if err != nil {
+		writeServerError(c, err)
+		return
+	}
+
+	writeJSON(c, http.StatusOK, cycleCounts)
+}
+
+func (s *Server) handleCreateCycleCount(c *gin.Context) {
+	var input service.CreateCycleCountInput
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	cycleCount, err := s.store.CreateCycleCount(c.Request.Context(), input)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "CREATE", "cycle_count", cycleCount.ID, cycleCount.CountNo, "Created cycle count", map[string]any{
+		"totalLines":    cycleCount.TotalLines,
+		"totalVariance": cycleCount.TotalVariance,
+	})
+
+	writeJSON(c, http.StatusCreated, cycleCount)
+}
+
+func (s *Server) handleListAuditLogs(c *gin.Context) {
+	limit := 200
+	if value := strings.TrimSpace(c.Query("limit")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, "limit must be a number")
+			return
+		}
+		limit = parsed
+	}
+
+	logs, err := s.store.ListAuditLogs(c.Request.Context(), limit)
+	if err != nil {
+		writeServerError(c, err)
+		return
+	}
+
+	writeJSON(c, http.StatusOK, logs)
+}
+
+func (s *Server) writeAuditLog(c *gin.Context, action string, entityType string, entityID int64, targetLabel string, summary string, details any) {
+	authPayload, ok := userFromContext(c)
+	if !ok {
+		return
+	}
+
+	_ = s.store.CreateAuditLog(c.Request.Context(), service.CreateAuditLogInput{
+		ActorUserID:   authPayload.User.ID,
+		ActorEmail:    authPayload.User.Email,
+		ActorName:     authPayload.User.FullName,
+		ActorRole:     authPayload.User.Role,
+		Action:        action,
+		EntityType:    entityType,
+		EntityID:      entityID,
+		TargetLabel:   targetLabel,
+		Summary:       summary,
+		RequestMethod: c.Request.Method,
+		RequestPath:   c.FullPath(),
+		Details:       details,
+	})
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func bindJSON(c *gin.Context, destination any) error {

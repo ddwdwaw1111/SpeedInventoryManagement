@@ -94,6 +94,30 @@ func (s *Server) requireAuth() gin.HandlerFunc {
 	}
 }
 
+func (s *Server) requireRoles(roles ...string) gin.HandlerFunc {
+	allowed := make(map[string]struct{}, len(roles))
+	for _, role := range roles {
+		allowed[role] = struct{}{}
+	}
+
+	return func(c *gin.Context) {
+		authPayload, ok := userFromContext(c)
+		if !ok {
+			writeError(c, http.StatusUnauthorized, "authentication required")
+			c.Abort()
+			return
+		}
+
+		if _, ok := allowed[authPayload.User.Role]; !ok {
+			writeError(c, http.StatusForbidden, "you do not have permission to perform this action")
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
 func userFromContext(c *gin.Context) (service.AuthPayload, bool) {
 	value, ok := c.Get(string(userContextKey))
 	if !ok {

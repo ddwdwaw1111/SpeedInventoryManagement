@@ -1,10 +1,15 @@
 import {
   AssessmentOutlined,
+  BadgeOutlined,
   CategoryOutlined,
+  CompareArrowsOutlined,
+  FactCheckOutlined,
   GroupsOutlined,
+  HistoryOutlined,
   MoveToInboxOutlined,
   OutboxOutlined,
   SettingsOutlined,
+  TuneOutlined,
   WarehouseOutlined
 } from "@mui/icons-material";
 import {
@@ -18,17 +23,22 @@ import {
 import { BarChart, PieChart } from "@mui/x-charts";
 
 import { ActivityManagementPage } from "./components/ActivityManagementPage";
+import { AdjustmentManagementPage } from "./components/AdjustmentManagementPage";
+import { AllActivityPage } from "./components/AllActivityPage";
+import { AuditLogPage } from "./components/AuditLogPage";
 import { AppHeaderUser, AuthPage } from "./components/AuthPage";
 import { CustomerManagementPage } from "./components/CustomerManagementPage";
+import { CycleCountManagementPage } from "./components/CycleCountManagementPage";
 import { MasterInventoryPage } from "./components/MasterInventoryPage";
 import { SKUMasterPage } from "./components/SKUMasterPage";
 import { SettingsPage } from "./components/SettingsPage";
 import { StorageManagementPage } from "./components/StorageManagementPage";
+import { TransferManagementPage } from "./components/TransferManagementPage";
 import { ApiError, api } from "./lib/api";
 import { parseDateValue } from "./lib/dates";
 import { useI18n } from "./lib/i18n";
 import { getPageFromPath, navigateToPage, type PageKey } from "./lib/routes";
-import type { Customer, Item, Location, LoginPayload, Movement, SKUMaster, SignUpPayload, User } from "./lib/types";
+import type { AuditLog, Customer, CycleCount, InboundDocument, InventoryAdjustment, InventoryTransfer, Item, Location, LoginPayload, Movement, OutboundDocument, SKUMaster, SignUpPayload, User } from "./lib/types";
 
 type ReportGranularity = "day" | "month" | "year";
 type ChartTone = "blue" | "green" | "amber" | "red";
@@ -48,9 +58,15 @@ export default function App() {
   const [activePage, setActivePage] = useState<PageKey>(() => getPageFromPath(window.location.pathname));
   const [locations, setLocations] = useState<Location[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [skuMasters, setSkuMasters] = useState<SKUMaster[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [movements, setMovements] = useState<Movement[]>([]);
+  const [inboundDocuments, setInboundDocuments] = useState<InboundDocument[]>([]);
+  const [outboundDocuments, setOutboundDocuments] = useState<OutboundDocument[]>([]);
+  const [adjustments, setAdjustments] = useState<InventoryAdjustment[]>([]);
+  const [transfers, setTransfers] = useState<InventoryTransfer[]>([]);
+  const [cycleCounts, setCycleCounts] = useState<CycleCount[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
@@ -79,7 +95,7 @@ export default function App() {
     try {
       const session = await api.getCurrentSession();
       setCurrentUser(session.user);
-      await loadAppData(false);
+      await loadAppData(false, session.user.role);
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         setCurrentUser(null);
@@ -92,19 +108,35 @@ export default function App() {
     }
   }
 
-  async function loadAppData(showSpinner: boolean) {
+  async function loadAppData(showSpinner: boolean, currentRole = currentUser?.role) {
     if (showSpinner) setIsLoading(true);
     setErrorMessage("");
     try {
-      const [locationsResponse, customersResponse, skuMastersResponse, itemsResponse, movementsResponse] = await Promise.all([
-        api.getLocations(), api.getCustomers(), api.getSKUMasters(), api.getItems(), api.getMovements(200)
+      const [locationsResponse, customersResponse, skuMastersResponse, itemsResponse, movementsResponse, inboundDocumentsResponse, outboundDocumentsResponse, adjustmentsResponse, transfersResponse, cycleCountsResponse, auditLogsResponse] = await Promise.all([
+        api.getLocations(),
+        api.getCustomers(),
+        api.getSKUMasters(),
+        api.getItems(),
+        api.getMovements(1000),
+        api.getInboundDocuments(300),
+        api.getOutboundDocuments(300),
+        api.getInventoryAdjustments(300),
+        api.getInventoryTransfers(300),
+        api.getCycleCounts(300),
+        currentRole === "admin" ? api.getAuditLogs(500) : Promise.resolve([])
       ]);
       startTransition(() => {
         setLocations(locationsResponse);
         setCustomers(customersResponse);
+        setAuditLogs(auditLogsResponse);
         setSkuMasters(skuMastersResponse);
         setItems(itemsResponse);
         setMovements(movementsResponse);
+        setInboundDocuments(inboundDocumentsResponse);
+        setOutboundDocuments(outboundDocumentsResponse);
+        setAdjustments(adjustmentsResponse);
+        setTransfers(transfersResponse);
+        setCycleCounts(cycleCountsResponse);
       });
     } catch (error) {
       setErrorMessage(getErrorMessage(error, t("couldNotLoadReport")));
@@ -119,7 +151,7 @@ export default function App() {
     try {
       const session = await api.login(payload);
       setCurrentUser(session.user);
-      await loadAppData(true);
+      await loadAppData(true, session.user.role);
     } catch (error) {
       setAuthErrorMessage(getErrorMessage(error, "Could not sign in."));
     } finally {
@@ -134,7 +166,7 @@ export default function App() {
     try {
       const session = await api.signUp(payload);
       setCurrentUser(session.user);
-      await loadAppData(true);
+      await loadAppData(true, session.user.role);
     } catch (error) {
       setAuthErrorMessage(getErrorMessage(error, "Could not create your account."));
     } finally {
@@ -150,9 +182,15 @@ export default function App() {
       await api.logout();
       setCurrentUser(null);
       setCustomers([]);
+      setAuditLogs([]);
       setLocations([]);
       setItems([]);
       setMovements([]);
+      setInboundDocuments([]);
+      setOutboundDocuments([]);
+      setAdjustments([]);
+      setTransfers([]);
+      setCycleCounts([]);
     } catch (error) {
       setAuthErrorMessage(getErrorMessage(error, "Could not sign out."));
     } finally {
@@ -160,6 +198,7 @@ export default function App() {
     }
   }
 
+  const canViewAuditLogs = currentUser?.role === "admin";
   const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
   const filteredItems = useMemo(() => items.filter((item) => {
     const matchesSearch = normalizedSearch.length === 0
@@ -202,7 +241,12 @@ export default function App() {
     { key: "dashboard", label: t("report"), description: t("reportDesc"), icon: <AssessmentOutlined fontSize="small" /> },
     { key: "inbound-management", label: t("inbound"), description: t("inboundDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
     { key: "outbound-management", label: t("outbound"), description: t("outboundDesc"), icon: <OutboxOutlined fontSize="small" /> },
+    { key: "adjustments", label: t("adjustments"), description: t("adjustmentsDesc"), icon: <TuneOutlined fontSize="small" /> },
+    { key: "transfers", label: t("transfers"), description: t("transfersDesc"), icon: <CompareArrowsOutlined fontSize="small" /> },
+    { key: "cycle-counts", label: t("cycleCounts"), description: t("cycleCountsDesc"), icon: <FactCheckOutlined fontSize="small" /> },
+    { key: "all-activity", label: t("allActivity"), description: t("allActivityDesc"), icon: <HistoryOutlined fontSize="small" /> },
     { key: "customers", label: t("customers"), description: t("customersDesc"), icon: <GroupsOutlined fontSize="small" /> },
+    ...(canViewAuditLogs ? [{ key: "audit-logs" as PageKey, label: t("auditLogs"), description: t("auditLogsDesc"), icon: <BadgeOutlined fontSize="small" /> }] : []),
     { key: "sku-master", label: t("skuMaster"), description: t("skuMasterDesc"), icon: <CategoryOutlined fontSize="small" /> },
     { key: "stock-by-location", label: t("stockByLocation"), description: t("stockByLocationDesc"), icon: <WarehouseOutlined fontSize="small" /> },
     { key: "storage-management", label: t("storageManagement"), description: t("storageManagementDesc"), icon: <WarehouseOutlined fontSize="small" /> },
@@ -260,9 +304,14 @@ export default function App() {
       </header>
 
       <div className="workspace-shell">
-        {activePage === "inbound-management" ? <ActivityManagementPage mode="IN" items={items} locations={locations} customers={customers} movements={movements} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
-        {activePage === "outbound-management" ? <ActivityManagementPage mode="OUT" items={items} locations={locations} customers={customers} movements={movements} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+        {activePage === "inbound-management" ? <ActivityManagementPage mode="IN" items={items} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+        {activePage === "outbound-management" ? <ActivityManagementPage mode="OUT" items={items} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+        {activePage === "adjustments" ? <AdjustmentManagementPage adjustments={adjustments} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+        {activePage === "transfers" ? <TransferManagementPage transfers={transfers} items={items} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+        {activePage === "cycle-counts" ? <CycleCountManagementPage cycleCounts={cycleCounts} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+        {activePage === "all-activity" ? <AllActivityPage movements={movements} locations={locations} customers={customers} isLoading={isLoading} /> : null}
         {activePage === "customers" ? <CustomerManagementPage customers={customers} items={items} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+        {activePage === "audit-logs" && canViewAuditLogs ? <AuditLogPage auditLogs={auditLogs} isLoading={isLoading} /> : null}
         {activePage === "sku-master" ? <SKUMasterPage skuMasters={skuMasters} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
         {activePage === "stock-by-location" ? <MasterInventoryPage items={items} locations={locations} customers={customers} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
         {activePage === "storage-management" ? <StorageManagementPage locations={locations} items={items} onRefresh={() => loadAppData(false)} /> : null}
@@ -298,11 +347,11 @@ export default function App() {
                 </ReportCard>
 
                 <ReportCard title={t("topSkuOnHand")} subtitle={t("topSkuOnHandDesc")}>
-                  <InventoryBarChart rows={reportTopSkuRows} emptyLabel={t("noResults")} valueSuffix={t("units")} seriesLabel={t("onHand")} color="#22714a" />
+                  <InventoryBarChart rows={reportTopSkuRows} emptyLabel={t("noResults")} valueSuffix={t("units")} seriesLabel={t("onHand")} color="#274c77" />
                 </ReportCard>
 
                 <ReportCard title={t("lowStockAttention")} subtitle={t("lowStockAttentionDesc")}>
-                  <InventoryBarChart rows={reportLowStockRows} emptyLabel={t("noResults")} valueSuffix={t("unitsShort")} seriesLabel={t("lowStock")} color="#c18311" />
+                  <InventoryBarChart rows={reportLowStockRows} emptyLabel={t("noResults")} valueSuffix={t("unitsShort")} seriesLabel={t("lowStock")} color="#c79b5d" />
                 </ReportCard>
               </div>
             </section>
@@ -459,8 +508,8 @@ function MovementTrendChart({
           margin={{ top: 20, bottom: 20, left: 40, right: 20 }}
           xAxis={[{ scaleType: "band", dataKey: "label" }]}
           series={[
-            { dataKey: "inbound", label: inboundLabel, color: "#22714a" },
-            { dataKey: "outbound", label: outboundLabel, color: "#b64537" }
+            { dataKey: "inbound", label: inboundLabel, color: "#3c6e71" },
+            { dataKey: "outbound", label: outboundLabel, color: "#b76857" }
           ]}
           grid={{ horizontal: true }}
         />
@@ -544,7 +593,7 @@ function buildMovementTrendRows(movements: Movement[], granularity: ReportGranul
     if (row.timestamp === null) continue;
     const label = formatTrendLabel(new Date(row.timestamp), granularity);
     const trend = trendMap.get(label) ?? { label, inbound: 0, outbound: 0 };
-    if (row.movement.movementType === "IN") {
+    if (row.movement.movementType === "IN" || row.movement.movementType === "REVERSAL") {
       trend.inbound += Math.abs(row.movement.quantityChange);
     }
     if (row.movement.movementType === "OUT") {
@@ -620,8 +669,8 @@ function displayDescription(item: Pick<Item, "description" | "name">) { return i
 function getErrorMessage(error: unknown, fallbackMessage: string) { return error instanceof Error && error.message ? error.message : fallbackMessage; }
 function formatNumber(value: number) { return new Intl.NumberFormat("en-US").format(value); }
 function getChartColor(tone: ChartTone) {
-  if (tone === "green") return "#22714a";
-  if (tone === "amber") return "#c18311";
-  if (tone === "red") return "#b64537";
-  return "#1f6eaf";
+  if (tone === "green") return "#3c6e71";
+  if (tone === "amber") return "#c79b5d";
+  if (tone === "red") return "#b76857";
+  return "#274c77";
 }

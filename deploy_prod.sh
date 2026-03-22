@@ -22,7 +22,7 @@ SERVER_HOST="${SERVER_HOST:-129.213.52.3}"
 SERVER_PATH="${SERVER_PATH:-~/SpeedInventoryManagement}"
 SSH_KEY_PATH="${SSH_KEY_PATH:-$HOME/.ssh/oracle-prod.key}"
 ENV_FILE_PATH="${ENV_FILE_PATH:-$ROOT_DIR/.env.prod}"
-DEPLOY_STACK="${DEPLOY_STACK:-auto}"
+DEPLOY_STACK="${DEPLOY_STACK:-https}"
 REMOTE_ARCHIVE_NAME=""
 
 ssh_args=()
@@ -226,7 +226,7 @@ Deploy stack selection:
   auto  -> uses docker-compose.https.yml when .env.prod contains SITE_DOMAIN
            or SESSION_COOKIE_SECURE=true, otherwise docker-compose.prod.yml
   http  -> always uses docker-compose.prod.yml
-  https -> always uses docker-compose.https.yml
+  https -> always uses docker-compose.https.yml (default)
 EOF
 
 if [[ "$DEPLOY_AFTER_BUILD" == "true" ]]; then

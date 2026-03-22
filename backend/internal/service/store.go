@@ -154,6 +154,10 @@ type Item struct {
 type Movement struct {
 	ID                int64      `json:"id"`
 	ItemID            int64      `json:"itemId"`
+	InboundDocumentID int64      `json:"inboundDocumentId"`
+	InboundDocumentLineID int64  `json:"inboundDocumentLineId"`
+	OutboundDocumentID int64     `json:"outboundDocumentId"`
+	OutboundDocumentLineID int64 `json:"outboundDocumentLineId"`
 	ItemName          string     `json:"itemName"`
 	SKU               string     `json:"sku"`
 	Description       string     `json:"description"`
@@ -179,6 +183,7 @@ type Movement struct {
 	GrossWeightKgs    float64    `json:"grossWeightKgs"`
 	HeightIn          int        `json:"heightIn"`
 	OutDate           *time.Time `json:"outDate"`
+	DocumentNote      string     `json:"documentNote"`
 	Reason            string     `json:"reason"`
 	ReferenceCode     string     `json:"referenceCode"`
 	CreatedAt         time.Time  `json:"createdAt"`
@@ -233,6 +238,7 @@ type CreateMovementInput struct {
 	GrossWeightKgs    float64 `json:"grossWeightKgs"`
 	HeightIn          int    `json:"heightIn"`
 	OutDate           string `json:"outDate"`
+	DocumentNote      string `json:"documentNote"`
 	Reason            string `json:"reason"`
 	ReferenceCode     string `json:"referenceCode"`
 }
@@ -600,6 +606,10 @@ func (s *Store) ListMovements(ctx context.Context, limit int) ([]Movement, error
 		SELECT
 			m.id,
 			m.item_id,
+			COALESCE(m.inbound_document_id, 0),
+			COALESCE(m.inbound_document_line_id, 0),
+			COALESCE(m.outbound_document_id, 0),
+			COALESCE(m.outbound_document_line_id, 0),
 			i.name,
 			i.sku,
 			COALESCE(m.description_snapshot, i.description, i.name, ''),
@@ -625,6 +635,7 @@ func (s *Store) ListMovements(ctx context.Context, limit int) ([]Movement, error
 			m.gross_weight_kgs,
 			m.height_in,
 			m.out_date,
+			COALESCE(m.document_note, ''),
 			COALESCE(m.reason, ''),
 			COALESCE(m.reference_code, ''),
 			m.created_at
@@ -748,9 +759,10 @@ func (s *Store) CreateMovement(ctx context.Context, input CreateMovementInput) (
 			gross_weight_kgs,
 			height_in,
 			out_date,
+			document_note,
 			reason,
 			reference_code
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		input.ItemID,
 		customerID,
@@ -775,6 +787,7 @@ func (s *Store) CreateMovement(ctx context.Context, input CreateMovementInput) (
 		input.GrossWeightKgs,
 		input.HeightIn,
 		nullableTime(outDate),
+		nullableString(input.DocumentNote),
 		nullableString(input.Reason),
 		nullableString(input.ReferenceCode),
 	)
@@ -847,16 +860,41 @@ func (s *Store) UpdateMovement(ctx context.Context, movementID int64, input Crea
 	var previousItemID int64
 	var previousDelta int
 	var previousStorageSection string
+	var inboundDocumentID int64
+	var outboundDocumentID int64
+	var adjustmentID int64
+	var transferID int64
+	var cycleCountID int64
 	if err := tx.QueryRowContext(ctx, `
-		SELECT item_id, quantity_change, storage_section
+		SELECT
+			item_id,
+			quantity_change,
+			storage_section,
+			COALESCE(inbound_document_id, 0),
+			COALESCE(outbound_document_id, 0),
+			COALESCE(adjustment_id, 0),
+			COALESCE(transfer_id, 0),
+			COALESCE(cycle_count_id, 0)
 		FROM stock_movements
 		WHERE id = ?
 		FOR UPDATE
-	`, movementID).Scan(&previousItemID, &previousDelta, &previousStorageSection); err != nil {
+	`, movementID).Scan(
+		&previousItemID,
+		&previousDelta,
+		&previousStorageSection,
+		&inboundDocumentID,
+		&outboundDocumentID,
+		&adjustmentID,
+		&transferID,
+		&cycleCountID,
+	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Movement{}, ErrNotFound
 		}
 		return Movement{}, fmt.Errorf("load movement for update: %w", err)
+	}
+	if inboundDocumentID > 0 || outboundDocumentID > 0 || adjustmentID > 0 || transferID > 0 || cycleCountID > 0 {
+		return Movement{}, fmt.Errorf("%w: posted document lines must be edited from their document", ErrInvalidInput)
 	}
 	if input.StorageSection == "" {
 		input.StorageSection = previousStorageSection
@@ -909,6 +947,7 @@ func (s *Store) UpdateMovement(ctx context.Context, movementID int64, input Crea
 				gross_weight_kgs = ?,
 				height_in = ?,
 				out_date = ?,
+				document_note = ?,
 				reason = ?,
 				reference_code = ?
 			WHERE id = ?
@@ -935,6 +974,7 @@ func (s *Store) UpdateMovement(ctx context.Context, movementID int64, input Crea
 			input.GrossWeightKgs,
 			input.HeightIn,
 			nullableTime(outDate),
+			nullableString(input.DocumentNote),
 			nullableString(input.Reason),
 			nullableString(input.ReferenceCode),
 			movementID,
@@ -992,6 +1032,7 @@ func (s *Store) UpdateMovement(ctx context.Context, movementID int64, input Crea
 				gross_weight_kgs = ?,
 				height_in = ?,
 				out_date = ?,
+				document_note = ?,
 				reason = ?,
 				reference_code = ?
 			WHERE id = ?
@@ -1019,6 +1060,7 @@ func (s *Store) UpdateMovement(ctx context.Context, movementID int64, input Crea
 			input.GrossWeightKgs,
 			input.HeightIn,
 			nullableTime(outDate),
+			nullableString(input.DocumentNote),
 			nullableString(input.Reason),
 			nullableString(input.ReferenceCode),
 			movementID,
@@ -1038,7 +1080,7 @@ func (s *Store) UpdateMovement(ctx context.Context, movementID int64, input Crea
 	return s.getMovement(ctx, movementID)
 }
 
-func (s *Store) DeleteMovement(ctx context.Context, movementID int64) error {
+func (s *Store) DeleteMovement(ctx context.Context, movementID int64, restoreStock bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -1047,16 +1089,45 @@ func (s *Store) DeleteMovement(ctx context.Context, movementID int64) error {
 
 	var itemID int64
 	var quantityChange int
+	var movementType string
+	var inboundDocumentID int64
+	var outboundDocumentID int64
+	var adjustmentID int64
+	var transferID int64
+	var cycleCountID int64
 	if err := tx.QueryRowContext(ctx, `
-		SELECT item_id, quantity_change
+		SELECT
+			item_id,
+			quantity_change,
+			movement_type,
+			COALESCE(inbound_document_id, 0),
+			COALESCE(outbound_document_id, 0),
+			COALESCE(adjustment_id, 0),
+			COALESCE(transfer_id, 0),
+			COALESCE(cycle_count_id, 0)
 		FROM stock_movements
 		WHERE id = ?
 		FOR UPDATE
-	`, movementID).Scan(&itemID, &quantityChange); err != nil {
+	`, movementID).Scan(&itemID, &quantityChange, &movementType, &inboundDocumentID, &outboundDocumentID, &adjustmentID, &transferID, &cycleCountID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
 		return fmt.Errorf("load movement for delete: %w", err)
+	}
+	if inboundDocumentID > 0 || outboundDocumentID > 0 || adjustmentID > 0 || transferID > 0 || cycleCountID > 0 {
+		return fmt.Errorf("%w: posted document lines must be cancelled from their document", ErrInvalidInput)
+	}
+
+	if !restoreStock && strings.EqualFold(movementType, "OUT") {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM stock_movements WHERE id = ?`, movementID); err != nil {
+			return mapDBError(fmt.Errorf("delete outbound movement without stock restore: %w", err))
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit movement delete without stock restore: %w", err)
+		}
+
+		return nil
 	}
 
 	currentQuantity, _, _, _, _, err := s.loadLockedItemForMovement(ctx, tx, itemID)
@@ -1136,6 +1207,10 @@ func (s *Store) getMovement(ctx context.Context, movementID int64) (Movement, er
 		SELECT
 			m.id,
 			m.item_id,
+			COALESCE(m.inbound_document_id, 0),
+			COALESCE(m.inbound_document_line_id, 0),
+			COALESCE(m.outbound_document_id, 0),
+			COALESCE(m.outbound_document_line_id, 0),
 			i.name,
 			i.sku,
 			COALESCE(m.description_snapshot, i.description, i.name, ''),
@@ -1161,6 +1236,7 @@ func (s *Store) getMovement(ctx context.Context, movementID int64) (Movement, er
 			m.gross_weight_kgs,
 			m.height_in,
 			m.out_date,
+			COALESCE(m.document_note, ''),
 			COALESCE(m.reason, ''),
 			COALESCE(m.reference_code, ''),
 			m.created_at
@@ -1299,6 +1375,10 @@ func scanMovement(scanner itemScanner) (Movement, error) {
 	if err := scanner.Scan(
 		&movement.ID,
 		&movement.ItemID,
+		&movement.InboundDocumentID,
+		&movement.InboundDocumentLineID,
+		&movement.OutboundDocumentID,
+		&movement.OutboundDocumentLineID,
 		&movement.ItemName,
 		&movement.SKU,
 		&movement.Description,
@@ -1324,6 +1404,7 @@ func scanMovement(scanner itemScanner) (Movement, error) {
 		&movement.GrossWeightKgs,
 		&movement.HeightIn,
 		&outDate,
+		&movement.DocumentNote,
 		&movement.Reason,
 		&movement.ReferenceCode,
 		&movement.CreatedAt,
@@ -1398,6 +1479,7 @@ func sanitizeMovementInput(input CreateMovementInput) CreateMovementInput {
 	input.PalletsDetailCtns = strings.TrimSpace(input.PalletsDetailCtns)
 	input.CartonSizeMM = strings.TrimSpace(input.CartonSizeMM)
 	input.UnitLabel = strings.TrimSpace(input.UnitLabel)
+	input.DocumentNote = strings.TrimSpace(input.DocumentNote)
 	input.Reason = strings.TrimSpace(input.Reason)
 	input.ReferenceCode = strings.TrimSpace(strings.ToUpper(input.ReferenceCode))
 	return input
@@ -1420,8 +1502,28 @@ func resolveMovementDelta(movementType string, quantity int) (int, error) {
 			return 0, fmt.Errorf("%w: adjustment quantity cannot be zero", ErrInvalidInput)
 		}
 		return quantity, nil
+	case "REVERSAL":
+		if quantity <= 0 {
+			return 0, fmt.Errorf("%w: reversal quantity must be greater than zero", ErrInvalidInput)
+		}
+		return quantity, nil
+	case "TRANSFER_IN":
+		if quantity <= 0 {
+			return 0, fmt.Errorf("%w: transfer-in quantity must be greater than zero", ErrInvalidInput)
+		}
+		return quantity, nil
+	case "TRANSFER_OUT":
+		if quantity <= 0 {
+			return 0, fmt.Errorf("%w: transfer-out quantity must be greater than zero", ErrInvalidInput)
+		}
+		return -quantity, nil
+	case "COUNT":
+		if quantity == 0 {
+			return 0, fmt.Errorf("%w: cycle count variance cannot be zero", ErrInvalidInput)
+		}
+		return quantity, nil
 	default:
-		return 0, fmt.Errorf("%w: movement type must be IN, OUT, or ADJUST", ErrInvalidInput)
+		return 0, fmt.Errorf("%w: movement type must be IN, OUT, ADJUST, REVERSAL, TRANSFER_IN, TRANSFER_OUT, or COUNT", ErrInvalidInput)
 	}
 }
 
@@ -1448,6 +1550,14 @@ func defaultMovementReason(movementType string) string {
 		return "Inbound shipment recorded"
 	case "OUT":
 		return "Outbound shipment recorded"
+	case "REVERSAL":
+		return "Outbound shipment reversed"
+	case "TRANSFER_IN":
+		return "Inventory transfer received"
+	case "TRANSFER_OUT":
+		return "Inventory transfer shipped"
+	case "COUNT":
+		return "Cycle count variance recorded"
 	default:
 		return "Inventory adjustment recorded"
 	}

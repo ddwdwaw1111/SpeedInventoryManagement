@@ -1,6 +1,11 @@
 export type PageKey =
   | "dashboard"
+  | "all-activity"
   | "customers"
+  | "audit-logs"
+  | "adjustments"
+  | "transfers"
+  | "cycle-counts"
   | "sku-master"
   | "stock-by-location"
   | "storage-management"
@@ -10,7 +15,12 @@ export type PageKey =
 
 export const pagePathMap: Record<PageKey, string> = {
   dashboard: "/",
+  "all-activity": "/all-activity",
   customers: "/customers",
+  "audit-logs": "/audit-logs",
+  adjustments: "/adjustments",
+  transfers: "/transfers",
+  "cycle-counts": "/cycle-counts",
   "sku-master": "/sku-master",
   "stock-by-location": "/stock-by-location",
   "storage-management": "/storage-management",
@@ -31,6 +41,11 @@ export function normalizePagePath(pathname: string): string {
 export function getPageFromPath(pathname: string): PageKey {
   const normalized = normalizePagePath(pathname);
 
+  if (normalized === "/all-activity") return "all-activity";
+  if (normalized === "/audit-logs") return "audit-logs";
+  if (normalized === "/adjustments") return "adjustments";
+  if (normalized === "/transfers") return "transfers";
+  if (normalized === "/cycle-counts") return "cycle-counts";
   if (normalized === "/inbound-management") return "inbound-management";
   if (normalized === "/outbound-management") return "outbound-management";
   if (normalized === "/customers") return "customers";

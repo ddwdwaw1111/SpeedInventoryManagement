@@ -2,23 +2,32 @@
 
 :root {
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
-  color: #102033;
+  color: #1f2937;
   background:
-    linear-gradient(180deg, rgba(230, 240, 250, 0.9), rgba(248, 250, 252, 0.95)),
-    linear-gradient(90deg, rgba(32, 111, 184, 0.04) 1px, transparent 1px),
-    linear-gradient(rgba(32, 111, 184, 0.04) 1px, transparent 1px);
+    linear-gradient(180deg, rgba(246, 248, 251, 0.99), rgba(241, 245, 249, 0.96)),
+    linear-gradient(90deg, rgba(215, 222, 231, 0.18) 1px, transparent 1px),
+    linear-gradient(rgba(215, 222, 231, 0.18) 1px, transparent 1px);
   background-size: auto, 38px 38px, 38px 38px;
   color-scheme: light;
-  --panel: rgba(255, 255, 255, 0.92);
-  --panel-border: rgba(16, 32, 51, 0.12);
-  --sheet-blue: #1f6eaf;
-  --sheet-blue-dark: #114f82;
-  --sheet-blue-soft: rgba(31, 110, 175, 0.12);
-  --sheet-green-soft: rgba(37, 120, 75, 0.12);
-  --sheet-red-soft: rgba(183, 69, 55, 0.14);
-  --ink-soft: #5a6a78;
-  --danger: #a6352c;
-  --success: #22714a;
+  --gray-0: #f6f8fb;
+  --gray-1: #ffffff;
+  --gray-2: #eef2f7;
+  --gray-3: #d7dee7;
+  --gray-4: #a6b4c3;
+  --gray-5: #64748b;
+  --gray-6: #334155;
+  --gray-7: #274c77;
+  --gray-8: #17324d;
+  --panel: rgba(255, 255, 255, 0.96);
+  --panel-border: rgba(100, 116, 139, 0.16);
+  --sheet-blue: #274c77;
+  --sheet-blue-dark: #17324d;
+  --sheet-blue-soft: rgba(39, 76, 119, 0.12);
+  --sheet-green-soft: rgba(60, 110, 113, 0.14);
+  --sheet-red-soft: rgba(183, 104, 87, 0.14);
+  --ink-soft: #64748b;
+  --danger: #b76857;
+  --success: #3c6e71;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -71,14 +80,14 @@ button {
   background: var(--panel);
   border: 1px solid var(--panel-border);
   border-radius: 24px;
-  box-shadow: 0 16px 40px rgba(18, 36, 59, 0.08);
+  box-shadow: 0 16px 40px rgba(52, 58, 64, 0.08);
 }
 
 .auth-hero {
   padding: 2rem;
   background:
-    radial-gradient(circle at top right, rgba(31, 110, 175, 0.16), transparent 36%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(236, 244, 252, 0.9));
+    radial-gradient(circle at top right, rgba(95, 134, 173, 0.2), transparent 36%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(241, 245, 249, 0.96));
   display: grid;
   align-content: space-between;
   gap: 1.5rem;
@@ -109,8 +118,8 @@ button {
 .auth-feature-list article {
   padding: 1rem 1.1rem;
   border-radius: 18px;
-  border: 1px solid rgba(16, 32, 51, 0.08);
-  background: rgba(255, 255, 255, 0.74);
+  border: 1px solid rgba(73, 80, 87, 0.08);
+  background: rgba(255, 255, 255, 0.82);
 }
 
 .auth-feature-list strong,
@@ -140,7 +149,7 @@ button {
   gap: 0.45rem;
   padding: 0.3rem;
   border-radius: 999px;
-  background: rgba(16, 32, 51, 0.06);
+  background: rgba(108, 117, 125, 0.14);
   width: fit-content;
 }
 
@@ -149,7 +158,7 @@ button {
   border-radius: 999px;
   padding: 0.55rem 0.95rem;
   background: transparent;
-  color: #102033;
+  color: var(--gray-8);
   font-weight: 700;
 }
 
@@ -186,7 +195,7 @@ button {
   background: var(--panel);
   border: 1px solid var(--panel-border);
   border-radius: 18px;
-  box-shadow: 0 16px 40px rgba(18, 36, 59, 0.08);
+  box-shadow: 0 16px 40px rgba(52, 58, 64, 0.08);
 }
 
 .app-topbar__brand {
@@ -211,7 +220,7 @@ button {
   justify-content: space-between;
   margin-top: 1rem;
   padding-top: 1rem;
-  border-top: 1px solid rgba(16, 32, 51, 0.08);
+  border-top: 1px solid rgba(73, 80, 87, 0.08);
 }
 
 .app-user__meta {
@@ -230,11 +239,11 @@ button {
 }
 
 .language-switch__button {
-  border: 1px solid rgba(16, 32, 51, 0.12);
+  border: 1px solid rgba(73, 80, 87, 0.12);
   border-radius: 999px;
   padding: 0.35rem 0.75rem;
   background: rgba(255, 255, 255, 0.92);
-  color: #102033;
+  color: var(--gray-8);
   font-size: 0.82rem;
   font-weight: 700;
 }
@@ -254,11 +263,11 @@ button {
 
 .app-topbar__link {
   text-align: left;
-  border: 1px solid rgba(16, 32, 51, 0.1);
+  border: 1px solid rgba(73, 80, 87, 0.1);
   border-radius: 16px;
   padding: 0.95rem 1rem;
   background: rgba(255, 255, 255, 0.9);
-  color: #102033;
+  color: var(--gray-8);
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
@@ -271,8 +280,8 @@ button {
   width: 2rem;
   height: 2rem;
   border-radius: 12px;
-  background: rgba(31, 110, 175, 0.1);
-  color: #1f6eaf;
+  background: rgba(39, 76, 119, 0.12);
+  color: var(--sheet-blue);
 }
 
 .app-topbar__link span {
@@ -285,8 +294,8 @@ button {
 }
 
 .app-topbar__link--active {
-  background: linear-gradient(180deg, rgba(31, 110, 175, 0.14), rgba(17, 79, 130, 0.08));
-  border-color: rgba(31, 110, 175, 0.24);
+  background: linear-gradient(180deg, rgba(239, 244, 249, 0.98), rgba(225, 234, 244, 0.94));
+  border-color: rgba(39, 76, 119, 0.18);
 }
 
 .workspace-shell {
@@ -312,7 +321,7 @@ button {
   background: var(--panel);
   border: 1px solid var(--panel-border);
   border-radius: 18px;
-  box-shadow: 0 16px 40px rgba(18, 36, 59, 0.08);
+  box-shadow: 0 16px 40px rgba(52, 58, 64, 0.08);
   padding: 1rem;
 }
 
@@ -335,17 +344,17 @@ button {
 
 .sidebar__nav-item {
   text-align: left;
-  border: 1px solid rgba(16, 32, 51, 0.1);
+  border: 1px solid rgba(73, 80, 87, 0.1);
   border-radius: 18px;
   padding: 0.95rem 1rem;
   background: rgba(255, 255, 255, 0.9);
-  color: #102033;
+  color: var(--gray-8);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   gap: 0.28rem;
   min-height: 100%;
-  box-shadow: 0 10px 24px rgba(18, 36, 59, 0.05);
+  box-shadow: 0 10px 24px rgba(52, 58, 64, 0.05);
 }
 
 .sidebar__nav-item strong {
@@ -354,8 +363,8 @@ button {
 }
 
 .sidebar__nav-item--active {
-  background: linear-gradient(180deg, rgba(31, 110, 175, 0.14), rgba(17, 79, 130, 0.08));
-  border-color: rgba(31, 110, 175, 0.24);
+  background: linear-gradient(180deg, rgba(239, 244, 249, 0.98), rgba(225, 234, 244, 0.94));
+  border-color: rgba(39, 76, 119, 0.18);
 }
 
 .sidebar__nav-label {
@@ -374,7 +383,7 @@ button {
   background: var(--panel);
   border: 1px solid var(--panel-border);
   border-radius: 18px;
-  box-shadow: 0 16px 40px rgba(18, 36, 59, 0.08);
+  box-shadow: 0 16px 40px rgba(52, 58, 64, 0.08);
 }
 
 .workbook-header {
@@ -413,7 +422,7 @@ button {
 .status-panel {
   margin: 1rem;
   padding: 1.25rem;
-  background: linear-gradient(180deg, rgba(31, 110, 175, 0.12), rgba(255, 255, 255, 0.92));
+  background: linear-gradient(180deg, rgba(239, 244, 249, 0.98), rgba(255, 255, 255, 0.97));
 }
 
 .status-panel__label {
@@ -436,8 +445,8 @@ button {
   margin-bottom: 1rem;
   padding: 0.9rem 1rem;
   border-radius: 14px;
-  border: 1px solid rgba(166, 53, 44, 0.24);
-  background: rgba(166, 53, 44, 0.1);
+  border: 1px solid rgba(183, 104, 87, 0.2);
+  background: rgba(255, 245, 242, 0.96);
   color: var(--danger);
   font-weight: 600;
 }
@@ -499,6 +508,47 @@ button {
   overflow: hidden;
 }
 
+.MuiDataGrid-root {
+  background: #ffffff;
+}
+
+.MuiDataGrid-columnHeaders {
+  background: #eef2f7 !important;
+  color: #17324d !important;
+  border-bottom: 1px solid #d7dee7 !important;
+}
+
+.MuiDataGrid-columnHeader,
+.MuiDataGrid-columnHeaderTitle,
+.MuiDataGrid-columnHeaderTitleContainer,
+.MuiDataGrid-columnHeaderTitleContainerContent,
+.MuiDataGrid-sortIcon,
+.MuiDataGrid-menuIconButton,
+.MuiDataGrid-iconButtonContainer button {
+  color: #17324d !important;
+}
+
+.MuiDataGrid-columnHeader {
+  background: #eef2f7 !important;
+}
+
+.MuiDataGrid-columnSeparator {
+  color: #cbd5e1 !important;
+}
+
+.MuiDataGrid-filler,
+.MuiDataGrid-scrollbarFiller {
+  background: #eef2f7 !important;
+}
+
+.MuiDataGrid-footerContainer {
+  border-top: 1px solid #d7dee7;
+}
+
+.MuiDataGrid-cell {
+  border-color: #eef2f7;
+}
+
 .workbook-panel__header {
   margin-bottom: 0.9rem;
 }
@@ -535,11 +585,11 @@ input,
 select,
 textarea {
   width: 100%;
-  border: 1px solid rgba(16, 32, 51, 0.14);
+  border: 1px solid rgba(73, 80, 87, 0.14);
   border-radius: 12px;
   padding: 0.72rem 0.82rem;
   background: rgba(255, 255, 255, 0.92);
-  color: #102033;
+  color: var(--gray-8);
 }
 
 textarea {
@@ -551,8 +601,8 @@ input:focus,
 select:focus,
 textarea:focus {
   outline: none;
-  border-color: rgba(31, 110, 175, 0.52);
-  box-shadow: 0 0 0 4px rgba(31, 110, 175, 0.08);
+  border-color: rgba(39, 76, 119, 0.44);
+  box-shadow: 0 0 0 4px rgba(95, 134, 173, 0.12);
 }
 
 .sheet-form__actions {
@@ -564,7 +614,7 @@ textarea:focus {
 .sheet-note {
   padding: 0.72rem 0.82rem;
   border-radius: 12px;
-  background: rgba(31, 110, 175, 0.08);
+  background: rgba(239, 244, 249, 0.94);
   color: var(--sheet-blue-dark);
   font-size: 0.92rem;
 }
@@ -582,12 +632,12 @@ textarea:focus {
 }
 
 .button--ghost {
-  background: rgba(16, 32, 51, 0.08);
-  color: #102033;
+  background: rgba(215, 222, 231, 0.8);
+  color: var(--gray-8);
 }
 
 .button--danger {
-  background: rgba(166, 53, 44, 0.12);
+  background: rgba(183, 104, 87, 0.12);
   color: var(--danger);
 }
 
@@ -598,7 +648,7 @@ textarea:focus {
 
 .tab-strip {
   padding: 1rem;
-  border-bottom: 1px solid rgba(16, 32, 51, 0.08);
+  border-bottom: 1px solid rgba(73, 80, 87, 0.08);
 }
 
 .filter-bar,
@@ -644,11 +694,11 @@ textarea:focus {
 
 .dashboard-tab-nav__item {
   text-align: left;
-  border: 1px solid rgba(16, 32, 51, 0.1);
+  border: 1px solid rgba(73, 80, 87, 0.1);
   border-radius: 16px;
   padding: 0.9rem 1rem;
   background: rgba(255, 255, 255, 0.9);
-  color: #102033;
+  color: var(--gray-8);
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
@@ -669,8 +719,8 @@ textarea:focus {
 }
 
 .dashboard-tab-nav__item--active {
-  background: linear-gradient(180deg, rgba(31, 110, 175, 0.14), rgba(17, 79, 130, 0.08));
-  border-color: rgba(31, 110, 175, 0.24);
+  background: linear-gradient(180deg, rgba(239, 244, 249, 0.98), rgba(225, 234, 244, 0.94));
+  border-color: rgba(39, 76, 119, 0.18);
 }
 
 .filter-bar label {
@@ -690,7 +740,7 @@ textarea:focus {
 }
 
 .report-card {
-  border: 1px solid rgba(16, 32, 51, 0.08);
+  border: 1px solid rgba(73, 80, 87, 0.08);
   border-radius: 18px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(244, 248, 252, 0.92)),
@@ -740,12 +790,12 @@ textarea:focus {
   z-index: 3;
   padding: 0.8rem 0;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.92));
-  border-bottom: 1px solid rgba(16, 32, 51, 0.08);
+  border-bottom: 1px solid rgba(73, 80, 87, 0.08);
   backdrop-filter: blur(6px);
 }
 
 .batch-line-card {
-  border: 1px solid rgba(16, 32, 51, 0.1);
+  border: 1px solid rgba(73, 80, 87, 0.1);
   border-radius: 16px;
   padding: 0.8rem;
   background: rgba(255, 255, 255, 0.88);
@@ -849,7 +899,7 @@ textarea:focus {
   height: 14px;
   border-radius: 999px;
   overflow: hidden;
-  background: rgba(16, 32, 51, 0.08);
+  background: rgba(108, 117, 125, 0.14);
 }
 
 .report-bars__fill {
@@ -858,19 +908,19 @@ textarea:focus {
 }
 
 .report-bars__fill--blue {
-  background: linear-gradient(90deg, #4aa3e2, #1f6eaf);
+  background: linear-gradient(90deg, #5f86ad, #274c77);
 }
 
 .report-bars__fill--green {
-  background: linear-gradient(90deg, #4dbb84, #22714a);
+  background: linear-gradient(90deg, #6d908c, #3c6e71);
 }
 
 .report-bars__fill--amber {
-  background: linear-gradient(90deg, #f4c160, #c18311);
+  background: linear-gradient(90deg, #ddbf8a, #c79b5d);
 }
 
 .report-bars__fill--red {
-  background: linear-gradient(90deg, #ef8d80, #b64537);
+  background: linear-gradient(90deg, #d08d80, #b76857);
 }
 
 .report-bars__value {
@@ -910,11 +960,11 @@ textarea:focus {
 }
 
 .trend-chart__swatch--in {
-  background: linear-gradient(180deg, #4dbb84, #22714a);
+  background: linear-gradient(180deg, #6d908c, #3c6e71);
 }
 
 .trend-chart__swatch--out {
-  background: linear-gradient(180deg, #ef8d80, #b64537);
+  background: linear-gradient(180deg, #d08d80, #b76857);
 }
 
 .trend-chart__grid {
@@ -936,7 +986,7 @@ textarea:focus {
   gap: 0.4rem;
   padding: 0.65rem;
   border-radius: 14px;
-  background: linear-gradient(180deg, rgba(31, 110, 175, 0.06), rgba(16, 32, 51, 0.02));
+  background: linear-gradient(180deg, rgba(244, 247, 251, 0.98), rgba(255, 255, 255, 0.96));
 }
 
 .trend-chart__mini-bar {
@@ -945,11 +995,11 @@ textarea:focus {
 }
 
 .trend-chart__mini-bar--in {
-  background: linear-gradient(90deg, #4dbb84, #22714a);
+  background: linear-gradient(90deg, #6d908c, #3c6e71);
 }
 
 .trend-chart__mini-bar--out {
-  background: linear-gradient(90deg, #ef8d80, #b64537);
+  background: linear-gradient(90deg, #d08d80, #b76857);
 }
 
 .trend-chart__totals,
@@ -977,7 +1027,7 @@ textarea:focus {
 .sheet-table thead th {
   position: sticky;
   top: 0;
-  background: linear-gradient(180deg, #2c83c6, #1f6eaf);
+  background: linear-gradient(180deg, #274c77, #17324d);
   color: white;
   text-align: left;
   padding: 0.82rem 0.7rem;
@@ -988,29 +1038,29 @@ textarea:focus {
 
 .sheet-table tbody td {
   padding: 0.8rem 0.7rem;
-  border-bottom: 1px solid rgba(16, 32, 51, 0.08);
+  border-bottom: 1px solid rgba(73, 80, 87, 0.08);
   background: rgba(255, 255, 255, 0.92);
   vertical-align: top;
 }
 
 .sheet-table tbody tr:nth-child(even) td {
-  background: rgba(239, 246, 252, 0.72);
+  background: rgba(244, 247, 251, 0.94);
 }
 
 .row--alert td {
-  background: rgba(255, 241, 210, 0.85) !important;
+  background: rgba(221, 191, 138, 0.2) !important;
 }
 
 .row--mismatch td {
-  background: rgba(254, 237, 235, 0.9) !important;
+  background: rgba(208, 141, 128, 0.14) !important;
 }
 
 .row--inbound td {
-  border-left: 4px solid rgba(34, 113, 74, 0.35);
+  border-left: 4px solid rgba(60, 110, 113, 0.45);
 }
 
 .row--outbound td {
-  border-left: 4px solid rgba(166, 53, 44, 0.35);
+  border-left: 4px solid rgba(183, 104, 87, 0.45);
 }
 
 .cell--mono {
@@ -1036,7 +1086,7 @@ textarea:focus {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(16, 32, 51, 0.42);
+  background: rgba(33, 37, 41, 0.42);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1051,7 +1101,7 @@ textarea:focus {
   background: rgba(255, 255, 255, 0.98);
   border: 1px solid var(--panel-border);
   border-radius: 22px;
-  box-shadow: 0 24px 60px rgba(18, 36, 59, 0.24);
+  box-shadow: 0 24px 60px rgba(52, 58, 64, 0.24);
   padding: 1rem;
 }
 
@@ -1092,12 +1142,12 @@ textarea:focus {
 }
 
 .status-pill--alert {
-  background: rgba(255, 183, 77, 0.22);
-  color: #8d5a00;
+  background: rgba(221, 191, 138, 0.22);
+  color: #8e6a33;
 }
 
 .status-pill--danger {
-  background: rgba(166, 53, 44, 0.12);
+  background: rgba(208, 141, 128, 0.16);
   color: var(--danger);
 }
 

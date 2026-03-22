@@ -312,7 +312,7 @@ go run ./cmd/server
 
 ### Frontend
 
-1. Install Node.js 18 or newer.
+1. Install Node.js 24 LTS.
 2. Copy [frontend/.env.example](/c:/Users/zihao/Desktop/Projects/SpeedInventoryManagement/frontend/.env.example) to `frontend/.env` if needed.
 3. Run:
 

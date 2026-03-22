@@ -1,3 +1,5 @@
+export type UserRole = "admin" | "operator" | "viewer";
+
 export type DashboardData = {
   totalItems: number;
   totalUnits: number;
@@ -6,10 +8,28 @@ export type DashboardData = {
   recentMovements: Movement[];
 };
 
+export type AuditLog = {
+  id: number;
+  actorUserId: number;
+  actorEmail: string;
+  actorName: string;
+  actorRole: string;
+  action: string;
+  entityType: string;
+  entityId: number;
+  targetLabel: string;
+  summary: string;
+  detailsJson: string;
+  requestMethod: string;
+  requestPath: string;
+  createdAt: string;
+};
+
 export type User = {
   id: number;
   email: string;
   fullName: string;
+  role: UserRole;
   createdAt: string;
 };
 
@@ -119,6 +139,10 @@ export type Item = {
 export type Movement = {
   id: number;
   itemId: number;
+  inboundDocumentId: number;
+  inboundDocumentLineId: number;
+  outboundDocumentId: number;
+  outboundDocumentLineId: number;
   itemName: string;
   sku: string;
   description: string;
@@ -126,7 +150,7 @@ export type Movement = {
   customerName: string;
   locationName: string;
   storageSection: string;
-  movementType: "IN" | "OUT" | "ADJUST";
+  movementType: "IN" | "OUT" | "ADJUST" | "REVERSAL" | "TRANSFER_IN" | "TRANSFER_OUT" | "COUNT";
   quantityChange: number;
   deliveryDate: string | null;
   containerNo: string;
@@ -144,9 +168,269 @@ export type Movement = {
   grossWeightKgs: number;
   heightIn: number;
   outDate: string | null;
+  documentNote: string;
   reason: string;
   referenceCode: string;
   createdAt: string;
+};
+
+export type OutboundDocumentLine = {
+  id: number;
+  documentId: number;
+  movementId: number;
+  itemId: number;
+  locationId: number;
+  locationName: string;
+  storageSection: string;
+  sku: string;
+  description: string;
+  quantity: number;
+  unitLabel: string;
+  cartonSizeMm: string;
+  netWeightKgs: number;
+  grossWeightKgs: number;
+  lineNote: string;
+  createdAt: string;
+};
+
+export type OutboundDocument = {
+  id: number;
+  packingListNo: string;
+  orderRef: string;
+  customerId: number;
+  customerName: string;
+  outDate: string | null;
+  documentNote: string;
+  status: string;
+  cancelNote: string;
+  cancelledAt: string | null;
+  totalLines: number;
+  totalQty: number;
+  totalNetWeightKgs: number;
+  totalGrossWeightKgs: number;
+  storages: string;
+  createdAt: string;
+  updatedAt: string;
+  lines: OutboundDocumentLine[];
+};
+
+export type OutboundDocumentLinePayload = {
+  itemId: number;
+  quantity: number;
+  unitLabel?: string;
+  cartonSizeMm?: string;
+  netWeightKgs?: number;
+  grossWeightKgs?: number;
+  lineNote?: string;
+};
+
+export type OutboundDocumentPayload = {
+  packingListNo?: string;
+  orderRef?: string;
+  outDate?: string;
+  documentNote?: string;
+  lines: OutboundDocumentLinePayload[];
+};
+
+export type CancelOutboundDocumentPayload = {
+  reason?: string;
+};
+
+export type InboundDocumentLine = {
+  id: number;
+  documentId: number;
+  movementId: number;
+  itemId: number;
+  sku: string;
+  description: string;
+  storageSection: string;
+  expectedQty: number;
+  receivedQty: number;
+  pallets: number;
+  palletsDetailCtns: string;
+  unitLabel: string;
+  lineNote: string;
+  createdAt: string;
+};
+
+export type InboundDocument = {
+  id: number;
+  customerId: number;
+  customerName: string;
+  locationId: number;
+  locationName: string;
+  deliveryDate: string | null;
+  containerNo: string;
+  storageSection: string;
+  unitLabel: string;
+  documentNote: string;
+  status: string;
+  totalLines: number;
+  totalExpectedQty: number;
+  totalReceivedQty: number;
+  createdAt: string;
+  updatedAt: string;
+  lines: InboundDocumentLine[];
+};
+
+export type InboundDocumentLinePayload = {
+  sku: string;
+  description: string;
+  reorderLevel: number;
+  expectedQty: number;
+  receivedQty: number;
+  pallets: number;
+  palletsDetailCtns?: string;
+  storageSection?: string;
+  lineNote?: string;
+};
+
+export type InboundDocumentPayload = {
+  customerId: number;
+  locationId: number;
+  deliveryDate?: string;
+  containerNo?: string;
+  storageSection?: string;
+  unitLabel?: string;
+  documentNote?: string;
+  lines: InboundDocumentLinePayload[];
+};
+
+export type InventoryAdjustmentLine = {
+  id: number;
+  adjustmentId: number;
+  movementId: number;
+  itemId: number;
+  customerId: number;
+  customerName: string;
+  locationId: number;
+  locationName: string;
+  storageSection: string;
+  sku: string;
+  description: string;
+  beforeQty: number;
+  adjustQty: number;
+  afterQty: number;
+  lineNote: string;
+  createdAt: string;
+};
+
+export type InventoryAdjustment = {
+  id: number;
+  adjustmentNo: string;
+  reasonCode: string;
+  notes: string;
+  status: string;
+  totalLines: number;
+  totalAdjustQty: number;
+  createdAt: string;
+  updatedAt: string;
+  lines: InventoryAdjustmentLine[];
+};
+
+export type InventoryAdjustmentLinePayload = {
+  itemId: number;
+  adjustQty: number;
+  lineNote?: string;
+};
+
+export type InventoryAdjustmentPayload = {
+  adjustmentNo?: string;
+  reasonCode: string;
+  notes?: string;
+  lines: InventoryAdjustmentLinePayload[];
+};
+
+export type InventoryTransferLine = {
+  id: number;
+  transferId: number;
+  transferOutMovementId: number;
+  transferInMovementId: number;
+  sourceItemId: number;
+  destinationItemId: number;
+  customerId: number;
+  customerName: string;
+  fromLocationId: number;
+  fromLocationName: string;
+  fromStorageSection: string;
+  toLocationId: number;
+  toLocationName: string;
+  toStorageSection: string;
+  sku: string;
+  description: string;
+  quantity: number;
+  lineNote: string;
+  createdAt: string;
+};
+
+export type InventoryTransfer = {
+  id: number;
+  transferNo: string;
+  notes: string;
+  status: string;
+  totalLines: number;
+  totalQty: number;
+  routes: string;
+  createdAt: string;
+  updatedAt: string;
+  lines: InventoryTransferLine[];
+};
+
+export type InventoryTransferLinePayload = {
+  sourceItemId: number;
+  quantity: number;
+  toLocationId: number;
+  toStorageSection?: string;
+  lineNote?: string;
+};
+
+export type InventoryTransferPayload = {
+  transferNo?: string;
+  notes?: string;
+  lines: InventoryTransferLinePayload[];
+};
+
+export type CycleCountLine = {
+  id: number;
+  cycleCountId: number;
+  movementId: number;
+  itemId: number;
+  customerId: number;
+  customerName: string;
+  locationId: number;
+  locationName: string;
+  storageSection: string;
+  sku: string;
+  description: string;
+  systemQty: number;
+  countedQty: number;
+  varianceQty: number;
+  lineNote: string;
+  createdAt: string;
+};
+
+export type CycleCount = {
+  id: number;
+  countNo: string;
+  notes: string;
+  status: string;
+  totalLines: number;
+  totalVariance: number;
+  createdAt: string;
+  updatedAt: string;
+  lines: CycleCountLine[];
+};
+
+export type CycleCountLinePayload = {
+  itemId: number;
+  countedQty: number;
+  lineNote?: string;
+};
+
+export type CycleCountPayload = {
+  countNo?: string;
+  notes?: string;
+  lines: CycleCountLinePayload[];
 };
 
 export type ItemPayload = {
@@ -172,7 +456,7 @@ export type ItemPayload = {
 
 export type MovementPayload = {
   itemId: number;
-  movementType: "IN" | "OUT" | "ADJUST";
+  movementType: "IN" | "OUT" | "ADJUST" | "REVERSAL" | "TRANSFER_IN" | "TRANSFER_OUT" | "COUNT";
   quantity: number;
   storageSection?: string;
   deliveryDate?: string;
@@ -191,6 +475,7 @@ export type MovementPayload = {
   grossWeightKgs?: number;
   heightIn: number;
   outDate?: string;
+  documentNote?: string;
   reason?: string;
   referenceCode?: string;
 };

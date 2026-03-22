@@ -18,6 +18,10 @@ type RowActionsMenuProps = {
 export function RowActionsMenu({ actions, ariaLabel }: RowActionsMenuProps) {
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
 
+  if (actions.length === 0) {
+    return null;
+  }
+
   function openMenu(event: MouseEvent<HTMLElement>) {
     setAnchorEl(event.currentTarget);
   }

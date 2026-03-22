@@ -1,8 +1,18 @@
 import type {
+  AuditLog,
   AuthResponse,
+  CycleCount,
+  CycleCountPayload,
+  CancelOutboundDocumentPayload,
   Customer,
   CustomerPayload,
   DashboardData,
+  InventoryAdjustment,
+  InventoryAdjustmentPayload,
+  InventoryTransfer,
+  InventoryTransferPayload,
+  InboundDocument,
+  InboundDocumentPayload,
   Item,
   ItemPayload,
   LoginPayload,
@@ -10,6 +20,8 @@ import type {
   LocationPayload,
   Movement,
   MovementPayload,
+  OutboundDocument,
+  OutboundDocumentPayload,
   SKUMaster,
   SKUMasterPayload,
   SignUpPayload
@@ -109,6 +121,10 @@ export const api = {
 
   getDashboard() {
     return request<DashboardData>("/dashboard");
+  },
+
+  getAuditLogs(limit = 200) {
+    return request<AuditLog[]>(`/audit-logs?limit=${limit}`);
   },
 
   getLocations() {
@@ -234,6 +250,68 @@ export const api = {
     return request<Movement[]>(`/movements?limit=${limit}`);
   },
 
+  getOutboundDocuments(limit = 100) {
+    return request<OutboundDocument[]>(`/outbound-documents?limit=${limit}`);
+  },
+
+  createOutboundDocument(payload: OutboundDocumentPayload) {
+    return request<OutboundDocument>("/outbound-documents", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  cancelOutboundDocument(documentId: number, payload?: CancelOutboundDocumentPayload) {
+    return request<OutboundDocument>(`/outbound-documents/${documentId}/cancel`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {})
+    });
+  },
+
+  getInboundDocuments(limit = 100) {
+    return request<InboundDocument[]>(`/inbound-documents?limit=${limit}`);
+  },
+
+  createInboundDocument(payload: InboundDocumentPayload) {
+    return request<InboundDocument>("/inbound-documents", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  getInventoryAdjustments(limit = 100) {
+    return request<InventoryAdjustment[]>(`/adjustments?limit=${limit}`);
+  },
+
+  createInventoryAdjustment(payload: InventoryAdjustmentPayload) {
+    return request<InventoryAdjustment>("/adjustments", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  getInventoryTransfers(limit = 100) {
+    return request<InventoryTransfer[]>(`/transfers?limit=${limit}`);
+  },
+
+  createInventoryTransfer(payload: InventoryTransferPayload) {
+    return request<InventoryTransfer>("/transfers", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  getCycleCounts(limit = 100) {
+    return request<CycleCount[]>(`/cycle-counts?limit=${limit}`);
+  },
+
+  createCycleCount(payload: CycleCountPayload) {
+    return request<CycleCount>("/cycle-counts", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
   createMovement(payload: MovementPayload) {
     return request<Movement>("/movements", {
       method: "POST",
@@ -248,8 +326,14 @@ export const api = {
     });
   },
 
-  deleteMovement(movementId: number) {
-    return request<void>(`/movements/${movementId}`, {
+  deleteMovement(movementId: number, options?: { restoreStock?: boolean }) {
+    const params = new URLSearchParams();
+    if (typeof options?.restoreStock === "boolean") {
+      params.set("restoreStock", String(options.restoreStock));
+    }
+
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    return request<void>(`/movements/${movementId}${suffix}`, {
       method: "DELETE"
     });
   }
