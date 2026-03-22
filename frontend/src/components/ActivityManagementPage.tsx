@@ -4,13 +4,14 @@ import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined
 import PictureAsPdfOutlinedIcon from "@mui/icons-material/PictureAsPdfOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import { type FormEvent, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, IconButton } from "@mui/material";
+import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, Drawer, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
 import { api } from "../lib/api";
 import { RowActionsMenu } from "./RowActionsMenu";
-import { formatDateValue } from "../lib/dates";
+import { formatDateTimeValue, formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
+import { useSettings } from "../lib/settings";
 import { downloadOutboundPackingListPdfFromDocument } from "../lib/outboundPackingListPdf";
 import type { Customer, InboundDocument, InboundDocumentPayload, Item, Location, Movement, OutboundDocument, OutboundDocumentPayload, UserRole } from "../lib/types";
 
@@ -133,6 +134,7 @@ function getSuggestedPalletsDetail(totalQty: number, pallets: number) {
 
 export function ActivityManagementPage({ mode, items, locations, customers, movements, inboundDocuments, outboundDocuments, currentUserRole, isLoading, onRefresh }: ActivityManagementPageProps) {
   const { t } = useI18n();
+  const { resolvedTimeZone } = useSettings();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
@@ -159,6 +161,38 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
     setSelectedInboundDocument(null);
     setSelectedOutboundDocument(null);
   }, [mode]);
+
+  useEffect(() => {
+    if (mode !== "OUT" || !selectedOutboundDocument) {
+      return;
+    }
+
+    const nextSelectedDocument = outboundDocuments.find((document) => document.id === selectedOutboundDocument.id) ?? null;
+    if (!nextSelectedDocument) {
+      setSelectedOutboundDocument(null);
+      return;
+    }
+
+    if (nextSelectedDocument !== selectedOutboundDocument) {
+      setSelectedOutboundDocument(nextSelectedDocument);
+    }
+  }, [mode, outboundDocuments, selectedOutboundDocument]);
+
+  useEffect(() => {
+    if (mode !== "IN" || !selectedInboundDocument) {
+      return;
+    }
+
+    const nextSelectedDocument = inboundDocuments.find((document) => document.id === selectedInboundDocument.id) ?? null;
+    if (!nextSelectedDocument) {
+      setSelectedInboundDocument(null);
+      return;
+    }
+
+    if (nextSelectedDocument !== selectedInboundDocument) {
+      setSelectedInboundDocument(nextSelectedDocument);
+    }
+  }, [inboundDocuments, mode, selectedInboundDocument]);
 
   useEffect(() => {
     if (!batchForm.locationId && locations[0]) {
@@ -744,6 +778,8 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
                   disableRowSelectionOnClick
                   initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
                   getRowHeight={() => 68}
+                  onRowClick={(params) => setSelectedInboundDocument(params.row)}
+                  getRowClassName={(params) => selectedInboundDocument?.id === params.row.id ? "document-row--selected" : ""}
                   sx={{ border: 0 }}
                 />
               ) : mode === "OUT" && outboundViewMode === "packing-lists" ? (
@@ -756,6 +792,8 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
                   disableRowSelectionOnClick
                   initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
                   getRowHeight={() => 68}
+                  onRowClick={(params) => setSelectedOutboundDocument(params.row)}
+                  getRowClassName={(params) => selectedOutboundDocument?.id === params.row.id ? "document-row--selected" : ""}
                   sx={{ border: 0 }}
                 />
               ) : (
@@ -776,104 +814,189 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
         </article>
       </section>
 
-      {mode === "IN" ? (
-        <Dialog
+      {mode === "IN" && inboundViewMode === "documents" ? (
+        <Drawer
+          anchor="right"
           open={selectedInboundDocument !== null}
           onClose={() => setSelectedInboundDocument(null)}
-          fullWidth
-          maxWidth="lg"
+          ModalProps={{ keepMounted: true }}
+          PaperProps={{ className: "document-drawer" }}
         >
-          <DialogTitle sx={{ pb: 1 }}>
-            {selectedInboundDocument?.containerNo || t("containerNo")}
-            <IconButton aria-label={t("close")} onClick={() => setSelectedInboundDocument(null)} sx={{ position: "absolute", right: 16, top: 16 }}>
-              <CloseIcon fontSize="small" />
-            </IconButton>
-          </DialogTitle>
-          <DialogContent dividers>
-            {selectedInboundDocument ? (
-              <>
-                <div className="sheet-form">
-                  <div className="sheet-note"><strong>{t("deliveryDate")}</strong> {formatDate(selectedInboundDocument.deliveryDate)}</div>
-                  <div className="sheet-note"><strong>{t("customer")}</strong> {selectedInboundDocument.customerName || "-"}</div>
-                  <div className="sheet-note"><strong>{t("currentStorage")}</strong> {`${selectedInboundDocument.locationName} / ${selectedInboundDocument.storageSection || "A"}`}</div>
-                  <div className="sheet-note"><strong>{t("inboundUnit")}</strong> {selectedInboundDocument.unitLabel || "-"}</div>
-                  <div className="sheet-note"><strong>{t("documentNotes")}</strong> {selectedInboundDocument.documentNote || "-"}</div>
-                  <div className="sheet-note"><strong>{t("totalLines")}</strong> {selectedInboundDocument.totalLines}</div>
-                  <div className="sheet-note"><strong>{t("expectedQty")}</strong> {selectedInboundDocument.totalExpectedQty}</div>
-                  <div className="sheet-note"><strong>{t("received")}</strong> {selectedInboundDocument.totalReceivedQty}</div>
+          {selectedInboundDocument ? (
+            <div className="document-drawer__content">
+              <div className="document-drawer__header">
+                <div>
+                  <div className="document-drawer__eyebrow">{t("documentsView")}</div>
+                  <h3>{selectedInboundDocument.containerNo || t("containerNo")}</h3>
+                  <p>
+                    {[selectedInboundDocument.customerName || "-", formatDate(selectedInboundDocument.deliveryDate)].filter(Boolean).join(" · ")}
+                  </p>
                 </div>
-                <Box sx={{ minWidth: 0 }}>
-                  <DataGrid
-                    rows={selectedInboundDocument.lines}
-                    columns={inboundDocumentDetailColumns}
-                    pagination
-                    pageSizeOptions={[5, 10, 20]}
-                    disableRowSelectionOnClick
-                    initialState={{ pagination: { paginationModel: { pageSize: 5, page: 0 } } }}
-                    getRowHeight={() => 68}
-                    sx={{ border: 0 }}
-                  />
-                </Box>
-              </>
-            ) : null}
-          </DialogContent>
-        </Dialog>
+                <IconButton aria-label={t("close")} onClick={() => setSelectedInboundDocument(null)}>
+                  <CloseIcon fontSize="small" />
+                </IconButton>
+              </div>
+
+              <div className="document-drawer__status-bar">
+                <div className="document-drawer__status-main">
+                  {renderDocumentStatus(selectedInboundDocument.status, t)}
+                </div>
+                <div className="document-drawer__status-stat">
+                  <strong>{selectedInboundDocument.totalLines}</strong>
+                  <span>{t("totalLines")}</span>
+                </div>
+                <div className="document-drawer__status-stat">
+                  <strong>{selectedInboundDocument.totalExpectedQty}</strong>
+                  <span>{t("expectedQty")}</span>
+                </div>
+                <div className="document-drawer__status-stat">
+                  <strong>{selectedInboundDocument.totalReceivedQty}</strong>
+                  <span>{t("received")}</span>
+                </div>
+              </div>
+
+              <div className="document-drawer__audit-strip">
+                <div className="document-drawer__audit-item">
+                  <strong>{t("created")}</strong>
+                  <span>{formatDateTimeValue(selectedInboundDocument.createdAt, resolvedTimeZone)}</span>
+                </div>
+                <div className="document-drawer__audit-item">
+                  <strong>{t("updated")}</strong>
+                  <span>{formatDateTimeValue(selectedInboundDocument.updatedAt, resolvedTimeZone)}</span>
+                </div>
+                <div className="document-drawer__audit-item">
+                  <strong>{t("status")}</strong>
+                  <span>{selectedInboundDocument.status}</span>
+                </div>
+              </div>
+
+              <div className="document-drawer__meta">
+                <div className="sheet-note"><strong>{t("deliveryDate")}</strong> {formatDate(selectedInboundDocument.deliveryDate)}</div>
+                <div className="sheet-note"><strong>{t("customer")}</strong> {selectedInboundDocument.customerName || "-"}</div>
+                <div className="sheet-note"><strong>{t("currentStorage")}</strong> {`${selectedInboundDocument.locationName} / ${selectedInboundDocument.storageSection || "A"}`}</div>
+                <div className="sheet-note"><strong>{t("inboundUnit")}</strong> {selectedInboundDocument.unitLabel || "-"}</div>
+                <div className="sheet-note document-drawer__meta-note"><strong>{t("documentNotes")}</strong> {selectedInboundDocument.documentNote || "-"}</div>
+              </div>
+
+              <div className="document-drawer__section-title">{t("skuLines")}</div>
+              <Box sx={{ minWidth: 0, height: 440 }}>
+                <DataGrid
+                  rows={selectedInboundDocument.lines}
+                  columns={inboundDocumentDetailColumns}
+                  pagination
+                  pageSizeOptions={[5, 10, 20]}
+                  disableRowSelectionOnClick
+                  initialState={{ pagination: { paginationModel: { pageSize: 5, page: 0 } } }}
+                  getRowHeight={() => 68}
+                  sx={{ border: 0 }}
+                />
+              </Box>
+            </div>
+          ) : null}
+        </Drawer>
       ) : null}
 
-      {mode === "OUT" ? (
-        <Dialog
+      {mode === "OUT" && outboundViewMode === "packing-lists" ? (
+        <Drawer
+          anchor="right"
           open={selectedOutboundDocument !== null}
           onClose={() => setSelectedOutboundDocument(null)}
-          fullWidth
-          maxWidth="lg"
+          ModalProps={{ keepMounted: true }}
+          PaperProps={{ className: "document-drawer" }}
         >
-          <DialogTitle sx={{ pb: 1 }}>
-            {selectedOutboundDocument?.packingListNo || t("packingListNo")}
-            <IconButton aria-label={t("close")} onClick={() => setSelectedOutboundDocument(null)} sx={{ position: "absolute", right: 16, top: 16 }}>
-              <CloseIcon fontSize="small" />
-            </IconButton>
-          </DialogTitle>
-          <DialogContent dividers>
-            {selectedOutboundDocument ? (
-              <>
-                <div className="sheet-form">
-                  <div className="sheet-note"><strong>{t("orderRef")}</strong> {selectedOutboundDocument.orderRef || "-"}</div>
-                  <div className="sheet-note"><strong>{t("customer")}</strong> {selectedOutboundDocument.customerName || "-"}</div>
-                  <div className="sheet-note"><strong>{t("currentStorage")}</strong> {selectedOutboundDocument.storages || "-"}</div>
-                  <div className="sheet-note"><strong>{t("outDate")}</strong> {formatDate(selectedOutboundDocument.outDate)}</div>
-                  <div className="sheet-note"><strong>{t("status")}</strong> {selectedOutboundDocument.status || "-"}</div>
-                  <div className="sheet-note"><strong>{t("documentNotes")}</strong> {selectedOutboundDocument.documentNote || "-"}</div>
-                  <div className="sheet-note"><strong>{t("cancelNote")}</strong> {selectedOutboundDocument.cancelNote || "-"}</div>
-                  <div className="sheet-note"><strong>{t("totalLines")}</strong> {selectedOutboundDocument.totalLines}</div>
-                  <div className="sheet-note"><strong>{t("totalQty")}</strong> {selectedOutboundDocument.totalQty}</div>
-                  <div className="sheet-note"><strong>{t("grossWeight")}</strong> {selectedOutboundDocument.totalGrossWeightKgs ? selectedOutboundDocument.totalGrossWeightKgs.toFixed(2) : "-"}</div>
+          {selectedOutboundDocument ? (
+            <div className="document-drawer__content">
+              <div className="document-drawer__header">
+                <div>
+                  <div className="document-drawer__eyebrow">{t("packingListsView")}</div>
+                  <h3>{selectedOutboundDocument.packingListNo || t("packingListNo")}</h3>
+                  <p>
+                    {[selectedOutboundDocument.customerName || "-", formatDate(selectedOutboundDocument.outDate)].filter(Boolean).join(" · ")}
+                  </p>
                 </div>
-                <div className="sheet-form__actions" style={{ margin: "0 0 1rem" }}>
-                  <button className="button button--primary" type="button" onClick={() => downloadOutboundPackingListPdfFromDocument(selectedOutboundDocument)}>
-                    {t("downloadPdf")}
-                  </button>
-                  {canManage && selectedOutboundDocument.status !== "CANCELLED" ? (
-                    <button className="button button--danger" type="button" onClick={() => void handleCancelOutboundDocument(selectedOutboundDocument)}>
-                      {t("cancelShipment")}
-                    </button>
-                  ) : null}
+                <IconButton aria-label={t("close")} onClick={() => setSelectedOutboundDocument(null)}>
+                  <CloseIcon fontSize="small" />
+                </IconButton>
+              </div>
+
+              <div className="document-drawer__actions">
+                <Button
+                  variant="contained"
+                  startIcon={<PictureAsPdfOutlinedIcon />}
+                  onClick={() => downloadOutboundPackingListPdfFromDocument(selectedOutboundDocument)}
+                >
+                  {t("downloadPdf")}
+                </Button>
+                {canManage && selectedOutboundDocument.status !== "CANCELLED" ? (
+                  <Button
+                    variant="outlined"
+                    color="error"
+                    startIcon={<DeleteOutlineOutlinedIcon />}
+                    onClick={() => void handleCancelOutboundDocument(selectedOutboundDocument)}
+                  >
+                    {t("cancelShipment")}
+                  </Button>
+                ) : null}
+              </div>
+
+              <div className="document-drawer__status-bar">
+                <div className="document-drawer__status-main">
+                  {renderDocumentStatus(selectedOutboundDocument.status, t)}
                 </div>
-                <Box sx={{ minWidth: 0 }}>
-                  <DataGrid
-                    rows={selectedOutboundDocument.lines}
-                    columns={outboundDocumentDetailColumns}
-                    pagination
-                    pageSizeOptions={[5, 10, 20]}
-                    disableRowSelectionOnClick
-                    initialState={{ pagination: { paginationModel: { pageSize: 5, page: 0 } } }}
-                    getRowHeight={() => 68}
-                    sx={{ border: 0 }}
-                  />
-                </Box>
-              </>
-            ) : null}
-          </DialogContent>
-        </Dialog>
+                <div className="document-drawer__status-stat">
+                  <strong>{selectedOutboundDocument.totalLines}</strong>
+                  <span>{t("totalLines")}</span>
+                </div>
+                <div className="document-drawer__status-stat">
+                  <strong>{selectedOutboundDocument.totalQty}</strong>
+                  <span>{t("totalQty")}</span>
+                </div>
+                <div className="document-drawer__status-stat">
+                  <strong>{selectedOutboundDocument.totalGrossWeightKgs ? selectedOutboundDocument.totalGrossWeightKgs.toFixed(2) : "-"}</strong>
+                  <span>{t("grossWeight")}</span>
+                </div>
+              </div>
+
+              <div className="document-drawer__audit-strip">
+                <div className="document-drawer__audit-item">
+                  <strong>{t("created")}</strong>
+                  <span>{formatDateTimeValue(selectedOutboundDocument.createdAt, resolvedTimeZone)}</span>
+                </div>
+                <div className="document-drawer__audit-item">
+                  <strong>{t("updated")}</strong>
+                  <span>{formatDateTimeValue(selectedOutboundDocument.updatedAt, resolvedTimeZone)}</span>
+                </div>
+                <div className="document-drawer__audit-item">
+                  <strong>{t("status")}</strong>
+                  <span>{selectedOutboundDocument.cancelledAt ? `${selectedOutboundDocument.status} | ${formatDateTimeValue(selectedOutboundDocument.cancelledAt, resolvedTimeZone)}` : selectedOutboundDocument.status}</span>
+                </div>
+              </div>
+
+              <div className="document-drawer__meta">
+                <div className="sheet-note"><strong>{t("orderRef")}</strong> {selectedOutboundDocument.orderRef || "-"}</div>
+                <div className="sheet-note"><strong>{t("customer")}</strong> {selectedOutboundDocument.customerName || "-"}</div>
+                <div className="sheet-note"><strong>{t("currentStorage")}</strong> {selectedOutboundDocument.storages || "-"}</div>
+                <div className="sheet-note"><strong>{t("outDate")}</strong> {formatDate(selectedOutboundDocument.outDate)}</div>
+                <div className="sheet-note document-drawer__meta-note"><strong>{t("documentNotes")}</strong> {selectedOutboundDocument.documentNote || "-"}</div>
+                <div className="sheet-note document-drawer__meta-note"><strong>{t("cancelNote")}</strong> {selectedOutboundDocument.cancelNote || "-"}</div>
+              </div>
+
+              <div className="document-drawer__section-title">{t("outboundLines")}</div>
+              <Box sx={{ minWidth: 0, height: 440 }}>
+                <DataGrid
+                  rows={selectedOutboundDocument.lines}
+                  columns={outboundDocumentDetailColumns}
+                  pagination
+                  pageSizeOptions={[5, 10, 20]}
+                  disableRowSelectionOnClick
+                  initialState={{ pagination: { paginationModel: { pageSize: 5, page: 0 } } }}
+                  getRowHeight={() => 68}
+                  sx={{ border: 0 }}
+                />
+              </Box>
+            </div>
+          ) : null}
+        </Drawer>
       ) : null}
 
       {mode === "IN" || mode === "OUT" ? (
@@ -1071,4 +1194,18 @@ function renderInboundStatus(
   }
 
   return <Chip label={t("matched")} color="success" size="small" />;
+}
+
+function renderDocumentStatus(status: string, t: (key: string) => string) {
+  const normalizedStatus = status.trim().toUpperCase();
+
+  if (normalizedStatus === "CANCELLED") {
+    return <Chip label={status || t("cancelShipment")} color="error" size="small" />;
+  }
+
+  if (normalizedStatus === "POSTED") {
+    return <Chip label={status || "POSTED"} color="success" size="small" />;
+  }
+
+  return <Chip label={status || "DRAFT"} color="default" size="small" />;
 }

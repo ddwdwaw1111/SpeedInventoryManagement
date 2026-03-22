@@ -1,14 +1,17 @@
 import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
 import CloseIcon from "@mui/icons-material/Close";
+import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
-import { type FormEvent, useMemo, useState } from "react";
-import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, IconButton } from "@mui/material";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, Drawer, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
 import { api } from "../lib/api";
+import { setPendingAllActivityContext } from "../lib/allActivityContext";
 import { formatDateTimeValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
+import type { PageKey } from "../lib/routes";
 import type { InventoryAdjustment, Item, UserRole } from "../lib/types";
 import { RowActionsMenu } from "./RowActionsMenu";
 
@@ -18,6 +21,7 @@ type AdjustmentManagementPageProps = {
   currentUserRole: UserRole;
   isLoading: boolean;
   onRefresh: () => Promise<void>;
+  onNavigate: (page: PageKey) => void;
 };
 
 type AdjustmentFormState = {
@@ -53,18 +57,28 @@ export function AdjustmentManagementPage({
   items,
   currentUserRole,
   isLoading,
-  onRefresh
+  onRefresh,
+  onNavigate
 }: AdjustmentManagementPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isDetailOpen, setIsDetailOpen] = useState(false);
-  const [selectedAdjustment, setSelectedAdjustment] = useState<InventoryAdjustment | null>(null);
+  const [selectedAdjustmentId, setSelectedAdjustmentId] = useState<number | null>(null);
   const [form, setForm] = useState<AdjustmentFormState>(emptyAdjustmentForm);
   const [lines, setLines] = useState<AdjustmentLineFormState[]>([createAdjustmentLine()]);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const selectedAdjustment = useMemo(
+    () => adjustments.find((adjustment) => adjustment.id === selectedAdjustmentId) ?? null,
+    [adjustments, selectedAdjustmentId]
+  );
+
+  useEffect(() => {
+    if (selectedAdjustmentId !== null && !selectedAdjustment) {
+      setSelectedAdjustmentId(null);
+    }
+  }, [selectedAdjustment, selectedAdjustmentId]);
 
   const columns = useMemo<GridColDef<InventoryAdjustment>[]>(() => [
     { field: "adjustmentNo", headerName: t("adjustmentNo"), minWidth: 180, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.adjustmentNo}</span> },
@@ -103,10 +117,7 @@ export function AdjustmentManagementPage({
               key: "details",
               label: t("details"),
               icon: <VisibilityOutlinedIcon fontSize="small" />,
-              onClick: () => {
-                setSelectedAdjustment(params.row);
-                setIsDetailOpen(true);
-              }
+              onClick: () => setSelectedAdjustmentId(params.row.id)
             }
           ]}
         />
@@ -221,11 +232,110 @@ export function AdjustmentManagementPage({
               disableRowSelectionOnClick
               initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
               getRowHeight={() => 64}
+              onRowClick={(params) => setSelectedAdjustmentId(params.row.id)}
+              getRowClassName={(params) => (params.row.id === selectedAdjustmentId ? "document-row--selected" : "")}
               sx={{ border: 0 }}
             />
           </Box>
         </div>
       </section>
+
+      <Drawer
+        anchor="right"
+        open={Boolean(selectedAdjustment)}
+        onClose={() => setSelectedAdjustmentId(null)}
+        PaperProps={{ className: "document-drawer" }}
+      >
+        {selectedAdjustment ? (
+          <div className="document-drawer__content">
+            <div className="document-drawer__header">
+              <div>
+                <div className="document-drawer__eyebrow">{t("adjustments")}</div>
+                <h3>{selectedAdjustment.adjustmentNo}</h3>
+                <p>{selectedAdjustment.reasonCode} | {formatDateTimeValue(selectedAdjustment.createdAt, resolvedTimeZone)}</p>
+              </div>
+              <IconButton aria-label={t("close")} onClick={() => setSelectedAdjustmentId(null)}>
+                <CloseIcon fontSize="small" />
+              </IconButton>
+            </div>
+
+            <div className="document-drawer__actions">
+              <Button
+                variant="outlined"
+                startIcon={<HistoryOutlinedIcon fontSize="small" />}
+                onClick={() => {
+                  setPendingAllActivityContext({ movementType: "ADJUST" });
+                  onNavigate("all-activity");
+                }}
+              >
+                {t("allActivity")}
+              </Button>
+            </div>
+
+            <div className="document-drawer__status-bar">
+              <div className="document-drawer__status-main">
+                <Chip label={t("posted")} color="success" size="small" />
+              </div>
+              <div className="document-drawer__status-stat">
+                <strong>{selectedAdjustment.totalLines}</strong>
+                <span>{t("totalLines")}</span>
+              </div>
+              <div className="document-drawer__status-stat">
+                <strong>{formatSignedNumber(selectedAdjustment.totalAdjustQty)}</strong>
+                <span>{t("totalAdjustQty")}</span>
+              </div>
+              <div className="document-drawer__status-stat">
+                <strong>{selectedAdjustment.reasonCode}</strong>
+                <span>{t("reasonCode")}</span>
+              </div>
+            </div>
+
+            <div className="document-drawer__audit-strip">
+              <div className="document-drawer__audit-item">
+                <strong>{t("created")}</strong>
+                <span>{formatDateTimeValue(selectedAdjustment.createdAt, resolvedTimeZone)}</span>
+              </div>
+              <div className="document-drawer__audit-item">
+                <strong>{t("updated")}</strong>
+                <span>{formatDateTimeValue(selectedAdjustment.updatedAt, resolvedTimeZone)}</span>
+              </div>
+              <div className="document-drawer__audit-item">
+                <strong>{t("status")}</strong>
+                <span>{selectedAdjustment.status}</span>
+              </div>
+            </div>
+
+            <div className="document-drawer__meta">
+              <div className="sheet-note">
+                <strong>{t("reasonCode")}</strong><br />
+                {selectedAdjustment.reasonCode}
+              </div>
+              <div className="sheet-note">
+                <strong>{t("created")}</strong><br />
+                {formatDateTimeValue(selectedAdjustment.createdAt, resolvedTimeZone)}
+              </div>
+              <div className="sheet-note document-drawer__meta-note">
+                <strong>{t("notes")}</strong><br />
+                {selectedAdjustment.notes || "-"}
+              </div>
+            </div>
+
+            <div className="document-drawer__section-title">{t("adjustmentLines")}</div>
+            <Box sx={{ minWidth: 0 }}>
+              <DataGrid
+                rows={selectedAdjustment.lines}
+                columns={detailColumns}
+                pagination
+                pageSizeOptions={[10, 25, 50]}
+                disableRowSelectionOnClick
+                initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
+                getRowHeight={() => 64}
+                sx={{ border: 0 }}
+              />
+            </Box>
+          </div>
+        ) : null}
+      </Drawer>
 
       <Dialog
         open={isModalOpen}
@@ -298,46 +408,6 @@ export function AdjustmentManagementPage({
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={isDetailOpen}
-        onClose={(_, reason) => {
-          if (reason === "backdropClick") return;
-          setIsDetailOpen(false);
-          setSelectedAdjustment(null);
-        }}
-        fullWidth
-        maxWidth="lg"
-      >
-        <DialogTitle sx={{ pb: 1 }}>
-          {selectedAdjustment?.adjustmentNo ?? t("details")}
-          <IconButton aria-label={t("close")} onClick={() => { setIsDetailOpen(false); setSelectedAdjustment(null); }} sx={{ position: "absolute", right: 16, top: 16 }}>
-            <CloseIcon fontSize="small" />
-          </IconButton>
-        </DialogTitle>
-        <DialogContent dividers>
-          {selectedAdjustment ? (
-            <>
-              <div className="sheet-note" style={{ marginBottom: "1rem" }}>
-                <strong>{t("reasonCode")}:</strong> {selectedAdjustment.reasonCode}{" "}
-                <strong style={{ marginLeft: "1rem" }}>{t("status")}:</strong> {selectedAdjustment.status}{" "}
-                <strong style={{ marginLeft: "1rem" }}>{t("notes")}:</strong> {selectedAdjustment.notes || "-"}
-              </div>
-              <Box sx={{ minWidth: 0 }}>
-                <DataGrid
-                  rows={selectedAdjustment.lines}
-                  columns={detailColumns}
-                  pagination
-                  pageSizeOptions={[10, 25, 50]}
-                  disableRowSelectionOnClick
-                  initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
-                  getRowHeight={() => 64}
-                  sx={{ border: 0 }}
-                />
-              </Box>
-            </>
-          ) : null}
-        </DialogContent>
-      </Dialog>
     </main>
   );
 }

@@ -1,9 +1,18 @@
-import { useDeferredValue, useMemo, useState } from "react";
-import { Box, Chip } from "@mui/material";
+import CloseIcon from "@mui/icons-material/Close";
+import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
+import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
+import OutboxOutlinedIcon from "@mui/icons-material/OutboxOutlined";
+import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
+import CompareArrowsOutlinedIcon from "@mui/icons-material/CompareArrowsOutlined";
+import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { Box, Button, Chip, Drawer, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
+import { consumePendingAllActivityContext } from "../lib/allActivityContext";
 import { formatDateTimeValue, formatDateValue, parseDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
+import type { PageKey } from "../lib/routes";
 import { useSettings } from "../lib/settings";
 import type { Customer, Location, Movement } from "../lib/types";
 
@@ -12,13 +21,14 @@ type AllActivityPageProps = {
   customers: Customer[];
   locations: Location[];
   isLoading: boolean;
+  onNavigate: (page: PageKey) => void;
 };
 
 type MovementTypeFilter = "ALL" | Movement["movementType"];
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
 
-export function AllActivityPage({ movements, customers, locations, isLoading }: AllActivityPageProps) {
+export function AllActivityPage({ movements, customers, locations, isLoading, onNavigate }: AllActivityPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const [searchTerm, setSearchTerm] = useState("");
@@ -27,6 +37,7 @@ export function AllActivityPage({ movements, customers, locations, isLoading }: 
   const [movementTypeFilter, setMovementTypeFilter] = useState<MovementTypeFilter>("ALL");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [selectedMovementId, setSelectedMovementId] = useState<number | null>(null);
   const deferredSearchTerm = useDeferredValue(searchTerm);
   const selectedLocationName = selectedLocationId === "all"
     ? null
@@ -69,6 +80,29 @@ export function AllActivityPage({ movements, customers, locations, isLoading }: 
     selectedLocationName,
     startDate
   ]);
+  const selectedMovement = useMemo(
+    () => filteredRows.find((movement) => movement.id === selectedMovementId) ?? null,
+    [filteredRows, selectedMovementId]
+  );
+
+  useEffect(() => {
+    const context = consumePendingAllActivityContext();
+    if (!context) {
+      return;
+    }
+
+    setSearchTerm(context.searchTerm ?? "");
+    setSelectedCustomerId(context.customerId ? String(context.customerId) : "all");
+    setSelectedLocationId(context.locationId ? String(context.locationId) : "all");
+    setMovementTypeFilter(context.movementType ?? "ALL");
+    setSelectedMovementId(null);
+  }, []);
+
+  useEffect(() => {
+    if (selectedMovementId !== null && !selectedMovement) {
+      setSelectedMovementId(null);
+    }
+  }, [selectedMovement, selectedMovementId]);
 
   const columns = useMemo<GridColDef<Movement>[]>(() => [
     {
@@ -150,13 +184,156 @@ export function AllActivityPage({ movements, customers, locations, isLoading }: 
               disableRowSelectionOnClick
               initialState={{ pagination: { paginationModel: { pageSize: 25, page: 0 } } }}
               getRowHeight={() => 72}
+              onRowClick={(params) => setSelectedMovementId(params.row.id)}
+              getRowClassName={(params) => (params.row.id === selectedMovementId ? "document-row--selected" : "")}
               sx={{ border: 0 }}
             />
           </Box>
         </div>
       </section>
+
+      <Drawer
+        anchor="right"
+        open={Boolean(selectedMovement)}
+        onClose={() => setSelectedMovementId(null)}
+        PaperProps={{ className: "document-drawer" }}
+      >
+        {selectedMovement ? (
+          <div className="document-drawer__content">
+            <div className="document-drawer__header">
+              <div>
+                <div className="document-drawer__eyebrow">{t("allActivity")}</div>
+                <h3>{selectedMovement.sku}</h3>
+                <p>{selectedMovement.description} | {selectedMovement.customerName} | {selectedMovement.locationName} / {selectedMovement.storageSection || "A"}</p>
+              </div>
+              <IconButton aria-label={t("close")} onClick={() => setSelectedMovementId(null)}>
+                <CloseIcon fontSize="small" />
+              </IconButton>
+            </div>
+
+            <div className="document-drawer__actions">
+              {renderMovementSourceAction(selectedMovement, t, onNavigate)}
+              <Button variant="outlined" startIcon={<HistoryOutlinedIcon fontSize="small" />} onClick={() => onNavigate("all-activity")}>
+                {t("allActivity")}
+              </Button>
+            </div>
+
+            <div className="document-drawer__status-bar">
+              <div className="document-drawer__status-main">
+                {renderMovementType(selectedMovement.movementType, t)}
+              </div>
+              <div className="document-drawer__status-stat">
+                <strong>{formatSignedNumber(selectedMovement.quantityChange)}</strong>
+                <span>{t("qtyChange")}</span>
+              </div>
+              <div className="document-drawer__status-stat">
+                <strong>{selectedMovement.customerName || "-"}</strong>
+                <span>{t("customer")}</span>
+              </div>
+              <div className="document-drawer__status-stat">
+                <strong>{selectedMovement.locationName}</strong>
+                <span>{t("currentStorage")}</span>
+              </div>
+            </div>
+
+            <div className="document-drawer__audit-strip">
+              <div className="document-drawer__audit-item">
+                <strong>{t("created")}</strong>
+                <span>{formatDateTimeValue(selectedMovement.createdAt, resolvedTimeZone)}</span>
+              </div>
+              <div className="document-drawer__audit-item">
+                <strong>{t("activityDate")}</strong>
+                <span>{formatMovementActivityDate(selectedMovement, resolvedTimeZone)}</span>
+              </div>
+              <div className="document-drawer__audit-item">
+                <strong>{t("status")}</strong>
+                <span>{selectedMovement.movementType}</span>
+              </div>
+            </div>
+
+            <div className="document-drawer__meta">
+              <div className="sheet-note">
+                <strong>{t("movementType")}</strong><br />
+                {selectedMovement.movementType}
+              </div>
+              <div className="sheet-note">
+                <strong>{t("activityDate")}</strong><br />
+                {formatMovementActivityDate(selectedMovement, resolvedTimeZone)}
+              </div>
+              <div className="sheet-note">
+                <strong>{t("containerNo")}</strong><br />
+                <span className="cell--mono">{selectedMovement.containerNo || "-"}</span>
+              </div>
+              <div className="sheet-note">
+                <strong>{t("packingListNo")}</strong><br />
+                <span className="cell--mono">{selectedMovement.packingListNo || "-"}</span>
+              </div>
+              <div className="sheet-note">
+                <strong>{t("reference")}</strong><br />
+                <span className="cell--mono">{selectedMovement.referenceCode || "-"}</span>
+              </div>
+              <div className="sheet-note">
+                <strong>{t("orderRef")}</strong><br />
+                <span className="cell--mono">{selectedMovement.orderRef || "-"}</span>
+              </div>
+              <div className="sheet-note document-drawer__meta-note">
+                <strong>{t("notes")}</strong><br />
+                {selectedMovement.reason || selectedMovement.documentNote || "-"}
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </Drawer>
     </main>
   );
+}
+
+function renderMovementSourceAction(
+  movement: Movement,
+  t: (key: string) => string,
+  onNavigate: (page: PageKey) => void
+) {
+  if (movement.inboundDocumentId > 0) {
+    return (
+      <Button variant="outlined" startIcon={<MoveToInboxOutlinedIcon fontSize="small" />} onClick={() => onNavigate("inbound-management")}>
+        {t("inbound")}
+      </Button>
+    );
+  }
+
+  if (movement.outboundDocumentId > 0) {
+    return (
+      <Button variant="outlined" startIcon={<OutboxOutlinedIcon fontSize="small" />} onClick={() => onNavigate("outbound-management")}>
+        {t("outbound")}
+      </Button>
+    );
+  }
+
+  if (movement.movementType === "ADJUST") {
+    return (
+      <Button variant="outlined" startIcon={<TuneOutlinedIcon fontSize="small" />} onClick={() => onNavigate("adjustments")}>
+        {t("adjustments")}
+      </Button>
+    );
+  }
+
+  if (movement.movementType === "COUNT") {
+    return (
+      <Button variant="outlined" startIcon={<FactCheckOutlinedIcon fontSize="small" />} onClick={() => onNavigate("cycle-counts")}>
+        {t("cycleCounts")}
+      </Button>
+    );
+  }
+
+  if (movement.movementType === "TRANSFER_IN" || movement.movementType === "TRANSFER_OUT") {
+    return (
+      <Button variant="outlined" startIcon={<CompareArrowsOutlinedIcon fontSize="small" />} onClick={() => onNavigate("transfers")}>
+        {t("transfers")}
+      </Button>
+    );
+  }
+
+  return null;
 }
 
 function renderMovementType(movementType: Movement["movementType"], t: (key: string) => string) {

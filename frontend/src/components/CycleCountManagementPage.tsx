@@ -1,14 +1,17 @@
 import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
 import CloseIcon from "@mui/icons-material/Close";
+import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
-import { type FormEvent, useMemo, useState } from "react";
-import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, IconButton } from "@mui/material";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, Drawer, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
 import { api } from "../lib/api";
+import { setPendingAllActivityContext } from "../lib/allActivityContext";
 import { formatDateTimeValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
+import type { PageKey } from "../lib/routes";
 import type { CycleCount, Item, UserRole } from "../lib/types";
 import { RowActionsMenu } from "./RowActionsMenu";
 
@@ -18,6 +21,7 @@ type CycleCountManagementPageProps = {
   currentUserRole: UserRole;
   isLoading: boolean;
   onRefresh: () => Promise<void>;
+  onNavigate: (page: PageKey) => void;
 };
 
 type CycleCountFormState = {
@@ -51,18 +55,28 @@ export function CycleCountManagementPage({
   items,
   currentUserRole,
   isLoading,
-  onRefresh
+  onRefresh,
+  onNavigate
 }: CycleCountManagementPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isDetailOpen, setIsDetailOpen] = useState(false);
-  const [selectedCycleCount, setSelectedCycleCount] = useState<CycleCount | null>(null);
+  const [selectedCycleCountId, setSelectedCycleCountId] = useState<number | null>(null);
   const [form, setForm] = useState<CycleCountFormState>(emptyCycleCountForm);
   const [lines, setLines] = useState<CycleCountLineFormState[]>([createCycleCountLine()]);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const selectedCycleCount = useMemo(
+    () => cycleCounts.find((cycleCount) => cycleCount.id === selectedCycleCountId) ?? null,
+    [cycleCounts, selectedCycleCountId]
+  );
+
+  useEffect(() => {
+    if (selectedCycleCountId !== null && !selectedCycleCount) {
+      setSelectedCycleCountId(null);
+    }
+  }, [selectedCycleCount, selectedCycleCountId]);
 
   const columns = useMemo<GridColDef<CycleCount>[]>(() => [
     { field: "countNo", headerName: t("countNo"), minWidth: 180, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.countNo}</span> },
@@ -100,10 +114,7 @@ export function CycleCountManagementPage({
               key: "details",
               label: t("details"),
               icon: <VisibilityOutlinedIcon fontSize="small" />,
-              onClick: () => {
-                setSelectedCycleCount(params.row);
-                setIsDetailOpen(true);
-              }
+              onClick: () => setSelectedCycleCountId(params.row.id)
             }
           ]}
         />
@@ -215,11 +226,110 @@ export function CycleCountManagementPage({
               disableRowSelectionOnClick
               initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
               getRowHeight={() => 64}
+              onRowClick={(params) => setSelectedCycleCountId(params.row.id)}
+              getRowClassName={(params) => (params.row.id === selectedCycleCountId ? "document-row--selected" : "")}
               sx={{ border: 0 }}
             />
           </Box>
         </div>
       </section>
+
+      <Drawer
+        anchor="right"
+        open={Boolean(selectedCycleCount)}
+        onClose={() => setSelectedCycleCountId(null)}
+        PaperProps={{ className: "document-drawer" }}
+      >
+        {selectedCycleCount ? (
+          <div className="document-drawer__content">
+            <div className="document-drawer__header">
+              <div>
+                <div className="document-drawer__eyebrow">{t("cycleCounts")}</div>
+                <h3>{selectedCycleCount.countNo}</h3>
+                <p>{formatDateTimeValue(selectedCycleCount.createdAt, resolvedTimeZone)}</p>
+              </div>
+              <IconButton aria-label={t("close")} onClick={() => setSelectedCycleCountId(null)}>
+                <CloseIcon fontSize="small" />
+              </IconButton>
+            </div>
+
+            <div className="document-drawer__actions">
+              <Button
+                variant="outlined"
+                startIcon={<HistoryOutlinedIcon fontSize="small" />}
+                onClick={() => {
+                  setPendingAllActivityContext({ movementType: "COUNT" });
+                  onNavigate("all-activity");
+                }}
+              >
+                {t("allActivity")}
+              </Button>
+            </div>
+
+            <div className="document-drawer__status-bar">
+              <div className="document-drawer__status-main">
+                <Chip label={t("posted")} color="success" size="small" />
+              </div>
+              <div className="document-drawer__status-stat">
+                <strong>{selectedCycleCount.totalLines}</strong>
+                <span>{t("totalLines")}</span>
+              </div>
+              <div className="document-drawer__status-stat">
+                <strong>{formatSignedNumber(selectedCycleCount.totalVariance)}</strong>
+                <span>{t("varianceQty")}</span>
+              </div>
+              <div className="document-drawer__status-stat">
+                <strong>{selectedCycleCount.status}</strong>
+                <span>{t("status")}</span>
+              </div>
+            </div>
+
+            <div className="document-drawer__audit-strip">
+              <div className="document-drawer__audit-item">
+                <strong>{t("created")}</strong>
+                <span>{formatDateTimeValue(selectedCycleCount.createdAt, resolvedTimeZone)}</span>
+              </div>
+              <div className="document-drawer__audit-item">
+                <strong>{t("updated")}</strong>
+                <span>{formatDateTimeValue(selectedCycleCount.updatedAt, resolvedTimeZone)}</span>
+              </div>
+              <div className="document-drawer__audit-item">
+                <strong>{t("status")}</strong>
+                <span>{selectedCycleCount.status}</span>
+              </div>
+            </div>
+
+            <div className="document-drawer__meta">
+              <div className="sheet-note">
+                <strong>{t("countNo")}</strong><br />
+                {selectedCycleCount.countNo}
+              </div>
+              <div className="sheet-note">
+                <strong>{t("created")}</strong><br />
+                {formatDateTimeValue(selectedCycleCount.createdAt, resolvedTimeZone)}
+              </div>
+              <div className="sheet-note document-drawer__meta-note">
+                <strong>{t("notes")}</strong><br />
+                {selectedCycleCount.notes || "-"}
+              </div>
+            </div>
+
+            <div className="document-drawer__section-title">{t("cycleCountLines")}</div>
+            <Box sx={{ minWidth: 0 }}>
+              <DataGrid
+                rows={selectedCycleCount.lines}
+                columns={detailColumns}
+                pagination
+                pageSizeOptions={[10, 25, 50]}
+                disableRowSelectionOnClick
+                initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
+                getRowHeight={() => 64}
+                sx={{ border: 0 }}
+              />
+            </Box>
+          </div>
+        ) : null}
+      </Drawer>
 
       <Dialog
         open={isModalOpen}
@@ -301,46 +411,6 @@ export function CycleCountManagementPage({
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={isDetailOpen}
-        onClose={(_, reason) => {
-          if (reason === "backdropClick") return;
-          setIsDetailOpen(false);
-          setSelectedCycleCount(null);
-        }}
-        fullWidth
-        maxWidth="lg"
-      >
-        <DialogTitle sx={{ pb: 1 }}>
-          {selectedCycleCount?.countNo ?? t("details")}
-          <IconButton aria-label={t("close")} onClick={() => { setIsDetailOpen(false); setSelectedCycleCount(null); }} sx={{ position: "absolute", right: 16, top: 16 }}>
-            <CloseIcon fontSize="small" />
-          </IconButton>
-        </DialogTitle>
-        <DialogContent dividers>
-          {selectedCycleCount ? (
-            <>
-              <div className="sheet-note" style={{ marginBottom: "1rem" }}>
-                <strong>{t("status")}:</strong> {selectedCycleCount.status}{" "}
-                <strong style={{ marginLeft: "1rem" }}>{t("varianceQty")}:</strong> {formatSignedNumber(selectedCycleCount.totalVariance)}{" "}
-                <strong style={{ marginLeft: "1rem" }}>{t("notes")}:</strong> {selectedCycleCount.notes || "-"}
-              </div>
-              <Box sx={{ minWidth: 0 }}>
-                <DataGrid
-                  rows={selectedCycleCount.lines}
-                  columns={detailColumns}
-                  pagination
-                  pageSizeOptions={[10, 25, 50]}
-                  disableRowSelectionOnClick
-                  initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
-                  getRowHeight={() => 64}
-                  sx={{ border: 0 }}
-                />
-              </Box>
-            </>
-          ) : null}
-        </DialogContent>
-      </Dialog>
     </main>
   );
 }

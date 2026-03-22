@@ -1,14 +1,17 @@
 import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
 import CloseIcon from "@mui/icons-material/Close";
+import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
-import { type FormEvent, useMemo, useState } from "react";
-import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, IconButton } from "@mui/material";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, Drawer, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
 import { api } from "../lib/api";
+import { setPendingAllActivityContext } from "../lib/allActivityContext";
 import { formatDateTimeValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
+import type { PageKey } from "../lib/routes";
 import type { InventoryTransfer, Item, Location, UserRole } from "../lib/types";
 import { RowActionsMenu } from "./RowActionsMenu";
 
@@ -19,6 +22,7 @@ type TransferManagementPageProps = {
   currentUserRole: UserRole;
   isLoading: boolean;
   onRefresh: () => Promise<void>;
+  onNavigate: (page: PageKey) => void;
 };
 
 type TransferFormState = {
@@ -57,18 +61,28 @@ export function TransferManagementPage({
   locations,
   currentUserRole,
   isLoading,
-  onRefresh
+  onRefresh,
+  onNavigate
 }: TransferManagementPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isDetailOpen, setIsDetailOpen] = useState(false);
-  const [selectedTransfer, setSelectedTransfer] = useState<InventoryTransfer | null>(null);
+  const [selectedTransferId, setSelectedTransferId] = useState<number | null>(null);
   const [form, setForm] = useState<TransferFormState>(emptyTransferForm);
   const [lines, setLines] = useState<TransferLineFormState[]>([createTransferLine()]);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const selectedTransfer = useMemo(
+    () => transfers.find((transfer) => transfer.id === selectedTransferId) ?? null,
+    [transfers, selectedTransferId]
+  );
+
+  useEffect(() => {
+    if (selectedTransferId !== null && !selectedTransfer) {
+      setSelectedTransferId(null);
+    }
+  }, [selectedTransfer, selectedTransferId]);
 
   const availableSourceItems = useMemo(() => items.filter((item) => item.quantity > 0), [items]);
 
@@ -99,10 +113,7 @@ export function TransferManagementPage({
               key: "details",
               label: t("details"),
               icon: <VisibilityOutlinedIcon fontSize="small" />,
-              onClick: () => {
-                setSelectedTransfer(params.row);
-                setIsDetailOpen(true);
-              }
+              onClick: () => setSelectedTransferId(params.row.id)
             }
           ]}
         />
@@ -208,11 +219,110 @@ export function TransferManagementPage({
               disableRowSelectionOnClick
               initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
               getRowHeight={() => 64}
+              onRowClick={(params) => setSelectedTransferId(params.row.id)}
+              getRowClassName={(params) => (params.row.id === selectedTransferId ? "document-row--selected" : "")}
               sx={{ border: 0 }}
             />
           </Box>
         </div>
       </section>
+
+      <Drawer
+        anchor="right"
+        open={Boolean(selectedTransfer)}
+        onClose={() => setSelectedTransferId(null)}
+        PaperProps={{ className: "document-drawer" }}
+      >
+        {selectedTransfer ? (
+          <div className="document-drawer__content">
+            <div className="document-drawer__header">
+              <div>
+                <div className="document-drawer__eyebrow">{t("transfers")}</div>
+                <h3>{selectedTransfer.transferNo}</h3>
+                <p>{selectedTransfer.routes || "-"} | {formatDateTimeValue(selectedTransfer.createdAt, resolvedTimeZone)}</p>
+              </div>
+              <IconButton aria-label={t("close")} onClick={() => setSelectedTransferId(null)}>
+                <CloseIcon fontSize="small" />
+              </IconButton>
+            </div>
+
+            <div className="document-drawer__actions">
+              <Button
+                variant="outlined"
+                startIcon={<HistoryOutlinedIcon fontSize="small" />}
+                onClick={() => {
+                  setPendingAllActivityContext({ movementType: "TRANSFER_OUT" });
+                  onNavigate("all-activity");
+                }}
+              >
+                {t("allActivity")}
+              </Button>
+            </div>
+
+            <div className="document-drawer__status-bar">
+              <div className="document-drawer__status-main">
+                <Chip label={t("posted")} color="success" size="small" />
+              </div>
+              <div className="document-drawer__status-stat">
+                <strong>{selectedTransfer.totalLines}</strong>
+                <span>{t("totalLines")}</span>
+              </div>
+              <div className="document-drawer__status-stat">
+                <strong>{selectedTransfer.totalQty}</strong>
+                <span>{t("totalQty")}</span>
+              </div>
+              <div className="document-drawer__status-stat">
+                <strong>{selectedTransfer.routes || "-"}</strong>
+                <span>{t("routes")}</span>
+              </div>
+            </div>
+
+            <div className="document-drawer__audit-strip">
+              <div className="document-drawer__audit-item">
+                <strong>{t("created")}</strong>
+                <span>{formatDateTimeValue(selectedTransfer.createdAt, resolvedTimeZone)}</span>
+              </div>
+              <div className="document-drawer__audit-item">
+                <strong>{t("updated")}</strong>
+                <span>{formatDateTimeValue(selectedTransfer.updatedAt, resolvedTimeZone)}</span>
+              </div>
+              <div className="document-drawer__audit-item">
+                <strong>{t("status")}</strong>
+                <span>{selectedTransfer.status}</span>
+              </div>
+            </div>
+
+            <div className="document-drawer__meta">
+              <div className="sheet-note">
+                <strong>{t("routes")}</strong><br />
+                {selectedTransfer.routes || "-"}
+              </div>
+              <div className="sheet-note">
+                <strong>{t("created")}</strong><br />
+                {formatDateTimeValue(selectedTransfer.createdAt, resolvedTimeZone)}
+              </div>
+              <div className="sheet-note document-drawer__meta-note">
+                <strong>{t("notes")}</strong><br />
+                {selectedTransfer.notes || "-"}
+              </div>
+            </div>
+
+            <div className="document-drawer__section-title">{t("transferLines")}</div>
+            <Box sx={{ minWidth: 0 }}>
+              <DataGrid
+                rows={selectedTransfer.lines}
+                columns={detailColumns}
+                pagination
+                pageSizeOptions={[10, 25, 50]}
+                disableRowSelectionOnClick
+                initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
+                getRowHeight={() => 64}
+                sx={{ border: 0 }}
+              />
+            </Box>
+          </div>
+        ) : null}
+      </Drawer>
 
       <Dialog
         open={isModalOpen}
@@ -286,46 +396,6 @@ export function TransferManagementPage({
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={isDetailOpen}
-        onClose={(_, reason) => {
-          if (reason === "backdropClick") return;
-          setIsDetailOpen(false);
-          setSelectedTransfer(null);
-        }}
-        fullWidth
-        maxWidth="lg"
-      >
-        <DialogTitle sx={{ pb: 1 }}>
-          {selectedTransfer?.transferNo ?? t("details")}
-          <IconButton aria-label={t("close")} onClick={() => { setIsDetailOpen(false); setSelectedTransfer(null); }} sx={{ position: "absolute", right: 16, top: 16 }}>
-            <CloseIcon fontSize="small" />
-          </IconButton>
-        </DialogTitle>
-        <DialogContent dividers>
-          {selectedTransfer ? (
-            <>
-              <div className="sheet-note" style={{ marginBottom: "1rem" }}>
-                <strong>{t("status")}:</strong> {selectedTransfer.status}{" "}
-                <strong style={{ marginLeft: "1rem" }}>{t("routes")}:</strong> {selectedTransfer.routes || "-"}{" "}
-                <strong style={{ marginLeft: "1rem" }}>{t("notes")}:</strong> {selectedTransfer.notes || "-"}
-              </div>
-              <Box sx={{ minWidth: 0 }}>
-                <DataGrid
-                  rows={selectedTransfer.lines}
-                  columns={detailColumns}
-                  pagination
-                  pageSizeOptions={[10, 25, 50]}
-                  disableRowSelectionOnClick
-                  initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
-                  getRowHeight={() => 64}
-                  sx={{ border: 0 }}
-                />
-              </Box>
-            </>
-          ) : null}
-        </DialogContent>
-      </Dialog>
     </main>
   );
 }

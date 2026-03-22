@@ -1,15 +1,20 @@
-import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
 import CloseIcon from "@mui/icons-material/Close";
+import CompareArrowsOutlinedIcon from "@mui/icons-material/CompareArrowsOutlined";
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
+import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
+import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
+import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
 import { type FormEvent, useDeferredValue, useEffect, useMemo, useState } from "react";
-import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, IconButton } from "@mui/material";
+import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, Drawer, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
 import { api } from "../lib/api";
+import { setPendingAllActivityContext } from "../lib/allActivityContext";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
+import type { PageKey } from "../lib/routes";
 import type { Customer, Item, ItemPayload, Location, UserRole } from "../lib/types";
 
 type MasterInventoryPageProps = {
@@ -19,6 +24,7 @@ type MasterInventoryPageProps = {
   currentUserRole: UserRole;
   isLoading: boolean;
   onRefresh: () => Promise<void>;
+  onNavigate: (page: PageKey) => void;
 };
 
 type InventoryHealthFilter = "ALL" | "IN_STOCK" | "LOW_STOCK" | "MISMATCH";
@@ -74,7 +80,7 @@ function getSuggestedPalletsDetail(totalQty: number, pallets: number) {
   return `${pallets - 1}*${cartonsPerFullPallet}+${remainingCartons}`;
 }
 
-export function MasterInventoryPage({ items, locations, customers, currentUserRole, isLoading, onRefresh }: MasterInventoryPageProps) {
+export function MasterInventoryPage({ items, locations, customers, currentUserRole, isLoading, onRefresh, onNavigate }: MasterInventoryPageProps) {
   const { t } = useI18n();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
   const canDelete = currentUserRole === "admin";
@@ -87,6 +93,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
   const [selectedLocationId, setSelectedLocationId] = useState("all");
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [healthFilter, setHealthFilter] = useState<InventoryHealthFilter>("ALL");
+  const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItemId, setEditingItemId] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -122,6 +129,16 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
       || (healthFilter === "MISMATCH" && hasQtyMismatch(item.expectedQty, item.receivedQty));
     return matchesSearch && matchesLocation && matchesCustomer && matchesHealth;
   });
+  const selectedItem = useMemo(
+    () => filteredItems.find((item) => item.id === selectedItemId) ?? null,
+    [filteredItems, selectedItemId]
+  );
+
+  useEffect(() => {
+    if (selectedItemId !== null && !selectedItem) {
+      setSelectedItemId(null);
+    }
+  }, [selectedItem, selectedItemId]);
 
   const columns = useMemo<GridColDef<Item>[]>(() => [
     { field: "sku", headerName: t("sku"), minWidth: 120, flex: 0.8, renderCell: (params) => <span className="cell--mono">{params.value}</span> },
@@ -177,16 +194,9 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
     }
   ], [canDelete, canManage, t]);
 
-  function openCreateModal() {
-    if (!canManage) return;
-    setEditingItemId(null);
-    setForm(createEmptyItemForm(customers[0] ? String(customers[0].id) : "", locations[0] ? String(locations[0].id) : ""));
-    setErrorMessage("");
-    setIsModalOpen(true);
-  }
-
   function openEditModal(item: Item) {
     if (!canManage) return;
+    setSelectedItemId(item.id);
     setEditingItemId(item.id);
     setForm({
       sku: item.sku,
@@ -287,19 +297,24 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
     }
   }
 
+  function openWorkspace(page: PageKey) {
+    if (!selectedItem) return;
+    if (page === "all-activity") {
+      setPendingAllActivityContext({
+        searchTerm: selectedItem.sku,
+        customerId: selectedItem.customerId,
+        locationId: selectedItem.locationId
+      });
+    }
+    onNavigate(page);
+  }
+
   return (
     <main className="workspace-main">
       {errorMessage && !isModalOpen ? <div className="alert-banner">{errorMessage}</div> : null}
 
       <section className="workbook-panel workbook-panel--full">
         <div className="tab-strip">
-          <div className="tab-strip__toolbar">
-            {canManage ? (
-              <div className="tab-strip__actions">
-                <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addNew")}</Button>
-              </div>
-            ) : null}
-          </div>
           {permissionNote ? <div className="sheet-note sheet-note--readonly">{permissionNote}</div> : null}
           <div className="filter-bar">
             <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("stockByLocationSearchPlaceholder")} /></label>
@@ -320,11 +335,118 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
               disableRowSelectionOnClick
               initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
               getRowHeight={() => 72}
+              onRowClick={(params) => setSelectedItemId(params.row.id)}
+              getRowClassName={(params) => (params.row.id === selectedItemId ? "document-row--selected" : "")}
               sx={{ border: 0 }}
             />
           </Box>
         </div>
       </section>
+
+      <Drawer
+        anchor="right"
+        open={Boolean(selectedItem)}
+        onClose={() => setSelectedItemId(null)}
+        PaperProps={{ className: "document-drawer" }}
+      >
+        {selectedItem ? (
+          <div className="document-drawer__content">
+            <div className="document-drawer__header">
+              <div>
+                <div className="document-drawer__eyebrow">{t("stockByLocation")}</div>
+                <h3>{selectedItem.sku}</h3>
+                <p>{displayDescription(selectedItem)} | {selectedItem.customerName} | {selectedItem.locationName} / {selectedItem.storageSection || "A"}</p>
+              </div>
+              <IconButton aria-label={t("close")} onClick={() => setSelectedItemId(null)}>
+                <CloseIcon fontSize="small" />
+              </IconButton>
+            </div>
+
+            <div className="document-drawer__actions">
+              {canManage ? (
+                <Button variant="contained" startIcon={<EditOutlinedIcon fontSize="small" />} onClick={() => openEditModal(selectedItem)}>
+                  {t("editStockRow")}
+                </Button>
+              ) : null}
+              {canManage ? (
+                <Button variant="outlined" startIcon={<TuneOutlinedIcon fontSize="small" />} onClick={() => openWorkspace("adjustments")}>
+                  {t("adjustments")}
+                </Button>
+              ) : null}
+              {canManage ? (
+                <Button variant="outlined" startIcon={<CompareArrowsOutlinedIcon fontSize="small" />} onClick={() => openWorkspace("transfers")}>
+                  {t("transfers")}
+                </Button>
+              ) : null}
+              {canManage ? (
+                <Button variant="outlined" startIcon={<FactCheckOutlinedIcon fontSize="small" />} onClick={() => openWorkspace("cycle-counts")}>
+                  {t("cycleCounts")}
+                </Button>
+              ) : null}
+              <Button variant="outlined" startIcon={<HistoryOutlinedIcon fontSize="small" />} onClick={() => openWorkspace("all-activity")}>
+                {t("allActivity")}
+              </Button>
+            </div>
+
+            <div className="document-drawer__status-bar">
+              <div className="document-drawer__status-main">
+                <div className="status-stack">
+                  {selectedItem.quantity <= selectedItem.reorderLevel ? <Chip label={t("lowStock")} color="warning" size="small" /> : <Chip label={t("healthy")} color="success" size="small" />}
+                  {hasQtyMismatch(selectedItem.expectedQty, selectedItem.receivedQty) ? <Chip label={t("qtyMismatch")} color="error" size="small" /> : null}
+                </div>
+              </div>
+              <div className="document-drawer__status-stat">
+                <strong>{selectedItem.quantity}</strong>
+                <span>{t("onHand")}</span>
+              </div>
+              <div className="document-drawer__status-stat">
+                <strong>{selectedItem.reorderLevel}</strong>
+                <span>{t("reorderLevel")}</span>
+              </div>
+              <div className="document-drawer__status-stat">
+                <strong>{selectedItem.expectedQty || 0} / {selectedItem.receivedQty || 0}</strong>
+                <span>{t("expectedQty")} / {t("received")}</span>
+              </div>
+            </div>
+
+            <div className="document-drawer__meta">
+              <div className="sheet-note">
+                <strong>{t("customer")}</strong><br />
+                {selectedItem.customerName}
+              </div>
+              <div className="sheet-note">
+                <strong>{t("currentStorage")}</strong><br />
+                {selectedItem.locationName} / {selectedItem.storageSection || "A"}
+              </div>
+              <div className="sheet-note">
+                <strong>{t("deliveryDate")}</strong><br />
+                {formatDate(selectedItem.deliveryDate)}
+              </div>
+              <div className="sheet-note">
+                <strong>{t("containerNo")}</strong><br />
+                <span className="cell--mono">{selectedItem.containerNo || "-"}</span>
+              </div>
+              <div className="sheet-note">
+                <strong>{t("pallets")}</strong><br />
+                {selectedItem.pallets || "-"}
+              </div>
+              <div className="sheet-note">
+                <strong>{t("palletsDetail")}</strong><br />
+                <span className="cell--mono">{selectedItem.palletsDetailCtns || "-"}</span>
+              </div>
+              <div className="sheet-note">
+                <strong>{t("heightIn")}</strong><br />
+                {selectedItem.heightIn || "-"}
+              </div>
+              <div className="sheet-note">
+                <strong>{t("outDate")}</strong><br />
+                {formatDate(selectedItem.outDate)}
+              </div>
+              {permissionNote ? <div className="sheet-note document-drawer__meta-note">{permissionNote}</div> : null}
+            </div>
+          </div>
+        ) : null}
+      </Drawer>
 
       <Dialog
         open={isModalOpen}
@@ -336,7 +458,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
         maxWidth="md"
       >
         <DialogTitle sx={{ pb: 1 }}>
-          {editingItemId ? t("editStockRow") : t("addStockRow")}
+          {t("editStockRow")}
           <IconButton aria-label={t("close")} onClick={closeModal} sx={{ position: "absolute", right: 16, top: 16 }}>
             <CloseIcon fontSize="small" />
           </IconButton>
@@ -361,7 +483,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
             <label>{t("outDate")}<input type="date" value={form.outDate} onChange={(event) => setForm((current) => ({ ...current, outDate: event.target.value }))} /></label>
             <label>{t("reorderLevel")}<input type="number" min="0" value={numberInputValue(form.reorderLevel)} onChange={(event) => setForm((current) => ({ ...current, reorderLevel: Math.max(0, Number(event.target.value || 0)) }))} /></label>
             <div className="sheet-form__actions sheet-form__wide">
-              <button className="button button--primary" type="submit" disabled={isSubmitting}>{isSubmitting ? t("saving") : editingItemId ? t("updateRow") : t("addRow")}</button>
+              <button className="button button--primary" type="submit" disabled={isSubmitting}>{isSubmitting ? t("saving") : t("updateRow")}</button>
               <button className="button button--ghost" type="button" onClick={closeModal}>{t("cancel")}</button>
             </div>
           </form>

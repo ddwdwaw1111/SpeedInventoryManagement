@@ -2,22 +2,32 @@ import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOu
 import CloseIcon from "@mui/icons-material/Close";
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
-import { type FormEvent, useDeferredValue, useMemo, useState } from "react";
-import { Box, Button, Dialog, DialogContent, DialogTitle, IconButton } from "@mui/material";
+import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
+import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
+import OutboxOutlinedIcon from "@mui/icons-material/OutboxOutlined";
+import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
+import { type FormEvent, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { Box, Button, Dialog, DialogContent, DialogTitle, Drawer, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
 import { api } from "../lib/api";
+import { setPendingAllActivityContext } from "../lib/allActivityContext";
 import { formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
-import type { Customer, CustomerPayload, Item, UserRole } from "../lib/types";
+import type { PageKey } from "../lib/routes";
+import type { Customer, CustomerPayload, InboundDocument, Item, Movement, OutboundDocument, UserRole } from "../lib/types";
 import { RowActionsMenu } from "./RowActionsMenu";
 
 type CustomerManagementPageProps = {
   customers: Customer[];
   items: Item[];
+  inboundDocuments: InboundDocument[];
+  outboundDocuments: OutboundDocument[];
+  movements: Movement[];
   currentUserRole: UserRole;
   isLoading: boolean;
   onRefresh: () => Promise<void>;
+  onNavigate: (page: PageKey) => void;
 };
 
 type CustomerFormState = {
@@ -40,10 +50,21 @@ function createEmptyForm(): CustomerFormState {
   };
 }
 
-export function CustomerManagementPage({ customers, items, currentUserRole, isLoading, onRefresh }: CustomerManagementPageProps) {
+export function CustomerManagementPage({
+  customers,
+  items,
+  inboundDocuments,
+  outboundDocuments,
+  movements,
+  currentUserRole,
+  isLoading,
+  onRefresh,
+  onNavigate
+}: CustomerManagementPageProps) {
   const { t } = useI18n();
   const canManage = currentUserRole === "admin";
   const [searchTerm, setSearchTerm] = useState("");
+  const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<CustomerFormState>(() => createEmptyForm());
@@ -72,6 +93,46 @@ export function CustomerManagementPage({ customers, items, currentUserRole, isLo
 
     return summary;
   }, [items]);
+
+  const selectedCustomer = useMemo(
+    () => customers.find((customer) => customer.id === selectedCustomerId) ?? null,
+    [customers, selectedCustomerId]
+  );
+
+  useEffect(() => {
+    if (selectedCustomerId !== null && !selectedCustomer) {
+      setSelectedCustomerId(null);
+    }
+  }, [selectedCustomer, selectedCustomerId]);
+
+  const selectedCustomerItems = useMemo(
+    () => items
+      .filter((item) => item.customerId === selectedCustomerId)
+      .sort((left, right) => right.quantity - left.quantity)
+      .slice(0, 6),
+    [items, selectedCustomerId]
+  );
+
+  const selectedInboundDocuments = useMemo(
+    () => inboundDocuments
+      .filter((document) => document.customerId === selectedCustomerId)
+      .slice(0, 5),
+    [inboundDocuments, selectedCustomerId]
+  );
+
+  const selectedOutboundDocuments = useMemo(
+    () => outboundDocuments
+      .filter((document) => document.customerId === selectedCustomerId)
+      .slice(0, 5),
+    [outboundDocuments, selectedCustomerId]
+  );
+
+  const selectedCustomerMovements = useMemo(
+    () => movements
+      .filter((movement) => movement.customerId === selectedCustomerId)
+      .slice(0, 6),
+    [movements, selectedCustomerId]
+  );
 
   const columns = useMemo<GridColDef<Customer>[]>(() => [
     { field: "name", headerName: t("customer"), minWidth: 180, flex: 1 },
@@ -121,6 +182,7 @@ export function CustomerManagementPage({ customers, items, currentUserRole, isLo
 
   function openEditModal(row: Customer) {
     if (!canManage) return;
+    setSelectedCustomerId(row.id);
     setEditingId(row.id);
     setForm({
       name: row.name,
@@ -184,6 +246,15 @@ export function CustomerManagementPage({ customers, items, currentUserRole, isLo
     }
   }
 
+  function openWorkspace(page: PageKey) {
+    if (page === "all-activity" && selectedCustomer) {
+      setPendingAllActivityContext({
+        customerId: selectedCustomer.id
+      });
+    }
+    onNavigate(page);
+  }
+
   return (
     <main className="workspace-main">
       {errorMessage && !isModalOpen ? <div className="alert-banner">{errorMessage}</div> : null}
@@ -214,11 +285,159 @@ export function CustomerManagementPage({ customers, items, currentUserRole, isLo
               disableRowSelectionOnClick
               initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
               getRowHeight={() => 64}
+              onRowClick={(params) => setSelectedCustomerId(params.row.id)}
+              getRowClassName={(params) => (params.row.id === selectedCustomerId ? "document-row--selected" : "")}
               sx={{ border: 0 }}
             />
           </Box>
         </div>
       </section>
+
+      <Drawer
+        anchor="right"
+        open={Boolean(selectedCustomer)}
+        onClose={() => setSelectedCustomerId(null)}
+        PaperProps={{ className: "document-drawer" }}
+      >
+        {selectedCustomer ? (
+          <div className="document-drawer__content">
+            <div className="document-drawer__header">
+              <div>
+                <div className="document-drawer__eyebrow">{t("customers")}</div>
+                <h3>{selectedCustomer.name}</h3>
+                <p>{selectedCustomer.contactName || "-"} | {selectedCustomer.email || "-"} | {selectedCustomer.phone || "-"}</p>
+              </div>
+              <IconButton aria-label={t("close")} onClick={() => setSelectedCustomerId(null)}>
+                <CloseIcon fontSize="small" />
+              </IconButton>
+            </div>
+
+            <div className="document-drawer__actions">
+              {canManage ? (
+                <Button variant="contained" startIcon={<EditOutlinedIcon fontSize="small" />} onClick={() => openEditModal(selectedCustomer)}>
+                  {t("editCustomer")}
+                </Button>
+              ) : null}
+              <Button variant="outlined" startIcon={<WarehouseOutlinedIcon fontSize="small" />} onClick={() => openWorkspace("stock-by-location")}>
+                {t("stockByLocation")}
+              </Button>
+              <Button variant="outlined" startIcon={<MoveToInboxOutlinedIcon fontSize="small" />} onClick={() => openWorkspace("inbound-management")}>
+                {t("inbound")}
+              </Button>
+              <Button variant="outlined" startIcon={<OutboxOutlinedIcon fontSize="small" />} onClick={() => openWorkspace("outbound-management")}>
+                {t("outbound")}
+              </Button>
+              <Button variant="outlined" startIcon={<HistoryOutlinedIcon fontSize="small" />} onClick={() => openWorkspace("all-activity")}>
+                {t("allActivity")}
+              </Button>
+            </div>
+
+            <div className="document-drawer__status-bar">
+              <div className="document-drawer__status-main">
+                <div className="sheet-note">
+                  <strong>{selectedCustomer.notes || "-"}</strong>
+                  <div>{t("notes")}</div>
+                </div>
+              </div>
+              <div className="document-drawer__status-stat">
+                <strong>{inventorySummaryByCustomer.get(selectedCustomer.id)?.stockRows ?? 0}</strong>
+                <span>{t("assignedSkuRows")}</span>
+              </div>
+              <div className="document-drawer__status-stat">
+                <strong>{inventorySummaryByCustomer.get(selectedCustomer.id)?.onHand ?? 0}</strong>
+                <span>{t("onHand")}</span>
+              </div>
+              <div className="document-drawer__status-stat">
+                <strong>{selectedInboundDocuments.length} / {selectedOutboundDocuments.length}</strong>
+                <span>{t("inbound")} / {t("outbound")}</span>
+              </div>
+            </div>
+
+            <div className="document-drawer__meta">
+              <div className="sheet-note">
+                <strong>{t("contactName")}</strong><br />
+                {selectedCustomer.contactName || "-"}
+              </div>
+              <div className="sheet-note">
+                <strong>{t("updated")}</strong><br />
+                {formatDateValue(selectedCustomer.updatedAt, dateFormatter)}
+              </div>
+            </div>
+
+            <div>
+              <div className="document-drawer__section-title">{t("currentInventoryRows")}</div>
+              <div className="document-drawer__list">
+                {selectedCustomerItems.length > 0 ? selectedCustomerItems.map((item) => (
+                  <div className="document-drawer__list-row" key={item.id}>
+                    <div>
+                      <strong>{item.sku}</strong>
+                      <span>{item.description || item.name}</span>
+                    </div>
+                    <div>
+                      <strong>{item.quantity}</strong>
+                      <span>{item.locationName} / {item.storageSection || "A"}</span>
+                    </div>
+                  </div>
+                )) : <div className="sheet-note">{t("noCustomerInventory")}</div>}
+              </div>
+            </div>
+
+            <div>
+              <div className="document-drawer__section-title">{t("recentInboundDocuments")}</div>
+              <div className="document-drawer__list">
+                {selectedInboundDocuments.length > 0 ? selectedInboundDocuments.map((document) => (
+                  <div className="document-drawer__list-row" key={document.id}>
+                    <div>
+                      <strong>{document.containerNo || `#${document.id}`}</strong>
+                      <span>{document.locationName}</span>
+                    </div>
+                    <div>
+                      <strong>{document.totalReceivedQty}</strong>
+                      <span>{formatDateValue(document.deliveryDate, dateFormatter)}</span>
+                    </div>
+                  </div>
+                )) : <div className="sheet-note">{t("noCustomerDocuments")}</div>}
+              </div>
+            </div>
+
+            <div>
+              <div className="document-drawer__section-title">{t("recentOutboundDocuments")}</div>
+              <div className="document-drawer__list">
+                {selectedOutboundDocuments.length > 0 ? selectedOutboundDocuments.map((document) => (
+                  <div className="document-drawer__list-row" key={document.id}>
+                    <div>
+                      <strong>{document.packingListNo || `#${document.id}`}</strong>
+                      <span>{document.storages || "-"}</span>
+                    </div>
+                    <div>
+                      <strong>{document.totalQty}</strong>
+                      <span>{formatDateValue(document.outDate, dateFormatter)}</span>
+                    </div>
+                  </div>
+                )) : <div className="sheet-note">{t("noCustomerDocuments")}</div>}
+              </div>
+            </div>
+
+            <div>
+              <div className="document-drawer__section-title">{t("recentActivity")}</div>
+              <div className="document-drawer__list">
+                {selectedCustomerMovements.length > 0 ? selectedCustomerMovements.map((movement) => (
+                  <div className="document-drawer__list-row" key={movement.id}>
+                    <div>
+                      <strong>{movement.movementType}</strong>
+                      <span>{movement.sku} | {movement.locationName} / {movement.storageSection || "A"}</span>
+                    </div>
+                    <div>
+                      <strong>{movement.quantityChange}</strong>
+                      <span>{formatDateValue(movement.createdAt, dateFormatter)}</span>
+                    </div>
+                  </div>
+                )) : <div className="sheet-note">{t("noCustomerActivity")}</div>}
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </Drawer>
 
       <Dialog
         open={isModalOpen}
