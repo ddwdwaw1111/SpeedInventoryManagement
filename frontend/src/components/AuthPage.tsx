@@ -80,20 +80,35 @@ export function AuthPage({
 export function AppHeaderUser({
   user,
   onLogout,
-  isSubmitting
+  isSubmitting,
+  compact = false
 }: {
   user: User;
   onLogout: () => Promise<void>;
   isSubmitting: boolean;
+  compact?: boolean;
 }) {
+  const initials = user.fullName
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("") || "U";
+
   return (
-    <div className="app-user">
-      <div className="app-user__meta">
-        <strong>{user.fullName}</strong>
-        <span>{user.email}</span>
+    <div className={`app-user ${compact ? "app-user--compact" : ""}`}>
+      <div className="app-user__identity">
+        <div className="app-user__avatar" aria-hidden="true">{initials}</div>
+        <div className="app-user__meta">
+          <div className="app-user__name-row">
+            <strong>{user.fullName}</strong>
+            <span className="app-user__role">{user.role}</span>
+          </div>
+          <span>{user.email}</span>
+        </div>
       </div>
-      <button className="button button--ghost button--small" type="button" onClick={() => { void onLogout(); }} disabled={isSubmitting}>
-        {isSubmitting ? "Signing out..." : "Logout"}
+      <button className="app-user__logout" type="button" onClick={() => { void onLogout(); }} disabled={isSubmitting}>
+        {isSubmitting ? "Signing out..." : "Sign out"}
       </button>
     </div>
   );

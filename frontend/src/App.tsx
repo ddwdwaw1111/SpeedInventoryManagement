@@ -2,6 +2,9 @@ import {
   AssessmentOutlined,
   BadgeOutlined,
   CategoryOutlined,
+  ChevronLeftOutlined,
+  ExpandMoreOutlined,
+  ChevronRightOutlined,
   CompareArrowsOutlined,
   FactCheckOutlined,
   GroupsOutlined,
@@ -52,7 +55,35 @@ const monthFormatter = new Intl.DateTimeFormat("en-US", { month: "short", year: 
 const yearFormatter = new Intl.DateTimeFormat("en-US", { year: "numeric" });
 
 export default function App() {
-  const { language, setLanguage, t } = useI18n();
+  const { language, t } = useI18n();
+  const navLabels = language === "zh"
+    ? {
+        overview: "总览",
+        receiving: "收货",
+        shipping: "发货",
+        inventory: "库存",
+        masterData: "主数据",
+        administration: "系统管理"
+      }
+    : {
+        overview: "Overview",
+        receiving: "Receiving",
+        shipping: "Shipping",
+        inventory: "Inventory",
+        masterData: "Master Data",
+        administration: "Administration"
+      };
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem("sim-sidebar-collapsed") === "true");
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = window.localStorage.getItem("sim-sidebar-sections");
+      if (!saved) return {};
+      const parsed = JSON.parse(saved);
+      return typeof parsed === "object" && parsed ? parsed as Record<string, boolean> : {};
+    } catch {
+      return {};
+    }
+  });
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isAuthResolved, setIsAuthResolved] = useState(false);
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
@@ -89,6 +120,12 @@ export default function App() {
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
+  useEffect(() => {
+    window.localStorage.setItem("sim-sidebar-collapsed", String(sidebarCollapsed));
+  }, [sidebarCollapsed]);
+  useEffect(() => {
+    window.localStorage.setItem("sim-sidebar-sections", JSON.stringify(collapsedSections));
+  }, [collapsedSections]);
 
   async function bootstrapApp() {
     setIsLoading(true);
@@ -266,6 +303,26 @@ export default function App() {
     { key: "storage-management", label: t("storageManagement"), description: t("storageManagementDesc"), icon: <WarehouseOutlined fontSize="small" /> },
     { key: "settings", label: t("settings"), description: t("settingsDesc"), icon: <SettingsOutlined fontSize="small" /> }
   ];
+  const pageItemMap = new Map(pageItems.map((item) => [item.key, item] as const));
+  const navSections = [
+    { key: "overview", label: navLabels.overview, items: ["dashboard"] as PageKey[] },
+    { key: "receiving", label: navLabels.receiving, items: ["inbound-management", "cycle-counts"] as PageKey[] },
+    { key: "shipping", label: navLabels.shipping, items: ["outbound-management"] as PageKey[] },
+    { key: "inventory", label: navLabels.inventory, items: ["stock-by-location", "adjustments", "transfers", "all-activity"] as PageKey[] },
+    { key: "master-data", label: navLabels.masterData, items: ["customers", "sku-master", "storage-management"] as PageKey[] },
+    { key: "administration", label: navLabels.administration, items: ["audit-logs", "user-management", "settings"] as PageKey[] }
+  ].map((section) => ({
+    ...section,
+    items: section.items
+      .map((pageKey) => pageItemMap.get(pageKey))
+      .filter((item): item is NonNullable<typeof item> => Boolean(item))
+  })).filter((section) => section.items.length > 0);
+  const activePageItem = pageItemMap.get(activePage) ?? pageItems[0];
+  const activeNavSection = navSections.find((section) => section.items.some((item) => item.key === activePage)) ?? navSections[0];
+  useEffect(() => {
+    if (!activeNavSection) return;
+    setCollapsedSections((current) => current[activeNavSection.key] ? { ...current, [activeNavSection.key]: false } : current);
+  }, [activeNavSection]);
 
   if (!isAuthResolved || (isLoading && !currentUser)) {
     return (
@@ -290,88 +347,140 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
-      <header className="app-topbar">
-        <div className="app-topbar__brand">
-          <p className="eyebrow">{t("inventorySystem")}</p>
-          <h2>{t("speedInventory")}</h2>
-          <div className="language-switch" aria-label={t("language")}>
-            <button className={`language-switch__button ${language === "en" ? "language-switch__button--active" : ""}`} type="button" onClick={() => setLanguage("en")}>{t("english")}</button>
-            <button className={`language-switch__button ${language === "zh" ? "language-switch__button--active" : ""}`} type="button" onClick={() => setLanguage("zh")}>{t("chinese")}</button>
-          </div>
-          <AppHeaderUser user={currentUser} onLogout={handleLogout} isSubmitting={isAuthSubmitting} />
-        </div>
-        <nav className="app-topbar__nav" aria-label={t("pages")}>
-          {pageItems.map((item) => (
-            <button
-              key={item.key}
-              className={`app-topbar__link ${activePage === item.key ? "app-topbar__link--active" : ""}`}
-              type="button"
-              onClick={() => navigateToPage(item.key, setActivePage)}
-            >
-              <span className="app-topbar__link-icon" aria-hidden="true">{item.icon}</span>
-              <span>{item.label}</span>
-              <small>{item.description}</small>
-            </button>
-          ))}
-        </nav>
-      </header>
-
-      <div className="workspace-shell">
-        {activePage === "inbound-management" ? <ActivityManagementPage mode="IN" items={items} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
-        {activePage === "outbound-management" ? <ActivityManagementPage mode="OUT" items={items} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
-        {activePage === "adjustments" ? <AdjustmentManagementPage adjustments={adjustments} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
-        {activePage === "transfers" ? <TransferManagementPage transfers={transfers} items={items} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
-        {activePage === "cycle-counts" ? <CycleCountManagementPage cycleCounts={cycleCounts} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
-        {activePage === "all-activity" ? <AllActivityPage movements={movements} locations={locations} customers={customers} isLoading={isLoading} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
-        {activePage === "customers" ? <CustomerManagementPage customers={customers} items={items} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} movements={movements} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
-        {activePage === "audit-logs" && canViewAuditLogs ? <AuditLogPage auditLogs={auditLogs} isLoading={isLoading} /> : null}
-        {activePage === "user-management" && canManageUsers ? <UserManagementPage users={users} currentUser={currentUser} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
-        {activePage === "sku-master" ? <SKUMasterPage skuMasters={skuMasters} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
-        {activePage === "stock-by-location" ? <MasterInventoryPage items={items} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
-        {activePage === "storage-management" ? <StorageManagementPage locations={locations} items={items} currentUserRole={currentUser.role} onRefresh={() => loadAppData(false)} /> : null}
-        {activePage === "settings" ? <SettingsPage /> : null}
-
-        {activePage === "dashboard" ? (
-          <main className="workspace-main">
-            {errorMessage ? <div className="alert-banner">{errorMessage}</div> : null}
-
-            <section className="workbook-panel workbook-panel--full">
-              <div className="tab-strip">
-                <div className="tab-strip__heading">
-                  <h2>{t("reportOverviewTitle")}</h2>
-                  <p>{t("reportOverviewSubtitle")}</p>
-                </div>
-                <div className="filter-bar">
-                  <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("searchSkuPlaceholder")} /></label>
-                  <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
-                  <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
-                  <label>{t("groupBy")}<select value={reportGranularity} onChange={(event) => setReportGranularity(event.target.value as ReportGranularity)}><option value="day">{t("daily")}</option><option value="month">{t("monthly")}</option><option value="year">{t("yearly")}</option></select></label>
-                  <label>{t("fromDate")}<input type="date" value={reportStartDate} onChange={(event) => setReportStartDate(event.target.value)} /></label>
-                  <label>{t("toDate")}<input type="date" value={reportEndDate} onChange={(event) => setReportEndDate(event.target.value)} /></label>
-                </div>
-              </div>
-
-              <div className="report-grid">
-                <ReportCard title={t("inventoryByStorage")} subtitle={t("inventoryByStorageDesc")}>
-                  <StorageDistributionChart rows={reportLocationRows} emptyLabel={t("noResults")} valueSuffix={t("units")} />
-                </ReportCard>
-
-                <ReportCard title={t("movementTrend")} subtitle={t("movementTrendDesc")}>
-                  <MovementTrendChart rows={reportTrendRows} emptyLabel={t("noResults")} inboundLabel={t("inbound")} outboundLabel={t("outbound")} />
-                </ReportCard>
-
-                <ReportCard title={t("topSkuOnHand")} subtitle={t("topSkuOnHandDesc")}>
-                  <InventoryBarChart rows={reportTopSkuRows} emptyLabel={t("noResults")} valueSuffix={t("units")} seriesLabel={t("onHand")} color="#274c77" />
-                </ReportCard>
-
-                <ReportCard title={t("lowStockAttention")} subtitle={t("lowStockAttentionDesc")}>
-                  <InventoryBarChart rows={reportLowStockRows} emptyLabel={t("noResults")} valueSuffix={t("unitsShort")} seriesLabel={t("lowStock")} color="#c79b5d" />
-                </ReportCard>
+    <div className={`app-shell app-shell--workspace ${sidebarCollapsed ? "app-shell--sidebar-collapsed" : ""}`}>
+      <aside className={`app-sidebar ${sidebarCollapsed ? "app-sidebar--collapsed" : ""}`}>
+        <nav className="app-sidebar__nav" aria-label={t("pages")}>
+          {navSections.map((section) => (
+            <section className="app-sidebar__section" key={section.key}>
+              {!sidebarCollapsed ? (
+                <button
+                  className={`app-sidebar__section-toggle ${activeNavSection?.key === section.key ? "app-sidebar__section-toggle--active" : ""}`}
+                  type="button"
+                  onClick={() => setCollapsedSections((current) => ({ ...current, [section.key]: !current[section.key] }))}
+                  aria-expanded={!collapsedSections[section.key]}
+                >
+                  <span className="app-sidebar__section-label">{section.label}</span>
+                  <ExpandMoreOutlined
+                    fontSize="small"
+                    className={`app-sidebar__section-chevron ${collapsedSections[section.key] ? "app-sidebar__section-chevron--collapsed" : ""}`}
+                  />
+                </button>
+              ) : null}
+              <div className={`app-sidebar__section-items ${!sidebarCollapsed && collapsedSections[section.key] ? "app-sidebar__section-items--collapsed" : ""}`}>
+                {section.items.map((item) => (
+                  <button
+                    key={item.key}
+                    className={`app-sidebar__link ${activePage === item.key ? "app-sidebar__link--active" : ""}`}
+                    type="button"
+                    onClick={() => navigateToPage(item.key, setActivePage)}
+                    title={sidebarCollapsed ? item.label : undefined}
+                  >
+                    <span className="app-sidebar__link-icon" aria-hidden="true">{item.icon}</span>
+                    {!sidebarCollapsed ? <span className="app-sidebar__link-label">{item.label}</span> : null}
+                  </button>
+                ))}
               </div>
             </section>
-          </main>
-        ) : null}
+          ))}
+        </nav>
+        <div className="app-sidebar__footer">
+          <div className="app-sidebar__brand">
+            <div className="app-sidebar__brand-mark" aria-hidden="true">SI</div>
+            {!sidebarCollapsed ? (
+              <div className="app-sidebar__brand-copy">
+                <p className="eyebrow">{t("inventorySystem")}</p>
+                <h2>{t("speedInventory")}</h2>
+              </div>
+            ) : null}
+          </div>
+          <AppHeaderUser user={currentUser} onLogout={handleLogout} isSubmitting={isAuthSubmitting} compact />
+        </div>
+        <button
+          className="app-sidebar__rail-toggle"
+          type="button"
+          onClick={() => setSidebarCollapsed((value) => !value)}
+          aria-label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"}
+          title={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"}
+        >
+          {sidebarCollapsed ? <ChevronRightOutlined fontSize="small" /> : <ChevronLeftOutlined fontSize="small" />}
+        </button>
+      </aside>
+
+      <div className="app-main">
+        <header className="app-toolbar">
+          <div className="app-toolbar__copy">
+            <div className="app-toolbar__breadcrumb">
+              <span>{t("inventorySystem")}</span>
+              <span aria-hidden="true">/</span>
+              <span>{activeNavSection.label}</span>
+            </div>
+            <div className="app-toolbar__title-row">
+              <div className="app-toolbar__title-main">
+                <div className="app-toolbar__icon" aria-hidden="true">{activePageItem.icon}</div>
+                <h1>{activePageItem.label}</h1>
+              </div>
+              <span className="app-toolbar__section-pill">{activeNavSection.label}</span>
+            </div>
+            <p>{activePageItem.description}</p>
+          </div>
+        </header>
+
+        <div className="workspace-shell">
+          {activePage === "inbound-management" ? <ActivityManagementPage mode="IN" items={items} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+          {activePage === "outbound-management" ? <ActivityManagementPage mode="OUT" items={items} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+          {activePage === "adjustments" ? <AdjustmentManagementPage adjustments={adjustments} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
+          {activePage === "transfers" ? <TransferManagementPage transfers={transfers} items={items} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
+          {activePage === "cycle-counts" ? <CycleCountManagementPage cycleCounts={cycleCounts} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
+          {activePage === "all-activity" ? <AllActivityPage movements={movements} locations={locations} customers={customers} isLoading={isLoading} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
+          {activePage === "customers" ? <CustomerManagementPage customers={customers} items={items} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} movements={movements} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
+          {activePage === "audit-logs" && canViewAuditLogs ? <AuditLogPage auditLogs={auditLogs} isLoading={isLoading} /> : null}
+          {activePage === "user-management" && canManageUsers ? <UserManagementPage users={users} currentUser={currentUser} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+          {activePage === "sku-master" ? <SKUMasterPage skuMasters={skuMasters} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+          {activePage === "stock-by-location" ? <MasterInventoryPage items={items} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
+          {activePage === "storage-management" ? <StorageManagementPage locations={locations} items={items} currentUserRole={currentUser.role} onRefresh={() => loadAppData(false)} /> : null}
+          {activePage === "settings" ? <SettingsPage /> : null}
+
+          {activePage === "dashboard" ? (
+            <main className="workspace-main">
+              {errorMessage ? <div className="alert-banner">{errorMessage}</div> : null}
+
+              <section className="workbook-panel workbook-panel--full">
+                <div className="tab-strip">
+                  <div className="tab-strip__heading">
+                    <h2>{t("reportOverviewTitle")}</h2>
+                    <p>{t("reportOverviewSubtitle")}</p>
+                  </div>
+                  <div className="filter-bar">
+                    <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("searchSkuPlaceholder")} /></label>
+                    <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
+                    <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
+                    <label>{t("groupBy")}<select value={reportGranularity} onChange={(event) => setReportGranularity(event.target.value as ReportGranularity)}><option value="day">{t("daily")}</option><option value="month">{t("monthly")}</option><option value="year">{t("yearly")}</option></select></label>
+                    <label>{t("fromDate")}<input type="date" value={reportStartDate} onChange={(event) => setReportStartDate(event.target.value)} /></label>
+                    <label>{t("toDate")}<input type="date" value={reportEndDate} onChange={(event) => setReportEndDate(event.target.value)} /></label>
+                  </div>
+                </div>
+
+                <div className="report-grid">
+                  <ReportCard title={t("inventoryByStorage")} subtitle={t("inventoryByStorageDesc")}>
+                    <StorageDistributionChart rows={reportLocationRows} emptyLabel={t("noResults")} valueSuffix={t("units")} />
+                  </ReportCard>
+
+                  <ReportCard title={t("movementTrend")} subtitle={t("movementTrendDesc")}>
+                    <MovementTrendChart rows={reportTrendRows} emptyLabel={t("noResults")} inboundLabel={t("inbound")} outboundLabel={t("outbound")} />
+                  </ReportCard>
+
+                  <ReportCard title={t("topSkuOnHand")} subtitle={t("topSkuOnHandDesc")}>
+                    <InventoryBarChart rows={reportTopSkuRows} emptyLabel={t("noResults")} valueSuffix={t("units")} seriesLabel={t("onHand")} color="#274c77" />
+                  </ReportCard>
+
+                  <ReportCard title={t("lowStockAttention")} subtitle={t("lowStockAttentionDesc")}>
+                    <InventoryBarChart rows={reportLowStockRows} emptyLabel={t("noResults")} valueSuffix={t("unitsShort")} seriesLabel={t("lowStock")} color="#c79b5d" />
+                  </ReportCard>
+                </div>
+              </section>
+            </main>
+          ) : null}
+        </div>
       </div>
     </div>
   );

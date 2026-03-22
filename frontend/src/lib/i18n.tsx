@@ -12,6 +12,12 @@ const translations = {
   en: {
     inventorySystem: "Inventory System",
     speedInventory: "Speed Inventory",
+    navSupportCopy: "Grouped around warehouse work so new users can find the right page faster.",
+    navDashboard: "Dashboard",
+    navReceiving: "Receiving",
+    navShipping: "Shipping",
+    navInventory: "Inventory",
+    navAdmin: "Admin",
     report: "Report",
     reportDesc: "Inventory analytics and operational graphs",
     reportOverviewTitle: "Operational Report",
@@ -349,7 +355,10 @@ const translations = {
     documentManagedLineItemsNotice: "Line items are read-only activity records generated from posted documents. Create, edit, or cancel the source document instead of editing activity rows directly.",
     language: "Language",
     english: "EN",
-    chinese: "中文"
+    chinese: "中文",
+    saveChanges: "Save Changes",
+    unsavedChanges: "Unsaved changes",
+    noChanges: "No pending changes"
   },
   zh: {
     currentInventoryRows: "当前库存行",
@@ -691,7 +700,10 @@ const translations = {
     documentManagedLineItemsNotice: "逐条明细这里是由已过账单据生成的只读流水。请通过原始单据创建、编辑或取消，不要直接修改活动行。",
     language: "语言",
     english: "EN",
-    chinese: "中文"
+    chinese: "中文",
+    saveChanges: "保存更改",
+    unsavedChanges: "有未保存的更改",
+    noChanges: "当前没有待保存更改"
   }
 } as const;
 
