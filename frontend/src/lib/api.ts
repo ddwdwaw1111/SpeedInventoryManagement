@@ -20,7 +20,6 @@ import type {
   Location,
   LocationPayload,
   Movement,
-  MovementPayload,
   OutboundDocument,
   OutboundDocumentPayload,
   SKUMaster,
@@ -330,32 +329,6 @@ export const api = {
     return request<CycleCount>("/cycle-counts", {
       method: "POST",
       body: JSON.stringify(payload)
-    });
-  },
-
-  createMovement(payload: MovementPayload) {
-    return request<Movement>("/movements", {
-      method: "POST",
-      body: JSON.stringify(payload)
-    });
-  },
-
-  updateMovement(movementId: number, payload: MovementPayload) {
-    return request<Movement>(`/movements/${movementId}`, {
-      method: "PUT",
-      body: JSON.stringify(payload)
-    });
-  },
-
-  deleteMovement(movementId: number, options?: { restoreStock?: boolean }) {
-    const params = new URLSearchParams();
-    if (typeof options?.restoreStock === "boolean") {
-      params.set("restoreStock", String(options.restoreStock));
-    }
-
-    const suffix = params.toString() ? `?${params.toString()}` : "";
-    return request<void>(`/movements/${movementId}${suffix}`, {
-      method: "DELETE"
     });
   }
 };

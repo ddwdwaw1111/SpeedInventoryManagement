@@ -467,29 +467,3 @@ export type ItemPayload = {
   heightIn: number;
   outDate?: string;
 };
-
-export type MovementPayload = {
-  itemId: number;
-  movementType: "IN" | "OUT" | "ADJUST" | "REVERSAL" | "TRANSFER_IN" | "TRANSFER_OUT" | "COUNT";
-  quantity: number;
-  storageSection?: string;
-  deliveryDate?: string;
-  containerNo?: string;
-  packingListNo?: string;
-  orderRef?: string;
-  itemNumber?: string;
-  expectedQty: number;
-  receivedQty: number;
-  pallets: number;
-  palletsDetailCtns?: string;
-  cartonSizeMm?: string;
-  cartonCount?: number;
-  unitLabel?: string;
-  netWeightKgs?: number;
-  grossWeightKgs?: number;
-  heightIn: number;
-  outDate?: string;
-  documentNote?: string;
-  reason?: string;
-  referenceCode?: string;
-};

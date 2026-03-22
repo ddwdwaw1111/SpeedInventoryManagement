@@ -1,10 +1,9 @@
 import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
 import CloseIcon from "@mui/icons-material/Close";
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
-import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import PictureAsPdfOutlinedIcon from "@mui/icons-material/PictureAsPdfOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
-import { type Dispatch, type FormEvent, type SetStateAction, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
@@ -13,7 +12,7 @@ import { RowActionsMenu } from "./RowActionsMenu";
 import { formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import { downloadOutboundPackingListPdfFromDocument } from "../lib/outboundPackingListPdf";
-import type { Customer, InboundDocument, InboundDocumentPayload, Item, ItemPayload, Location, Movement, MovementPayload, OutboundDocument, OutboundDocumentPayload, UserRole } from "../lib/types";
+import type { Customer, InboundDocument, InboundDocumentPayload, Item, Location, Movement, OutboundDocument, OutboundDocumentPayload, UserRole } from "../lib/types";
 
 type ActivityMode = "IN" | "OUT";
 
@@ -28,38 +27,6 @@ type ActivityManagementPageProps = {
   currentUserRole: UserRole;
   isLoading: boolean;
   onRefresh: () => Promise<void>;
-};
-
-type ActivityFormState = {
-  itemId: string;
-  quantity: number;
-  storageSection: string;
-  deliveryDate: string;
-  containerNo: string;
-  packingListNo: string;
-  orderRef: string;
-  expectedQty: number;
-  receivedQty: number;
-  pallets: number;
-  palletsDetailCtns: string;
-  cartonSizeMm: string;
-  unitLabel: string;
-  netWeightKgs: number;
-  grossWeightKgs: number;
-  heightIn: number;
-  outDate: string;
-  documentNote: string;
-  reason: string;
-  referenceCode: string;
-};
-
-type NewSkuFormState = {
-  sku: string;
-  description: string;
-  customerId: string;
-  locationId: string;
-  storageSection: string;
-  reorderLevel: number;
 };
 
 type BatchInboundFormState = {
@@ -105,42 +72,6 @@ type InboundViewMode = "documents" | "line-items";
 type OutboundViewMode = "packing-lists" | "line-items";
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
-
-function createEmptyActivityForm(mode: ActivityMode): ActivityFormState {
-  return {
-    itemId: "",
-    quantity: 0,
-    storageSection: "A",
-    deliveryDate: "",
-    containerNo: "",
-    packingListNo: "",
-    orderRef: "",
-    expectedQty: 0,
-    receivedQty: 0,
-    pallets: 0,
-    palletsDetailCtns: "",
-    cartonSizeMm: "",
-    unitLabel: mode === "IN" ? "CTN" : "PCS",
-    netWeightKgs: 0,
-    grossWeightKgs: 0,
-    heightIn: mode === "IN" ? 0 : 87,
-    outDate: "",
-    documentNote: "",
-    reason: mode === "IN" ? "Inbound shipment recorded" : "Outbound shipment recorded",
-    referenceCode: ""
-  };
-}
-
-function createEmptyNewSkuForm(defaultCustomerId = "", defaultLocationId = ""): NewSkuFormState {
-  return {
-    sku: "",
-    description: "",
-    customerId: defaultCustomerId,
-    locationId: defaultLocationId,
-    storageSection: "A",
-    reorderLevel: 0
-  };
-}
 
 function createEmptyBatchInboundForm(): BatchInboundFormState {
   return {
@@ -205,15 +136,8 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
-  const [form, setForm] = useState<ActivityFormState>(() => createEmptyActivityForm(mode));
-  const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const [editingMovementId, setEditingMovementId] = useState<number | null>(null);
-  const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
-  const [pendingDeleteMovement, setPendingDeleteMovement] = useState<Movement | null>(null);
-  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
-  const [newSkuForm, setNewSkuForm] = useState<NewSkuFormState>(() => createEmptyNewSkuForm("", ""));
   const [batchForm, setBatchForm] = useState<BatchInboundFormState>(() => createEmptyBatchInboundForm());
   const [batchLines, setBatchLines] = useState<BatchInboundLineState[]>(() => [createEmptyBatchInboundLine()]);
   const [batchOutboundForm, setBatchOutboundForm] = useState<BatchOutboundFormState>(() => createEmptyBatchOutboundForm());
@@ -228,36 +152,13 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
 
   useEffect(() => {
-    setForm((current) => ({ ...createEmptyActivityForm(mode), itemId: current.itemId }));
-    setEditingMovementId(null);
-    setIsFormModalOpen(false);
     setIsBatchModalOpen(false);
-    setPendingDeleteMovement(null);
-    setDeleteSubmitting(false);
     setInboundViewMode("documents");
     setBatchOutboundForm(createEmptyBatchOutboundForm());
     setBatchOutboundLines([createEmptyBatchOutboundLine()]);
     setSelectedInboundDocument(null);
     setSelectedOutboundDocument(null);
   }, [mode]);
-
-  useEffect(() => {
-    if (items.length > 0 && !form.itemId) {
-      setForm((current) => ({ ...current, itemId: String(items[0].id) }));
-    }
-  }, [form.itemId, items]);
-
-  useEffect(() => {
-    if (!newSkuForm.locationId && locations[0]) {
-      setNewSkuForm((current) => ({ ...current, locationId: String(locations[0].id) }));
-    }
-  }, [locations, newSkuForm.locationId]);
-
-  useEffect(() => {
-    if (!newSkuForm.customerId && customers[0]) {
-      setNewSkuForm((current) => ({ ...current, customerId: String(customers[0].id) }));
-    }
-  }, [customers, newSkuForm.customerId]);
 
   useEffect(() => {
     if (!batchForm.locationId && locations[0]) {
@@ -291,29 +192,8 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
     pendingBatchLineIDRef.current = null;
   }, [batchLines]);
 
-  const selectedItem = items.find((item) => item.id === Number(form.itemId));
-  const selectedItemLocation = locations.find((location) => location.id === selectedItem?.locationId);
-  const selectedItemSectionOptions = getLocationSectionOptions(selectedItemLocation);
-  const newSkuLocation = locations.find((location) => location.id === Number(newSkuForm.locationId));
-  const newSkuSectionOptions = getLocationSectionOptions(newSkuLocation);
   const batchLocation = locations.find((location) => location.id === Number(batchForm.locationId));
   const batchSectionOptions = getLocationSectionOptions(batchLocation);
-  const matchingNewSkuTemplate = useMemo(() => {
-    const normalizedSku = newSkuForm.sku.trim().toUpperCase();
-    if (!normalizedSku) return undefined;
-    return items.find((item) => item.sku.trim().toUpperCase() === normalizedSku);
-  }, [items, newSkuForm.sku]);
-  const matchingNewSkuItem = useMemo(() => {
-    const normalizedSku = newSkuForm.sku.trim().toUpperCase();
-    const locationID = Number(newSkuForm.locationId);
-    const customerID = Number(newSkuForm.customerId);
-    if (!normalizedSku || !locationID || !customerID) return undefined;
-    return items.find((item) =>
-      item.sku.trim().toUpperCase() === normalizedSku
-      && item.locationId === locationID
-      && item.customerId === customerID
-    );
-  }, [items, newSkuForm.customerId, newSkuForm.locationId, newSkuForm.sku, newSkuForm.storageSection]);
   const historyRows = useMemo(() => movements.filter((movement) => movement.movementType === mode), [mode, movements]);
   const availableOutboundItems = useMemo(
     () => items.filter((item) => item.quantity > 0).sort((left, right) => {
@@ -325,75 +205,12 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
     }),
     [items]
   );
-  const isAutoMatchedInboundSku = mode === "IN" && editingMovementId === null && Boolean(matchingNewSkuItem);
-  const shouldAutoCreateInboundSku = mode === "IN" && editingMovementId === null && !matchingNewSkuItem && Boolean(newSkuForm.sku.trim());
-
-  useEffect(() => {
-    if (!selectedItem) {
-      return;
-    }
-
-    const fallbackSection = selectedItem.storageSection || selectedItemSectionOptions[0] || "A";
-    setForm((current) => {
-      if (editingMovementId !== null) {
-        if (selectedItemSectionOptions.includes(current.storageSection)) {
-          return current;
-        }
-
-        return { ...current, storageSection: fallbackSection };
-      }
-
-      return current.storageSection === fallbackSection ? current : { ...current, storageSection: fallbackSection };
-    });
-  }, [editingMovementId, selectedItem, selectedItemSectionOptions]);
-
-  useEffect(() => {
-    const fallbackSection = newSkuSectionOptions[0] || "A";
-    if (!newSkuSectionOptions.includes(newSkuForm.storageSection)) {
-      setNewSkuForm((current) => ({ ...current, storageSection: fallbackSection }));
-    }
-  }, [newSkuForm.storageSection, newSkuSectionOptions]);
-
   useEffect(() => {
     const fallbackSection = batchSectionOptions[0] || "A";
     if (!batchSectionOptions.includes(batchForm.storageSection)) {
       setBatchForm((current) => ({ ...current, storageSection: fallbackSection }));
     }
   }, [batchForm.storageSection, batchSectionOptions]);
-
-  useEffect(() => {
-    if (mode !== "IN" || editingMovementId !== null) {
-      return;
-    }
-
-    if (matchingNewSkuItem) {
-      const fallbackSection = matchingNewSkuItem.storageSection || "A";
-      setForm((current) => ({
-        ...current,
-        itemId: String(matchingNewSkuItem.id),
-        storageSection: fallbackSection
-      }));
-      setNewSkuForm((current) => ({
-        ...current,
-        description: current.description || displayDescription(matchingNewSkuItem)
-      }));
-      return;
-    }
-
-    setForm((current) => current.itemId === "" ? current : { ...current, itemId: "" });
-  }, [editingMovementId, matchingNewSkuItem, mode, selectedItemSectionOptions]);
-
-  useEffect(() => {
-    if (mode !== "IN" || editingMovementId !== null || matchingNewSkuItem || !matchingNewSkuTemplate) {
-      return;
-    }
-
-    setNewSkuForm((current) => ({
-      ...current,
-      description: current.description || displayDescription(matchingNewSkuTemplate),
-      reorderLevel: current.reorderLevel > 0 ? current.reorderLevel : matchingNewSkuTemplate.reorderLevel
-    }));
-  }, [editingMovementId, matchingNewSkuItem, matchingNewSkuTemplate, mode]);
 
   const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
   const filteredRows = historyRows.filter((movement) => {
@@ -508,17 +325,12 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
               ? [
                   { key: "details", label: t("details"), icon: <VisibilityOutlinedIcon fontSize="small" />, onClick: () => setSelectedInboundDocument(linkedDocument) }
                 ]
-              : canManage
-                ? [
-                    { key: "edit", label: t("edit"), icon: <EditOutlinedIcon fontSize="small" />, onClick: () => openEditModal(params.row) },
-                    { key: "delete", label: t("delete"), icon: <DeleteOutlineOutlinedIcon fontSize="small" />, danger: true, onClick: () => handleDeleteMovement(params.row) }
-                  ]
-                : []}
+              : []}
           />
         );
       }
     }
-  ], [canManage, inboundDocuments, t]);
+  ], [inboundDocuments, t]);
 
   const inboundDocumentColumns = useMemo<GridColDef<InboundDocument>[]>(() => [
     { field: "deliveryDate", headerName: t("deliveryDate"), minWidth: 140, renderCell: (params) => formatDate(params.row.deliveryDate) },
@@ -590,17 +402,12 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
                   { key: "details", label: t("details"), icon: <VisibilityOutlinedIcon fontSize="small" />, onClick: () => setSelectedOutboundDocument(linkedDocument) },
                   { key: "download-pdf", label: t("downloadPdf"), icon: <PictureAsPdfOutlinedIcon fontSize="small" />, onClick: () => downloadOutboundPackingListPdfFromDocument(linkedDocument) }
                 ]
-              : canManage
-                ? [
-                    { key: "edit", label: t("edit"), icon: <EditOutlinedIcon fontSize="small" />, onClick: () => openEditModal(params.row) },
-                    { key: "delete", label: t("delete"), icon: <DeleteOutlineOutlinedIcon fontSize="small" />, danger: true, onClick: () => handleDeleteMovement(params.row) }
-                  ]
-                : []}
+              : []}
           />
         );
       }
     }
-  ], [canManage, filteredRows, outboundDocuments, t]);
+  ], [filteredRows, outboundDocuments, t]);
 
   const outboundDocumentColumns = useMemo<GridColDef<OutboundDocument>[]>(() => [
     { field: "packingListNo", headerName: t("packingListNo"), minWidth: 170, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.packingListNo || "-"}</span> },
@@ -643,129 +450,6 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
     { field: "grossWeightKgs", headerName: t("grossWeight"), minWidth: 100, type: "number", renderCell: (params) => params.row.grossWeightKgs ? params.row.grossWeightKgs.toFixed(2) : "-" },
     { field: "lineNote", headerName: t("internalNotes"), minWidth: 220, flex: 1.1, renderCell: (params) => params.row.lineNote || "-" }
   ], [t]);
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSubmitting(true);
-    setErrorMessage("");
-
-    let itemId = Number(form.itemId);
-    const resolvedQuantity = mode === "IN"
-      ? form.receivedQty || form.expectedQty
-      : form.quantity;
-    if (resolvedQuantity === 0) {
-      setErrorMessage(t("chooseSkuAndQty"));
-      setSubmitting(false);
-      return;
-    }
-
-    if (mode === "IN" && editingMovementId === null) {
-      if (matchingNewSkuItem) {
-        itemId = matchingNewSkuItem.id;
-      } else {
-        const locationId = Number(newSkuForm.locationId);
-        const customerId = Number(newSkuForm.customerId);
-        if (!customerId) {
-          setErrorMessage(t("chooseCustomerBeforeSave"));
-          setSubmitting(false);
-          return;
-        }
-        if (!newSkuForm.sku.trim() || !locationId || !newSkuForm.description.trim()) {
-          setErrorMessage(t("enterNewSkuRequired"));
-          setSubmitting(false);
-          return;
-        }
-
-        const createItemPayload: ItemPayload = {
-          sku: newSkuForm.sku.trim(),
-          name: newSkuForm.description.trim(),
-          category: "General",
-          description: newSkuForm.description.trim(),
-          unit: (form.unitLabel || "CTN").toLowerCase(),
-          quantity: 0,
-          reorderLevel: newSkuForm.reorderLevel,
-          customerId,
-          locationId,
-          storageSection: newSkuForm.storageSection || "A",
-          deliveryDate: form.deliveryDate || undefined,
-          containerNo: form.containerNo || undefined,
-          expectedQty: form.expectedQty,
-          receivedQty: form.receivedQty,
-          pallets: form.pallets,
-          palletsDetailCtns: form.palletsDetailCtns || undefined,
-          heightIn: form.heightIn,
-          outDate: form.outDate || undefined
-        };
-
-        try {
-          const createdItem = await api.createItem(createItemPayload);
-          itemId = createdItem.id;
-        } catch (error) {
-          setErrorMessage(error instanceof Error ? error.message : t("createNewSkuError"));
-          setSubmitting(false);
-          return;
-        }
-      }
-    }
-
-    if (!itemId) {
-      setErrorMessage(t("chooseSkuAndQty"));
-      setSubmitting(false);
-      return;
-    }
-
-    const payload: MovementPayload = {
-      itemId,
-      movementType: mode,
-      quantity: resolvedQuantity,
-      storageSection: mode === "IN"
-        ? (
-          editingMovementId !== null
-            ? (form.storageSection || selectedItem?.storageSection || "A")
-            : (newSkuForm.storageSection || form.storageSection || matchingNewSkuItem?.storageSection || "A")
-        )
-        : (form.storageSection || selectedItem?.storageSection || "A"),
-      deliveryDate: form.deliveryDate || undefined,
-      containerNo: form.containerNo || undefined,
-      packingListNo: form.packingListNo || undefined,
-      orderRef: form.orderRef || undefined,
-      itemNumber: undefined,
-      expectedQty: form.expectedQty,
-      receivedQty: form.receivedQty,
-      pallets: form.pallets,
-      palletsDetailCtns: form.palletsDetailCtns || undefined,
-      cartonSizeMm: form.cartonSizeMm || undefined,
-      cartonCount: mode === "OUT" ? resolvedQuantity : 0,
-      unitLabel: form.unitLabel || undefined,
-      netWeightKgs: form.netWeightKgs,
-      grossWeightKgs: form.grossWeightKgs,
-      heightIn: form.heightIn,
-      outDate: form.outDate || undefined,
-      documentNote: mode === "OUT" ? form.documentNote || undefined : undefined,
-      reason: form.reason || undefined,
-      referenceCode: form.referenceCode || undefined
-    };
-
-    try {
-      if (editingMovementId) {
-        await api.updateMovement(editingMovementId, payload);
-      } else {
-        await api.createMovement(payload);
-      }
-      setForm((current) => ({ ...createEmptyActivityForm(mode), itemId: current.itemId }));
-      setNewSkuForm(createEmptyNewSkuForm(
-        customers[0] ? String(customers[0].id) : "",
-        locations[0] ? String(locations[0].id) : ""
-      ));
-      setEditingMovementId(null);
-      setIsFormModalOpen(false);
-      await onRefresh();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveActivity"));
-    } finally {
-      setSubmitting(false);
-    }
-  }
 
   function openCreateModal() {
     if (!canManage) {
@@ -810,86 +494,6 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
     setBatchOutboundLines([createEmptyBatchOutboundLine()]);
     setErrorMessage("");
     setIsBatchModalOpen(true);
-  }
-
-  function openEditModal(movement: Movement) {
-    setEditingMovementId(movement.id);
-    setForm({
-      itemId: String(movement.itemId),
-      quantity: Math.abs(movement.quantityChange),
-      storageSection: movement.storageSection || "A",
-      deliveryDate: toDateInputValue(movement.deliveryDate),
-      containerNo: movement.containerNo,
-      packingListNo: movement.packingListNo,
-      orderRef: movement.orderRef,
-      expectedQty: movement.expectedQty,
-      receivedQty: movement.receivedQty,
-      pallets: movement.pallets,
-      palletsDetailCtns: movement.palletsDetailCtns,
-      cartonSizeMm: movement.cartonSizeMm,
-      unitLabel: movement.unitLabel || (movement.movementType === "IN" ? "CTN" : "PCS"),
-      netWeightKgs: movement.netWeightKgs,
-      grossWeightKgs: movement.grossWeightKgs,
-      heightIn: movement.heightIn || 87,
-      outDate: toDateInputValue(movement.outDate),
-      documentNote: movement.documentNote,
-      reason: movement.reason,
-      referenceCode: movement.referenceCode
-    });
-    setNewSkuForm(createEmptyNewSkuForm(
-      customers[0] ? String(customers[0].id) : "",
-      locations[0] ? String(locations[0].id) : ""
-    ));
-    setErrorMessage("");
-    setIsFormModalOpen(true);
-  }
-
-  async function handleDeleteMovement(movement: Movement) {
-    if (!canManage) {
-      return;
-    }
-    if (mode === "OUT") {
-      setPendingDeleteMovement(movement);
-      setErrorMessage("");
-      return;
-    }
-
-    if (!window.confirm(t("deleteInboundConfirm", { sku: movement.sku }))) return;
-    await performDeleteMovement(movement, true);
-  }
-
-  async function performDeleteMovement(movement: Movement, restoreStock: boolean) {
-    setErrorMessage("");
-    setDeleteSubmitting(true);
-    try {
-      await api.deleteMovement(movement.id, { restoreStock });
-      if (editingMovementId === movement.id) {
-        setEditingMovementId(null);
-        setIsFormModalOpen(false);
-      }
-      setPendingDeleteMovement(null);
-      await onRefresh();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : t("couldNotDeleteActivity"));
-    } finally {
-      setDeleteSubmitting(false);
-    }
-  }
-
-  function closeDeleteDialog() {
-    if (deleteSubmitting) return;
-    setPendingDeleteMovement(null);
-  }
-
-  function closeFormModal() {
-    setEditingMovementId(null);
-    setIsFormModalOpen(false);
-    setForm((current) => ({ ...createEmptyActivityForm(mode), itemId: current.itemId }));
-    setNewSkuForm(createEmptyNewSkuForm(
-      customers[0] ? String(customers[0].id) : "",
-      locations[0] ? String(locations[0].id) : ""
-    ));
-    setErrorMessage("");
   }
 
   function closeBatchModal() {
@@ -1093,7 +697,7 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
 
   return (
     <main className="workspace-main">
-      {errorMessage && !isFormModalOpen ? <div className="alert-banner">{errorMessage}</div> : null}
+      {errorMessage && !isBatchModalOpen ? <div className="alert-banner">{errorMessage}</div> : null}
 
       <section>
         <article className="workbook-panel workbook-panel--full">
@@ -1119,6 +723,9 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
                 ) : null}
               </div>
             </div>
+            {(mode === "IN" && inboundViewMode === "line-items") || (mode === "OUT" && outboundViewMode === "line-items")
+              ? <div className="sheet-note sheet-note--readonly">{t("documentManagedLineItemsNotice")}</div>
+              : null}
             <div className="filter-bar">
               <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={mode === "IN" ? t("searchInboundPlaceholder") : t("searchOutboundPlaceholder")} /></label>
               <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
@@ -1168,57 +775,6 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
           </div>
         </article>
       </section>
-
-      <Dialog
-        open={isFormModalOpen}
-        onClose={(_, reason) => {
-          if (reason === "backdropClick") return;
-          closeFormModal();
-        }}
-        fullWidth
-        maxWidth={mode === "IN" ? "lg" : "md"}
-        PaperProps={{
-          sx: mode === "IN"
-            ? {
-                width: "min(1180px, calc(100vw - 32px))",
-                maxWidth: "1180px"
-              }
-            : undefined
-        }}
-      >
-        <DialogTitle sx={{ pb: 1 }}>
-          {editingMovementId ? (mode === "IN" ? t("updateInboundRow") : t("updateOutboundRow")) : (mode === "IN" ? t("addInboundRow") : t("addOutboundRow"))}
-          <IconButton aria-label={t("close")} onClick={closeFormModal} sx={{ position: "absolute", right: 16, top: 16 }}>
-            <CloseIcon fontSize="small" />
-          </IconButton>
-        </DialogTitle>
-        <DialogContent dividers sx={mode === "IN" ? { px: 3, py: 2.5 } : undefined}>
-          {errorMessage ? <div className="alert-banner">{errorMessage}</div> : null}
-          <form className="sheet-form" onSubmit={handleSubmit}>
-            <ActivityFormFields
-              mode={mode}
-              form={form}
-              setForm={setForm}
-              items={items}
-              locations={locations}
-              customers={customers}
-              selectedItem={selectedItem}
-              selectedItemSectionOptions={selectedItemSectionOptions}
-              matchingNewSkuItem={matchingNewSkuItem}
-              isAutoMatchedInboundSku={isAutoMatchedInboundSku}
-              shouldAutoCreateInboundSku={shouldAutoCreateInboundSku}
-              newSkuForm={newSkuForm}
-              setNewSkuForm={setNewSkuForm}
-              newSkuSectionOptions={newSkuSectionOptions}
-              isEditing={editingMovementId !== null}
-            />
-            <div className="sheet-form__actions sheet-form__wide">
-              <button className="button button--primary" type="submit" disabled={submitting || (mode !== "IN" && items.length === 0)}>{submitting ? t("saving") : editingMovementId ? (mode === "IN" ? t("updateInboundRow") : t("updateOutboundRow")) : (mode === "IN" ? t("addInboundRow") : t("addOutboundRow"))}</button>
-              <button className="button button--ghost" type="button" onClick={closeFormModal}>{t("cancel")}</button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
 
       {mode === "IN" ? (
         <Dialog
@@ -1314,44 +870,6 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
                     sx={{ border: 0 }}
                   />
                 </Box>
-              </>
-            ) : null}
-          </DialogContent>
-        </Dialog>
-      ) : null}
-
-      {mode === "OUT" ? (
-        <Dialog
-          open={pendingDeleteMovement !== null}
-          onClose={(_, reason) => {
-            if (reason === "backdropClick") return;
-            closeDeleteDialog();
-          }}
-          fullWidth
-          maxWidth="sm"
-        >
-          <DialogTitle sx={{ pb: 1 }}>
-            {t("deleteOutboundTitle")}
-            <IconButton aria-label={t("close")} onClick={closeDeleteDialog} disabled={deleteSubmitting} sx={{ position: "absolute", right: 16, top: 16 }}>
-              <CloseIcon fontSize="small" />
-            </IconButton>
-          </DialogTitle>
-          <DialogContent dividers>
-            {pendingDeleteMovement ? (
-              <>
-                <div className="sheet-note sheet-form__wide">
-                  <strong>{pendingDeleteMovement.sku}</strong>
-                  {" "}
-                  {t("deleteOutboundMessage", {
-                    qty: Math.abs(pendingDeleteMovement.quantityChange),
-                    storage: `${pendingDeleteMovement.locationName} / ${pendingDeleteMovement.storageSection || "A"}`
-                  })}
-                </div>
-                <div className="sheet-form__actions sheet-form__wide" style={{ marginTop: "1rem" }}>
-                  <button className="button button--ghost" type="button" onClick={closeDeleteDialog} disabled={deleteSubmitting}>{t("cancel")}</button>
-                  <button className="button button--danger" type="button" onClick={() => void performDeleteMovement(pendingDeleteMovement, false)} disabled={deleteSubmitting}>{deleteSubmitting ? t("saving") : t("deleteWithoutRestore")}</button>
-                  <button className="button button--primary" type="button" onClick={() => void performDeleteMovement(pendingDeleteMovement, true)} disabled={deleteSubmitting}>{deleteSubmitting ? t("saving") : t("deleteAndRestore")}</button>
-                </div>
               </>
             ) : null}
           </DialogContent>
@@ -1530,146 +1048,9 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
   );
 }
 
-function ActivityFormFields({
-  mode,
-  form,
-  setForm,
-  items,
-  locations,
-  customers,
-  selectedItem,
-  selectedItemSectionOptions,
-  matchingNewSkuItem,
-  isAutoMatchedInboundSku,
-  shouldAutoCreateInboundSku,
-  newSkuForm,
-  setNewSkuForm,
-  newSkuSectionOptions,
-  isEditing
-}: {
-  mode: ActivityMode;
-  form: ActivityFormState;
-  setForm: Dispatch<SetStateAction<ActivityFormState>>;
-  items: Item[];
-  locations: Location[];
-  customers: Customer[];
-  selectedItem: Item | undefined;
-  selectedItemSectionOptions: string[];
-  matchingNewSkuItem: Item | undefined;
-  isAutoMatchedInboundSku: boolean;
-  shouldAutoCreateInboundSku: boolean;
-  newSkuForm: NewSkuFormState;
-  setNewSkuForm: Dispatch<SetStateAction<NewSkuFormState>>;
-  newSkuSectionOptions: string[];
-  isEditing: boolean;
-}) {
-  const { t } = useI18n();
-  const suggestedPalletsDetail = mode === "IN"
-    ? getSuggestedPalletsDetail(form.receivedQty || form.expectedQty || form.quantity, form.pallets)
-    : "";
-
-  return (
-    <>
-      {mode === "IN" ? (
-        <>
-          {isEditing ? (
-            <div className="batch-line-card inbound-compact-card">
-              <div className="batch-line-card__header">
-                <div className="batch-line-card__title">
-                  <strong>{t("sku")}</strong>
-                  <span className="status-pill status-pill--ok">{t("edit")}</span>
-                </div>
-              </div>
-              <div className="batch-line-grid">
-                <label className="batch-line-grid__description">
-                  {t("sku")}
-                  <select value={form.itemId} onChange={(event) => setForm((current) => ({ ...current, itemId: event.target.value }))} required>
-                    {items.length === 0 ? <option value="">{t("noSkuRowsAvailable")}</option> : items.map((item) => <option key={item.id} value={item.id}>{item.customerName} | {item.locationName} | {item.sku} - {displayDescription(item)}</option>)}
-                  </select>
-                </label>
-                <label>{t("storageSection")}<select value={form.storageSection} onChange={(event) => setForm((current) => ({ ...current, storageSection: event.target.value }))}>{selectedItemSectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}</select></label>
-                <label>{t("deliveryDate")}<input type="date" value={form.deliveryDate} onChange={(event) => setForm((current) => ({ ...current, deliveryDate: event.target.value }))} /></label>
-                <label>{t("containerNo")}<input value={form.containerNo} onChange={(event) => setForm((current) => ({ ...current, containerNo: event.target.value }))} placeholder="MRSU8580370" /></label>
-                <label>{t("expectedQty")}<input type="number" min="0" value={numberInputValue(form.expectedQty)} onChange={(event) => setForm((current) => ({ ...current, expectedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-                <label>{t("received")}<input type="number" min="0" value={numberInputValue(form.receivedQty)} onChange={(event) => setForm((current) => ({ ...current, receivedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-                <label>{t("inboundUnit")}<select value={form.unitLabel} onChange={(event) => setForm((current) => ({ ...current, unitLabel: event.target.value }))}><option value="CTN">CTN</option><option value="PCS">PCS</option><option value="PALLET">PALLET</option></select></label>
-                <label>{t("pallets")}<input type="number" min="0" value={numberInputValue(form.pallets)} onChange={(event) => setForm((current) => ({ ...current, pallets: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-                <label className="batch-line-grid__detail">{t("palletsDetail")}<input value={form.palletsDetailCtns} onChange={(event) => setForm((current) => ({ ...current, palletsDetailCtns: event.target.value }))} placeholder={suggestedPalletsDetail || "28*115+110"} /></label>
-              </div>
-              <div className="batch-line-card__meta">
-                <span className="batch-line-card__hint">{selectedItem ? `${selectedItem.customerName} | ${selectedItem.sku} | ${displayDescription(selectedItem)} | ${selectedItem.locationName}` : t("noSkuSelected")}</span>
-                {suggestedPalletsDetail ? <button className="button button--ghost button--small" type="button" onClick={() => setForm((current) => ({ ...current, palletsDetailCtns: suggestedPalletsDetail }))}>{t("useSuggestion")}: {suggestedPalletsDetail}</button> : null}
-              </div>
-            </div>
-          ) : (
-            <div className="batch-line-card inbound-compact-card">
-              <div className="batch-line-card__header">
-                <div className="batch-line-card__title">
-                  <strong>{t("sku")}</strong>
-                  <span className={`status-pill ${isAutoMatchedInboundSku ? "status-pill--ok" : "status-pill--alert"}`}>
-                    {isAutoMatchedInboundSku ? t("useExistingSku") : t("createNewSku")}
-                  </span>
-                </div>
-              </div>
-              <div className="batch-line-grid">
-                <label>{t("sku")}<input value={newSkuForm.sku} onChange={(event) => setNewSkuForm((current) => ({ ...current, sku: event.target.value }))} placeholder="023042" required /></label>
-                <label>{t("customer")}<select value={newSkuForm.customerId} onChange={(event) => setNewSkuForm((current) => ({ ...current, customerId: event.target.value }))} required>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
-                <label>{t("currentStorage")}<select value={newSkuForm.locationId} onChange={(event) => setNewSkuForm((current) => ({ ...current, locationId: event.target.value }))} required>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
-                <label>{t("storageSection")}<select value={newSkuForm.storageSection} onChange={(event) => setNewSkuForm((current) => ({ ...current, storageSection: event.target.value }))}>{newSkuSectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}</select></label>
-                <label className="batch-line-grid__description">{t("description")}<input value={isAutoMatchedInboundSku ? displayDescription(matchingNewSkuItem ?? selectedItem ?? { description: "", name: "" }) : newSkuForm.description} onChange={(event) => setNewSkuForm((current) => ({ ...current, description: event.target.value }))} placeholder={t("descriptionPlaceholder")} required={!isAutoMatchedInboundSku} disabled={isAutoMatchedInboundSku} /></label>
-                <label>{t("reorderLevel")}<input type="number" min="0" value={numberInputValue(newSkuForm.reorderLevel)} onChange={(event) => setNewSkuForm((current) => ({ ...current, reorderLevel: Math.max(0, Number(event.target.value || 0)) }))} disabled={isAutoMatchedInboundSku} /></label>
-                <label>{t("deliveryDate")}<input type="date" value={form.deliveryDate} onChange={(event) => setForm((current) => ({ ...current, deliveryDate: event.target.value }))} /></label>
-                <label>{t("containerNo")}<input value={form.containerNo} onChange={(event) => setForm((current) => ({ ...current, containerNo: event.target.value }))} placeholder="MRSU8580370" /></label>
-                <label>{t("expectedQty")}<input type="number" min="0" value={numberInputValue(form.expectedQty)} onChange={(event) => setForm((current) => ({ ...current, expectedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-                <label>{t("received")}<input type="number" min="0" value={numberInputValue(form.receivedQty)} onChange={(event) => setForm((current) => ({ ...current, receivedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-                <label>{t("inboundUnit")}<select value={form.unitLabel} onChange={(event) => setForm((current) => ({ ...current, unitLabel: event.target.value }))}><option value="CTN">CTN</option><option value="PCS">PCS</option><option value="PALLET">PALLET</option></select></label>
-                <label>{t("pallets")}<input type="number" min="0" value={numberInputValue(form.pallets)} onChange={(event) => setForm((current) => ({ ...current, pallets: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-                <label className="batch-line-grid__detail">{t("palletsDetail")}<input value={form.palletsDetailCtns} onChange={(event) => setForm((current) => ({ ...current, palletsDetailCtns: event.target.value }))} placeholder={suggestedPalletsDetail || "28*115+110"} /></label>
-              </div>
-              <div className="batch-line-card__meta">
-                <span className="batch-line-card__hint">
-                  {isAutoMatchedInboundSku
-                    ? `${matchingNewSkuItem?.customerName} | ${matchingNewSkuItem?.sku} | ${displayDescription(matchingNewSkuItem ?? { description: "", name: "" })} | ${matchingNewSkuItem?.locationName} | ${matchingNewSkuItem?.storageSection || "A"}`
-                    : shouldAutoCreateInboundSku
-                      ? `${(customers.find((customer) => String(customer.id) === newSkuForm.customerId)?.name ?? "-")} | ${newSkuForm.sku.trim().toUpperCase()} | ${(locations.find((location) => String(location.id) === newSkuForm.locationId)?.name ?? t("noSkuSelected"))} | ${newSkuForm.storageSection || "A"}`
-                      : t("noSkuSelected")}
-                </span>
-                {suggestedPalletsDetail ? <button className="button button--ghost button--small" type="button" onClick={() => setForm((current) => ({ ...current, palletsDetailCtns: suggestedPalletsDetail }))}>{t("useSuggestion")}: {suggestedPalletsDetail}</button> : null}
-              </div>
-            </div>
-          )}
-          <label className="sheet-form__wide">{t("notes")}<input value={form.reason} onChange={(event) => setForm((current) => ({ ...current, reason: event.target.value }))} placeholder={t("inboundNotePlaceholder")} /></label>
-        </>
-      ) : (
-        <>
-          <label className="sheet-form__wide">
-            {t("sku")}
-            <select value={form.itemId} onChange={(event) => setForm((current) => ({ ...current, itemId: event.target.value }))} required>
-              {items.length === 0 ? <option value="">{t("noSkuRowsAvailable")}</option> : items.map((item) => <option key={item.id} value={item.id}>{item.customerName} | {item.locationName} | {item.sku} - {displayDescription(item)}</option>)}
-            </select>
-          </label>
-          <div className="sheet-note sheet-form__wide"><strong>{t("selectedDescription")}</strong> {selectedItem ? `${selectedItem.customerName} | ${displayDescription(selectedItem)}` : t("noSkuSelected")}</div>
-          <div className="sheet-note sheet-form__wide"><strong>{t("storageSection")}</strong> {selectedItem ? `${selectedItem.locationName} / ${selectedItem.storageSection || form.storageSection || "A"}` : (form.storageSection || "A")}</div>
-          <label>{t("packingListNo")}<input value={form.packingListNo} onChange={(event) => setForm((current) => ({ ...current, packingListNo: event.target.value }))} placeholder="TGCUS180265" /></label>
-          <label>{t("orderRef")}<input value={form.orderRef} onChange={(event) => setForm((current) => ({ ...current, orderRef: event.target.value }))} placeholder="J73504" /></label>
-          <label>{t("outDate")}<input type="date" value={form.outDate} onChange={(event) => setForm((current) => ({ ...current, outDate: event.target.value }))} /></label>
-          <label>{t("outQty")}<input type="number" min="0" value={numberInputValue(form.quantity)} onChange={(event) => setForm((current) => ({ ...current, quantity: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-          <label>{t("unit")}<input value={form.unitLabel} onChange={(event) => setForm((current) => ({ ...current, unitLabel: event.target.value }))} placeholder="PCS" /></label>
-          <label>{t("cartonSize")}<input value={form.cartonSizeMm} onChange={(event) => setForm((current) => ({ ...current, cartonSizeMm: event.target.value }))} placeholder="455*330*325" /></label>
-          <label>{t("netWeight")}<input type="number" min="0" step="0.01" value={numberInputValue(form.netWeightKgs)} onChange={(event) => setForm((current) => ({ ...current, netWeightKgs: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-          <label>{t("grossWeight")}<input type="number" min="0" step="0.01" value={numberInputValue(form.grossWeightKgs)} onChange={(event) => setForm((current) => ({ ...current, grossWeightKgs: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-          <label className="sheet-form__wide">{t("documentNotes")}<input value={form.documentNote} onChange={(event) => setForm((current) => ({ ...current, documentNote: event.target.value }))} placeholder={t("outboundDocumentNotePlaceholder")} /></label>
-          <label className="sheet-form__wide">{t("internalNotes")}<input value={form.reason} onChange={(event) => setForm((current) => ({ ...current, reason: event.target.value }))} placeholder={t("outboundInternalNotePlaceholder")} /></label>
-        </>
-      )}
-    </>
-  );
-}
-
 function displayDescription(item: Pick<Item, "description" | "name">) { return item.description || item.name; }
 function formatDate(value: string | null) { return formatDateValue(value, dateFormatter); }
 function hasQtyMismatch(expectedQty: number, receivedQty: number) { return expectedQty > 0 && receivedQty > 0 && expectedQty !== receivedQty; }
-function toDateInputValue(value: string | null) { return value ? value.slice(0, 10) : ""; }
 function numberInputValue(value: number) { return value === 0 ? "" : String(value); }
 function getLocationSectionOptions(location: Location | undefined) {
   const sectionNames = location?.sectionNames?.map((sectionName) => sectionName.trim()).filter(Boolean) ?? [];

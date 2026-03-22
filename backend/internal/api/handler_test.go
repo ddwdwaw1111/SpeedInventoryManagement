@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -141,5 +142,36 @@ func TestRequireAuthWithoutCookie(t *testing.T) {
 
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("expected status 401, got %d", recorder.Code)
+	}
+}
+
+func TestMovementWriteRoutesRemoved(t *testing.T) {
+	handler := NewHandler(nil, "", "sim_session", false)
+
+	testCases := []struct {
+		name   string
+		method string
+		target string
+		body   string
+	}{
+		{name: "create", method: http.MethodPost, target: "/api/movements", body: "{}"},
+		{name: "update", method: http.MethodPut, target: "/api/movements/1", body: "{}"},
+		{name: "delete", method: http.MethodDelete, target: "/api/movements/1"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(tc.method, tc.target, strings.NewReader(tc.body))
+			if tc.body != "" {
+				request.Header.Set("Content-Type", "application/json")
+			}
+
+			handler.ServeHTTP(recorder, request)
+
+			if recorder.Code != http.StatusNotFound {
+				t.Fatalf("expected status 404, got %d", recorder.Code)
+			}
+		})
 	}
 }

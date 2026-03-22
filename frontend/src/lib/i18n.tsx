@@ -339,6 +339,7 @@ const translations = {
     viewDetails: "View Details",
     auditLogDetails: "Audit Log Details",
     noAuditDetails: "No structured detail payload",
+    documentManagedLineItemsNotice: "Line items are read-only activity records generated from posted documents. Create, edit, or cancel the source document instead of editing activity rows directly.",
     language: "Language",
     english: "EN",
     chinese: "中文"
@@ -673,6 +674,7 @@ const translations = {
     viewDetails: "查看详情",
     auditLogDetails: "审计日志详情",
     noAuditDetails: "没有结构化详情内容",
+    documentManagedLineItemsNotice: "逐条明细这里是由已过账单据生成的只读流水。请通过原始单据创建、编辑或取消，不要直接修改活动行。",
     language: "语言",
     english: "EN",
     chinese: "中文"
