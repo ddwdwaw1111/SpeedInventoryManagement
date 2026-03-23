@@ -11,6 +11,7 @@ import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type { CreateUserPayload, UpdateUserAccessPayload, User, UserRole } from "../lib/types";
 import { RowActionsMenu } from "./RowActionsMenu";
+import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type UserManagementPageProps = {
   users: User[];
@@ -40,6 +41,7 @@ const emptyUserForm: UserFormState = {
 export function UserManagementPage({ users, currentUser, isLoading, onRefresh }: UserManagementPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
+  const pageDescription = t("userManagementDesc");
   const [searchTerm, setSearchTerm] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -53,6 +55,13 @@ export function UserManagementPage({ users, currentUser, isLoading, onRefresh }:
     const searchBlob = [user.fullName, user.email, user.role, user.isActive ? t("active") : t("inactive")].join(" ").toLowerCase();
     return normalizedSearch.length === 0 || searchBlob.includes(normalizedSearch);
   }), [normalizedSearch, t, users]);
+  const hasActiveFilters = normalizedSearch.length > 0;
+  const mainGridSlots = buildWorkspaceGridSlots({
+    emptyTitle: t("noResults"),
+    emptyDescription: hasActiveFilters ? t("filteredStateHint") : t("emptyStateHint"),
+    loadingTitle: t("loadingRecords"),
+    loadingDescription: pageDescription
+  });
 
   const columns = useMemo<GridColDef<User>[]>(() => [
     { field: "fullName", headerName: t("fullName"), minWidth: 180, flex: 1 },
@@ -148,15 +157,13 @@ export function UserManagementPage({ users, currentUser, isLoading, onRefresh }:
 
   return (
     <main className="workspace-main">
-      {errorMessage && !isModalOpen ? <div className="alert-banner">{errorMessage}</div> : null}
-
       <section className="workbook-panel workbook-panel--full">
         <div className="tab-strip">
-          <div className="tab-strip__toolbar">
-            <div className="tab-strip__actions">
-              <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addUser")}</Button>
-            </div>
-          </div>
+          <WorkspacePanelHeader
+            title={t("userManagement")}
+            actions={<Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addUser")}</Button>}
+            errorMessage={errorMessage && !isModalOpen ? errorMessage : ""}
+          />
           <div className="filter-bar">
             <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("userSearchPlaceholder")} /></label>
           </div>
@@ -173,6 +180,7 @@ export function UserManagementPage({ users, currentUser, isLoading, onRefresh }:
               disableRowSelectionOnClick
               initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
               getRowHeight={() => 64}
+              slots={mainGridSlots}
               sx={{ border: 0 }}
             />
           </Box>

@@ -14,6 +14,7 @@ import { useSettings } from "../lib/settings";
 import type { PageKey } from "../lib/routes";
 import type { CycleCount, Item, UserRole } from "../lib/types";
 import { RowActionsMenu } from "./RowActionsMenu";
+import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type CycleCountManagementPageProps = {
   cycleCounts: CycleCount[];
@@ -61,6 +62,8 @@ export function CycleCountManagementPage({
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
+  const pageDescription = t("cycleCountsDesc");
+  const permissionNotice = canManage ? "" : t("readOnlyModeNotice");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedCycleCountId, setSelectedCycleCountId] = useState<number | null>(null);
   const [form, setForm] = useState<CycleCountFormState>(emptyCycleCountForm);
@@ -143,6 +146,17 @@ export function CycleCountManagementPage({
     },
     { field: "lineNote", headerName: t("internalNotes"), minWidth: 240, flex: 1.3, renderCell: (params) => params.row.lineNote || "-" }
   ], [t]);
+  const mainGridSlots = buildWorkspaceGridSlots({
+    emptyTitle: t("noResults"),
+    emptyDescription: t("emptyStateHint"),
+    loadingTitle: t("loadingRecords"),
+    loadingDescription: pageDescription
+  });
+  const detailGridSlots = buildWorkspaceGridSlots({
+    emptyTitle: t("noResults"),
+    emptyDescription: t("emptyStateHint"),
+    loadingTitle: t("loadingRecords")
+  });
 
   function openCreateModal() {
     if (!canManage) return;
@@ -200,20 +214,18 @@ export function CycleCountManagementPage({
 
   return (
     <main className="workspace-main">
-      {errorMessage && !isModalOpen ? <div className="alert-banner">{errorMessage}</div> : null}
-
       <section className="workbook-panel workbook-panel--full">
         <div className="tab-strip">
-          <div className="tab-strip__toolbar">
-            <div className="tab-strip__actions">
-              {canManage ? (
-                <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>
-                  {t("addCycleCount")}
-                </Button>
-              ) : null}
-            </div>
-          </div>
-          {!canManage ? <div className="sheet-note sheet-note--readonly">{t("readOnlyModeNotice")}</div> : null}
+          <WorkspacePanelHeader
+            title={t("cycleCounts")}
+            actions={canManage ? (
+              <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>
+                {t("addCycleCount")}
+              </Button>
+            ) : undefined}
+            notices={[permissionNotice]}
+            errorMessage={errorMessage && !isModalOpen ? errorMessage : ""}
+          />
         </div>
         <div className="sheet-table-wrap">
           <Box sx={{ minWidth: 0 }}>
@@ -228,6 +240,7 @@ export function CycleCountManagementPage({
               getRowHeight={() => 64}
               onRowClick={(params) => setSelectedCycleCountId(params.row.id)}
               getRowClassName={(params) => (params.row.id === selectedCycleCountId ? "document-row--selected" : "")}
+              slots={mainGridSlots}
               sx={{ border: 0 }}
             />
           </Box>
@@ -324,6 +337,7 @@ export function CycleCountManagementPage({
                 disableRowSelectionOnClick
                 initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
                 getRowHeight={() => 64}
+                slots={detailGridSlots}
                 sx={{ border: 0 }}
               />
             </Box>

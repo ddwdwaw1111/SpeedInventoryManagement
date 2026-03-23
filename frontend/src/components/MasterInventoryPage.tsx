@@ -16,6 +16,7 @@ import { formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
 import type { Customer, Item, ItemPayload, Location, UserRole } from "../lib/types";
+import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type MasterInventoryPageProps = {
   items: Item[];
@@ -84,6 +85,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
   const { t } = useI18n();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
   const canDelete = currentUserRole === "admin";
+  const pageDescription = t("stockByLocationDesc");
   const permissionNote = currentUserRole === "viewer"
     ? t("readOnlyModeNotice")
     : currentUserRole === "operator"
@@ -133,6 +135,13 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
     () => filteredItems.find((item) => item.id === selectedItemId) ?? null,
     [filteredItems, selectedItemId]
   );
+  const hasActiveFilters = normalizedSearch.length > 0 || selectedLocationId !== "all" || selectedCustomerId !== "all" || healthFilter !== "ALL";
+  const mainGridSlots = buildWorkspaceGridSlots({
+    emptyTitle: t("noResults"),
+    emptyDescription: hasActiveFilters ? t("filteredStateHint") : t("emptyStateHint"),
+    loadingTitle: t("loadingRecords"),
+    loadingDescription: pageDescription
+  });
 
   useEffect(() => {
     if (selectedItemId !== null && !selectedItem) {
@@ -311,11 +320,13 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
 
   return (
     <main className="workspace-main">
-      {errorMessage && !isModalOpen ? <div className="alert-banner">{errorMessage}</div> : null}
-
       <section className="workbook-panel workbook-panel--full">
         <div className="tab-strip">
-          {permissionNote ? <div className="sheet-note sheet-note--readonly">{permissionNote}</div> : null}
+          <WorkspacePanelHeader
+            title={t("stockByLocation")}
+            notices={[permissionNote]}
+            errorMessage={errorMessage && !isModalOpen ? errorMessage : ""}
+          />
           <div className="filter-bar">
             <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("stockByLocationSearchPlaceholder")} /></label>
             <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
@@ -337,6 +348,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
               getRowHeight={() => 72}
               onRowClick={(params) => setSelectedItemId(params.row.id)}
               getRowClassName={(params) => (params.row.id === selectedItemId ? "document-row--selected" : "")}
+              slots={mainGridSlots}
               sx={{ border: 0 }}
             />
           </Box>

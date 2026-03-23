@@ -15,6 +15,7 @@ import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
 import { useSettings } from "../lib/settings";
 import type { Customer, Location, Movement } from "../lib/types";
+import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type AllActivityPageProps = {
   movements: Movement[];
@@ -84,6 +85,13 @@ export function AllActivityPage({ movements, customers, locations, isLoading, on
     () => filteredRows.find((movement) => movement.id === selectedMovementId) ?? null,
     [filteredRows, selectedMovementId]
   );
+  const hasActiveFilters = normalizedSearch.length > 0 || selectedCustomerId !== "all" || selectedLocationId !== "all" || movementTypeFilter !== "ALL" || startDate.length > 0 || endDate.length > 0;
+  const mainGridSlots = buildWorkspaceGridSlots({
+    emptyTitle: t("noResults"),
+    emptyDescription: hasActiveFilters ? t("filteredStateHint") : t("emptyStateHint"),
+    loadingTitle: t("loadingRecords"),
+    loadingDescription: t("allActivityDesc")
+  });
 
   useEffect(() => {
     const context = consumePendingAllActivityContext();
@@ -156,15 +164,12 @@ export function AllActivityPage({ movements, customers, locations, isLoading, on
   ], [resolvedTimeZone, t]);
 
   return (
-    <main className="workspace-main">
-      <section className="workbook-panel workbook-panel--full">
-        <div className="tab-strip">
-          <div className="tab-strip__heading">
-            <h2>{t("allActivity")}</h2>
-            <p>{t("allActivityDesc")}</p>
-          </div>
-          <div className="filter-bar">
-            <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("allActivitySearchPlaceholder")} /></label>
+      <main className="workspace-main">
+        <section className="workbook-panel workbook-panel--full">
+          <div className="tab-strip">
+            <WorkspacePanelHeader title={t("allActivity")} />
+            <div className="filter-bar">
+              <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("allActivitySearchPlaceholder")} /></label>
             <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
             <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
             <label>{t("movementType")}<select value={movementTypeFilter} onChange={(event) => setMovementTypeFilter(event.target.value as MovementTypeFilter)}><option value="ALL">{t("allRows")}</option><option value="IN">{t("inbound")}</option><option value="OUT">{t("outbound")}</option><option value="ADJUST">{t("adjustment")}</option><option value="COUNT">{t("cycleCount")}</option><option value="REVERSAL">{t("reversal")}</option><option value="TRANSFER_IN">{t("transferIn")}</option><option value="TRANSFER_OUT">{t("transferOut")}</option></select></label>
@@ -186,6 +191,7 @@ export function AllActivityPage({ movements, customers, locations, isLoading, on
               getRowHeight={() => 72}
               onRowClick={(params) => setSelectedMovementId(params.row.id)}
               getRowClassName={(params) => (params.row.id === selectedMovementId ? "document-row--selected" : "")}
+              slots={mainGridSlots}
               sx={{ border: 0 }}
             />
           </Box>

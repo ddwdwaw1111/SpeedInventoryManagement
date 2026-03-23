@@ -14,6 +14,7 @@ import { useSettings } from "../lib/settings";
 import type { PageKey } from "../lib/routes";
 import type { InventoryAdjustment, Item, UserRole } from "../lib/types";
 import { RowActionsMenu } from "./RowActionsMenu";
+import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type AdjustmentManagementPageProps = {
   adjustments: InventoryAdjustment[];
@@ -63,6 +64,8 @@ export function AdjustmentManagementPage({
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
+  const pageDescription = t("adjustmentsDesc");
+  const permissionNotice = canManage ? "" : t("readOnlyModeNotice");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedAdjustmentId, setSelectedAdjustmentId] = useState<number | null>(null);
   const [form, setForm] = useState<AdjustmentFormState>(emptyAdjustmentForm);
@@ -146,6 +149,17 @@ export function AdjustmentManagementPage({
     { field: "afterQty", headerName: t("afterQty"), minWidth: 120, type: "number" },
     { field: "lineNote", headerName: t("internalNotes"), minWidth: 240, flex: 1.3, renderCell: (params) => params.row.lineNote || "-" }
   ], [t]);
+  const mainGridSlots = buildWorkspaceGridSlots({
+    emptyTitle: t("noResults"),
+    emptyDescription: t("emptyStateHint"),
+    loadingTitle: t("loadingRecords"),
+    loadingDescription: pageDescription
+  });
+  const detailGridSlots = buildWorkspaceGridSlots({
+    emptyTitle: t("noResults"),
+    emptyDescription: t("emptyStateHint"),
+    loadingTitle: t("loadingRecords")
+  });
 
   function openCreateModal() {
     if (!canManage) {
@@ -206,20 +220,18 @@ export function AdjustmentManagementPage({
 
   return (
     <main className="workspace-main">
-      {errorMessage && !isModalOpen ? <div className="alert-banner">{errorMessage}</div> : null}
-
       <section className="workbook-panel workbook-panel--full">
         <div className="tab-strip">
-          <div className="tab-strip__toolbar">
-            <div className="tab-strip__actions">
-              {canManage ? (
-                <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>
-                  {t("addAdjustment")}
-                </Button>
-              ) : null}
-            </div>
-          </div>
-          {!canManage ? <div className="sheet-note sheet-note--readonly">{t("readOnlyModeNotice")}</div> : null}
+          <WorkspacePanelHeader
+            title={t("adjustments")}
+            actions={canManage ? (
+              <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>
+                {t("addAdjustment")}
+              </Button>
+            ) : undefined}
+            notices={[permissionNotice]}
+            errorMessage={errorMessage && !isModalOpen ? errorMessage : ""}
+          />
         </div>
         <div className="sheet-table-wrap">
           <Box sx={{ minWidth: 0 }}>
@@ -234,6 +246,7 @@ export function AdjustmentManagementPage({
               getRowHeight={() => 64}
               onRowClick={(params) => setSelectedAdjustmentId(params.row.id)}
               getRowClassName={(params) => (params.row.id === selectedAdjustmentId ? "document-row--selected" : "")}
+              slots={mainGridSlots}
               sx={{ border: 0 }}
             />
           </Box>
@@ -330,6 +343,7 @@ export function AdjustmentManagementPage({
                 disableRowSelectionOnClick
                 initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
                 getRowHeight={() => 64}
+                slots={detailGridSlots}
                 sx={{ border: 0 }}
               />
             </Box>

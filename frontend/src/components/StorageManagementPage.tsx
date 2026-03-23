@@ -13,11 +13,13 @@ import { formatDateTimeValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type { Item, Location, LocationPayload, UserRole } from "../lib/types";
+import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type StorageManagementPageProps = {
   locations: Location[];
   items: Item[];
   currentUserRole: UserRole;
+  isLoading: boolean;
   onRefresh: () => Promise<void>;
 };
 
@@ -39,10 +41,12 @@ const emptyLocationForm: LocationFormState = {
   sectionNames: ["A"]
 };
 
-export function StorageManagementPage({ locations, items, currentUserRole, onRefresh }: StorageManagementPageProps) {
+export function StorageManagementPage({ locations, items, currentUserRole, isLoading, onRefresh }: StorageManagementPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const canManage = currentUserRole === "admin";
+  const pageDescription = t("storageManagementDesc");
+  const permissionNotice = canManage ? "" : t("adminOnlyManageNotice");
   const [form, setForm] = useState<LocationFormState>(emptyLocationForm);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingLocationId, setEditingLocationId] = useState<number | null>(null);
@@ -56,6 +60,12 @@ export function StorageManagementPage({ locations, items, currentUserRole, onRef
     });
     return usageMap;
   }, [items]);
+  const mainGridSlots = buildWorkspaceGridSlots({
+    emptyTitle: t("noResults"),
+    emptyDescription: t("emptyStateHint"),
+    loadingTitle: t("loadingRecords"),
+    loadingDescription: pageDescription
+  });
 
   const columns = useMemo<GridColDef<Location>[]>(() => [
     { field: "name", headerName: t("storageName"), minWidth: 180, flex: 1 },
@@ -208,29 +218,29 @@ export function StorageManagementPage({ locations, items, currentUserRole, onRef
 
   return (
     <main className="workspace-main">
-      {errorMessage && !isModalOpen ? <div className="alert-banner">{errorMessage}</div> : null}
-
       <section className="workbook-panel workbook-panel--full">
         <div className="tab-strip">
-          <div className="tab-strip__toolbar">
-            {canManage ? (
-              <div className="tab-strip__actions">
-                <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addLocation")}</Button>
-              </div>
-            ) : null}
-          </div>
-          {!canManage ? <div className="sheet-note sheet-note--readonly">{t("adminOnlyManageNotice")}</div> : null}
+          <WorkspacePanelHeader
+            title={t("storageManagement")}
+            actions={canManage ? (
+              <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addLocation")}</Button>
+            ) : undefined}
+            notices={[permissionNotice]}
+            errorMessage={errorMessage && !isModalOpen ? errorMessage : ""}
+          />
         </div>
         <div className="sheet-table-wrap">
           <Box sx={{ minWidth: 0 }}>
             <DataGrid
               rows={locations}
               columns={columns}
+              loading={isLoading}
               pagination
               pageSizeOptions={[8, 16, 32]}
               disableRowSelectionOnClick
               initialState={{ pagination: { paginationModel: { pageSize: 8, page: 0 } } }}
               getRowHeight={() => 64}
+              slots={mainGridSlots}
               sx={{ border: 0 }}
             />
           </Box>

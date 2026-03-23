@@ -17,6 +17,7 @@ import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
 import type { Customer, CustomerPayload, InboundDocument, Item, Movement, OutboundDocument, UserRole } from "../lib/types";
 import { RowActionsMenu } from "./RowActionsMenu";
+import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type CustomerManagementPageProps = {
   customers: Customer[];
@@ -63,6 +64,8 @@ export function CustomerManagementPage({
 }: CustomerManagementPageProps) {
   const { t } = useI18n();
   const canManage = currentUserRole === "admin";
+  const pageDescription = t("customersDesc");
+  const permissionNotice = canManage ? "" : t("adminOnlyManageNotice");
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -98,6 +101,13 @@ export function CustomerManagementPage({
     () => customers.find((customer) => customer.id === selectedCustomerId) ?? null,
     [customers, selectedCustomerId]
   );
+  const hasActiveFilters = normalizedSearch.length > 0;
+  const mainGridSlots = buildWorkspaceGridSlots({
+    emptyTitle: t("noResults"),
+    emptyDescription: hasActiveFilters ? t("filteredStateHint") : t("emptyStateHint"),
+    loadingTitle: t("loadingRecords"),
+    loadingDescription: pageDescription
+  });
 
   useEffect(() => {
     if (selectedCustomerId !== null && !selectedCustomer) {
@@ -257,18 +267,16 @@ export function CustomerManagementPage({
 
   return (
     <main className="workspace-main">
-      {errorMessage && !isModalOpen ? <div className="alert-banner">{errorMessage}</div> : null}
-
       <section className="workbook-panel workbook-panel--full">
         <div className="tab-strip">
-          <div className="tab-strip__toolbar">
-            {canManage ? (
-              <div className="tab-strip__actions">
-                <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addNew")}</Button>
-              </div>
-            ) : null}
-          </div>
-          {!canManage ? <div className="sheet-note sheet-note--readonly">{t("adminOnlyManageNotice")}</div> : null}
+          <WorkspacePanelHeader
+            title={t("customers")}
+            actions={canManage ? (
+              <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addNew")}</Button>
+            ) : undefined}
+            notices={[permissionNotice]}
+            errorMessage={errorMessage && !isModalOpen ? errorMessage : ""}
+          />
           <div className="filter-bar">
             <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("customerSearchPlaceholder")} /></label>
           </div>
@@ -287,6 +295,7 @@ export function CustomerManagementPage({
               getRowHeight={() => 64}
               onRowClick={(params) => setSelectedCustomerId(params.row.id)}
               getRowClassName={(params) => (params.row.id === selectedCustomerId ? "document-row--selected" : "")}
+              slots={mainGridSlots}
               sx={{ border: 0 }}
             />
           </Box>

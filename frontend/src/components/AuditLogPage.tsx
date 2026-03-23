@@ -8,6 +8,7 @@ import { formatDateTimeValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type { AuditLog } from "../lib/types";
+import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type AuditLogPageProps = {
   auditLogs: AuditLog[];
@@ -50,6 +51,13 @@ export function AuditLogPage({ auditLogs, isLoading }: AuditLogPageProps) {
 
     return matchesSearch && matchesAction && matchesEntityType && matchesActorRole;
   }), [auditLogs, normalizedSearch, selectedAction, selectedEntityType, selectedActorRole]);
+  const hasActiveFilters = normalizedSearch.length > 0 || selectedAction !== "all" || selectedEntityType !== "all" || selectedActorRole !== "all";
+  const mainGridSlots = buildWorkspaceGridSlots({
+    emptyTitle: t("noResults"),
+    emptyDescription: hasActiveFilters ? t("filteredStateHint") : t("emptyStateHint"),
+    loadingTitle: t("loadingRecords"),
+    loadingDescription: t("auditLogsDesc")
+  });
 
   const columns = useMemo<GridColDef<AuditLog>[]>(() => [
     {
@@ -113,15 +121,12 @@ export function AuditLogPage({ auditLogs, isLoading }: AuditLogPageProps) {
   const selectedLogDetails = useMemo(() => formatAuditDetails(selectedLog?.detailsJson ?? ""), [selectedLog?.detailsJson]);
 
   return (
-    <main className="workspace-main">
-      <section className="workbook-panel workbook-panel--full">
-        <div className="tab-strip">
-          <div className="tab-strip__heading">
-            <h2>{t("auditLogs")}</h2>
-            <p>{t("auditLogsDesc")}</p>
-          </div>
-          <div className="filter-bar">
-            <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("auditLogSearchPlaceholder")} /></label>
+      <main className="workspace-main">
+        <section className="workbook-panel workbook-panel--full">
+          <div className="tab-strip">
+            <WorkspacePanelHeader title={t("auditLogs")} />
+            <div className="filter-bar">
+              <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("auditLogSearchPlaceholder")} /></label>
             <label>{t("filterByAction")}<select value={selectedAction} onChange={(event) => setSelectedAction(event.target.value)}><option value="all">{t("allActions")}</option>{actionOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
             <label>{t("filterByEntity")}<select value={selectedEntityType} onChange={(event) => setSelectedEntityType(event.target.value)}><option value="all">{t("allEntities")}</option>{entityTypeOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
             <label>{t("filterByRole")}<select value={selectedActorRole} onChange={(event) => setSelectedActorRole(event.target.value)}><option value="all">{t("allRoles")}</option>{actorRoleOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
@@ -139,6 +144,7 @@ export function AuditLogPage({ auditLogs, isLoading }: AuditLogPageProps) {
               disableRowSelectionOnClick
               initialState={{ pagination: { paginationModel: { pageSize: 25, page: 0 } } }}
               getRowHeight={() => 72}
+              slots={mainGridSlots}
               sx={{ border: 0 }}
             />
           </Box>

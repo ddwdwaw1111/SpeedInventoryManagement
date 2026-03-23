@@ -1,5 +1,6 @@
 import { type FormEvent, useState } from "react";
 
+import { useI18n } from "../lib/i18n";
 import type { LoginPayload, SignUpPayload, User } from "../lib/types";
 
 export function AuthPage({
@@ -13,6 +14,7 @@ export function AuthPage({
   isSubmitting: boolean;
   errorMessage: string;
 }) {
+  const { t } = useI18n();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -25,24 +27,24 @@ export function AuthPage({
   return (
     <main className="auth-shell">
       <section className="auth-hero">
-        <p className="eyebrow">Inventory control</p>
-        <h1>Speed Inventory Management</h1>
+        <p className="eyebrow">{t("inventorySystem")}</p>
+        <h1>{t("speedInventory")}</h1>
         <p>
-          Centralize inbound, outbound, storage, and SKU tracking behind a simple
-          authenticated workspace for your team.
+          Manage receiving, shipping, inventory control, and audit activity from a
+          single secure workspace for your warehouse team.
         </p>
         <div className="auth-feature-list">
           <article>
-            <strong>Live warehouse records</strong>
-            <span>Track current stock, container details, and location assignments.</span>
+            <strong>Operational visibility</strong>
+            <span>Track inventory positions, container references, and warehouse assignments in real time.</span>
           </article>
           <article>
-            <strong>Protected operations</strong>
-            <span>Sign in before accessing inventory edits and movement history.</span>
+            <strong>Controlled execution</strong>
+            <span>Authenticate users before they can post transactions, update inventory, or review history.</span>
           </article>
           <article>
-            <strong>One shared dashboard</strong>
-            <span>Keep receiving, shipping, and reporting in the same interface.</span>
+            <strong>Unified warehouse workflow</strong>
+            <span>Keep receipts, shipments, inventory control, and reporting in one operating interface.</span>
           </article>
         </div>
       </section>
@@ -50,7 +52,7 @@ export function AuthPage({
       <section className="auth-card">
         <div className="auth-card__header">
           <div>
-            <p className="eyebrow">Welcome back</p>
+            <p className="eyebrow">Warehouse access</p>
             <h2>Sign in to continue</h2>
           </div>
         </div>
@@ -69,7 +71,7 @@ export function AuthPage({
           {errorMessage ? <div className="alert-banner">{errorMessage}</div> : null}
 
           <button className="button button--primary auth-submit" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Please wait..." : "Sign in"}
+            {isSubmitting ? "Signing in..." : "Sign in"}
           </button>
         </form>
       </section>
@@ -80,14 +82,13 @@ export function AuthPage({
 export function AppHeaderUser({
   user,
   onLogout,
-  isSubmitting,
-  compact = false
+  isSubmitting
 }: {
   user: User;
   onLogout: () => Promise<void>;
   isSubmitting: boolean;
-  compact?: boolean;
 }) {
+  const { t } = useI18n();
   const initials = user.fullName
     .split(" ")
     .filter(Boolean)
@@ -96,20 +97,24 @@ export function AppHeaderUser({
     .join("") || "U";
 
   return (
-    <div className={`app-user ${compact ? "app-user--compact" : ""}`}>
-      <div className="app-user__identity">
+    <div className="app-user">
+      <button className="app-user__trigger" type="button" aria-haspopup="menu">
         <div className="app-user__avatar" aria-hidden="true">{initials}</div>
-        <div className="app-user__meta">
-          <div className="app-user__name-row">
-            <strong>{user.fullName}</strong>
-            <span className="app-user__role">{user.role}</span>
-          </div>
+        <span className="app-user__trigger-name">{user.fullName}</span>
+        <span className="app-user__trigger-caret" aria-hidden="true" />
+      </button>
+      <div className="app-user__menu" role="menu">
+        <div className="app-user__menu-header">
+          <strong>{user.fullName}</strong>
+          <span className="app-user__menu-role">{t(user.role)}</span>
+        </div>
+        <div className="app-user__menu-details">
           <span>{user.email}</span>
         </div>
+        <button className="app-user__menu-action" type="button" onClick={() => { void onLogout(); }} disabled={isSubmitting}>
+          {isSubmitting ? "Signing out..." : "Sign out"}
+        </button>
       </div>
-      <button className="app-user__logout" type="button" onClick={() => { void onLogout(); }} disabled={isSubmitting}>
-        {isSubmitting ? "Signing out..." : "Sign out"}
-      </button>
     </div>
   );
 }

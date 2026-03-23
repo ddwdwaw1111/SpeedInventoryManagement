@@ -14,6 +14,7 @@ import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import { downloadOutboundPackingListPdfFromDocument } from "../lib/outboundPackingListPdf";
 import type { Customer, InboundDocument, InboundDocumentPayload, Item, Location, Movement, OutboundDocument, OutboundDocumentPayload, UserRole } from "../lib/types";
+import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type ActivityMode = "IN" | "OUT";
 
@@ -68,9 +69,6 @@ type BatchOutboundLineState = {
   grossWeightKgs: number;
   reason: string;
 };
-
-type InboundViewMode = "documents" | "line-items";
-type OutboundViewMode = "packing-lists" | "line-items";
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
 
@@ -132,7 +130,7 @@ function getSuggestedPalletsDetail(totalQty: number, pallets: number) {
   return `${pallets - 1}*${cartonsPerFullPallet}+${remainingCartons}`;
 }
 
-export function ActivityManagementPage({ mode, items, locations, customers, movements, inboundDocuments, outboundDocuments, currentUserRole, isLoading, onRefresh }: ActivityManagementPageProps) {
+export function ActivityManagementPage({ mode, items, locations, customers, inboundDocuments, outboundDocuments, currentUserRole, isLoading, onRefresh }: ActivityManagementPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const [searchTerm, setSearchTerm] = useState("");
@@ -144,18 +142,17 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
   const [batchLines, setBatchLines] = useState<BatchInboundLineState[]>(() => [createEmptyBatchInboundLine()]);
   const [batchOutboundForm, setBatchOutboundForm] = useState<BatchOutboundFormState>(() => createEmptyBatchOutboundForm());
   const [batchOutboundLines, setBatchOutboundLines] = useState<BatchOutboundLineState[]>(() => [createEmptyBatchOutboundLine()]);
-  const [inboundViewMode, setInboundViewMode] = useState<InboundViewMode>("documents");
-  const [outboundViewMode, setOutboundViewMode] = useState<OutboundViewMode>("packing-lists");
   const [selectedInboundDocument, setSelectedInboundDocument] = useState<InboundDocument | null>(null);
   const [selectedOutboundDocument, setSelectedOutboundDocument] = useState<OutboundDocument | null>(null);
   const [batchSubmitting, setBatchSubmitting] = useState(false);
   const deferredSearchTerm = useDeferredValue(searchTerm);
   const pendingBatchLineIDRef = useRef<string | null>(null);
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
+  const pageDescription = mode === "IN" ? t("inboundDesc") : t("outboundDesc");
+  const permissionNotice = canManage ? "" : t("readOnlyModeNotice");
 
   useEffect(() => {
     setIsBatchModalOpen(false);
-    setInboundViewMode("documents");
     setBatchOutboundForm(createEmptyBatchOutboundForm());
     setBatchOutboundLines([createEmptyBatchOutboundLine()]);
     setSelectedInboundDocument(null);
@@ -228,7 +225,6 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
 
   const batchLocation = locations.find((location) => location.id === Number(batchForm.locationId));
   const batchSectionOptions = getLocationSectionOptions(batchLocation);
-  const historyRows = useMemo(() => movements.filter((movement) => movement.movementType === mode), [mode, movements]);
   const availableOutboundItems = useMemo(
     () => items.filter((item) => item.quantity > 0).sort((left, right) => {
       const customerCompare = left.customerName.localeCompare(right.customerName);
@@ -247,20 +243,6 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
   }, [batchForm.storageSection, batchSectionOptions]);
 
   const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
-  const filteredRows = historyRows.filter((movement) => {
-    const matchesSearch = normalizedSearch.length === 0
-      || movement.sku.toLowerCase().includes(normalizedSearch)
-      || movement.customerName.toLowerCase().includes(normalizedSearch)
-      || movement.description.toLowerCase().includes(normalizedSearch)
-      || movement.containerNo.toLowerCase().includes(normalizedSearch)
-      || movement.referenceCode.toLowerCase().includes(normalizedSearch)
-      || movement.packingListNo.toLowerCase().includes(normalizedSearch)
-      || movement.orderRef.toLowerCase().includes(normalizedSearch);
-    const matchesLocation = selectedLocationId === "all"
-      || items.find((item) => item.id === movement.itemId)?.locationId === Number(selectedLocationId);
-    const matchesCustomer = selectedCustomerId === "all" || movement.customerId === Number(selectedCustomerId);
-    return matchesSearch && matchesLocation && matchesCustomer;
-  });
   const inboundDocumentRows = useMemo(() => {
     if (mode !== "IN") return [];
 
@@ -308,63 +290,18 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
       return rightDate.localeCompare(leftDate);
     });
   }, [locations, mode, normalizedSearch, outboundDocuments, selectedCustomerId, selectedLocationId]);
-
-  const inboundColumns = useMemo<GridColDef<Movement>[]>(() => [
-    { field: "deliveryDate", headerName: t("deliveryDate"), minWidth: 140, renderCell: (params) => formatDate(params.row.deliveryDate) },
-    { field: "containerNo", headerName: t("containerNo"), minWidth: 170, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.containerNo || "-"}</span> },
-    { field: "sku", headerName: t("sku"), minWidth: 120, renderCell: (params) => <span className="cell--mono">{params.row.sku}</span> },
-    { field: "description", headerName: t("description"), minWidth: 260, flex: 1.4, renderCell: (params) => params.row.description },
-    { field: "customerName", headerName: t("customer"), minWidth: 170, flex: 1, renderCell: (params) => params.row.customerName },
-    { field: "expectedQty", headerName: t("expectedQty"), minWidth: 130, type: "number", renderCell: (params) => params.row.expectedQty || "-" },
-    {
-      field: "receivedQty",
-      headerName: t("received"),
-      minWidth: 110,
-      type: "number",
-      renderCell: (params) => (
-        <span className={hasQtyMismatch(params.row.expectedQty, params.row.receivedQty) ? "cell--mismatch" : ""}>
-          {params.row.receivedQty || params.row.quantityChange || "-"}
-        </span>
-      )
-    },
-    { field: "pallets", headerName: t("pallets"), minWidth: 100, type: "number", renderCell: (params) => params.row.pallets || "-" },
-    { field: "unitLabel", headerName: t("inboundUnit"), minWidth: 110, renderCell: (params) => params.row.unitLabel || "-" },
-    { field: "storageSection", headerName: t("storageSection"), minWidth: 110, renderCell: (params) => params.row.storageSection || "A" },
-    { field: "palletsDetailCtns", headerName: t("palletsDetail"), minWidth: 180, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.palletsDetailCtns || "-"}</span> },
-    { field: "heightIn", headerName: t("heightIn"), minWidth: 110, type: "number", renderCell: (params) => params.row.heightIn || "-" },
-    { field: "locationName", headerName: t("currentStorage"), minWidth: 170, flex: 1, renderCell: (params) => params.row.locationName },
-    {
-      field: "status",
-      headerName: t("status"),
-      minWidth: 140,
-      sortable: false,
-      filterable: false,
-      renderCell: (params) => renderInboundStatus(params.row.expectedQty, params.row.receivedQty, t)
-    },
-    {
-      field: "actions",
-      headerName: t("actions"),
-      minWidth: 90,
-      sortable: false,
-      filterable: false,
-      renderCell: (params) => {
-        const linkedDocument = params.row.inboundDocumentId > 0
-          ? inboundDocuments.find((document) => document.id === params.row.inboundDocumentId)
-          : undefined;
-
-        return (
-          <RowActionsMenu
-            ariaLabel={t("actions")}
-            actions={linkedDocument
-              ? [
-                  { key: "details", label: t("details"), icon: <VisibilityOutlinedIcon fontSize="small" />, onClick: () => setSelectedInboundDocument(linkedDocument) }
-                ]
-              : []}
-          />
-        );
-      }
-    }
-  ], [inboundDocuments, t]);
+  const hasActiveFilters = normalizedSearch.length > 0 || selectedCustomerId !== "all" || selectedLocationId !== "all";
+  const mainGridSlots = buildWorkspaceGridSlots({
+    emptyTitle: t("noResults"),
+    emptyDescription: hasActiveFilters ? t("filteredStateHint") : t("emptyStateHint"),
+    loadingTitle: t("loadingRecords"),
+    loadingDescription: pageDescription
+  });
+  const detailGridSlots = buildWorkspaceGridSlots({
+    emptyTitle: t("noResults"),
+    emptyDescription: t("emptyStateHint"),
+    loadingTitle: t("loadingRecords")
+  });
 
   const inboundDocumentColumns = useMemo<GridColDef<InboundDocument>[]>(() => [
     { field: "deliveryDate", headerName: t("deliveryDate"), minWidth: 140, renderCell: (params) => formatDate(params.row.deliveryDate) },
@@ -402,46 +339,6 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
     { field: "palletsDetailCtns", headerName: t("palletsDetail"), minWidth: 180, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.palletsDetailCtns || "-"}</span> },
     { field: "lineNote", headerName: t("internalNotes"), minWidth: 220, flex: 1.1, renderCell: (params) => params.row.lineNote || "-" }
   ], [t]);
-
-  const outboundColumns = useMemo<GridColDef<Movement>[]>(() => [
-    { field: "sn", headerName: "SN", minWidth: 80, sortable: false, filterable: false, renderCell: (params) => filteredRows.findIndex((row) => row.id === params.row.id) + 1 },
-    { field: "packingListNo", headerName: t("packingListNo"), minWidth: 170, renderCell: (params) => <span className="cell--mono">{params.row.packingListNo || "-"}</span> },
-    { field: "orderRef", headerName: t("orderRef"), minWidth: 150, renderCell: (params) => <span className="cell--mono">{params.row.orderRef || "-"}</span> },
-    { field: "sku", headerName: t("sku"), minWidth: 120, renderCell: (params) => <span className="cell--mono">{params.row.sku}</span> },
-    { field: "description", headerName: t("description"), minWidth: 260, flex: 1.4, renderCell: (params) => params.row.description },
-    { field: "customerName", headerName: t("customer"), minWidth: 170, flex: 1, renderCell: (params) => params.row.customerName },
-    { field: "quantityChange", headerName: "QTY", minWidth: 100, type: "number", renderCell: (params) => Math.abs(params.row.quantityChange) || "-" },
-    { field: "unitLabel", headerName: t("unit"), minWidth: 90, renderCell: (params) => params.row.unitLabel || "-" },
-    { field: "storageSection", headerName: t("storageSection"), minWidth: 110, renderCell: (params) => params.row.storageSection || "A" },
-    { field: "cartonSizeMm", headerName: t("cartonSize"), minWidth: 150, renderCell: (params) => <span className="cell--mono">{params.row.cartonSizeMm || "-"}</span> },
-    { field: "netWeightKgs", headerName: t("netWeight"), minWidth: 110, type: "number", renderCell: (params) => params.row.netWeightKgs ? params.row.netWeightKgs.toFixed(2) : "-" },
-    { field: "grossWeightKgs", headerName: t("grossWeight"), minWidth: 110, type: "number", renderCell: (params) => params.row.grossWeightKgs ? params.row.grossWeightKgs.toFixed(2) : "-" },
-    { field: "outDate", headerName: t("outDate"), minWidth: 130, renderCell: (params) => formatDate(params.row.outDate) },
-    {
-      field: "actions",
-      headerName: t("actions"),
-      minWidth: 90,
-      sortable: false,
-      filterable: false,
-      renderCell: (params) => {
-        const linkedDocument = params.row.outboundDocumentId > 0
-          ? outboundDocuments.find((document) => document.id === params.row.outboundDocumentId)
-          : undefined;
-
-        return (
-          <RowActionsMenu
-            ariaLabel={t("actions")}
-            actions={linkedDocument
-              ? [
-                  { key: "details", label: t("details"), icon: <VisibilityOutlinedIcon fontSize="small" />, onClick: () => setSelectedOutboundDocument(linkedDocument) },
-                  { key: "download-pdf", label: t("downloadPdf"), icon: <PictureAsPdfOutlinedIcon fontSize="small" />, onClick: () => downloadOutboundPackingListPdfFromDocument(linkedDocument) }
-                ]
-              : []}
-          />
-        );
-      }
-    }
-  ], [filteredRows, outboundDocuments, t]);
 
   const outboundDocumentColumns = useMemo<GridColDef<OutboundDocument>[]>(() => [
     { field: "packingListNo", headerName: t("packingListNo"), minWidth: 170, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.packingListNo || "-"}</span> },
@@ -731,35 +628,26 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
 
   return (
     <main className="workspace-main">
-      {errorMessage && !isBatchModalOpen ? <div className="alert-banner">{errorMessage}</div> : null}
-
       <section>
         <article className="workbook-panel workbook-panel--full">
           <div className="tab-strip">
-            <div className="tab-strip__toolbar">
-              <div className="tab-strip__actions">
-                {canManage ? (
-                  <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>
-                    {mode === "IN" ? t("newInbound") : t("newOutbound")}
+            <WorkspacePanelHeader
+              title={mode === "IN" ? t("inbound") : t("outbound")}
+              actions={(
+                <>
+                  {canManage ? (
+                    <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>
+                      {mode === "IN" ? t("newInbound") : t("newOutbound")}
+                    </Button>
+                  ) : null}
+                  <Button variant="outlined" disabled>
+                    {mode === "IN" ? t("documentsView") : t("packingListsView")}
                   </Button>
-                ) : null}
-                {mode === "IN" ? (
-                  <>
-                    <Button variant={inboundViewMode === "documents" ? "outlined" : "text"} onClick={() => setInboundViewMode("documents")}>{t("documentsView")}</Button>
-                    <Button variant={inboundViewMode === "line-items" ? "outlined" : "text"} onClick={() => setInboundViewMode("line-items")}>{t("lineItemsView")}</Button>
-                  </>
-                ) : null}
-                {mode === "OUT" ? (
-                  <>
-                    <Button variant={outboundViewMode === "packing-lists" ? "outlined" : "text"} onClick={() => setOutboundViewMode("packing-lists")}>{t("packingListsView")}</Button>
-                    <Button variant={outboundViewMode === "line-items" ? "outlined" : "text"} onClick={() => setOutboundViewMode("line-items")}>{t("lineItemsView")}</Button>
-                  </>
-                ) : null}
-              </div>
-            </div>
-            {(mode === "IN" && inboundViewMode === "line-items") || (mode === "OUT" && outboundViewMode === "line-items")
-              ? <div className="sheet-note sheet-note--readonly">{t("documentManagedLineItemsNotice")}</div>
-              : null}
+                </>
+              )}
+              notices={[permissionNotice]}
+              errorMessage={errorMessage && !isBatchModalOpen ? errorMessage : ""}
+            />
             <div className="filter-bar">
               <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={mode === "IN" ? t("searchInboundPlaceholder") : t("searchOutboundPlaceholder")} /></label>
               <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
@@ -768,7 +656,7 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
           </div>
           <div className="sheet-table-wrap">
             <Box sx={{ minWidth: 0 }}>
-              {mode === "IN" && inboundViewMode === "documents" ? (
+              {mode === "IN" ? (
                 <DataGrid
                   rows={inboundDocumentRows}
                   columns={inboundDocumentColumns}
@@ -780,9 +668,10 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
                   getRowHeight={() => 68}
                   onRowClick={(params) => setSelectedInboundDocument(params.row)}
                   getRowClassName={(params) => selectedInboundDocument?.id === params.row.id ? "document-row--selected" : ""}
+                  slots={mainGridSlots}
                   sx={{ border: 0 }}
                 />
-              ) : mode === "OUT" && outboundViewMode === "packing-lists" ? (
+              ) : (
                 <DataGrid
                   rows={outboundDocumentRows}
                   columns={outboundDocumentColumns}
@@ -794,18 +683,7 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
                   getRowHeight={() => 68}
                   onRowClick={(params) => setSelectedOutboundDocument(params.row)}
                   getRowClassName={(params) => selectedOutboundDocument?.id === params.row.id ? "document-row--selected" : ""}
-                  sx={{ border: 0 }}
-                />
-              ) : (
-                <DataGrid
-                  rows={filteredRows}
-                  columns={mode === "IN" ? inboundColumns : outboundColumns}
-                  loading={isLoading}
-                  pagination
-                  pageSizeOptions={[10, 20, 50]}
-                  disableRowSelectionOnClick
-                  initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
-                  getRowHeight={() => 68}
+                  slots={mainGridSlots}
                   sx={{ border: 0 }}
                 />
               )}
@@ -814,7 +692,7 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
         </article>
       </section>
 
-      {mode === "IN" && inboundViewMode === "documents" ? (
+      {mode === "IN" ? (
         <Drawer
           anchor="right"
           open={selectedInboundDocument !== null}
@@ -888,6 +766,7 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
                   disableRowSelectionOnClick
                   initialState={{ pagination: { paginationModel: { pageSize: 5, page: 0 } } }}
                   getRowHeight={() => 68}
+                  slots={detailGridSlots}
                   sx={{ border: 0 }}
                 />
               </Box>
@@ -896,7 +775,7 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
         </Drawer>
       ) : null}
 
-      {mode === "OUT" && outboundViewMode === "packing-lists" ? (
+      {mode === "OUT" ? (
         <Drawer
           anchor="right"
           open={selectedOutboundDocument !== null}
@@ -991,6 +870,7 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
                   disableRowSelectionOnClick
                   initialState={{ pagination: { paginationModel: { pageSize: 5, page: 0 } } }}
                   getRowHeight={() => 68}
+                  slots={detailGridSlots}
                   sx={{ border: 0 }}
                 />
               </Box>
@@ -1173,27 +1053,10 @@ export function ActivityManagementPage({ mode, items, locations, customers, move
 
 function displayDescription(item: Pick<Item, "description" | "name">) { return item.description || item.name; }
 function formatDate(value: string | null) { return formatDateValue(value, dateFormatter); }
-function hasQtyMismatch(expectedQty: number, receivedQty: number) { return expectedQty > 0 && receivedQty > 0 && expectedQty !== receivedQty; }
 function numberInputValue(value: number) { return value === 0 ? "" : String(value); }
 function getLocationSectionOptions(location: Location | undefined) {
   const sectionNames = location?.sectionNames?.map((sectionName) => sectionName.trim()).filter(Boolean) ?? [];
   return sectionNames.length > 0 ? sectionNames : ["A"];
-}
-
-function renderInboundStatus(
-  expectedQty: number,
-  receivedQty: number,
-  t: (key: string) => string
-) {
-  if (expectedQty > 0 && receivedQty > expectedQty) {
-    return <Chip label={t("overReceived")} color="warning" size="small" />;
-  }
-
-  if (expectedQty > 0 && receivedQty < expectedQty) {
-    return <Chip label={t("shortReceived")} color="error" size="small" />;
-  }
-
-  return <Chip label={t("matched")} color="success" size="small" />;
 }
 
 function renderDocumentStatus(status: string, t: (key: string) => string) {

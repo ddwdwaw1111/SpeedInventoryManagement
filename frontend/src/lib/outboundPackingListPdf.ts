@@ -124,26 +124,26 @@ type PackingListRow = {
 
 const LABELS = {
   title: "Packing List",
-  generatedAt: "Generated",
+  printedAt: "Printed At",
   packingListNo: "Packing List No.",
-  orderRef: "Order Ref.",
+  orderRef: "Order No.",
   customer: "Customer",
-  outDate: "Out Date",
-  storage: "Storage",
+  outDate: "Ship Date",
+  warehouse: "Warehouse",
   totalQty: "Total Qty",
-  notes: "Notes",
+  remarks: "Remarks",
   sequence: "SN",
   sku: "SKU",
-  description: "Description",
-  qty: "Qty",
-  unit: "Unit",
-  cartonSize: "CTN Size (MM)",
-  netWeight: "N.W.",
-  grossWeight: "G.W.",
+  description: "Item Description",
+  qty: "Ship Qty",
+  unit: "UOM",
+  cartonSize: "Carton Size (mm)",
+  netWeight: "Net Wt. (kg)",
+  grossWeight: "Gross Wt. (kg)",
   total: "TOTAL",
-  generatedBySystem: "Generated automatically by the system",
-  empty: "—",
-  subject: "Outbound Packing List"
+  generatedBySystem: "System generated document",
+  empty: "--",
+  subject: "Shipment Packing List"
 } as const;
 
 export function downloadOutboundPackingListPdfFromDocument(document: OutboundDocument) {
@@ -171,12 +171,13 @@ function buildPackingListDocumentFromDocument(document: OutboundDocument): Packi
 
 function buildDocumentDefinition(document: PackingListDocument): TDocumentDefinitions {
   const noteText = document.notes.length > 0 ? document.notes.join(" / ") : LABELS.empty;
+  const printedAt = formatTimestamp(new Date().toISOString(), { includeTime: true });
   const tableBody: TableCell[][] = [
     [
       headerCell(LABELS.sequence),
       headerCell(LABELS.sku),
       headerCell(LABELS.description),
-      headerCell(LABELS.storage),
+      headerCell(LABELS.warehouse),
       headerCell(LABELS.qty),
       headerCell(LABELS.unit),
       headerCell(LABELS.cartonSize),
@@ -214,9 +215,9 @@ function buildDocumentDefinition(document: PackingListDocument): TDocumentDefini
             metaBlock(LABELS.outDate, formatDateLabel(document.outDate))
           ],
           [
-            metaBlock(LABELS.storage, document.storageSummary || LABELS.empty),
-            metaBlock(LABELS.generatedAt, formatTimestamp(new Date().toISOString(), { includeTime: true })),
-            metaSpanBlock(LABELS.notes, noteText, 2),
+            metaBlock(LABELS.warehouse, document.storageSummary || LABELS.empty),
+            metaSpanBlock(LABELS.remarks, noteText, 3),
+            {},
             {}
           ]
         ]
@@ -268,6 +269,7 @@ function buildDocumentDefinition(document: PackingListDocument): TDocumentDefini
       margin: [20, 0, 20, 4],
       columns: [
         { text: LABELS.generatedBySystem, style: "footer" },
+        { text: `${LABELS.printedAt}: ${printedAt}`, alignment: "center", style: "footer" },
         { text: `Page ${currentPage} / ${pageCount}`, alignment: "right", style: "footer" }
       ]
     }),

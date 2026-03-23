@@ -11,6 +11,7 @@ import { RowActionsMenu } from "./RowActionsMenu";
 import { formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import type { SKUMaster, SKUMasterPayload, UserRole } from "../lib/types";
+import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type SKUMasterPageProps = {
   skuMasters: SKUMaster[];
@@ -42,6 +43,8 @@ function createEmptyForm(): SKUMasterFormState {
 export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefresh }: SKUMasterPageProps) {
   const { t } = useI18n();
   const canManage = currentUserRole === "admin";
+  const pageDescription = t("skuMasterDesc");
+  const permissionNotice = canManage ? "" : t("adminOnlyManageNotice");
   const [searchTerm, setSearchTerm] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -57,6 +60,13 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
     || displayDescription(row).toLowerCase().includes(normalizedSearch)
     || row.category.toLowerCase().includes(normalizedSearch)
   )), [normalizedSearch, skuMasters]);
+  const hasActiveFilters = normalizedSearch.length > 0;
+  const mainGridSlots = buildWorkspaceGridSlots({
+    emptyTitle: t("noResults"),
+    emptyDescription: hasActiveFilters ? t("filteredStateHint") : t("emptyStateHint"),
+    loadingTitle: t("loadingRecords"),
+    loadingDescription: pageDescription
+  });
 
   const columns = useMemo<GridColDef<SKUMaster>[]>(() => [
     { field: "sku", headerName: t("sku"), minWidth: 130, flex: 0.8, renderCell: (params) => <span className="cell--mono">{params.value}</span> },
@@ -159,18 +169,16 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
 
   return (
     <main className="workspace-main">
-      {errorMessage && !isModalOpen ? <div className="alert-banner">{errorMessage}</div> : null}
-
       <section className="workbook-panel workbook-panel--full">
         <div className="tab-strip">
-          <div className="tab-strip__toolbar">
-            {canManage ? (
-              <div className="tab-strip__actions">
-                <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addNew")}</Button>
-              </div>
-            ) : null}
-          </div>
-          {!canManage ? <div className="sheet-note sheet-note--readonly">{t("adminOnlyManageNotice")}</div> : null}
+          <WorkspacePanelHeader
+            title={t("skuMaster")}
+            actions={canManage ? (
+              <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addNew")}</Button>
+            ) : undefined}
+            notices={[permissionNotice]}
+            errorMessage={errorMessage && !isModalOpen ? errorMessage : ""}
+          />
           <div className="filter-bar">
             <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("skuMasterSearchPlaceholder")} /></label>
           </div>
@@ -187,6 +195,7 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
               disableRowSelectionOnClick
               initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
               getRowHeight={() => 64}
+              slots={mainGridSlots}
               sx={{ border: 0 }}
             />
           </Box>
