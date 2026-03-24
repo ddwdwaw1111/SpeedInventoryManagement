@@ -1,6 +1,7 @@
 import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
 import CloseIcon from "@mui/icons-material/Close";
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
+import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import PictureAsPdfOutlinedIcon from "@mui/icons-material/PictureAsPdfOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import { type FormEvent, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
@@ -9,14 +10,17 @@ import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
 import { api } from "../lib/api";
 import { RowActionsMenu } from "./RowActionsMenu";
+import { buildItemContainerBalances, formatContainerDistributionSummary as formatContainerDistributionSummaryValue, type ItemContainerBalance } from "../lib/containerBalances";
 import { formatDateTimeValue, formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
-import { downloadOutboundPackingListPdfFromDocument } from "../lib/outboundPackingListPdf";
+import { downloadOutboundDeliveryNotePdfFromDocument } from "../lib/outboundPackingListPdf";
+import { downloadOutboundPickSheetPdfFromDocument } from "../lib/outboundPickSheetPdf";
 import type { Customer, InboundDocument, InboundDocumentPayload, Item, Location, Movement, OutboundDocument, OutboundDocumentPayload, UserRole } from "../lib/types";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type ActivityMode = "IN" | "OUT";
+type MutableDocumentStatus = "DRAFT" | "CONFIRMED";
 
 type ActivityManagementPageProps = {
   mode: ActivityMode;
@@ -38,6 +42,7 @@ type BatchInboundFormState = {
   locationId: string;
   storageSection: string;
   unitLabel: string;
+  status: MutableDocumentStatus;
   documentNote: string;
 };
 
@@ -50,12 +55,18 @@ type BatchInboundLineState = {
   receivedQty: number;
   pallets: number;
   palletsDetailCtns: string;
+  lineNote: string;
 };
 
 type BatchOutboundFormState = {
   packingListNo: string;
   orderRef: string;
   outDate: string;
+  shipToName: string;
+  shipToAddress: string;
+  shipToContact: string;
+  carrierName: string;
+  status: MutableDocumentStatus;
   documentNote: string;
 };
 
@@ -70,6 +81,71 @@ type BatchOutboundLineState = {
   reason: string;
 };
 
+type OutboundPickAllocationRow = {
+  id: string;
+  itemNumber: string;
+  sku: string;
+  description: string;
+  locationName: string;
+  storageSection: string;
+  containerNo: string;
+  allocatedQty: number;
+};
+
+type OutboundAllocationPreviewRow = {
+  id: string;
+  lineLabel: string;
+  itemNumber: string;
+  sku: string;
+  description: string;
+  locationName: string;
+  storageSection: string;
+  containerNo: string;
+  allocatedQty: number;
+};
+
+type OutboundAllocationLineSummary = {
+  lineId: string;
+  lineLabel: string;
+  itemId: number;
+  itemNumber: string;
+  sku: string;
+  description: string;
+  locationName: string;
+  storageSection: string;
+  requestedQty: number;
+  allocatedQty: number;
+  shortageQty: number;
+  containerCount: number;
+};
+
+type OutboundAllocationPreviewResult = {
+  rows: OutboundAllocationPreviewRow[];
+  summaries: Map<string, OutboundAllocationLineSummary>;
+  totalRequestedQty: number;
+  totalAllocatedQty: number;
+  totalContainerCount: number;
+  splitLineCount: number;
+  shortageLineCount: number;
+};
+
+type OutboundSourceOption = {
+  id: number;
+  customerId: number;
+  customerName: string;
+  locationId: number;
+  locationName: string;
+  sku: string;
+  itemNumber: string;
+  description: string;
+  unit: string;
+  availableQty: number;
+  storageSections: string[];
+  containerCount: number;
+  containerSummary: string;
+  candidates: ItemContainerBalance[];
+};
+
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
 
 function createEmptyBatchInboundForm(): BatchInboundFormState {
@@ -80,6 +156,7 @@ function createEmptyBatchInboundForm(): BatchInboundFormState {
     locationId: "",
     storageSection: "A",
     unitLabel: "CTN",
+    status: "CONFIRMED",
     documentNote: ""
   };
 }
@@ -93,7 +170,8 @@ function createEmptyBatchInboundLine(): BatchInboundLineState {
     expectedQty: 0,
     receivedQty: 0,
     pallets: 0,
-    palletsDetailCtns: ""
+    palletsDetailCtns: "",
+    lineNote: ""
   };
 }
 
@@ -102,6 +180,11 @@ function createEmptyBatchOutboundForm(): BatchOutboundFormState {
     packingListNo: "",
     orderRef: "",
     outDate: "",
+    shipToName: "",
+    shipToAddress: "",
+    shipToContact: "",
+    carrierName: "",
+    status: "CONFIRMED",
     documentNote: ""
   };
 }
@@ -130,18 +213,21 @@ function getSuggestedPalletsDetail(totalQty: number, pallets: number) {
   return `${pallets - 1}*${cartonsPerFullPallet}+${remainingCartons}`;
 }
 
-export function ActivityManagementPage({ mode, items, locations, customers, inboundDocuments, outboundDocuments, currentUserRole, isLoading, onRefresh }: ActivityManagementPageProps) {
+export function ActivityManagementPage({ mode, items, locations, customers, movements, inboundDocuments, outboundDocuments, currentUserRole, isLoading, onRefresh }: ActivityManagementPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
+  const [selectedStatus, setSelectedStatus] = useState("all");
   const [errorMessage, setErrorMessage] = useState("");
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
   const [batchForm, setBatchForm] = useState<BatchInboundFormState>(() => createEmptyBatchInboundForm());
   const [batchLines, setBatchLines] = useState<BatchInboundLineState[]>(() => [createEmptyBatchInboundLine()]);
   const [batchOutboundForm, setBatchOutboundForm] = useState<BatchOutboundFormState>(() => createEmptyBatchOutboundForm());
   const [batchOutboundLines, setBatchOutboundLines] = useState<BatchOutboundLineState[]>(() => [createEmptyBatchOutboundLine()]);
+  const [editingInboundDocumentId, setEditingInboundDocumentId] = useState<number | null>(null);
+  const [editingOutboundDocumentId, setEditingOutboundDocumentId] = useState<number | null>(null);
   const [selectedInboundDocument, setSelectedInboundDocument] = useState<InboundDocument | null>(null);
   const [selectedOutboundDocument, setSelectedOutboundDocument] = useState<OutboundDocument | null>(null);
   const [batchSubmitting, setBatchSubmitting] = useState(false);
@@ -150,11 +236,16 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
   const pageDescription = mode === "IN" ? t("inboundDesc") : t("outboundDesc");
   const permissionNotice = canManage ? "" : t("readOnlyModeNotice");
+  const isEditingInboundDraft = editingInboundDocumentId !== null;
+  const isEditingOutboundDraft = editingOutboundDocumentId !== null;
 
   useEffect(() => {
     setIsBatchModalOpen(false);
+    setEditingInboundDocumentId(null);
+    setEditingOutboundDocumentId(null);
     setBatchOutboundForm(createEmptyBatchOutboundForm());
     setBatchOutboundLines([createEmptyBatchOutboundLine()]);
+    setSelectedStatus("all");
     setSelectedInboundDocument(null);
     setSelectedOutboundDocument(null);
   }, [mode]);
@@ -225,16 +316,40 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
 
   const batchLocation = locations.find((location) => location.id === Number(batchForm.locationId));
   const batchSectionOptions = getLocationSectionOptions(batchLocation);
-  const availableOutboundItems = useMemo(
-    () => items.filter((item) => item.quantity > 0).sort((left, right) => {
+  const availableOutboundSources = useMemo(
+    () => buildOutboundSourceOptions(items.filter((item) => item.availableQty > 0), movements),
+    [items, movements]
+  );
+  const selectableOutboundSources = useMemo(() => {
+    const selectedIds = new Set(
+      batchOutboundLines
+        .map((line) => Number(line.itemId))
+        .filter((itemId) => Number.isFinite(itemId) && itemId > 0)
+    );
+
+    const merged = [...availableOutboundSources];
+    for (const selectedId of selectedIds) {
+      const selectedItem = items.find((item) => item.id === selectedId);
+      const source = selectedItem
+        ? buildOutboundSourceOptions(items.filter((item) =>
+          item.customerId === selectedItem.customerId
+          && item.locationId === selectedItem.locationId
+          && item.sku.trim().toUpperCase() === selectedItem.sku.trim().toUpperCase()
+        ), movements)[0]
+        : null;
+      if (source && !merged.some((item) => item.id === source.id)) {
+        merged.push(source);
+      }
+    }
+
+    return merged.sort((left, right) => {
       const customerCompare = left.customerName.localeCompare(right.customerName);
       if (customerCompare !== 0) return customerCompare;
       const locationCompare = left.locationName.localeCompare(right.locationName);
       if (locationCompare !== 0) return locationCompare;
       return left.sku.localeCompare(right.sku);
-    }),
-    [items]
-  );
+    });
+  }, [availableOutboundSources, batchOutboundLines, items, movements]);
   useEffect(() => {
     const fallbackSection = batchSectionOptions[0] || "A";
     if (!batchSectionOptions.includes(batchForm.storageSection)) {
@@ -257,13 +372,14 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
       const matchesSearch = normalizedSearch.length === 0 || searchBlob.includes(normalizedSearch);
       const matchesCustomer = selectedCustomerId === "all" || document.customerId === Number(selectedCustomerId);
       const matchesLocation = selectedLocationId === "all" || document.locationId === Number(selectedLocationId);
-      return matchesSearch && matchesCustomer && matchesLocation;
+      const matchesStatus = selectedStatus === "all" || normalizeDocumentStatus(document.status) === selectedStatus;
+      return matchesSearch && matchesCustomer && matchesLocation && matchesStatus;
     }).sort((left, right) => {
       const leftDate = left.deliveryDate ?? left.createdAt ?? "";
       const rightDate = right.deliveryDate ?? right.createdAt ?? "";
       return rightDate.localeCompare(leftDate);
     });
-  }, [inboundDocuments, mode, normalizedSearch, selectedCustomerId, selectedLocationId]);
+  }, [inboundDocuments, mode, normalizedSearch, selectedCustomerId, selectedLocationId, selectedStatus]);
   const outboundDocumentRows = useMemo(() => {
     if (mode !== "OUT") return [];
 
@@ -283,14 +399,15 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
           line.locationId === Number(selectedLocationId)
           || locations.find((location) => location.id === Number(selectedLocationId))?.name === line.locationName
         );
-      return matchesSearch && matchesCustomer && matchesLocation;
+      const matchesStatus = selectedStatus === "all" || normalizeDocumentStatus(document.status) === selectedStatus;
+      return matchesSearch && matchesCustomer && matchesLocation && matchesStatus;
     }).sort((left, right) => {
       const leftDate = left.outDate ?? left.createdAt ?? "";
       const rightDate = right.outDate ?? right.createdAt ?? "";
       return rightDate.localeCompare(leftDate);
     });
-  }, [locations, mode, normalizedSearch, outboundDocuments, selectedCustomerId, selectedLocationId]);
-  const hasActiveFilters = normalizedSearch.length > 0 || selectedCustomerId !== "all" || selectedLocationId !== "all";
+  }, [locations, mode, normalizedSearch, outboundDocuments, selectedCustomerId, selectedLocationId, selectedStatus]);
+  const hasActiveFilters = normalizedSearch.length > 0 || selectedCustomerId !== "all" || selectedLocationId !== "all" || selectedStatus !== "all";
   const mainGridSlots = buildWorkspaceGridSlots({
     emptyTitle: t("noResults"),
     emptyDescription: hasActiveFilters ? t("filteredStateHint") : t("emptyStateHint"),
@@ -311,6 +428,7 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
     { field: "totalLines", headerName: t("totalLines"), minWidth: 100, type: "number" },
     { field: "totalExpectedQty", headerName: t("expectedQty"), minWidth: 120, type: "number" },
     { field: "totalReceivedQty", headerName: t("received"), minWidth: 110, type: "number" },
+    { field: "status", headerName: t("status"), minWidth: 120, renderCell: (params) => renderDocumentStatus(params.row.status, t) },
     {
       field: "actions",
       headerName: t("actions"),
@@ -321,12 +439,15 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
         <RowActionsMenu
           ariaLabel={t("actions")}
           actions={[
-            { key: "details", label: t("details"), icon: <VisibilityOutlinedIcon fontSize="small" />, onClick: () => setSelectedInboundDocument(params.row) }
+            { key: "details", label: t("details"), icon: <VisibilityOutlinedIcon fontSize="small" />, onClick: () => setSelectedInboundDocument(params.row) },
+            ...(canManage && normalizeDocumentStatus(params.row.status) === "DRAFT"
+              ? [{ key: "edit", label: t("editDraft"), icon: <EditOutlinedIcon fontSize="small" />, onClick: () => openEditInboundDraft(params.row) }]
+              : [])
           ]}
         />
       )
     }
-  ], [t]);
+  ], [canManage, t]);
 
   const inboundDocumentDetailColumns = useMemo<GridColDef<InboundDocument["lines"][number]>[]>(() => [
     { field: "sku", headerName: t("sku"), minWidth: 110, renderCell: (params) => <span className="cell--mono">{params.row.sku}</span> },
@@ -349,6 +470,7 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
     { field: "totalLines", headerName: t("totalLines"), minWidth: 100, type: "number" },
     { field: "totalQty", headerName: t("totalQty"), minWidth: 100, type: "number" },
     { field: "totalGrossWeightKgs", headerName: t("grossWeight"), minWidth: 120, type: "number", renderCell: (params) => params.row.totalGrossWeightKgs ? params.row.totalGrossWeightKgs.toFixed(2) : "-" },
+    { field: "status", headerName: t("status"), minWidth: 120, renderCell: (params) => renderDocumentStatus(params.row.status, t) },
     {
       field: "actions",
       headerName: t("actions"),
@@ -360,7 +482,11 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
           ariaLabel={t("actions")}
           actions={[
             { key: "details", label: t("details"), icon: <VisibilityOutlinedIcon fontSize="small" />, onClick: () => setSelectedOutboundDocument(params.row) },
-            { key: "download-pdf", label: t("downloadPdf"), icon: <PictureAsPdfOutlinedIcon fontSize="small" />, onClick: () => downloadOutboundPackingListPdfFromDocument(params.row) },
+            ...(canManage && normalizeDocumentStatus(params.row.status) === "DRAFT"
+              ? [{ key: "edit", label: t("editDraft"), icon: <EditOutlinedIcon fontSize="small" />, onClick: () => openEditOutboundDraft(params.row) }]
+              : []),
+            { key: "download-pick-sheet", label: t("downloadPickSheet"), icon: <PictureAsPdfOutlinedIcon fontSize="small" />, onClick: () => downloadOutboundPickSheetPdfFromDocument(params.row) },
+            { key: "download-delivery-note", label: t("downloadDeliveryNote"), icon: <PictureAsPdfOutlinedIcon fontSize="small" />, onClick: () => downloadOutboundDeliveryNotePdfFromDocument(params.row) },
             ...(canManage && params.row.status !== "CANCELLED"
               ? [{ key: "cancel", label: t("cancelShipment"), icon: <DeleteOutlineOutlinedIcon fontSize="small" />, danger: true, onClick: () => void handleCancelOutboundDocument(params.row) }]
               : [])
@@ -371,6 +497,7 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
   ], [canManage, t]);
 
   const outboundDocumentDetailColumns = useMemo<GridColDef<OutboundDocument["lines"][number]>[]>(() => [
+    { field: "itemNumber", headerName: t("itemNumber"), minWidth: 120, renderCell: (params) => <span className="cell--mono">{params.row.itemNumber || "-"}</span> },
     { field: "sku", headerName: t("sku"), minWidth: 110, renderCell: (params) => <span className="cell--mono">{params.row.sku}</span> },
     { field: "description", headerName: t("description"), minWidth: 240, flex: 1.4, renderCell: (params) => params.row.description },
     { field: "locationName", headerName: t("currentStorage"), minWidth: 150, flex: 1, renderCell: (params) => `${params.row.locationName} / ${params.row.storageSection || "A"}` },
@@ -381,6 +508,49 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
     { field: "grossWeightKgs", headerName: t("grossWeight"), minWidth: 100, type: "number", renderCell: (params) => params.row.grossWeightKgs ? params.row.grossWeightKgs.toFixed(2) : "-" },
     { field: "lineNote", headerName: t("internalNotes"), minWidth: 220, flex: 1.1, renderCell: (params) => params.row.lineNote || "-" }
   ], [t]);
+  const outboundPickAllocationColumns = useMemo<GridColDef<OutboundPickAllocationRow>[]>(() => [
+    { field: "itemNumber", headerName: t("itemNumber"), minWidth: 120, renderCell: (params) => <span className="cell--mono">{params.row.itemNumber || "-"}</span> },
+    { field: "sku", headerName: t("sku"), minWidth: 110, renderCell: (params) => <span className="cell--mono">{params.row.sku}</span> },
+    { field: "description", headerName: t("description"), minWidth: 220, flex: 1.2, renderCell: (params) => params.row.description || "-" },
+    { field: "locationName", headerName: t("currentStorage"), minWidth: 150, flex: 1, renderCell: (params) => `${params.row.locationName} / ${params.row.storageSection || "A"}` },
+    { field: "containerNo", headerName: t("sourceContainer"), minWidth: 170, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.containerNo || "-"}</span> },
+    { field: "allocatedQty", headerName: t("pickQty"), minWidth: 100, type: "number" }
+  ], [t]);
+  const outboundAllocationPreviewColumns = useMemo<GridColDef<OutboundAllocationPreviewRow>[]>(() => [
+    { field: "lineLabel", headerName: t("shipmentLine"), minWidth: 120, renderCell: (params) => params.row.lineLabel },
+    { field: "itemNumber", headerName: t("itemNumber"), minWidth: 120, renderCell: (params) => <span className="cell--mono">{params.row.itemNumber || "-"}</span> },
+    { field: "sku", headerName: t("sku"), minWidth: 110, renderCell: (params) => <span className="cell--mono">{params.row.sku}</span> },
+    { field: "description", headerName: t("description"), minWidth: 220, flex: 1.2, renderCell: (params) => params.row.description || "-" },
+    { field: "locationName", headerName: t("currentStorage"), minWidth: 150, flex: 1, renderCell: (params) => `${params.row.locationName} / ${params.row.storageSection || "A"}` },
+    { field: "containerNo", headerName: t("sourceContainer"), minWidth: 170, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.containerNo || "-"}</span> },
+    { field: "allocatedQty", headerName: t("pickQty"), minWidth: 100, type: "number" }
+  ], [t]);
+  const selectedOutboundPickAllocationRows = useMemo<OutboundPickAllocationRow[]>(() => {
+    if (!selectedOutboundDocument) {
+      return [];
+    }
+
+    return selectedOutboundDocument.lines.flatMap((line) =>
+      line.pickAllocations.map((allocation) => ({
+        id: `${line.id}-${allocation.id}`,
+        itemNumber: allocation.itemNumber || line.itemNumber || "",
+        sku: line.sku,
+        description: line.description,
+        locationName: allocation.locationName,
+        storageSection: allocation.storageSection,
+        containerNo: allocation.containerNo,
+        allocatedQty: allocation.allocatedQty
+      }))
+    );
+  }, [selectedOutboundDocument]);
+  const selectedOutboundAllocationSummary = useMemo(
+    () => summarizeOutboundPickAllocations(selectedOutboundDocument),
+    [selectedOutboundDocument]
+  );
+  const batchOutboundAllocationPreview = useMemo(
+    () => buildOutboundAllocationPreview(batchOutboundLines, availableOutboundSources),
+    [batchOutboundLines, availableOutboundSources]
+  );
 
   function openCreateModal() {
     if (!canManage) {
@@ -402,6 +572,8 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
     if (!canManage) {
       return;
     }
+    setEditingInboundDocumentId(null);
+    setEditingOutboundDocumentId(null);
     setBatchForm({
       ...createEmptyBatchInboundForm(),
       customerId: customers[0] ? String(customers[0].id) : "",
@@ -417,17 +589,94 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
     if (!canManage) {
       return;
     }
-    if (availableOutboundItems.length === 0) {
+    if (availableOutboundSources.length === 0) {
       setErrorMessage(t("noAvailableStockRows"));
       return;
     }
+    setEditingInboundDocumentId(null);
+    setEditingOutboundDocumentId(null);
     setBatchOutboundForm(createEmptyBatchOutboundForm());
     setBatchOutboundLines([createEmptyBatchOutboundLine()]);
     setErrorMessage("");
     setIsBatchModalOpen(true);
   }
 
+  function openEditInboundDraft(document: InboundDocument) {
+    if (!canManage || normalizeDocumentStatus(document.status) !== "DRAFT") {
+      return;
+    }
+
+    setEditingInboundDocumentId(document.id);
+    setEditingOutboundDocumentId(null);
+    setBatchForm({
+      deliveryDate: document.deliveryDate ? document.deliveryDate.slice(0, 10) : "",
+      containerNo: document.containerNo || "",
+      customerId: String(document.customerId),
+      locationId: String(document.locationId),
+      storageSection: document.storageSection || "A",
+      unitLabel: document.unitLabel || "CTN",
+      status: "DRAFT",
+      documentNote: document.documentNote || ""
+    });
+    pendingBatchLineIDRef.current = null;
+    setBatchLines(
+      document.lines.length > 0
+          ? document.lines.map((line) => ({
+            id: String(line.id),
+            sku: line.sku || "",
+            description: line.description || "",
+            reorderLevel: line.reorderLevel || 0,
+            expectedQty: line.expectedQty,
+            receivedQty: line.receivedQty,
+            pallets: line.pallets,
+            palletsDetailCtns: line.palletsDetailCtns || "",
+            lineNote: line.lineNote || ""
+          }))
+        : [createEmptyBatchInboundLine()]
+    );
+    setErrorMessage("");
+    setIsBatchModalOpen(true);
+  }
+
+  function openEditOutboundDraft(document: OutboundDocument) {
+    if (!canManage || normalizeDocumentStatus(document.status) !== "DRAFT") {
+      return;
+    }
+
+    setEditingOutboundDocumentId(document.id);
+    setEditingInboundDocumentId(null);
+    setBatchOutboundForm({
+      packingListNo: document.packingListNo || "",
+      orderRef: document.orderRef || "",
+      outDate: document.outDate ? document.outDate.slice(0, 10) : "",
+      shipToName: document.shipToName || "",
+      shipToAddress: document.shipToAddress || "",
+      shipToContact: document.shipToContact || "",
+      carrierName: document.carrierName || "",
+      status: "DRAFT",
+      documentNote: document.documentNote || ""
+    });
+    setBatchOutboundLines(
+      document.lines.length > 0
+        ? document.lines.map((line) => ({
+            id: String(line.id),
+            itemId: String(line.itemId),
+            quantity: line.quantity,
+            unitLabel: line.unitLabel || "PCS",
+            cartonSizeMm: line.cartonSizeMm || "",
+            netWeightKgs: line.netWeightKgs || 0,
+            grossWeightKgs: line.grossWeightKgs || 0,
+            reason: line.lineNote || ""
+          }))
+        : [createEmptyBatchOutboundLine()]
+    );
+    setErrorMessage("");
+    setIsBatchModalOpen(true);
+  }
+
   function closeBatchModal() {
+    setEditingInboundDocumentId(null);
+    setEditingOutboundDocumentId(null);
     setBatchForm({
       ...createEmptyBatchInboundForm(),
       customerId: customers[0] ? String(customers[0].id) : "",
@@ -456,6 +705,93 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
     setBatchLines((current) => current.map((line) => line.id === lineID ? { ...line, ...updates } : line));
   }
 
+  function updateBatchLineExpectedQty(lineID: string, nextExpectedQty: number) {
+    setBatchLines((current) => current.map((line) => {
+      if (line.id !== lineID) {
+        return line;
+      }
+
+      const previousSuggested = calculateSuggestedReorderLevel(line.expectedQty, line.receivedQty);
+      const nextReceivedQty = line.receivedQty <= 0 || line.receivedQty === line.expectedQty ? nextExpectedQty : line.receivedQty;
+      const nextSuggested = calculateSuggestedReorderLevel(nextExpectedQty, nextReceivedQty);
+      const shouldKeepAutoReorder = line.reorderLevel <= 0 || line.reorderLevel === previousSuggested;
+      const previousPalletsSuggestion = getSuggestedPalletsDetail(line.receivedQty || line.expectedQty, line.pallets);
+      const nextPalletsSuggestion = getSuggestedPalletsDetail(nextReceivedQty || nextExpectedQty, line.pallets);
+      const shouldKeepAutoPalletsDetail = !line.palletsDetailCtns || line.palletsDetailCtns === previousPalletsSuggestion;
+
+      return {
+        ...line,
+        expectedQty: nextExpectedQty,
+        receivedQty: nextReceivedQty,
+        reorderLevel: shouldKeepAutoReorder ? nextSuggested : line.reorderLevel,
+        palletsDetailCtns: shouldKeepAutoPalletsDetail ? nextPalletsSuggestion : line.palletsDetailCtns
+      };
+    }));
+  }
+
+  function updateBatchLineReceivedQty(lineID: string, nextReceivedQty: number) {
+    setBatchLines((current) => current.map((line) => {
+      if (line.id !== lineID) {
+        return line;
+      }
+
+      const previousSuggested = calculateSuggestedReorderLevel(line.expectedQty, line.receivedQty);
+      const nextSuggested = calculateSuggestedReorderLevel(line.expectedQty, nextReceivedQty);
+      const shouldKeepAutoReorder = line.reorderLevel <= 0 || line.reorderLevel === previousSuggested;
+      const previousPalletsSuggestion = getSuggestedPalletsDetail(line.receivedQty || line.expectedQty, line.pallets);
+      const nextPalletsSuggestion = getSuggestedPalletsDetail(nextReceivedQty || line.expectedQty, line.pallets);
+      const shouldKeepAutoPalletsDetail = !line.palletsDetailCtns || line.palletsDetailCtns === previousPalletsSuggestion;
+
+      return {
+        ...line,
+        receivedQty: nextReceivedQty,
+        reorderLevel: shouldKeepAutoReorder ? nextSuggested : line.reorderLevel,
+        palletsDetailCtns: shouldKeepAutoPalletsDetail ? nextPalletsSuggestion : line.palletsDetailCtns
+      };
+    }));
+  }
+
+  function autofillBatchLineReceivedQty(lineID: string) {
+    setBatchLines((current) => current.map((line) => {
+      if (line.id !== lineID || line.receivedQty > 0 || line.expectedQty <= 0) {
+        return line;
+      }
+
+      const nextReceivedQty = line.expectedQty;
+      const previousSuggested = calculateSuggestedReorderLevel(line.expectedQty, line.receivedQty);
+      const nextSuggested = calculateSuggestedReorderLevel(line.expectedQty, nextReceivedQty);
+      const shouldKeepAutoReorder = line.reorderLevel <= 0 || line.reorderLevel === previousSuggested;
+      const previousPalletsSuggestion = getSuggestedPalletsDetail(line.receivedQty || line.expectedQty, line.pallets);
+      const nextPalletsSuggestion = getSuggestedPalletsDetail(nextReceivedQty || line.expectedQty, line.pallets);
+      const shouldKeepAutoPalletsDetail = !line.palletsDetailCtns || line.palletsDetailCtns === previousPalletsSuggestion;
+
+      return {
+        ...line,
+        receivedQty: nextReceivedQty,
+        reorderLevel: shouldKeepAutoReorder ? nextSuggested : line.reorderLevel,
+        palletsDetailCtns: shouldKeepAutoPalletsDetail ? nextPalletsSuggestion : line.palletsDetailCtns
+      };
+    }));
+  }
+
+  function updateBatchLinePallets(lineID: string, nextPallets: number) {
+    setBatchLines((current) => current.map((line) => {
+      if (line.id !== lineID) {
+        return line;
+      }
+
+      const previousSuggested = getSuggestedPalletsDetail(line.receivedQty || line.expectedQty, line.pallets);
+      const nextSuggested = getSuggestedPalletsDetail(line.receivedQty || line.expectedQty, nextPallets);
+      const shouldKeepAutoPalletsDetail = !line.palletsDetailCtns || line.palletsDetailCtns === previousSuggested;
+
+      return {
+        ...line,
+        pallets: nextPallets,
+        palletsDetailCtns: shouldKeepAutoPalletsDetail ? nextSuggested : line.palletsDetailCtns
+      };
+    }));
+  }
+
   function addBatchOutboundLine() {
     setBatchOutboundLines((current) => [...current, createEmptyBatchOutboundLine()]);
   }
@@ -468,8 +804,7 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
     setBatchOutboundLines((current) => current.map((line) => line.id === lineID ? { ...line, ...updates } : line));
   }
 
-  async function handleBatchSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function submitInboundDocument(status: MutableDocumentStatus) {
     setBatchSubmitting(true);
     setErrorMessage("");
 
@@ -500,11 +835,13 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
         containerNo: batchForm.containerNo || undefined,
         storageSection: batchForm.storageSection || "A",
         unitLabel: batchForm.unitLabel || "CTN",
+        status,
         documentNote: batchForm.documentNote || undefined,
         lines: validLines.map((line) => {
           const normalizedSku = line.sku.trim().toUpperCase();
           const matchingTemplate = items.find((item) => item.sku.trim().toUpperCase() === normalizedSku);
           const lineDescription = line.description.trim() || displayDescription(matchingTemplate ?? { description: "", name: "" });
+          const normalizedReceivedQty = line.receivedQty > 0 ? line.receivedQty : line.expectedQty;
 
           if (!matchingTemplate && !lineDescription) {
             throw new Error(t("batchInboundMissingNewSkuDetails", { sku: normalizedSku || "-" }));
@@ -515,15 +852,20 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
             description: lineDescription,
             reorderLevel: line.reorderLevel || matchingTemplate?.reorderLevel || 0,
             expectedQty: line.expectedQty,
-            receivedQty: line.receivedQty,
+            receivedQty: normalizedReceivedQty,
             pallets: line.pallets,
             palletsDetailCtns: line.palletsDetailCtns || undefined,
-            storageSection: batchForm.storageSection || "A"
+            storageSection: batchForm.storageSection || "A",
+            lineNote: line.lineNote || undefined
           };
         })
       };
 
-      await api.createInboundDocument(payload);
+      if (editingInboundDocumentId) {
+        await api.updateInboundDocument(editingInboundDocumentId, payload);
+      } else {
+        await api.createInboundDocument(payload);
+      }
       closeBatchModal();
       await onRefresh();
     } catch (error) {
@@ -533,8 +875,12 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
     }
   }
 
-  async function handleBatchOutboundSubmit(event: FormEvent<HTMLFormElement>) {
+  function handleBatchSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    void submitInboundDocument("CONFIRMED");
+  }
+
+  async function submitOutboundDocument(status: MutableDocumentStatus) {
     setBatchSubmitting(true);
     setErrorMessage("");
 
@@ -545,7 +891,6 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
       return;
     }
 
-    const requestedByItemId = new Map<number, number>();
     for (const line of validLines) {
       const itemId = Number(line.itemId);
       const selectedOutboundItem = items.find((item) => item.id === itemId);
@@ -555,12 +900,11 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
         return;
       }
 
-      const requestedQty = (requestedByItemId.get(itemId) ?? 0) + line.quantity;
-      requestedByItemId.set(itemId, requestedQty);
-      if (requestedQty > selectedOutboundItem.quantity) {
+      const allocationSummary = batchOutboundAllocationPreview.summaries.get(line.id);
+      if (!allocationSummary || allocationSummary.shortageQty > 0) {
         setErrorMessage(t("outboundQtyExceedsStock", {
           sku: selectedOutboundItem.sku,
-          available: selectedOutboundItem.quantity
+          available: allocationSummary?.allocatedQty ?? 0
         }));
         setBatchSubmitting(false);
         return;
@@ -572,18 +916,23 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
         packingListNo: batchOutboundForm.packingListNo || undefined,
         orderRef: batchOutboundForm.orderRef || undefined,
         outDate: batchOutboundForm.outDate || undefined,
+        shipToName: batchOutboundForm.shipToName || undefined,
+        shipToAddress: batchOutboundForm.shipToAddress || undefined,
+        shipToContact: batchOutboundForm.shipToContact || undefined,
+        carrierName: batchOutboundForm.carrierName || undefined,
+        status,
         documentNote: batchOutboundForm.documentNote || undefined,
         lines: validLines.map((line) => {
           const itemId = Number(line.itemId);
-          const selectedOutboundItem = items.find((item) => item.id === itemId);
-          if (!selectedOutboundItem) {
+          const selectedOutboundSource = selectableOutboundSources.find((item) => item.id === itemId);
+          if (!selectedOutboundSource) {
             throw new Error(t("chooseSkuAndQty"));
           }
 
           return {
             itemId,
             quantity: line.quantity,
-            unitLabel: line.unitLabel || selectedOutboundItem.unit.toUpperCase() || "PCS",
+            unitLabel: line.unitLabel || selectedOutboundSource.unit.toUpperCase() || "PCS",
             cartonSizeMm: line.cartonSizeMm || undefined,
             netWeightKgs: line.netWeightKgs,
             grossWeightKgs: line.grossWeightKgs,
@@ -592,7 +941,11 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
         })
       };
 
-      await api.createOutboundDocument(payload);
+      if (editingOutboundDocumentId) {
+        await api.updateOutboundDocument(editingOutboundDocumentId, payload);
+      } else {
+        await api.createOutboundDocument(payload);
+      }
 
       closeBatchModal();
       await onRefresh();
@@ -600,6 +953,63 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
       setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveActivity"));
     } finally {
       setBatchSubmitting(false);
+    }
+  }
+
+  function handleBatchOutboundSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void submitOutboundDocument("CONFIRMED");
+  }
+
+  async function handleConfirmInboundDocument(document: InboundDocument) {
+    if (!canManage) {
+      return;
+    }
+
+    setErrorMessage("");
+    try {
+      await api.confirmInboundDocument(document.id);
+      await onRefresh();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveActivity"));
+    }
+  }
+
+  async function handleCancelInboundDocument(document: InboundDocument) {
+    if (!canManage) {
+      return;
+    }
+
+    const documentLabel = document.containerNo || String(document.id);
+    if (!window.confirm(t("cancelInboundConfirm", { containerNo: documentLabel }))) {
+      return;
+    }
+
+    setErrorMessage("");
+    try {
+      await api.cancelInboundDocument(document.id, {
+        reason: document.documentNote || undefined
+      });
+      if (selectedInboundDocument?.id === document.id) {
+        setSelectedInboundDocument(null);
+      }
+      await onRefresh();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveActivity"));
+    }
+  }
+
+  async function handleConfirmOutboundDocument(document: OutboundDocument) {
+    if (!canManage) {
+      return;
+    }
+
+    setErrorMessage("");
+    try {
+      await api.confirmOutboundDocument(document.id);
+      await onRefresh();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveActivity"));
     }
   }
 
@@ -652,6 +1062,7 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
               <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={mode === "IN" ? t("searchInboundPlaceholder") : t("searchOutboundPlaceholder")} /></label>
               <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
               <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
+              <label>{t("status")}<select value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value)}><option value="all">{t("allStatuses")}</option><option value="DRAFT">{t("draft")}</option><option value="CONFIRMED">{t("confirmed")}</option><option value="CANCELLED">{t("cancelled")}</option></select></label>
             </div>
           </div>
           <div className="sheet-table-wrap">
@@ -715,6 +1126,24 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
                 </IconButton>
               </div>
 
+              <div className="document-drawer__actions">
+                {canManage && normalizeDocumentStatus(selectedInboundDocument.status) === "DRAFT" ? (
+                  <Button variant="outlined" onClick={() => openEditInboundDraft(selectedInboundDocument)}>
+                    {t("editDraft")}
+                  </Button>
+                ) : null}
+                {canManage && normalizeDocumentStatus(selectedInboundDocument.status) === "DRAFT" ? (
+                  <Button variant="contained" onClick={() => void handleConfirmInboundDocument(selectedInboundDocument)}>
+                    {t("confirmReceipt")}
+                  </Button>
+                ) : null}
+                {canManage && normalizeDocumentStatus(selectedInboundDocument.status) !== "CANCELLED" ? (
+                  <Button variant="outlined" color="error" startIcon={<DeleteOutlineOutlinedIcon />} onClick={() => void handleCancelInboundDocument(selectedInboundDocument)}>
+                    {t("cancelReceipt")}
+                  </Button>
+                ) : null}
+              </div>
+
               <div className="document-drawer__status-bar">
                 <div className="document-drawer__status-main">
                   {renderDocumentStatus(selectedInboundDocument.status, t)}
@@ -744,7 +1173,11 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
                 </div>
                 <div className="document-drawer__audit-item">
                   <strong>{t("status")}</strong>
-                  <span>{selectedInboundDocument.status}</span>
+                  <span>{selectedInboundDocument.cancelledAt ? `${selectedInboundDocument.status} | ${formatDateTimeValue(selectedInboundDocument.cancelledAt, resolvedTimeZone)}` : selectedInboundDocument.status}</span>
+                </div>
+                <div className="document-drawer__audit-item">
+                  <strong>{t("confirmedAt")}</strong>
+                  <span>{selectedInboundDocument.confirmedAt ? formatDateTimeValue(selectedInboundDocument.confirmedAt, resolvedTimeZone) : "-"}</span>
                 </div>
               </div>
 
@@ -754,6 +1187,7 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
                 <div className="sheet-note"><strong>{t("currentStorage")}</strong> {`${selectedInboundDocument.locationName} / ${selectedInboundDocument.storageSection || "A"}`}</div>
                 <div className="sheet-note"><strong>{t("inboundUnit")}</strong> {selectedInboundDocument.unitLabel || "-"}</div>
                 <div className="sheet-note document-drawer__meta-note"><strong>{t("documentNotes")}</strong> {selectedInboundDocument.documentNote || "-"}</div>
+                <div className="sheet-note document-drawer__meta-note"><strong>{t("cancelNote")}</strong> {selectedInboundDocument.cancelNote || "-"}</div>
               </div>
 
               <div className="document-drawer__section-title">{t("skuLines")}</div>
@@ -799,14 +1233,31 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
               </div>
 
               <div className="document-drawer__actions">
+                {canManage && normalizeDocumentStatus(selectedOutboundDocument.status) === "DRAFT" ? (
+                  <Button variant="outlined" onClick={() => openEditOutboundDraft(selectedOutboundDocument)}>
+                    {t("editDraft")}
+                  </Button>
+                ) : null}
+                {canManage && normalizeDocumentStatus(selectedOutboundDocument.status) === "DRAFT" ? (
+                  <Button variant="contained" onClick={() => void handleConfirmOutboundDocument(selectedOutboundDocument)}>
+                    {t("confirmShipment")}
+                  </Button>
+                ) : null}
                 <Button
                   variant="contained"
                   startIcon={<PictureAsPdfOutlinedIcon />}
-                  onClick={() => downloadOutboundPackingListPdfFromDocument(selectedOutboundDocument)}
+                  onClick={() => downloadOutboundPickSheetPdfFromDocument(selectedOutboundDocument)}
                 >
-                  {t("downloadPdf")}
+                  {t("downloadPickSheet")}
                 </Button>
-                {canManage && selectedOutboundDocument.status !== "CANCELLED" ? (
+                <Button
+                  variant="outlined"
+                  startIcon={<PictureAsPdfOutlinedIcon />}
+                  onClick={() => downloadOutboundDeliveryNotePdfFromDocument(selectedOutboundDocument)}
+                >
+                  {t("downloadDeliveryNote")}
+                </Button>
+                {canManage && normalizeDocumentStatus(selectedOutboundDocument.status) !== "CANCELLED" ? (
                   <Button
                     variant="outlined"
                     color="error"
@@ -836,6 +1287,21 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
                 </div>
               </div>
 
+              <div className="document-drawer__summary-grid">
+                <div className="document-drawer__summary-card">
+                  <strong>{selectedOutboundAllocationSummary.totalContainerCount}</strong>
+                  <span>{t("containers")}</span>
+                </div>
+                <div className="document-drawer__summary-card">
+                  <strong>{selectedOutboundAllocationSummary.totalPickRows}</strong>
+                  <span>{t("pickRows")}</span>
+                </div>
+                <div className="document-drawer__summary-card">
+                  <strong>{selectedOutboundAllocationSummary.splitLineCount}</strong>
+                  <span>{t("splitLines")}</span>
+                </div>
+              </div>
+
               <div className="document-drawer__audit-strip">
                 <div className="document-drawer__audit-item">
                   <strong>{t("created")}</strong>
@@ -849,19 +1315,46 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
                   <strong>{t("status")}</strong>
                   <span>{selectedOutboundDocument.cancelledAt ? `${selectedOutboundDocument.status} | ${formatDateTimeValue(selectedOutboundDocument.cancelledAt, resolvedTimeZone)}` : selectedOutboundDocument.status}</span>
                 </div>
+                <div className="document-drawer__audit-item">
+                  <strong>{t("confirmedAt")}</strong>
+                  <span>{selectedOutboundDocument.confirmedAt ? formatDateTimeValue(selectedOutboundDocument.confirmedAt, resolvedTimeZone) : "-"}</span>
+                </div>
               </div>
 
               <div className="document-drawer__meta">
                 <div className="sheet-note"><strong>{t("orderRef")}</strong> {selectedOutboundDocument.orderRef || "-"}</div>
                 <div className="sheet-note"><strong>{t("customer")}</strong> {selectedOutboundDocument.customerName || "-"}</div>
+                <div className="sheet-note"><strong>{t("shipToName")}</strong> {selectedOutboundDocument.shipToName || "-"}</div>
+                <div className="sheet-note"><strong>{t("shipToContact")}</strong> {selectedOutboundDocument.shipToContact || "-"}</div>
+                <div className="sheet-note document-drawer__meta-note"><strong>{t("shipToAddress")}</strong> {selectedOutboundDocument.shipToAddress || "-"}</div>
                 <div className="sheet-note"><strong>{t("currentStorage")}</strong> {selectedOutboundDocument.storages || "-"}</div>
                 <div className="sheet-note"><strong>{t("outDate")}</strong> {formatDate(selectedOutboundDocument.outDate)}</div>
+                <div className="sheet-note"><strong>{t("carrier")}</strong> {selectedOutboundDocument.carrierName || "-"}</div>
                 <div className="sheet-note document-drawer__meta-note"><strong>{t("documentNotes")}</strong> {selectedOutboundDocument.documentNote || "-"}</div>
                 <div className="sheet-note document-drawer__meta-note"><strong>{t("cancelNote")}</strong> {selectedOutboundDocument.cancelNote || "-"}</div>
               </div>
 
+              {selectedOutboundPickAllocationRows.length > 0 ? (
+                <>
+                  <div className="document-drawer__section-title">{t("pickAllocations")}</div>
+                  <div className="sheet-note sheet-note--readonly">{t("pickAllocationsNotice")}</div>
+                  <Box sx={{ minWidth: 0, height: 320 }}>
+                    <DataGrid
+                      rows={selectedOutboundPickAllocationRows}
+                      columns={outboundPickAllocationColumns}
+                      pagination
+                      pageSizeOptions={[5, 10, 20]}
+                      disableRowSelectionOnClick
+                      initialState={{ pagination: { paginationModel: { pageSize: 5, page: 0 } } }}
+                      getRowHeight={() => 64}
+                      slots={detailGridSlots}
+                      sx={{ border: 0 }}
+                    />
+                  </Box>
+                </>
+              ) : null}
               <div className="document-drawer__section-title">{t("outboundLines")}</div>
-              <Box sx={{ minWidth: 0, height: 440 }}>
+              <Box sx={{ minWidth: 0, height: 400 }}>
                 <DataGrid
                   rows={selectedOutboundDocument.lines}
                   columns={outboundDocumentDetailColumns}
@@ -890,7 +1383,9 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
           maxWidth="lg"
         >
           <DialogTitle sx={{ pb: 1 }}>
-            {mode === "IN" ? t("batchInboundTitle") : t("batchOutboundTitle")}
+            {mode === "IN"
+              ? (isEditingInboundDraft ? t("editInboundDraftTitle") : t("batchInboundTitle"))
+              : (isEditingOutboundDraft ? t("editOutboundDraftTitle") : t("batchOutboundTitle"))}
             <IconButton aria-label={t("close")} onClick={closeBatchModal} sx={{ position: "absolute", right: 16, top: 16 }}>
               <CloseIcon fontSize="small" />
             </IconButton>
@@ -922,7 +1417,8 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
                       && item.customerId === Number(batchForm.customerId)
                     );
                     const batchSkuTemplate = items.find((item) => item.sku.trim().toUpperCase() === line.sku.trim().toUpperCase());
-                    const suggestedPalletsDetail = getSuggestedPalletsDetail(line.receivedQty || line.expectedQty, line.pallets);
+                    const suggestedReorderLevel = calculateSuggestedReorderLevel(line.expectedQty, line.receivedQty);
+                    const displayedReorderLevel = selectedBatchItem?.reorderLevel ?? batchSkuTemplate?.reorderLevel ?? line.reorderLevel;
 
                     return (
                       <div className="batch-line-card" key={line.id} id={`batch-line-${line.id}`}>
@@ -937,13 +1433,13 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
                         </div>
                         <div className="batch-line-grid">
                           <label>{t("sku")}<input value={line.sku} onChange={(event) => updateBatchLine(line.id, { sku: event.target.value })} placeholder="023042" /></label>
-                          <label>{t("reorderLevel")}<input type="number" min="0" value={numberInputValue(line.reorderLevel)} onChange={(event) => updateBatchLine(line.id, { reorderLevel: Math.max(0, Number(event.target.value || 0)) })} /></label>
                           <label className="batch-line-grid__description">{t("description")}<input value={selectedBatchItem ? displayDescription(selectedBatchItem) : (line.description || displayDescription(batchSkuTemplate ?? { description: "", name: "" }))} onChange={(event) => updateBatchLine(line.id, { description: event.target.value })} placeholder={t("descriptionPlaceholder")} disabled={Boolean(selectedBatchItem)} /></label>
-                          <label>{t("expectedQty")}<input type="number" min="0" value={numberInputValue(line.expectedQty)} onChange={(event) => updateBatchLine(line.id, { expectedQty: Math.max(0, Number(event.target.value || 0)) })} /></label>
-                          <label>{t("received")}<input type="number" min="0" value={numberInputValue(line.receivedQty)} onChange={(event) => updateBatchLine(line.id, { receivedQty: Math.max(0, Number(event.target.value || 0)) })} /></label>
-                          <label>{t("pallets")}<input type="number" min="0" value={numberInputValue(line.pallets)} onChange={(event) => updateBatchLine(line.id, { pallets: Math.max(0, Number(event.target.value || 0)) })} /></label>
+                          <label>{t("expectedQty")}<input type="number" min="0" value={numberInputValue(line.expectedQty)} onChange={(event) => updateBatchLineExpectedQty(line.id, Math.max(0, Number(event.target.value || 0)))} /></label>
+                          <label>{t("received")}<input type="number" min="0" value={numberInputValue(line.receivedQty)} onChange={(event) => updateBatchLineReceivedQty(line.id, Math.max(0, Number(event.target.value || 0)))} onBlur={() => autofillBatchLineReceivedQty(line.id)} placeholder={line.expectedQty > 0 ? String(line.expectedQty) : ""} /></label>
+                          <label>{t("pallets")}<input type="number" min="0" value={numberInputValue(line.pallets)} onChange={(event) => updateBatchLinePallets(line.id, Math.max(0, Number(event.target.value || 0)))} /></label>
                           <label>{t("storageSection")}<input value={selectedBatchItem?.storageSection || batchForm.storageSection || "A"} readOnly /></label>
-                          <label className="batch-line-grid__detail">{t("palletsDetail")}<input value={line.palletsDetailCtns} onChange={(event) => updateBatchLine(line.id, { palletsDetailCtns: event.target.value })} placeholder={suggestedPalletsDetail || "28*115+110"} /></label>
+                          <label className="batch-line-grid__detail">{t("palletsDetail")}<input value={line.palletsDetailCtns} onChange={(event) => updateBatchLine(line.id, { palletsDetailCtns: event.target.value })} placeholder="28*115+110" /></label>
+                          <label>{t("reorderLevel")}<input type="number" min="0" value={numberInputValue(displayedReorderLevel)} onChange={(event) => updateBatchLine(line.id, { reorderLevel: Math.max(0, Number(event.target.value || 0)) })} placeholder={suggestedReorderLevel > 0 ? String(suggestedReorderLevel) : ""} disabled={Boolean(selectedBatchItem)} /></label>
                         </div>
                         <div className="batch-line-card__meta">
                           <span className="batch-line-card__hint">
@@ -951,11 +1447,6 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
                               ? `${selectedBatchItem.customerName} | ${selectedBatchItem.sku} | ${selectedBatchItem.locationName}`
                               : (line.sku.trim() ? line.sku.trim().toUpperCase() : t("noSkuSelected"))}
                           </span>
-                          {suggestedPalletsDetail ? (
-                            <button className="button button--ghost button--small" type="button" onClick={() => updateBatchLine(line.id, { palletsDetailCtns: suggestedPalletsDetail })}>
-                              {t("useSuggestion")}: {suggestedPalletsDetail}
-                            </button>
-                          ) : null}
                         </div>
                       </div>
                     );
@@ -964,7 +1455,8 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
                 </div>
 
                 <div className="sheet-form__actions" style={{ marginTop: "1rem" }}>
-                  <button className="button button--primary" type="submit" disabled={batchSubmitting}>{batchSubmitting ? t("saving") : t("saveBatchInbound")}</button>
+                  <button className="button button--ghost" type="button" disabled={batchSubmitting} onClick={() => void submitInboundDocument("DRAFT")}>{batchSubmitting ? t("saving") : isEditingInboundDraft ? t("saveChanges") : t("saveDraft")}</button>
+                  <button className="button button--primary" type="submit" disabled={batchSubmitting}>{batchSubmitting ? t("saving") : t("confirmReceipt")}</button>
                   <button className="button button--ghost" type="button" onClick={closeBatchModal}>{t("cancel")}</button>
                 </div>
               </form>
@@ -974,6 +1466,10 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
                   <label>{t("packingListNo")}<input value={batchOutboundForm.packingListNo} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, packingListNo: event.target.value }))} placeholder="TGCUS180265" /></label>
                   <label>{t("orderRef")}<input value={batchOutboundForm.orderRef} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, orderRef: event.target.value }))} placeholder="J73504" /></label>
                   <label>{t("outDate")}<input type="date" value={batchOutboundForm.outDate} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, outDate: event.target.value }))} /></label>
+                  <label>{t("shipToName")}<input value={batchOutboundForm.shipToName} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, shipToName: event.target.value }))} placeholder="Receiver name" /></label>
+                  <label>{t("shipToContact")}<input value={batchOutboundForm.shipToContact} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, shipToContact: event.target.value }))} placeholder="+1 555 010 0200" /></label>
+                  <label>{t("carrier")}<input value={batchOutboundForm.carrierName} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, carrierName: event.target.value }))} placeholder="FedEx" /></label>
+                  <label className="sheet-form__wide">{t("shipToAddress")}<input value={batchOutboundForm.shipToAddress} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, shipToAddress: event.target.value }))} placeholder="Delivery address" /></label>
                   <label className="sheet-form__wide">{t("documentNotes")}<input value={batchOutboundForm.documentNote} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, documentNote: event.target.value }))} placeholder={t("outboundDocumentNotePlaceholder")} /></label>
                 </div>
 
@@ -984,41 +1480,41 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
                   </div>
 
                   {batchOutboundLines.map((line, index) => {
-                    const selectedOutboundItem = availableOutboundItems.find((item) => item.id === Number(line.itemId));
+                    const selectedOutboundSource = selectableOutboundSources.find((item) => item.id === Number(line.itemId));
 
                     return (
                       <div className="batch-line-card" key={line.id}>
                         <div className="batch-line-card__header">
                           <div className="batch-line-card__title">
-                            <strong>{t("stockRow")} #{index + 1}</strong>
-                            <span className={`status-pill ${selectedOutboundItem ? "status-pill--ok" : "status-pill--alert"}`}>
-                              {selectedOutboundItem ? t("selected") : t("selectStockRow")}
+                            <strong>{t("shipmentSource")} #{index + 1}</strong>
+                            <span className={`status-pill ${selectedOutboundSource ? "status-pill--ok" : "status-pill--alert"}`}>
+                              {selectedOutboundSource ? t("selected") : t("selectShipmentSource")}
                             </span>
                           </div>
                           <button className="button button--danger button--small" type="button" onClick={() => removeBatchOutboundLine(line.id)} disabled={batchOutboundLines.length === 1}>{t("removeLine")}</button>
                         </div>
                         <div className="batch-line-grid">
                           <label className="batch-line-grid__description">
-                            {t("stockRow")}
+                            {t("shipmentSource")}
                             <select
                               value={line.itemId}
                               onChange={(event) => {
-                                const nextItem = availableOutboundItems.find((item) => item.id === Number(event.target.value));
+                                const nextItem = selectableOutboundSources.find((item) => item.id === Number(event.target.value));
                                 updateBatchOutboundLine(line.id, {
                                   itemId: event.target.value,
                                   unitLabel: nextItem?.unit?.toUpperCase() || line.unitLabel || "PCS"
                                 });
                               }}
                             >
-                              <option value="">{t("selectStockRow")}</option>
-                              {availableOutboundItems.map((item) => (
-                                <option key={item.id} value={item.id}>
-                                  {`${item.customerName} | ${item.locationName} / ${item.storageSection || "A"} | ${item.sku} - ${displayDescription(item)} (${t("availableQty")}: ${item.quantity})`}
+                              <option value="">{t("selectShipmentSource")}</option>
+                              {selectableOutboundSources.map((item) => (
+                              <option key={item.id} value={item.id}>
+                                  {`${item.customerName} | ${item.locationName} / ${item.storageSections.join(", ") || "A"} | ${t("containers")}: ${item.containerCount} | ${t("itemNumber")}: ${item.itemNumber || "-"} | ${item.sku} - ${item.description} (${t("availableQty")}: ${item.availableQty})`}
                                 </option>
                               ))}
                             </select>
                           </label>
-                          <label>{t("availableQty")}<input value={selectedOutboundItem ? String(selectedOutboundItem.quantity) : ""} readOnly /></label>
+                          <label>{t("availableQty")}<input value={selectedOutboundSource ? String(selectedOutboundSource.availableQty) : ""} readOnly /></label>
                           <label>{t("outQty")}<input type="number" min="0" value={numberInputValue(line.quantity)} onChange={(event) => updateBatchOutboundLine(line.id, { quantity: Math.max(0, Number(event.target.value || 0)) })} /></label>
                           <label>{t("unit")}<input value={line.unitLabel} onChange={(event) => updateBatchOutboundLine(line.id, { unitLabel: event.target.value })} placeholder="PCS" /></label>
                           <label>{t("cartonSize")}<input value={line.cartonSizeMm} onChange={(event) => updateBatchOutboundLine(line.id, { cartonSizeMm: event.target.value })} placeholder="455*330*325" /></label>
@@ -1028,9 +1524,9 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
                         </div>
                         <div className="batch-line-card__meta">
                           <span className="batch-line-card__hint">
-                            {selectedOutboundItem
-                              ? `${selectedOutboundItem.customerName} | ${selectedOutboundItem.sku} | ${displayDescription(selectedOutboundItem)} | ${selectedOutboundItem.locationName} / ${selectedOutboundItem.storageSection || "A"} | ${t("availableQty")}: ${selectedOutboundItem.quantity}`
-                              : t("selectStockRow")}
+                            {selectedOutboundSource
+                              ? `${selectedOutboundSource.customerName} | ${t("itemNumber")}: ${selectedOutboundSource.itemNumber || "-"} | ${selectedOutboundSource.sku} | ${selectedOutboundSource.description} | ${selectedOutboundSource.locationName} / ${selectedOutboundSource.storageSections.join(", ") || "A"} | ${t("containerDistribution")}: ${selectedOutboundSource.containerSummary || "-"} | ${t("availableQty")}: ${selectedOutboundSource.availableQty}`
+                              : t("selectShipmentSource")}
                           </span>
                         </div>
                       </div>
@@ -1038,8 +1534,58 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
                   })}
                 </div>
 
+                <div className="batch-allocation-preview">
+                  <div className="batch-allocation-preview__header">
+                    <div>
+                      <strong>{t("pickAllocationPreview")}</strong>
+                      <span>{t("pickAllocationPreviewHint")}</span>
+                    </div>
+                    <div className="batch-allocation-preview__stats">
+                      <div className="batch-allocation-preview__stat">
+                        <strong>{batchOutboundAllocationPreview.totalContainerCount}</strong>
+                        <span>{t("containers")}</span>
+                      </div>
+                      <div className="batch-allocation-preview__stat">
+                        <strong>{batchOutboundAllocationPreview.rows.length}</strong>
+                        <span>{t("pickRows")}</span>
+                      </div>
+                      <div className="batch-allocation-preview__stat">
+                        <strong>{batchOutboundAllocationPreview.splitLineCount}</strong>
+                        <span>{t("splitLines")}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {batchOutboundAllocationPreview.shortageLineCount > 0 ? (
+                    <div className="alert-banner">
+                      {t("pickAllocationPreviewShortage")}
+                    </div>
+                  ) : null}
+
+                  {batchOutboundAllocationPreview.rows.length > 0 ? (
+                    <Box sx={{ minWidth: 0, height: 260 }}>
+                      <DataGrid
+                        rows={batchOutboundAllocationPreview.rows}
+                        columns={outboundAllocationPreviewColumns}
+                        pagination
+                        pageSizeOptions={[5, 10, 20]}
+                        disableRowSelectionOnClick
+                        initialState={{ pagination: { paginationModel: { pageSize: 5, page: 0 } } }}
+                        getRowHeight={() => 64}
+                        slots={detailGridSlots}
+                        sx={{ border: 0 }}
+                      />
+                    </Box>
+                  ) : (
+                    <div className="sheet-note sheet-note--readonly">
+                      {t("pickAllocationPreviewEmpty")}
+                    </div>
+                  )}
+                </div>
+
                 <div className="sheet-form__actions" style={{ marginTop: "1rem" }}>
-                  <button className="button button--primary" type="submit" disabled={batchSubmitting || availableOutboundItems.length === 0}>{batchSubmitting ? t("saving") : t("saveBatchOutbound")}</button>
+                  <button className="button button--ghost" type="button" disabled={batchSubmitting || (!isEditingOutboundDraft && availableOutboundSources.length === 0)} onClick={() => void submitOutboundDocument("DRAFT")}>{batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("saveDraft")}</button>
+                  <button className="button button--primary" type="submit" disabled={batchSubmitting || (!isEditingOutboundDraft && availableOutboundSources.length === 0)}>{batchSubmitting ? t("saving") : t("confirmShipment")}</button>
                   <button className="button button--ghost" type="button" onClick={closeBatchModal}>{t("cancel")}</button>
                 </div>
               </form>
@@ -1054,21 +1600,226 @@ export function ActivityManagementPage({ mode, items, locations, customers, inbo
 function displayDescription(item: Pick<Item, "description" | "name">) { return item.description || item.name; }
 function formatDate(value: string | null) { return formatDateValue(value, dateFormatter); }
 function numberInputValue(value: number) { return value === 0 ? "" : String(value); }
+function calculateSuggestedReorderLevel(expectedQty: number, receivedQty: number) {
+  const baseQty = receivedQty > 0 ? receivedQty : expectedQty;
+  if (baseQty <= 0) {
+    return 0;
+  }
+  return Math.max(1, Math.ceil(baseQty * 0.2));
+}
 function getLocationSectionOptions(location: Location | undefined) {
   const sectionNames = location?.sectionNames?.map((sectionName) => sectionName.trim()).filter(Boolean) ?? [];
   return sectionNames.length > 0 ? sectionNames : ["A"];
 }
 
 function renderDocumentStatus(status: string, t: (key: string) => string) {
-  const normalizedStatus = status.trim().toUpperCase();
+  const normalizedStatus = normalizeDocumentStatus(status);
 
   if (normalizedStatus === "CANCELLED") {
-    return <Chip label={status || t("cancelShipment")} color="error" size="small" />;
+    return <Chip label={t("cancelled")} color="error" size="small" />;
   }
 
-  if (normalizedStatus === "POSTED") {
-    return <Chip label={status || "POSTED"} color="success" size="small" />;
+  if (normalizedStatus === "CONFIRMED") {
+    return <Chip label={t("confirmed")} color="success" size="small" />;
   }
 
-  return <Chip label={status || "DRAFT"} color="default" size="small" />;
+  return <Chip label={t("draft")} color="default" size="small" />;
+}
+
+function normalizeDocumentStatus(status: string) {
+  return status.trim().toUpperCase();
+}
+
+function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceOptions: OutboundSourceOption[]): OutboundAllocationPreviewResult {
+  const reservedByItemId = new Map<number, number>();
+  const reservedBySourceId = new Map<string, number>();
+  const rows: OutboundAllocationPreviewRow[] = [];
+  const summaries = new Map<string, OutboundAllocationLineSummary>();
+  const sourceOptionMap = new Map(sourceOptions.map((sourceOption) => [sourceOption.id, sourceOption] as const));
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const itemId = Number(line.itemId);
+    if (!Number.isFinite(itemId) || itemId <= 0 || line.quantity <= 0) {
+      continue;
+    }
+
+    const selectedSource = sourceOptionMap.get(itemId);
+    if (!selectedSource) {
+      continue;
+    }
+
+    const summary: OutboundAllocationLineSummary = {
+      lineId: line.id,
+      lineLabel: `#${index + 1}`,
+      itemId: selectedSource.id,
+      itemNumber: selectedSource.itemNumber || "",
+      sku: selectedSource.sku,
+      description: selectedSource.description,
+      locationName: selectedSource.locationName,
+      storageSection: selectedSource.storageSections[0] || "A",
+      requestedQty: line.quantity,
+      allocatedQty: 0,
+      shortageQty: 0,
+      containerCount: 0
+    };
+
+    const availableByItemId = new Map<number, number>();
+    for (const candidate of selectedSource.candidates) {
+      availableByItemId.set(candidate.itemId, (availableByItemId.get(candidate.itemId) ?? 0) + candidate.availableQty);
+    }
+
+    let remainingQty = line.quantity;
+    for (const candidate of selectedSource.candidates) {
+      const sourceId = `${candidate.itemId}|${candidate.storageSection}|${candidate.containerNo}`;
+      const sourceRemaining = candidate.availableQty - (reservedBySourceId.get(sourceId) ?? 0);
+      const itemRemaining = (availableByItemId.get(candidate.itemId) ?? 0) - (reservedByItemId.get(candidate.itemId) ?? 0);
+      const effectiveAvailable = Math.min(sourceRemaining, itemRemaining);
+      if (effectiveAvailable <= 0) {
+        continue;
+      }
+
+      const allocatedQty = Math.min(effectiveAvailable, remainingQty);
+      if (allocatedQty <= 0) {
+        continue;
+      }
+
+      rows.push({
+        id: `${line.id}-${candidate.id}`,
+        lineLabel: summary.lineLabel,
+        itemNumber: selectedSource.itemNumber || summary.itemNumber,
+        sku: selectedSource.sku,
+        description: selectedSource.description,
+        locationName: candidate.locationName,
+        storageSection: candidate.storageSection || "A",
+        containerNo: candidate.containerNo || "",
+        allocatedQty
+      });
+      reservedBySourceId.set(sourceId, (reservedBySourceId.get(sourceId) ?? 0) + allocatedQty);
+      reservedByItemId.set(candidate.itemId, (reservedByItemId.get(candidate.itemId) ?? 0) + allocatedQty);
+      summary.allocatedQty += allocatedQty;
+      remainingQty -= allocatedQty;
+
+      if (remainingQty === 0) {
+        break;
+      }
+    }
+
+    const containers = new Set(
+      rows
+        .filter((row) => row.lineLabel === summary.lineLabel)
+        .map((row) => row.containerNo || `${row.locationName}/${row.storageSection}`)
+    );
+    summary.containerCount = containers.size;
+    summary.shortageQty = Math.max(0, remainingQty);
+    summaries.set(line.id, summary);
+  }
+
+  return {
+    rows,
+    summaries,
+    totalRequestedQty: Array.from(summaries.values()).reduce((sum, summary) => sum + summary.requestedQty, 0),
+    totalAllocatedQty: Array.from(summaries.values()).reduce((sum, summary) => sum + summary.allocatedQty, 0),
+    totalContainerCount: new Set(rows.map((row) => row.containerNo || `${row.locationName}/${row.storageSection}`)).size,
+    splitLineCount: Array.from(summaries.values()).filter((summary) => summary.containerCount > 1).length,
+    shortageLineCount: Array.from(summaries.values()).filter((summary) => summary.shortageQty > 0).length
+  };
+}
+
+function compareOutboundAllocationCandidates(left: Item, right: Item) {
+  const leftDeliveryDate = left.deliveryDate || "";
+  const rightDeliveryDate = right.deliveryDate || "";
+  if (!leftDeliveryDate && rightDeliveryDate) return 1;
+  if (leftDeliveryDate && !rightDeliveryDate) return -1;
+  if (leftDeliveryDate !== rightDeliveryDate) return leftDeliveryDate.localeCompare(rightDeliveryDate);
+
+  if (left.createdAt !== right.createdAt) {
+    return left.createdAt.localeCompare(right.createdAt);
+  }
+
+  return left.id - right.id;
+}
+
+function summarizeOutboundPickAllocations(document: OutboundDocument | null) {
+  if (!document) {
+    return {
+      totalContainerCount: 0,
+      totalPickRows: 0,
+      splitLineCount: 0
+    };
+  }
+
+  const allAllocations = document.lines.flatMap((line) => line.pickAllocations);
+  return {
+    totalContainerCount: new Set(allAllocations.map((allocation) => allocation.containerNo || `${allocation.locationName}/${allocation.storageSection || "A"}`)).size,
+    totalPickRows: allAllocations.length,
+    splitLineCount: document.lines.filter((line) => {
+      const containers = new Set(line.pickAllocations.map((allocation) => allocation.containerNo || `${allocation.locationName}/${allocation.storageSection || "A"}`));
+      return containers.size > 1;
+    }).length
+  };
+}
+
+function buildOutboundSourceOptions(items: Item[], movements: Movement[]): OutboundSourceOption[] {
+  const containerBalances = buildItemContainerBalances(items, movements);
+  const grouped = new Map<string, { representative: Item; items: Item[] }>();
+
+  for (const item of [...items].sort(compareOutboundAllocationCandidates)) {
+    const key = `${item.customerId}:${item.locationId}:${item.sku.trim().toUpperCase()}`;
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, { representative: item, items: [item] });
+      continue;
+    }
+
+    existing.items.push(item);
+  }
+
+  return [...grouped.values()].map(({ representative, items: sourceItems }) => {
+    const sourceItemIds = new Set(sourceItems.map((item) => item.id));
+    const candidates = containerBalances.filter((balance) => sourceItemIds.has(balance.itemId));
+    const sections = new Set<string>();
+    let availableQty = 0;
+
+    for (const candidate of candidates) {
+      availableQty += candidate.availableQty;
+      if (candidate.storageSection) {
+        sections.add(candidate.storageSection);
+      }
+    }
+
+    return {
+      id: representative.id,
+      customerId: representative.customerId,
+      customerName: representative.customerName,
+      locationId: representative.locationId,
+      locationName: representative.locationName,
+      sku: representative.sku,
+      itemNumber: representative.itemNumber || "",
+      description: displayDescription(representative),
+      unit: representative.unit,
+      availableQty,
+      storageSections: [...sections].sort(),
+      containerCount: new Set(candidates.map((candidate) => candidate.containerNo || `${candidate.locationName}/${candidate.storageSection || "A"}`)).size,
+      containerSummary: formatContainerDistributionSummaryValue(candidates),
+      candidates
+    };
+  }).sort((left, right) => {
+    const customerCompare = left.customerName.localeCompare(right.customerName);
+    if (customerCompare !== 0) return customerCompare;
+    const locationCompare = left.locationName.localeCompare(right.locationName);
+    if (locationCompare !== 0) return locationCompare;
+    return left.sku.localeCompare(right.sku);
+  });
+}
+
+function formatContainerDistributionSummary(containers: Map<string, number>) {
+  if (containers.size === 0) {
+    return "";
+  }
+
+  return [...containers.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([containerNo, quantity]) => `${containerNo}:${quantity}`)
+    .join(" · ");
 }

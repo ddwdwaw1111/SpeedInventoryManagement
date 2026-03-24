@@ -31,12 +31,16 @@ type MasterInventoryPageProps = {
 type InventoryHealthFilter = "ALL" | "IN_STOCK" | "LOW_STOCK" | "MISMATCH";
 
 type ItemFormState = {
+  itemNumber: string;
   sku: string;
   description: string;
   customerId: string;
   locationId: string;
   storageSection: string;
   quantity: number;
+  allocatedQty: number;
+  damagedQty: number;
+  holdQty: number;
   reorderLevel: number;
   deliveryDate: string;
   containerNo: string;
@@ -52,12 +56,16 @@ const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
 
 function createEmptyItemForm(defaultCustomerId = "", defaultLocationId = ""): ItemFormState {
   return {
+    itemNumber: "",
     sku: "",
     description: "",
     customerId: defaultCustomerId,
     locationId: defaultLocationId,
     storageSection: "A",
     quantity: 0,
+    allocatedQty: 0,
+    damagedQty: 0,
+    holdQty: 0,
     reorderLevel: 0,
     deliveryDate: "",
     containerNo: "",
@@ -120,14 +128,15 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
   const filteredItems = items.filter((item) => {
     const matchesSearch = normalizedSearch.length === 0
       || item.sku.toLowerCase().includes(normalizedSearch)
+      || item.itemNumber.toLowerCase().includes(normalizedSearch)
       || item.customerName.toLowerCase().includes(normalizedSearch)
       || displayDescription(item).toLowerCase().includes(normalizedSearch)
       || item.containerNo.toLowerCase().includes(normalizedSearch);
     const matchesLocation = selectedLocationId === "all" || item.locationId === Number(selectedLocationId);
     const matchesCustomer = selectedCustomerId === "all" || item.customerId === Number(selectedCustomerId);
     const matchesHealth = healthFilter === "ALL"
-      || (healthFilter === "IN_STOCK" && item.quantity > item.reorderLevel)
-      || (healthFilter === "LOW_STOCK" && item.quantity <= item.reorderLevel)
+      || (healthFilter === "IN_STOCK" && item.availableQty > item.reorderLevel)
+      || (healthFilter === "LOW_STOCK" && item.availableQty <= item.reorderLevel)
       || (healthFilter === "MISMATCH" && hasQtyMismatch(item.expectedQty, item.receivedQty));
     return matchesSearch && matchesLocation && matchesCustomer && matchesHealth;
   });
@@ -150,12 +159,16 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
   }, [selectedItem, selectedItemId]);
 
   const columns = useMemo<GridColDef<Item>[]>(() => [
+    { field: "itemNumber", headerName: t("itemNumber"), minWidth: 130, flex: 0.8, renderCell: (params) => <span className="cell--mono">{params.value || "-"}</span> },
     { field: "sku", headerName: t("sku"), minWidth: 120, flex: 0.8, renderCell: (params) => <span className="cell--mono">{params.value}</span> },
     { field: "description", headerName: t("description"), minWidth: 240, flex: 1.5, valueGetter: (_, row) => displayDescription(row) },
     { field: "customerName", headerName: t("customer"), minWidth: 180, flex: 1 },
     { field: "locationName", headerName: t("currentStorage"), minWidth: 170, flex: 1 },
     { field: "storageSection", headerName: t("storageSection"), minWidth: 110, renderCell: (params) => params.row.storageSection || "A" },
     { field: "quantity", headerName: t("onHand"), minWidth: 110, type: "number" },
+    { field: "availableQty", headerName: t("availableQty"), minWidth: 120, type: "number" },
+    { field: "allocatedQty", headerName: t("allocatedQty"), minWidth: 110, type: "number" },
+    { field: "damagedQty", headerName: t("damagedQty"), minWidth: 110, type: "number" },
     { field: "reorderLevel", headerName: t("reorderLevel"), minWidth: 130, type: "number" },
     { field: "deliveryDate", headerName: t("deliveryDate"), minWidth: 140, valueFormatter: (_, row) => formatDate(row.deliveryDate) },
     { field: "containerNo", headerName: t("containerNo"), minWidth: 170, flex: 1, renderCell: (params) => <span className="cell--mono">{params.value || "-"}</span> },
@@ -179,7 +192,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
       filterable: false,
       renderCell: (params) => (
         <div className="status-stack">
-          {params.row.quantity <= params.row.reorderLevel ? <Chip label={t("lowStock")} color="warning" size="small" /> : <Chip label={t("healthy")} color="success" size="small" />}
+          {params.row.availableQty <= params.row.reorderLevel ? <Chip label={t("lowStock")} color="warning" size="small" /> : <Chip label={t("healthy")} color="success" size="small" />}
           {hasQtyMismatch(params.row.expectedQty, params.row.receivedQty) ? <Chip label={t("qtyMismatch")} color="error" size="small" /> : null}
         </div>
       )
@@ -208,12 +221,16 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
     setSelectedItemId(item.id);
     setEditingItemId(item.id);
     setForm({
+      itemNumber: item.itemNumber || "",
       sku: item.sku,
       description: displayDescription(item),
       customerId: String(item.customerId),
       locationId: String(item.locationId),
       storageSection: item.storageSection || "A",
       quantity: item.quantity,
+      allocatedQty: item.allocatedQty,
+      damagedQty: item.damagedQty,
+      holdQty: item.holdQty,
       reorderLevel: item.reorderLevel,
       deliveryDate: toDateInputValue(item.deliveryDate),
       containerNo: item.containerNo,
@@ -256,12 +273,16 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
     }
 
     const payload: ItemPayload = {
+      itemNumber: form.itemNumber,
       sku: form.sku,
       name: form.description,
       category: "General",
       description: form.description,
       unit: "pcs",
       quantity: form.quantity,
+      allocatedQty: form.allocatedQty,
+      damagedQty: form.damagedQty,
+      holdQty: form.holdQty,
       reorderLevel: form.reorderLevel,
       customerId,
       locationId,
@@ -367,7 +388,10 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
               <div>
                 <div className="document-drawer__eyebrow">{t("stockByLocation")}</div>
                 <h3>{selectedItem.sku}</h3>
-                <p>{displayDescription(selectedItem)} | {selectedItem.customerName} | {selectedItem.locationName} / {selectedItem.storageSection || "A"}</p>
+                <p>
+                  {displayDescription(selectedItem)} | {selectedItem.customerName} | {selectedItem.locationName} / {selectedItem.storageSection || "A"}
+                  {" "} | {t("containerNo")}: {selectedItem.containerNo || "-"}
+                </p>
               </div>
               <IconButton aria-label={t("close")} onClick={() => setSelectedItemId(null)}>
                 <CloseIcon fontSize="small" />
@@ -403,7 +427,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
             <div className="document-drawer__status-bar">
               <div className="document-drawer__status-main">
                 <div className="status-stack">
-                  {selectedItem.quantity <= selectedItem.reorderLevel ? <Chip label={t("lowStock")} color="warning" size="small" /> : <Chip label={t("healthy")} color="success" size="small" />}
+                  {selectedItem.availableQty <= selectedItem.reorderLevel ? <Chip label={t("lowStock")} color="warning" size="small" /> : <Chip label={t("healthy")} color="success" size="small" />}
                   {hasQtyMismatch(selectedItem.expectedQty, selectedItem.receivedQty) ? <Chip label={t("qtyMismatch")} color="error" size="small" /> : null}
                 </div>
               </div>
@@ -412,12 +436,12 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
                 <span>{t("onHand")}</span>
               </div>
               <div className="document-drawer__status-stat">
-                <strong>{selectedItem.reorderLevel}</strong>
-                <span>{t("reorderLevel")}</span>
+                <strong>{selectedItem.availableQty}</strong>
+                <span>{t("availableQty")}</span>
               </div>
               <div className="document-drawer__status-stat">
-                <strong>{selectedItem.expectedQty || 0} / {selectedItem.receivedQty || 0}</strong>
-                <span>{t("expectedQty")} / {t("received")}</span>
+                <strong>{selectedItem.allocatedQty} / {selectedItem.damagedQty}</strong>
+                <span>{t("allocatedQty")} / {t("damagedQty")}</span>
               </div>
             </div>
 
@@ -431,12 +455,22 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
                 {selectedItem.locationName} / {selectedItem.storageSection || "A"}
               </div>
               <div className="sheet-note">
-                <strong>{t("deliveryDate")}</strong><br />
-                {formatDate(selectedItem.deliveryDate)}
+                <strong>{t("itemNumber")}</strong><br />
+                <span className="cell--mono">{selectedItem.itemNumber || "-"}</span>
               </div>
               <div className="sheet-note">
-                <strong>{t("containerNo")}</strong><br />
-                <span className="cell--mono">{selectedItem.containerNo || "-"}</span>
+                <strong>{t("receiptSource")}</strong><br />
+                <span className="cell--mono">{selectedItem.containerNo || "-"}</span><br />
+                <span>{t("deliveryDate")}: {formatDate(selectedItem.deliveryDate)}</span>
+              </div>
+              <div className="sheet-note">
+                <strong>{t("receiptSummary")}</strong><br />
+                {t("expectedQty")}: {selectedItem.expectedQty || "-"}<br />
+                {t("received")}: {selectedItem.receivedQty || "-"}
+              </div>
+              <div className="sheet-note">
+                <strong>{t("reorderLevel")}</strong><br />
+                {selectedItem.reorderLevel}
               </div>
               <div className="sheet-note">
                 <strong>{t("pallets")}</strong><br />
@@ -478,12 +512,15 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
         <DialogContent dividers>
           {errorMessage ? <div className="alert-banner">{errorMessage}</div> : null}
           <form className="sheet-form" onSubmit={handleSubmit}>
+            <label>{t("itemNumber")}<input value={form.itemNumber} onChange={(event) => setForm((current) => ({ ...current, itemNumber: event.target.value }))} placeholder="VB22GC" /></label>
             <label>{t("sku")}<input value={form.sku} onChange={(event) => setForm((current) => ({ ...current, sku: event.target.value }))} placeholder="023042" required /></label>
             <label className="sheet-form__wide">{t("description")}<input value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} placeholder={t("descriptionPlaceholder")} required /></label>
             <label>{t("customer")}<select value={form.customerId} onChange={(event) => setForm((current) => ({ ...current, customerId: event.target.value }))} required>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
             <label>{t("currentStorage")}<select value={form.locationId} onChange={(event) => setForm((current) => ({ ...current, locationId: event.target.value }))} required>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
             <div className="sheet-note sheet-form__wide"><strong>{t("storageSection")}</strong> {form.storageSection || "A"}</div>
             <label>{t("onHand")}<input type="number" min="0" value={numberInputValue(form.quantity)} onChange={(event) => setForm((current) => ({ ...current, quantity: Math.max(0, Number(event.target.value || 0)) }))} /></label>
+            <label>{t("allocatedQty")}<input type="number" min="0" value={numberInputValue(form.allocatedQty)} onChange={(event) => setForm((current) => ({ ...current, allocatedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
+            <label>{t("damagedQty")}<input type="number" min="0" value={numberInputValue(form.damagedQty)} onChange={(event) => setForm((current) => ({ ...current, damagedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
             <label>{t("deliveryDate")}<input type="date" value={form.deliveryDate} onChange={(event) => setForm((current) => ({ ...current, deliveryDate: event.target.value }))} /></label>
             <label>{t("containerNo")}<input value={form.containerNo} onChange={(event) => setForm((current) => ({ ...current, containerNo: event.target.value }))} placeholder="KKFU7963968" /></label>
             <label>{t("expectedQty")}<input type="number" min="0" value={numberInputValue(form.expectedQty)} onChange={(event) => setForm((current) => ({ ...current, expectedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>

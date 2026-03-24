@@ -21,6 +21,7 @@ type SKUMasterPageProps = {
 };
 
 type SKUMasterFormState = {
+  itemNumber: string;
   sku: string;
   description: string;
   category: string;
@@ -32,6 +33,7 @@ const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", ti
 
 function createEmptyForm(): SKUMasterFormState {
   return {
+    itemNumber: "",
     sku: "",
     description: "",
     category: "General",
@@ -56,6 +58,7 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
   const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
   const filteredRows = useMemo(() => skuMasters.filter((row) => (
     normalizedSearch.length === 0
+    || row.itemNumber.toLowerCase().includes(normalizedSearch)
     || row.sku.toLowerCase().includes(normalizedSearch)
     || displayDescription(row).toLowerCase().includes(normalizedSearch)
     || row.category.toLowerCase().includes(normalizedSearch)
@@ -69,6 +72,7 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
   });
 
   const columns = useMemo<GridColDef<SKUMaster>[]>(() => [
+    { field: "itemNumber", headerName: t("itemNumber"), minWidth: 130, flex: 0.8, renderCell: (params) => <span className="cell--mono">{params.value || "-"}</span> },
     { field: "sku", headerName: t("sku"), minWidth: 130, flex: 0.8, renderCell: (params) => <span className="cell--mono">{params.value}</span> },
     { field: "description", headerName: t("description"), minWidth: 260, flex: 1.6, valueGetter: (_, row) => displayDescription(row) },
     { field: "category", headerName: t("category"), minWidth: 140, flex: 0.8 },
@@ -105,6 +109,7 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
     if (!canManage) return;
     setEditingId(row.id);
     setForm({
+      itemNumber: row.itemNumber || "",
       sku: row.sku,
       description: displayDescription(row),
       category: row.category || "General",
@@ -129,6 +134,7 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
     setErrorMessage("");
 
     const payload: SKUMasterPayload = {
+      itemNumber: form.itemNumber,
       sku: form.sku,
       name: form.description,
       category: form.category,
@@ -220,6 +226,7 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
         <DialogContent dividers>
           {errorMessage ? <div className="alert-banner">{errorMessage}</div> : null}
           <form className="sheet-form" onSubmit={handleSubmit}>
+            <label>{t("itemNumber")}<input value={form.itemNumber} onChange={(event) => setForm((current) => ({ ...current, itemNumber: event.target.value }))} placeholder="VB22GC" /></label>
             <label>{t("sku")}<input value={form.sku} onChange={(event) => setForm((current) => ({ ...current, sku: event.target.value }))} placeholder="023042" required /></label>
             <label className="sheet-form__wide">{t("description")}<input value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} placeholder={t("descriptionPlaceholder")} required /></label>
             <label>{t("category")}<input value={form.category} onChange={(event) => setForm((current) => ({ ...current, category: event.target.value }))} placeholder="General" /></label>

@@ -52,7 +52,6 @@
 - [x] backend unit tests
 - [x] API handler tests
 - [x] service integration tests
-- [ ] CI 自动运行测试
 
 ## P1 - Operational Maturity
 
@@ -60,7 +59,7 @@
 
 ### Inventory Model
 
-- [ ] 增加库存状态维度：
+- [x] 增加库存状态维度：
   - `on_hand`
   - `available`
   - `allocated`
@@ -77,10 +76,10 @@
 
 ### Customer Operations
 
-- [ ] 客户详情页 / 客户工作台进一步增强
-- [ ] 客户库存汇总
-- [ ] 客户单据视图
-- [ ] 客户活动汇总
+- [x] 客户详情页 / 客户工作台进一步增强
+- [x] 客户库存汇总
+- [x] 客户单据视图
+- [x] 客户活动汇总
 
 ### Import / Export
 

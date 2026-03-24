@@ -105,6 +105,7 @@ type CreateCustomerInput struct {
 
 type SKUMaster struct {
 	ID           int64     `db:"id" json:"id"`
+	ItemNumber   string    `db:"item_number" json:"itemNumber"`
 	SKU          string    `db:"sku" json:"sku"`
 	Name         string    `db:"name" json:"name"`
 	Category     string    `db:"category" json:"category"`
@@ -116,6 +117,7 @@ type SKUMaster struct {
 }
 
 type CreateSKUMasterInput struct {
+	ItemNumber   string `json:"itemNumber"`
 	SKU          string `json:"sku"`
 	Name         string `json:"name"`
 	Category     string `json:"category"`
@@ -126,12 +128,17 @@ type CreateSKUMasterInput struct {
 
 type Item struct {
 	ID                int64      `json:"id"`
+	ItemNumber        string     `json:"itemNumber"`
 	SKU               string     `json:"sku"`
 	Name              string     `json:"name"`
 	Category          string     `json:"category"`
 	Description       string     `json:"description"`
 	Unit              string     `json:"unit"`
 	Quantity          int        `json:"quantity"`
+	AvailableQty      int        `json:"availableQty"`
+	AllocatedQty      int        `json:"allocatedQty"`
+	DamagedQty        int        `json:"damagedQty"`
+	HoldQty           int        `json:"holdQty"`
 	ReorderLevel      int        `json:"reorderLevel"`
 	CustomerID        int64      `json:"customerId"`
 	CustomerName      string     `json:"customerName"`
@@ -197,12 +204,16 @@ type ItemFilters struct {
 }
 
 type CreateItemInput struct {
+	ItemNumber        string `json:"itemNumber"`
 	SKU               string `json:"sku"`
 	Name              string `json:"name"`
 	Category          string `json:"category"`
 	Description       string `json:"description"`
 	Unit              string `json:"unit"`
 	Quantity          int    `json:"quantity"`
+	AllocatedQty      int    `json:"allocatedQty"`
+	DamagedQty        int    `json:"damagedQty"`
+	HoldQty           int    `json:"holdQty"`
 	ReorderLevel      int    `json:"reorderLevel"`
 	CustomerID        int64  `json:"customerId"`
 	LocationID        int64  `json:"locationId"`
@@ -254,7 +265,7 @@ func (s *Store) GetDashboard(ctx context.Context) (DashboardData, error) {
 		SELECT
 			COUNT(*) AS total_items,
 			COALESCE(SUM(quantity), 0) AS total_units,
-			COALESCE(SUM(CASE WHEN quantity <= reorder_level THEN 1 ELSE 0 END), 0) AS low_stock_items,
+			COALESCE(SUM(CASE WHEN GREATEST(quantity - allocated_qty - damaged_qty - hold_qty, 0) <= reorder_level THEN 1 ELSE 0 END), 0) AS low_stock_items,
 			COUNT(DISTINCT location_id) AS locations_in_use
 		FROM inventory_items
 	`
@@ -281,12 +292,17 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 	query := `
 		SELECT
 			i.id,
+			COALESCE(i.item_number, ''),
 			i.sku,
 			i.name,
 			i.category,
 			COALESCE(i.description, ''),
 			i.unit,
 			i.quantity,
+			GREATEST(i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty, 0) AS available_qty,
+			i.allocated_qty,
+			i.damaged_qty,
+			i.hold_qty,
 			i.reorder_level,
 			i.customer_id,
 			c.name,
@@ -313,8 +329,8 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 	args := make([]any, 0)
 	if search := strings.TrimSpace(filters.Search); search != "" {
 		likeValue := "%" + search + "%"
-		query += " AND (i.sku LIKE ? OR i.name LIKE ? OR i.description LIKE ? OR i.category LIKE ? OR c.name LIKE ?)"
-		args = append(args, likeValue, likeValue, likeValue, likeValue, likeValue)
+		query += " AND (i.item_number LIKE ? OR i.sku LIKE ? OR i.name LIKE ? OR i.description LIKE ? OR i.category LIKE ? OR c.name LIKE ?)"
+		args = append(args, likeValue, likeValue, likeValue, likeValue, likeValue, likeValue)
 	}
 
 	if filters.LocationID > 0 {
@@ -328,7 +344,7 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 	}
 
 	if filters.LowStockOnly {
-		query += " AND i.quantity <= i.reorder_level"
+		query += " AND GREATEST(i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty, 0) <= i.reorder_level"
 	}
 
 	query += " ORDER BY i.updated_at DESC, i.sku ASC"
@@ -392,12 +408,16 @@ func (s *Store) CreateItem(ctx context.Context, input CreateItemInput) (Item, er
 		INSERT INTO inventory_items (
 			sku_master_id,
 			customer_id,
+			item_number,
 			sku,
 			name,
 			category,
 			description,
 			unit,
 			quantity,
+			allocated_qty,
+			damaged_qty,
+			hold_qty,
 			reorder_level,
 			location_id,
 			storage_section,
@@ -410,21 +430,25 @@ func (s *Store) CreateItem(ctx context.Context, input CreateItemInput) (Item, er
 			height_in,
 			out_date,
 			last_restocked_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		skuMasterID,
 		input.CustomerID,
+		nullableString(input.ItemNumber),
 		input.SKU,
 		input.Name,
 		input.Category,
 		input.Description,
 		input.Unit,
 		input.Quantity,
+		input.AllocatedQty,
+		input.DamagedQty,
+		input.HoldQty,
 		input.ReorderLevel,
 		input.LocationID,
 		input.StorageSection,
 		nullableTime(deliveryDate),
-		nullableString(input.ContainerNo),
+		input.ContainerNo,
 		input.ExpectedQty,
 		input.ReceivedQty,
 		input.Pallets,
@@ -486,12 +510,16 @@ func (s *Store) UpdateItem(ctx context.Context, itemID int64, input CreateItemIn
 		SET
 			sku_master_id = ?,
 			customer_id = ?,
+			item_number = ?,
 			sku = ?,
 			name = ?,
 			category = ?,
 			description = ?,
 			unit = ?,
 			quantity = ?,
+			allocated_qty = ?,
+			damaged_qty = ?,
+			hold_qty = ?,
 			reorder_level = ?,
 			location_id = ?,
 			storage_section = ?,
@@ -512,17 +540,21 @@ func (s *Store) UpdateItem(ctx context.Context, itemID int64, input CreateItemIn
 		`,
 		skuMasterID,
 		input.CustomerID,
+		nullableString(input.ItemNumber),
 		input.SKU,
 		input.Name,
 		input.Category,
 		input.Description,
 		input.Unit,
 		input.Quantity,
+		input.AllocatedQty,
+		input.DamagedQty,
+		input.HoldQty,
 		input.ReorderLevel,
 		input.LocationID,
 		input.StorageSection,
 		nullableTime(deliveryDate),
-		nullableString(input.ContainerNo),
+		input.ContainerNo,
 		input.ExpectedQty,
 		input.ReceivedQty,
 		input.Pallets,
@@ -1162,12 +1194,17 @@ func (s *Store) getItem(ctx context.Context, itemID int64) (Item, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT
 			i.id,
+			COALESCE(i.item_number, ''),
 			i.sku,
 			i.name,
 			i.category,
 			COALESCE(i.description, ''),
 			i.unit,
 			i.quantity,
+			GREATEST(i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty, 0) AS available_qty,
+			i.allocated_qty,
+			i.damaged_qty,
+			i.hold_qty,
 			i.reorder_level,
 			i.customer_id,
 			c.name,
@@ -1306,6 +1343,7 @@ func scanSKUMaster(scanner itemScanner) (SKUMaster, error) {
 	var skuMaster SKUMaster
 	if err := scanner.Scan(
 		&skuMaster.ID,
+		&skuMaster.ItemNumber,
 		&skuMaster.SKU,
 		&skuMaster.Name,
 		&skuMaster.Category,
@@ -1328,12 +1366,17 @@ func scanItem(scanner itemScanner) (Item, error) {
 	var lastRestockedAt sql.NullTime
 	if err := scanner.Scan(
 		&item.ID,
+		&item.ItemNumber,
 		&item.SKU,
 		&item.Name,
 		&item.Category,
 		&item.Description,
 		&item.Unit,
 		&item.Quantity,
+		&item.AvailableQty,
+		&item.AllocatedQty,
+		&item.DamagedQty,
+		&item.HoldQty,
 		&item.ReorderLevel,
 		&item.CustomerID,
 		&item.CustomerName,
@@ -1423,6 +1466,7 @@ func scanMovement(scanner itemScanner) (Movement, error) {
 }
 
 func sanitizeItemInput(input CreateItemInput) CreateItemInput {
+	input.ItemNumber = strings.TrimSpace(strings.ToUpper(input.ItemNumber))
 	input.SKU = strings.TrimSpace(strings.ToUpper(input.SKU))
 	input.Name = strings.TrimSpace(input.Name)
 	input.Category = strings.TrimSpace(input.Category)
@@ -1456,6 +1500,10 @@ func validateItemInput(input CreateItemInput) error {
 		return fmt.Errorf("%w: description is required", ErrInvalidInput)
 	case input.Quantity < 0:
 		return fmt.Errorf("%w: quantity cannot be negative", ErrInvalidInput)
+	case input.AllocatedQty < 0 || input.DamagedQty < 0 || input.HoldQty < 0:
+		return fmt.Errorf("%w: inventory status quantities cannot be negative", ErrInvalidInput)
+	case input.AllocatedQty+input.DamagedQty+input.HoldQty > input.Quantity:
+		return fmt.Errorf("%w: available stock cannot be negative", ErrInvalidInput)
 	case input.ReorderLevel < 0:
 		return fmt.Errorf("%w: reorder level cannot be negative", ErrInvalidInput)
 	case input.CustomerID <= 0:
@@ -1587,11 +1635,20 @@ func (s *Store) loadLockedItemForMovement(ctx context.Context, tx *sql.Tx, itemI
 	return quantity, customerID, locationID, storageSection, descriptionSnapshot, nil
 }
 
+func computeAvailableQuantity(quantity, allocatedQty, damagedQty, holdQty int) int {
+	availableQty := quantity - allocatedQty - damagedQty - holdQty
+	if availableQty < 0 {
+		return 0
+	}
+	return availableQty
+}
+
 func (s *Store) ensureSKUMaster(ctx context.Context, tx *sql.Tx, input CreateItemInput) (int64, error) {
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO sku_master (sku, name, category, description, unit, reorder_level)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO sku_master (item_number, sku, name, category, description, unit, reorder_level)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
+			item_number = COALESCE(NULLIF(VALUES(item_number), ''), item_number),
 			name = VALUES(name),
 			category = VALUES(category),
 			description = VALUES(description),
@@ -1599,6 +1656,7 @@ func (s *Store) ensureSKUMaster(ctx context.Context, tx *sql.Tx, input CreateIte
 			reorder_level = VALUES(reorder_level),
 			id = LAST_INSERT_ID(id)
 	`,
+		nullableString(input.ItemNumber),
 		input.SKU,
 		input.Name,
 		input.Category,

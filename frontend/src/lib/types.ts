@@ -104,6 +104,7 @@ export type CustomerPayload = {
 
 export type SKUMaster = {
   id: number;
+  itemNumber: string;
   sku: string;
   name: string;
   category: string;
@@ -115,6 +116,7 @@ export type SKUMaster = {
 };
 
 export type SKUMasterPayload = {
+  itemNumber: string;
   sku: string;
   name: string;
   category: string;
@@ -125,12 +127,17 @@ export type SKUMasterPayload = {
 
 export type Item = {
   id: number;
+  itemNumber: string;
   sku: string;
   name: string;
   category: string;
   description: string;
   unit: string;
   quantity: number;
+  availableQty: number;
+  allocatedQty: number;
+  damagedQty: number;
+  holdQty: number;
   reorderLevel: number;
   customerId: number;
   customerName: string;
@@ -193,6 +200,7 @@ export type OutboundDocumentLine = {
   documentId: number;
   movementId: number;
   itemId: number;
+  itemNumber: string;
   locationId: number;
   locationName: string;
   storageSection: string;
@@ -204,6 +212,21 @@ export type OutboundDocumentLine = {
   netWeightKgs: number;
   grossWeightKgs: number;
   lineNote: string;
+  pickAllocations: OutboundPickAllocation[];
+  createdAt: string;
+};
+
+export type OutboundPickAllocation = {
+  id: number;
+  lineId: number;
+  movementId: number;
+  itemId: number;
+  itemNumber: string;
+  locationId: number;
+  locationName: string;
+  storageSection: string;
+  containerNo: string;
+  allocatedQty: number;
   createdAt: string;
 };
 
@@ -214,8 +237,13 @@ export type OutboundDocument = {
   customerId: number;
   customerName: string;
   outDate: string | null;
+  shipToName: string;
+  shipToAddress: string;
+  shipToContact: string;
+  carrierName: string;
   documentNote: string;
   status: string;
+  confirmedAt: string | null;
   cancelNote: string;
   cancelledAt: string | null;
   totalLines: number;
@@ -242,6 +270,11 @@ export type OutboundDocumentPayload = {
   packingListNo?: string;
   orderRef?: string;
   outDate?: string;
+  shipToName?: string;
+  shipToAddress?: string;
+  shipToContact?: string;
+  carrierName?: string;
+  status?: string;
   documentNote?: string;
   lines: OutboundDocumentLinePayload[];
 };
@@ -258,6 +291,7 @@ export type InboundDocumentLine = {
   sku: string;
   description: string;
   storageSection: string;
+  reorderLevel: number;
   expectedQty: number;
   receivedQty: number;
   pallets: number;
@@ -279,6 +313,9 @@ export type InboundDocument = {
   unitLabel: string;
   documentNote: string;
   status: string;
+  confirmedAt: string | null;
+  cancelNote: string;
+  cancelledAt: string | null;
   totalLines: number;
   totalExpectedQty: number;
   totalReceivedQty: number;
@@ -306,8 +343,13 @@ export type InboundDocumentPayload = {
   containerNo?: string;
   storageSection?: string;
   unitLabel?: string;
+  status?: string;
   documentNote?: string;
   lines: InboundDocumentLinePayload[];
+};
+
+export type CancelInboundDocumentPayload = {
+  reason?: string;
 };
 
 export type InventoryAdjustmentLine = {
@@ -448,12 +490,16 @@ export type CycleCountPayload = {
 };
 
 export type ItemPayload = {
+  itemNumber: string;
   sku: string;
   name: string;
   category: string;
   description: string;
   unit: string;
   quantity: number;
+  allocatedQty: number;
+  damagedQty: number;
+  holdQty: number;
   reorderLevel: number;
   customerId: number;
   locationId: number;

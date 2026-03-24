@@ -1,6 +1,7 @@
 import type {
   AuditLog,
   AuthResponse,
+  CancelInboundDocumentPayload,
   CycleCount,
   CycleCountPayload,
   CancelOutboundDocumentPayload,
@@ -281,6 +282,19 @@ export const api = {
     });
   },
 
+  updateOutboundDocument(documentId: number, payload: OutboundDocumentPayload) {
+    return request<OutboundDocument>(`/outbound-documents/${documentId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  confirmOutboundDocument(documentId: number) {
+    return request<OutboundDocument>(`/outbound-documents/${documentId}/confirm`, {
+      method: "POST"
+    });
+  },
+
   cancelOutboundDocument(documentId: number, payload?: CancelOutboundDocumentPayload) {
     return request<OutboundDocument>(`/outbound-documents/${documentId}/cancel`, {
       method: "POST",
@@ -296,6 +310,26 @@ export const api = {
     return request<InboundDocument>("/inbound-documents", {
       method: "POST",
       body: JSON.stringify(payload)
+    });
+  },
+
+  updateInboundDocument(documentId: number, payload: InboundDocumentPayload) {
+    return request<InboundDocument>(`/inbound-documents/${documentId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  confirmInboundDocument(documentId: number) {
+    return request<InboundDocument>(`/inbound-documents/${documentId}/confirm`, {
+      method: "POST"
+    });
+  },
+
+  cancelInboundDocument(documentId: number, payload?: CancelInboundDocumentPayload) {
+    return request<InboundDocument>(`/inbound-documents/${documentId}/cancel`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {})
     });
   },
 

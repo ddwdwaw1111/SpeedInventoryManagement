@@ -67,6 +67,7 @@ func Migrate(db *sql.DB) error {
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE AFTER role`,
 		`CREATE TABLE IF NOT EXISTS sku_master (
 			id BIGINT NOT NULL AUTO_INCREMENT,
+			item_number VARCHAR(120) DEFAULT NULL,
 			sku VARCHAR(64) NOT NULL,
 			name VARCHAR(160) NOT NULL,
 			category VARCHAR(120) NOT NULL,
@@ -78,21 +79,26 @@ func Migrate(db *sql.DB) error {
 			PRIMARY KEY (id),
 			UNIQUE KEY uq_sku_master_sku (sku)
 		)`,
+		`ALTER TABLE sku_master ADD COLUMN IF NOT EXISTS item_number VARCHAR(120) DEFAULT NULL AFTER id`,
 		`CREATE TABLE IF NOT EXISTS inventory_items (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			sku_master_id BIGINT NOT NULL,
 			customer_id BIGINT NOT NULL,
+			item_number VARCHAR(120) DEFAULT NULL,
 			sku VARCHAR(64) NOT NULL,
 			name VARCHAR(160) NOT NULL,
 			category VARCHAR(120) NOT NULL,
 			description TEXT DEFAULT NULL,
 			unit VARCHAR(32) NOT NULL DEFAULT 'pcs',
 			quantity INT NOT NULL DEFAULT 0,
+			allocated_qty INT NOT NULL DEFAULT 0,
+			damaged_qty INT NOT NULL DEFAULT 0,
+			hold_qty INT NOT NULL DEFAULT 0,
 			reorder_level INT NOT NULL DEFAULT 0,
 			location_id BIGINT NOT NULL,
 			storage_section VARCHAR(16) NOT NULL DEFAULT 'A',
 			delivery_date DATE DEFAULT NULL,
-			container_no VARCHAR(120) DEFAULT NULL,
+			container_no VARCHAR(120) NOT NULL DEFAULT '',
 			expected_qty INT NOT NULL DEFAULT 0,
 			received_qty INT NOT NULL DEFAULT 0,
 			pallets INT NOT NULL DEFAULT 0,
@@ -103,7 +109,7 @@ func Migrate(db *sql.DB) error {
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			PRIMARY KEY (id),
-			UNIQUE KEY uq_inventory_item_balance (sku_master_id, location_id, storage_section, customer_id),
+			UNIQUE KEY uq_inventory_item_balance (sku_master_id, location_id, storage_section, customer_id, container_no),
 			KEY idx_inventory_items_category (category),
 			KEY idx_inventory_items_location_id (location_id),
 			KEY idx_inventory_items_sku (sku),
@@ -118,9 +124,13 @@ func Migrate(db *sql.DB) error {
 		)`,
 		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS sku_master_id BIGINT NULL AFTER id`,
 		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS customer_id BIGINT NULL AFTER sku_master_id`,
+		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS item_number VARCHAR(120) DEFAULT NULL AFTER customer_id`,
 		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS delivery_date DATE DEFAULT NULL AFTER location_id`,
 		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS storage_section VARCHAR(16) NOT NULL DEFAULT 'A' AFTER location_id`,
-		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS container_no VARCHAR(120) DEFAULT NULL AFTER delivery_date`,
+		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS allocated_qty INT NOT NULL DEFAULT 0 AFTER quantity`,
+		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS damaged_qty INT NOT NULL DEFAULT 0 AFTER allocated_qty`,
+		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS hold_qty INT NOT NULL DEFAULT 0 AFTER damaged_qty`,
+		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS container_no VARCHAR(120) NOT NULL DEFAULT '' AFTER delivery_date`,
 		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS expected_qty INT NOT NULL DEFAULT 0 AFTER container_no`,
 		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS received_qty INT NOT NULL DEFAULT 0 AFTER expected_qty`,
 		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS pallets INT NOT NULL DEFAULT 0 AFTER received_qty`,
@@ -217,8 +227,14 @@ func Migrate(db *sql.DB) error {
 			order_ref VARCHAR(120) DEFAULT NULL,
 			customer_id BIGINT NOT NULL,
 			out_date DATE DEFAULT NULL,
+			ship_to_name VARCHAR(160) DEFAULT NULL,
+			ship_to_address VARCHAR(255) DEFAULT NULL,
+			ship_to_contact VARCHAR(160) DEFAULT NULL,
+			carrier_name VARCHAR(160) DEFAULT NULL,
 			document_note TEXT DEFAULT NULL,
-			status VARCHAR(32) NOT NULL DEFAULT 'POSTED',
+			status VARCHAR(32) NOT NULL DEFAULT 'CONFIRMED',
+			confirmed_at TIMESTAMP NULL DEFAULT NULL,
+			posted_at TIMESTAMP NULL DEFAULT NULL,
 			cancel_note TEXT DEFAULT NULL,
 			cancelled_at TIMESTAMP NULL DEFAULT NULL,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -230,8 +246,21 @@ func Migrate(db *sql.DB) error {
 			CONSTRAINT fk_outbound_documents_customer
 				FOREIGN KEY (customer_id) REFERENCES customers (id)
 		)`,
-		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS cancel_note TEXT DEFAULT NULL AFTER status`,
+		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS ship_to_name VARCHAR(160) DEFAULT NULL AFTER out_date`,
+		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS ship_to_address VARCHAR(255) DEFAULT NULL AFTER ship_to_name`,
+		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS ship_to_contact VARCHAR(160) DEFAULT NULL AFTER ship_to_address`,
+		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS carrier_name VARCHAR(160) DEFAULT NULL AFTER ship_to_contact`,
+		`ALTER TABLE outbound_documents MODIFY COLUMN status VARCHAR(32) NOT NULL DEFAULT 'CONFIRMED'`,
+		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMP NULL DEFAULT NULL AFTER status`,
+		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP NULL DEFAULT NULL AFTER confirmed_at`,
+		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS cancel_note TEXT DEFAULT NULL AFTER posted_at`,
 		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP NULL DEFAULT NULL AFTER cancel_note`,
+		`UPDATE outbound_documents
+			SET
+				confirmed_at = COALESCE(confirmed_at, posted_at, created_at),
+				posted_at = COALESCE(posted_at, created_at),
+				status = 'CONFIRMED'
+			WHERE UPPER(status) = 'POSTED'`,
 		`CREATE TABLE IF NOT EXISTS inbound_documents (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			customer_id BIGINT NOT NULL,
@@ -241,7 +270,11 @@ func Migrate(db *sql.DB) error {
 			storage_section VARCHAR(16) NOT NULL DEFAULT 'A',
 			unit_label VARCHAR(32) DEFAULT NULL,
 			document_note TEXT DEFAULT NULL,
-			status VARCHAR(32) NOT NULL DEFAULT 'POSTED',
+			status VARCHAR(32) NOT NULL DEFAULT 'CONFIRMED',
+			confirmed_at TIMESTAMP NULL DEFAULT NULL,
+			posted_at TIMESTAMP NULL DEFAULT NULL,
+			cancel_note TEXT DEFAULT NULL,
+			cancelled_at TIMESTAMP NULL DEFAULT NULL,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			PRIMARY KEY (id),
@@ -254,14 +287,26 @@ func Migrate(db *sql.DB) error {
 			CONSTRAINT fk_inbound_documents_location
 				FOREIGN KEY (location_id) REFERENCES storage_locations (id)
 		)`,
+		`ALTER TABLE inbound_documents MODIFY COLUMN status VARCHAR(32) NOT NULL DEFAULT 'CONFIRMED'`,
+		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMP NULL DEFAULT NULL AFTER status`,
+		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP NULL DEFAULT NULL AFTER confirmed_at`,
+		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS cancel_note TEXT DEFAULT NULL AFTER posted_at`,
+		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP NULL DEFAULT NULL AFTER cancel_note`,
+		`UPDATE inbound_documents
+			SET
+				confirmed_at = COALESCE(confirmed_at, posted_at, created_at),
+				posted_at = COALESCE(posted_at, created_at),
+				status = 'CONFIRMED'
+			WHERE UPPER(status) = 'POSTED'`,
 		`CREATE TABLE IF NOT EXISTS inbound_document_lines (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			document_id BIGINT NOT NULL,
 			movement_id BIGINT DEFAULT NULL,
-			item_id BIGINT NOT NULL,
+			item_id BIGINT DEFAULT NULL,
 			sku_snapshot VARCHAR(64) NOT NULL,
 			description_snapshot VARCHAR(255) DEFAULT NULL,
 			storage_section VARCHAR(16) NOT NULL DEFAULT 'A',
+			reorder_level INT NOT NULL DEFAULT 0,
 			expected_qty INT NOT NULL DEFAULT 0,
 			received_qty INT NOT NULL DEFAULT 0,
 			pallets INT NOT NULL DEFAULT 0,
@@ -283,6 +328,8 @@ func Migrate(db *sql.DB) error {
 			CONSTRAINT fk_inbound_document_lines_item
 				FOREIGN KEY (item_id) REFERENCES inventory_items (id)
 		)`,
+		`ALTER TABLE inbound_document_lines MODIFY COLUMN item_id BIGINT NULL`,
+		`ALTER TABLE inbound_document_lines ADD COLUMN IF NOT EXISTS reorder_level INT NOT NULL DEFAULT 0 AFTER storage_section`,
 		`CREATE TABLE IF NOT EXISTS outbound_document_lines (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			document_id BIGINT NOT NULL,
@@ -291,6 +338,7 @@ func Migrate(db *sql.DB) error {
 			location_id BIGINT NOT NULL,
 			location_name_snapshot VARCHAR(160) NOT NULL,
 			storage_section VARCHAR(16) NOT NULL DEFAULT 'A',
+			item_number_snapshot VARCHAR(120) DEFAULT NULL,
 			sku_snapshot VARCHAR(64) NOT NULL,
 			description_snapshot VARCHAR(255) DEFAULT NULL,
 			quantity INT NOT NULL DEFAULT 0,
@@ -316,6 +364,59 @@ func Migrate(db *sql.DB) error {
 			CONSTRAINT fk_outbound_document_lines_location
 				FOREIGN KEY (location_id) REFERENCES storage_locations (id)
 		)`,
+		`ALTER TABLE outbound_document_lines ADD COLUMN IF NOT EXISTS item_number_snapshot VARCHAR(120) DEFAULT NULL AFTER storage_section`,
+		`CREATE TABLE IF NOT EXISTS outbound_pick_allocations (
+			id BIGINT NOT NULL AUTO_INCREMENT,
+			line_id BIGINT NOT NULL,
+			movement_id BIGINT DEFAULT NULL,
+			item_id BIGINT NOT NULL,
+			location_id BIGINT NOT NULL,
+			location_name_snapshot VARCHAR(160) NOT NULL,
+			storage_section VARCHAR(16) NOT NULL DEFAULT 'A',
+			container_no_snapshot VARCHAR(120) DEFAULT NULL,
+			allocated_qty INT NOT NULL DEFAULT 0,
+			sort_order INT NOT NULL DEFAULT 1,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			KEY idx_outbound_pick_allocations_line_id (line_id),
+			KEY idx_outbound_pick_allocations_movement_id (movement_id),
+			KEY idx_outbound_pick_allocations_item_id (item_id),
+			CONSTRAINT fk_outbound_pick_allocations_line
+				FOREIGN KEY (line_id) REFERENCES outbound_document_lines (id)
+				ON DELETE CASCADE,
+			CONSTRAINT fk_outbound_pick_allocations_movement
+				FOREIGN KEY (movement_id) REFERENCES stock_movements (id)
+				ON DELETE SET NULL,
+			CONSTRAINT fk_outbound_pick_allocations_item
+				FOREIGN KEY (item_id) REFERENCES inventory_items (id),
+			CONSTRAINT fk_outbound_pick_allocations_location
+				FOREIGN KEY (location_id) REFERENCES storage_locations (id)
+		)`,
+		`ALTER TABLE outbound_pick_allocations ADD COLUMN IF NOT EXISTS movement_id BIGINT DEFAULT NULL AFTER line_id`,
+		`INSERT INTO outbound_pick_allocations (
+			line_id,
+			item_id,
+			location_id,
+			location_name_snapshot,
+			storage_section,
+			container_no_snapshot,
+			allocated_qty,
+			sort_order
+		)
+		SELECT
+			l.id,
+			l.item_id,
+			l.location_id,
+			l.location_name_snapshot,
+			l.storage_section,
+			COALESCE(NULLIF(m.container_no, ''), NULLIF(i.container_no, ''), NULL) AS container_no_snapshot,
+			l.quantity,
+			1
+		FROM outbound_document_lines l
+		LEFT JOIN stock_movements m ON m.id = l.movement_id
+		LEFT JOIN inventory_items i ON i.id = l.item_id
+		LEFT JOIN outbound_pick_allocations a ON a.line_id = l.id
+		WHERE a.id IS NULL`,
 		`CREATE TABLE IF NOT EXISTS inventory_adjustments (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			adjustment_no VARCHAR(120) NOT NULL,
@@ -516,11 +617,12 @@ func Migrate(db *sql.DB) error {
 	}
 
 	if _, err := db.Exec(`
-		INSERT INTO sku_master (sku, name, category, description, unit, reorder_level)
-		SELECT DISTINCT sku, name, category, description, unit, reorder_level
+		INSERT INTO sku_master (item_number, sku, name, category, description, unit, reorder_level)
+		SELECT DISTINCT item_number, sku, name, category, description, unit, reorder_level
 		FROM inventory_items
 		WHERE sku IS NOT NULL AND sku <> ''
 		ON DUPLICATE KEY UPDATE
+			item_number = COALESCE(NULLIF(VALUES(item_number), ''), sku_master.item_number),
 			name = VALUES(name),
 			category = VALUES(category),
 			description = VALUES(description),
@@ -537,6 +639,26 @@ func Migrate(db *sql.DB) error {
 		WHERE i.sku_master_id IS NULL OR i.sku_master_id = 0
 	`); err != nil {
 		return fmt.Errorf("link inventory items to sku master: %w", err)
+	}
+
+	if _, err := db.Exec(`
+		UPDATE inventory_items i
+		JOIN sku_master s ON s.id = i.sku_master_id
+		SET
+			i.item_number = COALESCE(NULLIF(i.item_number, ''), s.item_number),
+			s.item_number = COALESCE(NULLIF(s.item_number, ''), i.item_number)
+		WHERE (i.item_number IS NULL OR i.item_number = '' OR s.item_number IS NULL OR s.item_number = '')
+	`); err != nil {
+		return fmt.Errorf("sync item numbers between sku master and inventory items: %w", err)
+	}
+
+	if _, err := db.Exec(`
+		UPDATE outbound_document_lines l
+		JOIN inventory_items i ON i.id = l.item_id
+		SET l.item_number_snapshot = COALESCE(NULLIF(l.item_number_snapshot, ''), i.item_number)
+		WHERE l.item_number_snapshot IS NULL OR l.item_number_snapshot = ''
+	`); err != nil {
+		return fmt.Errorf("backfill outbound line item number snapshot: %w", err)
 	}
 
 	if _, err := db.Exec(`
@@ -580,7 +702,15 @@ func Migrate(db *sql.DB) error {
 		}
 	}
 
-	if _, err := db.Exec(`ALTER TABLE inventory_items ADD UNIQUE INDEX uq_inventory_item_balance (sku_master_id, location_id, storage_section, customer_id)`); err != nil {
+	if _, err := db.Exec(`UPDATE inventory_items SET container_no = '' WHERE container_no IS NULL`); err != nil {
+		return fmt.Errorf("backfill inventory item containers: %w", err)
+	}
+
+	if _, err := db.Exec(`ALTER TABLE inventory_items MODIFY COLUMN container_no VARCHAR(120) NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("normalize inventory item container column: %w", err)
+	}
+
+	if _, err := db.Exec(`ALTER TABLE inventory_items ADD UNIQUE INDEX uq_inventory_item_balance (sku_master_id, location_id, storage_section, customer_id, container_no)`); err != nil {
 		if !isDuplicateIndexError(err) {
 			return fmt.Errorf("create inventory balance uniqueness: %w", err)
 		}

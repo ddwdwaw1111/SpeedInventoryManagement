@@ -12,50 +12,55 @@ import (
 )
 
 type InboundDocument struct {
-	ID            int64                 `json:"id"`
-	CustomerID    int64                 `json:"customerId"`
-	CustomerName  string                `json:"customerName"`
-	LocationID    int64                 `json:"locationId"`
-	LocationName  string                `json:"locationName"`
-	DeliveryDate  *time.Time            `json:"deliveryDate"`
-	ContainerNo   string                `json:"containerNo"`
-	StorageSection string               `json:"storageSection"`
-	UnitLabel     string                `json:"unitLabel"`
-	DocumentNote  string                `json:"documentNote"`
-	Status        string                `json:"status"`
-	TotalLines    int                   `json:"totalLines"`
-	TotalExpectedQty int                `json:"totalExpectedQty"`
-	TotalReceivedQty int                `json:"totalReceivedQty"`
-	CreatedAt     time.Time             `json:"createdAt"`
-	UpdatedAt     time.Time             `json:"updatedAt"`
-	Lines         []InboundDocumentLine `json:"lines"`
+	ID               int64                 `json:"id"`
+	CustomerID       int64                 `json:"customerId"`
+	CustomerName     string                `json:"customerName"`
+	LocationID       int64                 `json:"locationId"`
+	LocationName     string                `json:"locationName"`
+	DeliveryDate     *time.Time            `json:"deliveryDate"`
+	ContainerNo      string                `json:"containerNo"`
+	StorageSection   string                `json:"storageSection"`
+	UnitLabel        string                `json:"unitLabel"`
+	DocumentNote     string                `json:"documentNote"`
+	Status           string                `json:"status"`
+	ConfirmedAt      *time.Time            `json:"confirmedAt"`
+	CancelNote       string                `json:"cancelNote"`
+	CancelledAt      *time.Time            `json:"cancelledAt"`
+	TotalLines       int                   `json:"totalLines"`
+	TotalExpectedQty int                   `json:"totalExpectedQty"`
+	TotalReceivedQty int                   `json:"totalReceivedQty"`
+	CreatedAt        time.Time             `json:"createdAt"`
+	UpdatedAt        time.Time             `json:"updatedAt"`
+	Lines            []InboundDocumentLine `json:"lines"`
 }
 
 type InboundDocumentLine struct {
-	ID               int64     `json:"id"`
-	DocumentID       int64     `json:"documentId"`
-	MovementID       int64     `json:"movementId"`
-	ItemID           int64     `json:"itemId"`
-	SKU              string    `json:"sku"`
-	Description      string    `json:"description"`
-	StorageSection   string    `json:"storageSection"`
-	ExpectedQty      int       `json:"expectedQty"`
-	ReceivedQty      int       `json:"receivedQty"`
-	Pallets          int       `json:"pallets"`
-	PalletsDetailCtns string   `json:"palletsDetailCtns"`
-	UnitLabel        string    `json:"unitLabel"`
-	LineNote         string    `json:"lineNote"`
-	CreatedAt        time.Time `json:"createdAt"`
+	ID                int64     `json:"id"`
+	DocumentID        int64     `json:"documentId"`
+	MovementID        int64     `json:"movementId"`
+	ItemID            int64     `json:"itemId"`
+	SKU               string    `json:"sku"`
+	Description       string    `json:"description"`
+	StorageSection    string    `json:"storageSection"`
+	ReorderLevel      int       `json:"reorderLevel"`
+	ExpectedQty       int       `json:"expectedQty"`
+	ReceivedQty       int       `json:"receivedQty"`
+	Pallets           int       `json:"pallets"`
+	PalletsDetailCtns string    `json:"palletsDetailCtns"`
+	UnitLabel         string    `json:"unitLabel"`
+	LineNote          string    `json:"lineNote"`
+	CreatedAt         time.Time `json:"createdAt"`
 }
 
 type CreateInboundDocumentInput struct {
-	CustomerID     int64                        `json:"customerId"`
-	LocationID     int64                        `json:"locationId"`
-	DeliveryDate   string                       `json:"deliveryDate"`
-	ContainerNo    string                       `json:"containerNo"`
-	StorageSection string                       `json:"storageSection"`
-	UnitLabel      string                       `json:"unitLabel"`
-	DocumentNote   string                       `json:"documentNote"`
+	CustomerID     int64                            `json:"customerId"`
+	LocationID     int64                            `json:"locationId"`
+	DeliveryDate   string                           `json:"deliveryDate"`
+	ContainerNo    string                           `json:"containerNo"`
+	StorageSection string                           `json:"storageSection"`
+	UnitLabel      string                           `json:"unitLabel"`
+	Status         string                           `json:"status"`
+	DocumentNote   string                           `json:"documentNote"`
 	Lines          []CreateInboundDocumentLineInput `json:"lines"`
 }
 
@@ -83,25 +88,33 @@ type inboundDocumentRow struct {
 	UnitLabel      string     `db:"unit_label"`
 	DocumentNote   string     `db:"document_note"`
 	Status         string     `db:"status"`
+	ConfirmedAt    *time.Time `db:"confirmed_at"`
+	CancelNote     string     `db:"cancel_note"`
+	CancelledAt    *time.Time `db:"cancelled_at"`
 	CreatedAt      time.Time  `db:"created_at"`
 	UpdatedAt      time.Time  `db:"updated_at"`
 }
 
 type inboundDocumentLineRow struct {
-	ID                 int64     `db:"id"`
-	DocumentID         int64     `db:"document_id"`
-	MovementID         int64     `db:"movement_id"`
-	ItemID             int64     `db:"item_id"`
-	SKUSnapshot        string    `db:"sku_snapshot"`
-	DescriptionSnapshot string   `db:"description_snapshot"`
-	StorageSection     string    `db:"storage_section"`
-	ExpectedQty        int       `db:"expected_qty"`
-	ReceivedQty        int       `db:"received_qty"`
-	Pallets            int       `db:"pallets"`
-	PalletsDetailCtns  string    `db:"pallets_detail_ctns"`
-	UnitLabel          string    `db:"unit_label"`
-	LineNote           string    `db:"line_note"`
-	CreatedAt          time.Time `db:"created_at"`
+	ID                  int64     `db:"id"`
+	DocumentID          int64     `db:"document_id"`
+	MovementID          int64     `db:"movement_id"`
+	ItemID              int64     `db:"item_id"`
+	SKUSnapshot         string    `db:"sku_snapshot"`
+	DescriptionSnapshot string    `db:"description_snapshot"`
+	StorageSection      string    `db:"storage_section"`
+	ReorderLevel        int       `db:"reorder_level"`
+	ExpectedQty         int       `db:"expected_qty"`
+	ReceivedQty         int       `db:"received_qty"`
+	Pallets             int       `db:"pallets"`
+	PalletsDetailCtns   string    `db:"pallets_detail_ctns"`
+	UnitLabel           string    `db:"unit_label"`
+	LineNote            string    `db:"line_note"`
+	CreatedAt           time.Time `db:"created_at"`
+}
+
+type CancelInboundDocumentInput struct {
+	Reason string `json:"reason"`
 }
 
 func (s *Store) ListInboundDocuments(ctx context.Context, limit int) ([]InboundDocument, error) {
@@ -123,6 +136,9 @@ func (s *Store) ListInboundDocuments(ctx context.Context, limit int) ([]InboundD
 			COALESCE(d.unit_label, '') AS unit_label,
 			COALESCE(d.document_note, '') AS document_note,
 			d.status,
+			d.confirmed_at,
+			COALESCE(d.cancel_note, '') AS cancel_note,
+			d.cancelled_at,
 			d.created_at,
 			d.updated_at
 		FROM inbound_documents d
@@ -152,7 +168,10 @@ func (s *Store) ListInboundDocuments(ctx context.Context, limit int) ([]InboundD
 			StorageSection: fallbackSection(row.StorageSection),
 			UnitLabel:      row.UnitLabel,
 			DocumentNote:   row.DocumentNote,
-			Status:         row.Status,
+			Status:         normalizeDocumentStatus(row.Status),
+			ConfirmedAt:    row.ConfirmedAt,
+			CancelNote:     row.CancelNote,
+			CancelledAt:    row.CancelledAt,
 			CreatedAt:      row.CreatedAt,
 			UpdatedAt:      row.UpdatedAt,
 			Lines:          make([]InboundDocumentLine, 0),
@@ -167,10 +186,11 @@ func (s *Store) ListInboundDocuments(ctx context.Context, limit int) ([]InboundD
 			id,
 			document_id,
 			COALESCE(movement_id, 0) AS movement_id,
-			item_id,
+			COALESCE(item_id, 0) AS item_id,
 			sku_snapshot,
 			COALESCE(description_snapshot, '') AS description_snapshot,
 			storage_section,
+			reorder_level,
 			expected_qty,
 			received_qty,
 			pallets,
@@ -204,6 +224,7 @@ func (s *Store) ListInboundDocuments(ctx context.Context, limit int) ([]InboundD
 			SKU:               lineRow.SKUSnapshot,
 			Description:       lineRow.DescriptionSnapshot,
 			StorageSection:    fallbackSection(lineRow.StorageSection),
+			ReorderLevel:      lineRow.ReorderLevel,
 			ExpectedQty:       lineRow.ExpectedQty,
 			ReceivedQty:       lineRow.ReceivedQty,
 			Pallets:           lineRow.Pallets,
@@ -234,12 +255,18 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 		now := time.Now().UTC()
 		deliveryDate = &now
 	}
+	requestedStatus := coalesceDocumentStatus(input.Status)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return InboundDocument{}, fmt.Errorf("begin inbound document transaction: %w", err)
 	}
 	defer tx.Rollback()
+
+	persistedStatus := requestedStatus
+	if requestedStatus == DocumentStatusConfirmed {
+		persistedStatus = DocumentStatusDraft
+	}
 
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO inbound_documents (
@@ -250,8 +277,12 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 			storage_section,
 			unit_label,
 			document_note,
-			status
-		) VALUES (?, ?, ?, ?, ?, ?, ?, 'POSTED')
+			status,
+			confirmed_at,
+			posted_at,
+			cancel_note,
+			cancelled_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)
 	`,
 		input.CustomerID,
 		input.LocationID,
@@ -260,6 +291,7 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 		fallbackSection(input.StorageSection),
 		nullableString(input.UnitLabel),
 		nullableString(input.DocumentNote),
+		persistedStatus,
 	)
 	if err != nil {
 		return InboundDocument{}, mapDBError(fmt.Errorf("create inbound document: %w", err))
@@ -271,18 +303,14 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 	}
 
 	for index, line := range input.Lines {
-		itemID, itemDescription, err := s.findOrCreateInboundItem(ctx, tx, input, line, deliveryDate)
-		if err != nil {
-			return InboundDocument{}, err
-		}
-
-		lineResult, err := tx.ExecContext(ctx, `
+		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO inbound_document_lines (
 				document_id,
 				item_id,
 				sku_snapshot,
 				description_snapshot,
 				storage_section,
+				reorder_level,
 				expected_qty,
 				received_qty,
 				pallets,
@@ -290,13 +318,14 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 				unit_label,
 				line_note,
 				sort_order
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			documentID,
-			itemID,
+			nil,
 			line.SKU,
-			nullableString(itemDescription),
+			nullableString(line.Description),
 			fallbackSection(firstNonEmpty(line.StorageSection, input.StorageSection)),
+			line.ReorderLevel,
 			line.ExpectedQty,
 			line.ReceivedQty,
 			line.Pallets,
@@ -304,17 +333,244 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 			nullableString(firstNonEmpty(input.UnitLabel, "CTN")),
 			nullableString(line.LineNote),
 			index+1,
-		)
-		if err != nil {
+		); err != nil {
 			return InboundDocument{}, mapDBError(fmt.Errorf("create inbound document line: %w", err))
 		}
+	}
 
-		lineID, err := lineResult.LastInsertId()
-		if err != nil {
-			return InboundDocument{}, fmt.Errorf("resolve inbound document line id: %w", err)
+	switch requestedStatus {
+	case DocumentStatusConfirmed:
+		if err := s.confirmInboundDocumentTx(ctx, tx, documentID); err != nil {
+			return InboundDocument{}, err
+		}
+	case DocumentStatusDraft:
+		// Draft documents remain pending until confirmed.
+	}
+
+	if err := tx.Commit(); err != nil {
+		return InboundDocument{}, fmt.Errorf("commit inbound document: %w", err)
+	}
+
+	return s.getInboundDocument(ctx, documentID)
+}
+
+func (s *Store) UpdateInboundDocument(ctx context.Context, documentID int64, input CreateInboundDocumentInput) (InboundDocument, error) {
+	input = sanitizeInboundDocumentInput(input)
+	if err := validateInboundDocumentInput(input); err != nil {
+		return InboundDocument{}, err
+	}
+
+	deliveryDate, err := parseOptionalDate(input.DeliveryDate)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+	if deliveryDate == nil {
+		now := time.Now().UTC()
+		deliveryDate = &now
+	}
+	requestedStatus := coalesceDocumentStatus(input.Status)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return InboundDocument{}, fmt.Errorf("begin inbound update transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	documentRow, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+	if normalizeDocumentStatus(documentRow.Status) != DocumentStatusDraft {
+		return InboundDocument{}, fmt.Errorf("%w: only draft receipts can be edited", ErrInvalidInput)
+	}
+
+	existingLines, err := s.loadInboundDocumentLinesTx(ctx, tx, documentID)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+	for _, line := range existingLines {
+		if line.MovementID > 0 {
+			return InboundDocument{}, fmt.Errorf("%w: confirmed receipt lines cannot be edited", ErrInvalidInput)
+		}
+	}
+
+	persistedStatus := requestedStatus
+	if requestedStatus == DocumentStatusConfirmed {
+		persistedStatus = DocumentStatusDraft
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE inbound_documents
+		SET
+			customer_id = ?,
+			location_id = ?,
+			delivery_date = ?,
+			container_no = ?,
+			storage_section = ?,
+			unit_label = ?,
+			document_note = ?,
+			status = ?,
+			confirmed_at = NULL,
+			posted_at = NULL,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`,
+		input.CustomerID,
+		input.LocationID,
+		nullableTime(deliveryDate),
+		nullableString(input.ContainerNo),
+		fallbackSection(input.StorageSection),
+		nullableString(input.UnitLabel),
+		nullableString(input.DocumentNote),
+		persistedStatus,
+		documentID,
+	); err != nil {
+		return InboundDocument{}, mapDBError(fmt.Errorf("update inbound document: %w", err))
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM inbound_document_lines WHERE document_id = ?`, documentID); err != nil {
+		return InboundDocument{}, mapDBError(fmt.Errorf("delete inbound draft lines: %w", err))
+	}
+
+	for index, line := range input.Lines {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO inbound_document_lines (
+				document_id,
+				item_id,
+				sku_snapshot,
+				description_snapshot,
+				storage_section,
+				reorder_level,
+				expected_qty,
+				received_qty,
+				pallets,
+				pallets_detail_ctns,
+				unit_label,
+				line_note,
+				sort_order
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`,
+			documentID,
+			nil,
+			line.SKU,
+			nullableString(line.Description),
+			fallbackSection(firstNonEmpty(line.StorageSection, input.StorageSection)),
+			line.ReorderLevel,
+			line.ExpectedQty,
+			line.ReceivedQty,
+			line.Pallets,
+			nullableString(line.PalletsDetailCtns),
+			nullableString(firstNonEmpty(input.UnitLabel, "CTN")),
+			nullableString(line.LineNote),
+			index+1,
+		); err != nil {
+			return InboundDocument{}, mapDBError(fmt.Errorf("recreate inbound document line: %w", err))
+		}
+	}
+
+	if requestedStatus == DocumentStatusConfirmed {
+		if err := s.confirmInboundDocumentTx(ctx, tx, documentID); err != nil {
+			return InboundDocument{}, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return InboundDocument{}, fmt.Errorf("commit inbound update: %w", err)
+	}
+
+	return s.getInboundDocument(ctx, documentID)
+}
+
+func (s *Store) ConfirmInboundDocument(ctx context.Context, documentID int64) (InboundDocument, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return InboundDocument{}, fmt.Errorf("begin inbound confirm transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	documentRow, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+
+	status := normalizeDocumentStatus(documentRow.Status)
+	if status == DocumentStatusCancelled {
+		return InboundDocument{}, fmt.Errorf("%w: cancelled receipt cannot be confirmed", ErrInvalidInput)
+	}
+	if status == DocumentStatusConfirmed {
+		return InboundDocument{}, fmt.Errorf("%w: receipt is already confirmed", ErrInvalidInput)
+	}
+	if err := s.confirmInboundDocumentTx(ctx, tx, documentID); err != nil {
+		return InboundDocument{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return InboundDocument{}, fmt.Errorf("commit inbound confirm: %w", err)
+	}
+
+	return s.getInboundDocument(ctx, documentID)
+}
+
+func (s *Store) PostInboundDocument(ctx context.Context, documentID int64) (InboundDocument, error) {
+	return s.ConfirmInboundDocument(ctx, documentID)
+}
+
+func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, documentID int64) error {
+	documentRow, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID)
+	if err != nil {
+		return err
+	}
+
+	status := normalizeDocumentStatus(documentRow.Status)
+	if status == DocumentStatusCancelled {
+		return fmt.Errorf("%w: cancelled receipt cannot be confirmed", ErrInvalidInput)
+	}
+	if status == DocumentStatusConfirmed {
+		return fmt.Errorf("%w: receipt is already confirmed", ErrInvalidInput)
+	}
+
+	lineRows, err := s.loadInboundDocumentLinesTx(ctx, tx, documentID)
+	if err != nil {
+		return err
+	}
+
+	for _, lineRow := range lineRows {
+		if lineRow.MovementID > 0 {
+			continue
 		}
 
-		receivedQty := line.receivedOrExpectedQty()
+		itemID, itemDescription, err := s.findOrCreateInboundItem(ctx, tx, CreateInboundDocumentInput{
+			CustomerID:     documentRow.CustomerID,
+			LocationID:     documentRow.LocationID,
+			DeliveryDate:   safeDateInput(documentRow.DeliveryDate),
+			ContainerNo:    documentRow.ContainerNo,
+			StorageSection: documentRow.StorageSection,
+			UnitLabel:      documentRow.UnitLabel,
+			DocumentNote:   documentRow.DocumentNote,
+		}, CreateInboundDocumentLineInput{
+			SKU:               lineRow.SKUSnapshot,
+			Description:       lineRow.DescriptionSnapshot,
+			ReorderLevel:      lineRow.ReorderLevel,
+			ExpectedQty:       lineRow.ExpectedQty,
+			ReceivedQty:       lineRow.ReceivedQty,
+			Pallets:           lineRow.Pallets,
+			PalletsDetailCtns: lineRow.PalletsDetailCtns,
+			StorageSection:    lineRow.StorageSection,
+			LineNote:          lineRow.LineNote,
+		}, documentRow.DeliveryDate)
+		if err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE inbound_document_lines
+			SET item_id = ?, description_snapshot = COALESCE(description_snapshot, ?)
+			WHERE id = ?
+		`, itemID, nullableString(itemDescription), lineRow.ID); err != nil {
+			return mapDBError(fmt.Errorf("link inbound line to inventory item: %w", err))
+		}
+
+		receivedQty := lineRow.receivedOrExpectedQty()
 		movementResult, err := tx.ExecContext(ctx, `
 			INSERT INTO stock_movements (
 				item_id,
@@ -340,71 +596,319 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 		`,
 			itemID,
 			documentID,
-			lineID,
-			input.CustomerID,
-			input.LocationID,
-			fallbackSection(firstNonEmpty(line.StorageSection, input.StorageSection)),
+			lineRow.ID,
+			documentRow.CustomerID,
+			documentRow.LocationID,
+			fallbackSection(firstNonEmpty(lineRow.StorageSection, documentRow.StorageSection)),
 			receivedQty,
-			nullableTime(deliveryDate),
-			nullableString(input.ContainerNo),
+			nullableTime(documentRow.DeliveryDate),
+			nullableString(documentRow.ContainerNo),
 			nullableString(itemDescription),
-			line.ExpectedQty,
-			line.ReceivedQty,
-			line.Pallets,
-			nullableString(line.PalletsDetailCtns),
-			nullableString(firstNonEmpty(input.UnitLabel, "CTN")),
+			lineRow.ExpectedQty,
+			lineRow.ReceivedQty,
+			lineRow.Pallets,
+			nullableString(lineRow.PalletsDetailCtns),
+			nullableString(firstNonEmpty(documentRow.UnitLabel, "CTN")),
 			0,
-			nullableString(input.DocumentNote),
-			nullableString(firstNonEmpty(line.LineNote, defaultMovementReason("IN"))),
+			nullableString(documentRow.DocumentNote),
+			nullableString(firstNonEmpty(lineRow.LineNote, defaultMovementReason("IN"))),
 		)
 		if err != nil {
-			return InboundDocument{}, mapDBError(fmt.Errorf("create inbound stock movement: %w", err))
+			return mapDBError(fmt.Errorf("create inbound stock movement: %w", err))
 		}
 
 		movementID, err := movementResult.LastInsertId()
 		if err != nil {
-			return InboundDocument{}, fmt.Errorf("resolve inbound movement id: %w", err)
+			return fmt.Errorf("resolve inbound movement id: %w", err)
 		}
 
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE inbound_document_lines
 			SET movement_id = ?
 			WHERE id = ?
-		`, movementID, lineID); err != nil {
-			return InboundDocument{}, mapDBError(fmt.Errorf("link inbound line to movement: %w", err))
+		`, movementID, lineRow.ID); err != nil {
+			return mapDBError(fmt.Errorf("link inbound line to movement: %w", err))
 		}
 
 		currentQuantity, _, _, _, _, err := s.loadLockedItemForMovement(ctx, tx, itemID)
 		if err != nil {
-			return InboundDocument{}, err
+			return err
 		}
 		updatedQuantity := currentQuantity + receivedQty
 		movementInput := CreateMovementInput{
 			ItemID:            itemID,
 			MovementType:      "IN",
 			Quantity:          receivedQty,
-			StorageSection:    fallbackSection(firstNonEmpty(line.StorageSection, input.StorageSection)),
-			DeliveryDate:      deliveryDate.Format(time.DateOnly),
-			ContainerNo:       input.ContainerNo,
-			ExpectedQty:       line.ExpectedQty,
-			ReceivedQty:       line.ReceivedQty,
-			Pallets:           line.Pallets,
-			PalletsDetailCtns: line.PalletsDetailCtns,
-			UnitLabel:         firstNonEmpty(input.UnitLabel, "CTN"),
+			StorageSection:    fallbackSection(firstNonEmpty(lineRow.StorageSection, documentRow.StorageSection)),
+			DeliveryDate:      safeDateInput(documentRow.DeliveryDate),
+			ContainerNo:       documentRow.ContainerNo,
+			ExpectedQty:       lineRow.ExpectedQty,
+			ReceivedQty:       lineRow.ReceivedQty,
+			Pallets:           lineRow.Pallets,
+			PalletsDetailCtns: lineRow.PalletsDetailCtns,
+			UnitLabel:         firstNonEmpty(documentRow.UnitLabel, "CTN"),
 			HeightIn:          0,
-			DocumentNote:      input.DocumentNote,
-			Reason:            firstNonEmpty(line.LineNote, defaultMovementReason("IN")),
+			DocumentNote:      documentRow.DocumentNote,
+			Reason:            firstNonEmpty(lineRow.LineNote, defaultMovementReason("IN")),
 		}
-		if err := s.applyMovementToInventoryItem(ctx, tx, itemID, updatedQuantity, receivedQty, movementInput, deliveryDate, nil); err != nil {
-			return InboundDocument{}, mapDBError(fmt.Errorf("update inventory after inbound document line: %w", err))
+		if err := s.applyMovementToInventoryItem(ctx, tx, itemID, updatedQuantity, receivedQty, movementInput, documentRow.DeliveryDate, nil); err != nil {
+			return mapDBError(fmt.Errorf("update inventory after inbound document line: %w", err))
 		}
+	}
+
+	confirmedAt := time.Now().UTC()
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE inbound_documents
+		SET
+			status = ?,
+			confirmed_at = COALESCE(confirmed_at, ?),
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, DocumentStatusConfirmed, confirmedAt, documentID); err != nil {
+		return mapDBError(fmt.Errorf("mark inbound document confirmed: %w", err))
+	}
+
+	return nil
+}
+
+func (s *Store) CancelInboundDocument(ctx context.Context, documentID int64, input CancelInboundDocumentInput) (InboundDocument, error) {
+	input.Reason = strings.TrimSpace(input.Reason)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return InboundDocument{}, fmt.Errorf("begin inbound cancel transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	documentRow, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+
+	status := normalizeDocumentStatus(documentRow.Status)
+	if status == DocumentStatusCancelled {
+		return InboundDocument{}, fmt.Errorf("%w: inbound document is already cancelled", ErrInvalidInput)
+	}
+
+	cancellationReason := firstNonEmpty(input.Reason, fmt.Sprintf("Reversal of inbound %s", firstNonEmpty(documentRow.ContainerNo, fmt.Sprintf("IN-%d", documentID))))
+	cancelledAt := time.Now().UTC()
+
+	if status == DocumentStatusConfirmed {
+		lineRows, err := s.loadInboundDocumentLinesTx(ctx, tx, documentID)
+		if err != nil {
+			return InboundDocument{}, err
+		}
+
+		for _, lineRow := range lineRows {
+			if lineRow.ItemID <= 0 {
+				continue
+			}
+
+			currentQuantity, customerID, locationID, storageSection, descriptionSnapshot, err := s.loadLockedItemForMovement(ctx, tx, lineRow.ItemID)
+			if err != nil {
+				return InboundDocument{}, err
+			}
+
+			delta := -lineRow.receivedOrExpectedQty()
+			updatedQuantity := currentQuantity + delta
+			if updatedQuantity < 0 {
+				return InboundDocument{}, ErrInsufficientStock
+			}
+
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO stock_movements (
+					item_id,
+					inbound_document_id,
+					inbound_document_line_id,
+					customer_id,
+					location_id,
+					storage_section,
+					movement_type,
+					quantity_change,
+					delivery_date,
+					container_no,
+					description_snapshot,
+					expected_qty,
+					received_qty,
+					pallets,
+					pallets_detail_ctns,
+					unit_label,
+					height_in,
+					document_note,
+					reason
+				) VALUES (?, ?, ?, ?, ?, ?, 'REVERSAL', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`,
+				lineRow.ItemID,
+				documentID,
+				lineRow.ID,
+				customerID,
+				locationID,
+				fallbackSection(storageSection),
+				delta,
+				nullableTime(documentRow.DeliveryDate),
+				nullableString(documentRow.ContainerNo),
+				nullableString(firstNonEmpty(descriptionSnapshot, lineRow.DescriptionSnapshot)),
+				lineRow.ExpectedQty,
+				lineRow.ReceivedQty,
+				lineRow.Pallets,
+				nullableString(lineRow.PalletsDetailCtns),
+				nullableString(firstNonEmpty(lineRow.UnitLabel, documentRow.UnitLabel, "CTN")),
+				0,
+				nullableString(documentRow.DocumentNote),
+				nullableString(cancellationReason),
+			); err != nil {
+				return InboundDocument{}, mapDBError(fmt.Errorf("create inbound reversal movement: %w", err))
+			}
+
+			movementInput := CreateMovementInput{
+				ItemID:            lineRow.ItemID,
+				MovementType:      "REVERSAL",
+				Quantity:          lineRow.receivedOrExpectedQty(),
+				StorageSection:    fallbackSection(storageSection),
+				DeliveryDate:      safeDateInput(documentRow.DeliveryDate),
+				ContainerNo:       documentRow.ContainerNo,
+				ExpectedQty:       lineRow.ExpectedQty,
+				ReceivedQty:       lineRow.ReceivedQty,
+				Pallets:           lineRow.Pallets,
+				PalletsDetailCtns: lineRow.PalletsDetailCtns,
+				UnitLabel:         firstNonEmpty(lineRow.UnitLabel, documentRow.UnitLabel, "CTN"),
+				HeightIn:          0,
+				DocumentNote:      documentRow.DocumentNote,
+				Reason:            cancellationReason,
+			}
+			if err := s.applyMovementToInventoryItem(ctx, tx, lineRow.ItemID, updatedQuantity, delta, movementInput, documentRow.DeliveryDate, nil); err != nil {
+				return InboundDocument{}, mapDBError(fmt.Errorf("restore inventory after inbound cancellation: %w", err))
+			}
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE inbound_documents
+		SET
+			status = ?,
+			cancel_note = ?,
+			cancelled_at = ?,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, DocumentStatusCancelled, nullableString(cancellationReason), cancelledAt, documentID); err != nil {
+		return InboundDocument{}, mapDBError(fmt.Errorf("cancel inbound document: %w", err))
 	}
 
 	if err := tx.Commit(); err != nil {
-		return InboundDocument{}, fmt.Errorf("commit inbound document: %w", err)
+		return InboundDocument{}, fmt.Errorf("commit inbound cancel: %w", err)
 	}
 
 	return s.getInboundDocument(ctx, documentID)
+}
+
+func (s *Store) loadInboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx, documentID int64) (inboundDocumentRow, error) {
+	var documentRow inboundDocumentRow
+	if err := tx.QueryRowContext(ctx, `
+		SELECT
+			d.id,
+			d.customer_id,
+			c.name AS customer_name,
+			d.location_id,
+			l.name AS location_name,
+			d.delivery_date,
+			COALESCE(d.container_no, '') AS container_no,
+			d.storage_section,
+			COALESCE(d.unit_label, '') AS unit_label,
+			COALESCE(d.document_note, '') AS document_note,
+			d.status,
+			d.confirmed_at,
+			COALESCE(d.cancel_note, '') AS cancel_note,
+			d.cancelled_at,
+			d.created_at,
+			d.updated_at
+		FROM inbound_documents d
+		JOIN customers c ON c.id = d.customer_id
+		JOIN storage_locations l ON l.id = d.location_id
+		WHERE d.id = ?
+		FOR UPDATE
+	`, documentID).Scan(
+		&documentRow.ID,
+		&documentRow.CustomerID,
+		&documentRow.CustomerName,
+		&documentRow.LocationID,
+		&documentRow.LocationName,
+		&documentRow.DeliveryDate,
+		&documentRow.ContainerNo,
+		&documentRow.StorageSection,
+		&documentRow.UnitLabel,
+		&documentRow.DocumentNote,
+		&documentRow.Status,
+		&documentRow.ConfirmedAt,
+		&documentRow.CancelNote,
+		&documentRow.CancelledAt,
+		&documentRow.CreatedAt,
+		&documentRow.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return inboundDocumentRow{}, ErrNotFound
+		}
+		return inboundDocumentRow{}, fmt.Errorf("load inbound document for update: %w", err)
+	}
+
+	return documentRow, nil
+}
+
+func (s *Store) loadInboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, documentID int64) ([]inboundDocumentLineRow, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT
+			id,
+			document_id,
+			COALESCE(movement_id, 0) AS movement_id,
+			COALESCE(item_id, 0) AS item_id,
+			sku_snapshot,
+			COALESCE(description_snapshot, '') AS description_snapshot,
+			storage_section,
+			reorder_level,
+			expected_qty,
+			received_qty,
+			pallets,
+			COALESCE(pallets_detail_ctns, '') AS pallets_detail_ctns,
+			COALESCE(unit_label, '') AS unit_label,
+			COALESCE(line_note, '') AS line_note,
+			created_at
+		FROM inbound_document_lines
+		WHERE document_id = ?
+		ORDER BY sort_order ASC, id ASC
+	`, documentID)
+	if err != nil {
+		return nil, fmt.Errorf("load inbound document lines: %w", err)
+	}
+	defer rows.Close()
+
+	lineRows := make([]inboundDocumentLineRow, 0)
+	for rows.Next() {
+		var lineRow inboundDocumentLineRow
+		if err := rows.Scan(
+			&lineRow.ID,
+			&lineRow.DocumentID,
+			&lineRow.MovementID,
+			&lineRow.ItemID,
+			&lineRow.SKUSnapshot,
+			&lineRow.DescriptionSnapshot,
+			&lineRow.StorageSection,
+			&lineRow.ReorderLevel,
+			&lineRow.ExpectedQty,
+			&lineRow.ReceivedQty,
+			&lineRow.Pallets,
+			&lineRow.PalletsDetailCtns,
+			&lineRow.UnitLabel,
+			&lineRow.LineNote,
+			&lineRow.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan inbound document line: %w", err)
+		}
+		lineRows = append(lineRows, lineRow)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate inbound document lines: %w", err)
+	}
+
+	return lineRows, nil
 }
 
 func (s *Store) getInboundDocument(ctx context.Context, documentID int64) (InboundDocument, error) {
@@ -436,6 +940,9 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 			COALESCE(d.unit_label, '') AS unit_label,
 			COALESCE(d.document_note, '') AS document_note,
 			d.status,
+			d.confirmed_at,
+			COALESCE(d.cancel_note, '') AS cancel_note,
+			d.cancelled_at,
 			d.created_at,
 			d.updated_at
 		FROM inbound_documents d
@@ -460,20 +967,23 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 	documentsByID := make(map[int64]*InboundDocument, len(documentRows))
 	for _, row := range documentRows {
 		document := InboundDocument{
-			ID:              row.ID,
-			CustomerID:      row.CustomerID,
-			CustomerName:    row.CustomerName,
-			LocationID:      row.LocationID,
-			LocationName:    row.LocationName,
-			DeliveryDate:    row.DeliveryDate,
-			ContainerNo:     row.ContainerNo,
-			StorageSection:  fallbackSection(row.StorageSection),
-			UnitLabel:       row.UnitLabel,
-			DocumentNote:    row.DocumentNote,
-			Status:          row.Status,
-			CreatedAt:       row.CreatedAt,
-			UpdatedAt:       row.UpdatedAt,
-			Lines:           make([]InboundDocumentLine, 0),
+			ID:             row.ID,
+			CustomerID:     row.CustomerID,
+			CustomerName:   row.CustomerName,
+			LocationID:     row.LocationID,
+			LocationName:   row.LocationName,
+			DeliveryDate:   row.DeliveryDate,
+			ContainerNo:    row.ContainerNo,
+			StorageSection: fallbackSection(row.StorageSection),
+			UnitLabel:      row.UnitLabel,
+			DocumentNote:   row.DocumentNote,
+			Status:         normalizeDocumentStatus(row.Status),
+			ConfirmedAt:    row.ConfirmedAt,
+			CancelNote:     row.CancelNote,
+			CancelledAt:    row.CancelledAt,
+			CreatedAt:      row.CreatedAt,
+			UpdatedAt:      row.UpdatedAt,
+			Lines:          make([]InboundDocumentLine, 0),
 		}
 		documents = append(documents, document)
 		documentsByID[row.ID] = &documents[len(documents)-1]
@@ -484,10 +994,11 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 			id,
 			document_id,
 			COALESCE(movement_id, 0) AS movement_id,
-			item_id,
+			COALESCE(item_id, 0) AS item_id,
 			sku_snapshot,
 			COALESCE(description_snapshot, '') AS description_snapshot,
 			storage_section,
+			reorder_level,
 			expected_qty,
 			received_qty,
 			pallets,
@@ -522,6 +1033,7 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 			SKU:               lineRow.SKUSnapshot,
 			Description:       lineRow.DescriptionSnapshot,
 			StorageSection:    fallbackSection(lineRow.StorageSection),
+			ReorderLevel:      lineRow.ReorderLevel,
 			ExpectedQty:       lineRow.ExpectedQty,
 			ReceivedQty:       lineRow.ReceivedQty,
 			Pallets:           lineRow.Pallets,
@@ -539,21 +1051,60 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 }
 
 func (s *Store) findOrCreateInboundItem(ctx context.Context, tx *sql.Tx, documentInput CreateInboundDocumentInput, line CreateInboundDocumentLineInput, deliveryDate *time.Time) (int64, string, error) {
+	normalizedSection := fallbackSection(firstNonEmpty(line.StorageSection, documentInput.StorageSection))
+	normalizedContainerNo := strings.TrimSpace(documentInput.ContainerNo)
 	var itemID int64
 	var description string
 	err := tx.QueryRowContext(ctx, `
 		SELECT id, COALESCE(description, name, '')
 		FROM inventory_items
-		WHERE sku = ? AND customer_id = ? AND location_id = ?
+		WHERE
+			sku = ?
+			AND customer_id = ?
+			AND location_id = ?
+			AND COALESCE(NULLIF(storage_section, ''), 'A') = ?
+			AND COALESCE(container_no, '') = ?
 		ORDER BY updated_at DESC, id DESC
 		LIMIT 1
 		FOR UPDATE
-	`, line.SKU, documentInput.CustomerID, documentInput.LocationID).Scan(&itemID, &description)
+	`, line.SKU, documentInput.CustomerID, documentInput.LocationID, normalizedSection, normalizedContainerNo).Scan(&itemID, &description)
 	if err == nil {
 		if strings.TrimSpace(description) == "" {
 			description = line.Description
 		}
 		return itemID, description, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		err = tx.QueryRowContext(ctx, `
+			SELECT id, COALESCE(description, name, '')
+			FROM inventory_items
+			WHERE
+				sku = ?
+				AND customer_id = ?
+				AND location_id = ?
+				AND COALESCE(NULLIF(storage_section, ''), 'A') = ?
+				AND quantity = 0
+				AND COALESCE(container_no, '') = ''
+			ORDER BY updated_at DESC, id DESC
+			LIMIT 1
+			FOR UPDATE
+		`, line.SKU, documentInput.CustomerID, documentInput.LocationID, normalizedSection).Scan(&itemID, &description)
+		if err == nil {
+			if _, updateErr := tx.ExecContext(ctx, `
+				UPDATE inventory_items
+				SET
+					storage_section = ?,
+					container_no = ?,
+					updated_at = CURRENT_TIMESTAMP
+				WHERE id = ?
+			`, normalizedSection, normalizedContainerNo, itemID); updateErr != nil {
+				return 0, "", mapDBError(fmt.Errorf("prepare inbound placeholder inventory row: %w", updateErr))
+			}
+			if strings.TrimSpace(description) == "" {
+				description = line.Description
+			}
+			return itemID, description, nil
+		}
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, "", fmt.Errorf("load inbound inventory item by sku: %w", err)
@@ -625,7 +1176,7 @@ func (s *Store) findOrCreateInboundItem(ctx context.Context, tx *sql.Tx, documen
 		itemInput.LocationID,
 		itemInput.StorageSection,
 		nullableTime(deliveryDate),
-		nullableString(itemInput.ContainerNo),
+		itemInput.ContainerNo,
 		itemInput.ExpectedQty,
 		itemInput.ReceivedQty,
 		itemInput.Pallets,
@@ -647,6 +1198,7 @@ func sanitizeInboundDocumentInput(input CreateInboundDocumentInput) CreateInboun
 	input.ContainerNo = strings.TrimSpace(strings.ToUpper(input.ContainerNo))
 	input.StorageSection = fallbackSection(strings.TrimSpace(strings.ToUpper(input.StorageSection)))
 	input.UnitLabel = strings.TrimSpace(strings.ToUpper(input.UnitLabel))
+	input.Status = strings.TrimSpace(strings.ToUpper(input.Status))
 	input.DocumentNote = strings.TrimSpace(input.DocumentNote)
 
 	lines := make([]CreateInboundDocumentLineInput, 0, len(input.Lines))
@@ -666,6 +1218,10 @@ func sanitizeInboundDocumentInput(input CreateInboundDocumentInput) CreateInboun
 }
 
 func validateInboundDocumentInput(input CreateInboundDocumentInput) error {
+	if err := validateCreatableDocumentStatus(coalesceDocumentStatus(input.Status)); err != nil {
+		return err
+	}
+
 	switch {
 	case input.CustomerID <= 0:
 		return fmt.Errorf("%w: customer is required", ErrInvalidInput)
@@ -690,6 +1246,13 @@ func validateInboundDocumentInput(input CreateInboundDocumentInput) error {
 }
 
 func (line CreateInboundDocumentLineInput) receivedOrExpectedQty() int {
+	if line.ReceivedQty > 0 {
+		return line.ReceivedQty
+	}
+	return line.ExpectedQty
+}
+
+func (line inboundDocumentLineRow) receivedOrExpectedQty() int {
 	if line.ReceivedQty > 0 {
 		return line.ReceivedQty
 	}

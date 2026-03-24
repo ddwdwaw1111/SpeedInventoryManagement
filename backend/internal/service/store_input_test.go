@@ -40,6 +40,9 @@ func TestValidateItemInput(t *testing.T) {
 		CustomerID:   1,
 		LocationID:   2,
 		Quantity:     10,
+		AllocatedQty: 2,
+		DamagedQty:   1,
+		HoldQty:      1,
 		ReorderLevel: 2,
 	}
 
@@ -53,6 +56,8 @@ func TestValidateItemInput(t *testing.T) {
 		{SKU: "SKU-1001", Description: "Disposable Pan", CustomerID: 0, LocationID: 2},
 		{SKU: "SKU-1001", Description: "Disposable Pan", CustomerID: 1, LocationID: 0},
 		{SKU: "SKU-1001", Description: "Disposable Pan", CustomerID: 1, LocationID: 2, Quantity: -1},
+		{SKU: "SKU-1001", Description: "Disposable Pan", CustomerID: 1, LocationID: 2, Quantity: 10, AllocatedQty: -1},
+		{SKU: "SKU-1001", Description: "Disposable Pan", CustomerID: 1, LocationID: 2, Quantity: 5, AllocatedQty: 2, DamagedQty: 2, HoldQty: 2},
 	}
 
 	for _, tc := range testCases {

@@ -322,14 +322,14 @@ function buildTopSkuRows(items: Item[]): BarRow[] {
 
 function buildLowStockRows(items: Item[], formatReorderMeta: (onHand: string, reorder: string) => string): BarRow[] {
   return items
-    .filter((item) => item.reorderLevel > 0 && item.quantity <= item.reorderLevel)
-    .sort((left, right) => (right.reorderLevel - right.quantity) - (left.reorderLevel - left.quantity))
+    .filter((item) => item.reorderLevel > 0 && item.availableQty <= item.reorderLevel)
+    .sort((left, right) => (right.reorderLevel - right.availableQty) - (left.reorderLevel - left.availableQty))
     .slice(0, 8)
     .map((item) => ({
       label: item.sku,
-      value: Math.max(item.reorderLevel - item.quantity, 0),
-      meta: formatReorderMeta(formatNumber(item.quantity), formatNumber(item.reorderLevel)),
-      tone: item.quantity === 0 ? "red" : "amber"
+      value: Math.max(item.reorderLevel - item.availableQty, 0),
+      meta: formatReorderMeta(formatNumber(item.availableQty), formatNumber(item.reorderLevel)),
+      tone: item.availableQty === 0 ? "red" : "amber"
     }));
 }
 

@@ -105,6 +105,7 @@ type lockedTransferItem struct {
 	Unit           string
 	ReorderLevel   int
 	Quantity       int
+	AvailableQty   int
 }
 
 func (s *Store) ListInventoryTransfers(ctx context.Context, limit int) ([]InventoryTransfer, error) {
@@ -270,7 +271,7 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 		if sourceItem.LocationID == line.ToLocationID && fallbackSection(sourceItem.StorageSection) == toSection {
 			return InventoryTransfer{}, fmt.Errorf("%w: source and destination cannot be the same stock position", ErrInvalidInput)
 		}
-		if line.Quantity > sourceItem.Quantity {
+		if line.Quantity > sourceItem.AvailableQty {
 			return InventoryTransfer{}, ErrInsufficientStock
 		}
 
@@ -593,7 +594,8 @@ func (s *Store) loadLockedTransferItem(ctx context.Context, tx *sql.Tx, itemID i
 			COALESCE(i.description, i.name, ''),
 			COALESCE(i.unit, 'pcs'),
 			i.reorder_level,
-			i.quantity
+			i.quantity,
+			GREATEST(i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty, 0) AS available_qty
 		FROM inventory_items i
 		JOIN customers c ON c.id = i.customer_id
 		JOIN storage_locations l ON l.id = i.location_id
@@ -614,6 +616,7 @@ func (s *Store) loadLockedTransferItem(ctx context.Context, tx *sql.Tx, itemID i
 		&item.Unit,
 		&item.ReorderLevel,
 		&item.Quantity,
+		&item.AvailableQty,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return lockedTransferItem{}, ErrNotFound
@@ -683,7 +686,7 @@ func (s *Store) findOrCreateTransferDestinationItem(
 			height_in,
 			out_date,
 			last_restocked_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL, NULL, 0, 0, 0, NULL, 0, NULL, NULL)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL, '', 0, 0, 0, NULL, 0, NULL, NULL)
 	`,
 		sourceItem.SKUMasterID,
 		sourceItem.CustomerID,

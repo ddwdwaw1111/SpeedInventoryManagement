@@ -27,6 +27,7 @@ import { AppHeaderUser, AuthPage } from "./components/AuthPage";
 import { CustomerManagementPage } from "./components/CustomerManagementPage";
 import { CycleCountManagementPage } from "./components/CycleCountManagementPage";
 import { HomeDashboardPage } from "./components/HomeDashboardPage";
+import { InventorySummaryPage } from "./components/InventorySummaryPage";
 import { MasterInventoryPage } from "./components/MasterInventoryPage";
 import { ReportsPage } from "./components/ReportsPage";
 import { SKUMasterPage } from "./components/SKUMasterPage";
@@ -42,7 +43,6 @@ import type { AuditLog, Customer, CycleCount, InboundDocument, InventoryAdjustme
 export default function App() {
   const { t } = useI18n();
   const navLabels = {
-    overview: t("navDashboard"),
     receiving: t("navReceiving"),
     shipping: t("navShipping"),
     inventory: t("navInventory"),
@@ -127,7 +127,7 @@ export default function App() {
         api.getCustomers(),
         api.getSKUMasters(),
         api.getItems(),
-        api.getMovements(1000),
+        api.getMovements(20000),
         api.getInboundDocuments(300),
         api.getOutboundDocuments(300),
         api.getInventoryAdjustments(300),
@@ -225,6 +225,7 @@ export default function App() {
     { key: "reports", label: t("report"), description: t("reportDesc"), icon: <AssessmentOutlined fontSize="small" /> },
     { key: "inbound-management", label: t("inbound"), description: t("inboundDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
     { key: "outbound-management", label: t("outbound"), description: t("outboundDesc"), icon: <OutboxOutlined fontSize="small" /> },
+    { key: "inventory-summary", label: t("inventorySummary"), description: t("inventorySummaryDesc"), icon: <WarehouseOutlined fontSize="small" /> },
     { key: "adjustments", label: t("adjustments"), description: t("adjustmentsDesc"), icon: <TuneOutlined fontSize="small" /> },
     { key: "transfers", label: t("transfers"), description: t("transfersDesc"), icon: <CompareArrowsOutlined fontSize="small" /> },
     { key: "cycle-counts", label: t("cycleCounts"), description: t("cycleCountsDesc"), icon: <FactCheckOutlined fontSize="small" /> },
@@ -239,10 +240,9 @@ export default function App() {
   ];
   const pageItemMap = new Map(pageItems.map((item) => [item.key, item] as const));
   const navSections = [
-    { key: "overview", label: navLabels.overview, items: ["dashboard"] as PageKey[] },
     { key: "receiving", label: navLabels.receiving, items: ["inbound-management", "cycle-counts"] as PageKey[] },
     { key: "shipping", label: navLabels.shipping, items: ["outbound-management"] as PageKey[] },
-    { key: "inventory", label: navLabels.inventory, items: ["stock-by-location", "adjustments", "transfers", "all-activity"] as PageKey[] },
+    { key: "inventory", label: navLabels.inventory, items: ["inventory-summary", "stock-by-location", "adjustments", "transfers", "all-activity"] as PageKey[] },
     { key: "master-data", label: navLabels.masterData, items: ["customers", "sku-master", "storage-management"] as PageKey[] },
     { key: "reports", label: navLabels.reports, items: ["reports"] as PageKey[] },
     { key: "administration", label: navLabels.administration, items: ["audit-logs", "user-management", "settings"] as PageKey[] }
@@ -253,7 +253,8 @@ export default function App() {
       .filter((item): item is NonNullable<typeof item> => Boolean(item))
   })).filter((section) => section.items.length > 0);
   const activePageItem = pageItemMap.get(activePage) ?? pageItems[0];
-  const activeNavSection = navSections.find((section) => section.items.some((item) => item.key === activePage)) ?? navSections[0];
+  const homePageItem = pageItemMap.get("dashboard");
+  const activeNavSection = navSections.find((section) => section.items.some((item) => item.key === activePage));
   const showPageContext = activePage !== "dashboard";
   useEffect(() => {
     if (!activeNavSection) return;
@@ -309,6 +310,19 @@ export default function App() {
 
       <div className={`app-workspace ${sidebarCollapsed ? "app-workspace--sidebar-collapsed" : ""}`}>
         <aside className={`app-sidebar ${sidebarCollapsed ? "app-sidebar--collapsed" : ""}`}>
+        {homePageItem ? (
+          <div className="app-sidebar__home">
+            <button
+              className={`app-sidebar__link app-sidebar__link--home ${activePage === homePageItem.key ? "app-sidebar__link--active" : ""}`}
+              type="button"
+              onClick={() => navigateToPage(homePageItem.key, setActivePage)}
+              title={sidebarCollapsed ? homePageItem.label : undefined}
+            >
+              <span className="app-sidebar__link-icon" aria-hidden="true">{homePageItem.icon}</span>
+              {!sidebarCollapsed ? <span className="app-sidebar__link-label">{homePageItem.label}</span> : null}
+            </button>
+          </div>
+        ) : null}
         <nav className="app-sidebar__nav" aria-label={t("pages")}>
           {navSections.map((section) => (
             <section className="app-sidebar__section" key={section.key}>
@@ -359,7 +373,7 @@ export default function App() {
           {showPageContext ? (
             <div className="app-page-context">
               <div className="app-page-context__breadcrumb">
-                <span>{activeNavSection.label}</span>
+                <span>{activeNavSection?.label}</span>
                 <span aria-hidden="true">/</span>
                 <span>{activePageItem.label}</span>
               </div>
@@ -370,6 +384,7 @@ export default function App() {
           {activePage === "adjustments" ? <AdjustmentManagementPage adjustments={adjustments} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
           {activePage === "transfers" ? <TransferManagementPage transfers={transfers} items={items} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
           {activePage === "cycle-counts" ? <CycleCountManagementPage cycleCounts={cycleCounts} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
+          {activePage === "inventory-summary" ? <InventorySummaryPage items={items} movements={movements} customers={customers} locations={locations} isLoading={isLoading} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
           {activePage === "all-activity" ? <AllActivityPage movements={movements} locations={locations} customers={customers} isLoading={isLoading} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
           {activePage === "customers" ? <CustomerManagementPage customers={customers} items={items} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} movements={movements} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
           {activePage === "audit-logs" && canViewAuditLogs ? <AuditLogPage auditLogs={auditLogs} isLoading={isLoading} /> : null}

@@ -175,3 +175,31 @@ func TestMovementWriteRoutesRemoved(t *testing.T) {
 		})
 	}
 }
+
+func TestDocumentStatusRoutesRequireAuth(t *testing.T) {
+	handler := NewHandler(nil, "", "sim_session", false)
+
+	testCases := []struct {
+		name   string
+		target string
+	}{
+		{name: "confirm outbound", target: "/api/outbound-documents/1/confirm"},
+		{name: "cancel outbound", target: "/api/outbound-documents/1/cancel"},
+		{name: "confirm inbound", target: "/api/inbound-documents/1/confirm"},
+		{name: "cancel inbound", target: "/api/inbound-documents/1/cancel"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, tc.target, strings.NewReader("{}"))
+			request.Header.Set("Content-Type", "application/json")
+
+			handler.ServeHTTP(recorder, request)
+
+			if recorder.Code != http.StatusUnauthorized {
+				t.Fatalf("expected status 401, got %d", recorder.Code)
+			}
+		})
+	}
+}

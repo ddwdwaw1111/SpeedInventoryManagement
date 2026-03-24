@@ -7,7 +7,7 @@ import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
 import OutboxOutlinedIcon from "@mui/icons-material/OutboxOutlined";
 import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
 import { type FormEvent, useDeferredValue, useEffect, useMemo, useState } from "react";
-import { Box, Button, Dialog, DialogContent, DialogTitle, Drawer, IconButton } from "@mui/material";
+import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, Drawer, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
 import { api } from "../lib/api";
@@ -85,12 +85,25 @@ export function CustomerManagementPage({
   )), [customers, normalizedSearch]);
 
   const inventorySummaryByCustomer = useMemo(() => {
-    const summary = new Map<number, { stockRows: number; onHand: number }>();
+    const summary = new Map<number, { stockRows: number; onHand: number; available: number; allocated: number; warehouses: Set<number>; lowStockRows: number }>();
 
     for (const item of items) {
-      const current = summary.get(item.customerId) ?? { stockRows: 0, onHand: 0 };
+      const current = summary.get(item.customerId) ?? {
+        stockRows: 0,
+        onHand: 0,
+        available: 0,
+        allocated: 0,
+        warehouses: new Set<number>(),
+        lowStockRows: 0
+      };
       current.stockRows += 1;
       current.onHand += item.quantity;
+      current.available += item.availableQty;
+      current.allocated += item.allocatedQty;
+      current.warehouses.add(item.locationId);
+      if (item.reorderLevel > 0 && item.availableQty <= item.reorderLevel) {
+        current.lowStockRows += 1;
+      }
       summary.set(item.customerId, current);
     }
 
@@ -118,31 +131,40 @@ export function CustomerManagementPage({
   const selectedCustomerItems = useMemo(
     () => items
       .filter((item) => item.customerId === selectedCustomerId)
-      .sort((left, right) => right.quantity - left.quantity)
-      .slice(0, 6),
+      .sort((left, right) => right.availableQty - left.availableQty)
+      .slice(0, 8),
     [items, selectedCustomerId]
   );
 
   const selectedInboundDocuments = useMemo(
     () => inboundDocuments
       .filter((document) => document.customerId === selectedCustomerId)
-      .slice(0, 5),
+      .sort((left, right) => getDocumentTimestamp(right.updatedAt || right.createdAt) - getDocumentTimestamp(left.updatedAt || left.createdAt))
+      .slice(0, 6),
     [inboundDocuments, selectedCustomerId]
   );
 
   const selectedOutboundDocuments = useMemo(
     () => outboundDocuments
       .filter((document) => document.customerId === selectedCustomerId)
-      .slice(0, 5),
+      .sort((left, right) => getDocumentTimestamp(right.updatedAt || right.createdAt) - getDocumentTimestamp(left.updatedAt || left.createdAt))
+      .slice(0, 6),
     [outboundDocuments, selectedCustomerId]
   );
 
   const selectedCustomerMovements = useMemo(
     () => movements
       .filter((movement) => movement.customerId === selectedCustomerId)
-      .slice(0, 6),
+      .sort((left, right) => getMovementTimestamp(right) - getMovementTimestamp(left))
+      .slice(0, 8),
     [movements, selectedCustomerId]
   );
+
+  const selectedCustomerSummary = selectedCustomer
+    ? inventorySummaryByCustomer.get(selectedCustomer.id) ?? { stockRows: 0, onHand: 0, available: 0, allocated: 0, warehouses: new Set<number>(), lowStockRows: 0 }
+    : null;
+  const selectedOpenDocumentsCount = selectedInboundDocuments.filter((document) => isOpenStatus(document.status)).length
+    + selectedOutboundDocuments.filter((document) => isOpenStatus(document.status)).length;
 
   const columns = useMemo<GridColDef<Customer>[]>(() => [
     { field: "name", headerName: t("customer"), minWidth: 180, flex: 1 },
@@ -342,23 +364,23 @@ export function CustomerManagementPage({
             </div>
 
             <div className="document-drawer__status-bar">
-              <div className="document-drawer__status-main">
-                <div className="sheet-note">
-                  <strong>{selectedCustomer.notes || "-"}</strong>
-                  <div>{t("notes")}</div>
+                <div className="document-drawer__status-main">
+                  <div className="sheet-note">
+                    <strong>{selectedCustomer.notes || "-"}</strong>
+                    <div>{t("notes")}</div>
+                  </div>
                 </div>
-              </div>
               <div className="document-drawer__status-stat">
-                <strong>{inventorySummaryByCustomer.get(selectedCustomer.id)?.stockRows ?? 0}</strong>
+                <strong>{selectedCustomerSummary?.stockRows ?? 0}</strong>
                 <span>{t("assignedSkuRows")}</span>
               </div>
               <div className="document-drawer__status-stat">
-                <strong>{inventorySummaryByCustomer.get(selectedCustomer.id)?.onHand ?? 0}</strong>
+                <strong>{selectedCustomerSummary?.onHand ?? 0}</strong>
                 <span>{t("onHand")}</span>
               </div>
               <div className="document-drawer__status-stat">
-                <strong>{selectedInboundDocuments.length} / {selectedOutboundDocuments.length}</strong>
-                <span>{t("inbound")} / {t("outbound")}</span>
+                <strong>{selectedCustomerSummary?.available ?? 0}</strong>
+                <span>{t("availableQty")}</span>
               </div>
             </div>
 
@@ -373,6 +395,25 @@ export function CustomerManagementPage({
               </div>
             </div>
 
+            <div className="document-drawer__meta">
+              <div className="sheet-note">
+                <strong>{t("allocatedQty")}</strong><br />
+                {selectedCustomerSummary?.allocated ?? 0}
+              </div>
+              <div className="sheet-note">
+                <strong>{t("customerWarehouseFootprint")}</strong><br />
+                {selectedCustomerSummary?.warehouses.size ?? 0}
+              </div>
+              <div className="sheet-note">
+                <strong>{t("customerLowStockRows")}</strong><br />
+                {selectedCustomerSummary?.lowStockRows ?? 0}
+              </div>
+              <div className="sheet-note">
+                <strong>{t("openDocuments")}</strong><br />
+                {selectedOpenDocumentsCount}
+              </div>
+            </div>
+
             <div>
               <div className="document-drawer__section-title">{t("currentInventoryRows")}</div>
               <div className="document-drawer__list">
@@ -383,8 +424,8 @@ export function CustomerManagementPage({
                       <span>{item.description || item.name}</span>
                     </div>
                     <div>
-                      <strong>{item.quantity}</strong>
-                      <span>{item.locationName} / {item.storageSection || "A"}</span>
+                      <strong>{item.quantity} / {item.availableQty}</strong>
+                      <span>{item.locationName} / {item.storageSection || "A"} · {t("onHand")} / {t("availableQty")}</span>
                     </div>
                   </div>
                 )) : <div className="sheet-note">{t("noCustomerInventory")}</div>}
@@ -404,6 +445,7 @@ export function CustomerManagementPage({
                       <strong>{document.totalReceivedQty}</strong>
                       <span>{formatDateValue(document.deliveryDate, dateFormatter)}</span>
                     </div>
+                    <div>{renderDocumentStatusChip(document.status, t)}</div>
                   </div>
                 )) : <div className="sheet-note">{t("noCustomerDocuments")}</div>}
               </div>
@@ -422,6 +464,7 @@ export function CustomerManagementPage({
                       <strong>{document.totalQty}</strong>
                       <span>{formatDateValue(document.outDate, dateFormatter)}</span>
                     </div>
+                    <div>{renderDocumentStatusChip(document.status, t)}</div>
                   </div>
                 )) : <div className="sheet-note">{t("noCustomerDocuments")}</div>}
               </div>
@@ -433,11 +476,11 @@ export function CustomerManagementPage({
                 {selectedCustomerMovements.length > 0 ? selectedCustomerMovements.map((movement) => (
                   <div className="document-drawer__list-row" key={movement.id}>
                     <div>
-                      <strong>{movement.movementType}</strong>
+                      <strong>{renderMovementTypeLabel(movement.movementType, t)}</strong>
                       <span>{movement.sku} | {movement.locationName} / {movement.storageSection || "A"}</span>
                     </div>
                     <div>
-                      <strong>{movement.quantityChange}</strong>
+                      <strong>{formatSignedQuantity(movement.quantityChange)}</strong>
                       <span>{formatDateValue(movement.createdAt, dateFormatter)}</span>
                     </div>
                   </div>
@@ -480,4 +523,57 @@ export function CustomerManagementPage({
       </Dialog>
     </main>
   );
+}
+
+function getDocumentTimestamp(value: string | null | undefined) {
+  if (!value) return 0;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function getMovementTimestamp(movement: Movement) {
+  return getDocumentTimestamp(movement.outDate || movement.deliveryDate || movement.createdAt);
+}
+
+function isOpenStatus(status: string) {
+  const normalized = status.trim().toUpperCase();
+  return normalized === "DRAFT" || normalized === "CONFIRMED";
+}
+
+function renderDocumentStatusChip(status: string, t: (key: string) => string) {
+  const normalized = status.trim().toUpperCase();
+  if (normalized === "CANCELLED") {
+    return <Chip label={t("cancelled")} color="error" size="small" />;
+  }
+  if (normalized === "CONFIRMED") {
+    return <Chip label={t("confirmed")} color="success" size="small" />;
+  }
+  if (normalized === "DRAFT") {
+    return <Chip label={t("draft")} color="default" size="small" />;
+  }
+  return <Chip label={t("confirmed")} color="success" size="small" />;
+}
+
+function renderMovementTypeLabel(movementType: Movement["movementType"], t: (key: string) => string) {
+  switch (movementType) {
+    case "IN":
+      return t("inbound");
+    case "OUT":
+      return t("outbound");
+    case "ADJUST":
+      return t("adjustments");
+    case "REVERSAL":
+      return t("reversal");
+    case "TRANSFER_IN":
+    case "TRANSFER_OUT":
+      return t("transfers");
+    case "COUNT":
+      return t("cycleCounts");
+    default:
+      return movementType;
+  }
+}
+
+function formatSignedQuantity(quantity: number) {
+  return quantity > 0 ? `+${quantity}` : String(quantity);
 }

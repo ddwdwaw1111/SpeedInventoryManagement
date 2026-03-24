@@ -11,6 +11,7 @@ func TestSanitizeInboundDocumentInput(t *testing.T) {
 		ContainerNo:    " mrku123 ",
 		StorageSection: " ",
 		UnitLabel:      " ctn ",
+		Status:         " confirmed ",
 		DocumentNote:   "  inbound note ",
 		Lines: []CreateInboundDocumentLineInput{
 			{SKU: " sku-1 ", Description: "  Pan  ", StorageSection: " b ", LineNote: "  keep cold ", ExpectedQty: 10},
@@ -26,6 +27,9 @@ func TestSanitizeInboundDocumentInput(t *testing.T) {
 	}
 	if input.UnitLabel != "CTN" {
 		t.Fatalf("expected uppercase unit label, got %q", input.UnitLabel)
+	}
+	if input.Status != "CONFIRMED" {
+		t.Fatalf("expected uppercase status, got %q", input.Status)
 	}
 	if input.DocumentNote != "inbound note" {
 		t.Fatalf("expected trimmed document note, got %q", input.DocumentNote)
@@ -61,6 +65,7 @@ func TestValidateInboundDocumentInput(t *testing.T) {
 		{LocationID: 1, Lines: []CreateInboundDocumentLineInput{{SKU: "SKU-1", ExpectedQty: 10}}},
 		{CustomerID: 1, Lines: []CreateInboundDocumentLineInput{{SKU: "SKU-1", ExpectedQty: 10}}},
 		{CustomerID: 1, LocationID: 2},
+		{CustomerID: 1, LocationID: 2, Status: "INVALID", Lines: []CreateInboundDocumentLineInput{{SKU: "SKU-1", ExpectedQty: 10}}},
 		{CustomerID: 1, LocationID: 2, Lines: []CreateInboundDocumentLineInput{{SKU: "", ExpectedQty: 10}}},
 		{CustomerID: 1, LocationID: 2, Lines: []CreateInboundDocumentLineInput{{SKU: "SKU-1"}}},
 	}
@@ -76,6 +81,11 @@ func TestSanitizeOutboundDocumentInput(t *testing.T) {
 	input := sanitizeOutboundDocumentInput(CreateOutboundDocumentInput{
 		PackingListNo: " pl-001 ",
 		OrderRef:      " so-100 ",
+		ShipToName:    " receiver ",
+		ShipToAddress: " 123 main st ",
+		ShipToContact: " alex ",
+		CarrierName:   " fedex ",
+		Status:        " draft ",
 		DocumentNote:  "  urgent shipment ",
 		Lines: []CreateOutboundDocumentLineInput{
 			{ItemID: 1, Quantity: 3, UnitLabel: " ctn ", CartonSizeMM: " 400*300*200 ", LineNote: "  fragile "},
@@ -88,6 +98,15 @@ func TestSanitizeOutboundDocumentInput(t *testing.T) {
 	}
 	if input.OrderRef != "SO-100" {
 		t.Fatalf("expected uppercase order ref, got %q", input.OrderRef)
+	}
+	if input.ShipToName != "receiver" || input.ShipToAddress != "123 main st" || input.ShipToContact != "alex" {
+		t.Fatalf("expected trimmed ship-to fields, got %#v", input)
+	}
+	if input.CarrierName != "fedex" {
+		t.Fatalf("expected normalized shipment fields, got %#v", input)
+	}
+	if input.Status != "DRAFT" {
+		t.Fatalf("expected uppercase document status, got %q", input.Status)
 	}
 	if input.DocumentNote != "urgent shipment" {
 		t.Fatalf("expected trimmed document note, got %q", input.DocumentNote)
@@ -116,6 +135,7 @@ func TestValidateOutboundDocumentInput(t *testing.T) {
 
 	testCases := []CreateOutboundDocumentInput{
 		{},
+		{Status: "UNKNOWN", Lines: []CreateOutboundDocumentLineInput{{ItemID: 1, Quantity: 3}}},
 		{Lines: []CreateOutboundDocumentLineInput{{ItemID: 0, Quantity: 3}}},
 		{Lines: []CreateOutboundDocumentLineInput{{ItemID: 1, Quantity: 0}}},
 		{Lines: []CreateOutboundDocumentLineInput{{ItemID: 1, Quantity: 1, NetWeightKgs: -1}}},

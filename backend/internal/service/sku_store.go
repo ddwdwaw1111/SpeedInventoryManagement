@@ -12,6 +12,7 @@ func (s *Store) ListSKUMasters(ctx context.Context, search string) ([]SKUMaster,
 	query := `
 		SELECT
 			id,
+			COALESCE(item_number, '') AS item_number,
 			sku,
 			name,
 			category,
@@ -27,8 +28,8 @@ func (s *Store) ListSKUMasters(ctx context.Context, search string) ([]SKUMaster,
 	args := make([]any, 0)
 	if trimmedSearch := strings.TrimSpace(search); trimmedSearch != "" {
 		likeValue := "%" + trimmedSearch + "%"
-		query += " AND (sku LIKE ? OR name LIKE ? OR description LIKE ? OR category LIKE ?)"
-		args = append(args, likeValue, likeValue, likeValue, likeValue)
+		query += " AND (item_number LIKE ? OR sku LIKE ? OR name LIKE ? OR description LIKE ? OR category LIKE ?)"
+		args = append(args, likeValue, likeValue, likeValue, likeValue, likeValue)
 	}
 
 	query += " ORDER BY updated_at DESC, sku ASC"
@@ -48,9 +49,10 @@ func (s *Store) CreateSKUMaster(ctx context.Context, input CreateSKUMasterInput)
 	}
 
 	result, err := s.db.ExecContext(ctx, `
-		INSERT INTO sku_master (sku, name, category, description, unit, reorder_level)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO sku_master (item_number, sku, name, category, description, unit, reorder_level)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`,
+		nullableString(input.ItemNumber),
 		input.SKU,
 		input.Name,
 		input.Category,
@@ -79,6 +81,7 @@ func (s *Store) UpdateSKUMaster(ctx context.Context, skuMasterID int64, input Cr
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE sku_master
 		SET
+			item_number = ?,
 			sku = ?,
 			name = ?,
 			category = ?,
@@ -88,6 +91,7 @@ func (s *Store) UpdateSKUMaster(ctx context.Context, skuMasterID int64, input Cr
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`,
+		nullableString(input.ItemNumber),
 		input.SKU,
 		input.Name,
 		input.Category,
@@ -111,6 +115,7 @@ func (s *Store) UpdateSKUMaster(ctx context.Context, skuMasterID int64, input Cr
 	if _, err := s.db.ExecContext(ctx, `
 		UPDATE inventory_items
 		SET
+			item_number = ?,
 			sku = ?,
 			name = ?,
 			category = ?,
@@ -120,6 +125,7 @@ func (s *Store) UpdateSKUMaster(ctx context.Context, skuMasterID int64, input Cr
 			updated_at = CURRENT_TIMESTAMP
 		WHERE sku_master_id = ?
 	`,
+		nullableString(input.ItemNumber),
 		input.SKU,
 		input.Name,
 		input.Category,
@@ -168,6 +174,7 @@ func (s *Store) getSKUMaster(ctx context.Context, skuMasterID int64) (SKUMaster,
 	if err := s.db.GetContext(ctx, &skuMaster, `
 		SELECT
 			id,
+			COALESCE(item_number, '') AS item_number,
 			sku,
 			name,
 			category,
@@ -189,6 +196,7 @@ func (s *Store) getSKUMaster(ctx context.Context, skuMasterID int64) (SKUMaster,
 }
 
 func sanitizeSKUMasterInput(input CreateSKUMasterInput) CreateSKUMasterInput {
+	input.ItemNumber = strings.TrimSpace(strings.ToUpper(input.ItemNumber))
 	input.SKU = strings.TrimSpace(strings.ToUpper(input.SKU))
 	input.Name = strings.TrimSpace(input.Name)
 	input.Category = strings.TrimSpace(input.Category)

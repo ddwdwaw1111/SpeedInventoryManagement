@@ -56,8 +56,13 @@ func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName s
 	operator.POST("/items", server.handleCreateItem)
 	operator.PUT("/items/:id", server.handleUpdateItem)
 	operator.POST("/outbound-documents", server.handleCreateOutboundDocument)
+	operator.PUT("/outbound-documents/:id", server.handleUpdateOutboundDocument)
+	operator.POST("/outbound-documents/:id/confirm", server.handleConfirmOutboundDocument)
 	operator.POST("/outbound-documents/:id/cancel", server.handleCancelOutboundDocument)
 	operator.POST("/inbound-documents", server.handleCreateInboundDocument)
+	operator.PUT("/inbound-documents/:id", server.handleUpdateInboundDocument)
+	operator.POST("/inbound-documents/:id/confirm", server.handleConfirmInboundDocument)
+	operator.POST("/inbound-documents/:id/cancel", server.handleCancelInboundDocument)
 	operator.POST("/adjustments", server.handleCreateInventoryAdjustment)
 	operator.POST("/transfers", server.handleCreateInventoryTransfer)
 	operator.POST("/cycle-counts", server.handleCreateCycleCount)
@@ -279,11 +284,12 @@ func (s *Server) handleCreateSKUMaster(c *gin.Context) {
 	}
 
 	s.writeAuditLog(c, "CREATE", "sku_master", skuMaster.ID, skuMaster.SKU, "Created SKU master", map[string]any{
-		"sku":           skuMaster.SKU,
-		"name":          skuMaster.Name,
-		"category":      skuMaster.Category,
-		"reorderLevel":  skuMaster.ReorderLevel,
-		"unit":          skuMaster.Unit,
+		"itemNumber":    skuMaster.ItemNumber,
+		"sku":          skuMaster.SKU,
+		"name":         skuMaster.Name,
+		"category":     skuMaster.Category,
+		"reorderLevel": skuMaster.ReorderLevel,
+		"unit":         skuMaster.Unit,
 	})
 
 	writeJSON(c, http.StatusCreated, skuMaster)
@@ -309,6 +315,7 @@ func (s *Server) handleUpdateSKUMaster(c *gin.Context) {
 	}
 
 	s.writeAuditLog(c, "UPDATE", "sku_master", skuMaster.ID, skuMaster.SKU, "Updated SKU master", map[string]any{
+		"itemNumber":    skuMaster.ItemNumber,
 		"sku":          skuMaster.SKU,
 		"name":         skuMaster.Name,
 		"category":     skuMaster.Category,
@@ -377,6 +384,7 @@ func (s *Server) handleCreateItem(c *gin.Context) {
 	}
 
 	s.writeAuditLog(c, "CREATE", "inventory_item", item.ID, item.SKU, "Created stock by location row", map[string]any{
+		"itemNumber":     item.ItemNumber,
 		"sku":            item.SKU,
 		"customer":       item.CustomerName,
 		"location":       item.LocationName,
@@ -407,6 +415,7 @@ func (s *Server) handleUpdateItem(c *gin.Context) {
 	}
 
 	s.writeAuditLog(c, "UPDATE", "inventory_item", item.ID, item.SKU, "Updated stock by location row", map[string]any{
+		"itemNumber":     item.ItemNumber,
 		"sku":            item.SKU,
 		"customer":       item.CustomerName,
 		"location":       item.LocationName,
@@ -468,9 +477,9 @@ func (s *Server) handleCreateMovement(c *gin.Context) {
 	}
 
 	s.writeAuditLog(c, "CREATE", "movement", movement.ID, movement.SKU, "Created standalone movement", map[string]any{
-		"movementType": movement.MovementType,
+		"movementType":   movement.MovementType,
 		"quantityChange": movement.QuantityChange,
-		"location": movement.LocationName,
+		"location":       movement.LocationName,
 		"storageSection": movement.StorageSection,
 	})
 
@@ -497,9 +506,9 @@ func (s *Server) handleUpdateMovement(c *gin.Context) {
 	}
 
 	s.writeAuditLog(c, "UPDATE", "movement", movement.ID, movement.SKU, "Updated standalone movement", map[string]any{
-		"movementType": movement.MovementType,
+		"movementType":   movement.MovementType,
 		"quantityChange": movement.QuantityChange,
-		"location": movement.LocationName,
+		"location":       movement.LocationName,
 		"storageSection": movement.StorageSection,
 	})
 
@@ -571,11 +580,68 @@ func (s *Server) handleCreateOutboundDocument(c *gin.Context) {
 	s.writeAuditLog(c, "CREATE", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Created outbound document", map[string]any{
 		"packingListNo": document.PackingListNo,
 		"customer":      document.CustomerName,
+		"status":        document.Status,
+		"shipToName":    document.ShipToName,
+		"carrierName":   document.CarrierName,
 		"totalLines":    document.TotalLines,
 		"totalQty":      document.TotalQty,
 	})
 
 	writeJSON(c, http.StatusCreated, document)
+}
+
+func (s *Server) handleUpdateOutboundDocument(c *gin.Context) {
+	documentID, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var input service.CreateOutboundDocumentInput
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	document, err := s.store.UpdateOutboundDocument(c.Request.Context(), documentID, input)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "UPDATE", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Updated outbound draft", map[string]any{
+		"packingListNo": document.PackingListNo,
+		"customer":      document.CustomerName,
+		"status":        document.Status,
+		"shipToName":    document.ShipToName,
+		"carrierName":   document.CarrierName,
+		"totalLines":    document.TotalLines,
+		"totalQty":      document.TotalQty,
+	})
+
+	writeJSON(c, http.StatusOK, document)
+}
+
+func (s *Server) handleConfirmOutboundDocument(c *gin.Context) {
+	documentID, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	document, err := s.store.ConfirmOutboundDocument(c.Request.Context(), documentID)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "CONFIRM", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Confirmed outbound document", map[string]any{
+		"packingListNo": document.PackingListNo,
+		"status":        document.Status,
+		"confirmedAt":   document.ConfirmedAt,
+	})
+
+	writeJSON(c, http.StatusOK, document)
 }
 
 func (s *Server) handleCancelOutboundDocument(c *gin.Context) {
@@ -601,7 +667,8 @@ func (s *Server) handleCancelOutboundDocument(c *gin.Context) {
 
 	s.writeAuditLog(c, "CANCEL", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Cancelled outbound document", map[string]any{
 		"packingListNo": document.PackingListNo,
-		"reason":        input.Reason,
+		"status":        document.Status,
+		"reason":        document.CancelNote,
 		"cancelledAt":   document.CancelledAt,
 	})
 
@@ -642,14 +709,101 @@ func (s *Server) handleCreateInboundDocument(c *gin.Context) {
 	}
 
 	s.writeAuditLog(c, "CREATE", "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), "Created inbound document", map[string]any{
-		"containerNo":  document.ContainerNo,
-		"customer":     document.CustomerName,
-		"location":     document.LocationName,
-		"totalLines":   document.TotalLines,
+		"containerNo":   document.ContainerNo,
+		"customer":      document.CustomerName,
+		"location":      document.LocationName,
+		"status":        document.Status,
+		"totalLines":    document.TotalLines,
 		"totalReceived": document.TotalReceivedQty,
 	})
 
 	writeJSON(c, http.StatusCreated, document)
+}
+
+func (s *Server) handleUpdateInboundDocument(c *gin.Context) {
+	documentID, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var input service.CreateInboundDocumentInput
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	document, err := s.store.UpdateInboundDocument(c.Request.Context(), documentID, input)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "UPDATE", "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), "Updated inbound draft", map[string]any{
+		"containerNo":   document.ContainerNo,
+		"customer":      document.CustomerName,
+		"location":      document.LocationName,
+		"status":        document.Status,
+		"totalLines":    document.TotalLines,
+		"totalReceived": document.TotalReceivedQty,
+	})
+
+	writeJSON(c, http.StatusOK, document)
+}
+
+func (s *Server) handleConfirmInboundDocument(c *gin.Context) {
+	documentID, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	document, err := s.store.ConfirmInboundDocument(c.Request.Context(), documentID)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "CONFIRM", "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), "Confirmed inbound document", map[string]any{
+		"containerNo":   document.ContainerNo,
+		"status":        document.Status,
+		"confirmedAt":   document.ConfirmedAt,
+		"totalLines":    document.TotalLines,
+		"totalExpected": document.TotalExpectedQty,
+	})
+
+	writeJSON(c, http.StatusOK, document)
+}
+
+func (s *Server) handleCancelInboundDocument(c *gin.Context) {
+	documentID, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var input service.CancelInboundDocumentInput
+	if c.Request.ContentLength > 0 {
+		if err := bindJSON(c, &input); err != nil {
+			writeError(c, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
+	document, err := s.store.CancelInboundDocument(c.Request.Context(), documentID, input)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "CANCEL", "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), "Cancelled inbound document", map[string]any{
+		"containerNo": document.ContainerNo,
+		"status":      document.Status,
+		"reason":      document.CancelNote,
+		"cancelledAt": document.CancelledAt,
+	})
+
+	writeJSON(c, http.StatusOK, document)
 }
 
 func (s *Server) handleListInventoryAdjustments(c *gin.Context) {

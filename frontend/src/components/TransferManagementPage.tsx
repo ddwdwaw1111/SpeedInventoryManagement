@@ -87,7 +87,7 @@ export function TransferManagementPage({
     }
   }, [selectedTransfer, selectedTransferId]);
 
-  const availableSourceItems = useMemo(() => items.filter((item) => item.quantity > 0), [items]);
+  const availableSourceItems = useMemo(() => items.filter((item) => item.availableQty > 0), [items]);
 
   const columns = useMemo<GridColDef<InventoryTransfer>[]>(() => [
     { field: "transferNo", headerName: t("transferNo"), minWidth: 180, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.transferNo}</span> },
@@ -385,12 +385,12 @@ export function TransferManagementPage({
                             <option value="">{t("selectStockRow")}</option>
                             {availableSourceItems.map((item) => (
                               <option key={item.id} value={item.id}>
-                                {`${item.customerName} | ${item.locationName} / ${item.storageSection || "A"} | ${item.sku} - ${displayDescription(item)} (${t("availableQty")}: ${item.quantity})`}
+                                {`${item.customerName} | ${item.locationName} / ${item.storageSection || "A"} | ${item.sku} - ${displayDescription(item)} (${t("availableQty")}: ${item.availableQty})`}
                               </option>
                             ))}
                           </select>
                         </label>
-                        <label>{t("availableQty")}<input value={selectedItem ? String(selectedItem.quantity) : ""} readOnly /></label>
+                        <label>{t("availableQty")}<input value={selectedItem ? String(selectedItem.availableQty) : ""} readOnly /></label>
                         <label>{t("transferQty")}<input type="number" min="0" value={numberInputValue(line.quantity)} onChange={(event) => updateLine(line.id, { quantity: Math.max(0, Number(event.target.value || 0)) })} /></label>
                         <label>{t("destinationStorage")}<select value={line.toLocationId} onChange={(event) => updateLine(line.id, { toLocationId: event.target.value, toStorageSection: getLocationSectionOptions(locations.find((location) => location.id === Number(event.target.value)))[0] || "A" })}><option value="">{t("selectStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
                         <label>{t("toSection")}<select value={line.toStorageSection} onChange={(event) => updateLine(line.id, { toStorageSection: event.target.value })}>{sectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}</select></label>

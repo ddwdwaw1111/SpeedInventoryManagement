@@ -65,7 +65,7 @@ type InventoryLookupRow = {
   customerName: string;
   locationName: string;
   storageSection: string;
-  quantity: number;
+  availableQty: number;
   containerNo: string;
 };
 
@@ -97,7 +97,7 @@ export function HomeDashboardPage({
 
   const summaryStats = useMemo<DashboardStat[]>(() => {
     const totalUnits = items.reduce((sum, item) => sum + item.quantity, 0);
-    const lowStockCount = items.filter((item) => item.reorderLevel > 0 && item.quantity <= item.reorderLevel).length;
+    const lowStockCount = items.filter((item) => item.reorderLevel > 0 && item.availableQty <= item.reorderLevel).length;
     const activeWarehouseCount = new Set(items.filter((item) => item.quantity > 0).map((item) => item.locationId)).size;
 
     return [
@@ -174,7 +174,7 @@ export function HomeDashboardPage({
     {
       key: "low-stock",
       label: t("dashboardExceptionLowStock"),
-      count: items.filter((item) => item.reorderLevel > 0 && item.quantity <= item.reorderLevel).length,
+      count: items.filter((item) => item.reorderLevel > 0 && item.availableQty <= item.reorderLevel).length,
       page: "stock-by-location"
     },
     {
@@ -216,7 +216,7 @@ export function HomeDashboardPage({
         const leftStartsWithSku = left.sku.toLowerCase().startsWith(normalizedLookupQuery);
         const rightStartsWithSku = right.sku.toLowerCase().startsWith(normalizedLookupQuery);
         if (leftStartsWithSku !== rightStartsWithSku) return leftStartsWithSku ? -1 : 1;
-        return right.quantity - left.quantity;
+        return right.availableQty - left.availableQty;
       })
       .slice(0, 6)
       .map((item) => ({
@@ -226,7 +226,7 @@ export function HomeDashboardPage({
         customerName: item.customerName,
         locationName: item.locationName,
         storageSection: item.storageSection,
-        quantity: item.quantity,
+        availableQty: item.availableQty,
         containerNo: item.containerNo
       }));
   }, [items, normalizedLookupQuery]);
@@ -268,8 +268,6 @@ export function HomeDashboardPage({
       <section className="workbook-panel dashboard-home__hero">
         <div className="dashboard-home__hero-copy">
           <p className="sheet-kicker">{t("navDashboard")}</p>
-          <h2>{t("dashboardHomeTitle")}</h2>
-          <p>{t("dashboardHomeSubtitle")}</p>
         </div>
         <div className="dashboard-home__summary-grid">
           {summaryStats.map((stat) => (
@@ -328,8 +326,8 @@ export function HomeDashboardPage({
                       <small>{row.customerName} · {row.locationName}{row.storageSection ? ` / ${row.storageSection}` : ""}</small>
                     </div>
                     <div className="dashboard-home__lookup-result-metric">
-                      <strong>{formatNumber(row.quantity)}</strong>
-                      <span>{t("onHand")}</span>
+                      <strong>{formatNumber(row.availableQty)}</strong>
+                      <span>{t("availableQty")}</span>
                       {row.containerNo ? <small>{row.containerNo}</small> : null}
                     </div>
                   </button>
@@ -484,7 +482,7 @@ function RecentDocumentList({
 function countOpenStatuses(statuses: string[]) {
   return statuses.filter((status) => {
     const normalized = normalizeStatus(status);
-    return normalized !== "posted" && normalized !== "cancelled" && normalized !== "closed";
+    return normalized !== "confirmed" && normalized !== "cancelled" && normalized !== "closed";
   }).length;
 }
 
