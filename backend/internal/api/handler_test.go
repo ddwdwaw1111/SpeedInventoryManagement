@@ -129,6 +129,71 @@ func TestRequireRoles(t *testing.T) {
 	}
 }
 
+func TestRequireRolesMatrix(t *testing.T) {
+	newRouter := func(payload service.AuthPayload, allowedRoles ...string) *gin.Engine {
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			if payload.User.ID > 0 {
+				c.Set(string(userContextKey), payload)
+			}
+			c.Next()
+		})
+		server := &Server{}
+		router.GET("/protected", server.requireRoles(allowedRoles...), func(c *gin.Context) {
+			c.Status(http.StatusNoContent)
+		})
+		return router
+	}
+
+	type testCase struct {
+		name         string
+		allowedRoles []string
+		payload      service.AuthPayload
+		wantStatus   int
+	}
+
+	testCases := []testCase{
+		{
+			name:         "operator route allows operator",
+			allowedRoles: []string{service.RoleAdmin, service.RoleOperator},
+			payload:      service.AuthPayload{User: service.User{ID: 1, Role: service.RoleOperator}},
+			wantStatus:   http.StatusNoContent,
+		},
+		{
+			name:         "operator route forbids viewer",
+			allowedRoles: []string{service.RoleAdmin, service.RoleOperator},
+			payload:      service.AuthPayload{User: service.User{ID: 2, Role: service.RoleViewer}},
+			wantStatus:   http.StatusForbidden,
+		},
+		{
+			name:         "admin route forbids operator",
+			allowedRoles: []string{service.RoleAdmin},
+			payload:      service.AuthPayload{User: service.User{ID: 3, Role: service.RoleOperator}},
+			wantStatus:   http.StatusForbidden,
+		},
+		{
+			name:         "admin route allows admin",
+			allowedRoles: []string{service.RoleAdmin},
+			payload:      service.AuthPayload{User: service.User{ID: 4, Role: service.RoleAdmin}},
+			wantStatus:   http.StatusNoContent,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			router := newRouter(tc.payload, tc.allowedRoles...)
+
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, "/protected", nil)
+			router.ServeHTTP(recorder, request)
+
+			if recorder.Code != tc.wantStatus {
+				t.Fatalf("expected status %d, got %d", tc.wantStatus, recorder.Code)
+			}
+		})
+	}
+}
+
 func TestRequireAuthWithoutCookie(t *testing.T) {
 	server := &Server{sessionCookieName: "sim_session"}
 	router := gin.New()

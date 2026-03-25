@@ -18,6 +18,7 @@ import type { PageKey } from "../lib/routes";
 import type { Customer, CustomerPayload, InboundDocument, Item, Movement, OutboundDocument, UserRole } from "../lib/types";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
+import { useSharedColumnOrder } from "./useSharedColumnOrder";
 
 type CustomerManagementPageProps = {
   customers: Customer[];
@@ -40,6 +41,7 @@ type CustomerFormState = {
 };
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" });
+const CUSTOMER_COLUMN_ORDER_PREFERENCE_KEY = "customers.column-order";
 
 function createEmptyForm(): CustomerFormState {
   return {
@@ -166,7 +168,7 @@ export function CustomerManagementPage({
   const selectedOpenDocumentsCount = selectedInboundDocuments.filter((document) => isOpenStatus(document.status)).length
     + selectedOutboundDocuments.filter((document) => isOpenStatus(document.status)).length;
 
-  const columns = useMemo<GridColDef<Customer>[]>(() => [
+  const baseColumns = useMemo<GridColDef<Customer>[]>(() => [
     { field: "name", headerName: t("customer"), minWidth: 180, flex: 1 },
     { field: "contactName", headerName: t("contactName"), minWidth: 160, flex: 0.9, valueGetter: (_, row) => row.contactName || "-" },
     { field: "email", headerName: t("email"), minWidth: 200, flex: 1.1, valueGetter: (_, row) => row.email || "-" },
@@ -203,6 +205,16 @@ export function CustomerManagementPage({
       ) : null
     }
   ], [canManage, inventorySummaryByCustomer, t]);
+  const {
+    columns,
+    columnOrderAction,
+    columnOrderDialog
+  } = useSharedColumnOrder({
+    preferenceKey: CUSTOMER_COLUMN_ORDER_PREFERENCE_KEY,
+    baseColumns,
+    canManage,
+    onError: setErrorMessage
+  });
 
   function openCreateModal() {
     if (!canManage) return;
@@ -294,7 +306,10 @@ export function CustomerManagementPage({
           <WorkspacePanelHeader
             title={t("customers")}
             actions={canManage ? (
-              <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addNew")}</Button>
+              <div className="sheet-actions">
+                {columnOrderAction}
+                <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addNew")}</Button>
+              </div>
             ) : undefined}
             notices={[permissionNotice]}
             errorMessage={errorMessage && !isModalOpen ? errorMessage : ""}
@@ -323,6 +338,7 @@ export function CustomerManagementPage({
           </Box>
         </div>
       </section>
+      {columnOrderDialog}
 
       <Drawer
         anchor="right"

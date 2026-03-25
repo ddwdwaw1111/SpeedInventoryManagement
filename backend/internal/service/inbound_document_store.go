@@ -1128,8 +1128,6 @@ func (s *Store) findOrCreateInboundItem(ctx context.Context, tx *sql.Tx, documen
 		ContainerNo:       documentInput.ContainerNo,
 		ExpectedQty:       line.ExpectedQty,
 		ReceivedQty:       line.ReceivedQty,
-		Pallets:           line.Pallets,
-		PalletsDetailCtns: line.PalletsDetailCtns,
 		HeightIn:          0,
 	})
 	if err := validateItemInput(itemInput); err != nil {
@@ -1158,12 +1156,10 @@ func (s *Store) findOrCreateInboundItem(ctx context.Context, tx *sql.Tx, documen
 			container_no,
 			expected_qty,
 			received_qty,
-			pallets,
-			pallets_detail_ctns,
 			height_in,
 			out_date,
 			last_restocked_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL)
 	`,
 		skuMasterID,
 		itemInput.CustomerID,
@@ -1179,8 +1175,6 @@ func (s *Store) findOrCreateInboundItem(ctx context.Context, tx *sql.Tx, documen
 		itemInput.ContainerNo,
 		itemInput.ExpectedQty,
 		itemInput.ReceivedQty,
-		itemInput.Pallets,
-		nullableString(itemInput.PalletsDetailCtns),
 	)
 	if err != nil {
 		return 0, "", mapDBError(fmt.Errorf("create inbound inventory item: %w", err))

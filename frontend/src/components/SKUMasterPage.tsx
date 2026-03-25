@@ -1,8 +1,10 @@
 import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
 import CloseIcon from "@mui/icons-material/Close";
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
+import DragIndicatorOutlinedIcon from "@mui/icons-material/DragIndicatorOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
-import { type FormEvent, useDeferredValue, useMemo, useState } from "react";
+import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
+import { type FormEvent, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Box, Button, Dialog, DialogContent, DialogTitle, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
@@ -27,7 +29,9 @@ type SKUMasterFormState = {
   category: string;
   unit: string;
   reorderLevel: number;
+  defaultUnitsPerPallet: number;
 };
+const SKU_MASTER_COLUMN_ORDER_PREFERENCE_KEY = "sku-master.column-order";
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" });
 
@@ -38,7 +42,8 @@ function createEmptyForm(): SKUMasterFormState {
     description: "",
     category: "General",
     unit: "pcs",
-    reorderLevel: 0
+    reorderLevel: 0,
+    defaultUnitsPerPallet: 0
   };
 }
 
@@ -53,16 +58,47 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
   const [form, setForm] = useState<SKUMasterFormState>(() => createEmptyForm());
   const [errorMessage, setErrorMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isColumnOrderModalOpen, setIsColumnOrderModalOpen] = useState(false);
+  const [isSavingColumnOrder, setIsSavingColumnOrder] = useState(false);
+  const [editableRows, setEditableRows] = useState<SKUMaster[]>(skuMasters);
+  const [columnOrder, setColumnOrder] = useState<string[]>([]);
+  const [draftColumnOrder, setDraftColumnOrder] = useState<string[]>([]);
+  const [draggingColumnField, setDraggingColumnField] = useState<string | null>(null);
   const deferredSearchTerm = useDeferredValue(searchTerm);
 
+  useEffect(() => {
+    setEditableRows(skuMasters);
+  }, [skuMasters]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function loadColumnOrder() {
+      try {
+        const preference = await api.getUIPreference<string[]>(SKU_MASTER_COLUMN_ORDER_PREFERENCE_KEY);
+        if (!isActive) return;
+        setColumnOrder(Array.isArray(preference.value) ? preference.value.filter((value): value is string => typeof value === "string" && value !== "actions") : []);
+      } catch (error) {
+        if (isActive) {
+          setErrorMessage(error instanceof Error ? error.message : t("couldNotLoadReport"));
+        }
+      }
+    }
+
+    void loadColumnOrder();
+    return () => {
+      isActive = false;
+    };
+  }, [t]);
+
   const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
-  const filteredRows = useMemo(() => skuMasters.filter((row) => (
+  const filteredRows = useMemo(() => editableRows.filter((row) => (
     normalizedSearch.length === 0
     || row.itemNumber.toLowerCase().includes(normalizedSearch)
     || row.sku.toLowerCase().includes(normalizedSearch)
     || displayDescription(row).toLowerCase().includes(normalizedSearch)
     || row.category.toLowerCase().includes(normalizedSearch)
-  )), [normalizedSearch, skuMasters]);
+  )), [editableRows, normalizedSearch]);
   const hasActiveFilters = normalizedSearch.length > 0;
   const mainGridSlots = buildWorkspaceGridSlots({
     emptyTitle: t("noResults"),
@@ -71,20 +107,59 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
     loadingDescription: pageDescription
   });
 
-  const columns = useMemo<GridColDef<SKUMaster>[]>(() => [
-    { field: "itemNumber", headerName: t("itemNumber"), minWidth: 130, flex: 0.8, renderCell: (params) => <span className="cell--mono">{params.value || "-"}</span> },
-    { field: "sku", headerName: t("sku"), minWidth: 130, flex: 0.8, renderCell: (params) => <span className="cell--mono">{params.value}</span> },
-    { field: "description", headerName: t("description"), minWidth: 260, flex: 1.6, valueGetter: (_, row) => displayDescription(row) },
-    { field: "category", headerName: t("category"), minWidth: 140, flex: 0.8 },
-    { field: "unit", headerName: t("unit"), minWidth: 100, flex: 0.6, valueGetter: (_, row) => row.unit.toUpperCase() },
-    { field: "reorderLevel", headerName: t("reorderLevel"), minWidth: 130, type: "number" },
-    { field: "updatedAt", headerName: t("updated"), minWidth: 180, flex: 0.9, valueFormatter: (value) => formatDateValue(value, dateFormatter) },
+  const baseColumns = useMemo<GridColDef<SKUMaster>[]>(() => [
+    {
+      field: "itemNumber",
+      headerName: t("itemNumber"),
+      minWidth: 130,
+      flex: 0.8,
+      editable: canManage,
+      disableReorder: !canManage,
+      renderCell: (params) => <span className="cell--mono">{params.value || "-"}</span>
+    },
+    {
+      field: "sku",
+      headerName: t("sku"),
+      minWidth: 130,
+      flex: 0.8,
+      editable: canManage,
+      disableReorder: !canManage,
+      renderCell: (params) => <span className="cell--mono">{params.value}</span>
+    },
+    {
+      field: "description",
+      headerName: t("description"),
+      minWidth: 260,
+      flex: 1.6,
+      editable: canManage,
+      disableReorder: !canManage,
+      valueGetter: (_, row) => displayDescription(row),
+      valueSetter: (value, row) => ({
+        ...row,
+        description: String(value ?? ""),
+        name: String(value ?? "")
+      })
+    },
+    { field: "category", headerName: t("category"), minWidth: 140, flex: 0.8, editable: canManage, disableReorder: !canManage },
+    {
+      field: "unit",
+      headerName: t("unit"),
+      minWidth: 100,
+      flex: 0.6,
+      editable: canManage,
+      disableReorder: !canManage,
+      renderCell: (params) => <span>{String(params.value ?? "").toUpperCase()}</span>
+    },
+    { field: "reorderLevel", headerName: t("reorderLevel"), minWidth: 130, type: "number", editable: canManage, disableReorder: !canManage },
+    { field: "defaultUnitsPerPallet", headerName: t("defaultUnitsPerPallet"), minWidth: 170, type: "number", editable: canManage, disableReorder: !canManage },
+    { field: "updatedAt", headerName: t("updated"), minWidth: 180, flex: 0.9, disableReorder: !canManage, valueFormatter: (value) => formatDateValue(value, dateFormatter) },
     {
       field: "actions",
       headerName: t("actions"),
       minWidth: 90,
       sortable: false,
       filterable: false,
+      disableReorder: true,
       renderCell: (params) => canManage ? (
         <RowActionsMenu
           ariaLabel={t("actions")}
@@ -96,6 +171,30 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
       ) : null
     }
   ], [canManage, t]);
+
+  const orderableFields = useMemo(
+    () => baseColumns.filter((column) => column.field !== "actions").map((column) => column.field),
+    [baseColumns]
+  );
+
+  const resolvedColumnOrder = useMemo(() => {
+    if (columnOrder.length === 0) {
+      return orderableFields;
+    }
+
+    const orderedFields = columnOrder.filter((field) => orderableFields.includes(field));
+    const remainingFields = orderableFields.filter((field) => !orderedFields.includes(field));
+    return [...orderedFields, ...remainingFields];
+  }, [columnOrder, orderableFields]);
+
+  const columns = useMemo<GridColDef<SKUMaster>[]>(() => {
+    const baseColumnsByField = new Map(baseColumns.map((column) => [column.field, column] as const));
+    const orderedColumns = resolvedColumnOrder
+      .map((field) => baseColumnsByField.get(field))
+      .filter((column): column is GridColDef<SKUMaster> => Boolean(column));
+    const actionsColumn = baseColumnsByField.get("actions");
+    return actionsColumn ? [...orderedColumns, actionsColumn] : orderedColumns;
+  }, [baseColumns, resolvedColumnOrder]);
 
   function openCreateModal() {
     if (!canManage) return;
@@ -114,10 +213,90 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
       description: displayDescription(row),
       category: row.category || "General",
       unit: row.unit || "pcs",
-      reorderLevel: row.reorderLevel
+      reorderLevel: row.reorderLevel,
+      defaultUnitsPerPallet: row.defaultUnitsPerPallet || 0
     });
     setErrorMessage("");
     setIsModalOpen(true);
+  }
+
+  function buildPayload(row: SKUMaster): SKUMasterPayload {
+    return {
+      itemNumber: row.itemNumber?.trim() ?? "",
+      sku: row.sku.trim(),
+      name: displayDescription(row).trim(),
+      category: row.category.trim() || "General",
+      description: displayDescription(row).trim(),
+      unit: row.unit.trim() || "pcs",
+      reorderLevel: Math.max(0, Number(row.reorderLevel || 0)),
+      defaultUnitsPerPallet: Math.max(0, Number(row.defaultUnitsPerPallet || 0))
+    };
+  }
+
+  async function handleInlineUpdate(updatedRow: SKUMaster, originalRow: SKUMaster) {
+    if (!canManage) return originalRow;
+
+    const payload = buildPayload(updatedRow);
+    if (!payload.sku || !payload.description) {
+      throw new Error(t("couldNotSaveSkuMaster"));
+    }
+
+    setErrorMessage("");
+    const savedRow = await api.updateSKUMaster(updatedRow.id, payload);
+    setEditableRows((current) => current.map((row) => (row.id === savedRow.id ? savedRow : row)));
+    void onRefresh();
+    return savedRow;
+  }
+
+  async function persistColumnOrder(nextOrder: string[], previousOrder: string[]) {
+    if (!canManage) return;
+    try {
+      await api.updateUIPreference<string[]>(SKU_MASTER_COLUMN_ORDER_PREFERENCE_KEY, nextOrder);
+    } catch (error) {
+      setColumnOrder(previousOrder);
+      setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveSkuMaster"));
+    }
+  }
+
+  function openColumnOrderModal() {
+    if (!canManage) return;
+    setDraftColumnOrder(resolvedColumnOrder);
+    setIsColumnOrderModalOpen(true);
+  }
+
+  function closeColumnOrderModal() {
+    setIsColumnOrderModalOpen(false);
+    setDraftColumnOrder([]);
+    setIsSavingColumnOrder(false);
+    setDraggingColumnField(null);
+  }
+
+  function moveDraftColumn(field: string, targetField: string) {
+    if (field === targetField) return;
+
+    setDraftColumnOrder((current) => {
+      const next = [...current];
+      const currentIndex = next.indexOf(field);
+      const targetIndex = next.indexOf(targetField);
+      if (currentIndex === -1 || targetIndex === -1) {
+        return current;
+      }
+
+      const [movedField] = next.splice(currentIndex, 1);
+      next.splice(targetIndex, 0, movedField);
+      return next;
+    });
+  }
+
+  async function saveColumnOrder() {
+    if (!canManage) return;
+    const nextOrder = [...draftColumnOrder];
+    const previousOrder = [...columnOrder];
+    setIsSavingColumnOrder(true);
+    setColumnOrder(nextOrder);
+    await persistColumnOrder(nextOrder, previousOrder);
+    setIsSavingColumnOrder(false);
+    setIsColumnOrderModalOpen(false);
   }
 
   function closeModal() {
@@ -140,7 +319,8 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
       category: form.category,
       description: form.description,
       unit: form.unit,
-      reorderLevel: form.reorderLevel
+      reorderLevel: form.reorderLevel,
+      defaultUnitsPerPallet: form.defaultUnitsPerPallet
     };
 
     try {
@@ -180,7 +360,10 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
           <WorkspacePanelHeader
             title={t("skuMaster")}
             actions={canManage ? (
-              <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addNew")}</Button>
+              <div className="sheet-actions">
+                <Button variant="outlined" startIcon={<TuneOutlinedIcon />} onClick={openColumnOrderModal}>{t("columnOrder")}</Button>
+                <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addNew")}</Button>
+              </div>
             ) : undefined}
             notices={[permissionNotice]}
             errorMessage={errorMessage && !isModalOpen ? errorMessage : ""}
@@ -196,11 +379,14 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
               rows={filteredRows}
               columns={columns}
               loading={isLoading}
+              editMode="cell"
               pagination
               pageSizeOptions={[10, 20, 50]}
               disableRowSelectionOnClick
               initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
               getRowHeight={() => 64}
+              processRowUpdate={handleInlineUpdate}
+              onProcessRowUpdateError={(error) => setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveSkuMaster"))}
               slots={mainGridSlots}
               sx={{ border: 0 }}
             />
@@ -232,11 +418,77 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
             <label>{t("category")}<input value={form.category} onChange={(event) => setForm((current) => ({ ...current, category: event.target.value }))} placeholder="General" /></label>
             <label>{t("unit")}<input value={form.unit} onChange={(event) => setForm((current) => ({ ...current, unit: event.target.value }))} placeholder="pcs" /></label>
             <label>{t("reorderLevel")}<input type="number" min="0" value={form.reorderLevel} onChange={(event) => setForm((current) => ({ ...current, reorderLevel: Math.max(0, Number(event.target.value || 0)) }))} /></label>
+            <label>{t("defaultUnitsPerPallet")}<input type="number" min="0" value={form.defaultUnitsPerPallet} onChange={(event) => setForm((current) => ({ ...current, defaultUnitsPerPallet: Math.max(0, Number(event.target.value || 0)) }))} placeholder="200" /></label>
             <div className="sheet-form__actions sheet-form__wide">
               <button className="button button--primary" type="submit" disabled={isSubmitting}>{isSubmitting ? t("saving") : editingId ? t("updateRow") : t("addRow")}</button>
               <button className="button button--ghost" type="button" onClick={closeModal}>{t("cancel")}</button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={isColumnOrderModalOpen}
+        onClose={(_, reason) => {
+          if (reason === "backdropClick" || isSavingColumnOrder) return;
+          closeColumnOrderModal();
+        }}
+        fullWidth
+        maxWidth={false}
+        PaperProps={{
+          sx: {
+            width: "min(1360px, 96vw)"
+          }
+        }}
+      >
+        <DialogTitle sx={{ pb: 1 }}>
+          {t("columnOrder")}
+          <IconButton aria-label={t("close")} onClick={closeColumnOrderModal} disabled={isSavingColumnOrder} sx={{ position: "absolute", right: 16, top: 16 }}>
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          <div className="sheet-note sheet-note--readonly">{t("columnOrderSharedNotice")}</div>
+          <div className="column-order-board">
+            {draftColumnOrder.map((field, index) => {
+              const column = baseColumns.find((candidate) => candidate.field === field);
+              if (!column) return null;
+
+              return (
+                <div
+                  className={`column-order-card ${draggingColumnField === field ? "column-order-card--dragging" : ""}`}
+                  key={field}
+                  draggable={!isSavingColumnOrder}
+                  onDragStart={() => setDraggingColumnField(field)}
+                  onDragEnd={() => setDraggingColumnField(null)}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    if (!draggingColumnField) return;
+                    moveDraftColumn(draggingColumnField, field);
+                    setDraggingColumnField(null);
+                  }}
+                >
+                  <DragIndicatorOutlinedIcon fontSize="small" />
+                  <div className="column-order-card__copy">
+                    <strong>{column.headerName}</strong>
+                    <span>{t("positionLabel", { position: index + 1 })}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="sheet-form__actions" style={{ marginTop: "1rem" }}>
+            <button className="button button--primary" type="button" disabled={isSavingColumnOrder} onClick={() => void saveColumnOrder()}>
+              {isSavingColumnOrder ? t("saving") : t("saveChanges")}
+            </button>
+            <button className="button button--ghost" type="button" disabled={isSavingColumnOrder} onClick={() => setDraftColumnOrder(orderableFields)}>
+              {t("resetDefault")}
+            </button>
+            <button className="button button--ghost" type="button" disabled={isSavingColumnOrder} onClick={closeColumnOrderModal}>
+              {t("cancel")}
+            </button>
+          </div>
         </DialogContent>
       </Dialog>
     </main>

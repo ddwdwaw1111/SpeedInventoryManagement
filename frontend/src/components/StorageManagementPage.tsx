@@ -14,6 +14,7 @@ import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type { Item, Location, LocationPayload, UserRole } from "../lib/types";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
+import { useSharedColumnOrder } from "./useSharedColumnOrder";
 
 type StorageManagementPageProps = {
   locations: Location[];
@@ -40,6 +41,7 @@ const emptyLocationForm: LocationFormState = {
   capacity: 0,
   sectionNames: ["A"]
 };
+const STORAGE_MANAGEMENT_COLUMN_ORDER_PREFERENCE_KEY = "storage-management.column-order";
 
 export function StorageManagementPage({ locations, items, currentUserRole, isLoading, onRefresh }: StorageManagementPageProps) {
   const { t } = useI18n();
@@ -67,7 +69,7 @@ export function StorageManagementPage({ locations, items, currentUserRole, isLoa
     loadingDescription: pageDescription
   });
 
-  const columns = useMemo<GridColDef<Location>[]>(() => [
+  const baseColumns = useMemo<GridColDef<Location>[]>(() => [
     { field: "name", headerName: t("storageName"), minWidth: 180, flex: 1 },
     { field: "address", headerName: t("address"), minWidth: 260, flex: 1.5, renderCell: (params) => params.value || "-" },
     { field: "zone", headerName: t("zone"), minWidth: 140, flex: 0.9 },
@@ -113,6 +115,16 @@ export function StorageManagementPage({ locations, items, currentUserRole, isLoa
       ) : null
     }
   ], [canManage, locationUsage, resolvedTimeZone, t]);
+  const {
+    columns,
+    columnOrderAction,
+    columnOrderDialog
+  } = useSharedColumnOrder({
+    preferenceKey: STORAGE_MANAGEMENT_COLUMN_ORDER_PREFERENCE_KEY,
+    baseColumns,
+    canManage,
+    onError: setErrorMessage
+  });
 
   function resetForm() {
     setForm(emptyLocationForm);
@@ -223,7 +235,10 @@ export function StorageManagementPage({ locations, items, currentUserRole, isLoa
           <WorkspacePanelHeader
             title={t("storageManagement")}
             actions={canManage ? (
-              <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addLocation")}</Button>
+              <div className="sheet-actions">
+                {columnOrderAction}
+                <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addLocation")}</Button>
+              </div>
             ) : undefined}
             notices={[permissionNotice]}
             errorMessage={errorMessage && !isModalOpen ? errorMessage : ""}
@@ -246,6 +261,7 @@ export function StorageManagementPage({ locations, items, currentUserRole, isLoa
           </Box>
         </div>
       </section>
+      {columnOrderDialog}
 
       <Dialog
         open={isModalOpen}

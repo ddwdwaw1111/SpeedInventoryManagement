@@ -69,10 +69,24 @@ CREATE TABLE IF NOT EXISTS sku_master (
   description TEXT DEFAULT NULL,
   unit VARCHAR(32) NOT NULL DEFAULT 'pcs',
   reorder_level INT NOT NULL DEFAULT 0,
+  default_units_per_pallet INT NOT NULL DEFAULT 0,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_sku_master_sku (sku)
+);
+
+CREATE TABLE IF NOT EXISTS ui_preferences (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  scope_type VARCHAR(32) NOT NULL DEFAULT 'global',
+  scope_id BIGINT NOT NULL DEFAULT 0,
+  preference_key VARCHAR(120) NOT NULL,
+  value_json JSON DEFAULT NULL,
+  updated_by_user_id BIGINT DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_ui_preferences_scope_key (scope_type, scope_id, preference_key)
 );
 
 CREATE TABLE IF NOT EXISTS inventory_items (
@@ -96,8 +110,6 @@ CREATE TABLE IF NOT EXISTS inventory_items (
   container_no VARCHAR(120) NOT NULL DEFAULT '',
   expected_qty INT NOT NULL DEFAULT 0,
   received_qty INT NOT NULL DEFAULT 0,
-  pallets INT NOT NULL DEFAULT 0,
-  pallets_detail_ctns VARCHAR(255) DEFAULT NULL,
   height_in INT NOT NULL DEFAULT 0,
   out_date DATE DEFAULT NULL,
   last_restocked_at TIMESTAMP NULL DEFAULT NULL,
@@ -267,6 +279,8 @@ CREATE TABLE IF NOT EXISTS outbound_document_lines (
   sku_snapshot VARCHAR(64) NOT NULL,
   description_snapshot VARCHAR(255) DEFAULT NULL,
   quantity INT NOT NULL DEFAULT 0,
+  pallets INT NOT NULL DEFAULT 0,
+  pallets_detail_ctns VARCHAR(255) DEFAULT NULL,
   unit_label VARCHAR(32) DEFAULT NULL,
   carton_size_mm VARCHAR(120) DEFAULT NULL,
   net_weight_kgs DECIMAL(12,2) NOT NULL DEFAULT 0,

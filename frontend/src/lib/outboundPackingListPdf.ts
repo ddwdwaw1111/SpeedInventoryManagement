@@ -115,6 +115,7 @@ type DeliveryNoteRow = {
   sku: string;
   description: string;
   quantity: number;
+  pallets: number;
   unitLabel: string;
   cartonSizeMm: string;
   netWeightKgs: number;
@@ -142,6 +143,7 @@ const LABELS = {
   sku: "SKU",
   description: "Item Description",
   qty: "Ship Qty",
+  pallets: "Pallets",
   unit: "UOM",
   cartonSize: "Carton Size (mm)",
   netWeight: "Net Wt. (kg)",
@@ -154,18 +156,16 @@ const LABELS = {
 
 export function downloadOutboundDeliveryNotePdfFromDocument(document: OutboundDocument) {
   const deliveryNoteDocument = buildDeliveryNoteDocumentFromDocument(document);
-  const documentDefinition = buildDocumentDefinition(deliveryNoteDocument);
+  const documentDefinition = buildDeliveryNoteDefinition(deliveryNoteDocument);
   const tableLayouts = { [DELIVERY_NOTE_LAYOUT_NAME]: PACKING_LIST_TABLE_LAYOUT };
-  const pdfMakeInstance = pdfMake as typeof pdfMake & { fonts?: TFontDictionary };
-  pdfMakeInstance.fonts = PDF_FONTS;
-  void pdfMakeInstance.createPdf(documentDefinition, tableLayouts, PDF_FONTS).download(deliveryNoteDocument.fileName);
+  void pdfMake.createPdf(documentDefinition, tableLayouts, PDF_FONTS).download(deliveryNoteDocument.fileName);
 }
 
 export function downloadOutboundPackingListPdfFromDocument(document: OutboundDocument) {
   downloadOutboundDeliveryNotePdfFromDocument(document);
 }
 
-function buildDeliveryNoteDocumentFromDocument(document: OutboundDocument): DeliveryNoteDocument {
+export function buildDeliveryNoteDocumentFromDocument(document: OutboundDocument): DeliveryNoteDocument {
   return {
     fileName: `delivery-note-${sanitizeFileName(document.packingListNo || `outbound-${document.id}`)}.pdf`,
     rows: document.lines.map((line) => toDeliveryNoteRowFromLine(line, document)),
@@ -185,7 +185,7 @@ function buildDeliveryNoteDocumentFromDocument(document: OutboundDocument): Deli
   };
 }
 
-function buildDocumentDefinition(document: DeliveryNoteDocument): TDocumentDefinitions {
+export function buildDeliveryNoteDefinition(document: DeliveryNoteDocument): TDocumentDefinitions {
   const noteText = document.notes.length > 0 ? document.notes.join(" / ") : LABELS.empty;
   const printedAt = formatTimestamp(new Date().toISOString(), { includeTime: true });
   const tableBody: TableCell[][] = [
@@ -195,6 +195,7 @@ function buildDocumentDefinition(document: DeliveryNoteDocument): TDocumentDefin
       headerCell(LABELS.sku),
       headerCell(LABELS.description),
       headerCell(LABELS.qty),
+      headerCell(LABELS.pallets),
       headerCell(LABELS.unit),
       headerCell(LABELS.cartonSize),
       headerCell(LABELS.netWeight),
@@ -206,6 +207,7 @@ function buildDocumentDefinition(document: DeliveryNoteDocument): TDocumentDefin
       bodyCell(row.sku, "tableCellCenter"),
       bodyCell(displayDescription(row), "tableCell"),
       bodyCell(formatInteger(Math.abs(row.quantity)), "tableCellRight"),
+      bodyCell(formatInteger(row.pallets), "tableCellRight"),
       bodyCell(row.unitLabel || "PCS", "tableCellCenter"),
       bodyCell(row.cartonSizeMm || LABELS.empty, "tableCellCenter"),
       bodyCell(formatDecimal(row.netWeightKgs), "tableCellRight"),
@@ -251,7 +253,7 @@ function buildDocumentDefinition(document: DeliveryNoteDocument): TDocumentDefin
       table: {
         headerRows: 1,
         dontBreakRows: true,
-        widths: [22, 62, 64, "*", 52, 46, 88, 56, 56],
+        widths: [20, 52, 54, "*", 48, 48, 42, 86, 52, 56],
         body: tableBody
       },
       layout: DELIVERY_NOTE_LAYOUT_NAME
@@ -347,6 +349,7 @@ function toDeliveryNoteRowFromLine(line: OutboundDocumentLine, document: Outboun
     sku: line.sku,
     description: line.description,
     quantity: line.quantity,
+    pallets: line.pallets || 0,
     unitLabel: line.unitLabel || "PCS",
     cartonSizeMm: line.cartonSizeMm,
     netWeightKgs: line.netWeightKgs,

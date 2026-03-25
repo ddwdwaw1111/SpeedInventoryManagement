@@ -17,6 +17,7 @@ import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
 import type { Customer, Item, ItemPayload, Location, UserRole } from "../lib/types";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
+import { useSharedColumnOrder } from "./useSharedColumnOrder";
 
 type MasterInventoryPageProps = {
   items: Item[];
@@ -46,13 +47,12 @@ type ItemFormState = {
   containerNo: string;
   expectedQty: number;
   receivedQty: number;
-  pallets: number;
-  palletsDetailCtns: string;
   heightIn: number;
   outDate: string;
 };
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
+const INVENTORY_BY_LOCATION_COLUMN_ORDER_PREFERENCE_KEY = "inventory-by-location.column-order";
 
 function createEmptyItemForm(defaultCustomerId = "", defaultLocationId = ""): ItemFormState {
   return {
@@ -71,28 +71,16 @@ function createEmptyItemForm(defaultCustomerId = "", defaultLocationId = ""): It
     containerNo: "",
     expectedQty: 0,
     receivedQty: 0,
-    pallets: 0,
-    palletsDetailCtns: "",
     heightIn: 87,
     outDate: ""
   };
-}
-
-function getSuggestedPalletsDetail(totalQty: number, pallets: number) {
-  if (totalQty <= 0 || pallets <= 0) return "";
-  if (pallets === 1) return String(totalQty);
-
-  const cartonsPerFullPallet = Math.ceil(totalQty / pallets);
-  const remainingCartons = totalQty - (pallets - 1) * cartonsPerFullPallet;
-  if (remainingCartons <= 0) return `${pallets}*${Math.floor(totalQty / pallets)}`;
-
-  return `${pallets - 1}*${cartonsPerFullPallet}+${remainingCartons}`;
 }
 
 export function MasterInventoryPage({ items, locations, customers, currentUserRole, isLoading, onRefresh, onNavigate }: MasterInventoryPageProps) {
   const { t } = useI18n();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
   const canDelete = currentUserRole === "admin";
+  const canConfigureColumns = currentUserRole === "admin";
   const pageDescription = t("stockByLocationDesc");
   const permissionNote = currentUserRole === "viewer"
     ? t("readOnlyModeNotice")
@@ -110,8 +98,6 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
   const [errorMessage, setErrorMessage] = useState("");
   const [form, setForm] = useState<ItemFormState>(() => createEmptyItemForm("", ""));
   const deferredSearchTerm = useDeferredValue(searchTerm);
-  const suggestedPalletsDetail = getSuggestedPalletsDetail(form.receivedQty || form.expectedQty || form.quantity, form.pallets);
-
   useEffect(() => {
     if (!form.locationId && locations[0]) {
       setForm((current) => ({ ...current, locationId: String(locations[0].id) }));
@@ -158,7 +144,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
     }
   }, [selectedItem, selectedItemId]);
 
-  const columns = useMemo<GridColDef<Item>[]>(() => [
+  const baseColumns = useMemo<GridColDef<Item>[]>(() => [
     { field: "itemNumber", headerName: t("itemNumber"), minWidth: 130, flex: 0.8, renderCell: (params) => <span className="cell--mono">{params.value || "-"}</span> },
     { field: "sku", headerName: t("sku"), minWidth: 120, flex: 0.8, renderCell: (params) => <span className="cell--mono">{params.value}</span> },
     { field: "description", headerName: t("description"), minWidth: 240, flex: 1.5, valueGetter: (_, row) => displayDescription(row) },
@@ -180,8 +166,6 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
       type: "number",
       renderCell: (params) => <span className={hasQtyMismatch(params.row.expectedQty, params.row.receivedQty) ? "cell--mismatch" : ""}>{params.row.receivedQty || "-"}</span>
     },
-    { field: "pallets", headerName: t("pallets"), minWidth: 100, type: "number", valueFormatter: (value) => value || "-" },
-    { field: "palletsDetailCtns", headerName: t("palletsDetail"), minWidth: 180, flex: 1, renderCell: (params) => <span className="cell--mono">{params.value || "-"}</span> },
     { field: "heightIn", headerName: t("heightIn"), minWidth: 110, type: "number", valueFormatter: (value) => value || "-" },
     { field: "outDate", headerName: t("outDate"), minWidth: 140, valueFormatter: (_, row) => formatDate(row.outDate) },
     {
@@ -215,6 +199,16 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
       }
     }
   ], [canDelete, canManage, t]);
+  const {
+    columns,
+    columnOrderAction,
+    columnOrderDialog
+  } = useSharedColumnOrder({
+    preferenceKey: INVENTORY_BY_LOCATION_COLUMN_ORDER_PREFERENCE_KEY,
+    baseColumns,
+    canManage: canConfigureColumns,
+    onError: setErrorMessage
+  });
 
   function openEditModal(item: Item) {
     if (!canManage) return;
@@ -236,8 +230,6 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
       containerNo: item.containerNo,
       expectedQty: item.expectedQty,
       receivedQty: item.receivedQty,
-      pallets: item.pallets,
-      palletsDetailCtns: item.palletsDetailCtns,
       heightIn: item.heightIn || 87,
       outDate: toDateInputValue(item.outDate)
     });
@@ -291,8 +283,6 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
       containerNo: form.containerNo || undefined,
       expectedQty: form.expectedQty,
       receivedQty: form.receivedQty,
-      pallets: form.pallets,
-      palletsDetailCtns: form.palletsDetailCtns || undefined,
       heightIn: form.heightIn,
       outDate: form.outDate || undefined
     };
@@ -345,6 +335,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
         <div className="tab-strip">
           <WorkspacePanelHeader
             title={t("stockByLocation")}
+            actions={columnOrderAction}
             notices={[permissionNote]}
             errorMessage={errorMessage && !isModalOpen ? errorMessage : ""}
           />
@@ -375,6 +366,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
           </Box>
         </div>
       </section>
+      {columnOrderDialog}
 
       <Drawer
         anchor="right"
@@ -473,14 +465,6 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
                 {selectedItem.reorderLevel}
               </div>
               <div className="sheet-note">
-                <strong>{t("pallets")}</strong><br />
-                {selectedItem.pallets || "-"}
-              </div>
-              <div className="sheet-note">
-                <strong>{t("palletsDetail")}</strong><br />
-                <span className="cell--mono">{selectedItem.palletsDetailCtns || "-"}</span>
-              </div>
-              <div className="sheet-note">
                 <strong>{t("heightIn")}</strong><br />
                 {selectedItem.heightIn || "-"}
               </div>
@@ -525,9 +509,6 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
             <label>{t("containerNo")}<input value={form.containerNo} onChange={(event) => setForm((current) => ({ ...current, containerNo: event.target.value }))} placeholder="KKFU7963968" /></label>
             <label>{t("expectedQty")}<input type="number" min="0" value={numberInputValue(form.expectedQty)} onChange={(event) => setForm((current) => ({ ...current, expectedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
             <label>{t("received")}<input type="number" min="0" value={numberInputValue(form.receivedQty)} onChange={(event) => setForm((current) => ({ ...current, receivedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-            <label>{t("pallets")}<input type="number" min="0" value={numberInputValue(form.pallets)} onChange={(event) => setForm((current) => ({ ...current, pallets: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-            <label className="sheet-form__wide">{t("palletsDetail")}<input value={form.palletsDetailCtns} onChange={(event) => setForm((current) => ({ ...current, palletsDetailCtns: event.target.value }))} placeholder={suggestedPalletsDetail || "29*66+44"} /></label>
-            {suggestedPalletsDetail ? <div className="sheet-note sheet-form__wide"><strong>{t("suggested")}</strong> {suggestedPalletsDetail}<button className="button button--ghost button--small" type="button" onClick={() => setForm((current) => ({ ...current, palletsDetailCtns: suggestedPalletsDetail }))}>{t("useSuggestion")}</button></div> : null}
             <label>{t("heightIn")}<input type="number" min="0" value={form.heightIn} onChange={(event) => setForm((current) => ({ ...current, heightIn: Math.max(0, Number(event.target.value || 0)) }))} /></label>
             <label>{t("outDate")}<input type="date" value={form.outDate} onChange={(event) => setForm((current) => ({ ...current, outDate: event.target.value }))} /></label>
             <label>{t("reorderLevel")}<input type="number" min="0" value={numberInputValue(form.reorderLevel)} onChange={(event) => setForm((current) => ({ ...current, reorderLevel: Math.max(0, Number(event.target.value || 0)) }))} /></label>

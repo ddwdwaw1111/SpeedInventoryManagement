@@ -15,6 +15,7 @@ import type { PageKey } from "../lib/routes";
 import type { CycleCount, Item, UserRole } from "../lib/types";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
+import { useSharedColumnOrder } from "./useSharedColumnOrder";
 
 type CycleCountManagementPageProps = {
   cycleCounts: CycleCount[];
@@ -41,6 +42,7 @@ const emptyCycleCountForm: CycleCountFormState = {
   countNo: "",
   notes: ""
 };
+const CYCLE_COUNT_COLUMN_ORDER_PREFERENCE_KEY = "cycle-counts.column-order";
 
 function createCycleCountLine(): CycleCountLineFormState {
   return {
@@ -62,6 +64,7 @@ export function CycleCountManagementPage({
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
+  const canConfigureColumns = currentUserRole === "admin";
   const pageDescription = t("cycleCountsDesc");
   const permissionNotice = canManage ? "" : t("readOnlyModeNotice");
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -81,7 +84,7 @@ export function CycleCountManagementPage({
     }
   }, [selectedCycleCount, selectedCycleCountId]);
 
-  const columns = useMemo<GridColDef<CycleCount>[]>(() => [
+  const baseColumns = useMemo<GridColDef<CycleCount>[]>(() => [
     { field: "countNo", headerName: t("countNo"), minWidth: 180, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.countNo}</span> },
     { field: "totalLines", headerName: t("totalLines"), minWidth: 120, type: "number" },
     {
@@ -124,6 +127,16 @@ export function CycleCountManagementPage({
       )
     }
   ], [resolvedTimeZone, t]);
+  const {
+    columns,
+    columnOrderAction,
+    columnOrderDialog
+  } = useSharedColumnOrder({
+    preferenceKey: CYCLE_COUNT_COLUMN_ORDER_PREFERENCE_KEY,
+    baseColumns,
+    canManage: canConfigureColumns,
+    onError: setErrorMessage
+  });
 
   const detailColumns = useMemo<GridColDef<CycleCount["lines"][number]>[]>(() => [
     { field: "sku", headerName: t("sku"), minWidth: 120, renderCell: (params) => <span className="cell--mono">{params.row.sku}</span> },
@@ -218,10 +231,15 @@ export function CycleCountManagementPage({
         <div className="tab-strip">
           <WorkspacePanelHeader
             title={t("cycleCounts")}
-            actions={canManage ? (
-              <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>
-                {t("addCycleCount")}
-              </Button>
+            actions={canManage || canConfigureColumns ? (
+              <div className="sheet-actions">
+                {columnOrderAction}
+                {canManage ? (
+                  <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>
+                    {t("addCycleCount")}
+                  </Button>
+                ) : null}
+              </div>
             ) : undefined}
             notices={[permissionNotice]}
             errorMessage={errorMessage && !isModalOpen ? errorMessage : ""}
@@ -246,6 +264,7 @@ export function CycleCountManagementPage({
           </Box>
         </div>
       </section>
+      {columnOrderDialog}
 
       <Drawer
         anchor="right"

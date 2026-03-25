@@ -40,6 +40,7 @@ func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName s
 	protected.Use(server.requireAuth())
 	protected.GET("/auth/me", server.handleMe)
 	protected.GET("/dashboard", server.handleDashboard)
+	protected.GET("/ui-preferences/:key", server.handleGetUIPreference)
 	protected.GET("/customers", server.handleListCustomers)
 	protected.GET("/locations", server.handleListLocations)
 	protected.GET("/sku-master", server.handleListSKUMasters)
@@ -76,6 +77,7 @@ func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName s
 	admin.GET("/users", server.handleListUsers)
 	admin.POST("/users", server.handleCreateUser)
 	admin.PUT("/users/:id/access", server.handleUpdateUserAccess)
+	admin.PUT("/ui-preferences/:key", server.handleUpdateUIPreference)
 	admin.POST("/locations", server.handleCreateLocation)
 	admin.PUT("/locations/:id", server.handleUpdateLocation)
 	admin.DELETE("/locations/:id", server.handleDeleteLocation)
@@ -284,12 +286,13 @@ func (s *Server) handleCreateSKUMaster(c *gin.Context) {
 	}
 
 	s.writeAuditLog(c, "CREATE", "sku_master", skuMaster.ID, skuMaster.SKU, "Created SKU master", map[string]any{
-		"itemNumber":    skuMaster.ItemNumber,
-		"sku":          skuMaster.SKU,
-		"name":         skuMaster.Name,
-		"category":     skuMaster.Category,
-		"reorderLevel": skuMaster.ReorderLevel,
-		"unit":         skuMaster.Unit,
+		"itemNumber":            skuMaster.ItemNumber,
+		"sku":                   skuMaster.SKU,
+		"name":                  skuMaster.Name,
+		"category":              skuMaster.Category,
+		"reorderLevel":          skuMaster.ReorderLevel,
+		"defaultUnitsPerPallet": skuMaster.DefaultUnitsPerPallet,
+		"unit":                  skuMaster.Unit,
 	})
 
 	writeJSON(c, http.StatusCreated, skuMaster)
@@ -315,12 +318,13 @@ func (s *Server) handleUpdateSKUMaster(c *gin.Context) {
 	}
 
 	s.writeAuditLog(c, "UPDATE", "sku_master", skuMaster.ID, skuMaster.SKU, "Updated SKU master", map[string]any{
-		"itemNumber":    skuMaster.ItemNumber,
-		"sku":          skuMaster.SKU,
-		"name":         skuMaster.Name,
-		"category":     skuMaster.Category,
-		"reorderLevel": skuMaster.ReorderLevel,
-		"unit":         skuMaster.Unit,
+		"itemNumber":            skuMaster.ItemNumber,
+		"sku":                   skuMaster.SKU,
+		"name":                  skuMaster.Name,
+		"category":              skuMaster.Category,
+		"reorderLevel":          skuMaster.ReorderLevel,
+		"defaultUnitsPerPallet": skuMaster.DefaultUnitsPerPallet,
+		"unit":                  skuMaster.Unit,
 	})
 
 	writeJSON(c, http.StatusOK, skuMaster)

@@ -681,12 +681,10 @@ func (s *Store) findOrCreateTransferDestinationItem(
 			container_no,
 			expected_qty,
 			received_qty,
-			pallets,
-			pallets_detail_ctns,
 			height_in,
 			out_date,
 			last_restocked_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL, '', 0, 0, 0, NULL, 0, NULL, NULL)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL, '', 0, 0, 0, NULL, NULL)
 	`,
 		sourceItem.SKUMasterID,
 		sourceItem.CustomerID,

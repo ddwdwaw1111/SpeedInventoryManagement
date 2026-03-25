@@ -7,17 +7,22 @@ import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 import { formatDateTimeValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
-import type { AuditLog } from "../lib/types";
+import type { AuditLog, UserRole } from "../lib/types";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
+import { useSharedColumnOrder } from "./useSharedColumnOrder";
 
 type AuditLogPageProps = {
   auditLogs: AuditLog[];
+  currentUserRole: UserRole;
   isLoading: boolean;
 };
 
-export function AuditLogPage({ auditLogs, isLoading }: AuditLogPageProps) {
+const AUDIT_LOG_COLUMN_ORDER_PREFERENCE_KEY = "audit-logs.column-order";
+
+export function AuditLogPage({ auditLogs, currentUserRole, isLoading }: AuditLogPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
+  const canConfigureColumns = currentUserRole === "admin";
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedAction, setSelectedAction] = useState("all");
   const [selectedEntityType, setSelectedEntityType] = useState("all");
@@ -59,7 +64,7 @@ export function AuditLogPage({ auditLogs, isLoading }: AuditLogPageProps) {
     loadingDescription: t("auditLogsDesc")
   });
 
-  const columns = useMemo<GridColDef<AuditLog>[]>(() => [
+  const baseColumns = useMemo<GridColDef<AuditLog>[]>(() => [
     {
       field: "createdAt",
       headerName: t("created"),
@@ -117,6 +122,15 @@ export function AuditLogPage({ auditLogs, isLoading }: AuditLogPageProps) {
       )
     }
   ], [resolvedTimeZone, t]);
+  const {
+    columns,
+    columnOrderAction,
+    columnOrderDialog
+  } = useSharedColumnOrder({
+    preferenceKey: AUDIT_LOG_COLUMN_ORDER_PREFERENCE_KEY,
+    baseColumns,
+    canManage: canConfigureColumns
+  });
 
   const selectedLogDetails = useMemo(() => formatAuditDetails(selectedLog?.detailsJson ?? ""), [selectedLog?.detailsJson]);
 
@@ -124,7 +138,7 @@ export function AuditLogPage({ auditLogs, isLoading }: AuditLogPageProps) {
       <main className="workspace-main">
         <section className="workbook-panel workbook-panel--full">
           <div className="tab-strip">
-            <WorkspacePanelHeader title={t("auditLogs")} />
+            <WorkspacePanelHeader title={t("auditLogs")} actions={columnOrderAction} />
             <div className="filter-bar">
               <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("auditLogSearchPlaceholder")} /></label>
             <label>{t("filterByAction")}<select value={selectedAction} onChange={(event) => setSelectedAction(event.target.value)}><option value="all">{t("allActions")}</option>{actionOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
@@ -150,6 +164,7 @@ export function AuditLogPage({ auditLogs, isLoading }: AuditLogPageProps) {
           </Box>
         </div>
       </section>
+      {columnOrderDialog}
 
       <Dialog
         open={Boolean(selectedLog)}

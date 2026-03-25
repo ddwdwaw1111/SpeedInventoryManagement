@@ -15,6 +15,7 @@ import type { PageKey } from "../lib/routes";
 import type { InventoryAdjustment, Item, UserRole } from "../lib/types";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
+import { useSharedColumnOrder } from "./useSharedColumnOrder";
 
 type AdjustmentManagementPageProps = {
   adjustments: InventoryAdjustment[];
@@ -43,6 +44,7 @@ const emptyAdjustmentForm: AdjustmentFormState = {
   reasonCode: "",
   notes: ""
 };
+const ADJUSTMENT_COLUMN_ORDER_PREFERENCE_KEY = "adjustments.column-order";
 
 function createAdjustmentLine(): AdjustmentLineFormState {
   return {
@@ -64,6 +66,7 @@ export function AdjustmentManagementPage({
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
+  const canConfigureColumns = currentUserRole === "admin";
   const pageDescription = t("adjustmentsDesc");
   const permissionNotice = canManage ? "" : t("readOnlyModeNotice");
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -83,7 +86,7 @@ export function AdjustmentManagementPage({
     }
   }, [selectedAdjustment, selectedAdjustmentId]);
 
-  const columns = useMemo<GridColDef<InventoryAdjustment>[]>(() => [
+  const baseColumns = useMemo<GridColDef<InventoryAdjustment>[]>(() => [
     { field: "adjustmentNo", headerName: t("adjustmentNo"), minWidth: 180, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.adjustmentNo}</span> },
     { field: "reasonCode", headerName: t("reasonCode"), minWidth: 150, flex: 0.9 },
     { field: "totalLines", headerName: t("totalLines"), minWidth: 120, type: "number" },
@@ -127,6 +130,16 @@ export function AdjustmentManagementPage({
       )
     }
   ], [resolvedTimeZone, t]);
+  const {
+    columns,
+    columnOrderAction,
+    columnOrderDialog
+  } = useSharedColumnOrder({
+    preferenceKey: ADJUSTMENT_COLUMN_ORDER_PREFERENCE_KEY,
+    baseColumns,
+    canManage: canConfigureColumns,
+    onError: setErrorMessage
+  });
 
   const detailColumns = useMemo<GridColDef<InventoryAdjustment["lines"][number]>[]>(() => [
     { field: "sku", headerName: t("sku"), minWidth: 120, renderCell: (params) => <span className="cell--mono">{params.row.sku}</span> },
@@ -224,10 +237,15 @@ export function AdjustmentManagementPage({
         <div className="tab-strip">
           <WorkspacePanelHeader
             title={t("adjustments")}
-            actions={canManage ? (
-              <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>
-                {t("addAdjustment")}
-              </Button>
+            actions={canManage || canConfigureColumns ? (
+              <div className="sheet-actions">
+                {columnOrderAction}
+                {canManage ? (
+                  <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>
+                    {t("addAdjustment")}
+                  </Button>
+                ) : null}
+              </div>
             ) : undefined}
             notices={[permissionNotice]}
             errorMessage={errorMessage && !isModalOpen ? errorMessage : ""}
@@ -252,6 +270,7 @@ export function AdjustmentManagementPage({
           </Box>
         </div>
       </section>
+      {columnOrderDialog}
 
       <Drawer
         anchor="right"

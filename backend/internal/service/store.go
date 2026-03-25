@@ -104,26 +104,28 @@ type CreateCustomerInput struct {
 }
 
 type SKUMaster struct {
-	ID           int64     `db:"id" json:"id"`
-	ItemNumber   string    `db:"item_number" json:"itemNumber"`
-	SKU          string    `db:"sku" json:"sku"`
-	Name         string    `db:"name" json:"name"`
-	Category     string    `db:"category" json:"category"`
-	Description  string    `db:"description" json:"description"`
-	Unit         string    `db:"unit" json:"unit"`
-	ReorderLevel int       `db:"reorder_level" json:"reorderLevel"`
-	CreatedAt    time.Time `db:"created_at" json:"createdAt"`
-	UpdatedAt    time.Time `db:"updated_at" json:"updatedAt"`
+	ID                    int64     `db:"id" json:"id"`
+	ItemNumber            string    `db:"item_number" json:"itemNumber"`
+	SKU                   string    `db:"sku" json:"sku"`
+	Name                  string    `db:"name" json:"name"`
+	Category              string    `db:"category" json:"category"`
+	Description           string    `db:"description" json:"description"`
+	Unit                  string    `db:"unit" json:"unit"`
+	ReorderLevel          int       `db:"reorder_level" json:"reorderLevel"`
+	DefaultUnitsPerPallet int       `db:"default_units_per_pallet" json:"defaultUnitsPerPallet"`
+	CreatedAt             time.Time `db:"created_at" json:"createdAt"`
+	UpdatedAt             time.Time `db:"updated_at" json:"updatedAt"`
 }
 
 type CreateSKUMasterInput struct {
-	ItemNumber   string `json:"itemNumber"`
-	SKU          string `json:"sku"`
-	Name         string `json:"name"`
-	Category     string `json:"category"`
-	Description  string `json:"description"`
-	Unit         string `json:"unit"`
-	ReorderLevel int    `json:"reorderLevel"`
+	ItemNumber            string `json:"itemNumber"`
+	SKU                   string `json:"sku"`
+	Name                  string `json:"name"`
+	Category              string `json:"category"`
+	Description           string `json:"description"`
+	Unit                  string `json:"unit"`
+	ReorderLevel          int    `json:"reorderLevel"`
+	DefaultUnitsPerPallet int    `json:"defaultUnitsPerPallet"`
 }
 
 type Item struct {
@@ -149,8 +151,6 @@ type Item struct {
 	ContainerNo       string     `json:"containerNo"`
 	ExpectedQty       int        `json:"expectedQty"`
 	ReceivedQty       int        `json:"receivedQty"`
-	Pallets           int        `json:"pallets"`
-	PalletsDetailCtns string     `json:"palletsDetailCtns"`
 	HeightIn          int        `json:"heightIn"`
 	OutDate           *time.Time `json:"outDate"`
 	LastRestockedAt   *time.Time `json:"lastRestockedAt"`
@@ -222,8 +222,6 @@ type CreateItemInput struct {
 	ContainerNo       string `json:"containerNo"`
 	ExpectedQty       int    `json:"expectedQty"`
 	ReceivedQty       int    `json:"receivedQty"`
-	Pallets           int    `json:"pallets"`
-	PalletsDetailCtns string `json:"palletsDetailCtns"`
 	HeightIn          int    `json:"heightIn"`
 	OutDate           string `json:"outDate"`
 }
@@ -313,8 +311,6 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 			COALESCE(i.container_no, ''),
 			i.expected_qty,
 			i.received_qty,
-			i.pallets,
-			COALESCE(i.pallets_detail_ctns, ''),
 			i.height_in,
 			i.out_date,
 			i.last_restocked_at,
@@ -425,12 +421,10 @@ func (s *Store) CreateItem(ctx context.Context, input CreateItemInput) (Item, er
 			container_no,
 			expected_qty,
 			received_qty,
-			pallets,
-			pallets_detail_ctns,
 			height_in,
 			out_date,
 			last_restocked_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		skuMasterID,
 		input.CustomerID,
@@ -451,8 +445,6 @@ func (s *Store) CreateItem(ctx context.Context, input CreateItemInput) (Item, er
 		input.ContainerNo,
 		input.ExpectedQty,
 		input.ReceivedQty,
-		input.Pallets,
-		nullableString(input.PalletsDetailCtns),
 		input.HeightIn,
 		nullableTime(outDate),
 		lastRestockedAt,
@@ -527,8 +519,6 @@ func (s *Store) UpdateItem(ctx context.Context, itemID int64, input CreateItemIn
 			container_no = ?,
 			expected_qty = ?,
 			received_qty = ?,
-			pallets = ?,
-			pallets_detail_ctns = ?,
 			height_in = ?,
 			out_date = ?,
 			last_restocked_at = CASE
@@ -557,8 +547,6 @@ func (s *Store) UpdateItem(ctx context.Context, itemID int64, input CreateItemIn
 		input.ContainerNo,
 		input.ExpectedQty,
 		input.ReceivedQty,
-		input.Pallets,
-		nullableString(input.PalletsDetailCtns),
 		input.HeightIn,
 		nullableTime(outDate),
 		input.Quantity,
@@ -1215,8 +1203,6 @@ func (s *Store) getItem(ctx context.Context, itemID int64) (Item, error) {
 			COALESCE(i.container_no, ''),
 			i.expected_qty,
 			i.received_qty,
-			i.pallets,
-			COALESCE(i.pallets_detail_ctns, ''),
 			i.height_in,
 			i.out_date,
 			i.last_restocked_at,
@@ -1387,8 +1373,6 @@ func scanItem(scanner itemScanner) (Item, error) {
 		&item.ContainerNo,
 		&item.ExpectedQty,
 		&item.ReceivedQty,
-		&item.Pallets,
-		&item.PalletsDetailCtns,
 		&item.HeightIn,
 		&outDate,
 		&lastRestockedAt,
@@ -1474,7 +1458,6 @@ func sanitizeItemInput(input CreateItemInput) CreateItemInput {
 	input.Unit = strings.TrimSpace(strings.ToLower(input.Unit))
 	input.ContainerNo = strings.TrimSpace(strings.ToUpper(input.ContainerNo))
 	input.StorageSection = strings.TrimSpace(strings.ToUpper(input.StorageSection))
-	input.PalletsDetailCtns = strings.TrimSpace(input.PalletsDetailCtns)
 
 	if input.Name == "" {
 		input.Name = input.Description
@@ -1510,7 +1493,7 @@ func validateItemInput(input CreateItemInput) error {
 		return fmt.Errorf("%w: customer is required", ErrInvalidInput)
 	case input.LocationID <= 0:
 		return fmt.Errorf("%w: location is required", ErrInvalidInput)
-	case input.ExpectedQty < 0 || input.ReceivedQty < 0 || input.Pallets < 0 || input.HeightIn < 0:
+	case input.ExpectedQty < 0 || input.ReceivedQty < 0 || input.HeightIn < 0:
 		return fmt.Errorf("%w: spreadsheet quantities and height cannot be negative", ErrInvalidInput)
 	default:
 		return nil
@@ -1741,14 +1724,6 @@ func (s *Store) applyMovementToInventoryItem(ctx context.Context, tx *sql.Tx, it
 				WHEN ? <> 0 THEN ?
 				ELSE received_qty
 			END,
-			pallets = CASE
-				WHEN ? <> 0 THEN ?
-				ELSE pallets
-			END,
-			pallets_detail_ctns = CASE
-				WHEN ? <> '' THEN ?
-				ELSE pallets_detail_ctns
-			END,
 			height_in = CASE
 				WHEN ? <> 0 THEN ?
 				ELSE height_in
@@ -1771,10 +1746,6 @@ func (s *Store) applyMovementToInventoryItem(ctx context.Context, tx *sql.Tx, it
 		input.ExpectedQty,
 		input.ReceivedQty,
 		input.ReceivedQty,
-		input.Pallets,
-		input.Pallets,
-		input.PalletsDetailCtns,
-		input.PalletsDetailCtns,
 		input.HeightIn,
 		input.HeightIn,
 		nullableTime(outDate),

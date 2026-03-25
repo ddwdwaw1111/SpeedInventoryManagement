@@ -74,12 +74,27 @@ func Migrate(db *sql.DB) error {
 			description TEXT DEFAULT NULL,
 			unit VARCHAR(32) NOT NULL DEFAULT 'pcs',
 			reorder_level INT NOT NULL DEFAULT 0,
+			default_units_per_pallet INT NOT NULL DEFAULT 0,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			PRIMARY KEY (id),
 			UNIQUE KEY uq_sku_master_sku (sku)
 		)`,
 		`ALTER TABLE sku_master ADD COLUMN IF NOT EXISTS item_number VARCHAR(120) DEFAULT NULL AFTER id`,
+		`ALTER TABLE sku_master ADD COLUMN IF NOT EXISTS default_units_per_pallet INT NOT NULL DEFAULT 0 AFTER reorder_level`,
+		`CREATE TABLE IF NOT EXISTS ui_preferences (
+			id BIGINT NOT NULL AUTO_INCREMENT,
+			scope_type VARCHAR(32) NOT NULL DEFAULT 'global',
+			scope_id BIGINT NOT NULL DEFAULT 0,
+			preference_key VARCHAR(120) NOT NULL,
+			value_json JSON DEFAULT NULL,
+			updated_by_user_id BIGINT DEFAULT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			UNIQUE KEY uq_ui_preferences_scope_key (scope_type, scope_id, preference_key)
+		)`,
+		`ALTER TABLE ui_preferences ADD COLUMN IF NOT EXISTS updated_by_user_id BIGINT DEFAULT NULL AFTER value_json`,
 		`CREATE TABLE IF NOT EXISTS inventory_items (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			sku_master_id BIGINT NOT NULL,
@@ -101,8 +116,6 @@ func Migrate(db *sql.DB) error {
 			container_no VARCHAR(120) NOT NULL DEFAULT '',
 			expected_qty INT NOT NULL DEFAULT 0,
 			received_qty INT NOT NULL DEFAULT 0,
-			pallets INT NOT NULL DEFAULT 0,
-			pallets_detail_ctns VARCHAR(255) DEFAULT NULL,
 			height_in INT NOT NULL DEFAULT 0,
 			out_date DATE DEFAULT NULL,
 			last_restocked_at TIMESTAMP NULL DEFAULT NULL,
@@ -133,9 +146,7 @@ func Migrate(db *sql.DB) error {
 		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS container_no VARCHAR(120) NOT NULL DEFAULT '' AFTER delivery_date`,
 		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS expected_qty INT NOT NULL DEFAULT 0 AFTER container_no`,
 		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS received_qty INT NOT NULL DEFAULT 0 AFTER expected_qty`,
-		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS pallets INT NOT NULL DEFAULT 0 AFTER received_qty`,
-		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS pallets_detail_ctns VARCHAR(255) DEFAULT NULL AFTER pallets`,
-		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS height_in INT NOT NULL DEFAULT 0 AFTER pallets_detail_ctns`,
+		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS height_in INT NOT NULL DEFAULT 0 AFTER received_qty`,
 		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS out_date DATE DEFAULT NULL AFTER height_in`,
 		`CREATE TABLE IF NOT EXISTS stock_movements (
 			id BIGINT NOT NULL AUTO_INCREMENT,
@@ -342,6 +353,8 @@ func Migrate(db *sql.DB) error {
 			sku_snapshot VARCHAR(64) NOT NULL,
 			description_snapshot VARCHAR(255) DEFAULT NULL,
 			quantity INT NOT NULL DEFAULT 0,
+			pallets INT NOT NULL DEFAULT 0,
+			pallets_detail_ctns VARCHAR(255) DEFAULT NULL,
 			unit_label VARCHAR(32) DEFAULT NULL,
 			carton_size_mm VARCHAR(120) DEFAULT NULL,
 			net_weight_kgs DECIMAL(12,2) NOT NULL DEFAULT 0,
@@ -365,6 +378,8 @@ func Migrate(db *sql.DB) error {
 				FOREIGN KEY (location_id) REFERENCES storage_locations (id)
 		)`,
 		`ALTER TABLE outbound_document_lines ADD COLUMN IF NOT EXISTS item_number_snapshot VARCHAR(120) DEFAULT NULL AFTER storage_section`,
+		`ALTER TABLE outbound_document_lines ADD COLUMN IF NOT EXISTS pallets INT NOT NULL DEFAULT 0 AFTER quantity`,
+		`ALTER TABLE outbound_document_lines ADD COLUMN IF NOT EXISTS pallets_detail_ctns VARCHAR(255) DEFAULT NULL AFTER pallets`,
 		`CREATE TABLE IF NOT EXISTS outbound_pick_allocations (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			line_id BIGINT NOT NULL,
@@ -607,6 +622,19 @@ func Migrate(db *sql.DB) error {
 		}
 	}
 
+	if hasLegacyDefaultPallets, err := columnExists(db, "sku_master", "default_pallets"); err != nil {
+		return fmt.Errorf("check legacy sku default pallets column: %w", err)
+	} else if hasLegacyDefaultPallets {
+		if _, err := db.Exec(`
+			UPDATE sku_master
+			SET default_units_per_pallet = default_pallets
+			WHERE default_units_per_pallet = 0
+				AND default_pallets > 0
+		`); err != nil {
+			return fmt.Errorf("backfill default units per pallet: %w", err)
+		}
+	}
+
 	if _, err := db.Exec(`
 		INSERT INTO customers (name, contact_name, email, phone, notes)
 		VALUES ('Unassigned', NULL, NULL, NULL, 'Default customer for legacy inventory rows')
@@ -784,6 +812,20 @@ func indexExists(db *sql.DB, tableName string, indexName string) (bool, error) {
 			AND table_name = ?
 			AND index_name = ?
 	`, tableName, indexName).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func columnExists(db *sql.DB, tableName string, columnName string) (bool, error) {
+	var count int
+	if err := db.QueryRow(`
+		SELECT COUNT(*)
+		FROM information_schema.columns
+		WHERE table_schema = DATABASE()
+			AND table_name = ?
+			AND column_name = ?
+	`, tableName, columnName).Scan(&count); err != nil {
 		return false, err
 	}
 	return count > 0, nil

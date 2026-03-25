@@ -8,6 +8,17 @@ export type DashboardData = {
   recentMovements: Movement[];
 };
 
+export type UIPreference<T = unknown> = {
+  id: number;
+  scopeType: string;
+  scopeId: number;
+  key: string;
+  value: T | null;
+  updatedByUserId: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type AuditLog = {
   id: number;
   actorUserId: number;
@@ -111,6 +122,7 @@ export type SKUMaster = {
   description: string;
   unit: string;
   reorderLevel: number;
+  defaultUnitsPerPallet: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -123,6 +135,7 @@ export type SKUMasterPayload = {
   description: string;
   unit: string;
   reorderLevel: number;
+  defaultUnitsPerPallet: number;
 };
 
 export type Item = {
@@ -148,8 +161,6 @@ export type Item = {
   containerNo: string;
   expectedQty: number;
   receivedQty: number;
-  pallets: number;
-  palletsDetailCtns: string;
   heightIn: number;
   outDate: string | null;
   lastRestockedAt: string | null;
@@ -207,6 +218,8 @@ export type OutboundDocumentLine = {
   sku: string;
   description: string;
   quantity: number;
+  pallets: number;
+  palletsDetailCtns: string;
   unitLabel: string;
   cartonSizeMm: string;
   netWeightKgs: number;
@@ -259,11 +272,20 @@ export type OutboundDocument = {
 export type OutboundDocumentLinePayload = {
   itemId: number;
   quantity: number;
+  pallets: number;
+  palletsDetailCtns?: string;
   unitLabel?: string;
   cartonSizeMm?: string;
   netWeightKgs?: number;
   grossWeightKgs?: number;
   lineNote?: string;
+  pickAllocations?: OutboundDocumentLineAllocationPayload[];
+};
+
+export type OutboundDocumentLineAllocationPayload = {
+  storageSection: string;
+  containerNo: string;
+  allocatedQty: number;
 };
 
 export type OutboundDocumentPayload = {
@@ -508,8 +530,6 @@ export type ItemPayload = {
   containerNo?: string;
   expectedQty: number;
   receivedQty: number;
-  pallets: number;
-  palletsDetailCtns?: string;
   heightIn: number;
   outDate?: string;
 };

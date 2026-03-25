@@ -14,13 +14,15 @@ import { formatDateTimeValue, formatDateValue, parseDateValue } from "../lib/dat
 import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
 import { useSettings } from "../lib/settings";
-import type { Customer, Location, Movement } from "../lib/types";
+import type { Customer, Location, Movement, UserRole } from "../lib/types";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
+import { useSharedColumnOrder } from "./useSharedColumnOrder";
 
 type AllActivityPageProps = {
   movements: Movement[];
   customers: Customer[];
   locations: Location[];
+  currentUserRole: UserRole;
   isLoading: boolean;
   onNavigate: (page: PageKey) => void;
 };
@@ -28,10 +30,12 @@ type AllActivityPageProps = {
 type MovementTypeFilter = "ALL" | Movement["movementType"];
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
+const ALL_ACTIVITY_COLUMN_ORDER_PREFERENCE_KEY = "all-activity.column-order";
 
-export function AllActivityPage({ movements, customers, locations, isLoading, onNavigate }: AllActivityPageProps) {
+export function AllActivityPage({ movements, customers, locations, currentUserRole, isLoading, onNavigate }: AllActivityPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
+  const canConfigureColumns = currentUserRole === "admin";
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
@@ -112,7 +116,7 @@ export function AllActivityPage({ movements, customers, locations, isLoading, on
     }
   }, [selectedMovement, selectedMovementId]);
 
-  const columns = useMemo<GridColDef<Movement>[]>(() => [
+  const baseColumns = useMemo<GridColDef<Movement>[]>(() => [
     {
       field: "activityDate",
       headerName: t("activityDate"),
@@ -162,12 +166,21 @@ export function AllActivityPage({ movements, customers, locations, isLoading, on
       renderCell: (params) => formatDateTimeValue(params.row.createdAt, resolvedTimeZone)
     }
   ], [resolvedTimeZone, t]);
+  const {
+    columns,
+    columnOrderAction,
+    columnOrderDialog
+  } = useSharedColumnOrder({
+    preferenceKey: ALL_ACTIVITY_COLUMN_ORDER_PREFERENCE_KEY,
+    baseColumns,
+    canManage: canConfigureColumns
+  });
 
   return (
       <main className="workspace-main">
         <section className="workbook-panel workbook-panel--full">
           <div className="tab-strip">
-            <WorkspacePanelHeader title={t("allActivity")} />
+            <WorkspacePanelHeader title={t("allActivity")} actions={columnOrderAction} />
             <div className="filter-bar">
               <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("allActivitySearchPlaceholder")} /></label>
             <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
@@ -197,6 +210,7 @@ export function AllActivityPage({ movements, customers, locations, isLoading, on
           </Box>
         </div>
       </section>
+      {columnOrderDialog}
 
       <Drawer
         anchor="right"

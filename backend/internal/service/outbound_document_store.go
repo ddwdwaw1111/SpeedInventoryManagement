@@ -65,6 +65,8 @@ type OutboundDocumentLine struct {
 	SKU             string                   `json:"sku"`
 	Description     string                   `json:"description"`
 	Quantity        int                      `json:"quantity"`
+	Pallets         int                      `json:"pallets"`
+	PalletsDetailCtns string                 `json:"palletsDetailCtns"`
 	UnitLabel       string                   `json:"unitLabel"`
 	CartonSizeMM    string                   `json:"cartonSizeMm"`
 	NetWeightKgs    float64                  `json:"netWeightKgs"`
@@ -87,14 +89,23 @@ type CreateOutboundDocumentInput struct {
 	Lines         []CreateOutboundDocumentLineInput `json:"lines"`
 }
 
+type CreateOutboundLineAllocationInput struct {
+	StorageSection string `json:"storageSection"`
+	ContainerNo    string `json:"containerNo"`
+	AllocatedQty   int    `json:"allocatedQty"`
+}
+
 type CreateOutboundDocumentLineInput struct {
-	ItemID         int64   `json:"itemId"`
-	Quantity       int     `json:"quantity"`
-	UnitLabel      string  `json:"unitLabel"`
-	CartonSizeMM   string  `json:"cartonSizeMm"`
-	NetWeightKgs   float64 `json:"netWeightKgs"`
-	GrossWeightKgs float64 `json:"grossWeightKgs"`
-	LineNote       string  `json:"lineNote"`
+	ItemID          int64                            `json:"itemId"`
+	Quantity        int                              `json:"quantity"`
+	Pallets         int                              `json:"pallets"`
+	PalletsDetailCtns string                         `json:"palletsDetailCtns"`
+	UnitLabel       string                           `json:"unitLabel"`
+	CartonSizeMM    string                           `json:"cartonSizeMm"`
+	NetWeightKgs    float64                          `json:"netWeightKgs"`
+	GrossWeightKgs  float64                          `json:"grossWeightKgs"`
+	LineNote        string                           `json:"lineNote"`
+	PickAllocations []CreateOutboundLineAllocationInput `json:"pickAllocations"`
 }
 
 type outboundDocumentRow struct {
@@ -137,6 +148,8 @@ type outboundDocumentLineRow struct {
 	SKUSnapshot         string    `db:"sku_snapshot"`
 	DescriptionSnapshot string    `db:"description_snapshot"`
 	Quantity            int       `db:"quantity"`
+	Pallets             int       `db:"pallets"`
+	PalletsDetailCtns   string    `db:"pallets_detail_ctns"`
 	UnitLabel           string    `db:"unit_label"`
 	CartonSizeMM        string    `db:"carton_size_mm"`
 	NetWeightKgs        float64   `db:"net_weight_kgs"`
@@ -303,6 +316,8 @@ func (s *Store) ListOutboundDocuments(ctx context.Context, limit int) ([]Outboun
 			sku_snapshot,
 			COALESCE(description_snapshot, '') AS description_snapshot,
 			quantity,
+			pallets,
+			COALESCE(pallets_detail_ctns, '') AS pallets_detail_ctns,
 			COALESCE(unit_label, '') AS unit_label,
 			COALESCE(carton_size_mm, '') AS carton_size_mm,
 			net_weight_kgs,
@@ -340,6 +355,8 @@ func (s *Store) ListOutboundDocuments(ctx context.Context, limit int) ([]Outboun
 			SKU:             lineRow.SKUSnapshot,
 			Description:     lineRow.DescriptionSnapshot,
 			Quantity:        lineRow.Quantity,
+			Pallets:         lineRow.Pallets,
+			PalletsDetailCtns: lineRow.PalletsDetailCtns,
 			UnitLabel:       lineRow.UnitLabel,
 			CartonSizeMM:    lineRow.CartonSizeMM,
 			NetWeightKgs:    lineRow.NetWeightKgs,
@@ -405,7 +422,7 @@ func (s *Store) CreateOutboundDocument(ctx context.Context, input CreateOutbound
 		} else if customerID != lockedItem.CustomerID {
 			return OutboundDocument{}, fmt.Errorf("%w: all outbound lines must belong to the same customer", ErrInvalidInput)
 		}
-		if _, err := s.allocateOutboundLineTx(ctx, tx, lockedItem, line.Quantity, reservationState); err != nil {
+		if _, err := s.resolveOutboundLineAllocationsTx(ctx, tx, lockedItem, line, reservationState); err != nil {
 			return OutboundDocument{}, err
 		}
 	}
@@ -533,7 +550,7 @@ func (s *Store) UpdateOutboundDocument(ctx context.Context, documentID int64, in
 		} else if customerID != lockedItem.CustomerID {
 			return OutboundDocument{}, fmt.Errorf("%w: all outbound lines must belong to the same customer", ErrInvalidInput)
 		}
-		if _, err := s.allocateOutboundLineTx(ctx, tx, lockedItem, line.Quantity, reservationState); err != nil {
+		if _, err := s.resolveOutboundLineAllocationsTx(ctx, tx, lockedItem, line, reservationState); err != nil {
 			return OutboundDocument{}, err
 		}
 	}
@@ -604,9 +621,19 @@ func (s *Store) insertOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, d
 	reservationState := newOutboundAllocationReservationState()
 	for index, line := range input.Lines {
 		lockedItem := lockedItems[line.ItemID]
-		allocations, err := s.allocateOutboundLineTx(ctx, tx, lockedItem, line.Quantity, reservationState)
+		allocations, err := s.resolveOutboundLineAllocationsTx(ctx, tx, lockedItem, line, reservationState)
 		if err != nil {
 			return err
+		}
+		lineLocationID := lockedItem.LocationID
+		lineLocationName := lockedItem.LocationName
+		lineStorageSection := fallbackSection(lockedItem.StorageSection)
+		lineItemNumber := strings.TrimSpace(lockedItem.ItemNumber)
+		if len(allocations) > 0 {
+			lineLocationID = allocations[0].LocationID
+			lineLocationName = allocations[0].LocationName
+			lineStorageSection = fallbackSection(allocations[0].StorageSection)
+			lineItemNumber = firstNonEmpty(lineItemNumber, allocations[0].ItemNumber)
 		}
 
 		lineResult, err := tx.ExecContext(ctx, `
@@ -620,23 +647,27 @@ func (s *Store) insertOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, d
 				sku_snapshot,
 				description_snapshot,
 				quantity,
+				pallets,
+				pallets_detail_ctns,
 				unit_label,
 				carton_size_mm,
 				net_weight_kgs,
 				gross_weight_kgs,
 				line_note,
 				sort_order
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			documentID,
 			lockedItem.ItemID,
-			lockedItem.LocationID,
-			lockedItem.LocationName,
-			fallbackSection(lockedItem.StorageSection),
-			nullableString(lockedItem.ItemNumber),
+			lineLocationID,
+			lineLocationName,
+			lineStorageSection,
+			nullableString(lineItemNumber),
 			lockedItem.SKU,
 			nullableString(lockedItem.Description),
 			line.Quantity,
+			line.Pallets,
+			nullableString(line.PalletsDetailCtns),
 			nullableString(firstNonEmpty(line.UnitLabel, strings.ToUpper(lockedItem.Unit), "PCS")),
 			nullableString(line.CartonSizeMM),
 			line.NetWeightKgs,
@@ -741,8 +772,17 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 
 	lockedItems := make(map[int64]lockedOutboundItem)
 	reservationState := newOutboundAllocationReservationState()
-	lineAllocations := make(map[int64][]outboundAllocationCandidate, len(lineRows))
 	lineIDs := make([]int64, 0, len(lineRows))
+	for _, lineRow := range lineRows {
+		lineIDs = append(lineIDs, lineRow.ID)
+	}
+
+	storedAllocationsByLineID, err := s.loadOutboundPickAllocationsTx(ctx, tx, lineIDs)
+	if err != nil {
+		return err
+	}
+
+	lineAllocations := make(map[int64][]outboundAllocationCandidate, len(lineRows))
 
 	for _, lineRow := range lineRows {
 		lockedItem, exists := lockedItems[lineRow.ItemID]
@@ -754,13 +794,25 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 			lockedItems[lineRow.ItemID] = lockedItem
 		}
 
-		allocations, err := s.allocateOutboundLineTx(ctx, tx, lockedItem, lineRow.Quantity, reservationState)
+		lineInput := CreateOutboundDocumentLineInput{
+			ItemID:            lineRow.ItemID,
+			Quantity:          lineRow.Quantity,
+			Pallets:           lineRow.Pallets,
+			PalletsDetailCtns: lineRow.PalletsDetailCtns,
+			UnitLabel:         lineRow.UnitLabel,
+			CartonSizeMM:      lineRow.CartonSizeMM,
+			NetWeightKgs: lineRow.NetWeightKgs,
+			GrossWeightKgs: lineRow.GrossWeightKgs,
+			LineNote:          lineRow.LineNote,
+			PickAllocations: toCreateOutboundLineAllocationInputs(storedAllocationsByLineID[lineRow.ID]),
+		}
+
+		allocations, err := s.resolveOutboundLineAllocationsTx(ctx, tx, lockedItem, lineInput, reservationState)
 		if err != nil {
 			return err
 		}
 
 		lineAllocations[lineRow.ID] = allocations
-		lineIDs = append(lineIDs, lineRow.ID)
 	}
 
 	if err := s.deleteOutboundPickAllocationsTx(ctx, tx, lineIDs); err != nil {
@@ -816,7 +868,7 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 					out_date,
 					document_note,
 					reason
-				) VALUES (?, ?, ?, ?, ?, ?, 'OUT', ?, NULL, ?, ?, ?, ?, ?, 0, 0, 0, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				) VALUES (?, ?, ?, ?, ?, ?, 'OUT', ?, NULL, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`,
 				allocation.ItemID,
 				documentID,
@@ -830,6 +882,8 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 				nullableString(documentRow.OrderRef),
 				nullableString(firstNonEmpty(allocation.ItemNumber, lineRow.ItemNumberSnapshot)),
 				nullableString(firstNonEmpty(allocation.Description, lineRow.DescriptionSnapshot)),
+				lineRow.Pallets,
+				nullableString(lineRow.PalletsDetailCtns),
 				nullableString(lineRow.CartonSizeMM),
 				allocation.AllocatedQty,
 				nullableString(firstNonEmpty(lineRow.UnitLabel, strings.ToUpper(allocation.Unit), "PCS")),
@@ -1015,9 +1069,10 @@ func (s *Store) CancelOutboundDocument(ctx context.Context, documentID int64, in
 						net_weight_kgs,
 						gross_weight_kgs,
 						height_in,
+						out_date,
 						document_note,
 						reason
-					) VALUES (?, ?, ?, ?, ?, ?, 'REVERSAL', ?, NULL, ?, ?, ?, ?, ?, 0, 0, 0, NULL, ?, ?, ?, ?, ?, 0, ?, ?)
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				`,
 					allocation.ItemID,
 					documentID,
@@ -1025,17 +1080,25 @@ func (s *Store) CancelOutboundDocument(ctx context.Context, documentID int64, in
 					customerID,
 					locationID,
 					fallbackSection(storageSection),
+					"REVERSAL",
 					delta,
+					nil,
 					nullableString(allocation.ContainerNo),
 					nullableString(documentRow.PackingListNo),
 					nullableString(documentRow.OrderRef),
 					nullableString(firstNonEmpty(allocation.ItemNumber, lineRow.ItemNumberSnapshot)),
 					nullableString(firstNonEmpty(descriptionSnapshot, lineRow.DescriptionSnapshot)),
+					0,
+					0,
+					lineRow.Pallets,
+					nullableString(lineRow.PalletsDetailCtns),
 					nullableString(lineRow.CartonSizeMM),
 					delta,
 					nullableString(firstNonEmpty(lineRow.UnitLabel, "PCS")),
 					netWeightSplits[allocationIndex],
 					grossWeightSplits[allocationIndex],
+					0,
+					nullableTime(documentRow.OutDate),
 					nullableString(documentRow.DocumentNote),
 					nullableString(cancellationReason),
 				); err != nil {
@@ -1150,6 +1213,8 @@ func (s *Store) loadOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, doc
 			sku_snapshot,
 			COALESCE(description_snapshot, '') AS description_snapshot,
 			quantity,
+			pallets,
+			COALESCE(pallets_detail_ctns, '') AS pallets_detail_ctns,
 			COALESCE(unit_label, '') AS unit_label,
 			COALESCE(carton_size_mm, '') AS carton_size_mm,
 			net_weight_kgs,
@@ -1180,6 +1245,8 @@ func (s *Store) loadOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, doc
 			&lineRow.SKUSnapshot,
 			&lineRow.DescriptionSnapshot,
 			&lineRow.Quantity,
+			&lineRow.Pallets,
+			&lineRow.PalletsDetailCtns,
 			&lineRow.UnitLabel,
 			&lineRow.CartonSizeMM,
 			&lineRow.NetWeightKgs,
@@ -1291,6 +1358,8 @@ func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []in
 			sku_snapshot,
 			COALESCE(description_snapshot, '') AS description_snapshot,
 			quantity,
+			pallets,
+			COALESCE(pallets_detail_ctns, '') AS pallets_detail_ctns,
 			COALESCE(unit_label, '') AS unit_label,
 			COALESCE(carton_size_mm, '') AS carton_size_mm,
 			net_weight_kgs,
@@ -1327,6 +1396,8 @@ func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []in
 			SKU:             lineRow.SKUSnapshot,
 			Description:     lineRow.DescriptionSnapshot,
 			Quantity:        lineRow.Quantity,
+			Pallets:         lineRow.Pallets,
+			PalletsDetailCtns: lineRow.PalletsDetailCtns,
 			UnitLabel:       lineRow.UnitLabel,
 			CartonSizeMM:    lineRow.CartonSizeMM,
 			NetWeightKgs:    lineRow.NetWeightKgs,
@@ -1454,9 +1525,6 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 
 	lockedRows := make([]lockedOutboundSourceRow, 0)
 	itemAvailableByItemID := make(map[int64]int)
-	lockedRowsByItemID := make(map[int64]lockedOutboundSourceRow)
-	lockedRowsBySourceKey := make(map[string]lockedOutboundSourceRow)
-	var fallbackLockedRow lockedOutboundSourceRow
 
 	for rows.Next() {
 		var (
@@ -1489,17 +1557,56 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 
 		lockedRows = append(lockedRows, row)
 		itemAvailableByItemID[row.ItemID] = row.AvailableQty
-		lockedRowsByItemID[row.ItemID] = row
-		lockedRowsBySourceKey[outboundAllocationLedgerSourceKey(row.StorageSection, row.ContainerNo)] = row
-		if fallbackLockedRow.ItemID == 0 {
-			fallbackLockedRow = row
-		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, nil, fmt.Errorf("iterate locked outbound source rows: %w", err)
 	}
 	if len(lockedRows) == 0 {
 		return nil, nil, ErrInsufficientStock
+	}
+
+	currentCandidatesBySourceKey := make(map[string]outboundAllocationCandidate)
+	totalAvailableQty := 0
+	for _, lockedRow := range lockedRows {
+		totalAvailableQty += lockedRow.AvailableQty
+		sourceKey := outboundAllocationLedgerSourceKey(lockedRow.StorageSection, lockedRow.ContainerNo)
+		existingCandidate, exists := currentCandidatesBySourceKey[sourceKey]
+		if !exists {
+			sortTime := lockedRow.CreatedAt
+			if lockedRow.DeliveryDate != nil {
+				sortTime = *lockedRow.DeliveryDate
+			}
+
+			currentCandidatesBySourceKey[sourceKey] = outboundAllocationCandidate{
+				ItemID:         lockedRow.ItemID,
+				CustomerID:     lockedRow.CustomerID,
+				ItemNumber:     lockedRow.ItemNumber,
+				LocationID:     lockedRow.LocationID,
+				LocationName:   lockedRow.LocationName,
+				StorageSection: fallbackSection(lockedRow.StorageSection),
+				ContainerNo:    lockedRow.ContainerNo,
+				SKU:            lockedRow.SKU,
+				Description:    lockedRow.Description,
+				Unit:           lockedRow.Unit,
+				Quantity:       lockedRow.Quantity,
+				AvailableQty:   lockedRow.AvailableQty,
+				HeightIn:       lockedRow.HeightIn,
+				SortAt:         sortTime,
+			}
+			continue
+		}
+
+		existingCandidate.Quantity += lockedRow.Quantity
+		existingCandidate.AvailableQty += lockedRow.AvailableQty
+		existingCandidate.ItemNumber = firstNonEmpty(existingCandidate.ItemNumber, lockedRow.ItemNumber)
+		if lockedRow.DeliveryDate != nil {
+			if existingCandidate.SortAt.IsZero() || lockedRow.DeliveryDate.Before(existingCandidate.SortAt) {
+				existingCandidate.SortAt = *lockedRow.DeliveryDate
+			}
+		} else if !lockedRow.CreatedAt.IsZero() && (existingCandidate.SortAt.IsZero() || lockedRow.CreatedAt.Before(existingCandidate.SortAt)) {
+			existingCandidate.SortAt = lockedRow.CreatedAt
+		}
+		currentCandidatesBySourceKey[sourceKey] = existingCandidate
 	}
 
 	movementQuery := `
@@ -1517,7 +1624,6 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 		GROUP BY
 			COALESCE(NULLIF(m.storage_section, ''), 'A'),
 			COALESCE(m.container_no, '')
-		HAVING SUM(m.quantity_change) > 0
 	`
 
 	movementRows, err := tx.QueryContext(ctx, movementQuery, lockedItem.CustomerID, lockedItem.LocationID, lockedItem.SKU)
@@ -1526,8 +1632,11 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 	}
 	defer movementRows.Close()
 
-	candidates := make([]outboundAllocationCandidate, 0)
-	itemIDsWithLedgerBalances := make(map[int64]bool)
+	movementCandidatesBySourceKey := make(map[string]outboundAllocationCandidate)
+	var fallbackLockedRow lockedOutboundSourceRow
+	if len(lockedRows) > 0 {
+		fallbackLockedRow = lockedRows[0]
+	}
 
 	for movementRows.Next() {
 		var (
@@ -1547,66 +1656,102 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 		}
 
 		sourceKey := outboundAllocationLedgerSourceKey(balanceRow.StorageSection, balanceRow.ContainerNo)
-		lockedRow, exists := lockedRowsBySourceKey[sourceKey]
+		candidate, exists := currentCandidatesBySourceKey[sourceKey]
 		if !exists {
-			lockedRow = fallbackLockedRow
+			candidate = outboundAllocationCandidate{
+				ItemID:         fallbackLockedRow.ItemID,
+				CustomerID:     fallbackLockedRow.CustomerID,
+				ItemNumber:     fallbackLockedRow.ItemNumber,
+				LocationID:     fallbackLockedRow.LocationID,
+				LocationName:   fallbackLockedRow.LocationName,
+				StorageSection: fallbackSection(balanceRow.StorageSection),
+				ContainerNo:    balanceRow.ContainerNo,
+				SKU:            fallbackLockedRow.SKU,
+				Description:    fallbackLockedRow.Description,
+				Unit:           fallbackLockedRow.Unit,
+				Quantity:       fallbackLockedRow.Quantity,
+				AvailableQty:   balanceRow.AvailableQty,
+				HeightIn:       fallbackLockedRow.HeightIn,
+			}
+		} else {
+			candidate.StorageSection = fallbackSection(balanceRow.StorageSection)
+			candidate.ContainerNo = balanceRow.ContainerNo
+			candidate.AvailableQty = balanceRow.AvailableQty
 		}
 
-		sortTime := lockedRow.CreatedAt
 		if sortAt.Valid {
-			sortTime = sortAt.Time
-		} else if lockedRow.DeliveryDate != nil {
-			sortTime = *lockedRow.DeliveryDate
+			candidate.SortAt = sortAt.Time
+			if currentCandidate, currentExists := currentCandidatesBySourceKey[sourceKey]; currentExists {
+				currentCandidate.SortAt = sortAt.Time
+				currentCandidatesBySourceKey[sourceKey] = currentCandidate
+			}
+		} else if candidate.SortAt.IsZero() && fallbackLockedRow.DeliveryDate != nil {
+			candidate.SortAt = *fallbackLockedRow.DeliveryDate
 		}
-
-		itemIDsWithLedgerBalances[lockedRow.ItemID] = true
-		candidates = append(candidates, outboundAllocationCandidate{
-			ItemID:         lockedRow.ItemID,
-			CustomerID:     lockedRow.CustomerID,
-			ItemNumber:     lockedRow.ItemNumber,
-			LocationID:     lockedRow.LocationID,
-			LocationName:   lockedRow.LocationName,
-			StorageSection: fallbackSection(balanceRow.StorageSection),
-			ContainerNo:    balanceRow.ContainerNo,
-			SKU:            lockedRow.SKU,
-			Description:    lockedRow.Description,
-			Unit:           lockedRow.Unit,
-			Quantity:       lockedRow.Quantity,
-			AvailableQty:   balanceRow.AvailableQty,
-			HeightIn:       lockedRow.HeightIn,
-			SortAt:         sortTime,
-		})
+		movementCandidatesBySourceKey[sourceKey] = candidate
 	}
 	if err := movementRows.Err(); err != nil {
 		return nil, nil, fmt.Errorf("iterate outbound movement balances: %w", err)
 	}
 
-	for _, lockedRow := range lockedRows {
-		if itemIDsWithLedgerBalances[lockedRow.ItemID] || lockedRow.AvailableQty <= 0 {
+	currentCandidates := make([]outboundAllocationCandidate, 0, len(currentCandidatesBySourceKey))
+	currentNamedContainerCount := 0
+	for _, candidate := range currentCandidatesBySourceKey {
+		if candidate.AvailableQty <= 0 {
+			continue
+		}
+		if strings.TrimSpace(candidate.ContainerNo) != "" {
+			currentNamedContainerCount++
+		}
+		currentCandidates = append(currentCandidates, candidate)
+	}
+
+	movementCandidates := make([]outboundAllocationCandidate, 0, len(movementCandidatesBySourceKey))
+	for _, candidate := range movementCandidatesBySourceKey {
+		if candidate.AvailableQty <= 0 {
+			continue
+		}
+		movementCandidates = append(movementCandidates, candidate)
+	}
+
+	sort.SliceStable(movementCandidates, func(leftIndex, rightIndex int) bool {
+		left := movementCandidates[leftIndex]
+		right := movementCandidates[rightIndex]
+		if !left.SortAt.Equal(right.SortAt) {
+			return left.SortAt.Before(right.SortAt)
+		}
+		if left.LocationName != right.LocationName {
+			return left.LocationName < right.LocationName
+		}
+		if fallbackSection(left.StorageSection) != fallbackSection(right.StorageSection) {
+			return fallbackSection(left.StorageSection) < fallbackSection(right.StorageSection)
+		}
+		return left.ContainerNo < right.ContainerNo
+	})
+
+	distributedMovementCandidates := make([]outboundAllocationCandidate, 0, len(movementCandidates))
+	remainingAvailableQty := totalAvailableQty
+	for _, candidate := range movementCandidates {
+		if remainingAvailableQty <= 0 {
+			break
+		}
+		distributedQty := candidate.AvailableQty
+		if distributedQty > remainingAvailableQty {
+			distributedQty = remainingAvailableQty
+		}
+		if distributedQty <= 0 {
 			continue
 		}
 
-		sortTime := lockedRow.CreatedAt
-		if lockedRow.DeliveryDate != nil {
-			sortTime = *lockedRow.DeliveryDate
-		}
+		candidate.AvailableQty = distributedQty
+		distributedMovementCandidates = append(distributedMovementCandidates, candidate)
+		remainingAvailableQty -= distributedQty
+	}
 
-		candidates = append(candidates, outboundAllocationCandidate{
-			ItemID:         lockedRow.ItemID,
-			CustomerID:     lockedRow.CustomerID,
-			ItemNumber:     lockedRow.ItemNumber,
-			LocationID:     lockedRow.LocationID,
-			LocationName:   lockedRow.LocationName,
-			StorageSection: fallbackSection(lockedRow.StorageSection),
-			ContainerNo:    lockedRow.ContainerNo,
-			SKU:            lockedRow.SKU,
-			Description:    lockedRow.Description,
-			Unit:           lockedRow.Unit,
-			Quantity:       lockedRow.Quantity,
-			AvailableQty:   lockedRow.AvailableQty,
-			HeightIn:       lockedRow.HeightIn,
-			SortAt:         sortTime,
-		})
+	useCurrentCandidates := len(distributedMovementCandidates) <= 1 || currentNamedContainerCount > 1
+	candidates := currentCandidates
+	if !useCurrentCandidates {
+		candidates = distributedMovementCandidates
 	}
 
 	sort.SliceStable(candidates, func(leftIndex, rightIndex int) bool {
@@ -1700,6 +1845,80 @@ func (s *Store) allocateOutboundLineTx(ctx context.Context, tx *sql.Tx, lockedIt
 	return allocations, nil
 }
 
+func (s *Store) resolveOutboundLineAllocationsTx(ctx context.Context, tx *sql.Tx, lockedItem lockedOutboundItem, line CreateOutboundDocumentLineInput, reservationState *outboundAllocationReservationState) ([]outboundAllocationCandidate, error) {
+	if len(line.PickAllocations) == 0 {
+		return s.allocateOutboundLineTx(ctx, tx, lockedItem, line.Quantity, reservationState)
+	}
+	if reservationState == nil {
+		reservationState = newOutboundAllocationReservationState()
+	}
+
+	candidates, itemAvailableByItemID, err := s.loadLockedOutboundAllocationCandidatesTx(ctx, tx, lockedItem)
+	if err != nil {
+		return nil, err
+	}
+
+	candidatesBySourceKey := make(map[string]outboundAllocationCandidate, len(candidates))
+	for _, candidate := range candidates {
+		candidatesBySourceKey[outboundAllocationLedgerSourceKey(candidate.StorageSection, candidate.ContainerNo)] = candidate
+	}
+
+	allocations := make([]outboundAllocationCandidate, 0, len(line.PickAllocations))
+	appliedReservations := make([]struct {
+		ItemID    int64
+		SourceKey string
+		Allocated int
+	}, 0, len(line.PickAllocations))
+	totalAllocatedQty := 0
+
+	for _, requestedAllocation := range line.PickAllocations {
+		sourceKey := outboundAllocationLedgerSourceKey(requestedAllocation.StorageSection, requestedAllocation.ContainerNo)
+		candidate, exists := candidatesBySourceKey[sourceKey]
+		if !exists {
+			return nil, fmt.Errorf("%w: selected container allocation is no longer available", ErrInsufficientStock)
+		}
+
+		candidateReservationKey := outboundAllocationSourceKey(candidate.ItemID, candidate.StorageSection, candidate.ContainerNo)
+		effectiveAvailable := candidate.AvailableQty - reservationState.BySourceKey[candidateReservationKey]
+		itemRemaining := itemAvailableByItemID[candidate.ItemID] - reservationState.ByItemID[candidate.ItemID]
+		if itemRemaining < effectiveAvailable {
+			effectiveAvailable = itemRemaining
+		}
+		if requestedAllocation.AllocatedQty > effectiveAvailable {
+			for _, applied := range appliedReservations {
+				reservationState.BySourceKey[applied.SourceKey] -= applied.Allocated
+				reservationState.ByItemID[applied.ItemID] -= applied.Allocated
+			}
+			return nil, ErrInsufficientStock
+		}
+
+		candidate.AllocatedQty = requestedAllocation.AllocatedQty
+		allocations = append(allocations, candidate)
+		reservationState.BySourceKey[candidateReservationKey] += requestedAllocation.AllocatedQty
+		reservationState.ByItemID[candidate.ItemID] += requestedAllocation.AllocatedQty
+		appliedReservations = append(appliedReservations, struct {
+			ItemID    int64
+			SourceKey string
+			Allocated int
+		}{
+			ItemID:    candidate.ItemID,
+			SourceKey: candidateReservationKey,
+			Allocated: requestedAllocation.AllocatedQty,
+		})
+		totalAllocatedQty += requestedAllocation.AllocatedQty
+	}
+
+	if totalAllocatedQty != line.Quantity {
+		for _, applied := range appliedReservations {
+			reservationState.BySourceKey[applied.SourceKey] -= applied.Allocated
+			reservationState.ByItemID[applied.ItemID] -= applied.Allocated
+		}
+		return nil, fmt.Errorf("%w: manual pick allocations must match the shipment quantity", ErrInvalidInput)
+	}
+
+	return allocations, nil
+}
+
 func (s *Store) attachOutboundPickAllocations(ctx context.Context, documentIDs []int64, linesByID map[int64]*OutboundDocumentLine) error {
 	if len(documentIDs) == 0 || len(linesByID) == 0 {
 		return nil
@@ -1716,15 +1935,16 @@ func (s *Store) attachOutboundPickAllocations(ctx context.Context, documentIDs [
 			a.line_id,
 			COALESCE(a.movement_id, 0) AS movement_id,
 			a.item_id,
-			COALESCE(l.item_number_snapshot, '') AS item_number,
+			COALESCE(NULLIF(l.item_number_snapshot, ''), NULLIF(m.item_number, ''), '') AS item_number,
 			a.location_id,
 			a.location_name_snapshot,
-			a.storage_section,
-			COALESCE(a.container_no_snapshot, '') AS container_no_snapshot,
+			COALESCE(NULLIF(a.storage_section, ''), NULLIF(m.storage_section, ''), 'A') AS storage_section,
+			COALESCE(NULLIF(a.container_no_snapshot, ''), NULLIF(m.container_no, ''), '') AS container_no_snapshot,
 			a.allocated_qty,
 			a.created_at
 		FROM outbound_pick_allocations a
 		JOIN outbound_document_lines l ON l.id = a.line_id
+		LEFT JOIN stock_movements m ON m.id = a.movement_id
 		WHERE line_id IN (?)
 		ORDER BY a.line_id ASC, a.sort_order ASC, a.id ASC
 	`, lineIDs)
@@ -1788,15 +2008,16 @@ func (s *Store) loadOutboundPickAllocationsTx(ctx context.Context, tx *sql.Tx, l
 			a.line_id,
 			COALESCE(a.movement_id, 0) AS movement_id,
 			a.item_id,
-			COALESCE(l.item_number_snapshot, '') AS item_number,
+			COALESCE(NULLIF(l.item_number_snapshot, ''), NULLIF(m.item_number, ''), '') AS item_number,
 			a.location_id,
 			a.location_name_snapshot,
-			a.storage_section,
-			COALESCE(a.container_no_snapshot, '') AS container_no_snapshot,
+			COALESCE(NULLIF(a.storage_section, ''), NULLIF(m.storage_section, ''), 'A') AS storage_section,
+			COALESCE(NULLIF(a.container_no_snapshot, ''), NULLIF(m.container_no, ''), '') AS container_no_snapshot,
 			a.allocated_qty,
 			a.created_at
 		FROM outbound_pick_allocations a
 		JOIN outbound_document_lines l ON l.id = a.line_id
+		LEFT JOIN stock_movements m ON m.id = a.movement_id
 		WHERE line_id IN (?)
 		ORDER BY a.line_id ASC, a.sort_order ASC, a.id ASC
 	`, lineIDs)
@@ -1878,6 +2099,21 @@ func toAllocationCandidates(rows []outboundPickAllocationRow) []outboundAllocati
 	return allocations
 }
 
+func toCreateOutboundLineAllocationInputs(rows []outboundPickAllocationRow) []CreateOutboundLineAllocationInput {
+	inputs := make([]CreateOutboundLineAllocationInput, 0, len(rows))
+	for _, row := range rows {
+		if row.AllocatedQty <= 0 {
+			continue
+		}
+		inputs = append(inputs, CreateOutboundLineAllocationInput{
+			StorageSection: fallbackSection(row.StorageSection),
+			ContainerNo:    strings.TrimSpace(row.ContainerNo),
+			AllocatedQty:   row.AllocatedQty,
+		})
+	}
+	return inputs
+}
+
 func roundToTwoDecimals(value float64) float64 {
 	return math.Round(value*100) / 100
 }
@@ -1911,7 +2147,29 @@ func sanitizeOutboundDocumentInput(input CreateOutboundDocumentInput) CreateOutb
 	for _, line := range input.Lines {
 		line.UnitLabel = strings.TrimSpace(strings.ToUpper(line.UnitLabel))
 		line.CartonSizeMM = strings.TrimSpace(line.CartonSizeMM)
+		line.PalletsDetailCtns = strings.TrimSpace(line.PalletsDetailCtns)
 		line.LineNote = strings.TrimSpace(line.LineNote)
+		allocationInputs := make([]CreateOutboundLineAllocationInput, 0, len(line.PickAllocations))
+		allocationIndexByKey := make(map[string]int)
+		for _, allocation := range line.PickAllocations {
+			normalizedSection := strings.ToUpper(fallbackSection(strings.TrimSpace(allocation.StorageSection)))
+			normalizedContainer := strings.ToUpper(strings.TrimSpace(allocation.ContainerNo))
+			if allocation.AllocatedQty <= 0 {
+				continue
+			}
+			allocationKey := outboundAllocationLedgerSourceKey(normalizedSection, normalizedContainer)
+			if existingIndex, exists := allocationIndexByKey[allocationKey]; exists {
+				allocationInputs[existingIndex].AllocatedQty += allocation.AllocatedQty
+				continue
+			}
+			allocationIndexByKey[allocationKey] = len(allocationInputs)
+			allocationInputs = append(allocationInputs, CreateOutboundLineAllocationInput{
+				StorageSection: normalizedSection,
+				ContainerNo:    normalizedContainer,
+				AllocatedQty:   allocation.AllocatedQty,
+			})
+		}
+		line.PickAllocations = allocationInputs
 		if line.ItemID <= 0 || line.Quantity <= 0 {
 			continue
 		}
@@ -1935,8 +2193,23 @@ func validateOutboundDocumentInput(input CreateOutboundDocumentInput) error {
 			return fmt.Errorf("%w: stock row is required", ErrInvalidInput)
 		case line.Quantity <= 0:
 			return fmt.Errorf("%w: outbound quantity must be greater than zero", ErrInvalidInput)
+		case line.Pallets < 0:
+			return fmt.Errorf("%w: pallets cannot be negative", ErrInvalidInput)
 		case line.NetWeightKgs < 0 || line.GrossWeightKgs < 0:
 			return fmt.Errorf("%w: weights cannot be negative", ErrInvalidInput)
+		}
+
+		if len(line.PickAllocations) > 0 {
+			totalAllocatedQty := 0
+			for _, allocation := range line.PickAllocations {
+				if allocation.AllocatedQty <= 0 {
+					return fmt.Errorf("%w: manual pick quantities must be greater than zero", ErrInvalidInput)
+				}
+				totalAllocatedQty += allocation.AllocatedQty
+			}
+			if totalAllocatedQty != line.Quantity {
+				return fmt.Errorf("%w: manual pick allocations must match the shipment quantity", ErrInvalidInput)
+			}
 		}
 	}
 

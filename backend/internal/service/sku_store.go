@@ -19,6 +19,7 @@ func (s *Store) ListSKUMasters(ctx context.Context, search string) ([]SKUMaster,
 			COALESCE(description, '') AS description,
 			unit,
 			reorder_level,
+			default_units_per_pallet,
 			created_at,
 			updated_at
 		FROM sku_master
@@ -49,8 +50,17 @@ func (s *Store) CreateSKUMaster(ctx context.Context, input CreateSKUMasterInput)
 	}
 
 	result, err := s.db.ExecContext(ctx, `
-		INSERT INTO sku_master (item_number, sku, name, category, description, unit, reorder_level)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO sku_master (
+			item_number,
+			sku,
+			name,
+			category,
+			description,
+			unit,
+			reorder_level,
+			default_units_per_pallet
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		nullableString(input.ItemNumber),
 		input.SKU,
@@ -59,6 +69,7 @@ func (s *Store) CreateSKUMaster(ctx context.Context, input CreateSKUMasterInput)
 		input.Description,
 		input.Unit,
 		input.ReorderLevel,
+		input.DefaultUnitsPerPallet,
 	)
 	if err != nil {
 		return SKUMaster{}, mapDBError(fmt.Errorf("create sku master: %w", err))
@@ -88,6 +99,7 @@ func (s *Store) UpdateSKUMaster(ctx context.Context, skuMasterID int64, input Cr
 			description = ?,
 			unit = ?,
 			reorder_level = ?,
+			default_units_per_pallet = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`,
@@ -98,6 +110,7 @@ func (s *Store) UpdateSKUMaster(ctx context.Context, skuMasterID int64, input Cr
 		input.Description,
 		input.Unit,
 		input.ReorderLevel,
+		input.DefaultUnitsPerPallet,
 		skuMasterID,
 	)
 	if err != nil {
@@ -181,6 +194,7 @@ func (s *Store) getSKUMaster(ctx context.Context, skuMasterID int64) (SKUMaster,
 			COALESCE(description, '') AS description,
 			unit,
 			reorder_level,
+			default_units_per_pallet,
 			created_at,
 			updated_at
 		FROM sku_master
@@ -224,6 +238,8 @@ func validateSKUMasterInput(input CreateSKUMasterInput) error {
 		return fmt.Errorf("%w: description is required", ErrInvalidInput)
 	case input.ReorderLevel < 0:
 		return fmt.Errorf("%w: reorder level cannot be negative", ErrInvalidInput)
+	case input.DefaultUnitsPerPallet < 0:
+		return fmt.Errorf("%w: default units per pallet cannot be negative", ErrInvalidInput)
 	default:
 		return nil
 	}

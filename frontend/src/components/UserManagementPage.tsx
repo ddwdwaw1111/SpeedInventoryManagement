@@ -12,6 +12,7 @@ import { useSettings } from "../lib/settings";
 import type { CreateUserPayload, UpdateUserAccessPayload, User, UserRole } from "../lib/types";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
+import { useSharedColumnOrder } from "./useSharedColumnOrder";
 
 type UserManagementPageProps = {
   users: User[];
@@ -37,10 +38,12 @@ const emptyUserForm: UserFormState = {
   role: "operator",
   isActive: true
 };
+const USER_MANAGEMENT_COLUMN_ORDER_PREFERENCE_KEY = "user-management.column-order";
 
 export function UserManagementPage({ users, currentUser, isLoading, onRefresh }: UserManagementPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
+  const canConfigureColumns = currentUser.role === "admin";
   const pageDescription = t("userManagementDesc");
   const [searchTerm, setSearchTerm] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -63,7 +66,7 @@ export function UserManagementPage({ users, currentUser, isLoading, onRefresh }:
     loadingDescription: pageDescription
   });
 
-  const columns = useMemo<GridColDef<User>[]>(() => [
+  const baseColumns = useMemo<GridColDef<User>[]>(() => [
     { field: "fullName", headerName: t("fullName"), minWidth: 180, flex: 1 },
     { field: "email", headerName: t("email"), minWidth: 220, flex: 1.2 },
     {
@@ -95,6 +98,16 @@ export function UserManagementPage({ users, currentUser, isLoading, onRefresh }:
       )
     }
   ], [resolvedTimeZone, t]);
+  const {
+    columns,
+    columnOrderAction,
+    columnOrderDialog
+  } = useSharedColumnOrder({
+    preferenceKey: USER_MANAGEMENT_COLUMN_ORDER_PREFERENCE_KEY,
+    baseColumns,
+    canManage: canConfigureColumns,
+    onError: setErrorMessage
+  });
 
   function openCreateModal() {
     setEditingUser(null);
@@ -161,7 +174,12 @@ export function UserManagementPage({ users, currentUser, isLoading, onRefresh }:
         <div className="tab-strip">
           <WorkspacePanelHeader
             title={t("userManagement")}
-            actions={<Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addUser")}</Button>}
+            actions={(
+              <div className="sheet-actions">
+                {columnOrderAction}
+                <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>{t("addUser")}</Button>
+              </div>
+            )}
             errorMessage={errorMessage && !isModalOpen ? errorMessage : ""}
           />
           <div className="filter-bar">
@@ -186,6 +204,7 @@ export function UserManagementPage({ users, currentUser, isLoading, onRefresh }:
           </Box>
         </div>
       </section>
+      {columnOrderDialog}
 
       <Dialog
         open={isModalOpen}

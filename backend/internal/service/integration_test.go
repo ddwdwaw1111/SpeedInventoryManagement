@@ -72,6 +72,7 @@ func resetIntegrationDatabase(t *testing.T, db *sqlx.DB) {
 
 	tables := []string{
 		"audit_logs",
+		"ui_preferences",
 		"user_sessions",
 		"stock_movements",
 		"cycle_count_lines",
@@ -256,6 +257,93 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 	assertMovementTypeCount(t, movements, itemAfterInbound.ID, "IN", 1)
 	assertMovementTypeCount(t, movements, itemAfterInbound.ID, "OUT", 1)
 	assertMovementTypeCount(t, movements, itemAfterInbound.ID, "REVERSAL", 2)
+}
+
+func TestGlobalUIPreferenceIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+
+	preference, err := store.GetGlobalUIPreference(ctx, "sku-master.column-order")
+	if err != nil {
+		t.Fatalf("get empty ui preference: %v", err)
+	}
+	if preference.PreferenceKey != "sku-master.column-order" {
+		t.Fatalf("expected preference key to round-trip, got %q", preference.PreferenceKey)
+	}
+
+	preference, err = store.UpsertGlobalUIPreference(ctx, "sku-master.column-order", `["sku","itemNumber","description"]`, 42)
+	if err != nil {
+		t.Fatalf("upsert ui preference: %v", err)
+	}
+	if preference.ValueJSON == "" {
+		t.Fatal("expected preference value json to be stored")
+	}
+	if preference.UpdatedByUserID != 42 {
+		t.Fatalf("expected updated by user 42, got %d", preference.UpdatedByUserID)
+	}
+
+	loaded, err := store.GetGlobalUIPreference(ctx, "sku-master.column-order")
+	if err != nil {
+		t.Fatalf("reload ui preference: %v", err)
+	}
+	if loaded.ValueJSON != `["sku","itemNumber","description"]` {
+		t.Fatalf("expected stored column order, got %q", loaded.ValueJSON)
+	}
+}
+
+func TestInboundDocumentSupportsMultipleSectionsIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0)
+
+	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:     customer.ID,
+		LocationID:     location.ID,
+		DeliveryDate:   "2026-03-24",
+		ContainerNo:    "CONT-MULTI-" + suffix,
+		StorageSection: "A",
+		UnitLabel:      "CTN",
+		Status:         DocumentStatusConfirmed,
+		DocumentNote:   "Multi-section receipt",
+		Lines: []CreateInboundDocumentLineInput{
+			{
+				SKU:            item.SKU,
+				Description:    item.Description,
+				ExpectedQty:    5,
+				ReceivedQty:    5,
+				StorageSection: "A",
+			},
+			{
+				SKU:            item.SKU,
+				Description:    item.Description,
+				ExpectedQty:    7,
+				ReceivedQty:    7,
+				StorageSection: "B",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create confirmed inbound with multiple sections: %v", err)
+	}
+	if inbound.TotalReceivedQty != 12 {
+		t.Fatalf("expected total received qty 12, got %d", inbound.TotalReceivedQty)
+	}
+	if len(inbound.Lines) != 2 {
+		t.Fatalf("expected 2 inbound lines, got %d", len(inbound.Lines))
+	}
+
+	itemSectionA := mustFindItemByContainer(t, ctx, store, location.ID, "A", "CONT-MULTI-"+suffix, item.SKU)
+	if itemSectionA.Quantity != 5 {
+		t.Fatalf("expected section A quantity 5, got %d", itemSectionA.Quantity)
+	}
+	itemSectionB := mustFindItemByContainer(t, ctx, store, location.ID, "B", "CONT-MULTI-"+suffix, item.SKU)
+	if itemSectionB.Quantity != 7 {
+		t.Fatalf("expected section B quantity 7, got %d", itemSectionB.Quantity)
+	}
 }
 
 func TestDraftDocumentUpdateIntegration(t *testing.T) {
@@ -620,6 +708,111 @@ func TestOutboundAutoAllocationFromMergedContainerLedgerIntegration(t *testing.T
 	}
 }
 
+func TestOutboundManualContainerAllocationIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0, "A")
+
+	if _, err := store.CreateMovement(ctx, CreateMovementInput{
+		ItemID:         item.ID,
+		MovementType:   "IN",
+		Quantity:       6,
+		StorageSection: "A",
+		ContainerNo:    "CONT-A-" + suffix,
+		ExpectedQty:    6,
+		ReceivedQty:    6,
+		UnitLabel:      "CTN",
+	}); err != nil {
+		t.Fatalf("create first inbound movement: %v", err)
+	}
+	if _, err := store.CreateMovement(ctx, CreateMovementInput{
+		ItemID:         item.ID,
+		MovementType:   "IN",
+		Quantity:       4,
+		StorageSection: "A",
+		ContainerNo:    "CONT-B-" + suffix,
+		ExpectedQty:    4,
+		ReceivedQty:    4,
+		UnitLabel:      "CTN",
+	}); err != nil {
+		t.Fatalf("create second inbound movement: %v", err)
+	}
+
+	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo: "PL-MANUAL-" + suffix,
+		OrderRef:      "SO-MANUAL-" + suffix,
+		OutDate:       "2026-03-23",
+		ShipToName:    "Receiver " + suffix,
+		ShipToAddress: "123 Warehouse Ln",
+		ShipToContact: "Dock 5",
+		CarrierName:   "Internal Fleet",
+		Status:        DocumentStatusDraft,
+		DocumentNote:  "Manual container allocation test",
+		Lines: []CreateOutboundDocumentLineInput{
+			{
+				ItemID:       item.ID,
+				Quantity:     5,
+				UnitLabel:    "CTN",
+				CartonSizeMM: "400*300*200",
+				PickAllocations: []CreateOutboundLineAllocationInput{
+					{StorageSection: "A", ContainerNo: "CONT-B-" + suffix, AllocatedQty: 4},
+					{StorageSection: "A", ContainerNo: "CONT-A-" + suffix, AllocatedQty: 1},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create manual outbound document: %v", err)
+	}
+	if len(outbound.Lines) != 1 || len(outbound.Lines[0].PickAllocations) != 2 {
+		t.Fatalf("expected 2 stored manual pick allocations, got %+v", outbound.Lines)
+	}
+	if outbound.Lines[0].PickAllocations[0].ContainerNo != "CONT-B-"+suffix || outbound.Lines[0].PickAllocations[0].AllocatedQty != 4 {
+		t.Fatalf("expected first manual allocation CONT-B qty 4, got %+v", outbound.Lines[0].PickAllocations[0])
+	}
+	if outbound.Lines[0].PickAllocations[1].ContainerNo != "CONT-A-"+suffix || outbound.Lines[0].PickAllocations[1].AllocatedQty != 1 {
+		t.Fatalf("expected second manual allocation CONT-A qty 1, got %+v", outbound.Lines[0].PickAllocations[1])
+	}
+
+	outbound, err = store.ConfirmOutboundDocument(ctx, outbound.ID)
+	if err != nil {
+		t.Fatalf("confirm manual outbound document: %v", err)
+	}
+	if len(outbound.Lines) != 1 || len(outbound.Lines[0].PickAllocations) != 2 {
+		t.Fatalf("expected 2 confirmed manual pick allocations, got %+v", outbound.Lines)
+	}
+	if outbound.Lines[0].PickAllocations[0].ContainerNo != "CONT-B-"+suffix || outbound.Lines[0].PickAllocations[0].AllocatedQty != 4 {
+		t.Fatalf("expected confirmed first manual allocation CONT-B qty 4, got %+v", outbound.Lines[0].PickAllocations[0])
+	}
+	if outbound.Lines[0].PickAllocations[1].ContainerNo != "CONT-A-"+suffix || outbound.Lines[0].PickAllocations[1].AllocatedQty != 1 {
+		t.Fatalf("expected confirmed second manual allocation CONT-A qty 1, got %+v", outbound.Lines[0].PickAllocations[1])
+	}
+
+	itemAfterConfirm := mustFindItemByID(t, ctx, store, item.ID)
+	if itemAfterConfirm.Quantity != 5 {
+		t.Fatalf("expected merged inventory row quantity 5 after confirm, got %d", itemAfterConfirm.Quantity)
+	}
+
+	movements, err := store.ListMovements(ctx, 20)
+	if err != nil {
+		t.Fatalf("list movements after manual allocation confirm: %v", err)
+	}
+
+	var movementContainers []string
+	for _, movement := range movements {
+		if movement.OutboundDocumentID == outbound.ID && movement.MovementType == "OUT" {
+			movementContainers = append(movementContainers, movement.ContainerNo)
+		}
+	}
+	if !containsString(movementContainers, "CONT-A-"+suffix) || !containsString(movementContainers, "CONT-B-"+suffix) {
+		t.Fatalf("expected outbound movements to preserve manual containers, got %v", movementContainers)
+	}
+}
+
 func TestInventoryTransferIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
@@ -802,6 +995,76 @@ func TestUserManagementIntegration(t *testing.T) {
 		IsActive: false,
 	}); err == nil || !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("expected self-deactivation to fail with ErrInvalidInput, got %v", err)
+	}
+}
+
+func TestAuthSessionLifecycleIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	adminPayload, _, err := store.RegisterUser(ctx, RegisterUserInput{
+		Email:    "admin-" + suffix + "@example.com",
+		FullName: "Admin " + suffix,
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("register admin: %v", err)
+	}
+
+	operator, err := store.CreateManagedUser(ctx, CreateManagedUserInput{
+		Email:    "operator-" + suffix + "@example.com",
+		FullName: "Operator " + suffix,
+		Password: "password123",
+		Role:     RoleOperator,
+		IsActive: true,
+	})
+	if err != nil {
+		t.Fatalf("create operator: %v", err)
+	}
+
+	loginPayload, sessionToken, err := store.Login(ctx, LoginInput{
+		Email:    operator.Email,
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("login operator: %v", err)
+	}
+	if loginPayload.User.Role != RoleOperator {
+		t.Fatalf("expected operator role after login, got %q", loginPayload.User.Role)
+	}
+	if strings.TrimSpace(sessionToken) == "" {
+		t.Fatal("expected non-empty session token")
+	}
+
+	resolvedPayload, err := store.GetUserBySessionToken(ctx, sessionToken)
+	if err != nil {
+		t.Fatalf("resolve session token: %v", err)
+	}
+	if resolvedPayload.User.Email != operator.Email {
+		t.Fatalf("expected resolved session user %q, got %q", operator.Email, resolvedPayload.User.Email)
+	}
+
+	if err := store.Logout(ctx, sessionToken); err != nil {
+		t.Fatalf("logout session: %v", err)
+	}
+	if _, err := store.GetUserBySessionToken(ctx, sessionToken); err == nil || !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected logged out session token to be invalid, got %v", err)
+	}
+
+	_, err = store.UpdateUserAccess(ctx, adminPayload.User.ID, operator.ID, UpdateUserAccessInput{
+		Role:     RoleOperator,
+		IsActive: false,
+	})
+	if err != nil {
+		t.Fatalf("deactivate operator: %v", err)
+	}
+
+	if _, _, err := store.Login(ctx, LoginInput{
+		Email:    operator.Email,
+		Password: "password123",
+	}); err == nil || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected inactive operator login to fail with ErrInvalidInput, got %v", err)
 	}
 }
 

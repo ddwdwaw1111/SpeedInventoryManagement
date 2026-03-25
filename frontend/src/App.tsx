@@ -17,7 +17,7 @@ import {
   TuneOutlined,
   WarehouseOutlined
 } from "@mui/icons-material";
-import { type ReactNode, startTransition, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
 import { ActivityManagementPage } from "./components/ActivityManagementPage";
 import { AdjustmentManagementPage } from "./components/AdjustmentManagementPage";
@@ -122,7 +122,7 @@ export default function App() {
     if (showSpinner) setIsLoading(true);
     setErrorMessage("");
     try {
-      const [locationsResponse, customersResponse, skuMastersResponse, itemsResponse, movementsResponse, inboundDocumentsResponse, outboundDocumentsResponse, adjustmentsResponse, transfersResponse, cycleCountsResponse, auditLogsResponse, usersResponse] = await Promise.all([
+      const results = await Promise.allSettled([
         api.getLocations(),
         api.getCustomers(),
         api.getSKUMasters(),
@@ -136,20 +136,39 @@ export default function App() {
         currentRole === "admin" ? api.getAuditLogs(500) : Promise.resolve([]),
         currentRole === "admin" ? api.getUsers() : Promise.resolve([])
       ]);
-      startTransition(() => {
-        setLocations(locationsResponse);
-        setCustomers(customersResponse);
-        setUsers(usersResponse);
-        setAuditLogs(auditLogsResponse);
-        setSkuMasters(skuMastersResponse);
-        setItems(itemsResponse);
-        setMovements(movementsResponse);
-        setInboundDocuments(inboundDocumentsResponse);
-        setOutboundDocuments(outboundDocumentsResponse);
-        setAdjustments(adjustmentsResponse);
-        setTransfers(transfersResponse);
-        setCycleCounts(cycleCountsResponse);
-      });
+
+      const [
+        locationsResult,
+        customersResult,
+        skuMastersResult,
+        itemsResult,
+        movementsResult,
+        inboundDocumentsResult,
+        outboundDocumentsResult,
+        adjustmentsResult,
+        transfersResult,
+        cycleCountsResult,
+        auditLogsResult,
+        usersResult
+      ] = results;
+
+      const firstRejectedResult = results.find((result) => result.status === "rejected");
+      if (locationsResult.status === "fulfilled") setLocations(locationsResult.value);
+      if (customersResult.status === "fulfilled") setCustomers(customersResult.value);
+      if (usersResult.status === "fulfilled") setUsers(usersResult.value);
+      if (auditLogsResult.status === "fulfilled") setAuditLogs(auditLogsResult.value);
+      if (skuMastersResult.status === "fulfilled") setSkuMasters(skuMastersResult.value);
+      if (itemsResult.status === "fulfilled") setItems(itemsResult.value);
+      if (movementsResult.status === "fulfilled") setMovements(movementsResult.value);
+      if (inboundDocumentsResult.status === "fulfilled") setInboundDocuments(inboundDocumentsResult.value);
+      if (outboundDocumentsResult.status === "fulfilled") setOutboundDocuments(outboundDocumentsResult.value);
+      if (adjustmentsResult.status === "fulfilled") setAdjustments(adjustmentsResult.value);
+      if (transfersResult.status === "fulfilled") setTransfers(transfersResult.value);
+      if (cycleCountsResult.status === "fulfilled") setCycleCounts(cycleCountsResult.value);
+
+      if (firstRejectedResult?.status === "rejected") {
+        setErrorMessage(getErrorMessage(firstRejectedResult.reason, t("couldNotLoadReport")));
+      }
     } catch (error) {
       setErrorMessage(getErrorMessage(error, t("couldNotLoadReport")));
     } finally {
@@ -379,15 +398,15 @@ export default function App() {
               </div>
             </div>
           ) : null}
-          {activePage === "inbound-management" ? <ActivityManagementPage mode="IN" items={items} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
-          {activePage === "outbound-management" ? <ActivityManagementPage mode="OUT" items={items} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+          {activePage === "inbound-management" ? <ActivityManagementPage mode="IN" items={items} skuMasters={skuMasters} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+          {activePage === "outbound-management" ? <ActivityManagementPage mode="OUT" items={items} skuMasters={skuMasters} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
           {activePage === "adjustments" ? <AdjustmentManagementPage adjustments={adjustments} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
           {activePage === "transfers" ? <TransferManagementPage transfers={transfers} items={items} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
           {activePage === "cycle-counts" ? <CycleCountManagementPage cycleCounts={cycleCounts} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
-          {activePage === "inventory-summary" ? <InventorySummaryPage items={items} movements={movements} customers={customers} locations={locations} isLoading={isLoading} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
-          {activePage === "all-activity" ? <AllActivityPage movements={movements} locations={locations} customers={customers} isLoading={isLoading} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
+          {activePage === "inventory-summary" ? <InventorySummaryPage items={items} movements={movements} customers={customers} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
+          {activePage === "all-activity" ? <AllActivityPage movements={movements} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
           {activePage === "customers" ? <CustomerManagementPage customers={customers} items={items} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} movements={movements} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
-          {activePage === "audit-logs" && canViewAuditLogs ? <AuditLogPage auditLogs={auditLogs} isLoading={isLoading} /> : null}
+          {activePage === "audit-logs" && canViewAuditLogs ? <AuditLogPage auditLogs={auditLogs} currentUserRole={currentUser.role} isLoading={isLoading} /> : null}
           {activePage === "user-management" && canManageUsers ? <UserManagementPage users={users} currentUser={currentUser} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
           {activePage === "sku-master" ? <SKUMasterPage skuMasters={skuMasters} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
           {activePage === "stock-by-location" ? <MasterInventoryPage items={items} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}

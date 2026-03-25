@@ -14,12 +14,15 @@ export type ItemContainerBalance = {
 };
 
 type MovementBalanceGroup = {
-  sourceKey: string;
+  id: string;
+  itemId: number;
+  customerId: number;
   locationId: number;
   locationName: string;
   storageSection: string;
   containerNo: string;
   onHandQty: number;
+  availableQty: number;
   sortAt: number;
 };
 
@@ -56,7 +59,7 @@ export function buildItemContainerBalances(items: Item[], movements: Movement[])
     return [];
   }
 
-  const groupedItems = new Map<string, { items: Item[]; totalOnHand: number; totalAvailable: number; representative: Item }>();
+  const groupedItems = new Map<string, { items: Item[]; representative: Item }>();
   const relevantSourceKeys = new Set<string>();
 
   for (const item of items) {
@@ -67,163 +70,130 @@ export function buildItemContainerBalances(items: Item[], movements: Movement[])
     if (!existing) {
       groupedItems.set(itemSourceKey, {
         items: [item],
-        totalOnHand: item.quantity,
-        totalAvailable: item.availableQty,
         representative: item
       });
       continue;
     }
 
     existing.items.push(item);
-    existing.totalOnHand += item.quantity;
-    existing.totalAvailable += item.availableQty;
     if (parseItemSortAt(item) < parseItemSortAt(existing.representative)) {
       existing.representative = item;
     }
   }
 
-  const groupedBalances = new Map<string, MovementBalanceGroup>();
-
-  for (const movement of movements) {
-    const movementSourceKey = buildMovementSourceKey(movement);
-    if (!relevantSourceKeys.has(movementSourceKey)) {
-      continue;
-    }
-
-    const sourceGroup = groupedItems.get(movementSourceKey);
-    if (!sourceGroup) {
-      continue;
-    }
-
-    const storageSection = movement.storageSection || sourceGroup.representative.storageSection || "A";
-    const containerNo = movement.containerNo || "";
-    const key = `${movementSourceKey}|${storageSection}|${containerNo}`;
-    const existing = groupedBalances.get(key);
-    const sortAt = movement.quantityChange > 0 ? parseMovementSortAt(movement) : 0;
-
-    if (!existing) {
-      groupedBalances.set(key, {
-        sourceKey: movementSourceKey,
-        locationId: sourceGroup.representative.locationId,
-        locationName: sourceGroup.representative.locationName,
-        storageSection,
-        containerNo,
-        onHandQty: movement.quantityChange,
-        sortAt
-      });
-      continue;
-    }
-
-    existing.onHandQty += movement.quantityChange;
-    if (sortAt > 0 && (existing.sortAt === 0 || sortAt < existing.sortAt)) {
-      existing.sortAt = sortAt;
-    }
-  }
-
-  const groupedBalancesBySourceKey = new Map<string, MovementBalanceGroup[]>();
-  for (const balance of groupedBalances.values()) {
-    if (balance.onHandQty <= 0) {
-      continue;
-    }
-
-    const existing = groupedBalancesBySourceKey.get(balance.sourceKey);
-    if (!existing) {
-      groupedBalancesBySourceKey.set(balance.sourceKey, [balance]);
-      continue;
-    }
-
-    existing.push(balance);
-  }
-
   const balances: ItemContainerBalance[] = [];
 
   for (const [itemSourceKey, sourceGroup] of groupedItems.entries()) {
-    const movementSourceBalances = [...(groupedBalancesBySourceKey.get(itemSourceKey) ?? [])].sort((left, right) => {
-      if (left.sortAt !== right.sortAt) return left.sortAt - right.sortAt;
-      if (left.locationName !== right.locationName) return left.locationName.localeCompare(right.locationName);
-      if (left.storageSection !== right.storageSection) return left.storageSection.localeCompare(right.storageSection);
-      return left.containerNo.localeCompare(right.containerNo);
-    });
-
-    let remainingOnHand = sourceGroup.totalOnHand;
-    let remainingAvailable = sourceGroup.totalAvailable;
-
-    for (const balance of movementSourceBalances) {
-      if (remainingOnHand <= 0) {
-        break;
-      }
-
-      const onHandQty = Math.min(balance.onHandQty, remainingOnHand);
-      const availableQty = Math.min(onHandQty, remainingAvailable);
-      remainingOnHand -= onHandQty;
-      remainingAvailable = Math.max(0, remainingAvailable - availableQty);
-
-      balances.push({
-        id: containerBalanceKey(balance.locationId, balance.storageSection, balance.containerNo),
-        itemId: sourceGroup.representative.id,
-        customerId: sourceGroup.representative.customerId,
-        locationId: balance.locationId,
-        locationName: balance.locationName,
-        storageSection: balance.storageSection || sourceGroup.representative.storageSection || "A",
-        containerNo: balance.containerNo || "",
-        onHandQty,
-        availableQty,
-        sortAt: balance.sortAt || parseItemSortAt(sourceGroup.representative)
-      });
-    }
-
-    if (remainingOnHand <= 0) {
-      continue;
-    }
-
-    const fallbackGroups = new Map<string, { item: Item; onHandQty: number; availableQty: number }>();
+    const groupedByCurrentContainer = new Map<string, ItemContainerBalance>();
     for (const item of sourceGroup.items) {
-      const fallbackKey = containerBalanceKey(item.locationId, item.storageSection || "A", item.containerNo || "");
-      const existing = fallbackGroups.get(fallbackKey);
+      const storageSection = item.storageSection || "A";
+      const containerNo = item.containerNo || "";
+      const sourceKey = containerBalanceKey(item.locationId, storageSection, containerNo);
+      const existing = groupedByCurrentContainer.get(sourceKey);
       if (!existing) {
-        fallbackGroups.set(fallbackKey, {
-          item,
+        groupedByCurrentContainer.set(sourceKey, {
+          id: sourceKey,
+          itemId: item.id,
+          customerId: item.customerId,
+          locationId: item.locationId,
+          locationName: item.locationName,
+          storageSection,
+          containerNo,
           onHandQty: item.quantity,
-          availableQty: item.availableQty
+          availableQty: item.availableQty,
+          sortAt: parseItemSortAt(item)
         });
         continue;
       }
 
       existing.onHandQty += item.quantity;
       existing.availableQty += item.availableQty;
+      const itemSortAt = parseItemSortAt(item);
+      if (itemSortAt > 0 && (existing.sortAt === 0 || itemSortAt < existing.sortAt)) {
+        existing.sortAt = itemSortAt;
+      }
     }
 
-    const sortedFallbacks = [...fallbackGroups.values()].sort((left, right) => {
-      const leftSortAt = parseItemSortAt(left.item);
-      const rightSortAt = parseItemSortAt(right.item);
-      if (leftSortAt !== rightSortAt) return leftSortAt - rightSortAt;
-      if (left.item.locationName !== right.item.locationName) return left.item.locationName.localeCompare(right.item.locationName);
-      if ((left.item.storageSection || "A") !== (right.item.storageSection || "A")) return (left.item.storageSection || "A").localeCompare(right.item.storageSection || "A");
-      return (left.item.containerNo || "").localeCompare(right.item.containerNo || "");
-    });
+    const currentContainerBalances = [...groupedByCurrentContainer.values()];
 
-    for (const fallback of sortedFallbacks) {
-      if (remainingOnHand <= 0) {
-        break;
+    const movementContainerBalances = new Map<string, MovementBalanceGroup>();
+    for (const movement of movements) {
+      if (buildMovementSourceKey(movement) !== itemSourceKey) {
+        continue;
       }
 
-      const onHandQty = Math.min(fallback.onHandQty, remainingOnHand);
-      const availableQty = Math.min(onHandQty, remainingAvailable, fallback.availableQty);
-      remainingOnHand -= onHandQty;
-      remainingAvailable = Math.max(0, remainingAvailable - availableQty);
+      const storageSection = movement.storageSection || sourceGroup.representative.storageSection || "A";
+      const containerNo = movement.containerNo || "";
+      const key = containerBalanceKey(sourceGroup.representative.locationId, storageSection, containerNo);
+      const existing = movementContainerBalances.get(key);
+      const nextSortAt = parseMovementSortAt(movement) || parseItemSortAt(sourceGroup.representative);
 
-      balances.push({
-        id: containerBalanceKey(fallback.item.locationId, fallback.item.storageSection || "A", fallback.item.containerNo || ""),
-        itemId: fallback.item.id,
-        customerId: fallback.item.customerId,
-        locationId: fallback.item.locationId,
-        locationName: fallback.item.locationName,
-        storageSection: fallback.item.storageSection || "A",
-        containerNo: fallback.item.containerNo || "",
-        onHandQty,
-        availableQty,
-        sortAt: parseItemSortAt(fallback.item)
+      if (!existing) {
+        movementContainerBalances.set(key, {
+          id: key,
+          itemId: sourceGroup.representative.id,
+          customerId: sourceGroup.representative.customerId,
+          locationId: sourceGroup.representative.locationId,
+          locationName: sourceGroup.representative.locationName,
+          storageSection,
+          containerNo,
+          onHandQty: movement.quantityChange,
+          availableQty: 0,
+          sortAt: nextSortAt
+        });
+        continue;
+      }
+
+      existing.onHandQty += movement.quantityChange;
+      if (nextSortAt > 0 && (existing.sortAt === 0 || nextSortAt < existing.sortAt)) {
+        existing.sortAt = nextSortAt;
+      }
+    }
+
+    const normalizedMovementBalances = [...movementContainerBalances.values()]
+      .filter((balance) => balance.onHandQty > 0)
+      .sort((left, right) => {
+        if (left.sortAt !== right.sortAt) return left.sortAt - right.sortAt;
+        if (left.locationName !== right.locationName) return left.locationName.localeCompare(right.locationName);
+        if (left.storageSection !== right.storageSection) return left.storageSection.localeCompare(right.storageSection);
+        return left.containerNo.localeCompare(right.containerNo);
       });
+
+    let remainingAvailableQty = Math.max(0, sourceGroup.items.reduce((sum, item) => sum + item.availableQty, 0));
+    for (const balance of normalizedMovementBalances) {
+      const availableQty = Math.min(balance.onHandQty, remainingAvailableQty);
+      balance.availableQty = Math.max(0, availableQty);
+      remainingAvailableQty = Math.max(0, remainingAvailableQty - availableQty);
+    }
+
+    const movementDerivedBalances: ItemContainerBalance[] = normalizedMovementBalances
+      .filter((balance) => balance.availableQty > 0 || balance.onHandQty > 0)
+      .map((balance) => ({
+        id: balance.id,
+        itemId: balance.itemId,
+        customerId: balance.customerId,
+        locationId: balance.locationId,
+        locationName: balance.locationName,
+        storageSection: balance.storageSection,
+        containerNo: balance.containerNo,
+        onHandQty: balance.onHandQty,
+        availableQty: balance.availableQty,
+        sortAt: balance.sortAt
+      }));
+
+    const currentNamedContainerCount = currentContainerBalances.filter((balance) => balance.containerNo.trim()).length;
+    const useCurrentContainerBalances = movementDerivedBalances.length <= 1 || currentNamedContainerCount > 1;
+    const selectedBalances = useCurrentContainerBalances ? currentContainerBalances : movementDerivedBalances;
+
+    const sortedContainers = [...selectedBalances].sort((left, right) => {
+      if (left.sortAt !== right.sortAt) return left.sortAt - right.sortAt;
+      if (left.locationName !== right.locationName) return left.locationName.localeCompare(right.locationName);
+      if (left.storageSection !== right.storageSection) return left.storageSection.localeCompare(right.storageSection);
+      return left.containerNo.localeCompare(right.containerNo);
+    });
+
+    for (const groupedContainer of sortedContainers) {
+      balances.push(groupedContainer);
     }
   }
 

@@ -15,6 +15,7 @@ import type { PageKey } from "../lib/routes";
 import type { InventoryTransfer, Item, Location, UserRole } from "../lib/types";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
+import { useSharedColumnOrder } from "./useSharedColumnOrder";
 
 type TransferManagementPageProps = {
   transfers: InventoryTransfer[];
@@ -44,6 +45,7 @@ const emptyTransferForm: TransferFormState = {
   transferNo: "",
   notes: ""
 };
+const TRANSFER_COLUMN_ORDER_PREFERENCE_KEY = "transfers.column-order";
 
 function createTransferLine(): TransferLineFormState {
   return {
@@ -68,6 +70,7 @@ export function TransferManagementPage({
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
+  const canConfigureColumns = currentUserRole === "admin";
   const pageDescription = t("transfersDesc");
   const permissionNotice = canManage ? "" : t("readOnlyModeNotice");
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -89,7 +92,7 @@ export function TransferManagementPage({
 
   const availableSourceItems = useMemo(() => items.filter((item) => item.availableQty > 0), [items]);
 
-  const columns = useMemo<GridColDef<InventoryTransfer>[]>(() => [
+  const baseColumns = useMemo<GridColDef<InventoryTransfer>[]>(() => [
     { field: "transferNo", headerName: t("transferNo"), minWidth: 180, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.transferNo}</span> },
     { field: "totalLines", headerName: t("totalLines"), minWidth: 120, type: "number" },
     { field: "totalQty", headerName: t("totalQty"), minWidth: 120, type: "number" },
@@ -123,6 +126,16 @@ export function TransferManagementPage({
       )
     }
   ], [resolvedTimeZone, t]);
+  const {
+    columns,
+    columnOrderAction,
+    columnOrderDialog
+  } = useSharedColumnOrder({
+    preferenceKey: TRANSFER_COLUMN_ORDER_PREFERENCE_KEY,
+    baseColumns,
+    canManage: canConfigureColumns,
+    onError: setErrorMessage
+  });
 
   const detailColumns = useMemo<GridColDef<InventoryTransfer["lines"][number]>[]>(() => [
     { field: "sku", headerName: t("sku"), minWidth: 120, renderCell: (params) => <span className="cell--mono">{params.row.sku}</span> },
@@ -211,10 +224,15 @@ export function TransferManagementPage({
         <div className="tab-strip">
           <WorkspacePanelHeader
             title={t("transfers")}
-            actions={canManage ? (
-              <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>
-                {t("addTransfer")}
-              </Button>
+            actions={canManage || canConfigureColumns ? (
+              <div className="sheet-actions">
+                {columnOrderAction}
+                {canManage ? (
+                  <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>
+                    {t("addTransfer")}
+                  </Button>
+                ) : null}
+              </div>
             ) : undefined}
             notices={[permissionNotice]}
             errorMessage={errorMessage && !isModalOpen ? errorMessage : ""}
@@ -239,6 +257,7 @@ export function TransferManagementPage({
           </Box>
         </div>
       </section>
+      {columnOrderDialog}
 
       <Drawer
         anchor="right"

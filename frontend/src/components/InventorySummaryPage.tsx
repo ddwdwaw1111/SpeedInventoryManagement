@@ -10,14 +10,16 @@ import { buildItemContainerBalances, type ItemContainerBalance } from "../lib/co
 import { formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
-import type { Customer, Item, Location, Movement } from "../lib/types";
+import type { Customer, Item, Location, Movement, UserRole } from "../lib/types";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
+import { useSharedColumnOrder } from "./useSharedColumnOrder";
 
 type InventorySummaryPageProps = {
   items: Item[];
   movements: Movement[];
   customers: Customer[];
   locations: Location[];
+  currentUserRole: UserRole;
   isLoading: boolean;
   onNavigate: (page: PageKey) => void;
 };
@@ -64,16 +66,19 @@ type ContainerBreakdownRow = {
 };
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
+const INVENTORY_SUMMARY_COLUMN_ORDER_PREFERENCE_KEY = "inventory-summary.column-order";
 
 export function InventorySummaryPage({
   items,
   movements,
   customers,
   locations,
+  currentUserRole,
   isLoading,
   onNavigate
 }: InventorySummaryPageProps) {
   const { t } = useI18n();
+  const canConfigureColumns = currentUserRole === "admin";
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
@@ -100,7 +105,7 @@ export function InventorySummaryPage({
     }
   }, [selectedSummary, selectedSummaryId]);
 
-  const columns = useMemo<GridColDef<InventorySummaryRow>[]>(() => [
+  const baseColumns = useMemo<GridColDef<InventorySummaryRow>[]>(() => [
     { field: "itemNumber", headerName: t("itemNumber"), minWidth: 130, flex: 0.8, renderCell: (params) => <span className="cell--mono">{params.row.itemNumber || "-"}</span> },
     { field: "sku", headerName: t("sku"), minWidth: 130, flex: 0.8, renderCell: (params) => <span className="cell--mono">{params.row.sku}</span> },
     { field: "description", headerName: t("description"), minWidth: 240, flex: 1.5 },
@@ -119,6 +124,15 @@ export function InventorySummaryPage({
       valueFormatter: (value) => formatDateValue(value, dateFormatter)
     }
   ], [t]);
+  const {
+    columns,
+    columnOrderAction,
+    columnOrderDialog
+  } = useSharedColumnOrder({
+    preferenceKey: INVENTORY_SUMMARY_COLUMN_ORDER_PREFERENCE_KEY,
+    baseColumns,
+    canManage: canConfigureColumns
+  });
 
   const warehouseBreakdown = useMemo(
     () => buildWarehouseBreakdown(selectedSummary?.containerBalances ?? []),
@@ -134,7 +148,7 @@ export function InventorySummaryPage({
     <main className="workspace-main">
       <section className="workbook-panel workbook-panel--full">
         <div className="tab-strip">
-          <WorkspacePanelHeader title={t("inventorySummary")} />
+          <WorkspacePanelHeader title={t("inventorySummary")} actions={columnOrderAction} />
           <div className="filter-bar">
             <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("inventorySummarySearchPlaceholder")} /></label>
             <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
@@ -161,6 +175,7 @@ export function InventorySummaryPage({
           </Box>
         </div>
       </section>
+      {columnOrderDialog}
 
       <Drawer
         anchor="right"

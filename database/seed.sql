@@ -61,20 +61,18 @@ INSERT INTO inventory_items (
   container_no,
   expected_qty,
   received_qty,
-  pallets,
-  pallets_detail_ctns,
   height_in,
   out_date,
   last_restocked_at
 )
 VALUES
-  ((SELECT id FROM sku_master WHERE sku = '023042'), (SELECT id FROM customers WHERE name = 'SpeedWin'), '023042', 'ALUMINIUM FOIL CONTAINER', 'Food Packaging', 'ALUMINIUM FOIL CONTAINER', 'pcs', 1958, 300, 1, 'A', '2025-12-19', 'MRSU7765631', 1946, 1958, 30, '29*66+44', 87, NULL, CURRENT_TIMESTAMP),
-  ((SELECT id FROM sku_master WHERE sku = '033768'), (SELECT id FROM customers WHERE name = 'SpeedWin'), '033768', 'ALUMINIUM FOIL CONTAINER', 'Food Packaging', 'ALUMINIUM FOIL CONTAINER', 'pcs', 2751, 250, 1, 'A', '2025-12-11', 'KKFU7963968', 2751, 2751, 27, '26*105+21', 87, NULL, CURRENT_TIMESTAMP),
-  ((SELECT id FROM sku_master WHERE sku = 'VB72GC'), (SELECT id FROM customers WHERE name = 'ODW'), 'VB72GC', '72 OZ ALUMINUM TAKE OUT CONTAINER COMBO', 'Food Packaging', '72 OZ ALUMINUM TAKE OUT CONTAINER COMBO', 'pcs', 564, 120, 2, 'A', '2025-12-11', 'TLLU5105021', 564, 564, 7, '7*70+74', 87, NULL, CURRENT_TIMESTAMP),
-  ((SELECT id FROM sku_master WHERE sku = '023127'), (SELECT id FROM customers WHERE name = 'SpeedWin'), '023127', 'FOIL LID FOR ALUMINIUM KITCHEN WARE CONTAINER', 'Food Packaging', 'FOIL LID FOR ALUMINIUM KITCHEN WARE CONTAINER', 'pcs', 3330, 400, 2, 'A', '2025-12-19', 'MRSU8580370', 3330, 3330, 29, '28*115+110', 87, NULL, CURRENT_TIMESTAMP),
-  ((SELECT id FROM sku_master WHERE sku = '023134'), (SELECT id FROM customers WHERE name = 'ODW'), '023134', 'ALUMINIUM KITCHEN WARE CONTAINER', 'Food Packaging', 'ALUMINIUM KITCHEN WARE CONTAINER', 'pcs', 1430, 180, 3, 'A', '2025-12-08', 'HASU4467200', 1430, 1430, 29, '28*50+30', 87, NULL, CURRENT_TIMESTAMP),
-  ((SELECT id FROM sku_master WHERE sku = '033782'), (SELECT id FROM customers WHERE name = 'ODW'), '033782', 'ALUMINIUM KITCHEN WARE CONTAINER', 'Food Packaging', 'ALUMINIUM KITCHEN WARE CONTAINER', 'pcs', 1430, 180, 3, 'A', '2025-12-08', 'MRKU3310106', 1431, 1430, 29, '28*50+30', 87, '2025-12-18', CURRENT_TIMESTAMP),
-  ((SELECT id FROM sku_master WHERE sku = '023141'), (SELECT id FROM customers WHERE name = 'ODW'), '023141', 'ALUMINIUM KITCHEN WARE CONTAINER', 'Food Packaging', 'ALUMINIUM KITCHEN WARE CONTAINER', 'pcs', 1399, 150, 3, 'A', '2025-12-08', 'TRHU7293759', 1399, 1399, 24, '23*60+19', 87, NULL, CURRENT_TIMESTAMP)
+  ((SELECT id FROM sku_master WHERE sku = '023042'), (SELECT id FROM customers WHERE name = 'SpeedWin'), '023042', 'ALUMINIUM FOIL CONTAINER', 'Food Packaging', 'ALUMINIUM FOIL CONTAINER', 'pcs', 1958, 300, 1, 'A', '2025-12-19', 'MRSU7765631', 1946, 1958, 87, NULL, CURRENT_TIMESTAMP),
+  ((SELECT id FROM sku_master WHERE sku = '033768'), (SELECT id FROM customers WHERE name = 'SpeedWin'), '033768', 'ALUMINIUM FOIL CONTAINER', 'Food Packaging', 'ALUMINIUM FOIL CONTAINER', 'pcs', 2751, 250, 1, 'A', '2025-12-11', 'KKFU7963968', 2751, 2751, 87, NULL, CURRENT_TIMESTAMP),
+  ((SELECT id FROM sku_master WHERE sku = 'VB72GC'), (SELECT id FROM customers WHERE name = 'ODW'), 'VB72GC', '72 OZ ALUMINUM TAKE OUT CONTAINER COMBO', 'Food Packaging', '72 OZ ALUMINUM TAKE OUT CONTAINER COMBO', 'pcs', 564, 120, 2, 'A', '2025-12-11', 'TLLU5105021', 564, 564, 87, NULL, CURRENT_TIMESTAMP),
+  ((SELECT id FROM sku_master WHERE sku = '023127'), (SELECT id FROM customers WHERE name = 'SpeedWin'), '023127', 'FOIL LID FOR ALUMINIUM KITCHEN WARE CONTAINER', 'Food Packaging', 'FOIL LID FOR ALUMINIUM KITCHEN WARE CONTAINER', 'pcs', 3330, 400, 2, 'A', '2025-12-19', 'MRSU8580370', 3330, 3330, 87, NULL, CURRENT_TIMESTAMP),
+  ((SELECT id FROM sku_master WHERE sku = '023134'), (SELECT id FROM customers WHERE name = 'ODW'), '023134', 'ALUMINIUM KITCHEN WARE CONTAINER', 'Food Packaging', 'ALUMINIUM KITCHEN WARE CONTAINER', 'pcs', 1430, 180, 3, 'A', '2025-12-08', 'HASU4467200', 1430, 1430, 87, NULL, CURRENT_TIMESTAMP),
+  ((SELECT id FROM sku_master WHERE sku = '033782'), (SELECT id FROM customers WHERE name = 'ODW'), '033782', 'ALUMINIUM KITCHEN WARE CONTAINER', 'Food Packaging', 'ALUMINIUM KITCHEN WARE CONTAINER', 'pcs', 1430, 180, 3, 'A', '2025-12-08', 'MRKU3310106', 1431, 1430, 87, '2025-12-18', CURRENT_TIMESTAMP),
+  ((SELECT id FROM sku_master WHERE sku = '023141'), (SELECT id FROM customers WHERE name = 'ODW'), '023141', 'ALUMINIUM KITCHEN WARE CONTAINER', 'Food Packaging', 'ALUMINIUM KITCHEN WARE CONTAINER', 'pcs', 1399, 150, 3, 'A', '2025-12-08', 'TRHU7293759', 1399, 1399, 87, NULL, CURRENT_TIMESTAMP)
 ON DUPLICATE KEY UPDATE
   sku_master_id = VALUES(sku_master_id),
   customer_id = VALUES(customer_id),
@@ -90,8 +88,6 @@ ON DUPLICATE KEY UPDATE
   container_no = VALUES(container_no),
   expected_qty = VALUES(expected_qty),
   received_qty = VALUES(received_qty),
-  pallets = VALUES(pallets),
-  pallets_detail_ctns = VALUES(pallets_detail_ctns),
   height_in = VALUES(height_in),
   out_date = VALUES(out_date),
   last_restocked_at = VALUES(last_restocked_at);

@@ -25,6 +25,7 @@ import type {
   OutboundDocumentPayload,
   SKUMaster,
   SKUMasterPayload,
+  UIPreference,
   SignUpPayload,
   UpdateUserAccessPayload,
   User
@@ -124,6 +125,17 @@ export const api = {
 
   getDashboard() {
     return request<DashboardData>("/dashboard");
+  },
+
+  getUIPreference<T = unknown>(key: string) {
+    return request<UIPreference<T>>(`/ui-preferences/${encodeURIComponent(key)}`);
+  },
+
+  updateUIPreference<T = unknown>(key: string, value: T) {
+    return request<UIPreference<T>>(`/ui-preferences/${encodeURIComponent(key)}`, {
+      method: "PUT",
+      body: JSON.stringify({ value })
+    });
   },
 
   getAuditLogs(limit = 200) {

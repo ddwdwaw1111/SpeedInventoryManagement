@@ -90,6 +90,7 @@ type PickSheetRow = {
   section: string;
   containerNo: string;
   quantity: number;
+  pallets: number;
   unitLabel: string;
   lineNote: string;
 };
@@ -122,6 +123,7 @@ const LABELS = {
   section: "Section",
   containerNo: "Container No.",
   qty: "Pick Qty",
+  pallets: "Pallets",
   unit: "UOM",
   internalNotes: "Internal Notes",
   total: "TOTAL",
@@ -134,12 +136,10 @@ export function downloadOutboundPickSheetPdfFromDocument(document: OutboundDocum
   const pickSheetDocument = buildPickSheetDocument(document);
   const documentDefinition = buildPickSheetDefinition(pickSheetDocument);
   const tableLayouts = { [PICK_SHEET_LAYOUT_NAME]: PICK_SHEET_TABLE_LAYOUT };
-  const pdfMakeInstance = pdfMake as typeof pdfMake & { fonts?: TFontDictionary };
-  pdfMakeInstance.fonts = PDF_FONTS;
-  void pdfMakeInstance.createPdf(documentDefinition, tableLayouts, PDF_FONTS).download(pickSheetDocument.fileName);
+  void pdfMake.createPdf(documentDefinition, tableLayouts, PDF_FONTS).download(pickSheetDocument.fileName);
 }
 
-function buildPickSheetDocument(document: OutboundDocument): PickSheetDocument {
+export function buildPickSheetDocument(document: OutboundDocument): PickSheetDocument {
   const rows = document.lines.flatMap((line) => {
     if (line.pickAllocations.length === 0) {
       return [{
@@ -151,6 +151,7 @@ function buildPickSheetDocument(document: OutboundDocument): PickSheetDocument {
         section: line.storageSection || "A",
         containerNo: "",
         quantity: line.quantity,
+        pallets: line.pallets || 0,
         unitLabel: line.unitLabel || "PCS",
         lineNote: line.lineNote || ""
       }];
@@ -165,6 +166,7 @@ function buildPickSheetDocument(document: OutboundDocument): PickSheetDocument {
       section: allocation.storageSection || "A",
       containerNo: allocation.containerNo || "",
       quantity: allocation.allocatedQty,
+      pallets: line.pallets || 0,
       unitLabel: line.unitLabel || "PCS",
       lineNote: line.lineNote || ""
     }));
@@ -183,7 +185,7 @@ function buildPickSheetDocument(document: OutboundDocument): PickSheetDocument {
   };
 }
 
-function buildPickSheetDefinition(document: PickSheetDocument): TDocumentDefinitions {
+export function buildPickSheetDefinition(document: PickSheetDocument): TDocumentDefinitions {
   const printedAt = formatTimestamp(new Date().toISOString(), true);
   const tableBody: TableCell[][] = [
     [
@@ -195,6 +197,7 @@ function buildPickSheetDefinition(document: PickSheetDocument): TDocumentDefinit
       headerCell(LABELS.section),
       headerCell(LABELS.containerNo),
       headerCell(LABELS.qty),
+      headerCell(LABELS.pallets),
       headerCell(LABELS.unit),
       headerCell(LABELS.internalNotes)
     ],
@@ -207,6 +210,7 @@ function buildPickSheetDefinition(document: PickSheetDocument): TDocumentDefinit
       bodyCell(row.section || LABELS.empty, "tableCellCenter"),
       bodyCell(row.containerNo || LABELS.empty, "tableCellCenter"),
       bodyCell(formatInteger(row.quantity), "tableCellRight"),
+      bodyCell(formatInteger(row.pallets), "tableCellRight"),
       bodyCell(row.unitLabel || "PCS", "tableCellCenter"),
       bodyCell(row.lineNote || LABELS.empty, "tableCell")
     ]))
@@ -244,7 +248,7 @@ function buildPickSheetDefinition(document: PickSheetDocument): TDocumentDefinit
       table: {
         headerRows: 1,
         dontBreakRows: true,
-        widths: [22, 62, 56, "*", 94, 40, 82, 46, 40, 110],
+        widths: [20, 54, 52, "*", 84, 42, 84, 48, 42, 42, 110],
         body: tableBody
       },
       layout: PICK_SHEET_LAYOUT_NAME
