@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -61,6 +62,7 @@ func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName s
 	operator.POST("/outbound-documents/:id/confirm", server.handleConfirmOutboundDocument)
 	operator.POST("/outbound-documents/:id/cancel", server.handleCancelOutboundDocument)
 	operator.POST("/inbound-documents", server.handleCreateInboundDocument)
+	operator.POST("/inbound-documents/import-preview", server.handleImportInboundDocumentPreview)
 	operator.PUT("/inbound-documents/:id", server.handleUpdateInboundDocument)
 	operator.POST("/inbound-documents/:id/confirm", server.handleConfirmInboundDocument)
 	operator.POST("/inbound-documents/:id/cancel", server.handleCancelInboundDocument)
@@ -722,6 +724,35 @@ func (s *Server) handleCreateInboundDocument(c *gin.Context) {
 	})
 
 	writeJSON(c, http.StatusCreated, document)
+}
+
+func (s *Server) handleImportInboundDocumentPreview(c *gin.Context) {
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "file is required")
+		return
+	}
+
+	file, err := fileHeader.Open()
+	if err != nil {
+		writeServerError(c, fmt.Errorf("open import file: %w", err))
+		return
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		writeServerError(c, fmt.Errorf("read import file: %w", err))
+		return
+	}
+
+	preview, err := s.store.ImportInboundPackingListPreview(c.Request.Context(), fileHeader.Filename, data)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	writeJSON(c, http.StatusOK, preview)
 }
 
 func (s *Server) handleUpdateInboundDocument(c *gin.Context) {

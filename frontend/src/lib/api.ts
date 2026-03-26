@@ -15,6 +15,7 @@ import type {
   InventoryTransferPayload,
   InboundDocument,
   InboundDocumentPayload,
+  InboundPackingListImportPreview,
   Item,
   ItemPayload,
   LoginPayload,
@@ -67,13 +68,16 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  const bodyIsFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
+  if (!bodyIsFormData && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {})
-    },
-    ...init
+    ...init,
+    headers
   });
 
   if (!response.ok) {
@@ -322,6 +326,16 @@ export const api = {
     return request<InboundDocument>("/inbound-documents", {
       method: "POST",
       body: JSON.stringify(payload)
+    });
+  },
+
+  importInboundDocumentPreview(file: File) {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    return request<InboundPackingListImportPreview>("/inbound-documents/import-preview", {
+      method: "POST",
+      body: formData
     });
   },
 

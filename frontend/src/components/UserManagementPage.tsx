@@ -10,6 +10,7 @@ import { formatDateTimeValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type { CreateUserPayload, UpdateUserAccessPayload, User, UserRole } from "../lib/types";
+import { InlineAlert } from "./Feedback";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
@@ -222,7 +223,7 @@ export function UserManagementPage({ users, currentUser, isLoading, onRefresh }:
           </IconButton>
         </DialogTitle>
         <DialogContent dividers>
-          {errorMessage ? <div className="alert-banner">{errorMessage}</div> : null}
+          {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
           <form className="sheet-form" onSubmit={handleSubmit}>
             <label>
               {t("fullName")}

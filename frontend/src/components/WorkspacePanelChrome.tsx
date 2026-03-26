@@ -1,4 +1,7 @@
 import { type ReactNode } from "react";
+import { Alert } from "@mui/material";
+
+import { InlineAlert } from "./Feedback";
 
 type WorkspacePanelHeaderProps = {
   title?: string;
@@ -41,13 +44,24 @@ export function WorkspacePanelHeader({
           {actions ? <div className="workspace-panel-header__actions">{actions}</div> : null}
         </div>
       ) : null}
-      {errorMessage ? <div className="alert-banner workspace-panel-header__alert">{errorMessage}</div> : null}
+      {errorMessage ? <InlineAlert className="workspace-panel-header__alert">{errorMessage}</InlineAlert> : null}
       {visibleNotices.length > 0 ? (
         <div className="workspace-panel-header__notices">
           {visibleNotices.map((notice, index) => (
-            <div className="sheet-note sheet-note--readonly" key={index}>
+            <Alert
+              severity="info"
+              variant="outlined"
+              key={index}
+              sx={{
+                borderRadius: 2,
+                mb: 0,
+                "& .MuiAlert-message": {
+                  width: "100%"
+                }
+              }}
+            >
               {notice}
-            </div>
+            </Alert>
           ))}
         </div>
       ) : null}

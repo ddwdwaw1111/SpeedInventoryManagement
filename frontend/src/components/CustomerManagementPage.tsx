@@ -16,6 +16,7 @@ import { formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
 import type { Customer, CustomerPayload, InboundDocument, Item, Movement, OutboundDocument, UserRole } from "../lib/types";
+import { InlineAlert, useConfirmDialog } from "./Feedback";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
@@ -65,6 +66,7 @@ export function CustomerManagementPage({
   onNavigate
 }: CustomerManagementPageProps) {
   const { t } = useI18n();
+  const { confirm, confirmationDialog } = useConfirmDialog();
   const canManage = currentUserRole === "admin";
   const pageDescription = t("customersDesc");
   const permissionNotice = canManage ? "" : t("adminOnlyManageNotice");
@@ -277,7 +279,14 @@ export function CustomerManagementPage({
 
   async function handleDelete(row: Customer) {
     if (!canManage) return;
-    if (!window.confirm(t("deleteCustomerConfirm", { name: row.name }))) {
+    if (!(await confirm({
+      title: t("delete"),
+      message: t("deleteCustomerConfirm", { name: row.name }),
+      confirmLabel: t("delete"),
+      cancelLabel: t("cancel"),
+      confirmColor: "error",
+      severity: "warning"
+    }))) {
       return;
     }
 
@@ -413,10 +422,6 @@ export function CustomerManagementPage({
 
             <div className="document-drawer__meta">
               <div className="sheet-note">
-                <strong>{t("allocatedQty")}</strong><br />
-                {selectedCustomerSummary?.allocated ?? 0}
-              </div>
-              <div className="sheet-note">
                 <strong>{t("customerWarehouseFootprint")}</strong><br />
                 {selectedCustomerSummary?.warehouses.size ?? 0}
               </div>
@@ -523,7 +528,7 @@ export function CustomerManagementPage({
           </IconButton>
         </DialogTitle>
         <DialogContent dividers>
-          {errorMessage ? <div className="alert-banner">{errorMessage}</div> : null}
+          {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
           <form className="sheet-form" onSubmit={handleSubmit}>
             <label>{t("customer")}<input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder={t("customerNamePlaceholder")} required /></label>
             <label>{t("contactName")}<input value={form.contactName} onChange={(event) => setForm((current) => ({ ...current, contactName: event.target.value }))} placeholder={t("contactNamePlaceholder")} /></label>
@@ -537,6 +542,7 @@ export function CustomerManagementPage({
           </form>
         </DialogContent>
       </Dialog>
+      {confirmationDialog}
     </main>
   );
 }

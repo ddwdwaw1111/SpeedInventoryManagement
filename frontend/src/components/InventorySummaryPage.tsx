@@ -1,5 +1,7 @@
 import CloseIcon from "@mui/icons-material/Close";
+import CompareArrowsOutlinedIcon from "@mui/icons-material/CompareArrowsOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
+import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
 import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Box, Button, Drawer, IconButton } from "@mui/material";
@@ -8,7 +10,10 @@ import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 import { setPendingAllActivityContext } from "../lib/allActivityContext";
 import { buildItemContainerBalances, type ItemContainerBalance } from "../lib/containerBalances";
 import { formatDateValue } from "../lib/dates";
+import { setPendingInventoryActionContext } from "../lib/inventoryActionContext";
+import { buildInventoryActionSourceKey } from "../lib/inventoryActionSources";
 import { useI18n } from "../lib/i18n";
+import { setPendingInventoryByLocationContext } from "../lib/inventoryByLocationContext";
 import type { PageKey } from "../lib/routes";
 import type { Customer, Item, Location, Movement, UserRole } from "../lib/types";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
@@ -79,6 +84,7 @@ export function InventorySummaryPage({
 }: InventorySummaryPageProps) {
   const { t } = useI18n();
   const canConfigureColumns = currentUserRole === "admin";
+  const canManageInventory = currentUserRole === "admin" || currentUserRole === "operator";
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
@@ -112,7 +118,6 @@ export function InventorySummaryPage({
     { field: "customerName", headerName: t("customer"), minWidth: 180, flex: 1 },
     { field: "onHand", headerName: t("onHand"), minWidth: 110, type: "number" },
     { field: "availableQty", headerName: t("availableQty"), minWidth: 120, type: "number" },
-    { field: "allocatedQty", headerName: t("allocatedQty"), minWidth: 120, type: "number" },
     { field: "damagedQty", headerName: t("damagedQty"), minWidth: 120, type: "number" },
     { field: "warehouseCount", headerName: t("warehouseCount"), minWidth: 120, type: "number" },
     { field: "containerCount", headerName: t("containerCount"), minWidth: 120, type: "number" },
@@ -148,7 +153,14 @@ export function InventorySummaryPage({
     <main className="workspace-main">
       <section className="workbook-panel workbook-panel--full">
         <div className="tab-strip">
-          <WorkspacePanelHeader title={t("inventorySummary")} actions={columnOrderAction} />
+          <WorkspacePanelHeader
+            title={t("inventorySummary")}
+            actions={(
+              <div className="sheet-actions">
+                {columnOrderAction}
+              </div>
+            )}
+          />
           <div className="filter-bar">
             <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("inventorySummarySearchPlaceholder")} /></label>
             <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
@@ -197,7 +209,49 @@ export function InventorySummaryPage({
             </div>
 
             <div className="document-drawer__actions">
-              <Button variant="contained" startIcon={<WarehouseOutlinedIcon fontSize="small" />} onClick={() => onNavigate("stock-by-location")}>
+              {canManageInventory ? (
+                <Button
+                  variant="contained"
+                  startIcon={<TuneOutlinedIcon fontSize="small" />}
+                  onClick={() => {
+                    setPendingInventoryActionContext("adjustments", {
+                      sourceKey: buildInventoryActionSourceKey(selectedSummary.customerId, selectedSummary.sku),
+                      sku: selectedSummary.sku,
+                      customerId: selectedSummary.customerId
+                    });
+                    onNavigate("adjustments");
+                  }}
+                >
+                  {t("addAdjustment")}
+                </Button>
+              ) : null}
+              {canManageInventory ? (
+                <Button
+                  variant="outlined"
+                  startIcon={<CompareArrowsOutlinedIcon fontSize="small" />}
+                  onClick={() => {
+                    setPendingInventoryActionContext("transfers", {
+                      sourceKey: buildInventoryActionSourceKey(selectedSummary.customerId, selectedSummary.sku),
+                      sku: selectedSummary.sku,
+                      customerId: selectedSummary.customerId
+                    });
+                    onNavigate("transfers");
+                  }}
+                >
+                  {t("addTransfer")}
+                </Button>
+              ) : null}
+              <Button
+                variant="contained"
+                startIcon={<WarehouseOutlinedIcon fontSize="small" />}
+                onClick={() => {
+                  setPendingInventoryByLocationContext({
+                    sku: selectedSummary.sku,
+                    customerId: selectedSummary.customerId
+                  });
+                  onNavigate("stock-by-location");
+                }}
+              >
                 {t("openInventoryByLocation")}
               </Button>
               <Button
@@ -330,7 +384,7 @@ function buildInventorySummaryRows(
   const summaryMap = new Map<string, InventorySummaryRow>();
 
   for (const item of filteredItems) {
-    const key = `${item.customerId}:${item.sku}`;
+    const key = buildInventoryActionSourceKey(item.customerId, item.sku);
     const existing = summaryMap.get(key);
     const receiptDate = item.deliveryDate || item.lastRestockedAt || null;
 

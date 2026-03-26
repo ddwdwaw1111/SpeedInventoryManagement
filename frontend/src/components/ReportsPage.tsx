@@ -1,6 +1,7 @@
 import { type ReactNode, useDeferredValue, useMemo, useState } from "react";
 import { BarChart, PieChart } from "@mui/x-charts";
 
+import { InlineAlert } from "./Feedback";
 import { parseDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import type { Customer, Item, Location, Movement } from "../lib/types";
@@ -79,7 +80,7 @@ export function ReportsPage({ items, movements, locations, customers, isLoading,
 
   return (
       <main className="workspace-main">
-        {errorMessage ? <div className="alert-banner">{errorMessage}</div> : null}
+        {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
 
         <section className="workbook-panel workbook-panel--full">
           <div className="tab-strip">

@@ -7,6 +7,7 @@ require github.com/go-sql-driver/mysql v1.8.1
 require (
 	github.com/gin-gonic/gin v1.10.0
 	github.com/jmoiron/sqlx v1.4.0
+	rsc.io/pdf v0.1.1
 )
 
 require (

@@ -11,11 +11,15 @@ import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
 import { api } from "../lib/api";
 import { setPendingAllActivityContext } from "../lib/allActivityContext";
+import { setPendingInventoryActionContext } from "../lib/inventoryActionContext";
+import { buildInventoryActionSourceKey } from "../lib/inventoryActionSources";
+import { consumePendingInventoryByLocationContext } from "../lib/inventoryByLocationContext";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
 import type { Customer, Item, ItemPayload, Location, UserRole } from "../lib/types";
+import { InlineAlert, useConfirmDialog } from "./Feedback";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
 
@@ -78,6 +82,7 @@ function createEmptyItemForm(defaultCustomerId = "", defaultLocationId = ""): It
 
 export function MasterInventoryPage({ items, locations, customers, currentUserRole, isLoading, onRefresh, onNavigate }: MasterInventoryPageProps) {
   const { t } = useI18n();
+  const { confirm, confirmationDialog } = useConfirmDialog();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
   const canDelete = currentUserRole === "admin";
   const canConfigureColumns = currentUserRole === "admin";
@@ -88,6 +93,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
       ? t("operatorCanEditStockNotice")
       : "";
   const [searchTerm, setSearchTerm] = useState("");
+  const [focusedSku, setFocusedSku] = useState<string | null>(null);
   const [selectedLocationId, setSelectedLocationId] = useState("all");
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [healthFilter, setHealthFilter] = useState<InventoryHealthFilter>("ALL");
@@ -110,8 +116,23 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
     }
   }, [customers, form.customerId]);
 
+  useEffect(() => {
+    const context = consumePendingInventoryByLocationContext();
+    if (!context) {
+      return;
+    }
+
+    const nextSku = context.sku?.trim() ?? "";
+    setFocusedSku(nextSku || null);
+    setSearchTerm(nextSku);
+    setSelectedCustomerId(context.customerId ? String(context.customerId) : "all");
+    setSelectedLocationId(context.locationId ? String(context.locationId) : "all");
+    setSelectedItemId(null);
+  }, []);
+
   const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
   const filteredItems = items.filter((item) => {
+    const matchesFocusedSku = !focusedSku || item.sku.toLowerCase() === focusedSku.toLowerCase();
     const matchesSearch = normalizedSearch.length === 0
       || item.sku.toLowerCase().includes(normalizedSearch)
       || item.itemNumber.toLowerCase().includes(normalizedSearch)
@@ -124,13 +145,13 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
       || (healthFilter === "IN_STOCK" && item.availableQty > item.reorderLevel)
       || (healthFilter === "LOW_STOCK" && item.availableQty <= item.reorderLevel)
       || (healthFilter === "MISMATCH" && hasQtyMismatch(item.expectedQty, item.receivedQty));
-    return matchesSearch && matchesLocation && matchesCustomer && matchesHealth;
+    return matchesFocusedSku && matchesSearch && matchesLocation && matchesCustomer && matchesHealth;
   });
   const selectedItem = useMemo(
     () => filteredItems.find((item) => item.id === selectedItemId) ?? null,
     [filteredItems, selectedItemId]
   );
-  const hasActiveFilters = normalizedSearch.length > 0 || selectedLocationId !== "all" || selectedCustomerId !== "all" || healthFilter !== "ALL";
+  const hasActiveFilters = normalizedSearch.length > 0 || selectedLocationId !== "all" || selectedCustomerId !== "all" || healthFilter !== "ALL" || focusedSku !== null;
   const mainGridSlots = buildWorkspaceGridSlots({
     emptyTitle: t("noResults"),
     emptyDescription: hasActiveFilters ? t("filteredStateHint") : t("emptyStateHint"),
@@ -153,7 +174,6 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
     { field: "storageSection", headerName: t("storageSection"), minWidth: 110, renderCell: (params) => params.row.storageSection || "A" },
     { field: "quantity", headerName: t("onHand"), minWidth: 110, type: "number" },
     { field: "availableQty", headerName: t("availableQty"), minWidth: 120, type: "number" },
-    { field: "allocatedQty", headerName: t("allocatedQty"), minWidth: 110, type: "number" },
     { field: "damagedQty", headerName: t("damagedQty"), minWidth: 110, type: "number" },
     { field: "reorderLevel", headerName: t("reorderLevel"), minWidth: 130, type: "number" },
     { field: "deliveryDate", headerName: t("deliveryDate"), minWidth: 140, valueFormatter: (_, row) => formatDate(row.deliveryDate) },
@@ -304,7 +324,14 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
 
   async function handleDeleteItem(item: Item) {
     if (!canDelete) return;
-    if (!window.confirm(t("deleteStockRowConfirm", { sku: item.sku, storage: item.locationName, section: item.storageSection || "A" }))) {
+    if (!(await confirm({
+      title: t("delete"),
+      message: t("deleteStockRowConfirm", { sku: item.sku, storage: item.locationName, section: item.storageSection || "A" }),
+      confirmLabel: t("delete"),
+      cancelLabel: t("cancel"),
+      confirmColor: "error",
+      severity: "warning"
+    }))) {
       return;
     }
 
@@ -319,6 +346,13 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
 
   function openWorkspace(page: PageKey) {
     if (!selectedItem) return;
+    if (page === "adjustments" || page === "transfers") {
+      setPendingInventoryActionContext(page, {
+        sourceKey: buildInventoryActionSourceKey(selectedItem.customerId, selectedItem.sku),
+        sku: selectedItem.sku,
+        customerId: selectedItem.customerId
+      });
+    }
     if (page === "all-activity") {
       setPendingAllActivityContext({
         searchTerm: selectedItem.sku,
@@ -340,7 +374,13 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
             errorMessage={errorMessage && !isModalOpen ? errorMessage : ""}
           />
           <div className="filter-bar">
-            <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("stockByLocationSearchPlaceholder")} /></label>
+            <label>{t("search")}<input value={searchTerm} onChange={(event) => {
+              const nextValue = event.target.value;
+              setSearchTerm(nextValue);
+              if (focusedSku && nextValue.trim().toLowerCase() !== focusedSku.toLowerCase()) {
+                setFocusedSku(null);
+              }
+            }} placeholder={t("stockByLocationSearchPlaceholder")} /></label>
             <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
             <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
             <label>{t("stockHealth")}<select value={healthFilter} onChange={(event) => setHealthFilter(event.target.value as InventoryHealthFilter)}><option value="ALL">{t("allRows")}</option><option value="IN_STOCK">{t("healthyStock")}</option><option value="LOW_STOCK">{t("lowStock")}</option><option value="MISMATCH">{t("mismatch")}</option></select></label>
@@ -432,8 +472,8 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
                 <span>{t("availableQty")}</span>
               </div>
               <div className="document-drawer__status-stat">
-                <strong>{selectedItem.allocatedQty} / {selectedItem.damagedQty}</strong>
-                <span>{t("allocatedQty")} / {t("damagedQty")}</span>
+                <strong>{selectedItem.damagedQty}</strong>
+                <span>{t("damagedQty")}</span>
               </div>
             </div>
 
@@ -494,7 +534,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
           </IconButton>
         </DialogTitle>
         <DialogContent dividers>
-          {errorMessage ? <div className="alert-banner">{errorMessage}</div> : null}
+          {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
           <form className="sheet-form" onSubmit={handleSubmit}>
             <label>{t("itemNumber")}<input value={form.itemNumber} onChange={(event) => setForm((current) => ({ ...current, itemNumber: event.target.value }))} placeholder="VB22GC" /></label>
             <label>{t("sku")}<input value={form.sku} onChange={(event) => setForm((current) => ({ ...current, sku: event.target.value }))} placeholder="023042" required /></label>
@@ -503,7 +543,6 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
             <label>{t("currentStorage")}<select value={form.locationId} onChange={(event) => setForm((current) => ({ ...current, locationId: event.target.value }))} required>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
             <div className="sheet-note sheet-form__wide"><strong>{t("storageSection")}</strong> {form.storageSection || "A"}</div>
             <label>{t("onHand")}<input type="number" min="0" value={numberInputValue(form.quantity)} onChange={(event) => setForm((current) => ({ ...current, quantity: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-            <label>{t("allocatedQty")}<input type="number" min="0" value={numberInputValue(form.allocatedQty)} onChange={(event) => setForm((current) => ({ ...current, allocatedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
             <label>{t("damagedQty")}<input type="number" min="0" value={numberInputValue(form.damagedQty)} onChange={(event) => setForm((current) => ({ ...current, damagedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
             <label>{t("deliveryDate")}<input type="date" value={form.deliveryDate} onChange={(event) => setForm((current) => ({ ...current, deliveryDate: event.target.value }))} /></label>
             <label>{t("containerNo")}<input value={form.containerNo} onChange={(event) => setForm((current) => ({ ...current, containerNo: event.target.value }))} placeholder="KKFU7963968" /></label>
@@ -519,6 +558,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
           </form>
         </DialogContent>
       </Dialog>
+      {confirmationDialog}
     </main>
   );
 }

@@ -370,6 +370,32 @@ export type InboundDocumentPayload = {
   lines: InboundDocumentLinePayload[];
 };
 
+export type InboundPackingListImportLine = {
+  sequence: number;
+  itemNumber: string;
+  sku: string;
+  description: string;
+  quantity: number;
+  unitLabel: string;
+  cartonSizeMm: string;
+  cartonCount: number;
+  netWeightKgs: number;
+  grossWeightKgs: number;
+};
+
+export type InboundPackingListImportPreview = {
+  sourceFileName: string;
+  title: string;
+  containerNo: string;
+  referenceCode: string;
+  unitLabel: string;
+  totalQty: number;
+  totalCartons: number;
+  totalNetWeightKgs: number;
+  totalGrossWeightKgs: number;
+  lines: InboundPackingListImportLine[];
+};
+
 export type CancelInboundDocumentPayload = {
   reason?: string;
 };

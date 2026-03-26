@@ -1,4 +1,5 @@
 import { type FormEvent, useState } from "react";
+import { Alert } from "@mui/material";
 
 import { useI18n } from "../lib/i18n";
 import type { LoginPayload, SignUpPayload, User } from "../lib/types";
@@ -68,7 +69,7 @@ export function AuthPage({
             <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" autoComplete="current-password" />
           </label>
 
-          {errorMessage ? <div className="alert-banner">{errorMessage}</div> : null}
+          {errorMessage ? <Alert severity="error" variant="outlined" sx={{ mb: 2, borderRadius: 2 }}>{errorMessage}</Alert> : null}
 
           <button className="button button--primary auth-submit" type="submit" disabled={isSubmitting}>
             {isSubmitting ? "Signing in..." : "Sign in"}

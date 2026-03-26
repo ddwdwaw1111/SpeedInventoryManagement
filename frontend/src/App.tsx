@@ -1,5 +1,6 @@
 import {
   AssessmentOutlined,
+  ArrowBackOutlined,
   BadgeOutlined,
   CategoryOutlined,
   ChevronLeftOutlined,
@@ -261,7 +262,7 @@ export default function App() {
   const navSections = [
     { key: "receiving", label: navLabels.receiving, items: ["inbound-management", "cycle-counts"] as PageKey[] },
     { key: "shipping", label: navLabels.shipping, items: ["outbound-management"] as PageKey[] },
-    { key: "inventory", label: navLabels.inventory, items: ["inventory-summary", "stock-by-location", "adjustments", "transfers", "all-activity"] as PageKey[] },
+    { key: "inventory", label: navLabels.inventory, items: ["inventory-summary", "all-activity"] as PageKey[] },
     { key: "master-data", label: navLabels.masterData, items: ["customers", "sku-master", "storage-management"] as PageKey[] },
     { key: "reports", label: navLabels.reports, items: ["reports"] as PageKey[] },
     { key: "administration", label: navLabels.administration, items: ["audit-logs", "user-management", "settings"] as PageKey[] }
@@ -273,7 +274,30 @@ export default function App() {
   })).filter((section) => section.items.length > 0);
   const activePageItem = pageItemMap.get(activePage) ?? pageItems[0];
   const homePageItem = pageItemMap.get("dashboard");
-  const activeNavSection = navSections.find((section) => section.items.some((item) => item.key === activePage));
+  const parentPageByPage: Partial<Record<PageKey, PageKey>> = {
+    "stock-by-location": "inventory-summary",
+    adjustments: "inventory-summary",
+    transfers: "inventory-summary"
+  };
+  const sectionKeyByPage: Partial<Record<PageKey, string>> = {
+    "inbound-management": "receiving",
+    "cycle-counts": "receiving",
+    "outbound-management": "shipping",
+    "inventory-summary": "inventory",
+    "stock-by-location": "inventory",
+    "adjustments": "inventory",
+    "transfers": "inventory",
+    "all-activity": "inventory",
+    customers: "master-data",
+    "sku-master": "master-data",
+    "storage-management": "master-data",
+    reports: "reports",
+    "audit-logs": "administration",
+    "user-management": "administration",
+    settings: "administration"
+  };
+  const parentPage = parentPageByPage[activePage] ? pageItemMap.get(parentPageByPage[activePage] as PageKey) : null;
+  const activeNavSection = navSections.find((section) => section.key === sectionKeyByPage[activePage]);
   const showPageContext = activePage !== "dashboard";
   useEffect(() => {
     if (!activeNavSection) return;
@@ -391,10 +415,22 @@ export default function App() {
         <div className="workspace-shell">
           {showPageContext ? (
             <div className="app-page-context">
-              <div className="app-page-context__breadcrumb">
-                <span>{activeNavSection?.label}</span>
-                <span aria-hidden="true">/</span>
-                <span>{activePageItem.label}</span>
+              <div className="app-page-context__leading">
+                {parentPage ? (
+                  <button
+                    className="app-page-context__back-button"
+                    type="button"
+                    onClick={() => navigateToPage(parentPage.key, setActivePage)}
+                  >
+                    <ArrowBackOutlined fontSize="small" />
+                    <span>{t("back")}</span>
+                  </button>
+                ) : null}
+                <div className="app-page-context__breadcrumb">
+                  <span>{activeNavSection?.label}</span>
+                  <span aria-hidden="true">/</span>
+                  <span>{activePageItem.label}</span>
+                </div>
               </div>
             </div>
           ) : null}

@@ -17,6 +17,7 @@ import { useSettings } from "../lib/settings";
 import { downloadOutboundDeliveryNotePdfFromDocument } from "../lib/outboundPackingListPdf";
 import { downloadOutboundPickSheetPdfFromDocument } from "../lib/outboundPickSheetPdf";
 import type { Customer, InboundDocument, InboundDocumentPayload, Item, Location, Movement, OutboundDocument, OutboundDocumentPayload, SKUMaster, UserRole } from "../lib/types";
+import { InlineAlert, useConfirmDialog } from "./Feedback";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type ActivityMode = "IN" | "OUT";
@@ -270,6 +271,7 @@ function buildAutoPalletPlan(totalQty: number, unitsPerPallet: number) {
 export function ActivityManagementPage({ mode, items, skuMasters, locations, customers, movements, inboundDocuments, outboundDocuments, currentUserRole, isLoading, onRefresh }: ActivityManagementPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
+  const { confirm, confirmationDialog } = useConfirmDialog();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
@@ -1285,7 +1287,14 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     }
 
     const documentLabel = document.containerNo || String(document.id);
-    if (!window.confirm(t("cancelInboundConfirm", { containerNo: documentLabel }))) {
+    if (!(await confirm({
+      title: t("cancelReceipt"),
+      message: t("cancelInboundConfirm", { containerNo: documentLabel }),
+      confirmLabel: t("cancelReceipt"),
+      cancelLabel: t("cancel"),
+      confirmColor: "warning",
+      severity: "warning"
+    }))) {
       return;
     }
 
@@ -1322,7 +1331,14 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
       return;
     }
 
-    if (!window.confirm(t("cancelOutboundConfirm", { packingListNo: document.packingListNo || String(document.id) }))) {
+    if (!(await confirm({
+      title: t("cancelShipment"),
+      message: t("cancelOutboundConfirm", { packingListNo: document.packingListNo || String(document.id) }),
+      confirmLabel: t("cancelShipment"),
+      cancelLabel: t("cancel"),
+      confirmColor: "warning",
+      severity: "warning"
+    }))) {
       return;
     }
 
@@ -1696,7 +1712,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
             </IconButton>
           </DialogTitle>
           <DialogContent dividers>
-            {errorMessage ? <div className="alert-banner">{errorMessage}</div> : null}
+            {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
             {mode === "IN" ? (
               <form onSubmit={handleBatchSubmit}>
                 <div className="sheet-form sheet-form--compact">
@@ -1975,9 +1991,9 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
                   </div>
 
                   {batchOutboundAllocationPreview.shortageLineCount > 0 ? (
-                    <div className="alert-banner">
+                    <InlineAlert severity="warning">
                       {t("pickAllocationPreviewShortage")}
-                    </div>
+                    </InlineAlert>
                   ) : null}
 
                   {batchOutboundAllocationPreview.rows.length > 0 ? (
@@ -2021,6 +2037,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
           </DialogContent>
         </Dialog>
       ) : null}
+      {confirmationDialog}
     </main>
   );
 }

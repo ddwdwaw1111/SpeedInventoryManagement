@@ -13,6 +13,7 @@ import { RowActionsMenu } from "./RowActionsMenu";
 import { formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import type { SKUMaster, SKUMasterPayload, UserRole } from "../lib/types";
+import { InlineAlert, useConfirmDialog } from "./Feedback";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type SKUMasterPageProps = {
@@ -49,6 +50,7 @@ function createEmptyForm(): SKUMasterFormState {
 
 export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefresh }: SKUMasterPageProps) {
   const { t } = useI18n();
+  const { confirm, confirmationDialog } = useConfirmDialog();
   const canManage = currentUserRole === "admin";
   const pageDescription = t("skuMasterDesc");
   const permissionNotice = canManage ? "" : t("adminOnlyManageNotice");
@@ -340,7 +342,14 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
 
   async function handleDelete(row: SKUMaster) {
     if (!canManage) return;
-    if (!window.confirm(t("deleteSkuMasterConfirm", { sku: row.sku }))) {
+    if (!(await confirm({
+      title: t("delete"),
+      message: t("deleteSkuMasterConfirm", { sku: row.sku }),
+      confirmLabel: t("delete"),
+      cancelLabel: t("cancel"),
+      confirmColor: "error",
+      severity: "warning"
+    }))) {
       return;
     }
 
@@ -410,7 +419,7 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
           </IconButton>
         </DialogTitle>
         <DialogContent dividers>
-          {errorMessage ? <div className="alert-banner">{errorMessage}</div> : null}
+          {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
           <form className="sheet-form" onSubmit={handleSubmit}>
             <label>{t("itemNumber")}<input value={form.itemNumber} onChange={(event) => setForm((current) => ({ ...current, itemNumber: event.target.value }))} placeholder="VB22GC" /></label>
             <label>{t("sku")}<input value={form.sku} onChange={(event) => setForm((current) => ({ ...current, sku: event.target.value }))} placeholder="023042" required /></label>
@@ -491,6 +500,7 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
           </div>
         </DialogContent>
       </Dialog>
+      {confirmationDialog}
     </main>
   );
 }

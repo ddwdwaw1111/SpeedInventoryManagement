@@ -9,6 +9,7 @@ import {
 } from "@mui/icons-material";
 import { type ReactNode, useDeferredValue, useMemo, useState } from "react";
 
+import { InlineAlert } from "./Feedback";
 import { WorkspacePanelHeader, WorkspaceTableEmptyState, WorkspaceTableLoadingState } from "./WorkspacePanelChrome";
 import { useI18n } from "../lib/i18n";
 import type {
@@ -263,7 +264,7 @@ export function HomeDashboardPage({
 
   return (
     <main className="workspace-main dashboard-home">
-      {errorMessage ? <div className="alert-banner">{errorMessage}</div> : null}
+      {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
 
       <section className="workbook-panel dashboard-home__hero">
         <div className="dashboard-home__hero-copy">

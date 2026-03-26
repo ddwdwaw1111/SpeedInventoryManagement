@@ -13,6 +13,7 @@ import { formatDateTimeValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type { Item, Location, LocationPayload, UserRole } from "../lib/types";
+import { InlineAlert, useConfirmDialog } from "./Feedback";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
 
@@ -46,6 +47,7 @@ const STORAGE_MANAGEMENT_COLUMN_ORDER_PREFERENCE_KEY = "storage-management.colum
 export function StorageManagementPage({ locations, items, currentUserRole, isLoading, onRefresh }: StorageManagementPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
+  const { confirm, confirmationDialog } = useConfirmDialog();
   const canManage = currentUserRole === "admin";
   const pageDescription = t("storageManagementDesc");
   const permissionNotice = canManage ? "" : t("adminOnlyManageNotice");
@@ -195,7 +197,14 @@ export function StorageManagementPage({ locations, items, currentUserRole, isLoa
 
   async function handleDelete(location: Location) {
     if (!canManage) return;
-    if (!window.confirm(t("deleteStorageConfirm", { name: location.name }))) return;
+    if (!(await confirm({
+      title: t("delete"),
+      message: t("deleteStorageConfirm", { name: location.name }),
+      confirmLabel: t("delete"),
+      cancelLabel: t("cancel"),
+      confirmColor: "error",
+      severity: "warning"
+    }))) return;
 
     setErrorMessage("");
     try {
@@ -279,7 +288,7 @@ export function StorageManagementPage({ locations, items, currentUserRole, isLoa
           </IconButton>
         </DialogTitle>
         <DialogContent dividers>
-          {errorMessage ? <div className="alert-banner">{errorMessage}</div> : null}
+          {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
           <form className="sheet-form" onSubmit={handleSubmit}>
             <label>{t("storageName")}<input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="NJ Warehouse A" required /></label>
             <label>{t("zone")}<input value={form.zone} onChange={(event) => setForm((current) => ({ ...current, zone: event.target.value }))} placeholder="North Wing" required /></label>
@@ -310,6 +319,7 @@ export function StorageManagementPage({ locations, items, currentUserRole, isLoa
           </form>
         </DialogContent>
       </Dialog>
+      {confirmationDialog}
     </main>
   );
 }
