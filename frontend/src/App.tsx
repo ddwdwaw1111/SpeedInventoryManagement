@@ -8,6 +8,7 @@ import {
   ChevronRightOutlined,
   CompareArrowsOutlined,
   FactCheckOutlined,
+  FileDownloadOutlined,
   GroupsOutlined,
   HomeOutlined,
   HistoryOutlined,
@@ -25,9 +26,11 @@ import { AdjustmentManagementPage } from "./components/AdjustmentManagementPage"
 import { AllActivityPage } from "./components/AllActivityPage";
 import { AuditLogPage } from "./components/AuditLogPage";
 import { AppHeaderUser, AuthPage } from "./components/AuthPage";
+import { ContainerContentsPage } from "./components/ContainerContentsPage";
 import { CustomerManagementPage } from "./components/CustomerManagementPage";
 import { CycleCountManagementPage } from "./components/CycleCountManagementPage";
 import { HomeDashboardPage } from "./components/HomeDashboardPage";
+import { ExportCenterPage } from "./components/ExportCenterPage";
 import { InventorySummaryPage } from "./components/InventorySummaryPage";
 import { MasterInventoryPage } from "./components/MasterInventoryPage";
 import { ReportsPage } from "./components/ReportsPage";
@@ -243,9 +246,11 @@ export default function App() {
   const pageItems: Array<{ key: PageKey; label: string; description: string; icon: ReactNode }> = [
     { key: "dashboard", label: t("navDashboard"), description: t("dashboardDesc"), icon: <HomeOutlined fontSize="small" /> },
     { key: "reports", label: t("report"), description: t("reportDesc"), icon: <AssessmentOutlined fontSize="small" /> },
+    { key: "export-center", label: t("exportCenter"), description: t("exportCenterDesc"), icon: <FileDownloadOutlined fontSize="small" /> },
     { key: "inbound-management", label: t("inbound"), description: t("inboundDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
     { key: "outbound-management", label: t("outbound"), description: t("outboundDesc"), icon: <OutboxOutlined fontSize="small" /> },
     { key: "inventory-summary", label: t("inventorySummary"), description: t("inventorySummaryDesc"), icon: <WarehouseOutlined fontSize="small" /> },
+    { key: "container-contents", label: t("containerContents"), description: t("containerContentsDesc"), icon: <WarehouseOutlined fontSize="small" /> },
     { key: "adjustments", label: t("adjustments"), description: t("adjustmentsDesc"), icon: <TuneOutlined fontSize="small" /> },
     { key: "transfers", label: t("transfers"), description: t("transfersDesc"), icon: <CompareArrowsOutlined fontSize="small" /> },
     { key: "cycle-counts", label: t("cycleCounts"), description: t("cycleCountsDesc"), icon: <FactCheckOutlined fontSize="small" /> },
@@ -262,9 +267,9 @@ export default function App() {
   const navSections = [
     { key: "receiving", label: navLabels.receiving, items: ["inbound-management", "cycle-counts"] as PageKey[] },
     { key: "shipping", label: navLabels.shipping, items: ["outbound-management"] as PageKey[] },
-    { key: "inventory", label: navLabels.inventory, items: ["inventory-summary", "all-activity"] as PageKey[] },
+    { key: "inventory", label: navLabels.inventory, items: ["inventory-summary", "container-contents", "all-activity"] as PageKey[] },
     { key: "master-data", label: navLabels.masterData, items: ["customers", "sku-master", "storage-management"] as PageKey[] },
-    { key: "reports", label: navLabels.reports, items: ["reports"] as PageKey[] },
+    { key: "reports", label: navLabels.reports, items: ["reports", "export-center"] as PageKey[] },
     { key: "administration", label: navLabels.administration, items: ["audit-logs", "user-management", "settings"] as PageKey[] }
   ].map((section) => ({
     ...section,
@@ -284,6 +289,7 @@ export default function App() {
     "cycle-counts": "receiving",
     "outbound-management": "shipping",
     "inventory-summary": "inventory",
+    "container-contents": "inventory",
     "stock-by-location": "inventory",
     "adjustments": "inventory",
     "transfers": "inventory",
@@ -292,6 +298,7 @@ export default function App() {
     "sku-master": "master-data",
     "storage-management": "master-data",
     reports: "reports",
+    "export-center": "reports",
     "audit-logs": "administration",
     "user-management": "administration",
     settings: "administration"
@@ -440,6 +447,7 @@ export default function App() {
           {activePage === "transfers" ? <TransferManagementPage transfers={transfers} items={items} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
           {activePage === "cycle-counts" ? <CycleCountManagementPage cycleCounts={cycleCounts} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
           {activePage === "inventory-summary" ? <InventorySummaryPage items={items} movements={movements} customers={customers} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
+          {activePage === "container-contents" ? <ContainerContentsPage items={items} customers={customers} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
           {activePage === "all-activity" ? <AllActivityPage movements={movements} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
           {activePage === "customers" ? <CustomerManagementPage customers={customers} items={items} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} movements={movements} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
           {activePage === "audit-logs" && canViewAuditLogs ? <AuditLogPage auditLogs={auditLogs} currentUserRole={currentUser.role} isLoading={isLoading} /> : null}
@@ -470,6 +478,14 @@ export default function App() {
               customers={customers}
               isLoading={isLoading}
               errorMessage={errorMessage}
+            />
+          ) : null}
+          {activePage === "export-center" ? (
+            <ExportCenterPage
+              items={items}
+              inboundDocuments={inboundDocuments}
+              outboundDocuments={outboundDocuments}
+              onNavigate={(page) => navigateToPage(page, setActivePage)}
             />
           ) : null}
         </div>

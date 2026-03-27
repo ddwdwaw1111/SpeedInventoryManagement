@@ -2,6 +2,7 @@ import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOu
 import CloseIcon from "@mui/icons-material/Close";
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
+import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
 import PictureAsPdfOutlinedIcon from "@mui/icons-material/PictureAsPdfOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import { type FormEvent, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
@@ -12,11 +13,13 @@ import { api } from "../lib/api";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildItemContainerBalances, formatContainerDistributionSummary as formatContainerDistributionSummaryValue, type ItemContainerBalance } from "../lib/containerBalances";
 import { formatDateTimeValue, formatDateValue } from "../lib/dates";
+import { downloadExcelWorkbook, type ExcelExportColumn } from "../lib/excelExport";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import { downloadOutboundDeliveryNotePdfFromDocument } from "../lib/outboundPackingListPdf";
 import { downloadOutboundPickSheetPdfFromDocument } from "../lib/outboundPickSheetPdf";
 import type { Customer, InboundDocument, InboundDocumentPayload, Item, Location, Movement, OutboundDocument, OutboundDocumentPayload, SKUMaster, UserRole } from "../lib/types";
+import { ExportExcelDialog } from "./ExportExcelDialog";
 import { InlineAlert, useConfirmDialog } from "./Feedback";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
@@ -163,6 +166,31 @@ type OutboundSourceOption = {
 };
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
+const RECEIPTS_EXPORT_TITLE = "Receipts";
+const SHIPMENTS_EXPORT_TITLE = "Shipments";
+const RECEIPTS_EXPORT_COLUMNS = [
+  { key: "deliveryDate", label: "Receipt Date" },
+  { key: "containerNo", label: "Container No." },
+  { key: "customerName", label: "Customer" },
+  { key: "locationName", label: "Warehouse" },
+  { key: "totalLines", label: "Total Lines" },
+  { key: "totalExpectedQty", label: "Expected Qty" },
+  { key: "totalReceivedQty", label: "Received Qty" },
+  { key: "status", label: "Status" }
+] as const;
+const SHIPMENTS_EXPORT_COLUMNS = [
+  { key: "packingListNo", label: "Packing List No." },
+  { key: "orderRef", label: "Order Ref." },
+  { key: "customerName", label: "Customer" },
+  { key: "storages", label: "Warehouse" },
+  { key: "outDate", label: "Ship Date" },
+  { key: "shipToName", label: "Ship-to Name" },
+  { key: "carrierName", label: "Carrier" },
+  { key: "totalLines", label: "Total Lines" },
+  { key: "totalQty", label: "Total Qty" },
+  { key: "totalGrossWeightKgs", label: "Gross Weight (kg)" },
+  { key: "status", label: "Status" }
+] as const;
 
 function createEmptyBatchInboundForm(): BatchInboundFormState {
   return {
@@ -288,6 +316,9 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
   const [selectedOutboundDocument, setSelectedOutboundDocument] = useState<OutboundDocument | null>(null);
   const [batchSubmitting, setBatchSubmitting] = useState(false);
   const [outboundWizardStep, setOutboundWizardStep] = useState<OutboundWizardStep>(1);
+  const [batchInboundLineAddCount, setBatchInboundLineAddCount] = useState(1);
+  const [batchOutboundLineAddCount, setBatchOutboundLineAddCount] = useState(1);
+  const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const deferredSearchTerm = useDeferredValue(searchTerm);
   const pendingBatchLineIDRef = useRef<string | null>(null);
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
@@ -306,6 +337,8 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     setBatchOutboundForm(createEmptyBatchOutboundForm());
     setBatchOutboundLines([createEmptyBatchOutboundLine()]);
     setOutboundWizardStep(1);
+    setBatchInboundLineAddCount(1);
+    setBatchOutboundLineAddCount(1);
     setSelectedStatus("all");
     setSelectedInboundDocument(null);
     setSelectedOutboundDocument(null);
@@ -710,6 +743,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     });
     pendingBatchLineIDRef.current = null;
     setBatchLines([createEmptyBatchInboundLine()]);
+    setBatchInboundLineAddCount(1);
     setErrorMessage("");
     setIsBatchModalOpen(true);
   }
@@ -727,6 +761,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     setBatchOutboundForm(createEmptyBatchOutboundForm());
     setBatchOutboundLines([createEmptyBatchOutboundLine()]);
     setOutboundWizardStep(1);
+    setBatchOutboundLineAddCount(1);
     setErrorMessage("");
     setIsBatchModalOpen(true);
   }
@@ -850,16 +885,25 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     setBatchLines([createEmptyBatchInboundLine()]);
     setBatchSubmitting(false);
     setOutboundWizardStep(1);
+    setBatchInboundLineAddCount(1);
+    setBatchOutboundLineAddCount(1);
     setBatchOutboundForm(createEmptyBatchOutboundForm());
     setBatchOutboundLines([createEmptyBatchOutboundLine()]);
     setErrorMessage("");
     setIsBatchModalOpen(false);
   }
 
-  function addBatchLine() {
-    const nextLine = createEmptyBatchInboundLine(batchForm.storageSection || batchSectionOptions[0] || "A");
-    pendingBatchLineIDRef.current = nextLine.id;
-    setBatchLines((current) => [...current, nextLine]);
+  function getSafeLineAddCount(value: number) {
+    return Math.min(50, Math.max(1, Math.floor(value) || 1));
+  }
+
+  function addBatchLine(count = batchInboundLineAddCount) {
+    const safeCount = getSafeLineAddCount(count);
+    const nextLines = Array.from({ length: safeCount }, () =>
+      createEmptyBatchInboundLine(batchForm.storageSection || batchSectionOptions[0] || "A")
+    );
+    pendingBatchLineIDRef.current = nextLines[0]?.id ?? null;
+    setBatchLines((current) => [...current, ...nextLines]);
   }
 
   function removeBatchLine(lineID: string) {
@@ -1007,8 +1051,12 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     }));
   }
 
-  function addBatchOutboundLine() {
-    setBatchOutboundLines((current) => [...current, createEmptyBatchOutboundLine()]);
+  function addBatchOutboundLine(count = batchOutboundLineAddCount) {
+    const safeCount = getSafeLineAddCount(count);
+    setBatchOutboundLines((current) => [
+      ...current,
+      ...Array.from({ length: safeCount }, () => createEmptyBatchOutboundLine())
+    ]);
   }
 
   function removeBatchOutboundLine(lineID: string) {
@@ -1356,6 +1404,55 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     }
   }
 
+  function handleExport({
+    title,
+    columns
+  }: {
+    title: string;
+    columns: ExcelExportColumn[];
+  }) {
+    if (mode === "IN") {
+      downloadExcelWorkbook({
+        title,
+        sheetName: RECEIPTS_EXPORT_TITLE,
+        fileName: title,
+        columns,
+        rows: inboundDocumentRows.map((document) => ({
+          deliveryDate: formatDate(document.deliveryDate),
+          containerNo: document.containerNo || "-",
+          customerName: document.customerName || "-",
+          locationName: `${document.locationName} / ${summarizeInboundDocumentSections(document)}`,
+          totalLines: document.totalLines,
+          totalExpectedQty: document.totalExpectedQty,
+          totalReceivedQty: document.totalReceivedQty,
+          status: document.status
+        }))
+      });
+    } else {
+      downloadExcelWorkbook({
+        title,
+        sheetName: SHIPMENTS_EXPORT_TITLE,
+        fileName: title,
+        columns,
+        rows: outboundDocumentRows.map((document) => ({
+          packingListNo: document.packingListNo || "-",
+          orderRef: document.orderRef || "-",
+          customerName: document.customerName || "-",
+          storages: document.storages || "-",
+          outDate: formatDate(document.outDate),
+          shipToName: document.shipToName || "-",
+          carrierName: document.carrierName || "-",
+          totalLines: document.totalLines,
+          totalQty: document.totalQty,
+          totalGrossWeightKgs: document.totalGrossWeightKgs ? document.totalGrossWeightKgs.toFixed(2) : "-",
+          status: document.status
+        }))
+      });
+    }
+
+    setIsExportDialogOpen(false);
+  }
+
   return (
     <main className="workspace-main">
       <section>
@@ -1365,6 +1462,14 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
               title={mode === "IN" ? t("inbound") : t("outbound")}
               actions={(
                 <>
+                  <Button
+                    variant="outlined"
+                    startIcon={<FileDownloadOutlinedIcon />}
+                    onClick={() => setIsExportDialogOpen(true)}
+                    disabled={(mode === "IN" ? inboundDocumentRows.length : outboundDocumentRows.length) === 0}
+                  >
+                    {t("exportExcel")}
+                  </Button>
                   {canManage ? (
                     <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={openCreateModal}>
                       {mode === "IN" ? t("newInbound") : t("newOutbound")}
@@ -1422,6 +1527,13 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
           </div>
         </article>
       </section>
+      <ExportExcelDialog
+        open={isExportDialogOpen}
+        defaultTitle={mode === "IN" ? RECEIPTS_EXPORT_TITLE : SHIPMENTS_EXPORT_TITLE}
+        defaultColumns={mode === "IN" ? [...RECEIPTS_EXPORT_COLUMNS] : [...SHIPMENTS_EXPORT_COLUMNS]}
+        onClose={() => setIsExportDialogOpen(false)}
+        onExport={handleExport}
+      />
 
       {mode === "IN" ? (
         <Drawer
@@ -1727,7 +1839,26 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
                 <div className="batch-lines">
                   <div className="batch-lines__toolbar batch-lines__toolbar--sticky">
                     <strong>{t("skuLines")}</strong>
-                    <Button size="small" variant="outlined" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={addBatchLine}>{t("addSkuLine")}</Button>
+                    <div className="batch-lines__adder">
+                      <label className="batch-lines__adder-label">
+                        {t("rowsToAdd")}
+                        <input
+                          type="number"
+                          min="1"
+                          max="50"
+                          value={batchInboundLineAddCount}
+                          onChange={(event) => setBatchInboundLineAddCount(getSafeLineAddCount(Number(event.target.value || 1)))}
+                        />
+                      </label>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        startIcon={<AddCircleOutlineOutlinedIcon />}
+                        onClick={() => addBatchLine()}
+                      >
+                        {t("addSkuLine")}
+                      </Button>
+                    </div>
                   </div>
 
                   {batchLines.map((line, index) => {
@@ -1820,7 +1951,26 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
                   <div className="batch-lines__toolbar batch-lines__toolbar--sticky">
                     <strong>{outboundWizardStep === 2 ? t("pickAllocations") : t("outboundLines")}</strong>
                     {outboundWizardStep === 1 ? (
-                      <Button size="small" variant="outlined" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={addBatchOutboundLine}>{t("addOutboundLine")}</Button>
+                      <div className="batch-lines__adder">
+                        <label className="batch-lines__adder-label">
+                          {t("rowsToAdd")}
+                          <input
+                            type="number"
+                            min="1"
+                            max="50"
+                            value={batchOutboundLineAddCount}
+                            onChange={(event) => setBatchOutboundLineAddCount(getSafeLineAddCount(Number(event.target.value || 1)))}
+                          />
+                        </label>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          startIcon={<AddCircleOutlineOutlinedIcon />}
+                          onClick={() => addBatchOutboundLine()}
+                        >
+                          {t("addOutboundLine")}
+                        </Button>
+                      </div>
                     ) : (
                       <span className="batch-line-card__hint">{t("pickPlanStepHint")}</span>
                     )}

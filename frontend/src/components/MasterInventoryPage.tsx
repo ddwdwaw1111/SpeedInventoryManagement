@@ -3,6 +3,7 @@ import CompareArrowsOutlinedIcon from "@mui/icons-material/CompareArrowsOutlined
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
+import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
 import { type FormEvent, useDeferredValue, useEffect, useMemo, useState } from "react";
@@ -11,6 +12,7 @@ import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
 import { api } from "../lib/api";
 import { setPendingAllActivityContext } from "../lib/allActivityContext";
+import { downloadExcelWorkbook, type ExcelExportColumn } from "../lib/excelExport";
 import { setPendingInventoryActionContext } from "../lib/inventoryActionContext";
 import { buildInventoryActionSourceKey } from "../lib/inventoryActionSources";
 import { consumePendingInventoryByLocationContext } from "../lib/inventoryByLocationContext";
@@ -20,6 +22,7 @@ import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
 import type { Customer, Item, ItemPayload, Location, UserRole } from "../lib/types";
 import { InlineAlert, useConfirmDialog } from "./Feedback";
+import { ExportExcelDialog } from "./ExportExcelDialog";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
 
@@ -57,6 +60,25 @@ type ItemFormState = {
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
 const INVENTORY_BY_LOCATION_COLUMN_ORDER_PREFERENCE_KEY = "inventory-by-location.column-order";
+const INVENTORY_DETAIL_EXPORT_TITLE = "Inventory Detail";
+const INVENTORY_DETAIL_EXPORT_COLUMNS = [
+  { key: "itemNumber", label: "Item #" },
+  { key: "sku", label: "SKU" },
+  { key: "description", label: "Description" },
+  { key: "customerName", label: "Customer" },
+  { key: "locationName", label: "Warehouse" },
+  { key: "storageSection", label: "Pick Location" },
+  { key: "quantity", label: "On Hand" },
+  { key: "availableQty", label: "Available Qty" },
+  { key: "damagedQty", label: "Damaged Qty" },
+  { key: "reorderLevel", label: "Reorder Level" },
+  { key: "deliveryDate", label: "Receipt Date" },
+  { key: "containerNo", label: "Container No." },
+  { key: "expectedQty", label: "Expected Qty" },
+  { key: "receivedQty", label: "Received Qty" },
+  { key: "heightIn", label: "Height (in)" },
+  { key: "outDate", label: "Out Date" }
+] as const;
 
 function createEmptyItemForm(defaultCustomerId = "", defaultLocationId = ""): ItemFormState {
   return {
@@ -99,6 +121,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
   const [healthFilter, setHealthFilter] = useState<InventoryHealthFilter>("ALL");
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [editingItemId, setEditingItemId] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -123,8 +146,10 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
     }
 
     const nextSku = context.sku?.trim() ?? "";
+    const nextContainerNo = context.containerNo?.trim() ?? "";
+    const nextSearchTerm = nextSku || nextContainerNo;
     setFocusedSku(nextSku || null);
-    setSearchTerm(nextSku);
+    setSearchTerm(nextSearchTerm);
     setSelectedCustomerId(context.customerId ? String(context.customerId) : "all");
     setSelectedLocationId(context.locationId ? String(context.locationId) : "all");
     setSelectedItemId(null);
@@ -363,13 +388,53 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
     onNavigate(page);
   }
 
+  function handleExport({ title, columns }: { title: string; columns: ExcelExportColumn[] }) {
+    downloadExcelWorkbook({
+      title,
+      sheetName: INVENTORY_DETAIL_EXPORT_TITLE,
+      fileName: title,
+      columns,
+      rows: filteredItems.map((item) => ({
+        itemNumber: item.itemNumber || "-",
+        sku: item.sku,
+        description: displayDescription(item),
+        customerName: item.customerName,
+        locationName: item.locationName,
+        storageSection: item.storageSection || "A",
+        quantity: item.quantity,
+        availableQty: item.availableQty,
+        damagedQty: item.damagedQty,
+        reorderLevel: item.reorderLevel,
+        deliveryDate: formatDate(item.deliveryDate),
+        containerNo: item.containerNo || "-",
+        expectedQty: item.expectedQty || 0,
+        receivedQty: item.receivedQty || 0,
+        heightIn: item.heightIn || "-",
+        outDate: formatDate(item.outDate)
+      }))
+    });
+    setIsExportDialogOpen(false);
+  }
+
   return (
     <main className="workspace-main">
       <section className="workbook-panel workbook-panel--full">
         <div className="tab-strip">
           <WorkspacePanelHeader
             title={t("stockByLocation")}
-            actions={columnOrderAction}
+            actions={(
+              <div className="sheet-actions">
+                <Button
+                  variant="outlined"
+                  startIcon={<FileDownloadOutlinedIcon fontSize="small" />}
+                  onClick={() => setIsExportDialogOpen(true)}
+                  disabled={filteredItems.length === 0}
+                >
+                  {t("exportExcel")}
+                </Button>
+                {columnOrderAction}
+              </div>
+            )}
             notices={[permissionNote]}
             errorMessage={errorMessage && !isModalOpen ? errorMessage : ""}
           />
@@ -407,6 +472,13 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
         </div>
       </section>
       {columnOrderDialog}
+      <ExportExcelDialog
+        open={isExportDialogOpen}
+        defaultTitle={INVENTORY_DETAIL_EXPORT_TITLE}
+        defaultColumns={[...INVENTORY_DETAIL_EXPORT_COLUMNS]}
+        onClose={() => setIsExportDialogOpen(false)}
+        onExport={handleExport}
+      />
 
       <Drawer
         anchor="right"

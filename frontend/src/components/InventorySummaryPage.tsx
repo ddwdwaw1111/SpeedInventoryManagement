@@ -1,5 +1,6 @@
 import CloseIcon from "@mui/icons-material/Close";
 import CompareArrowsOutlinedIcon from "@mui/icons-material/CompareArrowsOutlined";
+import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
 import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
@@ -9,13 +10,16 @@ import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
 import { setPendingAllActivityContext } from "../lib/allActivityContext";
 import { buildItemContainerBalances, type ItemContainerBalance } from "../lib/containerBalances";
+import { setPendingContainerContentsContext } from "../lib/containerContentsContext";
 import { formatDateValue } from "../lib/dates";
+import { downloadExcelWorkbook, type ExcelExportColumn } from "../lib/excelExport";
 import { setPendingInventoryActionContext } from "../lib/inventoryActionContext";
 import { buildInventoryActionSourceKey } from "../lib/inventoryActionSources";
 import { useI18n } from "../lib/i18n";
 import { setPendingInventoryByLocationContext } from "../lib/inventoryByLocationContext";
 import type { PageKey } from "../lib/routes";
 import type { Customer, Item, Location, Movement, UserRole } from "../lib/types";
+import { ExportExcelDialog } from "./ExportExcelDialog";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
 
@@ -72,6 +76,19 @@ type ContainerBreakdownRow = {
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
 const INVENTORY_SUMMARY_COLUMN_ORDER_PREFERENCE_KEY = "inventory-summary.column-order";
+const INVENTORY_SUMMARY_EXPORT_TITLE = "Inventory Summary";
+const INVENTORY_SUMMARY_EXPORT_COLUMNS = [
+  { key: "itemNumber", label: "Item #"},
+  { key: "sku", label: "SKU" },
+  { key: "description", label: "Description" },
+  { key: "customerName", label: "Customer" },
+  { key: "onHand", label: "On Hand" },
+  { key: "availableQty", label: "Available Qty" },
+  { key: "damagedQty", label: "Damaged Qty" },
+  { key: "warehouseCount", label: "Warehouse Count" },
+  { key: "containerCount", label: "Container Count" },
+  { key: "lastReceipt", label: "Last Receipt" }
+] as const;
 
 export function InventorySummaryPage({
   items,
@@ -89,6 +106,7 @@ export function InventorySummaryPage({
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
   const [selectedSummaryId, setSelectedSummaryId] = useState<string | null>(null);
+  const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const deferredSearchTerm = useDeferredValue(searchTerm);
 
   const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
@@ -149,6 +167,28 @@ export function InventorySummaryPage({
     [selectedSummary]
   );
 
+  function handleExport({ title, columns }: { title: string; columns: ExcelExportColumn[] }) {
+    downloadExcelWorkbook({
+      title,
+      sheetName: INVENTORY_SUMMARY_EXPORT_TITLE,
+      fileName: title,
+      columns,
+      rows: summaryRows.map((row) => ({
+        itemNumber: row.itemNumber || "-",
+        sku: row.sku,
+        description: row.description,
+        customerName: row.customerName,
+        onHand: row.onHand,
+        availableQty: row.availableQty,
+        damagedQty: row.damagedQty,
+        warehouseCount: row.warehouseCount,
+        containerCount: row.containerCount,
+        lastReceipt: formatDateValue(row.lastReceipt, dateFormatter)
+      }))
+    });
+    setIsExportDialogOpen(false);
+  }
+
   return (
     <main className="workspace-main">
       <section className="workbook-panel workbook-panel--full">
@@ -157,6 +197,14 @@ export function InventorySummaryPage({
             title={t("inventorySummary")}
             actions={(
               <div className="sheet-actions">
+                <Button
+                  variant="outlined"
+                  startIcon={<FileDownloadOutlinedIcon fontSize="small" />}
+                  onClick={() => setIsExportDialogOpen(true)}
+                  disabled={summaryRows.length === 0}
+                >
+                  {t("exportExcel")}
+                </Button>
                 {columnOrderAction}
               </div>
             )}
@@ -188,6 +236,13 @@ export function InventorySummaryPage({
         </div>
       </section>
       {columnOrderDialog}
+      <ExportExcelDialog
+        open={isExportDialogOpen}
+        defaultTitle={INVENTORY_SUMMARY_EXPORT_TITLE}
+        defaultColumns={[...INVENTORY_SUMMARY_EXPORT_COLUMNS]}
+        onClose={() => setIsExportDialogOpen(false)}
+        onExport={handleExport}
+      />
 
       <Drawer
         anchor="right"
@@ -253,6 +308,19 @@ export function InventorySummaryPage({
                 }}
               >
                 {t("openInventoryByLocation")}
+              </Button>
+              <Button
+                variant="outlined"
+                startIcon={<WarehouseOutlinedIcon fontSize="small" />}
+                onClick={() => {
+                  setPendingContainerContentsContext({
+                    sku: selectedSummary.sku,
+                    customerId: selectedSummary.customerId
+                  });
+                  onNavigate("container-contents");
+                }}
+              >
+                {t("openContainerContents")}
               </Button>
               <Button
                 variant="outlined"

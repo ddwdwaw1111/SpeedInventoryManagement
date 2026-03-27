@@ -1,17 +1,17 @@
-type InventoryByLocationContext = {
+type ContainerContentsContext = {
   sku?: string;
   customerId?: number;
   locationId?: number;
   containerNo?: string;
 };
 
-const STORAGE_KEY = "sim-inventory-by-location-context";
+const STORAGE_KEY = "sim-container-contents-context";
 
-export function setPendingInventoryByLocationContext(context: InventoryByLocationContext) {
+export function setPendingContainerContentsContext(context: ContainerContentsContext) {
   window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(context));
 }
 
-export function consumePendingInventoryByLocationContext(): InventoryByLocationContext | null {
+export function consumePendingContainerContentsContext(): ContainerContentsContext | null {
   const raw = window.sessionStorage.getItem(STORAGE_KEY);
   if (!raw) {
     return null;
@@ -20,7 +20,7 @@ export function consumePendingInventoryByLocationContext(): InventoryByLocationC
   window.sessionStorage.removeItem(STORAGE_KEY);
 
   try {
-    return JSON.parse(raw) as InventoryByLocationContext;
+    return JSON.parse(raw) as ContainerContentsContext;
   } catch {
     return null;
   }
