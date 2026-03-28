@@ -1,7 +1,7 @@
 import * as pdfMake from "pdfmake/build/pdfmake";
 import type { Content, CustomTableLayout, Style, TableCell, TDocumentDefinitions, TFontDictionary } from "pdfmake/interfaces";
 
-import type { OutboundDocument } from "./types";
+import { normalizeStorageSection, type OutboundDocument } from "./types";
 
 const PICK_SHEET_LAYOUT_NAME = "pickSheetTable";
 const CJK_FONT_NAME = "NotoSansCJKSC";
@@ -148,7 +148,7 @@ export function buildPickSheetDocument(document: OutboundDocument): PickSheetDoc
         sku: line.sku,
         description: line.description,
         warehouse: line.locationName,
-        section: line.storageSection || "A",
+        section: normalizeStorageSection(line.storageSection),
         containerNo: "",
         quantity: line.quantity,
         pallets: line.pallets || 0,
@@ -163,7 +163,7 @@ export function buildPickSheetDocument(document: OutboundDocument): PickSheetDoc
       sku: line.sku,
       description: line.description,
       warehouse: allocation.locationName,
-      section: allocation.storageSection || "A",
+      section: normalizeStorageSection(allocation.storageSection),
       containerNo: allocation.containerNo || "",
       quantity: allocation.allocatedQty,
       pallets: line.pallets || 0,

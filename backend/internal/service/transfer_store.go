@@ -649,14 +649,24 @@ func (s *Store) findOrCreateTransferDestinationItem(
 	toLocationName string,
 	toSection string,
 ) (int64, int, error) {
+	normalizedToSection := normalizeStorageSection(toSection)
+
 	var destinationItemID int64
 	var destinationQuantity int
-	err := tx.QueryRowContext(ctx, `
+	query := `
 		SELECT id, quantity
 		FROM inventory_items
-		WHERE sku_master_id = ? AND customer_id = ? AND location_id = ? AND storage_section = ?
+		WHERE sku_master_id = ? AND customer_id = ? AND location_id = ? AND COALESCE(NULLIF(storage_section, ''), ?) = ?
 		FOR UPDATE
-	`, sourceItem.SKUMasterID, sourceItem.CustomerID, toLocationID, toSection).Scan(&destinationItemID, &destinationQuantity)
+	`
+	queryArgs := []any{
+		sourceItem.SKUMasterID,
+		sourceItem.CustomerID,
+		toLocationID,
+		DefaultStorageSection,
+		normalizedToSection,
+	}
+	err := tx.QueryRowContext(ctx, query, queryArgs...).Scan(&destinationItemID, &destinationQuantity)
 	if err == nil {
 		return destinationItemID, destinationQuantity, nil
 	}
@@ -695,7 +705,7 @@ func (s *Store) findOrCreateTransferDestinationItem(
 		sourceItem.Unit,
 		sourceItem.ReorderLevel,
 		toLocationID,
-		toSection,
+		normalizedToSection,
 	)
 	if err != nil {
 		return 0, 0, mapDBError(fmt.Errorf("create transfer destination item: %w", err))

@@ -18,7 +18,7 @@ import { buildInventoryActionSourceKey } from "../lib/inventoryActionSources";
 import { useI18n } from "../lib/i18n";
 import { setPendingInventoryByLocationContext } from "../lib/inventoryByLocationContext";
 import type { PageKey } from "../lib/routes";
-import type { Customer, Item, Location, Movement, UserRole } from "../lib/types";
+import { DEFAULT_STORAGE_SECTION, normalizeStorageSection, type Customer, type Item, type Location, type Movement, type UserRole } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
@@ -405,7 +405,7 @@ export function InventorySummaryPage({
                 <div className="document-drawer__list-row" key={row.id}>
                   <div>
                     <strong>{row.containerNo || "-"}</strong>
-                    <span>{row.locationName} / {row.storageSections.join(", ") || "A"}</span>
+                    <span>{row.locationName} / {row.storageSections.join(", ") || DEFAULT_STORAGE_SECTION}</span>
                   </div>
                   <div>
                     <strong>{t("onHand")}</strong>
@@ -470,7 +470,7 @@ function buildInventorySummaryRows(
         allocatedQty: item.allocatedQty,
         damagedQty: item.damagedQty,
         warehouseCount: 1,
-        containerCount: new Set(containerBalances.map((balance) => balance.containerNo || `${balance.locationName}/${balance.storageSection || "A"}`)).size,
+        containerCount: new Set(containerBalances.map((balance) => balance.containerNo || `${balance.locationName}/${normalizeStorageSection(balance.storageSection)}`)).size,
         lastReceipt: receiptDate,
         containerBalances,
         items: [item]
@@ -495,7 +495,7 @@ function buildInventorySummaryRows(
       return {
         ...row,
         warehouseCount: new Set(containerBalances.map((balance) => balance.locationId)).size,
-        containerCount: new Set(containerBalances.map((balance) => balance.containerNo || `${balance.locationName}/${balance.storageSection || "A"}`)).size,
+        containerCount: new Set(containerBalances.map((balance) => balance.containerNo || `${balance.locationName}/${normalizeStorageSection(balance.storageSection)}`)).size,
         containerBalances
       };
     })
@@ -551,7 +551,7 @@ function buildContainerBreakdown(containerBalances: ItemContainerBalance[]): Con
 
   for (const balance of containerBalances) {
     const containerNo = balance.containerNo.trim() || "-";
-    const key = `${balance.locationId}:${balance.storageSection || "A"}:${containerNo}`;
+    const key = `${balance.locationId}:${normalizeStorageSection(balance.storageSection)}:${containerNo}`;
     const existing = rowMap.get(key);
     const receiptDate = Number.isFinite(balance.sortAt) && balance.sortAt > 0 ? new Date(balance.sortAt).toISOString() : null;
 

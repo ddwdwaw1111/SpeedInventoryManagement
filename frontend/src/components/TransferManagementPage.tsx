@@ -14,7 +14,15 @@ import { buildInventoryActionSourceOptions } from "../lib/inventoryActionSources
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type { PageKey } from "../lib/routes";
-import type { InventoryTransfer, Item, Location, UserRole } from "../lib/types";
+import {
+  DEFAULT_STORAGE_SECTION,
+  getLocationSectionOptions,
+  normalizeStorageSection,
+  type InventoryTransfer,
+  type Item,
+  type Location,
+  type UserRole
+} from "../lib/types";
 import { InlineAlert } from "./Feedback";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
@@ -56,7 +64,7 @@ function createTransferLine(): TransferLineFormState {
     sourceItemId: "",
     quantity: 0,
     toLocationId: "",
-    toStorageSection: "A",
+    toStorageSection: DEFAULT_STORAGE_SECTION,
     lineNote: ""
   };
 }
@@ -461,14 +469,14 @@ export function TransferManagementPage({
                             <option value="">{selectedSourceOption ? t("selectStockRow") : t("selectSkuForInventoryAction")}</option>
                             {selectableSourceItems.map((item) => (
                               <option key={item.id} value={item.id}>
-                                {`${item.locationName} / ${item.storageSection || "A"} | ${t("containerNo")}: ${item.containerNo || "-"} | ${item.sku} - ${displayDescription(item)} (${t("availableQty")}: ${item.availableQty})`}
+                                {`${item.locationName} / ${normalizeStorageSection(item.storageSection)} | ${t("containerNo")}: ${item.containerNo || "-"} | ${item.sku} - ${displayDescription(item)} (${t("availableQty")}: ${item.availableQty})`}
                               </option>
                             ))}
                           </select>
                         </label>
                         <label>{t("availableQty")}<input value={selectedItem ? String(selectedItem.availableQty) : ""} readOnly /></label>
                         <label>{t("transferQty")}<input type="number" min="0" value={numberInputValue(line.quantity)} onChange={(event) => updateLine(line.id, { quantity: Math.max(0, Number(event.target.value || 0)) })} /></label>
-                        <label>{t("destinationStorage")}<select value={line.toLocationId} onChange={(event) => updateLine(line.id, { toLocationId: event.target.value, toStorageSection: getLocationSectionOptions(locations.find((location) => location.id === Number(event.target.value)))[0] || "A" })}><option value="">{t("selectStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
+                        <label>{t("destinationStorage")}<select value={line.toLocationId} onChange={(event) => updateLine(line.id, { toLocationId: event.target.value, toStorageSection: getLocationSectionOptions(locations.find((location) => location.id === Number(event.target.value)))[0] || DEFAULT_STORAGE_SECTION })}><option value="">{t("selectStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
                         <label>{t("toSection")}<select value={line.toStorageSection} onChange={(event) => updateLine(line.id, { toStorageSection: event.target.value })}>{sectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}</select></label>
                         <label className="batch-line-grid__detail">{t("internalNotes")}<input value={line.lineNote} onChange={(event) => updateLine(line.id, { lineNote: event.target.value })} placeholder={t("transferLineNotePlaceholder")} /></label>
                       </div>
@@ -496,9 +504,4 @@ function displayDescription(item: Pick<Item, "description" | "name">) {
 
 function numberInputValue(value: number) {
   return value === 0 ? "" : String(value);
-}
-
-function getLocationSectionOptions(location: Location | undefined) {
-  const sectionNames = location?.sectionNames?.map((sectionName) => sectionName.trim()).filter(Boolean) ?? [];
-  return sectionNames.length > 0 ? sectionNames : ["A"];
 }

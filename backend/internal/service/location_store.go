@@ -6,7 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
+)
+
+const (
+	StorageLayoutBlockTypeTemporary = "temporary"
+	StorageLayoutBlockTypeSection   = "section"
+	StorageLayoutBlockTypeSupport   = "support"
 )
 
 func (s *Store) ListLocations(ctx context.Context) ([]Location, error) {
@@ -21,6 +28,7 @@ func (s *Store) ListLocations(ctx context.Context) ([]Location, error) {
 			capacity,
 			section_count,
 			COALESCE(section_names_json, '') AS section_names_json,
+			COALESCE(layout_json, '') AS layout_json,
 			created_at
 		FROM storage_locations
 		ORDER BY zone ASC, name ASC
@@ -45,10 +53,14 @@ func (s *Store) CreateLocation(ctx context.Context, input CreateLocationInput) (
 	if err != nil {
 		return Location{}, fmt.Errorf("marshal location section names: %w", err)
 	}
+	layoutJSON, err := marshalLayoutBlocks(input.LayoutBlocks)
+	if err != nil {
+		return Location{}, fmt.Errorf("marshal location layout blocks: %w", err)
+	}
 
 	result, err := s.db.ExecContext(ctx, `
-		INSERT INTO storage_locations (name, address, zone, description, capacity, section_count, section_names_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO storage_locations (name, address, zone, description, capacity, section_count, section_names_json, layout_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		input.Name,
 		nullableString(input.Address),
@@ -57,6 +69,7 @@ func (s *Store) CreateLocation(ctx context.Context, input CreateLocationInput) (
 		input.Capacity,
 		len(input.SectionNames),
 		sectionNamesJSON,
+		layoutJSON,
 	)
 	if err != nil {
 		return Location{}, mapDBError(fmt.Errorf("create location: %w", err))
@@ -79,6 +92,10 @@ func (s *Store) UpdateLocation(ctx context.Context, locationID int64, input Crea
 	if err != nil {
 		return Location{}, fmt.Errorf("marshal location section names: %w", err)
 	}
+	layoutJSON, err := marshalLayoutBlocks(input.LayoutBlocks)
+	if err != nil {
+		return Location{}, fmt.Errorf("marshal location layout blocks: %w", err)
+	}
 
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE storage_locations
@@ -89,7 +106,8 @@ func (s *Store) UpdateLocation(ctx context.Context, locationID int64, input Crea
 			description = ?,
 			capacity = ?,
 			section_count = ?,
-			section_names_json = ?
+			section_names_json = ?,
+			layout_json = ?
 		WHERE id = ?
 	`,
 		input.Name,
@@ -99,6 +117,7 @@ func (s *Store) UpdateLocation(ctx context.Context, locationID int64, input Crea
 		input.Capacity,
 		len(input.SectionNames),
 		sectionNamesJSON,
+		layoutJSON,
 		locationID,
 	)
 	if err != nil {
@@ -145,6 +164,7 @@ func (s *Store) getLocation(ctx context.Context, locationID int64) (Location, er
 			capacity,
 			section_count,
 			COALESCE(section_names_json, '') AS section_names_json,
+			COALESCE(layout_json, '') AS layout_json,
 			created_at
 		FROM storage_locations
 		WHERE id = ?
@@ -163,18 +183,11 @@ func sanitizeLocationInput(input CreateLocationInput) CreateLocationInput {
 	input.Address = strings.TrimSpace(input.Address)
 	input.Zone = strings.TrimSpace(input.Zone)
 	input.Description = strings.TrimSpace(input.Description)
-	sectionNames := make([]string, 0, len(input.SectionNames))
-	for _, sectionName := range input.SectionNames {
-		trimmed := strings.TrimSpace(sectionName)
-		if trimmed == "" {
-			continue
-		}
-		sectionNames = append(sectionNames, trimmed)
+	input.LayoutBlocks = sanitizeLayoutBlocks(input.LayoutBlocks)
+	if len(input.LayoutBlocks) == 0 {
+		input.LayoutBlocks = buildDefaultLayoutBlocks(input.SectionNames)
 	}
-	if len(sectionNames) == 0 {
-		sectionNames = []string{"A"}
-	}
-	input.SectionNames = sectionNames
+	input.SectionNames = deriveSectionNamesFromLayout(input.LayoutBlocks)
 	return input
 }
 
@@ -188,6 +201,8 @@ func validateLocationInput(input CreateLocationInput) error {
 		return fmt.Errorf("%w: storage zone is required", ErrInvalidInput)
 	case input.Capacity < 0:
 		return fmt.Errorf("%w: capacity cannot be negative", ErrInvalidInput)
+	case len(input.LayoutBlocks) == 0:
+		return fmt.Errorf("%w: at least one warehouse area is required", ErrInvalidInput)
 	case len(input.SectionNames) == 0:
 		return fmt.Errorf("%w: at least one storage section is required", ErrInvalidInput)
 	default:
@@ -203,40 +218,204 @@ func marshalSectionNames(sectionNames []string) (string, error) {
 	return string(payload), nil
 }
 
+func marshalLayoutBlocks(blocks []StorageLayoutBlock) (string, error) {
+	payload, err := json.Marshal(blocks)
+	if err != nil {
+		return "", err
+	}
+	return string(payload), nil
+}
+
 func parseSectionNames(sectionNamesJSON string, sectionCount int) []string {
 	trimmed := strings.TrimSpace(sectionNamesJSON)
 	if trimmed != "" {
 		var parsed []string
 		if err := json.Unmarshal([]byte(trimmed), &parsed); err == nil {
-			sanitized := make([]string, 0, len(parsed))
-			for _, sectionName := range parsed {
-				cleaned := strings.TrimSpace(sectionName)
-				if cleaned == "" {
-					continue
-				}
-				sanitized = append(sanitized, cleaned)
-			}
+			sanitized := ensureStorageSections(parsed)
 			if len(sanitized) > 0 {
 				return sanitized
 			}
 		}
 	}
 
-	if sectionCount <= 0 {
-		sectionCount = 1
-	}
-
-	labels := make([]string, 0, sectionCount)
-	for index := 0; index < sectionCount; index++ {
-		labels = append(labels, legacySectionLabel(index))
-	}
-	return labels
+	return []string{DefaultStorageSection}
 }
 
-func legacySectionLabel(index int) string {
-	if index < 0 {
-		return "A"
+func parseLayoutBlocks(layoutJSON string, sectionNames []string) []StorageLayoutBlock {
+	trimmed := strings.TrimSpace(layoutJSON)
+	if trimmed != "" {
+		var parsed []StorageLayoutBlock
+		if err := json.Unmarshal([]byte(trimmed), &parsed); err == nil {
+			sanitized := sanitizeLayoutBlocks(parsed)
+			if len(sanitized) > 0 {
+				return sanitized
+			}
+		}
 	}
 
-	return string(rune('A' + (index % 26)))
+	return buildDefaultLayoutBlocks(sectionNames)
+}
+
+func sanitizeLayoutBlocks(blocks []StorageLayoutBlock) []StorageLayoutBlock {
+	sanitized := make([]StorageLayoutBlock, 0, len(blocks))
+	seenIDs := make(map[string]struct{}, len(blocks))
+	temporaryCount := 0
+
+	for index, block := range blocks {
+		block.ID = strings.TrimSpace(block.ID)
+		if block.ID == "" {
+			block.ID = fmt.Sprintf("block-%d", index+1)
+		}
+		if _, exists := seenIDs[block.ID]; exists {
+			continue
+		}
+		seenIDs[block.ID] = struct{}{}
+
+		block.Type = strings.TrimSpace(strings.ToLower(block.Type))
+		if !slices.Contains([]string{
+			StorageLayoutBlockTypeTemporary,
+			StorageLayoutBlockTypeSection,
+			StorageLayoutBlockTypeSupport,
+		}, block.Type) {
+			block.Type = StorageLayoutBlockTypeSection
+		}
+		if block.Type == StorageLayoutBlockTypeTemporary {
+			temporaryCount++
+			if temporaryCount > 1 {
+				continue
+			}
+		}
+
+		block.Name = strings.TrimSpace(block.Name)
+		switch block.Type {
+		case StorageLayoutBlockTypeTemporary:
+			if block.Name == "" {
+				block.Name = "Temporary Area"
+			}
+		case StorageLayoutBlockTypeSection:
+			if block.Name == "" {
+				block.Name = fmt.Sprintf("S%d", index+1)
+			} else {
+				block.Name = strings.ToUpper(block.Name)
+			}
+		case StorageLayoutBlockTypeSupport:
+			if block.Name == "" {
+				block.Name = fmt.Sprintf("Support %d", index+1)
+			}
+		}
+
+		if block.X < 0 {
+			block.X = 0
+		}
+		if block.Y < 0 {
+			block.Y = 0
+		}
+		if block.Width <= 0 {
+			block.Width = 4
+		}
+		if block.Height <= 0 {
+			block.Height = 3
+		}
+
+		sanitized = append(sanitized, block)
+	}
+
+	if len(sanitized) == 0 {
+		return buildDefaultLayoutBlocks(nil)
+	}
+
+	if !hasTemporaryLayoutBlock(sanitized) {
+		sanitized = append([]StorageLayoutBlock{{
+			ID:     "temp-area",
+			Name:   "Temporary Area",
+			Type:   StorageLayoutBlockTypeTemporary,
+			X:      0,
+			Y:      0,
+			Width:  5,
+			Height: 4,
+		}}, sanitized...)
+	}
+
+	return sanitized
+}
+
+func deriveSectionNamesFromLayout(blocks []StorageLayoutBlock) []string {
+	sectionNames := make([]string, 0, len(blocks))
+	seen := make(map[string]struct{}, len(blocks))
+
+	addSection := func(sectionName string) {
+		normalized := normalizeStorageSection(sectionName)
+		if _, exists := seen[normalized]; exists {
+			return
+		}
+		seen[normalized] = struct{}{}
+		sectionNames = append(sectionNames, normalized)
+	}
+
+	for _, block := range blocks {
+		switch block.Type {
+		case StorageLayoutBlockTypeTemporary:
+			addSection(DefaultStorageSection)
+		case StorageLayoutBlockTypeSection:
+			if strings.TrimSpace(block.Name) != "" {
+				addSection(block.Name)
+			}
+		}
+	}
+
+	if len(sectionNames) == 0 {
+		return []string{DefaultStorageSection}
+	}
+
+	if _, exists := seen[DefaultStorageSection]; !exists {
+		sectionNames = append([]string{DefaultStorageSection}, sectionNames...)
+	}
+
+	return sectionNames
+}
+
+func hasTemporaryLayoutBlock(blocks []StorageLayoutBlock) bool {
+	for _, block := range blocks {
+		if block.Type == StorageLayoutBlockTypeTemporary {
+			return true
+		}
+	}
+	return false
+}
+
+func buildDefaultLayoutBlocks(sectionNames []string) []StorageLayoutBlock {
+	sections := ensureStorageSections(sectionNames)
+	blocks := make([]StorageLayoutBlock, 0, len(sections))
+
+	for index, sectionName := range sections {
+		block := StorageLayoutBlock{
+			ID:     fmt.Sprintf("layout-%d", index+1),
+			X:      index * 5,
+			Y:      0,
+			Width:  4,
+			Height: 3,
+		}
+		if sectionName == DefaultStorageSection {
+			block.Type = StorageLayoutBlockTypeTemporary
+			block.Name = "Temporary Area"
+		} else {
+			block.Type = StorageLayoutBlockTypeSection
+			block.Name = normalizeStorageSection(sectionName)
+		}
+		blocks = append(blocks, block)
+	}
+
+	if len(blocks) == 0 {
+		return []StorageLayoutBlock{{
+			ID:     "temp-area",
+			Name:   "Temporary Area",
+			Type:   StorageLayoutBlockTypeTemporary,
+			X:      0,
+			Y:      0,
+			Width:  5,
+			Height: 4,
+		}}
+	}
+
+	return blocks
 }

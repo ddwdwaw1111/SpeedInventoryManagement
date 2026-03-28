@@ -1490,7 +1490,7 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 			COALESCE(i.item_number, ''),
 			i.location_id,
 			l.name,
-			COALESCE(NULLIF(i.storage_section, ''), 'A'),
+			COALESCE(NULLIF(i.storage_section, ''), 'TEMP'),
 			COALESCE(i.container_no, ''),
 			i.sku,
 			COALESCE(i.description, i.name, ''),
@@ -1611,7 +1611,7 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 
 	movementQuery := `
 		SELECT
-			COALESCE(NULLIF(m.storage_section, ''), 'A') AS storage_section,
+			COALESCE(NULLIF(m.storage_section, ''), 'TEMP') AS storage_section,
 			COALESCE(m.container_no, '') AS container_no,
 			SUM(m.quantity_change) AS available_qty,
 			MIN(COALESCE(m.delivery_date, m.created_at)) AS sort_at
@@ -1622,7 +1622,7 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 			AND source_item.location_id = ?
 			AND source_item.sku = ?
 		GROUP BY
-			COALESCE(NULLIF(m.storage_section, ''), 'A'),
+			COALESCE(NULLIF(m.storage_section, ''), 'TEMP'),
 			COALESCE(m.container_no, '')
 	`
 
@@ -1938,7 +1938,7 @@ func (s *Store) attachOutboundPickAllocations(ctx context.Context, documentIDs [
 			COALESCE(NULLIF(l.item_number_snapshot, ''), NULLIF(m.item_number, ''), '') AS item_number,
 			a.location_id,
 			a.location_name_snapshot,
-			COALESCE(NULLIF(a.storage_section, ''), NULLIF(m.storage_section, ''), 'A') AS storage_section,
+			COALESCE(NULLIF(a.storage_section, ''), NULLIF(m.storage_section, ''), 'TEMP') AS storage_section,
 			COALESCE(NULLIF(a.container_no_snapshot, ''), NULLIF(m.container_no, ''), '') AS container_no_snapshot,
 			a.allocated_qty,
 			a.created_at
@@ -1971,7 +1971,7 @@ func (s *Store) attachOutboundPickAllocations(ctx context.Context, documentIDs [
 			ItemNumber:     allocationRow.ItemNumber,
 			LocationID:     allocationRow.LocationID,
 			LocationName:   allocationRow.LocationName,
-			StorageSection: allocationRow.StorageSection,
+			StorageSection: fallbackSection(allocationRow.StorageSection),
 			ContainerNo:    allocationRow.ContainerNo,
 			AllocatedQty:   allocationRow.AllocatedQty,
 			CreatedAt:      allocationRow.CreatedAt,
@@ -2011,7 +2011,7 @@ func (s *Store) loadOutboundPickAllocationsTx(ctx context.Context, tx *sql.Tx, l
 			COALESCE(NULLIF(l.item_number_snapshot, ''), NULLIF(m.item_number, ''), '') AS item_number,
 			a.location_id,
 			a.location_name_snapshot,
-			COALESCE(NULLIF(a.storage_section, ''), NULLIF(m.storage_section, ''), 'A') AS storage_section,
+			COALESCE(NULLIF(a.storage_section, ''), NULLIF(m.storage_section, ''), 'TEMP') AS storage_section,
 			COALESCE(NULLIF(a.container_no_snapshot, ''), NULLIF(m.container_no, ''), '') AS container_no_snapshot,
 			a.allocated_qty,
 			a.created_at
@@ -2091,7 +2091,7 @@ func toAllocationCandidates(rows []outboundPickAllocationRow) []outboundAllocati
 			ItemNumber:     row.ItemNumber,
 			LocationID:     row.LocationID,
 			LocationName:   row.LocationName,
-			StorageSection: row.StorageSection,
+			StorageSection: fallbackSection(row.StorageSection),
 			ContainerNo:    row.ContainerNo,
 			AllocatedQty:   row.AllocatedQty,
 		})
@@ -2252,11 +2252,7 @@ func firstNonEmpty(values ...string) string {
 }
 
 func fallbackSection(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return "A"
-	}
-	return trimmed
+	return normalizeStorageSection(value)
 }
 
 func safeOutboundDateInput(value *time.Time) string {

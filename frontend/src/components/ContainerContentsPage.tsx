@@ -13,7 +13,7 @@ import { downloadExcelWorkbook, type ExcelExportColumn } from "../lib/excelExpor
 import { useI18n } from "../lib/i18n";
 import { setPendingInventoryByLocationContext } from "../lib/inventoryByLocationContext";
 import type { PageKey } from "../lib/routes";
-import type { Customer, Item, Location, UserRole } from "../lib/types";
+import { normalizeStorageSection, type Customer, type Item, type Location, type UserRole } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
@@ -162,7 +162,7 @@ export function ContainerContentsPage({
           if (left.customerName !== right.customerName) return left.customerName.localeCompare(right.customerName);
           if (left.sku !== right.sku) return left.sku.localeCompare(right.sku);
           if (left.locationName !== right.locationName) return left.locationName.localeCompare(right.locationName);
-          return (left.storageSection || "A").localeCompare(right.storageSection || "A");
+          return normalizeStorageSection(left.storageSection).localeCompare(normalizeStorageSection(right.storageSection));
         })
         .map((item) => ({
           containerNo: row.containerNo,
@@ -171,7 +171,7 @@ export function ContainerContentsPage({
           description: displayDescription(item),
           customerName: item.customerName,
           locationName: item.locationName,
-          storageSection: item.storageSection || "A",
+          storageSection: normalizeStorageSection(item.storageSection),
           onHand: item.quantity,
           availableQty: item.availableQty,
           damagedQty: item.damagedQty,
@@ -202,7 +202,7 @@ export function ContainerContentsPage({
       if (left.customerName !== right.customerName) return left.customerName.localeCompare(right.customerName);
       if (left.sku !== right.sku) return left.sku.localeCompare(right.sku);
       if (left.locationName !== right.locationName) return left.locationName.localeCompare(right.locationName);
-      return (left.storageSection || "A").localeCompare(right.storageSection || "A");
+      return normalizeStorageSection(left.storageSection).localeCompare(normalizeStorageSection(right.storageSection));
     });
   }, [selectedContainer]);
 
@@ -355,7 +355,7 @@ export function ContainerContentsPage({
                 <div className="document-drawer__list-row" key={item.id}>
                   <div>
                     <strong>{item.itemNumber ? `${item.itemNumber} · ${item.sku}` : item.sku}</strong>
-                    <span>{displayDescription(item)} | {item.customerName} | {item.locationName} / {item.storageSection || "A"}</span>
+                    <span>{displayDescription(item)} | {item.customerName} | {item.locationName} / {normalizeStorageSection(item.storageSection)}</span>
                   </div>
                   <div>
                     <strong>{t("onHand")}</strong>
@@ -398,7 +398,7 @@ function buildContainerContentsRows(
       || displayDescription(item).toLowerCase().includes(normalizedSearch)
       || item.customerName.toLowerCase().includes(normalizedSearch)
       || item.locationName.toLowerCase().includes(normalizedSearch)
-      || (item.storageSection || "A").toLowerCase().includes(normalizedSearch);
+      || normalizeStorageSection(item.storageSection).toLowerCase().includes(normalizedSearch);
     const matchesCustomer = selectedCustomerId === "all" || item.customerId === Number(selectedCustomerId);
     const matchesLocation = selectedLocationId === "all" || item.locationId === Number(selectedLocationId);
     return matchesSearch && matchesCustomer && matchesLocation;
@@ -410,7 +410,7 @@ function buildContainerContentsRows(
     const containerNo = item.containerNo.trim();
     const existing = rowMap.get(containerNo);
     const receiptDate = item.deliveryDate || item.lastRestockedAt || null;
-    const pickLocation = `${item.locationName} / ${item.storageSection || "A"}`;
+    const pickLocation = `${item.locationName} / ${normalizeStorageSection(item.storageSection)}`;
 
     if (!existing) {
       rowMap.set(containerNo, {

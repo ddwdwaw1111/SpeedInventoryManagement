@@ -1,4 +1,4 @@
-import type { Item } from "./types";
+import { normalizeStorageSection, type Item } from "./types";
 
 export type InventoryActionSourceOption = {
   key: string;
@@ -57,7 +57,7 @@ export function buildInventoryActionSourceOptions(items: Item[]) {
       ...source,
       warehouseCount: new Set(source.items.map((item) => item.locationId)).size,
       containerCount: new Set(
-        source.items.map((item) => item.containerNo.trim() || `${item.locationName}/${item.storageSection || "A"}`)
+        source.items.map((item) => item.containerNo.trim() || `${item.locationName}/${normalizeStorageSection(item.storageSection)}`)
       ).size
     }))
     .sort((left, right) => {

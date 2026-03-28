@@ -22,8 +22,8 @@ func TestSanitizeInboundDocumentInput(t *testing.T) {
 	if input.ContainerNo != "MRKU123" {
 		t.Fatalf("expected uppercase container number, got %q", input.ContainerNo)
 	}
-	if input.StorageSection != "A" {
-		t.Fatalf("expected default storage section A, got %q", input.StorageSection)
+	if input.StorageSection != DefaultStorageSection {
+		t.Fatalf("expected default storage section %s, got %q", DefaultStorageSection, input.StorageSection)
 	}
 	if input.UnitLabel != "CTN" {
 		t.Fatalf("expected uppercase unit label, got %q", input.UnitLabel)
@@ -150,13 +150,13 @@ func TestValidateOutboundDocumentInput(t *testing.T) {
 
 func TestParseSectionNames(t *testing.T) {
 	got := parseSectionNames(`[" A ", "", "B"]`, 0)
-	want := []string{"A", "B"}
+	want := []string{DefaultStorageSection, "A", "B"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected parsed section names %v, got %v", want, got)
 	}
 
 	fallback := parseSectionNames("", 3)
-	wantFallback := []string{"A", "B", "C"}
+	wantFallback := []string{DefaultStorageSection}
 	if !reflect.DeepEqual(fallback, wantFallback) {
 		t.Fatalf("expected fallback section names %v, got %v", wantFallback, fallback)
 	}

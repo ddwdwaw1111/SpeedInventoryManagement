@@ -27,6 +27,44 @@ var acceptedDateLayouts = []string{
 	time.RFC3339,
 }
 
+const DefaultStorageSection = "TEMP"
+
+func normalizeStorageSection(value string) string {
+	trimmed := strings.TrimSpace(strings.ToUpper(value))
+	if trimmed == "" {
+		return DefaultStorageSection
+	}
+	return trimmed
+}
+
+func ensureStorageSections(sectionNames []string) []string {
+	normalized := make([]string, 0, len(sectionNames)+1)
+	seen := make(map[string]struct{}, len(sectionNames)+1)
+
+	addSection := func(value string) {
+		section := normalizeStorageSection(value)
+		if section == "" {
+			return
+		}
+		if _, exists := seen[section]; exists {
+			return
+		}
+		seen[section] = struct{}{}
+		normalized = append(normalized, section)
+	}
+
+	addSection(DefaultStorageSection)
+	for _, sectionName := range sectionNames {
+		addSection(sectionName)
+	}
+
+	if len(normalized) == 0 {
+		return []string{DefaultStorageSection}
+	}
+
+	return normalized
+}
+
 type Store struct {
 	db *sqlx.DB
 }
@@ -47,7 +85,18 @@ type Location struct {
 	Description  string    `db:"description" json:"description"`
 	Capacity     int       `db:"capacity" json:"capacity"`
 	SectionNames []string  `json:"sectionNames"`
+	LayoutBlocks []StorageLayoutBlock `json:"layoutBlocks"`
 	CreatedAt    time.Time `db:"created_at" json:"createdAt"`
+}
+
+type StorageLayoutBlock struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Type   string `json:"type"`
+	X      int    `json:"x"`
+	Y      int    `json:"y"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
 }
 
 type locationRow struct {
@@ -59,10 +108,12 @@ type locationRow struct {
 	Capacity         int       `db:"capacity"`
 	SectionCount     int       `db:"section_count"`
 	SectionNamesJSON string    `db:"section_names_json"`
+	LayoutJSON       string    `db:"layout_json"`
 	CreatedAt        time.Time `db:"created_at"`
 }
 
 func (row locationRow) toLocation() Location {
+	layoutBlocks := parseLayoutBlocks(row.LayoutJSON, parseSectionNames(row.SectionNamesJSON, row.SectionCount))
 	return Location{
 		ID:           row.ID,
 		Name:         row.Name,
@@ -71,6 +122,7 @@ func (row locationRow) toLocation() Location {
 		Description:  row.Description,
 		Capacity:     row.Capacity,
 		SectionNames: parseSectionNames(row.SectionNamesJSON, row.SectionCount),
+		LayoutBlocks: layoutBlocks,
 		CreatedAt:    row.CreatedAt,
 	}
 }
@@ -93,6 +145,7 @@ type CreateLocationInput struct {
 	Description  string   `json:"description"`
 	Capacity     int      `json:"capacity"`
 	SectionNames []string `json:"sectionNames"`
+	LayoutBlocks []StorageLayoutBlock `json:"layoutBlocks"`
 }
 
 type CreateCustomerInput struct {
@@ -1391,6 +1444,7 @@ func scanItem(scanner itemScanner) (Item, error) {
 	if lastRestockedAt.Valid {
 		item.LastRestockedAt = &lastRestockedAt.Time
 	}
+	item.StorageSection = normalizeStorageSection(item.StorageSection)
 
 	return item, nil
 }
@@ -1445,6 +1499,7 @@ func scanMovement(scanner itemScanner) (Movement, error) {
 	if outDate.Valid {
 		movement.OutDate = &outDate.Time
 	}
+	movement.StorageSection = normalizeStorageSection(movement.StorageSection)
 
 	return movement, nil
 }
@@ -1457,7 +1512,7 @@ func sanitizeItemInput(input CreateItemInput) CreateItemInput {
 	input.Description = strings.TrimSpace(input.Description)
 	input.Unit = strings.TrimSpace(strings.ToLower(input.Unit))
 	input.ContainerNo = strings.TrimSpace(strings.ToUpper(input.ContainerNo))
-	input.StorageSection = strings.TrimSpace(strings.ToUpper(input.StorageSection))
+	input.StorageSection = normalizeStorageSection(input.StorageSection)
 
 	if input.Name == "" {
 		input.Name = input.Description
@@ -1468,10 +1523,6 @@ func sanitizeItemInput(input CreateItemInput) CreateItemInput {
 	if input.Unit == "" {
 		input.Unit = "pcs"
 	}
-	if input.StorageSection == "" {
-		input.StorageSection = "A"
-	}
-
 	return input
 }
 
@@ -1506,7 +1557,7 @@ func sanitizeMovementInput(input CreateMovementInput) CreateMovementInput {
 	input.PackingListNo = strings.TrimSpace(strings.ToUpper(input.PackingListNo))
 	input.OrderRef = strings.TrimSpace(strings.ToUpper(input.OrderRef))
 	input.ItemNumber = strings.TrimSpace(strings.ToUpper(input.ItemNumber))
-	input.StorageSection = strings.TrimSpace(strings.ToUpper(input.StorageSection))
+	input.StorageSection = normalizeStorageSection(input.StorageSection)
 	input.PalletsDetailCtns = strings.TrimSpace(input.PalletsDetailCtns)
 	input.CartonSizeMM = strings.TrimSpace(input.CartonSizeMM)
 	input.UnitLabel = strings.TrimSpace(input.UnitLabel)
@@ -1611,9 +1662,7 @@ func (s *Store) loadLockedItemForMovement(ctx context.Context, tx *sql.Tx, itemI
 		}
 		return 0, 0, 0, "", "", fmt.Errorf("load item for movement: %w", err)
 	}
-	if storageSection == "" {
-		storageSection = "A"
-	}
+	storageSection = normalizeStorageSection(storageSection)
 
 	return quantity, customerID, locationID, storageSection, descriptionSnapshot, nil
 }
@@ -1737,8 +1786,8 @@ func (s *Store) applyMovementToInventoryItem(ctx context.Context, tx *sql.Tx, it
 		WHERE id = ?
 	`,
 		updatedQuantity,
-		input.StorageSection,
-		input.StorageSection,
+		normalizeStorageSection(input.StorageSection),
+		normalizeStorageSection(input.StorageSection),
 		nullableTime(deliveryDate),
 		input.ContainerNo,
 		input.ContainerNo,

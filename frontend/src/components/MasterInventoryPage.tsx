@@ -20,7 +20,7 @@ import { RowActionsMenu } from "./RowActionsMenu";
 import { formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
-import type { Customer, Item, ItemPayload, Location, UserRole } from "../lib/types";
+import { DEFAULT_STORAGE_SECTION, normalizeStorageSection, type Customer, type Item, type ItemPayload, type Location, type UserRole } from "../lib/types";
 import { InlineAlert, useConfirmDialog } from "./Feedback";
 import { ExportExcelDialog } from "./ExportExcelDialog";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
@@ -87,7 +87,7 @@ function createEmptyItemForm(defaultCustomerId = "", defaultLocationId = ""): It
     description: "",
     customerId: defaultCustomerId,
     locationId: defaultLocationId,
-    storageSection: "A",
+    storageSection: DEFAULT_STORAGE_SECTION,
     quantity: 0,
     allocatedQty: 0,
     damagedQty: 0,
@@ -196,7 +196,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
     { field: "description", headerName: t("description"), minWidth: 240, flex: 1.5, valueGetter: (_, row) => displayDescription(row) },
     { field: "customerName", headerName: t("customer"), minWidth: 180, flex: 1 },
     { field: "locationName", headerName: t("currentStorage"), minWidth: 170, flex: 1 },
-    { field: "storageSection", headerName: t("storageSection"), minWidth: 110, renderCell: (params) => params.row.storageSection || "A" },
+    { field: "storageSection", headerName: t("storageSection"), minWidth: 110, renderCell: (params) => normalizeStorageSection(params.row.storageSection) },
     { field: "quantity", headerName: t("onHand"), minWidth: 110, type: "number" },
     { field: "availableQty", headerName: t("availableQty"), minWidth: 120, type: "number" },
     { field: "damagedQty", headerName: t("damagedQty"), minWidth: 110, type: "number" },
@@ -265,7 +265,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
       description: displayDescription(item),
       customerId: String(item.customerId),
       locationId: String(item.locationId),
-      storageSection: item.storageSection || "A",
+      storageSection: normalizeStorageSection(item.storageSection),
       quantity: item.quantity,
       allocatedQty: item.allocatedQty,
       damagedQty: item.damagedQty,
@@ -323,7 +323,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
       reorderLevel: form.reorderLevel,
       customerId,
       locationId,
-      storageSection: form.storageSection || "A",
+      storageSection: normalizeStorageSection(form.storageSection),
       deliveryDate: form.deliveryDate || undefined,
       containerNo: form.containerNo || undefined,
       expectedQty: form.expectedQty,
@@ -351,7 +351,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
     if (!canDelete) return;
     if (!(await confirm({
       title: t("delete"),
-      message: t("deleteStockRowConfirm", { sku: item.sku, storage: item.locationName, section: item.storageSection || "A" }),
+      message: t("deleteStockRowConfirm", { sku: item.sku, storage: item.locationName, section: normalizeStorageSection(item.storageSection) }),
       confirmLabel: t("delete"),
       cancelLabel: t("cancel"),
       confirmColor: "error",
@@ -400,7 +400,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
         description: displayDescription(item),
         customerName: item.customerName,
         locationName: item.locationName,
-        storageSection: item.storageSection || "A",
+        storageSection: normalizeStorageSection(item.storageSection),
         quantity: item.quantity,
         availableQty: item.availableQty,
         damagedQty: item.damagedQty,
@@ -493,7 +493,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
                 <div className="document-drawer__eyebrow">{t("stockByLocation")}</div>
                 <h3>{selectedItem.sku}</h3>
                 <p>
-                  {displayDescription(selectedItem)} | {selectedItem.customerName} | {selectedItem.locationName} / {selectedItem.storageSection || "A"}
+                  {displayDescription(selectedItem)} | {selectedItem.customerName} | {selectedItem.locationName} / {normalizeStorageSection(selectedItem.storageSection)}
                   {" "} | {t("containerNo")}: {selectedItem.containerNo || "-"}
                 </p>
               </div>
@@ -556,7 +556,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
               </div>
               <div className="sheet-note">
                 <strong>{t("currentStorage")}</strong><br />
-                {selectedItem.locationName} / {selectedItem.storageSection || "A"}
+                {selectedItem.locationName} / {normalizeStorageSection(selectedItem.storageSection)}
               </div>
               <div className="sheet-note">
                 <strong>{t("itemNumber")}</strong><br />
@@ -613,7 +613,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
             <label className="sheet-form__wide">{t("description")}<input value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} placeholder={t("descriptionPlaceholder")} required /></label>
             <label>{t("customer")}<select value={form.customerId} onChange={(event) => setForm((current) => ({ ...current, customerId: event.target.value }))} required>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
             <label>{t("currentStorage")}<select value={form.locationId} onChange={(event) => setForm((current) => ({ ...current, locationId: event.target.value }))} required>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
-            <div className="sheet-note sheet-form__wide"><strong>{t("storageSection")}</strong> {form.storageSection || "A"}</div>
+            <div className="sheet-note sheet-form__wide"><strong>{t("storageSection")}</strong> {normalizeStorageSection(form.storageSection)}</div>
             <label>{t("onHand")}<input type="number" min="0" value={numberInputValue(form.quantity)} onChange={(event) => setForm((current) => ({ ...current, quantity: Math.max(0, Number(event.target.value || 0)) }))} /></label>
             <label>{t("damagedQty")}<input type="number" min="0" value={numberInputValue(form.damagedQty)} onChange={(event) => setForm((current) => ({ ...current, damagedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
             <label>{t("deliveryDate")}<input type="date" value={form.deliveryDate} onChange={(event) => setForm((current) => ({ ...current, deliveryDate: event.target.value }))} /></label>

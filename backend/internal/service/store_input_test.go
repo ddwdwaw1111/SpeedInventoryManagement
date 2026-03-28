@@ -28,8 +28,8 @@ func TestSanitizeItemInput(t *testing.T) {
 	if input.ContainerNo != "MRKU123" {
 		t.Fatalf("expected uppercase container number, got %q", input.ContainerNo)
 	}
-	if input.StorageSection != "A" {
-		t.Fatalf("expected default storage section A, got %q", input.StorageSection)
+	if input.StorageSection != DefaultStorageSection {
+		t.Fatalf("expected default storage section %s, got %q", DefaultStorageSection, input.StorageSection)
 	}
 }
 

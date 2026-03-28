@@ -114,7 +114,7 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 		LocationID:     location.ID,
 		DeliveryDate:   "2026-03-22",
 		ContainerNo:    "CONT-" + suffix,
-		StorageSection: "A",
+		StorageSection: DefaultStorageSection,
 		UnitLabel:      "CTN",
 		Status:         DocumentStatusDraft,
 		DocumentNote:   "Inbound integration test",
@@ -124,7 +124,7 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 				Description:       item.Description,
 				ExpectedQty:       10,
 				ReceivedQty:       10,
-				StorageSection:    "A",
+				StorageSection:    DefaultStorageSection,
 				Pallets:           1,
 				PalletsDetailCtns: "1*10",
 			},
@@ -157,7 +157,7 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 		t.Fatalf("expected total received qty 10, got %d", inbound.TotalReceivedQty)
 	}
 
-	itemAfterInbound := mustFindItemByContainer(t, ctx, store, location.ID, "A", "CONT-"+suffix, item.SKU)
+	itemAfterInbound := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "CONT-"+suffix, item.SKU)
 	if itemAfterInbound.Quantity != 10 {
 		t.Fatalf("expected on-hand 10 after inbound, got %d", itemAfterInbound.Quantity)
 	}
@@ -305,7 +305,7 @@ func TestInboundDocumentSupportsMultipleSectionsIntegration(t *testing.T) {
 		LocationID:     location.ID,
 		DeliveryDate:   "2026-03-24",
 		ContainerNo:    "CONT-MULTI-" + suffix,
-		StorageSection: "A",
+		StorageSection: DefaultStorageSection,
 		UnitLabel:      "CTN",
 		Status:         DocumentStatusConfirmed,
 		DocumentNote:   "Multi-section receipt",
@@ -315,7 +315,7 @@ func TestInboundDocumentSupportsMultipleSectionsIntegration(t *testing.T) {
 				Description:    item.Description,
 				ExpectedQty:    5,
 				ReceivedQty:    5,
-				StorageSection: "A",
+				StorageSection: DefaultStorageSection,
 			},
 			{
 				SKU:            item.SKU,
@@ -336,9 +336,9 @@ func TestInboundDocumentSupportsMultipleSectionsIntegration(t *testing.T) {
 		t.Fatalf("expected 2 inbound lines, got %d", len(inbound.Lines))
 	}
 
-	itemSectionA := mustFindItemByContainer(t, ctx, store, location.ID, "A", "CONT-MULTI-"+suffix, item.SKU)
-	if itemSectionA.Quantity != 5 {
-		t.Fatalf("expected section A quantity 5, got %d", itemSectionA.Quantity)
+	itemSectionTemp := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "CONT-MULTI-"+suffix, item.SKU)
+	if itemSectionTemp.Quantity != 5 {
+		t.Fatalf("expected temporary section quantity 5, got %d", itemSectionTemp.Quantity)
 	}
 	itemSectionB := mustFindItemByContainer(t, ctx, store, location.ID, "B", "CONT-MULTI-"+suffix, item.SKU)
 	if itemSectionB.Quantity != 7 {
@@ -360,7 +360,7 @@ func TestDraftDocumentUpdateIntegration(t *testing.T) {
 		LocationID:     location.ID,
 		DeliveryDate:   "2026-03-22",
 		ContainerNo:    "CONT-OLD-" + suffix,
-		StorageSection: "A",
+		StorageSection: DefaultStorageSection,
 		UnitLabel:      "CTN",
 		Status:         DocumentStatusDraft,
 		DocumentNote:   "Inbound draft before edit",
@@ -369,7 +369,7 @@ func TestDraftDocumentUpdateIntegration(t *testing.T) {
 			Description:    item.Description,
 			ExpectedQty:    10,
 			ReceivedQty:    10,
-			StorageSection: "A",
+			StorageSection: DefaultStorageSection,
 		}},
 	})
 	if err != nil {
@@ -540,7 +540,7 @@ func TestOutboundAutoAllocationIntegration(t *testing.T) {
 
 	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
 	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
-	itemA := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 5, "A")
+	itemA := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 5, DefaultStorageSection)
 	itemB := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 7, "B")
 
 	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
@@ -625,13 +625,13 @@ func TestOutboundAutoAllocationFromMergedContainerLedgerIntegration(t *testing.T
 
 	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
 	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
-	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0, "A")
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0, DefaultStorageSection)
 
 	if _, err := store.CreateMovement(ctx, CreateMovementInput{
 		ItemID:         item.ID,
 		MovementType:   "IN",
 		Quantity:       6,
-		StorageSection: "A",
+		StorageSection: DefaultStorageSection,
 		ContainerNo:    "CONT-A-" + suffix,
 		ExpectedQty:    6,
 		ReceivedQty:    6,
@@ -643,7 +643,7 @@ func TestOutboundAutoAllocationFromMergedContainerLedgerIntegration(t *testing.T
 		ItemID:         item.ID,
 		MovementType:   "IN",
 		Quantity:       4,
-		StorageSection: "A",
+		StorageSection: DefaultStorageSection,
 		ContainerNo:    "CONT-B-" + suffix,
 		ExpectedQty:    4,
 		ReceivedQty:    4,
@@ -715,13 +715,13 @@ func TestOutboundManualContainerAllocationIntegration(t *testing.T) {
 
 	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
 	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
-	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0, "A")
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0, DefaultStorageSection)
 
 	if _, err := store.CreateMovement(ctx, CreateMovementInput{
 		ItemID:         item.ID,
 		MovementType:   "IN",
 		Quantity:       6,
-		StorageSection: "A",
+		StorageSection: DefaultStorageSection,
 		ContainerNo:    "CONT-A-" + suffix,
 		ExpectedQty:    6,
 		ReceivedQty:    6,
@@ -733,7 +733,7 @@ func TestOutboundManualContainerAllocationIntegration(t *testing.T) {
 		ItemID:         item.ID,
 		MovementType:   "IN",
 		Quantity:       4,
-		StorageSection: "A",
+		StorageSection: DefaultStorageSection,
 		ContainerNo:    "CONT-B-" + suffix,
 		ExpectedQty:    4,
 		ReceivedQty:    4,
@@ -759,8 +759,8 @@ func TestOutboundManualContainerAllocationIntegration(t *testing.T) {
 				UnitLabel:    "CTN",
 				CartonSizeMM: "400*300*200",
 				PickAllocations: []CreateOutboundLineAllocationInput{
-					{StorageSection: "A", ContainerNo: "CONT-B-" + suffix, AllocatedQty: 4},
-					{StorageSection: "A", ContainerNo: "CONT-A-" + suffix, AllocatedQty: 1},
+					{StorageSection: DefaultStorageSection, ContainerNo: "CONT-B-" + suffix, AllocatedQty: 4},
+					{StorageSection: DefaultStorageSection, ContainerNo: "CONT-A-" + suffix, AllocatedQty: 1},
 				},
 			},
 		},
@@ -1084,7 +1084,7 @@ func mustCreateLocation(t *testing.T, ctx context.Context, store *Store, name st
 		Address:      name + " address",
 		Zone:         "A1",
 		Capacity:     100,
-		SectionNames: []string{"A", "B"},
+		SectionNames: []string{DefaultStorageSection, "B"},
 	})
 	if err != nil {
 		t.Fatalf("create location: %v", err)
@@ -1094,7 +1094,7 @@ func mustCreateLocation(t *testing.T, ctx context.Context, store *Store, name st
 
 func mustCreateItem(t *testing.T, ctx context.Context, store *Store, customerID int64, locationID int64, sku string, quantity int) Item {
 	t.Helper()
-	return mustCreateItemWithSection(t, ctx, store, customerID, locationID, sku, quantity, "A")
+	return mustCreateItemWithSection(t, ctx, store, customerID, locationID, sku, quantity, DefaultStorageSection)
 }
 
 func mustCreateItemWithSection(t *testing.T, ctx context.Context, store *Store, customerID int64, locationID int64, sku string, quantity int, section string) Item {

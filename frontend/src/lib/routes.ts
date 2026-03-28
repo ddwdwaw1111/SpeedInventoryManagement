@@ -8,12 +8,14 @@ export type PageKey =
   | "audit-logs"
   | "user-management"
   | "inventory-summary"
+  | "warehouse-map"
   | "adjustments"
   | "transfers"
   | "cycle-counts"
   | "sku-master"
   | "stock-by-location"
   | "storage-management"
+  | "storage-location-editor"
   | "inbound-management"
   | "outbound-management"
   | "settings";
@@ -28,12 +30,14 @@ export const pagePathMap: Record<PageKey, string> = {
   "audit-logs": "/audit-logs",
   "user-management": "/user-management",
   "inventory-summary": "/inventory-summary",
+  "warehouse-map": "/warehouse-map",
   adjustments: "/adjustments",
   transfers: "/transfers",
   "cycle-counts": "/cycle-counts",
   "sku-master": "/sku-master",
   "stock-by-location": "/stock-by-location",
   "storage-management": "/storage-management",
+  "storage-location-editor": "/storage-management/new",
   "inbound-management": "/inbound-management",
   "outbound-management": "/outbound-management",
   settings: "/settings"
@@ -58,6 +62,7 @@ export function getPageFromPath(pathname: string): PageKey {
   if (normalized === "/audit-logs") return "audit-logs";
   if (normalized === "/user-management") return "user-management";
   if (normalized === "/inventory-summary") return "inventory-summary";
+  if (normalized === "/warehouse-map") return "warehouse-map";
   if (normalized === "/adjustments") return "adjustments";
   if (normalized === "/transfers") return "transfers";
   if (normalized === "/cycle-counts") return "cycle-counts";
@@ -67,6 +72,7 @@ export function getPageFromPath(pathname: string): PageKey {
   if (normalized === "/sku-master") return "sku-master";
   if (normalized === "/stock-by-location") return "stock-by-location";
   if (normalized === "/storage-management") return "storage-management";
+  if (normalized === "/storage-management/new" || /^\/storage-management\/\d+$/.test(normalized)) return "storage-location-editor";
   if (normalized === "/settings") return "settings";
   return "dashboard";
 }
@@ -82,4 +88,23 @@ export function navigateToPage(page: PageKey, setter: (page: PageKey) => void) {
   }
 
   setter(page);
+}
+
+export function navigateToStorageLocationEditor(setter: (page: PageKey) => void, locationId?: number) {
+  const path = locationId ? `/storage-management/${locationId}` : "/storage-management/new";
+  if (normalizePagePath(window.location.pathname) !== path) {
+    window.history.pushState({ page: "storage-location-editor", locationId: locationId ?? null }, "", path);
+  }
+
+  setter("storage-location-editor");
+}
+
+export function getStorageLocationEditorIdFromPath(pathname: string) {
+  const normalized = normalizePagePath(pathname);
+  const match = normalized.match(/^\/storage-management\/(\d+)$/);
+  if (!match) {
+    return null;
+  }
+
+  return Number(match[1]);
 }

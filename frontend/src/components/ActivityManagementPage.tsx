@@ -18,7 +18,21 @@ import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import { downloadOutboundDeliveryNotePdfFromDocument } from "../lib/outboundPackingListPdf";
 import { downloadOutboundPickSheetPdfFromDocument } from "../lib/outboundPickSheetPdf";
-import type { Customer, InboundDocument, InboundDocumentPayload, Item, Location, Movement, OutboundDocument, OutboundDocumentPayload, SKUMaster, UserRole } from "../lib/types";
+import {
+  DEFAULT_STORAGE_SECTION,
+  getLocationSectionOptions,
+  normalizeStorageSection,
+  type Customer,
+  type InboundDocument,
+  type InboundDocumentPayload,
+  type Item,
+  type Location,
+  type Movement,
+  type OutboundDocument,
+  type OutboundDocumentPayload,
+  type SKUMaster,
+  type UserRole
+} from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
 import { InlineAlert, useConfirmDialog } from "./Feedback";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
@@ -198,14 +212,14 @@ function createEmptyBatchInboundForm(): BatchInboundFormState {
     containerNo: "",
     customerId: "",
     locationId: "",
-    storageSection: "A",
+    storageSection: DEFAULT_STORAGE_SECTION,
     unitLabel: "CTN",
     status: "CONFIRMED",
     documentNote: ""
   };
 }
 
-function createEmptyBatchInboundLine(defaultStorageSection = "A"): BatchInboundLineState {
+function createEmptyBatchInboundLine(defaultStorageSection = DEFAULT_STORAGE_SECTION): BatchInboundLineState {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     sku: "",
@@ -445,13 +459,13 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     });
   }, [availableOutboundSources, batchOutboundLines, items, movements]);
   useEffect(() => {
-    const fallbackSection = batchSectionOptions[0] || "A";
+    const fallbackSection = batchSectionOptions[0] || DEFAULT_STORAGE_SECTION;
     if (!batchSectionOptions.includes(batchForm.storageSection)) {
       setBatchForm((current) => ({ ...current, storageSection: fallbackSection }));
     }
   }, [batchForm.storageSection, batchSectionOptions]);
   useEffect(() => {
-    const fallbackSection = batchSectionOptions[0] || "A";
+    const fallbackSection = batchSectionOptions[0] || DEFAULT_STORAGE_SECTION;
     setBatchLines((current) => current.map((line) => (
       batchSectionOptions.includes(line.storageSection) ? line : { ...line, storageSection: fallbackSection }
     )));
@@ -552,7 +566,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
   const inboundDocumentDetailColumns = useMemo<GridColDef<InboundDocument["lines"][number]>[]>(() => [
     { field: "sku", headerName: t("sku"), minWidth: 110, renderCell: (params) => <span className="cell--mono">{params.row.sku}</span> },
     { field: "description", headerName: t("description"), minWidth: 260, flex: 1.4, renderCell: (params) => params.row.description || "-" },
-    { field: "storageSection", headerName: t("storageSection"), minWidth: 100, renderCell: (params) => params.row.storageSection || "A" },
+    { field: "storageSection", headerName: t("storageSection"), minWidth: 100, renderCell: (params) => normalizeStorageSection(params.row.storageSection) },
     { field: "expectedQty", headerName: t("expectedQty"), minWidth: 110, type: "number", renderCell: (params) => params.row.expectedQty || "-" },
     { field: "receivedQty", headerName: t("received"), minWidth: 110, type: "number", renderCell: (params) => params.row.receivedQty || "-" },
     { field: "pallets", headerName: t("pallets"), minWidth: 90, type: "number", renderCell: (params) => params.row.pallets || "-" },
@@ -600,7 +614,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     { field: "itemNumber", headerName: t("itemNumber"), minWidth: 120, renderCell: (params) => <span className="cell--mono">{params.row.itemNumber || "-"}</span> },
     { field: "sku", headerName: t("sku"), minWidth: 110, renderCell: (params) => <span className="cell--mono">{params.row.sku}</span> },
     { field: "description", headerName: t("description"), minWidth: 240, flex: 1.4, renderCell: (params) => params.row.description },
-    { field: "locationName", headerName: t("currentStorage"), minWidth: 150, flex: 1, renderCell: (params) => `${params.row.locationName} / ${params.row.storageSection || "A"}` },
+    { field: "locationName", headerName: t("currentStorage"), minWidth: 150, flex: 1, renderCell: (params) => `${params.row.locationName} / ${normalizeStorageSection(params.row.storageSection)}` },
     { field: "quantity", headerName: t("outQty"), minWidth: 90, type: "number", renderCell: (params) => params.row.quantity || "-" },
     { field: "pallets", headerName: t("pallets"), minWidth: 90, type: "number", renderCell: (params) => params.row.pallets || "-" },
     { field: "unitLabel", headerName: t("unit"), minWidth: 80, renderCell: (params) => params.row.unitLabel || "-" },
@@ -610,7 +624,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     { field: "lineNote", headerName: t("internalNotes"), minWidth: 220, flex: 1.1, renderCell: (params) => params.row.lineNote || "-" }
   ], [t]);
   const outboundPickAllocationColumns = useMemo<GridColDef<OutboundPickAllocationRow>[]>(() => [
-    { field: "locationName", headerName: t("currentStorage"), minWidth: 150, flex: 1, renderCell: (params) => `${params.row.locationName} / ${params.row.storageSection || "A"}` },
+    { field: "locationName", headerName: t("currentStorage"), minWidth: 150, flex: 1, renderCell: (params) => `${params.row.locationName} / ${normalizeStorageSection(params.row.storageSection)}` },
     { field: "containerNo", headerName: t("sourceContainer"), minWidth: 170, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.containerNo || "-"}</span> },
     { field: "allocatedQty", headerName: t("pickQty"), minWidth: 100, type: "number" },
     { field: "itemNumber", headerName: t("itemNumber"), minWidth: 120, renderCell: (params) => <span className="cell--mono">{params.row.itemNumber || "-"}</span> },
@@ -619,7 +633,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
   ], [t]);
   const outboundAllocationPreviewColumns = useMemo<GridColDef<OutboundAllocationPreviewRow>[]>(() => [
     { field: "lineLabel", headerName: t("shipmentLine"), minWidth: 120, renderCell: (params) => params.row.lineLabel },
-    { field: "locationName", headerName: t("currentStorage"), minWidth: 150, flex: 1, renderCell: (params) => `${params.row.locationName} / ${params.row.storageSection || "A"}` },
+    { field: "locationName", headerName: t("currentStorage"), minWidth: 150, flex: 1, renderCell: (params) => `${params.row.locationName} / ${normalizeStorageSection(params.row.storageSection)}` },
     { field: "containerNo", headerName: t("sourceContainer"), minWidth: 170, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.containerNo || "-"}</span> },
     { field: "allocatedQty", headerName: t("pickQty"), minWidth: 100, type: "number" },
     { field: "itemNumber", headerName: t("itemNumber"), minWidth: 120, renderCell: (params) => <span className="cell--mono">{params.row.itemNumber || "-"}</span> },
@@ -778,7 +792,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
       containerNo: document.containerNo || "",
       customerId: String(document.customerId),
       locationId: String(document.locationId),
-      storageSection: document.storageSection || "A",
+      storageSection: normalizeStorageSection(document.storageSection),
       unitLabel: document.unitLabel || "CTN",
       status: "DRAFT",
       documentNote: document.documentNote || ""
@@ -790,7 +804,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
             id: String(line.id),
             sku: line.sku || "",
             description: line.description || "",
-            storageSection: line.storageSection || document.storageSection || "A",
+            storageSection: normalizeStorageSection(line.storageSection || document.storageSection),
             reorderLevel: line.reorderLevel || 0,
             expectedQty: line.expectedQty,
             receivedQty: line.receivedQty,
@@ -798,7 +812,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
             palletsDetailCtns: line.palletsDetailCtns || "",
             lineNote: line.lineNote || ""
           }))
-        : [createEmptyBatchInboundLine(document.storageSection || "A")]
+        : [createEmptyBatchInboundLine(normalizeStorageSection(document.storageSection))]
     );
     setErrorMessage("");
     setIsBatchModalOpen(true);
@@ -824,7 +838,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
           reason: line.lineNote || "",
           pickAllocations: normalizeBatchOutboundPickAllocations(
             line.pickAllocations.map((allocation) => ({
-              storageSection: allocation.storageSection || "A",
+              storageSection: normalizeStorageSection(allocation.storageSection),
               containerNo: allocation.containerNo || "",
               allocatedQty: allocation.allocatedQty
             }))
@@ -857,7 +871,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
           autoPreview.rows
             .filter((row) => row.id.startsWith(`${line.id}-`))
             .map((row) => ({
-              storageSection: row.storageSection || "A",
+              storageSection: normalizeStorageSection(row.storageSection),
               containerNo: row.containerNo || "",
               allocatedQty: row.allocatedQty
             }))
@@ -900,7 +914,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
   function addBatchLine(count = batchInboundLineAddCount) {
     const safeCount = getSafeLineAddCount(count);
     const nextLines = Array.from({ length: safeCount }, () =>
-      createEmptyBatchInboundLine(batchForm.storageSection || batchSectionOptions[0] || "A")
+      createEmptyBatchInboundLine(normalizeStorageSection(batchForm.storageSection || batchSectionOptions[0]))
     );
     pendingBatchLineIDRef.current = nextLines[0]?.id ?? null;
     setBatchLines((current) => [...current, ...nextLines]);
@@ -940,7 +954,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
         ...line,
         sku: nextSkuValue,
         description: shouldRefreshDescription ? nextDescription : line.description,
-        storageSection: line.storageSection || batchForm.storageSection || batchSectionOptions[0] || "A",
+        storageSection: normalizeStorageSection(line.storageSection || batchForm.storageSection || batchSectionOptions[0]),
         reorderLevel: shouldRefreshReorder ? nextSkuMaster.reorderLevel : line.reorderLevel,
         pallets: shouldRefreshPallets ? nextAutoPalletPlan.pallets : line.pallets,
         palletsDetailCtns: shouldRefreshPalletDetail ? nextAutoPalletPlan.detail : line.palletsDetailCtns
@@ -1195,7 +1209,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
         locationId: batchLocationId,
         deliveryDate: batchForm.deliveryDate || undefined,
         containerNo: batchForm.containerNo || undefined,
-        storageSection: validLines[0]?.storageSection || batchForm.storageSection || batchSectionOptions[0] || "A",
+        storageSection: normalizeStorageSection(validLines[0]?.storageSection || batchForm.storageSection || batchSectionOptions[0]),
         unitLabel: batchForm.unitLabel || "CTN",
         status,
         documentNote: batchForm.documentNote || undefined,
@@ -1220,7 +1234,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
             receivedQty: normalizedReceivedQty,
             pallets: line.pallets,
             palletsDetailCtns: line.palletsDetailCtns || undefined,
-            storageSection: line.storageSection || batchForm.storageSection || batchSectionOptions[0] || "A",
+            storageSection: normalizeStorageSection(line.storageSection || batchForm.storageSection || batchSectionOptions[0]),
             lineNote: line.lineNote || undefined
           };
         })
@@ -1890,7 +1904,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
                           <label>{t("expectedQty")}<input type="number" min="0" value={numberInputValue(line.expectedQty)} onChange={(event) => updateBatchLineExpectedQty(line.id, Math.max(0, Number(event.target.value || 0)))} /></label>
                           <label>{t("received")}<input type="number" min="0" value={numberInputValue(line.receivedQty)} onChange={(event) => updateBatchLineReceivedQty(line.id, Math.max(0, Number(event.target.value || 0)))} onBlur={() => autofillBatchLineReceivedQty(line.id)} placeholder={line.expectedQty > 0 ? String(line.expectedQty) : ""} /></label>
                           <label>{t("pallets")}<input type="number" min="0" value={numberInputValue(line.pallets)} onChange={(event) => updateBatchLinePallets(line.id, Math.max(0, Number(event.target.value || 0)))} /></label>
-                          <label>{t("storageSection")}<select value={line.storageSection || batchSectionOptions[0] || "A"} onChange={(event) => updateBatchLine(line.id, { storageSection: event.target.value })}>{batchSectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}</select></label>
+                          <label>{t("storageSection")}<select value={normalizeStorageSection(line.storageSection || batchSectionOptions[0])} onChange={(event) => updateBatchLine(line.id, { storageSection: event.target.value })}>{batchSectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}</select></label>
                           <label className="batch-line-grid__detail">{t("palletsDetail")}<input value={line.palletsDetailCtns} onChange={(event) => updateBatchLine(line.id, { palletsDetailCtns: event.target.value })} placeholder="28*115+110" /></label>
                           <label>{t("reorderLevel")}<input type="number" min="0" value={numberInputValue(displayedReorderLevel)} onChange={(event) => updateBatchLine(line.id, { reorderLevel: Math.max(0, Number(event.target.value || 0)) })} placeholder={suggestedReorderLevel > 0 ? String(suggestedReorderLevel) : ""} disabled={Boolean(selectedBatchItem)} /></label>
                         </div>
@@ -2006,7 +2020,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
                               <option value="">{t("selectShipmentSource")}</option>
                               {selectableOutboundSources.map((item) => (
                               <option key={item.id} value={item.id}>
-                                  {`${item.customerName} | ${item.locationName} / ${item.storageSections.join(", ") || "A"} | ${t("containers")}: ${item.containerCount} | ${t("itemNumber")}: ${item.itemNumber || "-"} | ${item.sku} - ${item.description} (${t("availableQty")}: ${item.availableQty})`}
+                                  {`${item.customerName} | ${item.locationName} / ${item.storageSections.join(", ") || DEFAULT_STORAGE_SECTION} | ${t("containers")}: ${item.containerCount} | ${t("itemNumber")}: ${item.itemNumber || "-"} | ${item.sku} - ${item.description} (${t("availableQty")}: ${item.availableQty})`}
                                 </option>
                               ))}
                             </select>
@@ -2024,7 +2038,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
                         <div className="batch-line-card__meta">
                           <span className="batch-line-card__hint">
                             {selectedOutboundSource
-                              ? `${selectedOutboundSource.customerName} | ${t("itemNumber")}: ${selectedOutboundSource.itemNumber || "-"} | ${selectedOutboundSource.sku} | ${selectedOutboundSource.description} | ${selectedOutboundSource.locationName} / ${selectedOutboundSource.storageSections.join(", ") || "A"} | ${t("containerDistribution")}: ${selectedOutboundSource.containerSummary || "-"} | ${t("availableQty")}: ${selectedOutboundSource.availableQty}`
+                              ? `${selectedOutboundSource.customerName} | ${t("itemNumber")}: ${selectedOutboundSource.itemNumber || "-"} | ${selectedOutboundSource.sku} | ${selectedOutboundSource.description} | ${selectedOutboundSource.locationName} / ${selectedOutboundSource.storageSections.join(", ") || DEFAULT_STORAGE_SECTION} | ${t("containerDistribution")}: ${selectedOutboundSource.containerSummary || "-"} | ${t("availableQty")}: ${selectedOutboundSource.availableQty}`
                               : t("selectShipmentSource")}
                           </span>
                         </div>
@@ -2080,8 +2094,8 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
                                   return (
                                     <div className="batch-line-pick-plan__row" key={`${line.id}-${candidate.id}`}>
                                       <div className="batch-line-pick-plan__location">
-                                        <strong>{candidate.containerNo || `${candidate.locationName}/${candidate.storageSection || "A"}`}</strong>
-                                        <span>{candidate.locationName} / {candidate.storageSection || "A"}</span>
+                                        <strong>{candidate.containerNo || `${candidate.locationName}/${normalizeStorageSection(candidate.storageSection)}`}</strong>
+                                        <span>{candidate.locationName} / {normalizeStorageSection(candidate.storageSection)}</span>
                                       </div>
                                       <div className="batch-line-pick-plan__available">
                                         <span>{t("availableQty")}</span>
@@ -2096,7 +2110,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
                                           value={numberInputValue(requestedAllocation?.allocatedQty ?? 0)}
                                           onChange={(event) => updateBatchOutboundLinePickAllocation(
                                             line.id,
-                                            candidate.storageSection || "A",
+                                            normalizeStorageSection(candidate.storageSection),
                                             candidate.containerNo || "",
                                             Math.max(0, Number(event.target.value || 0))
                                           )}
@@ -2202,11 +2216,6 @@ function calculateSuggestedReorderLevel(expectedQty: number, receivedQty: number
   }
   return Math.max(1, Math.ceil(baseQty * 0.2));
 }
-function getLocationSectionOptions(location: Location | undefined) {
-  const sectionNames = location?.sectionNames?.map((sectionName) => sectionName.trim()).filter(Boolean) ?? [];
-  return sectionNames.length > 0 ? sectionNames : ["A"];
-}
-
 function summarizeInboundDocumentSections(document: InboundDocument) {
   const sections = Array.from(new Set(
     document.lines
@@ -2215,7 +2224,7 @@ function summarizeInboundDocumentSections(document: InboundDocument) {
   ));
 
   if (sections.length === 0) {
-    return document.storageSection || "A";
+    return normalizeStorageSection(document.storageSection);
   }
 
   return sections.join(", ");
@@ -2240,7 +2249,7 @@ function normalizeDocumentStatus(status: string) {
 }
 
 function buildOutboundAllocationKey(storageSection: string, containerNo: string) {
-  return `${(storageSection || "A").trim().toUpperCase()}|${containerNo.trim().toUpperCase()}`;
+  return `${normalizeStorageSection(storageSection)}|${containerNo.trim().toUpperCase()}`;
 }
 
 function normalizeBatchOutboundPickAllocations(allocations: BatchOutboundLineAllocationState[]) {
@@ -2248,7 +2257,7 @@ function normalizeBatchOutboundPickAllocations(allocations: BatchOutboundLineAll
   const allocationIndexByKey = new Map<string, number>();
 
   for (const allocation of allocations) {
-    const normalizedStorageSection = (allocation.storageSection || "A").trim().toUpperCase() || "A";
+    const normalizedStorageSection = normalizeStorageSection(allocation.storageSection);
     const normalizedContainerNo = allocation.containerNo.trim().toUpperCase();
     const normalizedQty = Math.max(0, Math.trunc(allocation.allocatedQty));
     if (normalizedQty <= 0) {
@@ -2324,7 +2333,7 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
       sku: selectedSource.sku,
       description: selectedSource.description,
       locationName: selectedSource.locationName,
-      storageSection: selectedSource.storageSections[0] || "A",
+      storageSection: selectedSource.storageSections[0] || DEFAULT_STORAGE_SECTION,
       requestedQty: line.quantity,
       allocatedQty: 0,
       shortageQty: 0,
@@ -2367,7 +2376,7 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
           sku: selectedSource.sku,
           description: selectedSource.description,
           locationName: candidate.locationName,
-          storageSection: candidate.storageSection || "A",
+          storageSection: normalizeStorageSection(candidate.storageSection),
           containerNo: candidate.containerNo || "",
           allocatedQty
         });
@@ -2398,7 +2407,7 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
           sku: selectedSource.sku,
           description: selectedSource.description,
           locationName: candidate.locationName,
-          storageSection: candidate.storageSection || "A",
+          storageSection: normalizeStorageSection(candidate.storageSection),
           containerNo: candidate.containerNo || "",
           allocatedQty
         });
@@ -2465,10 +2474,10 @@ function summarizeOutboundPickAllocations(document: OutboundDocument | null) {
 
   const allAllocations = document.lines.flatMap((line) => line.pickAllocations);
   return {
-    totalContainerCount: new Set(allAllocations.map((allocation) => allocation.containerNo || `${allocation.locationName}/${allocation.storageSection || "A"}`)).size,
+    totalContainerCount: new Set(allAllocations.map((allocation) => allocation.containerNo || `${allocation.locationName}/${normalizeStorageSection(allocation.storageSection)}`)).size,
     totalPickRows: allAllocations.length,
     splitLineCount: document.lines.filter((line) => {
-      const containers = new Set(line.pickAllocations.map((allocation) => allocation.containerNo || `${allocation.locationName}/${allocation.storageSection || "A"}`));
+      const containers = new Set(line.pickAllocations.map((allocation) => allocation.containerNo || `${allocation.locationName}/${normalizeStorageSection(allocation.storageSection)}`));
       return containers.size > 1;
     }).length
   };
@@ -2519,7 +2528,7 @@ function buildOutboundSourceOptions(items: Item[], movements: Movement[]): Outbo
       unit: sourceUnit,
       availableQty,
       storageSections: [...sections].sort(),
-      containerCount: new Set(candidates.map((candidate) => candidate.containerNo || `${candidate.locationName}/${candidate.storageSection || "A"}`)).size,
+      containerCount: new Set(candidates.map((candidate) => candidate.containerNo || `${candidate.locationName}/${normalizeStorageSection(candidate.storageSection)}`)).size,
       containerSummary: formatContainerDistributionSummaryValue(candidates),
       candidates
     };

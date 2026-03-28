@@ -14,7 +14,7 @@ import { buildInventoryActionSourceOptions } from "../lib/inventoryActionSources
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type { PageKey } from "../lib/routes";
-import type { InventoryAdjustment, Item, UserRole } from "../lib/types";
+import { normalizeStorageSection, type InventoryAdjustment, type Item, type UserRole } from "../lib/types";
 import { InlineAlert } from "./Feedback";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
@@ -475,7 +475,7 @@ export function AdjustmentManagementPage({
                             <option value="">{selectedSourceOption ? t("selectStockRow") : t("selectSkuForInventoryAction")}</option>
                             {selectableAdjustmentItems.map((item) => (
                               <option key={item.id} value={item.id}>
-                                {`${item.locationName} / ${item.storageSection || "A"} | ${t("containerNo")}: ${item.containerNo || "-"} | ${item.sku} - ${displayDescription(item)} (${t("onHand")}: ${item.quantity})`}
+                                {`${item.locationName} / ${normalizeStorageSection(item.storageSection)} | ${t("containerNo")}: ${item.containerNo || "-"} | ${item.sku} - ${displayDescription(item)} (${t("onHand")}: ${item.quantity})`}
                               </option>
                             ))}
                           </select>

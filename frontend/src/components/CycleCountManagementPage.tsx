@@ -12,7 +12,7 @@ import { formatDateTimeValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type { PageKey } from "../lib/routes";
-import type { CycleCount, Item, UserRole } from "../lib/types";
+import { normalizeStorageSection, type CycleCount, type Item, type UserRole } from "../lib/types";
 import { InlineAlert } from "./Feedback";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
@@ -421,7 +421,7 @@ export function CycleCountManagementPage({
                             <option value="">{t("selectStockRow")}</option>
                             {items.map((item) => (
                               <option key={item.id} value={item.id}>
-                                {`${item.customerName} | ${item.locationName} / ${item.storageSection || "A"} | ${item.sku} - ${displayDescription(item)} (${t("onHand")}: ${item.quantity})`}
+                                {`${item.customerName} | ${item.locationName} / ${normalizeStorageSection(item.storageSection)} | ${item.sku} - ${displayDescription(item)} (${t("onHand")}: ${item.quantity})`}
                               </option>
                             ))}
                           </select>

@@ -1,4 +1,4 @@
-import type { Item, Movement } from "./types";
+import { normalizeStorageSection, type Item, type Movement } from "./types";
 
 export type ItemContainerBalance = {
   id: string;
@@ -51,7 +51,7 @@ function buildMovementSourceKey(movement: Pick<Movement, "customerId" | "locatio
 }
 
 function containerBalanceKey(locationId: number, storageSection: string, containerNo: string) {
-  return `${locationId}|${storageSection || "A"}|${containerNo || ""}`;
+  return `${locationId}|${normalizeStorageSection(storageSection)}|${containerNo || ""}`;
 }
 
 export function buildItemContainerBalances(items: Item[], movements: Movement[]) {
@@ -86,7 +86,7 @@ export function buildItemContainerBalances(items: Item[], movements: Movement[])
   for (const [itemSourceKey, sourceGroup] of groupedItems.entries()) {
     const groupedByCurrentContainer = new Map<string, ItemContainerBalance>();
     for (const item of sourceGroup.items) {
-      const storageSection = item.storageSection || "A";
+      const storageSection = normalizeStorageSection(item.storageSection);
       const containerNo = item.containerNo || "";
       const sourceKey = containerBalanceKey(item.locationId, storageSection, containerNo);
       const existing = groupedByCurrentContainer.get(sourceKey);
@@ -122,7 +122,7 @@ export function buildItemContainerBalances(items: Item[], movements: Movement[])
         continue;
       }
 
-      const storageSection = movement.storageSection || sourceGroup.representative.storageSection || "A";
+      const storageSection = normalizeStorageSection(movement.storageSection || sourceGroup.representative.storageSection);
       const containerNo = movement.containerNo || "";
       const key = containerBalanceKey(sourceGroup.representative.locationId, storageSection, containerNo);
       const existing = movementContainerBalances.get(key);
@@ -212,7 +212,7 @@ export function formatContainerDistributionSummary(
   const containerTotals = new Map<string, number>();
 
   for (const balance of balances) {
-    const label = balance.containerNo.trim() || `${balance.locationName}/${balance.storageSection || "A"}`;
+    const label = balance.containerNo.trim() || `${balance.locationName}/${normalizeStorageSection(balance.storageSection)}`;
     containerTotals.set(label, (containerTotals.get(label) ?? 0) + balance.availableQty);
   }
 

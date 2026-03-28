@@ -19,7 +19,7 @@ import {
   TuneOutlined,
   WarehouseOutlined
 } from "@mui/icons-material";
-import { type ReactNode, useEffect, useState } from "react";
+import { Suspense, lazy, type ReactNode, useEffect, useState } from "react";
 
 import { ActivityManagementPage } from "./components/ActivityManagementPage";
 import { AdjustmentManagementPage } from "./components/AdjustmentManagementPage";
@@ -36,19 +36,23 @@ import { MasterInventoryPage } from "./components/MasterInventoryPage";
 import { ReportsPage } from "./components/ReportsPage";
 import { SKUMasterPage } from "./components/SKUMasterPage";
 import { SettingsPage } from "./components/SettingsPage";
+import { StorageLocationEditorPage } from "./components/StorageLocationEditorPage";
 import { StorageManagementPage } from "./components/StorageManagementPage";
 import { TransferManagementPage } from "./components/TransferManagementPage";
 import { UserManagementPage } from "./components/UserManagementPage";
 import { ApiError, api } from "./lib/api";
 import { useI18n } from "./lib/i18n";
-import { getPageFromPath, navigateToPage, type PageKey } from "./lib/routes";
+import { getPageFromPath, getStorageLocationEditorIdFromPath, navigateToPage, navigateToStorageLocationEditor, type PageKey } from "./lib/routes";
 import type { AuditLog, Customer, CycleCount, InboundDocument, InventoryAdjustment, InventoryTransfer, Item, Location, LoginPayload, Movement, OutboundDocument, SKUMaster, SignUpPayload, User } from "./lib/types";
+
+const WarehouseMapPage = lazy(async () => {
+  const module = await import("./components/WarehouseMapPage");
+  return { default: module.WarehouseMapPage };
+});
 
 export default function App() {
   const { t } = useI18n();
   const navLabels = {
-    receiving: t("navReceiving"),
-    shipping: t("navShipping"),
     inventory: t("navInventory"),
     masterData: t("masterData"),
     reports: t("reportsSection"),
@@ -250,6 +254,7 @@ export default function App() {
     { key: "inbound-management", label: t("inbound"), description: t("inboundDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
     { key: "outbound-management", label: t("outbound"), description: t("outboundDesc"), icon: <OutboxOutlined fontSize="small" /> },
     { key: "inventory-summary", label: t("inventorySummary"), description: t("inventorySummaryDesc"), icon: <WarehouseOutlined fontSize="small" /> },
+    { key: "warehouse-map", label: t("warehouseMap"), description: t("warehouseMapDesc"), icon: <WarehouseOutlined fontSize="small" /> },
     { key: "container-contents", label: t("containerContents"), description: t("containerContentsDesc"), icon: <WarehouseOutlined fontSize="small" /> },
     { key: "adjustments", label: t("adjustments"), description: t("adjustmentsDesc"), icon: <TuneOutlined fontSize="small" /> },
     { key: "transfers", label: t("transfers"), description: t("transfersDesc"), icon: <CompareArrowsOutlined fontSize="small" /> },
@@ -261,13 +266,15 @@ export default function App() {
     { key: "sku-master", label: t("skuMaster"), description: t("skuMasterDesc"), icon: <CategoryOutlined fontSize="small" /> },
     { key: "stock-by-location", label: t("stockByLocation"), description: t("stockByLocationDesc"), icon: <WarehouseOutlined fontSize="small" /> },
     { key: "storage-management", label: t("storageManagement"), description: t("storageManagementDesc"), icon: <WarehouseOutlined fontSize="small" /> },
+    { key: "storage-location-editor", label: t("editStorageLocation"), description: t("warehouseLayoutDesc"), icon: <WarehouseOutlined fontSize="small" /> },
     { key: "settings", label: t("settings"), description: t("settingsDesc"), icon: <SettingsOutlined fontSize="small" /> }
   ];
   const pageItemMap = new Map(pageItems.map((item) => [item.key, item] as const));
+  const primaryNavItems = (["dashboard", "inbound-management", "outbound-management"] as PageKey[])
+    .map((pageKey) => pageItemMap.get(pageKey))
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
   const navSections = [
-    { key: "receiving", label: navLabels.receiving, items: ["inbound-management", "cycle-counts"] as PageKey[] },
-    { key: "shipping", label: navLabels.shipping, items: ["outbound-management"] as PageKey[] },
-    { key: "inventory", label: navLabels.inventory, items: ["inventory-summary", "container-contents", "all-activity"] as PageKey[] },
+    { key: "inventory", label: navLabels.inventory, items: ["inventory-summary", "warehouse-map", "container-contents", "all-activity"] as PageKey[] },
     { key: "master-data", label: navLabels.masterData, items: ["customers", "sku-master", "storage-management"] as PageKey[] },
     { key: "reports", label: navLabels.reports, items: ["reports", "export-center"] as PageKey[] },
     { key: "administration", label: navLabels.administration, items: ["audit-logs", "user-management", "settings"] as PageKey[] }
@@ -278,25 +285,26 @@ export default function App() {
       .filter((item): item is NonNullable<typeof item> => Boolean(item))
   })).filter((section) => section.items.length > 0);
   const activePageItem = pageItemMap.get(activePage) ?? pageItems[0];
-  const homePageItem = pageItemMap.get("dashboard");
   const parentPageByPage: Partial<Record<PageKey, PageKey>> = {
     "stock-by-location": "inventory-summary",
     adjustments: "inventory-summary",
-    transfers: "inventory-summary"
+    transfers: "inventory-summary",
+    "cycle-counts": "inventory-summary",
+    "storage-location-editor": "storage-management"
   };
   const sectionKeyByPage: Partial<Record<PageKey, string>> = {
-    "inbound-management": "receiving",
-    "cycle-counts": "receiving",
-    "outbound-management": "shipping",
     "inventory-summary": "inventory",
+    "warehouse-map": "inventory",
     "container-contents": "inventory",
     "stock-by-location": "inventory",
     "adjustments": "inventory",
     "transfers": "inventory",
+    "cycle-counts": "inventory",
     "all-activity": "inventory",
     customers: "master-data",
     "sku-master": "master-data",
     "storage-management": "master-data",
+    "storage-location-editor": "master-data",
     reports: "reports",
     "export-center": "reports",
     "audit-logs": "administration",
@@ -306,6 +314,10 @@ export default function App() {
   const parentPage = parentPageByPage[activePage] ? pageItemMap.get(parentPageByPage[activePage] as PageKey) : null;
   const activeNavSection = navSections.find((section) => section.key === sectionKeyByPage[activePage]);
   const showPageContext = activePage !== "dashboard";
+  const editingStorageLocationId = getStorageLocationEditorIdFromPath(window.location.pathname);
+  const editingStorageLocation = editingStorageLocationId
+    ? locations.find((location) => location.id === editingStorageLocationId) ?? null
+    : null;
   useEffect(() => {
     if (!activeNavSection) return;
     setCollapsedSections((current) => current[activeNavSection.key] ? { ...current, [activeNavSection.key]: false } : current);
@@ -360,19 +372,20 @@ export default function App() {
 
       <div className={`app-workspace ${sidebarCollapsed ? "app-workspace--sidebar-collapsed" : ""}`}>
         <aside className={`app-sidebar ${sidebarCollapsed ? "app-sidebar--collapsed" : ""}`}>
-        {homePageItem ? (
-          <div className="app-sidebar__home">
+        <div className="app-sidebar__home">
+          {primaryNavItems.map((item) => (
             <button
-              className={`app-sidebar__link app-sidebar__link--home ${activePage === homePageItem.key ? "app-sidebar__link--active" : ""}`}
+              key={item.key}
+              className={`app-sidebar__link app-sidebar__link--home ${activePage === item.key ? "app-sidebar__link--active" : ""}`}
               type="button"
-              onClick={() => navigateToPage(homePageItem.key, setActivePage)}
-              title={sidebarCollapsed ? homePageItem.label : undefined}
+              onClick={() => navigateToPage(item.key, setActivePage)}
+              title={sidebarCollapsed ? item.label : undefined}
             >
-              <span className="app-sidebar__link-icon" aria-hidden="true">{homePageItem.icon}</span>
-              {!sidebarCollapsed ? <span className="app-sidebar__link-label">{homePageItem.label}</span> : null}
+              <span className="app-sidebar__link-icon" aria-hidden="true">{item.icon}</span>
+              {!sidebarCollapsed ? <span className="app-sidebar__link-label">{item.label}</span> : null}
             </button>
-          </div>
-        ) : null}
+          ))}
+        </div>
         <nav className="app-sidebar__nav" aria-label={t("pages")}>
           {navSections.map((section) => (
             <section className="app-sidebar__section" key={section.key}>
@@ -434,8 +447,8 @@ export default function App() {
                   </button>
                 ) : null}
                 <div className="app-page-context__breadcrumb">
-                  <span>{activeNavSection?.label}</span>
-                  <span aria-hidden="true">/</span>
+                  {activeNavSection ? <span>{activeNavSection.label}</span> : null}
+                  {activeNavSection ? <span aria-hidden="true">/</span> : null}
                   <span>{activePageItem.label}</span>
                 </div>
               </div>
@@ -447,6 +460,11 @@ export default function App() {
           {activePage === "transfers" ? <TransferManagementPage transfers={transfers} items={items} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
           {activePage === "cycle-counts" ? <CycleCountManagementPage cycleCounts={cycleCounts} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
           {activePage === "inventory-summary" ? <InventorySummaryPage items={items} movements={movements} customers={customers} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
+          {activePage === "warehouse-map" ? (
+            <Suspense fallback={<section className="workbook-panel"><div className="empty-state">{t("loadingRecords")}</div></section>}>
+              <WarehouseMapPage items={items} isLoading={isLoading} onNavigate={(page) => navigateToPage(page, setActivePage)} />
+            </Suspense>
+          ) : null}
           {activePage === "container-contents" ? <ContainerContentsPage items={items} customers={customers} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
           {activePage === "all-activity" ? <AllActivityPage movements={movements} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
           {activePage === "customers" ? <CustomerManagementPage customers={customers} items={items} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} movements={movements} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
@@ -454,7 +472,27 @@ export default function App() {
           {activePage === "user-management" && canManageUsers ? <UserManagementPage users={users} currentUser={currentUser} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
           {activePage === "sku-master" ? <SKUMasterPage skuMasters={skuMasters} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
           {activePage === "stock-by-location" ? <MasterInventoryPage items={items} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
-          {activePage === "storage-management" ? <StorageManagementPage locations={locations} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
+          {activePage === "storage-management" ? (
+            <StorageManagementPage
+              locations={locations}
+              items={items}
+              currentUserRole={currentUser.role}
+              isLoading={isLoading}
+              onRefresh={() => loadAppData(false)}
+              onCreateLocation={() => navigateToStorageLocationEditor(setActivePage)}
+              onEditLocation={(locationId) => navigateToStorageLocationEditor(setActivePage, locationId)}
+            />
+          ) : null}
+          {activePage === "storage-location-editor" ? (
+            <StorageLocationEditorPage
+              location={editingStorageLocation}
+              locationId={editingStorageLocationId}
+              currentUserRole={currentUser.role}
+              isLoading={isLoading}
+              onRefresh={() => loadAppData(false)}
+              onBack={() => navigateToPage("storage-management", setActivePage)}
+            />
+          ) : null}
           {activePage === "settings" ? <SettingsPage /> : null}
           {activePage === "dashboard" ? (
             <HomeDashboardPage

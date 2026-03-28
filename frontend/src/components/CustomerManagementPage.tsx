@@ -15,7 +15,7 @@ import { setPendingAllActivityContext } from "../lib/allActivityContext";
 import { formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
-import type { Customer, CustomerPayload, InboundDocument, Item, Movement, OutboundDocument, UserRole } from "../lib/types";
+import { normalizeStorageSection, type Customer, type CustomerPayload, type InboundDocument, type Item, type Movement, type OutboundDocument, type UserRole } from "../lib/types";
 import { InlineAlert, useConfirmDialog } from "./Feedback";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
@@ -446,7 +446,7 @@ export function CustomerManagementPage({
                     </div>
                     <div>
                       <strong>{item.quantity} / {item.availableQty}</strong>
-                      <span>{item.locationName} / {item.storageSection || "A"} · {t("onHand")} / {t("availableQty")}</span>
+                      <span>{item.locationName} / {normalizeStorageSection(item.storageSection)} · {t("onHand")} / {t("availableQty")}</span>
                     </div>
                   </div>
                 )) : <div className="sheet-note">{t("noCustomerInventory")}</div>}
@@ -498,7 +498,7 @@ export function CustomerManagementPage({
                   <div className="document-drawer__list-row" key={movement.id}>
                     <div>
                       <strong>{renderMovementTypeLabel(movement.movementType, t)}</strong>
-                      <span>{movement.sku} | {movement.locationName} / {movement.storageSection || "A"}</span>
+                      <span>{movement.sku} | {movement.locationName} / {normalizeStorageSection(movement.storageSection)}</span>
                     </div>
                     <div>
                       <strong>{formatSignedQuantity(movement.quantityChange)}</strong>

@@ -9,7 +9,7 @@ import { formatDateValue } from "../lib/dates";
 import { downloadExcelWorkbook, type ExcelExportCell, type ExcelExportColumn } from "../lib/excelExport";
 import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
-import type { InboundDocument, Item, OutboundDocument } from "../lib/types";
+import { DEFAULT_STORAGE_SECTION, normalizeStorageSection, type InboundDocument, type Item, type OutboundDocument } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
 import { WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
@@ -271,7 +271,7 @@ function buildInventorySummaryExportRows(items: Item[]) {
   for (const item of items) {
     const key = `${item.customerId}|${item.sku}`;
     const existing = rowMap.get(key);
-    const containerKey = item.containerNo.trim() || `${item.locationName}/${item.storageSection || "A"}`;
+    const containerKey = item.containerNo.trim() || `${item.locationName}/${normalizeStorageSection(item.storageSection)}`;
     const receiptDate = item.deliveryDate || item.lastRestockedAt || null;
 
     if (!existing) {
@@ -328,7 +328,7 @@ function buildInventoryDetailExportRows(items: Item[]) {
       description: displayDescription(item),
       customerName: item.customerName,
       locationName: item.locationName,
-      storageSection: item.storageSection || "A",
+      storageSection: normalizeStorageSection(item.storageSection),
       quantity: item.quantity,
       availableQty: item.availableQty,
       damagedQty: item.damagedQty,
@@ -357,7 +357,7 @@ function buildContainerContentsExportRows(items: Item[]) {
       description: displayDescription(item),
       customerName: item.customerName,
       locationName: item.locationName,
-      storageSection: item.storageSection || "A",
+      storageSection: normalizeStorageSection(item.storageSection),
       onHand: item.quantity,
       availableQty: item.availableQty,
       damagedQty: item.damagedQty,
@@ -404,8 +404,8 @@ function buildShipmentExportRows(outboundDocuments: OutboundDocument[]) {
 }
 
 function summarizeInboundDocumentSections(document: InboundDocument) {
-  const sections = [...new Set(document.lines.map((line) => line.storageSection || "A").filter(Boolean))];
-  return sections.join(", ") || "A";
+  const sections = [...new Set(document.lines.map((line) => normalizeStorageSection(line.storageSection)).filter(Boolean))];
+  return sections.join(", ") || DEFAULT_STORAGE_SECTION;
 }
 
 function displayDescription(item: Pick<Item, "description" | "name">) {

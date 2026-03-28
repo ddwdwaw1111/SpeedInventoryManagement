@@ -1055,19 +1055,28 @@ func (s *Store) findOrCreateInboundItem(ctx context.Context, tx *sql.Tx, documen
 	normalizedContainerNo := strings.TrimSpace(documentInput.ContainerNo)
 	var itemID int64
 	var description string
-	err := tx.QueryRowContext(ctx, `
+	matchByContainerQuery := `
 		SELECT id, COALESCE(description, name, '')
 		FROM inventory_items
 		WHERE
 			sku = ?
 			AND customer_id = ?
 			AND location_id = ?
-			AND COALESCE(NULLIF(storage_section, ''), 'A') = ?
+			AND COALESCE(NULLIF(storage_section, ''), ?) = ?
 			AND COALESCE(container_no, '') = ?
 		ORDER BY updated_at DESC, id DESC
 		LIMIT 1
 		FOR UPDATE
-	`, line.SKU, documentInput.CustomerID, documentInput.LocationID, normalizedSection, normalizedContainerNo).Scan(&itemID, &description)
+	`
+	matchByContainerArgs := []any{
+		line.SKU,
+		documentInput.CustomerID,
+		documentInput.LocationID,
+		DefaultStorageSection,
+		normalizedSection,
+		normalizedContainerNo,
+	}
+	err := tx.QueryRowContext(ctx, matchByContainerQuery, matchByContainerArgs...).Scan(&itemID, &description)
 	if err == nil {
 		if strings.TrimSpace(description) == "" {
 			description = line.Description
@@ -1075,20 +1084,28 @@ func (s *Store) findOrCreateInboundItem(ctx context.Context, tx *sql.Tx, documen
 		return itemID, description, nil
 	}
 	if errors.Is(err, sql.ErrNoRows) {
-		err = tx.QueryRowContext(ctx, `
+		matchPlaceholderQuery := `
 			SELECT id, COALESCE(description, name, '')
 			FROM inventory_items
 			WHERE
 				sku = ?
 				AND customer_id = ?
 				AND location_id = ?
-				AND COALESCE(NULLIF(storage_section, ''), 'A') = ?
+				AND COALESCE(NULLIF(storage_section, ''), ?) = ?
 				AND quantity = 0
 				AND COALESCE(container_no, '') = ''
 			ORDER BY updated_at DESC, id DESC
 			LIMIT 1
 			FOR UPDATE
-		`, line.SKU, documentInput.CustomerID, documentInput.LocationID, normalizedSection).Scan(&itemID, &description)
+		`
+		matchPlaceholderArgs := []any{
+			line.SKU,
+			documentInput.CustomerID,
+			documentInput.LocationID,
+			DefaultStorageSection,
+			normalizedSection,
+		}
+		err = tx.QueryRowContext(ctx, matchPlaceholderQuery, matchPlaceholderArgs...).Scan(&itemID, &description)
 		if err == nil {
 			if _, updateErr := tx.ExecContext(ctx, `
 				UPDATE inventory_items

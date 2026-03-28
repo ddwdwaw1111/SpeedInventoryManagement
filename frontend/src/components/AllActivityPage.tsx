@@ -14,7 +14,7 @@ import { formatDateTimeValue, formatDateValue, parseDateValue } from "../lib/dat
 import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
 import { useSettings } from "../lib/settings";
-import type { Customer, Location, Movement, UserRole } from "../lib/types";
+import { normalizeStorageSection, type Customer, type Location, type Movement, type UserRole } from "../lib/types";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
 
@@ -136,7 +136,7 @@ export function AllActivityPage({ movements, customers, locations, currentUserRo
     { field: "description", headerName: t("description"), minWidth: 240, flex: 1.5, renderCell: (params) => params.row.description },
     { field: "customerName", headerName: t("customer"), minWidth: 170, flex: 1 },
     { field: "locationName", headerName: t("currentStorage"), minWidth: 170, flex: 1 },
-    { field: "storageSection", headerName: t("storageSection"), minWidth: 110, flex: 0.7, renderCell: (params) => params.row.storageSection || "A" },
+    { field: "storageSection", headerName: t("storageSection"), minWidth: 110, flex: 0.7, renderCell: (params) => normalizeStorageSection(params.row.storageSection) },
     {
       field: "quantityChange",
       headerName: t("qtyChange"),
@@ -224,7 +224,7 @@ export function AllActivityPage({ movements, customers, locations, currentUserRo
               <div>
                 <div className="document-drawer__eyebrow">{t("allActivity")}</div>
                 <h3>{selectedMovement.sku}</h3>
-                <p>{selectedMovement.description} | {selectedMovement.customerName} | {selectedMovement.locationName} / {selectedMovement.storageSection || "A"}</p>
+                <p>{selectedMovement.description} | {selectedMovement.customerName} | {selectedMovement.locationName} / {normalizeStorageSection(selectedMovement.storageSection)}</p>
               </div>
               <IconButton aria-label={t("close")} onClick={() => setSelectedMovementId(null)}>
                 <CloseIcon fontSize="small" />

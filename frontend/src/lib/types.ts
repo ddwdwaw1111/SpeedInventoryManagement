@@ -82,7 +82,20 @@ export type Location = {
   description: string;
   capacity: number;
   sectionNames: string[];
+  layoutBlocks: StorageLayoutBlock[];
   createdAt: string;
+};
+
+export type StorageLayoutBlockType = "temporary" | "section" | "support";
+
+export type StorageLayoutBlock = {
+  id: string;
+  name: string;
+  type: StorageLayoutBlockType;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 };
 
 export type LocationPayload = {
@@ -92,7 +105,26 @@ export type LocationPayload = {
   description: string;
   capacity: number;
   sectionNames: string[];
+  layoutBlocks: StorageLayoutBlock[];
 };
+
+export const DEFAULT_STORAGE_SECTION = "TEMP";
+
+export function normalizeStorageSection(value?: string | null) {
+  const trimmed = (value ?? "").trim().toUpperCase();
+  if (!trimmed) {
+    return DEFAULT_STORAGE_SECTION;
+  }
+  return trimmed;
+}
+
+export function getLocationSectionOptions(location: Location | undefined) {
+  const sectionNames = location?.sectionNames
+    ?.map((sectionName) => normalizeStorageSection(sectionName))
+    .filter(Boolean) ?? [];
+
+  return Array.from(new Set([DEFAULT_STORAGE_SECTION, ...sectionNames]));
+}
 
 export type Customer = {
   id: number;
