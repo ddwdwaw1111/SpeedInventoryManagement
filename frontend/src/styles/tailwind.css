@@ -1,0 +1,83 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .tw-panel {
+    @apply rounded-2xl bg-white shadow-[0_12px_32px_rgba(27,54,93,0.08)] ring-1 ring-slate-950/5;
+  }
+
+  .tw-panel-muted {
+    @apply rounded-2xl bg-slate-50/80 shadow-[0_10px_24px_rgba(27,54,93,0.06)] ring-1 ring-slate-950/5;
+  }
+
+  .tw-panel-subtle {
+    @apply rounded-xl bg-slate-50 shadow-sm ring-1 ring-slate-200/80;
+  }
+
+  .tw-kicker {
+    @apply text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500;
+  }
+
+  .tw-heading-xl {
+    @apply font-headline text-[1.875rem] font-extrabold tracking-tight text-[#1b365d];
+  }
+
+  .tw-heading-lg {
+    @apply font-headline text-xl font-extrabold tracking-tight text-[#1b365d];
+  }
+
+  .tw-heading-md {
+    @apply font-headline text-base font-bold tracking-tight text-[#1b365d];
+  }
+
+  .tw-body-muted {
+    @apply text-sm leading-6 text-slate-500;
+  }
+
+  .tw-field-label {
+    @apply block text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500;
+  }
+
+  .tw-input {
+    @apply mt-2 block w-full rounded-xl border-0 bg-white px-3.5 py-2.5 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-200 outline-none transition placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-[#1b365d]/30;
+  }
+
+  .tw-select {
+    @apply tw-input appearance-none;
+  }
+
+  .tw-textarea {
+    @apply tw-input min-h-[140px] resize-y;
+  }
+
+  .tw-btn-primary {
+    @apply inline-flex items-center gap-2 rounded-xl bg-gradient-to-br from-[#002046] to-[#1b365d] px-5 py-2.5 text-sm font-bold text-white shadow-[0_14px_28px_rgba(27,54,93,0.18)] transition hover:translate-y-[-1px] hover:shadow-[0_18px_32px_rgba(27,54,93,0.22)] disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .tw-btn-secondary {
+    @apply inline-flex items-center gap-2 rounded-xl bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-inset ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .tw-btn-tonal {
+    @apply inline-flex items-center gap-2 rounded-xl bg-[#eaeef2] px-3.5 py-2.5 text-sm font-semibold text-[#1b365d] shadow-sm ring-1 ring-inset ring-slate-200 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .tw-btn-danger {
+    @apply inline-flex items-center gap-2 rounded-xl bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 shadow-sm ring-1 ring-inset ring-rose-200 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .tw-stat-card {
+    @apply rounded-xl bg-slate-50 px-4 py-4 shadow-sm ring-1 ring-slate-200/80;
+  }
+
+  .tw-notice-amber {
+    @apply rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800;
+  }
+
+  .tw-notice-rose {
+    @apply rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700;
+  }
+}

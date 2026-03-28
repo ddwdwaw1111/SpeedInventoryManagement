@@ -155,7 +155,12 @@ export function useSharedColumnOrder<Row extends GridValidRowModel>({
   }
 
   const columnOrderAction = canManage ? (
-    <Button variant="outlined" startIcon={<TuneOutlinedIcon />} onClick={openColumnOrderModal}>
+    <Button
+      variant="outlined"
+      startIcon={<TuneOutlinedIcon />}
+      onClick={openColumnOrderModal}
+      className="!rounded-xl !border-slate-200 !bg-white !px-3.5 !py-2.5 !text-sm !font-semibold !text-slate-700 !shadow-sm hover:!bg-slate-50"
+    >
       {t("columnOrder")}
     </Button>
   ) : null;
@@ -171,7 +176,8 @@ export function useSharedColumnOrder<Row extends GridValidRowModel>({
       maxWidth={false}
       PaperProps={{
         sx: {
-          width: dialogWidth
+          width: dialogWidth,
+          borderRadius: "1rem"
         }
       }}
     >

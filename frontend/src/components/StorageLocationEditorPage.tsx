@@ -1,8 +1,9 @@
 import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
+import ArrowBackOutlinedIcon from "@mui/icons-material/ArrowBackOutlined";
 import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
+import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
 import WidgetsOutlinedIcon from "@mui/icons-material/WidgetsOutlined";
-import { Button } from "@mui/material";
-import { type FormEvent, type RefObject, useMemo, useState } from "react";
+import { type FormEvent, type RefObject, useEffect, useMemo, useState } from "react";
 import { GridLayout, noCompactor, useContainerWidth, type Layout, type LayoutItem as GridLayoutItem } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
@@ -18,8 +19,6 @@ import {
   type StorageLayoutBlockType,
   type UserRole
 } from "../lib/types";
-import { InlineAlert } from "./Feedback";
-import { WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type StorageLocationEditorPageProps = {
   location: Location | null;
@@ -40,6 +39,12 @@ type LocationFormState = {
 };
 
 const LAYOUT_GRID_SIZE = 44;
+
+const fieldClassName = "tw-input";
+const panelClassName = "tw-panel";
+const secondaryButtonClass = "tw-btn-secondary";
+const actionButtonClass = "tw-btn-tonal";
+const dangerButtonClass = "tw-btn-danger";
 
 function createLayoutBlock(type: StorageLayoutBlockType, index: number): StorageLayoutBlock {
   if (type === "temporary") {
@@ -144,14 +149,26 @@ function sanitizeLayoutBlocks(layoutBlocks: StorageLayoutBlock[]) {
   return hasTemporary ? blocks : [createLayoutBlock("temporary", 0), ...blocks];
 }
 
-function getBlockColorClass(type: StorageLayoutBlockType) {
+function getBlockTone(type: StorageLayoutBlockType) {
   switch (type) {
     case "temporary":
-      return "storage-layout-canvas__block--temporary";
+      return {
+        card: "border-amber-300/70 bg-[linear-gradient(180deg,rgba(250,221,171,0.95),rgba(244,206,147,0.96))] text-amber-950",
+        swatch: "bg-amber-300",
+        label: "Temporary"
+      };
     case "support":
-      return "storage-layout-canvas__block--support";
+      return {
+        card: "border-slate-300/70 bg-[linear-gradient(180deg,rgba(223,230,241,0.95),rgba(204,214,229,0.97))] text-slate-900",
+        swatch: "bg-slate-300",
+        label: "Support"
+      };
     default:
-      return "storage-layout-canvas__block--section";
+      return {
+        card: "border-sky-300/70 bg-[linear-gradient(180deg,rgba(194,224,251,0.96),rgba(171,209,244,0.98))] text-sky-950",
+        swatch: "bg-sky-300",
+        label: "Section"
+      };
   }
 }
 
@@ -184,6 +201,13 @@ export function StorageLocationEditorPage({
   const [selectedBlockId, setSelectedBlockId] = useState<string>(createFormFromLocation(location).layoutBlocks[0]?.id ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+
+  useEffect(() => {
+    const nextForm = createFormFromLocation(location);
+    setForm(nextForm);
+    setSelectedBlockId(nextForm.layoutBlocks[0]?.id ?? "");
+    setErrorMessage("");
+  }, [locationId, location]);
 
   const selectedBlock = useMemo(
     () => form.layoutBlocks.find((block) => block.id === selectedBlockId) ?? form.layoutBlocks[0] ?? null,
@@ -218,22 +242,25 @@ export function StorageLocationEditorPage({
   const temporaryBlockExists = form.layoutBlocks.some((block) => block.type === "temporary");
   const title = location ? t("editStorageLocation") : t("addStorageLocation");
   const permissionNotice = canManage ? "" : t("adminOnlyManageNotice");
-
-  if (!isLoading && locationId !== null && !location) {
-    return (
-      <main className="workspace-main">
-        <section className="workbook-panel workbook-panel--full">
-          <div className="tab-strip">
-            <WorkspacePanelHeader
-              title={t("editStorageLocation")}
-              actions={<button className="button button--ghost" type="button" onClick={onBack}>{t("back")}</button>}
-              errorMessage={t("recordNotFound")}
-            />
-          </div>
-        </section>
-      </main>
-    );
-  }
+  const layoutSummary = useMemo(() => {
+    const temporaryCount = form.layoutBlocks.filter((block) => block.type === "temporary").length;
+    const sectionCount = form.layoutBlocks.filter((block) => block.type === "section").length;
+    const supportCount = form.layoutBlocks.filter((block) => block.type === "support").length;
+    const totalFootprint = form.layoutBlocks.reduce((sum, block) => sum + (block.width * block.height), 0);
+    return [
+      { label: t("temporaryArea"), value: temporaryCount },
+      { label: t("formalSection"), value: sectionCount },
+      { label: t("supportArea"), value: supportCount },
+      { label: "Grid Cells", value: totalFootprint }
+    ];
+  }, [form.layoutBlocks, t]);
+  const selectedTone = selectedBlock ? getBlockTone(selectedBlock.type) : null;
+  const selectedAreaStats = selectedBlock ? [
+    { label: t("areaType"), value: selectedTone?.label ?? "-" },
+    { label: "Origin", value: `${selectedBlock.x}, ${selectedBlock.y}` },
+    { label: "Size", value: `${selectedBlock.width} x ${selectedBlock.height}` },
+    { label: "Footprint", value: `${selectedBlock.width * selectedBlock.height} cells` }
+  ] : [];
 
   function updateLayoutBlock(blockId: string, patch: Partial<StorageLayoutBlock>) {
     setForm((current) => ({
@@ -355,101 +382,287 @@ export function StorageLocationEditorPage({
     }
   }
 
+  if (!isLoading && locationId !== null && !location) {
+    return (
+      <main className="workspace-main">
+        <section className="mx-auto flex w-full max-w-[1600px] flex-col gap-4 rounded-[1.25rem] bg-white p-6 shadow-[0_16px_40px_rgba(27,54,93,0.08)] ring-1 ring-slate-950/5">
+          <div className="flex items-center justify-between gap-4">
+            <div className="space-y-1">
+              <p className="tw-kicker">{t("storageManagement")}</p>
+              <h1 className="m-0 text-[1.375rem] font-semibold tracking-tight text-slate-950">{t("editStorageLocation")}</h1>
+            </div>
+            <button className={secondaryButtonClass} type="button" onClick={onBack}>
+              <ArrowBackOutlinedIcon fontSize="small" />
+              {t("back")}
+            </button>
+          </div>
+          <div className="tw-notice-rose">{t("recordNotFound")}</div>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="workspace-main">
-      <section className="workbook-panel workbook-panel--full">
-        <div className="tab-strip">
-          <WorkspacePanelHeader
-            title={title}
-            actions={canManage ? (
-              <div className="sheet-actions">
-                <button className="button button--ghost" type="button" onClick={onBack}>
-                  {t("cancel")}
-                </button>
-                <button className="button button--primary" form="storage-location-editor-form" type="submit" disabled={submitting || isLoading}>
-                  {submitting ? t("saving") : location ? t("updateLocation") : t("addLocation")}
-                </button>
-              </div>
-            ) : undefined}
-            notices={[permissionNotice]}
-            errorMessage={errorMessage}
-          />
-        </div>
-
-        <form id="storage-location-editor-form" className="sheet-form" onSubmit={handleSubmit}>
-          <label>{t("storageName")}<input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="NJ Warehouse A" required /></label>
-          <label>{t("zone")}<input value={form.zone} onChange={(event) => setForm((current) => ({ ...current, zone: event.target.value }))} placeholder="North Wing" required /></label>
-          <label className="sheet-form__wide">{t("address")}<input value={form.address} onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))} placeholder="1200 Harbor Blvd, North Bergen, NJ" required /></label>
-          <label>{t("capacity")}<input type="number" min="0" value={form.capacity} onChange={(event) => setForm((current) => ({ ...current, capacity: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-
-          <div className="sheet-form__wide storage-layout-editor">
-            <div className="storage-layout-editor__header">
-              <div>
-                <strong>{t("warehouseLayout")}</strong>
-                <p>{t("warehouseLayoutDesc")}</p>
-              </div>
-              <div className="storage-layout-editor__actions">
-                <Button size="small" variant="outlined" type="button" startIcon={<AddOutlinedIcon />} onClick={() => addLayoutBlock("temporary")} disabled={temporaryBlockExists}>
-                  {t("addTemporaryArea")}
-                </Button>
-                <Button size="small" variant="outlined" type="button" startIcon={<Inventory2OutlinedIcon />} onClick={() => addLayoutBlock("section")}>
-                  {t("addSectionArea")}
-                </Button>
-                <Button size="small" variant="outlined" type="button" startIcon={<WidgetsOutlinedIcon />} onClick={() => addLayoutBlock("support")}>
-                  {t("addSupportArea")}
-                </Button>
+      <section className="mx-auto flex w-full max-w-[1680px] flex-col gap-6">
+        <header className={`${panelClassName} flex flex-col gap-5 px-6 py-6`}>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="space-y-2">
+              <p className="tw-kicker m-0">{t("storageManagement")}</p>
+              <div className="space-y-1">
+                <h1 className="tw-heading-xl m-0">{title}</h1>
+                <p className="tw-body-muted m-0 max-w-3xl">{t("warehouseLayoutDesc")}</p>
               </div>
             </div>
 
-            <div className="storage-layout-editor__body">
-              <div className="storage-layout-canvas-wrap">
-                <div className="storage-layout-canvas" ref={layoutContainerRef as RefObject<HTMLDivElement>} style={{ minHeight: layoutCanvasSize.height }}>
-                  {layoutMounted ? (
-                    <GridLayout
-                      className="storage-layout-grid"
-                      width={layoutWidth}
-                      gridConfig={{
-                        cols: layoutGridColumns,
-                        rowHeight: LAYOUT_GRID_SIZE,
-                        margin: [8, 8],
-                        containerPadding: [8, 8]
-                      }}
-                      dragConfig={{ handle: ".storage-layout-grid__handle" }}
-                      resizeConfig={{ handles: ["se"] }}
-                      layout={layoutGridItems}
-                      compactor={noCompactor}
-                      onLayoutChange={syncLayoutBlocks}
-                    >
-                      {form.layoutBlocks.map((block) => (
-                        <div key={block.id} className="storage-layout-grid__cell">
-                          <button
-                            className={`storage-layout-canvas__block ${getBlockColorClass(block.type)}${selectedBlock?.id === block.id ? " storage-layout-canvas__block--selected" : ""}`}
-                            type="button"
-                            onClick={() => setSelectedBlockId(block.id)}
-                          >
-                            <span className="storage-layout-grid__handle">::</span>
-                            <strong>{block.name}</strong>
-                            <small>{block.type === "temporary" ? t("temporaryAreaShort") : block.type === "support" ? t("supportAreaShort") : t("formalSectionShort")}</small>
-                          </button>
-                        </div>
-                      ))}
-                    </GridLayout>
-                  ) : null}
+            <div className="flex flex-wrap items-center gap-3">
+              <button className={secondaryButtonClass} type="button" onClick={onBack}>
+                <ArrowBackOutlinedIcon fontSize="small" />
+                {t("back")}
+              </button>
+              {canManage ? (
+                <button
+                  className="tw-btn-primary"
+                  form="storage-location-editor-form"
+                  type="submit"
+                  disabled={submitting || isLoading}
+                >
+                  <SaveOutlinedIcon fontSize="small" />
+                  {submitting ? t("saving") : location ? t("updateLocation") : t("addLocation")}
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          {permissionNotice ? <div className="tw-notice-amber">{permissionNotice}</div> : null}
+          {errorMessage ? <div className="tw-notice-rose">{errorMessage}</div> : null}
+        </header>
+
+        <form id="storage-location-editor-form" className="grid gap-6" onSubmit={handleSubmit}>
+          <section className={`${panelClassName} grid gap-6 px-6 py-6`}>
+            <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-200/80 pb-5">
+              <div className="space-y-1">
+                <p className="tw-kicker m-0">Profile</p>
+                <h2 className="tw-heading-lg m-0">Warehouse Profile</h2>
+                <p className="tw-body-muted m-0">Define the site identity and the inventory zones the team will work from.</p>
+              </div>
+              <div className="max-w-sm text-sm leading-6 text-slate-500">
+                All inventory defaults to <span className="font-semibold text-slate-950">TEMP</span> until moved into a formal section.
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.3fr)_180px]">
+              <label className="tw-field-label">
+                {t("storageName")}
+                <input
+                  className={fieldClassName}
+                  value={form.name}
+                  onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+                  placeholder="NJ Warehouse A"
+                  required
+                />
+              </label>
+              <label className="tw-field-label">
+                {t("zone")}
+                <input
+                  className={fieldClassName}
+                  value={form.zone}
+                  onChange={(event) => setForm((current) => ({ ...current, zone: event.target.value }))}
+                  placeholder="North Wing"
+                  required
+                />
+              </label>
+              <label className="tw-field-label xl:col-span-1 md:col-span-2">
+                {t("address")}
+                <input
+                  className={fieldClassName}
+                  value={form.address}
+                  onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))}
+                  placeholder="1200 Harbor Blvd, North Bergen, NJ"
+                  required
+                />
+              </label>
+              <label className="tw-field-label">
+                {t("capacity")}
+                <input
+                  className={fieldClassName}
+                  type="number"
+                  min="0"
+                  value={form.capacity}
+                  onChange={(event) => setForm((current) => ({ ...current, capacity: Math.max(0, Number(event.target.value || 0)) }))}
+                />
+              </label>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {layoutSummary.map((metric) => (
+                <article key={metric.label} className="tw-stat-card">
+                  <p className="tw-kicker m-0">{metric.label}</p>
+                  <strong className="mt-2 block text-[2rem] font-semibold tracking-tight text-slate-950">{metric.value}</strong>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="tw-panel-muted grid gap-5 px-6 py-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="space-y-1">
+                <p className="tw-kicker m-0">{t("warehouseLayout")}</p>
+                <h2 className="tw-heading-lg m-0">{t("warehouseLayout")}</h2>
+                <p className="tw-body-muted m-0">Arrange temporary, formal, and support areas on a single grid the team can understand at a glance.</p>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button className={actionButtonClass} type="button" onClick={() => addLayoutBlock("temporary")} disabled={temporaryBlockExists}>
+                  <AddOutlinedIcon fontSize="small" />
+                  {t("addTemporaryArea")}
+                </button>
+                <button className={actionButtonClass} type="button" onClick={() => addLayoutBlock("section")}>
+                  <Inventory2OutlinedIcon fontSize="small" />
+                  {t("addSectionArea")}
+                </button>
+                <button className={actionButtonClass} type="button" onClick={() => addLayoutBlock("support")}>
+                  <WidgetsOutlinedIcon fontSize="small" />
+                  {t("addSupportArea")}
+                </button>
+              </div>
+            </div>
+
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,1.7fr)_360px]">
+              <div className="grid gap-4">
+                <div className="tw-panel grid gap-3 p-3">
+                  <div className="flex items-start justify-between gap-3 border-b border-slate-200/80 pb-3">
+                    <div>
+                      <p className="tw-kicker m-0">2D Map</p>
+                      <h3 className="tw-heading-md m-0 mt-1">Warehouse Block Layout</h3>
+                    </div>
+                    <div className="text-right text-xs leading-5 text-slate-500">
+                      <div>{layoutGridColumns} cols</div>
+                      <div>{LAYOUT_GRID_SIZE}px grid</div>
+                    </div>
+                  </div>
+
+                  <div
+                    ref={layoutContainerRef as RefObject<HTMLDivElement>}
+                    style={{ minHeight: layoutCanvasSize.height }}
+                    className="overflow-auto rounded-xl border border-slate-200 bg-[linear-gradient(to_right,rgba(119,144,176,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(119,144,176,0.08)_1px,transparent_1px)] [background-size:44px_44px]"
+                  >
+                    {layoutMounted ? (
+                      <GridLayout
+                        className="storage-layout-grid"
+                        width={layoutWidth}
+                        gridConfig={{
+                          cols: layoutGridColumns,
+                          rowHeight: LAYOUT_GRID_SIZE,
+                          margin: [8, 8],
+                          containerPadding: [8, 8]
+                        }}
+                        dragConfig={{ handle: ".storage-layout-grid__handle" }}
+                        resizeConfig={{ handles: ["se"] }}
+                        layout={layoutGridItems}
+                        compactor={noCompactor}
+                        onLayoutChange={syncLayoutBlocks}
+                      >
+                        {form.layoutBlocks.map((block) => {
+                          const tone = getBlockTone(block.type);
+                          const isSelected = selectedBlock?.id === block.id;
+                          return (
+                            <div key={block.id} className="storage-layout-grid__cell">
+                              <button
+                                className={`grid h-full w-full content-center justify-items-center gap-1 rounded-xl border px-3 py-3 text-center shadow-[0_12px_28px_rgba(15,34,59,0.12)] transition ${
+                                  tone.card
+                                } ${
+                                  isSelected
+                                    ? "ring-2 ring-slate-950/60 ring-offset-2 ring-offset-white"
+                                    : "hover:-translate-y-0.5"
+                                }`}
+                                type="button"
+                                onClick={() => setSelectedBlockId(block.id)}
+                              >
+                                <span className="storage-layout-grid__handle inline-flex cursor-grab items-center justify-center rounded-sm bg-white/70 px-2 py-0.5 text-[11px] font-semibold tracking-[0.14em] text-slate-700 shadow-sm active:cursor-grabbing">
+                                  ::
+                                </span>
+                                <strong className="block text-sm font-extrabold leading-tight">{block.name}</strong>
+                                <small className="block text-[11px] font-semibold uppercase tracking-[0.08em] opacity-75">{tone.label}</small>
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </GridLayout>
+                    ) : null}
+                  </div>
                 </div>
-                <div className="storage-layout-legend">
-                  <span className="storage-layout-legend__item"><i className="storage-layout-legend__swatch storage-layout-legend__swatch--temporary" />{t("temporaryArea")}</span>
-                  <span className="storage-layout-legend__item"><i className="storage-layout-legend__swatch storage-layout-legend__swatch--section" />{t("formalSection")}</span>
-                  <span className="storage-layout-legend__item"><i className="storage-layout-legend__swatch storage-layout-legend__swatch--support" />{t("supportArea")}</span>
+
+                <div className="flex flex-wrap gap-3 text-sm font-semibold text-slate-600">
+                  {(["temporary", "section", "support"] as StorageLayoutBlockType[]).map((type) => {
+                    const tone = getBlockTone(type);
+                    const label = type === "temporary" ? t("temporaryArea") : type === "section" ? t("formalSection") : t("supportArea");
+                    return (
+                      <span key={type} className="inline-flex items-center gap-2 rounded-md bg-white px-3 py-2 shadow-sm ring-1 ring-slate-200">
+                        <i className={`h-3.5 w-3.5 rounded-sm border border-slate-300 ${tone.swatch}`} />
+                        {label}
+                      </span>
+                    );
+                  })}
+                </div>
+
+                <div className="tw-panel px-4 py-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="tw-kicker m-0">Directory</p>
+                      <h3 className="tw-heading-md m-0 mt-1">Area Directory</h3>
+                      <p className="tw-body-muted m-0 mt-1">Select any area to edit its properties and footprint.</p>
+                    </div>
+                    <span className="text-xs font-medium text-slate-500">{form.layoutBlocks.length} areas</span>
+                  </div>
+                  <div className="grid gap-2 md:grid-cols-2">
+                    {form.layoutBlocks.map((block) => {
+                      const tone = getBlockTone(block.type);
+                      const isSelected = selectedBlock?.id === block.id;
+                      return (
+                        <button
+                          key={block.id}
+                          type="button"
+                          onClick={() => setSelectedBlockId(block.id)}
+                          className={`flex items-start justify-between gap-3 rounded-xl border px-3 py-3 text-left transition ${
+                            isSelected
+                              ? "border-[#1b365d] bg-gradient-to-br from-[#002046] to-[#1b365d] text-white shadow-[0_14px_28px_rgba(27,54,93,0.18)]"
+                              : "border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-white"
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className={`h-2.5 w-2.5 rounded-full border border-black/10 ${isSelected ? "bg-white" : tone.swatch}`} />
+                              <strong className="block truncate text-sm font-semibold">{block.name}</strong>
+                            </div>
+                            <span className={`mt-1 block text-xs ${isSelected ? "text-slate-300" : "text-slate-500"}`}>
+                              {tone.label} / {block.width} x {block.height}
+                            </span>
+                          </div>
+                          <span className={`shrink-0 text-xs font-medium ${isSelected ? "text-slate-300" : "text-slate-400"}`}>
+                            {block.x},{block.y}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 
-              <div className="storage-layout-editor__panel">
+              <aside className="tw-panel grid gap-4 p-5 xl:sticky xl:top-4 xl:self-start">
                 {selectedBlock ? (
                   <>
-                    <div className="storage-layout-editor__panel-header">
-                      <strong>{t("selectedArea")}</strong>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="tw-kicker m-0">{t("selectedArea")}</p>
+                        <div className="mt-1 flex items-center gap-2">
+                          <span className={`h-3 w-3 rounded-full border border-black/10 ${selectedTone?.swatch ?? "bg-slate-300"}`} />
+                          <h3 className="tw-heading-lg m-0">{selectedBlock.name}</h3>
+                        </div>
+                        <p className="tw-body-muted m-0 mt-2">{selectedTone?.label} area configured for this warehouse layout.</p>
+                      </div>
                       <button
-                        className="button button--danger button--small"
+                        className={dangerButtonClass}
                         type="button"
                         onClick={removeSelectedBlock}
                         disabled={form.layoutBlocks.length <= 1 || (selectedBlock.type === "temporary" && form.layoutBlocks.filter((block) => block.type === "temporary").length === 1)}
@@ -457,9 +670,21 @@ export function StorageLocationEditorPage({
                         {t("removeArea")}
                       </button>
                     </div>
-                    <div className="sheet-form">
-                      <label>{t("areaType")}
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {selectedAreaStats.map((stat) => (
+                        <div key={stat.label} className="tw-stat-card">
+                          <div className="tw-kicker">{stat.label}</div>
+                          <div className="mt-1 text-sm font-semibold text-slate-950">{stat.value}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="grid gap-4 border-t border-slate-200/80 pt-4 sm:grid-cols-2">
+                      <label className="tw-field-label">
+                        {t("areaType")}
                         <select
+                          className="tw-select"
                           value={selectedBlock.type}
                           onChange={(event) => updateLayoutBlock(selectedBlock.id, { type: event.target.value as StorageLayoutBlockType })}
                         >
@@ -468,37 +693,96 @@ export function StorageLocationEditorPage({
                           <option value="support">{t("supportArea")}</option>
                         </select>
                       </label>
-                      <label>{t("areaName")}
+
+                      <label className="tw-field-label">
+                        {t("areaName")}
                         <input
+                          className={fieldClassName}
                           value={selectedBlock.name}
                           onChange={(event) => updateLayoutBlock(selectedBlock.id, { name: event.target.value })}
                           placeholder={selectedBlock.type === "temporary" ? t("temporaryArea") : t("sectionName")}
                         />
                       </label>
-                      <label>{t("layoutPosX")}<input type="number" min="0" value={selectedBlock.x} onChange={(event) => updateLayoutBlock(selectedBlock.id, { x: Math.max(0, Number(event.target.value || 0)) })} /></label>
-                      <label>{t("layoutPosY")}<input type="number" min="0" value={selectedBlock.y} onChange={(event) => updateLayoutBlock(selectedBlock.id, { y: Math.max(0, Number(event.target.value || 0)) })} /></label>
-                      <label>{t("layoutWidth")}<input type="number" min="1" value={selectedBlock.width} onChange={(event) => updateLayoutBlock(selectedBlock.id, { width: Math.max(1, Number(event.target.value || 1)) })} /></label>
-                      <label>{t("layoutHeight")}<input type="number" min="1" value={selectedBlock.height} onChange={(event) => updateLayoutBlock(selectedBlock.id, { height: Math.max(1, Number(event.target.value || 1)) })} /></label>
+
+                      <label className="tw-field-label">
+                        {t("layoutPosX")}
+                        <input
+                          className={fieldClassName}
+                          type="number"
+                          min="0"
+                          value={selectedBlock.x}
+                          onChange={(event) => updateLayoutBlock(selectedBlock.id, { x: Math.max(0, Number(event.target.value || 0)) })}
+                        />
+                      </label>
+
+                      <label className="tw-field-label">
+                        {t("layoutPosY")}
+                        <input
+                          className={fieldClassName}
+                          type="number"
+                          min="0"
+                          value={selectedBlock.y}
+                          onChange={(event) => updateLayoutBlock(selectedBlock.id, { y: Math.max(0, Number(event.target.value || 0)) })}
+                        />
+                      </label>
+
+                      <label className="tw-field-label">
+                        {t("layoutWidth")}
+                        <input
+                          className={fieldClassName}
+                          type="number"
+                          min="1"
+                          value={selectedBlock.width}
+                          onChange={(event) => updateLayoutBlock(selectedBlock.id, { width: Math.max(1, Number(event.target.value || 1)) })}
+                        />
+                      </label>
+
+                      <label className="tw-field-label">
+                        {t("layoutHeight")}
+                        <input
+                          className={fieldClassName}
+                          type="number"
+                          min="1"
+                          value={selectedBlock.height}
+                          onChange={(event) => updateLayoutBlock(selectedBlock.id, { height: Math.max(1, Number(event.target.value || 1)) })}
+                        />
+                      </label>
                     </div>
-                    <div className="sheet-note">
-                      <strong>{t("inventorySections")}</strong> {sectionNames.join(", ")}
+
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                      <strong className="font-semibold text-slate-950">{t("inventorySections")}</strong> {sectionNames.join(", ")}
                     </div>
+
                     {selectedBlock.type === "temporary" ? (
-                      <div className="sheet-note">{t("temporaryAreaMapsToTemp")}</div>
+                      <div className="tw-notice-amber">{t("temporaryAreaMapsToTemp")}</div>
                     ) : null}
                   </>
                 ) : (
-                  <div className="sheet-note">{t("selectAreaToEdit")}</div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                    {t("selectAreaToEdit")}
+                  </div>
                 )}
-              </div>
+              </aside>
             </div>
-          </div>
+          </section>
 
-          <label className="sheet-form__wide">
-            {t("notes")}
-            <textarea value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} placeholder={t("storageNotesPlaceholder")} rows={4} />
-          </label>
-          {!canManage ? <InlineAlert>{t("adminOnlyManageNotice")}</InlineAlert> : null}
+          <section className={`${panelClassName} grid gap-4 px-6 py-6`}>
+            <div className="space-y-1 border-b border-slate-200/80 pb-4">
+              <p className="tw-kicker m-0">Notes</p>
+              <h2 className="tw-heading-lg m-0">{t("notes")}</h2>
+              <p className="tw-body-muted m-0">Keep operational notes here for staging rules, dock instructions, or special handling.</p>
+            </div>
+            <label className="tw-field-label">
+              {t("notes")}
+              <textarea
+                className="tw-textarea"
+                value={form.description}
+                onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
+                placeholder={t("storageNotesPlaceholder")}
+                rows={4}
+              />
+            </label>
+          </section>
         </form>
       </section>
     </main>
