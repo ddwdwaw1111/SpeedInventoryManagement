@@ -1,16 +1,16 @@
-import {
-  CompareArrowsOutlined,
-  FactCheckOutlined,
-  MoveToInboxOutlined,
-  OutboxOutlined,
-  SearchOutlined,
-  TuneOutlined,
-  WarehouseOutlined
-} from "@mui/icons-material";
-import { type ReactNode, useDeferredValue, useMemo, useState } from "react";
+import ChevronLeftRoundedIcon from "@mui/icons-material/ChevronLeftRounded";
+import ChevronRightRoundedIcon from "@mui/icons-material/ChevronRightRounded";
+import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
+import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
+import LocalShippingOutlinedIcon from "@mui/icons-material/LocalShippingOutlined";
+import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
+import ReportProblemOutlinedIcon from "@mui/icons-material/ReportProblemOutlined";
+import TimelineOutlinedIcon from "@mui/icons-material/TimelineOutlined";
+import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
+import type { ReactNode } from "react";
+import { useMemo, useState } from "react";
 
 import { InlineAlert } from "./Feedback";
-import { WorkspacePanelHeader, WorkspaceTableEmptyState, WorkspaceTableLoadingState } from "./WorkspacePanelChrome";
 import { useI18n } from "../lib/i18n";
 import type {
   CycleCount,
@@ -36,47 +36,56 @@ type HomeDashboardPageProps = {
   onNavigate: (page: PageKey) => void;
 };
 
-type DashboardAction = {
+type SummaryCard = {
   key: string;
-  page: PageKey;
-  label: string;
-  description: string;
-  icon: ReactNode;
-};
-
-type DashboardStat = {
   label: string;
   value: string;
   meta: string;
+  tone: "blue" | "emerald" | "amber" | "red";
+  icon: ReactNode;
 };
 
-type QueueMetric = {
+type TrendPeriod = "week" | "month" | "year";
+
+type TrendPoint = {
   key: string;
   label: string;
-  count: number;
-  page: PageKey;
+  shortLabel: string;
+  total: number;
+  inbound: number;
+  outbound: number;
 };
 
-type ExceptionMetric = QueueMetric;
-
-type InventoryLookupRow = {
-  id: number;
-  sku: string;
+type ActivityEntry = {
+  id: string;
+  title: string;
   description: string;
-  customerName: string;
-  locationName: string;
-  storageSection: string;
-  availableQty: number;
-  containerNo: string;
+  timeLabel: string;
+  tone: "emerald" | "blue" | "amber" | "red" | "slate";
 };
 
-type RecentDocument = {
-  id: number;
+type TrackerRow = {
+  id: string;
   code: string;
-  customerName: string;
+  counterpart: string;
+  warehouse: string;
   dateLabel: string;
-  status: string;
+  trackingLabel: string;
+  progress: number;
+  badgeTone: "emerald" | "blue" | "amber" | "red" | "slate";
 };
+
+type CalendarDay = {
+  key: string;
+  date: Date;
+  dayNumber: number;
+  inCurrentMonth: boolean;
+  isToday: boolean;
+  inboundCount: number;
+  outboundCount: number;
+};
+
+const numberFormatter = new Intl.NumberFormat("en-US");
 
 export function HomeDashboardPage({
   currentUserRole,
@@ -91,428 +100,1104 @@ export function HomeDashboardPage({
   onNavigate
 }: HomeDashboardPageProps) {
   const { t } = useI18n();
-  const [lookupQuery, setLookupQuery] = useState("");
-  const deferredLookupQuery = useDeferredValue(lookupQuery);
-  const normalizedLookupQuery = deferredLookupQuery.trim().toLowerCase();
   const isViewer = currentUserRole === "viewer";
+  const [trendPeriod, setTrendPeriod] = useState<TrendPeriod>("month");
+  const [calendarWeek, setCalendarWeek] = useState(() => startOfUtcWeek(new Date()));
 
-  const summaryStats = useMemo<DashboardStat[]>(() => {
-    const totalUnits = items.reduce((sum, item) => sum + item.quantity, 0);
-    const lowStockCount = items.filter((item) => item.reorderLevel > 0 && item.availableQty <= item.reorderLevel).length;
-    const activeWarehouseCount = new Set(items.filter((item) => item.quantity > 0).map((item) => item.locationId)).size;
+  const summaryCards = useMemo<SummaryCard[]>(() => {
+    const onHandUnits = items.reduce((sum, item) => sum + item.quantity, 0);
+    const activePositions = items.filter((item) => item.quantity > 0).length;
+    const scheduledReceipts = inboundDocuments.filter((document) => normalizeDocumentStatus(document.status) === "DRAFT").length;
+    const arrivedReceipts = inboundDocuments.filter((document) => normalizeInboundTrackingStatus(document.trackingStatus, document.status) === "ARRIVED").length;
+    const receivingReceipts = inboundDocuments.filter((document) => normalizeInboundTrackingStatus(document.trackingStatus, document.status) === "RECEIVING").length;
+    const pendingShipments = outboundDocuments.filter((document) => normalizeDocumentStatus(document.status) === "DRAFT").length;
+    const pickingShipments = outboundDocuments.filter((document) => normalizeOutboundTrackingStatus(document.trackingStatus, document.status) === "PICKING").length;
+    const packedShipments = outboundDocuments.filter((document) => normalizeOutboundTrackingStatus(document.trackingStatus, document.status) === "PACKED").length;
+    const lowStockSkus = items.filter((item) => item.reorderLevel > 0 && item.availableQty <= item.reorderLevel).length;
+    const atRiskWarehouses = new Set(
+      items
+        .filter((item) => item.reorderLevel > 0 && item.availableQty <= item.reorderLevel)
+        .map((item) => item.locationId)
+    ).size;
 
     return [
       {
-        label: t("dashboardOnHandUnits"),
-        value: formatNumber(totalUnits),
-        meta: t("dashboardOnHandUnitsMeta")
+        key: "on-hand",
+        label: t("dashboardKpiOnHand"),
+        value: numberFormatter.format(onHandUnits),
+        meta: t("dashboardKpiOnHandMeta", { count: activePositions }),
+        tone: "blue",
+        icon: <Inventory2OutlinedIcon fontSize="small" />
       },
       {
-        label: t("dashboardInventoryPositions"),
-        value: formatNumber(items.length),
-        meta: t("dashboardInventoryPositionsMeta")
+        key: "receipts",
+        label: t("dashboardKpiScheduledReceipts"),
+        value: numberFormatter.format(scheduledReceipts),
+        meta: t("dashboardKpiScheduledReceiptsMeta", { arrived: arrivedReceipts, receiving: receivingReceipts }),
+        tone: "emerald",
+        icon: <MoveToInboxOutlinedIcon fontSize="small" />
       },
       {
-        label: t("dashboardLowStockSkus"),
-        value: formatNumber(lowStockCount),
-        meta: t("dashboardLowStockSkusMeta")
+        key: "shipments",
+        label: t("dashboardKpiPendingShipments"),
+        value: numberFormatter.format(pendingShipments),
+        meta: t("dashboardKpiPendingShipmentsMeta", { picking: pickingShipments, packed: packedShipments }),
+        tone: "amber",
+        icon: <LocalShippingOutlinedIcon fontSize="small" />
       },
       {
-        label: t("dashboardWarehousesActive"),
-        value: formatNumber(activeWarehouseCount),
-        meta: t("dashboardWarehousesActiveMeta")
+        key: "low-stock",
+        label: t("dashboardKpiLowStock"),
+        value: numberFormatter.format(lowStockSkus),
+        meta: t("dashboardKpiLowStockMeta", { warehouses: atRiskWarehouses }),
+        tone: "red",
+        icon: <ReportProblemOutlinedIcon fontSize="small" />
       }
     ];
-  }, [items, t]);
+  }, [inboundDocuments, items, outboundDocuments, t]);
 
-  const quickActions = useMemo<DashboardAction[]>(() => [
-    {
-      key: "receipts",
-      page: "inbound-management",
-      label: t("newInbound"),
-      description: t("dashboardQuickActionReceipts"),
-      icon: <MoveToInboxOutlined fontSize="small" />
-    },
-    {
-      key: "shipments",
-      page: "outbound-management",
-      label: t("newOutbound"),
-      description: t("dashboardQuickActionShipments"),
-      icon: <OutboxOutlined fontSize="small" />
-    },
-    {
-      key: "adjustments",
-      page: "adjustments",
-      label: t("addAdjustment"),
-      description: t("dashboardQuickActionAdjustments"),
-      icon: <TuneOutlined fontSize="small" />
-    },
-    {
-      key: "transfers",
-      page: "transfers",
-      label: t("addTransfer"),
-      description: t("dashboardQuickActionTransfers"),
-      icon: <CompareArrowsOutlined fontSize="small" />
-    },
-    {
-      key: "counts",
-      page: "cycle-counts",
-      label: t("addCycleCount"),
-      description: t("dashboardQuickActionCounts"),
-      icon: <FactCheckOutlined fontSize="small" />
-    }
-  ], [t]);
-
-  const queueMetrics = useMemo<QueueMetric[]>(() => [
-    { key: "receipts", label: t("dashboardOpenReceipts"), count: countOpenStatuses(inboundDocuments.map((document) => document.status)), page: "inbound-management" },
-    { key: "shipments", label: t("dashboardOpenShipments"), count: countOpenStatuses(outboundDocuments.map((document) => document.status)), page: "outbound-management" },
-    { key: "adjustments", label: t("dashboardOpenAdjustments"), count: countOpenStatuses(adjustments.map((document) => document.status)), page: "adjustments" },
-    { key: "transfers", label: t("dashboardOpenTransfers"), count: countOpenStatuses(transfers.map((document) => document.status)), page: "transfers" },
-    { key: "counts", label: t("dashboardOpenCounts"), count: countOpenStatuses(cycleCounts.map((document) => document.status)), page: "cycle-counts" }
-  ], [adjustments, cycleCounts, inboundDocuments, outboundDocuments, t, transfers]);
-
-  const exceptionMetrics = useMemo<ExceptionMetric[]>(() => [
-    {
-      key: "low-stock",
-      label: t("dashboardExceptionLowStock"),
-      count: items.filter((item) => item.reorderLevel > 0 && item.availableQty <= item.reorderLevel).length,
-      page: "stock-by-location"
-    },
-    {
-      key: "receipt-variance",
-      label: t("dashboardExceptionReceiptVariance"),
-      count: inboundDocuments.filter((document) => document.lines.some((line) => line.expectedQty !== line.receivedQty)).length,
-      page: "inbound-management"
-    },
-    {
-      key: "cancelled-shipments",
-      label: t("dashboardExceptionCancelledShipments"),
-      count: outboundDocuments.filter((document) => normalizeStatus(document.status) === "cancelled").length,
-      page: "outbound-management"
-    },
-    {
-      key: "count-variance",
-      label: t("dashboardExceptionCountVariance"),
-      count: cycleCounts.filter((document) => document.totalVariance !== 0).length,
-      page: "cycle-counts"
-    }
-  ], [cycleCounts, inboundDocuments, items, outboundDocuments, t]);
-
-  const inventoryLookupResults = useMemo<InventoryLookupRow[]>(() => {
-    if (!normalizedLookupQuery) return [];
-
-    return items
-      .filter((item) => {
-        const searchable = [
-          item.sku,
-          item.description,
-          item.customerName,
-          item.locationName,
-          item.storageSection,
-          item.containerNo
-        ].join(" ").toLowerCase();
-        return searchable.includes(normalizedLookupQuery);
-      })
-      .sort((left, right) => {
-        const leftStartsWithSku = left.sku.toLowerCase().startsWith(normalizedLookupQuery);
-        const rightStartsWithSku = right.sku.toLowerCase().startsWith(normalizedLookupQuery);
-        if (leftStartsWithSku !== rightStartsWithSku) return leftStartsWithSku ? -1 : 1;
-        return right.availableQty - left.availableQty;
-      })
-      .slice(0, 6)
-      .map((item) => ({
-        id: item.id,
-        sku: item.sku,
-        description: displayDescription(item),
-        customerName: item.customerName,
-        locationName: item.locationName,
-        storageSection: item.storageSection,
-        availableQty: item.availableQty,
-        containerNo: item.containerNo
-      }));
-  }, [items, normalizedLookupQuery]);
-
-  const recentInboundRows = useMemo(
-    () => inboundDocuments
-      .slice()
-      .sort((left, right) => getDocumentTimestamp(right.updatedAt || right.createdAt) - getDocumentTimestamp(left.updatedAt || left.createdAt))
-      .slice(0, 5)
-      .map((document) => ({
-        id: document.id,
-        code: document.containerNo || `RCV-${document.id}`,
-        customerName: document.customerName,
-        dateLabel: formatDate(document.deliveryDate || document.createdAt),
-        status: document.status
-      })),
-    [inboundDocuments]
+  const throughputPoints = useMemo(
+    () => buildThroughputPoints(inboundDocuments, outboundDocuments, trendPeriod),
+    [inboundDocuments, outboundDocuments, trendPeriod]
   );
 
-  const recentOutboundRows = useMemo(
-    () => outboundDocuments
+  const throughputTotals = useMemo(
+    () => ({
+      inbound: throughputPoints.reduce((sum, point) => sum + point.inbound, 0),
+      outbound: throughputPoints.reduce((sum, point) => sum + point.outbound, 0)
+    }),
+    [throughputPoints]
+  );
+
+  const trendPeriodOptions = useMemo(
+    () => ([
+      { key: "week" as const, label: t("week") },
+      { key: "month" as const, label: t("month") },
+      { key: "year" as const, label: t("year") }
+    ]),
+    [t]
+  );
+
+  const recentActivity = useMemo<ActivityEntry[]>(
+    () => buildRecentActivityEntries(inboundDocuments, outboundDocuments, adjustments, transfers, cycleCounts, t),
+    [adjustments, cycleCounts, inboundDocuments, outboundDocuments, t, transfers]
+  );
+
+  const calendarDays = useMemo(
+    () => buildProcessingCalendarDays(inboundDocuments, outboundDocuments, calendarWeek),
+    [calendarWeek, inboundDocuments, outboundDocuments]
+  );
+
+  const inboundTrackerRows = useMemo<TrackerRow[]>(
+    () => inboundDocuments
+      .filter((document) => normalizeDocumentStatus(document.status) !== "CANCELLED")
       .slice()
-      .sort((left, right) => getDocumentTimestamp(right.updatedAt || right.createdAt) - getDocumentTimestamp(left.updatedAt || left.createdAt))
-      .slice(0, 5)
+      .sort((left, right) => getDocumentTime(right.updatedAt || right.createdAt) - getDocumentTime(left.updatedAt || left.createdAt))
+      .slice(0, 6)
       .map((document) => ({
-        id: document.id,
-        code: document.packingListNo || `SHP-${document.id}`,
-        customerName: document.customerName,
-        dateLabel: formatDate(document.outDate || document.createdAt),
-        status: document.status
+        id: `inbound-${document.id}`,
+        code: document.containerNo || `RCV-${document.id}`,
+        counterpart: document.customerName || "-",
+        warehouse: `${document.locationName}${document.storageSection ? ` / ${document.storageSection}` : ""}`,
+        dateLabel: formatDashboardDate(document.deliveryDate || document.createdAt),
+        trackingLabel: formatInboundTrackingStatusLabel(document.trackingStatus, document.status, t),
+        progress: inboundTrackingProgress(document.trackingStatus, document.status),
+        badgeTone: trackingTone(inboundTrackingProgress(document.trackingStatus, document.status))
       })),
-    [outboundDocuments]
+    [inboundDocuments, t]
+  );
+
+  const outboundTrackerRows = useMemo<TrackerRow[]>(
+    () => outboundDocuments
+      .filter((document) => normalizeDocumentStatus(document.status) !== "CANCELLED")
+      .slice()
+      .sort((left, right) => getDocumentTime(right.updatedAt || right.createdAt) - getDocumentTime(left.updatedAt || left.createdAt))
+      .slice(0, 6)
+      .map((document) => ({
+        id: `outbound-${document.id}`,
+        code: document.packingListNo || `SHP-${document.id}`,
+        counterpart: document.shipToName || document.customerName || "-",
+        warehouse: document.storages || "-",
+        dateLabel: formatDashboardDate(document.outDate || document.createdAt),
+        trackingLabel: formatOutboundTrackingStatusLabel(document.trackingStatus, document.status, t),
+        progress: outboundTrackingProgress(document.trackingStatus, document.status),
+        badgeTone: trackingTone(outboundTrackingProgress(document.trackingStatus, document.status))
+      })),
+    [outboundDocuments, t]
   );
 
   return (
-    <main className="workspace-main dashboard-home">
+    <main className="workspace-main">
       {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
 
-      <section className="workbook-panel dashboard-home__hero">
-        <div className="dashboard-home__hero-copy">
-          <p className="sheet-kicker">{t("navDashboard")}</p>
-        </div>
-        <div className="dashboard-home__summary-grid">
-          {summaryStats.map((stat) => (
-            <article className="dashboard-home__summary-card" key={stat.label}>
-              <span>{stat.label}</span>
-              <strong>{stat.value}</strong>
-              <small>{stat.meta}</small>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <div className="dashboard-home__grid">
-        <section className="workbook-panel dashboard-home__panel dashboard-home__panel--lookup">
-          <WorkspacePanelHeader
-            title={t("dashboardLookupTitle")}
-            description={t("dashboardLookupDesc")}
-            actions={
-              <button className="button button--ghost button--small" type="button" onClick={() => onNavigate("stock-by-location")}>
-                {t("dashboardOpenInventory")}
-              </button>
-            }
-          />
-          <div className="dashboard-home__lookup">
-            <label>
-              {t("search")}
-              <div className="dashboard-home__lookup-input">
-                <SearchOutlined fontSize="small" />
-                <input
-                  value={lookupQuery}
-                  onChange={(event) => setLookupQuery(event.target.value)}
-                  placeholder={t("dashboardLookupPlaceholder")}
-                />
+      <div className="space-y-6 pb-6">
+        <section className="rounded-[24px] border border-slate-200/80 bg-[linear-gradient(180deg,#f3f8ff_0%,#eef4fb_100%)] px-6 py-6 shadow-[0_18px_48px_rgba(10,31,68,0.06)]">
+          <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+            <div className="space-y-2.5">
+              <div className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500 ring-1 ring-slate-200/70">
+                <WarehouseOutlinedIcon sx={{ fontSize: 14 }} />
+                {t("navDashboard")}
               </div>
-            </label>
+              <div>
+                <h1 className="font-headline text-3xl font-extrabold tracking-tight text-[#0d2d63]">
+                  {t("dashboardOperationalTitle")}
+                </h1>
+                <p className="mt-1.5 max-w-3xl text-sm text-slate-600">
+                  {t("dashboardOperationalSubtitle")}
+                </p>
+              </div>
+            </div>
 
-            {isLoading ? <WorkspaceTableLoadingState title={t("loadingRecords")} description={t("dashboardLookupLoading")} /> : null}
-            {!isLoading && normalizedLookupQuery.length === 0 ? (
-              <WorkspaceTableEmptyState title={t("dashboardLookupPromptTitle")} description={t("dashboardLookupPromptDesc")} />
-            ) : null}
-            {!isLoading && normalizedLookupQuery.length > 0 && inventoryLookupResults.length === 0 ? (
-              <WorkspaceTableEmptyState title={t("dashboardLookupNoResultsTitle")} description={t("dashboardLookupNoResultsDesc")} />
-            ) : null}
-            {!isLoading && inventoryLookupResults.length > 0 ? (
-              <div className="dashboard-home__lookup-results">
-                {inventoryLookupResults.map((row) => (
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => onNavigate("reports")}
+                className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50"
+              >
+                <DownloadOutlinedIcon sx={{ fontSize: 18 }} />
+                {t("dashboardDownloadReport")}
+              </button>
+              <button
+                type="button"
+                disabled={isViewer}
+                onClick={() => onNavigate("inbound-management")}
+                className="inline-flex items-center gap-2 rounded-xl bg-[#143569] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(20,53,105,0.18)] transition hover:bg-[#102f5f] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <MoveToInboxOutlinedIcon sx={{ fontSize: 18 }} />
+                {t("dashboardScheduleReceipts")}
+              </button>
+              <button
+                type="button"
+                disabled={isViewer}
+                onClick={() => onNavigate("outbound-management")}
+                className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(15,23,42,0.18)] transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <LocalShippingOutlinedIcon sx={{ fontSize: 18 }} />
+                {t("dashboardScheduleShipments")}
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {summaryCards.map((card) => (
+              <DashboardSummaryCard key={card.key} card={card} />
+            ))}
+          </div>
+        </section>
+
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1.8fr)_minmax(320px,0.9fr)]">
+          <section className="rounded-[24px] border border-slate-200/80 bg-white p-6 shadow-[0_16px_34px_rgba(15,23,42,0.05)]">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h2 className="font-headline text-xl font-extrabold tracking-tight text-[#0d2d63]">
+                  {t("dashboardFlowTitle")}
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">{t("dashboardFlowSubtitle")}</p>
+              </div>
+              <div className="inline-flex items-center gap-1 rounded-xl bg-slate-100 p-1">
+                {trendPeriodOptions.map((option) => (
                   <button
-                    className="dashboard-home__lookup-result"
-                    key={row.id}
+                    key={option.key}
                     type="button"
-                    onClick={() => onNavigate("stock-by-location")}
+                    onClick={() => setTrendPeriod(option.key)}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                      option.key === trendPeriod
+                        ? "bg-white text-[#143569] shadow-[0_8px_18px_rgba(15,23,42,0.08)]"
+                        : "text-slate-500 hover:text-slate-700"
+                    }`}
                   >
-                    <div className="dashboard-home__lookup-result-copy">
-                      <strong>{row.sku}</strong>
-                      <span>{row.description}</span>
-                      <small>{row.customerName} · {row.locationName}{row.storageSection ? ` / ${row.storageSection}` : ""}</small>
-                    </div>
-                    <div className="dashboard-home__lookup-result-metric">
-                      <strong>{formatNumber(row.availableQty)}</strong>
-                      <span>{t("availableQty")}</span>
-                      {row.containerNo ? <small>{row.containerNo}</small> : null}
-                    </div>
+                    {option.label}
                   </button>
                 ))}
               </div>
-            ) : null}
-          </div>
-        </section>
+            </div>
 
-        <section className="workbook-panel dashboard-home__panel">
-          <WorkspacePanelHeader
-            title={t("dashboardQuickActionsTitle")}
-            description={t("dashboardQuickActionsDesc")}
-            notices={isViewer ? [t("readOnlyModeNotice")] : []}
-          />
-          <div className="dashboard-home__action-grid">
-            {quickActions.map((action) => (
-              <button
-                className="dashboard-home__action-card"
-                key={action.key}
-                type="button"
-                onClick={() => onNavigate(action.page)}
-                disabled={isViewer}
-              >
-                <span className="dashboard-home__action-icon" aria-hidden="true">{action.icon}</span>
-                <strong>{action.label}</strong>
-                <span>{action.description}</span>
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <section className="workbook-panel dashboard-home__panel">
-          <WorkspacePanelHeader
-            title={t("dashboardQueuesTitle")}
-            description={t("dashboardQueuesDesc")}
-          />
-          <div className="dashboard-home__metric-grid">
-            {queueMetrics.map((metric) => (
-              <button className="dashboard-home__metric-card" key={metric.key} type="button" onClick={() => onNavigate(metric.page)}>
-                <div>
-                  <strong>{formatNumber(metric.count)}</strong>
-                  <span>{metric.label}</span>
+            <div className="mt-6 space-y-5">
+              <div className="flex flex-wrap items-center gap-3">
+                <TrendLegend
+                  colorClass="bg-emerald-500"
+                  label={t("inbound")}
+                  value={numberFormatter.format(throughputTotals.inbound)}
+                />
+                <TrendLegend
+                  colorClass="bg-[#143569]"
+                  label={t("outbound")}
+                  value={numberFormatter.format(throughputTotals.outbound)}
+                />
+                <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">
+                  <TimelineOutlinedIcon sx={{ fontSize: 15 }} />
+                  {t("dashboardFlowLineMeta")}
                 </div>
-                <small>{t("dashboardOpenWorkspace")}</small>
-              </button>
-            ))}
-          </div>
-        </section>
+              </div>
 
-        <section className="workbook-panel dashboard-home__panel">
-          <WorkspacePanelHeader
-            title={t("dashboardExceptionsTitle")}
-            description={t("dashboardExceptionsDesc")}
-          />
-          <div className="dashboard-home__metric-grid">
-            {exceptionMetrics.map((metric) => (
-              <button className="dashboard-home__metric-card dashboard-home__metric-card--alert" key={metric.key} type="button" onClick={() => onNavigate(metric.page)}>
-                <div>
-                  <strong>{formatNumber(metric.count)}</strong>
-                  <span>{metric.label}</span>
+              <ThroughputLineChart points={throughputPoints} emptyLabel={t("dashboardFlowEmpty")} />
+            </div>
+          </section>
+
+          <section className="rounded-[24px] border border-slate-200/80 bg-[#eef3fb] p-6 shadow-[0_16px_34px_rgba(15,23,42,0.04)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="font-headline text-xl font-extrabold tracking-tight text-[#0d2d63]">
+                  {t("recentActivity")}
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">{t("dashboardRecentActivityDesc")}</p>
+              </div>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              {recentActivity.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-white/70 px-5 py-8 text-center text-sm text-slate-500">
+                  {isLoading ? t("loadingRecords") : t("dashboardNoRecentActivity")}
                 </div>
-                <small>{t("dashboardReviewQueue")}</small>
-              </button>
-            ))}
-          </div>
-        </section>
+              ) : recentActivity.map((entry) => (
+                <div key={entry.id} className="flex gap-4">
+                  <div className="flex w-5 flex-col items-center">
+                    <span className={`mt-1 h-2.5 w-2.5 rounded-full ${toneDotClass(entry.tone)}`} />
+                    <span className="mt-1 h-full w-px bg-slate-200" />
+                  </div>
+                  <div className="space-y-1 pb-1">
+                    <p className="text-base font-bold text-[#0d2d63]">{entry.title}</p>
+                    <p className="text-sm leading-6 text-slate-600">{entry.description}</p>
+                    <p className="text-xs font-medium text-slate-400">{entry.timeLabel}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
 
-        <section className="workbook-panel dashboard-home__panel">
-          <WorkspacePanelHeader
-            title={t("dashboardRecentReceiptsTitle")}
-            description={t("dashboardRecentReceiptsDesc")}
-            actions={
-              <button className="button button--ghost button--small" type="button" onClick={() => onNavigate("inbound-management")}>
-                {t("dashboardOpenWorkspace")}
-              </button>
-            }
-          />
-          <RecentDocumentList
-            rows={recentInboundRows}
-            emptyTitle={t("dashboardNoRecentReceiptsTitle")}
-            emptyDescription={t("dashboardNoRecentReceiptsDesc")}
+            <button
+              type="button"
+              onClick={() => onNavigate("all-activity")}
+              className="mt-6 inline-flex w-full items-center justify-center rounded-xl bg-white px-4 py-3 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50"
+            >
+              {t("dashboardViewFullLogs")}
+            </button>
+          </section>
+        </div>
+
+        <ProcessingCalendarCard
+          weekStart={calendarWeek}
+          days={calendarDays}
+          onPreviousWeek={() => setCalendarWeek((current) => shiftUtcDay(current, -7))}
+          onNextWeek={() => setCalendarWeek((current) => shiftUtcDay(current, 7))}
+          onToday={() => setCalendarWeek(startOfUtcWeek(new Date()))}
+        />
+
+        <div className="grid gap-5 2xl:grid-cols-2">
+          <TrackerTableCard
+            title={t("dashboardInboundTrackerTitle")}
+            description={t("dashboardInboundTrackerDesc")}
+            rows={inboundTrackerRows}
+            emptyLabel={t("dashboardTrackerEmpty")}
             isLoading={isLoading}
             onOpen={() => onNavigate("inbound-management")}
           />
-        </section>
-
-        <section className="workbook-panel dashboard-home__panel">
-          <WorkspacePanelHeader
-            title={t("dashboardRecentShipmentsTitle")}
-            description={t("dashboardRecentShipmentsDesc")}
-            actions={
-              <button className="button button--ghost button--small" type="button" onClick={() => onNavigate("outbound-management")}>
-                {t("dashboardOpenWorkspace")}
-              </button>
-            }
-          />
-          <RecentDocumentList
-            rows={recentOutboundRows}
-            emptyTitle={t("dashboardNoRecentShipmentsTitle")}
-            emptyDescription={t("dashboardNoRecentShipmentsDesc")}
+          <TrackerTableCard
+            title={t("dashboardOutboundTrackerTitle")}
+            description={t("dashboardOutboundTrackerDesc")}
+            rows={outboundTrackerRows}
+            emptyLabel={t("dashboardTrackerEmpty")}
             isLoading={isLoading}
             onOpen={() => onNavigate("outbound-management")}
           />
-        </section>
+        </div>
       </div>
     </main>
   );
 }
 
-function RecentDocumentList({
+function DashboardSummaryCard({ card }: { card: SummaryCard }) {
+  return (
+    <article className="rounded-[20px] border border-slate-200/80 bg-white p-5 shadow-[0_12px_28px_rgba(15,23,42,0.04)]">
+      <div className="flex items-start justify-between gap-4">
+        <div className={`flex h-12 w-12 items-center justify-center rounded-xl ${summaryToneIconClass(card.tone)}`}>
+          <span className="text-[#143569]">{card.icon}</span>
+        </div>
+        <span className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold ${summaryToneBadgeClass(card.tone)}`}>
+          {card.label}
+        </span>
+      </div>
+      <div className="mt-5">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">{card.label}</p>
+        <h3 className="mt-2.5 font-headline text-3xl font-extrabold tracking-tight text-[#0d2d63]">{card.value}</h3>
+        <p className="mt-1.5 text-sm text-slate-500">{card.meta}</p>
+      </div>
+    </article>
+  );
+}
+
+function TrendLegend({
+  colorClass,
+  label,
+  value
+}: {
+  colorClass: string;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600">
+      <span className={`h-2.5 w-2.5 rounded-full ${colorClass}`} />
+      <span>{label}</span>
+      <span className="text-slate-400">/</span>
+      <span className="font-bold text-[#143569]">{value}</span>
+    </div>
+  );
+}
+
+function ThroughputLineChart({
+  points,
+  emptyLabel
+}: {
+  points: TrendPoint[];
+  emptyLabel: string;
+}) {
+  const chartWidth = 760;
+  const chartHeight = 220;
+  const topPadding = 12;
+  const bottomPadding = 28;
+  const leftPadding = 8;
+  const rightPadding = 8;
+  const availableWidth = chartWidth - leftPadding - rightPadding;
+  const availableHeight = chartHeight - topPadding - bottomPadding;
+  const maxValue = Math.max(...points.map((point) => Math.max(point.inbound, point.outbound)), 0);
+  const labelStep = points.length > 14 ? Math.ceil(points.length / 6) : 1;
+
+  if (!points.length || maxValue === 0) {
+    return (
+      <div className="flex h-[280px] items-center justify-center rounded-[24px] border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
+        {emptyLabel}
+      </div>
+    );
+  }
+
+  const toCoordinates = (selector: (point: TrendPoint) => number) => points.map((point, index) => {
+    const x = points.length === 1 ? chartWidth / 2 : leftPadding + (availableWidth / (points.length - 1)) * index;
+    const y = topPadding + availableHeight - (selector(point) / maxValue) * availableHeight;
+    return { x, y, point, index };
+  });
+
+  const inboundCoordinates = toCoordinates((point) => point.inbound);
+  const outboundCoordinates = toCoordinates((point) => point.outbound);
+
+  const toPath = (coordinates: Array<{ x: number; y: number }>) => coordinates
+    .map((coordinate, index) => `${index === 0 ? "M" : "L"} ${coordinate.x} ${coordinate.y}`)
+    .join(" ");
+
+  return (
+    <div className="rounded-[24px] bg-slate-50/80 px-4 py-4">
+      <svg
+        viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+        className="h-[280px] w-full overflow-visible"
+        role="img"
+        aria-label="Warehouse throughput trend"
+      >
+        {[0.25, 0.5, 0.75, 1].map((ratio) => {
+          const y = topPadding + availableHeight - availableHeight * ratio;
+          return (
+            <line
+              key={ratio}
+              x1={leftPadding}
+              x2={chartWidth - rightPadding}
+              y1={y}
+              y2={y}
+              stroke="#d8e0ec"
+              strokeDasharray="4 6"
+            />
+          );
+        })}
+
+        <path d={toPath(inboundCoordinates)} fill="none" stroke="#10b981" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3.5" />
+        <path d={toPath(outboundCoordinates)} fill="none" stroke="#143569" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3.5" />
+
+        {inboundCoordinates.map(({ x, y, point }) => (
+          <g key={`inbound-${point.key}`}>
+            <circle cx={x} cy={y} r="5" fill="#10b981" stroke="#ffffff" strokeWidth="2.5" />
+            <title>{`${point.label} / Inbound: ${point.inbound}`}</title>
+          </g>
+        ))}
+
+        {outboundCoordinates.map(({ x, y, point }) => (
+          <g key={`outbound-${point.key}`}>
+            <circle cx={x} cy={y} r="5" fill="#143569" stroke="#ffffff" strokeWidth="2.5" />
+            <title>{`${point.label} / Outbound: ${point.outbound}`}</title>
+          </g>
+        ))}
+
+        {points.map((point, index) => {
+          const x = points.length === 1 ? chartWidth / 2 : leftPadding + (availableWidth / (points.length - 1)) * index;
+          const showLabel = index === 0 || index === points.length - 1 || index % labelStep === 0;
+          if (!showLabel) {
+            return null;
+          }
+
+          return (
+            <text
+              key={`label-${point.key}`}
+              x={x}
+              y={chartHeight - 4}
+              textAnchor="middle"
+              fill="#64748b"
+              fontSize="11"
+              fontWeight="600"
+            >
+              {point.shortLabel}
+            </text>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function ProcessingCalendarCard({
+  weekStart,
+  days,
+  onPreviousWeek,
+  onNextWeek,
+  onToday
+}: {
+  weekStart: Date;
+  days: CalendarDay[];
+  onPreviousWeek: () => void;
+  onNextWeek: () => void;
+  onToday: () => void;
+}) {
+  const { t } = useI18n();
+  const weekEnd = shiftUtcDay(weekStart, 6);
+  const rangeFormatter = new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC"
+  });
+  const weekLabel = `${rangeFormatter.format(weekStart)} - ${rangeFormatter.format(weekEnd)}`;
+  const weekdayLabels = useMemo(() => {
+    const start = new Date(Date.UTC(2026, 2, 29));
+    return Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate() + index));
+      return date.toLocaleString(undefined, { weekday: "short", timeZone: "UTC" }).toUpperCase();
+    });
+  }, []);
+  const inboundTotal = days
+    .filter((day) => day.inCurrentMonth)
+    .reduce((sum, day) => sum + day.inboundCount, 0);
+  const outboundTotal = days
+    .filter((day) => day.inCurrentMonth)
+    .reduce((sum, day) => sum + day.outboundCount, 0);
+
+  return (
+    <section className="rounded-[24px] border border-slate-200/80 bg-white p-6 shadow-[0_16px_34px_rgba(15,23,42,0.05)]">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <h2 className="font-headline text-xl font-extrabold tracking-tight text-[#0d2d63]">
+            {t("dashboardCalendarTitle")}
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">{t("dashboardCalendarDesc")}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <TrendLegend colorClass="bg-emerald-500" label={t("inbound")} value={numberFormatter.format(inboundTotal)} />
+          <TrendLegend colorClass="bg-[#143569]" label={t("outbound")} value={numberFormatter.format(outboundTotal)} />
+        </div>
+      </div>
+
+      <div className="mt-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onPreviousWeek}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600 transition hover:bg-slate-200"
+            aria-label={t("previousWeek")}
+          >
+            <ChevronLeftRoundedIcon fontSize="small" />
+          </button>
+          <div className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-semibold text-[#143569]">
+            {weekLabel}
+          </div>
+          <button
+            type="button"
+            onClick={onNextWeek}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600 transition hover:bg-slate-200"
+            aria-label={t("nextWeek")}
+          >
+            <ChevronRightRoundedIcon fontSize="small" />
+          </button>
+        </div>
+
+        <button
+          type="button"
+          onClick={onToday}
+          className="inline-flex items-center justify-center rounded-xl bg-white px-4 py-2 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50"
+        >
+          {t("today")}
+        </button>
+      </div>
+
+      <div className="mt-5 grid grid-cols-7 gap-2">
+        {weekdayLabels.map((label) => (
+          <div key={label} className="px-2 py-1 text-center text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400">
+            {label}
+          </div>
+        ))}
+
+        {days.map((day) => (
+          <div
+            key={day.key}
+            className={`min-h-[112px] rounded-[18px] border px-3 py-3 transition ${
+              day.isToday
+                ? "border-[#143569]/30 bg-[#143569]/[0.03] shadow-[0_8px_18px_rgba(20,53,105,0.06)]"
+                : "border-slate-200/80 bg-slate-50/80"
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className={`text-sm font-bold ${day.isToday ? "text-[#143569]" : "text-slate-500"}`}>{day.dayNumber}</span>
+              {day.isToday ? (
+                <span className="rounded-full bg-[#143569] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white">
+                  {t("today")}
+                </span>
+              ) : null}
+            </div>
+
+            <div className="mt-4 space-y-2">
+              <div className={`rounded-xl px-2.5 py-2 ${day.inboundCount > 0 ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100" : "bg-white/80 text-slate-400 ring-1 ring-slate-100"}`}>
+                <div className="text-[10px] font-bold uppercase tracking-[0.2em]">{t("inbound")}</div>
+                <div className="mt-1 text-base font-extrabold">{numberFormatter.format(day.inboundCount)}</div>
+              </div>
+              <div className={`rounded-xl px-2.5 py-2 ${day.outboundCount > 0 ? "bg-blue-50 text-[#143569] ring-1 ring-blue-100" : "bg-white/80 text-slate-400 ring-1 ring-slate-100"}`}>
+                <div className="text-[10px] font-bold uppercase tracking-[0.2em]">{t("outbound")}</div>
+                <div className="mt-1 text-base font-extrabold">{numberFormatter.format(day.outboundCount)}</div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function TrackerTableCard({
+  title,
+  description,
   rows,
-  emptyTitle,
-  emptyDescription,
+  emptyLabel,
   isLoading,
   onOpen
 }: {
-  rows: RecentDocument[];
-  emptyTitle: string;
-  emptyDescription: string;
+  title: string;
+  description: string;
+  rows: TrackerRow[];
+  emptyLabel: string;
   isLoading: boolean;
   onOpen: () => void;
 }) {
   const { t } = useI18n();
 
-  if (isLoading) {
-    return <WorkspaceTableLoadingState title={t("loadingRecords")} description={t("dashboardRecentDocumentsLoading")} />;
-  }
-
-  if (rows.length === 0) {
-    return <WorkspaceTableEmptyState title={emptyTitle} description={emptyDescription} />;
-  }
-
   return (
-    <div className="dashboard-home__document-list">
-      {rows.map((row) => (
-        <button className="dashboard-home__document-row" key={row.id} type="button" onClick={onOpen}>
-          <div className="dashboard-home__document-copy">
-            <strong>{row.code}</strong>
-            <span>{row.customerName}</span>
-          </div>
-          <div className="dashboard-home__document-meta">
-            <span>{row.dateLabel}</span>
-            <small>{row.status}</small>
-          </div>
+    <section className="overflow-hidden rounded-[24px] border border-slate-200/80 bg-white shadow-[0_16px_34px_rgba(15,23,42,0.05)]">
+      <div className="flex items-start justify-between gap-4 border-b border-slate-200/80 px-6 py-5">
+        <div>
+          <h2 className="font-headline text-xl font-extrabold tracking-tight text-[#0d2d63]">{title}</h2>
+          <p className="mt-1 text-sm text-slate-500">{description}</p>
+        </div>
+        <button
+          type="button"
+          onClick={onOpen}
+          className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-semibold text-[#143569] transition hover:bg-slate-200"
+        >
+          {t("dashboardOpenWorkspace")}
         </button>
-      ))}
-    </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="min-w-full border-collapse">
+          <thead className="bg-slate-100/80">
+            <tr>
+              <th className="px-6 py-3.5 text-left text-[11px] font-bold uppercase tracking-[0.24em] text-slate-500">{t("dashboardTrackerCode")}</th>
+              <th className="px-6 py-3.5 text-left text-[11px] font-bold uppercase tracking-[0.24em] text-slate-500">{t("dashboardTrackerCustomer")}</th>
+              <th className="px-6 py-3.5 text-left text-[11px] font-bold uppercase tracking-[0.24em] text-slate-500">{t("dashboardTrackerWarehouse")}</th>
+              <th className="px-6 py-3.5 text-left text-[11px] font-bold uppercase tracking-[0.24em] text-slate-500">{t("trackingStatus")}</th>
+              <th className="px-6 py-3.5 text-left text-[11px] font-bold uppercase tracking-[0.24em] text-slate-500">{t("dashboardTrackerProgress")}</th>
+              <th className="px-6 py-3.5 text-left text-[11px] font-bold uppercase tracking-[0.24em] text-slate-500">{t("dashboardTrackerDate")}</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-200/80 bg-white">
+            {isLoading ? (
+              <tr>
+                <td className="px-6 py-8 text-sm text-slate-500" colSpan={6}>{t("loadingRecords")}</td>
+              </tr>
+            ) : rows.length === 0 ? (
+              <tr>
+                <td className="px-6 py-8 text-sm text-slate-500" colSpan={6}>{emptyLabel}</td>
+              </tr>
+            ) : rows.map((row) => (
+              <tr key={row.id} className="transition hover:bg-slate-50/80">
+                <td className="px-6 py-4 text-sm font-bold text-[#143569]">{row.code}</td>
+                <td className="px-6 py-4 text-sm font-medium text-slate-700">{row.counterpart}</td>
+                <td className="px-6 py-4 text-sm text-slate-500">{row.warehouse}</td>
+                <td className="px-6 py-4">
+                  <span className={`inline-flex rounded-full px-3 py-1 text-[11px] font-semibold ${badgeToneClass(row.badgeTone)}`}>
+                    {row.trackingLabel}
+                  </span>
+                </td>
+                <td className="px-6 py-4">
+                  <div className="space-y-2">
+                    <div className="h-2.5 w-32 overflow-hidden rounded-full bg-slate-200">
+                      <div
+                        className={`h-full rounded-full ${progressToneClass(row.badgeTone)}`}
+                        style={{ width: `${row.progress}%` }}
+                      />
+                    </div>
+                    <div className="text-xs font-semibold text-slate-500">{row.progress}%</div>
+                  </div>
+                </td>
+                <td className="px-6 py-4 text-sm text-slate-500">{row.dateLabel}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
-function countOpenStatuses(statuses: string[]) {
-  return statuses.filter((status) => {
-    const normalized = normalizeStatus(status);
-    return normalized !== "confirmed" && normalized !== "cancelled" && normalized !== "closed";
-  }).length;
+function buildThroughputPoints(
+  inboundDocuments: InboundDocument[],
+  outboundDocuments: OutboundDocument[],
+  period: TrendPeriod
+): TrendPoint[] {
+  const today = startOfUtcDay(new Date());
+  const buckets = new Map<string, TrendPoint>();
+
+  if (period === "year") {
+    for (let index = 11; index >= 0; index -= 1) {
+      const date = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - index, 1));
+      const key = monthBucketKey(date);
+      buckets.set(key, {
+        key,
+        label: date.toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" }),
+        shortLabel: date.toLocaleString("en-US", { month: "short", timeZone: "UTC" }).toUpperCase(),
+        total: 0,
+        inbound: 0,
+        outbound: 0
+      });
+    }
+  } else {
+    const dayCount = period === "week" ? 7 : 30;
+    for (let index = dayCount - 1; index >= 0; index -= 1) {
+      const date = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - index));
+      const key = dayBucketKey(date);
+      buckets.set(key, {
+        key,
+        label: date.toLocaleString("en-US", {
+          weekday: period === "week" ? "long" : undefined,
+          month: "short",
+          day: "numeric",
+          timeZone: "UTC"
+        }),
+        shortLabel: period === "week"
+          ? date.toLocaleString("en-US", { weekday: "short", timeZone: "UTC" }).toUpperCase()
+          : date.toLocaleString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).toUpperCase(),
+        total: 0,
+        inbound: 0,
+        outbound: 0
+      });
+    }
+  }
+
+  for (const document of inboundDocuments) {
+    const date = new Date(document.deliveryDate || document.createdAt);
+    if (Number.isNaN(date.getTime())) {
+      continue;
+    }
+    const bucket = buckets.get(period === "year" ? monthBucketKey(date) : dayBucketKey(date));
+    if (!bucket) {
+      continue;
+    }
+    const quantity = Math.max(document.totalReceivedQty, document.totalExpectedQty, 0);
+    bucket.inbound += quantity;
+    bucket.total += quantity;
+  }
+
+  for (const document of outboundDocuments) {
+    const date = new Date(document.outDate || document.createdAt);
+    if (Number.isNaN(date.getTime())) {
+      continue;
+    }
+    const bucket = buckets.get(period === "year" ? monthBucketKey(date) : dayBucketKey(date));
+    if (!bucket) {
+      continue;
+    }
+    const quantity = Math.max(document.totalQty, 0);
+    bucket.outbound += quantity;
+    bucket.total += quantity;
+  }
+
+  return Array.from(buckets.values());
 }
 
-function normalizeStatus(status: string) {
-  return status.trim().toLowerCase();
+function startOfUtcDay(date: Date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 }
 
-function getDocumentTimestamp(value: string) {
+function dayBucketKey(date: Date) {
+  return `${date.getUTCFullYear()}-${date.getUTCMonth()}-${date.getUTCDate()}`;
+}
+
+function monthBucketKey(date: Date) {
+  return `${date.getUTCFullYear()}-${date.getUTCMonth()}`;
+}
+
+function startOfUtcMonth(date: Date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+}
+
+function shiftUtcMonth(date: Date, delta: number) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + delta, 1));
+}
+
+function startOfUtcWeek(date: Date) {
+  const day = startOfUtcDay(date);
+  return new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate() - day.getUTCDay()));
+}
+
+function shiftUtcDay(date: Date, delta: number) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + delta));
+}
+
+function buildProcessingCalendarDays(
+  inboundDocuments: InboundDocument[],
+  outboundDocuments: OutboundDocument[],
+  anchorWeek: Date
+): CalendarDay[] {
+  const weekStart = startOfUtcWeek(anchorWeek);
+  const inboundCounts = new Map<string, number>();
+  const outboundCounts = new Map<string, number>();
+  const todayKey = dayBucketKey(startOfUtcDay(new Date()));
+
+  for (const document of inboundDocuments) {
+    if (!isDocumentPending(document.status)) {
+      continue;
+    }
+    const date = new Date(document.deliveryDate || document.createdAt);
+    if (Number.isNaN(date.getTime())) {
+      continue;
+    }
+    const key = dayBucketKey(date);
+    inboundCounts.set(key, (inboundCounts.get(key) ?? 0) + 1);
+  }
+
+  for (const document of outboundDocuments) {
+    if (!isDocumentPending(document.status)) {
+      continue;
+    }
+    const date = new Date(document.outDate || document.createdAt);
+    if (Number.isNaN(date.getTime())) {
+      continue;
+    }
+    const key = dayBucketKey(date);
+    outboundCounts.set(key, (outboundCounts.get(key) ?? 0) + 1);
+  }
+
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = shiftUtcDay(weekStart, index);
+    const key = dayBucketKey(date);
+    return {
+      key,
+      date,
+      dayNumber: date.getUTCDate(),
+      inCurrentMonth: true,
+      isToday: key === todayKey,
+      inboundCount: inboundCounts.get(key) ?? 0,
+      outboundCount: outboundCounts.get(key) ?? 0
+    };
+  });
+}
+
+function isDocumentPending(status: string) {
+  const normalizedStatus = normalizeDocumentStatus(status);
+  return normalizedStatus !== "CONFIRMED" && normalizedStatus !== "CANCELLED" && normalizedStatus !== "ARCHIVED";
+}
+
+function buildRecentActivityEntries(
+  inboundDocuments: InboundDocument[],
+  outboundDocuments: OutboundDocument[],
+  adjustments: InventoryAdjustment[],
+  transfers: InventoryTransfer[],
+  cycleCounts: CycleCount[],
+  t: (key: string, params?: Record<string, string | number>) => string
+) {
+  const entries: Array<ActivityEntry & { timestamp: number }> = [];
+
+  for (const document of inboundDocuments) {
+    const timestamp = getDocumentTime(document.updatedAt || document.createdAt);
+    entries.push({
+      id: `inbound-${document.id}`,
+      title: `${t("inbound")} · ${formatInboundTrackingStatusLabel(document.trackingStatus, document.status, t)}`,
+      description: [document.containerNo || `RCV-${document.id}`, document.customerName || "-", document.locationName || "-"].filter(Boolean).join(" / "),
+      timeLabel: formatRelativeTime(timestamp),
+      tone: toneFromProgress(inboundTrackingProgress(document.trackingStatus, document.status)),
+      timestamp
+    });
+  }
+
+  for (const document of outboundDocuments) {
+    const timestamp = getDocumentTime(document.updatedAt || document.createdAt);
+    entries.push({
+      id: `outbound-${document.id}`,
+      title: `${t("outbound")} · ${formatOutboundTrackingStatusLabel(document.trackingStatus, document.status, t)}`,
+      description: [document.packingListNo || `SHP-${document.id}`, document.shipToName || document.customerName || "-", document.storages || "-"].filter(Boolean).join(" / "),
+      timeLabel: formatRelativeTime(timestamp),
+      tone: toneFromProgress(outboundTrackingProgress(document.trackingStatus, document.status)),
+      timestamp
+    });
+  }
+
+  for (const adjustment of adjustments) {
+    const timestamp = getDocumentTime(adjustment.updatedAt || adjustment.createdAt);
+    entries.push({
+      id: `adjustment-${adjustment.id}`,
+      title: t("adjustments"),
+      description: `${adjustment.adjustmentNo || `ADJ-${adjustment.id}`} / ${adjustment.reasonCode || "-"}`,
+      timeLabel: formatRelativeTime(timestamp),
+      tone: "amber",
+      timestamp
+    });
+  }
+
+  for (const transfer of transfers) {
+    const timestamp = getDocumentTime(transfer.updatedAt || transfer.createdAt);
+    entries.push({
+      id: `transfer-${transfer.id}`,
+      title: t("transfers"),
+      description: `${transfer.transferNo || `TRF-${transfer.id}`} / ${transfer.notes || t("dashboardRecentTransferFallback")}`,
+      timeLabel: formatRelativeTime(timestamp),
+      tone: "blue",
+      timestamp
+    });
+  }
+
+  for (const cycleCount of cycleCounts) {
+    const timestamp = getDocumentTime(cycleCount.updatedAt || cycleCount.createdAt);
+    entries.push({
+      id: `cycle-${cycleCount.id}`,
+      title: t("cycleCounts"),
+      description: `${cycleCount.countNo || `CNT-${cycleCount.id}`} / ${cycleCount.notes || t("dashboardRecentCountFallback")}`,
+      timeLabel: formatRelativeTime(timestamp),
+      tone: "slate",
+      timestamp
+    });
+  }
+
+  return entries
+    .sort((left, right) => right.timestamp - left.timestamp)
+    .slice(0, 5)
+    .map(({ timestamp: _timestamp, ...entry }) => entry);
+}
+
+function normalizeDocumentStatus(status: string) {
+  return (status || "").trim().toUpperCase();
+}
+
+function normalizeInboundTrackingStatus(trackingStatus: string, documentStatus: string) {
+  if (normalizeDocumentStatus(documentStatus) === "CONFIRMED") {
+    return "RECEIVED";
+  }
+  const normalizedTrackingStatus = (trackingStatus || "").trim().toUpperCase();
+  if (normalizedTrackingStatus === "ARRIVED" || normalizedTrackingStatus === "RECEIVING" || normalizedTrackingStatus === "RECEIVED") {
+    return normalizedTrackingStatus;
+  }
+  return "SCHEDULED";
+}
+
+function normalizeOutboundTrackingStatus(trackingStatus: string, documentStatus: string) {
+  if (normalizeDocumentStatus(documentStatus) === "CONFIRMED") {
+    return "SHIPPED";
+  }
+  const normalizedTrackingStatus = (trackingStatus || "").trim().toUpperCase();
+  if (normalizedTrackingStatus === "PICKING" || normalizedTrackingStatus === "PACKED" || normalizedTrackingStatus === "SHIPPED") {
+    return normalizedTrackingStatus;
+  }
+  return "SCHEDULED";
+}
+
+function inboundTrackingProgress(trackingStatus: string, documentStatus: string) {
+  switch (normalizeInboundTrackingStatus(trackingStatus, documentStatus)) {
+    case "ARRIVED":
+      return 50;
+    case "RECEIVING":
+      return 75;
+    case "RECEIVED":
+      return 100;
+    default:
+      return 25;
+  }
+}
+
+function outboundTrackingProgress(trackingStatus: string, documentStatus: string) {
+  switch (normalizeOutboundTrackingStatus(trackingStatus, documentStatus)) {
+    case "PICKING":
+      return 55;
+    case "PACKED":
+      return 80;
+    case "SHIPPED":
+      return 100;
+    default:
+      return 25;
+  }
+}
+
+function formatInboundTrackingStatusLabel(trackingStatus: string, documentStatus: string, t: (key: string) => string) {
+  switch (normalizeInboundTrackingStatus(trackingStatus, documentStatus)) {
+    case "ARRIVED":
+      return t("arrived");
+    case "RECEIVING":
+      return t("receiving");
+    case "RECEIVED":
+      return t("receivedTracking");
+    default:
+      return t("scheduled");
+  }
+}
+
+function formatOutboundTrackingStatusLabel(trackingStatus: string, documentStatus: string, t: (key: string) => string) {
+  switch (normalizeOutboundTrackingStatus(trackingStatus, documentStatus)) {
+    case "PICKING":
+      return t("picking");
+    case "PACKED":
+      return t("packed");
+    case "SHIPPED":
+      return t("shipped");
+    default:
+      return t("scheduled");
+  }
+}
+
+function getDocumentTime(value: string) {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
 }
 
-function formatDate(value: string) {
+function formatDashboardDate(value: string) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
     return value;
   }
 
   return new Intl.DateTimeFormat("en-US", {
-    year: "numeric",
     month: "short",
     day: "numeric"
   }).format(parsed);
 }
 
-function displayDescription(item: Pick<Item, "description" | "name">) {
-  return item.description || item.name;
+function formatRelativeTime(timestamp: number) {
+  if (!timestamp) {
+    return "-";
+  }
+
+  const diffMs = Date.now() - timestamp;
+  const diffMinutes = Math.max(1, Math.round(diffMs / 60000));
+  if (diffMinutes < 60) {
+    return `${diffMinutes}m ago`;
+  }
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) {
+    return `${diffHours}h ago`;
+  }
+  const diffDays = Math.round(diffHours / 24);
+  return `${diffDays}d ago`;
 }
 
-function formatNumber(value: number) {
-  return new Intl.NumberFormat("en-US").format(value);
+function summaryToneIconClass(tone: SummaryCard["tone"]) {
+  switch (tone) {
+    case "emerald":
+      return "bg-emerald-100 text-emerald-700";
+    case "amber":
+      return "bg-amber-100 text-amber-700";
+    case "red":
+      return "bg-rose-100 text-rose-700";
+    default:
+      return "bg-blue-100 text-[#143569]";
+  }
+}
+
+function summaryToneBadgeClass(tone: SummaryCard["tone"]) {
+  switch (tone) {
+    case "emerald":
+      return "bg-emerald-100 text-emerald-700";
+    case "amber":
+      return "bg-amber-100 text-amber-700";
+    case "red":
+      return "bg-rose-100 text-rose-700";
+    default:
+      return "bg-slate-100 text-slate-600";
+  }
+}
+
+function badgeToneClass(tone: ActivityEntry["tone"]) {
+  switch (tone) {
+    case "emerald":
+      return "bg-emerald-100 text-emerald-700";
+    case "amber":
+      return "bg-amber-100 text-amber-700";
+    case "red":
+      return "bg-rose-100 text-rose-700";
+    case "blue":
+      return "bg-blue-100 text-[#143569]";
+    default:
+      return "bg-slate-100 text-slate-600";
+  }
+}
+
+function progressToneClass(tone: ActivityEntry["tone"]) {
+  switch (tone) {
+    case "emerald":
+      return "bg-emerald-500";
+    case "amber":
+      return "bg-amber-500";
+    case "red":
+      return "bg-rose-500";
+    case "blue":
+      return "bg-[#143569]";
+    default:
+      return "bg-slate-500";
+  }
+}
+
+function toneDotClass(tone: ActivityEntry["tone"]) {
+  switch (tone) {
+    case "emerald":
+      return "bg-emerald-600";
+    case "amber":
+      return "bg-amber-500";
+    case "red":
+      return "bg-rose-500";
+    case "blue":
+      return "bg-[#143569]";
+    default:
+      return "bg-slate-400";
+  }
+}
+
+function toneFromProgress(progress: number): ActivityEntry["tone"] {
+  if (progress >= 100) {
+    return "emerald";
+  }
+  if (progress >= 80) {
+    return "blue";
+  }
+  if (progress >= 50) {
+    return "amber";
+  }
+  return "slate";
+}
+
+function trackingTone(progress: number): ActivityEntry["tone"] {
+  if (progress >= 100) {
+    return "emerald";
+  }
+  if (progress >= 75) {
+    return "blue";
+  }
+  if (progress >= 50) {
+    return "amber";
+  }
+  return "slate";
 }

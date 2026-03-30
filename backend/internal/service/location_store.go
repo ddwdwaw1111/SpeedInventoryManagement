@@ -23,7 +23,6 @@ func (s *Store) ListLocations(ctx context.Context) ([]Location, error) {
 			id,
 			name,
 			COALESCE(address, '') AS address,
-			zone,
 			COALESCE(description, '') AS description,
 			capacity,
 			section_count,
@@ -31,7 +30,7 @@ func (s *Store) ListLocations(ctx context.Context) ([]Location, error) {
 			COALESCE(layout_json, '') AS layout_json,
 			created_at
 		FROM storage_locations
-		ORDER BY zone ASC, name ASC
+		ORDER BY name ASC
 	`); err != nil {
 		return nil, fmt.Errorf("load locations: %w", err)
 	}
@@ -59,12 +58,11 @@ func (s *Store) CreateLocation(ctx context.Context, input CreateLocationInput) (
 	}
 
 	result, err := s.db.ExecContext(ctx, `
-		INSERT INTO storage_locations (name, address, zone, description, capacity, section_count, section_names_json, layout_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO storage_locations (name, address, description, capacity, section_count, section_names_json, layout_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`,
 		input.Name,
 		nullableString(input.Address),
-		input.Zone,
 		nullableString(input.Description),
 		input.Capacity,
 		len(input.SectionNames),
@@ -102,7 +100,6 @@ func (s *Store) UpdateLocation(ctx context.Context, locationID int64, input Crea
 		SET
 			name = ?,
 			address = ?,
-			zone = ?,
 			description = ?,
 			capacity = ?,
 			section_count = ?,
@@ -112,7 +109,6 @@ func (s *Store) UpdateLocation(ctx context.Context, locationID int64, input Crea
 	`,
 		input.Name,
 		nullableString(input.Address),
-		input.Zone,
 		nullableString(input.Description),
 		input.Capacity,
 		len(input.SectionNames),
@@ -159,7 +155,6 @@ func (s *Store) getLocation(ctx context.Context, locationID int64) (Location, er
 			id,
 			name,
 			COALESCE(address, '') AS address,
-			zone,
 			COALESCE(description, '') AS description,
 			capacity,
 			section_count,
@@ -181,7 +176,6 @@ func (s *Store) getLocation(ctx context.Context, locationID int64) (Location, er
 func sanitizeLocationInput(input CreateLocationInput) CreateLocationInput {
 	input.Name = strings.TrimSpace(input.Name)
 	input.Address = strings.TrimSpace(input.Address)
-	input.Zone = strings.TrimSpace(input.Zone)
 	input.Description = strings.TrimSpace(input.Description)
 	input.LayoutBlocks = sanitizeLayoutBlocks(input.LayoutBlocks)
 	if len(input.LayoutBlocks) == 0 {
@@ -197,8 +191,6 @@ func validateLocationInput(input CreateLocationInput) error {
 		return fmt.Errorf("%w: storage name is required", ErrInvalidInput)
 	case input.Address == "":
 		return fmt.Errorf("%w: storage address is required", ErrInvalidInput)
-	case input.Zone == "":
-		return fmt.Errorf("%w: storage zone is required", ErrInvalidInput)
 	case input.Capacity < 0:
 		return fmt.Errorf("%w: capacity cannot be negative", ErrInvalidInput)
 	case len(input.LayoutBlocks) == 0:

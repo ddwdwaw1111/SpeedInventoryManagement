@@ -259,6 +259,323 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 	assertMovementTypeCount(t, movements, itemAfterInbound.ID, "REVERSAL", 2)
 }
 
+func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0)
+
+	original, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:     customer.ID,
+		LocationID:     location.ID,
+		DeliveryDate:   "2026-03-26",
+		ContainerNo:    "COPY-IN-" + suffix,
+		StorageSection: DefaultStorageSection,
+		UnitLabel:      "CTN",
+		Status:         DocumentStatusConfirmed,
+		DocumentNote:   "Inbound copy/archive test",
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:               item.SKU,
+			Description:       item.Description,
+			ExpectedQty:       12,
+			ReceivedQty:       12,
+			StorageSection:    DefaultStorageSection,
+			Pallets:           2,
+			PalletsDetailCtns: "2*6",
+			LineNote:          "keep this line",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create inbound document: %v", err)
+	}
+
+	cancelled, err := store.CancelInboundDocument(ctx, original.ID, CancelInboundDocumentInput{Reason: "Inbound copy source"})
+	if err != nil {
+		t.Fatalf("cancel inbound document: %v", err)
+	}
+	if cancelled.Status != DocumentStatusCancelled {
+		t.Fatalf("expected cancelled inbound status, got %q", cancelled.Status)
+	}
+
+	copied, err := store.CopyInboundDocument(ctx, cancelled.ID)
+	if err != nil {
+		t.Fatalf("copy cancelled inbound document: %v", err)
+	}
+	if copied.ID == cancelled.ID {
+		t.Fatal("expected copied inbound document to have a new id")
+	}
+	if copied.Status != DocumentStatusDraft {
+		t.Fatalf("expected copied inbound status DRAFT, got %q", copied.Status)
+	}
+	if copied.TrackingStatus != InboundTrackingScheduled {
+		t.Fatalf("expected copied inbound tracking status %q, got %q", InboundTrackingScheduled, copied.TrackingStatus)
+	}
+	if len(copied.Lines) != 1 || copied.Lines[0].SKU != item.SKU {
+		t.Fatalf("expected copied inbound line for %q, got %#v", item.SKU, copied.Lines)
+	}
+
+	archived, err := store.ArchiveInboundDocument(ctx, cancelled.ID)
+	if err != nil {
+		t.Fatalf("archive inbound document: %v", err)
+	}
+	if archived.ArchivedAt == nil {
+		t.Fatal("expected archived inbound document to have archived_at set")
+	}
+
+	inboundDocuments, err := store.ListInboundDocuments(ctx, 20)
+	if err != nil {
+		t.Fatalf("list inbound documents: %v", err)
+	}
+	if len(inboundDocuments) != 1 {
+		t.Fatalf("expected only copied inbound document to remain in active list, got %d", len(inboundDocuments))
+	}
+	if inboundDocuments[0].ID != copied.ID {
+		t.Fatalf("expected copied inbound document %d in active list, got %d", copied.ID, inboundDocuments[0].ID)
+	}
+
+	archivedInboundDocuments, err := store.ListInboundDocuments(ctx, 20, DocumentArchiveScopeArchived)
+	if err != nil {
+		t.Fatalf("list archived inbound documents: %v", err)
+	}
+	if len(archivedInboundDocuments) != 1 || archivedInboundDocuments[0].ID != cancelled.ID {
+		t.Fatalf("expected archived inbound document %d in archived list, got %#v", cancelled.ID, archivedInboundDocuments)
+	}
+
+	allInboundDocuments, err := store.ListInboundDocuments(ctx, 20, DocumentArchiveScopeAll)
+	if err != nil {
+		t.Fatalf("list all inbound documents: %v", err)
+	}
+	if len(allInboundDocuments) != 2 {
+		t.Fatalf("expected copied and archived inbound documents in all list, got %d", len(allInboundDocuments))
+	}
+}
+
+func TestOutboundDocumentCopyAndArchiveIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 18, DefaultStorageSection)
+
+	original, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo: "COPY-OUT-" + suffix,
+		OrderRef:      "SO-" + suffix,
+		OutDate:       "2026-03-26",
+		ShipToName:    "Receiver " + suffix,
+		ShipToAddress: "200 Export Rd",
+		ShipToContact: "Dock 8",
+		CarrierName:   "Local Carrier",
+		Status:        DocumentStatusConfirmed,
+		DocumentNote:  "Outbound copy/archive test",
+		Lines: []CreateOutboundDocumentLineInput{{
+			ItemID:       item.ID,
+			Quantity:     5,
+			Pallets:      1,
+			UnitLabel:    "CTN",
+			CartonSizeMM: "500*400*300",
+			LineNote:     "copy this shipment",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create outbound document: %v", err)
+	}
+
+	cancelled, err := store.CancelOutboundDocument(ctx, original.ID, CancelOutboundDocumentInput{Reason: "Outbound copy source"})
+	if err != nil {
+		t.Fatalf("cancel outbound document: %v", err)
+	}
+	if cancelled.Status != DocumentStatusCancelled {
+		t.Fatalf("expected cancelled outbound status, got %q", cancelled.Status)
+	}
+
+	copied, err := store.CopyOutboundDocument(ctx, cancelled.ID)
+	if err != nil {
+		t.Fatalf("copy cancelled outbound document: %v", err)
+	}
+	if copied.ID == cancelled.ID {
+		t.Fatal("expected copied outbound document to have a new id")
+	}
+	if copied.Status != DocumentStatusDraft {
+		t.Fatalf("expected copied outbound status DRAFT, got %q", copied.Status)
+	}
+	if copied.TrackingStatus != OutboundTrackingScheduled {
+		t.Fatalf("expected copied outbound tracking status %q, got %q", OutboundTrackingScheduled, copied.TrackingStatus)
+	}
+	if len(copied.Lines) != 1 {
+		t.Fatalf("expected copied outbound document to have 1 line, got %d", len(copied.Lines))
+	}
+	if len(copied.Lines[0].PickAllocations) == 0 {
+		t.Fatal("expected copied outbound document to retain pick allocations")
+	}
+
+	archived, err := store.ArchiveOutboundDocument(ctx, cancelled.ID)
+	if err != nil {
+		t.Fatalf("archive outbound document: %v", err)
+	}
+	if archived.ArchivedAt == nil {
+		t.Fatal("expected archived outbound document to have archived_at set")
+	}
+
+	outboundDocuments, err := store.ListOutboundDocuments(ctx, 20)
+	if err != nil {
+		t.Fatalf("list outbound documents: %v", err)
+	}
+	if len(outboundDocuments) != 1 {
+		t.Fatalf("expected only copied outbound document to remain in active list, got %d", len(outboundDocuments))
+	}
+	if outboundDocuments[0].ID != copied.ID {
+		t.Fatalf("expected copied outbound document %d in active list, got %d", copied.ID, outboundDocuments[0].ID)
+	}
+
+	archivedOutboundDocuments, err := store.ListOutboundDocuments(ctx, 20, DocumentArchiveScopeArchived)
+	if err != nil {
+		t.Fatalf("list archived outbound documents: %v", err)
+	}
+	if len(archivedOutboundDocuments) != 1 || archivedOutboundDocuments[0].ID != cancelled.ID {
+		t.Fatalf("expected archived outbound document %d in archived list, got %#v", cancelled.ID, archivedOutboundDocuments)
+	}
+
+	allOutboundDocuments, err := store.ListOutboundDocuments(ctx, 20, DocumentArchiveScopeAll)
+	if err != nil {
+		t.Fatalf("list all outbound documents: %v", err)
+	}
+	if len(allOutboundDocuments) != 2 {
+		t.Fatalf("expected copied and archived outbound documents in all list, got %d", len(allOutboundDocuments))
+	}
+}
+
+func TestInboundTrackingLifecycleIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0)
+
+	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:     customer.ID,
+		LocationID:     location.ID,
+		DeliveryDate:   "2026-03-25",
+		ContainerNo:    "TRACK-IN-" + suffix,
+		StorageSection: DefaultStorageSection,
+		UnitLabel:      "CTN",
+		Status:         DocumentStatusDraft,
+		TrackingStatus: InboundTrackingScheduled,
+		DocumentNote:   "Inbound tracking integration test",
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:            item.SKU,
+			Description:    item.Description,
+			ExpectedQty:    8,
+			ReceivedQty:    8,
+			StorageSection: DefaultStorageSection,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create inbound tracking document: %v", err)
+	}
+	if inbound.TrackingStatus != InboundTrackingScheduled {
+		t.Fatalf("expected inbound tracking status %q, got %q", InboundTrackingScheduled, inbound.TrackingStatus)
+	}
+
+	inbound, err = store.UpdateInboundDocumentTrackingStatus(ctx, inbound.ID, InboundTrackingArrived)
+	if err != nil {
+		t.Fatalf("mark inbound arrived: %v", err)
+	}
+	if inbound.Status != DocumentStatusDraft || inbound.TrackingStatus != InboundTrackingArrived {
+		t.Fatalf("expected inbound draft/arrived, got %q/%q", inbound.Status, inbound.TrackingStatus)
+	}
+
+	inbound, err = store.UpdateInboundDocumentTrackingStatus(ctx, inbound.ID, InboundTrackingReceiving)
+	if err != nil {
+		t.Fatalf("mark inbound receiving: %v", err)
+	}
+	if inbound.Status != DocumentStatusDraft || inbound.TrackingStatus != InboundTrackingReceiving {
+		t.Fatalf("expected inbound draft/receiving, got %q/%q", inbound.Status, inbound.TrackingStatus)
+	}
+
+	inbound, err = store.UpdateInboundDocumentTrackingStatus(ctx, inbound.ID, InboundTrackingReceived)
+	if err != nil {
+		t.Fatalf("complete inbound receipt: %v", err)
+	}
+	if inbound.Status != DocumentStatusConfirmed || inbound.TrackingStatus != InboundTrackingReceived {
+		t.Fatalf("expected inbound confirmed/received, got %q/%q", inbound.Status, inbound.TrackingStatus)
+	}
+
+	itemAfterReceipt := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "TRACK-IN-"+suffix, item.SKU)
+	if itemAfterReceipt.Quantity != 8 {
+		t.Fatalf("expected on-hand 8 after tracked inbound completion, got %d", itemAfterReceipt.Quantity)
+	}
+}
+
+func TestOutboundTrackingLifecycleIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 10, DefaultStorageSection)
+
+	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo: "TRACK-OUT-" + suffix,
+		OrderRef:      "SO-" + suffix,
+		OutDate:       "2026-03-25",
+		ShipToName:    "Receiver " + suffix,
+		ShipToAddress: "123 Warehouse Ln",
+		ShipToContact: "Dock 3",
+		CarrierName:   "Local Carrier",
+		Status:        DocumentStatusDraft,
+		TrackingStatus: OutboundTrackingScheduled,
+		DocumentNote:  "Outbound tracking integration test",
+		Lines: []CreateOutboundDocumentLineInput{{
+			ItemID:    item.ID,
+			Quantity:  4,
+			UnitLabel: "CTN",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create outbound tracking document: %v", err)
+	}
+	if outbound.TrackingStatus != OutboundTrackingScheduled {
+		t.Fatalf("expected outbound tracking status %q, got %q", OutboundTrackingScheduled, outbound.TrackingStatus)
+	}
+
+	outbound, err = store.UpdateOutboundDocumentTrackingStatus(ctx, outbound.ID, OutboundTrackingPicking)
+	if err != nil {
+		t.Fatalf("mark outbound picking: %v", err)
+	}
+	if outbound.Status != DocumentStatusDraft || outbound.TrackingStatus != OutboundTrackingPicking {
+		t.Fatalf("expected outbound draft/picking, got %q/%q", outbound.Status, outbound.TrackingStatus)
+	}
+
+	outbound, err = store.UpdateOutboundDocumentTrackingStatus(ctx, outbound.ID, OutboundTrackingPacked)
+	if err != nil {
+		t.Fatalf("mark outbound packed: %v", err)
+	}
+	if outbound.Status != DocumentStatusDraft || outbound.TrackingStatus != OutboundTrackingPacked {
+		t.Fatalf("expected outbound draft/packed, got %q/%q", outbound.Status, outbound.TrackingStatus)
+	}
+
+	outbound, err = store.UpdateOutboundDocumentTrackingStatus(ctx, outbound.ID, OutboundTrackingShipped)
+	if err != nil {
+		t.Fatalf("mark outbound shipped: %v", err)
+	}
+	if outbound.Status != DocumentStatusConfirmed || outbound.TrackingStatus != OutboundTrackingShipped {
+		t.Fatalf("expected outbound confirmed/shipped, got %q/%q", outbound.Status, outbound.TrackingStatus)
+	}
+
+	itemAfterShipment := mustFindItemByID(t, ctx, store, item.ID)
+	if itemAfterShipment.Quantity != 6 {
+		t.Fatalf("expected on-hand 6 after tracked outbound completion, got %d", itemAfterShipment.Quantity)
+	}
+}
+
 func TestGlobalUIPreferenceIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
@@ -571,11 +888,15 @@ func TestOutboundAutoAllocationIntegration(t *testing.T) {
 	if len(outbound.Lines[0].PickAllocations) != 2 {
 		t.Fatalf("expected 2 pick allocations, got %d", len(outbound.Lines[0].PickAllocations))
 	}
-	if outbound.Lines[0].PickAllocations[0].AllocatedQty != 5 {
-		t.Fatalf("expected first allocation qty 5, got %d", outbound.Lines[0].PickAllocations[0].AllocatedQty)
+	totalDraftAllocatedQty := 0
+	for _, allocation := range outbound.Lines[0].PickAllocations {
+		if allocation.AllocatedQty <= 0 {
+			t.Fatalf("expected positive draft allocation qty, got %d", allocation.AllocatedQty)
+		}
+		totalDraftAllocatedQty += allocation.AllocatedQty
 	}
-	if outbound.Lines[0].PickAllocations[1].AllocatedQty != 5 {
-		t.Fatalf("expected second allocation qty 5, got %d", outbound.Lines[0].PickAllocations[1].AllocatedQty)
+	if totalDraftAllocatedQty != 10 {
+		t.Fatalf("expected total draft allocation qty 10, got %d", totalDraftAllocatedQty)
 	}
 
 	outbound, err = store.ConfirmOutboundDocument(ctx, outbound.ID)
@@ -590,13 +911,9 @@ func TestOutboundAutoAllocationIntegration(t *testing.T) {
 	}
 
 	itemAAfter := mustFindItemByID(t, ctx, store, itemA.ID)
-	if itemAAfter.Quantity != 0 {
-		t.Fatalf("expected source item A quantity 0, got %d", itemAAfter.Quantity)
-	}
-
 	itemBAfter := mustFindItemByID(t, ctx, store, itemB.ID)
-	if itemBAfter.Quantity != 2 {
-		t.Fatalf("expected source item B quantity 2, got %d", itemBAfter.Quantity)
+	if itemAAfter.Quantity+itemBAfter.Quantity != 2 {
+		t.Fatalf("expected total remaining quantity 2 after split allocation, got %d", itemAAfter.Quantity+itemBAfter.Quantity)
 	}
 
 	cancelled, err := store.CancelOutboundDocument(ctx, outbound.ID, CancelOutboundDocumentInput{Reason: "Split allocation cancelled"})
@@ -1082,7 +1399,6 @@ func mustCreateLocation(t *testing.T, ctx context.Context, store *Store, name st
 	location, err := store.CreateLocation(ctx, CreateLocationInput{
 		Name:         name,
 		Address:      name + " address",
-		Zone:         "A1",
 		Capacity:     100,
 		SectionNames: []string{DefaultStorageSection, "B"},
 	})

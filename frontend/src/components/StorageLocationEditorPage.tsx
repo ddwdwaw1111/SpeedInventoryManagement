@@ -32,7 +32,6 @@ type StorageLocationEditorPageProps = {
 type LocationFormState = {
   name: string;
   address: string;
-  zone: string;
   description: string;
   capacity: number;
   layoutBlocks: StorageLayoutBlock[];
@@ -180,7 +179,6 @@ function createFormFromLocation(location: Location | null): LocationFormState {
   return {
     name: location?.name ?? "",
     address: location?.address ?? "",
-    zone: location?.zone ?? "",
     description: location?.description ?? "",
     capacity: location?.capacity ?? 0,
     layoutBlocks
@@ -360,7 +358,6 @@ export function StorageLocationEditorPage({
     const payload: LocationPayload = {
       name: form.name,
       address: form.address,
-      zone: form.zone,
       description: form.description,
       capacity: form.capacity,
       sectionNames: deriveSectionNames(sanitizedBlocks),
@@ -444,7 +441,7 @@ export function StorageLocationEditorPage({
               <div className="space-y-1">
                 <p className="tw-kicker m-0">Profile</p>
                 <h2 className="tw-heading-lg m-0">Warehouse Profile</h2>
-                <p className="tw-body-muted m-0">Define the site identity and the inventory zones the team will work from.</p>
+                <p className="tw-body-muted m-0">Define the site identity and the warehouse areas the team will work from.</p>
               </div>
               <div className="max-w-sm text-sm leading-6 text-slate-500">
                 All inventory defaults to <span className="font-semibold text-slate-950">TEMP</span> until moved into a formal section.
@@ -462,17 +459,7 @@ export function StorageLocationEditorPage({
                   required
                 />
               </label>
-              <label className="tw-field-label">
-                {t("zone")}
-                <input
-                  className={fieldClassName}
-                  value={form.zone}
-                  onChange={(event) => setForm((current) => ({ ...current, zone: event.target.value }))}
-                  placeholder="North Wing"
-                  required
-                />
-              </label>
-              <label className="tw-field-label xl:col-span-1 md:col-span-2">
+              <label className="tw-field-label xl:col-span-2">
                 {t("address")}
                 <input
                   className={fieldClassName}

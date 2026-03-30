@@ -78,7 +78,6 @@ export type Location = {
   id: number;
   name: string;
   address: string;
-  zone: string;
   description: string;
   capacity: number;
   sectionNames: string[];
@@ -101,7 +100,6 @@ export type StorageLayoutBlock = {
 export type LocationPayload = {
   name: string;
   address: string;
-  zone: string;
   description: string;
   capacity: number;
   sectionNames: string[];
@@ -288,9 +286,11 @@ export type OutboundDocument = {
   carrierName: string;
   documentNote: string;
   status: string;
+  trackingStatus: string;
   confirmedAt: string | null;
   cancelNote: string;
   cancelledAt: string | null;
+  archivedAt: string | null;
   totalLines: number;
   totalQty: number;
   totalNetWeightKgs: number;
@@ -329,6 +329,7 @@ export type OutboundDocumentPayload = {
   shipToContact?: string;
   carrierName?: string;
   status?: string;
+  trackingStatus?: string;
   documentNote?: string;
   lines: OutboundDocumentLinePayload[];
 };
@@ -367,9 +368,11 @@ export type InboundDocument = {
   unitLabel: string;
   documentNote: string;
   status: string;
+  trackingStatus: string;
   confirmedAt: string | null;
   cancelNote: string;
   cancelledAt: string | null;
+  archivedAt: string | null;
   totalLines: number;
   totalExpectedQty: number;
   totalReceivedQty: number;
@@ -398,8 +401,13 @@ export type InboundDocumentPayload = {
   storageSection?: string;
   unitLabel?: string;
   status?: string;
+  trackingStatus?: string;
   documentNote?: string;
   lines: InboundDocumentLinePayload[];
+};
+
+export type DocumentTrackingStatusPayload = {
+  trackingStatus: string;
 };
 
 export type InboundPackingListImportLine = {

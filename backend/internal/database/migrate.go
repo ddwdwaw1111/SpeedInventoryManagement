@@ -39,7 +39,6 @@ func Migrate(db *sql.DB) error {
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			name VARCHAR(120) NOT NULL,
 			address VARCHAR(255) DEFAULT NULL,
-			zone VARCHAR(80) NOT NULL,
 			description VARCHAR(255) DEFAULT NULL,
 			capacity INT NOT NULL DEFAULT 0,
 			section_count INT NOT NULL DEFAULT 1,
@@ -50,6 +49,7 @@ func Migrate(db *sql.DB) error {
 			UNIQUE KEY uq_storage_locations_name (name)
 		)`,
 		`ALTER TABLE storage_locations ADD COLUMN IF NOT EXISTS address VARCHAR(255) DEFAULT NULL AFTER name`,
+		`ALTER TABLE storage_locations DROP COLUMN IF EXISTS zone`,
 		`ALTER TABLE storage_locations ADD COLUMN IF NOT EXISTS section_count INT NOT NULL DEFAULT 1 AFTER capacity`,
 		`ALTER TABLE storage_locations ADD COLUMN IF NOT EXISTS section_names_json TEXT DEFAULT NULL AFTER section_count`,
 		`ALTER TABLE storage_locations ADD COLUMN IF NOT EXISTS layout_json JSON DEFAULT NULL AFTER section_names_json`,
@@ -246,10 +246,12 @@ func Migrate(db *sql.DB) error {
 			carrier_name VARCHAR(160) DEFAULT NULL,
 			document_note TEXT DEFAULT NULL,
 			status VARCHAR(32) NOT NULL DEFAULT 'CONFIRMED',
+			tracking_status VARCHAR(32) NOT NULL DEFAULT 'SCHEDULED',
 			confirmed_at TIMESTAMP NULL DEFAULT NULL,
 			posted_at TIMESTAMP NULL DEFAULT NULL,
 			cancel_note TEXT DEFAULT NULL,
 			cancelled_at TIMESTAMP NULL DEFAULT NULL,
+			archived_at TIMESTAMP NULL DEFAULT NULL,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			PRIMARY KEY (id),
@@ -264,16 +266,24 @@ func Migrate(db *sql.DB) error {
 		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS ship_to_contact VARCHAR(160) DEFAULT NULL AFTER ship_to_address`,
 		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS carrier_name VARCHAR(160) DEFAULT NULL AFTER ship_to_contact`,
 		`ALTER TABLE outbound_documents MODIFY COLUMN status VARCHAR(32) NOT NULL DEFAULT 'CONFIRMED'`,
+		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS tracking_status VARCHAR(32) NOT NULL DEFAULT 'SCHEDULED' AFTER status`,
 		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMP NULL DEFAULT NULL AFTER status`,
 		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP NULL DEFAULT NULL AFTER confirmed_at`,
 		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS cancel_note TEXT DEFAULT NULL AFTER posted_at`,
 		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP NULL DEFAULT NULL AFTER cancel_note`,
+		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP NULL DEFAULT NULL AFTER cancelled_at`,
 		`UPDATE outbound_documents
 			SET
 				confirmed_at = COALESCE(confirmed_at, posted_at, created_at),
 				posted_at = COALESCE(posted_at, created_at),
 				status = 'CONFIRMED'
 			WHERE UPPER(status) = 'POSTED'`,
+		`UPDATE outbound_documents
+			SET tracking_status = CASE
+				WHEN UPPER(status) IN ('CONFIRMED', 'POSTED') THEN 'SHIPPED'
+				ELSE 'SCHEDULED'
+			END
+			WHERE COALESCE(TRIM(tracking_status), '') = ''`,
 		`CREATE TABLE IF NOT EXISTS inbound_documents (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			customer_id BIGINT NOT NULL,
@@ -284,10 +294,12 @@ func Migrate(db *sql.DB) error {
 			unit_label VARCHAR(32) DEFAULT NULL,
 			document_note TEXT DEFAULT NULL,
 			status VARCHAR(32) NOT NULL DEFAULT 'CONFIRMED',
+			tracking_status VARCHAR(32) NOT NULL DEFAULT 'SCHEDULED',
 			confirmed_at TIMESTAMP NULL DEFAULT NULL,
 			posted_at TIMESTAMP NULL DEFAULT NULL,
 			cancel_note TEXT DEFAULT NULL,
 			cancelled_at TIMESTAMP NULL DEFAULT NULL,
+			archived_at TIMESTAMP NULL DEFAULT NULL,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			PRIMARY KEY (id),
@@ -301,16 +313,24 @@ func Migrate(db *sql.DB) error {
 				FOREIGN KEY (location_id) REFERENCES storage_locations (id)
 		)`,
 		`ALTER TABLE inbound_documents MODIFY COLUMN status VARCHAR(32) NOT NULL DEFAULT 'CONFIRMED'`,
+		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS tracking_status VARCHAR(32) NOT NULL DEFAULT 'SCHEDULED' AFTER status`,
 		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMP NULL DEFAULT NULL AFTER status`,
 		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP NULL DEFAULT NULL AFTER confirmed_at`,
 		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS cancel_note TEXT DEFAULT NULL AFTER posted_at`,
 		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP NULL DEFAULT NULL AFTER cancel_note`,
+		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP NULL DEFAULT NULL AFTER cancelled_at`,
 		`UPDATE inbound_documents
 			SET
 				confirmed_at = COALESCE(confirmed_at, posted_at, created_at),
 				posted_at = COALESCE(posted_at, created_at),
 				status = 'CONFIRMED'
 			WHERE UPPER(status) = 'POSTED'`,
+		`UPDATE inbound_documents
+			SET tracking_status = CASE
+				WHEN UPPER(status) IN ('CONFIRMED', 'POSTED') THEN 'RECEIVED'
+				ELSE 'SCHEDULED'
+			END
+			WHERE COALESCE(TRIM(tracking_status), '') = ''`,
 		`CREATE TABLE IF NOT EXISTS inbound_document_lines (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			document_id BIGINT NOT NULL,

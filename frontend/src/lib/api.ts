@@ -9,6 +9,7 @@ import type {
   Customer,
   CustomerPayload,
   DashboardData,
+  DocumentTrackingStatusPayload,
   InventoryAdjustment,
   InventoryAdjustmentPayload,
   InventoryTransfer,
@@ -56,6 +57,8 @@ type ItemQuery = {
 type SKUMasterQuery = {
   search?: string;
 };
+
+type DocumentArchiveScope = "active" | "archived" | "all";
 
 export class ApiError extends Error {
   status: number;
@@ -287,8 +290,8 @@ export const api = {
     return request<Movement[]>(`/movements?limit=${limit}`);
   },
 
-  getOutboundDocuments(limit = 100) {
-    return request<OutboundDocument[]>(`/outbound-documents?limit=${limit}`);
+  getOutboundDocuments(limit = 100, archiveScope: DocumentArchiveScope = "active") {
+    return request<OutboundDocument[]>(`/outbound-documents?limit=${limit}&archiveScope=${archiveScope}`);
   },
 
   createOutboundDocument(payload: OutboundDocumentPayload) {
@@ -311,6 +314,13 @@ export const api = {
     });
   },
 
+  updateOutboundDocumentTrackingStatus(documentId: number, payload: DocumentTrackingStatusPayload) {
+    return request<OutboundDocument>(`/outbound-documents/${documentId}/tracking-status`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
   cancelOutboundDocument(documentId: number, payload?: CancelOutboundDocumentPayload) {
     return request<OutboundDocument>(`/outbound-documents/${documentId}/cancel`, {
       method: "POST",
@@ -318,8 +328,20 @@ export const api = {
     });
   },
 
-  getInboundDocuments(limit = 100) {
-    return request<InboundDocument[]>(`/inbound-documents?limit=${limit}`);
+  archiveOutboundDocument(documentId: number) {
+    return request<OutboundDocument>(`/outbound-documents/${documentId}/archive`, {
+      method: "POST"
+    });
+  },
+
+  copyOutboundDocument(documentId: number) {
+    return request<OutboundDocument>(`/outbound-documents/${documentId}/copy`, {
+      method: "POST"
+    });
+  },
+
+  getInboundDocuments(limit = 100, archiveScope: DocumentArchiveScope = "active") {
+    return request<InboundDocument[]>(`/inbound-documents?limit=${limit}&archiveScope=${archiveScope}`);
   },
 
   createInboundDocument(payload: InboundDocumentPayload) {
@@ -352,10 +374,29 @@ export const api = {
     });
   },
 
+  updateInboundDocumentTrackingStatus(documentId: number, payload: DocumentTrackingStatusPayload) {
+    return request<InboundDocument>(`/inbound-documents/${documentId}/tracking-status`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
   cancelInboundDocument(documentId: number, payload?: CancelInboundDocumentPayload) {
     return request<InboundDocument>(`/inbound-documents/${documentId}/cancel`, {
       method: "POST",
       body: JSON.stringify(payload ?? {})
+    });
+  },
+
+  archiveInboundDocument(documentId: number) {
+    return request<InboundDocument>(`/inbound-documents/${documentId}/archive`, {
+      method: "POST"
+    });
+  },
+
+  copyInboundDocument(documentId: number) {
+    return request<InboundDocument>(`/inbound-documents/${documentId}/copy`, {
+      method: "POST"
     });
   },
 

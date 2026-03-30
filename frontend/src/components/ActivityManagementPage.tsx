@@ -1,11 +1,13 @@
 import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
+import ArchiveOutlinedIcon from "@mui/icons-material/ArchiveOutlined";
 import CloseIcon from "@mui/icons-material/Close";
+import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
 import PictureAsPdfOutlinedIcon from "@mui/icons-material/PictureAsPdfOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
-import { type FormEvent, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, Drawer, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
@@ -190,6 +192,7 @@ const RECEIPTS_EXPORT_COLUMNS = [
   { key: "totalLines", label: "Total Lines" },
   { key: "totalExpectedQty", label: "Expected Qty" },
   { key: "totalReceivedQty", label: "Received Qty" },
+  { key: "trackingStatus", label: "Tracking" },
   { key: "status", label: "Status" }
 ] as const;
 const SHIPMENTS_EXPORT_COLUMNS = [
@@ -203,6 +206,7 @@ const SHIPMENTS_EXPORT_COLUMNS = [
   { key: "totalLines", label: "Total Lines" },
   { key: "totalQty", label: "Total Qty" },
   { key: "totalGrossWeightKgs", label: "Gross Weight (kg)" },
+  { key: "trackingStatus", label: "Tracking" },
   { key: "status", label: "Status" }
 ] as const;
 
@@ -314,7 +318,6 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const { confirm, confirmationDialog } = useConfirmDialog();
-  const [searchTerm, setSearchTerm] = useState("");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [selectedStatus, setSelectedStatus] = useState("all");
@@ -333,7 +336,6 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
   const [batchInboundLineAddCount, setBatchInboundLineAddCount] = useState(1);
   const [batchOutboundLineAddCount, setBatchOutboundLineAddCount] = useState(1);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
-  const deferredSearchTerm = useDeferredValue(searchTerm);
   const pendingBatchLineIDRef = useRef<string | null>(null);
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
   const pageDescription = mode === "IN" ? t("inboundDesc") : t("outboundDesc");
@@ -471,57 +473,49 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     )));
   }, [batchSectionOptions]);
 
-  const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
   const inboundDocumentRows = useMemo(() => {
     if (mode !== "IN") return [];
 
     return inboundDocuments.filter((document) => {
-      const searchBlob = [
-        document.customerName,
-        document.locationName,
-        document.containerNo,
-        document.documentNote,
-        ...document.lines.flatMap((line) => [line.sku, line.description, line.lineNote])
-      ].join(" ").toLowerCase();
-      const matchesSearch = normalizedSearch.length === 0 || searchBlob.includes(normalizedSearch);
       const matchesCustomer = selectedCustomerId === "all" || document.customerId === Number(selectedCustomerId);
       const matchesLocation = selectedLocationId === "all" || document.locationId === Number(selectedLocationId);
-      const matchesStatus = selectedStatus === "all" || normalizeDocumentStatus(document.status) === selectedStatus;
-      return matchesSearch && matchesCustomer && matchesLocation && matchesStatus;
+      const isArchived = Boolean(document.archivedAt);
+      const matchesStatus = selectedStatus === "ARCHIVED"
+        ? isArchived
+        : selectedStatus === "all"
+          ? !isArchived
+          : !isArchived && normalizeDocumentStatus(document.status) === selectedStatus;
+      return matchesCustomer && matchesLocation && matchesStatus;
     }).sort((left, right) => {
       const leftDate = left.deliveryDate ?? left.createdAt ?? "";
       const rightDate = right.deliveryDate ?? right.createdAt ?? "";
       return rightDate.localeCompare(leftDate);
     });
-  }, [inboundDocuments, mode, normalizedSearch, selectedCustomerId, selectedLocationId, selectedStatus]);
+  }, [inboundDocuments, mode, selectedCustomerId, selectedLocationId, selectedStatus]);
   const outboundDocumentRows = useMemo(() => {
     if (mode !== "OUT") return [];
 
     return outboundDocuments.filter((document) => {
-      const searchBlob = [
-        document.packingListNo,
-        document.orderRef,
-        document.customerName,
-        document.documentNote,
-        document.storages,
-        ...document.lines.flatMap((line) => [line.sku, line.description, line.locationName, line.lineNote])
-      ].join(" ").toLowerCase();
-      const matchesSearch = normalizedSearch.length === 0 || searchBlob.includes(normalizedSearch);
       const matchesCustomer = selectedCustomerId === "all" || document.customerId === Number(selectedCustomerId);
       const matchesLocation = selectedLocationId === "all"
         || document.lines.some((line) =>
           line.locationId === Number(selectedLocationId)
           || locations.find((location) => location.id === Number(selectedLocationId))?.name === line.locationName
         );
-      const matchesStatus = selectedStatus === "all" || normalizeDocumentStatus(document.status) === selectedStatus;
-      return matchesSearch && matchesCustomer && matchesLocation && matchesStatus;
+      const isArchived = Boolean(document.archivedAt);
+      const matchesStatus = selectedStatus === "ARCHIVED"
+        ? isArchived
+        : selectedStatus === "all"
+          ? !isArchived
+          : !isArchived && normalizeDocumentStatus(document.status) === selectedStatus;
+      return matchesCustomer && matchesLocation && matchesStatus;
     }).sort((left, right) => {
       const leftDate = left.outDate ?? left.createdAt ?? "";
       const rightDate = right.outDate ?? right.createdAt ?? "";
       return rightDate.localeCompare(leftDate);
     });
-  }, [locations, mode, normalizedSearch, outboundDocuments, selectedCustomerId, selectedLocationId, selectedStatus]);
-  const hasActiveFilters = normalizedSearch.length > 0 || selectedCustomerId !== "all" || selectedLocationId !== "all" || selectedStatus !== "all";
+  }, [locations, mode, outboundDocuments, selectedCustomerId, selectedLocationId, selectedStatus]);
+  const hasActiveFilters = selectedCustomerId !== "all" || selectedLocationId !== "all" || selectedStatus !== "all";
   const mainGridSlots = buildWorkspaceGridSlots({
     emptyTitle: t("noResults"),
     emptyDescription: hasActiveFilters ? t("filteredStateHint") : t("emptyStateHint"),
@@ -542,7 +536,8 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     { field: "totalLines", headerName: t("totalLines"), minWidth: 100, type: "number" },
     { field: "totalExpectedQty", headerName: t("expectedQty"), minWidth: 120, type: "number" },
     { field: "totalReceivedQty", headerName: t("received"), minWidth: 110, type: "number" },
-    { field: "status", headerName: t("status"), minWidth: 120, renderCell: (params) => renderDocumentStatus(params.row.status, t) },
+    { field: "trackingStatus", headerName: t("trackingStatus"), minWidth: 140, renderCell: (params) => renderInboundTrackingStatus(params.row.trackingStatus, params.row.status, t) },
+    { field: "status", headerName: t("status"), minWidth: 120, renderCell: (params) => renderDocumentStatus(params.row.status, params.row.archivedAt, t) },
     {
       field: "actions",
       headerName: t("actions"),
@@ -554,8 +549,14 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
           ariaLabel={t("actions")}
           actions={[
             { key: "details", label: t("details"), icon: <VisibilityOutlinedIcon fontSize="small" />, onClick: () => setSelectedInboundDocument(params.row) },
-            ...(canManage && normalizeDocumentStatus(params.row.status) === "DRAFT"
+            ...(canManage && !params.row.archivedAt && normalizeDocumentStatus(params.row.status) === "DRAFT"
               ? [{ key: "edit", label: t("editDraft"), icon: <EditOutlinedIcon fontSize="small" />, onClick: () => openEditInboundDraft(params.row) }]
+              : []),
+            ...(canManage
+              ? [{ key: "copy", label: t("copyReceipt"), icon: <ContentCopyOutlinedIcon fontSize="small" />, onClick: () => void handleCopyInboundDocument(params.row) }]
+              : []),
+            ...(canManage && !params.row.archivedAt
+              ? [{ key: "archive", label: t("archiveReceipt"), icon: <ArchiveOutlinedIcon fontSize="small" />, onClick: () => void handleArchiveInboundDocument(params.row) }]
               : [])
           ]}
         />
@@ -584,7 +585,8 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     { field: "totalLines", headerName: t("totalLines"), minWidth: 100, type: "number" },
     { field: "totalQty", headerName: t("totalQty"), minWidth: 100, type: "number" },
     { field: "totalGrossWeightKgs", headerName: t("grossWeight"), minWidth: 120, type: "number", renderCell: (params) => params.row.totalGrossWeightKgs ? params.row.totalGrossWeightKgs.toFixed(2) : "-" },
-    { field: "status", headerName: t("status"), minWidth: 120, renderCell: (params) => renderDocumentStatus(params.row.status, t) },
+    { field: "trackingStatus", headerName: t("trackingStatus"), minWidth: 140, renderCell: (params) => renderOutboundTrackingStatus(params.row.trackingStatus, params.row.status, t) },
+    { field: "status", headerName: t("status"), minWidth: 120, renderCell: (params) => renderDocumentStatus(params.row.status, params.row.archivedAt, t) },
     {
       field: "actions",
       headerName: t("actions"),
@@ -596,12 +598,18 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
           ariaLabel={t("actions")}
           actions={[
             { key: "details", label: t("details"), icon: <VisibilityOutlinedIcon fontSize="small" />, onClick: () => setSelectedOutboundDocument(params.row) },
-            ...(canManage && normalizeDocumentStatus(params.row.status) === "DRAFT"
+            ...(canManage && !params.row.archivedAt && normalizeDocumentStatus(params.row.status) === "DRAFT"
               ? [{ key: "edit", label: t("editDraft"), icon: <EditOutlinedIcon fontSize="small" />, onClick: () => openEditOutboundDraft(params.row) }]
+              : []),
+            ...(canManage
+              ? [{ key: "copy", label: t("copyShipment"), icon: <ContentCopyOutlinedIcon fontSize="small" />, onClick: () => void handleCopyOutboundDocument(params.row) }]
+              : []),
+            ...(canManage && !params.row.archivedAt
+              ? [{ key: "archive", label: t("archiveShipment"), icon: <ArchiveOutlinedIcon fontSize="small" />, onClick: () => void handleArchiveOutboundDocument(params.row) }]
               : []),
             { key: "download-pick-sheet", label: t("downloadPickSheet"), icon: <PictureAsPdfOutlinedIcon fontSize="small" />, onClick: () => downloadOutboundPickSheetPdfFromDocument(params.row) },
             { key: "download-delivery-note", label: t("downloadDeliveryNote"), icon: <PictureAsPdfOutlinedIcon fontSize="small" />, onClick: () => downloadOutboundDeliveryNotePdfFromDocument(params.row) },
-            ...(canManage && params.row.status !== "CANCELLED"
+            ...(canManage && !params.row.archivedAt && params.row.status !== "CANCELLED"
               ? [{ key: "cancel", label: t("cancelShipment"), icon: <DeleteOutlineOutlinedIcon fontSize="small" />, danger: true, onClick: () => void handleCancelOutboundDocument(params.row) }]
               : [])
           ]}
@@ -1204,6 +1212,9 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     }
 
     try {
+      const editingInboundDocument = editingInboundDocumentId
+        ? inboundDocuments.find((document) => document.id === editingInboundDocumentId)
+        : null;
       const payload: InboundDocumentPayload = {
         customerId: batchCustomerId,
         locationId: batchLocationId,
@@ -1212,6 +1223,9 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
         storageSection: normalizeStorageSection(validLines[0]?.storageSection || batchForm.storageSection || batchSectionOptions[0]),
         unitLabel: batchForm.unitLabel || "CTN",
         status,
+        trackingStatus: status === "DRAFT"
+          ? normalizeInboundTrackingStatusValue(editingInboundDocument?.trackingStatus, editingInboundDocument?.status)
+          : "RECEIVED",
         documentNote: batchForm.documentNote || undefined,
         lines: validLines.map((line) => {
           const normalizedSku = line.sku.trim().toUpperCase();
@@ -1271,6 +1285,9 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     }
 
     try {
+      const editingOutboundDocument = editingOutboundDocumentId
+        ? outboundDocuments.find((document) => document.id === editingOutboundDocumentId)
+        : null;
       const payload: OutboundDocumentPayload = {
         packingListNo: batchOutboundForm.packingListNo || undefined,
         orderRef: batchOutboundForm.orderRef || undefined,
@@ -1280,6 +1297,9 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
         shipToContact: batchOutboundForm.shipToContact || undefined,
         carrierName: batchOutboundForm.carrierName || undefined,
         status,
+        trackingStatus: status === "DRAFT"
+          ? normalizeOutboundTrackingStatusValue(editingOutboundDocument?.trackingStatus, editingOutboundDocument?.status)
+          : "SHIPPED",
         documentNote: batchOutboundForm.documentNote || undefined,
         lines: validBatchOutboundLines.map((line) => {
           const itemId = Number(line.itemId);
@@ -1336,7 +1356,23 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
 
     setErrorMessage("");
     try {
-      await api.confirmInboundDocument(document.id);
+      const updatedDocument = await api.confirmInboundDocument(document.id);
+      setSelectedInboundDocument(updatedDocument);
+      await onRefresh();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveActivity"));
+    }
+  }
+
+  async function handleUpdateInboundTrackingStatus(document: InboundDocument, trackingStatus: string) {
+    if (!canManage) {
+      return;
+    }
+
+    setErrorMessage("");
+    try {
+      const updatedDocument = await api.updateInboundDocumentTrackingStatus(document.id, { trackingStatus });
+      setSelectedInboundDocument(updatedDocument);
       await onRefresh();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveActivity"));
@@ -1362,15 +1398,56 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
 
     setErrorMessage("");
     try {
-      await api.cancelInboundDocument(document.id, {
+      const updatedDocument = await api.cancelInboundDocument(document.id, {
         reason: document.documentNote || undefined
       });
-      if (selectedInboundDocument?.id === document.id) {
-        setSelectedInboundDocument(null);
-      }
+      setSelectedInboundDocument(updatedDocument);
       await onRefresh();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveActivity"));
+    }
+  }
+
+  async function handleArchiveInboundDocument(document: InboundDocument) {
+    if (!canManage) {
+      return;
+    }
+
+    const documentLabel = document.containerNo || String(document.id);
+    if (!(await confirm({
+      title: t("archiveReceipt"),
+      message: t("archiveInboundConfirm", { containerNo: documentLabel }),
+      confirmLabel: t("archiveReceipt"),
+      cancelLabel: t("cancel"),
+      confirmColor: "warning",
+      severity: "warning"
+    }))) {
+      return;
+    }
+
+    setErrorMessage("");
+    try {
+      await api.archiveInboundDocument(document.id);
+      setSelectedInboundDocument(null);
+      await onRefresh();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : t("couldNotArchiveDocument"));
+    }
+  }
+
+  async function handleCopyInboundDocument(document: InboundDocument) {
+    if (!canManage) {
+      return;
+    }
+
+    setErrorMessage("");
+    try {
+      const copiedDocument = await api.copyInboundDocument(document.id);
+      await onRefresh();
+      openEditInboundDraft(copiedDocument);
+      setSelectedInboundDocument(copiedDocument);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : t("couldNotCopyDocument"));
     }
   }
 
@@ -1381,7 +1458,23 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
 
     setErrorMessage("");
     try {
-      await api.confirmOutboundDocument(document.id);
+      const updatedDocument = await api.confirmOutboundDocument(document.id);
+      setSelectedOutboundDocument(updatedDocument);
+      await onRefresh();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveActivity"));
+    }
+  }
+
+  async function handleUpdateOutboundTrackingStatus(document: OutboundDocument, trackingStatus: string) {
+    if (!canManage) {
+      return;
+    }
+
+    setErrorMessage("");
+    try {
+      const updatedDocument = await api.updateOutboundDocumentTrackingStatus(document.id, { trackingStatus });
+      setSelectedOutboundDocument(updatedDocument);
       await onRefresh();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveActivity"));
@@ -1406,15 +1499,55 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
 
     setErrorMessage("");
     try {
-      await api.cancelOutboundDocument(document.id, {
+      const updatedDocument = await api.cancelOutboundDocument(document.id, {
         reason: document.documentNote || undefined
       });
-      if (selectedOutboundDocument?.id === document.id) {
-        setSelectedOutboundDocument(null);
-      }
+      setSelectedOutboundDocument(updatedDocument);
       await onRefresh();
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveActivity"));
+    }
+  }
+
+  async function handleArchiveOutboundDocument(document: OutboundDocument) {
+    if (!canManage) {
+      return;
+    }
+
+    if (!(await confirm({
+      title: t("archiveShipment"),
+      message: t("archiveOutboundConfirm", { packingListNo: document.packingListNo || String(document.id) }),
+      confirmLabel: t("archiveShipment"),
+      cancelLabel: t("cancel"),
+      confirmColor: "warning",
+      severity: "warning"
+    }))) {
+      return;
+    }
+
+    setErrorMessage("");
+    try {
+      await api.archiveOutboundDocument(document.id);
+      setSelectedOutboundDocument(null);
+      await onRefresh();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : t("couldNotArchiveDocument"));
+    }
+  }
+
+  async function handleCopyOutboundDocument(document: OutboundDocument) {
+    if (!canManage) {
+      return;
+    }
+
+    setErrorMessage("");
+    try {
+      const copiedDocument = await api.copyOutboundDocument(document.id);
+      await onRefresh();
+      openEditOutboundDraft(copiedDocument);
+      setSelectedOutboundDocument(copiedDocument);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : t("couldNotCopyDocument"));
     }
   }
 
@@ -1439,6 +1572,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
           totalLines: document.totalLines,
           totalExpectedQty: document.totalExpectedQty,
           totalReceivedQty: document.totalReceivedQty,
+          trackingStatus: formatInboundTrackingStatusLabel(document.trackingStatus, document.status, t),
           status: document.status
         }))
       });
@@ -1459,6 +1593,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
           totalLines: document.totalLines,
           totalQty: document.totalQty,
           totalGrossWeightKgs: document.totalGrossWeightKgs ? document.totalGrossWeightKgs.toFixed(2) : "-",
+          trackingStatus: formatOutboundTrackingStatusLabel(document.trackingStatus, document.status, t),
           status: document.status
         }))
       });
@@ -1498,10 +1633,9 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
               errorMessage={errorMessage && !isBatchModalOpen ? errorMessage : ""}
             />
             <div className="filter-bar">
-              <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={mode === "IN" ? t("searchInboundPlaceholder") : t("searchOutboundPlaceholder")} /></label>
               <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
               <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
-              <label>{t("status")}<select value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value)}><option value="all">{t("allStatuses")}</option><option value="DRAFT">{t("draft")}</option><option value="CONFIRMED">{t("confirmed")}</option><option value="CANCELLED">{t("cancelled")}</option></select></label>
+              <label>{t("status")}<select value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value)}><option value="all">{t("allStatuses")}</option><option value="DRAFT">{t("draft")}</option><option value="CONFIRMED">{t("confirmed")}</option><option value="CANCELLED">{t("cancelled")}</option><option value="ARCHIVED">{t("archived")}</option></select></label>
             </div>
           </div>
           <div className="sheet-table-wrap">
@@ -1573,26 +1707,45 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
               </div>
 
               <div className="document-drawer__actions">
-                {canManage && normalizeDocumentStatus(selectedInboundDocument.status) === "DRAFT" ? (
+                {canManage && !selectedInboundDocument.archivedAt && normalizeDocumentStatus(selectedInboundDocument.status) === "DRAFT" ? (
                   <Button variant="outlined" onClick={() => openEditInboundDraft(selectedInboundDocument)}>
                     {t("editDraft")}
                   </Button>
                 ) : null}
-                {canManage && normalizeDocumentStatus(selectedInboundDocument.status) === "DRAFT" ? (
-                  <Button variant="contained" onClick={() => void handleConfirmInboundDocument(selectedInboundDocument)}>
-                    {t("confirmReceipt")}
+                {canManage ? (
+                  <Button variant="outlined" startIcon={<ContentCopyOutlinedIcon />} onClick={() => void handleCopyInboundDocument(selectedInboundDocument)}>
+                    {t("copyReceipt")}
                   </Button>
                 ) : null}
-                {canManage && normalizeDocumentStatus(selectedInboundDocument.status) !== "CANCELLED" ? (
+                {canManage && !selectedInboundDocument.archivedAt && getInboundTrackingAction(selectedInboundDocument, t) ? (
+                  <Button
+                    variant={getInboundTrackingAction(selectedInboundDocument, t)?.trackingStatus === "RECEIVED" ? "contained" : "outlined"}
+                    onClick={() => {
+                      const nextAction = getInboundTrackingAction(selectedInboundDocument, t);
+                      if (nextAction) {
+                        void handleUpdateInboundTrackingStatus(selectedInboundDocument, nextAction.trackingStatus);
+                      }
+                    }}
+                  >
+                    {getInboundTrackingAction(selectedInboundDocument, t)?.label}
+                  </Button>
+                ) : null}
+                {canManage && !selectedInboundDocument.archivedAt && normalizeDocumentStatus(selectedInboundDocument.status) !== "CANCELLED" ? (
                   <Button variant="outlined" color="error" startIcon={<DeleteOutlineOutlinedIcon />} onClick={() => void handleCancelInboundDocument(selectedInboundDocument)}>
                     {t("cancelReceipt")}
+                  </Button>
+                ) : null}
+                {canManage && !selectedInboundDocument.archivedAt ? (
+                  <Button variant="outlined" startIcon={<ArchiveOutlinedIcon />} onClick={() => void handleArchiveInboundDocument(selectedInboundDocument)}>
+                    {t("archiveReceipt")}
                   </Button>
                 ) : null}
               </div>
 
               <div className="document-drawer__status-bar">
                 <div className="document-drawer__status-main">
-                  {renderDocumentStatus(selectedInboundDocument.status, t)}
+                  {renderDocumentStatus(selectedInboundDocument.status, selectedInboundDocument.archivedAt, t)}
+                  {renderInboundTrackingStatus(selectedInboundDocument.trackingStatus, selectedInboundDocument.status, t)}
                 </div>
                 <div className="document-drawer__status-stat">
                   <strong>{selectedInboundDocument.totalLines}</strong>
@@ -1619,7 +1772,11 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
                 </div>
                 <div className="document-drawer__audit-item">
                   <strong>{t("status")}</strong>
-                  <span>{selectedInboundDocument.cancelledAt ? `${selectedInboundDocument.status} | ${formatDateTimeValue(selectedInboundDocument.cancelledAt, resolvedTimeZone)}` : selectedInboundDocument.status}</span>
+                  <span>{formatDocumentStatusAuditValue(selectedInboundDocument.status, selectedInboundDocument.archivedAt, selectedInboundDocument.cancelledAt, resolvedTimeZone, t)}</span>
+                </div>
+                <div className="document-drawer__audit-item">
+                  <strong>{t("trackingStatus")}</strong>
+                  <span>{formatInboundTrackingStatusLabel(selectedInboundDocument.trackingStatus, selectedInboundDocument.status, t)}</span>
                 </div>
                 <div className="document-drawer__audit-item">
                   <strong>{t("confirmedAt")}</strong>
@@ -1679,14 +1836,27 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
               </div>
 
               <div className="document-drawer__actions">
-                {canManage && normalizeDocumentStatus(selectedOutboundDocument.status) === "DRAFT" ? (
+                {canManage && !selectedOutboundDocument.archivedAt && normalizeDocumentStatus(selectedOutboundDocument.status) === "DRAFT" ? (
                   <Button variant="outlined" onClick={() => openEditOutboundDraft(selectedOutboundDocument)}>
                     {t("editDraft")}
                   </Button>
                 ) : null}
-                {canManage && normalizeDocumentStatus(selectedOutboundDocument.status) === "DRAFT" ? (
-                  <Button variant="contained" onClick={() => void handleConfirmOutboundDocument(selectedOutboundDocument)}>
-                    {t("confirmShipment")}
+                {canManage ? (
+                  <Button variant="outlined" startIcon={<ContentCopyOutlinedIcon />} onClick={() => void handleCopyOutboundDocument(selectedOutboundDocument)}>
+                    {t("copyShipment")}
+                  </Button>
+                ) : null}
+                {canManage && !selectedOutboundDocument.archivedAt && getOutboundTrackingAction(selectedOutboundDocument, t) ? (
+                  <Button
+                    variant={getOutboundTrackingAction(selectedOutboundDocument, t)?.trackingStatus === "SHIPPED" ? "contained" : "outlined"}
+                    onClick={() => {
+                      const nextAction = getOutboundTrackingAction(selectedOutboundDocument, t);
+                      if (nextAction) {
+                        void handleUpdateOutboundTrackingStatus(selectedOutboundDocument, nextAction.trackingStatus);
+                      }
+                    }}
+                  >
+                    {getOutboundTrackingAction(selectedOutboundDocument, t)?.label}
                   </Button>
                 ) : null}
                 <Button
@@ -1703,7 +1873,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
                 >
                   {t("downloadDeliveryNote")}
                 </Button>
-                {canManage && normalizeDocumentStatus(selectedOutboundDocument.status) !== "CANCELLED" ? (
+                {canManage && !selectedOutboundDocument.archivedAt && normalizeDocumentStatus(selectedOutboundDocument.status) !== "CANCELLED" ? (
                   <Button
                     variant="outlined"
                     color="error"
@@ -1713,11 +1883,21 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
                     {t("cancelShipment")}
                   </Button>
                 ) : null}
+                {canManage && !selectedOutboundDocument.archivedAt ? (
+                  <Button
+                    variant="outlined"
+                    startIcon={<ArchiveOutlinedIcon />}
+                    onClick={() => void handleArchiveOutboundDocument(selectedOutboundDocument)}
+                  >
+                    {t("archiveShipment")}
+                  </Button>
+                ) : null}
               </div>
 
               <div className="document-drawer__status-bar">
                 <div className="document-drawer__status-main">
-                  {renderDocumentStatus(selectedOutboundDocument.status, t)}
+                  {renderDocumentStatus(selectedOutboundDocument.status, selectedOutboundDocument.archivedAt, t)}
+                  {renderOutboundTrackingStatus(selectedOutboundDocument.trackingStatus, selectedOutboundDocument.status, t)}
                 </div>
                 <div className="document-drawer__status-stat">
                   <strong>{selectedOutboundDocument.totalLines}</strong>
@@ -1759,7 +1939,11 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
                 </div>
                 <div className="document-drawer__audit-item">
                   <strong>{t("status")}</strong>
-                  <span>{selectedOutboundDocument.cancelledAt ? `${selectedOutboundDocument.status} | ${formatDateTimeValue(selectedOutboundDocument.cancelledAt, resolvedTimeZone)}` : selectedOutboundDocument.status}</span>
+                  <span>{formatDocumentStatusAuditValue(selectedOutboundDocument.status, selectedOutboundDocument.archivedAt, selectedOutboundDocument.cancelledAt, resolvedTimeZone, t)}</span>
+                </div>
+                <div className="document-drawer__audit-item">
+                  <strong>{t("trackingStatus")}</strong>
+                  <span>{formatOutboundTrackingStatusLabel(selectedOutboundDocument.trackingStatus, selectedOutboundDocument.status, t)}</span>
                 </div>
                 <div className="document-drawer__audit-item">
                   <strong>{t("confirmedAt")}</strong>
@@ -1922,7 +2106,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
                 </div>
 
                 <div className="sheet-form__actions" style={{ marginTop: "1rem" }}>
-                  <button className="button button--ghost" type="button" disabled={batchSubmitting} onClick={() => void submitInboundDocument("DRAFT")}>{batchSubmitting ? t("saving") : isEditingInboundDraft ? t("saveChanges") : t("saveDraft")}</button>
+                  <button className="button button--ghost" type="button" disabled={batchSubmitting} onClick={() => void submitInboundDocument("DRAFT")}>{batchSubmitting ? t("saving") : isEditingInboundDraft ? t("saveChanges") : t("scheduleReceipt")}</button>
                   <button className="button button--primary" type="submit" disabled={batchSubmitting}>{batchSubmitting ? t("saving") : t("confirmReceipt")}</button>
                   <button className="button button--ghost" type="button" onClick={closeBatchModal}>{t("cancel")}</button>
                 </div>
@@ -2183,7 +2367,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
                 ) : null}
 
                 <div className="sheet-form__actions" style={{ marginTop: "1rem" }}>
-                  <button className="button button--ghost" type="button" disabled={batchSubmitting || (!isEditingOutboundDraft && availableOutboundSources.length === 0)} onClick={() => void submitOutboundDocument("DRAFT")}>{batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("saveDraft")}</button>
+                  <button className="button button--ghost" type="button" disabled={batchSubmitting || (!isEditingOutboundDraft && availableOutboundSources.length === 0)} onClick={() => void submitOutboundDocument("DRAFT")}>{batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("scheduleShipment")}</button>
                   <div className="shipment-wizard__actions">
                     {outboundWizardStep > 1 ? (
                       <button className="button button--ghost" type="button" onClick={() => moveOutboundWizardStep((outboundWizardStep - 1) as OutboundWizardStep)}>{t("back")}</button>
@@ -2230,7 +2414,11 @@ function summarizeInboundDocumentSections(document: InboundDocument) {
   return sections.join(", ");
 }
 
-function renderDocumentStatus(status: string, t: (key: string) => string) {
+function renderDocumentStatus(status: string, archivedAt: string | null | undefined, t: (key: string) => string) {
+  if (archivedAt) {
+    return <Chip label={t("archived")} color="default" size="small" variant="outlined" />;
+  }
+
   const normalizedStatus = normalizeDocumentStatus(status);
 
   if (normalizedStatus === "CANCELLED") {
@@ -2242,6 +2430,134 @@ function renderDocumentStatus(status: string, t: (key: string) => string) {
   }
 
   return <Chip label={t("draft")} color="default" size="small" />;
+}
+
+function formatDocumentStatusAuditValue(
+  status: string,
+  archivedAt: string | null | undefined,
+  cancelledAt: string | null | undefined,
+  resolvedTimeZone: string,
+  t: (key: string) => string
+) {
+  if (archivedAt) {
+    return `${t("archived")} | ${formatDateTimeValue(archivedAt, resolvedTimeZone)}`;
+  }
+  if (cancelledAt) {
+    return `${status} | ${formatDateTimeValue(cancelledAt, resolvedTimeZone)}`;
+  }
+  return status;
+}
+
+function normalizeInboundTrackingStatusValue(trackingStatus?: string | null, documentStatus?: string | null) {
+  const normalizedStatus = normalizeDocumentStatus(documentStatus || "");
+  if (normalizedStatus === "CONFIRMED") {
+    return "RECEIVED";
+  }
+  const normalizedTrackingStatus = (trackingStatus || "").trim().toUpperCase();
+  if (normalizedTrackingStatus === "ARRIVED" || normalizedTrackingStatus === "RECEIVING" || normalizedTrackingStatus === "RECEIVED") {
+    return normalizedTrackingStatus;
+  }
+  return "SCHEDULED";
+}
+
+function normalizeOutboundTrackingStatusValue(trackingStatus?: string | null, documentStatus?: string | null) {
+  const normalizedStatus = normalizeDocumentStatus(documentStatus || "");
+  if (normalizedStatus === "CONFIRMED") {
+    return "SHIPPED";
+  }
+  const normalizedTrackingStatus = (trackingStatus || "").trim().toUpperCase();
+  if (normalizedTrackingStatus === "PICKING" || normalizedTrackingStatus === "PACKED" || normalizedTrackingStatus === "SHIPPED") {
+    return normalizedTrackingStatus;
+  }
+  return "SCHEDULED";
+}
+
+function formatInboundTrackingStatusLabel(trackingStatus: string, documentStatus: string, t: (key: string) => string) {
+  switch (normalizeInboundTrackingStatusValue(trackingStatus, documentStatus)) {
+    case "ARRIVED":
+      return t("arrived");
+    case "RECEIVING":
+      return t("receiving");
+    case "RECEIVED":
+      return t("receivedTracking");
+    default:
+      return t("scheduled");
+  }
+}
+
+function formatOutboundTrackingStatusLabel(trackingStatus: string, documentStatus: string, t: (key: string) => string) {
+  switch (normalizeOutboundTrackingStatusValue(trackingStatus, documentStatus)) {
+    case "PICKING":
+      return t("picking");
+    case "PACKED":
+      return t("packed");
+    case "SHIPPED":
+      return t("shipped");
+    default:
+      return t("scheduled");
+  }
+}
+
+function renderInboundTrackingStatus(trackingStatus: string, documentStatus: string, t: (key: string) => string) {
+  const normalizedTrackingStatus = normalizeInboundTrackingStatusValue(trackingStatus, documentStatus);
+  if (normalizedTrackingStatus === "RECEIVED") {
+    return <Chip label={t("receivedTracking")} color="success" size="small" variant="outlined" />;
+  }
+  if (normalizedTrackingStatus === "RECEIVING") {
+    return <Chip label={t("receiving")} color="primary" size="small" variant="outlined" />;
+  }
+  if (normalizedTrackingStatus === "ARRIVED") {
+    return <Chip label={t("arrived")} color="info" size="small" variant="outlined" />;
+  }
+  return <Chip label={t("scheduled")} color="default" size="small" variant="outlined" />;
+}
+
+function renderOutboundTrackingStatus(trackingStatus: string, documentStatus: string, t: (key: string) => string) {
+  const normalizedTrackingStatus = normalizeOutboundTrackingStatusValue(trackingStatus, documentStatus);
+  if (normalizedTrackingStatus === "SHIPPED") {
+    return <Chip label={t("shipped")} color="success" size="small" variant="outlined" />;
+  }
+  if (normalizedTrackingStatus === "PACKED") {
+    return <Chip label={t("packed")} color="primary" size="small" variant="outlined" />;
+  }
+  if (normalizedTrackingStatus === "PICKING") {
+    return <Chip label={t("picking")} color="info" size="small" variant="outlined" />;
+  }
+  return <Chip label={t("scheduled")} color="default" size="small" variant="outlined" />;
+}
+
+function getInboundTrackingAction(document: InboundDocument, t: (key: string) => string) {
+  if (normalizeDocumentStatus(document.status) !== "DRAFT") {
+    return null;
+  }
+
+  switch (normalizeInboundTrackingStatusValue(document.trackingStatus, document.status)) {
+    case "SCHEDULED":
+      return { trackingStatus: "ARRIVED", label: t("markArrived") };
+    case "ARRIVED":
+      return { trackingStatus: "RECEIVING", label: t("startReceiving") };
+    case "RECEIVING":
+      return { trackingStatus: "RECEIVED", label: t("completeReceipt") };
+    default:
+      return null;
+  }
+}
+
+function getOutboundTrackingAction(document: OutboundDocument, t: (key: string) => string) {
+  if (normalizeDocumentStatus(document.status) !== "DRAFT") {
+    return null;
+  }
+
+  switch (normalizeOutboundTrackingStatusValue(document.trackingStatus, document.status)) {
+    case "SCHEDULED":
+      return { trackingStatus: "PICKING", label: t("startPicking") };
+    case "PICKING":
+      return { trackingStatus: "PACKED", label: t("markPacked") };
+    case "PACKED":
+      return { trackingStatus: "SHIPPED", label: t("shipOut") };
+    default:
+      return null;
+  }
 }
 
 function normalizeDocumentStatus(status: string) {

@@ -1445,6 +1445,8 @@ textarea:focus {
 .document-drawer__status-main {
   display: flex;
   align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
 }
 
 .document-drawer__status-stat {

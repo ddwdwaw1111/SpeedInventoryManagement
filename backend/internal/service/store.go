@@ -78,15 +78,14 @@ type DashboardData struct {
 }
 
 type Location struct {
-	ID           int64     `db:"id" json:"id"`
-	Name         string    `db:"name" json:"name"`
-	Address      string    `db:"address" json:"address"`
-	Zone         string    `db:"zone" json:"zone"`
-	Description  string    `db:"description" json:"description"`
-	Capacity     int       `db:"capacity" json:"capacity"`
-	SectionNames []string  `json:"sectionNames"`
+	ID           int64              `db:"id" json:"id"`
+	Name         string             `db:"name" json:"name"`
+	Address      string             `db:"address" json:"address"`
+	Description  string             `db:"description" json:"description"`
+	Capacity     int                `db:"capacity" json:"capacity"`
+	SectionNames []string           `json:"sectionNames"`
 	LayoutBlocks []StorageLayoutBlock `json:"layoutBlocks"`
-	CreatedAt    time.Time `db:"created_at" json:"createdAt"`
+	CreatedAt    time.Time          `db:"created_at" json:"createdAt"`
 }
 
 type StorageLayoutBlock struct {
@@ -103,7 +102,6 @@ type locationRow struct {
 	ID               int64     `db:"id"`
 	Name             string    `db:"name"`
 	Address          string    `db:"address"`
-	Zone             string    `db:"zone"`
 	Description      string    `db:"description"`
 	Capacity         int       `db:"capacity"`
 	SectionCount     int       `db:"section_count"`
@@ -118,7 +116,6 @@ func (row locationRow) toLocation() Location {
 		ID:           row.ID,
 		Name:         row.Name,
 		Address:      row.Address,
-		Zone:         row.Zone,
 		Description:  row.Description,
 		Capacity:     row.Capacity,
 		SectionNames: parseSectionNames(row.SectionNamesJSON, row.SectionCount),
@@ -141,7 +138,6 @@ type Customer struct {
 type CreateLocationInput struct {
 	Name         string   `json:"name"`
 	Address      string   `json:"address"`
-	Zone         string   `json:"zone"`
 	Description  string   `json:"description"`
 	Capacity     int      `json:"capacity"`
 	SectionNames []string `json:"sectionNames"`
@@ -1346,7 +1342,6 @@ func scanLocation(scanner itemScanner) (Location, error) {
 		&location.ID,
 		&location.Name,
 		&location.Address,
-		&location.Zone,
 		&location.Description,
 		&location.Capacity,
 		&sectionCount,

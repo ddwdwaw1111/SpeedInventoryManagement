@@ -21,6 +21,10 @@ type Server struct {
 	sessionCookieSecure bool
 }
 
+type documentTrackingStatusInput struct {
+	TrackingStatus string `json:"trackingStatus"`
+}
+
 func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName string, sessionCookieSecure bool) http.Handler {
 	server := &Server{
 		store:               store,
@@ -60,12 +64,18 @@ func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName s
 	operator.POST("/outbound-documents", server.handleCreateOutboundDocument)
 	operator.PUT("/outbound-documents/:id", server.handleUpdateOutboundDocument)
 	operator.POST("/outbound-documents/:id/confirm", server.handleConfirmOutboundDocument)
+	operator.POST("/outbound-documents/:id/tracking-status", server.handleUpdateOutboundDocumentTrackingStatus)
 	operator.POST("/outbound-documents/:id/cancel", server.handleCancelOutboundDocument)
+	operator.POST("/outbound-documents/:id/archive", server.handleArchiveOutboundDocument)
+	operator.POST("/outbound-documents/:id/copy", server.handleCopyOutboundDocument)
 	operator.POST("/inbound-documents", server.handleCreateInboundDocument)
 	operator.POST("/inbound-documents/import-preview", server.handleImportInboundDocumentPreview)
 	operator.PUT("/inbound-documents/:id", server.handleUpdateInboundDocument)
 	operator.POST("/inbound-documents/:id/confirm", server.handleConfirmInboundDocument)
+	operator.POST("/inbound-documents/:id/tracking-status", server.handleUpdateInboundDocumentTrackingStatus)
 	operator.POST("/inbound-documents/:id/cancel", server.handleCancelInboundDocument)
+	operator.POST("/inbound-documents/:id/archive", server.handleArchiveInboundDocument)
+	operator.POST("/inbound-documents/:id/copy", server.handleCopyInboundDocument)
 	operator.POST("/adjustments", server.handleCreateInventoryAdjustment)
 	operator.POST("/transfers", server.handleCreateInventoryTransfer)
 	operator.POST("/cycle-counts", server.handleCreateCycleCount)
@@ -212,7 +222,6 @@ func (s *Server) handleCreateLocation(c *gin.Context) {
 
 	s.writeAuditLog(c, "CREATE", "location", location.ID, location.Name, "Created storage location", map[string]any{
 		"name":     location.Name,
-		"zone":     location.Zone,
 		"capacity": location.Capacity,
 	})
 
@@ -240,7 +249,6 @@ func (s *Server) handleUpdateLocation(c *gin.Context) {
 
 	s.writeAuditLog(c, "UPDATE", "location", location.ID, location.Name, "Updated storage location", map[string]any{
 		"name":     location.Name,
-		"zone":     location.Zone,
 		"capacity": location.Capacity,
 	})
 
@@ -561,7 +569,8 @@ func (s *Server) handleListOutboundDocuments(c *gin.Context) {
 		limit = parsed
 	}
 
-	documents, err := s.store.ListOutboundDocuments(c.Request.Context(), limit)
+	archiveScope := strings.TrimSpace(c.Query("archiveScope"))
+	documents, err := s.store.ListOutboundDocuments(c.Request.Context(), limit, archiveScope)
 	if err != nil {
 		writeServerError(c, err)
 		return
@@ -650,6 +659,36 @@ func (s *Server) handleConfirmOutboundDocument(c *gin.Context) {
 	writeJSON(c, http.StatusOK, document)
 }
 
+func (s *Server) handleUpdateOutboundDocumentTrackingStatus(c *gin.Context) {
+	documentID, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var input documentTrackingStatusInput
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	document, err := s.store.UpdateOutboundDocumentTrackingStatus(c.Request.Context(), documentID, input.TrackingStatus)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "TRACK", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Updated outbound tracking status", map[string]any{
+		"packingListNo":   document.PackingListNo,
+		"status":          document.Status,
+		"trackingStatus":  document.TrackingStatus,
+		"confirmedAt":     document.ConfirmedAt,
+		"cancelledAt":     document.CancelledAt,
+	})
+
+	writeJSON(c, http.StatusOK, document)
+}
+
 func (s *Server) handleCancelOutboundDocument(c *gin.Context) {
 	documentID, err := parseIDParam(c, "id")
 	if err != nil {
@@ -681,6 +720,53 @@ func (s *Server) handleCancelOutboundDocument(c *gin.Context) {
 	writeJSON(c, http.StatusOK, document)
 }
 
+func (s *Server) handleArchiveOutboundDocument(c *gin.Context) {
+	documentID, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	document, err := s.store.ArchiveOutboundDocument(c.Request.Context(), documentID)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "ARCHIVE", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Archived outbound document", map[string]any{
+		"packingListNo": document.PackingListNo,
+		"status":        document.Status,
+		"archivedAt":    document.ArchivedAt,
+	})
+
+	writeJSON(c, http.StatusOK, document)
+}
+
+func (s *Server) handleCopyOutboundDocument(c *gin.Context) {
+	documentID, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	document, err := s.store.CopyOutboundDocument(c.Request.Context(), documentID)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "COPY", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Copied outbound document into draft", map[string]any{
+		"sourceDocumentId": documentID,
+		"packingListNo":    document.PackingListNo,
+		"status":           document.Status,
+		"trackingStatus":   document.TrackingStatus,
+		"totalLines":       document.TotalLines,
+		"totalQty":         document.TotalQty,
+	})
+
+	writeJSON(c, http.StatusCreated, document)
+}
+
 func (s *Server) handleListInboundDocuments(c *gin.Context) {
 	limit := 100
 	if value := strings.TrimSpace(c.Query("limit")); value != "" {
@@ -692,7 +778,8 @@ func (s *Server) handleListInboundDocuments(c *gin.Context) {
 		limit = parsed
 	}
 
-	documents, err := s.store.ListInboundDocuments(c.Request.Context(), limit)
+	archiveScope := strings.TrimSpace(c.Query("archiveScope"))
+	documents, err := s.store.ListInboundDocuments(c.Request.Context(), limit, archiveScope)
 	if err != nil {
 		writeServerError(c, err)
 		return
@@ -836,6 +923,83 @@ func (s *Server) handleCancelInboundDocument(c *gin.Context) {
 		"status":      document.Status,
 		"reason":      document.CancelNote,
 		"cancelledAt": document.CancelledAt,
+	})
+
+	writeJSON(c, http.StatusOK, document)
+}
+
+func (s *Server) handleArchiveInboundDocument(c *gin.Context) {
+	documentID, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	document, err := s.store.ArchiveInboundDocument(c.Request.Context(), documentID)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "ARCHIVE", "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), "Archived inbound document", map[string]any{
+		"containerNo": document.ContainerNo,
+		"status":      document.Status,
+		"archivedAt":  document.ArchivedAt,
+	})
+
+	writeJSON(c, http.StatusOK, document)
+}
+
+func (s *Server) handleCopyInboundDocument(c *gin.Context) {
+	documentID, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	document, err := s.store.CopyInboundDocument(c.Request.Context(), documentID)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "COPY", "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), "Copied inbound document into draft", map[string]any{
+		"sourceDocumentId": documentID,
+		"containerNo":      document.ContainerNo,
+		"status":           document.Status,
+		"trackingStatus":   document.TrackingStatus,
+		"totalLines":       document.TotalLines,
+		"totalExpected":    document.TotalExpectedQty,
+	})
+
+	writeJSON(c, http.StatusCreated, document)
+}
+
+func (s *Server) handleUpdateInboundDocumentTrackingStatus(c *gin.Context) {
+	documentID, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var input documentTrackingStatusInput
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	document, err := s.store.UpdateInboundDocumentTrackingStatus(c.Request.Context(), documentID, input.TrackingStatus)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "TRACK", "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), "Updated inbound tracking status", map[string]any{
+		"containerNo":     document.ContainerNo,
+		"status":          document.Status,
+		"trackingStatus":  document.TrackingStatus,
+		"confirmedAt":     document.ConfirmedAt,
+		"cancelledAt":     document.CancelledAt,
 	})
 
 	writeJSON(c, http.StatusOK, document)

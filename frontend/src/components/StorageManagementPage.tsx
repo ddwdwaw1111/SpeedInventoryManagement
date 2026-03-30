@@ -100,7 +100,6 @@ export function StorageManagementPage({
   const baseColumns = useMemo<GridColDef<Location>[]>(() => [
     { field: "name", headerName: t("storageName"), minWidth: 180, flex: 1 },
     { field: "address", headerName: t("address"), minWidth: 260, flex: 1.4, renderCell: (params) => params.value || "-" },
-    { field: "zone", headerName: t("zone"), minWidth: 140, flex: 0.9 },
     { field: "capacity", headerName: t("capacity"), minWidth: 110, type: "number" },
     {
       field: "sectionNames",

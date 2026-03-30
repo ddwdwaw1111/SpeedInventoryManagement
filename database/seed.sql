@@ -11,14 +11,13 @@ ON DUPLICATE KEY UPDATE
   phone = VALUES(phone),
   notes = VALUES(notes);
 
-INSERT INTO storage_locations (name, address, zone, description, capacity)
+INSERT INTO storage_locations (name, address, description, capacity)
 VALUES
-  ('Rack A-01', '1200 Harbor Blvd, North Bergen, NJ', 'North Wing', 'Fast-moving packing supplies near dispatch', 320),
-  ('Rack B-07', '88 Commerce Rd, Secaucus, NJ', 'Cold Room', 'Temperature-controlled shelf for sensitive items', 180),
-  ('Floor C-12', '350 Industrial Ave, Jersey City, NJ', 'Bulk Zone', 'Pallet storage for heavy or oversized stock', 520)
+  ('Rack A-01', '1200 Harbor Blvd, North Bergen, NJ', 'Fast-moving packing supplies near dispatch', 320),
+  ('Rack B-07', '88 Commerce Rd, Secaucus, NJ', 'Temperature-controlled shelf for sensitive items', 180),
+  ('Floor C-12', '350 Industrial Ave, Jersey City, NJ', 'Pallet storage for heavy or oversized stock', 520)
 ON DUPLICATE KEY UPDATE
   address = VALUES(address),
-  zone = VALUES(zone),
   description = VALUES(description),
   capacity = VALUES(capacity);
 

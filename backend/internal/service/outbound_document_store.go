@@ -26,9 +26,11 @@ type OutboundDocument struct {
 	CarrierName         string                 `json:"carrierName"`
 	DocumentNote        string                 `json:"documentNote"`
 	Status              string                 `json:"status"`
+	TrackingStatus      string                 `json:"trackingStatus"`
 	ConfirmedAt         *time.Time             `json:"confirmedAt"`
 	CancelNote          string                 `json:"cancelNote"`
 	CancelledAt         *time.Time             `json:"cancelledAt"`
+	ArchivedAt          *time.Time             `json:"archivedAt"`
 	TotalLines          int                    `json:"totalLines"`
 	TotalQty            int                    `json:"totalQty"`
 	TotalNetWeightKgs   float64                `json:"totalNetWeightKgs"`
@@ -85,6 +87,7 @@ type CreateOutboundDocumentInput struct {
 	ShipToContact string                            `json:"shipToContact"`
 	CarrierName   string                            `json:"carrierName"`
 	Status        string                            `json:"status"`
+	TrackingStatus string                           `json:"trackingStatus"`
 	DocumentNote  string                            `json:"documentNote"`
 	Lines         []CreateOutboundDocumentLineInput `json:"lines"`
 }
@@ -121,9 +124,11 @@ type outboundDocumentRow struct {
 	CarrierName   string     `db:"carrier_name"`
 	DocumentNote  string     `db:"document_note"`
 	Status        string     `db:"status"`
+	TrackingStatus string    `db:"tracking_status"`
 	ConfirmedAt   *time.Time `db:"confirmed_at"`
 	CancelNote    string     `db:"cancel_note"`
 	CancelledAt   *time.Time `db:"cancelled_at"`
+	ArchivedAt    *time.Time `db:"archived_at"`
 	CreatedAt     time.Time  `db:"created_at"`
 	UpdatedAt     time.Time  `db:"updated_at"`
 }
@@ -236,13 +241,19 @@ type outboundMovementBalanceRow struct {
 	SortAt         *time.Time `db:"sort_at"`
 }
 
-func (s *Store) ListOutboundDocuments(ctx context.Context, limit int) ([]OutboundDocument, error) {
+func (s *Store) ListOutboundDocuments(ctx context.Context, limit int, archiveScope ...string) ([]OutboundDocument, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 
+	normalizedArchiveScope := DocumentArchiveScopeActive
+	if len(archiveScope) > 0 {
+		normalizedArchiveScope = normalizeDocumentArchiveScope(archiveScope[0])
+	}
+	archiveFilterClause := buildDocumentArchiveFilterClause("d", normalizedArchiveScope)
+
 	documentRows := make([]outboundDocumentRow, 0)
-	if err := s.db.SelectContext(ctx, &documentRows, `
+	if err := s.db.SelectContext(ctx, &documentRows, fmt.Sprintf(`
 		SELECT
 			d.id,
 			COALESCE(d.packing_list_no, '') AS packing_list_no,
@@ -256,16 +267,19 @@ func (s *Store) ListOutboundDocuments(ctx context.Context, limit int) ([]Outboun
 			COALESCE(d.carrier_name, '') AS carrier_name,
 			COALESCE(d.document_note, '') AS document_note,
 			d.status,
+			COALESCE(d.tracking_status, '') AS tracking_status,
 			d.confirmed_at,
 			COALESCE(d.cancel_note, '') AS cancel_note,
 			d.cancelled_at,
+			d.archived_at,
 			d.created_at,
 			d.updated_at
 		FROM outbound_documents d
 		JOIN customers c ON c.id = d.customer_id
+		WHERE %s
 		ORDER BY COALESCE(d.out_date, d.created_at) DESC, d.id DESC
 		LIMIT ?
-	`, limit); err != nil {
+	`, archiveFilterClause), limit); err != nil {
 		return nil, fmt.Errorf("load outbound documents: %w", err)
 	}
 
@@ -291,9 +305,11 @@ func (s *Store) ListOutboundDocuments(ctx context.Context, limit int) ([]Outboun
 			CarrierName:   row.CarrierName,
 			DocumentNote:  row.DocumentNote,
 			Status:        normalizeDocumentStatus(row.Status),
+			TrackingStatus: normalizeOutboundTrackingStatus(row.TrackingStatus, row.Status),
 			ConfirmedAt:   row.ConfirmedAt,
 			CancelNote:    row.CancelNote,
 			CancelledAt:   row.CancelledAt,
+			ArchivedAt:    row.ArchivedAt,
 			Lines:         make([]OutboundDocumentLine, 0),
 			CreatedAt:     row.CreatedAt,
 			UpdatedAt:     row.UpdatedAt,
@@ -396,6 +412,7 @@ func (s *Store) CreateOutboundDocument(ctx context.Context, input CreateOutbound
 		outDate = &now
 	}
 	requestedStatus := coalesceDocumentStatus(input.Status)
+	requestedTrackingStatus := coalesceOutboundTrackingStatus(input.TrackingStatus, requestedStatus)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -444,9 +461,10 @@ func (s *Store) CreateOutboundDocument(ctx context.Context, input CreateOutbound
 			carrier_name,
 			document_note,
 			status,
+			tracking_status,
 			confirmed_at,
 			posted_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
 	`,
 		nullableString(input.PackingListNo),
 		nullableString(input.OrderRef),
@@ -458,6 +476,7 @@ func (s *Store) CreateOutboundDocument(ctx context.Context, input CreateOutbound
 		nullableString(input.CarrierName),
 		nullableString(input.DocumentNote),
 		persistedStatus,
+		requestedTrackingStatus,
 	)
 	if err != nil {
 		return OutboundDocument{}, mapDBError(fmt.Errorf("create outbound document: %w", err))
@@ -503,6 +522,7 @@ func (s *Store) UpdateOutboundDocument(ctx context.Context, documentID int64, in
 		outDate = &now
 	}
 	requestedStatus := coalesceDocumentStatus(input.Status)
+	requestedTrackingStatus := coalesceOutboundTrackingStatus(input.TrackingStatus, requestedStatus)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -573,6 +593,7 @@ func (s *Store) UpdateOutboundDocument(ctx context.Context, documentID int64, in
 			carrier_name = ?,
 			document_note = ?,
 			status = ?,
+			tracking_status = ?,
 			confirmed_at = NULL,
 			posted_at = NULL,
 			updated_at = CURRENT_TIMESTAMP
@@ -588,6 +609,7 @@ func (s *Store) UpdateOutboundDocument(ctx context.Context, documentID int64, in
 		nullableString(input.CarrierName),
 		nullableString(input.DocumentNote),
 		persistedStatus,
+		requestedTrackingStatus,
 		documentID,
 	); err != nil {
 		return OutboundDocument{}, mapDBError(fmt.Errorf("update outbound document: %w", err))
@@ -746,6 +768,61 @@ func (s *Store) ConfirmOutboundDocument(ctx context.Context, documentID int64) (
 
 func (s *Store) PostOutboundDocument(ctx context.Context, documentID int64) (OutboundDocument, error) {
 	return s.ConfirmOutboundDocument(ctx, documentID)
+}
+
+func (s *Store) UpdateOutboundDocumentTrackingStatus(ctx context.Context, documentID int64, trackingStatus string) (OutboundDocument, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return OutboundDocument{}, fmt.Errorf("begin outbound tracking transition: %w", err)
+	}
+	defer tx.Rollback()
+
+	documentRow, err := s.loadOutboundDocumentForUpdateTx(ctx, tx, documentID)
+	if err != nil {
+		return OutboundDocument{}, err
+	}
+
+	documentStatus := normalizeDocumentStatus(documentRow.Status)
+	if documentStatus == DocumentStatusCancelled {
+		return OutboundDocument{}, fmt.Errorf("%w: cancelled shipment cannot change tracking status", ErrInvalidInput)
+	}
+
+	currentTrackingStatus := normalizeOutboundTrackingStatus(documentRow.TrackingStatus, documentRow.Status)
+	targetTrackingStatus := normalizeOutboundTrackingStatus(trackingStatus, documentRow.Status)
+	if err := validateOutboundTrackingTransition(currentTrackingStatus, targetTrackingStatus); err != nil {
+		return OutboundDocument{}, err
+	}
+
+	if targetTrackingStatus == OutboundTrackingShipped {
+		if documentStatus != DocumentStatusConfirmed {
+			if err := s.confirmOutboundDocumentTx(ctx, tx, documentID); err != nil {
+				return OutboundDocument{}, err
+			}
+		} else if _, err := tx.ExecContext(ctx, `
+			UPDATE outbound_documents
+			SET tracking_status = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`, OutboundTrackingShipped, documentID); err != nil {
+			return OutboundDocument{}, mapDBError(fmt.Errorf("update outbound tracking status: %w", err))
+		}
+	} else {
+		if documentStatus == DocumentStatusConfirmed {
+			return OutboundDocument{}, fmt.Errorf("%w: confirmed shipment tracking cannot move away from shipped", ErrInvalidInput)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE outbound_documents
+			SET tracking_status = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`, targetTrackingStatus, documentID); err != nil {
+			return OutboundDocument{}, mapDBError(fmt.Errorf("update outbound tracking status: %w", err))
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return OutboundDocument{}, fmt.Errorf("commit outbound tracking transition: %w", err)
+	}
+
+	return s.getOutboundDocument(ctx, documentID)
 }
 
 func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, documentID int64) error {
@@ -970,10 +1047,11 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 		UPDATE outbound_documents
 		SET
 			status = ?,
+			tracking_status = ?,
 			confirmed_at = COALESCE(confirmed_at, ?),
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, DocumentStatusConfirmed, confirmedAt, documentID); err != nil {
+	`, DocumentStatusConfirmed, OutboundTrackingShipped, confirmedAt, documentID); err != nil {
 		return mapDBError(fmt.Errorf("mark outbound document confirmed: %w", err))
 	}
 
@@ -1146,6 +1224,190 @@ func (s *Store) CancelOutboundDocument(ctx context.Context, documentID int64, in
 	return s.getOutboundDocument(ctx, documentID)
 }
 
+func (s *Store) ArchiveOutboundDocument(ctx context.Context, documentID int64) (OutboundDocument, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return OutboundDocument{}, fmt.Errorf("begin outbound archive transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	documentRow, err := s.loadOutboundDocumentForUpdateTx(ctx, tx, documentID)
+	if err != nil {
+		return OutboundDocument{}, err
+	}
+	if documentRow.ArchivedAt != nil {
+		return OutboundDocument{}, fmt.Errorf("%w: shipment is already archived", ErrInvalidInput)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE outbound_documents
+		SET archived_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, documentID); err != nil {
+		return OutboundDocument{}, mapDBError(fmt.Errorf("archive outbound document: %w", err))
+	}
+
+	if err := tx.Commit(); err != nil {
+		return OutboundDocument{}, fmt.Errorf("commit outbound archive: %w", err)
+	}
+
+	return s.getOutboundDocument(ctx, documentID)
+}
+
+func (s *Store) CopyOutboundDocument(ctx context.Context, documentID int64) (OutboundDocument, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return OutboundDocument{}, fmt.Errorf("begin outbound copy transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	documentRow, err := s.loadOutboundDocumentForUpdateTx(ctx, tx, documentID)
+	if err != nil {
+		return OutboundDocument{}, err
+	}
+
+	lineRows, err := s.loadOutboundDocumentLinesTx(ctx, tx, documentID)
+	if err != nil {
+		return OutboundDocument{}, err
+	}
+	if len(lineRows) == 0 {
+		return OutboundDocument{}, fmt.Errorf("%w: shipment must contain at least one line", ErrInvalidInput)
+	}
+
+	lineIDs := make([]int64, 0, len(lineRows))
+	for _, lineRow := range lineRows {
+		lineIDs = append(lineIDs, lineRow.ID)
+	}
+
+	allocationsByLineID, err := s.loadOutboundPickAllocationsTx(ctx, tx, lineIDs)
+	if err != nil {
+		return OutboundDocument{}, err
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO outbound_documents (
+			packing_list_no,
+			order_ref,
+			customer_id,
+			out_date,
+			ship_to_name,
+			ship_to_address,
+			ship_to_contact,
+			carrier_name,
+			document_note,
+			status,
+			tracking_status,
+			confirmed_at,
+			posted_at,
+			cancel_note,
+			cancelled_at,
+			archived_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
+	`,
+		nullableString(documentRow.PackingListNo),
+		nullableString(documentRow.OrderRef),
+		documentRow.CustomerID,
+		nullableTime(documentRow.OutDate),
+		nullableString(documentRow.ShipToName),
+		nullableString(documentRow.ShipToAddress),
+		nullableString(documentRow.ShipToContact),
+		nullableString(documentRow.CarrierName),
+		nullableString(documentRow.DocumentNote),
+		DocumentStatusDraft,
+		OutboundTrackingScheduled,
+	)
+	if err != nil {
+		return OutboundDocument{}, mapDBError(fmt.Errorf("copy outbound document: %w", err))
+	}
+
+	newDocumentID, err := result.LastInsertId()
+	if err != nil {
+		return OutboundDocument{}, fmt.Errorf("resolve copied outbound document id: %w", err)
+	}
+
+	for index, lineRow := range lineRows {
+		lineResult, err := tx.ExecContext(ctx, `
+			INSERT INTO outbound_document_lines (
+				document_id,
+				item_id,
+				location_id,
+				location_name_snapshot,
+				storage_section,
+				item_number_snapshot,
+				sku_snapshot,
+				description_snapshot,
+				quantity,
+				pallets,
+				pallets_detail_ctns,
+				unit_label,
+				carton_size_mm,
+				net_weight_kgs,
+				gross_weight_kgs,
+				line_note,
+				sort_order
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`,
+			newDocumentID,
+			lineRow.ItemID,
+			lineRow.LocationID,
+			lineRow.LocationName,
+			fallbackSection(lineRow.StorageSection),
+			nullableString(lineRow.ItemNumberSnapshot),
+			lineRow.SKUSnapshot,
+			nullableString(lineRow.DescriptionSnapshot),
+			lineRow.Quantity,
+			lineRow.Pallets,
+			nullableString(lineRow.PalletsDetailCtns),
+			nullableString(lineRow.UnitLabel),
+			nullableString(lineRow.CartonSizeMM),
+			lineRow.NetWeightKgs,
+			lineRow.GrossWeightKgs,
+			nullableString(lineRow.LineNote),
+			index+1,
+		)
+		if err != nil {
+			return OutboundDocument{}, mapDBError(fmt.Errorf("copy outbound document line: %w", err))
+		}
+
+		newLineID, err := lineResult.LastInsertId()
+		if err != nil {
+			return OutboundDocument{}, fmt.Errorf("resolve copied outbound line id: %w", err)
+		}
+
+		for allocationIndex, allocation := range allocationsByLineID[lineRow.ID] {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO outbound_pick_allocations (
+					line_id,
+					item_id,
+					location_id,
+					location_name_snapshot,
+					storage_section,
+					container_no_snapshot,
+					allocated_qty,
+					sort_order
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			`,
+				newLineID,
+				allocation.ItemID,
+				allocation.LocationID,
+				allocation.LocationName,
+				fallbackSection(allocation.StorageSection),
+				nullableString(allocation.ContainerNo),
+				allocation.AllocatedQty,
+				allocationIndex+1,
+			); err != nil {
+				return OutboundDocument{}, mapDBError(fmt.Errorf("copy outbound pick allocation: %w", err))
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return OutboundDocument{}, fmt.Errorf("commit outbound copy: %w", err)
+	}
+
+	return s.getOutboundDocument(ctx, newDocumentID)
+}
+
 func (s *Store) loadOutboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx, documentID int64) (outboundDocumentRow, error) {
 	var documentRow outboundDocumentRow
 	if err := tx.QueryRowContext(ctx, `
@@ -1162,9 +1424,11 @@ func (s *Store) loadOutboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx,
 			COALESCE(d.carrier_name, '') AS carrier_name,
 			COALESCE(d.document_note, '') AS document_note,
 			d.status,
+			COALESCE(d.tracking_status, '') AS tracking_status,
 			d.confirmed_at,
 			COALESCE(d.cancel_note, '') AS cancel_note,
 			d.cancelled_at,
+			d.archived_at,
 			d.created_at,
 			d.updated_at
 		FROM outbound_documents d
@@ -1184,9 +1448,11 @@ func (s *Store) loadOutboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx,
 		&documentRow.CarrierName,
 		&documentRow.DocumentNote,
 		&documentRow.Status,
+		&documentRow.TrackingStatus,
 		&documentRow.ConfirmedAt,
 		&documentRow.CancelNote,
 		&documentRow.CancelledAt,
+		&documentRow.ArchivedAt,
 		&documentRow.CreatedAt,
 		&documentRow.UpdatedAt,
 	); err != nil {
@@ -1266,7 +1532,7 @@ func (s *Store) loadOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, doc
 }
 
 func (s *Store) getOutboundDocument(ctx context.Context, documentID int64) (OutboundDocument, error) {
-	documents, err := s.listOutboundDocumentsByIDs(ctx, []int64{documentID})
+	documents, err := s.listOutboundDocumentsByIDs(ctx, []int64{documentID}, true)
 	if err != nil {
 		return OutboundDocument{}, err
 	}
@@ -1276,12 +1542,17 @@ func (s *Store) getOutboundDocument(ctx context.Context, documentID int64) (Outb
 	return documents[0], nil
 }
 
-func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []int64) ([]OutboundDocument, error) {
+func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []int64, includeArchived bool) ([]OutboundDocument, error) {
 	if len(documentIDs) == 0 {
 		return []OutboundDocument{}, nil
 	}
 
-	query, args, err := sqlx.In(`
+	archiveFilter := "AND d.archived_at IS NULL"
+	if includeArchived {
+		archiveFilter = ""
+	}
+
+	query, args, err := sqlx.In(fmt.Sprintf(`
 		SELECT
 			d.id,
 			COALESCE(d.packing_list_no, '') AS packing_list_no,
@@ -1295,16 +1566,19 @@ func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []in
 			COALESCE(d.carrier_name, '') AS carrier_name,
 			COALESCE(d.document_note, '') AS document_note,
 			d.status,
+			COALESCE(d.tracking_status, '') AS tracking_status,
 			d.confirmed_at,
 			COALESCE(d.cancel_note, '') AS cancel_note,
 			d.cancelled_at,
+			d.archived_at,
 			d.created_at,
 			d.updated_at
 		FROM outbound_documents d
 		JOIN customers c ON c.id = d.customer_id
 		WHERE d.id IN (?)
+		%s
 		ORDER BY COALESCE(d.out_date, d.created_at) DESC, d.id DESC
-	`, documentIDs)
+	`, archiveFilter), documentIDs)
 	if err != nil {
 		return nil, fmt.Errorf("build outbound document query: %w", err)
 	}
@@ -1334,9 +1608,11 @@ func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []in
 			CarrierName:   row.CarrierName,
 			DocumentNote:  row.DocumentNote,
 			Status:        normalizeDocumentStatus(row.Status),
+			TrackingStatus: normalizeOutboundTrackingStatus(row.TrackingStatus, row.Status),
 			ConfirmedAt:   row.ConfirmedAt,
 			CancelNote:    row.CancelNote,
 			CancelledAt:   row.CancelledAt,
+			ArchivedAt:    row.ArchivedAt,
 			Lines:         make([]OutboundDocumentLine, 0),
 			CreatedAt:     row.CreatedAt,
 			UpdatedAt:     row.UpdatedAt,
@@ -2142,6 +2418,7 @@ func sanitizeOutboundDocumentInput(input CreateOutboundDocumentInput) CreateOutb
 	input.ShipToContact = strings.TrimSpace(input.ShipToContact)
 	input.CarrierName = strings.TrimSpace(input.CarrierName)
 	input.Status = strings.TrimSpace(strings.ToUpper(input.Status))
+	input.TrackingStatus = strings.TrimSpace(strings.ToUpper(input.TrackingStatus))
 	input.DocumentNote = strings.TrimSpace(input.DocumentNote)
 	lines := make([]CreateOutboundDocumentLineInput, 0, len(input.Lines))
 	for _, line := range input.Lines {
@@ -2180,7 +2457,17 @@ func sanitizeOutboundDocumentInput(input CreateOutboundDocumentInput) CreateOutb
 }
 
 func validateOutboundDocumentInput(input CreateOutboundDocumentInput) error {
-	if err := validateCreatableDocumentStatus(coalesceDocumentStatus(input.Status)); err != nil {
+	coalescedStatus := coalesceDocumentStatus(input.Status)
+	if err := validateCreatableDocumentStatus(coalescedStatus); err != nil {
+		return err
+	}
+	if normalizedTracking := normalizeOutboundTrackingStatus(input.TrackingStatus, coalescedStatus); normalizedTracking == "" {
+		return fmt.Errorf("%w: invalid outbound tracking status", ErrInvalidInput)
+	}
+	if coalescedStatus == DocumentStatusConfirmed && normalizeOutboundTrackingStatus(input.TrackingStatus, coalescedStatus) != OutboundTrackingShipped {
+		return fmt.Errorf("%w: confirmed shipments must use the shipped tracking status", ErrInvalidInput)
+	}
+	if err := validateOutboundTrackingTransition(OutboundTrackingScheduled, normalizeOutboundTrackingStatus(input.TrackingStatus, coalescedStatus)); err != nil {
 		return err
 	}
 	if len(input.Lines) == 0 {

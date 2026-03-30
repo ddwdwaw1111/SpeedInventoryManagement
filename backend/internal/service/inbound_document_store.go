@@ -23,9 +23,11 @@ type InboundDocument struct {
 	UnitLabel        string                `json:"unitLabel"`
 	DocumentNote     string                `json:"documentNote"`
 	Status           string                `json:"status"`
+	TrackingStatus   string                `json:"trackingStatus"`
 	ConfirmedAt      *time.Time            `json:"confirmedAt"`
 	CancelNote       string                `json:"cancelNote"`
 	CancelledAt      *time.Time            `json:"cancelledAt"`
+	ArchivedAt       *time.Time            `json:"archivedAt"`
 	TotalLines       int                   `json:"totalLines"`
 	TotalExpectedQty int                   `json:"totalExpectedQty"`
 	TotalReceivedQty int                   `json:"totalReceivedQty"`
@@ -60,6 +62,7 @@ type CreateInboundDocumentInput struct {
 	StorageSection string                           `json:"storageSection"`
 	UnitLabel      string                           `json:"unitLabel"`
 	Status         string                           `json:"status"`
+	TrackingStatus string                           `json:"trackingStatus"`
 	DocumentNote   string                           `json:"documentNote"`
 	Lines          []CreateInboundDocumentLineInput `json:"lines"`
 }
@@ -88,9 +91,11 @@ type inboundDocumentRow struct {
 	UnitLabel      string     `db:"unit_label"`
 	DocumentNote   string     `db:"document_note"`
 	Status         string     `db:"status"`
+	TrackingStatus string     `db:"tracking_status"`
 	ConfirmedAt    *time.Time `db:"confirmed_at"`
 	CancelNote     string     `db:"cancel_note"`
 	CancelledAt    *time.Time `db:"cancelled_at"`
+	ArchivedAt     *time.Time `db:"archived_at"`
 	CreatedAt      time.Time  `db:"created_at"`
 	UpdatedAt      time.Time  `db:"updated_at"`
 }
@@ -117,13 +122,19 @@ type CancelInboundDocumentInput struct {
 	Reason string `json:"reason"`
 }
 
-func (s *Store) ListInboundDocuments(ctx context.Context, limit int) ([]InboundDocument, error) {
+func (s *Store) ListInboundDocuments(ctx context.Context, limit int, archiveScope ...string) ([]InboundDocument, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 
+	normalizedArchiveScope := DocumentArchiveScopeActive
+	if len(archiveScope) > 0 {
+		normalizedArchiveScope = normalizeDocumentArchiveScope(archiveScope[0])
+	}
+	archiveFilterClause := buildDocumentArchiveFilterClause("d", normalizedArchiveScope)
+
 	documentRows := make([]inboundDocumentRow, 0)
-	if err := s.db.SelectContext(ctx, &documentRows, `
+	if err := s.db.SelectContext(ctx, &documentRows, fmt.Sprintf(`
 		SELECT
 			d.id,
 			d.customer_id,
@@ -136,17 +147,20 @@ func (s *Store) ListInboundDocuments(ctx context.Context, limit int) ([]InboundD
 			COALESCE(d.unit_label, '') AS unit_label,
 			COALESCE(d.document_note, '') AS document_note,
 			d.status,
+			COALESCE(d.tracking_status, '') AS tracking_status,
 			d.confirmed_at,
 			COALESCE(d.cancel_note, '') AS cancel_note,
 			d.cancelled_at,
+			d.archived_at,
 			d.created_at,
 			d.updated_at
 		FROM inbound_documents d
 		JOIN customers c ON c.id = d.customer_id
 		JOIN storage_locations l ON l.id = d.location_id
+		WHERE %s
 		ORDER BY COALESCE(d.delivery_date, d.created_at) DESC, d.id DESC
 		LIMIT ?
-	`, limit); err != nil {
+	`, archiveFilterClause), limit); err != nil {
 		return nil, fmt.Errorf("load inbound documents: %w", err)
 	}
 	if len(documentRows) == 0 {
@@ -169,9 +183,11 @@ func (s *Store) ListInboundDocuments(ctx context.Context, limit int) ([]InboundD
 			UnitLabel:      row.UnitLabel,
 			DocumentNote:   row.DocumentNote,
 			Status:         normalizeDocumentStatus(row.Status),
+			TrackingStatus: normalizeInboundTrackingStatus(row.TrackingStatus, row.Status),
 			ConfirmedAt:    row.ConfirmedAt,
 			CancelNote:     row.CancelNote,
 			CancelledAt:    row.CancelledAt,
+			ArchivedAt:     row.ArchivedAt,
 			CreatedAt:      row.CreatedAt,
 			UpdatedAt:      row.UpdatedAt,
 			Lines:          make([]InboundDocumentLine, 0),
@@ -256,6 +272,7 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 		deliveryDate = &now
 	}
 	requestedStatus := coalesceDocumentStatus(input.Status)
+	requestedTrackingStatus := coalesceInboundTrackingStatus(input.TrackingStatus, requestedStatus)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -278,11 +295,12 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 			unit_label,
 			document_note,
 			status,
+			tracking_status,
 			confirmed_at,
 			posted_at,
 			cancel_note,
 			cancelled_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)
 	`,
 		input.CustomerID,
 		input.LocationID,
@@ -292,6 +310,7 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 		nullableString(input.UnitLabel),
 		nullableString(input.DocumentNote),
 		persistedStatus,
+		requestedTrackingStatus,
 	)
 	if err != nil {
 		return InboundDocument{}, mapDBError(fmt.Errorf("create inbound document: %w", err))
@@ -369,6 +388,7 @@ func (s *Store) UpdateInboundDocument(ctx context.Context, documentID int64, inp
 		deliveryDate = &now
 	}
 	requestedStatus := coalesceDocumentStatus(input.Status)
+	requestedTrackingStatus := coalesceInboundTrackingStatus(input.TrackingStatus, requestedStatus)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -410,6 +430,7 @@ func (s *Store) UpdateInboundDocument(ctx context.Context, documentID int64, inp
 			unit_label = ?,
 			document_note = ?,
 			status = ?,
+			tracking_status = ?,
 			confirmed_at = NULL,
 			posted_at = NULL,
 			updated_at = CURRENT_TIMESTAMP
@@ -423,6 +444,7 @@ func (s *Store) UpdateInboundDocument(ctx context.Context, documentID int64, inp
 		nullableString(input.UnitLabel),
 		nullableString(input.DocumentNote),
 		persistedStatus,
+		requestedTrackingStatus,
 		documentID,
 	); err != nil {
 		return InboundDocument{}, mapDBError(fmt.Errorf("update inbound document: %w", err))
@@ -513,6 +535,61 @@ func (s *Store) ConfirmInboundDocument(ctx context.Context, documentID int64) (I
 
 func (s *Store) PostInboundDocument(ctx context.Context, documentID int64) (InboundDocument, error) {
 	return s.ConfirmInboundDocument(ctx, documentID)
+}
+
+func (s *Store) UpdateInboundDocumentTrackingStatus(ctx context.Context, documentID int64, trackingStatus string) (InboundDocument, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return InboundDocument{}, fmt.Errorf("begin inbound tracking transition: %w", err)
+	}
+	defer tx.Rollback()
+
+	documentRow, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+
+	documentStatus := normalizeDocumentStatus(documentRow.Status)
+	if documentStatus == DocumentStatusCancelled {
+		return InboundDocument{}, fmt.Errorf("%w: cancelled receipt cannot change tracking status", ErrInvalidInput)
+	}
+
+	currentTrackingStatus := normalizeInboundTrackingStatus(documentRow.TrackingStatus, documentRow.Status)
+	targetTrackingStatus := normalizeInboundTrackingStatus(trackingStatus, documentRow.Status)
+	if err := validateInboundTrackingTransition(currentTrackingStatus, targetTrackingStatus); err != nil {
+		return InboundDocument{}, err
+	}
+
+	if targetTrackingStatus == InboundTrackingReceived {
+		if documentStatus != DocumentStatusConfirmed {
+			if err := s.confirmInboundDocumentTx(ctx, tx, documentID); err != nil {
+				return InboundDocument{}, err
+			}
+		} else if _, err := tx.ExecContext(ctx, `
+			UPDATE inbound_documents
+			SET tracking_status = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`, InboundTrackingReceived, documentID); err != nil {
+			return InboundDocument{}, mapDBError(fmt.Errorf("update inbound tracking status: %w", err))
+		}
+	} else {
+		if documentStatus == DocumentStatusConfirmed {
+			return InboundDocument{}, fmt.Errorf("%w: confirmed receipt tracking cannot move away from received", ErrInvalidInput)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE inbound_documents
+			SET tracking_status = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`, targetTrackingStatus, documentID); err != nil {
+			return InboundDocument{}, mapDBError(fmt.Errorf("update inbound tracking status: %w", err))
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return InboundDocument{}, fmt.Errorf("commit inbound tracking transition: %w", err)
+	}
+
+	return s.getInboundDocument(ctx, documentID)
 }
 
 func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, documentID int64) error {
@@ -661,10 +738,11 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 		UPDATE inbound_documents
 		SET
 			status = ?,
+			tracking_status = ?,
 			confirmed_at = COALESCE(confirmed_at, ?),
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, DocumentStatusConfirmed, confirmedAt, documentID); err != nil {
+	`, DocumentStatusConfirmed, InboundTrackingReceived, confirmedAt, documentID); err != nil {
 		return mapDBError(fmt.Errorf("mark inbound document confirmed: %w", err))
 	}
 
@@ -801,6 +879,135 @@ func (s *Store) CancelInboundDocument(ctx context.Context, documentID int64, inp
 	return s.getInboundDocument(ctx, documentID)
 }
 
+func (s *Store) ArchiveInboundDocument(ctx context.Context, documentID int64) (InboundDocument, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return InboundDocument{}, fmt.Errorf("begin inbound archive transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	documentRow, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+	if documentRow.ArchivedAt != nil {
+		return InboundDocument{}, fmt.Errorf("%w: receipt is already archived", ErrInvalidInput)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE inbound_documents
+		SET archived_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, documentID); err != nil {
+		return InboundDocument{}, mapDBError(fmt.Errorf("archive inbound document: %w", err))
+	}
+
+	if err := tx.Commit(); err != nil {
+		return InboundDocument{}, fmt.Errorf("commit inbound archive: %w", err)
+	}
+
+	return s.getInboundDocument(ctx, documentID)
+}
+
+func (s *Store) CopyInboundDocument(ctx context.Context, documentID int64) (InboundDocument, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return InboundDocument{}, fmt.Errorf("begin inbound copy transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	documentRow, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+
+	lineRows, err := s.loadInboundDocumentLinesTx(ctx, tx, documentID)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+	if len(lineRows) == 0 {
+		return InboundDocument{}, fmt.Errorf("%w: receipt must contain at least one line", ErrInvalidInput)
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO inbound_documents (
+			customer_id,
+			location_id,
+			delivery_date,
+			container_no,
+			storage_section,
+			unit_label,
+			document_note,
+			status,
+			tracking_status,
+			confirmed_at,
+			posted_at,
+			cancel_note,
+			cancelled_at,
+			archived_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
+	`,
+		documentRow.CustomerID,
+		documentRow.LocationID,
+		nullableTime(documentRow.DeliveryDate),
+		nullableString(documentRow.ContainerNo),
+		fallbackSection(documentRow.StorageSection),
+		nullableString(documentRow.UnitLabel),
+		nullableString(documentRow.DocumentNote),
+		DocumentStatusDraft,
+		InboundTrackingScheduled,
+	)
+	if err != nil {
+		return InboundDocument{}, mapDBError(fmt.Errorf("copy inbound document: %w", err))
+	}
+
+	newDocumentID, err := result.LastInsertId()
+	if err != nil {
+		return InboundDocument{}, fmt.Errorf("resolve copied inbound document id: %w", err)
+	}
+
+	for index, lineRow := range lineRows {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO inbound_document_lines (
+				document_id,
+				item_id,
+				sku_snapshot,
+				description_snapshot,
+				storage_section,
+				reorder_level,
+				expected_qty,
+				received_qty,
+				pallets,
+				pallets_detail_ctns,
+				unit_label,
+				line_note,
+				sort_order
+			) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`,
+			newDocumentID,
+			lineRow.SKUSnapshot,
+			nullableString(lineRow.DescriptionSnapshot),
+			fallbackSection(lineRow.StorageSection),
+			lineRow.ReorderLevel,
+			lineRow.ExpectedQty,
+			lineRow.ReceivedQty,
+			lineRow.Pallets,
+			nullableString(lineRow.PalletsDetailCtns),
+			nullableString(lineRow.UnitLabel),
+			nullableString(lineRow.LineNote),
+			index+1,
+		); err != nil {
+			return InboundDocument{}, mapDBError(fmt.Errorf("copy inbound document line: %w", err))
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return InboundDocument{}, fmt.Errorf("commit inbound copy: %w", err)
+	}
+
+	return s.getInboundDocument(ctx, newDocumentID)
+}
+
 func (s *Store) loadInboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx, documentID int64) (inboundDocumentRow, error) {
 	var documentRow inboundDocumentRow
 	if err := tx.QueryRowContext(ctx, `
@@ -816,9 +1023,11 @@ func (s *Store) loadInboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx, 
 			COALESCE(d.unit_label, '') AS unit_label,
 			COALESCE(d.document_note, '') AS document_note,
 			d.status,
+			COALESCE(d.tracking_status, '') AS tracking_status,
 			d.confirmed_at,
 			COALESCE(d.cancel_note, '') AS cancel_note,
 			d.cancelled_at,
+			d.archived_at,
 			d.created_at,
 			d.updated_at
 		FROM inbound_documents d
@@ -838,9 +1047,11 @@ func (s *Store) loadInboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx, 
 		&documentRow.UnitLabel,
 		&documentRow.DocumentNote,
 		&documentRow.Status,
+		&documentRow.TrackingStatus,
 		&documentRow.ConfirmedAt,
 		&documentRow.CancelNote,
 		&documentRow.CancelledAt,
+		&documentRow.ArchivedAt,
 		&documentRow.CreatedAt,
 		&documentRow.UpdatedAt,
 	); err != nil {
@@ -912,7 +1123,7 @@ func (s *Store) loadInboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, docu
 }
 
 func (s *Store) getInboundDocument(ctx context.Context, documentID int64) (InboundDocument, error) {
-	documents, err := s.listInboundDocumentsByIDs(ctx, []int64{documentID})
+	documents, err := s.listInboundDocumentsByIDs(ctx, []int64{documentID}, true)
 	if err != nil {
 		return InboundDocument{}, err
 	}
@@ -922,12 +1133,17 @@ func (s *Store) getInboundDocument(ctx context.Context, documentID int64) (Inbou
 	return documents[0], nil
 }
 
-func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int64) ([]InboundDocument, error) {
+func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int64, includeArchived bool) ([]InboundDocument, error) {
 	if len(documentIDs) == 0 {
 		return []InboundDocument{}, nil
 	}
 
-	query, args, err := sqlx.In(`
+	archiveFilter := "AND d.archived_at IS NULL"
+	if includeArchived {
+		archiveFilter = ""
+	}
+
+	query, args, err := sqlx.In(fmt.Sprintf(`
 		SELECT
 			d.id,
 			d.customer_id,
@@ -940,17 +1156,20 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 			COALESCE(d.unit_label, '') AS unit_label,
 			COALESCE(d.document_note, '') AS document_note,
 			d.status,
+			COALESCE(d.tracking_status, '') AS tracking_status,
 			d.confirmed_at,
 			COALESCE(d.cancel_note, '') AS cancel_note,
 			d.cancelled_at,
+			d.archived_at,
 			d.created_at,
 			d.updated_at
 		FROM inbound_documents d
 		JOIN customers c ON c.id = d.customer_id
 		JOIN storage_locations l ON l.id = d.location_id
 		WHERE d.id IN (?)
+		%s
 		ORDER BY COALESCE(d.delivery_date, d.created_at) DESC, d.id DESC
-	`, documentIDs)
+	`, archiveFilter), documentIDs)
 	if err != nil {
 		return nil, fmt.Errorf("build inbound document query: %w", err)
 	}
@@ -978,9 +1197,11 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 			UnitLabel:      row.UnitLabel,
 			DocumentNote:   row.DocumentNote,
 			Status:         normalizeDocumentStatus(row.Status),
+			TrackingStatus: normalizeInboundTrackingStatus(row.TrackingStatus, row.Status),
 			ConfirmedAt:    row.ConfirmedAt,
 			CancelNote:     row.CancelNote,
 			CancelledAt:    row.CancelledAt,
+			ArchivedAt:     row.ArchivedAt,
 			CreatedAt:      row.CreatedAt,
 			UpdatedAt:      row.UpdatedAt,
 			Lines:          make([]InboundDocumentLine, 0),
@@ -1210,6 +1431,7 @@ func sanitizeInboundDocumentInput(input CreateInboundDocumentInput) CreateInboun
 	input.StorageSection = fallbackSection(strings.TrimSpace(strings.ToUpper(input.StorageSection)))
 	input.UnitLabel = strings.TrimSpace(strings.ToUpper(input.UnitLabel))
 	input.Status = strings.TrimSpace(strings.ToUpper(input.Status))
+	input.TrackingStatus = strings.TrimSpace(strings.ToUpper(input.TrackingStatus))
 	input.DocumentNote = strings.TrimSpace(input.DocumentNote)
 
 	lines := make([]CreateInboundDocumentLineInput, 0, len(input.Lines))
@@ -1229,7 +1451,17 @@ func sanitizeInboundDocumentInput(input CreateInboundDocumentInput) CreateInboun
 }
 
 func validateInboundDocumentInput(input CreateInboundDocumentInput) error {
-	if err := validateCreatableDocumentStatus(coalesceDocumentStatus(input.Status)); err != nil {
+	coalescedStatus := coalesceDocumentStatus(input.Status)
+	if err := validateCreatableDocumentStatus(coalescedStatus); err != nil {
+		return err
+	}
+	if normalizedTracking := normalizeInboundTrackingStatus(input.TrackingStatus, coalescedStatus); normalizedTracking == "" {
+		return fmt.Errorf("%w: invalid inbound tracking status", ErrInvalidInput)
+	}
+	if coalescedStatus == DocumentStatusConfirmed && normalizeInboundTrackingStatus(input.TrackingStatus, coalescedStatus) != InboundTrackingReceived {
+		return fmt.Errorf("%w: confirmed receipts must use the received tracking status", ErrInvalidInput)
+	}
+	if err := validateInboundTrackingTransition(InboundTrackingScheduled, normalizeInboundTrackingStatus(input.TrackingStatus, coalescedStatus)); err != nil {
 		return err
 	}
 

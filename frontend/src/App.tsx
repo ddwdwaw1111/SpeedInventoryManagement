@@ -19,7 +19,7 @@ import {
   TuneOutlined,
   WarehouseOutlined
 } from "@mui/icons-material";
-import { Suspense, lazy, type ReactNode, useEffect, useState } from "react";
+import { Suspense, lazy, type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { ActivityManagementPage } from "./components/ActivityManagementPage";
 import { AdjustmentManagementPage } from "./components/AdjustmentManagementPage";
@@ -88,6 +88,14 @@ export default function App() {
   const [cycleCounts, setCycleCounts] = useState<CycleCount[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const activeInboundDocuments = useMemo(
+    () => inboundDocuments.filter((document) => !document.archivedAt),
+    [inboundDocuments]
+  );
+  const activeOutboundDocuments = useMemo(
+    () => outboundDocuments.filter((document) => !document.archivedAt),
+    [outboundDocuments]
+  );
 
   useEffect(() => { void bootstrapApp(); }, []);
   useEffect(() => {
@@ -136,8 +144,8 @@ export default function App() {
         api.getSKUMasters(),
         api.getItems(),
         api.getMovements(20000),
-        api.getInboundDocuments(300),
-        api.getOutboundDocuments(300),
+        api.getInboundDocuments(300, "all"),
+        api.getOutboundDocuments(300, "all"),
         api.getInventoryAdjustments(300),
         api.getInventoryTransfers(300),
         api.getCycleCounts(300),
@@ -467,7 +475,7 @@ export default function App() {
           ) : null}
           {activePage === "container-contents" ? <ContainerContentsPage items={items} customers={customers} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
           {activePage === "all-activity" ? <AllActivityPage movements={movements} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
-          {activePage === "customers" ? <CustomerManagementPage customers={customers} items={items} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} movements={movements} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
+          {activePage === "customers" ? <CustomerManagementPage customers={customers} items={items} inboundDocuments={activeInboundDocuments} outboundDocuments={activeOutboundDocuments} movements={movements} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
           {activePage === "audit-logs" && canViewAuditLogs ? <AuditLogPage auditLogs={auditLogs} currentUserRole={currentUser.role} isLoading={isLoading} /> : null}
           {activePage === "user-management" && canManageUsers ? <UserManagementPage users={users} currentUser={currentUser} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
           {activePage === "sku-master" ? <SKUMasterPage skuMasters={skuMasters} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
@@ -498,8 +506,8 @@ export default function App() {
             <HomeDashboardPage
               currentUserRole={currentUser.role}
               items={items}
-              inboundDocuments={inboundDocuments}
-              outboundDocuments={outboundDocuments}
+              inboundDocuments={activeInboundDocuments}
+              outboundDocuments={activeOutboundDocuments}
               adjustments={adjustments}
               transfers={transfers}
               cycleCounts={cycleCounts}
@@ -521,8 +529,8 @@ export default function App() {
           {activePage === "export-center" ? (
             <ExportCenterPage
               items={items}
-              inboundDocuments={inboundDocuments}
-              outboundDocuments={outboundDocuments}
+              inboundDocuments={activeInboundDocuments}
+              outboundDocuments={activeOutboundDocuments}
               onNavigate={(page) => navigateToPage(page, setActivePage)}
             />
           ) : null}

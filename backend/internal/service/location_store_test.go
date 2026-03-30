@@ -9,7 +9,6 @@ func TestSanitizeLocationInputDerivesSectionsFromLayout(t *testing.T) {
 	input := sanitizeLocationInput(CreateLocationInput{
 		Name:    " NJ Warehouse ",
 		Address: " 100 Harbor Blvd ",
-		Zone:    " North ",
 		LayoutBlocks: []StorageLayoutBlock{
 			{ID: "temp", Type: StorageLayoutBlockTypeTemporary, Name: " "},
 			{ID: "section-a", Type: StorageLayoutBlockTypeSection, Name: " a-01 ", X: -1, Y: 2, Width: 0, Height: -3},
@@ -47,7 +46,6 @@ func TestSanitizeLocationInputBuildsDefaultTemporaryLayout(t *testing.T) {
 	input := sanitizeLocationInput(CreateLocationInput{
 		Name:         "LA",
 		Address:      "200 Main St",
-		Zone:         "West",
 		SectionNames: nil,
 		LayoutBlocks: nil,
 	})
