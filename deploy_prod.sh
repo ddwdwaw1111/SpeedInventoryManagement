@@ -25,6 +25,14 @@ ENV_FILE_PATH="${ENV_FILE_PATH:-$ROOT_DIR/.env.prod}"
 DEPLOY_STACK="${DEPLOY_STACK:-https}"
 ARCHIVE_RETENTION="${ARCHIVE_RETENTION:-4}"
 REMOTE_ARCHIVE_NAME=""
+PROD_COMPOSE_CHANGED=0
+HTTPS_COMPOSE_CHANGED=0
+SCHEMA_CHANGED=0
+SEED_CHANGED=0
+START_PROXY_CHANGED=0
+HTTP_TEMPLATE_CHANGED=0
+HTTPS_TEMPLATE_CHANGED=0
+ENV_FILE_CHANGED=0
 
 ssh_args=()
 
@@ -42,12 +50,13 @@ upload_if_changed() {
 
   if [[ -n "$remote_hash" && "$local_hash" == "$remote_hash" ]]; then
     echo "==> Skipping unchanged $(basename "$source_path")"
-    return
+    return 1
   fi
 
   remote_dir="$(dirname "$remote_relative_path")"
   ssh "${ssh_args[@]}" "${SERVER_USER}@${SERVER_HOST}" "mkdir -p ${SERVER_PATH}/${remote_dir}"
   scp "${ssh_args[@]}" "$source_path" "${SERVER_USER}@${SERVER_HOST}:${SERVER_PATH}/${remote_relative_path}"
+  return 0
 }
 
 usage() {
@@ -299,20 +308,20 @@ if [[ "$DEPLOY_AFTER_BUILD" == "true" ]]; then
   echo
   echo "==> Uploading archive and deployment files"
   scp "${ssh_args[@]}" "$ARCHIVE_PATH" "${SERVER_USER}@${SERVER_HOST}:${SERVER_PATH}/archives/"
-  upload_if_changed "$ROOT_DIR/docker-compose.prod.yml" "docker-compose.prod.yml"
-  upload_if_changed "$ROOT_DIR/docker-compose.https.yml" "docker-compose.https.yml"
-  upload_if_changed "$ROOT_DIR/database/schema.sql" "database/schema.sql"
-  upload_if_changed "$ROOT_DIR/database/seed.sql" "database/seed.sql"
-  upload_if_changed "$ROOT_DIR/deploy/nginx/start-proxy.sh" "deploy/nginx/start-proxy.sh"
-  upload_if_changed "$ROOT_DIR/deploy/nginx/templates/http.conf.template" "deploy/nginx/templates/http.conf.template"
-  upload_if_changed "$ROOT_DIR/deploy/nginx/templates/https.conf.template" "deploy/nginx/templates/https.conf.template"
-  upload_if_changed "$ENV_FILE_PATH" ".env.prod"
+  if upload_if_changed "$ROOT_DIR/docker-compose.prod.yml" "docker-compose.prod.yml"; then PROD_COMPOSE_CHANGED=1; fi
+  if upload_if_changed "$ROOT_DIR/docker-compose.https.yml" "docker-compose.https.yml"; then HTTPS_COMPOSE_CHANGED=1; fi
+  if upload_if_changed "$ROOT_DIR/database/schema.sql" "database/schema.sql"; then SCHEMA_CHANGED=1; fi
+  if upload_if_changed "$ROOT_DIR/database/seed.sql" "database/seed.sql"; then SEED_CHANGED=1; fi
+  if upload_if_changed "$ROOT_DIR/deploy/nginx/start-proxy.sh" "deploy/nginx/start-proxy.sh"; then START_PROXY_CHANGED=1; fi
+  if upload_if_changed "$ROOT_DIR/deploy/nginx/templates/http.conf.template" "deploy/nginx/templates/http.conf.template"; then HTTP_TEMPLATE_CHANGED=1; fi
+  if upload_if_changed "$ROOT_DIR/deploy/nginx/templates/https.conf.template" "deploy/nginx/templates/https.conf.template"; then HTTPS_TEMPLATE_CHANGED=1; fi
+  if upload_if_changed "$ENV_FILE_PATH" ".env.prod"; then ENV_FILE_CHANGED=1; fi
 
   REMOTE_ARCHIVE_NAME="$(basename "$ARCHIVE_PATH")"
 
   echo
   echo "==> Loading images and starting services on remote server"
-  ssh "${ssh_args[@]}" "${SERVER_USER}@${SERVER_HOST}" "cd ${SERVER_PATH} && REMOTE_ARCHIVE_NAME='${REMOTE_ARCHIVE_NAME}' DEPLOY_STACK='${DEPLOY_STACK}' ARCHIVE_RETENTION='${ARCHIVE_RETENTION}' MARIADB_IMAGE='${MARIADB_IMAGE}' bash -s" <<'EOF'
+  ssh "${ssh_args[@]}" "${SERVER_USER}@${SERVER_HOST}" "cd ${SERVER_PATH} && REMOTE_ARCHIVE_NAME='${REMOTE_ARCHIVE_NAME}' DEPLOY_STACK='${DEPLOY_STACK}' ARCHIVE_RETENTION='${ARCHIVE_RETENTION}' MARIADB_IMAGE='${MARIADB_IMAGE}' BACKEND_IMAGE='${BACKEND_IMAGE}' FRONTEND_IMAGE='${FRONTEND_IMAGE}' PROD_COMPOSE_CHANGED='${PROD_COMPOSE_CHANGED}' HTTPS_COMPOSE_CHANGED='${HTTPS_COMPOSE_CHANGED}' SCHEMA_CHANGED='${SCHEMA_CHANGED}' SEED_CHANGED='${SEED_CHANGED}' START_PROXY_CHANGED='${START_PROXY_CHANGED}' HTTP_TEMPLATE_CHANGED='${HTTP_TEMPLATE_CHANGED}' HTTPS_TEMPLATE_CHANGED='${HTTPS_TEMPLATE_CHANGED}' ENV_FILE_CHANGED='${ENV_FILE_CHANGED}' bash -s" <<'EOF'
 set -euo pipefail
 
 mkdir -p ./archives
@@ -321,12 +330,33 @@ if [[ -f "./$REMOTE_ARCHIVE_NAME" ]]; then
   mv -f "./$REMOTE_ARCHIVE_NAME" "./archives/$REMOTE_ARCHIVE_NAME"
 fi
 
+backend_image_before="$(docker image inspect --format '{{.Id}}' "$BACKEND_IMAGE" 2>/dev/null || true)"
+frontend_image_before="$(docker image inspect --format '{{.Id}}' "$FRONTEND_IMAGE" 2>/dev/null || true)"
+
 docker load -i "./archives/$REMOTE_ARCHIVE_NAME"
+
+backend_image_after="$(docker image inspect --format '{{.Id}}' "$BACKEND_IMAGE" 2>/dev/null || true)"
+frontend_image_after="$(docker image inspect --format '{{.Id}}' "$FRONTEND_IMAGE" 2>/dev/null || true)"
+
+backend_image_changed=0
+frontend_image_changed=0
+
+if [[ -n "$backend_image_after" && "$backend_image_before" != "$backend_image_after" ]]; then
+  backend_image_changed=1
+fi
+
+if [[ -n "$frontend_image_after" && "$frontend_image_before" != "$frontend_image_after" ]]; then
+  frontend_image_changed=1
+fi
 
 if ! docker image inspect "$MARIADB_IMAGE" >/dev/null 2>&1; then
   echo "==> Pulling database image $MARIADB_IMAGE on remote host"
   docker pull "$MARIADB_IMAGE"
 fi
+
+container_missing() {
+  ! docker inspect "$1" >/dev/null 2>&1
+}
 
 wait_for_container() {
   local container_name="$1"
@@ -382,16 +412,73 @@ fi
 
 if [[ "$selected_stack" == "https" ]]; then
   echo "==> Remote stack: https"
-  docker compose --env-file .env.prod -f docker-compose.https.yml up -d --remove-orphans backend frontend reverse-proxy
+  backend_needs_update=0
+  frontend_needs_update=0
+  proxy_needs_update=0
+  db_needs_update=0
+
+  if (( backend_image_changed || ENV_FILE_CHANGED || HTTPS_COMPOSE_CHANGED )) || container_missing speed-inventory-api; then
+    backend_needs_update=1
+  fi
+  if (( frontend_image_changed || ENV_FILE_CHANGED || HTTPS_COMPOSE_CHANGED )) || container_missing speed-inventory-web; then
+    frontend_needs_update=1
+  fi
+  if (( START_PROXY_CHANGED || HTTP_TEMPLATE_CHANGED || HTTPS_TEMPLATE_CHANGED || ENV_FILE_CHANGED || HTTPS_COMPOSE_CHANGED || backend_needs_update || frontend_needs_update )) || container_missing speed-inventory-proxy; then
+    proxy_needs_update=1
+  fi
+  if container_missing speed-inventory-db; then
+    db_needs_update=1
+  fi
+
+  services_to_up=()
+  if (( db_needs_update )); then services_to_up+=(mariadb); fi
+  if (( backend_needs_update )); then services_to_up+=(backend); fi
+  if (( frontend_needs_update )); then services_to_up+=(frontend); fi
+  if (( proxy_needs_update )); then services_to_up+=(reverse-proxy); fi
+
+  if (( ${#services_to_up[@]} > 0 )); then
+    echo "==> Updating services: ${services_to_up[*]}"
+    docker compose --env-file .env.prod -f docker-compose.https.yml up -d --remove-orphans "${services_to_up[@]}"
+  else
+    echo "==> No https services require update"
+  fi
+
   wait_for_container speed-inventory-api healthy 240
   wait_for_container speed-inventory-web healthy 180
-  docker compose --env-file .env.prod -f docker-compose.https.yml restart reverse-proxy
+  if (( proxy_needs_update )); then
+    docker compose --env-file .env.prod -f docker-compose.https.yml restart reverse-proxy
+  fi
   wait_for_container speed-inventory-proxy running 120
   run_smoke_test "https"
   echo "==> Check status with: docker compose --env-file .env.prod -f docker-compose.https.yml ps"
 else
   echo "==> Remote stack: http"
-  docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --remove-orphans backend frontend
+  backend_needs_update=0
+  frontend_needs_update=0
+  db_needs_update=0
+
+  if (( backend_image_changed || ENV_FILE_CHANGED || PROD_COMPOSE_CHANGED )) || container_missing speed-inventory-api; then
+    backend_needs_update=1
+  fi
+  if (( frontend_image_changed || ENV_FILE_CHANGED || PROD_COMPOSE_CHANGED )) || container_missing speed-inventory-web; then
+    frontend_needs_update=1
+  fi
+  if container_missing speed-inventory-db; then
+    db_needs_update=1
+  fi
+
+  services_to_up=()
+  if (( db_needs_update )); then services_to_up+=(mariadb); fi
+  if (( backend_needs_update )); then services_to_up+=(backend); fi
+  if (( frontend_needs_update )); then services_to_up+=(frontend); fi
+
+  if (( ${#services_to_up[@]} > 0 )); then
+    echo "==> Updating services: ${services_to_up[*]}"
+    docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --remove-orphans "${services_to_up[@]}"
+  else
+    echo "==> No http services require update"
+  fi
+
   wait_for_container speed-inventory-api healthy 240
   wait_for_container speed-inventory-web healthy 180
   run_smoke_test "http"
