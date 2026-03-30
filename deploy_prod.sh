@@ -23,9 +23,32 @@ SERVER_PATH="${SERVER_PATH:-~/SpeedInventoryManagement}"
 SSH_KEY_PATH="${SSH_KEY_PATH:-$HOME/.ssh/oracle-prod.key}"
 ENV_FILE_PATH="${ENV_FILE_PATH:-$ROOT_DIR/.env.prod}"
 DEPLOY_STACK="${DEPLOY_STACK:-https}"
+ARCHIVE_RETENTION="${ARCHIVE_RETENTION:-4}"
 REMOTE_ARCHIVE_NAME=""
 
 ssh_args=()
+
+sha256_file() {
+  sha256sum "$1" | awk '{print $1}'
+}
+
+upload_if_changed() {
+  local source_path="$1"
+  local remote_relative_path="$2"
+  local local_hash remote_hash remote_dir
+
+  local_hash="$(sha256_file "$source_path")"
+  remote_hash="$(ssh "${ssh_args[@]}" "${SERVER_USER}@${SERVER_HOST}" "cd ${SERVER_PATH} && if [ -f '${remote_relative_path}' ]; then sha256sum '${remote_relative_path}' | awk '{print \$1}'; fi" 2>/dev/null || true)"
+
+  if [[ -n "$remote_hash" && "$local_hash" == "$remote_hash" ]]; then
+    echo "==> Skipping unchanged $(basename "$source_path")"
+    return
+  fi
+
+  remote_dir="$(dirname "$remote_relative_path")"
+  ssh "${ssh_args[@]}" "${SERVER_USER}@${SERVER_HOST}" "mkdir -p ${SERVER_PATH}/${remote_dir}"
+  scp "${ssh_args[@]}" "$source_path" "${SERVER_USER}@${SERVER_HOST}:${SERVER_PATH}/${remote_relative_path}"
+}
 
 usage() {
   cat <<EOF
@@ -50,6 +73,7 @@ Options:
   --ssh-key <path>           SSH private key path for scp/ssh.
   --env-file <path>          Local env file to upload. Default: ${ENV_FILE_PATH}
   --stack <auto|http|https>  Deploy stack selection. Default: ${DEPLOY_STACK}
+  --keep-archives <count>    Remote tar archives to keep. Default: ${ARCHIVE_RETENTION}
   --push                     Use buildx --push instead of --load. Not recommended for this workflow.
   -h, --help                 Show this help.
 
@@ -121,6 +145,10 @@ while [[ $# -gt 0 ]]; do
       DEPLOY_STACK="$2"
       shift 2
       ;;
+    --keep-archives)
+      ARCHIVE_RETENTION="$2"
+      shift 2
+      ;;
     --push)
       LOAD_FLAG="--push"
       shift
@@ -147,6 +175,11 @@ case "$DEPLOY_STACK" in
     ;;
 esac
 
+if ! [[ "$ARCHIVE_RETENTION" =~ ^[0-9]+$ ]] || (( ARCHIVE_RETENTION < 1 )); then
+  echo "Invalid --keep-archives value: ${ARCHIVE_RETENTION}" >&2
+  exit 1
+fi
+
 mkdir -p "$OUTPUT_DIR"
 ARCHIVE_PATH="$OUTPUT_DIR/$ARCHIVE_NAME"
 
@@ -158,6 +191,7 @@ if [[ "$DEPLOY_AFTER_BUILD" == "true" ]]; then
   echo "==> Deploy target:   ${SERVER_USER}@${SERVER_HOST}:${SERVER_PATH}"
   echo "==> SSH key:         ${SSH_KEY_PATH}"
   echo "==> Deploy stack:    ${DEPLOY_STACK}"
+  echo "==> Keep archives:   ${ARCHIVE_RETENTION}"
 fi
 echo
 
@@ -198,15 +232,10 @@ if [[ "$LOAD_FLAG" == "--push" ]]; then
 fi
 
 echo
-echo "==> Pulling database image"
-docker pull --platform "$PLATFORM" "$MARIADB_IMAGE"
-
-echo
 echo "==> Saving images to archive"
 docker save \
   "$BACKEND_IMAGE" \
   "$FRONTEND_IMAGE" \
-  "$MARIADB_IMAGE" \
   -o "$ARCHIVE_PATH"
 
 cat > "$OUTPUT_DIR/README-$(basename "${ARCHIVE_NAME%.tar}").txt" <<EOF
@@ -215,12 +244,12 @@ Archive created: $ARCHIVE_PATH
 Images included:
   - $BACKEND_IMAGE
   - $FRONTEND_IMAGE
-  - $MARIADB_IMAGE
 
 Server steps:
-  scp "$(basename "$ARCHIVE_PATH")" ubuntu@<server-ip>:~/
+  scp "$(basename "$ARCHIVE_PATH")" ubuntu@<server-ip>:~/SpeedInventoryManagement/archives/
   ssh ubuntu@<server-ip>
-  docker load -i ~/"$(basename "$ARCHIVE_PATH")"
+  cd ~/SpeedInventoryManagement
+  docker load -i ./archives/"$(basename "$ARCHIVE_PATH")"
 
 Deploy stack selection:
   auto  -> uses docker-compose.https.yml when .env.prod contains SITE_DOMAIN
@@ -254,13 +283,7 @@ if [[ "$DEPLOY_AFTER_BUILD" == "true" ]]; then
   echo "==> Ready to deploy"
   echo "This will upload:"
   echo "    - $(basename "$ARCHIVE_PATH")"
-  echo "    - docker-compose.prod.yml"
-  echo "    - docker-compose.https.yml"
-  echo "    - database/schema.sql"
-  echo "    - database/seed.sql"
-  echo "    - deploy/nginx/start-proxy.sh"
-  echo "    - deploy/nginx/templates/*"
-  echo "    - $(basename "$ENV_FILE_PATH") as .env.prod"
+  echo "    - deployment files only when changed"
   echo "    - stack mode: ${DEPLOY_STACK}"
   echo
   read -r -p "Type 'yes' to continue deploy: " confirmation
@@ -271,28 +294,82 @@ if [[ "$DEPLOY_AFTER_BUILD" == "true" ]]; then
 
   echo
   echo "==> Creating remote directories"
-  ssh "${ssh_args[@]}" "${SERVER_USER}@${SERVER_HOST}" "mkdir -p ${SERVER_PATH}/database ${SERVER_PATH}/deploy/nginx/templates ${SERVER_PATH}/deploy/nginx"
+  ssh "${ssh_args[@]}" "${SERVER_USER}@${SERVER_HOST}" "mkdir -p ${SERVER_PATH}/database ${SERVER_PATH}/deploy/nginx/templates ${SERVER_PATH}/deploy/nginx ${SERVER_PATH}/archives"
 
   echo
   echo "==> Uploading archive and deployment files"
-  scp "${ssh_args[@]}" "$ARCHIVE_PATH" "${SERVER_USER}@${SERVER_HOST}:${SERVER_PATH}/"
-  scp "${ssh_args[@]}" "$ROOT_DIR/docker-compose.prod.yml" "${SERVER_USER}@${SERVER_HOST}:${SERVER_PATH}/"
-  scp "${ssh_args[@]}" "$ROOT_DIR/docker-compose.https.yml" "${SERVER_USER}@${SERVER_HOST}:${SERVER_PATH}/"
-  scp "${ssh_args[@]}" "$ROOT_DIR/database/schema.sql" "${SERVER_USER}@${SERVER_HOST}:${SERVER_PATH}/database/"
-  scp "${ssh_args[@]}" "$ROOT_DIR/database/seed.sql" "${SERVER_USER}@${SERVER_HOST}:${SERVER_PATH}/database/"
-  scp "${ssh_args[@]}" "$ROOT_DIR/deploy/nginx/start-proxy.sh" "${SERVER_USER}@${SERVER_HOST}:${SERVER_PATH}/deploy/nginx/"
-  scp "${ssh_args[@]}" "$ROOT_DIR/deploy/nginx/templates/http.conf.template" "${SERVER_USER}@${SERVER_HOST}:${SERVER_PATH}/deploy/nginx/templates/"
-  scp "${ssh_args[@]}" "$ROOT_DIR/deploy/nginx/templates/https.conf.template" "${SERVER_USER}@${SERVER_HOST}:${SERVER_PATH}/deploy/nginx/templates/"
-  scp "${ssh_args[@]}" "$ENV_FILE_PATH" "${SERVER_USER}@${SERVER_HOST}:${SERVER_PATH}/.env.prod"
+  scp "${ssh_args[@]}" "$ARCHIVE_PATH" "${SERVER_USER}@${SERVER_HOST}:${SERVER_PATH}/archives/"
+  upload_if_changed "$ROOT_DIR/docker-compose.prod.yml" "docker-compose.prod.yml"
+  upload_if_changed "$ROOT_DIR/docker-compose.https.yml" "docker-compose.https.yml"
+  upload_if_changed "$ROOT_DIR/database/schema.sql" "database/schema.sql"
+  upload_if_changed "$ROOT_DIR/database/seed.sql" "database/seed.sql"
+  upload_if_changed "$ROOT_DIR/deploy/nginx/start-proxy.sh" "deploy/nginx/start-proxy.sh"
+  upload_if_changed "$ROOT_DIR/deploy/nginx/templates/http.conf.template" "deploy/nginx/templates/http.conf.template"
+  upload_if_changed "$ROOT_DIR/deploy/nginx/templates/https.conf.template" "deploy/nginx/templates/https.conf.template"
+  upload_if_changed "$ENV_FILE_PATH" ".env.prod"
 
   REMOTE_ARCHIVE_NAME="$(basename "$ARCHIVE_PATH")"
 
   echo
   echo "==> Loading images and starting services on remote server"
-  ssh "${ssh_args[@]}" "${SERVER_USER}@${SERVER_HOST}" "cd ${SERVER_PATH} && REMOTE_ARCHIVE_NAME='${REMOTE_ARCHIVE_NAME}' DEPLOY_STACK='${DEPLOY_STACK}' bash -s" <<'EOF'
+  ssh "${ssh_args[@]}" "${SERVER_USER}@${SERVER_HOST}" "cd ${SERVER_PATH} && REMOTE_ARCHIVE_NAME='${REMOTE_ARCHIVE_NAME}' DEPLOY_STACK='${DEPLOY_STACK}' ARCHIVE_RETENTION='${ARCHIVE_RETENTION}' MARIADB_IMAGE='${MARIADB_IMAGE}' bash -s" <<'EOF'
 set -euo pipefail
 
-docker load -i "./$REMOTE_ARCHIVE_NAME"
+mkdir -p ./archives
+
+if [[ -f "./$REMOTE_ARCHIVE_NAME" ]]; then
+  mv -f "./$REMOTE_ARCHIVE_NAME" "./archives/$REMOTE_ARCHIVE_NAME"
+fi
+
+docker load -i "./archives/$REMOTE_ARCHIVE_NAME"
+
+if ! docker image inspect "$MARIADB_IMAGE" >/dev/null 2>&1; then
+  echo "==> Pulling database image $MARIADB_IMAGE on remote host"
+  docker pull "$MARIADB_IMAGE"
+fi
+
+wait_for_container() {
+  local container_name="$1"
+  local target_state="$2"
+  local timeout_seconds="${3:-180}"
+  local elapsed=0
+  local status=""
+
+  while (( elapsed < timeout_seconds )); do
+    status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_name" 2>/dev/null || true)"
+    if [[ "$status" == "$target_state" ]]; then
+      echo "==> ${container_name} is ${target_state}"
+      return 0
+    fi
+    if [[ "$status" == "unhealthy" || "$status" == "exited" || "$status" == "dead" ]]; then
+      echo "Container ${container_name} entered bad state: ${status}" >&2
+      docker logs --tail 120 "$container_name" || true
+      return 1
+    fi
+    sleep 5
+    elapsed=$((elapsed + 5))
+  done
+
+  echo "Timed out waiting for ${container_name} to become ${target_state} (last status: ${status:-unknown})" >&2
+  docker logs --tail 120 "$container_name" || true
+  return 1
+}
+
+run_smoke_test() {
+  local selected_stack="$1"
+
+  echo "==> Running smoke tests"
+  docker exec speed-inventory-api wget -q -O /dev/null http://127.0.0.1:8080/api/health
+  docker exec speed-inventory-web wget -q -O /dev/null http://127.0.0.1/
+
+  if [[ "$selected_stack" == "https" ]]; then
+    docker exec speed-inventory-proxy wget --no-check-certificate -q -O /dev/null https://localhost/api/health
+    docker exec speed-inventory-proxy wget --no-check-certificate -q -O /dev/null https://localhost/
+  else
+    docker exec speed-inventory-web wget -q -O /dev/null http://127.0.0.1/api/health
+    docker exec speed-inventory-web wget -q -O /dev/null http://127.0.0.1/
+  fi
+}
 
 selected_stack="$DEPLOY_STACK"
 if [[ "$selected_stack" == "auto" ]]; then
@@ -305,15 +382,34 @@ fi
 
 if [[ "$selected_stack" == "https" ]]; then
   echo "==> Remote stack: https"
-  docker compose --env-file .env.prod -f docker-compose.prod.yml down || true
-  docker compose --env-file .env.prod -f docker-compose.https.yml up -d
+  docker compose --env-file .env.prod -f docker-compose.https.yml up -d --remove-orphans backend frontend reverse-proxy
+  wait_for_container speed-inventory-api healthy 240
+  wait_for_container speed-inventory-web healthy 180
+  docker compose --env-file .env.prod -f docker-compose.https.yml restart reverse-proxy
+  wait_for_container speed-inventory-proxy running 120
+  run_smoke_test "https"
   echo "==> Check status with: docker compose --env-file .env.prod -f docker-compose.https.yml ps"
 else
   echo "==> Remote stack: http"
-  docker compose --env-file .env.prod -f docker-compose.https.yml down || true
-  docker compose --env-file .env.prod -f docker-compose.prod.yml up -d
+  docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --remove-orphans backend frontend
+  wait_for_container speed-inventory-api healthy 240
+  wait_for_container speed-inventory-web healthy 180
+  run_smoke_test "http"
   echo "==> Check status with: docker compose --env-file .env.prod -f docker-compose.prod.yml ps"
 fi
+
+find . -maxdepth 1 -type f -name '*-images-*.tar' -exec mv -f {} ./archives/ \;
+
+mapfile -t archive_files < <(find ./archives -maxdepth 1 -type f -name '*.tar' -printf '%T@ %p\n' | sort -nr | awk '{print $2}')
+if (( ${#archive_files[@]} > ARCHIVE_RETENTION )); then
+  echo "==> Pruning old archives (keeping latest ${ARCHIVE_RETENTION})"
+  printf '%s\n' "${archive_files[@]:ARCHIVE_RETENTION}" | while IFS= read -r archive_path; do
+    [[ -n "$archive_path" ]] || continue
+    rm -f -- "$archive_path"
+  done
+fi
+
+docker image prune -f >/dev/null 2>&1 || true
 EOF
 
   echo
