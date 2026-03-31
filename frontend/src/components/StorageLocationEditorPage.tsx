@@ -536,10 +536,27 @@ export function StorageLocationEditorPage({
                       <p className="tw-kicker m-0">{t("layoutMap2d")}</p>
                       <h3 className="tw-heading-md m-0 mt-1">{t("warehouseBlockLayout")}</h3>
                     </div>
-                    <div className="text-right text-xs leading-5 text-slate-500">
+                    <div className="grid justify-items-end gap-1 text-right text-xs leading-5 text-slate-500">
                       <div>{t("layoutColumns", { count: layoutGridColumns })}</div>
                       <div>{t("layoutGridSize", { size: LAYOUT_GRID_SIZE })}</div>
+                      <div className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                        {selectedBlock ? `${selectedBlock.name} / ${selectedBlock.width}x${selectedBlock.height}` : t("selectAreaToEdit")}
+                      </div>
                     </div>
+                  </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200/80 bg-white px-3.5 py-2.5 text-xs text-slate-600 shadow-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold uppercase tracking-[0.14em] text-slate-500">
+                        {t("warehouseAreas")}: {form.layoutBlocks.length}
+                      </span>
+                      <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold uppercase tracking-[0.14em] text-slate-500">
+                        {t("inventorySections")}: {sectionNames.length}
+                      </span>
+                    </div>
+                    <span className="font-medium text-slate-500">
+                      {t("layoutDragHint")}
+                    </span>
                   </div>
 
                   <div
@@ -573,7 +590,7 @@ export function StorageLocationEditorPage({
                                   tone.card
                                 } ${
                                   isSelected
-                                    ? "ring-2 ring-slate-950/60 ring-offset-2 ring-offset-white"
+                                    ? "ring-2 ring-slate-950/60 ring-offset-2 ring-offset-white shadow-[0_18px_34px_rgba(15,34,59,0.18)]"
                                     : "hover:-translate-y-0.5"
                                 }`}
                                 type="button"
@@ -584,6 +601,14 @@ export function StorageLocationEditorPage({
                                 </span>
                                 <strong className="block text-sm font-extrabold leading-tight">{block.name}</strong>
                                 <small className="block text-[11px] font-semibold uppercase tracking-[0.08em] opacity-75">{tone.label}</small>
+                                <div className="mt-1 flex flex-wrap items-center justify-center gap-1.5">
+                                  <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-semibold text-slate-700 shadow-sm">
+                                    {block.x},{block.y}
+                                  </span>
+                                  <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-semibold text-slate-700 shadow-sm">
+                                    {block.width}x{block.height}
+                                  </span>
+                                </div>
                               </button>
                             </div>
                           );
@@ -652,6 +677,9 @@ export function StorageLocationEditorPage({
               <aside className="tw-panel grid gap-4 p-5 xl:sticky xl:top-4 xl:self-start">
                 {selectedBlock ? (
                   <>
+                    <div className="tw-panel-subtle px-4 py-3 text-xs leading-5 text-slate-600">
+                      {t("layoutInspectorHint")}
+                    </div>
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="tw-kicker m-0">{t("selectedArea")}</p>

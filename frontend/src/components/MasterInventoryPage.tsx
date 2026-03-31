@@ -59,6 +59,7 @@ type ItemFormState = {
 };
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
+const summaryNumberFormatter = new Intl.NumberFormat("en-US");
 const INVENTORY_BY_LOCATION_COLUMN_ORDER_PREFERENCE_KEY = "inventory-by-location.column-order";
 const INVENTORY_DETAIL_EXPORT_TITLE = "Inventory Detail";
 const INVENTORY_DETAIL_EXPORT_COLUMNS = [
@@ -178,6 +179,21 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
     [filteredItems, selectedItemId]
   );
   const hasActiveFilters = normalizedSearch.length > 0 || selectedLocationId !== "all" || selectedCustomerId !== "all" || healthFilter !== "ALL" || focusedSku !== null;
+  const overviewStats = useMemo(() => {
+    const totalOnHand = filteredItems.reduce((sum, item) => sum + item.quantity, 0);
+    const totalAvailable = filteredItems.reduce((sum, item) => sum + item.availableQty, 0);
+    const lowStockCount = filteredItems.filter((item) => item.reorderLevel > 0 && item.availableQty <= item.reorderLevel).length;
+    const mismatchCount = filteredItems.filter((item) => hasQtyMismatch(item.expectedQty, item.receivedQty)).length;
+    const containers = new Set(filteredItems.map((item) => item.containerNo).filter(Boolean)).size;
+    return [
+      { label: t("allRows"), value: summaryNumberFormatter.format(filteredItems.length), meta: t("stockByLocation") },
+      { label: t("onHand"), value: summaryNumberFormatter.format(totalOnHand), meta: t("units") },
+      { label: t("availableQty"), value: summaryNumberFormatter.format(totalAvailable), meta: t("units") },
+      { label: t("lowStock"), value: summaryNumberFormatter.format(lowStockCount), meta: t("allRows") },
+      { label: t("containerCount"), value: summaryNumberFormatter.format(containers), meta: t("containerNo") },
+      { label: t("mismatch"), value: summaryNumberFormatter.format(mismatchCount), meta: t("expectedQty") }
+    ];
+  }, [filteredItems, t]);
   const mainGridSlots = buildWorkspaceGridSlots({
     emptyTitle: t("noResults"),
     emptyDescription: hasActiveFilters ? t("filteredStateHint") : t("emptyStateHint"),
@@ -459,6 +475,16 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
             <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
             <label>{t("stockHealth")}<select value={healthFilter} onChange={(event) => setHealthFilter(event.target.value as InventoryHealthFilter)}><option value="ALL">{t("allRows")}</option><option value="IN_STOCK">{t("healthyStock")}</option><option value="LOW_STOCK">{t("lowStock")}</option><option value="MISMATCH">{t("mismatch")}</option></select></label>
           </div>
+        </div>
+
+        <div className="workspace-summary-strip">
+          {overviewStats.map((stat) => (
+            <article className="workspace-summary-card" key={stat.label}>
+              <span className="workspace-summary-card__label">{stat.label}</span>
+              <strong className="workspace-summary-card__value">{stat.value}</strong>
+              <span className="workspace-summary-card__meta">{stat.meta}</span>
+            </article>
+          ))}
         </div>
 
         <div className="sheet-table-wrap">

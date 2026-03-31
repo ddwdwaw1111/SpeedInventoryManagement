@@ -12,6 +12,7 @@ import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, Drawer, IconButt
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
 import { api } from "../lib/api";
+import { consumePendingActivityManagementLaunchContext, type ActivityManagementLaunchContext } from "../lib/activityManagementLaunchContext";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildItemContainerBalances, formatContainerDistributionSummary as formatContainerDistributionSummaryValue, type ItemContainerBalance } from "../lib/containerBalances";
 import { formatDateTimeValue, formatDateValue } from "../lib/dates";
@@ -35,7 +36,7 @@ import {
 } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
 import { InlineAlert, useConfirmDialog, useFeedbackToast } from "./Feedback";
-import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
+import { buildWorkspaceGridSlots, WorkspaceDrawerLoadingState, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type ActivityMode = "IN" | "OUT";
 type MutableDocumentStatus = "DRAFT" | "CONFIRMED";
@@ -53,6 +54,11 @@ type ActivityManagementPageProps = {
   currentUserRole: UserRole;
   isLoading: boolean;
   onRefresh: () => Promise<void>;
+  onOpenInboundDetail?: (documentId: number) => void;
+  embeddedComposer?: {
+    initialDate?: string;
+    onClose: () => void;
+  };
 };
 
 type BatchInboundFormState = {
@@ -188,6 +194,7 @@ type InboundContainerWarningMatch = {
 };
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
+const summaryNumberFormatter = new Intl.NumberFormat("en-US");
 const RECEIPTS_EXPORT_TITLE = "Receipts";
 const SHIPMENTS_EXPORT_TITLE = "Shipments";
 const RECEIPTS_EXPORT_COLUMNS = [
@@ -216,9 +223,9 @@ const SHIPMENTS_EXPORT_COLUMNS = [
   { key: "status", label: "Status" }
 ] as const;
 
-function createEmptyBatchInboundForm(): BatchInboundFormState {
+function createEmptyBatchInboundForm(deliveryDate = ""): BatchInboundFormState {
   return {
-    deliveryDate: "",
+    deliveryDate,
     containerNo: "",
     customerId: "",
     locationId: "",
@@ -244,11 +251,11 @@ function createEmptyBatchInboundLine(defaultStorageSection = DEFAULT_STORAGE_SEC
   };
 }
 
-function createEmptyBatchOutboundForm(): BatchOutboundFormState {
+function createEmptyBatchOutboundForm(outDate = ""): BatchOutboundFormState {
   return {
     packingListNo: "",
     orderRef: "",
-    outDate: "",
+    outDate,
     shipToName: "",
     shipToAddress: "",
     shipToContact: "",
@@ -320,7 +327,21 @@ function buildAutoPalletPlan(totalQty: number, unitsPerPallet: number) {
   };
 }
 
-export function ActivityManagementPage({ mode, items, skuMasters, locations, customers, movements, inboundDocuments, outboundDocuments, currentUserRole, isLoading, onRefresh }: ActivityManagementPageProps) {
+export function ActivityManagementPage({
+  mode,
+  items,
+  skuMasters,
+  locations,
+  customers,
+  movements,
+  inboundDocuments,
+  outboundDocuments,
+  currentUserRole,
+  isLoading,
+  onRefresh,
+  onOpenInboundDetail,
+  embeddedComposer
+}: ActivityManagementPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const { confirm, confirmationDialog } = useConfirmDialog();
@@ -336,8 +357,10 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
   const [batchOutboundLines, setBatchOutboundLines] = useState<BatchOutboundLineState[]>(() => [createEmptyBatchOutboundLine()]);
   const [editingInboundDocumentId, setEditingInboundDocumentId] = useState<number | null>(null);
   const [editingOutboundDocumentId, setEditingOutboundDocumentId] = useState<number | null>(null);
-  const [selectedInboundDocument, setSelectedInboundDocument] = useState<InboundDocument | null>(null);
-  const [selectedOutboundDocument, setSelectedOutboundDocument] = useState<OutboundDocument | null>(null);
+  const [selectedInboundDocumentId, setSelectedInboundDocumentId] = useState<number | null>(null);
+  const [selectedOutboundDocumentId, setSelectedOutboundDocumentId] = useState<number | null>(null);
+  const [inboundDrawerReady, setInboundDrawerReady] = useState(false);
+  const [outboundDrawerReady, setOutboundDrawerReady] = useState(false);
   const [batchSubmitting, setBatchSubmitting] = useState(false);
   const [outboundWizardStep, setOutboundWizardStep] = useState<OutboundWizardStep>(1);
   const [batchInboundLineAddCount, setBatchInboundLineAddCount] = useState(1);
@@ -346,7 +369,9 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
   const [optimisticInboundDocuments, setOptimisticInboundDocuments] = useState<InboundDocument[]>([]);
   const [optimisticOutboundDocuments, setOptimisticOutboundDocuments] = useState<OutboundDocument[]>([]);
   const pendingBatchLineIDRef = useRef<string | null>(null);
+  const pendingLaunchContextRef = useRef<ActivityManagementLaunchContext | null | undefined>(undefined);
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
+  const isEmbeddedComposer = Boolean(embeddedComposer);
   const pageDescription = mode === "IN" ? t("inboundDesc") : t("outboundDesc");
   const permissionNotice = canManage ? "" : t("readOnlyModeNotice");
   const liveInboundDocuments = useMemo(
@@ -364,9 +389,19 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     () => (editingInboundDocumentId ? liveInboundDocuments.find((document) => document.id === editingInboundDocumentId) ?? null : null),
     [editingInboundDocumentId, liveInboundDocuments]
   );
+  const selectedInboundDocument = useMemo(
+    () => (selectedInboundDocumentId ? liveInboundDocuments.find((document) => document.id === selectedInboundDocumentId) ?? null : null),
+    [liveInboundDocuments, selectedInboundDocumentId]
+  );
+  const selectedOutboundDocument = useMemo(
+    () => (selectedOutboundDocumentId ? liveOutboundDocuments.find((document) => document.id === selectedOutboundDocumentId) ?? null : null),
+    [liveOutboundDocuments, selectedOutboundDocumentId]
+  );
   const isEditingInboundDraft = normalizeDocumentStatus(editingInboundDocument?.status ?? "") === "DRAFT";
   const isEditingConfirmedInbound = normalizeDocumentStatus(editingInboundDocument?.status ?? "") === "CONFIRMED";
   const isEditingOutboundDraft = editingOutboundDocumentId !== null;
+  const showInboundDrawerLoading = selectedInboundDocumentId !== null && (!inboundDrawerReady || isLoading || !selectedInboundDocument);
+  const showOutboundDrawerLoading = selectedOutboundDocumentId !== null && (!outboundDrawerReady || isLoading || !selectedOutboundDocument);
 
   function showActionError(error: unknown, fallbackMessage: string) {
     const message = error instanceof Error ? error.message : fallbackMessage;
@@ -407,41 +442,44 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     setBatchInboundLineAddCount(1);
     setBatchOutboundLineAddCount(1);
     setSelectedStatus("all");
-    setSelectedInboundDocument(null);
-    setSelectedOutboundDocument(null);
+    setSelectedInboundDocumentId(null);
+    setSelectedOutboundDocumentId(null);
+    pendingLaunchContextRef.current = undefined;
   }, [mode]);
 
   useEffect(() => {
-    if (mode !== "OUT" || !selectedOutboundDocument) {
-      return;
+    if (mode === "OUT" && selectedOutboundDocumentId && !selectedOutboundDocument) {
+      setSelectedOutboundDocumentId(null);
     }
-
-    const nextSelectedDocument = liveOutboundDocuments.find((document) => document.id === selectedOutboundDocument.id) ?? null;
-    if (!nextSelectedDocument) {
-      setSelectedOutboundDocument(null);
-      return;
-    }
-
-    if (nextSelectedDocument !== selectedOutboundDocument) {
-      setSelectedOutboundDocument(nextSelectedDocument);
-    }
-  }, [liveOutboundDocuments, mode, selectedOutboundDocument]);
+  }, [mode, selectedOutboundDocument, selectedOutboundDocumentId]);
 
   useEffect(() => {
-    if (mode !== "IN" || !selectedInboundDocument) {
+    if (mode === "IN" && selectedInboundDocumentId && !selectedInboundDocument) {
+      setSelectedInboundDocumentId(null);
+    }
+  }, [mode, selectedInboundDocument, selectedInboundDocumentId]);
+
+  useEffect(() => {
+    if (selectedInboundDocumentId === null) {
+      setInboundDrawerReady(false);
       return;
     }
 
-    const nextSelectedDocument = liveInboundDocuments.find((document) => document.id === selectedInboundDocument.id) ?? null;
-    if (!nextSelectedDocument) {
-      setSelectedInboundDocument(null);
+    setInboundDrawerReady(false);
+    const timeoutId = window.setTimeout(() => setInboundDrawerReady(true), 140);
+    return () => window.clearTimeout(timeoutId);
+  }, [selectedInboundDocumentId]);
+
+  useEffect(() => {
+    if (selectedOutboundDocumentId === null) {
+      setOutboundDrawerReady(false);
       return;
     }
 
-    if (nextSelectedDocument !== selectedInboundDocument) {
-      setSelectedInboundDocument(nextSelectedDocument);
-    }
-  }, [liveInboundDocuments, mode, selectedInboundDocument]);
+    setOutboundDrawerReady(false);
+    const timeoutId = window.setTimeout(() => setOutboundDrawerReady(true), 140);
+    return () => window.clearTimeout(timeoutId);
+  }, [selectedOutboundDocumentId]);
 
   useEffect(() => {
     setOptimisticInboundDocuments((current) => current.filter((document) => !inboundDocuments.some((next) => next.id === document.id)));
@@ -462,6 +500,48 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
       setBatchForm((current) => ({ ...current, customerId: String(customers[0].id) }));
     }
   }, [batchForm.customerId, customers]);
+
+  useEffect(() => {
+    if (isEmbeddedComposer) {
+      return;
+    }
+
+    if (pendingLaunchContextRef.current === undefined) {
+      pendingLaunchContextRef.current = consumePendingActivityManagementLaunchContext(mode);
+    }
+
+    const pendingLaunchContext = pendingLaunchContextRef.current;
+    if (!pendingLaunchContext) {
+      return;
+    }
+
+    if (pendingLaunchContext.documentId) {
+      if (mode === "IN") {
+        setSelectedInboundDocumentId(pendingLaunchContext.documentId);
+      } else {
+        setSelectedOutboundDocumentId(pendingLaunchContext.documentId);
+      }
+      pendingLaunchContextRef.current = null;
+      return;
+    }
+
+    if (!pendingLaunchContext.openCreate || !canManage) {
+      pendingLaunchContextRef.current = null;
+      return;
+    }
+
+    if (mode === "IN") {
+      if (!locations.length || !customers.length) {
+        return;
+      }
+      openBatchModal(pendingLaunchContext.scheduledDate || "");
+      pendingLaunchContextRef.current = null;
+      return;
+    }
+
+    openOutboundBatchModal(pendingLaunchContext.scheduledDate || "");
+    pendingLaunchContextRef.current = null;
+  }, [canManage, customers, isEmbeddedComposer, locations, mode]);
 
   useEffect(() => {
     if (!pendingBatchLineIDRef.current) {
@@ -523,6 +603,38 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
       return left.sku.localeCompare(right.sku);
     });
   }, [availableOutboundSources, batchOutboundLines, items, movements]);
+  useEffect(() => {
+    if (!embeddedComposer || !canManage || isBatchModalOpen) {
+      return;
+    }
+
+    if (mode === "IN") {
+      if (!locations.length || !customers.length) {
+        return;
+      }
+
+      openBatchModal(embeddedComposer.initialDate || "");
+      return;
+    }
+
+    if (!availableOutboundSources.length) {
+      showError(t("noAvailableStockRows"));
+      embeddedComposer.onClose();
+      return;
+    }
+
+    openOutboundBatchModal(embeddedComposer.initialDate || "");
+  }, [
+    availableOutboundSources.length,
+    canManage,
+    customers.length,
+    embeddedComposer,
+    isBatchModalOpen,
+    locations.length,
+    mode,
+    showError,
+    t
+  ]);
   useEffect(() => {
     const fallbackSection = batchSectionOptions[0] || DEFAULT_STORAGE_SECTION;
     if (!batchSectionOptions.includes(batchForm.storageSection)) {
@@ -597,6 +709,29 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     emptyDescription: t("emptyStateHint"),
     loadingTitle: t("loadingRecords")
   });
+  const overviewStats = useMemo(() => {
+    if (mode === "IN") {
+      const scheduled = inboundDocumentRows.filter((document) => normalizeDocumentStatus(document.status) === "DRAFT").length;
+      const receiving = inboundDocumentRows.filter((document) => normalizeInboundTrackingStatusValue(document.trackingStatus, document.status) === "RECEIVING").length;
+      const totalQty = inboundDocumentRows.reduce((sum, document) => sum + document.totalReceivedQty, 0);
+      return [
+        { label: t("allRows"), value: summaryNumberFormatter.format(inboundDocumentRows.length), meta: t("inbound") },
+        { label: t("received"), value: summaryNumberFormatter.format(totalQty), meta: t("units") },
+        { label: t("draft"), value: summaryNumberFormatter.format(scheduled), meta: t("trackingStatus") },
+        { label: t("receiving"), value: summaryNumberFormatter.format(receiving), meta: t("trackingStatus") }
+      ];
+    }
+
+    const scheduled = outboundDocumentRows.filter((document) => normalizeDocumentStatus(document.status) === "DRAFT").length;
+    const packed = outboundDocumentRows.filter((document) => normalizeOutboundTrackingStatusValue(document.trackingStatus, document.status) === "PACKED").length;
+    const totalQty = outboundDocumentRows.reduce((sum, document) => sum + document.totalQty, 0);
+    return [
+      { label: t("allRows"), value: summaryNumberFormatter.format(outboundDocumentRows.length), meta: t("outbound") },
+      { label: t("totalQty"), value: summaryNumberFormatter.format(totalQty), meta: t("units") },
+      { label: t("draft"), value: summaryNumberFormatter.format(scheduled), meta: t("trackingStatus") },
+      { label: t("packed"), value: summaryNumberFormatter.format(packed), meta: t("trackingStatus") }
+    ];
+  }, [inboundDocumentRows, mode, outboundDocumentRows, t]);
 
   const inboundDocumentColumns = useMemo<GridColDef<InboundDocument>[]>(() => [
     { field: "deliveryDate", headerName: t("deliveryDate"), minWidth: 140, renderCell: (params) => formatDate(params.row.deliveryDate) },
@@ -618,7 +753,12 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
         <RowActionsMenu
           ariaLabel={t("actions")}
           actions={[
-            { key: "details", label: t("details"), icon: <VisibilityOutlinedIcon fontSize="small" />, onClick: () => setSelectedInboundDocument(params.row) },
+            {
+              key: "details",
+              label: t("details"),
+              icon: <VisibilityOutlinedIcon fontSize="small" />,
+              onClick: () => onOpenInboundDetail ? onOpenInboundDetail(params.row.id) : setSelectedInboundDocumentId(params.row.id)
+            },
             ...(canManage && !params.row.archivedAt && ["DRAFT", "CONFIRMED"].includes(normalizeDocumentStatus(params.row.status))
               ? [{
                 key: "edit",
@@ -672,7 +812,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
         <RowActionsMenu
           ariaLabel={t("actions")}
           actions={[
-            { key: "details", label: t("details"), icon: <VisibilityOutlinedIcon fontSize="small" />, onClick: () => setSelectedOutboundDocument(params.row) },
+            { key: "details", label: t("details"), icon: <VisibilityOutlinedIcon fontSize="small" />, onClick: () => setSelectedOutboundDocumentId(params.row.id) },
             ...(canManage && !params.row.archivedAt && normalizeDocumentStatus(params.row.status) === "DRAFT"
               ? [{ key: "edit", label: t("editDraft"), icon: <EditOutlinedIcon fontSize="small" />, onClick: () => openEditOutboundDraft(params.row) }]
               : []),
@@ -827,14 +967,14 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     }
   }
 
-  function openBatchModal() {
+  function openBatchModal(prefilledDate = "") {
     if (!canManage) {
-      return;
+      return false;
     }
     setEditingInboundDocumentId(null);
     setEditingOutboundDocumentId(null);
     setBatchForm({
-      ...createEmptyBatchInboundForm(),
+      ...createEmptyBatchInboundForm(prefilledDate),
       customerId: customers[0] ? String(customers[0].id) : "",
       locationId: locations[0] ? String(locations[0].id) : ""
     });
@@ -843,24 +983,26 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     setBatchInboundLineAddCount(1);
     setErrorMessage("");
     setIsBatchModalOpen(true);
+    return true;
   }
 
-  function openOutboundBatchModal() {
+  function openOutboundBatchModal(prefilledDate = "") {
     if (!canManage) {
-      return;
+      return false;
     }
     if (availableOutboundSources.length === 0) {
       setErrorMessage(t("noAvailableStockRows"));
-      return;
+      return false;
     }
     setEditingInboundDocumentId(null);
     setEditingOutboundDocumentId(null);
-    setBatchOutboundForm(createEmptyBatchOutboundForm());
+    setBatchOutboundForm(createEmptyBatchOutboundForm(prefilledDate));
     setBatchOutboundLines([createEmptyBatchOutboundLine()]);
     setOutboundWizardStep(1);
     setBatchOutboundLineAddCount(1);
     setErrorMessage("");
     setIsBatchModalOpen(true);
+    return true;
   }
 
   function openEditInboundDocument(document: InboundDocument) {
@@ -989,6 +1131,9 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     setBatchOutboundLines([createEmptyBatchOutboundLine()]);
     setErrorMessage("");
     setIsBatchModalOpen(false);
+    if (embeddedComposer) {
+      embeddedComposer.onClose();
+    }
   }
 
   function getSafeLineAddCount(value: number) {
@@ -1025,7 +1170,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
 
       const previousDescription = previousSkuMaster ? getSKUMasterDescription(previousSkuMaster) : "";
       const nextDescription = getSKUMasterDescription(nextSkuMaster);
-      const totalQty = line.receivedQty || line.expectedQty;
+      const totalQty = line.receivedQty;
       const previousAutoPalletPlan = buildAutoPalletPlan(totalQty, previousSkuMaster?.defaultUnitsPerPallet ?? 0);
       const nextAutoPalletPlan = buildAutoPalletPlan(totalQty, nextSkuMaster.defaultUnitsPerPallet);
       const shouldRefreshDescription = !line.description.trim() || (previousDescription && line.description.trim() === previousDescription);
@@ -1059,18 +1204,17 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
       const skuMaster = skuMastersBySku.get(normalizeSkuLookupValue(line.sku));
       const unitsPerPallet = skuMaster?.defaultUnitsPerPallet ?? 0;
       const previousSuggested = calculateSuggestedReorderLevel(line.expectedQty, line.receivedQty);
-      const nextReceivedQty = line.receivedQty <= 0 || line.receivedQty === line.expectedQty ? nextExpectedQty : line.receivedQty;
+      const nextReceivedQty = line.receivedQty;
       const nextSuggested = calculateSuggestedReorderLevel(nextExpectedQty, nextReceivedQty);
       const shouldKeepAutoReorder = line.reorderLevel <= 0 || line.reorderLevel === previousSuggested;
-      const previousAutoPalletPlan = buildAutoPalletPlan(line.receivedQty || line.expectedQty, unitsPerPallet);
-      const nextAutoPalletPlan = buildAutoPalletPlan(nextReceivedQty || nextExpectedQty, unitsPerPallet);
+      const previousAutoPalletPlan = buildAutoPalletPlan(line.receivedQty, unitsPerPallet);
+      const nextAutoPalletPlan = buildAutoPalletPlan(nextReceivedQty, unitsPerPallet);
       const shouldKeepAutoPallets = line.pallets <= 0 || line.pallets === previousAutoPalletPlan.pallets;
       const shouldKeepAutoPalletsDetail = !line.palletsDetailCtns || line.palletsDetailCtns === previousAutoPalletPlan.detail;
 
       return {
         ...line,
         expectedQty: nextExpectedQty,
-        receivedQty: nextReceivedQty,
         reorderLevel: shouldKeepAutoReorder ? nextSuggested : line.reorderLevel,
         pallets: shouldKeepAutoPallets ? nextAutoPalletPlan.pallets : line.pallets,
         palletsDetailCtns: shouldKeepAutoPalletsDetail ? nextAutoPalletPlan.detail : line.palletsDetailCtns
@@ -1089,8 +1233,8 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
       const previousSuggested = calculateSuggestedReorderLevel(line.expectedQty, line.receivedQty);
       const nextSuggested = calculateSuggestedReorderLevel(line.expectedQty, nextReceivedQty);
       const shouldKeepAutoReorder = line.reorderLevel <= 0 || line.reorderLevel === previousSuggested;
-      const previousAutoPalletPlan = buildAutoPalletPlan(line.receivedQty || line.expectedQty, unitsPerPallet);
-      const nextAutoPalletPlan = buildAutoPalletPlan(nextReceivedQty || line.expectedQty, unitsPerPallet);
+      const previousAutoPalletPlan = buildAutoPalletPlan(line.receivedQty, unitsPerPallet);
+      const nextAutoPalletPlan = buildAutoPalletPlan(nextReceivedQty, unitsPerPallet);
       const shouldKeepAutoPallets = line.pallets <= 0 || line.pallets === previousAutoPalletPlan.pallets;
       const shouldKeepAutoPalletsDetail = !line.palletsDetailCtns || line.palletsDetailCtns === previousAutoPalletPlan.detail;
 
@@ -1116,8 +1260,8 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
       const previousSuggested = calculateSuggestedReorderLevel(line.expectedQty, line.receivedQty);
       const nextSuggested = calculateSuggestedReorderLevel(line.expectedQty, nextReceivedQty);
       const shouldKeepAutoReorder = line.reorderLevel <= 0 || line.reorderLevel === previousSuggested;
-      const previousAutoPalletPlan = buildAutoPalletPlan(line.receivedQty || line.expectedQty, unitsPerPallet);
-      const nextAutoPalletPlan = buildAutoPalletPlan(nextReceivedQty || line.expectedQty, unitsPerPallet);
+      const previousAutoPalletPlan = buildAutoPalletPlan(line.receivedQty, unitsPerPallet);
+      const nextAutoPalletPlan = buildAutoPalletPlan(nextReceivedQty, unitsPerPallet);
       const shouldKeepAutoPallets = line.pallets <= 0 || line.pallets === previousAutoPalletPlan.pallets;
       const shouldKeepAutoPalletsDetail = !line.palletsDetailCtns || line.palletsDetailCtns === previousAutoPalletPlan.detail;
 
@@ -1137,8 +1281,8 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
         return line;
       }
 
-      const previousSuggested = getSuggestedPalletsDetail(line.receivedQty || line.expectedQty, line.pallets);
-      const nextSuggested = getSuggestedPalletsDetail(line.receivedQty || line.expectedQty, nextPallets);
+      const previousSuggested = getSuggestedPalletsDetail(line.receivedQty, line.pallets);
+      const nextSuggested = getSuggestedPalletsDetail(line.receivedQty, nextPallets);
       const shouldKeepAutoPalletsDetail = !line.palletsDetailCtns || line.palletsDetailCtns === previousSuggested;
 
       return {
@@ -1435,7 +1579,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     setErrorMessage("");
     try {
       const updatedDocument = await api.confirmInboundDocument(document.id);
-      setSelectedInboundDocument(updatedDocument);
+      setSelectedInboundDocumentId(updatedDocument.id);
       await onRefresh();
       showActionSuccess(t("receiptConfirmedSuccess"));
     } catch (error) {
@@ -1451,7 +1595,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     setErrorMessage("");
     try {
       const updatedDocument = await api.updateInboundDocumentTrackingStatus(document.id, { trackingStatus });
-      setSelectedInboundDocument(updatedDocument);
+      setSelectedInboundDocumentId(updatedDocument.id);
       await onRefresh();
       showActionSuccess(t("receiptTrackingUpdatedSuccess"));
     } catch (error) {
@@ -1481,7 +1625,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
       const updatedDocument = await api.cancelInboundDocument(document.id, {
         reason: document.documentNote || undefined
       });
-      setSelectedInboundDocument(updatedDocument);
+      setSelectedInboundDocumentId(updatedDocument.id);
       await onRefresh();
       showActionSuccess(t("receiptCancelledSuccess"));
     } catch (error) {
@@ -1509,7 +1653,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     setErrorMessage("");
     try {
       await api.archiveInboundDocument(document.id);
-      setSelectedInboundDocument(null);
+      setSelectedInboundDocumentId(null);
       await onRefresh();
       showActionSuccess(t("receiptArchivedSuccess"));
     } catch (error) {
@@ -1527,7 +1671,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
       const copiedDocument = await api.copyInboundDocument(document.id);
       setOptimisticInboundDocuments((current) => [copiedDocument, ...current.filter((entry) => entry.id !== copiedDocument.id)]);
       setSelectedStatus("all");
-      setSelectedInboundDocument(copiedDocument);
+      setSelectedInboundDocumentId(copiedDocument.id);
       openEditInboundDocument(copiedDocument);
       await onRefresh();
       showActionSuccess(t("receiptCopiedSuccess"));
@@ -1544,7 +1688,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     setErrorMessage("");
     try {
       const updatedDocument = await api.confirmOutboundDocument(document.id);
-      setSelectedOutboundDocument(updatedDocument);
+      setSelectedOutboundDocumentId(updatedDocument.id);
       await onRefresh();
       showActionSuccess(t("shipmentConfirmedSuccess"));
     } catch (error) {
@@ -1560,7 +1704,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     setErrorMessage("");
     try {
       const updatedDocument = await api.updateOutboundDocumentTrackingStatus(document.id, { trackingStatus });
-      setSelectedOutboundDocument(updatedDocument);
+      setSelectedOutboundDocumentId(updatedDocument.id);
       await onRefresh();
       showActionSuccess(t("shipmentTrackingUpdatedSuccess"));
     } catch (error) {
@@ -1589,7 +1733,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
       const updatedDocument = await api.cancelOutboundDocument(document.id, {
         reason: document.documentNote || undefined
       });
-      setSelectedOutboundDocument(updatedDocument);
+      setSelectedOutboundDocumentId(updatedDocument.id);
       await onRefresh();
       showActionSuccess(t("shipmentCancelledSuccess"));
     } catch (error) {
@@ -1616,7 +1760,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     setErrorMessage("");
     try {
       await api.archiveOutboundDocument(document.id);
-      setSelectedOutboundDocument(null);
+      setSelectedOutboundDocumentId(null);
       await onRefresh();
       showActionSuccess(t("shipmentArchivedSuccess"));
     } catch (error) {
@@ -1634,7 +1778,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
       const copiedDocument = await api.copyOutboundDocument(document.id);
       setOptimisticOutboundDocuments((current) => [copiedDocument, ...current.filter((entry) => entry.id !== copiedDocument.id)]);
       setSelectedStatus("all");
-      setSelectedOutboundDocument(copiedDocument);
+      setSelectedOutboundDocumentId(copiedDocument.id);
       openEditOutboundDraft(copiedDocument);
       await onRefresh();
       showActionSuccess(t("shipmentCopiedSuccess"));
@@ -1695,9 +1839,11 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
   }
 
   return (
-    <main className="workspace-main">
-      <section>
-        <article className="workbook-panel workbook-panel--full">
+    <>
+      {!isEmbeddedComposer ? (
+        <main className="workspace-main">
+          <section>
+            <article className="workbook-panel workbook-panel--full">
           <div className="tab-strip">
             <WorkspacePanelHeader
               title={mode === "IN" ? t("inbound") : t("outbound")}
@@ -1730,6 +1876,15 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
               <label>{t("status")}<select value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value)}><option value="all">{t("allStatuses")}</option><option value="DRAFT">{t("draft")}</option><option value="CONFIRMED">{t("confirmed")}</option><option value="CANCELLED">{t("cancelled")}</option><option value="ARCHIVED">{t("archived")}</option></select></label>
             </div>
           </div>
+          <div className="workspace-summary-strip">
+            {overviewStats.map((stat) => (
+              <article className="workspace-summary-card" key={`${stat.label}-${stat.meta}`}>
+                <span className="workspace-summary-card__label">{stat.label}</span>
+                <strong className="workspace-summary-card__value">{stat.value}</strong>
+                <span className="workspace-summary-card__meta">{stat.meta}</span>
+              </article>
+            ))}
+          </div>
           <div className="sheet-table-wrap">
             <Box sx={{ minWidth: 0 }}>
               {mode === "IN" ? (
@@ -1742,8 +1897,8 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
                   disableRowSelectionOnClick
                   initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
                   getRowHeight={() => 68}
-                  onRowClick={(params) => setSelectedInboundDocument(params.row)}
-                  getRowClassName={(params) => selectedInboundDocument?.id === params.row.id ? "document-row--selected" : ""}
+                  onRowClick={(params) => setSelectedInboundDocumentId(params.row.id)}
+                  getRowClassName={(params) => selectedInboundDocumentId === params.row.id ? "document-row--selected" : ""}
                   slots={mainGridSlots}
                   sx={{ border: 0 }}
                 />
@@ -1757,34 +1912,38 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
                   disableRowSelectionOnClick
                   initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
                   getRowHeight={() => 68}
-                  onRowClick={(params) => setSelectedOutboundDocument(params.row)}
-                  getRowClassName={(params) => selectedOutboundDocument?.id === params.row.id ? "document-row--selected" : ""}
+                  onRowClick={(params) => setSelectedOutboundDocumentId(params.row.id)}
+                  getRowClassName={(params) => selectedOutboundDocumentId === params.row.id ? "document-row--selected" : ""}
                   slots={mainGridSlots}
                   sx={{ border: 0 }}
                 />
               )}
             </Box>
           </div>
-        </article>
-      </section>
-      <ExportExcelDialog
-        open={isExportDialogOpen}
-        defaultTitle={mode === "IN" ? RECEIPTS_EXPORT_TITLE : SHIPMENTS_EXPORT_TITLE}
-        defaultColumns={mode === "IN" ? [...RECEIPTS_EXPORT_COLUMNS] : [...SHIPMENTS_EXPORT_COLUMNS]}
-        onClose={() => setIsExportDialogOpen(false)}
-        onExport={handleExport}
-      />
+            </article>
+          </section>
+          <ExportExcelDialog
+            open={isExportDialogOpen}
+            defaultTitle={mode === "IN" ? RECEIPTS_EXPORT_TITLE : SHIPMENTS_EXPORT_TITLE}
+            defaultColumns={mode === "IN" ? [...RECEIPTS_EXPORT_COLUMNS] : [...SHIPMENTS_EXPORT_COLUMNS]}
+            onClose={() => setIsExportDialogOpen(false)}
+            onExport={handleExport}
+          />
+        </main>
+      ) : null}
       {feedbackToast}
 
       {mode === "IN" ? (
         <Drawer
           anchor="right"
-          open={selectedInboundDocument !== null}
-          onClose={() => setSelectedInboundDocument(null)}
+          open={selectedInboundDocumentId !== null}
+          onClose={() => setSelectedInboundDocumentId(null)}
           ModalProps={{ keepMounted: true }}
           PaperProps={{ className: "document-drawer" }}
         >
-          {selectedInboundDocument ? (
+          {showInboundDrawerLoading ? (
+            <WorkspaceDrawerLoadingState />
+          ) : selectedInboundDocument ? (
             <div className="document-drawer__content">
               <div className="document-drawer__header">
                 <div>
@@ -1794,12 +1953,17 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
                     {[selectedInboundDocument.customerName || "-", formatDate(selectedInboundDocument.deliveryDate)].filter(Boolean).join(" · ")}
                   </p>
                 </div>
-                <IconButton aria-label={t("close")} onClick={() => setSelectedInboundDocument(null)}>
+                <IconButton aria-label={t("close")} onClick={() => setSelectedInboundDocumentId(null)}>
                   <CloseIcon fontSize="small" />
                 </IconButton>
               </div>
 
               <div className="document-drawer__actions">
+                {onOpenInboundDetail ? (
+                  <Button variant="outlined" onClick={() => onOpenInboundDetail(selectedInboundDocument.id)}>
+                    {t("inboundDetailOpenPage")}
+                  </Button>
+                ) : null}
                 {canManage && !selectedInboundDocument.archivedAt && ["DRAFT", "CONFIRMED"].includes(normalizeDocumentStatus(selectedInboundDocument.status)) ? (
                   <Button variant="outlined" onClick={() => openEditInboundDocument(selectedInboundDocument)}>
                     {normalizeDocumentStatus(selectedInboundDocument.status) === "CONFIRMED" ? t("editReceipt") : t("editDraft")}
@@ -1908,12 +2072,14 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
       {mode === "OUT" ? (
         <Drawer
           anchor="right"
-          open={selectedOutboundDocument !== null}
-          onClose={() => setSelectedOutboundDocument(null)}
+          open={selectedOutboundDocumentId !== null}
+          onClose={() => setSelectedOutboundDocumentId(null)}
           ModalProps={{ keepMounted: true }}
           PaperProps={{ className: "document-drawer" }}
         >
-          {selectedOutboundDocument ? (
+          {showOutboundDrawerLoading ? (
+            <WorkspaceDrawerLoadingState />
+          ) : selectedOutboundDocument ? (
             <div className="document-drawer__content">
               <div className="document-drawer__header">
                 <div>
@@ -1923,7 +2089,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
                     {[selectedOutboundDocument.customerName || "-", formatDate(selectedOutboundDocument.outDate)].filter(Boolean).join(" · ")}
                   </p>
                 </div>
-                <IconButton aria-label={t("close")} onClick={() => setSelectedOutboundDocument(null)}>
+                <IconButton aria-label={t("close")} onClick={() => setSelectedOutboundDocumentId(null)}>
                   <CloseIcon fontSize="small" />
                 </IconButton>
               </div>
@@ -2514,7 +2680,7 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
         </Dialog>
       ) : null}
       {confirmationDialog}
-    </main>
+    </>
   );
 }
 

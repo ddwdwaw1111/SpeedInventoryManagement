@@ -556,6 +556,60 @@ func TestConfirmedInboundDocumentEditMovesRemainingLotsAfterPartialConsumptionIn
 	}
 }
 
+func TestInboundConfirmationMatchesInventoryBySKUMasterIDIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0)
+	containerNo := "MASTER-" + suffix
+
+	if _, err := store.db.ExecContext(ctx, `
+		UPDATE inventory_items
+		SET sku = ?, container_no = ?
+		WHERE id = ?
+	`, "LEGACY-"+suffix, containerNo, item.ID); err != nil {
+		t.Fatalf("prepare legacy inventory row: %v", err)
+	}
+
+	receipt, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:     customer.ID,
+		LocationID:     location.ID,
+		DeliveryDate:   "2026-03-31",
+		ContainerNo:    containerNo,
+		StorageSection: DefaultStorageSection,
+		UnitLabel:      "CTN",
+		Status:         DocumentStatusConfirmed,
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:            item.SKU,
+			Description:    "Matched by SKU master",
+			StorageSection: DefaultStorageSection,
+			ExpectedQty:    5,
+			ReceivedQty:    5,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create confirmed inbound document against legacy inventory row: %v", err)
+	}
+
+	if len(receipt.Lines) != 1 {
+		t.Fatalf("expected one receipt line, got %d", len(receipt.Lines))
+	}
+	if receipt.Lines[0].ItemID != item.ID {
+		t.Fatalf("expected receipt to reuse inventory item %d, got %d", item.ID, receipt.Lines[0].ItemID)
+	}
+
+	updatedItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerNo, item.SKU)
+	if updatedItem.ID != item.ID {
+		t.Fatalf("expected inbound confirmation to reuse existing inventory row %d, got %d", item.ID, updatedItem.ID)
+	}
+	if updatedItem.Quantity != 5 {
+		t.Fatalf("expected quantity 5 after inbound confirmation, got %d", updatedItem.Quantity)
+	}
+}
+
 func TestReceiptLotTraceIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()

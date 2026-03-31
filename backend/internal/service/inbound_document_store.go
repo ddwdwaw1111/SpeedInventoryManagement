@@ -2109,79 +2109,6 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 func (s *Store) findOrCreateInboundItem(ctx context.Context, tx *sql.Tx, documentInput CreateInboundDocumentInput, line CreateInboundDocumentLineInput, deliveryDate *time.Time) (int64, string, error) {
 	normalizedSection := fallbackSection(firstNonEmpty(line.StorageSection, documentInput.StorageSection))
 	normalizedContainerNo := strings.TrimSpace(documentInput.ContainerNo)
-	var itemID int64
-	var description string
-	matchByContainerQuery := `
-		SELECT id, COALESCE(description, name, '')
-		FROM inventory_items
-		WHERE
-			sku = ?
-			AND customer_id = ?
-			AND location_id = ?
-			AND COALESCE(NULLIF(storage_section, ''), ?) = ?
-			AND COALESCE(container_no, '') = ?
-		ORDER BY updated_at DESC, id DESC
-		LIMIT 1
-		FOR UPDATE
-	`
-	matchByContainerArgs := []any{
-		line.SKU,
-		documentInput.CustomerID,
-		documentInput.LocationID,
-		DefaultStorageSection,
-		normalizedSection,
-		normalizedContainerNo,
-	}
-	err := tx.QueryRowContext(ctx, matchByContainerQuery, matchByContainerArgs...).Scan(&itemID, &description)
-	if err == nil {
-		if strings.TrimSpace(description) == "" {
-			description = line.Description
-		}
-		return itemID, description, nil
-	}
-	if errors.Is(err, sql.ErrNoRows) {
-		matchPlaceholderQuery := `
-			SELECT id, COALESCE(description, name, '')
-			FROM inventory_items
-			WHERE
-				sku = ?
-				AND customer_id = ?
-				AND location_id = ?
-				AND COALESCE(NULLIF(storage_section, ''), ?) = ?
-				AND quantity = 0
-				AND COALESCE(container_no, '') = ''
-			ORDER BY updated_at DESC, id DESC
-			LIMIT 1
-			FOR UPDATE
-		`
-		matchPlaceholderArgs := []any{
-			line.SKU,
-			documentInput.CustomerID,
-			documentInput.LocationID,
-			DefaultStorageSection,
-			normalizedSection,
-		}
-		err = tx.QueryRowContext(ctx, matchPlaceholderQuery, matchPlaceholderArgs...).Scan(&itemID, &description)
-		if err == nil {
-			if _, updateErr := tx.ExecContext(ctx, `
-				UPDATE inventory_items
-				SET
-					storage_section = ?,
-					container_no = ?,
-					updated_at = CURRENT_TIMESTAMP
-				WHERE id = ?
-			`, normalizedSection, normalizedContainerNo, itemID); updateErr != nil {
-				return 0, "", mapDBError(fmt.Errorf("prepare inbound placeholder inventory row: %w", updateErr))
-			}
-			if strings.TrimSpace(description) == "" {
-				description = line.Description
-			}
-			return itemID, description, nil
-		}
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return 0, "", fmt.Errorf("load inbound inventory item by sku: %w", err)
-	}
 	if strings.TrimSpace(line.Description) == "" {
 		return 0, "", fmt.Errorf("%w: description is required for new inbound sku rows", ErrInvalidInput)
 	}
@@ -2210,6 +2137,80 @@ func (s *Store) findOrCreateInboundItem(ctx context.Context, tx *sql.Tx, documen
 	skuMasterID, err := s.ensureSKUMaster(ctx, tx, itemInput)
 	if err != nil {
 		return 0, "", err
+	}
+
+	var itemID int64
+	var description string
+	matchByContainerQuery := `
+		SELECT id, COALESCE(description, name, '')
+		FROM inventory_items
+		WHERE
+			sku_master_id = ?
+			AND customer_id = ?
+			AND location_id = ?
+			AND COALESCE(NULLIF(storage_section, ''), ?) = ?
+			AND COALESCE(container_no, '') = ?
+		ORDER BY updated_at DESC, id DESC
+		LIMIT 1
+		FOR UPDATE
+	`
+	matchByContainerArgs := []any{
+		skuMasterID,
+		documentInput.CustomerID,
+		documentInput.LocationID,
+		DefaultStorageSection,
+		normalizedSection,
+		normalizedContainerNo,
+	}
+	err = tx.QueryRowContext(ctx, matchByContainerQuery, matchByContainerArgs...).Scan(&itemID, &description)
+	if err == nil {
+		if strings.TrimSpace(description) == "" {
+			description = line.Description
+		}
+		return itemID, description, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		matchPlaceholderQuery := `
+			SELECT id, COALESCE(description, name, '')
+			FROM inventory_items
+			WHERE
+				sku_master_id = ?
+				AND customer_id = ?
+				AND location_id = ?
+				AND COALESCE(NULLIF(storage_section, ''), ?) = ?
+				AND quantity = 0
+				AND COALESCE(container_no, '') = ''
+			ORDER BY updated_at DESC, id DESC
+			LIMIT 1
+			FOR UPDATE
+		`
+		matchPlaceholderArgs := []any{
+			skuMasterID,
+			documentInput.CustomerID,
+			documentInput.LocationID,
+			DefaultStorageSection,
+			normalizedSection,
+		}
+		err = tx.QueryRowContext(ctx, matchPlaceholderQuery, matchPlaceholderArgs...).Scan(&itemID, &description)
+		if err == nil {
+			if _, updateErr := tx.ExecContext(ctx, `
+				UPDATE inventory_items
+				SET
+					storage_section = ?,
+					container_no = ?,
+					updated_at = CURRENT_TIMESTAMP
+				WHERE id = ?
+			`, normalizedSection, normalizedContainerNo, itemID); updateErr != nil {
+				return 0, "", mapDBError(fmt.Errorf("prepare inbound placeholder inventory row: %w", updateErr))
+			}
+			if strings.TrimSpace(description) == "" {
+				description = line.Description
+			}
+			return itemID, description, nil
+		}
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return 0, "", fmt.Errorf("load inbound inventory item by sku master: %w", err)
 	}
 
 	result, err := tx.ExecContext(ctx, `

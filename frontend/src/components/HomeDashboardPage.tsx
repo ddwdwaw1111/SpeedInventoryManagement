@@ -34,6 +34,7 @@ type HomeDashboardPageProps = {
   isLoading: boolean;
   errorMessage: string;
   onNavigate: (page: PageKey) => void;
+  onOpenDailyOperations: (date: string) => void;
 };
 
 type SummaryCard = {
@@ -97,7 +98,8 @@ export function HomeDashboardPage({
   cycleCounts,
   isLoading,
   errorMessage,
-  onNavigate
+  onNavigate,
+  onOpenDailyOperations
 }: HomeDashboardPageProps) {
   const { t } = useI18n();
   const isViewer = currentUserRole === "viewer";
@@ -279,11 +281,23 @@ export function HomeDashboardPage({
           </div>
 
           <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            {summaryCards.map((card) => (
-              <DashboardSummaryCard key={card.key} card={card} />
-            ))}
+            {isLoading
+              ? Array.from({ length: 4 }, (_, index) => <DashboardSummaryCardSkeleton key={index} />)
+              : summaryCards.map((card) => (
+                <DashboardSummaryCard key={card.key} card={card} />
+              ))}
           </div>
         </section>
+
+        <ProcessingCalendarCard
+          weekStart={calendarWeek}
+          days={calendarDays}
+          isLoading={isLoading}
+          onPreviousWeek={() => setCalendarWeek((current) => shiftUtcDay(current, -7))}
+          onNextWeek={() => setCalendarWeek((current) => shiftUtcDay(current, 7))}
+          onToday={() => setCalendarWeek(startOfUtcWeek(new Date()))}
+          onOpenDay={onOpenDailyOperations}
+        />
 
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.8fr)_minmax(280px,0.82fr)]">
           <section className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-[0_16px_34px_rgba(15,23,42,0.05)]">
@@ -345,9 +359,11 @@ export function HomeDashboardPage({
             </div>
 
             <div className="mt-4 space-y-3">
-              {recentActivity.length === 0 ? (
+              {isLoading ? (
+                <RecentActivitySkeleton />
+              ) : recentActivity.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-slate-300 bg-white/70 px-5 py-8 text-center text-sm text-slate-500">
-                  {isLoading ? t("loadingRecords") : t("dashboardNoRecentActivity")}
+                  {t("dashboardNoRecentActivity")}
                 </div>
               ) : recentActivity.map((entry) => (
                 <div key={entry.id} className="flex gap-3">
@@ -373,14 +389,6 @@ export function HomeDashboardPage({
             </button>
           </section>
         </div>
-
-        <ProcessingCalendarCard
-          weekStart={calendarWeek}
-          days={calendarDays}
-          onPreviousWeek={() => setCalendarWeek((current) => shiftUtcDay(current, -7))}
-          onNextWeek={() => setCalendarWeek((current) => shiftUtcDay(current, 7))}
-          onToday={() => setCalendarWeek(startOfUtcWeek(new Date()))}
-        />
 
         <div className="grid gap-5 2xl:grid-cols-2">
           <TrackerTableCard
@@ -420,6 +428,22 @@ function DashboardSummaryCard({ card }: { card: SummaryCard }) {
         <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">{card.label}</p>
         <h3 className="mt-1.5 font-headline text-2xl font-extrabold tracking-tight text-[#0d2d63]">{card.value}</h3>
         <p className="mt-1 text-xs text-slate-500">{card.meta}</p>
+      </div>
+    </article>
+  );
+}
+
+function DashboardSummaryCardSkeleton() {
+  return (
+    <article className="rounded-[18px] border border-slate-200/80 bg-white p-3 shadow-[0_10px_22px_rgba(15,23,42,0.04)] animate-pulse">
+      <div className="flex items-start justify-between gap-4">
+        <div className="h-9 w-9 rounded-lg bg-slate-100" />
+        <div className="h-5 w-24 rounded-md bg-slate-100" />
+      </div>
+      <div className="mt-3.5 space-y-2">
+        <div className="h-2.5 w-24 rounded-full bg-slate-100" />
+        <div className="h-9 w-32 rounded-lg bg-slate-100" />
+        <div className="h-2.5 w-40 rounded-full bg-slate-100" />
       </div>
     </article>
   );
@@ -552,15 +576,19 @@ function ThroughputLineChart({
 function ProcessingCalendarCard({
   weekStart,
   days,
+  isLoading,
   onPreviousWeek,
   onNextWeek,
-  onToday
+  onToday,
+  onOpenDay
 }: {
   weekStart: Date;
   days: CalendarDay[];
+  isLoading: boolean;
   onPreviousWeek: () => void;
   onNextWeek: () => void;
   onToday: () => void;
+  onOpenDay: (date: string) => void;
 }) {
   const { t } = useI18n();
   const weekEnd = shiftUtcDay(weekStart, 6);
@@ -638,36 +666,58 @@ function ProcessingCalendarCard({
           </div>
         ))}
 
-        {days.map((day) => (
-          <div
-            key={day.key}
-            className={`min-h-[112px] rounded-[18px] border px-3 py-3 transition ${
-              day.isToday
-                ? "border-[#143569]/30 bg-[#143569]/[0.03] shadow-[0_8px_18px_rgba(20,53,105,0.06)]"
-                : "border-slate-200/80 bg-slate-50/80"
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <span className={`text-sm font-bold ${day.isToday ? "text-[#143569]" : "text-slate-500"}`}>{day.dayNumber}</span>
-              {day.isToday ? (
-                <span className="rounded-full bg-[#143569] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white">
-                  {t("today")}
-                </span>
-              ) : null}
+        {isLoading
+          ? Array.from({ length: 7 }, (_, index) => (
+            <div key={`loading-${index}`} className="min-h-[112px] rounded-[18px] border border-slate-200/80 bg-slate-50/80 px-3 py-3 animate-pulse">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-bold text-slate-400">{index + 1}</span>
+                <span className="h-4 w-10 rounded-full bg-slate-200" />
+              </div>
+              <div className="mt-4 space-y-2">
+                <div className="rounded-xl bg-white/80 px-2.5 py-2 ring-1 ring-slate-100">
+                  <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-300">{t("inbound")}</div>
+                  <div className="mt-1 h-5 w-12 rounded-full bg-slate-200" />
+                </div>
+                <div className="rounded-xl bg-white/80 px-2.5 py-2 ring-1 ring-slate-100">
+                  <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-300">{t("outbound")}</div>
+                  <div className="mt-1 h-5 w-12 rounded-full bg-slate-200" />
+                </div>
+              </div>
             </div>
+          ))
+          : days.map((day) => (
+            <button
+              type="button"
+              key={day.key}
+              onClick={() => onOpenDay(formatUtcDateString(day.date))}
+              className={`min-h-[112px] rounded-[18px] border px-3 py-3 transition ${
+                day.isToday
+                  ? "border-[#143569]/30 bg-[#143569]/[0.03] shadow-[0_8px_18px_rgba(20,53,105,0.06)]"
+                  : "border-slate-200/80 bg-slate-50/80"
+              }`}
+              aria-label={t("dashboardOpenDayBoard", { date: formatUtcDateString(day.date) })}
+            >
+              <div className="flex items-center justify-between">
+                <span className={`text-sm font-bold ${day.isToday ? "text-[#143569]" : "text-slate-500"}`}>{day.dayNumber}</span>
+                {day.isToday ? (
+                  <span className="rounded-full bg-[#143569] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white">
+                    {t("today")}
+                  </span>
+                ) : null}
+              </div>
 
-            <div className="mt-4 space-y-2">
-              <div className={`rounded-xl px-2.5 py-2 ${day.inboundCount > 0 ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100" : "bg-white/80 text-slate-400 ring-1 ring-slate-100"}`}>
-                <div className="text-[10px] font-bold uppercase tracking-[0.2em]">{t("inbound")}</div>
-                <div className="mt-1 text-base font-extrabold">{numberFormatter.format(day.inboundCount)}</div>
+              <div className="mt-4 space-y-2">
+                <div className={`rounded-xl px-2.5 py-2 ${day.inboundCount > 0 ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100" : "bg-white/80 text-slate-400 ring-1 ring-slate-100"}`}>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.2em]">{t("inbound")}</div>
+                  <div className="mt-1 text-base font-extrabold">{numberFormatter.format(day.inboundCount)}</div>
+                </div>
+                <div className={`rounded-xl px-2.5 py-2 ${day.outboundCount > 0 ? "bg-blue-50 text-[#143569] ring-1 ring-blue-100" : "bg-white/80 text-slate-400 ring-1 ring-slate-100"}`}>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.2em]">{t("outbound")}</div>
+                  <div className="mt-1 text-base font-extrabold">{numberFormatter.format(day.outboundCount)}</div>
+                </div>
               </div>
-              <div className={`rounded-xl px-2.5 py-2 ${day.outboundCount > 0 ? "bg-blue-50 text-[#143569] ring-1 ring-blue-100" : "bg-white/80 text-slate-400 ring-1 ring-slate-100"}`}>
-                <div className="text-[10px] font-bold uppercase tracking-[0.2em]">{t("outbound")}</div>
-                <div className="mt-1 text-base font-extrabold">{numberFormatter.format(day.outboundCount)}</div>
-              </div>
-            </div>
-          </div>
-        ))}
+            </button>
+          ))}
       </div>
     </section>
   );
@@ -720,9 +770,7 @@ function TrackerTableCard({
           </thead>
           <tbody className="divide-y divide-slate-200/80 bg-white">
             {isLoading ? (
-              <tr>
-                <td className="px-6 py-8 text-sm text-slate-500" colSpan={6}>{t("loadingRecords")}</td>
-              </tr>
+              <TrackerTableSkeletonRows />
             ) : rows.length === 0 ? (
               <tr>
                 <td className="px-6 py-8 text-sm text-slate-500" colSpan={6}>{emptyLabel}</td>
@@ -755,6 +803,48 @@ function TrackerTableCard({
         </table>
       </div>
     </section>
+  );
+}
+
+function RecentActivitySkeleton() {
+  return (
+    <div className="space-y-3">
+      {Array.from({ length: 4 }, (_, index) => (
+        <div key={index} className="flex gap-3 animate-pulse">
+          <div className="flex w-4 flex-col items-center">
+            <span className="mt-1 h-2 w-2 rounded-full bg-slate-200" />
+            <span className="mt-1 h-full w-px bg-slate-200" />
+          </div>
+          <div className="flex-1 space-y-2 pb-1">
+            <div className="h-3.5 w-40 rounded-full bg-slate-200" />
+            <div className="h-3 w-full max-w-[220px] rounded-full bg-slate-100" />
+            <div className="h-3 w-24 rounded-full bg-slate-100" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TrackerTableSkeletonRows() {
+  return (
+    <>
+      {Array.from({ length: 4 }, (_, index) => (
+        <tr key={index} className="animate-pulse">
+          <td className="px-6 py-4"><div className="h-4 w-24 rounded-full bg-slate-200" /></td>
+          <td className="px-6 py-4"><div className="h-4 w-36 rounded-full bg-slate-100" /></td>
+          <td className="px-6 py-4"><div className="h-4 w-28 rounded-full bg-slate-100" /></td>
+          <td className="px-6 py-4"><div className="h-6 w-24 rounded-full bg-slate-100" /></td>
+          <td className="px-6 py-4">
+            <div className="space-y-2">
+              <div className="h-2.5 w-32 rounded-full bg-slate-100" />
+              <div className="h-3 w-10 rounded-full bg-slate-100" />
+            </div>
+          </td>
+          <td className="px-6 py-4"><div className="h-4 w-20 rounded-full bg-slate-100" /></td>
+        </tr>
+      ))}
+    </>
   );
 }
 
@@ -860,6 +950,10 @@ function startOfUtcWeek(date: Date) {
 
 function shiftUtcDay(date: Date, delta: number) {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + delta));
+}
+
+function formatUtcDateString(date: Date) {
+  return `${date.getUTCFullYear()}-${`${date.getUTCMonth() + 1}`.padStart(2, "0")}-${`${date.getUTCDate()}`.padStart(2, "0")}`;
 }
 
 function buildProcessingCalendarDays(

@@ -56,16 +56,17 @@ export default defineConfig({
             return "mui-icons";
           }
 
-          if (id.includes("@mui/material") || id.includes("@emotion")) {
-            return "mui-core";
+          if (
+            id.includes("@mui/material")
+            || id.includes("@emotion")
+            || id.includes("react")
+            || id.includes("scheduler")
+          ) {
+            return "framework-core";
           }
 
           if (id.includes("pdfmake") || id.includes("@foliojs-fork/pdfkit")) {
             return "pdf-export";
-          }
-
-          if (id.includes("react") || id.includes("scheduler")) {
-            return "react-core";
           }
         }
       }

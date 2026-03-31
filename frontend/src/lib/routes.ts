@@ -1,5 +1,6 @@
 export type PageKey =
   | "dashboard"
+  | "daily-operations"
   | "export-center"
   | "reports"
   | "all-activity"
@@ -18,11 +19,13 @@ export type PageKey =
   | "storage-management"
   | "storage-location-editor"
   | "inbound-management"
+  | "inbound-detail"
   | "outbound-management"
   | "settings";
 
 export const pagePathMap: Record<PageKey, string> = {
   dashboard: "/",
+  "daily-operations": "/daily-operations",
   "export-center": "/export-center",
   reports: "/reports",
   "all-activity": "/all-activity",
@@ -41,6 +44,7 @@ export const pagePathMap: Record<PageKey, string> = {
   "storage-management": "/storage-management",
   "storage-location-editor": "/storage-management/new",
   "inbound-management": "/inbound-management",
+  "inbound-detail": "/inbound-management",
   "outbound-management": "/outbound-management",
   settings: "/settings"
 };
@@ -57,6 +61,7 @@ export function normalizePagePath(pathname: string): string {
 export function getPageFromPath(pathname: string): PageKey {
   const normalized = normalizePagePath(pathname);
 
+  if (normalized === "/daily-operations" || /^\/daily-operations\/\d{4}-\d{2}-\d{2}$/.test(normalized)) return "daily-operations";
   if (normalized === "/reports") return "reports";
   if (normalized === "/export-center") return "export-center";
   if (normalized === "/all-activity") return "all-activity";
@@ -69,6 +74,7 @@ export function getPageFromPath(pathname: string): PageKey {
   if (normalized === "/adjustments") return "adjustments";
   if (normalized === "/transfers") return "transfers";
   if (normalized === "/cycle-counts") return "cycle-counts";
+  if (/^\/inbound-management\/\d+$/.test(normalized)) return "inbound-detail";
   if (normalized === "/inbound-management") return "inbound-management";
   if (normalized === "/outbound-management") return "outbound-management";
   if (normalized === "/customers") return "customers";
@@ -93,6 +99,46 @@ export function navigateToPage(page: PageKey, setter: (page: PageKey) => void) {
   setter(page);
 }
 
+function normalizeIsoDateSegment(value: string) {
+  const trimmed = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return null;
+  }
+
+  const [year, month, day] = trimmed.split("-").map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return trimmed;
+}
+
+export function navigateToDailyOperations(setter: (page: PageKey) => void, date?: string) {
+  const normalizedDate = date ? normalizeIsoDateSegment(date) : null;
+  const path = normalizedDate ? `/daily-operations/${normalizedDate}` : "/daily-operations";
+  if (normalizePagePath(window.location.pathname) !== path) {
+    window.history.pushState({ page: "daily-operations", date: normalizedDate ?? null }, "", path);
+  }
+
+  setter("daily-operations");
+}
+
+export function getDailyOperationsDateFromPath(pathname: string) {
+  const normalized = normalizePagePath(pathname);
+  const match = normalized.match(/^\/daily-operations\/(\d{4}-\d{2}-\d{2})$/);
+  if (!match) {
+    return null;
+  }
+
+  return normalizeIsoDateSegment(match[1]);
+}
+
 export function navigateToStorageLocationEditor(setter: (page: PageKey) => void, locationId?: number) {
   const path = locationId ? `/storage-management/${locationId}` : "/storage-management/new";
   if (normalizePagePath(window.location.pathname) !== path) {
@@ -105,6 +151,25 @@ export function navigateToStorageLocationEditor(setter: (page: PageKey) => void,
 export function getStorageLocationEditorIdFromPath(pathname: string) {
   const normalized = normalizePagePath(pathname);
   const match = normalized.match(/^\/storage-management\/(\d+)$/);
+  if (!match) {
+    return null;
+  }
+
+  return Number(match[1]);
+}
+
+export function navigateToInboundDetail(setter: (page: PageKey) => void, documentId: number) {
+  const path = `/inbound-management/${documentId}`;
+  if (normalizePagePath(window.location.pathname) !== path) {
+    window.history.pushState({ page: "inbound-detail", documentId }, "", path);
+  }
+
+  setter("inbound-detail");
+}
+
+export function getInboundDetailIdFromPath(pathname: string) {
+  const normalized = normalizePagePath(pathname);
+  const match = normalized.match(/^\/inbound-management\/(\d+)$/);
   if (!match) {
     return null;
   }

@@ -75,6 +75,7 @@ type ContainerBreakdownRow = {
 };
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
+const summaryNumberFormatter = new Intl.NumberFormat("en-US");
 const INVENTORY_SUMMARY_COLUMN_ORDER_PREFERENCE_KEY = "inventory-summary.column-order";
 const INVENTORY_SUMMARY_EXPORT_TITLE = "Inventory Summary";
 const INVENTORY_SUMMARY_EXPORT_COLUMNS = [
@@ -166,6 +167,19 @@ export function InventorySummaryPage({
     () => buildContainerBreakdown(selectedSummary?.containerBalances ?? []),
     [selectedSummary]
   );
+  const overviewStats = useMemo(() => {
+    const totalOnHand = summaryRows.reduce((sum, row) => sum + row.onHand, 0);
+    const totalAvailable = summaryRows.reduce((sum, row) => sum + row.availableQty, 0);
+    const lowStockRows = summaryRows.filter((row) => row.items.some((item) => item.reorderLevel > 0 && item.availableQty <= item.reorderLevel)).length;
+    const totalWarehouses = new Set(summaryRows.flatMap((row) => row.items.map((item) => item.locationId))).size;
+    return [
+      { label: t("sku"), value: summaryNumberFormatter.format(summaryRows.length), meta: t("allRows") },
+      { label: t("onHand"), value: summaryNumberFormatter.format(totalOnHand), meta: t("units") },
+      { label: t("availableQty"), value: summaryNumberFormatter.format(totalAvailable), meta: t("units") },
+      { label: t("lowStock"), value: summaryNumberFormatter.format(lowStockRows), meta: t("allRows") },
+      { label: t("warehouseCount"), value: summaryNumberFormatter.format(totalWarehouses), meta: t("currentStorage") }
+    ];
+  }, [summaryRows, t]);
 
   function handleExport({ title, columns }: { title: string; columns: ExcelExportColumn[] }) {
     downloadExcelWorkbook({
@@ -214,6 +228,16 @@ export function InventorySummaryPage({
             <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
             <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
           </div>
+        </div>
+
+        <div className="workspace-summary-strip">
+          {overviewStats.map((stat) => (
+            <article className="workspace-summary-card" key={stat.label}>
+              <span className="workspace-summary-card__label">{stat.label}</span>
+              <strong className="workspace-summary-card__value">{stat.value}</strong>
+              <span className="workspace-summary-card__meta">{stat.meta}</span>
+            </article>
+          ))}
         </div>
 
         <div className="sheet-table-wrap">

@@ -25,7 +25,7 @@ import {
 } from "../lib/types";
 import { InlineAlert, useFeedbackToast } from "./Feedback";
 import { RowActionsMenu } from "./RowActionsMenu";
-import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
+import { buildWorkspaceGridSlots, WorkspaceDrawerLoadingState, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
 
 type TransferManagementPageProps = {
@@ -56,6 +56,7 @@ const emptyTransferForm: TransferFormState = {
   transferNo: "",
   notes: ""
 };
+const summaryNumberFormatter = new Intl.NumberFormat("en-US");
 const TRANSFER_COLUMN_ORDER_PREFERENCE_KEY = "transfers.column-order";
 
 function createTransferLine(): TransferLineFormState {
@@ -203,6 +204,15 @@ export function TransferManagementPage({
     emptyDescription: t("emptyStateHint"),
     loadingTitle: t("loadingRecords")
   });
+  const overviewStats = useMemo(() => {
+    const routeCount = new Set(transfers.map((transfer) => transfer.routes).filter(Boolean)).size;
+    return [
+      { label: t("allRows"), value: summaryNumberFormatter.format(transfers.length), meta: t("transfers") },
+      { label: t("totalLines"), value: summaryNumberFormatter.format(transfers.reduce((sum, transfer) => sum + transfer.totalLines, 0)), meta: t("transferLines") },
+      { label: t("totalQty"), value: summaryNumberFormatter.format(transfers.reduce((sum, transfer) => sum + transfer.totalQty, 0)), meta: t("units") },
+      { label: t("routes"), value: summaryNumberFormatter.format(routeCount), meta: t("destinationStorage") }
+    ];
+  }, [transfers, t]);
 
   function openCreateModal(initialSourceKey = "") {
     if (!canManage) {
@@ -291,6 +301,15 @@ export function TransferManagementPage({
             errorMessage={errorMessage && !isModalOpen ? errorMessage : ""}
           />
         </div>
+        <div className="workspace-summary-strip">
+          {overviewStats.map((stat) => (
+            <article className="workspace-summary-card" key={`${stat.label}-${stat.meta}`}>
+              <span className="workspace-summary-card__label">{stat.label}</span>
+              <strong className="workspace-summary-card__value">{stat.value}</strong>
+              <span className="workspace-summary-card__meta">{stat.meta}</span>
+            </article>
+          ))}
+        </div>
         <div className="sheet-table-wrap">
           <Box sx={{ minWidth: 0 }}>
             <DataGrid
@@ -315,7 +334,7 @@ export function TransferManagementPage({
 
       <Drawer
         anchor="right"
-        open={Boolean(selectedTransfer)}
+        open={selectedTransferId !== null}
         onClose={() => setSelectedTransferId(null)}
         PaperProps={{ className: "document-drawer" }}
       >
@@ -408,7 +427,7 @@ export function TransferManagementPage({
               />
             </Box>
           </div>
-        ) : null}
+        ) : isLoading ? <WorkspaceDrawerLoadingState /> : null}
       </Drawer>
 
       <Dialog

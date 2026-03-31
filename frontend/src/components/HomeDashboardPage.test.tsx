@@ -10,6 +10,7 @@ describe("HomeDashboardPage", () => {
   it("renders the operations board and routes users to core workflows", async () => {
     const user = userEvent.setup();
     const onNavigate = vi.fn();
+    const onOpenDailyOperations = vi.fn();
 
     renderWithProviders(
       <HomeDashboardPage
@@ -46,6 +47,7 @@ describe("HomeDashboardPage", () => {
         isLoading={false}
         errorMessage=""
         onNavigate={onNavigate}
+        onOpenDailyOperations={onOpenDailyOperations}
       />
     );
 
@@ -63,5 +65,8 @@ describe("HomeDashboardPage", () => {
 
     await user.click(screen.getByRole("button", { name: "View Full Logs" }));
     expect(onNavigate).toHaveBeenCalledWith("all-activity");
+
+    await user.click(screen.getAllByRole("button", { name: /Open the day board for/i })[0]);
+    expect(onOpenDailyOperations).toHaveBeenCalled();
   });
 });

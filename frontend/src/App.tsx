@@ -24,7 +24,17 @@ import { Suspense, lazy, type ReactNode, useEffect, useMemo, useState } from "re
 import { AppHeaderUser, AuthPage } from "./components/AuthPage";
 import { ApiError, api } from "./lib/api";
 import { useI18n } from "./lib/i18n";
-import { getPageFromPath, getStorageLocationEditorIdFromPath, navigateToPage, navigateToStorageLocationEditor, type PageKey } from "./lib/routes";
+import {
+  getDailyOperationsDateFromPath,
+  getInboundDetailIdFromPath,
+  getPageFromPath,
+  getStorageLocationEditorIdFromPath,
+  navigateToDailyOperations,
+  navigateToInboundDetail,
+  navigateToPage,
+  navigateToStorageLocationEditor,
+  type PageKey
+} from "./lib/routes";
 import type { AuditLog, Customer, CycleCount, InboundDocument, InventoryAdjustment, InventoryTransfer, Item, Location, LoginPayload, Movement, OutboundDocument, SKUMaster, SignUpPayload, User } from "./lib/types";
 
 const ActivityManagementPage = lazy(async () => {
@@ -47,6 +57,10 @@ const ContainerContentsPage = lazy(async () => {
   const module = await import("./components/ContainerContentsPage");
   return { default: module.ContainerContentsPage };
 });
+const DailyOperationsPage = lazy(async () => {
+  const module = await import("./components/DailyOperationsPage");
+  return { default: module.DailyOperationsPage };
+});
 const CustomerManagementPage = lazy(async () => {
   const module = await import("./components/CustomerManagementPage");
   return { default: module.CustomerManagementPage };
@@ -66,6 +80,10 @@ const HomeDashboardPage = lazy(async () => {
 const InventorySummaryPage = lazy(async () => {
   const module = await import("./components/InventorySummaryPage");
   return { default: module.InventorySummaryPage };
+});
+const InboundDetailPage = lazy(async () => {
+  const module = await import("./components/InboundDetailPage");
+  return { default: module.InboundDetailPage };
 });
 const MasterInventoryPage = lazy(async () => {
   const module = await import("./components/MasterInventoryPage");
@@ -131,6 +149,7 @@ export default function App() {
   const [isAuthResolved, setIsAuthResolved] = useState(false);
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
   const [authErrorMessage, setAuthErrorMessage] = useState("");
+  const [currentPathname, setCurrentPathname] = useState(() => window.location.pathname);
   const [activePage, setActivePage] = useState<PageKey>(() => getPageFromPath(window.location.pathname));
   const [locations, setLocations] = useState<Location[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -146,6 +165,7 @@ export default function App() {
   const [cycleCounts, setCycleCounts] = useState<CycleCount[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [embeddedComposer, setEmbeddedComposer] = useState<{ mode: "IN" | "OUT"; date: string } | null>(null);
   const activeInboundDocuments = useMemo(
     () => inboundDocuments.filter((document) => !document.archivedAt),
     [inboundDocuments]
@@ -158,6 +178,7 @@ export default function App() {
   useEffect(() => { void bootstrapApp(); }, []);
   useEffect(() => {
     const handlePopState = () => {
+      setCurrentPathname(window.location.pathname);
       setActivePage(getPageFromPath(window.location.pathname));
     };
 
@@ -170,6 +191,30 @@ export default function App() {
   useEffect(() => {
     window.localStorage.setItem("sim-sidebar-sections", JSON.stringify(collapsedSections));
   }, [collapsedSections]);
+
+  function handleNavigateToPage(page: PageKey) {
+    navigateToPage(page, setActivePage);
+    setCurrentPathname(window.location.pathname);
+  }
+
+  function handleNavigateToDailyOperations(date?: string) {
+    navigateToDailyOperations(setActivePage, date);
+    setCurrentPathname(window.location.pathname);
+  }
+
+  function handleNavigateToStorageLocationEditor(locationId?: number) {
+    navigateToStorageLocationEditor(setActivePage, locationId);
+    setCurrentPathname(window.location.pathname);
+  }
+
+  function handleNavigateToInboundDetail(documentId: number) {
+    navigateToInboundDetail(setActivePage, documentId);
+    setCurrentPathname(window.location.pathname);
+  }
+
+  function handleOpenEmbeddedComposer(mode: "IN" | "OUT", date: string) {
+    setEmbeddedComposer({ mode, date });
+  }
 
   async function bootstrapApp() {
     setIsLoading(true);
@@ -314,15 +359,17 @@ export default function App() {
       (activePage === "receipt-lots" && !canViewReceiptLots) ||
       (activePage === "user-management" && !canManageUsers)
     ) {
-      navigateToPage("dashboard", setActivePage);
+      handleNavigateToPage("dashboard");
     }
   }, [activePage, canManageUsers, canViewAuditLogs, canViewReceiptLots]);
 
   const pageItems: Array<{ key: PageKey; label: string; description: string; icon: ReactNode }> = [
     { key: "dashboard", label: t("navDashboard"), description: t("dashboardDesc"), icon: <HomeOutlined fontSize="small" /> },
+    { key: "daily-operations", label: t("dailyOperations"), description: t("dailyOperationsDesc"), icon: <HomeOutlined fontSize="small" /> },
     { key: "reports", label: t("report"), description: t("reportDesc"), icon: <AssessmentOutlined fontSize="small" /> },
     { key: "export-center", label: t("exportCenter"), description: t("exportCenterDesc"), icon: <FileDownloadOutlined fontSize="small" /> },
     { key: "inbound-management", label: t("navReceiving"), description: t("inboundDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
+    { key: "inbound-detail", label: t("inboundDetailPage"), description: t("inboundDetailPageDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
     { key: "outbound-management", label: t("navShipping"), description: t("outboundDesc"), icon: <OutboxOutlined fontSize="small" /> },
     { key: "inventory-summary", label: t("inventorySummary"), description: t("inventorySummaryDesc"), icon: <WarehouseOutlined fontSize="small" /> },
     { key: "warehouse-map", label: t("warehouseMap"), description: t("warehouseMapDesc"), icon: <WarehouseOutlined fontSize="small" /> },
@@ -363,6 +410,8 @@ export default function App() {
     </section>
   );
   const parentPageByPage: Partial<Record<PageKey, PageKey>> = {
+    "daily-operations": "dashboard",
+    "inbound-detail": "inbound-management",
     "stock-by-location": "inventory-summary",
     adjustments: "inventory-summary",
     transfers: "inventory-summary",
@@ -391,10 +440,16 @@ export default function App() {
   };
   const parentPage = parentPageByPage[activePage] ? pageItemMap.get(parentPageByPage[activePage] as PageKey) : null;
   const activeNavSection = navSections.find((section) => section.key === sectionKeyByPage[activePage]);
+  const pageContextLeadLabel = activeNavSection?.label ?? parentPage?.label ?? null;
   const showPageContext = activePage !== "dashboard";
-  const editingStorageLocationId = getStorageLocationEditorIdFromPath(window.location.pathname);
+  const editingStorageLocationId = getStorageLocationEditorIdFromPath(currentPathname);
+  const selectedInboundDetailId = getInboundDetailIdFromPath(currentPathname);
+  const selectedDailyOperationsDate = getDailyOperationsDateFromPath(currentPathname);
   const editingStorageLocation = editingStorageLocationId
     ? locations.find((location) => location.id === editingStorageLocationId) ?? null
+    : null;
+  const selectedInboundDetailDocument = selectedInboundDetailId
+    ? inboundDocuments.find((document) => document.id === selectedInboundDetailId) ?? null
     : null;
   useEffect(() => {
     if (!activeNavSection) return;
@@ -430,7 +485,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="app-toolbar">
-        <button className="app-toolbar__brand" type="button" onClick={() => navigateToPage("dashboard", setActivePage)}>
+        <button className="app-toolbar__brand" type="button" onClick={() => handleNavigateToPage("dashboard")}>
           <div className="app-toolbar__brand-mark" aria-hidden="true">SI</div>
           <div className="app-toolbar__brand-copy">
             <span>{t("inventorySystem")}</span>
@@ -442,7 +497,7 @@ export default function App() {
           <button
             className="app-toolbar__action"
             type="button"
-            onClick={() => navigateToPage("settings", setActivePage)}
+            onClick={() => handleNavigateToPage("settings")}
             title={t("settings")}
             aria-label={t("settings")}
           >
@@ -460,7 +515,7 @@ export default function App() {
               key={item.key}
               className={`app-sidebar__link app-sidebar__link--home ${activePage === item.key ? "app-sidebar__link--active" : ""}`}
               type="button"
-              onClick={() => navigateToPage(item.key, setActivePage)}
+              onClick={() => handleNavigateToPage(item.key)}
               title={sidebarCollapsed ? item.label : undefined}
             >
               <span className="app-sidebar__link-icon" aria-hidden="true">{item.icon}</span>
@@ -491,7 +546,7 @@ export default function App() {
                     key={item.key}
                     className={`app-sidebar__link ${activePage === item.key ? "app-sidebar__link--active" : ""}`}
                     type="button"
-                    onClick={() => navigateToPage(item.key, setActivePage)}
+                    onClick={() => handleNavigateToPage(item.key)}
                     title={sidebarCollapsed ? item.label : undefined}
                   >
                     <span className="app-sidebar__link-icon" aria-hidden="true">{item.icon}</span>
@@ -522,92 +577,137 @@ export default function App() {
                   <button
                     className="app-page-context__back-button"
                     type="button"
-                    onClick={() => navigateToPage(parentPage.key, setActivePage)}
+                    onClick={() => handleNavigateToPage(parentPage.key)}
                   >
                     <ArrowBackOutlined fontSize="small" />
                     <span>{t("back")}</span>
                   </button>
                 ) : null}
                 <div className="app-page-context__breadcrumb">
-                  {activeNavSection ? <span>{activeNavSection.label}</span> : null}
-                  {activeNavSection ? <span aria-hidden="true">/</span> : null}
+                  {pageContextLeadLabel ? <span>{pageContextLeadLabel}</span> : null}
+                  {pageContextLeadLabel ? <span aria-hidden="true">/</span> : null}
                   <span>{activePageItem.label}</span>
                 </div>
               </div>
             </div>
           ) : null}
-          {activePage === "inbound-management" ? renderWithSuspense(<ActivityManagementPage mode="IN" items={items} skuMasters={skuMasters} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} />) : null}
-          {activePage === "outbound-management" ? renderWithSuspense(<ActivityManagementPage mode="OUT" items={items} skuMasters={skuMasters} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} />) : null}
-          {activePage === "adjustments" ? renderWithSuspense(<AdjustmentManagementPage adjustments={adjustments} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} />) : null}
-          {activePage === "transfers" ? renderWithSuspense(<TransferManagementPage transfers={transfers} items={items} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} />) : null}
-          {activePage === "cycle-counts" ? renderWithSuspense(<CycleCountManagementPage cycleCounts={cycleCounts} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} />) : null}
-          {activePage === "inventory-summary" ? renderWithSuspense(<InventorySummaryPage items={items} movements={movements} customers={customers} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={(page) => navigateToPage(page, setActivePage)} />) : null}
-          {activePage === "warehouse-map" ? (
-            <Suspense fallback={pageLoadingFallback}>
-              <WarehouseMapPage items={items} isLoading={isLoading} onNavigate={(page) => navigateToPage(page, setActivePage)} />
-            </Suspense>
-          ) : null}
-          {activePage === "container-contents" ? renderWithSuspense(<ContainerContentsPage items={items} customers={customers} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={(page) => navigateToPage(page, setActivePage)} />) : null}
-          {activePage === "all-activity" ? renderWithSuspense(<AllActivityPage movements={movements} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={(page) => navigateToPage(page, setActivePage)} />) : null}
-          {activePage === "customers" ? renderWithSuspense(<CustomerManagementPage customers={customers} items={items} inboundDocuments={activeInboundDocuments} outboundDocuments={activeOutboundDocuments} movements={movements} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} />) : null}
-          {activePage === "audit-logs" && canViewAuditLogs ? renderWithSuspense(<AuditLogPage auditLogs={auditLogs} currentUserRole={currentUser.role} isLoading={isLoading} />) : null}
-          {activePage === "receipt-lots" && canViewReceiptLots ? renderWithSuspense(<ReceiptLotTracePage />) : null}
-          {activePage === "user-management" && canManageUsers ? renderWithSuspense(<UserManagementPage users={users} currentUser={currentUser} isLoading={isLoading} onRefresh={() => loadAppData(false)} />) : null}
-          {activePage === "sku-master" ? renderWithSuspense(<SKUMasterPage skuMasters={skuMasters} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} />) : null}
-          {activePage === "stock-by-location" ? renderWithSuspense(<MasterInventoryPage items={items} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} />) : null}
-          {activePage === "storage-management" ? (
-            renderWithSuspense(<StorageManagementPage
-              locations={locations}
+          <div key={activePage} className="workspace-shell__page">
+            {activePage === "inbound-management" ? renderWithSuspense(<ActivityManagementPage mode="IN" items={items} skuMasters={skuMasters} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onOpenInboundDetail={handleNavigateToInboundDetail} />) : null}
+            {activePage === "inbound-detail" ? (
+              renderWithSuspense(<InboundDetailPage
+                document={selectedInboundDetailDocument}
+                currentUserRole={currentUser.role}
+                isLoading={isLoading}
+                onNavigate={handleNavigateToPage}
+              />)
+            ) : null}
+            {activePage === "outbound-management" ? renderWithSuspense(<ActivityManagementPage mode="OUT" items={items} skuMasters={skuMasters} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} />) : null}
+            {activePage === "adjustments" ? renderWithSuspense(<AdjustmentManagementPage adjustments={adjustments} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
+            {activePage === "transfers" ? renderWithSuspense(<TransferManagementPage transfers={transfers} items={items} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
+            {activePage === "cycle-counts" ? renderWithSuspense(<CycleCountManagementPage cycleCounts={cycleCounts} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
+            {activePage === "inventory-summary" ? renderWithSuspense(<InventorySummaryPage items={items} movements={movements} customers={customers} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={handleNavigateToPage} />) : null}
+            {activePage === "warehouse-map" ? (
+              <Suspense fallback={pageLoadingFallback}>
+                <WarehouseMapPage items={items} isLoading={isLoading} onNavigate={handleNavigateToPage} />
+              </Suspense>
+            ) : null}
+            {activePage === "container-contents" ? renderWithSuspense(<ContainerContentsPage items={items} customers={customers} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={handleNavigateToPage} />) : null}
+            {activePage === "all-activity" ? renderWithSuspense(<AllActivityPage movements={movements} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={handleNavigateToPage} />) : null}
+            {activePage === "customers" ? renderWithSuspense(<CustomerManagementPage customers={customers} items={items} inboundDocuments={activeInboundDocuments} outboundDocuments={activeOutboundDocuments} movements={movements} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
+            {activePage === "audit-logs" && canViewAuditLogs ? renderWithSuspense(<AuditLogPage auditLogs={auditLogs} currentUserRole={currentUser.role} isLoading={isLoading} />) : null}
+            {activePage === "receipt-lots" && canViewReceiptLots ? renderWithSuspense(<ReceiptLotTracePage />) : null}
+            {activePage === "user-management" && canManageUsers ? renderWithSuspense(<UserManagementPage users={users} currentUser={currentUser} isLoading={isLoading} onRefresh={() => loadAppData(false)} />) : null}
+            {activePage === "sku-master" ? renderWithSuspense(<SKUMasterPage skuMasters={skuMasters} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} />) : null}
+            {activePage === "stock-by-location" ? renderWithSuspense(<MasterInventoryPage items={items} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
+            {activePage === "storage-management" ? (
+              renderWithSuspense(<StorageManagementPage
+                locations={locations}
+                items={items}
+                currentUserRole={currentUser.role}
+                isLoading={isLoading}
+                onRefresh={() => loadAppData(false)}
+                onCreateLocation={() => handleNavigateToStorageLocationEditor()}
+                onEditLocation={(locationId) => handleNavigateToStorageLocationEditor(locationId)}
+              />)
+            ) : null}
+            {activePage === "storage-location-editor" ? (
+              renderWithSuspense(<StorageLocationEditorPage
+                location={editingStorageLocation}
+                locationId={editingStorageLocationId}
+                currentUserRole={currentUser.role}
+                isLoading={isLoading}
+                onRefresh={() => loadAppData(false)}
+                onBack={() => handleNavigateToPage("storage-management")}
+              />)
+            ) : null}
+            {activePage === "settings" ? renderWithSuspense(<SettingsPage />) : null}
+            {activePage === "daily-operations" ? (
+              renderWithSuspense(<DailyOperationsPage
+                selectedDate={selectedDailyOperationsDate ?? getCurrentLocalIsoDate()}
+                inboundDocuments={activeInboundDocuments}
+                outboundDocuments={activeOutboundDocuments}
+                currentUserRole={currentUser.role}
+                isLoading={isLoading}
+                onRefresh={() => loadAppData(false)}
+                onNavigate={handleNavigateToPage}
+                onOpenDate={handleNavigateToDailyOperations}
+                onOpenInboundDetail={handleNavigateToInboundDetail}
+                onOpenCreateComposer={handleOpenEmbeddedComposer}
+              />)
+            ) : null}
+            {activePage === "dashboard" ? (
+              renderWithSuspense(<HomeDashboardPage
+                currentUserRole={currentUser.role}
+                items={items}
+                inboundDocuments={activeInboundDocuments}
+                outboundDocuments={activeOutboundDocuments}
+                adjustments={adjustments}
+                transfers={transfers}
+                cycleCounts={cycleCounts}
+                isLoading={isLoading}
+                errorMessage={errorMessage}
+                onNavigate={handleNavigateToPage}
+                onOpenDailyOperations={handleNavigateToDailyOperations}
+              />)
+            ) : null}
+            {activePage === "reports" ? (
+              renderWithSuspense(<ReportsPage
+                items={items}
+                movements={movements}
+                locations={locations}
+                customers={customers}
+                isLoading={isLoading}
+                errorMessage={errorMessage}
+              />)
+            ) : null}
+            {activePage === "export-center" ? (
+              renderWithSuspense(<ExportCenterPage
+                items={items}
+                inboundDocuments={activeInboundDocuments}
+                outboundDocuments={activeOutboundDocuments}
+                onNavigate={handleNavigateToPage}
+              />)
+            ) : null}
+          </div>
+          {embeddedComposer ? renderWithSuspense(
+            <ActivityManagementPage
+              mode={embeddedComposer.mode}
               items={items}
-              currentUserRole={currentUser.role}
-              isLoading={isLoading}
-              onRefresh={() => loadAppData(false)}
-              onCreateLocation={() => navigateToStorageLocationEditor(setActivePage)}
-              onEditLocation={(locationId) => navigateToStorageLocationEditor(setActivePage, locationId)}
-            />)
-          ) : null}
-          {activePage === "storage-location-editor" ? (
-            renderWithSuspense(<StorageLocationEditorPage
-              location={editingStorageLocation}
-              locationId={editingStorageLocationId}
-              currentUserRole={currentUser.role}
-              isLoading={isLoading}
-              onRefresh={() => loadAppData(false)}
-              onBack={() => navigateToPage("storage-management", setActivePage)}
-            />)
-          ) : null}
-          {activePage === "settings" ? renderWithSuspense(<SettingsPage />) : null}
-          {activePage === "dashboard" ? (
-            renderWithSuspense(<HomeDashboardPage
-              currentUserRole={currentUser.role}
-              items={items}
-              inboundDocuments={activeInboundDocuments}
-              outboundDocuments={activeOutboundDocuments}
-              adjustments={adjustments}
-              transfers={transfers}
-              cycleCounts={cycleCounts}
-              isLoading={isLoading}
-              errorMessage={errorMessage}
-              onNavigate={(page) => navigateToPage(page, setActivePage)}
-            />)
-          ) : null}
-          {activePage === "reports" ? (
-            renderWithSuspense(<ReportsPage
-              items={items}
-              movements={movements}
+              skuMasters={skuMasters}
               locations={locations}
               customers={customers}
+              movements={movements}
+              inboundDocuments={inboundDocuments}
+              outboundDocuments={outboundDocuments}
+              currentUserRole={currentUser.role}
               isLoading={isLoading}
-              errorMessage={errorMessage}
-            />)
-          ) : null}
-          {activePage === "export-center" ? (
-            renderWithSuspense(<ExportCenterPage
-              items={items}
-              inboundDocuments={activeInboundDocuments}
-              outboundDocuments={activeOutboundDocuments}
-              onNavigate={(page) => navigateToPage(page, setActivePage)}
-            />)
+              onRefresh={() => loadAppData(false)}
+              onOpenInboundDetail={handleNavigateToInboundDetail}
+              embeddedComposer={{
+                initialDate: embeddedComposer.date,
+                onClose: () => setEmbeddedComposer(null)
+              }}
+            />
           ) : null}
         </div>
         </div>
@@ -615,4 +715,13 @@ export default function App() {
     </div>
   );
 }
+
+function getCurrentLocalIsoDate() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = `${now.getMonth() + 1}`.padStart(2, "0");
+  const day = `${now.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function getErrorMessage(error: unknown, fallbackMessage: string) { return error instanceof Error && error.message ? error.message : fallbackMessage; }

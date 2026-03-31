@@ -71,9 +71,11 @@ export function WorkspacePanelHeader({
 
 export function WorkspaceTableEmptyState({ title, description }: WorkspaceTableStateProps) {
   return (
-    <div className="workspace-table-state">
-      <strong>{title}</strong>
-      {description ? <span>{description}</span> : null}
+    <div className="workspace-table-state workspace-table-state--empty">
+      <div className="workspace-table-state__copy">
+        <strong>{title || "No records available"}</strong>
+        <span>{description || "No data matches the current view yet."}</span>
+      </div>
     </div>
   );
 }
@@ -81,8 +83,53 @@ export function WorkspaceTableEmptyState({ title, description }: WorkspaceTableS
 export function WorkspaceTableLoadingState({ title, description }: WorkspaceTableStateProps) {
   return (
     <div className="workspace-table-state workspace-table-state--loading">
-      <strong>{title}</strong>
-      {description ? <span>{description}</span> : null}
+      <div className="workspace-table-state__copy">
+        <strong>{title}</strong>
+        {description ? <span>{description}</span> : null}
+      </div>
+      <div className="workspace-table-state__rows" aria-hidden="true">
+        {Array.from({ length: 4 }, (_, index) => (
+          <div className="workspace-table-state__row" key={index}>
+            <span className="workspace-table-state__skeleton workspace-table-state__skeleton--short" />
+            <span className="workspace-table-state__skeleton workspace-table-state__skeleton--long" />
+            <span className="workspace-table-state__skeleton workspace-table-state__skeleton--metric" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function WorkspaceDrawerLoadingState() {
+  return (
+    <div className="document-drawer__content document-drawer__content--loading" aria-hidden="true">
+      <div className="document-drawer__loading-block document-drawer__loading-block--header">
+        <span className="document-drawer__loading-line document-drawer__loading-line--eyebrow" />
+        <span className="document-drawer__loading-line document-drawer__loading-line--title" />
+        <span className="document-drawer__loading-line document-drawer__loading-line--meta" />
+      </div>
+      <div className="document-drawer__loading-grid">
+        {Array.from({ length: 4 }, (_, index) => (
+          <div className="document-drawer__loading-card" key={index}>
+            <span className="document-drawer__loading-line document-drawer__loading-line--meta" />
+            <span className="document-drawer__loading-line document-drawer__loading-line--value" />
+          </div>
+        ))}
+      </div>
+      <div className="document-drawer__loading-block">
+        <span className="document-drawer__loading-line document-drawer__loading-line--title" />
+        <span className="document-drawer__loading-line document-drawer__loading-line--meta" />
+        <span className="document-drawer__loading-line document-drawer__loading-line--meta" />
+      </div>
+      <div className="document-drawer__loading-table">
+        {Array.from({ length: 4 }, (_, index) => (
+          <div className="document-drawer__loading-row" key={index}>
+            <span className="document-drawer__loading-line document-drawer__loading-line--short" />
+            <span className="document-drawer__loading-line document-drawer__loading-line--long" />
+            <span className="document-drawer__loading-line document-drawer__loading-line--metric" />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

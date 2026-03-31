@@ -17,7 +17,7 @@ import type { PageKey } from "../lib/routes";
 import { normalizeStorageSection, type InventoryAdjustment, type Item, type UserRole } from "../lib/types";
 import { InlineAlert, useFeedbackToast } from "./Feedback";
 import { RowActionsMenu } from "./RowActionsMenu";
-import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
+import { buildWorkspaceGridSlots, WorkspaceDrawerLoadingState, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
 
 type AdjustmentManagementPageProps = {
@@ -47,6 +47,7 @@ const emptyAdjustmentForm: AdjustmentFormState = {
   reasonCode: "",
   notes: ""
 };
+const summaryNumberFormatter = new Intl.NumberFormat("en-US");
 const ADJUSTMENT_COLUMN_ORDER_PREFERENCE_KEY = "adjustments.column-order";
 
 function createAdjustmentLine(): AdjustmentLineFormState {
@@ -210,6 +211,18 @@ export function AdjustmentManagementPage({
     emptyDescription: t("emptyStateHint"),
     loadingTitle: t("loadingRecords")
   });
+  const overviewStats = useMemo(() => {
+    const positiveAdjustments = adjustments.filter((adjustment) => adjustment.totalAdjustQty > 0).length;
+    const negativeAdjustments = adjustments.filter((adjustment) => adjustment.totalAdjustQty < 0).length;
+    const totalAdjustedQty = adjustments.reduce((sum, adjustment) => sum + adjustment.totalAdjustQty, 0);
+    return [
+      { label: t("allRows"), value: summaryNumberFormatter.format(adjustments.length), meta: t("adjustments") },
+      { label: t("totalLines"), value: summaryNumberFormatter.format(adjustments.reduce((sum, adjustment) => sum + adjustment.totalLines, 0)), meta: t("adjustmentLines") },
+      { label: t("qtyChange"), value: formatSignedNumber(totalAdjustedQty), meta: t("totalAdjustQty") },
+      { label: t("transferIn"), value: summaryNumberFormatter.format(positiveAdjustments), meta: t("adjustment") },
+      { label: t("transferOut"), value: summaryNumberFormatter.format(negativeAdjustments), meta: t("adjustment") }
+    ];
+  }, [adjustments, t]);
 
   function showActionError(error: unknown, fallbackMessage: string) {
     const message = error instanceof Error ? error.message : fallbackMessage;
@@ -297,6 +310,15 @@ export function AdjustmentManagementPage({
             errorMessage={errorMessage && !isModalOpen ? errorMessage : ""}
           />
         </div>
+        <div className="workspace-summary-strip">
+          {overviewStats.map((stat) => (
+            <article className="workspace-summary-card" key={`${stat.label}-${stat.meta}`}>
+              <span className="workspace-summary-card__label">{stat.label}</span>
+              <strong className="workspace-summary-card__value">{stat.value}</strong>
+              <span className="workspace-summary-card__meta">{stat.meta}</span>
+            </article>
+          ))}
+        </div>
         <div className="sheet-table-wrap">
           <Box sx={{ minWidth: 0 }}>
             <DataGrid
@@ -321,7 +343,7 @@ export function AdjustmentManagementPage({
 
       <Drawer
         anchor="right"
-        open={Boolean(selectedAdjustment)}
+        open={selectedAdjustmentId !== null}
         onClose={() => setSelectedAdjustmentId(null)}
         PaperProps={{ className: "document-drawer" }}
       >
@@ -414,7 +436,7 @@ export function AdjustmentManagementPage({
               />
             </Box>
           </div>
-        ) : null}
+        ) : isLoading ? <WorkspaceDrawerLoadingState /> : null}
       </Drawer>
 
       <Dialog
