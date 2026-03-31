@@ -18,8 +18,6 @@ import { formatDateTimeValue, formatDateValue } from "../lib/dates";
 import { downloadExcelWorkbook, type ExcelExportColumn } from "../lib/excelExport";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
-import { downloadOutboundDeliveryNotePdfFromDocument } from "../lib/outboundPackingListPdf";
-import { downloadOutboundPickSheetPdfFromDocument } from "../lib/outboundPickSheetPdf";
 import {
   DEFAULT_STORAGE_SECTION,
   getLocationSectionOptions,
@@ -381,6 +379,24 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
     showSuccess(message);
   }
 
+  async function handleDownloadPickSheet(document: OutboundDocument) {
+    try {
+      const { downloadOutboundPickSheetPdfFromDocument } = await import("../lib/outboundPickSheetPdf");
+      await downloadOutboundPickSheetPdfFromDocument(document);
+    } catch (error) {
+      showActionError(error, t("couldNotGeneratePickSheet"));
+    }
+  }
+
+  async function handleDownloadDeliveryNote(document: OutboundDocument) {
+    try {
+      const { downloadOutboundDeliveryNotePdfFromDocument } = await import("../lib/outboundPackingListPdf");
+      await downloadOutboundDeliveryNotePdfFromDocument(document);
+    } catch (error) {
+      showActionError(error, t("couldNotGenerateDeliveryNote"));
+    }
+  }
+
   useEffect(() => {
     setIsBatchModalOpen(false);
     setEditingInboundDocumentId(null);
@@ -666,8 +682,8 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
             ...(canManage && !params.row.archivedAt
               ? [{ key: "archive", label: t("archiveShipment"), icon: <ArchiveOutlinedIcon fontSize="small" />, onClick: () => void handleArchiveOutboundDocument(params.row) }]
               : []),
-            { key: "download-pick-sheet", label: t("downloadPickSheet"), icon: <PictureAsPdfOutlinedIcon fontSize="small" />, onClick: () => downloadOutboundPickSheetPdfFromDocument(params.row) },
-            { key: "download-delivery-note", label: t("downloadDeliveryNote"), icon: <PictureAsPdfOutlinedIcon fontSize="small" />, onClick: () => downloadOutboundDeliveryNotePdfFromDocument(params.row) },
+            { key: "download-pick-sheet", label: t("downloadPickSheet"), icon: <PictureAsPdfOutlinedIcon fontSize="small" />, onClick: () => void handleDownloadPickSheet(params.row) },
+            { key: "download-delivery-note", label: t("downloadDeliveryNote"), icon: <PictureAsPdfOutlinedIcon fontSize="small" />, onClick: () => void handleDownloadDeliveryNote(params.row) },
             ...(canManage && !params.row.archivedAt && params.row.status !== "CANCELLED"
               ? [{ key: "cancel", label: t("cancelShipment"), icon: <DeleteOutlineOutlinedIcon fontSize="small" />, danger: true, onClick: () => void handleCancelOutboundDocument(params.row) }]
               : [])
@@ -1939,14 +1955,14 @@ export function ActivityManagementPage({ mode, items, skuMasters, locations, cus
                 <Button
                   variant="contained"
                   startIcon={<PictureAsPdfOutlinedIcon />}
-                  onClick={() => downloadOutboundPickSheetPdfFromDocument(selectedOutboundDocument)}
+                  onClick={() => void handleDownloadPickSheet(selectedOutboundDocument)}
                 >
                   {t("downloadPickSheet")}
                 </Button>
                 <Button
                   variant="outlined"
                   startIcon={<PictureAsPdfOutlinedIcon />}
-                  onClick={() => downloadOutboundDeliveryNotePdfFromDocument(selectedOutboundDocument)}
+                  onClick={() => void handleDownloadDeliveryNote(selectedOutboundDocument)}
                 >
                   {t("downloadDeliveryNote")}
                 </Button>
