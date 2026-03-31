@@ -400,17 +400,43 @@ func (s *Store) UpdateInboundDocument(ctx context.Context, documentID int64, inp
 	if err != nil {
 		return InboundDocument{}, err
 	}
-	if normalizeDocumentStatus(documentRow.Status) != DocumentStatusDraft {
-		return InboundDocument{}, fmt.Errorf("%w: only draft receipts can be edited", ErrInvalidInput)
+	switch normalizeDocumentStatus(documentRow.Status) {
+	case DocumentStatusDraft:
+		if err := s.updateDraftInboundDocumentTx(ctx, tx, documentID, documentRow, input, deliveryDate, requestedStatus, requestedTrackingStatus); err != nil {
+			return InboundDocument{}, err
+		}
+	case DocumentStatusConfirmed:
+		if err := s.updateConfirmedInboundDocumentTx(ctx, tx, documentID, documentRow, input, deliveryDate); err != nil {
+			return InboundDocument{}, err
+		}
+	default:
+		return InboundDocument{}, fmt.Errorf("%w: only draft or confirmed receipts can be edited", ErrInvalidInput)
 	}
 
+	if err := tx.Commit(); err != nil {
+		return InboundDocument{}, fmt.Errorf("commit inbound update: %w", err)
+	}
+
+	return s.getInboundDocument(ctx, documentID)
+}
+
+func (s *Store) updateDraftInboundDocumentTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	documentID int64,
+	_ inboundDocumentRow,
+	input CreateInboundDocumentInput,
+	deliveryDate *time.Time,
+	requestedStatus string,
+	requestedTrackingStatus string,
+) error {
 	existingLines, err := s.loadInboundDocumentLinesTx(ctx, tx, documentID)
 	if err != nil {
-		return InboundDocument{}, err
+		return err
 	}
 	for _, line := range existingLines {
 		if line.MovementID > 0 {
-			return InboundDocument{}, fmt.Errorf("%w: confirmed receipt lines cannot be edited", ErrInvalidInput)
+			return fmt.Errorf("%w: confirmed receipt lines cannot be edited", ErrInvalidInput)
 		}
 	}
 
@@ -447,11 +473,11 @@ func (s *Store) UpdateInboundDocument(ctx context.Context, documentID int64, inp
 		requestedTrackingStatus,
 		documentID,
 	); err != nil {
-		return InboundDocument{}, mapDBError(fmt.Errorf("update inbound document: %w", err))
+		return mapDBError(fmt.Errorf("update inbound document: %w", err))
 	}
 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM inbound_document_lines WHERE document_id = ?`, documentID); err != nil {
-		return InboundDocument{}, mapDBError(fmt.Errorf("delete inbound draft lines: %w", err))
+		return mapDBError(fmt.Errorf("delete inbound draft lines: %w", err))
 	}
 
 	for index, line := range input.Lines {
@@ -486,21 +512,806 @@ func (s *Store) UpdateInboundDocument(ctx context.Context, documentID int64, inp
 			nullableString(line.LineNote),
 			index+1,
 		); err != nil {
-			return InboundDocument{}, mapDBError(fmt.Errorf("recreate inbound document line: %w", err))
+			return mapDBError(fmt.Errorf("recreate inbound document line: %w", err))
 		}
 	}
 
 	if requestedStatus == DocumentStatusConfirmed {
 		if err := s.confirmInboundDocumentTx(ctx, tx, documentID); err != nil {
-			return InboundDocument{}, err
+			return err
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		return InboundDocument{}, fmt.Errorf("commit inbound update: %w", err)
+	return nil
+}
+
+func (s *Store) updateConfirmedInboundDocumentTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	documentID int64,
+	documentRow inboundDocumentRow,
+	input CreateInboundDocumentInput,
+	deliveryDate *time.Time,
+) error {
+	if documentRow.ArchivedAt != nil {
+		return fmt.Errorf("%w: archived receipts cannot be edited", ErrInvalidInput)
+	}
+	if input.CustomerID != documentRow.CustomerID {
+		return fmt.Errorf("%w: confirmed receipt customer cannot be changed", ErrInvalidInput)
+	}
+	if input.LocationID != documentRow.LocationID {
+		return fmt.Errorf("%w: confirmed receipt warehouse cannot be changed", ErrInvalidInput)
+	}
+	if coalesceDocumentStatus(input.Status) != DocumentStatusConfirmed {
+		return fmt.Errorf("%w: confirmed receipts must remain confirmed", ErrInvalidInput)
 	}
 
-	return s.getInboundDocument(ctx, documentID)
+	existingLines, err := s.loadInboundDocumentLinesTx(ctx, tx, documentID)
+	if err != nil {
+		return err
+	}
+	if len(existingLines) != len(input.Lines) {
+		return fmt.Errorf("%w: confirmed receipt lines cannot be added or removed", ErrInvalidInput)
+	}
+
+	oldContainerNo := strings.TrimSpace(documentRow.ContainerNo)
+	newContainerNo := strings.TrimSpace(input.ContainerNo)
+	newDocumentSection := fallbackSection(firstNonEmpty(input.StorageSection, existingLines[0].StorageSection, documentRow.StorageSection))
+
+	for index, existingLine := range existingLines {
+		nextLine := input.Lines[index]
+		if nextLine.SKU != existingLine.SKUSnapshot {
+			return fmt.Errorf("%w: confirmed receipt SKU lines cannot be reordered or replaced", ErrInvalidInput)
+		}
+		if existingLine.MovementID <= 0 || existingLine.ItemID <= 0 {
+			return fmt.Errorf("%w: confirmed receipt line is missing inventory history", ErrInvalidInput)
+		}
+
+		oldQty := existingLine.receivedOrExpectedQty()
+		newQty := nextLine.receivedOrExpectedQty()
+		oldSection := fallbackSection(existingLine.StorageSection)
+		newSection := fallbackSection(firstNonEmpty(nextLine.StorageSection, input.StorageSection, existingLine.StorageSection))
+		positionChanged := oldSection != newSection || oldContainerNo != newContainerNo
+		lineDescription := firstNonEmpty(nextLine.Description, existingLine.DescriptionSnapshot)
+		unitLabel := firstNonEmpty(input.UnitLabel, documentRow.UnitLabel, existingLine.UnitLabel, "CTN")
+		currentItemID := existingLine.ItemID
+
+		if newQty < oldQty {
+			if err := s.reduceConfirmedInboundReceiptLotsTx(ctx, tx, documentID, documentRow, existingLine, nextLine, deliveryDate, oldQty-newQty, lineDescription, unitLabel, input.DocumentNote); err != nil {
+				return err
+			}
+		}
+
+		if positionChanged {
+			movedItemID, err := s.moveConfirmedInboundReceiptLotsTx(ctx, tx, documentID, documentRow, existingLine, nextLine, deliveryDate, newSection, newContainerNo, lineDescription, unitLabel, input.DocumentNote)
+			if err != nil {
+				return err
+			}
+			if movedItemID > 0 {
+				currentItemID = movedItemID
+			}
+		}
+
+		if newQty > oldQty {
+			increasedItemID, err := s.increaseConfirmedInboundReceiptLotsTx(ctx, tx, documentID, documentRow, existingLine, nextLine, deliveryDate, newSection, newContainerNo, newQty-oldQty, lineDescription, unitLabel, input.DocumentNote)
+			if err != nil {
+				return err
+			}
+			if increasedItemID > 0 {
+				currentItemID = increasedItemID
+			}
+		}
+
+		if representativeItemID, err := s.findRepresentativeReceiptLotItemTx(ctx, tx, existingLine.ID); err != nil {
+			return err
+		} else if representativeItemID > 0 {
+			currentItemID = representativeItemID
+		}
+
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE inbound_document_lines
+			SET
+				item_id = ?,
+				description_snapshot = ?,
+				storage_section = ?,
+				reorder_level = ?,
+				expected_qty = ?,
+				received_qty = ?,
+				pallets = ?,
+				pallets_detail_ctns = ?,
+				unit_label = ?,
+				line_note = ?
+			WHERE id = ?
+		`,
+			currentItemID,
+			nullableString(firstNonEmpty(nextLine.Description, existingLine.DescriptionSnapshot)),
+			newSection,
+			nextLine.ReorderLevel,
+			nextLine.ExpectedQty,
+			nextLine.ReceivedQty,
+			nextLine.Pallets,
+			nullableString(nextLine.PalletsDetailCtns),
+			nullableString(firstNonEmpty(input.UnitLabel, documentRow.UnitLabel, existingLine.UnitLabel, "CTN")),
+			nullableString(nextLine.LineNote),
+			existingLine.ID,
+		); err != nil {
+			return mapDBError(fmt.Errorf("update confirmed inbound line: %w", err))
+		}
+
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE stock_movements
+			SET
+				delivery_date = ?,
+				description_snapshot = ?,
+				expected_qty = ?,
+				received_qty = ?,
+				pallets = ?,
+				pallets_detail_ctns = ?,
+				unit_label = ?,
+				document_note = ?,
+				reason = ?
+			WHERE id = ?
+		`,
+			nullableTime(deliveryDate),
+			nullableString(lineDescription),
+			nextLine.ExpectedQty,
+			nextLine.ReceivedQty,
+			nextLine.Pallets,
+			nullableString(nextLine.PalletsDetailCtns),
+			nullableString(unitLabel),
+			nullableString(input.DocumentNote),
+			nullableString(firstNonEmpty(nextLine.LineNote, defaultMovementReason("IN"))),
+			existingLine.MovementID,
+		); err != nil {
+			return mapDBError(fmt.Errorf("update original inbound movement metadata: %w", err))
+		}
+
+		if err := s.syncConfirmedInboundOpenLotItemsTx(ctx, tx, existingLine.ID, deliveryDate, nextLine.ExpectedQty, nextLine.ReceivedQty, nextLine.ReorderLevel, lineDescription, unitLabel); err != nil {
+			return err
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE inbound_documents
+		SET
+			delivery_date = ?,
+			container_no = ?,
+			storage_section = ?,
+			unit_label = ?,
+			document_note = ?,
+			status = ?,
+			tracking_status = ?,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`,
+		nullableTime(deliveryDate),
+		nullableString(newContainerNo),
+		newDocumentSection,
+		nullableString(firstNonEmpty(input.UnitLabel, documentRow.UnitLabel, "CTN")),
+		nullableString(input.DocumentNote),
+		DocumentStatusConfirmed,
+		InboundTrackingReceived,
+		documentID,
+	); err != nil {
+		return mapDBError(fmt.Errorf("update confirmed inbound document: %w", err))
+	}
+
+	return nil
+}
+
+type inboundEditableItem struct {
+	ID             int64
+	SKUMasterID    int64
+	CustomerID     int64
+	LocationID     int64
+	StorageSection string
+	ContainerNo    string
+	SKU            string
+	Name           string
+	Category       string
+	Description    string
+	Unit           string
+	ReorderLevel   int
+	Quantity       int
+}
+
+type inboundCorrectionMovementInput struct {
+	ItemID                int64
+	InboundDocumentID     int64
+	InboundDocumentLineID int64
+	CustomerID            int64
+	LocationID            int64
+	StorageSection        string
+	MovementType          string
+	QuantityChange        int
+	DeliveryDate          *time.Time
+	ContainerNo           string
+	Description           string
+	ExpectedQty           int
+	ReceivedQty           int
+	Pallets               int
+	PalletsDetailCtns     string
+	UnitLabel             string
+	DocumentNote          string
+	Reason                string
+}
+
+func (s *Store) loadLockedInboundEditableItemTx(ctx context.Context, tx *sql.Tx, itemID int64) (inboundEditableItem, error) {
+	var item inboundEditableItem
+	if err := tx.QueryRowContext(ctx, `
+		SELECT
+			id,
+			sku_master_id,
+			customer_id,
+			location_id,
+			storage_section,
+			COALESCE(container_no, '') AS container_no,
+			sku,
+			name,
+			category,
+			COALESCE(description, name, '') AS description,
+			COALESCE(unit, 'pcs') AS unit,
+			reorder_level,
+			quantity
+		FROM inventory_items
+		WHERE id = ?
+		FOR UPDATE
+	`, itemID).Scan(
+		&item.ID,
+		&item.SKUMasterID,
+		&item.CustomerID,
+		&item.LocationID,
+		&item.StorageSection,
+		&item.ContainerNo,
+		&item.SKU,
+		&item.Name,
+		&item.Category,
+		&item.Description,
+		&item.Unit,
+		&item.ReorderLevel,
+		&item.Quantity,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return inboundEditableItem{}, ErrNotFound
+		}
+		return inboundEditableItem{}, fmt.Errorf("load inbound inventory item: %w", err)
+	}
+	item.StorageSection = fallbackSection(item.StorageSection)
+	return item, nil
+}
+
+func (s *Store) hasInboundReceiptExternalInventoryActivityTx(ctx context.Context, tx *sql.Tx, itemID int64, inboundDocumentID int64) (bool, error) {
+	var conflictID int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT id
+		FROM stock_movements
+		WHERE item_id = ?
+		  AND movement_type IN ('OUT', 'ADJUST', 'REVERSAL', 'TRANSFER_OUT', 'TRANSFER_IN', 'COUNT')
+		  AND COALESCE(inbound_document_id, 0) <> ?
+		ORDER BY id DESC
+		LIMIT 1
+	`, itemID, inboundDocumentID).Scan(&conflictID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("check inbound receipt downstream activity: %w", err)
+	}
+	return conflictID > 0, nil
+}
+
+func (s *Store) updateInboundEditableItemQuantityTx(ctx context.Context, tx *sql.Tx, itemID int64, nextQuantity int) error {
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE inventory_items
+		SET quantity = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, nextQuantity, itemID); err != nil {
+		return mapDBError(fmt.Errorf("update inbound inventory quantity: %w", err))
+	}
+	return nil
+}
+
+func (s *Store) updateInboundEditableItemStateTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	itemID int64,
+	nextQuantity int,
+	storageSection string,
+	containerNo string,
+	deliveryDate *time.Time,
+	expectedQty int,
+	receivedQty int,
+	reorderLevel int,
+	description string,
+	unitLabel string,
+) error {
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE inventory_items
+		SET
+			quantity = ?,
+			storage_section = ?,
+			container_no = ?,
+			delivery_date = ?,
+			last_restocked_at = COALESCE(?, last_restocked_at),
+			expected_qty = ?,
+			received_qty = ?,
+			reorder_level = ?,
+			description = CASE
+				WHEN ? <> '' THEN ?
+				ELSE description
+			END,
+			unit = CASE
+				WHEN ? <> '' THEN LOWER(?)
+				ELSE unit
+			END,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`,
+		nextQuantity,
+		fallbackSection(storageSection),
+		nullableString(containerNo),
+		nullableTime(deliveryDate),
+		nullableTime(deliveryDate),
+		expectedQty,
+		receivedQty,
+		reorderLevel,
+		strings.TrimSpace(description),
+		nullableString(strings.TrimSpace(description)),
+		strings.TrimSpace(unitLabel),
+		nullableString(strings.TrimSpace(unitLabel)),
+		itemID,
+	); err != nil {
+		return mapDBError(fmt.Errorf("update inbound inventory state: %w", err))
+	}
+	return nil
+}
+
+func (s *Store) syncConfirmedInboundOpenLotItemsTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	inboundLineID int64,
+	deliveryDate *time.Time,
+	expectedQty int,
+	receivedQty int,
+	reorderLevel int,
+	description string,
+	unitLabel string,
+) error {
+	openLots, err := s.listOpenReceiptLotsForInboundLineTx(ctx, tx, inboundLineID, false)
+	if err != nil {
+		return err
+	}
+
+	seenItemIDs := make(map[int64]struct{}, len(openLots))
+	for _, lot := range openLots {
+		if lot.ItemID <= 0 {
+			continue
+		}
+		if _, exists := seenItemIDs[lot.ItemID]; exists {
+			continue
+		}
+
+		currentItem, err := s.loadLockedInboundEditableItemTx(ctx, tx, lot.ItemID)
+		if err != nil {
+			return err
+		}
+		if err := s.updateInboundEditableItemStateTx(
+			ctx,
+			tx,
+			lot.ItemID,
+			currentItem.Quantity,
+			lot.StorageSection,
+			lot.ContainerNo,
+			deliveryDate,
+			expectedQty,
+			receivedQty,
+			reorderLevel,
+			description,
+			unitLabel,
+		); err != nil {
+			return err
+		}
+
+		seenItemIDs[lot.ItemID] = struct{}{}
+	}
+
+	return nil
+}
+
+func (s *Store) insertInboundCorrectionMovementTx(ctx context.Context, tx *sql.Tx, input inboundCorrectionMovementInput) (int64, error) {
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO stock_movements (
+			item_id,
+			inbound_document_id,
+			inbound_document_line_id,
+			customer_id,
+			location_id,
+			storage_section,
+			movement_type,
+			quantity_change,
+			delivery_date,
+			container_no,
+			description_snapshot,
+			expected_qty,
+			received_qty,
+			pallets,
+			pallets_detail_ctns,
+			unit_label,
+			height_in,
+			document_note,
+			reason
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+	`,
+		input.ItemID,
+		input.InboundDocumentID,
+		input.InboundDocumentLineID,
+		input.CustomerID,
+		input.LocationID,
+		fallbackSection(input.StorageSection),
+		input.MovementType,
+		input.QuantityChange,
+		nullableTime(input.DeliveryDate),
+		nullableString(input.ContainerNo),
+		nullableString(input.Description),
+		input.ExpectedQty,
+		input.ReceivedQty,
+		input.Pallets,
+		nullableString(input.PalletsDetailCtns),
+		nullableString(input.UnitLabel),
+		nullableString(input.DocumentNote),
+		nullableString(input.Reason),
+	)
+	if err != nil {
+		return 0, mapDBError(fmt.Errorf("create inbound correction movement: %w", err))
+	}
+	movementID, err := result.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("resolve inbound correction movement id: %w", err)
+	}
+	return movementID, nil
+}
+
+func (s *Store) reduceConfirmedInboundReceiptLotsTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	documentID int64,
+	documentRow inboundDocumentRow,
+	existingLine inboundDocumentLineRow,
+	nextLine CreateInboundDocumentLineInput,
+	deliveryDate *time.Time,
+	reductionQty int,
+	lineDescription string,
+	unitLabel string,
+	documentNote string,
+) error {
+	if reductionQty <= 0 {
+		return nil
+	}
+
+	openLots, err := s.listOpenReceiptLotsForInboundLineTx(ctx, tx, existingLine.ID, true)
+	if err != nil {
+		return err
+	}
+
+	remainingOpenQty := 0
+	for _, lot := range openLots {
+		remainingOpenQty += lot.RemainingQty
+	}
+	if reductionQty > remainingOpenQty {
+		return fmt.Errorf("%w: receipt line %s cannot reduce below quantity already consumed", ErrInvalidInput, existingLine.SKUSnapshot)
+	}
+
+	remainingToReduce := reductionQty
+	for _, lot := range openLots {
+		if remainingToReduce == 0 {
+			break
+		}
+		takeQty := lot.RemainingQty
+		if takeQty > remainingToReduce {
+			takeQty = remainingToReduce
+		}
+		if takeQty <= 0 {
+			continue
+		}
+
+		currentItem, err := s.loadLockedInboundEditableItemTx(ctx, tx, lot.ItemID)
+		if err != nil {
+			return err
+		}
+		nextQuantity := currentItem.Quantity - takeQty
+		if nextQuantity < 0 {
+			return ErrInsufficientStock
+		}
+
+		movementID, err := s.insertInboundCorrectionMovementTx(ctx, tx, inboundCorrectionMovementInput{
+			ItemID:                lot.ItemID,
+			InboundDocumentID:     documentID,
+			InboundDocumentLineID: existingLine.ID,
+			CustomerID:            documentRow.CustomerID,
+			LocationID:            documentRow.LocationID,
+			StorageSection:        lot.StorageSection,
+			MovementType:          "ADJUST",
+			QuantityChange:        -takeQty,
+			DeliveryDate:          deliveryDate,
+			ContainerNo:           lot.ContainerNo,
+			Description:           lineDescription,
+			ExpectedQty:           nextLine.ExpectedQty,
+			ReceivedQty:           nextLine.ReceivedQty,
+			Pallets:               nextLine.Pallets,
+			PalletsDetailCtns:     nextLine.PalletsDetailCtns,
+			UnitLabel:             unitLabel,
+			DocumentNote:          documentNote,
+			Reason:                fmt.Sprintf("Receipt correction: quantity updated from %d to %d", existingLine.receivedOrExpectedQty(), nextLine.receivedOrExpectedQty()),
+		})
+		if err != nil {
+			return err
+		}
+		if err := s.createMovementLotLinkTx(ctx, tx, movementID, lot.ID, takeQty, "adjust"); err != nil {
+			return err
+		}
+		if err := s.updateReceiptLotRemainingTx(ctx, tx, lot.ID, lot.RemainingQty-takeQty); err != nil {
+			return err
+		}
+		if err := s.updateInboundEditableItemStateTx(ctx, tx, lot.ItemID, nextQuantity, lot.StorageSection, lot.ContainerNo, deliveryDate, nextLine.ExpectedQty, nextLine.ReceivedQty, nextLine.ReorderLevel, lineDescription, unitLabel); err != nil {
+			return err
+		}
+
+		remainingToReduce -= takeQty
+	}
+
+	return nil
+}
+
+func (s *Store) moveConfirmedInboundReceiptLotsTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	documentID int64,
+	documentRow inboundDocumentRow,
+	existingLine inboundDocumentLineRow,
+	nextLine CreateInboundDocumentLineInput,
+	deliveryDate *time.Time,
+	targetSection string,
+	targetContainerNo string,
+	lineDescription string,
+	unitLabel string,
+	documentNote string,
+) (int64, error) {
+	openLots, err := s.listOpenReceiptLotsForInboundLineTx(ctx, tx, existingLine.ID, false)
+	if err != nil {
+		return 0, err
+	}
+	if len(openLots) == 0 {
+		return 0, nil
+	}
+
+	targetItemID, _, err := s.findOrCreateInboundItem(ctx, tx, CreateInboundDocumentInput{
+		CustomerID:     documentRow.CustomerID,
+		LocationID:     documentRow.LocationID,
+		DeliveryDate:   safeDateInput(deliveryDate),
+		ContainerNo:    targetContainerNo,
+		StorageSection: targetSection,
+		UnitLabel:      unitLabel,
+		DocumentNote:   documentRow.DocumentNote,
+	}, CreateInboundDocumentLineInput{
+		SKU:               existingLine.SKUSnapshot,
+		Description:       lineDescription,
+		ReorderLevel:      nextLine.ReorderLevel,
+		ExpectedQty:       nextLine.ExpectedQty,
+		ReceivedQty:       nextLine.ReceivedQty,
+		Pallets:           nextLine.Pallets,
+		PalletsDetailCtns: nextLine.PalletsDetailCtns,
+		StorageSection:    targetSection,
+		LineNote:          nextLine.LineNote,
+	}, deliveryDate)
+	if err != nil {
+		return 0, err
+	}
+
+	targetItem, err := s.loadLockedInboundEditableItemTx(ctx, tx, targetItemID)
+	if err != nil {
+		return 0, err
+	}
+	targetQuantity := targetItem.Quantity
+
+	for _, lot := range openLots {
+		if lot.RemainingQty <= 0 {
+			continue
+		}
+		if fallbackSection(lot.StorageSection) == fallbackSection(targetSection) && strings.TrimSpace(lot.ContainerNo) == strings.TrimSpace(targetContainerNo) {
+			continue
+		}
+
+		sourceItem, err := s.loadLockedInboundEditableItemTx(ctx, tx, lot.ItemID)
+		if err != nil {
+			return 0, err
+		}
+		nextSourceQuantity := sourceItem.Quantity - lot.RemainingQty
+		if nextSourceQuantity < 0 {
+			return 0, ErrInsufficientStock
+		}
+
+		transferReason := fmt.Sprintf(
+			"Receipt correction: moved from %s/%s to %s/%s",
+			fallbackSection(lot.StorageSection),
+			firstNonEmpty(lot.ContainerNo, "-"),
+			fallbackSection(targetSection),
+			firstNonEmpty(targetContainerNo, "-"),
+		)
+		outMovementID, err := s.insertInboundCorrectionMovementTx(ctx, tx, inboundCorrectionMovementInput{
+			ItemID:                lot.ItemID,
+			InboundDocumentID:     documentID,
+			InboundDocumentLineID: existingLine.ID,
+			CustomerID:            documentRow.CustomerID,
+			LocationID:            documentRow.LocationID,
+			StorageSection:        lot.StorageSection,
+			MovementType:          "TRANSFER_OUT",
+			QuantityChange:        -lot.RemainingQty,
+			DeliveryDate:          deliveryDate,
+			ContainerNo:           lot.ContainerNo,
+			Description:           lineDescription,
+			ExpectedQty:           nextLine.ExpectedQty,
+			ReceivedQty:           nextLine.ReceivedQty,
+			Pallets:               nextLine.Pallets,
+			PalletsDetailCtns:     nextLine.PalletsDetailCtns,
+			UnitLabel:             unitLabel,
+			DocumentNote:          documentNote,
+			Reason:                transferReason,
+		})
+		if err != nil {
+			return 0, err
+		}
+		if err := s.createMovementLotLinkTx(ctx, tx, outMovementID, lot.ID, lot.RemainingQty, "move_out"); err != nil {
+			return 0, err
+		}
+		if err := s.updateReceiptLotRemainingTx(ctx, tx, lot.ID, 0); err != nil {
+			return 0, err
+		}
+		if err := s.updateInboundEditableItemStateTx(ctx, tx, sourceItem.ID, nextSourceQuantity, lot.StorageSection, lot.ContainerNo, deliveryDate, nextLine.ExpectedQty, nextLine.ReceivedQty, nextLine.ReorderLevel, lineDescription, unitLabel); err != nil {
+			return 0, err
+		}
+
+		targetQuantity += lot.RemainingQty
+		inMovementID, err := s.insertInboundCorrectionMovementTx(ctx, tx, inboundCorrectionMovementInput{
+			ItemID:                targetItem.ID,
+			InboundDocumentID:     documentID,
+			InboundDocumentLineID: existingLine.ID,
+			CustomerID:            documentRow.CustomerID,
+			LocationID:            documentRow.LocationID,
+			StorageSection:        targetSection,
+			MovementType:          "TRANSFER_IN",
+			QuantityChange:        lot.RemainingQty,
+			DeliveryDate:          deliveryDate,
+			ContainerNo:           targetContainerNo,
+			Description:           lineDescription,
+			ExpectedQty:           nextLine.ExpectedQty,
+			ReceivedQty:           nextLine.ReceivedQty,
+			Pallets:               nextLine.Pallets,
+			PalletsDetailCtns:     nextLine.PalletsDetailCtns,
+			UnitLabel:             unitLabel,
+			DocumentNote:          documentNote,
+			Reason:                transferReason,
+		})
+		if err != nil {
+			return 0, err
+		}
+		newLot, err := s.createReceiptLotTx(ctx, tx, createReceiptLotInput{
+			ParentReceiptLotID:      lot.ID,
+			SourceInboundDocumentID: lot.SourceInboundDocumentID,
+			SourceInboundLineID:     lot.SourceInboundLineID,
+			ItemID:                  targetItem.ID,
+			CustomerID:              lot.CustomerID,
+			LocationID:              lot.LocationID,
+			StorageSection:          targetSection,
+			ContainerNo:             targetContainerNo,
+			OriginalQty:             lot.RemainingQty,
+			RemainingQty:            lot.RemainingQty,
+		})
+		if err != nil {
+			return 0, err
+		}
+		if err := s.createMovementLotLinkTx(ctx, tx, inMovementID, newLot.ID, lot.RemainingQty, "move_in"); err != nil {
+			return 0, err
+		}
+		if err := s.updateInboundEditableItemStateTx(ctx, tx, targetItem.ID, targetQuantity, targetSection, targetContainerNo, deliveryDate, nextLine.ExpectedQty, nextLine.ReceivedQty, nextLine.ReorderLevel, lineDescription, unitLabel); err != nil {
+			return 0, err
+		}
+	}
+
+	return targetItem.ID, nil
+}
+
+func (s *Store) increaseConfirmedInboundReceiptLotsTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	documentID int64,
+	documentRow inboundDocumentRow,
+	existingLine inboundDocumentLineRow,
+	nextLine CreateInboundDocumentLineInput,
+	deliveryDate *time.Time,
+	targetSection string,
+	targetContainerNo string,
+	increaseQty int,
+	lineDescription string,
+	unitLabel string,
+	documentNote string,
+) (int64, error) {
+	if increaseQty <= 0 {
+		return 0, nil
+	}
+
+	targetItemID, _, err := s.findOrCreateInboundItem(ctx, tx, CreateInboundDocumentInput{
+		CustomerID:     documentRow.CustomerID,
+		LocationID:     documentRow.LocationID,
+		DeliveryDate:   safeDateInput(deliveryDate),
+		ContainerNo:    targetContainerNo,
+		StorageSection: targetSection,
+		UnitLabel:      unitLabel,
+		DocumentNote:   documentRow.DocumentNote,
+	}, CreateInboundDocumentLineInput{
+		SKU:               existingLine.SKUSnapshot,
+		Description:       lineDescription,
+		ReorderLevel:      nextLine.ReorderLevel,
+		ExpectedQty:       nextLine.ExpectedQty,
+		ReceivedQty:       nextLine.ReceivedQty,
+		Pallets:           nextLine.Pallets,
+		PalletsDetailCtns: nextLine.PalletsDetailCtns,
+		StorageSection:    targetSection,
+		LineNote:          nextLine.LineNote,
+	}, deliveryDate)
+	if err != nil {
+		return 0, err
+	}
+
+	targetItem, err := s.loadLockedInboundEditableItemTx(ctx, tx, targetItemID)
+	if err != nil {
+		return 0, err
+	}
+
+	movementID, err := s.insertInboundCorrectionMovementTx(ctx, tx, inboundCorrectionMovementInput{
+		ItemID:                targetItem.ID,
+		InboundDocumentID:     documentID,
+		InboundDocumentLineID: existingLine.ID,
+		CustomerID:            documentRow.CustomerID,
+		LocationID:            documentRow.LocationID,
+		StorageSection:        targetSection,
+		MovementType:          "ADJUST",
+		QuantityChange:        increaseQty,
+		DeliveryDate:          deliveryDate,
+		ContainerNo:           targetContainerNo,
+		Description:           lineDescription,
+		ExpectedQty:           nextLine.ExpectedQty,
+		ReceivedQty:           nextLine.ReceivedQty,
+		Pallets:               nextLine.Pallets,
+		PalletsDetailCtns:     nextLine.PalletsDetailCtns,
+		UnitLabel:             unitLabel,
+		DocumentNote:          documentNote,
+		Reason:                fmt.Sprintf("Receipt correction: quantity updated from %d to %d", existingLine.receivedOrExpectedQty(), nextLine.receivedOrExpectedQty()),
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	newLot, err := s.createReceiptLotTx(ctx, tx, createReceiptLotInput{
+		SourceInboundDocumentID: documentID,
+		SourceInboundLineID:     existingLine.ID,
+		ItemID:                  targetItem.ID,
+		CustomerID:              documentRow.CustomerID,
+		LocationID:              documentRow.LocationID,
+		StorageSection:          targetSection,
+		ContainerNo:             targetContainerNo,
+		OriginalQty:             increaseQty,
+		RemainingQty:            increaseQty,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if err := s.createMovementLotLinkTx(ctx, tx, movementID, newLot.ID, increaseQty, "adjust"); err != nil {
+		return 0, err
+	}
+	if err := s.updateInboundEditableItemStateTx(ctx, tx, targetItem.ID, targetItem.Quantity+increaseQty, targetSection, targetContainerNo, deliveryDate, nextLine.ExpectedQty, nextLine.ReceivedQty, nextLine.ReorderLevel, lineDescription, unitLabel); err != nil {
+		return 0, err
+	}
+
+	return targetItem.ID, nil
 }
 
 func (s *Store) ConfirmInboundDocument(ctx context.Context, documentID int64) (InboundDocument, error) {
@@ -731,6 +1542,20 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 		if err := s.applyMovementToInventoryItem(ctx, tx, itemID, updatedQuantity, receivedQty, movementInput, documentRow.DeliveryDate, nil); err != nil {
 			return mapDBError(fmt.Errorf("update inventory after inbound document line: %w", err))
 		}
+
+		if _, err := s.createReceiptLotTx(ctx, tx, createReceiptLotInput{
+			SourceInboundDocumentID: documentID,
+			SourceInboundLineID:     lineRow.ID,
+			ItemID:                  itemID,
+			CustomerID:              documentRow.CustomerID,
+			LocationID:              documentRow.LocationID,
+			StorageSection:          fallbackSection(firstNonEmpty(lineRow.StorageSection, documentRow.StorageSection)),
+			ContainerNo:             documentRow.ContainerNo,
+			OriginalQty:             receivedQty,
+			RemainingQty:            receivedQty,
+		}); err != nil {
+			return err
+		}
 	}
 
 	confirmedAt := time.Now().UTC()
@@ -857,6 +1682,13 @@ func (s *Store) CancelInboundDocument(ctx context.Context, documentID int64, inp
 			if err := s.applyMovementToInventoryItem(ctx, tx, lineRow.ItemID, updatedQuantity, delta, movementInput, documentRow.DeliveryDate, nil); err != nil {
 				return InboundDocument{}, mapDBError(fmt.Errorf("restore inventory after inbound cancellation: %w", err))
 			}
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE receipt_lots
+				SET remaining_qty = 0, updated_at = CURRENT_TIMESTAMP
+				WHERE source_inbound_line_id = ?
+			`, lineRow.ID); err != nil {
+				return InboundDocument{}, mapDBError(fmt.Errorf("close receipt lots after inbound cancellation: %w", err))
+			}
 		}
 	}
 
@@ -892,6 +1724,9 @@ func (s *Store) ArchiveInboundDocument(ctx context.Context, documentID int64) (I
 	}
 	if documentRow.ArchivedAt != nil {
 		return InboundDocument{}, fmt.Errorf("%w: receipt is already archived", ErrInvalidInput)
+	}
+	if normalizeDocumentStatus(documentRow.Status) == DocumentStatusConfirmed {
+		return InboundDocument{}, fmt.Errorf("%w: confirmed receipts cannot be archived", ErrInvalidInput)
 	}
 
 	if _, err := tx.ExecContext(ctx, `

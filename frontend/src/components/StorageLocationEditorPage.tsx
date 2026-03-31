@@ -10,6 +10,7 @@ import "react-resizable/css/styles.css";
 
 import { api } from "../lib/api";
 import { useI18n } from "../lib/i18n";
+import { queuePageFeedback } from "../lib/pageFeedback";
 import {
   DEFAULT_STORAGE_SECTION,
   normalizeStorageSection,
@@ -19,6 +20,7 @@ import {
   type StorageLayoutBlockType,
   type UserRole
 } from "../lib/types";
+import { useFeedbackToast } from "./Feedback";
 
 type StorageLocationEditorPageProps = {
   location: Location | null;
@@ -37,6 +39,8 @@ type LocationFormState = {
   layoutBlocks: StorageLayoutBlock[];
 };
 
+type TranslateFn = (key: string, params?: Record<string, string | number>) => string;
+
 const LAYOUT_GRID_SIZE = 44;
 
 const fieldClassName = "tw-input";
@@ -45,11 +49,11 @@ const secondaryButtonClass = "tw-btn-secondary";
 const actionButtonClass = "tw-btn-tonal";
 const dangerButtonClass = "tw-btn-danger";
 
-function createLayoutBlock(type: StorageLayoutBlockType, index: number): StorageLayoutBlock {
+function createLayoutBlock(type: StorageLayoutBlockType, index: number, t: TranslateFn): StorageLayoutBlock {
   if (type === "temporary") {
     return {
       id: `temp-area-${Date.now()}-${index}`,
-      name: "Temporary Area",
+      name: t("temporaryArea"),
       type,
       x: 0,
       y: 0,
@@ -61,7 +65,7 @@ function createLayoutBlock(type: StorageLayoutBlockType, index: number): Storage
   if (type === "support") {
     return {
       id: `support-${Date.now()}-${index}`,
-      name: `Support ${index + 1}`,
+      name: `${t("supportAreaShort")} ${index + 1}`,
       type,
       x: index * 5,
       y: 5,
@@ -81,19 +85,19 @@ function createLayoutBlock(type: StorageLayoutBlockType, index: number): Storage
   };
 }
 
-function buildDefaultLayoutBlocks(sectionNames?: string[]) {
+function buildDefaultLayoutBlocks(sectionNames: string[] | undefined, t: TranslateFn) {
   const normalizedSections = Array.from(
     new Set((sectionNames ?? []).map((sectionName) => normalizeStorageSection(sectionName)).filter(Boolean))
   );
 
   if (normalizedSections.length === 0) {
-    return [createLayoutBlock("temporary", 0)];
+    return [createLayoutBlock("temporary", 0, t)];
   }
 
   return normalizedSections.map((sectionName, index) => (
     sectionName === DEFAULT_STORAGE_SECTION
-      ? { ...createLayoutBlock("temporary", index), id: `layout-${index + 1}` }
-      : { ...createLayoutBlock("section", index), id: `layout-${index + 1}`, name: sectionName }
+      ? { ...createLayoutBlock("temporary", index, t), id: `layout-${index + 1}` }
+      : { ...createLayoutBlock("section", index, t), id: `layout-${index + 1}`, name: sectionName }
   ));
 }
 
@@ -129,14 +133,14 @@ function deriveSectionNames(layoutBlocks: StorageLayoutBlock[]) {
   return sectionNames;
 }
 
-function sanitizeLayoutBlocks(layoutBlocks: StorageLayoutBlock[]) {
+function sanitizeLayoutBlocks(layoutBlocks: StorageLayoutBlock[], t: TranslateFn) {
   const blocks = layoutBlocks.map((block, index) => ({
     ...block,
     id: block.id || `layout-${index + 1}`,
     name: block.type === "temporary"
-      ? (block.name.trim() || "Temporary Area")
+      ? (block.name.trim() || t("temporaryArea"))
       : block.type === "support"
-        ? (block.name.trim() || `Support ${index + 1}`)
+        ? (block.name.trim() || `${t("supportAreaShort")} ${index + 1}`)
         : (block.name.trim().toUpperCase() || `S${index + 1}`),
     x: Math.max(0, Math.floor(block.x)),
     y: Math.max(0, Math.floor(block.y)),
@@ -145,35 +149,36 @@ function sanitizeLayoutBlocks(layoutBlocks: StorageLayoutBlock[]) {
   }));
 
   const hasTemporary = blocks.some((block) => block.type === "temporary");
-  return hasTemporary ? blocks : [createLayoutBlock("temporary", 0), ...blocks];
+  return hasTemporary ? blocks : [createLayoutBlock("temporary", 0, t), ...blocks];
 }
 
-function getBlockTone(type: StorageLayoutBlockType) {
+function getBlockTone(type: StorageLayoutBlockType, t: TranslateFn) {
   switch (type) {
     case "temporary":
       return {
         card: "border-amber-300/70 bg-[linear-gradient(180deg,rgba(250,221,171,0.95),rgba(244,206,147,0.96))] text-amber-950",
         swatch: "bg-amber-300",
-        label: "Temporary"
+        label: t("temporaryAreaShort")
       };
     case "support":
       return {
         card: "border-slate-300/70 bg-[linear-gradient(180deg,rgba(223,230,241,0.95),rgba(204,214,229,0.97))] text-slate-900",
         swatch: "bg-slate-300",
-        label: "Support"
+        label: t("supportAreaShort")
       };
     default:
       return {
         card: "border-sky-300/70 bg-[linear-gradient(180deg,rgba(194,224,251,0.96),rgba(171,209,244,0.98))] text-sky-950",
         swatch: "bg-sky-300",
-        label: "Section"
+        label: t("formalSectionShort")
       };
   }
 }
 
-function createFormFromLocation(location: Location | null): LocationFormState {
+function createFormFromLocation(location: Location | null, t: TranslateFn): LocationFormState {
   const layoutBlocks = sanitizeLayoutBlocks(
-    location?.layoutBlocks?.length ? location.layoutBlocks : buildDefaultLayoutBlocks(location?.sectionNames)
+    location?.layoutBlocks?.length ? location.layoutBlocks : buildDefaultLayoutBlocks(location?.sectionNames, t),
+    t
   );
 
   return {
@@ -194,18 +199,19 @@ export function StorageLocationEditorPage({
   onBack
 }: StorageLocationEditorPageProps) {
   const { t } = useI18n();
+  const { showError, feedbackToast } = useFeedbackToast();
   const canManage = currentUserRole === "admin";
-  const [form, setForm] = useState<LocationFormState>(() => createFormFromLocation(location));
-  const [selectedBlockId, setSelectedBlockId] = useState<string>(createFormFromLocation(location).layoutBlocks[0]?.id ?? "");
+  const [form, setForm] = useState<LocationFormState>(() => createFormFromLocation(location, t));
+  const [selectedBlockId, setSelectedBlockId] = useState<string>(createFormFromLocation(location, t).layoutBlocks[0]?.id ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
-    const nextForm = createFormFromLocation(location);
+    const nextForm = createFormFromLocation(location, t);
     setForm(nextForm);
     setSelectedBlockId(nextForm.layoutBlocks[0]?.id ?? "");
     setErrorMessage("");
-  }, [locationId, location]);
+  }, [locationId, location, t]);
 
   const selectedBlock = useMemo(
     () => form.layoutBlocks.find((block) => block.id === selectedBlockId) ?? form.layoutBlocks[0] ?? null,
@@ -249,15 +255,15 @@ export function StorageLocationEditorPage({
       { label: t("temporaryArea"), value: temporaryCount },
       { label: t("formalSection"), value: sectionCount },
       { label: t("supportArea"), value: supportCount },
-      { label: "Grid Cells", value: totalFootprint }
+      { label: t("gridCells"), value: totalFootprint }
     ];
   }, [form.layoutBlocks, t]);
-  const selectedTone = selectedBlock ? getBlockTone(selectedBlock.type) : null;
+  const selectedTone = selectedBlock ? getBlockTone(selectedBlock.type, t) : null;
   const selectedAreaStats = selectedBlock ? [
     { label: t("areaType"), value: selectedTone?.label ?? "-" },
-    { label: "Origin", value: `${selectedBlock.x}, ${selectedBlock.y}` },
-    { label: "Size", value: `${selectedBlock.width} x ${selectedBlock.height}` },
-    { label: "Footprint", value: `${selectedBlock.width * selectedBlock.height} cells` }
+    { label: t("areaOrigin"), value: `${selectedBlock.x}, ${selectedBlock.y}` },
+    { label: t("areaSize"), value: `${selectedBlock.width} x ${selectedBlock.height}` },
+    { label: t("areaFootprint"), value: `${selectedBlock.width * selectedBlock.height} ${t("gridCellsShort")}` }
   ] : [];
 
   function updateLayoutBlock(blockId: string, patch: Partial<StorageLayoutBlock>) {
@@ -317,7 +323,7 @@ export function StorageLocationEditorPage({
         return current;
       }
 
-      const newBlock = createLayoutBlock(type, current.layoutBlocks.length);
+      const newBlock = createLayoutBlock(type, current.layoutBlocks.length, t);
       setSelectedBlockId(newBlock.id);
       return {
         ...current,
@@ -354,7 +360,7 @@ export function StorageLocationEditorPage({
     setSubmitting(true);
     setErrorMessage("");
 
-    const sanitizedBlocks = sanitizeLayoutBlocks(form.layoutBlocks);
+    const sanitizedBlocks = sanitizeLayoutBlocks(form.layoutBlocks, t);
     const payload: LocationPayload = {
       name: form.name,
       address: form.address,
@@ -370,10 +376,16 @@ export function StorageLocationEditorPage({
       } else {
         await api.createLocation(payload);
       }
+      queuePageFeedback({
+        severity: "success",
+        message: t("locationSavedSuccess")
+      });
       await onRefresh();
       onBack();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveLocation"));
+      const message = error instanceof Error ? error.message : t("couldNotSaveLocation");
+      setErrorMessage(message);
+      showError(message);
     } finally {
       setSubmitting(false);
     }
@@ -401,6 +413,7 @@ export function StorageLocationEditorPage({
 
   return (
     <main className="workspace-main">
+      {feedbackToast}
       <section className="mx-auto flex w-full max-w-[1680px] flex-col gap-6">
         <header className={`${panelClassName} flex flex-col gap-5 px-6 py-6`}>
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -439,12 +452,12 @@ export function StorageLocationEditorPage({
           <section className={`${panelClassName} grid gap-6 px-6 py-6`}>
             <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-200/80 pb-5">
               <div className="space-y-1">
-                <p className="tw-kicker m-0">Profile</p>
-                <h2 className="tw-heading-lg m-0">Warehouse Profile</h2>
-                <p className="tw-body-muted m-0">Define the site identity and the warehouse areas the team will work from.</p>
+                <p className="tw-kicker m-0">{t("profile")}</p>
+                <h2 className="tw-heading-lg m-0">{t("warehouseProfile")}</h2>
+                <p className="tw-body-muted m-0">{t("warehouseProfileDesc")}</p>
               </div>
               <div className="max-w-sm text-sm leading-6 text-slate-500">
-                All inventory defaults to <span className="font-semibold text-slate-950">TEMP</span> until moved into a formal section.
+                {t("allInventoryDefaultsTemp")}
               </div>
             </div>
 
@@ -455,7 +468,7 @@ export function StorageLocationEditorPage({
                   className={fieldClassName}
                   value={form.name}
                   onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                  placeholder="NJ Warehouse A"
+                  placeholder={t("warehouseNamePlaceholder")}
                   required
                 />
               </label>
@@ -465,7 +478,7 @@ export function StorageLocationEditorPage({
                   className={fieldClassName}
                   value={form.address}
                   onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))}
-                  placeholder="1200 Harbor Blvd, North Bergen, NJ"
+                  placeholder={t("warehouseAddressPlaceholder")}
                   required
                 />
               </label>
@@ -496,7 +509,7 @@ export function StorageLocationEditorPage({
               <div className="space-y-1">
                 <p className="tw-kicker m-0">{t("warehouseLayout")}</p>
                 <h2 className="tw-heading-lg m-0">{t("warehouseLayout")}</h2>
-                <p className="tw-body-muted m-0">Arrange temporary, formal, and support areas on a single grid the team can understand at a glance.</p>
+                <p className="tw-body-muted m-0">{t("warehouseLayoutGuide")}</p>
               </div>
 
               <div className="flex flex-wrap gap-2">
@@ -520,12 +533,12 @@ export function StorageLocationEditorPage({
                 <div className="tw-panel grid gap-3 p-3">
                   <div className="flex items-start justify-between gap-3 border-b border-slate-200/80 pb-3">
                     <div>
-                      <p className="tw-kicker m-0">2D Map</p>
-                      <h3 className="tw-heading-md m-0 mt-1">Warehouse Block Layout</h3>
+                      <p className="tw-kicker m-0">{t("layoutMap2d")}</p>
+                      <h3 className="tw-heading-md m-0 mt-1">{t("warehouseBlockLayout")}</h3>
                     </div>
                     <div className="text-right text-xs leading-5 text-slate-500">
-                      <div>{layoutGridColumns} cols</div>
-                      <div>{LAYOUT_GRID_SIZE}px grid</div>
+                      <div>{t("layoutColumns", { count: layoutGridColumns })}</div>
+                      <div>{t("layoutGridSize", { size: LAYOUT_GRID_SIZE })}</div>
                     </div>
                   </div>
 
@@ -551,7 +564,7 @@ export function StorageLocationEditorPage({
                         onLayoutChange={syncLayoutBlocks}
                       >
                         {form.layoutBlocks.map((block) => {
-                          const tone = getBlockTone(block.type);
+                          const tone = getBlockTone(block.type, t);
                           const isSelected = selectedBlock?.id === block.id;
                           return (
                             <div key={block.id} className="storage-layout-grid__cell">
@@ -582,7 +595,7 @@ export function StorageLocationEditorPage({
 
                 <div className="flex flex-wrap gap-3 text-sm font-semibold text-slate-600">
                   {(["temporary", "section", "support"] as StorageLayoutBlockType[]).map((type) => {
-                    const tone = getBlockTone(type);
+                    const tone = getBlockTone(type, t);
                     const label = type === "temporary" ? t("temporaryArea") : type === "section" ? t("formalSection") : t("supportArea");
                     return (
                       <span key={type} className="inline-flex items-center gap-2 rounded-md bg-white px-3 py-2 shadow-sm ring-1 ring-slate-200">
@@ -596,15 +609,15 @@ export function StorageLocationEditorPage({
                 <div className="tw-panel px-4 py-4">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <div>
-                      <p className="tw-kicker m-0">Directory</p>
-                      <h3 className="tw-heading-md m-0 mt-1">Area Directory</h3>
-                      <p className="tw-body-muted m-0 mt-1">Select any area to edit its properties and footprint.</p>
+                      <p className="tw-kicker m-0">{t("directory")}</p>
+                      <h3 className="tw-heading-md m-0 mt-1">{t("areaDirectory")}</h3>
+                      <p className="tw-body-muted m-0 mt-1">{t("areaDirectoryDesc")}</p>
                     </div>
-                    <span className="text-xs font-medium text-slate-500">{form.layoutBlocks.length} areas</span>
+                    <span className="text-xs font-medium text-slate-500">{t("warehouseAreas")}: {form.layoutBlocks.length}</span>
                   </div>
                   <div className="grid gap-2 md:grid-cols-2">
                     {form.layoutBlocks.map((block) => {
-                      const tone = getBlockTone(block.type);
+                      const tone = getBlockTone(block.type, t);
                       const isSelected = selectedBlock?.id === block.id;
                       return (
                         <button
@@ -646,7 +659,7 @@ export function StorageLocationEditorPage({
                           <span className={`h-3 w-3 rounded-full border border-black/10 ${selectedTone?.swatch ?? "bg-slate-300"}`} />
                           <h3 className="tw-heading-lg m-0">{selectedBlock.name}</h3>
                         </div>
-                        <p className="tw-body-muted m-0 mt-2">{selectedTone?.label} area configured for this warehouse layout.</p>
+                        <p className="tw-body-muted m-0 mt-2">{t("selectedAreaConfiguredDesc", { type: selectedTone?.label ?? "-" })}</p>
                       </div>
                       <button
                         className={dangerButtonClass}
@@ -755,9 +768,9 @@ export function StorageLocationEditorPage({
 
           <section className={`${panelClassName} grid gap-4 px-6 py-6`}>
             <div className="space-y-1 border-b border-slate-200/80 pb-4">
-              <p className="tw-kicker m-0">Notes</p>
+              <p className="tw-kicker m-0">{t("notes")}</p>
               <h2 className="tw-heading-lg m-0">{t("notes")}</h2>
-              <p className="tw-body-muted m-0">Keep operational notes here for staging rules, dock instructions, or special handling.</p>
+              <p className="tw-body-muted m-0">{t("storageNotesGuide")}</p>
             </div>
             <label className="tw-field-label">
               {t("notes")}

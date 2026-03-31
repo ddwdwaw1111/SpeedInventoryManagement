@@ -97,6 +97,7 @@ func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName s
 	admin.PUT("/sku-master/:id", server.handleUpdateSKUMaster)
 	admin.DELETE("/sku-master/:id", server.handleDeleteSKUMaster)
 	admin.DELETE("/items/:id", server.handleDeleteItem)
+	admin.GET("/receipt-lots", server.handleListReceiptLots)
 
 	return router
 }
@@ -475,6 +476,26 @@ func (s *Server) handleListMovements(c *gin.Context) {
 	}
 
 	writeJSON(c, http.StatusOK, movements)
+}
+
+func (s *Server) handleListReceiptLots(c *gin.Context) {
+	limit := 500
+	if value := strings.TrimSpace(c.Query("limit")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, "limit must be a number")
+			return
+		}
+		limit = parsed
+	}
+
+	receiptLots, err := s.store.ListReceiptLots(c.Request.Context(), limit, c.Query("search"))
+	if err != nil {
+		writeServerError(c, err)
+		return
+	}
+
+	writeJSON(c, http.StatusOK, receiptLots)
 }
 
 func (s *Server) handleCreateMovement(c *gin.Context) {
@@ -861,7 +882,7 @@ func (s *Server) handleUpdateInboundDocument(c *gin.Context) {
 		return
 	}
 
-	s.writeAuditLog(c, "UPDATE", "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), "Updated inbound draft", map[string]any{
+	s.writeAuditLog(c, "UPDATE", "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), "Updated inbound document", map[string]any{
 		"containerNo":   document.ContainerNo,
 		"customer":      document.CustomerName,
 		"location":      document.LocationName,

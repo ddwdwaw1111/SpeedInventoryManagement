@@ -16,7 +16,7 @@ import { formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
 import { normalizeStorageSection, type Customer, type CustomerPayload, type InboundDocument, type Item, type Movement, type OutboundDocument, type UserRole } from "../lib/types";
-import { InlineAlert, useConfirmDialog } from "./Feedback";
+import { InlineAlert, useConfirmDialog, useFeedbackToast } from "./Feedback";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
@@ -67,6 +67,7 @@ export function CustomerManagementPage({
 }: CustomerManagementPageProps) {
   const { t } = useI18n();
   const { confirm, confirmationDialog } = useConfirmDialog();
+  const { showSuccess, showError, feedbackToast } = useFeedbackToast();
   const canManage = currentUserRole === "admin";
   const pageDescription = t("customersDesc");
   const permissionNotice = canManage ? "" : t("adminOnlyManageNotice");
@@ -248,6 +249,12 @@ export function CustomerManagementPage({
     setIsModalOpen(false);
   }
 
+  function showActionError(error: unknown, fallbackMessage: string) {
+    const message = error instanceof Error ? error.message : fallbackMessage;
+    setErrorMessage(message);
+    showError(message);
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canManage) return;
@@ -270,8 +277,9 @@ export function CustomerManagementPage({
       }
       closeModal();
       await onRefresh();
+      showSuccess(t("customerSavedSuccess"));
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveCustomer"));
+      showActionError(error, t("couldNotSaveCustomer"));
     } finally {
       setIsSubmitting(false);
     }
@@ -294,8 +302,9 @@ export function CustomerManagementPage({
     try {
       await api.deleteCustomer(row.id);
       await onRefresh();
+      showSuccess(t("customerDeletedSuccess"));
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : t("couldNotDeleteCustomer"));
+      showActionError(error, t("couldNotDeleteCustomer"));
     }
   }
 
@@ -348,6 +357,7 @@ export function CustomerManagementPage({
         </div>
       </section>
       {columnOrderDialog}
+      {feedbackToast}
 
       <Drawer
         anchor="right"

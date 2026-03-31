@@ -21,7 +21,7 @@ import { formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
 import { DEFAULT_STORAGE_SECTION, normalizeStorageSection, type Customer, type Item, type ItemPayload, type Location, type UserRole } from "../lib/types";
-import { InlineAlert, useConfirmDialog } from "./Feedback";
+import { InlineAlert, useConfirmDialog, useFeedbackToast } from "./Feedback";
 import { ExportExcelDialog } from "./ExportExcelDialog";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
@@ -105,6 +105,7 @@ function createEmptyItemForm(defaultCustomerId = "", defaultLocationId = ""): It
 export function MasterInventoryPage({ items, locations, customers, currentUserRole, isLoading, onRefresh, onNavigate }: MasterInventoryPageProps) {
   const { t } = useI18n();
   const { confirm, confirmationDialog } = useConfirmDialog();
+  const { showSuccess, showError, feedbackToast } = useFeedbackToast();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
   const canDelete = currentUserRole === "admin";
   const canConfigureColumns = currentUserRole === "admin";
@@ -289,6 +290,12 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
     setForm((current) => createEmptyItemForm(current.customerId || (customers[0] ? String(customers[0].id) : ""), current.locationId || (locations[0] ? String(locations[0].id) : "")));
   }
 
+  function showActionError(error: unknown, fallbackMessage: string) {
+    const message = error instanceof Error ? error.message : fallbackMessage;
+    setErrorMessage(message);
+    showError(message);
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canManage) return;
@@ -340,8 +347,9 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
       }
       closeModal();
       await onRefresh();
+      showSuccess(t("stockRowSavedSuccess"));
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveStockRow"));
+      showActionError(error, t("couldNotSaveStockRow"));
     } finally {
       setIsSubmitting(false);
     }
@@ -364,8 +372,9 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
     try {
       await api.deleteItem(item.id);
       await onRefresh();
+      showSuccess(t("stockRowDeletedSuccess"));
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : t("couldNotDeleteStockRow"));
+      showActionError(error, t("couldNotDeleteStockRow"));
     }
   }
 
@@ -479,6 +488,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
         onClose={() => setIsExportDialogOpen(false)}
         onExport={handleExport}
       />
+      {feedbackToast}
 
       <Drawer
         anchor="right"

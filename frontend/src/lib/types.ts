@@ -236,6 +236,41 @@ export type Movement = {
   createdAt: string;
 };
 
+export type ReceiptLotMovementLink = {
+  id: number;
+  movementId: number;
+  receiptLotId: number;
+  movementType: string;
+  quantityChange: number;
+  linkedQty: number;
+  linkType: string;
+  storageSection: string;
+  containerNo: string;
+  createdAt: string;
+};
+
+export type ReceiptLotTrace = {
+  id: number;
+  parentReceiptLotId: number;
+  sourceInboundDocumentId: number;
+  sourceInboundLineId: number;
+  itemId: number;
+  itemNumber: string;
+  sku: string;
+  description: string;
+  customerId: number;
+  customerName: string;
+  locationId: number;
+  locationName: string;
+  storageSection: string;
+  containerNo: string;
+  originalQty: number;
+  remainingQty: number;
+  createdAt: string;
+  updatedAt: string;
+  links: ReceiptLotMovementLink[];
+};
+
 export type OutboundDocumentLine = {
   id: number;
   documentId: number;

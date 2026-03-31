@@ -336,6 +336,61 @@ CREATE TABLE IF NOT EXISTS outbound_pick_allocations (
     FOREIGN KEY (location_id) REFERENCES storage_locations (id)
 );
 
+CREATE TABLE IF NOT EXISTS receipt_lots (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  parent_receipt_lot_id BIGINT DEFAULT NULL,
+  source_inbound_document_id BIGINT NOT NULL,
+  source_inbound_line_id BIGINT NOT NULL,
+  item_id BIGINT NOT NULL,
+  customer_id BIGINT NOT NULL,
+  location_id BIGINT NOT NULL,
+  storage_section VARCHAR(16) NOT NULL DEFAULT 'TEMP',
+  container_no VARCHAR(120) NOT NULL DEFAULT '',
+  original_qty INT NOT NULL DEFAULT 0,
+  remaining_qty INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_receipt_lots_parent_id (parent_receipt_lot_id),
+  KEY idx_receipt_lots_source_line_id (source_inbound_line_id),
+  KEY idx_receipt_lots_item_id (item_id),
+  KEY idx_receipt_lots_remaining_qty (remaining_qty),
+  CONSTRAINT fk_receipt_lots_parent
+    FOREIGN KEY (parent_receipt_lot_id) REFERENCES receipt_lots (id)
+    ON DELETE SET NULL,
+  CONSTRAINT fk_receipt_lots_source_document
+    FOREIGN KEY (source_inbound_document_id) REFERENCES inbound_documents (id)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_receipt_lots_source_line
+    FOREIGN KEY (source_inbound_line_id) REFERENCES inbound_document_lines (id)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_receipt_lots_item
+    FOREIGN KEY (item_id) REFERENCES inventory_items (id)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_receipt_lots_customer
+    FOREIGN KEY (customer_id) REFERENCES customers (id),
+  CONSTRAINT fk_receipt_lots_location
+    FOREIGN KEY (location_id) REFERENCES storage_locations (id)
+);
+
+CREATE TABLE IF NOT EXISTS movement_lot_links (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  movement_id BIGINT NOT NULL,
+  receipt_lot_id BIGINT NOT NULL,
+  quantity INT NOT NULL DEFAULT 0,
+  link_type VARCHAR(32) NOT NULL DEFAULT 'consume',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_movement_lot_links_movement_id (movement_id),
+  KEY idx_movement_lot_links_receipt_lot_id (receipt_lot_id),
+  CONSTRAINT fk_movement_lot_links_movement
+    FOREIGN KEY (movement_id) REFERENCES stock_movements (id)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_movement_lot_links_receipt_lot
+    FOREIGN KEY (receipt_lot_id) REFERENCES receipt_lots (id)
+    ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS inventory_adjustments (
   id BIGINT NOT NULL AUTO_INCREMENT,
   adjustment_no VARCHAR(120) NOT NULL,

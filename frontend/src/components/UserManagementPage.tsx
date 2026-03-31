@@ -10,7 +10,7 @@ import { formatDateTimeValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type { CreateUserPayload, UpdateUserAccessPayload, User, UserRole } from "../lib/types";
-import { InlineAlert } from "./Feedback";
+import { InlineAlert, useFeedbackToast } from "./Feedback";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
@@ -44,6 +44,7 @@ const USER_MANAGEMENT_COLUMN_ORDER_PREFERENCE_KEY = "user-management.column-orde
 export function UserManagementPage({ users, currentUser, isLoading, onRefresh }: UserManagementPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
+  const { showSuccess, showError, feedbackToast } = useFeedbackToast();
   const canConfigureColumns = currentUser.role === "admin";
   const pageDescription = t("userManagementDesc");
   const [searchTerm, setSearchTerm] = useState("");
@@ -137,6 +138,12 @@ export function UserManagementPage({ users, currentUser, isLoading, onRefresh }:
     setIsModalOpen(false);
   }
 
+  function showActionError(error: unknown, fallbackMessage: string) {
+    const message = error instanceof Error ? error.message : fallbackMessage;
+    setErrorMessage(message);
+    showError(message);
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsSubmitting(true);
@@ -162,8 +169,9 @@ export function UserManagementPage({ users, currentUser, isLoading, onRefresh }:
 
       closeModal();
       await onRefresh();
+      showSuccess(t("userSavedSuccess"));
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveUser"));
+      showActionError(error, t("couldNotSaveUser"));
     } finally {
       setIsSubmitting(false);
     }
@@ -206,6 +214,7 @@ export function UserManagementPage({ users, currentUser, isLoading, onRefresh }:
         </div>
       </section>
       {columnOrderDialog}
+      {feedbackToast}
 
       <Dialog
         open={isModalOpen}
@@ -230,7 +239,7 @@ export function UserManagementPage({ users, currentUser, isLoading, onRefresh }:
               <input
                 value={form.fullName}
                 onChange={(event) => setForm((current) => ({ ...current, fullName: event.target.value }))}
-                placeholder="Jane Doe"
+                placeholder={t("fullNamePlaceholder")}
                 required
                 disabled={Boolean(editingUser)}
               />
@@ -241,7 +250,7 @@ export function UserManagementPage({ users, currentUser, isLoading, onRefresh }:
                 type="email"
                 value={form.email}
                 onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))}
-                placeholder="you@company.com"
+                placeholder={t("emailPlaceholder")}
                 required
                 disabled={Boolean(editingUser)}
               />

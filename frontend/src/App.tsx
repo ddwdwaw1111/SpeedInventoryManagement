@@ -34,6 +34,7 @@ import { ExportCenterPage } from "./components/ExportCenterPage";
 import { InventorySummaryPage } from "./components/InventorySummaryPage";
 import { MasterInventoryPage } from "./components/MasterInventoryPage";
 import { ReportsPage } from "./components/ReportsPage";
+import { ReceiptLotTracePage } from "./components/ReceiptLotTracePage";
 import { SKUMasterPage } from "./components/SKUMasterPage";
 import { SettingsPage } from "./components/SettingsPage";
 import { StorageLocationEditorPage } from "./components/StorageLocationEditorPage";
@@ -247,20 +248,25 @@ export default function App() {
   }
 
   const canViewAuditLogs = currentUser?.role === "admin";
+  const canViewReceiptLots = currentUser?.role === "admin";
   const canManageUsers = currentUser?.role === "admin";
 
   useEffect(() => {
-    if ((activePage === "audit-logs" && !canViewAuditLogs) || (activePage === "user-management" && !canManageUsers)) {
+    if (
+      (activePage === "audit-logs" && !canViewAuditLogs) ||
+      (activePage === "receipt-lots" && !canViewReceiptLots) ||
+      (activePage === "user-management" && !canManageUsers)
+    ) {
       navigateToPage("dashboard", setActivePage);
     }
-  }, [activePage, canManageUsers, canViewAuditLogs]);
+  }, [activePage, canManageUsers, canViewAuditLogs, canViewReceiptLots]);
 
   const pageItems: Array<{ key: PageKey; label: string; description: string; icon: ReactNode }> = [
     { key: "dashboard", label: t("navDashboard"), description: t("dashboardDesc"), icon: <HomeOutlined fontSize="small" /> },
     { key: "reports", label: t("report"), description: t("reportDesc"), icon: <AssessmentOutlined fontSize="small" /> },
     { key: "export-center", label: t("exportCenter"), description: t("exportCenterDesc"), icon: <FileDownloadOutlined fontSize="small" /> },
-    { key: "inbound-management", label: t("inbound"), description: t("inboundDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
-    { key: "outbound-management", label: t("outbound"), description: t("outboundDesc"), icon: <OutboxOutlined fontSize="small" /> },
+    { key: "inbound-management", label: t("navReceiving"), description: t("inboundDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
+    { key: "outbound-management", label: t("navShipping"), description: t("outboundDesc"), icon: <OutboxOutlined fontSize="small" /> },
     { key: "inventory-summary", label: t("inventorySummary"), description: t("inventorySummaryDesc"), icon: <WarehouseOutlined fontSize="small" /> },
     { key: "warehouse-map", label: t("warehouseMap"), description: t("warehouseMapDesc"), icon: <WarehouseOutlined fontSize="small" /> },
     { key: "container-contents", label: t("containerContents"), description: t("containerContentsDesc"), icon: <WarehouseOutlined fontSize="small" /> },
@@ -270,6 +276,7 @@ export default function App() {
     { key: "all-activity", label: t("allActivity"), description: t("allActivityDesc"), icon: <HistoryOutlined fontSize="small" /> },
     { key: "customers", label: t("customers"), description: t("customersDesc"), icon: <GroupsOutlined fontSize="small" /> },
     ...(canViewAuditLogs ? [{ key: "audit-logs" as PageKey, label: t("auditLogs"), description: t("auditLogsDesc"), icon: <BadgeOutlined fontSize="small" /> }] : []),
+    ...(canViewReceiptLots ? [{ key: "receipt-lots" as PageKey, label: t("receiptLotTrace"), description: t("receiptLotTraceDesc"), icon: <HistoryOutlined fontSize="small" /> }] : []),
     ...(canManageUsers ? [{ key: "user-management" as PageKey, label: t("userManagement"), description: t("userManagementDesc"), icon: <ManageAccountsOutlined fontSize="small" /> }] : []),
     { key: "sku-master", label: t("skuMaster"), description: t("skuMasterDesc"), icon: <CategoryOutlined fontSize="small" /> },
     { key: "stock-by-location", label: t("stockByLocation"), description: t("stockByLocationDesc"), icon: <WarehouseOutlined fontSize="small" /> },
@@ -285,7 +292,7 @@ export default function App() {
     { key: "inventory", label: navLabels.inventory, items: ["inventory-summary", "warehouse-map", "container-contents", "all-activity"] as PageKey[] },
     { key: "master-data", label: navLabels.masterData, items: ["customers", "sku-master", "storage-management"] as PageKey[] },
     { key: "reports", label: navLabels.reports, items: ["reports", "export-center"] as PageKey[] },
-    { key: "administration", label: navLabels.administration, items: ["audit-logs", "user-management", "settings"] as PageKey[] }
+    { key: "administration", label: navLabels.administration, items: ["audit-logs", "receipt-lots", "user-management", "settings"] as PageKey[] }
   ].map((section) => ({
     ...section,
     items: section.items
@@ -316,6 +323,7 @@ export default function App() {
     reports: "reports",
     "export-center": "reports",
     "audit-logs": "administration",
+    "receipt-lots": "administration",
     "user-management": "administration",
     settings: "administration"
   };
@@ -477,6 +485,7 @@ export default function App() {
           {activePage === "all-activity" ? <AllActivityPage movements={movements} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
           {activePage === "customers" ? <CustomerManagementPage customers={customers} items={items} inboundDocuments={activeInboundDocuments} outboundDocuments={activeOutboundDocuments} movements={movements} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}
           {activePage === "audit-logs" && canViewAuditLogs ? <AuditLogPage auditLogs={auditLogs} currentUserRole={currentUser.role} isLoading={isLoading} /> : null}
+          {activePage === "receipt-lots" && canViewReceiptLots ? <ReceiptLotTracePage /> : null}
           {activePage === "user-management" && canManageUsers ? <UserManagementPage users={users} currentUser={currentUser} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
           {activePage === "sku-master" ? <SKUMasterPage skuMasters={skuMasters} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} /> : null}
           {activePage === "stock-by-location" ? <MasterInventoryPage items={items} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={(page) => navigateToPage(page, setActivePage)} /> : null}

@@ -368,7 +368,7 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 		FROM inventory_items i
 		JOIN customers c ON c.id = i.customer_id
 		JOIN storage_locations l ON l.id = i.location_id
-		WHERE 1 = 1
+		WHERE (i.quantity <> 0 OR i.allocated_qty <> 0 OR i.damaged_qty <> 0 OR i.hold_qty <> 0)
 	`
 
 	args := make([]any, 0)

@@ -98,6 +98,7 @@ type lockedTransferItem struct {
 	LocationID     int64
 	LocationName   string
 	StorageSection string
+	ContainerNo    string
 	SKU            string
 	Name           string
 	Category       string
@@ -342,12 +343,13 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 				storage_section,
 				movement_type,
 				quantity_change,
+				container_no,
 				description_snapshot,
 				unit_label,
 				height_in,
 				document_note,
 				reason
-			) VALUES (?, ?, ?, ?, ?, ?, 'TRANSFER_OUT', ?, ?, ?, 0, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, 'TRANSFER_OUT', ?, ?, ?, ?, 0, ?, ?)
 		`,
 			sourceItem.ItemID,
 			transferID,
@@ -356,6 +358,7 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 			sourceItem.LocationID,
 			fallbackSection(sourceItem.StorageSection),
 			-line.Quantity,
+			nullableString(sourceItem.ContainerNo),
 			nullableString(sourceItem.Description),
 			nullableString(strings.ToUpper(sourceItem.Unit)),
 			nullableString(input.Notes),
@@ -370,6 +373,11 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 			return InventoryTransfer{}, fmt.Errorf("resolve transfer-out movement id: %w", err)
 		}
 
+		lotConsumptions, err := s.consumeReceiptLotsForItemTx(ctx, tx, sourceItem.ItemID, line.Quantity, outMovementID, "move_out")
+		if err != nil {
+			return InventoryTransfer{}, fmt.Errorf("allocate receipt lots for transfer-out movement: %w", err)
+		}
+
 		inMovementResult, err := tx.ExecContext(ctx, `
 			INSERT INTO stock_movements (
 				item_id,
@@ -380,12 +388,13 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 				storage_section,
 				movement_type,
 				quantity_change,
+				container_no,
 				description_snapshot,
 				unit_label,
 				height_in,
 				document_note,
 				reason
-			) VALUES (?, ?, ?, ?, ?, ?, 'TRANSFER_IN', ?, ?, ?, 0, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, 'TRANSFER_IN', ?, ?, ?, ?, 0, ?, ?)
 		`,
 			destinationItemID,
 			transferID,
@@ -394,6 +403,7 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 			line.ToLocationID,
 			toSection,
 			line.Quantity,
+			nil,
 			nullableString(sourceItem.Description),
 			nullableString(strings.ToUpper(sourceItem.Unit)),
 			nullableString(input.Notes),
@@ -406,6 +416,27 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 		inMovementID, err := inMovementResult.LastInsertId()
 		if err != nil {
 			return InventoryTransfer{}, fmt.Errorf("resolve transfer-in movement id: %w", err)
+		}
+
+		for _, consumption := range lotConsumptions {
+			newLot, err := s.createReceiptLotTx(ctx, tx, createReceiptLotInput{
+				ParentReceiptLotID:      consumption.Lot.ID,
+				SourceInboundDocumentID: consumption.Lot.SourceInboundDocumentID,
+				SourceInboundLineID:     consumption.Lot.SourceInboundLineID,
+				ItemID:                  destinationItemID,
+				CustomerID:              consumption.Lot.CustomerID,
+				LocationID:              line.ToLocationID,
+				StorageSection:          toSection,
+				ContainerNo:             "",
+				OriginalQty:             consumption.Quantity,
+				RemainingQty:            consumption.Quantity,
+			})
+			if err != nil {
+				return InventoryTransfer{}, err
+			}
+			if err := s.createMovementLotLinkTx(ctx, tx, inMovementID, newLot.ID, consumption.Quantity, "move_in"); err != nil {
+				return InventoryTransfer{}, err
+			}
 		}
 
 		if _, err := tx.ExecContext(ctx, `
@@ -588,6 +619,7 @@ func (s *Store) loadLockedTransferItem(ctx context.Context, tx *sql.Tx, itemID i
 			i.location_id,
 			l.name,
 			i.storage_section,
+			COALESCE(i.container_no, ''),
 			i.sku,
 			i.name,
 			i.category,
@@ -609,6 +641,7 @@ func (s *Store) loadLockedTransferItem(ctx context.Context, tx *sql.Tx, itemID i
 		&item.LocationID,
 		&item.LocationName,
 		&item.StorageSection,
+		&item.ContainerNo,
 		&item.SKU,
 		&item.Name,
 		&item.Category,

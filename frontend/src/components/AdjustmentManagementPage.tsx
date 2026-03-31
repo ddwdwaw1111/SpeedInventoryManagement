@@ -15,7 +15,7 @@ import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type { PageKey } from "../lib/routes";
 import { normalizeStorageSection, type InventoryAdjustment, type Item, type UserRole } from "../lib/types";
-import { InlineAlert } from "./Feedback";
+import { InlineAlert, useFeedbackToast } from "./Feedback";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
@@ -68,6 +68,7 @@ export function AdjustmentManagementPage({
 }: AdjustmentManagementPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
+  const { showSuccess, showError, feedbackToast } = useFeedbackToast();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
   const canConfigureColumns = currentUserRole === "admin";
   const pageDescription = t("adjustmentsDesc");
@@ -210,6 +211,12 @@ export function AdjustmentManagementPage({
     loadingTitle: t("loadingRecords")
   });
 
+  function showActionError(error: unknown, fallbackMessage: string) {
+    const message = error instanceof Error ? error.message : fallbackMessage;
+    setErrorMessage(message);
+    showError(message);
+  }
+
   function openCreateModal(initialSourceKey = "") {
     if (!canManage) {
       return;
@@ -262,8 +269,9 @@ export function AdjustmentManagementPage({
       });
       closeCreateModal();
       await onRefresh();
+      showSuccess(t("adjustmentSavedSuccess"));
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveAdjustment"));
+      showActionError(error, t("couldNotSaveAdjustment"));
     } finally {
       setSubmitting(false);
     }
@@ -309,6 +317,7 @@ export function AdjustmentManagementPage({
         </div>
       </section>
       {columnOrderDialog}
+      {feedbackToast}
 
       <Drawer
         anchor="right"

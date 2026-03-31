@@ -231,7 +231,7 @@ export function HomeDashboardPage({
       {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
 
       <div className="space-y-6 pb-6">
-        <section className="rounded-[24px] border border-slate-200/80 bg-[linear-gradient(180deg,#f3f8ff_0%,#eef4fb_100%)] px-6 py-6 shadow-[0_18px_48px_rgba(10,31,68,0.06)]">
+        <section className="rounded-[24px] border border-slate-200/80 bg-[linear-gradient(180deg,#f3f8ff_0%,#eef4fb_100%)] px-5 py-5 shadow-[0_18px_48px_rgba(10,31,68,0.06)]">
           <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
             <div className="space-y-2.5">
               <div className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500 ring-1 ring-slate-200/70">
@@ -278,21 +278,21 @@ export function HomeDashboardPage({
             </div>
           </div>
 
-          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             {summaryCards.map((card) => (
               <DashboardSummaryCard key={card.key} card={card} />
             ))}
           </div>
         </section>
 
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1.8fr)_minmax(320px,0.9fr)]">
-          <section className="rounded-[24px] border border-slate-200/80 bg-white p-6 shadow-[0_16px_34px_rgba(15,23,42,0.05)]">
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.8fr)_minmax(280px,0.82fr)]">
+          <section className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-[0_16px_34px_rgba(15,23,42,0.05)]">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <h2 className="font-headline text-xl font-extrabold tracking-tight text-[#0d2d63]">
+                <h2 className="font-headline text-lg font-extrabold tracking-tight text-[#0d2d63]">
                   {t("dashboardFlowTitle")}
                 </h2>
-                <p className="mt-1 text-sm text-slate-500">{t("dashboardFlowSubtitle")}</p>
+                <p className="mt-1 text-xs text-slate-500">{t("dashboardFlowSubtitle")}</p>
               </div>
               <div className="inline-flex items-center gap-1 rounded-xl bg-slate-100 p-1">
                 {trendPeriodOptions.map((option) => (
@@ -300,7 +300,7 @@ export function HomeDashboardPage({
                     key={option.key}
                     type="button"
                     onClick={() => setTrendPeriod(option.key)}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                    className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold transition ${
                       option.key === trendPeriod
                         ? "bg-white text-[#143569] shadow-[0_8px_18px_rgba(15,23,42,0.08)]"
                         : "text-slate-500 hover:text-slate-700"
@@ -312,7 +312,7 @@ export function HomeDashboardPage({
               </div>
             </div>
 
-            <div className="mt-6 space-y-5">
+            <div className="mt-4 space-y-3">
               <div className="flex flex-wrap items-center gap-3">
                 <TrendLegend
                   colorClass="bg-emerald-500"
@@ -324,7 +324,7 @@ export function HomeDashboardPage({
                   label={t("outbound")}
                   value={numberFormatter.format(throughputTotals.outbound)}
                 />
-                <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">
+                <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-500">
                   <TimelineOutlinedIcon sx={{ fontSize: 15 }} />
                   {t("dashboardFlowLineMeta")}
                 </div>
@@ -334,31 +334,31 @@ export function HomeDashboardPage({
             </div>
           </section>
 
-          <section className="rounded-[24px] border border-slate-200/80 bg-[#eef3fb] p-6 shadow-[0_16px_34px_rgba(15,23,42,0.04)]">
+          <section className="rounded-[24px] border border-slate-200/80 bg-[#eef3fb] p-4 shadow-[0_16px_34px_rgba(15,23,42,0.04)]">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h2 className="font-headline text-xl font-extrabold tracking-tight text-[#0d2d63]">
+                <h2 className="font-headline text-lg font-extrabold tracking-tight text-[#0d2d63]">
                   {t("recentActivity")}
                 </h2>
-                <p className="mt-1 text-sm text-slate-500">{t("dashboardRecentActivityDesc")}</p>
+                <p className="mt-1 text-xs text-slate-500">{t("dashboardRecentActivityDesc")}</p>
               </div>
             </div>
 
-            <div className="mt-5 space-y-4">
+            <div className="mt-4 space-y-3">
               {recentActivity.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-slate-300 bg-white/70 px-5 py-8 text-center text-sm text-slate-500">
                   {isLoading ? t("loadingRecords") : t("dashboardNoRecentActivity")}
                 </div>
               ) : recentActivity.map((entry) => (
-                <div key={entry.id} className="flex gap-4">
-                  <div className="flex w-5 flex-col items-center">
-                    <span className={`mt-1 h-2.5 w-2.5 rounded-full ${toneDotClass(entry.tone)}`} />
+                <div key={entry.id} className="flex gap-3">
+                  <div className="flex w-4 flex-col items-center">
+                    <span className={`mt-1 h-2 w-2 rounded-full ${toneDotClass(entry.tone)}`} />
                     <span className="mt-1 h-full w-px bg-slate-200" />
                   </div>
                   <div className="space-y-1 pb-1">
-                    <p className="text-base font-bold text-[#0d2d63]">{entry.title}</p>
-                    <p className="text-sm leading-6 text-slate-600">{entry.description}</p>
-                    <p className="text-xs font-medium text-slate-400">{entry.timeLabel}</p>
+                    <p className="text-sm font-bold text-[#0d2d63]">{entry.title}</p>
+                    <p className="text-xs leading-5 text-slate-600">{entry.description}</p>
+                    <p className="text-[11px] font-medium text-slate-400">{entry.timeLabel}</p>
                   </div>
                 </div>
               ))}
@@ -367,7 +367,7 @@ export function HomeDashboardPage({
             <button
               type="button"
               onClick={() => onNavigate("all-activity")}
-              className="mt-6 inline-flex w-full items-center justify-center rounded-xl bg-white px-4 py-3 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50"
+              className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-white px-4 py-2.5 text-xs font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50"
             >
               {t("dashboardViewFullLogs")}
             </button>
@@ -407,19 +407,19 @@ export function HomeDashboardPage({
 
 function DashboardSummaryCard({ card }: { card: SummaryCard }) {
   return (
-    <article className="rounded-[20px] border border-slate-200/80 bg-white p-5 shadow-[0_12px_28px_rgba(15,23,42,0.04)]">
+    <article className="rounded-[18px] border border-slate-200/80 bg-white p-3 shadow-[0_10px_22px_rgba(15,23,42,0.04)]">
       <div className="flex items-start justify-between gap-4">
-        <div className={`flex h-12 w-12 items-center justify-center rounded-xl ${summaryToneIconClass(card.tone)}`}>
+        <div className={`flex h-9 w-9 items-center justify-center rounded-lg ${summaryToneIconClass(card.tone)}`}>
           <span className="text-[#143569]">{card.icon}</span>
         </div>
-        <span className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold ${summaryToneBadgeClass(card.tone)}`}>
+        <span className={`rounded-md px-2 py-0.5 text-[10px] font-semibold ${summaryToneBadgeClass(card.tone)}`}>
           {card.label}
         </span>
       </div>
-      <div className="mt-5">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">{card.label}</p>
-        <h3 className="mt-2.5 font-headline text-3xl font-extrabold tracking-tight text-[#0d2d63]">{card.value}</h3>
-        <p className="mt-1.5 text-sm text-slate-500">{card.meta}</p>
+      <div className="mt-3.5">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">{card.label}</p>
+        <h3 className="mt-1.5 font-headline text-2xl font-extrabold tracking-tight text-[#0d2d63]">{card.value}</h3>
+        <p className="mt-1 text-xs text-slate-500">{card.meta}</p>
       </div>
     </article>
   );
@@ -435,8 +435,8 @@ function TrendLegend({
   value: string;
 }) {
   return (
-    <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600">
-      <span className={`h-2.5 w-2.5 rounded-full ${colorClass}`} />
+    <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+      <span className={`h-2 w-2 rounded-full ${colorClass}`} />
       <span>{label}</span>
       <span className="text-slate-400">/</span>
       <span className="font-bold text-[#143569]">{value}</span>
@@ -452,9 +452,9 @@ function ThroughputLineChart({
   emptyLabel: string;
 }) {
   const chartWidth = 760;
-  const chartHeight = 220;
-  const topPadding = 12;
-  const bottomPadding = 28;
+  const chartHeight = 156;
+  const topPadding = 10;
+  const bottomPadding = 24;
   const leftPadding = 8;
   const rightPadding = 8;
   const availableWidth = chartWidth - leftPadding - rightPadding;
@@ -464,7 +464,7 @@ function ThroughputLineChart({
 
   if (!points.length || maxValue === 0) {
     return (
-      <div className="flex h-[280px] items-center justify-center rounded-[24px] border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
+      <div className="flex h-[188px] items-center justify-center rounded-[20px] border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
         {emptyLabel}
       </div>
     );
@@ -484,10 +484,10 @@ function ThroughputLineChart({
     .join(" ");
 
   return (
-    <div className="rounded-[24px] bg-slate-50/80 px-4 py-4">
+    <div className="rounded-[20px] bg-slate-50/80 px-3 py-3">
       <svg
         viewBox={`0 0 ${chartWidth} ${chartHeight}`}
-        className="h-[280px] w-full overflow-visible"
+        className="h-[188px] w-full overflow-visible"
         role="img"
         aria-label="Warehouse throughput trend"
       >
@@ -511,14 +511,14 @@ function ThroughputLineChart({
 
         {inboundCoordinates.map(({ x, y, point }) => (
           <g key={`inbound-${point.key}`}>
-            <circle cx={x} cy={y} r="5" fill="#10b981" stroke="#ffffff" strokeWidth="2.5" />
+            <circle cx={x} cy={y} r="4" fill="#10b981" stroke="#ffffff" strokeWidth="2" />
             <title>{`${point.label} / Inbound: ${point.inbound}`}</title>
           </g>
         ))}
 
         {outboundCoordinates.map(({ x, y, point }) => (
           <g key={`outbound-${point.key}`}>
-            <circle cx={x} cy={y} r="5" fill="#143569" stroke="#ffffff" strokeWidth="2.5" />
+            <circle cx={x} cy={y} r="4" fill="#143569" stroke="#ffffff" strokeWidth="2" />
             <title>{`${point.label} / Outbound: ${point.outbound}`}</title>
           </g>
         ))}
@@ -537,7 +537,7 @@ function ThroughputLineChart({
               y={chartHeight - 4}
               textAnchor="middle"
               fill="#64748b"
-              fontSize="11"
+              fontSize="10"
               fontWeight="600"
             >
               {point.shortLabel}

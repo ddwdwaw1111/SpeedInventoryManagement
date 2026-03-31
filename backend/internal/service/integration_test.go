@@ -74,6 +74,8 @@ func resetIntegrationDatabase(t *testing.T, db *sqlx.DB) {
 		"audit_logs",
 		"ui_preferences",
 		"user_sessions",
+		"movement_lot_links",
+		"receipt_lots",
 		"stock_movements",
 		"cycle_count_lines",
 		"cycle_counts",
@@ -259,6 +261,395 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 	assertMovementTypeCount(t, movements, itemAfterInbound.ID, "REVERSAL", 2)
 }
 
+func TestConfirmedInboundDocumentEditCreatesCorrectionsIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0)
+
+	receipt, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:     customer.ID,
+		LocationID:     location.ID,
+		DeliveryDate:   "2026-03-24",
+		ContainerNo:    "EDIT-OLD-" + suffix,
+		StorageSection: DefaultStorageSection,
+		UnitLabel:      "CTN",
+		Status:         DocumentStatusConfirmed,
+		DocumentNote:   "Original receipt",
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:               item.SKU,
+			Description:       item.Description,
+			ExpectedQty:       10,
+			ReceivedQty:       10,
+			StorageSection:    DefaultStorageSection,
+			Pallets:           1,
+			PalletsDetailCtns: "1*10",
+			LineNote:          "Original line",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create confirmed inbound document: %v", err)
+	}
+
+	updatedReceipt, err := store.UpdateInboundDocument(ctx, receipt.ID, CreateInboundDocumentInput{
+		CustomerID:     customer.ID,
+		LocationID:     location.ID,
+		DeliveryDate:   "2026-03-27",
+		ContainerNo:    "EDIT-NEW-" + suffix,
+		StorageSection: "B",
+		UnitLabel:      "CTN",
+		Status:         DocumentStatusConfirmed,
+		DocumentNote:   "Corrected receipt",
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:               item.SKU,
+			Description:       item.Description,
+			ExpectedQty:       12,
+			ReceivedQty:       12,
+			StorageSection:    "B",
+			Pallets:           2,
+			PalletsDetailCtns: "2*6",
+			LineNote:          "Corrected line",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("update confirmed inbound document: %v", err)
+	}
+
+	if !strings.EqualFold(updatedReceipt.Status, DocumentStatusConfirmed) {
+		t.Fatalf("expected confirmed receipt after correction, got %q", updatedReceipt.Status)
+	}
+	if updatedReceipt.ContainerNo != "EDIT-NEW-"+suffix {
+		t.Fatalf("expected updated container no, got %q", updatedReceipt.ContainerNo)
+	}
+	if len(updatedReceipt.Lines) != 1 {
+		t.Fatalf("expected 1 corrected receipt line, got %d", len(updatedReceipt.Lines))
+	}
+	if updatedReceipt.Lines[0].StorageSection != "B" {
+		t.Fatalf("expected corrected storage section B, got %q", updatedReceipt.Lines[0].StorageSection)
+	}
+	if updatedReceipt.Lines[0].ReceivedQty != 12 {
+		t.Fatalf("expected corrected received qty 12, got %d", updatedReceipt.Lines[0].ReceivedQty)
+	}
+
+	assertItemHiddenByContainer(t, ctx, store, location.ID, DefaultStorageSection, "EDIT-OLD-"+suffix, item.SKU)
+
+	newItem := mustFindItemByContainer(t, ctx, store, location.ID, "B", "EDIT-NEW-"+suffix, item.SKU)
+	if newItem.Quantity != 12 {
+		t.Fatalf("expected corrected receipt quantity 12 at new position, got %d", newItem.Quantity)
+	}
+
+	movements, err := store.ListMovements(ctx, 20)
+	if err != nil {
+		t.Fatalf("list movements after confirmed inbound edit: %v", err)
+	}
+
+	lineID := updatedReceipt.Lines[0].ID
+	var inMovement, transferOutMovement, transferInMovement, adjustMovement *Movement
+	for index := range movements {
+		movement := &movements[index]
+		if movement.InboundDocumentLineID != lineID {
+			continue
+		}
+		switch movement.MovementType {
+		case "IN":
+			inMovement = movement
+		case "TRANSFER_OUT":
+			transferOutMovement = movement
+		case "TRANSFER_IN":
+			transferInMovement = movement
+		case "ADJUST":
+			adjustMovement = movement
+		}
+	}
+
+	if inMovement == nil || inMovement.QuantityChange != 10 || inMovement.ContainerNo != "EDIT-OLD-"+suffix {
+		t.Fatalf("expected original IN movement to remain at old container with qty 10, got %+v", inMovement)
+	}
+	if transferOutMovement == nil || transferOutMovement.QuantityChange != -10 || transferOutMovement.ContainerNo != "EDIT-OLD-"+suffix {
+		t.Fatalf("expected transfer-out correction from old container, got %+v", transferOutMovement)
+	}
+	if transferInMovement == nil || transferInMovement.QuantityChange != 10 || transferInMovement.ContainerNo != "EDIT-NEW-"+suffix {
+		t.Fatalf("expected transfer-in correction into new container, got %+v", transferInMovement)
+	}
+	if adjustMovement == nil || adjustMovement.QuantityChange != 2 || adjustMovement.ContainerNo != "EDIT-NEW-"+suffix {
+		t.Fatalf("expected adjust correction of +2 at new container, got %+v", adjustMovement)
+	}
+}
+
+func TestConfirmedInboundDocumentEditMovesRemainingLotsAfterPartialConsumptionIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0)
+
+	receipt, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:     customer.ID,
+		LocationID:     location.ID,
+		DeliveryDate:   "2026-03-24",
+		ContainerNo:    "USED-OLD-" + suffix,
+		StorageSection: DefaultStorageSection,
+		UnitLabel:      "CTN",
+		Status:         DocumentStatusConfirmed,
+		DocumentNote:   "Original receipt",
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:               item.SKU,
+			Description:       item.Description,
+			ExpectedQty:       10,
+			ReceivedQty:       10,
+			StorageSection:    DefaultStorageSection,
+			Pallets:           1,
+			PalletsDetailCtns: "1*10",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create confirmed inbound receipt: %v", err)
+	}
+
+	receivedItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "USED-OLD-"+suffix, item.SKU)
+	if _, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo: "USED-OUT-" + suffix,
+		OrderRef:      "SO-" + suffix,
+		OutDate:       "2026-03-24",
+		ShipToName:    "Receiver " + suffix,
+		ShipToAddress: "123 Warehouse Ln",
+		ShipToContact: "Dock 4",
+		CarrierName:   "Local Carrier",
+		Status:        DocumentStatusConfirmed,
+		DocumentNote:  "Consume part of receipt",
+		Lines: []CreateOutboundDocumentLineInput{{
+			ItemID:    receivedItem.ID,
+			Quantity:  4,
+			UnitLabel: "CTN",
+		}},
+	}); err != nil {
+		t.Fatalf("create consuming outbound document: %v", err)
+	}
+
+	metadataOnly, err := store.UpdateInboundDocument(ctx, receipt.ID, CreateInboundDocumentInput{
+		CustomerID:     customer.ID,
+		LocationID:     location.ID,
+		DeliveryDate:   "2026-03-28",
+		ContainerNo:    "USED-OLD-" + suffix,
+		StorageSection: DefaultStorageSection,
+		UnitLabel:      "CTN",
+		Status:         DocumentStatusConfirmed,
+		DocumentNote:   "Metadata only correction",
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:               item.SKU,
+			Description:       item.Description,
+			ExpectedQty:       10,
+			ReceivedQty:       10,
+			StorageSection:    DefaultStorageSection,
+			Pallets:           2,
+			PalletsDetailCtns: "2*5",
+			LineNote:          "Metadata correction",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("update confirmed inbound metadata after outbound: %v", err)
+	}
+	if metadataOnly.DocumentNote != "Metadata only correction" {
+		t.Fatalf("expected metadata-only update to succeed, got note %q", metadataOnly.DocumentNote)
+	}
+	metadataOnlyItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "USED-OLD-"+suffix, item.SKU)
+	if metadataOnlyItem.DeliveryDate == nil || metadataOnlyItem.DeliveryDate.Format("2006-01-02") != "2026-03-28" {
+		t.Fatalf("expected metadata-only correction to refresh inventory delivery date to 2026-03-28, got %+v", metadataOnlyItem.DeliveryDate)
+	}
+	if metadataOnlyItem.LastRestockedAt == nil || metadataOnlyItem.LastRestockedAt.Format("2006-01-02") != "2026-03-28" {
+		t.Fatalf("expected metadata-only correction to refresh inventory last restocked at to 2026-03-28, got %+v", metadataOnlyItem.LastRestockedAt)
+	}
+
+	updatedReceipt, err := store.UpdateInboundDocument(ctx, receipt.ID, CreateInboundDocumentInput{
+		CustomerID:     customer.ID,
+		LocationID:     location.ID,
+		DeliveryDate:   "2026-03-28",
+		ContainerNo:    "USED-NEW-" + suffix,
+		StorageSection: "B",
+		UnitLabel:      "CTN",
+		Status:         DocumentStatusConfirmed,
+		DocumentNote:   "Try critical correction",
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:               item.SKU,
+			Description:       item.Description,
+			ExpectedQty:       8,
+			ReceivedQty:       8,
+			StorageSection:    "B",
+			Pallets:           2,
+			PalletsDetailCtns: "2*4",
+			LineNote:          "Move remaining stock",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("update partially consumed confirmed inbound receipt: %v", err)
+	}
+
+	if updatedReceipt.ContainerNo != "USED-NEW-"+suffix {
+		t.Fatalf("expected updated container no, got %q", updatedReceipt.ContainerNo)
+	}
+	if len(updatedReceipt.Lines) != 1 || updatedReceipt.Lines[0].StorageSection != "B" {
+		t.Fatalf("expected updated receipt line to move to section B, got %#v", updatedReceipt.Lines)
+	}
+	if updatedReceipt.Lines[0].ReceivedQty != 8 {
+		t.Fatalf("expected updated receipt quantity 8, got %d", updatedReceipt.Lines[0].ReceivedQty)
+	}
+
+	assertItemHiddenByContainer(t, ctx, store, location.ID, DefaultStorageSection, "USED-OLD-"+suffix, item.SKU)
+
+	newItem := mustFindItemByContainer(t, ctx, store, location.ID, "B", "USED-NEW-"+suffix, item.SKU)
+	if newItem.Quantity != 4 {
+		t.Fatalf("expected moved remaining quantity 4 at corrected position, got %d", newItem.Quantity)
+	}
+
+	movements, err := store.ListMovements(ctx, 20)
+	if err != nil {
+		t.Fatalf("list movements after consumed inbound edit: %v", err)
+	}
+
+	lineID := updatedReceipt.Lines[0].ID
+	var originalInMovement, outboundMovement, adjustMovement, transferOutMovement, transferInMovement *Movement
+	for index := range movements {
+		movement := &movements[index]
+		switch movement.MovementType {
+		case "IN":
+			if movement.InboundDocumentLineID == lineID {
+				originalInMovement = movement
+			}
+		case "OUT":
+			if movement.ItemID == receivedItem.ID && movement.ContainerNo == "USED-OLD-"+suffix {
+				outboundMovement = movement
+			}
+		case "ADJUST":
+			if movement.InboundDocumentLineID == lineID {
+				adjustMovement = movement
+			}
+		case "TRANSFER_OUT":
+			if movement.InboundDocumentLineID == lineID {
+				transferOutMovement = movement
+			}
+		case "TRANSFER_IN":
+			if movement.InboundDocumentLineID == lineID {
+				transferInMovement = movement
+			}
+		}
+	}
+
+	if originalInMovement == nil || originalInMovement.QuantityChange != 10 || originalInMovement.ContainerNo != "USED-OLD-"+suffix {
+		t.Fatalf("expected original IN movement to remain unchanged, got %+v", originalInMovement)
+	}
+	if outboundMovement == nil || outboundMovement.QuantityChange != -4 || outboundMovement.ContainerNo != "USED-OLD-"+suffix {
+		t.Fatalf("expected existing OUT movement to remain on original container, got %+v", outboundMovement)
+	}
+	if adjustMovement == nil || adjustMovement.QuantityChange != -2 || adjustMovement.ContainerNo != "USED-OLD-"+suffix {
+		t.Fatalf("expected quantity correction of -2 on original container, got %+v", adjustMovement)
+	}
+	if transferOutMovement == nil || transferOutMovement.QuantityChange != -4 || transferOutMovement.ContainerNo != "USED-OLD-"+suffix {
+		t.Fatalf("expected transfer-out of remaining quantity from original container, got %+v", transferOutMovement)
+	}
+	if transferInMovement == nil || transferInMovement.QuantityChange != 4 || transferInMovement.ContainerNo != "USED-NEW-"+suffix {
+		t.Fatalf("expected transfer-in of remaining quantity into corrected container, got %+v", transferInMovement)
+	}
+}
+
+func TestReceiptLotTraceIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0)
+
+	receipt, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:     customer.ID,
+		LocationID:     location.ID,
+		DeliveryDate:   "2026-03-29",
+		ContainerNo:    "TRACE-" + suffix,
+		StorageSection: DefaultStorageSection,
+		UnitLabel:      "CTN",
+		Status:         DocumentStatusConfirmed,
+		DocumentNote:   "Receipt lot trace test",
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:            item.SKU,
+			Description:    item.Description,
+			ExpectedQty:    10,
+			ReceivedQty:    10,
+			StorageSection: DefaultStorageSection,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create confirmed receipt: %v", err)
+	}
+
+	receivedItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "TRACE-"+suffix, item.SKU)
+	if _, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo: "TRACE-OUT-" + suffix,
+		OrderRef:      "SO-" + suffix,
+		OutDate:       "2026-03-29",
+		ShipToName:    "Receiver " + suffix,
+		ShipToAddress: "100 Dock Rd",
+		ShipToContact: "Dock 2",
+		CarrierName:   "Trace Carrier",
+		Status:        DocumentStatusConfirmed,
+		DocumentNote:  "Consume traced receipt",
+		Lines: []CreateOutboundDocumentLineInput{{
+			ItemID:    receivedItem.ID,
+			Quantity:  3,
+			UnitLabel: "CTN",
+		}},
+	}); err != nil {
+		t.Fatalf("create consuming outbound for lot trace: %v", err)
+	}
+
+	receiptLots, err := store.ListReceiptLots(ctx, 50, item.SKU)
+	if err != nil {
+		t.Fatalf("list receipt lots: %v", err)
+	}
+
+	var tracedLot *ReceiptLotTrace
+	lineID := receipt.Lines[0].ID
+	for index := range receiptLots {
+		if receiptLots[index].SourceInboundLineID == lineID {
+			tracedLot = &receiptLots[index]
+			break
+		}
+	}
+	if tracedLot == nil {
+		t.Fatalf("expected receipt lot trace for inbound line %d", lineID)
+	}
+	if tracedLot.OriginalQty != 10 {
+		t.Fatalf("expected receipt lot original qty 10, got %d", tracedLot.OriginalQty)
+	}
+	if tracedLot.RemainingQty != 7 {
+		t.Fatalf("expected receipt lot remaining qty 7, got %d", tracedLot.RemainingQty)
+	}
+	if tracedLot.ContainerNo != "TRACE-"+suffix {
+		t.Fatalf("expected receipt lot container TRACE-%s, got %q", suffix, tracedLot.ContainerNo)
+	}
+	if len(tracedLot.Links) == 0 {
+		t.Fatal("expected receipt lot to include linked movements")
+	}
+
+	var consumeLink *ReceiptLotMovementLink
+	for index := range tracedLot.Links {
+		if tracedLot.Links[index].LinkType == "consume" {
+			consumeLink = &tracedLot.Links[index]
+			break
+		}
+	}
+	if consumeLink == nil {
+		t.Fatalf("expected consume link in traced lot links, got %#v", tracedLot.Links)
+	}
+	if consumeLink.LinkedQty != 3 || consumeLink.MovementType != "OUT" {
+		t.Fatalf("expected OUT consume link with qty 3, got %+v", consumeLink)
+	}
+}
+
 func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
@@ -290,6 +681,9 @@ func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("create inbound document: %v", err)
+	}
+	if _, err := store.ArchiveInboundDocument(ctx, original.ID); err == nil {
+		t.Fatal("expected archiving a confirmed inbound document to fail")
 	}
 
 	cancelled, err := store.CancelInboundDocument(ctx, original.ID, CancelInboundDocumentInput{Reason: "Inbound copy source"})
@@ -1443,17 +1837,11 @@ func containsString(values []string, target string) bool {
 
 func mustFindItemByID(t *testing.T, ctx context.Context, store *Store, itemID int64) Item {
 	t.Helper()
-	items, err := store.ListItems(ctx, ItemFilters{})
+	item, err := store.getItem(ctx, itemID)
 	if err != nil {
-		t.Fatalf("list items: %v", err)
+		t.Fatalf("get item %d: %v", itemID, err)
 	}
-	for _, item := range items {
-		if item.ID == itemID {
-			return item
-		}
-	}
-	t.Fatalf("item %d not found", itemID)
-	return Item{}
+	return item
 }
 
 func mustFindItemByLocationAndSection(t *testing.T, ctx context.Context, store *Store, locationID int64, section string, sku string) Item {
@@ -1484,6 +1872,19 @@ func mustFindItemByContainer(t *testing.T, ctx context.Context, store *Store, lo
 	}
 	t.Fatalf("item %s at location %d section %s container %s not found", sku, locationID, section, containerNo)
 	return Item{}
+}
+
+func assertItemHiddenByContainer(t *testing.T, ctx context.Context, store *Store, locationID int64, section string, containerNo string, sku string) {
+	t.Helper()
+	items, err := store.ListItems(ctx, ItemFilters{LocationID: locationID})
+	if err != nil {
+		t.Fatalf("list items: %v", err)
+	}
+	for _, item := range items {
+		if item.SKU == sku && item.LocationID == locationID && item.StorageSection == section && item.ContainerNo == containerNo {
+			t.Fatalf("expected item %s at location %d section %s container %s to be hidden from inventory list", sku, locationID, section, containerNo)
+		}
+	}
 }
 
 func assertMovementTypeCount(t *testing.T, movements []Movement, itemID int64, movementType string, wantCount int) {

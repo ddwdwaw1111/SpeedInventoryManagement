@@ -1,5 +1,5 @@
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Button, Dialog, DialogActions, DialogContent, DialogTitle } from "@mui/material";
+import { type ReactNode, type SyntheticEvent, useCallback, useEffect, useRef, useState } from "react";
+import { Alert, Button, Dialog, DialogActions, DialogContent, DialogTitle, Snackbar } from "@mui/material";
 import type { AlertColor, ButtonProps } from "@mui/material";
 
 type InlineAlertProps = {
@@ -15,6 +15,13 @@ type ConfirmDialogOptions = {
   cancelLabel: ReactNode;
   confirmColor?: ButtonProps["color"];
   severity?: AlertColor;
+};
+
+type ToastNotice = {
+  id: number;
+  message: ReactNode;
+  severity: AlertColor;
+  autoHideDuration: number;
 };
 
 export function InlineAlert({ severity = "error", children, className }: InlineAlertProps) {
@@ -100,4 +107,58 @@ export function useConfirmDialog() {
   );
 
   return { confirm, confirmationDialog };
+}
+
+export function useFeedbackToast() {
+  const [notice, setNotice] = useState<ToastNotice | null>(null);
+
+  const closeToast = useCallback((_event?: Event | SyntheticEvent, reason?: string) => {
+    if (reason === "clickaway") {
+      return;
+    }
+    setNotice(null);
+  }, []);
+
+  const showToast = useCallback((message: ReactNode, severity: AlertColor = "success", autoHideDuration = 3200) => {
+    setNotice({
+      id: Date.now(),
+      message,
+      severity,
+      autoHideDuration
+    });
+  }, []);
+
+  const showSuccess = useCallback((message: ReactNode, autoHideDuration?: number) => {
+    showToast(message, "success", autoHideDuration ?? 3200);
+  }, [showToast]);
+
+  const showError = useCallback((message: ReactNode, autoHideDuration?: number) => {
+    showToast(message, "error", autoHideDuration ?? 4200);
+  }, [showToast]);
+
+  const feedbackToast = (
+    <Snackbar
+      key={notice?.id ?? "feedback-toast"}
+      open={Boolean(notice)}
+      autoHideDuration={notice?.autoHideDuration ?? 3200}
+      onClose={closeToast}
+      anchorOrigin={{ vertical: "top", horizontal: "center" }}
+    >
+      <Alert
+        severity={notice?.severity ?? "success"}
+        variant="filled"
+        onClose={closeToast}
+        sx={{
+          width: "100%",
+          minWidth: 320,
+          alignItems: "center",
+          boxShadow: "0 14px 34px rgba(12, 33, 74, 0.2)"
+        }}
+      >
+        {notice?.message}
+      </Alert>
+    </Snackbar>
+  );
+
+  return { showToast, showSuccess, showError, feedbackToast };
 }

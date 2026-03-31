@@ -13,7 +13,7 @@ import { RowActionsMenu } from "./RowActionsMenu";
 import { formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import type { SKUMaster, SKUMasterPayload, UserRole } from "../lib/types";
-import { InlineAlert, useConfirmDialog } from "./Feedback";
+import { InlineAlert, useConfirmDialog, useFeedbackToast } from "./Feedback";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type SKUMasterPageProps = {
@@ -51,6 +51,7 @@ function createEmptyForm(): SKUMasterFormState {
 export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefresh }: SKUMasterPageProps) {
   const { t } = useI18n();
   const { confirm, confirmationDialog } = useConfirmDialog();
+  const { showSuccess, showError, feedbackToast } = useFeedbackToast();
   const canManage = currentUserRole === "admin";
   const pageDescription = t("skuMasterDesc");
   const permissionNotice = canManage ? "" : t("adminOnlyManageNotice");
@@ -247,6 +248,7 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
     const savedRow = await api.updateSKUMaster(updatedRow.id, payload);
     setEditableRows((current) => current.map((row) => (row.id === savedRow.id ? savedRow : row)));
     void onRefresh();
+    showSuccess(t("skuMasterSavedSuccess"));
     return savedRow;
   }
 
@@ -254,9 +256,12 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
     if (!canManage) return;
     try {
       await api.updateUIPreference<string[]>(SKU_MASTER_COLUMN_ORDER_PREFERENCE_KEY, nextOrder);
+      showSuccess(t("columnOrderSavedSuccess"));
     } catch (error) {
       setColumnOrder(previousOrder);
-      setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveSkuMaster"));
+      const message = error instanceof Error ? error.message : t("couldNotSaveSkuMaster");
+      setErrorMessage(message);
+      showError(message);
     }
   }
 
@@ -308,6 +313,12 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
     setIsModalOpen(false);
   }
 
+  function showActionError(error: unknown, fallbackMessage: string) {
+    const message = error instanceof Error ? error.message : fallbackMessage;
+    setErrorMessage(message);
+    showError(message);
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canManage) return;
@@ -333,8 +344,9 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
       }
       closeModal();
       await onRefresh();
+      showSuccess(t("skuMasterSavedSuccess"));
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveSkuMaster"));
+      showActionError(error, t("couldNotSaveSkuMaster"));
     } finally {
       setIsSubmitting(false);
     }
@@ -357,8 +369,9 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
     try {
       await api.deleteSKUMaster(row.id);
       await onRefresh();
+      showSuccess(t("skuMasterDeletedSuccess"));
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : t("couldNotDeleteSkuMaster"));
+      showActionError(error, t("couldNotDeleteSkuMaster"));
     }
   }
 
@@ -395,7 +408,7 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
               initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
               getRowHeight={() => 64}
               processRowUpdate={handleInlineUpdate}
-              onProcessRowUpdateError={(error) => setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveSkuMaster"))}
+              onProcessRowUpdateError={(error) => showActionError(error, t("couldNotSaveSkuMaster"))}
               slots={mainGridSlots}
               sx={{ border: 0 }}
             />
@@ -435,6 +448,7 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
           </form>
         </DialogContent>
       </Dialog>
+      {feedbackToast}
 
       <Dialog
         open={isColumnOrderModalOpen}

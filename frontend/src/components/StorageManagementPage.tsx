@@ -3,14 +3,15 @@ import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import { Box, Chip } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { api } from "../lib/api";
 import { formatDateTimeValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
+import { consumePageFeedback } from "../lib/pageFeedback";
 import { useSettings } from "../lib/settings";
 import type { Item, Location, UserRole } from "../lib/types";
-import { useConfirmDialog } from "./Feedback";
+import { useConfirmDialog, useFeedbackToast } from "./Feedback";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
@@ -39,10 +40,25 @@ export function StorageManagementPage({
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const { confirm, confirmationDialog } = useConfirmDialog();
+  const { showSuccess, showError, feedbackToast } = useFeedbackToast();
   const canManage = currentUserRole === "admin";
   const pageDescription = t("storageManagementDesc");
   const permissionNotice = canManage ? "" : t("adminOnlyManageNotice");
   const [errorMessage, setErrorMessage] = useState("");
+
+  useEffect(() => {
+    const pendingNotice = consumePageFeedback();
+    if (!pendingNotice) {
+      return;
+    }
+
+    if (pendingNotice.severity === "success") {
+      showSuccess(pendingNotice.message);
+      return;
+    }
+
+    showError(pendingNotice.message);
+  }, [showError, showSuccess]);
 
   const locationUsage = useMemo(() => {
     const usageMap = new Map<number, number>();
@@ -92,8 +108,11 @@ export function StorageManagementPage({
     try {
       await api.deleteLocation(location.id);
       await onRefresh();
+      showSuccess(t("locationDeletedSuccess"));
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : t("couldNotDeleteLocation"));
+      const message = error instanceof Error ? error.message : t("couldNotDeleteLocation");
+      setErrorMessage(message);
+      showError(message);
     }
   }
 
@@ -203,12 +222,12 @@ export function StorageManagementPage({
         <section className="tw-panel flex flex-col gap-4 px-6 py-6">
           <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-200/80 pb-4">
             <div className="space-y-1">
-              <p className="tw-kicker m-0">Directory</p>
-              <h2 className="tw-heading-lg m-0">Warehouse Directory</h2>
-              <p className="tw-body-muted m-0">Review warehouses, active areas, and assigned inventory rows before opening the visual editor.</p>
+              <p className="tw-kicker m-0">{t("directory")}</p>
+              <h2 className="tw-heading-lg m-0">{t("warehouseDirectory")}</h2>
+              <p className="tw-body-muted m-0">{t("warehouseDirectoryDesc")}</p>
             </div>
             <div className="rounded-xl bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-600 ring-1 ring-slate-200">
-              {locations.length} {locations.length === 1 ? "record" : "records"}
+              {t("recordCount")}: {locations.length}
             </div>
           </div>
 
@@ -258,6 +277,7 @@ export function StorageManagementPage({
           </div>
         </section>
       </section>
+      {feedbackToast}
       {columnOrderDialog}
       {confirmationDialog}
     </main>

@@ -454,6 +454,73 @@ func Migrate(db *sql.DB) error {
 		LEFT JOIN inventory_items i ON i.id = l.item_id
 		LEFT JOIN outbound_pick_allocations a ON a.line_id = l.id
 		WHERE a.id IS NULL`,
+		`CREATE TABLE IF NOT EXISTS receipt_lots (
+			id BIGINT NOT NULL AUTO_INCREMENT,
+			parent_receipt_lot_id BIGINT DEFAULT NULL,
+			source_inbound_document_id BIGINT NOT NULL,
+			source_inbound_line_id BIGINT NOT NULL,
+			item_id BIGINT NOT NULL,
+			customer_id BIGINT NOT NULL,
+			location_id BIGINT NOT NULL,
+			storage_section VARCHAR(16) NOT NULL DEFAULT 'TEMP',
+			container_no VARCHAR(120) NOT NULL DEFAULT '',
+			original_qty INT NOT NULL DEFAULT 0,
+			remaining_qty INT NOT NULL DEFAULT 0,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			KEY idx_receipt_lots_parent_id (parent_receipt_lot_id),
+			KEY idx_receipt_lots_source_line_id (source_inbound_line_id),
+			KEY idx_receipt_lots_item_id (item_id),
+			KEY idx_receipt_lots_remaining_qty (remaining_qty),
+			CONSTRAINT fk_receipt_lots_parent
+				FOREIGN KEY (parent_receipt_lot_id) REFERENCES receipt_lots (id)
+				ON DELETE SET NULL,
+			CONSTRAINT fk_receipt_lots_source_document
+				FOREIGN KEY (source_inbound_document_id) REFERENCES inbound_documents (id)
+				ON DELETE CASCADE,
+			CONSTRAINT fk_receipt_lots_source_line
+				FOREIGN KEY (source_inbound_line_id) REFERENCES inbound_document_lines (id)
+				ON DELETE CASCADE,
+			CONSTRAINT fk_receipt_lots_item
+				FOREIGN KEY (item_id) REFERENCES inventory_items (id)
+				ON DELETE CASCADE,
+			CONSTRAINT fk_receipt_lots_customer
+				FOREIGN KEY (customer_id) REFERENCES customers (id),
+			CONSTRAINT fk_receipt_lots_location
+				FOREIGN KEY (location_id) REFERENCES storage_locations (id)
+		)`,
+		`ALTER TABLE receipt_lots ADD COLUMN IF NOT EXISTS parent_receipt_lot_id BIGINT DEFAULT NULL AFTER id`,
+		`ALTER TABLE receipt_lots ADD COLUMN IF NOT EXISTS source_inbound_document_id BIGINT NOT NULL AFTER parent_receipt_lot_id`,
+		`ALTER TABLE receipt_lots ADD COLUMN IF NOT EXISTS source_inbound_line_id BIGINT NOT NULL AFTER source_inbound_document_id`,
+		`ALTER TABLE receipt_lots ADD COLUMN IF NOT EXISTS item_id BIGINT NOT NULL AFTER source_inbound_line_id`,
+		`ALTER TABLE receipt_lots ADD COLUMN IF NOT EXISTS customer_id BIGINT NOT NULL AFTER item_id`,
+		`ALTER TABLE receipt_lots ADD COLUMN IF NOT EXISTS location_id BIGINT NOT NULL AFTER customer_id`,
+		`ALTER TABLE receipt_lots ADD COLUMN IF NOT EXISTS storage_section VARCHAR(16) NOT NULL DEFAULT 'TEMP' AFTER location_id`,
+		`ALTER TABLE receipt_lots ADD COLUMN IF NOT EXISTS container_no VARCHAR(120) NOT NULL DEFAULT '' AFTER storage_section`,
+		`ALTER TABLE receipt_lots ADD COLUMN IF NOT EXISTS original_qty INT NOT NULL DEFAULT 0 AFTER container_no`,
+		`ALTER TABLE receipt_lots ADD COLUMN IF NOT EXISTS remaining_qty INT NOT NULL DEFAULT 0 AFTER original_qty`,
+		`CREATE TABLE IF NOT EXISTS movement_lot_links (
+			id BIGINT NOT NULL AUTO_INCREMENT,
+			movement_id BIGINT NOT NULL,
+			receipt_lot_id BIGINT NOT NULL,
+			quantity INT NOT NULL DEFAULT 0,
+			link_type VARCHAR(32) NOT NULL DEFAULT 'consume',
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			KEY idx_movement_lot_links_movement_id (movement_id),
+			KEY idx_movement_lot_links_receipt_lot_id (receipt_lot_id),
+			CONSTRAINT fk_movement_lot_links_movement
+				FOREIGN KEY (movement_id) REFERENCES stock_movements (id)
+				ON DELETE CASCADE,
+			CONSTRAINT fk_movement_lot_links_receipt_lot
+				FOREIGN KEY (receipt_lot_id) REFERENCES receipt_lots (id)
+				ON DELETE CASCADE
+		)`,
+		`ALTER TABLE movement_lot_links ADD COLUMN IF NOT EXISTS movement_id BIGINT NOT NULL AFTER id`,
+		`ALTER TABLE movement_lot_links ADD COLUMN IF NOT EXISTS receipt_lot_id BIGINT NOT NULL AFTER movement_id`,
+		`ALTER TABLE movement_lot_links ADD COLUMN IF NOT EXISTS quantity INT NOT NULL DEFAULT 0 AFTER receipt_lot_id`,
+		`ALTER TABLE movement_lot_links ADD COLUMN IF NOT EXISTS link_type VARCHAR(32) NOT NULL DEFAULT 'consume' AFTER quantity`,
 		`CREATE TABLE IF NOT EXISTS inventory_adjustments (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			adjustment_no VARCHAR(120) NOT NULL,

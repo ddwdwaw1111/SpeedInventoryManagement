@@ -25,6 +25,7 @@ import type {
   Movement,
   OutboundDocument,
   OutboundDocumentPayload,
+  ReceiptLotTrace,
   SKUMaster,
   SKUMasterPayload,
   UIPreference,
@@ -288,6 +289,14 @@ export const api = {
 
   getMovements(limit = 12) {
     return request<Movement[]>(`/movements?limit=${limit}`);
+  },
+
+  getReceiptLots(limit = 500, search = "") {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (search.trim()) {
+      params.set("search", search.trim());
+    }
+    return request<ReceiptLotTrace[]>(`/receipt-lots?${params.toString()}`);
   },
 
   getOutboundDocuments(limit = 100, archiveScope: DocumentArchiveScope = "active") {

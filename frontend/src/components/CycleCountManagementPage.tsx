@@ -13,7 +13,7 @@ import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type { PageKey } from "../lib/routes";
 import { normalizeStorageSection, type CycleCount, type Item, type UserRole } from "../lib/types";
-import { InlineAlert } from "./Feedback";
+import { InlineAlert, useFeedbackToast } from "./Feedback";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
@@ -64,6 +64,7 @@ export function CycleCountManagementPage({
 }: CycleCountManagementPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
+  const { showSuccess, showError, feedbackToast } = useFeedbackToast();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
   const canConfigureColumns = currentUserRole === "admin";
   const pageDescription = t("cycleCountsDesc");
@@ -200,6 +201,12 @@ export function CycleCountManagementPage({
     setLines((current) => current.map((line) => line.id === lineId ? { ...line, ...patch } : line));
   }
 
+  function showActionError(error: unknown, fallbackMessage: string) {
+    const message = error instanceof Error ? error.message : fallbackMessage;
+    setErrorMessage(message);
+    showError(message);
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
@@ -219,8 +226,9 @@ export function CycleCountManagementPage({
       });
       closeCreateModal();
       await onRefresh();
+      showSuccess(t("cycleCountSavedSuccess"));
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveCycleCount"));
+      showActionError(error, t("couldNotSaveCycleCount"));
     } finally {
       setSubmitting(false);
     }
@@ -266,6 +274,7 @@ export function CycleCountManagementPage({
         </div>
       </section>
       {columnOrderDialog}
+      {feedbackToast}
 
       <Drawer
         anchor="right"

@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 PLATFORM="${PLATFORM:-linux/amd64}"
@@ -24,6 +24,7 @@ SSH_KEY_PATH="${SSH_KEY_PATH:-$HOME/.ssh/oracle-prod.key}"
 ENV_FILE_PATH="${ENV_FILE_PATH:-$ROOT_DIR/.env.prod}"
 DEPLOY_STACK="${DEPLOY_STACK:-https}"
 ARCHIVE_RETENTION="${ARCHIVE_RETENTION:-4}"
+LOCAL_ARCHIVE_RETENTION="${LOCAL_ARCHIVE_RETENTION:-2}"
 REMOTE_ARCHIVE_NAME=""
 PROD_COMPOSE_CHANGED=0
 HTTPS_COMPOSE_CHANGED=0
@@ -61,7 +62,7 @@ upload_if_changed() {
 
 usage() {
   cat <<EOF
-Usage: bash deploy_prod.sh [options]
+Usage: bash scripts/deploy_prod.sh [options]
 
 Builds production Docker images locally and exports them into a single tar archive
 that can be copied to the server and loaded with 'docker load'. It can also
@@ -83,14 +84,15 @@ Options:
   --env-file <path>          Local env file to upload. Default: ${ENV_FILE_PATH}
   --stack <auto|http|https>  Deploy stack selection. Default: ${DEPLOY_STACK}
   --keep-archives <count>    Remote tar archives to keep. Default: ${ARCHIVE_RETENTION}
+  --keep-local-archives <n>  Local tar archives to keep in dist. Default: ${LOCAL_ARCHIVE_RETENTION}
   --push                     Use buildx --push instead of --load. Not recommended for this workflow.
   -h, --help                 Show this help.
 
 Examples:
-  bash deploy_prod.sh
-  bash deploy_prod.sh --platform linux/amd64
-  bash deploy_prod.sh --platform linux/arm64 --tag-prefix sim
-  bash deploy_prod.sh --deploy --stack https --server-host 129.213.52.3 --ssh-key ~/oracle.key
+  bash scripts/deploy_prod.sh
+  bash scripts/deploy_prod.sh --platform linux/amd64
+  bash scripts/deploy_prod.sh --platform linux/arm64 --tag-prefix sim
+  bash scripts/deploy_prod.sh --deploy --stack https --server-host 129.213.52.3 --ssh-key ~/oracle.key
 EOF
 }
 
@@ -158,6 +160,10 @@ while [[ $# -gt 0 ]]; do
       ARCHIVE_RETENTION="$2"
       shift 2
       ;;
+    --keep-local-archives)
+      LOCAL_ARCHIVE_RETENTION="$2"
+      shift 2
+      ;;
     --push)
       LOAD_FLAG="--push"
       shift
@@ -189,6 +195,11 @@ if ! [[ "$ARCHIVE_RETENTION" =~ ^[0-9]+$ ]] || (( ARCHIVE_RETENTION < 1 )); then
   exit 1
 fi
 
+if ! [[ "$LOCAL_ARCHIVE_RETENTION" =~ ^[0-9]+$ ]] || (( LOCAL_ARCHIVE_RETENTION < 1 )); then
+  echo "Invalid --keep-local-archives value: ${LOCAL_ARCHIVE_RETENTION}" >&2
+  exit 1
+fi
+
 mkdir -p "$OUTPUT_DIR"
 ARCHIVE_PATH="$OUTPUT_DIR/$ARCHIVE_NAME"
 
@@ -196,6 +207,7 @@ echo "==> Target platform: $PLATFORM"
 echo "==> Backend image:   $BACKEND_IMAGE"
 echo "==> Frontend image:  $FRONTEND_IMAGE"
 echo "==> Archive output:  $ARCHIVE_PATH"
+echo "==> Keep local:      ${LOCAL_ARCHIVE_RETENTION}"
 if [[ "$DEPLOY_AFTER_BUILD" == "true" ]]; then
   echo "==> Deploy target:   ${SERVER_USER}@${SERVER_HOST}:${SERVER_PATH}"
   echo "==> SSH key:         ${SSH_KEY_PATH}"
@@ -266,6 +278,17 @@ Deploy stack selection:
   http  -> always uses docker-compose.prod.yml
   https -> always uses docker-compose.https.yml (default)
 EOF
+
+mapfile -t local_archive_files < <(find "$OUTPUT_DIR" -maxdepth 1 -type f -name '*.tar' -printf '%T@ %p\n' | sort -nr | awk '{print $2}')
+if (( ${#local_archive_files[@]} > LOCAL_ARCHIVE_RETENTION )); then
+  echo "==> Pruning local archives (keeping latest ${LOCAL_ARCHIVE_RETENTION})"
+  printf '%s\n' "${local_archive_files[@]:LOCAL_ARCHIVE_RETENTION}" | while IFS= read -r archive_path; do
+    [[ -n "$archive_path" ]] || continue
+    helper_path="$OUTPUT_DIR/README-$(basename "${archive_path%.tar}").txt"
+    rm -f -- "$archive_path"
+    rm -f -- "$helper_path"
+  done
+fi
 
 if [[ "$DEPLOY_AFTER_BUILD" == "true" ]]; then
   if [[ -z "$SERVER_HOST" ]]; then

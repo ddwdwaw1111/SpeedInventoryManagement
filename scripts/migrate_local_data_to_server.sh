@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 SERVER_USER="${SERVER_USER:-ubuntu}"
@@ -23,7 +23,7 @@ ssh_args=()
 
 usage() {
   cat <<EOF
-Usage: bash migrate_local_data_to_server.sh [options]
+Usage: bash scripts/migrate_local_data_to_server.sh [options]
 
 Exports local MariaDB data from Docker, uploads it to the server, backs up the
 server database, then imports the local dump into the remote database.

@@ -23,7 +23,7 @@ import {
   type Location,
   type UserRole
 } from "../lib/types";
-import { InlineAlert } from "./Feedback";
+import { InlineAlert, useFeedbackToast } from "./Feedback";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
@@ -80,6 +80,7 @@ export function TransferManagementPage({
 }: TransferManagementPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
+  const { showSuccess, showError, feedbackToast } = useFeedbackToast();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
   const canConfigureColumns = currentUserRole === "admin";
   const pageDescription = t("transfersDesc");
@@ -235,6 +236,12 @@ export function TransferManagementPage({
     setLines((current) => current.map((line) => line.id === lineId ? { ...line, ...patch } : line));
   }
 
+  function showActionError(error: unknown, fallbackMessage: string) {
+    const message = error instanceof Error ? error.message : fallbackMessage;
+    setErrorMessage(message);
+    showError(message);
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
@@ -256,8 +263,9 @@ export function TransferManagementPage({
       });
       closeCreateModal();
       await onRefresh();
+      showSuccess(t("transferSavedSuccess"));
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : t("couldNotSaveTransfer"));
+      showActionError(error, t("couldNotSaveTransfer"));
     } finally {
       setSubmitting(false);
     }
@@ -303,6 +311,7 @@ export function TransferManagementPage({
         </div>
       </section>
       {columnOrderDialog}
+      {feedbackToast}
 
       <Drawer
         anchor="right"

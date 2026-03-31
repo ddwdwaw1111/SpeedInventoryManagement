@@ -983,6 +983,10 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 				firstMovementID = movementID
 			}
 
+			if _, err := s.consumeReceiptLotsForItemTx(ctx, tx, allocation.ItemID, allocation.AllocatedQty, movementID, "consume"); err != nil {
+				return fmt.Errorf("allocate receipt lots for outbound movement: %w", err)
+			}
+
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO outbound_pick_allocations (
 					line_id,
@@ -1181,6 +1185,12 @@ func (s *Store) CancelOutboundDocument(ctx context.Context, documentID int64, in
 					nullableString(cancellationReason),
 				); err != nil {
 					return OutboundDocument{}, mapDBError(fmt.Errorf("create outbound reversal movement: %w", err))
+				}
+
+				if allocation.MovementID > 0 {
+					if err := s.restoreReceiptLotsForMovementTx(ctx, tx, allocation.MovementID); err != nil {
+						return OutboundDocument{}, fmt.Errorf("restore receipt lots after outbound cancellation: %w", err)
+					}
 				}
 
 				movementInput := CreateMovementInput{

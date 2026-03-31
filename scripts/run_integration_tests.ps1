@@ -1,11 +1,12 @@
 Param(
     [string]$GoImage = "golang:1.22-alpine",
-    [string]$MariaDBImage = "mariadb:11"
+    [string]$MariaDBImage = "mariadb:11",
+    [string]$TestPattern = "Integration"
 )
 
 $ErrorActionPreference = "Stop"
 
-$backendDir = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$backendDir = (Resolve-Path (Join-Path $PSScriptRoot "..\\backend")).Path
 $networkName = "speed-inventory-int-" + ([guid]::NewGuid().ToString("N").Substring(0, 8))
 $containerName = "speed-inventory-db-int-" + ([guid]::NewGuid().ToString("N").Substring(0, 8))
 $dbName = "speed_inventory_management_test"
@@ -55,7 +56,7 @@ try {
         throw "MariaDB did not become ready in time."
     }
 
-    Write-Host "Running service integration tests"
+    Write-Host "Running service integration tests matching pattern: $TestPattern"
     Invoke-Docker -DockerArgs @(
         "run", "--rm",
         "--network", $networkName,
@@ -67,7 +68,7 @@ try {
         "-e", "TEST_MYSQL_USER=$dbUser",
         "-e", "TEST_MYSQL_PASSWORD=$dbPassword",
         $GoImage,
-        "sh", "-c", "go test ./internal/service -run Integration -count=1"
+        "sh", "-c", "go test ./internal/service -run '$TestPattern' -count=1"
     )
 }
 finally {
