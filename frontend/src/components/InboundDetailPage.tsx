@@ -95,7 +95,7 @@ export function InboundDetailPage({
                 type="button"
                 onClick={handleOpenWorkspace}
                 disabled={!document}
-                className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <OpenInNewRoundedIcon sx={{ fontSize: 18 }} />
                 {t("inboundDetailOpenWorkspace")}
@@ -104,7 +104,7 @@ export function InboundDetailPage({
                 type="button"
                 onClick={handleOpenWorkspace}
                 disabled={!document}
-                className="inline-flex items-center gap-2 rounded-xl bg-[#143569] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(20,53,105,0.18)] transition hover:bg-[#102f5f] disabled:cursor-not-allowed disabled:opacity-60"
+                className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-[#143569] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(20,53,105,0.18)] transition hover:bg-[#102f5f] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <MoveToInboxOutlinedIcon sx={{ fontSize: 18 }} />
                 {canManage ? t("editReceipt") : t("documentsView")}
@@ -164,14 +164,18 @@ export function InboundDetailPage({
                             isComplete
                               ? "bg-emerald-400/15 text-emerald-700 ring-emerald-400/20"
                               : isCurrent
-                                ? "bg-[#143569] text-white ring-[#143569]/10 shadow-[0_12px_24px_rgba(20,53,105,0.2)]"
+                                ? "bg-amber-100 text-amber-700 ring-amber-300/60 shadow-[0_12px_24px_rgba(217,119,6,0.12)]"
                                 : "bg-slate-100 text-slate-400 ring-slate-200"
                           }`}
                         >
                           <span className="h-2.5 w-2.5 rounded-full bg-current opacity-80" />
                         </div>
                         <div className="min-w-0">
-                          <div className={`text-sm font-semibold ${isCurrent ? "text-[#0d2d63]" : isComplete ? "text-slate-700" : "text-slate-400"}`}>
+                          <div
+                            className={`text-sm font-semibold ${
+                              isCurrent ? "text-amber-700" : isComplete ? "text-emerald-700" : "text-slate-400"
+                            }`}
+                          >
                             {step}
                           </div>
                           <div className="mt-1 text-xs text-slate-500">
@@ -226,7 +230,7 @@ export function InboundDetailPage({
                   <span>{t("description")}</span>
                   <span>{t("expectedQty")}</span>
                   <span>{t("receivedQty")}</span>
-                  <span>{t("status")}</span>
+                  <span>{t("receiptVariance")}</span>
                 </div>
                 <div className="divide-y divide-slate-200/80">
                   {document.lines.map((line) => (
@@ -245,8 +249,8 @@ export function InboundDetailPage({
                       <div className="text-sm font-semibold text-slate-900">{line.expectedQty}</div>
                       <div className="text-sm font-semibold text-slate-900">{line.receivedQty}</div>
                       <div className="flex items-start">
-                        <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${getLineStatusToneClass(line)}`}>
-                          {getLineStatusLabel(line, t)}
+                        <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${getLineReceiptVarianceToneClass(line)}`}>
+                          {getLineReceiptVarianceLabel(line, t)}
                         </span>
                       </div>
                     </div>
@@ -494,24 +498,24 @@ function formatDateTime(value: string | null, formatter: Intl.DateTimeFormat) {
   return formatter.format(parsed);
 }
 
-function getLineStatusLabel(line: InboundDocumentLine, t: Translate) {
-  if (line.receivedQty <= 0) {
-    return t("receiptLinePending");
-  }
+function getLineReceiptVarianceLabel(line: InboundDocumentLine, t: Translate) {
   if (line.receivedQty === line.expectedQty) {
-    return t("receiptLineVerified");
+    return t("matched");
   }
-  return t("receiptLineVariance");
+  if (line.receivedQty < line.expectedQty) {
+    return t("shortReceived");
+  }
+  return t("overReceived");
 }
 
-function getLineStatusToneClass(line: InboundDocumentLine) {
-  if (line.receivedQty <= 0) {
-    return "bg-slate-100 text-slate-600 ring-1 ring-slate-200";
-  }
+function getLineReceiptVarianceToneClass(line: InboundDocumentLine) {
   if (line.receivedQty === line.expectedQty) {
-    return "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100";
+    return "bg-[rgb(209_250_229_/_var(--tw-bg-opacity,1))] text-[#143569] ring-1 ring-emerald-100";
   }
-  return "bg-amber-50 text-amber-700 ring-1 ring-amber-100";
+  if (line.receivedQty < line.expectedQty) {
+    return "bg-[#f1e6d2] text-[#143569] ring-1 ring-[#e5d3ac]";
+  }
+  return "bg-[#dce8f6] text-[#143569] ring-1 ring-[#c5d8ee]";
 }
 
 function getEventToneClass(tone: ActivityEvent["tone"]) {

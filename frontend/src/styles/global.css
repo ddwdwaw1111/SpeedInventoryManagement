@@ -2512,6 +2512,63 @@ textarea:focus {
   color: var(--ink-soft);
 }
 
+.interactive-block,
+.interactive-button-lift {
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.interactive-block {
+  will-change: transform;
+}
+
+.interactive-block:hover {
+  transform: translateY(-2px);
+  border-color: rgba(20, 53, 105, 0.18);
+  box-shadow:
+    0 18px 34px rgba(15, 23, 42, 0.08),
+    0 0 0 1px rgba(20, 53, 105, 0.05);
+}
+
+.interactive-block--soft:hover {
+  background: rgba(255, 255, 255, 0.98);
+}
+
+.interactive-block--slate:hover {
+  background: rgba(248, 250, 252, 0.98);
+}
+
+.interactive-block:active {
+  transform: translateY(0);
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.05);
+}
+
+.interactive-block:focus-visible,
+.interactive-button-lift:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 3px rgba(20, 53, 105, 0.14),
+    0 12px 28px rgba(15, 23, 42, 0.08);
+}
+
+.interactive-button-lift:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+}
+
+.interactive-button-lift:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.interactive-button-lift:disabled {
+  transform: none;
+  box-shadow: none;
+}
+
 .sheet-table-wrap {
   overflow-x: auto;
   padding: 0 0.7rem 0.8rem;
@@ -3887,7 +3944,9 @@ textarea:focus {
   .app-user__trigger,
   .app-sidebar__link,
   .app-sidebar__rail-toggle,
-  .MuiIconButton-root {
+  .MuiIconButton-root,
+  .interactive-block,
+  .interactive-button-lift {
     transition: none;
   }
 }

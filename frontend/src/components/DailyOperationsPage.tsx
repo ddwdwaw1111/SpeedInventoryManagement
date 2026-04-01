@@ -10,7 +10,7 @@ import { type ChangeEvent, type ReactNode, useMemo, useRef, useState } from "rea
 
 import { api } from "../lib/api";
 import { setPendingActivityManagementLaunchContext } from "../lib/activityManagementLaunchContext";
-import { formatDateValue, parseDateValue } from "../lib/dates";
+import { formatDateValue, normalizeCalendarDate, shiftIsoDate, toIsoDateString } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
 import type { InboundDocument, OutboundDocument, UserRole } from "../lib/types";
@@ -296,7 +296,7 @@ export function DailyOperationsPage({
               <button
                 type="button"
                 onClick={() => onOpenDate(previousDate)}
-                className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-white text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-50"
+                className="interactive-button-lift inline-flex h-11 w-11 items-center justify-center rounded-xl bg-white text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-50"
                 aria-label={t("previousDay")}
               >
                 <ChevronLeftRoundedIcon fontSize="small" />
@@ -304,7 +304,7 @@ export function DailyOperationsPage({
               <button
                 type="button"
                 onClick={handleOpenDatePicker}
-                className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50"
+                className="interactive-button-lift rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50"
               >
                 {activeDateLabel}
                 {isToday ? (
@@ -316,7 +316,7 @@ export function DailyOperationsPage({
               <button
                 type="button"
                 onClick={() => onOpenDate(nextDate)}
-                className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-white text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-50"
+                className="interactive-button-lift inline-flex h-11 w-11 items-center justify-center rounded-xl bg-white text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-50"
                 aria-label={t("nextDay")}
               >
                 <ChevronRightRoundedIcon fontSize="small" />
@@ -440,7 +440,7 @@ function DailyOperationsSection({
             type="button"
             onClick={onAction}
             disabled={actionDisabled}
-            className="inline-flex items-center gap-2 rounded-xl bg-[#143569] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(20,53,105,0.18)] transition hover:bg-[#102f5f] disabled:cursor-not-allowed disabled:opacity-60"
+            className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-[#143569] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(20,53,105,0.18)] transition hover:bg-[#102f5f] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {actionIcon}
             {actionLabel}
@@ -468,7 +468,10 @@ function DailyOperationsSection({
       ) : (
         <div className="mt-4 space-y-3">
           {rows.map((row) => (
-            <article key={row.id} className="rounded-[18px] border border-slate-200/80 bg-slate-50/80 px-4 py-4 shadow-[0_8px_22px_rgba(15,23,42,0.03)]">
+            <article
+              key={row.id}
+              className="interactive-block interactive-block--slate rounded-[18px] border border-slate-200/80 bg-slate-50/80 px-4 py-4 shadow-[0_8px_22px_rgba(15,23,42,0.03)]"
+            >
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
@@ -486,7 +489,6 @@ function DailyOperationsSection({
                   <MinimalWorkflowStepper
                     steps={row.workflowSteps}
                     currentStepIndex={row.workflowStepIndex}
-                    tone={row.tone}
                   />
                 </div>
 
@@ -496,7 +498,7 @@ function DailyOperationsSection({
                       type="button"
                       onClick={() => onAdvanceRow(row)}
                       disabled={busyActionKey === `advance-${row.rowKey}`}
-                      className="inline-flex items-center gap-2 rounded-xl bg-[#143569] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(20,53,105,0.14)] transition hover:bg-[#102f5f] disabled:cursor-not-allowed disabled:opacity-60"
+                      className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-[#143569] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(20,53,105,0.14)] transition hover:bg-[#102f5f] disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <ChevronRightRoundedIcon sx={{ fontSize: 18 }} />
                       {row.nextActionLabel}
@@ -507,7 +509,7 @@ function DailyOperationsSection({
                       type="button"
                       onClick={() => onCopyRow(row)}
                       disabled={busyActionKey === `copy-${row.rowKey}`}
-                      className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <ContentCopyOutlinedIcon sx={{ fontSize: 18 }} />
                       {copyLabel}
@@ -516,7 +518,7 @@ function DailyOperationsSection({
                   <button
                     type="button"
                     onClick={() => onOpenRow(row.id)}
-                    className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50"
+                    className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50"
                   >
                     <VisibilityOutlinedIcon sx={{ fontSize: 18 }} />
                     {t("details")}
@@ -533,52 +535,40 @@ function DailyOperationsSection({
 
 function MinimalWorkflowStepper({
   steps,
-  currentStepIndex,
-  tone
+  currentStepIndex
 }: {
   steps: string[];
   currentStepIndex: number;
-  tone: DailyOperationsRow["tone"];
 }) {
   return (
     <div className="mt-3.5">
-      <div className="grid grid-cols-2 gap-x-4 gap-y-3 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-0 md:grid-cols-4">
         {steps.map((step, index) => {
           const isComplete = index < currentStepIndex;
           const isCurrent = index === currentStepIndex;
-          const isUpcoming = index > currentStepIndex;
 
           return (
               <div key={`${step}-${index}`} className="min-w-0">
-                <div className="flex min-w-0 items-center gap-0.5">
+                <div className="flex min-w-0 items-center gap-0">
                   <span
-                    className={`text-[10px] font-semibold uppercase tracking-[0.14em] ${
+                    className={`inline-flex min-h-7 items-center rounded-md px-2 py-1 text-[9px] font-semibold uppercase leading-none tracking-[0.12em] ${
                       isCurrent
-                        ? "text-slate-700"
+                        ? "bg-[#e9ddc8] text-[#143569]"
                         : isComplete
-                      ? "text-slate-500"
-                      : "text-slate-400"
+                        ? "bg-[rgb(209_250_229_/_var(--tw-bg-opacity,1))] text-[#143569]"
+                        : "bg-[#e4e8ed] text-[#143569]"
                   }`}
                 >
                   {step}
                   </span>
-                  {isUpcoming ? (
+                  {index < steps.length - 1 ? (
                     <LabelImportantOutlinedIcon
                       aria-hidden="true"
-                      className={`shrink-0 ${
-                        index === currentStepIndex + 1 ? stepperArrowToneClass(tone) : "text-slate-300"
-                      }`}
-                      sx={{ fontSize: 15 }}
+                      className="shrink-0 text-[#143569]"
+                      sx={{ fontSize: 14 }}
                     />
                   ) : null}
-              </div>
-              {index < steps.length - 1 ? (
-                <span
-                  className={`mt-2 block h-px w-full ${
-                    index < currentStepIndex ? stepperLineToneClass(tone) : "bg-slate-200"
-                  }`}
-                />
-              ) : null}
+                </div>
             </div>
           );
         })}
@@ -707,32 +697,6 @@ function toneBadgeClass(tone: "emerald" | "blue" | "amber" | "slate") {
   }
 }
 
-function stepperArrowToneClass(tone: DailyOperationsRow["tone"]) {
-  switch (tone) {
-    case "emerald":
-      return "text-emerald-500";
-    case "amber":
-      return "text-amber-500";
-    case "slate":
-      return "text-slate-500";
-    default:
-      return "text-[#143569]";
-  }
-}
-
-function stepperLineToneClass(tone: DailyOperationsRow["tone"]) {
-  switch (tone) {
-    case "emerald":
-      return "bg-emerald-300";
-    case "amber":
-      return "bg-amber-300";
-    case "slate":
-      return "bg-slate-300";
-    default:
-      return "bg-[#143569]/30";
-  }
-}
-
 function getInboundTrackingAction(document: Pick<InboundDocument, "trackingStatus" | "status">, t: (key: string) => string) {
   switch (normalizeInboundTrackingStatus(document.trackingStatus, document.status)) {
     case "SCHEDULED":
@@ -820,39 +784,5 @@ function getOutboundDateKey(document: OutboundDocument) {
 }
 
 function getDateKey(value: string | null | undefined) {
-  if (!value) {
-    return "";
-  }
-
-  const parsed = /^\d{4}-\d{2}-\d{2}(?:T00:00:00(?:\.000)?Z)?$/.test(value)
-    ? parseDateValue(value)
-    : new Date(value);
-
-  if (Number.isNaN(parsed.getTime())) {
-    return "";
-  }
-
-  return toIsoDateString(parsed);
-}
-
-function normalizeCalendarDate(value: string | null | undefined) {
-  const trimmed = (value || "").trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  return getDateKey(trimmed) || null;
-}
-
-function toIsoDateString(date: Date) {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function shiftIsoDate(value: string, delta: number) {
-  const parsed = parseDateValue(value);
-  parsed.setDate(parsed.getDate() + delta);
-  return toIsoDateString(parsed);
+  return normalizeCalendarDate(value) || "";
 }

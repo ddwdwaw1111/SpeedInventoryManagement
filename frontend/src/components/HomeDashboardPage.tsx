@@ -1,6 +1,5 @@
 import ChevronLeftRoundedIcon from "@mui/icons-material/ChevronLeftRounded";
 import ChevronRightRoundedIcon from "@mui/icons-material/ChevronRightRounded";
-import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
 import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
 import LocalShippingOutlinedIcon from "@mui/icons-material/LocalShippingOutlined";
 import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
@@ -10,6 +9,17 @@ import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 
+import { setPendingActivityManagementLaunchContext } from "../lib/activityManagementLaunchContext";
+import {
+  getLocalDayBucketKey,
+  getLocalMonthBucketKey,
+  parseDateLikeValue,
+  shiftLocalDay,
+  startOfLocalDay,
+  startOfLocalWeek,
+  toIsoDateString
+} from "../lib/dates";
+import { setPendingInventoryByLocationContext } from "../lib/inventoryByLocationContext";
 import { InlineAlert } from "./Feedback";
 import { useI18n } from "../lib/i18n";
 import type {
@@ -44,6 +54,7 @@ type SummaryCard = {
   meta: string;
   tone: "blue" | "emerald" | "amber" | "red";
   icon: ReactNode;
+  onOpen: () => void;
 };
 
 type TrendPeriod = "week" | "month" | "year";
@@ -102,9 +113,8 @@ export function HomeDashboardPage({
   onOpenDailyOperations
 }: HomeDashboardPageProps) {
   const { t } = useI18n();
-  const isViewer = currentUserRole === "viewer";
   const [trendPeriod, setTrendPeriod] = useState<TrendPeriod>("month");
-  const [calendarWeek, setCalendarWeek] = useState(() => startOfUtcWeek(new Date()));
+  const [calendarWeek, setCalendarWeek] = useState(() => startOfLocalWeek(new Date()));
 
   const summaryCards = useMemo<SummaryCard[]>(() => {
     const onHandUnits = items.reduce((sum, item) => sum + item.quantity, 0);
@@ -129,7 +139,11 @@ export function HomeDashboardPage({
         value: numberFormatter.format(onHandUnits),
         meta: t("dashboardKpiOnHandMeta", { count: activePositions }),
         tone: "blue",
-        icon: <Inventory2OutlinedIcon fontSize="small" />
+        icon: <Inventory2OutlinedIcon fontSize="small" />,
+        onOpen: () => {
+          setPendingInventoryByLocationContext({ healthFilter: "ALL" });
+          onNavigate("stock-by-location");
+        }
       },
       {
         key: "receipts",
@@ -137,7 +151,11 @@ export function HomeDashboardPage({
         value: numberFormatter.format(scheduledReceipts),
         meta: t("dashboardKpiScheduledReceiptsMeta", { arrived: arrivedReceipts, receiving: receivingReceipts }),
         tone: "emerald",
-        icon: <MoveToInboxOutlinedIcon fontSize="small" />
+        icon: <MoveToInboxOutlinedIcon fontSize="small" />,
+        onOpen: () => {
+          setPendingActivityManagementLaunchContext("IN", { selectedStatus: "DRAFT" });
+          onNavigate("inbound-management");
+        }
       },
       {
         key: "shipments",
@@ -145,7 +163,11 @@ export function HomeDashboardPage({
         value: numberFormatter.format(pendingShipments),
         meta: t("dashboardKpiPendingShipmentsMeta", { picking: pickingShipments, packed: packedShipments }),
         tone: "amber",
-        icon: <LocalShippingOutlinedIcon fontSize="small" />
+        icon: <LocalShippingOutlinedIcon fontSize="small" />,
+        onOpen: () => {
+          setPendingActivityManagementLaunchContext("OUT", { selectedStatus: "DRAFT" });
+          onNavigate("outbound-management");
+        }
       },
       {
         key: "low-stock",
@@ -153,10 +175,14 @@ export function HomeDashboardPage({
         value: numberFormatter.format(lowStockSkus),
         meta: t("dashboardKpiLowStockMeta", { warehouses: atRiskWarehouses }),
         tone: "red",
-        icon: <ReportProblemOutlinedIcon fontSize="small" />
+        icon: <ReportProblemOutlinedIcon fontSize="small" />,
+        onOpen: () => {
+          setPendingInventoryByLocationContext({ healthFilter: "LOW_STOCK" });
+          onNavigate("stock-by-location");
+        }
       }
     ];
-  }, [inboundDocuments, items, outboundDocuments, t]);
+  }, [inboundDocuments, items, onNavigate, outboundDocuments, t]);
 
   const throughputPoints = useMemo(
     () => buildThroughputPoints(inboundDocuments, outboundDocuments, trendPeriod),
@@ -250,34 +276,6 @@ export function HomeDashboardPage({
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={() => onNavigate("reports")}
-                className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50"
-              >
-                <DownloadOutlinedIcon sx={{ fontSize: 18 }} />
-                {t("dashboardDownloadReport")}
-              </button>
-              <button
-                type="button"
-                disabled={isViewer}
-                onClick={() => onNavigate("inbound-management")}
-                className="inline-flex items-center gap-2 rounded-xl bg-[#143569] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(20,53,105,0.18)] transition hover:bg-[#102f5f] disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <MoveToInboxOutlinedIcon sx={{ fontSize: 18 }} />
-                {t("dashboardScheduleReceipts")}
-              </button>
-              <button
-                type="button"
-                disabled={isViewer}
-                onClick={() => onNavigate("outbound-management")}
-                className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(15,23,42,0.18)] transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <LocalShippingOutlinedIcon sx={{ fontSize: 18 }} />
-                {t("dashboardScheduleShipments")}
-              </button>
-            </div>
           </div>
 
           <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -293,9 +291,9 @@ export function HomeDashboardPage({
           weekStart={calendarWeek}
           days={calendarDays}
           isLoading={isLoading}
-          onPreviousWeek={() => setCalendarWeek((current) => shiftUtcDay(current, -7))}
-          onNextWeek={() => setCalendarWeek((current) => shiftUtcDay(current, 7))}
-          onToday={() => setCalendarWeek(startOfUtcWeek(new Date()))}
+          onPreviousWeek={() => setCalendarWeek((current) => shiftLocalDay(current, -7))}
+          onNextWeek={() => setCalendarWeek((current) => shiftLocalDay(current, 7))}
+          onToday={() => setCalendarWeek(startOfLocalWeek(new Date()))}
           onOpenDay={onOpenDailyOperations}
         />
 
@@ -415,7 +413,12 @@ export function HomeDashboardPage({
 
 function DashboardSummaryCard({ card }: { card: SummaryCard }) {
   return (
-    <article className="rounded-[18px] border border-slate-200/80 bg-white p-3 shadow-[0_10px_22px_rgba(15,23,42,0.04)]">
+    <button
+      type="button"
+      onClick={card.onOpen}
+      className="interactive-block interactive-block--soft w-full rounded-[18px] border border-slate-200/80 bg-white p-3 text-left shadow-[0_10px_22px_rgba(15,23,42,0.04)]"
+      aria-label={card.label}
+    >
       <div className="flex items-start justify-between gap-4">
         <div className={`flex h-9 w-9 items-center justify-center rounded-lg ${summaryToneIconClass(card.tone)}`}>
           <span className="text-[#143569]">{card.icon}</span>
@@ -429,7 +432,7 @@ function DashboardSummaryCard({ card }: { card: SummaryCard }) {
         <h3 className="mt-1.5 font-headline text-2xl font-extrabold tracking-tight text-[#0d2d63]">{card.value}</h3>
         <p className="mt-1 text-xs text-slate-500">{card.meta}</p>
       </div>
-    </article>
+    </button>
   );
 }
 
@@ -591,18 +594,17 @@ function ProcessingCalendarCard({
   onOpenDay: (date: string) => void;
 }) {
   const { t } = useI18n();
-  const weekEnd = shiftUtcDay(weekStart, 6);
+  const weekEnd = shiftLocalDay(weekStart, 6);
   const rangeFormatter = new Intl.DateTimeFormat(undefined, {
     month: "short",
-    day: "numeric",
-    timeZone: "UTC"
+    day: "numeric"
   });
   const weekLabel = `${rangeFormatter.format(weekStart)} - ${rangeFormatter.format(weekEnd)}`;
   const weekdayLabels = useMemo(() => {
-    const start = new Date(Date.UTC(2026, 2, 29));
+    const start = new Date(2026, 2, 29);
     return Array.from({ length: 7 }, (_, index) => {
-      const date = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate() + index));
-      return date.toLocaleString(undefined, { weekday: "short", timeZone: "UTC" }).toUpperCase();
+      const date = new Date(start.getFullYear(), start.getMonth(), start.getDate() + index);
+      return date.toLocaleString(undefined, { weekday: "short" }).toUpperCase();
     });
   }, []);
   const inboundTotal = days
@@ -632,7 +634,7 @@ function ProcessingCalendarCard({
           <button
             type="button"
             onClick={onPreviousWeek}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600 transition hover:bg-slate-200"
+            className="interactive-button-lift inline-flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600 transition hover:bg-slate-200"
             aria-label={t("previousWeek")}
           >
             <ChevronLeftRoundedIcon fontSize="small" />
@@ -643,7 +645,7 @@ function ProcessingCalendarCard({
           <button
             type="button"
             onClick={onNextWeek}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600 transition hover:bg-slate-200"
+            className="interactive-button-lift inline-flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600 transition hover:bg-slate-200"
             aria-label={t("nextWeek")}
           >
             <ChevronRightRoundedIcon fontSize="small" />
@@ -653,7 +655,7 @@ function ProcessingCalendarCard({
         <button
           type="button"
           onClick={onToday}
-          className="inline-flex items-center justify-center rounded-xl bg-white px-4 py-2 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50"
+          className="interactive-button-lift inline-flex items-center justify-center rounded-xl bg-white px-4 py-2 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50"
         >
           {t("today")}
         </button>
@@ -689,13 +691,13 @@ function ProcessingCalendarCard({
             <button
               type="button"
               key={day.key}
-              onClick={() => onOpenDay(formatUtcDateString(day.date))}
-              className={`min-h-[112px] rounded-[18px] border px-3 py-3 transition ${
+              onClick={() => onOpenDay(formatLocalDateString(day.date))}
+              className={`interactive-block interactive-block--slate min-h-[112px] rounded-[18px] border px-3 py-3 transition ${
                 day.isToday
                   ? "border-[#143569]/30 bg-[#143569]/[0.03] shadow-[0_8px_18px_rgba(20,53,105,0.06)]"
                   : "border-slate-200/80 bg-slate-50/80"
               }`}
-              aria-label={t("dashboardOpenDayBoard", { date: formatUtcDateString(day.date) })}
+              aria-label={t("dashboardOpenDayBoard", { date: formatLocalDateString(day.date) })}
             >
               <div className="flex items-center justify-between">
                 <span className={`text-sm font-bold ${day.isToday ? "text-[#143569]" : "text-slate-500"}`}>{day.dayNumber}</span>
@@ -750,7 +752,7 @@ function TrackerTableCard({
         <button
           type="button"
           onClick={onOpen}
-          className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-semibold text-[#143569] transition hover:bg-slate-200"
+          className="interactive-button-lift rounded-xl bg-slate-100 px-4 py-2 text-sm font-semibold text-[#143569] transition hover:bg-slate-200"
         >
           {t("dashboardOpenWorkspace")}
         </button>
@@ -853,17 +855,17 @@ function buildThroughputPoints(
   outboundDocuments: OutboundDocument[],
   period: TrendPeriod
 ): TrendPoint[] {
-  const today = startOfUtcDay(new Date());
+  const today = startOfLocalDay(new Date());
   const buckets = new Map<string, TrendPoint>();
 
   if (period === "year") {
     for (let index = 11; index >= 0; index -= 1) {
-      const date = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - index, 1));
-      const key = monthBucketKey(date);
+      const date = new Date(today.getFullYear(), today.getMonth() - index, 1);
+      const key = getLocalMonthBucketKey(date);
       buckets.set(key, {
         key,
-        label: date.toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" }),
-        shortLabel: date.toLocaleString("en-US", { month: "short", timeZone: "UTC" }).toUpperCase(),
+        label: date.toLocaleString("en-US", { month: "long", year: "numeric" }),
+        shortLabel: date.toLocaleString("en-US", { month: "short" }).toUpperCase(),
         total: 0,
         inbound: 0,
         outbound: 0
@@ -872,19 +874,18 @@ function buildThroughputPoints(
   } else {
     const dayCount = period === "week" ? 7 : 30;
     for (let index = dayCount - 1; index >= 0; index -= 1) {
-      const date = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - index));
-      const key = dayBucketKey(date);
+      const date = shiftLocalDay(today, -index);
+      const key = getLocalDayBucketKey(date);
       buckets.set(key, {
         key,
         label: date.toLocaleString("en-US", {
           weekday: period === "week" ? "long" : undefined,
           month: "short",
-          day: "numeric",
-          timeZone: "UTC"
+          day: "numeric"
         }),
         shortLabel: period === "week"
-          ? date.toLocaleString("en-US", { weekday: "short", timeZone: "UTC" }).toUpperCase()
-          : date.toLocaleString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).toUpperCase(),
+          ? date.toLocaleString("en-US", { weekday: "short" }).toUpperCase()
+          : date.toLocaleString("en-US", { month: "short", day: "numeric" }).toUpperCase(),
         total: 0,
         inbound: 0,
         outbound: 0
@@ -893,11 +894,11 @@ function buildThroughputPoints(
   }
 
   for (const document of inboundDocuments) {
-    const date = new Date(document.deliveryDate || document.createdAt);
-    if (Number.isNaN(date.getTime())) {
+    const date = parseDateLikeValue(document.deliveryDate || document.createdAt);
+    if (!date) {
       continue;
     }
-    const bucket = buckets.get(period === "year" ? monthBucketKey(date) : dayBucketKey(date));
+    const bucket = buckets.get(period === "year" ? getLocalMonthBucketKey(date) : getLocalDayBucketKey(date));
     if (!bucket) {
       continue;
     }
@@ -907,11 +908,11 @@ function buildThroughputPoints(
   }
 
   for (const document of outboundDocuments) {
-    const date = new Date(document.outDate || document.createdAt);
-    if (Number.isNaN(date.getTime())) {
+    const date = parseDateLikeValue(document.outDate || document.createdAt);
+    if (!date) {
       continue;
     }
-    const bucket = buckets.get(period === "year" ? monthBucketKey(date) : dayBucketKey(date));
+    const bucket = buckets.get(period === "year" ? getLocalMonthBucketKey(date) : getLocalDayBucketKey(date));
     if (!bucket) {
       continue;
     }
@@ -922,59 +923,25 @@ function buildThroughputPoints(
 
   return Array.from(buckets.values());
 }
-
-function startOfUtcDay(date: Date) {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-}
-
-function dayBucketKey(date: Date) {
-  return `${date.getUTCFullYear()}-${date.getUTCMonth()}-${date.getUTCDate()}`;
-}
-
-function monthBucketKey(date: Date) {
-  return `${date.getUTCFullYear()}-${date.getUTCMonth()}`;
-}
-
-function startOfUtcMonth(date: Date) {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
-}
-
-function shiftUtcMonth(date: Date, delta: number) {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + delta, 1));
-}
-
-function startOfUtcWeek(date: Date) {
-  const day = startOfUtcDay(date);
-  return new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate() - day.getUTCDay()));
-}
-
-function shiftUtcDay(date: Date, delta: number) {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + delta));
-}
-
-function formatUtcDateString(date: Date) {
-  return `${date.getUTCFullYear()}-${`${date.getUTCMonth() + 1}`.padStart(2, "0")}-${`${date.getUTCDate()}`.padStart(2, "0")}`;
-}
-
 function buildProcessingCalendarDays(
   inboundDocuments: InboundDocument[],
   outboundDocuments: OutboundDocument[],
   anchorWeek: Date
 ): CalendarDay[] {
-  const weekStart = startOfUtcWeek(anchorWeek);
+  const weekStart = startOfLocalWeek(anchorWeek);
   const inboundCounts = new Map<string, number>();
   const outboundCounts = new Map<string, number>();
-  const todayKey = dayBucketKey(startOfUtcDay(new Date()));
+  const todayKey = getLocalDayBucketKey(startOfLocalDay(new Date()));
 
   for (const document of inboundDocuments) {
     if (!isDocumentPending(document.status)) {
       continue;
     }
-    const date = new Date(document.deliveryDate || document.createdAt);
-    if (Number.isNaN(date.getTime())) {
+    const date = parseDateLikeValue(document.deliveryDate || document.createdAt);
+    if (!date) {
       continue;
     }
-    const key = dayBucketKey(date);
+    const key = getLocalDayBucketKey(date);
     inboundCounts.set(key, (inboundCounts.get(key) ?? 0) + 1);
   }
 
@@ -982,27 +949,31 @@ function buildProcessingCalendarDays(
     if (!isDocumentPending(document.status)) {
       continue;
     }
-    const date = new Date(document.outDate || document.createdAt);
-    if (Number.isNaN(date.getTime())) {
+    const date = parseDateLikeValue(document.outDate || document.createdAt);
+    if (!date) {
       continue;
     }
-    const key = dayBucketKey(date);
+    const key = getLocalDayBucketKey(date);
     outboundCounts.set(key, (outboundCounts.get(key) ?? 0) + 1);
   }
 
   return Array.from({ length: 7 }, (_, index) => {
-    const date = shiftUtcDay(weekStart, index);
-    const key = dayBucketKey(date);
+    const date = shiftLocalDay(weekStart, index);
+    const key = getLocalDayBucketKey(date);
     return {
       key,
       date,
-      dayNumber: date.getUTCDate(),
+      dayNumber: date.getDate(),
       inCurrentMonth: true,
       isToday: key === todayKey,
       inboundCount: inboundCounts.get(key) ?? 0,
       outboundCount: outboundCounts.get(key) ?? 0
     };
   });
+}
+
+function formatLocalDateString(date: Date) {
+  return toIsoDateString(date);
 }
 
 function isDocumentPending(status: string) {

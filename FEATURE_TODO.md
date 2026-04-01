@@ -20,6 +20,10 @@
 - [x] 管理员可禁用用户
 - [x] 公共 `signup` 限制为仅初始化管理员使用
 - [x] 页面和按钮的基础权限控制
+- [x] 密码哈希迁移到 bcrypt（渐进升级）
+- [ ] 用户自行修改密码
+- [ ] 登录失败锁定 / Rate limiting
+- [ ] 过期 session 定期清理
 
 ### Core Inventory Documents
 
@@ -74,6 +78,16 @@
   - `posted`
   - `cancelled`
 
+### Receipt / Shipment Enhancement
+
+- [ ] `Receipt variance` 明确化显示：`matched` / `short` / `over`
+- [ ] 收货 / 出货列表高级筛选（status / customer / date range / container no）
+- [ ] 单据操作人追溯：`created by` / `confirmed by` / `posted by` / `cancelled by`
+- [ ] 收货 / 出货异常高亮（short receipt / over receipt / missing carrier）
+- [ ] 收货 / 出货详情跳转到相关库存行 / 台账 / 客户上下文
+- [ ] 单据详情中加入 timeline / status history
+- [ ] Dashboard 加入 `Open Receipts / Open Shipments` 队列入口
+
 ### Customer Operations
 
 - [x] 客户详情页 / 客户工作台进一步增强
@@ -109,6 +123,11 @@
 - [ ] 高级筛选
 - [ ] 保存筛选条件
 
+### API and Infrastructure
+
+- [ ] API 列表分页（替代硬编码 `LIMIT 50`）
+- [ ] 数据库备份策略
+
 ## P2 - Productization
 
 目标：把系统继续推进到更成熟的产品阶段，支持更复杂的仓库运营和客户服务。
@@ -128,6 +147,7 @@
 
 - [ ] Barcode / Scanner 支持
 - [ ] 更完整的移动端仓库操作体验
+- [ ] 批量操作（批量确认 / 取消多个单据）
 
 ### Reporting and Automation
 
@@ -138,12 +158,20 @@
 ### Multi-Site / Scale
 
 - [ ] 多组织 / 多站点支持
+- [ ] 字段级权限（不同角色看到不同字段）
 
 ## Suggested Next Step
 
 建议下一步优先从 `P1` 开始，推荐顺序：
 
-1. 库存状态维度
-2. 单据状态流
-3. Import / Export
-4. 低库存和异常提醒
+1. Receipt variance 明确化显示
+2. 收货 / 出货列表高级筛选
+3. 单据操作人追溯（created by / confirmed by / posted by / cancelled by）
+4. Dashboard 队列入口（Open Receipts / Open Shipments）
+5. Import / Export 基础能力
+6. Shipment allocation（先锁库存再发货）
+7. 低库存和异常提醒
+8. 用户自行修改密码
+9. API 分页
+
+

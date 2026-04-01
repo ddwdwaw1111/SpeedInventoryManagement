@@ -4,6 +4,7 @@ export type ActivityManagementLaunchContext = {
   scheduledDate?: string;
   openCreate?: boolean;
   documentId?: number;
+  selectedStatus?: string;
 };
 
 function getStorageKey(mode: ActivityManagementMode) {

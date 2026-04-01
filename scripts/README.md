@@ -107,6 +107,7 @@ bash scripts/migrate_local_data_to_server.sh --server-host 129.213.52.3 --ssh-ke
 ## Seed Default Admin
 
 Seed or update the default admin account.
+The script now generates a bcrypt hash for the password before inserting the user.
 
 Remote server:
 

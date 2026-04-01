@@ -57,10 +57,10 @@ describe("HomeDashboardPage", () => {
     expect(screen.getByRole("heading", { name: "Inbound Appointments" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Outbound Execution" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Schedule Receipts" }));
+    await user.click(screen.getByRole("button", { name: "Scheduled Receipts" }));
     expect(onNavigate).toHaveBeenCalledWith("inbound-management");
 
-    await user.click(screen.getByRole("button", { name: "Schedule Shipments" }));
+    await user.click(screen.getByRole("button", { name: "Pending Shipments" }));
     expect(onNavigate).toHaveBeenCalledWith("outbound-management");
 
     await user.click(screen.getByRole("button", { name: "View Full Logs" }));

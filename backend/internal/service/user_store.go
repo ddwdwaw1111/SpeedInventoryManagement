@@ -51,13 +51,12 @@ func (s *Store) CreateManagedUser(ctx context.Context, input CreateManagedUserIn
 		return User{}, err
 	}
 
-	salt, err := randomHex(16)
+	passwordHash, err := hashPasswordBcrypt(input.Password)
 	if err != nil {
-		return User{}, fmt.Errorf("generate password salt: %w", err)
+		return User{}, fmt.Errorf("hash password: %w", err)
 	}
-	passwordHash := hashPassword(input.Password, salt)
 
-	return s.createUserRecord(ctx, input.Email, input.FullName, passwordHash, salt, input.Role, input.IsActive)
+	return s.createUserRecord(ctx, input.Email, input.FullName, passwordHash, "", input.Role, input.IsActive)
 }
 
 func (s *Store) UpdateUserAccess(ctx context.Context, actorUserID int64, userID int64, input UpdateUserAccessInput) (User, error) {

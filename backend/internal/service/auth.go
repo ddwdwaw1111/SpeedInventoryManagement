@@ -8,8 +8,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 const sessionTTL = 7 * 24 * time.Hour
@@ -83,17 +86,16 @@ func (s *Store) RegisterUser(ctx context.Context, input RegisterUserInput) (Auth
 		return AuthPayload{}, "", err
 	}
 
-	salt, err := randomHex(16)
+	passwordHash, err := hashPasswordBcrypt(input.Password)
 	if err != nil {
-		return AuthPayload{}, "", fmt.Errorf("generate password salt: %w", err)
+		return AuthPayload{}, "", fmt.Errorf("hash password: %w", err)
 	}
-	passwordHash := hashPassword(input.Password, salt)
 	role, err := s.resolveNewUserRole(ctx)
 	if err != nil {
 		return AuthPayload{}, "", err
 	}
 
-	user, err := s.createUserRecord(ctx, input.Email, input.FullName, passwordHash, salt, role, true)
+	user, err := s.createUserRecord(ctx, input.Email, input.FullName, passwordHash, "", role, true)
 	if err != nil {
 		return AuthPayload{}, "", err
 	}
@@ -121,11 +123,16 @@ func (s *Store) Login(ctx context.Context, input LoginInput) (AuthPayload, strin
 		return AuthPayload{}, "", fmt.Errorf("load user for login: %w", err)
 	}
 
-	if hashPassword(password, row.PasswordSalt) != row.PasswordHash {
+	if !verifyPassword(password, row.PasswordHash, row.PasswordSalt) {
 		return AuthPayload{}, "", fmt.Errorf("%w: invalid email or password", ErrInvalidInput)
 	}
 	if !row.IsActive {
 		return AuthPayload{}, "", fmt.Errorf("%w: this account is inactive", ErrInvalidInput)
+	}
+
+	// Transparently upgrade legacy SHA256 hash to bcrypt on successful login.
+	if !isBcryptHash(row.PasswordHash) {
+		go s.upgradePasswordHash(row.ID, password)
 	}
 
 	return s.createSession(ctx, row.toUser())
@@ -278,7 +285,30 @@ func randomToken(size int) (string, error) {
 	return randomHex(size)
 }
 
-func hashPassword(password, salt string) string {
+// hashPasswordBcrypt creates a new bcrypt hash (cost 12).
+func hashPasswordBcrypt(password string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	if err != nil {
+		return "", fmt.Errorf("bcrypt hash: %w", err)
+	}
+	return string(hash), nil
+}
+
+// isBcryptHash returns true if the stored hash is a bcrypt hash.
+func isBcryptHash(hash string) bool {
+	return strings.HasPrefix(hash, "$2a$") || strings.HasPrefix(hash, "$2b$")
+}
+
+// verifyPassword checks the password against bcrypt or legacy SHA256 hash.
+func verifyPassword(password, storedHash, salt string) bool {
+	if isBcryptHash(storedHash) {
+		return bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(password)) == nil
+	}
+	return hashPasswordLegacy(password, salt) == storedHash
+}
+
+// hashPasswordLegacy is the old SHA256-iterated scheme, kept for verifying existing passwords.
+func hashPasswordLegacy(password, salt string) string {
 	sum := sha256.Sum256([]byte(salt + ":" + password))
 	block := sum[:]
 	for range 120000 {
@@ -286,6 +316,20 @@ func hashPassword(password, salt string) string {
 		block = next[:]
 	}
 	return hex.EncodeToString(block)
+}
+
+// upgradePasswordHash transparently re-hashes a legacy password to bcrypt.
+func (s *Store) upgradePasswordHash(userID int64, plainPassword string) {
+	newHash, err := hashPasswordBcrypt(plainPassword)
+	if err != nil {
+		log.Printf("[WARN] failed to generate bcrypt hash for user %d: %v", userID, err)
+		return
+	}
+	if _, err := s.db.Exec(`
+		UPDATE users SET password_hash = ?, password_salt = '' WHERE id = ?
+	`, newHash, userID); err != nil {
+		log.Printf("[WARN] failed to upgrade password hash for user %d: %v", userID, err)
+	}
 }
 
 func hashToken(token string) string {

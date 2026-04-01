@@ -154,6 +154,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
     setSearchTerm(nextSearchTerm);
     setSelectedCustomerId(context.customerId ? String(context.customerId) : "all");
     setSelectedLocationId(context.locationId ? String(context.locationId) : "all");
+    setHealthFilter(context.healthFilter ?? "ALL");
     setSelectedItemId(null);
   }, []);
 

@@ -515,6 +515,10 @@ export function ActivityManagementPage({
       return;
     }
 
+    if (pendingLaunchContext.selectedStatus) {
+      setSelectedStatus(pendingLaunchContext.selectedStatus);
+    }
+
     if (pendingLaunchContext.documentId) {
       if (mode === "IN") {
         setSelectedInboundDocumentId(pendingLaunchContext.documentId);
@@ -525,7 +529,12 @@ export function ActivityManagementPage({
       return;
     }
 
-    if (!pendingLaunchContext.openCreate || !canManage) {
+    if (!pendingLaunchContext.openCreate) {
+      pendingLaunchContextRef.current = null;
+      return;
+    }
+
+    if (!canManage) {
       pendingLaunchContextRef.current = null;
       return;
     }

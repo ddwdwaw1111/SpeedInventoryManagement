@@ -10,6 +10,66 @@ export function parseDateValue(value: string) {
   return new Date(trimmed);
 }
 
+export function parseDateLikeValue(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const parsed = /^\d{4}-\d{2}-\d{2}(?:T00:00:00(?:\.000)?Z)?$/.test(trimmed)
+    ? parseDateValue(trimmed)
+    : new Date(trimmed);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed;
+}
+
+export function toIsoDateString(date: Date) {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function normalizeCalendarDate(value: string | null | undefined) {
+  const parsed = parseDateLikeValue(value);
+  return parsed ? toIsoDateString(parsed) : null;
+}
+
+export function startOfLocalDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+export function startOfLocalWeek(date: Date) {
+  const day = startOfLocalDay(date);
+  return new Date(day.getFullYear(), day.getMonth(), day.getDate() - day.getDay());
+}
+
+export function shiftLocalDay(date: Date, delta: number) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + delta);
+}
+
+export function shiftIsoDate(value: string, delta: number) {
+  const parsed = parseDateValue(value);
+  parsed.setDate(parsed.getDate() + delta);
+  return toIsoDateString(parsed);
+}
+
+export function getLocalDayBucketKey(date: Date) {
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+export function getLocalMonthBucketKey(date: Date) {
+  return `${date.getFullYear()}-${date.getMonth()}`;
+}
+
 export function formatDateValue(value: string | null, formatter: Intl.DateTimeFormat) {
   if (!value) return "-";
 

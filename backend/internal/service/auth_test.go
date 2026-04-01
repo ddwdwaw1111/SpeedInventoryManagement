@@ -5,6 +5,35 @@ import (
 	"testing"
 )
 
+func TestVerifyPasswordSupportsBcryptAndLegacy(t *testing.T) {
+	t.Run("verifies bcrypt hashes", func(t *testing.T) {
+		hash, err := hashPasswordBcrypt("password123")
+		if err != nil {
+			t.Fatalf("hashPasswordBcrypt returned error: %v", err)
+		}
+		if !isBcryptHash(hash) {
+			t.Fatalf("expected bcrypt hash, got %q", hash)
+		}
+		if !verifyPassword("password123", hash, "") {
+			t.Fatal("expected bcrypt password verification to succeed")
+		}
+		if verifyPassword("wrong-password", hash, "") {
+			t.Fatal("expected bcrypt password verification to fail for wrong password")
+		}
+	})
+
+	t.Run("verifies legacy hashes", func(t *testing.T) {
+		salt := "0123456789abcdef0123456789abcdef"
+		hash := hashPasswordLegacy("password123", salt)
+		if !verifyPassword("password123", hash, salt) {
+			t.Fatal("expected legacy password verification to succeed")
+		}
+		if verifyPassword("wrong-password", hash, salt) {
+			t.Fatal("expected legacy password verification to fail for wrong password")
+		}
+	})
+}
+
 func TestSanitizeAuthInput(t *testing.T) {
 	t.Run("sanitizes valid input", func(t *testing.T) {
 		input, err := sanitizeAuthInput("  USER@Example.com ", "  Jane Doe  ", "  password123  ")
