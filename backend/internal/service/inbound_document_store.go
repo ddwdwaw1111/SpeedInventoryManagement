@@ -199,24 +199,26 @@ func (s *Store) ListInboundDocuments(ctx context.Context, limit int, archiveScop
 
 	lineQuery, args, err := sqlx.In(`
 		SELECT
-			id,
-			document_id,
-			COALESCE(movement_id, 0) AS movement_id,
-			COALESCE(item_id, 0) AS item_id,
-			sku_snapshot,
-			COALESCE(description_snapshot, '') AS description_snapshot,
-			storage_section,
-			reorder_level,
-			expected_qty,
-			received_qty,
-			pallets,
-			COALESCE(pallets_detail_ctns, '') AS pallets_detail_ctns,
-			COALESCE(unit_label, '') AS unit_label,
-			COALESCE(line_note, '') AS line_note,
-			created_at
-		FROM inbound_document_lines
-		WHERE document_id IN (?)
-		ORDER BY document_id DESC, sort_order ASC, id ASC
+			l.id,
+			l.document_id,
+			COALESCE(l.movement_id, 0) AS movement_id,
+			COALESCE(l.item_id, 0) AS item_id,
+			l.sku_snapshot,
+			COALESCE(l.description_snapshot, sm.description, sm.name, '') AS description_snapshot,
+			l.storage_section,
+			COALESCE(sm.reorder_level, l.reorder_level, 0) AS reorder_level,
+			l.expected_qty,
+			l.received_qty,
+			l.pallets,
+			COALESCE(l.pallets_detail_ctns, '') AS pallets_detail_ctns,
+			COALESCE(l.unit_label, '') AS unit_label,
+			COALESCE(l.line_note, '') AS line_note,
+			l.created_at
+		FROM inbound_document_lines l
+		LEFT JOIN inventory_items i ON i.id = l.item_id
+		LEFT JOIN sku_master sm ON sm.id = i.sku_master_id
+		WHERE l.document_id IN (?)
+		ORDER BY l.document_id DESC, l.sort_order ASC, l.id ASC
 	`, documentIDs)
 	if err != nil {
 		return nil, fmt.Errorf("build inbound document line query: %w", err)
@@ -740,21 +742,22 @@ func (s *Store) loadLockedInboundEditableItemTx(ctx context.Context, tx *sql.Tx,
 	var item inboundEditableItem
 	if err := tx.QueryRowContext(ctx, `
 		SELECT
-			id,
-			sku_master_id,
-			customer_id,
-			location_id,
-			storage_section,
-			COALESCE(container_no, '') AS container_no,
-			sku,
-			name,
-			category,
-			COALESCE(description, name, '') AS description,
-			COALESCE(unit, 'pcs') AS unit,
-			reorder_level,
-			quantity
-		FROM inventory_items
-		WHERE id = ?
+			i.id,
+			i.sku_master_id,
+			i.customer_id,
+			i.location_id,
+			i.storage_section,
+			COALESCE(i.container_no, '') AS container_no,
+			sm.sku,
+			sm.name,
+			sm.category,
+			COALESCE(sm.description, sm.name, '') AS description,
+			COALESCE(sm.unit, 'pcs') AS unit,
+			sm.reorder_level,
+			i.quantity
+		FROM inventory_items i
+		JOIN sku_master sm ON sm.id = i.sku_master_id
+		WHERE i.id = ?
 		FOR UPDATE
 	`, itemID).Scan(
 		&item.ID,
@@ -832,17 +835,6 @@ func (s *Store) updateInboundEditableItemStateTx(
 			container_no = ?,
 			delivery_date = ?,
 			last_restocked_at = COALESCE(?, last_restocked_at),
-			expected_qty = ?,
-			received_qty = ?,
-			reorder_level = ?,
-			description = CASE
-				WHEN ? <> '' THEN ?
-				ELSE description
-			END,
-			unit = CASE
-				WHEN ? <> '' THEN LOWER(?)
-				ELSE unit
-			END,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`,
@@ -851,13 +843,6 @@ func (s *Store) updateInboundEditableItemStateTx(
 		nullableString(containerNo),
 		nullableTime(deliveryDate),
 		nullableTime(deliveryDate),
-		expectedQty,
-		receivedQty,
-		reorderLevel,
-		strings.TrimSpace(description),
-		nullableString(strings.TrimSpace(description)),
-		strings.TrimSpace(unitLabel),
-		nullableString(strings.TrimSpace(unitLabel)),
 		itemID,
 	); err != nil {
 		return mapDBError(fmt.Errorf("update inbound inventory state: %w", err))
@@ -1198,8 +1183,6 @@ func (s *Store) moveConfirmedInboundReceiptLotsTx(
 			SourceInboundDocumentID: lot.SourceInboundDocumentID,
 			SourceInboundLineID:     lot.SourceInboundLineID,
 			ItemID:                  targetItem.ID,
-			CustomerID:              lot.CustomerID,
-			LocationID:              lot.LocationID,
 			StorageSection:          targetSection,
 			ContainerNo:             targetContainerNo,
 			OriginalQty:             lot.RemainingQty,
@@ -1294,8 +1277,6 @@ func (s *Store) increaseConfirmedInboundReceiptLotsTx(
 		SourceInboundDocumentID: documentID,
 		SourceInboundLineID:     existingLine.ID,
 		ItemID:                  targetItem.ID,
-		CustomerID:              documentRow.CustomerID,
-		LocationID:              documentRow.LocationID,
 		StorageSection:          targetSection,
 		ContainerNo:             targetContainerNo,
 		OriginalQty:             increaseQty,
@@ -1547,8 +1528,6 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 			SourceInboundDocumentID: documentID,
 			SourceInboundLineID:     lineRow.ID,
 			ItemID:                  itemID,
-			CustomerID:              documentRow.CustomerID,
-			LocationID:              documentRow.LocationID,
 			StorageSection:          fallbackSection(firstNonEmpty(lineRow.StorageSection, documentRow.StorageSection)),
 			ContainerNo:             documentRow.ContainerNo,
 			OriginalQty:             receivedQty,
@@ -1902,24 +1881,26 @@ func (s *Store) loadInboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx, 
 func (s *Store) loadInboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, documentID int64) ([]inboundDocumentLineRow, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT
-			id,
-			document_id,
-			COALESCE(movement_id, 0) AS movement_id,
-			COALESCE(item_id, 0) AS item_id,
-			sku_snapshot,
-			COALESCE(description_snapshot, '') AS description_snapshot,
-			storage_section,
-			reorder_level,
-			expected_qty,
-			received_qty,
-			pallets,
-			COALESCE(pallets_detail_ctns, '') AS pallets_detail_ctns,
-			COALESCE(unit_label, '') AS unit_label,
-			COALESCE(line_note, '') AS line_note,
-			created_at
-		FROM inbound_document_lines
-		WHERE document_id = ?
-		ORDER BY sort_order ASC, id ASC
+			l.id,
+			l.document_id,
+			COALESCE(l.movement_id, 0) AS movement_id,
+			COALESCE(l.item_id, 0) AS item_id,
+			l.sku_snapshot,
+			COALESCE(l.description_snapshot, sm.description, sm.name, '') AS description_snapshot,
+			l.storage_section,
+			COALESCE(sm.reorder_level, l.reorder_level, 0) AS reorder_level,
+			l.expected_qty,
+			l.received_qty,
+			l.pallets,
+			COALESCE(l.pallets_detail_ctns, '') AS pallets_detail_ctns,
+			COALESCE(l.unit_label, '') AS unit_label,
+			COALESCE(l.line_note, '') AS line_note,
+			l.created_at
+		FROM inbound_document_lines l
+		LEFT JOIN inventory_items i ON i.id = l.item_id
+		LEFT JOIN sku_master sm ON sm.id = i.sku_master_id
+		WHERE l.document_id = ?
+		ORDER BY l.sort_order ASC, l.id ASC
 	`, documentID)
 	if err != nil {
 		return nil, fmt.Errorf("load inbound document lines: %w", err)
@@ -2047,24 +2028,26 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 
 	lineQuery, lineArgs, err := sqlx.In(`
 		SELECT
-			id,
-			document_id,
-			COALESCE(movement_id, 0) AS movement_id,
-			COALESCE(item_id, 0) AS item_id,
-			sku_snapshot,
-			COALESCE(description_snapshot, '') AS description_snapshot,
-			storage_section,
-			reorder_level,
-			expected_qty,
-			received_qty,
-			pallets,
-			COALESCE(pallets_detail_ctns, '') AS pallets_detail_ctns,
-			COALESCE(unit_label, '') AS unit_label,
-			COALESCE(line_note, '') AS line_note,
-			created_at
-		FROM inbound_document_lines
-		WHERE document_id IN (?)
-		ORDER BY document_id DESC, sort_order ASC, id ASC
+			l.id,
+			l.document_id,
+			COALESCE(l.movement_id, 0) AS movement_id,
+			COALESCE(l.item_id, 0) AS item_id,
+			l.sku_snapshot,
+			COALESCE(l.description_snapshot, sm.description, sm.name, '') AS description_snapshot,
+			l.storage_section,
+			COALESCE(sm.reorder_level, l.reorder_level, 0) AS reorder_level,
+			l.expected_qty,
+			l.received_qty,
+			l.pallets,
+			COALESCE(l.pallets_detail_ctns, '') AS pallets_detail_ctns,
+			COALESCE(l.unit_label, '') AS unit_label,
+			COALESCE(l.line_note, '') AS line_note,
+			l.created_at
+		FROM inbound_document_lines l
+		LEFT JOIN inventory_items i ON i.id = l.item_id
+		LEFT JOIN sku_master sm ON sm.id = i.sku_master_id
+		WHERE l.document_id IN (?)
+		ORDER BY l.document_id DESC, l.sort_order ASC, l.id ASC
 	`, documentIDs)
 	if err != nil {
 		return nil, fmt.Errorf("build inbound document line query by id: %w", err)
@@ -2142,15 +2125,16 @@ func (s *Store) findOrCreateInboundItem(ctx context.Context, tx *sql.Tx, documen
 	var itemID int64
 	var description string
 	matchByContainerQuery := `
-		SELECT id, COALESCE(description, name, '')
-		FROM inventory_items
+		SELECT i.id, COALESCE(sm.description, sm.name, '')
+		FROM inventory_items i
+		JOIN sku_master sm ON sm.id = i.sku_master_id
 		WHERE
-			sku_master_id = ?
-			AND customer_id = ?
-			AND location_id = ?
-			AND COALESCE(NULLIF(storage_section, ''), ?) = ?
-			AND COALESCE(container_no, '') = ?
-		ORDER BY updated_at DESC, id DESC
+			i.sku_master_id = ?
+			AND i.customer_id = ?
+			AND i.location_id = ?
+			AND COALESCE(NULLIF(i.storage_section, ''), ?) = ?
+			AND COALESCE(i.container_no, '') = ?
+		ORDER BY i.updated_at DESC, i.id DESC
 		LIMIT 1
 		FOR UPDATE
 	`
@@ -2171,16 +2155,17 @@ func (s *Store) findOrCreateInboundItem(ctx context.Context, tx *sql.Tx, documen
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		matchPlaceholderQuery := `
-			SELECT id, COALESCE(description, name, '')
-			FROM inventory_items
+			SELECT i.id, COALESCE(sm.description, sm.name, '')
+			FROM inventory_items i
+			JOIN sku_master sm ON sm.id = i.sku_master_id
 			WHERE
-				sku_master_id = ?
-				AND customer_id = ?
-				AND location_id = ?
-				AND COALESCE(NULLIF(storage_section, ''), ?) = ?
-				AND quantity = 0
-				AND COALESCE(container_no, '') = ''
-			ORDER BY updated_at DESC, id DESC
+				i.sku_master_id = ?
+				AND i.customer_id = ?
+				AND i.location_id = ?
+				AND COALESCE(NULLIF(i.storage_section, ''), ?) = ?
+				AND i.quantity = 0
+				AND COALESCE(i.container_no, '') = ''
+			ORDER BY i.updated_at DESC, i.id DESC
 			LIMIT 1
 			FOR UPDATE
 		`
@@ -2217,38 +2202,20 @@ func (s *Store) findOrCreateInboundItem(ctx context.Context, tx *sql.Tx, documen
 		INSERT INTO inventory_items (
 			sku_master_id,
 			customer_id,
-			sku,
-			name,
-			category,
-			description,
-			unit,
 			quantity,
-			reorder_level,
 			location_id,
 			storage_section,
 			delivery_date,
 			container_no,
-			expected_qty,
-			received_qty,
-			height_in,
-			out_date,
 			last_restocked_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL)
+		) VALUES (?, ?, 0, ?, ?, ?, ?, NULL)
 	`,
 		skuMasterID,
 		itemInput.CustomerID,
-		itemInput.SKU,
-		itemInput.Name,
-		itemInput.Category,
-		itemInput.Description,
-		itemInput.Unit,
-		itemInput.ReorderLevel,
 		itemInput.LocationID,
 		itemInput.StorageSection,
 		nullableTime(deliveryDate),
 		itemInput.ContainerNo,
-		itemInput.ExpectedQty,
-		itemInput.ReceivedQty,
 	)
 	if err != nil {
 		return 0, "", mapDBError(fmt.Errorf("create inbound inventory item: %w", err))

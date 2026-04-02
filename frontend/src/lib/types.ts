@@ -143,6 +143,69 @@ export type CustomerPayload = {
   notes: string;
 };
 
+export type CustomerRateCard = {
+  customerId: number;
+  customerName: string;
+  inboundContainerFee: number;
+  wrappingFeePerPallet: number;
+  storageFeePerPalletWeek: number;
+  outboundFeePerPallet: number;
+  isDefault: boolean;
+  updatedAt: string | null;
+};
+
+export type CustomerRateCardPayload = {
+  inboundContainerFee: number;
+  wrappingFeePerPallet: number;
+  storageFeePerPalletWeek: number;
+  outboundFeePerPallet: number;
+};
+
+export type BillingInvoiceLine = {
+  id: number;
+  invoiceId: number;
+  lineType: string;
+  referenceType: string;
+  referenceId: number;
+  label: string;
+  containerNo: string;
+  servicePeriodStart: string | null;
+  servicePeriodEnd: string | null;
+  quantity: number;
+  unitRate: number;
+  amount: number;
+  detailsJson: string;
+  sortOrder: number;
+};
+
+export type BillingInvoice = {
+  id: number;
+  invoiceNo: string;
+  customerId: number;
+  customerName: string;
+  billingMonth: string;
+  currency: string;
+  status: string;
+  inboundContainerCount: number;
+  inboundFee: number;
+  wrappingPallets: number;
+  wrappingFee: number;
+  storagePalletDays: number;
+  storageFee: number;
+  outboundPallets: number;
+  outboundFee: number;
+  totalAmount: number;
+  generatedAt: string;
+  createdAt: string;
+  updatedAt: string;
+  lines: BillingInvoiceLine[];
+};
+
+export type GenerateBillingInvoicesPayload = {
+  billingMonth: string;
+  customerId?: number;
+};
+
 export type SKUMaster = {
   id: number;
   itemNumber: string;

@@ -15,6 +15,7 @@ import {
   ManageAccountsOutlined,
   MoveToInboxOutlined,
   OutboxOutlined,
+  RequestQuoteOutlined,
   SettingsOutlined,
   TuneOutlined,
   WarehouseOutlined
@@ -77,6 +78,10 @@ const HomeDashboardPage = lazy(async () => {
   const module = await import("./components/HomeDashboardPage");
   return { default: module.HomeDashboardPage };
 });
+const FinanceBillingPage = lazy(async () => {
+  const module = await import("./components/FinanceBillingPage");
+  return { default: module.FinanceBillingPage };
+});
 const InventorySummaryPage = lazy(async () => {
   const module = await import("./components/InventorySummaryPage");
   return { default: module.InventorySummaryPage };
@@ -132,6 +137,7 @@ export default function App() {
     inventory: t("navInventory"),
     masterData: t("masterData"),
     reports: t("reportsSection"),
+    finance: t("financeSection"),
     administration: t("navAdmin")
   };
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem("sim-sidebar-collapsed") === "true");
@@ -350,24 +356,27 @@ export default function App() {
   }
 
   const canViewAuditLogs = currentUser?.role === "admin";
+  const canViewFinance = currentUser?.role === "admin";
   const canViewReceiptLots = currentUser?.role === "admin";
   const canManageUsers = currentUser?.role === "admin";
 
   useEffect(() => {
     if (
       (activePage === "audit-logs" && !canViewAuditLogs) ||
+      (activePage === "finance" && !canViewFinance) ||
       (activePage === "receipt-lots" && !canViewReceiptLots) ||
       (activePage === "user-management" && !canManageUsers)
     ) {
       handleNavigateToPage("dashboard");
     }
-  }, [activePage, canManageUsers, canViewAuditLogs, canViewReceiptLots]);
+  }, [activePage, canManageUsers, canViewAuditLogs, canViewFinance, canViewReceiptLots]);
 
   const pageItems: Array<{ key: PageKey; label: string; description: string; icon: ReactNode }> = [
     { key: "dashboard", label: t("navDashboard"), description: t("dashboardDesc"), icon: <HomeOutlined fontSize="small" /> },
     { key: "daily-operations", label: t("dailyOperations"), description: t("dailyOperationsDesc"), icon: <HomeOutlined fontSize="small" /> },
     { key: "reports", label: t("report"), description: t("reportDesc"), icon: <AssessmentOutlined fontSize="small" /> },
     { key: "export-center", label: t("exportCenter"), description: t("exportCenterDesc"), icon: <FileDownloadOutlined fontSize="small" /> },
+    ...(canViewFinance ? [{ key: "finance" as PageKey, label: t("financeBilling"), description: t("financeBillingDesc"), icon: <RequestQuoteOutlined fontSize="small" /> }] : []),
     { key: "inbound-management", label: t("navReceiving"), description: t("inboundDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
     { key: "inbound-detail", label: t("inboundDetailPage"), description: t("inboundDetailPageDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
     { key: "outbound-management", label: t("navShipping"), description: t("outboundDesc"), icon: <OutboxOutlined fontSize="small" /> },
@@ -396,6 +405,7 @@ export default function App() {
     { key: "inventory", label: navLabels.inventory, items: ["inventory-summary", "warehouse-map", "container-contents", "all-activity"] as PageKey[] },
     { key: "master-data", label: navLabels.masterData, items: ["customers", "sku-master", "storage-management"] as PageKey[] },
     { key: "reports", label: navLabels.reports, items: ["reports", "export-center"] as PageKey[] },
+    { key: "finance", label: navLabels.finance, items: ["finance"] as PageKey[] },
     { key: "administration", label: navLabels.administration, items: ["audit-logs", "receipt-lots", "user-management", "settings"] as PageKey[] }
   ].map((section) => ({
     ...section,
@@ -433,6 +443,7 @@ export default function App() {
     "storage-location-editor": "master-data",
     reports: "reports",
     "export-center": "reports",
+    finance: "finance",
     "audit-logs": "administration",
     "receipt-lots": "administration",
     "user-management": "administration",
@@ -680,6 +691,7 @@ export default function App() {
                 errorMessage={errorMessage}
               />)
             ) : null}
+            {activePage === "finance" && canViewFinance ? renderWithSuspense(<FinanceBillingPage />) : null}
             {activePage === "export-center" ? (
               renderWithSuspense(<ExportCenterPage
                 items={items}

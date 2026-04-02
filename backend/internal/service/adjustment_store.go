@@ -483,11 +483,12 @@ func (s *Store) loadLockedAdjustmentItem(ctx context.Context, tx *sql.Tx, itemID
 			i.location_id,
 			l.name,
 			i.storage_section,
-			i.sku,
-			COALESCE(i.description, i.name, ''),
-			COALESCE(i.unit, 'pcs'),
+			sm.sku,
+			COALESCE(sm.description, sm.name, ''),
+			COALESCE(sm.unit, 'pcs'),
 			i.quantity
 		FROM inventory_items i
+		JOIN sku_master sm ON sm.id = i.sku_master_id
 		JOIN customers c ON c.id = i.customer_id
 		JOIN storage_locations l ON l.id = i.location_id
 		WHERE i.id = ?

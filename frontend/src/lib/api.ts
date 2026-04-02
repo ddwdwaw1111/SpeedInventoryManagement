@@ -1,7 +1,10 @@
 import type {
   AuditLog,
   AuthResponse,
+  BillingInvoice,
   CancelInboundDocumentPayload,
+  CustomerRateCard,
+  CustomerRateCardPayload,
   CycleCount,
   CycleCountPayload,
   CancelOutboundDocumentPayload,
@@ -14,6 +17,7 @@ import type {
   InventoryAdjustmentPayload,
   InventoryTransfer,
   InventoryTransferPayload,
+  GenerateBillingInvoicesPayload,
   InboundDocument,
   InboundDocumentPayload,
   InboundPackingListImportPreview,
@@ -297,6 +301,33 @@ export const api = {
       params.set("search", search.trim());
     }
     return request<ReceiptLotTrace[]>(`/receipt-lots?${params.toString()}`);
+  },
+
+  getCustomerRateCards() {
+    return request<CustomerRateCard[]>("/billing/rate-cards");
+  },
+
+  updateCustomerRateCard(customerId: number, payload: CustomerRateCardPayload) {
+    return request<CustomerRateCard>(`/billing/rate-cards/${customerId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  getBillingInvoices(billingMonth = "") {
+    const params = new URLSearchParams();
+    if (billingMonth.trim()) {
+      params.set("billingMonth", billingMonth.trim());
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    return request<BillingInvoice[]>(`/billing/invoices${suffix}`);
+  },
+
+  generateBillingInvoices(payload: GenerateBillingInvoicesPayload) {
+    return request<BillingInvoice[]>("/billing/invoices/generate", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
   },
 
   getOutboundDocuments(limit = 100, archiveScope: DocumentArchiveScope = "active") {

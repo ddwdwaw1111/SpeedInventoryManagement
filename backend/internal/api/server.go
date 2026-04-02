@@ -98,6 +98,10 @@ func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName s
 	admin.DELETE("/sku-master/:id", server.handleDeleteSKUMaster)
 	admin.DELETE("/items/:id", server.handleDeleteItem)
 	admin.GET("/receipt-lots", server.handleListReceiptLots)
+	admin.GET("/billing/rate-cards", server.handleListCustomerRateCards)
+	admin.PUT("/billing/rate-cards/:customerId", server.handleUpsertCustomerRateCard)
+	admin.GET("/billing/invoices", server.handleListBillingInvoices)
+	admin.POST("/billing/invoices/generate", server.handleGenerateBillingInvoices)
 
 	return router
 }

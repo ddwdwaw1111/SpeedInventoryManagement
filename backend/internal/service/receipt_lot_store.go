@@ -16,8 +16,6 @@ type receiptLot struct {
 	SourceInboundDocumentID int64
 	SourceInboundLineID     int64
 	ItemID                  int64
-	CustomerID              int64
-	LocationID              int64
 	StorageSection          string
 	ContainerNo             string
 	OriginalQty             int
@@ -30,8 +28,6 @@ type createReceiptLotInput struct {
 	SourceInboundDocumentID int64
 	SourceInboundLineID     int64
 	ItemID                  int64
-	CustomerID              int64
-	LocationID              int64
 	StorageSection          string
 	ContainerNo             string
 	OriginalQty             int
@@ -124,9 +120,9 @@ func (s *Store) ListReceiptLots(ctx context.Context, limit int, search string) (
 	if normalizedSearch != "" {
 		searchClause = `
 			AND (
-				LOWER(COALESCE(i.item_number, '')) LIKE ?
-				OR LOWER(COALESCE(i.sku, '')) LIKE ?
-				OR LOWER(COALESCE(i.description, i.name, '')) LIKE ?
+				LOWER(COALESCE(sm.item_number, '')) LIKE ?
+				OR LOWER(COALESCE(sm.sku, '')) LIKE ?
+				OR LOWER(COALESCE(sm.description, sm.name, '')) LIKE ?
 				OR LOWER(COALESCE(c.name, '')) LIKE ?
 				OR LOWER(COALESCE(l.name, '')) LIKE ?
 				OR LOWER(COALESCE(rl.container_no, '')) LIKE ?
@@ -146,12 +142,12 @@ func (s *Store) ListReceiptLots(ctx context.Context, limit int, search string) (
 			rl.source_inbound_document_id,
 			rl.source_inbound_line_id,
 			rl.item_id,
-			COALESCE(i.item_number, '') AS item_number,
-			COALESCE(i.sku, '') AS sku,
-			COALESCE(i.description, i.name, '') AS description,
-			rl.customer_id,
+			COALESCE(sm.item_number, '') AS item_number,
+			COALESCE(sm.sku, '') AS sku,
+			COALESCE(sm.description, sm.name, '') AS description,
+			i.customer_id,
 			COALESCE(c.name, '') AS customer_name,
-			rl.location_id,
+			i.location_id,
 			COALESCE(l.name, '') AS location_name,
 			rl.storage_section,
 			COALESCE(rl.container_no, '') AS container_no,
@@ -161,8 +157,9 @@ func (s *Store) ListReceiptLots(ctx context.Context, limit int, search string) (
 			rl.updated_at
 		FROM receipt_lots rl
 		LEFT JOIN inventory_items i ON i.id = rl.item_id
-		LEFT JOIN customers c ON c.id = rl.customer_id
-		LEFT JOIN storage_locations l ON l.id = rl.location_id
+		LEFT JOIN sku_master sm ON sm.id = i.sku_master_id
+		LEFT JOIN customers c ON c.id = i.customer_id
+		LEFT JOIN storage_locations l ON l.id = i.location_id
 		WHERE 1 = 1
 		%s
 		ORDER BY rl.updated_at DESC, rl.id DESC
@@ -262,20 +259,17 @@ func (s *Store) createReceiptLotTx(ctx context.Context, tx *sql.Tx, input create
 			source_inbound_document_id,
 			source_inbound_line_id,
 			item_id,
-			customer_id,
-			location_id,
 			storage_section,
 			container_no,
 			original_qty,
 			remaining_qty
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		nullableInt64(input.ParentReceiptLotID),
 		input.SourceInboundDocumentID,
 		input.SourceInboundLineID,
 		input.ItemID,
-		input.CustomerID,
-		input.LocationID,
 		fallbackSection(input.StorageSection),
 		nullableString(input.ContainerNo),
 		input.OriginalQty,
@@ -296,8 +290,6 @@ func (s *Store) createReceiptLotTx(ctx context.Context, tx *sql.Tx, input create
 		SourceInboundDocumentID: input.SourceInboundDocumentID,
 		SourceInboundLineID:     input.SourceInboundLineID,
 		ItemID:                  input.ItemID,
-		CustomerID:              input.CustomerID,
-		LocationID:              input.LocationID,
 		StorageSection:          fallbackSection(input.StorageSection),
 		ContainerNo:             input.ContainerNo,
 		OriginalQty:             input.OriginalQty,
@@ -345,17 +337,15 @@ func (s *Store) listOpenReceiptLotsForItemTx(ctx context.Context, tx *sql.Tx, it
 			COALESCE(parent_receipt_lot_id, 0) AS parent_receipt_lot_id,
 			source_inbound_document_id,
 			source_inbound_line_id,
-			item_id,
-			customer_id,
-			location_id,
-			storage_section,
+			rl.item_id,
+			rl.storage_section,
 			COALESCE(container_no, '') AS container_no,
 			original_qty,
 			remaining_qty,
-			created_at
-		FROM receipt_lots
-		WHERE item_id = ? AND remaining_qty > 0
-		ORDER BY created_at ASC, id ASC
+			rl.created_at
+		FROM receipt_lots rl
+		WHERE rl.item_id = ? AND rl.remaining_qty > 0
+		ORDER BY rl.created_at ASC, rl.id ASC
 		FOR UPDATE
 	`, itemID)
 	if err != nil {
@@ -377,17 +367,15 @@ func (s *Store) listOpenReceiptLotsForInboundLineTx(ctx context.Context, tx *sql
 			COALESCE(parent_receipt_lot_id, 0) AS parent_receipt_lot_id,
 			source_inbound_document_id,
 			source_inbound_line_id,
-			item_id,
-			customer_id,
-			location_id,
-			storage_section,
+			rl.item_id,
+			rl.storage_section,
 			COALESCE(container_no, '') AS container_no,
 			original_qty,
 			remaining_qty,
-			created_at
-		FROM receipt_lots
-		WHERE source_inbound_line_id = ? AND remaining_qty > 0
-		ORDER BY created_at %s, id %s
+			rl.created_at
+		FROM receipt_lots rl
+		WHERE rl.source_inbound_line_id = ? AND rl.remaining_qty > 0
+		ORDER BY rl.created_at %s, rl.id %s
 		FOR UPDATE
 	`, orderDirection, orderDirection), inboundLineID)
 	if err != nil {
@@ -516,8 +504,6 @@ func scanReceiptLots(rows *sql.Rows) ([]receiptLot, error) {
 			&lot.SourceInboundDocumentID,
 			&lot.SourceInboundLineID,
 			&lot.ItemID,
-			&lot.CustomerID,
-			&lot.LocationID,
 			&lot.StorageSection,
 			&lot.ContainerNo,
 			&lot.OriginalQty,

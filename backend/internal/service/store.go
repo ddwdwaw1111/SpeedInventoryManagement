@@ -311,10 +311,11 @@ func (s *Store) GetDashboard(ctx context.Context) (DashboardData, error) {
 	query := `
 		SELECT
 			COUNT(*) AS total_items,
-			COALESCE(SUM(quantity), 0) AS total_units,
-			COALESCE(SUM(CASE WHEN GREATEST(quantity - allocated_qty - damaged_qty - hold_qty, 0) <= reorder_level THEN 1 ELSE 0 END), 0) AS low_stock_items,
-			COUNT(DISTINCT location_id) AS locations_in_use
-		FROM inventory_items
+			COALESCE(SUM(i.quantity), 0) AS total_units,
+			COALESCE(SUM(CASE WHEN GREATEST(i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty, 0) <= COALESCE(sm.reorder_level, 0) THEN 1 ELSE 0 END), 0) AS low_stock_items,
+			COUNT(DISTINCT i.location_id) AS locations_in_use
+		FROM inventory_items i
+		JOIN sku_master sm ON sm.id = i.sku_master_id
 	`
 
 	if err := s.db.QueryRowContext(ctx, query).Scan(
@@ -339,18 +340,18 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 	query := `
 		SELECT
 			i.id,
-			COALESCE(i.item_number, ''),
-			i.sku,
-			i.name,
-			i.category,
-			COALESCE(i.description, ''),
-			i.unit,
+			COALESCE(sm.item_number, ''),
+			COALESCE(sm.sku, ''),
+			COALESCE(sm.name, ''),
+			COALESCE(sm.category, ''),
+			COALESCE(sm.description, ''),
+			COALESCE(sm.unit, 'pcs'),
 			i.quantity,
 			GREATEST(i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty, 0) AS available_qty,
 			i.allocated_qty,
 			i.damaged_qty,
 			i.hold_qty,
-			i.reorder_level,
+			COALESCE(sm.reorder_level, 0),
 			i.customer_id,
 			c.name,
 			i.location_id,
@@ -358,14 +359,15 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 			i.storage_section,
 			i.delivery_date,
 			COALESCE(i.container_no, ''),
-			i.expected_qty,
-			i.received_qty,
-			i.height_in,
-			i.out_date,
+			0 AS expected_qty,
+			0 AS received_qty,
+			0 AS height_in,
+			NULL AS out_date,
 			i.last_restocked_at,
 			i.created_at,
 			i.updated_at
 		FROM inventory_items i
+		JOIN sku_master sm ON sm.id = i.sku_master_id
 		JOIN customers c ON c.id = i.customer_id
 		JOIN storage_locations l ON l.id = i.location_id
 		WHERE (i.quantity <> 0 OR i.allocated_qty <> 0 OR i.damaged_qty <> 0 OR i.hold_qty <> 0)
@@ -374,7 +376,7 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 	args := make([]any, 0)
 	if search := strings.TrimSpace(filters.Search); search != "" {
 		likeValue := "%" + search + "%"
-		query += " AND (i.item_number LIKE ? OR i.sku LIKE ? OR i.name LIKE ? OR i.description LIKE ? OR i.category LIKE ? OR c.name LIKE ?)"
+		query += " AND (sm.item_number LIKE ? OR sm.sku LIKE ? OR sm.name LIKE ? OR sm.description LIKE ? OR sm.category LIKE ? OR c.name LIKE ?)"
 		args = append(args, likeValue, likeValue, likeValue, likeValue, likeValue, likeValue)
 	}
 
@@ -389,10 +391,10 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 	}
 
 	if filters.LowStockOnly {
-		query += " AND GREATEST(i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty, 0) <= i.reorder_level"
+		query += " AND GREATEST(i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty, 0) <= sm.reorder_level"
 	}
 
-	query += " ORDER BY i.updated_at DESC, i.sku ASC"
+	query += " ORDER BY i.updated_at DESC, sm.sku ASC"
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -428,11 +430,6 @@ func (s *Store) CreateItem(ctx context.Context, input CreateItemInput) (Item, er
 		return Item{}, err
 	}
 
-	outDate, err := parseOptionalDate(input.OutDate)
-	if err != nil {
-		return Item{}, err
-	}
-
 	var lastRestockedAt any
 	if input.Quantity > 0 {
 		lastRestockedAt = time.Now().UTC()
@@ -453,49 +450,27 @@ func (s *Store) CreateItem(ctx context.Context, input CreateItemInput) (Item, er
 		INSERT INTO inventory_items (
 			sku_master_id,
 			customer_id,
-			item_number,
-			sku,
-			name,
-			category,
-			description,
-			unit,
 			quantity,
 			allocated_qty,
 			damaged_qty,
 			hold_qty,
-			reorder_level,
 			location_id,
 			storage_section,
 			delivery_date,
 			container_no,
-			expected_qty,
-			received_qty,
-			height_in,
-			out_date,
 			last_restocked_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		skuMasterID,
 		input.CustomerID,
-		nullableString(input.ItemNumber),
-		input.SKU,
-		input.Name,
-		input.Category,
-		input.Description,
-		input.Unit,
 		input.Quantity,
 		input.AllocatedQty,
 		input.DamagedQty,
 		input.HoldQty,
-		input.ReorderLevel,
 		input.LocationID,
 		input.StorageSection,
 		nullableTime(deliveryDate),
 		input.ContainerNo,
-		input.ExpectedQty,
-		input.ReceivedQty,
-		input.HeightIn,
-		nullableTime(outDate),
 		lastRestockedAt,
 	)
 	if err != nil {
@@ -525,11 +500,6 @@ func (s *Store) UpdateItem(ctx context.Context, itemID int64, input CreateItemIn
 		return Item{}, err
 	}
 
-	outDate, err := parseOptionalDate(input.OutDate)
-	if err != nil {
-		return Item{}, err
-	}
-
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Item{}, fmt.Errorf("begin item update transaction: %w", err)
@@ -551,25 +521,14 @@ func (s *Store) UpdateItem(ctx context.Context, itemID int64, input CreateItemIn
 		SET
 			sku_master_id = ?,
 			customer_id = ?,
-			item_number = ?,
-			sku = ?,
-			name = ?,
-			category = ?,
-			description = ?,
-			unit = ?,
 			quantity = ?,
 			allocated_qty = ?,
 			damaged_qty = ?,
 			hold_qty = ?,
-			reorder_level = ?,
 			location_id = ?,
 			storage_section = ?,
 			delivery_date = ?,
 			container_no = ?,
-			expected_qty = ?,
-			received_qty = ?,
-			height_in = ?,
-			out_date = ?,
 			last_restocked_at = CASE
 				WHEN ? > quantity THEN CURRENT_TIMESTAMP
 				ELSE last_restocked_at
@@ -579,25 +538,14 @@ func (s *Store) UpdateItem(ctx context.Context, itemID int64, input CreateItemIn
 		`,
 		skuMasterID,
 		input.CustomerID,
-		nullableString(input.ItemNumber),
-		input.SKU,
-		input.Name,
-		input.Category,
-		input.Description,
-		input.Unit,
 		input.Quantity,
 		input.AllocatedQty,
 		input.DamagedQty,
 		input.HoldQty,
-		input.ReorderLevel,
 		input.LocationID,
 		input.StorageSection,
 		nullableTime(deliveryDate),
 		input.ContainerNo,
-		input.ExpectedQty,
-		input.ReceivedQty,
-		input.HeightIn,
-		nullableTime(outDate),
 		input.Quantity,
 		itemID,
 	)
@@ -679,9 +627,9 @@ func (s *Store) ListMovements(ctx context.Context, limit int) ([]Movement, error
 			COALESCE(m.inbound_document_line_id, 0),
 			COALESCE(m.outbound_document_id, 0),
 			COALESCE(m.outbound_document_line_id, 0),
-			i.name,
-			i.sku,
-			COALESCE(m.description_snapshot, i.description, i.name, ''),
+			COALESCE(sm.name, ''),
+			COALESCE(sm.sku, ''),
+			COALESCE(m.description_snapshot, sm.description, sm.name, ''),
 			m.customer_id,
 			c.name,
 			l.name,
@@ -710,6 +658,7 @@ func (s *Store) ListMovements(ctx context.Context, limit int) ([]Movement, error
 			m.created_at
 		FROM stock_movements m
 		JOIN inventory_items i ON i.id = m.item_id
+		JOIN sku_master sm ON sm.id = i.sku_master_id
 		JOIN customers c ON c.id = m.customer_id
 		JOIN storage_locations l ON l.id = m.location_id
 		ORDER BY COALESCE(m.delivery_date, m.out_date, m.created_at) DESC, m.id DESC
@@ -1231,18 +1180,18 @@ func (s *Store) getItem(ctx context.Context, itemID int64) (Item, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT
 			i.id,
-			COALESCE(i.item_number, ''),
-			i.sku,
-			i.name,
-			i.category,
-			COALESCE(i.description, ''),
-			i.unit,
+			COALESCE(sm.item_number, ''),
+			COALESCE(sm.sku, ''),
+			COALESCE(sm.name, ''),
+			COALESCE(sm.category, ''),
+			COALESCE(sm.description, ''),
+			COALESCE(sm.unit, 'pcs'),
 			i.quantity,
 			GREATEST(i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty, 0) AS available_qty,
 			i.allocated_qty,
 			i.damaged_qty,
 			i.hold_qty,
-			i.reorder_level,
+			COALESCE(sm.reorder_level, 0),
 			i.customer_id,
 			c.name,
 			i.location_id,
@@ -1250,14 +1199,15 @@ func (s *Store) getItem(ctx context.Context, itemID int64) (Item, error) {
 			i.storage_section,
 			i.delivery_date,
 			COALESCE(i.container_no, ''),
-			i.expected_qty,
-			i.received_qty,
-			i.height_in,
-			i.out_date,
+			0 AS expected_qty,
+			0 AS received_qty,
+			0 AS height_in,
+			NULL AS out_date,
 			i.last_restocked_at,
 			i.created_at,
 			i.updated_at
 		FROM inventory_items i
+		JOIN sku_master sm ON sm.id = i.sku_master_id
 		JOIN customers c ON c.id = i.customer_id
 		JOIN storage_locations l ON l.id = i.location_id
 		WHERE i.id = ?
@@ -1283,9 +1233,9 @@ func (s *Store) getMovement(ctx context.Context, movementID int64) (Movement, er
 			COALESCE(m.inbound_document_line_id, 0),
 			COALESCE(m.outbound_document_id, 0),
 			COALESCE(m.outbound_document_line_id, 0),
-			i.name,
-			i.sku,
-			COALESCE(m.description_snapshot, i.description, i.name, ''),
+			COALESCE(sm.name, ''),
+			COALESCE(sm.sku, ''),
+			COALESCE(m.description_snapshot, sm.description, sm.name, ''),
 			m.customer_id,
 			c.name,
 			l.name,
@@ -1314,6 +1264,7 @@ func (s *Store) getMovement(ctx context.Context, movementID int64) (Movement, er
 			m.created_at
 		FROM stock_movements m
 		JOIN inventory_items i ON i.id = m.item_id
+		JOIN sku_master sm ON sm.id = i.sku_master_id
 		JOIN customers c ON c.id = m.customer_id
 		JOIN storage_locations l ON l.id = m.location_id
 		WHERE m.id = ?
@@ -1647,8 +1598,14 @@ func (s *Store) loadLockedItemForMovement(ctx context.Context, tx *sql.Tx, itemI
 	var storageSection string
 	var descriptionSnapshot string
 	if err := tx.QueryRowContext(ctx, `
-		SELECT quantity, customer_id, location_id, storage_section, COALESCE(description, name, '')
-		FROM inventory_items
+		SELECT
+			i.quantity,
+			i.customer_id,
+			i.location_id,
+			i.storage_section,
+			COALESCE(sm.description, sm.name, '')
+		FROM inventory_items i
+		JOIN sku_master sm ON sm.id = i.sku_master_id
 		WHERE id = ?
 		FOR UPDATE
 	`, itemID).Scan(&quantity, &customerID, &locationID, &storageSection, &descriptionSnapshot); err != nil {
@@ -1760,19 +1717,6 @@ func (s *Store) applyMovementToInventoryItem(ctx context.Context, tx *sql.Tx, it
 				WHEN ? <> '' THEN ?
 				ELSE container_no
 			END,
-			expected_qty = CASE
-				WHEN ? <> 0 THEN ?
-				ELSE expected_qty
-			END,
-			received_qty = CASE
-				WHEN ? <> 0 THEN ?
-				ELSE received_qty
-			END,
-			height_in = CASE
-				WHEN ? <> 0 THEN ?
-				ELSE height_in
-			END,
-			out_date = COALESCE(?, out_date),
 			last_restocked_at = CASE
 				WHEN ? > 0 THEN CURRENT_TIMESTAMP
 				ELSE last_restocked_at
@@ -1786,13 +1730,6 @@ func (s *Store) applyMovementToInventoryItem(ctx context.Context, tx *sql.Tx, it
 		nullableTime(deliveryDate),
 		input.ContainerNo,
 		input.ContainerNo,
-		input.ExpectedQty,
-		input.ExpectedQty,
-		input.ReceivedQty,
-		input.ReceivedQty,
-		input.HeightIn,
-		input.HeightIn,
-		nullableTime(outDate),
 		delta,
 		itemID,
 	)

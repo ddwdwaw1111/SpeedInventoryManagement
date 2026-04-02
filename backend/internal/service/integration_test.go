@@ -74,6 +74,9 @@ func resetIntegrationDatabase(t *testing.T, db *sqlx.DB) {
 		"audit_logs",
 		"ui_preferences",
 		"user_sessions",
+		"billing_invoice_lines",
+		"billing_invoices",
+		"customer_rate_cards",
 		"movement_lot_links",
 		"receipt_lots",
 		"stock_movements",
@@ -259,6 +262,90 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 	assertMovementTypeCount(t, movements, itemAfterInbound.ID, "IN", 1)
 	assertMovementTypeCount(t, movements, itemAfterInbound.ID, "OUT", 1)
 	assertMovementTypeCount(t, movements, itemAfterInbound.ID, "REVERSAL", 2)
+}
+
+func TestGenerateBillingInvoicesUsesOutboundAllocationContainerSnapshotIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0)
+	containerNo := "BILL-" + suffix
+
+	if _, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:     customer.ID,
+		LocationID:     location.ID,
+		DeliveryDate:   "2026-03-22",
+		ContainerNo:    containerNo,
+		StorageSection: DefaultStorageSection,
+		UnitLabel:      "PLT",
+		Status:         DocumentStatusConfirmed,
+		DocumentNote:   "Billing inbound test",
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:               item.SKU,
+			Description:       item.Description,
+			ExpectedQty:       20,
+			ReceivedQty:       20,
+			StorageSection:    DefaultStorageSection,
+			Pallets:           2,
+			PalletsDetailCtns: "2*10",
+		}},
+	}); err != nil {
+		t.Fatalf("create confirmed inbound document: %v", err)
+	}
+
+	receivedItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerNo, item.SKU)
+	if _, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo: "PL-BILL-" + suffix,
+		OrderRef:      "SO-BILL-" + suffix,
+		OutDate:       "2026-03-24",
+		ShipToName:    "Receiver " + suffix,
+		ShipToAddress: "123 Warehouse Ln",
+		ShipToContact: "Dock 6",
+		CarrierName:   "FedEx",
+		Status:        DocumentStatusConfirmed,
+		DocumentNote:  "Billing outbound test",
+		Lines: []CreateOutboundDocumentLineInput{{
+			ItemID:       receivedItem.ID,
+			Quantity:     10,
+			Pallets:      1,
+			UnitLabel:    "PLT",
+			CartonSizeMM: "400*300*200",
+		}},
+	}); err != nil {
+		t.Fatalf("create confirmed outbound document: %v", err)
+	}
+
+	invoices, err := store.GenerateBillingInvoices(ctx, GenerateBillingInvoicesInput{
+		BillingMonth: "2026-03",
+		CustomerID:   customer.ID,
+	})
+	if err != nil {
+		t.Fatalf("generate billing invoices: %v", err)
+	}
+	if len(invoices) != 1 {
+		t.Fatalf("expected 1 billing invoice, got %d", len(invoices))
+	}
+
+	var outboundLine *BillingInvoiceLine
+	for index := range invoices[0].Lines {
+		line := &invoices[0].Lines[index]
+		if line.LineType == BillingInvoiceLineOutbound {
+			outboundLine = line
+			break
+		}
+	}
+	if outboundLine == nil {
+		t.Fatal("expected outbound billing line to be generated")
+	}
+	if outboundLine.ContainerNo != containerNo {
+		t.Fatalf("expected outbound billing line container %q, got %q", containerNo, outboundLine.ContainerNo)
+	}
+	if outboundLine.Quantity != 1 {
+		t.Fatalf("expected outbound billing line quantity 1 pallet, got %v", outboundLine.Quantity)
+	}
 }
 
 func TestConfirmedInboundDocumentEditCreatesCorrectionsIntegration(t *testing.T) {

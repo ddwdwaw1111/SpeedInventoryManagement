@@ -93,33 +93,20 @@ CREATE TABLE IF NOT EXISTS inventory_items (
   id BIGINT NOT NULL AUTO_INCREMENT,
   sku_master_id BIGINT NOT NULL,
   customer_id BIGINT NOT NULL,
-  item_number VARCHAR(120) DEFAULT NULL,
-  sku VARCHAR(64) NOT NULL,
-  name VARCHAR(160) NOT NULL,
-  category VARCHAR(120) NOT NULL,
-  description TEXT DEFAULT NULL,
-  unit VARCHAR(32) NOT NULL DEFAULT 'pcs',
   quantity INT NOT NULL DEFAULT 0,
   allocated_qty INT NOT NULL DEFAULT 0,
   damaged_qty INT NOT NULL DEFAULT 0,
   hold_qty INT NOT NULL DEFAULT 0,
-  reorder_level INT NOT NULL DEFAULT 0,
   location_id BIGINT NOT NULL,
   storage_section VARCHAR(16) NOT NULL DEFAULT 'TEMP',
   delivery_date DATE DEFAULT NULL,
   container_no VARCHAR(120) NOT NULL DEFAULT '',
-  expected_qty INT NOT NULL DEFAULT 0,
-  received_qty INT NOT NULL DEFAULT 0,
-  height_in INT NOT NULL DEFAULT 0,
-  out_date DATE DEFAULT NULL,
   last_restocked_at TIMESTAMP NULL DEFAULT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_inventory_item_balance (sku_master_id, location_id, storage_section, customer_id, container_no),
-  KEY idx_inventory_items_category (category),
   KEY idx_inventory_items_location_id (location_id),
-  KEY idx_inventory_items_sku (sku),
   KEY idx_inventory_items_sku_master_id (sku_master_id),
   KEY idx_inventory_items_customer_id (customer_id),
   CONSTRAINT fk_inventory_items_sku_master
@@ -342,8 +329,6 @@ CREATE TABLE IF NOT EXISTS receipt_lots (
   source_inbound_document_id BIGINT NOT NULL,
   source_inbound_line_id BIGINT NOT NULL,
   item_id BIGINT NOT NULL,
-  customer_id BIGINT NOT NULL,
-  location_id BIGINT NOT NULL,
   storage_section VARCHAR(16) NOT NULL DEFAULT 'TEMP',
   container_no VARCHAR(120) NOT NULL DEFAULT '',
   original_qty INT NOT NULL DEFAULT 0,
@@ -366,11 +351,7 @@ CREATE TABLE IF NOT EXISTS receipt_lots (
     ON DELETE CASCADE,
   CONSTRAINT fk_receipt_lots_item
     FOREIGN KEY (item_id) REFERENCES inventory_items (id)
-    ON DELETE CASCADE,
-  CONSTRAINT fk_receipt_lots_customer
-    FOREIGN KEY (customer_id) REFERENCES customers (id),
-  CONSTRAINT fk_receipt_lots_location
-    FOREIGN KEY (location_id) REFERENCES storage_locations (id)
+    ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS movement_lot_links (
@@ -570,4 +551,69 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   KEY idx_audit_logs_created_at (created_at),
   CONSTRAINT fk_audit_logs_actor_user
     FOREIGN KEY (actor_user_id) REFERENCES users (id)
+);
+
+CREATE TABLE IF NOT EXISTS customer_rate_cards (
+  customer_id BIGINT NOT NULL,
+  inbound_container_fee DECIMAL(12,2) NOT NULL DEFAULT 450.00,
+  wrapping_fee_per_pallet DECIMAL(12,2) NOT NULL DEFAULT 10.00,
+  storage_fee_per_pallet_week DECIMAL(12,2) NOT NULL DEFAULT 7.00,
+  outbound_fee_per_pallet DECIMAL(12,2) NOT NULL DEFAULT 10.00,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (customer_id),
+  CONSTRAINT fk_customer_rate_cards_customer
+    FOREIGN KEY (customer_id) REFERENCES customers (id)
+    ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS billing_invoices (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  invoice_no VARCHAR(120) NOT NULL,
+  customer_id BIGINT NOT NULL,
+  billing_month DATE NOT NULL,
+  currency VARCHAR(8) NOT NULL DEFAULT 'USD',
+  status VARCHAR(32) NOT NULL DEFAULT 'DRAFT',
+  inbound_container_count INT NOT NULL DEFAULT 0,
+  inbound_fee DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  wrapping_pallets DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  wrapping_fee DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  storage_pallet_days DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  storage_fee DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  outbound_pallets DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  outbound_fee DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  total_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  generated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_billing_invoices_invoice_no (invoice_no),
+  UNIQUE KEY uq_billing_invoices_customer_month (customer_id, billing_month),
+  KEY idx_billing_invoices_billing_month (billing_month),
+  CONSTRAINT fk_billing_invoices_customer
+    FOREIGN KEY (customer_id) REFERENCES customers (id)
+);
+
+CREATE TABLE IF NOT EXISTS billing_invoice_lines (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  invoice_id BIGINT NOT NULL,
+  line_type VARCHAR(32) NOT NULL,
+  reference_type VARCHAR(64) DEFAULT NULL,
+  reference_id BIGINT DEFAULT NULL,
+  label VARCHAR(255) NOT NULL,
+  container_no VARCHAR(120) DEFAULT NULL,
+  service_period_start DATE DEFAULT NULL,
+  service_period_end DATE DEFAULT NULL,
+  quantity DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  unit_rate DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  details_json JSON DEFAULT NULL,
+  sort_order INT NOT NULL DEFAULT 1,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_billing_invoice_lines_invoice_id (invoice_id),
+  KEY idx_billing_invoice_lines_reference_id (reference_id),
+  CONSTRAINT fk_billing_invoice_lines_invoice
+    FOREIGN KEY (invoice_id) REFERENCES billing_invoices (id)
+    ON DELETE CASCADE
 );

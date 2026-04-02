@@ -1,0 +1,56 @@
+erDiagram
+    users ||--o{ user_sessions : has
+    users ||--o{ audit_logs : writes
+
+    customers ||--o{ inventory_items : owns
+    customers ||--o{ inbound_documents : owns
+    customers ||--o{ outbound_documents : owns
+    customers ||--|| customer_rate_cards : has
+    customers ||--o{ billing_invoices : billed_to
+    customers ||--o{ inventory_adjustment_lines : appears_on
+    customers ||--o{ inventory_transfer_lines : appears_on
+    customers ||--o{ cycle_count_lines : appears_on
+
+    storage_locations ||--o{ inventory_items : stores
+    storage_locations ||--o{ inbound_documents : receives_at
+    storage_locations ||--o{ stock_movements : happens_at
+    storage_locations ||--o{ outbound_document_lines : ships_from
+    storage_locations ||--o{ outbound_pick_allocations : allocates_from
+    storage_locations ||--o{ inventory_adjustment_lines : appears_on
+    storage_locations ||--o{ inventory_transfer_lines : from_to
+    storage_locations ||--o{ cycle_count_lines : appears_on
+
+    sku_master ||--o{ inventory_items : defines
+
+    inventory_items ||--o{ stock_movements : ledger_for
+    inventory_items ||--o{ inbound_document_lines : linked_item
+    inventory_items ||--o{ outbound_document_lines : linked_item
+    inventory_items ||--o{ outbound_pick_allocations : source_item
+    inventory_items ||--o{ receipt_lots : source_stock
+    inventory_items ||--o{ inventory_adjustment_lines : adjusted_item
+    inventory_items ||--o{ inventory_transfer_lines : source_or_dest
+    inventory_items ||--o{ cycle_count_lines : counted_item
+
+    inbound_documents ||--o{ inbound_document_lines : has_lines
+    inbound_documents ||--o{ receipt_lots : creates
+
+    stock_movements ||--o{ inbound_document_lines : posted_from
+    stock_movements ||--o{ outbound_document_lines : posted_from
+    stock_movements ||--o{ outbound_pick_allocations : linked_move
+    stock_movements ||--o{ movement_lot_links : applied_to_lot
+    stock_movements ||--o{ inventory_adjustment_lines : posted_from
+    stock_movements ||--o{ inventory_transfer_lines : in_out_move
+    stock_movements ||--o{ cycle_count_lines : posted_from
+
+    outbound_documents ||--o{ outbound_document_lines : has_lines
+    outbound_document_lines ||--o{ outbound_pick_allocations : split_into
+
+    inbound_document_lines ||--o{ receipt_lots : seeds
+    receipt_lots ||--o{ receipt_lots : parent_child
+    receipt_lots ||--o{ movement_lot_links : consumed_by
+
+    inventory_adjustments ||--o{ inventory_adjustment_lines : has_lines
+    inventory_transfers ||--o{ inventory_transfer_lines : has_lines
+    cycle_counts ||--o{ cycle_count_lines : has_lines
+
+    billing_invoices ||--o{ billing_invoice_lines : has_lines

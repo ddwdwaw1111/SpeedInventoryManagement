@@ -424,8 +424,6 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 				SourceInboundDocumentID: consumption.Lot.SourceInboundDocumentID,
 				SourceInboundLineID:     consumption.Lot.SourceInboundLineID,
 				ItemID:                  destinationItemID,
-				CustomerID:              consumption.Lot.CustomerID,
-				LocationID:              line.ToLocationID,
 				StorageSection:          toSection,
 				ContainerNo:             "",
 				OriginalQty:             consumption.Quantity,
@@ -620,15 +618,16 @@ func (s *Store) loadLockedTransferItem(ctx context.Context, tx *sql.Tx, itemID i
 			l.name,
 			i.storage_section,
 			COALESCE(i.container_no, ''),
-			i.sku,
-			i.name,
-			i.category,
-			COALESCE(i.description, i.name, ''),
-			COALESCE(i.unit, 'pcs'),
-			i.reorder_level,
+			sm.sku,
+			sm.name,
+			sm.category,
+			COALESCE(sm.description, sm.name, ''),
+			COALESCE(sm.unit, 'pcs'),
+			sm.reorder_level,
 			i.quantity,
 			GREATEST(i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty, 0) AS available_qty
 		FROM inventory_items i
+		JOIN sku_master sm ON sm.id = i.sku_master_id
 		JOIN customers c ON c.id = i.customer_id
 		JOIN storage_locations l ON l.id = i.location_id
 		WHERE i.id = ?
@@ -711,32 +710,16 @@ func (s *Store) findOrCreateTransferDestinationItem(
 		INSERT INTO inventory_items (
 			sku_master_id,
 			customer_id,
-			sku,
-			name,
-			category,
-			description,
-			unit,
 			quantity,
-			reorder_level,
 			location_id,
 			storage_section,
 			delivery_date,
 			container_no,
-			expected_qty,
-			received_qty,
-			height_in,
-			out_date,
 			last_restocked_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL, '', 0, 0, 0, NULL, NULL)
+		) VALUES (?, ?, 0, ?, ?, NULL, '', NULL)
 	`,
 		sourceItem.SKUMasterID,
 		sourceItem.CustomerID,
-		sourceItem.SKU,
-		sourceItem.Name,
-		sourceItem.Category,
-		sourceItem.Description,
-		sourceItem.Unit,
-		sourceItem.ReorderLevel,
 		toLocationID,
 		normalizedToSection,
 	)

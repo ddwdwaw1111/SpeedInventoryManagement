@@ -321,28 +321,30 @@ func (s *Store) ListOutboundDocuments(ctx context.Context, limit int, archiveSco
 
 	lineQuery, args, err := sqlx.In(`
 		SELECT
-			id,
-			document_id,
-			COALESCE(movement_id, 0) AS movement_id,
-			item_id,
-			COALESCE(item_number_snapshot, '') AS item_number_snapshot,
-			location_id,
-			location_name_snapshot,
-			storage_section,
-			sku_snapshot,
-			COALESCE(description_snapshot, '') AS description_snapshot,
-			quantity,
-			pallets,
-			COALESCE(pallets_detail_ctns, '') AS pallets_detail_ctns,
-			COALESCE(unit_label, '') AS unit_label,
-			COALESCE(carton_size_mm, '') AS carton_size_mm,
-			net_weight_kgs,
-			gross_weight_kgs,
-			COALESCE(line_note, '') AS line_note,
-			created_at
-		FROM outbound_document_lines
-		WHERE document_id IN (?)
-		ORDER BY document_id DESC, sort_order ASC, id ASC
+			l.id,
+			l.document_id,
+			COALESCE(l.movement_id, 0) AS movement_id,
+			l.item_id,
+			COALESCE(NULLIF(l.item_number_snapshot, ''), sm.item_number, '') AS item_number_snapshot,
+			l.location_id,
+			l.location_name_snapshot,
+			l.storage_section,
+			l.sku_snapshot,
+			COALESCE(l.description_snapshot, sm.description, sm.name, '') AS description_snapshot,
+			l.quantity,
+			l.pallets,
+			COALESCE(l.pallets_detail_ctns, '') AS pallets_detail_ctns,
+			COALESCE(l.unit_label, '') AS unit_label,
+			COALESCE(l.carton_size_mm, '') AS carton_size_mm,
+			l.net_weight_kgs,
+			l.gross_weight_kgs,
+			COALESCE(l.line_note, '') AS line_note,
+			l.created_at
+		FROM outbound_document_lines l
+		LEFT JOIN inventory_items i ON i.id = l.item_id
+		LEFT JOIN sku_master sm ON sm.id = i.sku_master_id
+		WHERE l.document_id IN (?)
+		ORDER BY l.document_id DESC, l.sort_order ASC, l.id ASC
 	`, documentIDs)
 	if err != nil {
 		return nil, fmt.Errorf("build outbound document line query: %w", err)
@@ -1478,28 +1480,30 @@ func (s *Store) loadOutboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx,
 func (s *Store) loadOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, documentID int64) ([]outboundDocumentLineRow, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT
-			id,
-			document_id,
-			COALESCE(movement_id, 0) AS movement_id,
-			item_id,
-			COALESCE(item_number_snapshot, '') AS item_number_snapshot,
-			location_id,
-			location_name_snapshot,
-			storage_section,
-			sku_snapshot,
-			COALESCE(description_snapshot, '') AS description_snapshot,
-			quantity,
-			pallets,
-			COALESCE(pallets_detail_ctns, '') AS pallets_detail_ctns,
-			COALESCE(unit_label, '') AS unit_label,
-			COALESCE(carton_size_mm, '') AS carton_size_mm,
-			net_weight_kgs,
-			gross_weight_kgs,
-			COALESCE(line_note, '') AS line_note,
-			created_at
-		FROM outbound_document_lines
-		WHERE document_id = ?
-		ORDER BY sort_order ASC, id ASC
+			l.id,
+			l.document_id,
+			COALESCE(l.movement_id, 0) AS movement_id,
+			l.item_id,
+			COALESCE(NULLIF(l.item_number_snapshot, ''), sm.item_number, '') AS item_number_snapshot,
+			l.location_id,
+			l.location_name_snapshot,
+			l.storage_section,
+			l.sku_snapshot,
+			COALESCE(l.description_snapshot, sm.description, sm.name, '') AS description_snapshot,
+			l.quantity,
+			l.pallets,
+			COALESCE(l.pallets_detail_ctns, '') AS pallets_detail_ctns,
+			COALESCE(l.unit_label, '') AS unit_label,
+			COALESCE(l.carton_size_mm, '') AS carton_size_mm,
+			l.net_weight_kgs,
+			l.gross_weight_kgs,
+			COALESCE(l.line_note, '') AS line_note,
+			l.created_at
+		FROM outbound_document_lines l
+		LEFT JOIN inventory_items i ON i.id = l.item_id
+		LEFT JOIN sku_master sm ON sm.id = i.sku_master_id
+		WHERE l.document_id = ?
+		ORDER BY l.sort_order ASC, l.id ASC
 	`, documentID)
 	if err != nil {
 		return nil, fmt.Errorf("load outbound document lines: %w", err)
@@ -1633,28 +1637,30 @@ func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []in
 
 	lineQuery, lineArgs, err := sqlx.In(`
 		SELECT
-			id,
-			document_id,
-			COALESCE(movement_id, 0) AS movement_id,
-			item_id,
-			COALESCE(item_number_snapshot, '') AS item_number_snapshot,
-			location_id,
-			location_name_snapshot,
-			storage_section,
-			sku_snapshot,
-			COALESCE(description_snapshot, '') AS description_snapshot,
-			quantity,
-			pallets,
-			COALESCE(pallets_detail_ctns, '') AS pallets_detail_ctns,
-			COALESCE(unit_label, '') AS unit_label,
-			COALESCE(carton_size_mm, '') AS carton_size_mm,
-			net_weight_kgs,
-			gross_weight_kgs,
-			COALESCE(line_note, '') AS line_note,
-			created_at
-		FROM outbound_document_lines
-		WHERE document_id IN (?)
-		ORDER BY document_id DESC, sort_order ASC, id ASC
+			l.id,
+			l.document_id,
+			COALESCE(l.movement_id, 0) AS movement_id,
+			l.item_id,
+			COALESCE(NULLIF(l.item_number_snapshot, ''), sm.item_number, '') AS item_number_snapshot,
+			l.location_id,
+			l.location_name_snapshot,
+			l.storage_section,
+			l.sku_snapshot,
+			COALESCE(l.description_snapshot, sm.description, sm.name, '') AS description_snapshot,
+			l.quantity,
+			l.pallets,
+			COALESCE(l.pallets_detail_ctns, '') AS pallets_detail_ctns,
+			COALESCE(l.unit_label, '') AS unit_label,
+			COALESCE(l.carton_size_mm, '') AS carton_size_mm,
+			l.net_weight_kgs,
+			l.gross_weight_kgs,
+			COALESCE(l.line_note, '') AS line_note,
+			l.created_at
+		FROM outbound_document_lines l
+		LEFT JOIN inventory_items i ON i.id = l.item_id
+		LEFT JOIN sku_master sm ON sm.id = i.sku_master_id
+		WHERE l.document_id IN (?)
+		ORDER BY l.document_id DESC, l.sort_order ASC, l.id ASC
 	`, documentIDs)
 	if err != nil {
 		return nil, fmt.Errorf("build outbound document line query by id: %w", err)
@@ -1714,18 +1720,19 @@ func (s *Store) loadLockedOutboundItem(ctx context.Context, tx *sql.Tx, itemID i
 		SELECT
 			i.id,
 			i.customer_id,
-			COALESCE(i.item_number, ''),
+			COALESCE(sm.item_number, ''),
 			i.location_id,
 			l.name,
 			i.storage_section,
 			COALESCE(i.container_no, ''),
-			i.sku,
-			COALESCE(i.description, i.name, ''),
-			COALESCE(i.unit, 'pcs'),
+			sm.sku,
+			COALESCE(sm.description, sm.name, ''),
+			COALESCE(sm.unit, 'pcs'),
 			i.quantity,
 			GREATEST(i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty, 0) AS available_qty,
-			i.height_in
+			0 AS height_in
 		FROM inventory_items i
+		JOIN sku_master sm ON sm.id = i.sku_master_id
 		JOIN storage_locations l ON l.id = i.location_id
 		WHERE i.id = ?
 		FOR UPDATE
@@ -1773,25 +1780,26 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 		SELECT
 			i.id,
 			i.customer_id,
-			COALESCE(i.item_number, ''),
+			COALESCE(sm.item_number, ''),
 			i.location_id,
 			l.name,
 			COALESCE(NULLIF(i.storage_section, ''), 'TEMP'),
 			COALESCE(i.container_no, ''),
-			i.sku,
-			COALESCE(i.description, i.name, ''),
-			COALESCE(i.unit, 'pcs'),
+			sm.sku,
+			COALESCE(sm.description, sm.name, ''),
+			COALESCE(sm.unit, 'pcs'),
 			i.quantity,
 			GREATEST(i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty, 0) AS available_qty,
-			i.height_in,
+			0 AS height_in,
 			i.delivery_date,
 			i.created_at
 		FROM inventory_items i
+		JOIN sku_master sm ON sm.id = i.sku_master_id
 		JOIN storage_locations l ON l.id = i.location_id
 		WHERE
 			i.customer_id = ?
 			AND i.location_id = ?
-			AND i.sku = ?
+			AND sm.sku = ?
 			AND GREATEST(i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty, 0) > 0
 		ORDER BY
 			CASE WHEN i.delivery_date IS NULL THEN 1 ELSE 0 END,

@@ -103,33 +103,20 @@ func Migrate(db *sql.DB) error {
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			sku_master_id BIGINT NOT NULL,
 			customer_id BIGINT NOT NULL,
-			item_number VARCHAR(120) DEFAULT NULL,
-			sku VARCHAR(64) NOT NULL,
-			name VARCHAR(160) NOT NULL,
-			category VARCHAR(120) NOT NULL,
-			description TEXT DEFAULT NULL,
-			unit VARCHAR(32) NOT NULL DEFAULT 'pcs',
 			quantity INT NOT NULL DEFAULT 0,
 			allocated_qty INT NOT NULL DEFAULT 0,
 			damaged_qty INT NOT NULL DEFAULT 0,
 			hold_qty INT NOT NULL DEFAULT 0,
-			reorder_level INT NOT NULL DEFAULT 0,
 			location_id BIGINT NOT NULL,
 			storage_section VARCHAR(16) NOT NULL DEFAULT 'TEMP',
 			delivery_date DATE DEFAULT NULL,
 			container_no VARCHAR(120) NOT NULL DEFAULT '',
-			expected_qty INT NOT NULL DEFAULT 0,
-			received_qty INT NOT NULL DEFAULT 0,
-			height_in INT NOT NULL DEFAULT 0,
-			out_date DATE DEFAULT NULL,
 			last_restocked_at TIMESTAMP NULL DEFAULT NULL,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			PRIMARY KEY (id),
 			UNIQUE KEY uq_inventory_item_balance (sku_master_id, location_id, storage_section, customer_id, container_no),
-			KEY idx_inventory_items_category (category),
 			KEY idx_inventory_items_location_id (location_id),
-			KEY idx_inventory_items_sku (sku),
 			KEY idx_inventory_items_sku_master_id (sku_master_id),
 			KEY idx_inventory_items_customer_id (customer_id),
 			CONSTRAINT fk_inventory_items_sku_master
@@ -141,17 +128,13 @@ func Migrate(db *sql.DB) error {
 		)`,
 		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS sku_master_id BIGINT NULL AFTER id`,
 		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS customer_id BIGINT NULL AFTER sku_master_id`,
-		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS item_number VARCHAR(120) DEFAULT NULL AFTER customer_id`,
 		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS delivery_date DATE DEFAULT NULL AFTER location_id`,
 		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS storage_section VARCHAR(16) NOT NULL DEFAULT 'TEMP' AFTER location_id`,
 		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS allocated_qty INT NOT NULL DEFAULT 0 AFTER quantity`,
 		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS damaged_qty INT NOT NULL DEFAULT 0 AFTER allocated_qty`,
 		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS hold_qty INT NOT NULL DEFAULT 0 AFTER damaged_qty`,
 		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS container_no VARCHAR(120) NOT NULL DEFAULT '' AFTER delivery_date`,
-		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS expected_qty INT NOT NULL DEFAULT 0 AFTER container_no`,
-		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS received_qty INT NOT NULL DEFAULT 0 AFTER expected_qty`,
-		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS height_in INT NOT NULL DEFAULT 0 AFTER received_qty`,
-		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS out_date DATE DEFAULT NULL AFTER height_in`,
+		`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS last_restocked_at TIMESTAMP NULL DEFAULT NULL AFTER container_no`,
 		`CREATE TABLE IF NOT EXISTS stock_movements (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			item_id BIGINT NOT NULL,
@@ -462,8 +445,6 @@ func Migrate(db *sql.DB) error {
 			source_inbound_document_id BIGINT NOT NULL,
 			source_inbound_line_id BIGINT NOT NULL,
 			item_id BIGINT NOT NULL,
-			customer_id BIGINT NOT NULL,
-			location_id BIGINT NOT NULL,
 			storage_section VARCHAR(16) NOT NULL DEFAULT 'TEMP',
 			container_no VARCHAR(120) NOT NULL DEFAULT '',
 			original_qty INT NOT NULL DEFAULT 0,
@@ -486,19 +467,13 @@ func Migrate(db *sql.DB) error {
 				ON DELETE CASCADE,
 			CONSTRAINT fk_receipt_lots_item
 				FOREIGN KEY (item_id) REFERENCES inventory_items (id)
-				ON DELETE CASCADE,
-			CONSTRAINT fk_receipt_lots_customer
-				FOREIGN KEY (customer_id) REFERENCES customers (id),
-			CONSTRAINT fk_receipt_lots_location
-				FOREIGN KEY (location_id) REFERENCES storage_locations (id)
+				ON DELETE CASCADE
 		)`,
 		`ALTER TABLE receipt_lots ADD COLUMN IF NOT EXISTS parent_receipt_lot_id BIGINT DEFAULT NULL AFTER id`,
 		`ALTER TABLE receipt_lots ADD COLUMN IF NOT EXISTS source_inbound_document_id BIGINT NOT NULL AFTER parent_receipt_lot_id`,
 		`ALTER TABLE receipt_lots ADD COLUMN IF NOT EXISTS source_inbound_line_id BIGINT NOT NULL AFTER source_inbound_document_id`,
 		`ALTER TABLE receipt_lots ADD COLUMN IF NOT EXISTS item_id BIGINT NOT NULL AFTER source_inbound_line_id`,
-		`ALTER TABLE receipt_lots ADD COLUMN IF NOT EXISTS customer_id BIGINT NOT NULL AFTER item_id`,
-		`ALTER TABLE receipt_lots ADD COLUMN IF NOT EXISTS location_id BIGINT NOT NULL AFTER customer_id`,
-		`ALTER TABLE receipt_lots ADD COLUMN IF NOT EXISTS storage_section VARCHAR(16) NOT NULL DEFAULT 'TEMP' AFTER location_id`,
+		`ALTER TABLE receipt_lots ADD COLUMN IF NOT EXISTS storage_section VARCHAR(16) NOT NULL DEFAULT 'TEMP' AFTER item_id`,
 		`ALTER TABLE receipt_lots ADD COLUMN IF NOT EXISTS container_no VARCHAR(120) NOT NULL DEFAULT '' AFTER storage_section`,
 		`ALTER TABLE receipt_lots ADD COLUMN IF NOT EXISTS original_qty INT NOT NULL DEFAULT 0 AFTER container_no`,
 		`ALTER TABLE receipt_lots ADD COLUMN IF NOT EXISTS remaining_qty INT NOT NULL DEFAULT 0 AFTER original_qty`,
@@ -697,6 +672,68 @@ func Migrate(db *sql.DB) error {
 			CONSTRAINT fk_audit_logs_actor_user
 				FOREIGN KEY (actor_user_id) REFERENCES users (id)
 		)`,
+		`CREATE TABLE IF NOT EXISTS customer_rate_cards (
+			customer_id BIGINT NOT NULL,
+			inbound_container_fee DECIMAL(12,2) NOT NULL DEFAULT 450.00,
+			wrapping_fee_per_pallet DECIMAL(12,2) NOT NULL DEFAULT 10.00,
+			storage_fee_per_pallet_week DECIMAL(12,2) NOT NULL DEFAULT 7.00,
+			outbound_fee_per_pallet DECIMAL(12,2) NOT NULL DEFAULT 10.00,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			PRIMARY KEY (customer_id),
+			CONSTRAINT fk_customer_rate_cards_customer
+				FOREIGN KEY (customer_id) REFERENCES customers (id)
+				ON DELETE CASCADE
+		)`,
+		`CREATE TABLE IF NOT EXISTS billing_invoices (
+			id BIGINT NOT NULL AUTO_INCREMENT,
+			invoice_no VARCHAR(120) NOT NULL,
+			customer_id BIGINT NOT NULL,
+			billing_month DATE NOT NULL,
+			currency VARCHAR(8) NOT NULL DEFAULT 'USD',
+			status VARCHAR(32) NOT NULL DEFAULT 'DRAFT',
+			inbound_container_count INT NOT NULL DEFAULT 0,
+			inbound_fee DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+			wrapping_pallets DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+			wrapping_fee DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+			storage_pallet_days DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+			storage_fee DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+			outbound_pallets DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+			outbound_fee DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+			total_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+			generated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			UNIQUE KEY uq_billing_invoices_invoice_no (invoice_no),
+			UNIQUE KEY uq_billing_invoices_customer_month (customer_id, billing_month),
+			KEY idx_billing_invoices_billing_month (billing_month),
+			CONSTRAINT fk_billing_invoices_customer
+				FOREIGN KEY (customer_id) REFERENCES customers (id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS billing_invoice_lines (
+			id BIGINT NOT NULL AUTO_INCREMENT,
+			invoice_id BIGINT NOT NULL,
+			line_type VARCHAR(32) NOT NULL,
+			reference_type VARCHAR(64) DEFAULT NULL,
+			reference_id BIGINT DEFAULT NULL,
+			label VARCHAR(255) NOT NULL,
+			container_no VARCHAR(120) DEFAULT NULL,
+			service_period_start DATE DEFAULT NULL,
+			service_period_end DATE DEFAULT NULL,
+			quantity DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+			unit_rate DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+			amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+			details_json JSON DEFAULT NULL,
+			sort_order INT NOT NULL DEFAULT 1,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			KEY idx_billing_invoice_lines_invoice_id (invoice_id),
+			KEY idx_billing_invoice_lines_reference_id (reference_id),
+			CONSTRAINT fk_billing_invoice_lines_invoice
+				FOREIGN KEY (invoice_id) REFERENCES billing_invoices (id)
+				ON DELETE CASCADE
+		)`,
 		`UPDATE stock_movements
 			SET document_note = reason
 			WHERE movement_type = 'OUT'
@@ -710,6 +747,42 @@ func Migrate(db *sql.DB) error {
 	for _, statement := range statements {
 		if _, err := db.Exec(statement); err != nil {
 			return fmt.Errorf("apply migration %q: %w", statement, err)
+		}
+	}
+
+	if hasLegacyInventorySKU, err := columnExists(db, "inventory_items", "sku"); err != nil {
+		return fmt.Errorf("check legacy inventory sku column: %w", err)
+	} else if hasLegacyInventorySKU {
+		if _, err := db.Exec(`ALTER TABLE inventory_items MODIFY COLUMN sku VARCHAR(64) NULL DEFAULT NULL`); err != nil {
+			return fmt.Errorf("relax legacy inventory sku column: %w", err)
+		}
+	}
+	if hasLegacyInventoryName, err := columnExists(db, "inventory_items", "name"); err != nil {
+		return fmt.Errorf("check legacy inventory name column: %w", err)
+	} else if hasLegacyInventoryName {
+		if _, err := db.Exec(`ALTER TABLE inventory_items MODIFY COLUMN name VARCHAR(160) NULL DEFAULT NULL`); err != nil {
+			return fmt.Errorf("relax legacy inventory name column: %w", err)
+		}
+	}
+	if hasLegacyInventoryCategory, err := columnExists(db, "inventory_items", "category"); err != nil {
+		return fmt.Errorf("check legacy inventory category column: %w", err)
+	} else if hasLegacyInventoryCategory {
+		if _, err := db.Exec(`ALTER TABLE inventory_items MODIFY COLUMN category VARCHAR(120) NULL DEFAULT NULL`); err != nil {
+			return fmt.Errorf("relax legacy inventory category column: %w", err)
+		}
+	}
+	if hasLegacyReceiptLotCustomer, err := columnExists(db, "receipt_lots", "customer_id"); err != nil {
+		return fmt.Errorf("check legacy receipt lot customer column: %w", err)
+	} else if hasLegacyReceiptLotCustomer {
+		if _, err := db.Exec(`ALTER TABLE receipt_lots MODIFY COLUMN customer_id BIGINT NULL DEFAULT NULL`); err != nil {
+			return fmt.Errorf("relax legacy receipt lot customer column: %w", err)
+		}
+	}
+	if hasLegacyReceiptLotLocation, err := columnExists(db, "receipt_lots", "location_id"); err != nil {
+		return fmt.Errorf("check legacy receipt lot location column: %w", err)
+	} else if hasLegacyReceiptLotLocation {
+		if _, err := db.Exec(`ALTER TABLE receipt_lots MODIFY COLUMN location_id BIGINT NULL DEFAULT NULL`); err != nil {
+			return fmt.Errorf("relax legacy receipt lot location column: %w", err)
 		}
 	}
 
@@ -735,49 +808,65 @@ func Migrate(db *sql.DB) error {
 		return fmt.Errorf("seed default customer: %w", err)
 	}
 
-	if _, err := db.Exec(`
-		INSERT INTO sku_master (item_number, sku, name, category, description, unit, reorder_level)
-		SELECT DISTINCT item_number, sku, name, category, description, unit, reorder_level
-		FROM inventory_items
-		WHERE sku IS NOT NULL AND sku <> ''
-		ON DUPLICATE KEY UPDATE
-			item_number = COALESCE(NULLIF(VALUES(item_number), ''), sku_master.item_number),
-			name = VALUES(name),
-			category = VALUES(category),
-			description = VALUES(description),
-			unit = VALUES(unit),
-			reorder_level = VALUES(reorder_level)
-	`); err != nil {
-		return fmt.Errorf("backfill sku master: %w", err)
+	if hasLegacyInventorySKU, err := columnExists(db, "inventory_items", "sku"); err != nil {
+		return fmt.Errorf("check legacy inventory sku column for backfill: %w", err)
+	} else if hasLegacyInventorySKU {
+		if _, err := db.Exec(`
+			INSERT INTO sku_master (item_number, sku, name, category, description, unit, reorder_level)
+			SELECT DISTINCT item_number, sku, COALESCE(name, sku), COALESCE(category, 'General'), description, COALESCE(unit, 'pcs'), COALESCE(reorder_level, 0)
+			FROM inventory_items
+			WHERE sku IS NOT NULL AND sku <> ''
+			ON DUPLICATE KEY UPDATE
+				item_number = COALESCE(NULLIF(VALUES(item_number), ''), sku_master.item_number),
+				name = VALUES(name),
+				category = VALUES(category),
+				description = VALUES(description),
+				unit = VALUES(unit),
+				reorder_level = VALUES(reorder_level)
+		`); err != nil {
+			return fmt.Errorf("backfill sku master: %w", err)
+		}
 	}
 
-	if _, err := db.Exec(`
-		UPDATE inventory_items i
-		JOIN sku_master s ON s.sku = i.sku
-		SET i.sku_master_id = s.id
-		WHERE i.sku_master_id IS NULL OR i.sku_master_id = 0
-	`); err != nil {
-		return fmt.Errorf("link inventory items to sku master: %w", err)
+	if hasLegacyInventorySKU, err := columnExists(db, "inventory_items", "sku"); err != nil {
+		return fmt.Errorf("check legacy inventory sku column for linking: %w", err)
+	} else if hasLegacyInventorySKU {
+		if _, err := db.Exec(`
+			UPDATE inventory_items i
+			JOIN sku_master s ON s.sku = i.sku
+			SET i.sku_master_id = s.id
+			WHERE i.sku_master_id IS NULL OR i.sku_master_id = 0
+		`); err != nil {
+			return fmt.Errorf("link inventory items to sku master: %w", err)
+		}
 	}
 
-	if _, err := db.Exec(`
-		UPDATE inventory_items i
-		JOIN sku_master s ON s.id = i.sku_master_id
-		SET
-			i.item_number = COALESCE(NULLIF(i.item_number, ''), s.item_number),
-			s.item_number = COALESCE(NULLIF(s.item_number, ''), i.item_number)
-		WHERE (i.item_number IS NULL OR i.item_number = '' OR s.item_number IS NULL OR s.item_number = '')
-	`); err != nil {
-		return fmt.Errorf("sync item numbers between sku master and inventory items: %w", err)
+	if hasLegacyInventoryItemNumber, err := columnExists(db, "inventory_items", "item_number"); err != nil {
+		return fmt.Errorf("check legacy inventory item number column: %w", err)
+	} else if hasLegacyInventoryItemNumber {
+		if _, err := db.Exec(`
+			UPDATE inventory_items i
+			JOIN sku_master s ON s.id = i.sku_master_id
+			SET
+				i.item_number = COALESCE(NULLIF(i.item_number, ''), s.item_number),
+				s.item_number = COALESCE(NULLIF(s.item_number, ''), i.item_number)
+			WHERE (i.item_number IS NULL OR i.item_number = '' OR s.item_number IS NULL OR s.item_number = '')
+		`); err != nil {
+			return fmt.Errorf("sync item numbers between sku master and inventory items: %w", err)
+		}
 	}
 
-	if _, err := db.Exec(`
-		UPDATE outbound_document_lines l
-		JOIN inventory_items i ON i.id = l.item_id
-		SET l.item_number_snapshot = COALESCE(NULLIF(l.item_number_snapshot, ''), i.item_number)
-		WHERE l.item_number_snapshot IS NULL OR l.item_number_snapshot = ''
-	`); err != nil {
-		return fmt.Errorf("backfill outbound line item number snapshot: %w", err)
+	if hasLegacyInventoryItemNumber, err := columnExists(db, "inventory_items", "item_number"); err != nil {
+		return fmt.Errorf("check legacy inventory item number column for outbound snapshots: %w", err)
+	} else if hasLegacyInventoryItemNumber {
+		if _, err := db.Exec(`
+			UPDATE outbound_document_lines l
+			JOIN inventory_items i ON i.id = l.item_id
+			SET l.item_number_snapshot = COALESCE(NULLIF(l.item_number_snapshot, ''), i.item_number)
+			WHERE l.item_number_snapshot IS NULL OR l.item_number_snapshot = ''
+		`); err != nil {
+			return fmt.Errorf("backfill outbound line item number snapshot: %w", err)
+		}
 	}
 
 	if _, err := db.Exec(`
@@ -843,11 +932,15 @@ func Migrate(db *sql.DB) error {
 		}
 	}
 
-	if hasIndex, err := indexExists(db, "inventory_items", "idx_inventory_items_sku"); err != nil {
-		return fmt.Errorf("check inventory sku index: %w", err)
-	} else if !hasIndex {
-		if _, err := db.Exec(`ALTER TABLE inventory_items ADD INDEX idx_inventory_items_sku (sku)`); err != nil {
-			return fmt.Errorf("create inventory sku lookup index: %w", err)
+	if hasLegacyInventorySKU, err := columnExists(db, "inventory_items", "sku"); err != nil {
+		return fmt.Errorf("check legacy inventory sku column for index: %w", err)
+	} else if hasLegacyInventorySKU {
+		if hasIndex, err := indexExists(db, "inventory_items", "idx_inventory_items_sku"); err != nil {
+			return fmt.Errorf("check inventory sku index: %w", err)
+		} else if !hasIndex {
+			if _, err := db.Exec(`ALTER TABLE inventory_items ADD INDEX idx_inventory_items_sku (sku)`); err != nil {
+				return fmt.Errorf("create inventory sku lookup index: %w", err)
+			}
 		}
 	}
 
