@@ -27,7 +27,9 @@ type DailyOperationsPageProps = {
   onNavigate: (page: PageKey) => void;
   onOpenDate: (date: string) => void;
   onOpenInboundDetail: (documentId: number) => void;
-  onOpenCreateComposer: (mode: "IN" | "OUT", date: string) => void;
+  onOpenCreateInboundReceipt: (date: string) => void;
+  onOpenCreateOutboundComposer: (date: string) => void;
+  onOpenInboundReceiptEditor: (documentId?: number | null) => void;
 };
 
 type DailyOperationsRow = {
@@ -56,7 +58,9 @@ export function DailyOperationsPage({
   onNavigate,
   onOpenDate,
   onOpenInboundDetail,
-  onOpenCreateComposer
+  onOpenCreateInboundReceipt,
+  onOpenCreateOutboundComposer,
+  onOpenInboundReceiptEditor
 }: DailyOperationsPageProps) {
   const { t } = useI18n();
   const { showSuccess, showError, feedbackToast } = useFeedbackToast();
@@ -164,11 +168,11 @@ export function DailyOperationsPage({
   );
 
   function handleCreateInbound() {
-    onOpenCreateComposer("IN", activeDate);
+    onOpenCreateInboundReceipt(activeDate);
   }
 
   function handleCreateOutbound() {
-    onOpenCreateComposer("OUT", activeDate);
+    onOpenCreateOutboundComposer(activeDate);
   }
 
   function handleOpenInbound(documentId: number) {
@@ -245,8 +249,7 @@ export function DailyOperationsPage({
       const copiedDocument = await api.copyInboundDocument(row.id);
       await onRefresh();
       showSuccess(t("receiptCopiedSuccess"));
-      setPendingActivityManagementLaunchContext("IN", { documentId: copiedDocument.id });
-      onNavigate("inbound-management");
+      onOpenInboundReceiptEditor(copiedDocument.id);
     } catch (error) {
       showError(error instanceof Error && error.message ? error.message : t("couldNotCopyDocument"));
     } finally {

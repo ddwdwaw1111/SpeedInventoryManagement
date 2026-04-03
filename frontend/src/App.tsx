@@ -23,16 +23,19 @@ import { Suspense, lazy, type ReactNode, useEffect, useMemo, useState } from "re
 
 import { AppHeaderUser, AuthPage } from "./components/AuthPage";
 import { ApiError, api } from "./lib/api";
+import { setPendingInboundReceiptEditorLaunchContext, type InboundReceiptEditorLaunchContext } from "./lib/inboundReceiptEditorLaunchContext";
 import { useI18n } from "./lib/i18n";
 import { setPendingPalletTraceLaunchContext } from "./lib/palletTraceLaunchContext";
 import {
   getDailyOperationsDateFromPath,
   getInboundDetailIdFromPath,
   getPageFromPath,
+  getReceiptEditorIdFromPath,
   getStorageLocationEditorIdFromPath,
   navigateToDailyOperations,
   navigateToInboundDetail,
   navigateToPage,
+  navigateToReceiptEditor,
   navigateToStorageLocationEditor,
   type PageKey
 } from "./lib/routes";
@@ -85,6 +88,10 @@ const InventorySummaryPage = lazy(async () => {
 const InboundDetailPage = lazy(async () => {
   const module = await import("./components/InboundDetailPage");
   return { default: module.InboundDetailPage };
+});
+const InboundReceiptEditorPage = lazy(async () => {
+  const module = await import("./components/InboundReceiptEditorPage");
+  return { default: module.InboundReceiptEditorPage };
 });
 const MasterInventoryPage = lazy(async () => {
   const module = await import("./components/MasterInventoryPage");
@@ -210,6 +217,14 @@ export default function App() {
 
   function handleNavigateToInboundDetail(documentId: number) {
     navigateToInboundDetail(setActivePage, documentId);
+    setCurrentPathname(window.location.pathname);
+  }
+
+  function handleNavigateToReceiptEditor(documentId?: number | null, context?: InboundReceiptEditorLaunchContext) {
+    if (context) {
+      setPendingInboundReceiptEditorLaunchContext(context);
+    }
+    navigateToReceiptEditor(setActivePage, documentId);
     setCurrentPathname(window.location.pathname);
   }
 
@@ -381,6 +396,7 @@ export default function App() {
     { key: "export-center", label: t("exportCenter"), description: t("exportCenterDesc"), icon: <FileDownloadOutlined fontSize="small" /> },
     { key: "inbound-management", label: t("navReceiving"), description: t("inboundDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
     { key: "inbound-detail", label: t("inboundDetailPage"), description: t("inboundDetailPageDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
+    { key: "receipt-editor", label: t("receiptEditorPage"), description: t("receiptEditorPageDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
     { key: "outbound-management", label: t("navShipping"), description: t("outboundDesc"), icon: <OutboxOutlined fontSize="small" /> },
     { key: "inventory-summary", label: t("inventorySummary"), description: t("inventorySummaryDesc"), icon: <WarehouseOutlined fontSize="small" /> },
     { key: "warehouse-map", label: t("warehouseMap"), description: t("warehouseMapDesc"), icon: <WarehouseOutlined fontSize="small" /> },
@@ -423,6 +439,7 @@ export default function App() {
   const parentPageByPage: Partial<Record<PageKey, PageKey>> = {
     "daily-operations": "dashboard",
     "inbound-detail": "inbound-management",
+    "receipt-editor": "inbound-management",
     "stock-by-location": "inventory-summary",
     adjustments: "inventory-summary",
     transfers: "inventory-summary",
@@ -455,12 +472,16 @@ export default function App() {
   const showPageContext = activePage !== "dashboard";
   const editingStorageLocationId = getStorageLocationEditorIdFromPath(currentPathname);
   const selectedInboundDetailId = getInboundDetailIdFromPath(currentPathname);
+  const selectedReceiptEditorId = getReceiptEditorIdFromPath(currentPathname);
   const selectedDailyOperationsDate = getDailyOperationsDateFromPath(currentPathname);
   const editingStorageLocation = editingStorageLocationId
     ? locations.find((location) => location.id === editingStorageLocationId) ?? null
     : null;
   const selectedInboundDetailDocument = selectedInboundDetailId
     ? inboundDocuments.find((document) => document.id === selectedInboundDetailId) ?? null
+    : null;
+  const selectedReceiptEditorDocument = selectedReceiptEditorId
+    ? inboundDocuments.find((document) => document.id === selectedReceiptEditorId) ?? null
     : null;
   useEffect(() => {
     if (!activeNavSection) return;
@@ -603,13 +624,32 @@ export default function App() {
             </div>
           ) : null}
           <div key={activePage} className="workspace-shell__page">
-            {activePage === "inbound-management" ? renderWithSuspense(<ActivityManagementPage mode="IN" items={items} skuMasters={skuMasters} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onOpenInboundDetail={handleNavigateToInboundDetail} onOpenPalletTrace={handleNavigateToPalletTrace} />) : null}
+            {activePage === "inbound-management" ? renderWithSuspense(<ActivityManagementPage mode="IN" items={items} skuMasters={skuMasters} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onOpenInboundDetail={handleNavigateToInboundDetail} onOpenPalletTrace={handleNavigateToPalletTrace} onOpenInboundReceiptEditor={handleNavigateToReceiptEditor} />) : null}
             {activePage === "inbound-detail" ? (
               renderWithSuspense(<InboundDetailPage
                 document={selectedInboundDetailDocument}
                 currentUserRole={currentUser.role}
                 isLoading={isLoading}
                 onNavigate={handleNavigateToPage}
+                onOpenReceiptEditor={handleNavigateToReceiptEditor}
+              />)
+            ) : null}
+            {activePage === "receipt-editor" ? (
+              renderWithSuspense(<InboundReceiptEditorPage
+                routeKey={currentPathname}
+                documentId={selectedReceiptEditorId}
+                document={selectedReceiptEditorDocument}
+                items={items}
+                skuMasters={skuMasters}
+                locations={locations}
+                customers={customers}
+                inboundDocuments={inboundDocuments}
+                currentUserRole={currentUser.role}
+                isLoading={isLoading}
+                onRefresh={() => loadAppData(false)}
+                onBackToList={() => handleNavigateToPage("inbound-management")}
+                onOpenInboundDetail={handleNavigateToInboundDetail}
+                onOpenReceiptEditor={handleNavigateToReceiptEditor}
               />)
             ) : null}
             {activePage === "outbound-management" ? renderWithSuspense(<ActivityManagementPage mode="OUT" items={items} skuMasters={skuMasters} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onOpenPalletTrace={handleNavigateToPalletTrace} />) : null}
@@ -663,7 +703,9 @@ export default function App() {
                 onNavigate={handleNavigateToPage}
                 onOpenDate={handleNavigateToDailyOperations}
                 onOpenInboundDetail={handleNavigateToInboundDetail}
-                onOpenCreateComposer={handleOpenEmbeddedComposer}
+                onOpenCreateInboundReceipt={(date) => handleNavigateToReceiptEditor(null, { scheduledDate: date })}
+                onOpenCreateOutboundComposer={(date) => handleOpenEmbeddedComposer("OUT", date)}
+                onOpenInboundReceiptEditor={handleNavigateToReceiptEditor}
               />)
             ) : null}
             {activePage === "dashboard" ? (

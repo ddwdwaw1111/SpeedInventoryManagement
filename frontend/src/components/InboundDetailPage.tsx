@@ -6,6 +6,7 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { ApiError, api } from "../lib/api";
 import { setPendingActivityManagementLaunchContext } from "../lib/activityManagementLaunchContext";
+import type { InboundReceiptEditorLaunchContext } from "../lib/inboundReceiptEditorLaunchContext";
 import { useI18n } from "../lib/i18n";
 import { setPendingPalletTraceLaunchContext } from "../lib/palletTraceLaunchContext";
 import type { PageKey } from "../lib/routes";
@@ -17,6 +18,7 @@ type InboundDetailPageProps = {
   currentUserRole: UserRole;
   isLoading: boolean;
   onNavigate: (page: PageKey) => void;
+  onOpenReceiptEditor: (documentId?: number | null, context?: InboundReceiptEditorLaunchContext) => void;
 };
 
 type ActivityEvent = {
@@ -33,7 +35,8 @@ export function InboundDetailPage({
   document,
   currentUserRole,
   isLoading,
-  onNavigate
+  onNavigate,
+  onOpenReceiptEditor
 }: InboundDetailPageProps) {
   const { t } = useI18n();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
@@ -119,13 +122,10 @@ export function InboundDetailPage({
       return;
     }
 
-    setPendingActivityManagementLaunchContext("IN", {
-      documentId: document.id,
-      openEditor: true,
-      forceInboundHandlingMode: "PALLETIZED",
+    onOpenReceiptEditor(document.id, {
+      forceHandlingMode: "PALLETIZED",
       inboundIntent: "convert-sealed-transit"
     });
-    onNavigate("inbound-management");
   }
 
   const canConvertSealedTransit =
@@ -195,7 +195,7 @@ export function InboundDetailPage({
               ) : null}
               <button
                 type="button"
-                onClick={handleOpenWorkspace}
+                onClick={canManage ? () => onOpenReceiptEditor(document?.id ?? null) : handleOpenWorkspace}
                 disabled={!document}
                 className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-[#143569] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(20,53,105,0.18)] transition hover:bg-[#102f5f] disabled:cursor-not-allowed disabled:opacity-60"
               >

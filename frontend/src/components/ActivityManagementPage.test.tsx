@@ -101,15 +101,17 @@ describe("ActivityManagementPage", () => {
 
     const dialog = await screen.findByRole("dialog");
     const headerInputs = dialog.querySelectorAll(".sheet-form input");
-    const inboundLineInputs = dialog.querySelectorAll(".batch-line-grid--inbound input");
 
     fireEvent.change(headerInputs[0] as HTMLInputElement, { target: { value: "2026-03-31" } });
     fireEvent.change(headerInputs[1] as HTMLInputElement, { target: { value: "MSCU1234567" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    const inboundLineInputs = dialog.querySelectorAll(".batch-line-grid--inbound input");
     fireEvent.change(inboundLineInputs[0] as HTMLInputElement, { target: { value: "011423" } });
     fireEvent.change(inboundLineInputs[1] as HTMLInputElement, { target: { value: "Sample inbound SKU" } });
     fireEvent.change(inboundLineInputs[2] as HTMLInputElement, { target: { value: "8" } });
     fireEvent.change(inboundLineInputs[3] as HTMLInputElement, { target: { value: "8" } });
 
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(screen.getByRole("button", { name: "Confirm Receipt" }));
 
     await waitFor(() => {
@@ -176,14 +178,16 @@ describe("ActivityManagementPage", () => {
 
     const dialog = await screen.findByRole("dialog");
     const headerInputs = dialog.querySelectorAll(".sheet-form input");
-    const inboundLineInputs = dialog.querySelectorAll(".batch-line-grid--inbound input");
 
     fireEvent.change(headerInputs[0] as HTMLInputElement, { target: { value: "2026-03-31" } });
     fireEvent.change(headerInputs[1] as HTMLInputElement, { target: { value: "MSCU7654321" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  const inboundLineInputs = dialog.querySelectorAll(".batch-line-grid--inbound input");
     fireEvent.change(inboundLineInputs[0] as HTMLInputElement, { target: { value: "011423" } });
     fireEvent.change(inboundLineInputs[2] as HTMLInputElement, { target: { value: "1024" } });
     fireEvent.change(inboundLineInputs[3] as HTMLInputElement, { target: { value: "1024" } });
 
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(screen.getByRole("button", { name: "Confirm Receipt" }));
 
     await waitFor(() => {
@@ -264,15 +268,17 @@ describe("ActivityManagementPage", () => {
 
     const dialog = await screen.findByRole("dialog");
     const headerInputs = dialog.querySelectorAll(".sheet-form input");
-    const inboundLineInputs = dialog.querySelectorAll(".batch-line-grid--inbound input");
 
     fireEvent.change(headerInputs[0] as HTMLInputElement, { target: { value: "2026-03-31" } });
     fireEvent.change(headerInputs[1] as HTMLInputElement, { target: { value: "MSCU2222222" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  const inboundLineInputs = dialog.querySelectorAll(".batch-line-grid--inbound input");
     fireEvent.change(inboundLineInputs[0] as HTMLInputElement, { target: { value: "011424" } });
     fireEvent.change(inboundLineInputs[2] as HTMLInputElement, { target: { value: "1024" } });
     fireEvent.change(inboundLineInputs[3] as HTMLInputElement, { target: { value: "1024" } });
     fireEvent.change(screen.getByLabelText("Units / Pallet"), { target: { value: "100" } });
 
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(screen.getByRole("button", { name: "Confirm Receipt" }));
 
     await waitFor(() => {
@@ -372,6 +378,8 @@ describe("ActivityManagementPage", () => {
     fireEvent.change(headerInputs[0] as HTMLInputElement, { target: { value: "2026-03-31" } });
     fireEvent.change(headerInputs[2] as HTMLInputElement, { target: { value: "Updated dock note" } });
 
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
 
     await waitFor(() => {
@@ -452,12 +460,14 @@ describe("ActivityManagementPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Edit Receipt" }));
 
     const dialog = await screen.findByRole("dialog");
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
     const inboundLineInputs = dialog.querySelectorAll(".batch-line-grid--inbound input");
     const inboundLineSectionSelect = dialog.querySelector(".batch-line-grid--inbound select");
 
     fireEvent.change(inboundLineInputs[3] as HTMLInputElement, { target: { value: "12" } });
     fireEvent.change(inboundLineSectionSelect as HTMLSelectElement, { target: { value: "A" } });
 
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
 
     await waitFor(() => {

@@ -22,6 +22,7 @@ export type PageKey =
   | "storage-location-editor"
   | "inbound-management"
   | "inbound-detail"
+  | "receipt-editor"
   | "outbound-management"
   | "settings";
 
@@ -47,6 +48,7 @@ export const pagePathMap: Record<PageKey, string> = {
   "storage-location-editor": "/storage-management/new",
   "inbound-management": "/inbound-management",
   "inbound-detail": "/inbound-management",
+  "receipt-editor": "/inbound-management/new",
   "outbound-management": "/outbound-management",
   settings: "/settings"
 };
@@ -76,6 +78,7 @@ export function getPageFromPath(pathname: string): PageKey {
   if (normalized === "/adjustments") return "adjustments";
   if (normalized === "/transfers") return "transfers";
   if (normalized === "/cycle-counts") return "cycle-counts";
+  if (normalized === "/inbound-management/new" || /^\/inbound-management\/\d+\/edit$/.test(normalized)) return "receipt-editor";
   if (/^\/inbound-management\/\d+$/.test(normalized)) return "inbound-detail";
   if (normalized === "/inbound-management") return "inbound-management";
   if (normalized === "/outbound-management") return "outbound-management";
@@ -160,6 +163,27 @@ export function navigateToInboundDetail(setter: (page: PageKey) => void, documen
 export function getInboundDetailIdFromPath(pathname: string) {
   const normalized = normalizePagePath(pathname);
   const match = normalized.match(/^\/inbound-management\/(\d+)$/);
+  if (!match) {
+    return null;
+  }
+
+  return Number(match[1]);
+}
+
+export function navigateToReceiptEditor(setter: (page: PageKey) => void, documentId?: number | null) {
+  const path = documentId && documentId > 0
+    ? `/inbound-management/${documentId}/edit`
+    : "/inbound-management/new";
+  if (normalizePagePath(window.location.pathname) !== path) {
+    window.history.pushState({ page: "receipt-editor", documentId: documentId ?? null }, "", path);
+  }
+
+  setter("receipt-editor");
+}
+
+export function getReceiptEditorIdFromPath(pathname: string) {
+  const normalized = normalizePagePath(pathname);
+  const match = normalized.match(/^\/inbound-management\/(\d+)\/edit$/);
   if (!match) {
     return null;
   }
