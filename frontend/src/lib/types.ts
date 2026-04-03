@@ -170,6 +170,7 @@ export type SKUMasterPayload = {
 
 export type Item = {
   id: number;
+  skuMasterId: number;
   itemNumber: string;
   sku: string;
   name: string;
@@ -189,14 +190,40 @@ export type Item = {
   storageSection: string;
   deliveryDate: string | null;
   containerNo: string;
-  expectedQty: number;
-  receivedQty: number;
-  heightIn: number;
-  outDate: string | null;
   lastRestockedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
+
+export type InventoryProjectionRef = {
+  customerId: number;
+  locationId: number;
+  storageSection: string;
+  containerNo: string;
+  skuMasterId: number;
+};
+
+export function buildInventoryProjectionKey(input: InventoryProjectionRef) {
+  return [
+    String(input.customerId),
+    String(input.locationId),
+    normalizeStorageSection(input.storageSection),
+    (input.containerNo ?? "").trim().toUpperCase(),
+    String(input.skuMasterId)
+  ].join(":");
+}
+
+export function toInventoryProjectionRef(
+  item: Pick<Item, "customerId" | "locationId" | "storageSection" | "containerNo" | "skuMasterId">
+): InventoryProjectionRef {
+  return {
+    customerId: item.customerId,
+    locationId: item.locationId,
+    storageSection: normalizeStorageSection(item.storageSection),
+    containerNo: (item.containerNo ?? "").trim().toUpperCase(),
+    skuMasterId: item.skuMasterId
+  };
+}
 
 export type Movement = {
   id: number;
@@ -236,46 +263,44 @@ export type Movement = {
   createdAt: string;
 };
 
-export type ReceiptLotMovementLink = {
+export type PalletContent = {
   id: number;
-  movementId: number;
-  receiptLotId: number;
-  movementType: string;
-  quantityChange: number;
-  linkedQty: number;
-  linkType: string;
-  storageSection: string;
-  containerNo: string;
-  createdAt: string;
-};
-
-export type ReceiptLotTrace = {
-  id: number;
-  parentReceiptLotId: number;
-  sourceInboundDocumentId: number;
-  sourceInboundLineId: number;
-  itemId: number;
+  palletId: number;
+  skuMasterId: number;
   itemNumber: string;
   sku: string;
   description: string;
-  customerId: number;
-  customerName: string;
-  locationId: number;
-  locationName: string;
-  storageSection: string;
-  containerNo: string;
-  originalQty: number;
-  remainingQty: number;
+  quantity: number;
   createdAt: string;
   updatedAt: string;
-  links: ReceiptLotMovementLink[];
+};
+
+export type PalletTrace = {
+  id: number;
+  parentPalletId: number;
+  palletCode: string;
+  containerVisitId: number;
+  sourceInboundDocumentId: number;
+  sourceInboundLineId: number;
+  customerId: number;
+  customerName: string;
+  skuMasterId: number;
+  sku: string;
+  description: string;
+  currentLocationId: number;
+  currentLocationName: string;
+  currentStorageSection: string;
+  currentContainerNo: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  contents: PalletContent[];
 };
 
 export type OutboundDocumentLine = {
   id: number;
   documentId: number;
-  movementId: number;
-  itemId: number;
+  skuMasterId: number;
   itemNumber: string;
   locationId: number;
   locationName: string;
@@ -297,8 +322,6 @@ export type OutboundDocumentLine = {
 export type OutboundPickAllocation = {
   id: number;
   lineId: number;
-  movementId: number;
-  itemId: number;
   itemNumber: string;
   locationId: number;
   locationName: string;
@@ -337,7 +360,9 @@ export type OutboundDocument = {
 };
 
 export type OutboundDocumentLinePayload = {
-  itemId: number;
+  customerId: number;
+  locationId: number;
+  skuMasterId: number;
   quantity: number;
   pallets: number;
   palletsDetailCtns?: string;
@@ -346,13 +371,6 @@ export type OutboundDocumentLinePayload = {
   netWeightKgs?: number;
   grossWeightKgs?: number;
   lineNote?: string;
-  pickAllocations?: OutboundDocumentLineAllocationPayload[];
-};
-
-export type OutboundDocumentLineAllocationPayload = {
-  storageSection: string;
-  containerNo: string;
-  allocatedQty: number;
 };
 
 export type OutboundDocumentPayload = {
@@ -376,8 +394,6 @@ export type CancelOutboundDocumentPayload = {
 export type InboundDocumentLine = {
   id: number;
   documentId: number;
-  movementId: number;
-  itemId: number;
   sku: string;
   description: string;
   storageSection: string;
@@ -385,10 +401,16 @@ export type InboundDocumentLine = {
   expectedQty: number;
   receivedQty: number;
   pallets: number;
+  unitsPerPallet: number;
   palletsDetailCtns: string;
+  palletBreakdown?: InboundPalletBreakdown[];
   unitLabel: string;
   lineNote: string;
   createdAt: string;
+};
+
+export type InboundPalletBreakdown = {
+  quantity: number;
 };
 
 export type InboundDocument = {
@@ -399,6 +421,7 @@ export type InboundDocument = {
   locationName: string;
   deliveryDate: string | null;
   containerNo: string;
+  handlingMode: "PALLETIZED" | "SEALED_TRANSIT";
   storageSection: string;
   unitLabel: string;
   documentNote: string;
@@ -423,7 +446,9 @@ export type InboundDocumentLinePayload = {
   expectedQty: number;
   receivedQty: number;
   pallets: number;
+  unitsPerPallet?: number;
   palletsDetailCtns?: string;
+  palletBreakdown?: InboundPalletBreakdown[];
   storageSection?: string;
   lineNote?: string;
 };
@@ -433,6 +458,7 @@ export type InboundDocumentPayload = {
   locationId: number;
   deliveryDate?: string;
   containerNo?: string;
+  handlingMode?: string;
   storageSection?: string;
   unitLabel?: string;
   status?: string;
@@ -478,8 +504,6 @@ export type CancelInboundDocumentPayload = {
 export type InventoryAdjustmentLine = {
   id: number;
   adjustmentId: number;
-  movementId: number;
-  itemId: number;
   customerId: number;
   customerName: string;
   locationId: number;
@@ -508,7 +532,11 @@ export type InventoryAdjustment = {
 };
 
 export type InventoryAdjustmentLinePayload = {
-  itemId: number;
+  customerId: number;
+  locationId: number;
+  storageSection: string;
+  containerNo: string;
+  skuMasterId: number;
   adjustQty: number;
   lineNote?: string;
 };
@@ -523,10 +551,6 @@ export type InventoryAdjustmentPayload = {
 export type InventoryTransferLine = {
   id: number;
   transferId: number;
-  transferOutMovementId: number;
-  transferInMovementId: number;
-  sourceItemId: number;
-  destinationItemId: number;
   customerId: number;
   customerName: string;
   fromLocationId: number;
@@ -556,7 +580,11 @@ export type InventoryTransfer = {
 };
 
 export type InventoryTransferLinePayload = {
-  sourceItemId: number;
+  customerId: number;
+  locationId: number;
+  storageSection: string;
+  containerNo: string;
+  skuMasterId: number;
   quantity: number;
   toLocationId: number;
   toStorageSection?: string;
@@ -572,8 +600,6 @@ export type InventoryTransferPayload = {
 export type CycleCountLine = {
   id: number;
   cycleCountId: number;
-  movementId: number;
-  itemId: number;
   customerId: number;
   customerName: string;
   locationId: number;
@@ -601,7 +627,11 @@ export type CycleCount = {
 };
 
 export type CycleCountLinePayload = {
-  itemId: number;
+  customerId: number;
+  locationId: number;
+  storageSection: string;
+  containerNo: string;
+  skuMasterId: number;
   countedQty: number;
   lineNote?: string;
 };
@@ -610,27 +640,4 @@ export type CycleCountPayload = {
   countNo?: string;
   notes?: string;
   lines: CycleCountLinePayload[];
-};
-
-export type ItemPayload = {
-  itemNumber: string;
-  sku: string;
-  name: string;
-  category: string;
-  description: string;
-  unit: string;
-  quantity: number;
-  allocatedQty: number;
-  damagedQty: number;
-  holdQty: number;
-  reorderLevel: number;
-  customerId: number;
-  locationId: number;
-  storageSection?: string;
-  deliveryDate?: string;
-  containerNo?: string;
-  expectedQty: number;
-  receivedQty: number;
-  heightIn: number;
-  outDate?: string;
 };

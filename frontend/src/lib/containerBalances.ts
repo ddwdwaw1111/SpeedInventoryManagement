@@ -2,7 +2,7 @@ import { normalizeStorageSection, type Item, type Movement } from "./types";
 
 export type ItemContainerBalance = {
   id: string;
-  itemId: number;
+  sourceKey: string;
   customerId: number;
   locationId: number;
   locationName: string;
@@ -15,7 +15,7 @@ export type ItemContainerBalance = {
 
 type MovementBalanceGroup = {
   id: string;
-  itemId: number;
+  sourceKey: string;
   customerId: number;
   locationId: number;
   locationName: string;
@@ -48,6 +48,10 @@ function buildItemSourceKey(item: Pick<Item, "customerId" | "locationName" | "sk
 
 function buildMovementSourceKey(movement: Pick<Movement, "customerId" | "locationName" | "sku">) {
   return `${movement.customerId}|${normalizeLocationRef(movement.locationName)}|${normalizeSku(movement.sku)}`;
+}
+
+function buildProjectionSourceKey(item: Pick<Item, "customerId" | "locationId" | "skuMasterId">) {
+  return `${item.customerId}|${item.locationId}|${item.skuMasterId}`;
 }
 
 function containerBalanceKey(locationId: number, storageSection: string, containerNo: string) {
@@ -84,6 +88,7 @@ export function buildItemContainerBalances(items: Item[], movements: Movement[])
   const balances: ItemContainerBalance[] = [];
 
   for (const [itemSourceKey, sourceGroup] of groupedItems.entries()) {
+    const projectionSourceKey = buildProjectionSourceKey(sourceGroup.representative);
     const groupedByCurrentContainer = new Map<string, ItemContainerBalance>();
     for (const item of sourceGroup.items) {
       const storageSection = normalizeStorageSection(item.storageSection);
@@ -93,7 +98,7 @@ export function buildItemContainerBalances(items: Item[], movements: Movement[])
       if (!existing) {
         groupedByCurrentContainer.set(sourceKey, {
           id: sourceKey,
-          itemId: item.id,
+          sourceKey: projectionSourceKey,
           customerId: item.customerId,
           locationId: item.locationId,
           locationName: item.locationName,
@@ -131,7 +136,7 @@ export function buildItemContainerBalances(items: Item[], movements: Movement[])
       if (!existing) {
         movementContainerBalances.set(key, {
           id: key,
-          itemId: sourceGroup.representative.id,
+          sourceKey: projectionSourceKey,
           customerId: sourceGroup.representative.customerId,
           locationId: sourceGroup.representative.locationId,
           locationName: sourceGroup.representative.locationName,
@@ -170,7 +175,7 @@ export function buildItemContainerBalances(items: Item[], movements: Movement[])
       .filter((balance) => balance.availableQty > 0 || balance.onHandQty > 0)
       .map((balance) => ({
         id: balance.id,
-        itemId: balance.itemId,
+        sourceKey: balance.sourceKey,
         customerId: balance.customerId,
         locationId: balance.locationId,
         locationName: balance.locationName,
@@ -202,7 +207,7 @@ export function buildItemContainerBalances(items: Item[], movements: Movement[])
     if (left.locationName !== right.locationName) return left.locationName.localeCompare(right.locationName);
     if (left.storageSection !== right.storageSection) return left.storageSection.localeCompare(right.storageSection);
     if (left.containerNo !== right.containerNo) return left.containerNo.localeCompare(right.containerNo);
-    return left.itemId - right.itemId;
+    return left.id.localeCompare(right.id);
   });
 }
 

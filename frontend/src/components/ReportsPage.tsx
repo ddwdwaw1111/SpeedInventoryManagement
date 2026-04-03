@@ -366,7 +366,7 @@ function getMovementTimestamp(movement: Movement) {
 }
 
 function matchesItemDateRange(item: Item, startDate: string, endDate: string) {
-  return [item.deliveryDate, item.outDate, item.lastRestockedAt, item.createdAt, item.updatedAt]
+  return [item.deliveryDate, item.lastRestockedAt, item.createdAt, item.updatedAt]
     .some((candidate) => isWithinDateRange(candidate, startDate, endDate));
 }
 

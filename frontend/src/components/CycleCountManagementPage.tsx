@@ -12,7 +12,14 @@ import { formatDateTimeValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type { PageKey } from "../lib/routes";
-import { normalizeStorageSection, type CycleCount, type Item, type UserRole } from "../lib/types";
+import {
+  buildInventoryProjectionKey,
+  normalizeStorageSection,
+  toInventoryProjectionRef,
+  type CycleCount,
+  type Item,
+  type UserRole
+} from "../lib/types";
 import { InlineAlert, useFeedbackToast } from "./Feedback";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
@@ -34,7 +41,7 @@ type CycleCountFormState = {
 
 type CycleCountLineFormState = {
   id: string;
-  itemId: string;
+  bucketKey: string;
   countedQty: number;
   lineNote: string;
 };
@@ -48,7 +55,7 @@ const CYCLE_COUNT_COLUMN_ORDER_PREFERENCE_KEY = "cycle-counts.column-order";
 function createCycleCountLine(): CycleCountLineFormState {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    itemId: "",
+    bucketKey: "",
     countedQty: 0,
     lineNote: ""
   };
@@ -217,12 +224,19 @@ export function CycleCountManagementPage({
         countNo: form.countNo || undefined,
         notes: form.notes || undefined,
         lines: lines
-          .filter((line) => Number(line.itemId) > 0)
-          .map((line) => ({
-            itemId: Number(line.itemId),
-            countedQty: Math.max(0, line.countedQty),
-            lineNote: line.lineNote || undefined
-          }))
+          .map((line) => {
+            const selectedItem = items.find((item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.bucketKey);
+            if (!selectedItem) {
+              return null;
+            }
+
+            return {
+              ...toInventoryProjectionRef(selectedItem),
+              countedQty: Math.max(0, line.countedQty),
+              lineNote: line.lineNote || undefined
+            };
+          })
+          .filter((line): line is NonNullable<typeof line> => line !== null)
       });
       closeCreateModal();
       await onRefresh();
@@ -402,9 +416,9 @@ export function CycleCountManagementPage({
               </div>
               <div className="batch-lines">
                 {lines.map((line, index) => {
-                  const selectedItem = items.find((item) => item.id === Number(line.itemId));
+                  const selectedItem = items.find((item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.bucketKey);
                   const systemQty = selectedItem?.quantity ?? 0;
-                  const varianceQty = line.itemId ? line.countedQty - systemQty : 0;
+                  const varianceQty = line.bucketKey ? line.countedQty - systemQty : 0;
 
                   return (
                     <div className="batch-line-card" key={line.id}>
@@ -418,18 +432,20 @@ export function CycleCountManagementPage({
                         <label className="batch-line-grid__description">
                           {t("stockRow")}
                           <select
-                            value={line.itemId}
+                            value={line.bucketKey}
                             onChange={(event) => {
-                              const nextItem = items.find((item) => item.id === Number(event.target.value));
+                              const nextItem = items.find(
+                                (item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === event.target.value
+                              );
                               updateLine(line.id, {
-                                itemId: event.target.value,
+                                bucketKey: event.target.value,
                                 countedQty: nextItem?.quantity ?? 0
                               });
                             }}
                           >
                             <option value="">{t("selectStockRow")}</option>
                             {items.map((item) => (
-                              <option key={item.id} value={item.id}>
+                              <option key={buildInventoryProjectionKey(toInventoryProjectionRef(item))} value={buildInventoryProjectionKey(toInventoryProjectionRef(item))}>
                                 {`${item.customerName} | ${item.locationName} / ${normalizeStorageSection(item.storageSection)} | ${item.sku} - ${displayDescription(item)} (${t("onHand")}: ${item.quantity})`}
                               </option>
                             ))}

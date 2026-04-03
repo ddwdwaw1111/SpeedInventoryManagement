@@ -1,10 +1,15 @@
 export type ActivityManagementMode = "IN" | "OUT";
+export type InboundHandlingMode = "PALLETIZED" | "SEALED_TRANSIT";
+export type InboundLaunchIntent = "convert-sealed-transit";
 
 export type ActivityManagementLaunchContext = {
   scheduledDate?: string;
   openCreate?: boolean;
+  openEditor?: boolean;
   documentId?: number;
   selectedStatus?: string;
+  forceInboundHandlingMode?: InboundHandlingMode;
+  inboundIntent?: InboundLaunchIntent;
 };
 
 function getStorageKey(mode: ActivityManagementMode) {

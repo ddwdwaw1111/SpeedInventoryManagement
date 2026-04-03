@@ -78,14 +78,14 @@ type DashboardData struct {
 }
 
 type Location struct {
-	ID           int64              `db:"id" json:"id"`
-	Name         string             `db:"name" json:"name"`
-	Address      string             `db:"address" json:"address"`
-	Description  string             `db:"description" json:"description"`
-	Capacity     int                `db:"capacity" json:"capacity"`
-	SectionNames []string           `json:"sectionNames"`
+	ID           int64                `db:"id" json:"id"`
+	Name         string               `db:"name" json:"name"`
+	Address      string               `db:"address" json:"address"`
+	Description  string               `db:"description" json:"description"`
+	Capacity     int                  `db:"capacity" json:"capacity"`
+	SectionNames []string             `json:"sectionNames"`
 	LayoutBlocks []StorageLayoutBlock `json:"layoutBlocks"`
-	CreatedAt    time.Time          `db:"created_at" json:"createdAt"`
+	CreatedAt    time.Time            `db:"created_at" json:"createdAt"`
 }
 
 type StorageLayoutBlock struct {
@@ -136,11 +136,11 @@ type Customer struct {
 }
 
 type CreateLocationInput struct {
-	Name         string   `json:"name"`
-	Address      string   `json:"address"`
-	Description  string   `json:"description"`
-	Capacity     int      `json:"capacity"`
-	SectionNames []string `json:"sectionNames"`
+	Name         string               `json:"name"`
+	Address      string               `json:"address"`
+	Description  string               `json:"description"`
+	Capacity     int                  `json:"capacity"`
+	SectionNames []string             `json:"sectionNames"`
 	LayoutBlocks []StorageLayoutBlock `json:"layoutBlocks"`
 }
 
@@ -178,71 +178,68 @@ type CreateSKUMasterInput struct {
 }
 
 type Item struct {
-	ID                int64      `json:"id"`
-	ItemNumber        string     `json:"itemNumber"`
-	SKU               string     `json:"sku"`
-	Name              string     `json:"name"`
-	Category          string     `json:"category"`
-	Description       string     `json:"description"`
-	Unit              string     `json:"unit"`
-	Quantity          int        `json:"quantity"`
-	AvailableQty      int        `json:"availableQty"`
-	AllocatedQty      int        `json:"allocatedQty"`
-	DamagedQty        int        `json:"damagedQty"`
-	HoldQty           int        `json:"holdQty"`
-	ReorderLevel      int        `json:"reorderLevel"`
-	CustomerID        int64      `json:"customerId"`
-	CustomerName      string     `json:"customerName"`
-	LocationID        int64      `json:"locationId"`
-	LocationName      string     `json:"locationName"`
-	StorageSection    string     `json:"storageSection"`
-	DeliveryDate      *time.Time `json:"deliveryDate"`
-	ContainerNo       string     `json:"containerNo"`
-	ExpectedQty       int        `json:"expectedQty"`
-	ReceivedQty       int        `json:"receivedQty"`
-	HeightIn          int        `json:"heightIn"`
-	OutDate           *time.Time `json:"outDate"`
-	LastRestockedAt   *time.Time `json:"lastRestockedAt"`
-	CreatedAt         time.Time  `json:"createdAt"`
-	UpdatedAt         time.Time  `json:"updatedAt"`
+	ID              int64      `json:"id"`
+	SKUMasterID     int64      `json:"skuMasterId"`
+	ItemNumber      string     `json:"itemNumber"`
+	SKU             string     `json:"sku"`
+	Name            string     `json:"name"`
+	Category        string     `json:"category"`
+	Description     string     `json:"description"`
+	Unit            string     `json:"unit"`
+	Quantity        int        `json:"quantity"`
+	AvailableQty    int        `json:"availableQty"`
+	AllocatedQty    int        `json:"allocatedQty"`
+	DamagedQty      int        `json:"damagedQty"`
+	HoldQty         int        `json:"holdQty"`
+	ReorderLevel    int        `json:"reorderLevel"`
+	CustomerID      int64      `json:"customerId"`
+	CustomerName    string     `json:"customerName"`
+	LocationID      int64      `json:"locationId"`
+	LocationName    string     `json:"locationName"`
+	StorageSection  string     `json:"storageSection"`
+	DeliveryDate    *time.Time `json:"deliveryDate"`
+	ContainerNo     string     `json:"containerNo"`
+	LastRestockedAt *time.Time `json:"lastRestockedAt"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	UpdatedAt       time.Time  `json:"updatedAt"`
 }
 
 type Movement struct {
-	ID                int64      `json:"id"`
-	ItemID            int64      `json:"itemId"`
-	InboundDocumentID int64      `json:"inboundDocumentId"`
-	InboundDocumentLineID int64  `json:"inboundDocumentLineId"`
-	OutboundDocumentID int64     `json:"outboundDocumentId"`
-	OutboundDocumentLineID int64 `json:"outboundDocumentLineId"`
-	ItemName          string     `json:"itemName"`
-	SKU               string     `json:"sku"`
-	Description       string     `json:"description"`
-	CustomerID        int64      `json:"customerId"`
-	CustomerName      string     `json:"customerName"`
-	LocationName      string     `json:"locationName"`
-	StorageSection    string     `json:"storageSection"`
-	MovementType      string     `json:"movementType"`
-	QuantityChange    int        `json:"quantityChange"`
-	DeliveryDate      *time.Time `json:"deliveryDate"`
-	ContainerNo       string     `json:"containerNo"`
-	PackingListNo     string     `json:"packingListNo"`
-	OrderRef          string     `json:"orderRef"`
-	ItemNumber        string     `json:"itemNumber"`
-	ExpectedQty       int        `json:"expectedQty"`
-	ReceivedQty       int        `json:"receivedQty"`
-	Pallets           int        `json:"pallets"`
-	PalletsDetailCtns string     `json:"palletsDetailCtns"`
-	CartonSizeMM      string     `json:"cartonSizeMm"`
-	CartonCount       int        `json:"cartonCount"`
-	UnitLabel         string     `json:"unitLabel"`
-	NetWeightKgs      float64    `json:"netWeightKgs"`
-	GrossWeightKgs    float64    `json:"grossWeightKgs"`
-	HeightIn          int        `json:"heightIn"`
-	OutDate           *time.Time `json:"outDate"`
-	DocumentNote      string     `json:"documentNote"`
-	Reason            string     `json:"reason"`
-	ReferenceCode     string     `json:"referenceCode"`
-	CreatedAt         time.Time  `json:"createdAt"`
+	ID                     int64      `json:"id"`
+	ItemID                 int64      `json:"itemId"`
+	InboundDocumentID      int64      `json:"inboundDocumentId"`
+	InboundDocumentLineID  int64      `json:"inboundDocumentLineId"`
+	OutboundDocumentID     int64      `json:"outboundDocumentId"`
+	OutboundDocumentLineID int64      `json:"outboundDocumentLineId"`
+	ItemName               string     `json:"itemName"`
+	SKU                    string     `json:"sku"`
+	Description            string     `json:"description"`
+	CustomerID             int64      `json:"customerId"`
+	CustomerName           string     `json:"customerName"`
+	LocationName           string     `json:"locationName"`
+	StorageSection         string     `json:"storageSection"`
+	MovementType           string     `json:"movementType"`
+	QuantityChange         int        `json:"quantityChange"`
+	DeliveryDate           *time.Time `json:"deliveryDate"`
+	ContainerNo            string     `json:"containerNo"`
+	PackingListNo          string     `json:"packingListNo"`
+	OrderRef               string     `json:"orderRef"`
+	ItemNumber             string     `json:"itemNumber"`
+	ExpectedQty            int        `json:"expectedQty"`
+	ReceivedQty            int        `json:"receivedQty"`
+	Pallets                int        `json:"pallets"`
+	PalletsDetailCtns      string     `json:"palletsDetailCtns"`
+	CartonSizeMM           string     `json:"cartonSizeMm"`
+	CartonCount            int        `json:"cartonCount"`
+	UnitLabel              string     `json:"unitLabel"`
+	NetWeightKgs           float64    `json:"netWeightKgs"`
+	GrossWeightKgs         float64    `json:"grossWeightKgs"`
+	HeightIn               int        `json:"heightIn"`
+	OutDate                *time.Time `json:"outDate"`
+	DocumentNote           string     `json:"documentNote"`
+	Reason                 string     `json:"reason"`
+	ReferenceCode          string     `json:"referenceCode"`
+	CreatedAt              time.Time  `json:"createdAt"`
 }
 
 type ItemFilters struct {
@@ -253,52 +250,48 @@ type ItemFilters struct {
 }
 
 type CreateItemInput struct {
-	ItemNumber        string `json:"itemNumber"`
-	SKU               string `json:"sku"`
-	Name              string `json:"name"`
-	Category          string `json:"category"`
-	Description       string `json:"description"`
-	Unit              string `json:"unit"`
-	Quantity          int    `json:"quantity"`
-	AllocatedQty      int    `json:"allocatedQty"`
-	DamagedQty        int    `json:"damagedQty"`
-	HoldQty           int    `json:"holdQty"`
-	ReorderLevel      int    `json:"reorderLevel"`
-	CustomerID        int64  `json:"customerId"`
-	LocationID        int64  `json:"locationId"`
-	StorageSection    string `json:"storageSection"`
-	DeliveryDate      string `json:"deliveryDate"`
-	ContainerNo       string `json:"containerNo"`
-	ExpectedQty       int    `json:"expectedQty"`
-	ReceivedQty       int    `json:"receivedQty"`
-	HeightIn          int    `json:"heightIn"`
-	OutDate           string `json:"outDate"`
+	ItemNumber     string `json:"itemNumber"`
+	SKU            string `json:"sku"`
+	Name           string `json:"name"`
+	Category       string `json:"category"`
+	Description    string `json:"description"`
+	Unit           string `json:"unit"`
+	Quantity       int    `json:"quantity"`
+	AllocatedQty   int    `json:"allocatedQty"`
+	DamagedQty     int    `json:"damagedQty"`
+	HoldQty        int    `json:"holdQty"`
+	ReorderLevel   int    `json:"reorderLevel"`
+	CustomerID     int64  `json:"customerId"`
+	LocationID     int64  `json:"locationId"`
+	StorageSection string `json:"storageSection"`
+	DeliveryDate   string `json:"deliveryDate"`
+	ContainerNo    string `json:"containerNo"`
 }
 
 type CreateMovementInput struct {
-	ItemID            int64  `json:"itemId"`
-	MovementType      string `json:"movementType"`
-	Quantity          int    `json:"quantity"`
-	StorageSection    string `json:"storageSection"`
-	DeliveryDate      string `json:"deliveryDate"`
-	ContainerNo       string `json:"containerNo"`
-	PackingListNo     string `json:"packingListNo"`
-	OrderRef          string `json:"orderRef"`
-	ItemNumber        string `json:"itemNumber"`
-	ExpectedQty       int    `json:"expectedQty"`
-	ReceivedQty       int    `json:"receivedQty"`
-	Pallets           int    `json:"pallets"`
-	PalletsDetailCtns string `json:"palletsDetailCtns"`
-	CartonSizeMM      string `json:"cartonSizeMm"`
-	CartonCount       int    `json:"cartonCount"`
-	UnitLabel         string `json:"unitLabel"`
+	ItemID            int64   `json:"itemId"`
+	MovementType      string  `json:"movementType"`
+	Quantity          int     `json:"quantity"`
+	StorageSection    string  `json:"storageSection"`
+	DeliveryDate      string  `json:"deliveryDate"`
+	ContainerNo       string  `json:"containerNo"`
+	PackingListNo     string  `json:"packingListNo"`
+	OrderRef          string  `json:"orderRef"`
+	ItemNumber        string  `json:"itemNumber"`
+	ExpectedQty       int     `json:"expectedQty"`
+	ReceivedQty       int     `json:"receivedQty"`
+	Pallets           int     `json:"pallets"`
+	PalletsDetailCtns string  `json:"palletsDetailCtns"`
+	CartonSizeMM      string  `json:"cartonSizeMm"`
+	CartonCount       int     `json:"cartonCount"`
+	UnitLabel         string  `json:"unitLabel"`
 	NetWeightKgs      float64 `json:"netWeightKgs"`
 	GrossWeightKgs    float64 `json:"grossWeightKgs"`
-	HeightIn          int    `json:"heightIn"`
-	OutDate           string `json:"outDate"`
-	DocumentNote      string `json:"documentNote"`
-	Reason            string `json:"reason"`
-	ReferenceCode     string `json:"referenceCode"`
+	HeightIn          int     `json:"heightIn"`
+	OutDate           string  `json:"outDate"`
+	DocumentNote      string  `json:"documentNote"`
+	Reason            string  `json:"reason"`
+	ReferenceCode     string  `json:"referenceCode"`
 }
 
 func NewStore(db *sqlx.DB) *Store {
@@ -311,10 +304,33 @@ func (s *Store) GetDashboard(ctx context.Context) (DashboardData, error) {
 	query := `
 		SELECT
 			COUNT(*) AS total_items,
-			COALESCE(SUM(quantity), 0) AS total_units,
-			COALESCE(SUM(CASE WHEN GREATEST(quantity - allocated_qty - damaged_qty - hold_qty, 0) <= reorder_level THEN 1 ELSE 0 END), 0) AS low_stock_items,
+			COALESCE(SUM(position_qty), 0) AS total_units,
+			COALESCE(SUM(CASE WHEN available_qty <= reorder_level THEN 1 ELSE 0 END), 0) AS low_stock_items,
 			COUNT(DISTINCT location_id) AS locations_in_use
-		FROM inventory_items
+		FROM (
+			SELECT
+				pi.sku_master_id,
+				p.customer_id,
+				p.current_location_id AS location_id,
+				p.current_storage_section AS storage_section,
+				sm.reorder_level,
+				SUM(pi.quantity) AS position_qty,
+				GREATEST(
+					SUM(pi.quantity) - SUM(pi.allocated_qty) - SUM(pi.damaged_qty) - SUM(pi.hold_qty),
+					0
+				) AS available_qty
+			FROM pallet_items pi
+			JOIN pallets p ON p.id = pi.pallet_id
+			JOIN sku_master sm ON sm.id = pi.sku_master_id
+			WHERE pi.quantity > 0
+			  AND p.status <> 'CANCELLED'
+			GROUP BY
+				pi.sku_master_id,
+				p.customer_id,
+				p.current_location_id,
+				p.current_storage_section,
+				sm.reorder_level
+		) AS inventory_positions
 	`
 
 	if err := s.db.QueryRowContext(ctx, query).Scan(
@@ -339,60 +355,91 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 	query := `
 		SELECT
 			i.id,
-			COALESCE(i.item_number, ''),
-			i.sku,
-			i.name,
-			i.category,
-			COALESCE(i.description, ''),
-			i.unit,
-			i.quantity,
-			GREATEST(i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty, 0) AS available_qty,
-			i.allocated_qty,
-			i.damaged_qty,
-			i.hold_qty,
-			i.reorder_level,
-			i.customer_id,
+			i.sku_master_id,
+			COALESCE(sm.item_number, ''),
+			sm.sku,
+			sm.name,
+			sm.category,
+			COALESCE(sm.description, ''),
+			sm.unit,
+			SUM(pi.quantity) AS quantity,
+			GREATEST(
+				SUM(pi.quantity) - SUM(pi.allocated_qty) - SUM(pi.damaged_qty) - SUM(pi.hold_qty),
+				0
+			) AS available_qty,
+			SUM(pi.allocated_qty) AS allocated_qty,
+			SUM(pi.damaged_qty) AS damaged_qty,
+			SUM(pi.hold_qty) AS hold_qty,
+			sm.reorder_level,
+			p.customer_id,
 			c.name,
-			i.location_id,
+			p.current_location_id,
 			l.name,
-			i.storage_section,
+			p.current_storage_section,
 			i.delivery_date,
-			COALESCE(i.container_no, ''),
-			i.expected_qty,
-			i.received_qty,
-			i.height_in,
-			i.out_date,
+			COALESCE(p.current_container_no, i.container_no, '') AS container_no,
 			i.last_restocked_at,
 			i.created_at,
-			i.updated_at
-		FROM inventory_items i
-		JOIN customers c ON c.id = i.customer_id
-		JOIN storage_locations l ON l.id = i.location_id
-		WHERE (i.quantity <> 0 OR i.allocated_qty <> 0 OR i.damaged_qty <> 0 OR i.hold_qty <> 0)
+			GREATEST(i.updated_at, MAX(p.updated_at)) AS updated_at
+		FROM pallet_items pi
+		JOIN pallets p ON p.id = pi.pallet_id
+		JOIN inventory_items i
+			ON i.sku_master_id = pi.sku_master_id
+			AND i.customer_id = p.customer_id
+			AND i.location_id = p.current_location_id
+			AND i.storage_section = p.current_storage_section
+			AND COALESCE(i.container_no, '') = COALESCE(p.current_container_no, '')
+		JOIN sku_master sm ON sm.id = pi.sku_master_id
+		JOIN customers c ON c.id = p.customer_id
+		JOIN storage_locations l ON l.id = p.current_location_id
+		WHERE pi.quantity > 0
+		  AND p.status <> 'CANCELLED'
 	`
 
 	args := make([]any, 0)
 	if search := strings.TrimSpace(filters.Search); search != "" {
 		likeValue := "%" + search + "%"
-		query += " AND (i.item_number LIKE ? OR i.sku LIKE ? OR i.name LIKE ? OR i.description LIKE ? OR i.category LIKE ? OR c.name LIKE ?)"
+		query += " AND (sm.item_number LIKE ? OR sm.sku LIKE ? OR sm.name LIKE ? OR sm.description LIKE ? OR sm.category LIKE ? OR c.name LIKE ? OR COALESCE(p.current_container_no, i.container_no, '') LIKE ?)"
 		args = append(args, likeValue, likeValue, likeValue, likeValue, likeValue, likeValue)
+		args = append(args, likeValue)
 	}
 
 	if filters.LocationID > 0 {
-		query += " AND i.location_id = ?"
+		query += " AND p.current_location_id = ?"
 		args = append(args, filters.LocationID)
 	}
 
 	if filters.CustomerID > 0 {
-		query += " AND i.customer_id = ?"
+		query += " AND p.customer_id = ?"
 		args = append(args, filters.CustomerID)
 	}
 
+	query += `
+		GROUP BY
+			i.id,
+			sm.item_number,
+			sm.sku,
+			sm.name,
+			sm.category,
+			sm.description,
+			sm.unit,
+			sm.reorder_level,
+			p.customer_id,
+			c.name,
+			p.current_location_id,
+			l.name,
+			p.current_storage_section,
+			i.delivery_date,
+			p.current_container_no,
+			i.last_restocked_at,
+			i.created_at,
+			i.updated_at
+	`
 	if filters.LowStockOnly {
-		query += " AND GREATEST(i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty, 0) <= i.reorder_level"
+		query += " HAVING available_qty <= sm.reorder_level"
 	}
 
-	query += " ORDER BY i.updated_at DESC, i.sku ASC"
+	query += " ORDER BY MAX(p.updated_at) DESC, sm.sku ASC"
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -428,11 +475,6 @@ func (s *Store) CreateItem(ctx context.Context, input CreateItemInput) (Item, er
 		return Item{}, err
 	}
 
-	outDate, err := parseOptionalDate(input.OutDate)
-	if err != nil {
-		return Item{}, err
-	}
-
 	var lastRestockedAt any
 	if input.Quantity > 0 {
 		lastRestockedAt = time.Now().UTC()
@@ -453,49 +495,19 @@ func (s *Store) CreateItem(ctx context.Context, input CreateItemInput) (Item, er
 		INSERT INTO inventory_items (
 			sku_master_id,
 			customer_id,
-			item_number,
-			sku,
-			name,
-			category,
-			description,
-			unit,
-			quantity,
-			allocated_qty,
-			damaged_qty,
-			hold_qty,
-			reorder_level,
 			location_id,
 			storage_section,
 			delivery_date,
 			container_no,
-			expected_qty,
-			received_qty,
-			height_in,
-			out_date,
 			last_restocked_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?)
 	`,
 		skuMasterID,
 		input.CustomerID,
-		nullableString(input.ItemNumber),
-		input.SKU,
-		input.Name,
-		input.Category,
-		input.Description,
-		input.Unit,
-		input.Quantity,
-		input.AllocatedQty,
-		input.DamagedQty,
-		input.HoldQty,
-		input.ReorderLevel,
 		input.LocationID,
 		input.StorageSection,
 		nullableTime(deliveryDate),
 		input.ContainerNo,
-		input.ExpectedQty,
-		input.ReceivedQty,
-		input.HeightIn,
-		nullableTime(outDate),
 		lastRestockedAt,
 	)
 	if err != nil {
@@ -505,6 +517,12 @@ func (s *Store) CreateItem(ctx context.Context, input CreateItemInput) (Item, er
 	itemID, err := result.LastInsertId()
 	if err != nil {
 		return Item{}, fmt.Errorf("resolve item id: %w", err)
+	}
+
+	if input.Quantity > 0 {
+		if err := s.createSeedPalletForInventoryItemTx(ctx, tx, itemID, skuMasterID, input, deliveryDate, input.Quantity, fmt.Sprintf("ITEM-%06d-SEED", itemID), StockLedgerSourceAdjustment, itemID, 0, "Manual inventory seed"); err != nil {
+			return Item{}, err
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -525,16 +543,19 @@ func (s *Store) UpdateItem(ctx context.Context, itemID int64, input CreateItemIn
 		return Item{}, err
 	}
 
-	outDate, err := parseOptionalDate(input.OutDate)
-	if err != nil {
-		return Item{}, err
-	}
-
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Item{}, fmt.Errorf("begin item update transaction: %w", err)
 	}
 	defer tx.Rollback()
+
+	currentProjection, err := s.loadPalletBackedInventoryProjectionTx(ctx, tx, itemID)
+	if err != nil {
+		return Item{}, err
+	}
+	if input.Quantity != currentProjection.Quantity || input.AllocatedQty != currentProjection.AllocatedQty || input.DamagedQty != currentProjection.DamagedQty || input.HoldQty != currentProjection.HoldQty {
+		return Item{}, fmt.Errorf("%w: inventory state changes must be made through pallet operations", ErrInvalidInput)
+	}
 
 	previousSKUMasterID, err := s.getItemSKUMasterID(ctx, tx, itemID)
 	if err != nil {
@@ -545,60 +566,32 @@ func (s *Store) UpdateItem(ctx context.Context, itemID int64, input CreateItemIn
 	if err != nil {
 		return Item{}, err
 	}
+	if currentProjection.Quantity > 0 && (previousSKUMasterID != skuMasterID ||
+		currentProjection.CustomerID != input.CustomerID ||
+		currentProjection.LocationID != input.LocationID ||
+		fallbackSection(currentProjection.StorageSection) != fallbackSection(input.StorageSection) ||
+		strings.TrimSpace(currentProjection.ContainerNo) != strings.TrimSpace(input.ContainerNo)) {
+		return Item{}, fmt.Errorf("%w: move stock through pallet operations instead of editing the bucket registry", ErrInvalidInput)
+	}
 
 	result, err := tx.ExecContext(ctx, `
 		UPDATE inventory_items
 		SET
 			sku_master_id = ?,
 			customer_id = ?,
-			item_number = ?,
-			sku = ?,
-			name = ?,
-			category = ?,
-			description = ?,
-			unit = ?,
-			quantity = ?,
-			allocated_qty = ?,
-			damaged_qty = ?,
-			hold_qty = ?,
-			reorder_level = ?,
 			location_id = ?,
 			storage_section = ?,
 			delivery_date = ?,
 			container_no = ?,
-			expected_qty = ?,
-			received_qty = ?,
-			height_in = ?,
-			out_date = ?,
-			last_restocked_at = CASE
-				WHEN ? > quantity THEN CURRENT_TIMESTAMP
-				ELSE last_restocked_at
-			END,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 		`,
 		skuMasterID,
 		input.CustomerID,
-		nullableString(input.ItemNumber),
-		input.SKU,
-		input.Name,
-		input.Category,
-		input.Description,
-		input.Unit,
-		input.Quantity,
-		input.AllocatedQty,
-		input.DamagedQty,
-		input.HoldQty,
-		input.ReorderLevel,
 		input.LocationID,
 		input.StorageSection,
 		nullableTime(deliveryDate),
 		input.ContainerNo,
-		input.ExpectedQty,
-		input.ReceivedQty,
-		input.HeightIn,
-		nullableTime(outDate),
-		input.Quantity,
 		itemID,
 	)
 	if err != nil {
@@ -637,9 +630,12 @@ func (s *Store) DeleteItem(ctx context.Context, itemID int64) error {
 	if err != nil {
 		return err
 	}
-
-	if _, err := tx.ExecContext(ctx, `DELETE FROM stock_movements WHERE item_id = ?`, itemID); err != nil {
-		return mapDBError(fmt.Errorf("delete linked movements for item: %w", err))
+	currentProjection, err := s.loadPalletBackedInventoryProjectionTx(ctx, tx, itemID)
+	if err != nil {
+		return err
+	}
+	if currentProjection.Quantity > 0 || currentProjection.AllocatedQty > 0 || currentProjection.DamagedQty > 0 || currentProjection.HoldQty > 0 {
+		return fmt.Errorf("%w: clear pallet-backed stock before deleting the bucket registry", ErrInvalidInput)
 	}
 
 	result, err := tx.ExecContext(ctx, `DELETE FROM inventory_items WHERE id = ?`, itemID)
@@ -671,52 +667,161 @@ func (s *Store) ListMovements(ctx context.Context, limit int) ([]Movement, error
 		limit = 10
 	}
 
+	return s.listStockLedgerMovements(ctx, limit)
+}
+
+func (s *Store) listStockLedgerMovements(ctx context.Context, limit int) ([]Movement, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
-			m.id,
-			m.item_id,
-			COALESCE(m.inbound_document_id, 0),
-			COALESCE(m.inbound_document_line_id, 0),
-			COALESCE(m.outbound_document_id, 0),
-			COALESCE(m.outbound_document_line_id, 0),
-			i.name,
-			i.sku,
-			COALESCE(m.description_snapshot, i.description, i.name, ''),
-			m.customer_id,
+			MAX(sl.id) AS id,
+			COALESCE(MAX(ii.id), 0) AS item_id,
+			MAX(CASE WHEN sl.source_document_type = 'INBOUND' THEN sl.source_document_id ELSE 0 END) AS inbound_document_id,
+			MAX(CASE WHEN sl.source_document_type = 'INBOUND' THEN sl.source_line_id ELSE 0 END) AS inbound_document_line_id,
+			MAX(CASE WHEN sl.source_document_type = 'OUTBOUND' THEN sl.source_document_id ELSE 0 END) AS outbound_document_id,
+			MAX(CASE WHEN sl.source_document_type = 'OUTBOUND' THEN sl.source_line_id ELSE 0 END) AS outbound_document_line_id,
+			COALESCE(MAX(sm.name), COALESCE(MAX(sl.description_snapshot), '')) AS item_name,
+			COALESCE(MAX(sm.sku), '') AS sku,
+			COALESCE(
+				MAX(NULLIF(sl.description_snapshot, '')),
+				MAX(NULLIF(iline.description_snapshot, '')),
+				MAX(NULLIF(oline.description_snapshot, '')),
+				MAX(NULLIF(adjl.description_snapshot, '')),
+				MAX(NULLIF(trl.description_snapshot, '')),
+				MAX(NULLIF(ccl.description_snapshot, '')),
+				MAX(NULLIF(sm.description, '')),
+				MAX(NULLIF(sm.name, '')),
+				''
+			) AS description,
+			sl.customer_id,
+			c.name AS customer_name,
+			l.name AS location_name,
+			COALESCE(NULLIF(sl.storage_section, ''), 'TEMP') AS storage_section,
+			CASE sl.event_type
+				WHEN 'RECEIVE' THEN 'IN'
+				WHEN 'SHIP' THEN 'OUT'
+				ELSE sl.event_type
+			END AS movement_type,
+			SUM(sl.quantity_change) AS quantity_change,
+			MAX(CASE
+				WHEN sl.event_type = 'RECEIVE' THEN COALESCE(sl.delivery_date, idoc.delivery_date)
+				ELSE NULL
+			END) AS delivery_date,
+			COALESCE(MAX(NULLIF(sl.container_no_snapshot, '')), MAX(NULLIF(idoc.container_no, '')), '') AS container_no,
+			COALESCE(
+				MAX(NULLIF(sl.packing_list_no, '')),
+				MAX(NULLIF(odoc.packing_list_no, '')),
+				''
+			) AS packing_list_no,
+			COALESCE(
+				MAX(NULLIF(sl.order_ref, '')),
+				MAX(NULLIF(odoc.order_ref, '')),
+				''
+			) AS order_ref,
+			COALESCE(
+				MAX(NULLIF(sl.item_number_snapshot, '')),
+				MAX(NULLIF(sm.item_number, '')),
+				''
+			) AS item_number,
+			COALESCE(MAX(sl.expected_qty), MAX(iline.expected_qty), 0) AS expected_qty,
+			COALESCE(MAX(sl.received_qty), MAX(iline.received_qty), 0) AS received_qty,
+			COALESCE(MAX(sl.pallets), MAX(iline.pallets), MAX(oline.pallets), 0) AS pallets,
+			COALESCE(
+				MAX(NULLIF(sl.pallets_detail_ctns, '')),
+				MAX(NULLIF(iline.pallets_detail_ctns, '')),
+				MAX(NULLIF(oline.pallets_detail_ctns, '')),
+				''
+			) AS pallets_detail_ctns,
+			COALESCE(MAX(NULLIF(sl.carton_size_mm, '')), MAX(NULLIF(oline.carton_size_mm, '')), '') AS carton_size_mm,
+			COALESCE(MAX(sl.carton_count), 0) AS carton_count,
+			COALESCE(
+				MAX(NULLIF(sl.unit_label, '')),
+				MAX(NULLIF(iline.unit_label, '')),
+				MAX(NULLIF(oline.unit_label, '')),
+				MAX(NULLIF(sm.unit, '')),
+				''
+			) AS unit_label,
+			COALESCE(MAX(sl.net_weight_kgs), MAX(oline.net_weight_kgs), 0) AS net_weight_kgs,
+			COALESCE(MAX(sl.gross_weight_kgs), MAX(oline.gross_weight_kgs), 0) AS gross_weight_kgs,
+			COALESCE(MAX(sl.height_in), 0) AS height_in,
+			MAX(CASE
+				WHEN sl.event_type = 'SHIP' THEN COALESCE(sl.out_date, odoc.out_date)
+				WHEN sl.event_type = 'REVERSAL' THEN COALESCE(sl.out_date, odoc.out_date)
+				ELSE NULL
+			END) AS out_date,
+			COALESCE(
+				MAX(NULLIF(sl.document_note, '')),
+				MAX(NULLIF(idoc.document_note, '')),
+				MAX(NULLIF(odoc.document_note, '')),
+				MAX(NULLIF(adj.notes, '')),
+				MAX(NULLIF(tr.notes, '')),
+				MAX(NULLIF(cc.notes, '')),
+				''
+			) AS document_note,
+			COALESCE(
+				MAX(NULLIF(sl.reason, '')),
+				MAX(NULLIF(adj.reason_code, '')),
+				''
+			) AS reason,
+			COALESCE(MAX(NULLIF(sl.reference_code, '')), '') AS reference_code,
+			MAX(sl.created_at) AS created_at
+		FROM stock_ledger sl
+		JOIN pallets p ON p.id = sl.pallet_id
+		LEFT JOIN pallet_items pi ON pi.id = sl.pallet_item_id
+		LEFT JOIN sku_master sm ON sm.id = COALESCE(sl.sku_master_id, pi.sku_master_id, p.sku_master_id)
+		JOIN customers c ON c.id = sl.customer_id
+		JOIN storage_locations l ON l.id = sl.location_id
+		LEFT JOIN inbound_documents idoc
+			ON sl.source_document_type = 'INBOUND' AND sl.source_document_id = idoc.id
+		LEFT JOIN inbound_document_lines iline
+			ON sl.source_document_type = 'INBOUND' AND sl.source_line_id = iline.id
+		LEFT JOIN outbound_documents odoc
+			ON sl.source_document_type = 'OUTBOUND' AND sl.source_document_id = odoc.id
+		LEFT JOIN outbound_document_lines oline
+			ON sl.source_document_type = 'OUTBOUND' AND sl.source_line_id = oline.id
+		LEFT JOIN inventory_adjustments adj
+			ON sl.source_document_type = 'ADJUSTMENT' AND sl.source_document_id = adj.id
+		LEFT JOIN inventory_adjustment_lines adjl
+			ON sl.source_document_type = 'ADJUSTMENT' AND sl.source_line_id = adjl.id
+		LEFT JOIN inventory_transfers tr
+			ON sl.source_document_type = 'TRANSFER' AND sl.source_document_id = tr.id
+		LEFT JOIN inventory_transfer_lines trl
+			ON sl.source_document_type = 'TRANSFER' AND sl.source_line_id = trl.id
+		LEFT JOIN cycle_counts cc
+			ON sl.source_document_type = 'CYCLE_COUNT' AND sl.source_document_id = cc.id
+		LEFT JOIN cycle_count_lines ccl
+			ON sl.source_document_type = 'CYCLE_COUNT' AND sl.source_line_id = ccl.id
+		LEFT JOIN inventory_items ii
+			ON ii.sku_master_id = COALESCE(sl.sku_master_id, pi.sku_master_id, p.sku_master_id)
+			AND ii.customer_id = sl.customer_id
+			AND ii.location_id = sl.location_id
+			AND ii.storage_section = COALESCE(NULLIF(sl.storage_section, ''), 'TEMP')
+			AND COALESCE(ii.container_no, '') = COALESCE(NULLIF(sl.container_no_snapshot, ''), COALESCE(idoc.container_no, ''), '')
+		GROUP BY
+			sl.source_document_type,
+			COALESCE(sl.source_document_id, 0),
+			COALESCE(sl.source_line_id, 0),
+			sl.customer_id,
 			c.name,
 			l.name,
-			m.storage_section,
-			m.movement_type,
-			m.quantity_change,
-			m.delivery_date,
-			COALESCE(m.container_no, ''),
-			COALESCE(m.packing_list_no, ''),
-			COALESCE(m.order_ref, ''),
-			COALESCE(m.item_number, ''),
-			m.expected_qty,
-			m.received_qty,
-			m.pallets,
-			COALESCE(m.pallets_detail_ctns, ''),
-			COALESCE(m.carton_size_mm, ''),
-			m.carton_count,
-			COALESCE(m.unit_label, ''),
-			m.net_weight_kgs,
-			m.gross_weight_kgs,
-			m.height_in,
-			m.out_date,
-			COALESCE(m.document_note, ''),
-			COALESCE(m.reason, ''),
-			COALESCE(m.reference_code, ''),
-			m.created_at
-		FROM stock_movements m
-		JOIN inventory_items i ON i.id = m.item_id
-		JOIN customers c ON c.id = m.customer_id
-		JOIN storage_locations l ON l.id = m.location_id
-		ORDER BY COALESCE(m.delivery_date, m.out_date, m.created_at) DESC, m.id DESC
+			COALESCE(NULLIF(sl.storage_section, ''), 'TEMP'),
+			CASE sl.event_type
+				WHEN 'RECEIVE' THEN 'IN'
+				WHEN 'SHIP' THEN 'OUT'
+				ELSE sl.event_type
+			END,
+			COALESCE(NULLIF(sl.container_no_snapshot, ''), COALESCE(idoc.container_no, '')),
+			COALESCE(sm.sku, ''),
+			COALESCE(NULLIF(sl.item_number_snapshot, ''), COALESCE(sm.item_number, ''))
+		ORDER BY COALESCE(MAX(CASE
+			WHEN sl.event_type = 'RECEIVE' THEN COALESCE(sl.delivery_date, idoc.delivery_date)
+			WHEN sl.event_type = 'SHIP' THEN COALESCE(sl.out_date, odoc.out_date)
+			WHEN sl.event_type = 'REVERSAL' THEN COALESCE(sl.out_date, odoc.out_date)
+			ELSE NULL
+		END), MAX(sl.created_at)) DESC, MAX(sl.id) DESC
 		LIMIT ?
 	`, limit)
 	if err != nil {
-		return nil, fmt.Errorf("load movements: %w", err)
+		return nil, fmt.Errorf("load stock ledger movements: %w", err)
 	}
 	defer rows.Close()
 
@@ -726,540 +831,78 @@ func (s *Store) ListMovements(ctx context.Context, limit int) ([]Movement, error
 		if err != nil {
 			return nil, err
 		}
-
 		movements = append(movements, movement)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate movements: %w", err)
+		return nil, fmt.Errorf("iterate stock ledger movements: %w", err)
 	}
 
 	return movements, nil
-}
-
-func (s *Store) CreateMovement(ctx context.Context, input CreateMovementInput) (Movement, error) {
-	input = sanitizeMovementInput(input)
-
-	delta, err := resolveMovementDelta(input.MovementType, input.Quantity)
-	if err != nil {
-		return Movement{}, err
-	}
-
-	if input.ItemID <= 0 {
-		return Movement{}, fmt.Errorf("%w: item is required", ErrInvalidInput)
-	}
-	if input.ExpectedQty < 0 || input.ReceivedQty < 0 || input.Pallets < 0 || input.HeightIn < 0 || input.CartonCount < 0 || input.NetWeightKgs < 0 || input.GrossWeightKgs < 0 {
-		return Movement{}, fmt.Errorf("%w: quantities, weights, and height cannot be negative", ErrInvalidInput)
-	}
-
-	deliveryDate, err := parseOptionalDate(input.DeliveryDate)
-	if err != nil {
-		return Movement{}, err
-	}
-
-	outDate, err := parseOptionalDate(input.OutDate)
-	if err != nil {
-		return Movement{}, err
-	}
-
-	if input.MovementType == "IN" && deliveryDate == nil {
-		now := time.Now().UTC()
-		deliveryDate = &now
-	}
-	if input.MovementType == "OUT" && outDate == nil {
-		now := time.Now().UTC()
-		outDate = &now
-	}
-	if input.MovementType == "IN" && input.ReceivedQty == 0 {
-		input.ReceivedQty = input.Quantity
-	}
-	if input.MovementType == "IN" && input.ExpectedQty == 0 {
-		input.ExpectedQty = input.ReceivedQty
-	}
-	if input.Reason == "" {
-		input.Reason = defaultMovementReason(input.MovementType)
-	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Movement{}, fmt.Errorf("begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	var currentQuantity int
-	var customerID int64
-	var locationID int64
-	var storageSection string
-	var descriptionSnapshot string
-	if currentQuantity, customerID, locationID, storageSection, descriptionSnapshot, err = s.loadLockedItemForMovement(ctx, tx, input.ItemID); err != nil {
-		return Movement{}, err
-	}
-	if input.StorageSection == "" {
-		input.StorageSection = storageSection
-	}
-
-	updatedQuantity := currentQuantity + delta
-	if updatedQuantity < 0 {
-		return Movement{}, ErrInsufficientStock
-	}
-
-	result, err := tx.ExecContext(ctx, `
-		INSERT INTO stock_movements (
-			item_id,
-			customer_id,
-			location_id,
-			storage_section,
-			movement_type,
-			quantity_change,
-			delivery_date,
-			container_no,
-			packing_list_no,
-			order_ref,
-			item_number,
-			description_snapshot,
-			expected_qty,
-			received_qty,
-			pallets,
-			pallets_detail_ctns,
-			carton_size_mm,
-			carton_count,
-			unit_label,
-			net_weight_kgs,
-			gross_weight_kgs,
-			height_in,
-			out_date,
-			document_note,
-			reason,
-			reference_code
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`,
-		input.ItemID,
-		customerID,
-		locationID,
-		input.StorageSection,
-		input.MovementType,
-		delta,
-		nullableTime(deliveryDate),
-		nullableString(input.ContainerNo),
-		nullableString(input.PackingListNo),
-		nullableString(input.OrderRef),
-		nullableString(input.ItemNumber),
-		nullableString(descriptionSnapshot),
-		input.ExpectedQty,
-		input.ReceivedQty,
-		input.Pallets,
-		nullableString(input.PalletsDetailCtns),
-		nullableString(input.CartonSizeMM),
-		input.CartonCount,
-		nullableString(input.UnitLabel),
-		input.NetWeightKgs,
-		input.GrossWeightKgs,
-		input.HeightIn,
-		nullableTime(outDate),
-		nullableString(input.DocumentNote),
-		nullableString(input.Reason),
-		nullableString(input.ReferenceCode),
-	)
-	if err != nil {
-		return Movement{}, mapDBError(fmt.Errorf("create movement: %w", err))
-	}
-
-	movementID, err := result.LastInsertId()
-	if err != nil {
-		return Movement{}, fmt.Errorf("resolve movement id: %w", err)
-	}
-
-	if err := s.applyMovementToInventoryItem(ctx, tx, input.ItemID, updatedQuantity, delta, input, deliveryDate, outDate); err != nil {
-		return Movement{}, mapDBError(fmt.Errorf("update inventory after movement: %w", err))
-	}
-
-	if err := tx.Commit(); err != nil {
-		return Movement{}, fmt.Errorf("commit movement: %w", err)
-	}
-
-	return s.getMovement(ctx, movementID)
-}
-
-func (s *Store) UpdateMovement(ctx context.Context, movementID int64, input CreateMovementInput) (Movement, error) {
-	input = sanitizeMovementInput(input)
-
-	delta, err := resolveMovementDelta(input.MovementType, input.Quantity)
-	if err != nil {
-		return Movement{}, err
-	}
-	if input.ItemID <= 0 {
-		return Movement{}, fmt.Errorf("%w: item is required", ErrInvalidInput)
-	}
-	if input.ExpectedQty < 0 || input.ReceivedQty < 0 || input.Pallets < 0 || input.HeightIn < 0 || input.CartonCount < 0 || input.NetWeightKgs < 0 || input.GrossWeightKgs < 0 {
-		return Movement{}, fmt.Errorf("%w: quantities, weights, and height cannot be negative", ErrInvalidInput)
-	}
-
-	deliveryDate, err := parseOptionalDate(input.DeliveryDate)
-	if err != nil {
-		return Movement{}, err
-	}
-	outDate, err := parseOptionalDate(input.OutDate)
-	if err != nil {
-		return Movement{}, err
-	}
-	if input.MovementType == "IN" && deliveryDate == nil {
-		now := time.Now().UTC()
-		deliveryDate = &now
-	}
-	if input.MovementType == "OUT" && outDate == nil {
-		now := time.Now().UTC()
-		outDate = &now
-	}
-	if input.MovementType == "IN" && input.ReceivedQty == 0 {
-		input.ReceivedQty = input.Quantity
-	}
-	if input.MovementType == "IN" && input.ExpectedQty == 0 {
-		input.ExpectedQty = input.ReceivedQty
-	}
-	if input.Reason == "" {
-		input.Reason = defaultMovementReason(input.MovementType)
-	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Movement{}, fmt.Errorf("begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	var previousItemID int64
-	var previousDelta int
-	var previousStorageSection string
-	var inboundDocumentID int64
-	var outboundDocumentID int64
-	var adjustmentID int64
-	var transferID int64
-	var cycleCountID int64
-	if err := tx.QueryRowContext(ctx, `
-		SELECT
-			item_id,
-			quantity_change,
-			storage_section,
-			COALESCE(inbound_document_id, 0),
-			COALESCE(outbound_document_id, 0),
-			COALESCE(adjustment_id, 0),
-			COALESCE(transfer_id, 0),
-			COALESCE(cycle_count_id, 0)
-		FROM stock_movements
-		WHERE id = ?
-		FOR UPDATE
-	`, movementID).Scan(
-		&previousItemID,
-		&previousDelta,
-		&previousStorageSection,
-		&inboundDocumentID,
-		&outboundDocumentID,
-		&adjustmentID,
-		&transferID,
-		&cycleCountID,
-	); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return Movement{}, ErrNotFound
-		}
-		return Movement{}, fmt.Errorf("load movement for update: %w", err)
-	}
-	if inboundDocumentID > 0 || outboundDocumentID > 0 || adjustmentID > 0 || transferID > 0 || cycleCountID > 0 {
-		return Movement{}, fmt.Errorf("%w: posted document lines must be edited from their document", ErrInvalidInput)
-	}
-	if input.StorageSection == "" {
-		input.StorageSection = previousStorageSection
-	}
-
-	previousQuantity, _, _, _, _, err := s.loadLockedItemForMovement(ctx, tx, previousItemID)
-	if err != nil {
-		return Movement{}, err
-	}
-	restoredPreviousQuantity := previousQuantity - previousDelta
-	if restoredPreviousQuantity < 0 {
-		return Movement{}, ErrInsufficientStock
-	}
-
-	if previousItemID == input.ItemID {
-		_, customerID, locationID, itemStorageSection, descriptionSnapshot, err := s.loadLockedItemForMovement(ctx, tx, input.ItemID)
-		if err != nil {
-			return Movement{}, err
-		}
-		if input.StorageSection == "" {
-			input.StorageSection = itemStorageSection
-		}
-		updatedQuantity := restoredPreviousQuantity + delta
-		if updatedQuantity < 0 {
-			return Movement{}, ErrInsufficientStock
-		}
-
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE stock_movements
-			SET
-				customer_id = ?,
-				location_id = ?,
-				storage_section = ?,
-				movement_type = ?,
-				quantity_change = ?,
-				delivery_date = ?,
-				container_no = ?,
-				packing_list_no = ?,
-				order_ref = ?,
-				item_number = ?,
-				description_snapshot = ?,
-				expected_qty = ?,
-				received_qty = ?,
-				pallets = ?,
-				pallets_detail_ctns = ?,
-				carton_size_mm = ?,
-				carton_count = ?,
-				unit_label = ?,
-				net_weight_kgs = ?,
-				gross_weight_kgs = ?,
-				height_in = ?,
-				out_date = ?,
-				document_note = ?,
-				reason = ?,
-				reference_code = ?
-			WHERE id = ?
-		`,
-			customerID,
-			locationID,
-			input.StorageSection,
-			input.MovementType,
-			delta,
-			nullableTime(deliveryDate),
-			nullableString(input.ContainerNo),
-			nullableString(input.PackingListNo),
-			nullableString(input.OrderRef),
-			nullableString(input.ItemNumber),
-			nullableString(descriptionSnapshot),
-			input.ExpectedQty,
-			input.ReceivedQty,
-			input.Pallets,
-			nullableString(input.PalletsDetailCtns),
-			nullableString(input.CartonSizeMM),
-			input.CartonCount,
-			nullableString(input.UnitLabel),
-			input.NetWeightKgs,
-			input.GrossWeightKgs,
-			input.HeightIn,
-			nullableTime(outDate),
-			nullableString(input.DocumentNote),
-			nullableString(input.Reason),
-			nullableString(input.ReferenceCode),
-			movementID,
-		); err != nil {
-			return Movement{}, mapDBError(fmt.Errorf("update movement: %w", err))
-		}
-
-		if err := s.applyMovementToInventoryItem(ctx, tx, input.ItemID, updatedQuantity, delta, input, deliveryDate, outDate); err != nil {
-			return Movement{}, mapDBError(fmt.Errorf("update inventory after movement edit: %w", err))
-		}
-	} else {
-		newQuantity, newCustomerID, newLocationID, newStorageSection, descriptionSnapshot, err := s.loadLockedItemForMovement(ctx, tx, input.ItemID)
-		if err != nil {
-			return Movement{}, err
-		}
-		if input.StorageSection == "" {
-			input.StorageSection = newStorageSection
-		}
-		updatedNewQuantity := newQuantity + delta
-		if updatedNewQuantity < 0 {
-			return Movement{}, ErrInsufficientStock
-		}
-
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE inventory_items
-			SET quantity = ?, updated_at = CURRENT_TIMESTAMP
-			WHERE id = ?
-		`, restoredPreviousQuantity, previousItemID); err != nil {
-			return Movement{}, mapDBError(fmt.Errorf("restore previous inventory after movement edit: %w", err))
-		}
-
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE stock_movements
-			SET
-				item_id = ?,
-				customer_id = ?,
-				location_id = ?,
-				storage_section = ?,
-				movement_type = ?,
-				quantity_change = ?,
-				delivery_date = ?,
-				container_no = ?,
-				packing_list_no = ?,
-				order_ref = ?,
-				item_number = ?,
-				description_snapshot = ?,
-				expected_qty = ?,
-				received_qty = ?,
-				pallets = ?,
-				pallets_detail_ctns = ?,
-				carton_size_mm = ?,
-				carton_count = ?,
-				unit_label = ?,
-				net_weight_kgs = ?,
-				gross_weight_kgs = ?,
-				height_in = ?,
-				out_date = ?,
-				document_note = ?,
-				reason = ?,
-				reference_code = ?
-			WHERE id = ?
-		`,
-			input.ItemID,
-			newCustomerID,
-			newLocationID,
-			input.StorageSection,
-			input.MovementType,
-			delta,
-			nullableTime(deliveryDate),
-			nullableString(input.ContainerNo),
-			nullableString(input.PackingListNo),
-			nullableString(input.OrderRef),
-			nullableString(input.ItemNumber),
-			nullableString(descriptionSnapshot),
-			input.ExpectedQty,
-			input.ReceivedQty,
-			input.Pallets,
-			nullableString(input.PalletsDetailCtns),
-			nullableString(input.CartonSizeMM),
-			input.CartonCount,
-			nullableString(input.UnitLabel),
-			input.NetWeightKgs,
-			input.GrossWeightKgs,
-			input.HeightIn,
-			nullableTime(outDate),
-			nullableString(input.DocumentNote),
-			nullableString(input.Reason),
-			nullableString(input.ReferenceCode),
-			movementID,
-		); err != nil {
-			return Movement{}, mapDBError(fmt.Errorf("update movement item: %w", err))
-		}
-
-		if err := s.applyMovementToInventoryItem(ctx, tx, input.ItemID, updatedNewQuantity, delta, input, deliveryDate, outDate); err != nil {
-			return Movement{}, mapDBError(fmt.Errorf("apply movement to new inventory item: %w", err))
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return Movement{}, fmt.Errorf("commit movement update: %w", err)
-	}
-
-	return s.getMovement(ctx, movementID)
-}
-
-func (s *Store) DeleteMovement(ctx context.Context, movementID int64, restoreStock bool) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	var itemID int64
-	var quantityChange int
-	var movementType string
-	var inboundDocumentID int64
-	var outboundDocumentID int64
-	var adjustmentID int64
-	var transferID int64
-	var cycleCountID int64
-	if err := tx.QueryRowContext(ctx, `
-		SELECT
-			item_id,
-			quantity_change,
-			movement_type,
-			COALESCE(inbound_document_id, 0),
-			COALESCE(outbound_document_id, 0),
-			COALESCE(adjustment_id, 0),
-			COALESCE(transfer_id, 0),
-			COALESCE(cycle_count_id, 0)
-		FROM stock_movements
-		WHERE id = ?
-		FOR UPDATE
-	`, movementID).Scan(&itemID, &quantityChange, &movementType, &inboundDocumentID, &outboundDocumentID, &adjustmentID, &transferID, &cycleCountID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
-		return fmt.Errorf("load movement for delete: %w", err)
-	}
-	if inboundDocumentID > 0 || outboundDocumentID > 0 || adjustmentID > 0 || transferID > 0 || cycleCountID > 0 {
-		return fmt.Errorf("%w: posted document lines must be cancelled from their document", ErrInvalidInput)
-	}
-
-	if !restoreStock && strings.EqualFold(movementType, "OUT") {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM stock_movements WHERE id = ?`, movementID); err != nil {
-			return mapDBError(fmt.Errorf("delete outbound movement without stock restore: %w", err))
-		}
-
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("commit movement delete without stock restore: %w", err)
-		}
-
-		return nil
-	}
-
-	currentQuantity, _, _, _, _, err := s.loadLockedItemForMovement(ctx, tx, itemID)
-	if err != nil {
-		return err
-	}
-	restoredQuantity := currentQuantity - quantityChange
-	if restoredQuantity < 0 {
-		return ErrInsufficientStock
-	}
-
-	if _, err := tx.ExecContext(ctx, `DELETE FROM stock_movements WHERE id = ?`, movementID); err != nil {
-		return mapDBError(fmt.Errorf("delete movement: %w", err))
-	}
-
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE inventory_items
-		SET quantity = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`, restoredQuantity, itemID); err != nil {
-		return mapDBError(fmt.Errorf("restore inventory after movement delete: %w", err))
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit movement delete: %w", err)
-	}
-
-	return nil
 }
 
 func (s *Store) getItem(ctx context.Context, itemID int64) (Item, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT
 			i.id,
-			COALESCE(i.item_number, ''),
-			i.sku,
-			i.name,
-			i.category,
-			COALESCE(i.description, ''),
-			i.unit,
-			i.quantity,
-			GREATEST(i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty, 0) AS available_qty,
-			i.allocated_qty,
-			i.damaged_qty,
-			i.hold_qty,
-			i.reorder_level,
+			i.sku_master_id,
+			COALESCE(sm.item_number, ''),
+			sm.sku,
+			sm.name,
+			sm.category,
+			COALESCE(sm.description, ''),
+			sm.unit,
+			COALESCE(pb.quantity, 0) AS quantity,
+			GREATEST(
+				COALESCE(pb.quantity, 0) - COALESCE(pb.allocated_qty, 0) - COALESCE(pb.damaged_qty, 0) - COALESCE(pb.hold_qty, 0),
+				0
+			) AS available_qty,
+			COALESCE(pb.allocated_qty, 0) AS allocated_qty,
+			COALESCE(pb.damaged_qty, 0) AS damaged_qty,
+			COALESCE(pb.hold_qty, 0) AS hold_qty,
+			sm.reorder_level,
 			i.customer_id,
 			c.name,
 			i.location_id,
 			l.name,
-			i.storage_section,
+			COALESCE(NULLIF(i.storage_section, ''), 'TEMP'),
 			i.delivery_date,
 			COALESCE(i.container_no, ''),
-			i.expected_qty,
-			i.received_qty,
-			i.height_in,
-			i.out_date,
 			i.last_restocked_at,
 			i.created_at,
-			i.updated_at
+			GREATEST(i.updated_at, COALESCE(pb.updated_at, i.updated_at)) AS updated_at
 		FROM inventory_items i
 		JOIN customers c ON c.id = i.customer_id
 		JOIN storage_locations l ON l.id = i.location_id
+		JOIN sku_master sm ON sm.id = i.sku_master_id
+		LEFT JOIN (
+			SELECT
+				pi.sku_master_id,
+				p.customer_id,
+				p.current_location_id AS location_id,
+				COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP') AS storage_section,
+				COALESCE(p.current_container_no, '') AS container_no,
+				SUM(pi.quantity) AS quantity,
+				SUM(pi.allocated_qty) AS allocated_qty,
+				SUM(pi.damaged_qty) AS damaged_qty,
+				SUM(pi.hold_qty) AS hold_qty,
+				MAX(pi.updated_at) AS updated_at
+			FROM pallet_items pi
+			JOIN pallets p ON p.id = pi.pallet_id
+			WHERE pi.quantity > 0
+			  AND p.status <> 'CANCELLED'
+			GROUP BY
+				pi.sku_master_id,
+				p.customer_id,
+				p.current_location_id,
+				COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP'),
+				COALESCE(p.current_container_no, '')
+		) pb
+			ON pb.sku_master_id = i.sku_master_id
+			AND pb.customer_id = i.customer_id
+			AND pb.location_id = i.location_id
+			AND pb.storage_section = COALESCE(NULLIF(i.storage_section, ''), 'TEMP')
+			AND pb.container_no = COALESCE(i.container_no, '')
 		WHERE i.id = ?
 	`, itemID)
 
@@ -1272,62 +915,6 @@ func (s *Store) getItem(ctx context.Context, itemID int64) (Item, error) {
 	}
 
 	return item, nil
-}
-
-func (s *Store) getMovement(ctx context.Context, movementID int64) (Movement, error) {
-	row := s.db.QueryRowContext(ctx, `
-		SELECT
-			m.id,
-			m.item_id,
-			COALESCE(m.inbound_document_id, 0),
-			COALESCE(m.inbound_document_line_id, 0),
-			COALESCE(m.outbound_document_id, 0),
-			COALESCE(m.outbound_document_line_id, 0),
-			i.name,
-			i.sku,
-			COALESCE(m.description_snapshot, i.description, i.name, ''),
-			m.customer_id,
-			c.name,
-			l.name,
-			m.storage_section,
-			m.movement_type,
-			m.quantity_change,
-			m.delivery_date,
-			COALESCE(m.container_no, ''),
-			COALESCE(m.packing_list_no, ''),
-			COALESCE(m.order_ref, ''),
-			COALESCE(m.item_number, ''),
-			m.expected_qty,
-			m.received_qty,
-			m.pallets,
-			COALESCE(m.pallets_detail_ctns, ''),
-			COALESCE(m.carton_size_mm, ''),
-			m.carton_count,
-			COALESCE(m.unit_label, ''),
-			m.net_weight_kgs,
-			m.gross_weight_kgs,
-			m.height_in,
-			m.out_date,
-			COALESCE(m.document_note, ''),
-			COALESCE(m.reason, ''),
-			COALESCE(m.reference_code, ''),
-			m.created_at
-		FROM stock_movements m
-		JOIN inventory_items i ON i.id = m.item_id
-		JOIN customers c ON c.id = m.customer_id
-		JOIN storage_locations l ON l.id = m.location_id
-		WHERE m.id = ?
-	`, movementID)
-
-	movement, err := scanMovement(row)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return Movement{}, ErrNotFound
-		}
-		return Movement{}, err
-	}
-
-	return movement, nil
 }
 
 type itemScanner interface {
@@ -1396,10 +983,10 @@ func scanSKUMaster(scanner itemScanner) (SKUMaster, error) {
 func scanItem(scanner itemScanner) (Item, error) {
 	var item Item
 	var deliveryDate sql.NullTime
-	var outDate sql.NullTime
 	var lastRestockedAt sql.NullTime
 	if err := scanner.Scan(
 		&item.ID,
+		&item.SKUMasterID,
 		&item.ItemNumber,
 		&item.SKU,
 		&item.Name,
@@ -1419,10 +1006,6 @@ func scanItem(scanner itemScanner) (Item, error) {
 		&item.StorageSection,
 		&deliveryDate,
 		&item.ContainerNo,
-		&item.ExpectedQty,
-		&item.ReceivedQty,
-		&item.HeightIn,
-		&outDate,
 		&lastRestockedAt,
 		&item.CreatedAt,
 		&item.UpdatedAt,
@@ -1432,9 +1015,6 @@ func scanItem(scanner itemScanner) (Item, error) {
 
 	if deliveryDate.Valid {
 		item.DeliveryDate = &deliveryDate.Time
-	}
-	if outDate.Valid {
-		item.OutDate = &outDate.Time
 	}
 	if lastRestockedAt.Valid {
 		item.LastRestockedAt = &lastRestockedAt.Time
@@ -1539,8 +1119,6 @@ func validateItemInput(input CreateItemInput) error {
 		return fmt.Errorf("%w: customer is required", ErrInvalidInput)
 	case input.LocationID <= 0:
 		return fmt.Errorf("%w: location is required", ErrInvalidInput)
-	case input.ExpectedQty < 0 || input.ReceivedQty < 0 || input.HeightIn < 0:
-		return fmt.Errorf("%w: spreadsheet quantities and height cannot be negative", ErrInvalidInput)
 	default:
 		return nil
 	}
@@ -1640,28 +1218,6 @@ func defaultMovementReason(movementType string) string {
 	}
 }
 
-func (s *Store) loadLockedItemForMovement(ctx context.Context, tx *sql.Tx, itemID int64) (int, int64, int64, string, string, error) {
-	var quantity int
-	var customerID int64
-	var locationID int64
-	var storageSection string
-	var descriptionSnapshot string
-	if err := tx.QueryRowContext(ctx, `
-		SELECT quantity, customer_id, location_id, storage_section, COALESCE(description, name, '')
-		FROM inventory_items
-		WHERE id = ?
-		FOR UPDATE
-	`, itemID).Scan(&quantity, &customerID, &locationID, &storageSection, &descriptionSnapshot); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return 0, 0, 0, "", "", ErrNotFound
-		}
-		return 0, 0, 0, "", "", fmt.Errorf("load item for movement: %w", err)
-	}
-	storageSection = normalizeStorageSection(storageSection)
-
-	return quantity, customerID, locationID, storageSection, descriptionSnapshot, nil
-}
-
 func computeAvailableQuantity(quantity, allocatedQty, damagedQty, holdQty int) int {
 	availableQty := quantity - allocatedQty - damagedQty - holdQty
 	if availableQty < 0 {
@@ -1706,6 +1262,33 @@ func (s *Store) ensureSKUMaster(ctx context.Context, tx *sql.Tx, input CreateIte
 	return skuMasterID, nil
 }
 
+func (s *Store) findInventoryItemIDByProjectionTx(ctx context.Context, tx *sql.Tx, skuMasterID int64, customerID int64, locationID int64, storageSection string, containerNo string) (int64, error) {
+	var itemID int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT id
+		FROM inventory_items
+		WHERE sku_master_id = ?
+		  AND customer_id = ?
+		  AND location_id = ?
+		  AND COALESCE(NULLIF(storage_section, ''), ?) = ?
+		  AND COALESCE(container_no, '') = ?
+		FOR UPDATE
+	`,
+		skuMasterID,
+		customerID,
+		locationID,
+		DefaultStorageSection,
+		normalizeStorageSection(storageSection),
+		strings.TrimSpace(containerNo),
+	).Scan(&itemID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		return 0, fmt.Errorf("load inventory item by projection: %w", err)
+	}
+	return itemID, nil
+}
+
 func (s *Store) getItemSKUMasterID(ctx context.Context, tx *sql.Tx, itemID int64) (int64, error) {
 	var skuMasterID int64
 	if err := tx.QueryRowContext(ctx, `
@@ -1729,11 +1312,12 @@ func (s *Store) deleteUnusedSKUMaster(ctx context.Context, tx *sql.Tx, skuMaster
 
 	var remainingCount int
 	if err := tx.QueryRowContext(ctx, `
-		SELECT COUNT(*)
-		FROM inventory_items
-		WHERE sku_master_id = ?
-	`, skuMasterID).Scan(&remainingCount); err != nil {
-		return fmt.Errorf("count inventory rows for sku master cleanup: %w", err)
+		SELECT
+			(SELECT COUNT(*) FROM inventory_items WHERE sku_master_id = ?)
+			+
+			(SELECT COUNT(*) FROM pallet_items WHERE sku_master_id = ?)
+	`, skuMasterID, skuMasterID).Scan(&remainingCount); err != nil {
+		return fmt.Errorf("count bucket rows for sku master cleanup: %w", err)
 	}
 	if remainingCount > 0 {
 		return nil
@@ -1746,57 +1330,104 @@ func (s *Store) deleteUnusedSKUMaster(ctx context.Context, tx *sql.Tx, skuMaster
 	return nil
 }
 
-func (s *Store) applyMovementToInventoryItem(ctx context.Context, tx *sql.Tx, itemID int64, updatedQuantity int, delta int, input CreateMovementInput, deliveryDate *time.Time, outDate *time.Time) error {
-	_, err := tx.ExecContext(ctx, `
-		UPDATE inventory_items
-		SET
-			quantity = ?,
-			storage_section = CASE
-				WHEN ? <> '' THEN ?
-				ELSE storage_section
-			END,
-			delivery_date = COALESCE(?, delivery_date),
-			container_no = CASE
-				WHEN ? <> '' THEN ?
-				ELSE container_no
-			END,
-			expected_qty = CASE
-				WHEN ? <> 0 THEN ?
-				ELSE expected_qty
-			END,
-			received_qty = CASE
-				WHEN ? <> 0 THEN ?
-				ELSE received_qty
-			END,
-			height_in = CASE
-				WHEN ? <> 0 THEN ?
-				ELSE height_in
-			END,
-			out_date = COALESCE(?, out_date),
-			last_restocked_at = CASE
-				WHEN ? > 0 THEN CURRENT_TIMESTAMP
-				ELSE last_restocked_at
-			END,
-			updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`,
-		updatedQuantity,
-		normalizeStorageSection(input.StorageSection),
-		normalizeStorageSection(input.StorageSection),
-		nullableTime(deliveryDate),
-		input.ContainerNo,
-		input.ContainerNo,
-		input.ExpectedQty,
-		input.ExpectedQty,
-		input.ReceivedQty,
-		input.ReceivedQty,
-		input.HeightIn,
-		input.HeightIn,
-		nullableTime(outDate),
-		delta,
-		itemID,
-	)
-	return err
+func (s *Store) createSeedPalletForInventoryItemTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	itemID int64,
+	skuMasterID int64,
+	input CreateItemInput,
+	deliveryDate *time.Time,
+	quantity int,
+	palletCode string,
+	sourceDocumentType string,
+	sourceDocumentID int64,
+	sourceLineID int64,
+	reason string,
+) error {
+	if itemID <= 0 || skuMasterID <= 0 || quantity <= 0 {
+		return nil
+	}
+
+	pallet, err := s.createPalletTx(ctx, tx, createPalletInput{
+		PalletCode:            strings.TrimSpace(palletCode),
+		CustomerID:            input.CustomerID,
+		SKUMasterID:           skuMasterID,
+		CurrentLocationID:     input.LocationID,
+		CurrentStorageSection: input.StorageSection,
+		CurrentContainerNo:    input.ContainerNo,
+		Status:                PalletStatusOpen,
+	})
+	if err != nil {
+		return err
+	}
+
+	palletItemID, err := s.createPalletItemTx(ctx, tx, createPalletItemInput{
+		PalletID:     pallet.ID,
+		SKUMasterID:  skuMasterID,
+		Quantity:     quantity,
+		AllocatedQty: input.AllocatedQty,
+		DamagedQty:   input.DamagedQty,
+		HoldQty:      input.HoldQty,
+	})
+	if err != nil {
+		return err
+	}
+
+	if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
+		EventType:           StockLedgerEventReceive,
+		PalletID:            pallet.ID,
+		PalletItemID:        palletItemID,
+		SKUMasterID:         skuMasterID,
+		CustomerID:          input.CustomerID,
+		LocationID:          input.LocationID,
+		StorageSection:      input.StorageSection,
+		QuantityChange:      quantity,
+		SourceDocumentType:  sourceDocumentType,
+		SourceDocumentID:    sourceDocumentID,
+		SourceLineID:        sourceLineID,
+		ContainerNo:         input.ContainerNo,
+		DeliveryDate:        deliveryDate,
+		ItemNumber:          input.ItemNumber,
+		DescriptionSnapshot: input.Description,
+		ExpectedQty:         quantity,
+		ReceivedQty:         quantity,
+		Pallets:             1,
+		UnitLabel:           strings.ToUpper(firstNonEmpty(input.Unit, "PCS")),
+		Reason:              reason,
+	}); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func mapMovementTypeToStockLedgerEvent(movementType string) string {
+	switch movementType {
+	case "IN":
+		return StockLedgerEventReceive
+	case "OUT":
+		return StockLedgerEventShip
+	case "REVERSAL":
+		return StockLedgerEventReversal
+	case "TRANSFER_OUT":
+		return StockLedgerEventTransferOut
+	case "TRANSFER_IN":
+		return StockLedgerEventTransferIn
+	case "COUNT":
+		return StockLedgerEventCount
+	default:
+		return StockLedgerEventAdjust
+	}
+}
+
+func signedQuantityForDelta(delta int, quantity int) int {
+	if quantity < 0 {
+		return quantity
+	}
+	if delta < 0 {
+		return -quantity
+	}
+	return quantity
 }
 
 func nullableString(value string) any {
@@ -1826,4 +1457,3 @@ func mapDBError(err error) error {
 
 	return err
 }
-

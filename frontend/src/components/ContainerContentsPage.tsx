@@ -67,8 +67,6 @@ const CONTAINER_CONTENTS_EXPORT_COLUMNS = [
   { key: "availableQty", label: "Available Qty" },
   { key: "damagedQty", label: "Damaged Qty" },
   { key: "holdQty", label: "On Hold Qty" },
-  { key: "expectedQty", label: "Expected Qty" },
-  { key: "receivedQty", label: "Received Qty" },
   { key: "reorderLevel", label: "Reorder Level" },
   { key: "lastReceipt", label: "Last Receipt" }
 ] as const;
@@ -176,8 +174,6 @@ export function ContainerContentsPage({
           availableQty: item.availableQty,
           damagedQty: item.damagedQty,
           holdQty: item.holdQty,
-          expectedQty: item.expectedQty,
-          receivedQty: item.receivedQty,
           reorderLevel: item.reorderLevel,
           lastReceipt: formatDateValue(item.deliveryDate || item.lastRestockedAt || null, dateFormatter)
         }))

@@ -1,13 +1,11 @@
 import CloseIcon from "@mui/icons-material/Close";
 import CompareArrowsOutlinedIcon from "@mui/icons-material/CompareArrowsOutlined";
-import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
-import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
 import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
-import { type FormEvent, useDeferredValue, useEffect, useMemo, useState } from "react";
-import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, Drawer, IconButton } from "@mui/material";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { Box, Button, Chip, Drawer, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
 import { api } from "../lib/api";
@@ -16,12 +14,10 @@ import { downloadExcelWorkbook, type ExcelExportColumn } from "../lib/excelExpor
 import { setPendingInventoryActionContext } from "../lib/inventoryActionContext";
 import { buildInventoryActionSourceKey } from "../lib/inventoryActionSources";
 import { consumePendingInventoryByLocationContext } from "../lib/inventoryByLocationContext";
-import { RowActionsMenu } from "./RowActionsMenu";
 import { formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
-import { DEFAULT_STORAGE_SECTION, normalizeStorageSection, type Customer, type Item, type ItemPayload, type Location, type UserRole } from "../lib/types";
-import { InlineAlert, useConfirmDialog, useFeedbackToast } from "./Feedback";
+import { normalizeStorageSection, type Customer, type Item, type Location, type UserRole } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
@@ -36,27 +32,7 @@ type MasterInventoryPageProps = {
   onNavigate: (page: PageKey) => void;
 };
 
-type InventoryHealthFilter = "ALL" | "IN_STOCK" | "LOW_STOCK" | "MISMATCH";
-
-type ItemFormState = {
-  itemNumber: string;
-  sku: string;
-  description: string;
-  customerId: string;
-  locationId: string;
-  storageSection: string;
-  quantity: number;
-  allocatedQty: number;
-  damagedQty: number;
-  holdQty: number;
-  reorderLevel: number;
-  deliveryDate: string;
-  containerNo: string;
-  expectedQty: number;
-  receivedQty: number;
-  heightIn: number;
-  outDate: string;
-};
+type InventoryHealthFilter = "ALL" | "IN_STOCK" | "LOW_STOCK";
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
 const summaryNumberFormatter = new Intl.NumberFormat("en-US");
@@ -74,41 +50,12 @@ const INVENTORY_DETAIL_EXPORT_COLUMNS = [
   { key: "damagedQty", label: "Damaged Qty" },
   { key: "reorderLevel", label: "Reorder Level" },
   { key: "deliveryDate", label: "Receipt Date" },
-  { key: "containerNo", label: "Container No." },
-  { key: "expectedQty", label: "Expected Qty" },
-  { key: "receivedQty", label: "Received Qty" },
-  { key: "heightIn", label: "Height (in)" },
-  { key: "outDate", label: "Out Date" }
+  { key: "containerNo", label: "Container No." }
 ] as const;
-
-function createEmptyItemForm(defaultCustomerId = "", defaultLocationId = ""): ItemFormState {
-  return {
-    itemNumber: "",
-    sku: "",
-    description: "",
-    customerId: defaultCustomerId,
-    locationId: defaultLocationId,
-    storageSection: DEFAULT_STORAGE_SECTION,
-    quantity: 0,
-    allocatedQty: 0,
-    damagedQty: 0,
-    holdQty: 0,
-    reorderLevel: 0,
-    deliveryDate: "",
-    containerNo: "",
-    expectedQty: 0,
-    receivedQty: 0,
-    heightIn: 87,
-    outDate: ""
-  };
-}
 
 export function MasterInventoryPage({ items, locations, customers, currentUserRole, isLoading, onRefresh, onNavigate }: MasterInventoryPageProps) {
   const { t } = useI18n();
-  const { confirm, confirmationDialog } = useConfirmDialog();
-  const { showSuccess, showError, feedbackToast } = useFeedbackToast();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
-  const canDelete = currentUserRole === "admin";
   const canConfigureColumns = currentUserRole === "admin";
   const pageDescription = t("stockByLocationDesc");
   const permissionNote = currentUserRole === "viewer"
@@ -122,24 +69,9 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [healthFilter, setHealthFilter] = useState<InventoryHealthFilter>("ALL");
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
-  const [editingItemId, setEditingItemId] = useState<number | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const [form, setForm] = useState<ItemFormState>(() => createEmptyItemForm("", ""));
   const deferredSearchTerm = useDeferredValue(searchTerm);
-  useEffect(() => {
-    if (!form.locationId && locations[0]) {
-      setForm((current) => ({ ...current, locationId: String(locations[0].id) }));
-    }
-  }, [form.locationId, locations]);
-
-  useEffect(() => {
-    if (!form.customerId && customers[0]) {
-      setForm((current) => ({ ...current, customerId: String(customers[0].id) }));
-    }
-  }, [customers, form.customerId]);
 
   useEffect(() => {
     const context = consumePendingInventoryByLocationContext();
@@ -171,8 +103,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
     const matchesCustomer = selectedCustomerId === "all" || item.customerId === Number(selectedCustomerId);
     const matchesHealth = healthFilter === "ALL"
       || (healthFilter === "IN_STOCK" && item.availableQty > item.reorderLevel)
-      || (healthFilter === "LOW_STOCK" && item.availableQty <= item.reorderLevel)
-      || (healthFilter === "MISMATCH" && hasQtyMismatch(item.expectedQty, item.receivedQty));
+      || (healthFilter === "LOW_STOCK" && item.availableQty <= item.reorderLevel);
     return matchesFocusedSku && matchesSearch && matchesLocation && matchesCustomer && matchesHealth;
   });
   const selectedItem = useMemo(
@@ -184,15 +115,13 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
     const totalOnHand = filteredItems.reduce((sum, item) => sum + item.quantity, 0);
     const totalAvailable = filteredItems.reduce((sum, item) => sum + item.availableQty, 0);
     const lowStockCount = filteredItems.filter((item) => item.reorderLevel > 0 && item.availableQty <= item.reorderLevel).length;
-    const mismatchCount = filteredItems.filter((item) => hasQtyMismatch(item.expectedQty, item.receivedQty)).length;
     const containers = new Set(filteredItems.map((item) => item.containerNo).filter(Boolean)).size;
     return [
       { label: t("allRows"), value: summaryNumberFormatter.format(filteredItems.length), meta: t("stockByLocation") },
       { label: t("onHand"), value: summaryNumberFormatter.format(totalOnHand), meta: t("units") },
       { label: t("availableQty"), value: summaryNumberFormatter.format(totalAvailable), meta: t("units") },
       { label: t("lowStock"), value: summaryNumberFormatter.format(lowStockCount), meta: t("allRows") },
-      { label: t("containerCount"), value: summaryNumberFormatter.format(containers), meta: t("containerNo") },
-      { label: t("mismatch"), value: summaryNumberFormatter.format(mismatchCount), meta: t("expectedQty") }
+      { label: t("containerCount"), value: summaryNumberFormatter.format(containers), meta: t("containerNo") }
     ];
   }, [filteredItems, t]);
   const mainGridSlots = buildWorkspaceGridSlots({
@@ -221,16 +150,6 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
     { field: "reorderLevel", headerName: t("reorderLevel"), minWidth: 130, type: "number" },
     { field: "deliveryDate", headerName: t("deliveryDate"), minWidth: 140, valueFormatter: (_, row) => formatDate(row.deliveryDate) },
     { field: "containerNo", headerName: t("containerNo"), minWidth: 170, flex: 1, renderCell: (params) => <span className="cell--mono">{params.value || "-"}</span> },
-    { field: "expectedQty", headerName: t("expectedQty"), minWidth: 130, type: "number", valueFormatter: (value) => value || "-" },
-    {
-      field: "receivedQty",
-      headerName: t("received"),
-      minWidth: 110,
-      type: "number",
-      renderCell: (params) => <span className={hasQtyMismatch(params.row.expectedQty, params.row.receivedQty) ? "cell--mismatch" : ""}>{params.row.receivedQty || "-"}</span>
-    },
-    { field: "heightIn", headerName: t("heightIn"), minWidth: 110, type: "number", valueFormatter: (value) => value || "-" },
-    { field: "outDate", headerName: t("outDate"), minWidth: 140, valueFormatter: (_, row) => formatDate(row.outDate) },
     {
       field: "status",
       headerName: t("status"),
@@ -240,28 +159,10 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
       renderCell: (params) => (
         <div className="status-stack">
           {params.row.availableQty <= params.row.reorderLevel ? <Chip label={t("lowStock")} color="warning" size="small" /> : <Chip label={t("healthy")} color="success" size="small" />}
-          {hasQtyMismatch(params.row.expectedQty, params.row.receivedQty) ? <Chip label={t("qtyMismatch")} color="error" size="small" /> : null}
         </div>
       )
-    },
-    {
-      field: "actions",
-      headerName: t("actions"),
-      minWidth: 90,
-      sortable: false,
-      filterable: false,
-      renderCell: (params) => {
-        const actions = [];
-        if (canManage) {
-          actions.push({ key: "edit", label: t("edit"), icon: <EditOutlinedIcon fontSize="small" />, onClick: () => openEditModal(params.row) });
-        }
-        if (canDelete) {
-          actions.push({ key: "delete", label: t("delete"), icon: <DeleteOutlineOutlinedIcon fontSize="small" />, danger: true, onClick: () => handleDeleteItem(params.row) });
-        }
-        return <RowActionsMenu ariaLabel={t("actions")} actions={actions} />;
-      }
     }
-  ], [canDelete, canManage, t]);
+  ], [t]);
   const {
     columns,
     columnOrderAction,
@@ -272,128 +173,6 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
     canManage: canConfigureColumns,
     onError: setErrorMessage
   });
-
-  function openEditModal(item: Item) {
-    if (!canManage) return;
-    setSelectedItemId(item.id);
-    setEditingItemId(item.id);
-    setForm({
-      itemNumber: item.itemNumber || "",
-      sku: item.sku,
-      description: displayDescription(item),
-      customerId: String(item.customerId),
-      locationId: String(item.locationId),
-      storageSection: normalizeStorageSection(item.storageSection),
-      quantity: item.quantity,
-      allocatedQty: item.allocatedQty,
-      damagedQty: item.damagedQty,
-      holdQty: item.holdQty,
-      reorderLevel: item.reorderLevel,
-      deliveryDate: toDateInputValue(item.deliveryDate),
-      containerNo: item.containerNo,
-      expectedQty: item.expectedQty,
-      receivedQty: item.receivedQty,
-      heightIn: item.heightIn || 87,
-      outDate: toDateInputValue(item.outDate)
-    });
-    setErrorMessage("");
-    setIsModalOpen(true);
-  }
-
-  function closeModal() {
-    setEditingItemId(null);
-    setIsModalOpen(false);
-    setErrorMessage("");
-    setForm((current) => createEmptyItemForm(current.customerId || (customers[0] ? String(customers[0].id) : ""), current.locationId || (locations[0] ? String(locations[0].id) : "")));
-  }
-
-  function showActionError(error: unknown, fallbackMessage: string) {
-    const message = error instanceof Error ? error.message : fallbackMessage;
-    setErrorMessage(message);
-    showError(message);
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!canManage) return;
-    setIsSubmitting(true);
-    setErrorMessage("");
-
-    const locationId = Number(form.locationId);
-    const customerId = Number(form.customerId);
-    if (!customerId) {
-      setErrorMessage(t("chooseCustomerBeforeSave"));
-      setIsSubmitting(false);
-      return;
-    }
-
-    if (!locationId) {
-      setErrorMessage(t("chooseStorageBeforeSave"));
-      setIsSubmitting(false);
-      return;
-    }
-
-    const payload: ItemPayload = {
-      itemNumber: form.itemNumber,
-      sku: form.sku,
-      name: form.description,
-      category: "General",
-      description: form.description,
-      unit: "pcs",
-      quantity: form.quantity,
-      allocatedQty: form.allocatedQty,
-      damagedQty: form.damagedQty,
-      holdQty: form.holdQty,
-      reorderLevel: form.reorderLevel,
-      customerId,
-      locationId,
-      storageSection: normalizeStorageSection(form.storageSection),
-      deliveryDate: form.deliveryDate || undefined,
-      containerNo: form.containerNo || undefined,
-      expectedQty: form.expectedQty,
-      receivedQty: form.receivedQty,
-      heightIn: form.heightIn,
-      outDate: form.outDate || undefined
-    };
-
-    try {
-      if (editingItemId) {
-        await api.updateItem(editingItemId, payload);
-      } else {
-        await api.createItem(payload);
-      }
-      closeModal();
-      await onRefresh();
-      showSuccess(t("stockRowSavedSuccess"));
-    } catch (error) {
-      showActionError(error, t("couldNotSaveStockRow"));
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
-  async function handleDeleteItem(item: Item) {
-    if (!canDelete) return;
-    if (!(await confirm({
-      title: t("delete"),
-      message: t("deleteStockRowConfirm", { sku: item.sku, storage: item.locationName, section: normalizeStorageSection(item.storageSection) }),
-      confirmLabel: t("delete"),
-      cancelLabel: t("cancel"),
-      confirmColor: "error",
-      severity: "warning"
-    }))) {
-      return;
-    }
-
-    setErrorMessage("");
-    try {
-      await api.deleteItem(item.id);
-      await onRefresh();
-      showSuccess(t("stockRowDeletedSuccess"));
-    } catch (error) {
-      showActionError(error, t("couldNotDeleteStockRow"));
-    }
-  }
 
   function openWorkspace(page: PageKey) {
     if (!selectedItem) return;
@@ -433,10 +212,6 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
         reorderLevel: item.reorderLevel,
         deliveryDate: formatDate(item.deliveryDate),
         containerNo: item.containerNo || "-",
-        expectedQty: item.expectedQty || 0,
-        receivedQty: item.receivedQty || 0,
-        heightIn: item.heightIn || "-",
-        outDate: formatDate(item.outDate)
       }))
     });
     setIsExportDialogOpen(false);
@@ -462,7 +237,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
               </div>
             )}
             notices={[permissionNote]}
-            errorMessage={errorMessage && !isModalOpen ? errorMessage : ""}
+            errorMessage={errorMessage}
           />
           <div className="filter-bar">
             <label>{t("search")}<input value={searchTerm} onChange={(event) => {
@@ -474,7 +249,7 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
             }} placeholder={t("stockByLocationSearchPlaceholder")} /></label>
             <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
             <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
-            <label>{t("stockHealth")}<select value={healthFilter} onChange={(event) => setHealthFilter(event.target.value as InventoryHealthFilter)}><option value="ALL">{t("allRows")}</option><option value="IN_STOCK">{t("healthyStock")}</option><option value="LOW_STOCK">{t("lowStock")}</option><option value="MISMATCH">{t("mismatch")}</option></select></label>
+            <label>{t("stockHealth")}<select value={healthFilter} onChange={(event) => setHealthFilter(event.target.value as InventoryHealthFilter)}><option value="ALL">{t("allRows")}</option><option value="IN_STOCK">{t("healthyStock")}</option><option value="LOW_STOCK">{t("lowStock")}</option></select></label>
           </div>
         </div>
 
@@ -515,7 +290,6 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
         onClose={() => setIsExportDialogOpen(false)}
         onExport={handleExport}
       />
-      {feedbackToast}
 
       <Drawer
         anchor="right"
@@ -541,11 +315,6 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
 
             <div className="document-drawer__actions">
               {canManage ? (
-                <Button variant="contained" startIcon={<EditOutlinedIcon fontSize="small" />} onClick={() => openEditModal(selectedItem)}>
-                  {t("editStockRow")}
-                </Button>
-              ) : null}
-              {canManage ? (
                 <Button variant="outlined" startIcon={<TuneOutlinedIcon fontSize="small" />} onClick={() => openWorkspace("adjustments")}>
                   {t("adjustments")}
                 </Button>
@@ -569,7 +338,6 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
               <div className="document-drawer__status-main">
                 <div className="status-stack">
                   {selectedItem.availableQty <= selectedItem.reorderLevel ? <Chip label={t("lowStock")} color="warning" size="small" /> : <Chip label={t("healthy")} color="success" size="small" />}
-                  {hasQtyMismatch(selectedItem.expectedQty, selectedItem.receivedQty) ? <Chip label={t("qtyMismatch")} color="error" size="small" /> : null}
                 </div>
               </div>
               <div className="document-drawer__status-stat">
@@ -605,75 +373,17 @@ export function MasterInventoryPage({ items, locations, customers, currentUserRo
                 <span>{t("deliveryDate")}: {formatDate(selectedItem.deliveryDate)}</span>
               </div>
               <div className="sheet-note">
-                <strong>{t("receiptSummary")}</strong><br />
-                {t("expectedQty")}: {selectedItem.expectedQty || "-"}<br />
-                {t("received")}: {selectedItem.receivedQty || "-"}
-              </div>
-              <div className="sheet-note">
                 <strong>{t("reorderLevel")}</strong><br />
                 {selectedItem.reorderLevel}
-              </div>
-              <div className="sheet-note">
-                <strong>{t("heightIn")}</strong><br />
-                {selectedItem.heightIn || "-"}
-              </div>
-              <div className="sheet-note">
-                <strong>{t("outDate")}</strong><br />
-                {formatDate(selectedItem.outDate)}
               </div>
               {permissionNote ? <div className="sheet-note document-drawer__meta-note">{permissionNote}</div> : null}
             </div>
           </div>
         ) : null}
       </Drawer>
-
-      <Dialog
-        open={isModalOpen}
-        onClose={(_, reason) => {
-          if (reason === "backdropClick") return;
-          closeModal();
-        }}
-        fullWidth
-        maxWidth="md"
-      >
-        <DialogTitle sx={{ pb: 1 }}>
-          {t("editStockRow")}
-          <IconButton aria-label={t("close")} onClick={closeModal} sx={{ position: "absolute", right: 16, top: 16 }}>
-            <CloseIcon fontSize="small" />
-          </IconButton>
-        </DialogTitle>
-        <DialogContent dividers>
-          {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
-          <form className="sheet-form" onSubmit={handleSubmit}>
-            <label>{t("itemNumber")}<input value={form.itemNumber} onChange={(event) => setForm((current) => ({ ...current, itemNumber: event.target.value }))} placeholder="VB22GC" /></label>
-            <label>{t("sku")}<input value={form.sku} onChange={(event) => setForm((current) => ({ ...current, sku: event.target.value }))} placeholder="023042" required /></label>
-            <label className="sheet-form__wide">{t("description")}<input value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} placeholder={t("descriptionPlaceholder")} required /></label>
-            <label>{t("customer")}<select value={form.customerId} onChange={(event) => setForm((current) => ({ ...current, customerId: event.target.value }))} required>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
-            <label>{t("currentStorage")}<select value={form.locationId} onChange={(event) => setForm((current) => ({ ...current, locationId: event.target.value }))} required>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
-            <div className="sheet-note sheet-form__wide"><strong>{t("storageSection")}</strong> {normalizeStorageSection(form.storageSection)}</div>
-            <label>{t("onHand")}<input type="number" min="0" value={numberInputValue(form.quantity)} onChange={(event) => setForm((current) => ({ ...current, quantity: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-            <label>{t("damagedQty")}<input type="number" min="0" value={numberInputValue(form.damagedQty)} onChange={(event) => setForm((current) => ({ ...current, damagedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-            <label>{t("deliveryDate")}<input type="date" value={form.deliveryDate} onChange={(event) => setForm((current) => ({ ...current, deliveryDate: event.target.value }))} /></label>
-            <label>{t("containerNo")}<input value={form.containerNo} onChange={(event) => setForm((current) => ({ ...current, containerNo: event.target.value }))} placeholder="KKFU7963968" /></label>
-            <label>{t("expectedQty")}<input type="number" min="0" value={numberInputValue(form.expectedQty)} onChange={(event) => setForm((current) => ({ ...current, expectedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-            <label>{t("received")}<input type="number" min="0" value={numberInputValue(form.receivedQty)} onChange={(event) => setForm((current) => ({ ...current, receivedQty: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-            <label>{t("heightIn")}<input type="number" min="0" value={form.heightIn} onChange={(event) => setForm((current) => ({ ...current, heightIn: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-            <label>{t("outDate")}<input type="date" value={form.outDate} onChange={(event) => setForm((current) => ({ ...current, outDate: event.target.value }))} /></label>
-            <label>{t("reorderLevel")}<input type="number" min="0" value={numberInputValue(form.reorderLevel)} onChange={(event) => setForm((current) => ({ ...current, reorderLevel: Math.max(0, Number(event.target.value || 0)) }))} /></label>
-            <div className="sheet-form__actions sheet-form__wide">
-              <button className="button button--primary" type="submit" disabled={isSubmitting}>{isSubmitting ? t("saving") : t("updateRow")}</button>
-              <button className="button button--ghost" type="button" onClick={closeModal}>{t("cancel")}</button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
-      {confirmationDialog}
     </main>
   );
 }
 
 function displayDescription(item: Pick<Item, "description" | "name">) { return item.description || item.name; }
 function formatDate(value: string | null) { return formatDateValue(value, dateFormatter); }
-function hasQtyMismatch(expectedQty: number, receivedQty: number) { return expectedQty > 0 && receivedQty > 0 && expectedQty !== receivedQty; }
-function toDateInputValue(value: string | null) { return value ? value.slice(0, 10) : ""; }
-function numberInputValue(value: number) { return value === 0 ? "" : String(value); }

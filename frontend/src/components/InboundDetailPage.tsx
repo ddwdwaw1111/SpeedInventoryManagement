@@ -2,12 +2,14 @@ import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
 import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
 import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
-import { type ReactNode, useMemo } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 
+import { ApiError, api } from "../lib/api";
 import { setPendingActivityManagementLaunchContext } from "../lib/activityManagementLaunchContext";
 import { useI18n } from "../lib/i18n";
+import { setPendingPalletTraceLaunchContext } from "../lib/palletTraceLaunchContext";
 import type { PageKey } from "../lib/routes";
-import type { InboundDocument, InboundDocumentLine, UserRole } from "../lib/types";
+import type { InboundDocument, InboundDocumentLine, PalletTrace, UserRole } from "../lib/types";
 import { WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type InboundDetailPageProps = {
@@ -35,6 +37,9 @@ export function InboundDetailPage({
 }: InboundDetailPageProps) {
   const { t } = useI18n();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
+  const [pallets, setPallets] = useState<PalletTrace[]>([]);
+  const [isPalletsLoading, setIsPalletsLoading] = useState(false);
+  const [palletErrorMessage, setPalletErrorMessage] = useState("");
   const dateFormatter = useMemo(
     () => new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }),
     []
@@ -56,6 +61,40 @@ export function InboundDetailPage({
   const totalPallets = document ? document.lines.reduce((sum, line) => sum + line.pallets, 0) : 0;
   const quantityVariance = document ? document.totalReceivedQty - document.totalExpectedQty : 0;
   const activityLog = useMemo(() => (document ? buildActivityLog(document, t) : []), [document, t]);
+  const palletCount = pallets.length;
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadPallets() {
+      if (!document?.id) {
+        setPallets([]);
+        setPalletErrorMessage("");
+        setIsPalletsLoading(false);
+        return;
+      }
+
+      setIsPalletsLoading(true);
+      setPalletErrorMessage("");
+      try {
+        const nextPallets = await api.getPallets(200, "", document.id);
+        if (!active) return;
+        setPallets(nextPallets);
+      } catch (error) {
+        if (!active) return;
+        setPalletErrorMessage(getErrorMessage(error, t("couldNotLoadReport")));
+      } finally {
+        if (active) {
+          setIsPalletsLoading(false);
+        }
+      }
+    }
+
+    void loadPallets();
+    return () => {
+      active = false;
+    };
+  }, [document?.id, t]);
 
   function handleOpenWorkspace() {
     if (!document) {
@@ -65,6 +104,35 @@ export function InboundDetailPage({
     setPendingActivityManagementLaunchContext("IN", { documentId: document.id });
     onNavigate("inbound-management");
   }
+
+  function handleOpenPalletWorkspace() {
+    if (!document) {
+      return;
+    }
+
+    setPendingPalletTraceLaunchContext({ sourceInboundDocumentId: document.id });
+    onNavigate("pallet-trace");
+  }
+
+  function handleConvertToPalletized() {
+    if (!document) {
+      return;
+    }
+
+    setPendingActivityManagementLaunchContext("IN", {
+      documentId: document.id,
+      openEditor: true,
+      forceInboundHandlingMode: "PALLETIZED",
+      inboundIntent: "convert-sealed-transit"
+    });
+    onNavigate("inbound-management");
+  }
+
+  const canConvertSealedTransit =
+    canManage
+    && !document?.archivedAt
+    && normalizeDocumentStatus(document?.status ?? "") === "DRAFT"
+    && document?.handlingMode === "SEALED_TRANSIT";
 
   return (
     <main className="workspace-main">
@@ -79,6 +147,12 @@ export function InboundDetailPage({
                 <h1 className="font-headline text-3xl font-extrabold tracking-tight text-[#0d2d63]">
                   {document?.containerNo || t("inboundDetailMissingTitle")}
                 </h1>
+                {document ? (
+                  <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-white/85 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#143569] ring-1 ring-slate-200/80">
+                    <span>{t("handlingMode")}</span>
+                    <span>{document.handlingMode === "SEALED_TRANSIT" ? t("handlingModeSealedTransit") : t("handlingModePalletized")}</span>
+                  </div>
+                ) : null}
                 <p className="mt-1.5 max-w-3xl text-sm text-slate-600">
                   {document
                     ? t("inboundDetailSubtitle", {
@@ -93,6 +167,15 @@ export function InboundDetailPage({
             <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
+                onClick={handleOpenPalletWorkspace}
+                disabled={!document}
+                className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <WarehouseOutlinedIcon sx={{ fontSize: 18 }} />
+                {t("openPalletWorkspace")}
+              </button>
+              <button
+                type="button"
                 onClick={handleOpenWorkspace}
                 disabled={!document}
                 className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
@@ -100,6 +183,16 @@ export function InboundDetailPage({
                 <OpenInNewRoundedIcon sx={{ fontSize: 18 }} />
                 {t("inboundDetailOpenWorkspace")}
               </button>
+              {canConvertSealedTransit ? (
+                <button
+                  type="button"
+                  onClick={handleConvertToPalletized}
+                  className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-[#143569] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(20,53,105,0.18)] transition hover:bg-[#102f5f]"
+                >
+                  <MoveToInboxOutlinedIcon sx={{ fontSize: 18 }} />
+                  {t("convertToPalletized")}
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={handleOpenWorkspace}
@@ -150,6 +243,7 @@ export function InboundDetailPage({
                     label={t("pallets")}
                     value={String(totalPallets)}
                     meta={t("inboundDetailVariance", { variance: quantityVariance })}
+                    secondaryValue={palletCount > 0 ? `${palletCount}` : undefined}
                   />
                 </div>
 
@@ -204,61 +298,136 @@ export function InboundDetailPage({
         </section>
 
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.85fr)]">
-          <section className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-[0_16px_34px_rgba(15,23,42,0.05)]">
-            <WorkspacePanelHeader
-              title={t("inboundDetailManifest")}
-              description={t("inboundDetailManifestDesc")}
-            />
-            {isLoading ? (
-              <div className="space-y-3 animate-pulse">
-                {Array.from({ length: 4 }, (_, index) => (
-                  <div key={index} className="rounded-[18px] border border-slate-200/80 bg-slate-50/80 px-4 py-4">
-                    <div className="grid gap-3 md:grid-cols-[0.8fr_1.4fr_0.5fr_0.5fr_0.7fr]">
-                      <div className="h-4 rounded-full bg-slate-200" />
-                      <div className="h-4 rounded-full bg-slate-200" />
-                      <div className="h-4 rounded-full bg-slate-200" />
-                      <div className="h-4 rounded-full bg-slate-200" />
-                      <div className="h-4 rounded-full bg-slate-200" />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : document ? (
-              <div className="overflow-hidden rounded-[18px] border border-slate-200/80">
-                <div className="grid grid-cols-[0.85fr_1.5fr_0.6fr_0.6fr_0.7fr] gap-3 bg-slate-100/90 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  <span>{t("sku")}</span>
-                  <span>{t("description")}</span>
-                  <span>{t("expectedQty")}</span>
-                  <span>{t("receivedQty")}</span>
-                  <span>{t("receiptVariance")}</span>
-                </div>
-                <div className="divide-y divide-slate-200/80">
-                  {document.lines.map((line) => (
-                    <div key={line.id} className="grid grid-cols-[0.85fr_1.5fr_0.6fr_0.6fr_0.7fr] gap-3 px-4 py-4">
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-[#0d2d63]">{line.sku || "-"}</div>
-                        <div className="mt-1 text-xs text-slate-500">{line.storageSection || document.storageSection || "-"}</div>
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-slate-900">{line.description || "-"}</div>
-                        <div className="mt-1 text-xs text-slate-500">
-                          {t("pallets")}: {line.pallets} / {line.palletsDetailCtns || "-"}
-                        </div>
-                        <div className="mt-1 text-xs text-slate-400">{line.lineNote || t("inboundDetailNoLineNote")}</div>
-                      </div>
-                      <div className="text-sm font-semibold text-slate-900">{line.expectedQty}</div>
-                      <div className="text-sm font-semibold text-slate-900">{line.receivedQty}</div>
-                      <div className="flex items-start">
-                        <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${getLineReceiptVarianceToneClass(line)}`}>
-                          {getLineReceiptVarianceLabel(line, t)}
-                        </span>
+          <div className="space-y-5">
+            <section className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-[0_16px_34px_rgba(15,23,42,0.05)]">
+              <WorkspacePanelHeader
+                title={t("inboundDetailManifest")}
+                description={t("inboundDetailManifestDesc")}
+              />
+              {isLoading ? (
+                <div className="space-y-3 animate-pulse">
+                  {Array.from({ length: 4 }, (_, index) => (
+                    <div key={index} className="rounded-[18px] border border-slate-200/80 bg-slate-50/80 px-4 py-4">
+                      <div className="grid gap-3 md:grid-cols-[0.8fr_1.4fr_0.5fr_0.5fr_0.7fr]">
+                        <div className="h-4 rounded-full bg-slate-200" />
+                        <div className="h-4 rounded-full bg-slate-200" />
+                        <div className="h-4 rounded-full bg-slate-200" />
+                        <div className="h-4 rounded-full bg-slate-200" />
+                        <div className="h-4 rounded-full bg-slate-200" />
                       </div>
                     </div>
                   ))}
                 </div>
-              </div>
-            ) : null}
-          </section>
+              ) : document ? (
+                <div className="overflow-hidden rounded-[18px] border border-slate-200/80">
+                  <div className="grid grid-cols-[0.85fr_1.5fr_0.6fr_0.6fr_0.7fr] gap-3 bg-slate-100/90 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    <span>{t("sku")}</span>
+                    <span>{t("description")}</span>
+                    <span>{t("expectedQty")}</span>
+                    <span>{t("receivedQty")}</span>
+                    <span>{t("receiptVariance")}</span>
+                  </div>
+                  <div className="divide-y divide-slate-200/80">
+                    {document.lines.map((line) => (
+                      <div key={line.id} className="grid grid-cols-[0.85fr_1.5fr_0.6fr_0.6fr_0.7fr] gap-3 px-4 py-4">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-[#0d2d63]">{line.sku || "-"}</div>
+                          <div className="mt-1 text-xs text-slate-500">{line.storageSection || document.storageSection || "-"}</div>
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-slate-900">{line.description || "-"}</div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            {t("pallets")}: {line.pallets} / {line.palletsDetailCtns || "-"}
+                          </div>
+                          <div className="mt-1 text-xs text-slate-400">{line.lineNote || t("inboundDetailNoLineNote")}</div>
+                        </div>
+                        <div className="text-sm font-semibold text-slate-900">{line.expectedQty}</div>
+                        <div className="text-sm font-semibold text-slate-900">{line.receivedQty}</div>
+                        <div className="flex items-start">
+                          <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${getLineReceiptVarianceToneClass(line)}`}>
+                            {getLineReceiptVarianceLabel(line, t)}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </section>
+
+            <section className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-[0_16px_34px_rgba(15,23,42,0.05)]">
+              <WorkspacePanelHeader
+                title={t("inboundDetailPalletManifest")}
+                description={t("inboundDetailPalletManifestDesc")}
+              />
+              {isPalletsLoading ? (
+                <div className="grid gap-3 md:grid-cols-2 animate-pulse">
+                  {Array.from({ length: 4 }, (_, index) => (
+                    <div key={index} className="rounded-[18px] border border-slate-200/80 bg-slate-50/80 p-4">
+                      <div className="h-4 w-32 rounded-full bg-slate-200" />
+                      <div className="mt-3 h-3 w-24 rounded-full bg-slate-200" />
+                      <div className="mt-4 h-12 rounded-2xl bg-slate-200" />
+                    </div>
+                  ))}
+                </div>
+              ) : palletErrorMessage ? (
+                <div className="rounded-[18px] border border-dashed border-rose-200 bg-rose-50/80 px-4 py-8 text-center text-sm text-rose-700">
+                  {palletErrorMessage}
+                </div>
+              ) : palletCount > 0 ? (
+                <div className="grid gap-3 md:grid-cols-2">
+                  {pallets.map((pallet) => {
+                    const totalQuantity = pallet.contents.reduce((sum, content) => sum + content.quantity, 0);
+                    return (
+                      <article key={pallet.id} className="rounded-[18px] border border-slate-200/80 bg-slate-50/70 p-4 shadow-[0_8px_18px_rgba(15,23,42,0.03)]">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold text-[#0d2d63]">{pallet.palletCode}</div>
+                            <div className="mt-1 text-xs text-slate-500">
+                              {pallet.currentLocationName || "-"} / {pallet.currentStorageSection || "-"}
+                            </div>
+                          </div>
+                          <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${getPalletStatusToneClass(pallet.status)}`}>
+                            {getPalletStatusLabel(t, pallet.status)}
+                          </span>
+                        </div>
+
+                        <div className="mt-4 grid grid-cols-3 gap-3 text-xs text-slate-500">
+                          <div>
+                            <div className="font-semibold uppercase tracking-[0.18em] text-slate-400">{t("containerNo")}</div>
+                            <div className="mt-1 font-medium text-slate-700">{pallet.currentContainerNo || "-"}</div>
+                          </div>
+                          <div>
+                            <div className="font-semibold uppercase tracking-[0.18em] text-slate-400">{t("palletContents")}</div>
+                            <div className="mt-1 font-medium text-slate-700">{pallet.contents.length}</div>
+                          </div>
+                          <div>
+                            <div className="font-semibold uppercase tracking-[0.18em] text-slate-400">{t("quantity")}</div>
+                            <div className="mt-1 font-medium text-slate-700">{totalQuantity}</div>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          {pallet.contents.map((content) => (
+                            <span
+                              key={content.id}
+                              className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200"
+                            >
+                              {(content.itemNumber || content.sku || "-")} · {content.quantity}
+                            </span>
+                          ))}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="rounded-[18px] border border-dashed border-slate-300 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-500">
+                  {t("inboundDetailNoPallets")}
+                </div>
+              )}
+            </section>
+          </div>
 
           <div className="space-y-5">
             <section className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-[0_16px_34px_rgba(15,23,42,0.05)]">
@@ -516,6 +685,43 @@ function getLineReceiptVarianceToneClass(line: InboundDocumentLine) {
     return "bg-[#f1e6d2] text-[#143569] ring-1 ring-[#e5d3ac]";
   }
   return "bg-[#dce8f6] text-[#143569] ring-1 ring-[#c5d8ee]";
+}
+
+function getPalletStatusLabel(t: Translate, status: string) {
+  switch ((status || "").trim().toUpperCase()) {
+    case "OPEN":
+      return t("palletOpen");
+    case "PARTIAL":
+      return t("palletPartial");
+    case "SHIPPED":
+      return t("palletShipped");
+    case "CANCELLED":
+      return t("palletCancelled");
+    default:
+      return status || t("pending");
+  }
+}
+
+function getPalletStatusToneClass(status: string) {
+  switch ((status || "").trim().toUpperCase()) {
+    case "OPEN":
+      return "bg-emerald-100 text-emerald-700";
+    case "PARTIAL":
+      return "bg-amber-100 text-amber-700";
+    case "SHIPPED":
+      return "bg-slate-100 text-slate-600";
+    case "CANCELLED":
+      return "bg-rose-100 text-rose-700";
+    default:
+      return "bg-slate-100 text-slate-600";
+  }
+}
+
+function getErrorMessage(error: unknown, fallbackMessage: string) {
+  if (error instanceof ApiError || error instanceof Error) {
+    return error.message || fallbackMessage;
+  }
+  return fallbackMessage;
 }
 
 function getEventToneClass(tone: ActivityEvent["tone"]) {

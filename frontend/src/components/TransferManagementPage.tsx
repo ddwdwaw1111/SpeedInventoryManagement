@@ -16,8 +16,10 @@ import { useSettings } from "../lib/settings";
 import type { PageKey } from "../lib/routes";
 import {
   DEFAULT_STORAGE_SECTION,
+  buildInventoryProjectionKey,
   getLocationSectionOptions,
   normalizeStorageSection,
+  toInventoryProjectionRef,
   type InventoryTransfer,
   type Item,
   type Location,
@@ -45,7 +47,7 @@ type TransferFormState = {
 
 type TransferLineFormState = {
   id: string;
-  sourceItemId: string;
+  sourceBucketKey: string;
   quantity: number;
   toLocationId: string;
   toStorageSection: string;
@@ -62,7 +64,7 @@ const TRANSFER_COLUMN_ORDER_PREFERENCE_KEY = "transfers.column-order";
 function createTransferLine(): TransferLineFormState {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    sourceItemId: "",
+    sourceBucketKey: "",
     quantity: 0,
     toLocationId: "",
     toStorageSection: DEFAULT_STORAGE_SECTION,
@@ -117,9 +119,9 @@ export function TransferManagementPage({
 
   useEffect(() => {
     setLines((current) => current.map((line) => (
-      selectableSourceItems.some((item) => item.id === Number(line.sourceItemId))
+      selectableSourceItems.some((item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.sourceBucketKey)
         ? line
-        : { ...line, sourceItemId: "" }
+        : { ...line, sourceBucketKey: "" }
     )));
   }, [selectableSourceItems]);
 
@@ -262,14 +264,23 @@ export function TransferManagementPage({
         transferNo: form.transferNo || undefined,
         notes: form.notes || undefined,
         lines: lines
-          .filter((line) => Number(line.sourceItemId) > 0 && Number(line.toLocationId) > 0 && line.quantity > 0)
-          .map((line) => ({
-            sourceItemId: Number(line.sourceItemId),
-            quantity: line.quantity,
-            toLocationId: Number(line.toLocationId),
-            toStorageSection: line.toStorageSection || undefined,
-            lineNote: line.lineNote || undefined
-          }))
+          .map((line) => {
+            const selectedItem = selectableSourceItems.find(
+              (item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.sourceBucketKey
+            );
+            if (!selectedItem || Number(line.toLocationId) <= 0 || line.quantity <= 0) {
+              return null;
+            }
+
+            return {
+              ...toInventoryProjectionRef(selectedItem),
+              quantity: line.quantity,
+              toLocationId: Number(line.toLocationId),
+              toStorageSection: line.toStorageSection || undefined,
+              lineNote: line.lineNote || undefined
+            };
+          })
+          .filter((line): line is NonNullable<typeof line> => line !== null)
       });
       closeCreateModal();
       await onRefresh();
@@ -478,7 +489,9 @@ export function TransferManagementPage({
               </div>
               <div className="batch-lines">
                 {lines.map((line, index) => {
-                  const selectedItem = selectableSourceItems.find((item) => item.id === Number(line.sourceItemId));
+                  const selectedItem = selectableSourceItems.find(
+                    (item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.sourceBucketKey
+                  );
                   const destinationLocation = locations.find((location) => location.id === Number(line.toLocationId));
                   const sectionOptions = getLocationSectionOptions(destinationLocation);
 
@@ -493,10 +506,10 @@ export function TransferManagementPage({
                       <div className="batch-line-grid">
                         <label className="batch-line-grid__description">
                           {t("sourceStockRow")}
-                          <select value={line.sourceItemId} onChange={(event) => updateLine(line.id, { sourceItemId: event.target.value })}>
+                          <select value={line.sourceBucketKey} onChange={(event) => updateLine(line.id, { sourceBucketKey: event.target.value })}>
                             <option value="">{selectedSourceOption ? t("selectStockRow") : t("selectSkuForInventoryAction")}</option>
                             {selectableSourceItems.map((item) => (
-                              <option key={item.id} value={item.id}>
+                              <option key={buildInventoryProjectionKey(toInventoryProjectionRef(item))} value={buildInventoryProjectionKey(toInventoryProjectionRef(item))}>
                                 {`${item.locationName} / ${normalizeStorageSection(item.storageSection)} | ${t("containerNo")}: ${item.containerNo || "-"} | ${item.sku} - ${displayDescription(item)} (${t("availableQty")}: ${item.availableQty})`}
                               </option>
                             ))}

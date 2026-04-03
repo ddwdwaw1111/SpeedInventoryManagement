@@ -58,11 +58,7 @@ const INVENTORY_DETAIL_EXPORT_COLUMNS = [
   { key: "damagedQty", label: "Damaged Qty" },
   { key: "reorderLevel", label: "Reorder Level" },
   { key: "deliveryDate", label: "Receipt Date" },
-  { key: "containerNo", label: "Container No." },
-  { key: "expectedQty", label: "Expected Qty" },
-  { key: "receivedQty", label: "Received Qty" },
-  { key: "heightIn", label: "Height (in)" },
-  { key: "outDate", label: "Out Date" }
+  { key: "containerNo", label: "Container No." }
 ] as const;
 
 const CONTAINER_CONTENTS_EXPORT_COLUMNS = [
@@ -77,8 +73,6 @@ const CONTAINER_CONTENTS_EXPORT_COLUMNS = [
   { key: "availableQty", label: "Available Qty" },
   { key: "damagedQty", label: "Damaged Qty" },
   { key: "holdQty", label: "On Hold Qty" },
-  { key: "expectedQty", label: "Expected Qty" },
-  { key: "receivedQty", label: "Received Qty" },
   { key: "reorderLevel", label: "Reorder Level" },
   { key: "lastReceipt", label: "Last Receipt" }
 ] as const;
@@ -335,10 +329,6 @@ function buildInventoryDetailExportRows(items: Item[]) {
       reorderLevel: item.reorderLevel,
       deliveryDate: formatDateValue(item.deliveryDate, dateFormatter),
       containerNo: item.containerNo || "-",
-      expectedQty: item.expectedQty || 0,
-      receivedQty: item.receivedQty || 0,
-      heightIn: item.heightIn || "-",
-      outDate: formatDateValue(item.outDate, dateFormatter)
     }))
     .sort((left, right) => {
       if (left.locationName !== right.locationName) return left.locationName.localeCompare(right.locationName);
@@ -362,8 +352,6 @@ function buildContainerContentsExportRows(items: Item[]) {
       availableQty: item.availableQty,
       damagedQty: item.damagedQty,
       holdQty: item.holdQty,
-      expectedQty: item.expectedQty,
-      receivedQty: item.receivedQty,
       reorderLevel: item.reorderLevel,
       lastReceipt: formatDateValue(item.deliveryDate || item.lastRestockedAt || null, dateFormatter)
     }))

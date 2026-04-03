@@ -60,7 +60,7 @@ vi.mock("../lib/api", () => ({
 import { api } from "../lib/api";
 import { ActivityManagementPage } from "./ActivityManagementPage";
 import { renderWithProviders } from "../test/renderWithProviders";
-import { createCustomer, createInboundDocument, createInboundDocumentLine, createItem, createLocation, createMovement } from "../test/fixtures";
+import { createCustomer, createInboundDocument, createInboundDocumentLine, createItem, createLocation, createMovement, createSkuMaster } from "../test/fixtures";
 
 const mockedApi = api as unknown as {
   createInboundDocument: ReturnType<typeof vi.fn>;
@@ -118,6 +118,7 @@ describe("ActivityManagementPage", () => {
         locationId: 1,
         deliveryDate: "2026-03-31",
         containerNo: "MSCU1234567",
+        handlingMode: "PALLETIZED",
         storageSection: "TEMP",
         unitLabel: "CTN",
         status: "CONFIRMED",
@@ -132,6 +133,183 @@ describe("ActivityManagementPage", () => {
             receivedQty: 8,
             pallets: 0,
             palletsDetailCtns: undefined,
+            storageSection: "TEMP",
+            lineNote: undefined
+          }
+        ]
+      });
+    });
+
+    expect(onRefresh).toHaveBeenCalled();
+  });
+
+  it("auto-allocates full pallets plus a remainder pallet based on units per pallet", async () => {
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+
+    mockedApi.createInboundDocument.mockResolvedValue(undefined);
+
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="IN"
+        items={[]}
+        skuMasters={[createSkuMaster({
+          id: 2,
+          sku: "011423",
+          itemNumber: "011423",
+          name: "011423",
+          description: "Sample inbound SKU",
+          defaultUnitsPerPallet: 100,
+          reorderLevel: 2
+        })]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        movements={[]}
+        inboundDocuments={[]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={onRefresh}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "New Receipt" }));
+
+    const dialog = await screen.findByRole("dialog");
+    const headerInputs = dialog.querySelectorAll(".sheet-form input");
+    const inboundLineInputs = dialog.querySelectorAll(".batch-line-grid--inbound input");
+
+    fireEvent.change(headerInputs[0] as HTMLInputElement, { target: { value: "2026-03-31" } });
+    fireEvent.change(headerInputs[1] as HTMLInputElement, { target: { value: "MSCU7654321" } });
+    fireEvent.change(inboundLineInputs[0] as HTMLInputElement, { target: { value: "011423" } });
+    fireEvent.change(inboundLineInputs[2] as HTMLInputElement, { target: { value: "1024" } });
+    fireEvent.change(inboundLineInputs[3] as HTMLInputElement, { target: { value: "1024" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Receipt" }));
+
+    await waitFor(() => {
+      expect(mockedApi.createInboundDocument).toHaveBeenCalledWith({
+        customerId: 1,
+        locationId: 1,
+        deliveryDate: "2026-03-31",
+        containerNo: "MSCU7654321",
+        handlingMode: "PALLETIZED",
+        storageSection: "TEMP",
+        unitLabel: "CTN",
+        status: "CONFIRMED",
+        trackingStatus: "RECEIVED",
+        documentNote: undefined,
+        lines: [
+          {
+            sku: "011423",
+            description: "Sample inbound SKU",
+            reorderLevel: 2,
+            expectedQty: 1024,
+            receivedQty: 1024,
+            pallets: 11,
+            unitsPerPallet: 100,
+            palletsDetailCtns: "10*100+24",
+            palletBreakdown: [
+              { quantity: 100 },
+              { quantity: 100 },
+              { quantity: 100 },
+              { quantity: 100 },
+              { quantity: 100 },
+              { quantity: 100 },
+              { quantity: 100 },
+              { quantity: 100 },
+              { quantity: 100 },
+              { quantity: 100 },
+              { quantity: 24 }
+            ],
+            storageSection: "TEMP",
+            lineNote: undefined
+          }
+        ]
+      });
+    });
+
+    expect(onRefresh).toHaveBeenCalled();
+  });
+
+  it("uses the manually entered units per pallet when filling a receipt", async () => {
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+
+    mockedApi.createInboundDocument.mockResolvedValue(undefined);
+
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="IN"
+        items={[]}
+        skuMasters={[createSkuMaster({
+          id: 3,
+          sku: "011424",
+          itemNumber: "011424",
+          name: "011424",
+          description: "Manual pallet SKU",
+          defaultUnitsPerPallet: 0,
+          reorderLevel: 2
+        })]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        movements={[]}
+        inboundDocuments={[]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={onRefresh}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "New Receipt" }));
+
+    const dialog = await screen.findByRole("dialog");
+    const headerInputs = dialog.querySelectorAll(".sheet-form input");
+    const inboundLineInputs = dialog.querySelectorAll(".batch-line-grid--inbound input");
+
+    fireEvent.change(headerInputs[0] as HTMLInputElement, { target: { value: "2026-03-31" } });
+    fireEvent.change(headerInputs[1] as HTMLInputElement, { target: { value: "MSCU2222222" } });
+    fireEvent.change(inboundLineInputs[0] as HTMLInputElement, { target: { value: "011424" } });
+    fireEvent.change(inboundLineInputs[2] as HTMLInputElement, { target: { value: "1024" } });
+    fireEvent.change(inboundLineInputs[3] as HTMLInputElement, { target: { value: "1024" } });
+    fireEvent.change(screen.getByLabelText("Units / Pallet"), { target: { value: "100" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Receipt" }));
+
+    await waitFor(() => {
+      expect(mockedApi.createInboundDocument).toHaveBeenCalledWith({
+        customerId: 1,
+        locationId: 1,
+        deliveryDate: "2026-03-31",
+        containerNo: "MSCU2222222",
+        handlingMode: "PALLETIZED",
+        storageSection: "TEMP",
+        unitLabel: "CTN",
+        status: "CONFIRMED",
+        trackingStatus: "RECEIVED",
+        documentNote: undefined,
+        lines: [
+          {
+            sku: "011424",
+            description: "Manual pallet SKU",
+            reorderLevel: 2,
+            expectedQty: 1024,
+            receivedQty: 1024,
+            pallets: 11,
+            unitsPerPallet: 100,
+            palletsDetailCtns: "10*100+24",
+            palletBreakdown: [
+              { quantity: 100 },
+              { quantity: 100 },
+              { quantity: 100 },
+              { quantity: 100 },
+              { quantity: 100 },
+              { quantity: 100 },
+              { quantity: 100 },
+              { quantity: 100 },
+              { quantity: 100 },
+              { quantity: 100 },
+              { quantity: 24 }
+            ],
             storageSection: "TEMP",
             lineNote: undefined
           }
@@ -202,6 +380,7 @@ describe("ActivityManagementPage", () => {
         locationId: 1,
         deliveryDate: "2026-03-31",
         containerNo: "GCXU5817233",
+        handlingMode: "PALLETIZED",
         storageSection: "TEMP",
         unitLabel: "CTN",
         status: "CONFIRMED",
@@ -216,6 +395,7 @@ describe("ActivityManagementPage", () => {
             receivedQty: 10,
             pallets: 1,
             palletsDetailCtns: "1*10",
+            palletBreakdown: [{ quantity: 10 }],
             storageSection: "TEMP",
             lineNote: undefined
           }
@@ -286,6 +466,7 @@ describe("ActivityManagementPage", () => {
         locationId: 1,
         deliveryDate: "2026-03-24",
         containerNo: "GCXU5817233",
+        handlingMode: "PALLETIZED",
         storageSection: "A",
         unitLabel: "CTN",
         status: "CONFIRMED",
@@ -299,7 +480,8 @@ describe("ActivityManagementPage", () => {
             expectedQty: 10,
             receivedQty: 12,
             pallets: 1,
-            palletsDetailCtns: "1*10",
+            palletsDetailCtns: "12",
+            palletBreakdown: [{ quantity: 12 }],
             storageSection: "A",
             lineNote: undefined
           }
@@ -346,7 +528,7 @@ describe("ActivityManagementPage", () => {
     const outboundLineSelect = dialog.querySelector(".batch-line-grid--outbound select");
     const outboundLineInputs = dialog.querySelectorAll(".batch-line-grid--outbound input");
 
-    fireEvent.change(outboundLineSelect as HTMLSelectElement, { target: { value: "1" } });
+    fireEvent.change(outboundLineSelect as HTMLSelectElement, { target: { value: "1|1|1" } });
     fireEvent.change(outboundLineInputs[1] as HTMLInputElement, { target: { value: "5" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
@@ -371,7 +553,9 @@ describe("ActivityManagementPage", () => {
         documentNote: undefined,
         lines: [
           {
-            itemId: 1,
+            customerId: 1,
+            locationId: 1,
+            skuMasterId: 1,
             quantity: 5,
             pallets: 0,
             palletsDetailCtns: undefined,
@@ -379,8 +563,7 @@ describe("ActivityManagementPage", () => {
             cartonSizeMm: undefined,
             netWeightKgs: 0,
             grossWeightKgs: 0,
-            lineNote: undefined,
-            pickAllocations: undefined
+            lineNote: undefined
           }
         ]
       });

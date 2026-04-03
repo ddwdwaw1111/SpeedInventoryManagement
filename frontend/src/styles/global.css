@@ -3179,6 +3179,36 @@ textarea:focus {
   grid-column: auto;
 }
 
+.batch-line-grid__detail--stacked {
+  display: grid;
+  gap: 0.55rem;
+  align-items: stretch;
+}
+
+.batch-line-grid__detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.batch-line-grid__detail-summary {
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+}
+
+.batch-line-pallet-breakdown {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.5rem;
+}
+
+.batch-line-card__hint--warning {
+  color: var(--danger);
+  font-weight: 600;
+}
+
 .batch-line-card__meta {
   display: flex;
   justify-content: space-between;
@@ -3595,10 +3625,6 @@ textarea:focus {
   background: rgba(221, 191, 138, 0.2) !important;
 }
 
-.row--mismatch td {
-  background: rgba(208, 141, 128, 0.14) !important;
-}
-
 .row--inbound td {
   border-left: 4px solid rgba(60, 110, 113, 0.45);
 }
@@ -3617,11 +3643,6 @@ textarea:focus {
   margin-top: 0.18rem;
   color: var(--ink-soft);
   font-size: 0.8rem;
-}
-
-.cell--mismatch {
-  color: var(--danger);
-  font-weight: 700;
 }
 
 .audit-log-json {

@@ -62,6 +62,7 @@ export function createSkuMaster(overrides: Partial<SKUMaster> = {}): SKUMaster {
 export function createItem(overrides: Partial<Item> = {}): Item {
   return {
     id: 1,
+    skuMasterId: 1,
     itemNumber: "608333",
     sku: "608333",
     name: "608333",
@@ -81,10 +82,6 @@ export function createItem(overrides: Partial<Item> = {}): Item {
     storageSection: "TEMP",
     deliveryDate: ISO_DATE,
     containerNo: "GCXU5817233",
-    expectedQty: 10,
-    receivedQty: 10,
-    heightIn: 0,
-    outDate: null,
     lastRestockedAt: ISO_TIMESTAMP,
     createdAt: ISO_TIMESTAMP,
     updatedAt: ISO_TIMESTAMP,
@@ -137,8 +134,6 @@ export function createInboundDocumentLine(overrides: Partial<InboundDocumentLine
   return {
     id: 1,
     documentId: 1,
-    movementId: 1,
-    itemId: 1,
     sku: "608333",
     description: "VB22GC",
     storageSection: "TEMP",
@@ -146,6 +141,7 @@ export function createInboundDocumentLine(overrides: Partial<InboundDocumentLine
     expectedQty: 10,
     receivedQty: 10,
     pallets: 1,
+    unitsPerPallet: 0,
     palletsDetailCtns: "1*10",
     unitLabel: "CTN",
     lineNote: "",
@@ -163,6 +159,7 @@ export function createInboundDocument(overrides: Partial<InboundDocument> = {}):
     locationName: "NJ",
     deliveryDate: ISO_DATE,
     containerNo: "GCXU5817233",
+    handlingMode: "PALLETIZED",
     storageSection: "TEMP",
     unitLabel: "CTN",
     documentNote: "",
@@ -186,8 +183,6 @@ export function createOutboundPickAllocation(overrides: Partial<OutboundPickAllo
   return {
     id: 1,
     lineId: 1,
-    movementId: 1,
-    itemId: 1,
     itemNumber: "608333",
     locationId: 1,
     locationName: "NJ",
@@ -203,8 +198,7 @@ export function createOutboundDocumentLine(overrides: Partial<OutboundDocumentLi
   return {
     id: 1,
     documentId: 1,
-    movementId: 1,
-    itemId: 1,
+    skuMasterId: 1,
     itemNumber: "608333",
     locationId: 1,
     locationName: "NJ",

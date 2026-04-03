@@ -14,7 +14,14 @@ import { buildInventoryActionSourceOptions } from "../lib/inventoryActionSources
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type { PageKey } from "../lib/routes";
-import { normalizeStorageSection, type InventoryAdjustment, type Item, type UserRole } from "../lib/types";
+import {
+  buildInventoryProjectionKey,
+  normalizeStorageSection,
+  toInventoryProjectionRef,
+  type InventoryAdjustment,
+  type Item,
+  type UserRole
+} from "../lib/types";
 import { InlineAlert, useFeedbackToast } from "./Feedback";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots, WorkspaceDrawerLoadingState, WorkspacePanelHeader } from "./WorkspacePanelChrome";
@@ -37,7 +44,7 @@ type AdjustmentFormState = {
 
 type AdjustmentLineFormState = {
   id: string;
-  itemId: string;
+  bucketKey: string;
   adjustQty: number;
   lineNote: string;
 };
@@ -53,7 +60,7 @@ const ADJUSTMENT_COLUMN_ORDER_PREFERENCE_KEY = "adjustments.column-order";
 function createAdjustmentLine(): AdjustmentLineFormState {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    itemId: "",
+    bucketKey: "",
     adjustQty: 0,
     lineNote: ""
   };
@@ -104,9 +111,9 @@ export function AdjustmentManagementPage({
 
   useEffect(() => {
     setLines((current) => current.map((line) => (
-      selectableAdjustmentItems.some((item) => item.id === Number(line.itemId))
+      selectableAdjustmentItems.some((item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.bucketKey)
         ? line
-        : { ...line, itemId: "" }
+        : { ...line, bucketKey: "" }
     )));
   }, [selectableAdjustmentItems]);
 
@@ -273,12 +280,21 @@ export function AdjustmentManagementPage({
         reasonCode: form.reasonCode,
         notes: form.notes || undefined,
         lines: lines
-          .filter((line) => Number(line.itemId) > 0 && line.adjustQty !== 0)
-          .map((line) => ({
-            itemId: Number(line.itemId),
-            adjustQty: line.adjustQty,
-            lineNote: line.lineNote || undefined
-          }))
+          .map((line) => {
+            const selectedItem = selectableAdjustmentItems.find(
+              (item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.bucketKey
+            );
+            if (!selectedItem || line.adjustQty === 0) {
+              return null;
+            }
+
+            return {
+              ...toInventoryProjectionRef(selectedItem),
+              adjustQty: line.adjustQty,
+              lineNote: line.lineNote || undefined
+            };
+          })
+          .filter((line): line is NonNullable<typeof line> => line !== null)
       });
       closeCreateModal();
       await onRefresh();
@@ -488,7 +504,9 @@ export function AdjustmentManagementPage({
               </div>
               <div className="batch-lines">
                 {lines.map((line, index) => {
-                  const selectedItem = selectableAdjustmentItems.find((item) => item.id === Number(line.itemId));
+                  const selectedItem = selectableAdjustmentItems.find(
+                    (item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.bucketKey
+                  );
                   const afterQty = (selectedItem?.quantity ?? 0) + line.adjustQty;
 
                   return (
@@ -502,10 +520,10 @@ export function AdjustmentManagementPage({
                       <div className="batch-line-grid">
                         <label className="batch-line-grid__description">
                           {t("stockRow")}
-                          <select value={line.itemId} onChange={(event) => updateLine(line.id, { itemId: event.target.value })}>
+                          <select value={line.bucketKey} onChange={(event) => updateLine(line.id, { bucketKey: event.target.value })}>
                             <option value="">{selectedSourceOption ? t("selectStockRow") : t("selectSkuForInventoryAction")}</option>
                             {selectableAdjustmentItems.map((item) => (
-                              <option key={item.id} value={item.id}>
+                              <option key={buildInventoryProjectionKey(toInventoryProjectionRef(item))} value={buildInventoryProjectionKey(toInventoryProjectionRef(item))}>
                                 {`${item.locationName} / ${normalizeStorageSection(item.storageSection)} | ${t("containerNo")}: ${item.containerNo || "-"} | ${item.sku} - ${displayDescription(item)} (${t("onHand")}: ${item.quantity})`}
                               </option>
                             ))}

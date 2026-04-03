@@ -26,10 +26,6 @@ type InventoryTransfer struct {
 type InventoryTransferLine struct {
 	ID                 int64     `json:"id"`
 	TransferID         int64     `json:"transferId"`
-	TransferOutMovementID int64  `json:"transferOutMovementId"`
-	TransferInMovementID int64   `json:"transferInMovementId"`
-	SourceItemID       int64     `json:"sourceItemId"`
-	DestinationItemID  int64     `json:"destinationItemId"`
 	CustomerID         int64     `json:"customerId"`
 	CustomerName       string    `json:"customerName"`
 	FromLocationID     int64     `json:"fromLocationId"`
@@ -46,17 +42,21 @@ type InventoryTransferLine struct {
 }
 
 type CreateInventoryTransferInput struct {
-	TransferNo string                         `json:"transferNo"`
-	Notes      string                         `json:"notes"`
+	TransferNo string                             `json:"transferNo"`
+	Notes      string                             `json:"notes"`
 	Lines      []CreateInventoryTransferLineInput `json:"lines"`
 }
 
 type CreateInventoryTransferLineInput struct {
-	SourceItemID      int64  `json:"sourceItemId"`
-	Quantity          int    `json:"quantity"`
-	ToLocationID      int64  `json:"toLocationId"`
-	ToStorageSection  string `json:"toStorageSection"`
-	LineNote          string `json:"lineNote"`
+	CustomerID       int64  `json:"customerId"`
+	LocationID       int64  `json:"locationId"`
+	StorageSection   string `json:"storageSection"`
+	ContainerNo      string `json:"containerNo"`
+	SKUMasterID      int64  `json:"skuMasterId"`
+	Quantity         int    `json:"quantity"`
+	ToLocationID     int64  `json:"toLocationId"`
+	ToStorageSection string `json:"toStorageSection"`
+	LineNote         string `json:"lineNote"`
 }
 
 type inventoryTransferRow struct {
@@ -69,25 +69,21 @@ type inventoryTransferRow struct {
 }
 
 type inventoryTransferLineRow struct {
-	ID                     int64     `db:"id"`
-	TransferID             int64     `db:"transfer_id"`
-	TransferOutMovementID  int64     `db:"transfer_out_movement_id"`
-	TransferInMovementID   int64     `db:"transfer_in_movement_id"`
-	SourceItemID           int64     `db:"source_item_id"`
-	DestinationItemID      int64     `db:"destination_item_id"`
-	CustomerID             int64     `db:"customer_id"`
-	CustomerNameSnapshot   string    `db:"customer_name_snapshot"`
-	FromLocationID         int64     `db:"from_location_id"`
-	FromLocationNameSnapshot string  `db:"from_location_name_snapshot"`
-	FromStorageSection     string    `db:"from_storage_section"`
-	ToLocationID           int64     `db:"to_location_id"`
-	ToLocationNameSnapshot string    `db:"to_location_name_snapshot"`
-	ToStorageSection       string    `db:"to_storage_section"`
-	SKUSnapshot            string    `db:"sku_snapshot"`
-	DescriptionSnapshot    string    `db:"description_snapshot"`
-	Quantity               int       `db:"quantity"`
-	LineNote               string    `db:"line_note"`
-	CreatedAt              time.Time `db:"created_at"`
+	ID                       int64     `db:"id"`
+	TransferID               int64     `db:"transfer_id"`
+	CustomerID               int64     `db:"customer_id"`
+	CustomerNameSnapshot     string    `db:"customer_name_snapshot"`
+	FromLocationID           int64     `db:"from_location_id"`
+	FromLocationNameSnapshot string    `db:"from_location_name_snapshot"`
+	FromStorageSection       string    `db:"from_storage_section"`
+	ToLocationID             int64     `db:"to_location_id"`
+	ToLocationNameSnapshot   string    `db:"to_location_name_snapshot"`
+	ToStorageSection         string    `db:"to_storage_section"`
+	SKUSnapshot              string    `db:"sku_snapshot"`
+	DescriptionSnapshot      string    `db:"description_snapshot"`
+	Quantity                 int       `db:"quantity"`
+	LineNote                 string    `db:"line_note"`
+	CreatedAt                time.Time `db:"created_at"`
 }
 
 type lockedTransferItem struct {
@@ -155,10 +151,6 @@ func (s *Store) ListInventoryTransfers(ctx context.Context, limit int) ([]Invent
 		SELECT
 			id,
 			transfer_id,
-			COALESCE(transfer_out_movement_id, 0) AS transfer_out_movement_id,
-			COALESCE(transfer_in_movement_id, 0) AS transfer_in_movement_id,
-			source_item_id,
-			COALESCE(destination_item_id, 0) AS destination_item_id,
 			customer_id,
 			customer_name_snapshot,
 			from_location_id,
@@ -191,25 +183,21 @@ func (s *Store) ListInventoryTransfers(ctx context.Context, limit int) ([]Invent
 			continue
 		}
 		transfer.Lines = append(transfer.Lines, InventoryTransferLine{
-			ID:                    lineRow.ID,
-			TransferID:            lineRow.TransferID,
-			TransferOutMovementID: lineRow.TransferOutMovementID,
-			TransferInMovementID:  lineRow.TransferInMovementID,
-			SourceItemID:          lineRow.SourceItemID,
-			DestinationItemID:     lineRow.DestinationItemID,
-			CustomerID:            lineRow.CustomerID,
-			CustomerName:          lineRow.CustomerNameSnapshot,
-			FromLocationID:        lineRow.FromLocationID,
-			FromLocationName:      lineRow.FromLocationNameSnapshot,
-			FromStorageSection:    fallbackSection(lineRow.FromStorageSection),
-			ToLocationID:          lineRow.ToLocationID,
-			ToLocationName:        lineRow.ToLocationNameSnapshot,
-			ToStorageSection:      fallbackSection(lineRow.ToStorageSection),
-			SKU:                   lineRow.SKUSnapshot,
-			Description:           lineRow.DescriptionSnapshot,
-			Quantity:              lineRow.Quantity,
-			LineNote:              lineRow.LineNote,
-			CreatedAt:             lineRow.CreatedAt,
+			ID:                 lineRow.ID,
+			TransferID:         lineRow.TransferID,
+			CustomerID:         lineRow.CustomerID,
+			CustomerName:       lineRow.CustomerNameSnapshot,
+			FromLocationID:     lineRow.FromLocationID,
+			FromLocationName:   lineRow.FromLocationNameSnapshot,
+			FromStorageSection: fallbackSection(lineRow.FromStorageSection),
+			ToLocationID:       lineRow.ToLocationID,
+			ToLocationName:     lineRow.ToLocationNameSnapshot,
+			ToStorageSection:   fallbackSection(lineRow.ToStorageSection),
+			SKU:                lineRow.SKUSnapshot,
+			Description:        lineRow.DescriptionSnapshot,
+			Quantity:           lineRow.Quantity,
+			LineNote:           lineRow.LineNote,
+			CreatedAt:          lineRow.CreatedAt,
 		})
 		transfer.TotalLines++
 		transfer.TotalQty += lineRow.Quantity
@@ -263,7 +251,13 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 	}
 
 	for index, line := range input.Lines {
-		sourceItem, err := s.loadLockedTransferItem(ctx, tx, line.SourceItemID)
+		sourceItem, err := s.loadLockedTransferItem(ctx, tx, palletSourceBucket{
+			SKUMasterID:    line.SKUMasterID,
+			CustomerID:     line.CustomerID,
+			LocationID:     line.LocationID,
+			StorageSection: line.StorageSection,
+			ContainerNo:    line.ContainerNo,
+		})
 		if err != nil {
 			return InventoryTransfer{}, err
 		}
@@ -281,16 +275,13 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 			return InventoryTransfer{}, err
 		}
 
-		destinationItemID, destinationQuantity, err := s.findOrCreateTransferDestinationItem(ctx, tx, sourceItem, line.ToLocationID, toLocationName, toSection)
-		if err != nil {
+		if err := s.ensureTransferDestinationProjectionItem(ctx, tx, sourceItem, line.ToLocationID, toSection); err != nil {
 			return InventoryTransfer{}, err
 		}
 
 		lineResult, err := tx.ExecContext(ctx, `
 			INSERT INTO inventory_transfer_lines (
 				transfer_id,
-				source_item_id,
-				destination_item_id,
 				customer_id,
 				customer_name_snapshot,
 				from_location_id,
@@ -304,11 +295,9 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 				quantity,
 				line_note,
 				sort_order
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			transferID,
-			sourceItem.ItemID,
-			destinationItemID,
 			sourceItem.CustomerID,
 			sourceItem.CustomerName,
 			sourceItem.LocationID,
@@ -333,138 +322,104 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 		}
 
 		reason := firstNonEmpty(line.LineNote, fmt.Sprintf("Transfer posted: %s", input.TransferNo))
-		outMovementResult, err := tx.ExecContext(ctx, `
-			INSERT INTO stock_movements (
-				item_id,
-				transfer_id,
-				transfer_line_id,
-				customer_id,
-				location_id,
-				storage_section,
-				movement_type,
-				quantity_change,
-				container_no,
-				description_snapshot,
-				unit_label,
-				height_in,
-				document_note,
-				reason
-			) VALUES (?, ?, ?, ?, ?, ?, 'TRANSFER_OUT', ?, ?, ?, ?, 0, ?, ?)
-		`,
-			sourceItem.ItemID,
-			transferID,
-			lineID,
-			sourceItem.CustomerID,
-			sourceItem.LocationID,
-			fallbackSection(sourceItem.StorageSection),
-			-line.Quantity,
-			nullableString(sourceItem.ContainerNo),
-			nullableString(sourceItem.Description),
-			nullableString(strings.ToUpper(sourceItem.Unit)),
-			nullableString(input.Notes),
-			nullableString(reason),
-		)
+		palletConsumptions, err := s.consumePalletContentsForItemTx(ctx, tx, sourceItem.ItemID, sourceItem.SKUMasterID, line.Quantity)
 		if err != nil {
-			return InventoryTransfer{}, mapDBError(fmt.Errorf("create transfer-out movement: %w", err))
+			return InventoryTransfer{}, fmt.Errorf("allocate pallet contents for transfer: %w", err)
+		}
+		if len(palletConsumptions) == 0 {
+			return InventoryTransfer{}, ErrInsufficientStock
 		}
 
-		outMovementID, err := outMovementResult.LastInsertId()
-		if err != nil {
-			return InventoryTransfer{}, fmt.Errorf("resolve transfer-out movement id: %w", err)
-		}
+		palletSplitSequence := 0
+		for _, palletConsumption := range palletConsumptions {
+			if err := s.createPalletLocationEventTx(ctx, tx, createPalletLocationEventInput{
+				PalletID:         palletConsumption.PalletID,
+				ContainerVisitID: palletConsumption.ContainerVisitID,
+				CustomerID:       palletConsumption.CustomerID,
+				LocationID:       palletConsumption.LocationID,
+				StorageSection:   palletConsumption.StorageSection,
+				ContainerNo:      firstNonEmpty(palletConsumption.ContainerNo, sourceItem.ContainerNo),
+				EventType:        PalletEventTransferOut,
+				QuantityDelta:    -palletConsumption.Quantity,
+			}); err != nil {
+				return InventoryTransfer{}, err
+			}
+			if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
+				EventType:           StockLedgerEventTransferOut,
+				PalletID:            palletConsumption.PalletID,
+				PalletItemID:        palletConsumption.PalletItemID,
+				SKUMasterID:         palletConsumption.SKUMasterID,
+				CustomerID:          palletConsumption.CustomerID,
+				LocationID:          palletConsumption.LocationID,
+				StorageSection:      palletConsumption.StorageSection,
+				QuantityChange:      -palletConsumption.Quantity,
+				SourceDocumentType:  StockLedgerSourceTransfer,
+				SourceDocumentID:    transferID,
+				SourceLineID:        lineID,
+				ContainerNo:         firstNonEmpty(palletConsumption.ContainerNo, sourceItem.ContainerNo),
+				ItemNumber:          sourceItem.SKU,
+				DescriptionSnapshot: sourceItem.Description,
+				Reason:              reason,
+			}); err != nil {
+				return InventoryTransfer{}, err
+			}
 
-		lotConsumptions, err := s.consumeReceiptLotsForItemTx(ctx, tx, sourceItem.ItemID, line.Quantity, outMovementID, "move_out")
-		if err != nil {
-			return InventoryTransfer{}, fmt.Errorf("allocate receipt lots for transfer-out movement: %w", err)
-		}
-
-		inMovementResult, err := tx.ExecContext(ctx, `
-			INSERT INTO stock_movements (
-				item_id,
-				transfer_id,
-				transfer_line_id,
-				customer_id,
-				location_id,
-				storage_section,
-				movement_type,
-				quantity_change,
-				container_no,
-				description_snapshot,
-				unit_label,
-				height_in,
-				document_note,
-				reason
-			) VALUES (?, ?, ?, ?, ?, ?, 'TRANSFER_IN', ?, ?, ?, ?, 0, ?, ?)
-		`,
-			destinationItemID,
-			transferID,
-			lineID,
-			sourceItem.CustomerID,
-			line.ToLocationID,
-			toSection,
-			line.Quantity,
-			nil,
-			nullableString(sourceItem.Description),
-			nullableString(strings.ToUpper(sourceItem.Unit)),
-			nullableString(input.Notes),
-			nullableString(reason),
-		)
-		if err != nil {
-			return InventoryTransfer{}, mapDBError(fmt.Errorf("create transfer-in movement: %w", err))
-		}
-
-		inMovementID, err := inMovementResult.LastInsertId()
-		if err != nil {
-			return InventoryTransfer{}, fmt.Errorf("resolve transfer-in movement id: %w", err)
-		}
-
-		for _, consumption := range lotConsumptions {
-			newLot, err := s.createReceiptLotTx(ctx, tx, createReceiptLotInput{
-				ParentReceiptLotID:      consumption.Lot.ID,
-				SourceInboundDocumentID: consumption.Lot.SourceInboundDocumentID,
-				SourceInboundLineID:     consumption.Lot.SourceInboundLineID,
-				ItemID:                  destinationItemID,
-				CustomerID:              consumption.Lot.CustomerID,
-				LocationID:              line.ToLocationID,
-				StorageSection:          toSection,
-				ContainerNo:             "",
-				OriginalQty:             consumption.Quantity,
-				RemainingQty:            consumption.Quantity,
+			palletSplitSequence++
+			childPallet, err := s.createPalletTx(ctx, tx, createPalletInput{
+				ParentPalletID:          palletConsumption.PalletID,
+				PalletCode:              palletCodeForTransferSplit(palletConsumption.PalletID, lineID, palletSplitSequence),
+				ContainerVisitID:        palletConsumption.ContainerVisitID,
+				SourceInboundDocumentID: palletConsumption.SourceInboundDocumentID,
+				SourceInboundLineID:     palletConsumption.SourceInboundLineID,
+				CustomerID:              sourceItem.CustomerID,
+				SKUMasterID:             palletConsumption.SKUMasterID,
+				CurrentLocationID:       line.ToLocationID,
+				CurrentStorageSection:   toSection,
+				CurrentContainerNo:      firstNonEmpty(palletConsumption.ContainerNo, sourceItem.ContainerNo),
+				Status:                  PalletStatusOpen,
 			})
 			if err != nil {
 				return InventoryTransfer{}, err
 			}
-			if err := s.createMovementLotLinkTx(ctx, tx, inMovementID, newLot.ID, consumption.Quantity, "move_in"); err != nil {
+			childPalletItemID, err := s.createPalletItemTx(ctx, tx, createPalletItemInput{
+				PalletID:    childPallet.ID,
+				SKUMasterID: palletConsumption.SKUMasterID,
+				Quantity:    palletConsumption.Quantity,
+			})
+			if err != nil {
 				return InventoryTransfer{}, err
 			}
-		}
-
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE inventory_transfer_lines
-			SET
-				transfer_out_movement_id = ?,
-				transfer_in_movement_id = ?
-			WHERE id = ?
-		`, outMovementID, inMovementID, lineID); err != nil {
-			return InventoryTransfer{}, mapDBError(fmt.Errorf("link transfer movements: %w", err))
-		}
-
-		sourceAfterQty := sourceItem.Quantity - line.Quantity
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE inventory_items
-			SET quantity = ?, updated_at = CURRENT_TIMESTAMP
-			WHERE id = ?
-		`, sourceAfterQty, sourceItem.ItemID); err != nil {
-			return InventoryTransfer{}, mapDBError(fmt.Errorf("update source inventory after transfer: %w", err))
-		}
-
-		destinationAfterQty := destinationQuantity + line.Quantity
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE inventory_items
-			SET quantity = ?, updated_at = CURRENT_TIMESTAMP
-			WHERE id = ?
-		`, destinationAfterQty, destinationItemID); err != nil {
-			return InventoryTransfer{}, mapDBError(fmt.Errorf("update destination inventory after transfer: %w", err))
+			if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
+				EventType:           StockLedgerEventTransferIn,
+				PalletID:            childPallet.ID,
+				PalletItemID:        childPalletItemID,
+				SKUMasterID:         palletConsumption.SKUMasterID,
+				CustomerID:          sourceItem.CustomerID,
+				LocationID:          line.ToLocationID,
+				StorageSection:      toSection,
+				QuantityChange:      palletConsumption.Quantity,
+				SourceDocumentType:  StockLedgerSourceTransfer,
+				SourceDocumentID:    transferID,
+				SourceLineID:        lineID,
+				ContainerNo:         childPallet.CurrentContainerNo,
+				ItemNumber:          sourceItem.SKU,
+				DescriptionSnapshot: sourceItem.Description,
+				Reason:              reason,
+			}); err != nil {
+				return InventoryTransfer{}, err
+			}
+			if err := s.createPalletLocationEventTx(ctx, tx, createPalletLocationEventInput{
+				PalletID:         childPallet.ID,
+				ContainerVisitID: childPallet.ContainerVisitID,
+				CustomerID:       sourceItem.CustomerID,
+				LocationID:       line.ToLocationID,
+				StorageSection:   toSection,
+				ContainerNo:      childPallet.CurrentContainerNo,
+				EventType:        PalletEventTransferIn,
+				QuantityDelta:    palletConsumption.Quantity,
+			}); err != nil {
+				return InventoryTransfer{}, err
+			}
 		}
 	}
 
@@ -535,10 +490,6 @@ func (s *Store) listInventoryTransfersByIDs(ctx context.Context, transferIDs []i
 		SELECT
 			id,
 			transfer_id,
-			COALESCE(transfer_out_movement_id, 0) AS transfer_out_movement_id,
-			COALESCE(transfer_in_movement_id, 0) AS transfer_in_movement_id,
-			source_item_id,
-			COALESCE(destination_item_id, 0) AS destination_item_id,
 			customer_id,
 			customer_name_snapshot,
 			from_location_id,
@@ -571,25 +522,21 @@ func (s *Store) listInventoryTransfersByIDs(ctx context.Context, transferIDs []i
 			continue
 		}
 		transfer.Lines = append(transfer.Lines, InventoryTransferLine{
-			ID:                    lineRow.ID,
-			TransferID:            lineRow.TransferID,
-			TransferOutMovementID: lineRow.TransferOutMovementID,
-			TransferInMovementID:  lineRow.TransferInMovementID,
-			SourceItemID:          lineRow.SourceItemID,
-			DestinationItemID:     lineRow.DestinationItemID,
-			CustomerID:            lineRow.CustomerID,
-			CustomerName:          lineRow.CustomerNameSnapshot,
-			FromLocationID:        lineRow.FromLocationID,
-			FromLocationName:      lineRow.FromLocationNameSnapshot,
-			FromStorageSection:    fallbackSection(lineRow.FromStorageSection),
-			ToLocationID:          lineRow.ToLocationID,
-			ToLocationName:        lineRow.ToLocationNameSnapshot,
-			ToStorageSection:      fallbackSection(lineRow.ToStorageSection),
-			SKU:                   lineRow.SKUSnapshot,
-			Description:           lineRow.DescriptionSnapshot,
-			Quantity:              lineRow.Quantity,
-			LineNote:              lineRow.LineNote,
-			CreatedAt:             lineRow.CreatedAt,
+			ID:                 lineRow.ID,
+			TransferID:         lineRow.TransferID,
+			CustomerID:         lineRow.CustomerID,
+			CustomerName:       lineRow.CustomerNameSnapshot,
+			FromLocationID:     lineRow.FromLocationID,
+			FromLocationName:   lineRow.FromLocationNameSnapshot,
+			FromStorageSection: fallbackSection(lineRow.FromStorageSection),
+			ToLocationID:       lineRow.ToLocationID,
+			ToLocationName:     lineRow.ToLocationNameSnapshot,
+			ToStorageSection:   fallbackSection(lineRow.ToStorageSection),
+			SKU:                lineRow.SKUSnapshot,
+			Description:        lineRow.DescriptionSnapshot,
+			Quantity:           lineRow.Quantity,
+			LineNote:           lineRow.LineNote,
+			CreatedAt:          lineRow.CreatedAt,
 		})
 		transfer.TotalLines++
 		transfer.TotalQty += lineRow.Quantity
@@ -608,55 +555,30 @@ func (s *Store) listInventoryTransfersByIDs(ctx context.Context, transferIDs []i
 	return transfers, nil
 }
 
-func (s *Store) loadLockedTransferItem(ctx context.Context, tx *sql.Tx, itemID int64) (lockedTransferItem, error) {
-	var item lockedTransferItem
-	if err := tx.QueryRowContext(ctx, `
-		SELECT
-			i.id,
-			i.sku_master_id,
-			i.customer_id,
-			c.name,
-			i.location_id,
-			l.name,
-			i.storage_section,
-			COALESCE(i.container_no, ''),
-			i.sku,
-			i.name,
-			i.category,
-			COALESCE(i.description, i.name, ''),
-			COALESCE(i.unit, 'pcs'),
-			i.reorder_level,
-			i.quantity,
-			GREATEST(i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty, 0) AS available_qty
-		FROM inventory_items i
-		JOIN customers c ON c.id = i.customer_id
-		JOIN storage_locations l ON l.id = i.location_id
-		WHERE i.id = ?
-		FOR UPDATE
-	`, itemID).Scan(
-		&item.ItemID,
-		&item.SKUMasterID,
-		&item.CustomerID,
-		&item.CustomerName,
-		&item.LocationID,
-		&item.LocationName,
-		&item.StorageSection,
-		&item.ContainerNo,
-		&item.SKU,
-		&item.Name,
-		&item.Category,
-		&item.Description,
-		&item.Unit,
-		&item.ReorderLevel,
-		&item.Quantity,
-		&item.AvailableQty,
-	); err != nil {
-		if err == sql.ErrNoRows {
-			return lockedTransferItem{}, ErrNotFound
-		}
-		return lockedTransferItem{}, fmt.Errorf("load transfer source item: %w", err)
+func (s *Store) loadLockedTransferItem(ctx context.Context, tx *sql.Tx, bucket palletSourceBucket) (lockedTransferItem, error) {
+	projection, err := s.loadPalletBackedInventoryProjectionForBucketTx(ctx, tx, bucket)
+	if err != nil {
+		return lockedTransferItem{}, err
 	}
-	return item, nil
+
+	return lockedTransferItem{
+		ItemID:         projection.ItemID,
+		SKUMasterID:    projection.SKUMasterID,
+		CustomerID:     projection.CustomerID,
+		CustomerName:   projection.CustomerName,
+		LocationID:     projection.LocationID,
+		LocationName:   projection.LocationName,
+		StorageSection: projection.StorageSection,
+		ContainerNo:    projection.ContainerNo,
+		SKU:            projection.SKU,
+		Name:           projection.Name,
+		Category:       projection.Category,
+		Description:    projection.Description,
+		Unit:           projection.Unit,
+		ReorderLevel:   projection.ReorderLevel,
+		Quantity:       projection.Quantity,
+		AvailableQty:   projection.AvailableQty,
+	}, nil
 }
 
 func (s *Store) getTransferLocationName(ctx context.Context, tx *sql.Tx, locationID int64) (string, error) {
@@ -674,22 +596,20 @@ func (s *Store) getTransferLocationName(ctx context.Context, tx *sql.Tx, locatio
 	return locationName, nil
 }
 
-func (s *Store) findOrCreateTransferDestinationItem(
+func (s *Store) ensureTransferDestinationProjectionItem(
 	ctx context.Context,
 	tx *sql.Tx,
 	sourceItem lockedTransferItem,
 	toLocationID int64,
-	toLocationName string,
 	toSection string,
-) (int64, int, error) {
+) error {
 	normalizedToSection := normalizeStorageSection(toSection)
 
 	var destinationItemID int64
-	var destinationQuantity int
 	query := `
-		SELECT id, quantity
+		SELECT id
 		FROM inventory_items
-		WHERE sku_master_id = ? AND customer_id = ? AND location_id = ? AND COALESCE(NULLIF(storage_section, ''), ?) = ?
+		WHERE sku_master_id = ? AND customer_id = ? AND location_id = ? AND COALESCE(NULLIF(storage_section, ''), ?) = ? AND COALESCE(container_no, '') = ?
 		FOR UPDATE
 	`
 	queryArgs := []any{
@@ -698,59 +618,38 @@ func (s *Store) findOrCreateTransferDestinationItem(
 		toLocationID,
 		DefaultStorageSection,
 		normalizedToSection,
+		strings.TrimSpace(sourceItem.ContainerNo),
 	}
-	err := tx.QueryRowContext(ctx, query, queryArgs...).Scan(&destinationItemID, &destinationQuantity)
+	err := tx.QueryRowContext(ctx, query, queryArgs...).Scan(&destinationItemID)
 	if err == nil {
-		return destinationItemID, destinationQuantity, nil
+		return nil
 	}
 	if err != sql.ErrNoRows {
-		return 0, 0, fmt.Errorf("load transfer destination item: %w", err)
+		return fmt.Errorf("load transfer destination item: %w", err)
 	}
 
-	result, err := tx.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO inventory_items (
 			sku_master_id,
 			customer_id,
-			sku,
-			name,
-			category,
-			description,
-			unit,
-			quantity,
-			reorder_level,
 			location_id,
 			storage_section,
 			delivery_date,
 			container_no,
-			expected_qty,
-			received_qty,
-			height_in,
-			out_date,
 			last_restocked_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL, '', 0, 0, 0, NULL, NULL)
+		) VALUES (?, ?, ?, ?, NULL, ?, NULL)
 	`,
 		sourceItem.SKUMasterID,
 		sourceItem.CustomerID,
-		sourceItem.SKU,
-		sourceItem.Name,
-		sourceItem.Category,
-		sourceItem.Description,
-		sourceItem.Unit,
-		sourceItem.ReorderLevel,
 		toLocationID,
 		normalizedToSection,
+		nullableString(sourceItem.ContainerNo),
 	)
 	if err != nil {
-		return 0, 0, mapDBError(fmt.Errorf("create transfer destination item: %w", err))
+		return mapDBError(fmt.Errorf("create transfer destination item: %w", err))
 	}
 
-	destinationItemID, err = result.LastInsertId()
-	if err != nil {
-		return 0, 0, fmt.Errorf("resolve transfer destination item id: %w", err)
-	}
-
-	_ = toLocationName
-	return destinationItemID, 0, nil
+	return nil
 }
 
 func sanitizeInventoryTransferInput(input CreateInventoryTransferInput) CreateInventoryTransferInput {
@@ -759,9 +658,11 @@ func sanitizeInventoryTransferInput(input CreateInventoryTransferInput) CreateIn
 
 	lines := make([]CreateInventoryTransferLineInput, 0, len(input.Lines))
 	for _, line := range input.Lines {
+		line.StorageSection = normalizeStorageSection(line.StorageSection)
+		line.ContainerNo = strings.TrimSpace(strings.ToUpper(line.ContainerNo))
 		line.ToStorageSection = fallbackSection(strings.TrimSpace(strings.ToUpper(line.ToStorageSection)))
 		line.LineNote = strings.TrimSpace(line.LineNote)
-		if line.SourceItemID <= 0 || line.Quantity <= 0 || line.ToLocationID <= 0 {
+		if line.CustomerID <= 0 || line.LocationID <= 0 || line.SKUMasterID <= 0 || line.Quantity <= 0 || line.ToLocationID <= 0 {
 			continue
 		}
 		lines = append(lines, line)
@@ -777,8 +678,12 @@ func validateInventoryTransferInput(input CreateInventoryTransferInput) error {
 
 	for _, line := range input.Lines {
 		switch {
-		case line.SourceItemID <= 0:
-			return fmt.Errorf("%w: source stock row is required", ErrInvalidInput)
+		case line.CustomerID <= 0:
+			return fmt.Errorf("%w: customer is required", ErrInvalidInput)
+		case line.LocationID <= 0:
+			return fmt.Errorf("%w: source storage is required", ErrInvalidInput)
+		case line.SKUMasterID <= 0:
+			return fmt.Errorf("%w: sku is required", ErrInvalidInput)
 		case line.Quantity <= 0:
 			return fmt.Errorf("%w: transfer quantity must be greater than zero", ErrInvalidInput)
 		case line.ToLocationID <= 0:

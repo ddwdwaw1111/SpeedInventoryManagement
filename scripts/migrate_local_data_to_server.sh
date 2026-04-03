@@ -186,8 +186,16 @@ echo "==> Dropping remote tables"
 ssh "${ssh_args[@]}" "${SERVER_USER}@${SERVER_HOST}" \
   "docker exec -i speed-inventory-db mariadb -u${REMOTE_DB_USER} -p${REMOTE_DB_PASSWORD} ${REMOTE_DB_NAME} <<'EOF'
 SET FOREIGN_KEY_CHECKS=0;
+DROP TABLE IF EXISTS pallet_location_events;
+DROP TABLE IF EXISTS pallet_items;
+DROP TABLE IF EXISTS pallets;
+DROP TABLE IF EXISTS stock_ledger;
+DROP TABLE IF EXISTS outbound_picks;
+DROP TABLE IF EXISTS movement_lot_links;
+DROP TABLE IF EXISTS receipt_lots;
 DROP TABLE IF EXISTS stock_movements;
 DROP TABLE IF EXISTS inventory_items;
+DROP TABLE IF EXISTS container_visits;
 DROP TABLE IF EXISTS sku_master;
 DROP TABLE IF EXISTS storage_locations;
 SET FOREIGN_KEY_CHECKS=1;
@@ -201,7 +209,7 @@ ssh "${ssh_args[@]}" "${SERVER_USER}@${SERVER_HOST}" \
 echo
 echo "==> Verifying remote row counts"
 ssh "${ssh_args[@]}" "${SERVER_USER}@${SERVER_HOST}" \
-  "docker exec -i speed-inventory-db mariadb -u${REMOTE_DB_USER} -p${REMOTE_DB_PASSWORD} -e \"USE ${REMOTE_DB_NAME}; SELECT COUNT(*) AS inventory_rows FROM inventory_items; SELECT COUNT(*) AS movement_rows FROM stock_movements;\""
+  "docker exec -i speed-inventory-db mariadb -u${REMOTE_DB_USER} -p${REMOTE_DB_PASSWORD} -e \"USE ${REMOTE_DB_NAME}; SELECT COUNT(*) AS inventory_rows FROM inventory_items; SELECT COUNT(*) AS movement_rows FROM stock_movements; SELECT COUNT(*) AS pallet_rows FROM pallets; SELECT COUNT(*) AS pallet_item_rows FROM pallet_items; SELECT COUNT(*) AS ledger_rows FROM stock_ledger;\""
 
 echo
 echo "==> Migration complete"

@@ -1,0 +1,339 @@
+erDiagram
+    users {
+        bigint id
+        varchar email
+        varchar full_name
+        varchar role
+        boolean is_active
+        varchar password_hash
+    }
+    user_sessions {
+        bigint id
+        bigint user_id
+        char token_hash
+        timestamp expires_at
+    }
+    audit_logs {
+        bigint id
+        bigint actor_user_id
+        varchar action
+        varchar entity_type
+        bigint entity_id
+        varchar summary
+    }
+    ui_preferences {
+        bigint id
+        varchar scope_type
+        bigint scope_id
+        varchar preference_key
+        json value_json
+    }
+
+    storage_locations {
+        bigint id
+        varchar name
+        int capacity
+        int section_count
+        json layout_json
+    }
+    customers {
+        bigint id
+        varchar name
+        varchar contact_name
+        varchar email
+    }
+    sku_master {
+        bigint id
+        varchar sku
+        varchar item_number
+        varchar name
+        varchar category
+        varchar unit
+        int default_units_per_pallet
+    }
+
+    inventory_items {
+        bigint id
+        bigint sku_master_id
+        bigint customer_id
+        bigint location_id
+        varchar sku
+        varchar storage_section
+        varchar container_no
+        int quantity
+        int allocated_qty
+        int damaged_qty
+        int hold_qty
+    }
+
+    inbound_documents {
+        bigint id
+        bigint customer_id
+        bigint location_id
+        varchar container_no
+        varchar handling_mode
+        date delivery_date
+        varchar status
+        varchar tracking_status
+    }
+    container_visits {
+        bigint id
+        bigint inbound_document_id
+        bigint customer_id
+        bigint location_id
+        varchar container_no
+        varchar handling_mode
+        varchar status
+    }
+    inbound_document_lines {
+        bigint id
+        bigint document_id
+        bigint item_id
+        varchar sku_snapshot
+        int expected_qty
+        int received_qty
+        int pallets
+        varchar unit_label
+    }
+
+    outbound_documents {
+        bigint id
+        bigint customer_id
+        varchar packing_list_no
+        varchar order_ref
+        date out_date
+        varchar status
+        varchar tracking_status
+    }
+    outbound_document_lines {
+        bigint id
+        bigint document_id
+        bigint item_id
+        bigint location_id
+        varchar sku_snapshot
+        int quantity
+        int pallets
+        decimal net_weight_kgs
+        decimal gross_weight_kgs
+    }
+    outbound_pick_allocations {
+        bigint id
+        bigint line_id
+        bigint location_id
+        varchar container_no_snapshot
+        int allocated_qty
+    }
+    outbound_picks {
+        bigint id
+        bigint outbound_line_id
+        bigint pallet_id
+        bigint pallet_item_id
+        int picked_qty
+    }
+
+    receipt_lots {
+        bigint id
+        bigint parent_receipt_lot_id
+        bigint source_inbound_document_id
+        bigint source_inbound_line_id
+        bigint container_visit_id
+        bigint sku_master_id
+        int original_qty
+        int remaining_qty
+        decimal original_pallets
+        decimal remaining_pallets
+    }
+    pallets {
+        bigint id
+        bigint parent_pallet_id
+        varchar pallet_code
+        bigint container_visit_id
+        bigint source_receipt_lot_id
+        bigint source_inbound_document_id
+        bigint source_inbound_line_id
+        bigint customer_id
+        bigint sku_master_id
+        bigint current_location_id
+        varchar current_storage_section
+        varchar current_container_no
+        varchar status
+    }
+    pallet_items {
+        bigint id
+        bigint pallet_id
+        bigint sku_master_id
+        int quantity
+        int allocated_qty
+        int damaged_qty
+        int hold_qty
+    }
+    stock_ledger {
+        bigint id
+        varchar event_type
+        bigint pallet_id
+        bigint pallet_item_id
+        bigint sku_master_id
+        bigint customer_id
+        bigint location_id
+        int quantity_change
+        varchar source_document_type
+        bigint source_document_id
+        bigint source_line_id
+        varchar container_no_snapshot
+        date delivery_date
+        varchar packing_list_no
+        varchar order_ref
+        int expected_qty
+        int received_qty
+        int pallets
+        decimal net_weight_kgs
+        decimal gross_weight_kgs
+        varchar reason
+        varchar reference_code
+    }
+    movement_lot_links {
+        bigint id
+        bigint stock_ledger_id
+        bigint receipt_lot_id
+        int quantity
+        decimal pallets
+        varchar link_type
+    }
+    pallet_location_events {
+        bigint id
+        bigint pallet_id
+        bigint container_visit_id
+        bigint customer_id
+        bigint location_id
+        varchar event_type
+        int quantity_delta
+        decimal pallet_delta
+    }
+
+    inventory_adjustments {
+        bigint id
+        varchar adjustment_no
+        varchar reason_code
+        varchar status
+    }
+    inventory_adjustment_lines {
+        bigint id
+        bigint adjustment_id
+        bigint item_id
+        bigint customer_id
+        bigint location_id
+        varchar sku_snapshot
+        int before_qty
+        int adjust_qty
+        int after_qty
+    }
+    inventory_transfers {
+        bigint id
+        varchar transfer_no
+        varchar status
+    }
+    inventory_transfer_lines {
+        bigint id
+        bigint transfer_id
+        bigint source_item_id
+        bigint customer_id
+        bigint from_location_id
+        bigint to_location_id
+        varchar sku_snapshot
+        int quantity
+    }
+    cycle_counts {
+        bigint id
+        varchar count_no
+        varchar status
+    }
+    cycle_count_lines {
+        bigint id
+        bigint cycle_count_id
+        bigint item_id
+        bigint customer_id
+        bigint location_id
+        varchar sku_snapshot
+        int system_qty
+        int counted_qty
+        int variance_qty
+    }
+
+    %% Auth
+    users ||--o{ user_sessions : "has"
+    users ||--o{ audit_logs : "creates"
+
+    %% Master data -> inventory_items (dimension table)
+    sku_master ||--o{ inventory_items : "defines"
+    customers ||--o{ inventory_items : "owns"
+    storage_locations ||--o{ inventory_items : "stores"
+
+    %% Inbound flow
+    customers ||--o{ inbound_documents : "receives"
+    storage_locations ||--o{ inbound_documents : "at"
+    inbound_documents ||--|| container_visits : "generates"
+    customers ||--o{ container_visits : "for"
+    storage_locations ||--o{ container_visits : "at"
+    inbound_documents ||--o{ inbound_document_lines : "has"
+    inventory_items ||--o{ inbound_document_lines : "linked"
+
+    %% Outbound flow
+    customers ||--o{ outbound_documents : "ships"
+    outbound_documents ||--o{ outbound_document_lines : "has"
+    inventory_items ||--o{ outbound_document_lines : "item"
+    storage_locations ||--o{ outbound_document_lines : "from"
+    outbound_document_lines ||--o{ outbound_pick_allocations : "planned"
+    storage_locations ||--o{ outbound_pick_allocations : "at"
+    outbound_document_lines ||--o{ outbound_picks : "fulfilled by"
+
+    %% Pallet-centric core
+    receipt_lots ||--o{ receipt_lots : "parent of"
+    sku_master ||--o{ receipt_lots : "for"
+    inbound_documents ||--o{ receipt_lots : "sourced by"
+    inbound_document_lines ||--o{ receipt_lots : "sourced by"
+    container_visits ||--o{ receipt_lots : "from"
+
+    pallets ||--o{ pallets : "parent of"
+    sku_master ||--o{ pallets : "type"
+    customers ||--o{ pallets : "owns"
+    storage_locations ||--o{ pallets : "current location"
+    container_visits ||--o{ pallets : "arrived with"
+    receipt_lots ||--o{ pallets : "sourced from"
+    inbound_documents ||--o{ pallets : "sourced by"
+    inbound_document_lines ||--o{ pallets : "sourced by"
+
+    pallets ||--|{ pallet_items : "contains"
+    sku_master ||--o{ pallet_items : "type"
+
+    pallets ||--o{ stock_ledger : "events"
+    pallet_items ||--o{ stock_ledger : "entry"
+    sku_master ||--o{ stock_ledger : "for"
+    customers ||--o{ stock_ledger : "for"
+    storage_locations ||--o{ stock_ledger : "at"
+
+    stock_ledger ||--o{ movement_lot_links : "links"
+    receipt_lots ||--o{ movement_lot_links : "consumed by"
+
+    pallets ||--o{ pallet_location_events : "tracked"
+    container_visits ||--o{ pallet_location_events : "for"
+    customers ||--o{ pallet_location_events : "for"
+    storage_locations ||--o{ pallet_location_events : "at"
+
+    pallets ||--o{ outbound_picks : "from"
+    pallet_items ||--o{ outbound_picks : "picked"
+
+    %% Operations (reference inventory_items as dimension)
+    inventory_adjustments ||--o{ inventory_adjustment_lines : "has"
+    inventory_items ||--o{ inventory_adjustment_lines : "adjusted"
+    customers ||--o{ inventory_adjustment_lines : "for"
+    storage_locations ||--o{ inventory_adjustment_lines : "at"
+
+    inventory_transfers ||--o{ inventory_transfer_lines : "has"
+    inventory_items ||--o{ inventory_transfer_lines : "source"
+    customers ||--o{ inventory_transfer_lines : "for"
+    storage_locations ||--o{ inventory_transfer_lines : "from/to"
+
+    cycle_counts ||--o{ cycle_count_lines : "has"
+    inventory_items ||--o{ cycle_count_lines : "counted"
+    customers ||--o{ cycle_count_lines : "for"
+    storage_locations ||--o{ cycle_count_lines : "at"

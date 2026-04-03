@@ -125,45 +125,21 @@ func (s *Store) UpdateSKUMaster(ctx context.Context, skuMasterID int64, input Cr
 		return SKUMaster{}, ErrNotFound
 	}
 
-	if _, err := s.db.ExecContext(ctx, `
-		UPDATE inventory_items
-		SET
-			item_number = ?,
-			sku = ?,
-			name = ?,
-			category = ?,
-			description = ?,
-			unit = ?,
-			reorder_level = ?,
-			updated_at = CURRENT_TIMESTAMP
-		WHERE sku_master_id = ?
-	`,
-		nullableString(input.ItemNumber),
-		input.SKU,
-		input.Name,
-		input.Category,
-		input.Description,
-		input.Unit,
-		input.ReorderLevel,
-		skuMasterID,
-	); err != nil {
-		return SKUMaster{}, mapDBError(fmt.Errorf("sync sku master to inventory items: %w", err))
-	}
-
 	return s.getSKUMaster(ctx, skuMasterID)
 }
 
 func (s *Store) DeleteSKUMaster(ctx context.Context, skuMasterID int64) error {
 	var linkedInventoryCount int
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT COUNT(*)
-		FROM inventory_items
-		WHERE sku_master_id = ?
-	`, skuMasterID).Scan(&linkedInventoryCount); err != nil {
-		return fmt.Errorf("count linked inventory rows for sku master delete: %w", err)
+		SELECT
+			(SELECT COUNT(*) FROM inventory_items WHERE sku_master_id = ?)
+			+
+			(SELECT COUNT(*) FROM pallet_items WHERE sku_master_id = ?)
+	`, skuMasterID, skuMasterID).Scan(&linkedInventoryCount); err != nil {
+		return fmt.Errorf("count linked projection rows for sku master delete: %w", err)
 	}
 	if linkedInventoryCount > 0 {
-		return fmt.Errorf("%w: sku master is linked to stock by location rows", ErrInvalidInput)
+		return fmt.Errorf("%w: sku master is linked to pallet or bucket rows", ErrInvalidInput)
 	}
 
 	result, err := s.db.ExecContext(ctx, `DELETE FROM sku_master WHERE id = ?`, skuMasterID)

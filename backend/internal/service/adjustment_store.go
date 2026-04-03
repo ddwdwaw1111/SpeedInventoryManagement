@@ -26,8 +26,6 @@ type InventoryAdjustment struct {
 type InventoryAdjustmentLine struct {
 	ID             int64     `json:"id"`
 	AdjustmentID   int64     `json:"adjustmentId"`
-	MovementID     int64     `json:"movementId"`
-	ItemID         int64     `json:"itemId"`
 	CustomerID     int64     `json:"customerId"`
 	CustomerName   string    `json:"customerName"`
 	LocationID     int64     `json:"locationId"`
@@ -43,16 +41,20 @@ type InventoryAdjustmentLine struct {
 }
 
 type CreateInventoryAdjustmentInput struct {
-	AdjustmentNo string                             `json:"adjustmentNo"`
-	ReasonCode   string                             `json:"reasonCode"`
-	Notes        string                             `json:"notes"`
+	AdjustmentNo string                               `json:"adjustmentNo"`
+	ReasonCode   string                               `json:"reasonCode"`
+	Notes        string                               `json:"notes"`
 	Lines        []CreateInventoryAdjustmentLineInput `json:"lines"`
 }
 
 type CreateInventoryAdjustmentLineInput struct {
-	ItemID    int64  `json:"itemId"`
-	AdjustQty int    `json:"adjustQty"`
-	LineNote  string `json:"lineNote"`
+	CustomerID     int64  `json:"customerId"`
+	LocationID     int64  `json:"locationId"`
+	StorageSection string `json:"storageSection"`
+	ContainerNo    string `json:"containerNo"`
+	SKUMasterID    int64  `json:"skuMasterId"`
+	AdjustQty      int    `json:"adjustQty"`
+	LineNote       string `json:"lineNote"`
 }
 
 type inventoryAdjustmentRow struct {
@@ -68,8 +70,6 @@ type inventoryAdjustmentRow struct {
 type inventoryAdjustmentLineRow struct {
 	ID                   int64     `db:"id"`
 	AdjustmentID         int64     `db:"adjustment_id"`
-	MovementID           int64     `db:"movement_id"`
-	ItemID               int64     `db:"item_id"`
 	CustomerID           int64     `db:"customer_id"`
 	CustomerNameSnapshot string    `db:"customer_name_snapshot"`
 	LocationID           int64     `db:"location_id"`
@@ -86,6 +86,7 @@ type inventoryAdjustmentLineRow struct {
 
 type lockedAdjustmentItem struct {
 	ItemID         int64
+	SKUMasterID    int64
 	CustomerID     int64
 	CustomerName   string
 	LocationID     int64
@@ -145,8 +146,6 @@ func (s *Store) ListInventoryAdjustments(ctx context.Context, limit int) ([]Inve
 		SELECT
 			id,
 			adjustment_id,
-			COALESCE(movement_id, 0) AS movement_id,
-			item_id,
 			customer_id,
 			customer_name_snapshot,
 			location_id,
@@ -180,8 +179,6 @@ func (s *Store) ListInventoryAdjustments(ctx context.Context, limit int) ([]Inve
 		adjustment.Lines = append(adjustment.Lines, InventoryAdjustmentLine{
 			ID:             lineRow.ID,
 			AdjustmentID:   lineRow.AdjustmentID,
-			MovementID:     lineRow.MovementID,
-			ItemID:         lineRow.ItemID,
 			CustomerID:     lineRow.CustomerID,
 			CustomerName:   lineRow.CustomerNameSnapshot,
 			LocationID:     lineRow.LocationID,
@@ -239,7 +236,13 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 	}
 
 	for index, line := range input.Lines {
-		lockedItem, err := s.loadLockedAdjustmentItem(ctx, tx, line.ItemID)
+		lockedItem, err := s.loadLockedAdjustmentItem(ctx, tx, palletSourceBucket{
+			SKUMasterID:    line.SKUMasterID,
+			CustomerID:     line.CustomerID,
+			LocationID:     line.LocationID,
+			StorageSection: line.StorageSection,
+			ContainerNo:    line.ContainerNo,
+		})
 		if err != nil {
 			return InventoryAdjustment{}, err
 		}
@@ -252,7 +255,6 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 		lineResult, err := tx.ExecContext(ctx, `
 			INSERT INTO inventory_adjustment_lines (
 				adjustment_id,
-				item_id,
 				customer_id,
 				customer_name_snapshot,
 				location_id,
@@ -265,10 +267,9 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 				after_qty,
 				line_note,
 				sort_order
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			adjustmentID,
-			lockedItem.ItemID,
 			lockedItem.CustomerID,
 			lockedItem.CustomerName,
 			lockedItem.LocationID,
@@ -292,58 +293,34 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 		}
 
 		reason := firstNonEmpty(line.LineNote, fmt.Sprintf("Adjustment posted: %s", input.ReasonCode))
-		movementResult, err := tx.ExecContext(ctx, `
-			INSERT INTO stock_movements (
-				item_id,
-				adjustment_id,
-				adjustment_line_id,
-				customer_id,
-				location_id,
-				storage_section,
-				movement_type,
-				quantity_change,
-				description_snapshot,
-				unit_label,
-				height_in,
-				document_note,
-				reason
-			) VALUES (?, ?, ?, ?, ?, ?, 'ADJUST', ?, ?, ?, 0, ?, ?)
-		`,
-			lockedItem.ItemID,
-			adjustmentID,
-			lineID,
-			lockedItem.CustomerID,
-			lockedItem.LocationID,
-			fallbackSection(lockedItem.StorageSection),
-			line.AdjustQty,
-			nullableString(lockedItem.Description),
-			nullableString(strings.ToUpper(lockedItem.Unit)),
-			nullableString(input.Notes),
-			nullableString(reason),
-		)
+
+		palletAdjustments, err := s.applyPalletDeltaForItemTx(ctx, tx, lockedItem.ItemID, lockedItem.SKUMasterID, line.AdjustQty)
 		if err != nil {
-			return InventoryAdjustment{}, mapDBError(fmt.Errorf("create adjustment movement: %w", err))
+			return InventoryAdjustment{}, err
 		}
-
-		movementID, err := movementResult.LastInsertId()
-		if err != nil {
-			return InventoryAdjustment{}, fmt.Errorf("resolve adjustment movement id: %w", err)
+		deltaSign := 1
+		if line.AdjustQty < 0 {
+			deltaSign = -1
 		}
-
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE inventory_adjustment_lines
-			SET movement_id = ?
-			WHERE id = ?
-		`, movementID, lineID); err != nil {
-			return InventoryAdjustment{}, mapDBError(fmt.Errorf("link adjustment line to movement: %w", err))
-		}
-
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE inventory_items
-			SET quantity = ?, updated_at = CURRENT_TIMESTAMP
-			WHERE id = ?
-		`, afterQty, lockedItem.ItemID); err != nil {
-			return InventoryAdjustment{}, mapDBError(fmt.Errorf("update inventory after adjustment: %w", err))
+		for _, palletAdjustment := range palletAdjustments {
+			if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
+				EventType:           StockLedgerEventAdjust,
+				PalletID:            palletAdjustment.PalletID,
+				PalletItemID:        palletAdjustment.PalletItemID,
+				SKUMasterID:         palletAdjustment.SKUMasterID,
+				CustomerID:          palletAdjustment.CustomerID,
+				LocationID:          palletAdjustment.LocationID,
+				StorageSection:      palletAdjustment.StorageSection,
+				QuantityChange:      deltaSign * palletAdjustment.Quantity,
+				SourceDocumentType:  StockLedgerSourceAdjustment,
+				SourceDocumentID:    adjustmentID,
+				SourceLineID:        lineID,
+				ContainerNo:         palletAdjustment.ContainerNo,
+				DescriptionSnapshot: lockedItem.Description,
+				Reason:              reason,
+			}); err != nil {
+				return InventoryAdjustment{}, err
+			}
 		}
 	}
 
@@ -416,8 +393,6 @@ func (s *Store) listInventoryAdjustmentsByIDs(ctx context.Context, adjustmentIDs
 		SELECT
 			id,
 			adjustment_id,
-			COALESCE(movement_id, 0) AS movement_id,
-			item_id,
 			customer_id,
 			customer_name_snapshot,
 			location_id,
@@ -451,8 +426,6 @@ func (s *Store) listInventoryAdjustmentsByIDs(ctx context.Context, adjustmentIDs
 		adjustment.Lines = append(adjustment.Lines, InventoryAdjustmentLine{
 			ID:             lineRow.ID,
 			AdjustmentID:   lineRow.AdjustmentID,
-			MovementID:     lineRow.MovementID,
-			ItemID:         lineRow.ItemID,
 			CustomerID:     lineRow.CustomerID,
 			CustomerName:   lineRow.CustomerNameSnapshot,
 			LocationID:     lineRow.LocationID,
@@ -473,43 +446,25 @@ func (s *Store) listInventoryAdjustmentsByIDs(ctx context.Context, adjustmentIDs
 	return adjustments, nil
 }
 
-func (s *Store) loadLockedAdjustmentItem(ctx context.Context, tx *sql.Tx, itemID int64) (lockedAdjustmentItem, error) {
-	var item lockedAdjustmentItem
-	if err := tx.QueryRowContext(ctx, `
-		SELECT
-			i.id,
-			i.customer_id,
-			c.name,
-			i.location_id,
-			l.name,
-			i.storage_section,
-			i.sku,
-			COALESCE(i.description, i.name, ''),
-			COALESCE(i.unit, 'pcs'),
-			i.quantity
-		FROM inventory_items i
-		JOIN customers c ON c.id = i.customer_id
-		JOIN storage_locations l ON l.id = i.location_id
-		WHERE i.id = ?
-		FOR UPDATE
-	`, itemID).Scan(
-		&item.ItemID,
-		&item.CustomerID,
-		&item.CustomerName,
-		&item.LocationID,
-		&item.LocationName,
-		&item.StorageSection,
-		&item.SKU,
-		&item.Description,
-		&item.Unit,
-		&item.Quantity,
-	); err != nil {
-		if err == sql.ErrNoRows {
-			return lockedAdjustmentItem{}, ErrNotFound
-		}
-		return lockedAdjustmentItem{}, fmt.Errorf("load adjustment inventory item: %w", err)
+func (s *Store) loadLockedAdjustmentItem(ctx context.Context, tx *sql.Tx, bucket palletSourceBucket) (lockedAdjustmentItem, error) {
+	projection, err := s.loadPalletBackedInventoryProjectionForBucketTx(ctx, tx, bucket)
+	if err != nil {
+		return lockedAdjustmentItem{}, err
 	}
-	return item, nil
+
+	return lockedAdjustmentItem{
+		ItemID:         projection.ItemID,
+		SKUMasterID:    projection.SKUMasterID,
+		CustomerID:     projection.CustomerID,
+		CustomerName:   projection.CustomerName,
+		LocationID:     projection.LocationID,
+		LocationName:   projection.LocationName,
+		StorageSection: projection.StorageSection,
+		SKU:            projection.SKU,
+		Description:    projection.Description,
+		Unit:           projection.Unit,
+		Quantity:       projection.Quantity,
+	}, nil
 }
 
 func sanitizeInventoryAdjustmentInput(input CreateInventoryAdjustmentInput) CreateInventoryAdjustmentInput {
@@ -519,8 +474,10 @@ func sanitizeInventoryAdjustmentInput(input CreateInventoryAdjustmentInput) Crea
 
 	lines := make([]CreateInventoryAdjustmentLineInput, 0, len(input.Lines))
 	for _, line := range input.Lines {
+		line.StorageSection = normalizeStorageSection(line.StorageSection)
+		line.ContainerNo = strings.TrimSpace(strings.ToUpper(line.ContainerNo))
 		line.LineNote = strings.TrimSpace(line.LineNote)
-		if line.ItemID <= 0 || line.AdjustQty == 0 {
+		if line.CustomerID <= 0 || line.LocationID <= 0 || line.SKUMasterID <= 0 || line.AdjustQty == 0 {
 			continue
 		}
 		lines = append(lines, line)
@@ -539,8 +496,12 @@ func validateInventoryAdjustmentInput(input CreateInventoryAdjustmentInput) erro
 
 	for _, line := range input.Lines {
 		switch {
-		case line.ItemID <= 0:
-			return fmt.Errorf("%w: stock row is required", ErrInvalidInput)
+		case line.CustomerID <= 0:
+			return fmt.Errorf("%w: customer is required", ErrInvalidInput)
+		case line.LocationID <= 0:
+			return fmt.Errorf("%w: storage is required", ErrInvalidInput)
+		case line.SKUMasterID <= 0:
+			return fmt.Errorf("%w: sku is required", ErrInvalidInput)
 		case line.AdjustQty == 0:
 			return fmt.Errorf("%w: adjustment quantity cannot be zero", ErrInvalidInput)
 		}

@@ -24,6 +24,7 @@ import { Suspense, lazy, type ReactNode, useEffect, useMemo, useState } from "re
 import { AppHeaderUser, AuthPage } from "./components/AuthPage";
 import { ApiError, api } from "./lib/api";
 import { useI18n } from "./lib/i18n";
+import { setPendingPalletTraceLaunchContext } from "./lib/palletTraceLaunchContext";
 import {
   getDailyOperationsDateFromPath,
   getInboundDetailIdFromPath,
@@ -89,9 +90,9 @@ const MasterInventoryPage = lazy(async () => {
   const module = await import("./components/MasterInventoryPage");
   return { default: module.MasterInventoryPage };
 });
-const ReceiptLotTracePage = lazy(async () => {
-  const module = await import("./components/ReceiptLotTracePage");
-  return { default: module.ReceiptLotTracePage };
+const PalletTracePage = lazy(async () => {
+  const module = await import("./components/PalletTracePage");
+  return { default: module.PalletTracePage };
 });
 const ReportsPage = lazy(async () => {
   const module = await import("./components/ReportsPage");
@@ -209,6 +210,16 @@ export default function App() {
 
   function handleNavigateToInboundDetail(documentId: number) {
     navigateToInboundDetail(setActivePage, documentId);
+    setCurrentPathname(window.location.pathname);
+  }
+
+  function handleNavigateToPalletTrace(sourceInboundDocumentId?: number) {
+    if (sourceInboundDocumentId && sourceInboundDocumentId > 0) {
+      setPendingPalletTraceLaunchContext({ sourceInboundDocumentId });
+    } else {
+      setPendingPalletTraceLaunchContext({});
+    }
+    navigateToPage("pallet-trace", setActivePage);
     setCurrentPathname(window.location.pathname);
   }
 
@@ -350,18 +361,18 @@ export default function App() {
   }
 
   const canViewAuditLogs = currentUser?.role === "admin";
-  const canViewReceiptLots = currentUser?.role === "admin";
+  const canViewPallets = Boolean(currentUser);
   const canManageUsers = currentUser?.role === "admin";
 
   useEffect(() => {
     if (
       (activePage === "audit-logs" && !canViewAuditLogs) ||
-      (activePage === "receipt-lots" && !canViewReceiptLots) ||
+      (activePage === "pallet-trace" && !canViewPallets) ||
       (activePage === "user-management" && !canManageUsers)
     ) {
       handleNavigateToPage("dashboard");
     }
-  }, [activePage, canManageUsers, canViewAuditLogs, canViewReceiptLots]);
+  }, [activePage, canManageUsers, canViewAuditLogs, canViewPallets]);
 
   const pageItems: Array<{ key: PageKey; label: string; description: string; icon: ReactNode }> = [
     { key: "dashboard", label: t("navDashboard"), description: t("dashboardDesc"), icon: <HomeOutlined fontSize="small" /> },
@@ -380,7 +391,7 @@ export default function App() {
     { key: "all-activity", label: t("allActivity"), description: t("allActivityDesc"), icon: <HistoryOutlined fontSize="small" /> },
     { key: "customers", label: t("customers"), description: t("customersDesc"), icon: <GroupsOutlined fontSize="small" /> },
     ...(canViewAuditLogs ? [{ key: "audit-logs" as PageKey, label: t("auditLogs"), description: t("auditLogsDesc"), icon: <BadgeOutlined fontSize="small" /> }] : []),
-    ...(canViewReceiptLots ? [{ key: "receipt-lots" as PageKey, label: t("receiptLotTrace"), description: t("receiptLotTraceDesc"), icon: <HistoryOutlined fontSize="small" /> }] : []),
+    ...(canViewPallets ? [{ key: "pallet-trace" as PageKey, label: t("palletTrace"), description: t("palletTraceDesc"), icon: <WarehouseOutlined fontSize="small" /> }] : []),
     ...(canManageUsers ? [{ key: "user-management" as PageKey, label: t("userManagement"), description: t("userManagementDesc"), icon: <ManageAccountsOutlined fontSize="small" /> }] : []),
     { key: "sku-master", label: t("skuMaster"), description: t("skuMasterDesc"), icon: <CategoryOutlined fontSize="small" /> },
     { key: "stock-by-location", label: t("stockByLocation"), description: t("stockByLocationDesc"), icon: <WarehouseOutlined fontSize="small" /> },
@@ -393,10 +404,10 @@ export default function App() {
     .map((pageKey) => pageItemMap.get(pageKey))
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
   const navSections = [
-    { key: "inventory", label: navLabels.inventory, items: ["inventory-summary", "warehouse-map", "container-contents", "all-activity"] as PageKey[] },
+    { key: "inventory", label: navLabels.inventory, items: ["inventory-summary", "warehouse-map", "container-contents", "pallet-trace", "all-activity"] as PageKey[] },
     { key: "master-data", label: navLabels.masterData, items: ["customers", "sku-master", "storage-management"] as PageKey[] },
     { key: "reports", label: navLabels.reports, items: ["reports", "export-center"] as PageKey[] },
-    { key: "administration", label: navLabels.administration, items: ["audit-logs", "receipt-lots", "user-management", "settings"] as PageKey[] }
+    { key: "administration", label: navLabels.administration, items: ["audit-logs", "user-management", "settings"] as PageKey[] }
   ].map((section) => ({
     ...section,
     items: section.items
@@ -427,6 +438,7 @@ export default function App() {
     "transfers": "inventory",
     "cycle-counts": "inventory",
     "all-activity": "inventory",
+    "pallet-trace": "inventory",
     customers: "master-data",
     "sku-master": "master-data",
     "storage-management": "master-data",
@@ -434,7 +446,6 @@ export default function App() {
     reports: "reports",
     "export-center": "reports",
     "audit-logs": "administration",
-    "receipt-lots": "administration",
     "user-management": "administration",
     settings: "administration"
   };
@@ -592,7 +603,7 @@ export default function App() {
             </div>
           ) : null}
           <div key={activePage} className="workspace-shell__page">
-            {activePage === "inbound-management" ? renderWithSuspense(<ActivityManagementPage mode="IN" items={items} skuMasters={skuMasters} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onOpenInboundDetail={handleNavigateToInboundDetail} />) : null}
+            {activePage === "inbound-management" ? renderWithSuspense(<ActivityManagementPage mode="IN" items={items} skuMasters={skuMasters} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onOpenInboundDetail={handleNavigateToInboundDetail} onOpenPalletTrace={handleNavigateToPalletTrace} />) : null}
             {activePage === "inbound-detail" ? (
               renderWithSuspense(<InboundDetailPage
                 document={selectedInboundDetailDocument}
@@ -601,7 +612,7 @@ export default function App() {
                 onNavigate={handleNavigateToPage}
               />)
             ) : null}
-            {activePage === "outbound-management" ? renderWithSuspense(<ActivityManagementPage mode="OUT" items={items} skuMasters={skuMasters} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} />) : null}
+            {activePage === "outbound-management" ? renderWithSuspense(<ActivityManagementPage mode="OUT" items={items} skuMasters={skuMasters} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onOpenPalletTrace={handleNavigateToPalletTrace} />) : null}
             {activePage === "adjustments" ? renderWithSuspense(<AdjustmentManagementPage adjustments={adjustments} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "transfers" ? renderWithSuspense(<TransferManagementPage transfers={transfers} items={items} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "cycle-counts" ? renderWithSuspense(<CycleCountManagementPage cycleCounts={cycleCounts} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
@@ -615,7 +626,7 @@ export default function App() {
             {activePage === "all-activity" ? renderWithSuspense(<AllActivityPage movements={movements} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "customers" ? renderWithSuspense(<CustomerManagementPage customers={customers} items={items} inboundDocuments={activeInboundDocuments} outboundDocuments={activeOutboundDocuments} movements={movements} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "audit-logs" && canViewAuditLogs ? renderWithSuspense(<AuditLogPage auditLogs={auditLogs} currentUserRole={currentUser.role} isLoading={isLoading} />) : null}
-            {activePage === "receipt-lots" && canViewReceiptLots ? renderWithSuspense(<ReceiptLotTracePage />) : null}
+            {activePage === "pallet-trace" && canViewPallets ? renderWithSuspense(<PalletTracePage />) : null}
             {activePage === "user-management" && canManageUsers ? renderWithSuspense(<UserManagementPage users={users} currentUser={currentUser} isLoading={isLoading} onRefresh={() => loadAppData(false)} />) : null}
             {activePage === "sku-master" ? renderWithSuspense(<SKUMasterPage skuMasters={skuMasters} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} />) : null}
             {activePage === "stock-by-location" ? renderWithSuspense(<MasterInventoryPage items={items} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
@@ -703,6 +714,7 @@ export default function App() {
               isLoading={isLoading}
               onRefresh={() => loadAppData(false)}
               onOpenInboundDetail={handleNavigateToInboundDetail}
+              onOpenPalletTrace={handleNavigateToPalletTrace}
               embeddedComposer={{
                 initialDate: embeddedComposer.date,
                 onClose: () => setEmbeddedComposer(null)

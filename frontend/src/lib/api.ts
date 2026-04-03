@@ -18,14 +18,13 @@ import type {
   InboundDocumentPayload,
   InboundPackingListImportPreview,
   Item,
-  ItemPayload,
   LoginPayload,
   Location,
   LocationPayload,
   Movement,
   OutboundDocument,
   OutboundDocumentPayload,
-  ReceiptLotTrace,
+  PalletTrace,
   SKUMaster,
   SKUMasterPayload,
   UIPreference,
@@ -267,36 +266,19 @@ export const api = {
     return request<Item[]>(`/items${suffix}`);
   },
 
-  createItem(payload: ItemPayload) {
-    return request<Item>("/items", {
-      method: "POST",
-      body: JSON.stringify(payload)
-    });
-  },
-
-  updateItem(itemId: number, payload: ItemPayload) {
-    return request<Item>(`/items/${itemId}`, {
-      method: "PUT",
-      body: JSON.stringify(payload)
-    });
-  },
-
-  deleteItem(itemId: number) {
-    return request<void>(`/items/${itemId}`, {
-      method: "DELETE"
-    });
-  },
-
   getMovements(limit = 12) {
     return request<Movement[]>(`/movements?limit=${limit}`);
   },
 
-  getReceiptLots(limit = 500, search = "") {
+  getPallets(limit = 500, search = "", sourceInboundDocumentId?: number) {
     const params = new URLSearchParams({ limit: String(limit) });
     if (search.trim()) {
       params.set("search", search.trim());
     }
-    return request<ReceiptLotTrace[]>(`/receipt-lots?${params.toString()}`);
+    if (sourceInboundDocumentId && sourceInboundDocumentId > 0) {
+      params.set("sourceInboundDocumentId", String(sourceInboundDocumentId));
+    }
+    return request<PalletTrace[]>(`/pallets?${params.toString()}`);
   },
 
   getOutboundDocuments(limit = 100, archiveScope: DocumentArchiveScope = "active") {

@@ -25,6 +25,9 @@ const (
 	OutboundTrackingPicking   = "PICKING"
 	OutboundTrackingPacked    = "PACKED"
 	OutboundTrackingShipped   = "SHIPPED"
+
+	InboundHandlingModePalletized   = "PALLETIZED"
+	InboundHandlingModeSealedTransit = "SEALED_TRANSIT"
 )
 
 func normalizeDocumentStatus(raw string) string {
@@ -133,6 +136,25 @@ func coalesceInboundTrackingStatus(raw string, documentStatus string) string {
 
 func coalesceOutboundTrackingStatus(raw string, documentStatus string) string {
 	return normalizeOutboundTrackingStatus(raw, documentStatus)
+}
+
+func normalizeInboundHandlingMode(raw string) string {
+	switch strings.TrimSpace(strings.ToUpper(raw)) {
+	case InboundHandlingModePalletized:
+		return InboundHandlingModePalletized
+	case InboundHandlingModeSealedTransit:
+		return InboundHandlingModeSealedTransit
+	default:
+		return strings.TrimSpace(strings.ToUpper(raw))
+	}
+}
+
+func coalesceInboundHandlingMode(raw string) string {
+	normalized := normalizeInboundHandlingMode(raw)
+	if normalized == "" {
+		return InboundHandlingModePalletized
+	}
+	return normalized
 }
 
 func validateInboundTrackingTransition(current string, target string) error {

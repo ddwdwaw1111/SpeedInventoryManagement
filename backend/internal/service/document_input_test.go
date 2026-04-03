@@ -88,8 +88,8 @@ func TestSanitizeOutboundDocumentInput(t *testing.T) {
 		Status:        " draft ",
 		DocumentNote:  "  urgent shipment ",
 		Lines: []CreateOutboundDocumentLineInput{
-			{ItemID: 1, Quantity: 3, UnitLabel: " ctn ", CartonSizeMM: " 400*300*200 ", LineNote: "  fragile "},
-			{ItemID: 0, Quantity: 1},
+			{CustomerID: 1, LocationID: 2, SKUMasterID: 3, Quantity: 3, UnitLabel: " ctn ", CartonSizeMM: " 400*300*200 ", LineNote: "  fragile "},
+			{CustomerID: 0, LocationID: 2, SKUMasterID: 3, Quantity: 1},
 		},
 	})
 
@@ -125,7 +125,7 @@ func TestSanitizeOutboundDocumentInput(t *testing.T) {
 func TestValidateOutboundDocumentInput(t *testing.T) {
 	validInput := CreateOutboundDocumentInput{
 		Lines: []CreateOutboundDocumentLineInput{
-			{ItemID: 1, Quantity: 3},
+			{CustomerID: 1, LocationID: 2, SKUMasterID: 3, Quantity: 3},
 		},
 	}
 
@@ -135,10 +135,12 @@ func TestValidateOutboundDocumentInput(t *testing.T) {
 
 	testCases := []CreateOutboundDocumentInput{
 		{},
-		{Status: "UNKNOWN", Lines: []CreateOutboundDocumentLineInput{{ItemID: 1, Quantity: 3}}},
-		{Lines: []CreateOutboundDocumentLineInput{{ItemID: 0, Quantity: 3}}},
-		{Lines: []CreateOutboundDocumentLineInput{{ItemID: 1, Quantity: 0}}},
-		{Lines: []CreateOutboundDocumentLineInput{{ItemID: 1, Quantity: 1, NetWeightKgs: -1}}},
+		{Status: "UNKNOWN", Lines: []CreateOutboundDocumentLineInput{{CustomerID: 1, LocationID: 2, SKUMasterID: 3, Quantity: 3}}},
+		{Lines: []CreateOutboundDocumentLineInput{{CustomerID: 0, LocationID: 2, SKUMasterID: 3, Quantity: 3}}},
+		{Lines: []CreateOutboundDocumentLineInput{{CustomerID: 1, LocationID: 0, SKUMasterID: 3, Quantity: 3}}},
+		{Lines: []CreateOutboundDocumentLineInput{{CustomerID: 1, LocationID: 2, SKUMasterID: 0, Quantity: 3}}},
+		{Lines: []CreateOutboundDocumentLineInput{{CustomerID: 1, LocationID: 2, SKUMasterID: 3, Quantity: 0}}},
+		{Lines: []CreateOutboundDocumentLineInput{{CustomerID: 1, LocationID: 2, SKUMasterID: 3, Quantity: 1, NetWeightKgs: -1}}},
 	}
 
 	for _, tc := range testCases {

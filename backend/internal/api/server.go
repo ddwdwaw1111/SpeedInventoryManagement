@@ -56,11 +56,10 @@ func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName s
 	protected.GET("/adjustments", server.handleListInventoryAdjustments)
 	protected.GET("/transfers", server.handleListInventoryTransfers)
 	protected.GET("/cycle-counts", server.handleListCycleCounts)
+	protected.GET("/pallets", server.handleListPallets)
 
 	operator := protected.Group("")
 	operator.Use(server.requireRoles(service.RoleAdmin, service.RoleOperator))
-	operator.POST("/items", server.handleCreateItem)
-	operator.PUT("/items/:id", server.handleUpdateItem)
 	operator.POST("/outbound-documents", server.handleCreateOutboundDocument)
 	operator.PUT("/outbound-documents/:id", server.handleUpdateOutboundDocument)
 	operator.POST("/outbound-documents/:id/confirm", server.handleConfirmOutboundDocument)
@@ -96,8 +95,6 @@ func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName s
 	admin.POST("/sku-master", server.handleCreateSKUMaster)
 	admin.PUT("/sku-master/:id", server.handleUpdateSKUMaster)
 	admin.DELETE("/sku-master/:id", server.handleDeleteSKUMaster)
-	admin.DELETE("/items/:id", server.handleDeleteItem)
-	admin.GET("/receipt-lots", server.handleListReceiptLots)
 
 	return router
 }
@@ -385,79 +382,6 @@ func (s *Server) handleListItems(c *gin.Context) {
 	writeJSON(c, http.StatusOK, items)
 }
 
-func (s *Server) handleCreateItem(c *gin.Context) {
-	var input service.CreateItemInput
-	if err := bindJSON(c, &input); err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	item, err := s.store.CreateItem(c.Request.Context(), input)
-	if err != nil {
-		writeDomainError(c, err)
-		return
-	}
-
-	s.writeAuditLog(c, "CREATE", "inventory_item", item.ID, item.SKU, "Created stock by location row", map[string]any{
-		"itemNumber":     item.ItemNumber,
-		"sku":            item.SKU,
-		"customer":       item.CustomerName,
-		"location":       item.LocationName,
-		"storageSection": item.StorageSection,
-		"quantity":       item.Quantity,
-	})
-
-	writeJSON(c, http.StatusCreated, item)
-}
-
-func (s *Server) handleUpdateItem(c *gin.Context) {
-	itemID, err := parseIDParam(c, "id")
-	if err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	var input service.CreateItemInput
-	if err := bindJSON(c, &input); err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	item, err := s.store.UpdateItem(c.Request.Context(), itemID, input)
-	if err != nil {
-		writeDomainError(c, err)
-		return
-	}
-
-	s.writeAuditLog(c, "UPDATE", "inventory_item", item.ID, item.SKU, "Updated stock by location row", map[string]any{
-		"itemNumber":     item.ItemNumber,
-		"sku":            item.SKU,
-		"customer":       item.CustomerName,
-		"location":       item.LocationName,
-		"storageSection": item.StorageSection,
-		"quantity":       item.Quantity,
-	})
-
-	writeJSON(c, http.StatusOK, item)
-}
-
-func (s *Server) handleDeleteItem(c *gin.Context) {
-	itemID, err := parseIDParam(c, "id")
-	if err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	if err := s.store.DeleteItem(c.Request.Context(), itemID); err != nil {
-		writeDomainError(c, err)
-		return
-	}
-
-	s.writeAuditLog(c, "DELETE", "inventory_item", itemID, fmt.Sprintf("inventory_item:%d", itemID), "Deleted stock by location row", nil)
-
-	c.Status(http.StatusNoContent)
-}
-
 func (s *Server) handleListMovements(c *gin.Context) {
 	limit := 12
 	if value := strings.TrimSpace(c.Query("limit")); value != "" {
@@ -478,7 +402,7 @@ func (s *Server) handleListMovements(c *gin.Context) {
 	writeJSON(c, http.StatusOK, movements)
 }
 
-func (s *Server) handleListReceiptLots(c *gin.Context) {
+func (s *Server) handleListPallets(c *gin.Context) {
 	limit := 500
 	if value := strings.TrimSpace(c.Query("limit")); value != "" {
 		parsed, err := strconv.Atoi(value)
@@ -489,94 +413,26 @@ func (s *Server) handleListReceiptLots(c *gin.Context) {
 		limit = parsed
 	}
 
-	receiptLots, err := s.store.ListReceiptLots(c.Request.Context(), limit, c.Query("search"))
+	var sourceInboundDocumentID int64
+	if value := strings.TrimSpace(c.Query("sourceInboundDocumentId")); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, "sourceInboundDocumentId must be a number")
+			return
+		}
+		sourceInboundDocumentID = parsed
+	}
+
+	pallets, err := s.store.ListPallets(c.Request.Context(), limit, service.ListPalletFilters{
+		Search:                  c.Query("search"),
+		SourceInboundDocumentID: sourceInboundDocumentID,
+	})
 	if err != nil {
 		writeServerError(c, err)
 		return
 	}
 
-	writeJSON(c, http.StatusOK, receiptLots)
-}
-
-func (s *Server) handleCreateMovement(c *gin.Context) {
-	var input service.CreateMovementInput
-	if err := bindJSON(c, &input); err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	movement, err := s.store.CreateMovement(c.Request.Context(), input)
-	if err != nil {
-		writeDomainError(c, err)
-		return
-	}
-
-	s.writeAuditLog(c, "CREATE", "movement", movement.ID, movement.SKU, "Created standalone movement", map[string]any{
-		"movementType":   movement.MovementType,
-		"quantityChange": movement.QuantityChange,
-		"location":       movement.LocationName,
-		"storageSection": movement.StorageSection,
-	})
-
-	writeJSON(c, http.StatusCreated, movement)
-}
-
-func (s *Server) handleUpdateMovement(c *gin.Context) {
-	movementID, err := parseIDParam(c, "id")
-	if err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	var input service.CreateMovementInput
-	if err := bindJSON(c, &input); err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	movement, err := s.store.UpdateMovement(c.Request.Context(), movementID, input)
-	if err != nil {
-		writeDomainError(c, err)
-		return
-	}
-
-	s.writeAuditLog(c, "UPDATE", "movement", movement.ID, movement.SKU, "Updated standalone movement", map[string]any{
-		"movementType":   movement.MovementType,
-		"quantityChange": movement.QuantityChange,
-		"location":       movement.LocationName,
-		"storageSection": movement.StorageSection,
-	})
-
-	writeJSON(c, http.StatusOK, movement)
-}
-
-func (s *Server) handleDeleteMovement(c *gin.Context) {
-	movementID, err := parseIDParam(c, "id")
-	if err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	restoreStock := true
-	if value := strings.TrimSpace(c.Query("restoreStock")); value != "" {
-		parsed, parseErr := strconv.ParseBool(value)
-		if parseErr != nil {
-			writeError(c, http.StatusBadRequest, "restoreStock must be true or false")
-			return
-		}
-		restoreStock = parsed
-	}
-
-	if err := s.store.DeleteMovement(c.Request.Context(), movementID, restoreStock); err != nil {
-		writeDomainError(c, err)
-		return
-	}
-
-	s.writeAuditLog(c, "DELETE", "movement", movementID, fmt.Sprintf("movement:%d", movementID), "Deleted standalone movement", map[string]any{
-		"restoreStock": restoreStock,
-	})
-
-	c.Status(http.StatusNoContent)
+	writeJSON(c, http.StatusOK, pallets)
 }
 
 func (s *Server) handleListOutboundDocuments(c *gin.Context) {
@@ -700,11 +556,11 @@ func (s *Server) handleUpdateOutboundDocumentTrackingStatus(c *gin.Context) {
 	}
 
 	s.writeAuditLog(c, "TRACK", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Updated outbound tracking status", map[string]any{
-		"packingListNo":   document.PackingListNo,
-		"status":          document.Status,
-		"trackingStatus":  document.TrackingStatus,
-		"confirmedAt":     document.ConfirmedAt,
-		"cancelledAt":     document.CancelledAt,
+		"packingListNo":  document.PackingListNo,
+		"status":         document.Status,
+		"trackingStatus": document.TrackingStatus,
+		"confirmedAt":    document.ConfirmedAt,
+		"cancelledAt":    document.CancelledAt,
 	})
 
 	writeJSON(c, http.StatusOK, document)
@@ -1016,11 +872,11 @@ func (s *Server) handleUpdateInboundDocumentTrackingStatus(c *gin.Context) {
 	}
 
 	s.writeAuditLog(c, "TRACK", "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), "Updated inbound tracking status", map[string]any{
-		"containerNo":     document.ContainerNo,
-		"status":          document.Status,
-		"trackingStatus":  document.TrackingStatus,
-		"confirmedAt":     document.ConfirmedAt,
-		"cancelledAt":     document.CancelledAt,
+		"containerNo":    document.ContainerNo,
+		"status":         document.Status,
+		"trackingStatus": document.TrackingStatus,
+		"confirmedAt":    document.ConfirmedAt,
+		"cancelledAt":    document.CancelledAt,
 	})
 
 	writeJSON(c, http.StatusOK, document)

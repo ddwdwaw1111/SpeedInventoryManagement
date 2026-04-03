@@ -3,7 +3,7 @@ type InventoryByLocationContext = {
   customerId?: number;
   locationId?: number;
   containerNo?: string;
-  healthFilter?: "ALL" | "IN_STOCK" | "LOW_STOCK" | "MISMATCH";
+  healthFilter?: "ALL" | "IN_STOCK" | "LOW_STOCK";
 };
 
 const STORAGE_KEY = "sim-inventory-by-location-context";
