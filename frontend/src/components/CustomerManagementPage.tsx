@@ -14,6 +14,7 @@ import { api } from "../lib/api";
 import { setPendingAllActivityContext } from "../lib/allActivityContext";
 import { formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
+import { setPendingInventorySummaryContext } from "../lib/inventorySummaryContext";
 import type { PageKey } from "../lib/routes";
 import { normalizeStorageSection, type Customer, type CustomerPayload, type InboundDocument, type Item, type Movement, type OutboundDocument, type UserRole } from "../lib/types";
 import { InlineAlert, useConfirmDialog, useFeedbackToast } from "./Feedback";
@@ -309,6 +310,11 @@ export function CustomerManagementPage({
   }
 
   function openWorkspace(page: PageKey) {
+    if (page === "inventory-summary" && selectedCustomer) {
+      setPendingInventorySummaryContext({
+        customerId: selectedCustomer.id
+      });
+    }
     if (page === "all-activity" && selectedCustomer) {
       setPendingAllActivityContext({
         customerId: selectedCustomer.id
@@ -384,8 +390,8 @@ export function CustomerManagementPage({
                   {t("editCustomer")}
                 </Button>
               ) : null}
-              <Button variant="outlined" startIcon={<WarehouseOutlinedIcon fontSize="small" />} onClick={() => openWorkspace("stock-by-location")}>
-                {t("stockByLocation")}
+              <Button variant="outlined" startIcon={<WarehouseOutlinedIcon fontSize="small" />} onClick={() => openWorkspace("inventory-summary")}>
+                {t("inventorySummary")}
               </Button>
               <Button variant="outlined" startIcon={<MoveToInboxOutlinedIcon fontSize="small" />} onClick={() => openWorkspace("inbound-management")}>
                 {t("inbound")}

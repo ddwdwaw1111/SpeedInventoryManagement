@@ -52,6 +52,7 @@ type CreateInventoryAdjustmentLineInput struct {
 	LocationID     int64  `json:"locationId"`
 	StorageSection string `json:"storageSection"`
 	ContainerNo    string `json:"containerNo"`
+	PalletID       int64  `json:"palletId"`
 	SKUMasterID    int64  `json:"skuMasterId"`
 	AdjustQty      int    `json:"adjustQty"`
 	LineNote       string `json:"lineNote"`
@@ -294,7 +295,7 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 
 		reason := firstNonEmpty(line.LineNote, fmt.Sprintf("Adjustment posted: %s", input.ReasonCode))
 
-		palletAdjustments, err := s.applyPalletDeltaForItemTx(ctx, tx, lockedItem.ItemID, lockedItem.SKUMasterID, line.AdjustQty)
+		palletAdjustments, err := s.applyAdjustmentPalletDeltaTx(ctx, tx, lockedItem.ItemID, line)
 		if err != nil {
 			return InventoryAdjustment{}, err
 		}
@@ -500,13 +501,36 @@ func validateInventoryAdjustmentInput(input CreateInventoryAdjustmentInput) erro
 			return fmt.Errorf("%w: customer is required", ErrInvalidInput)
 		case line.LocationID <= 0:
 			return fmt.Errorf("%w: storage is required", ErrInvalidInput)
+		case line.PalletID < 0:
+			return fmt.Errorf("%w: pallet is invalid", ErrInvalidInput)
 		case line.SKUMasterID <= 0:
 			return fmt.Errorf("%w: sku is required", ErrInvalidInput)
 		case line.AdjustQty == 0:
 			return fmt.Errorf("%w: adjustment quantity cannot be zero", ErrInvalidInput)
+		case line.PalletID > 0 && line.AdjustQty > 0:
+			return fmt.Errorf("%w: pallet-based adjustments only support reducing existing pallet stock", ErrInvalidInput)
 		}
 	}
 	return nil
+}
+
+func (s *Store) applyAdjustmentPalletDeltaTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	itemID int64,
+	line CreateInventoryAdjustmentLineInput,
+) ([]palletContentConsumption, error) {
+	if line.PalletID > 0 {
+		return s.consumeSpecificPalletContentsForBucketTx(ctx, tx, palletSourceBucket{
+			SKUMasterID:    line.SKUMasterID,
+			CustomerID:     line.CustomerID,
+			LocationID:     line.LocationID,
+			StorageSection: line.StorageSection,
+			ContainerNo:    line.ContainerNo,
+		}, line.PalletID, line.SKUMasterID, -line.AdjustQty)
+	}
+
+	return s.applyPalletDeltaForItemTx(ctx, tx, itemID, line.SKUMasterID, line.AdjustQty)
 }
 
 func generateAdjustmentNo() string {

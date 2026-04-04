@@ -271,6 +271,9 @@ export type PalletContent = {
   sku: string;
   description: string;
   quantity: number;
+  allocatedQty?: number;
+  damagedQty?: number;
+  holdQty?: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -536,6 +539,7 @@ export type InventoryAdjustmentLinePayload = {
   locationId: number;
   storageSection: string;
   containerNo: string;
+  palletId?: number;
   skuMasterId: number;
   adjustQty: number;
   lineNote?: string;
@@ -584,6 +588,7 @@ export type InventoryTransferLinePayload = {
   locationId: number;
   storageSection: string;
   containerNo: string;
+  palletId?: number;
   skuMasterId: number;
   quantity: number;
   toLocationId: number;

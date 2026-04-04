@@ -11,6 +11,7 @@ import { type ChangeEvent, type ReactNode, useMemo, useRef, useState } from "rea
 import { api } from "../lib/api";
 import { setPendingActivityManagementLaunchContext } from "../lib/activityManagementLaunchContext";
 import { formatDateValue, normalizeCalendarDate, shiftIsoDate, toIsoDateString } from "../lib/dates";
+import type { OutboundShipmentEditorLaunchContext } from "../lib/outboundShipmentEditorLaunchContext";
 import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
 import type { InboundDocument, OutboundDocument, UserRole } from "../lib/types";
@@ -28,8 +29,9 @@ type DailyOperationsPageProps = {
   onOpenDate: (date: string) => void;
   onOpenInboundDetail: (documentId: number) => void;
   onOpenCreateInboundReceipt: (date: string) => void;
-  onOpenCreateOutboundComposer: (date: string) => void;
+  onOpenCreateOutboundShipment: (date: string) => void;
   onOpenInboundReceiptEditor: (documentId?: number | null) => void;
+  onOpenOutboundShipmentEditor: (documentId?: number | null, context?: OutboundShipmentEditorLaunchContext) => void;
 };
 
 type DailyOperationsRow = {
@@ -59,8 +61,9 @@ export function DailyOperationsPage({
   onOpenDate,
   onOpenInboundDetail,
   onOpenCreateInboundReceipt,
-  onOpenCreateOutboundComposer,
-  onOpenInboundReceiptEditor
+  onOpenCreateOutboundShipment,
+  onOpenInboundReceiptEditor,
+  onOpenOutboundShipmentEditor
 }: DailyOperationsPageProps) {
   const { t } = useI18n();
   const { showSuccess, showError, feedbackToast } = useFeedbackToast();
@@ -172,7 +175,7 @@ export function DailyOperationsPage({
   }
 
   function handleCreateOutbound() {
-    onOpenCreateOutboundComposer(activeDate);
+    onOpenCreateOutboundShipment(activeDate);
   }
 
   function handleOpenInbound(documentId: number) {
@@ -267,8 +270,7 @@ export function DailyOperationsPage({
       const copiedDocument = await api.copyOutboundDocument(row.id);
       await onRefresh();
       showSuccess(t("shipmentCopiedSuccess"));
-      setPendingActivityManagementLaunchContext("OUT", { documentId: copiedDocument.id });
-      onNavigate("outbound-management");
+      onOpenOutboundShipmentEditor(copiedDocument.id);
     } catch (error) {
       showError(error instanceof Error && error.message ? error.message : t("couldNotCopyDocument"));
     } finally {

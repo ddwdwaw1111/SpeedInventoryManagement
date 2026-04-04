@@ -52,6 +52,7 @@ type CreateInventoryTransferLineInput struct {
 	LocationID       int64  `json:"locationId"`
 	StorageSection   string `json:"storageSection"`
 	ContainerNo      string `json:"containerNo"`
+	PalletID         int64  `json:"palletId"`
 	SKUMasterID      int64  `json:"skuMasterId"`
 	Quantity         int    `json:"quantity"`
 	ToLocationID     int64  `json:"toLocationId"`
@@ -322,7 +323,7 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 		}
 
 		reason := firstNonEmpty(line.LineNote, fmt.Sprintf("Transfer posted: %s", input.TransferNo))
-		palletConsumptions, err := s.consumePalletContentsForItemTx(ctx, tx, sourceItem.ItemID, sourceItem.SKUMasterID, line.Quantity)
+		palletConsumptions, err := s.consumeTransferPalletContentsTx(ctx, tx, sourceItem.ItemID, line)
 		if err != nil {
 			return InventoryTransfer{}, fmt.Errorf("allocate pallet contents for transfer: %w", err)
 		}
@@ -682,6 +683,8 @@ func validateInventoryTransferInput(input CreateInventoryTransferInput) error {
 			return fmt.Errorf("%w: customer is required", ErrInvalidInput)
 		case line.LocationID <= 0:
 			return fmt.Errorf("%w: source storage is required", ErrInvalidInput)
+		case line.PalletID < 0:
+			return fmt.Errorf("%w: pallet is invalid", ErrInvalidInput)
 		case line.SKUMasterID <= 0:
 			return fmt.Errorf("%w: sku is required", ErrInvalidInput)
 		case line.Quantity <= 0:
@@ -691,6 +694,25 @@ func validateInventoryTransferInput(input CreateInventoryTransferInput) error {
 		}
 	}
 	return nil
+}
+
+func (s *Store) consumeTransferPalletContentsTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	itemID int64,
+	line CreateInventoryTransferLineInput,
+) ([]palletContentConsumption, error) {
+	if line.PalletID > 0 {
+		return s.consumeSpecificPalletContentsForBucketTx(ctx, tx, palletSourceBucket{
+			SKUMasterID:    line.SKUMasterID,
+			CustomerID:     line.CustomerID,
+			LocationID:     line.LocationID,
+			StorageSection: line.StorageSection,
+			ContainerNo:    line.ContainerNo,
+		}, line.PalletID, line.SKUMasterID, line.Quantity)
+	}
+
+	return s.consumePalletContentsForItemTx(ctx, tx, itemID, line.SKUMasterID, line.Quantity)
 }
 
 func generateTransferNo() string {

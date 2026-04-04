@@ -18,6 +18,7 @@ import { buildItemContainerBalances, formatContainerDistributionSummary as forma
 import { formatDateTimeValue, formatDateValue } from "../lib/dates";
 import { downloadExcelWorkbook, type ExcelExportColumn } from "../lib/excelExport";
 import type { InboundReceiptEditorLaunchContext } from "../lib/inboundReceiptEditorLaunchContext";
+import type { OutboundShipmentEditorLaunchContext } from "../lib/outboundShipmentEditorLaunchContext";
 import { useI18n } from "../lib/i18n";
 import { setPendingPalletTraceLaunchContext } from "../lib/palletTraceLaunchContext";
 import { useSettings } from "../lib/settings";
@@ -39,6 +40,8 @@ import {
 } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
 import { InlineAlert, useConfirmDialog, useFeedbackToast } from "./Feedback";
+import { InboundPalletBreakdownPanel } from "./InboundPalletBreakdownPanel";
+import { OutboundPickPlanPanel } from "./OutboundPickPlanPanel";
 import { buildWorkspaceGridSlots, WorkspaceDrawerLoadingState, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type ActivityMode = "IN" | "OUT";
@@ -63,6 +66,7 @@ type ActivityManagementPageProps = {
   onOpenInboundDetail?: (documentId: number) => void;
   onOpenPalletTrace?: (sourceInboundDocumentId?: number) => void;
   onOpenInboundReceiptEditor?: (documentId?: number | null, context?: InboundReceiptEditorLaunchContext) => void;
+  onOpenOutboundShipmentEditor?: (documentId?: number | null, context?: OutboundShipmentEditorLaunchContext) => void;
   embeddedComposer?: {
     initialDate?: string;
     onClose: () => void;
@@ -141,6 +145,7 @@ type OutboundPickAllocationRow = {
 
 type OutboundAllocationPreviewRow = {
   id: string;
+  lineId: string;
   lineLabel: string;
   itemNumber: string;
   sku: string;
@@ -514,6 +519,7 @@ export function ActivityManagementPage({
   onOpenInboundDetail,
   onOpenPalletTrace,
   onOpenInboundReceiptEditor,
+  onOpenOutboundShipmentEditor,
   embeddedComposer
 }: ActivityManagementPageProps) {
   const { t } = useI18n();
@@ -541,6 +547,8 @@ export function ActivityManagementPage({
   const [batchInboundLineAddCount, setBatchInboundLineAddCount] = useState(1);
   const [batchOutboundLineAddCount, setBatchOutboundLineAddCount] = useState(1);
   const [inboundEditorIntent, setInboundEditorIntent] = useState<InboundLaunchIntent | null>(null);
+  const [expandedPalletBreakdowns, setExpandedPalletBreakdowns] = useState<Record<string, boolean>>({});
+  const [expandedOutboundPickPlans, setExpandedOutboundPickPlans] = useState<Record<string, boolean>>({});
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [optimisticInboundDocuments, setOptimisticInboundDocuments] = useState<InboundDocument[]>([]);
   const [optimisticOutboundDocuments, setOptimisticOutboundDocuments] = useState<OutboundDocument[]>([]);
@@ -618,6 +626,8 @@ export function ActivityManagementPage({
     setOutboundWizardStep(1);
     setBatchInboundLineAddCount(1);
     setBatchOutboundLineAddCount(1);
+    setExpandedPalletBreakdowns({});
+    setExpandedOutboundPickPlans({});
     setSelectedStatus("all");
     setSelectedInboundDocumentId(null);
     setSelectedOutboundDocumentId(null);
@@ -1233,6 +1243,20 @@ export function ActivityManagementPage({
     setInboundWizardStep(nextStep);
   }
 
+  function togglePalletBreakdown(lineId: string) {
+    setExpandedPalletBreakdowns((current) => ({
+      ...current,
+      [lineId]: !current[lineId]
+    }));
+  }
+
+  function toggleOutboundPickPlan(lineId: string) {
+    setExpandedOutboundPickPlans((current) => ({
+      ...current,
+      [lineId]: !current[lineId]
+    }));
+  }
+
   function moveOutboundWizardStep(nextStep: OutboundWizardStep) {
     if (nextStep === outboundWizardStep) {
       return;
@@ -1270,6 +1294,10 @@ export function ActivityManagementPage({
     }
 
     if (mode === "OUT") {
+      if (!isEmbeddedComposer && onOpenOutboundShipmentEditor) {
+        onOpenOutboundShipmentEditor(null, normalizedPrefilledDate ? { scheduledDate: normalizedPrefilledDate } : undefined);
+        return true;
+      }
       return openOutboundBatchModal(normalizedPrefilledDate);
     }
 
@@ -1292,6 +1320,7 @@ export function ActivityManagementPage({
     pendingBatchLineIDRef.current = null;
     setBatchLines([createEmptyBatchInboundLine()]);
     setBatchInboundLineAddCount(1);
+    setExpandedPalletBreakdowns({});
     setErrorMessage("");
     setIsBatchModalOpen(true);
     return true;
@@ -1312,6 +1341,7 @@ export function ActivityManagementPage({
     setBatchOutboundLines([createEmptyBatchOutboundLine()]);
     setOutboundWizardStep(1);
     setBatchOutboundLineAddCount(1);
+    setExpandedOutboundPickPlans({});
     setErrorMessage("");
     setIsBatchModalOpen(true);
     return true;
@@ -1374,12 +1404,18 @@ export function ActivityManagementPage({
           }))
         : [createEmptyBatchInboundLine(normalizeStorageSection(document.storageSection))]
     );
+      setExpandedPalletBreakdowns({});
     setErrorMessage("");
     setIsBatchModalOpen(true);
   }
 
   function openEditOutboundDraft(document: OutboundDocument) {
     if (!canManage || normalizeDocumentStatus(document.status) !== "DRAFT") {
+      return;
+    }
+
+    if (!isEmbeddedComposer && onOpenOutboundShipmentEditor) {
+      onOpenOutboundShipmentEditor(document.id);
       return;
     }
 
@@ -1413,6 +1449,7 @@ export function ActivityManagementPage({
     });
     setOutboundWizardStep(1);
     setBatchOutboundLines(draftLines);
+    setExpandedOutboundPickPlans({});
     setErrorMessage("");
     setIsBatchModalOpen(true);
   }
@@ -1430,6 +1467,8 @@ export function ActivityManagementPage({
     pendingBatchLineIDRef.current = null;
     setBatchLines([createEmptyBatchInboundLine()]);
     setBatchSubmitting(false);
+    setExpandedPalletBreakdowns({});
+    setExpandedOutboundPickPlans({});
     setOutboundWizardStep(1);
     setBatchInboundLineAddCount(1);
     setBatchOutboundLineAddCount(1);
@@ -2148,7 +2187,11 @@ export function ActivityManagementPage({
       setOptimisticOutboundDocuments((current) => [copiedDocument, ...current.filter((entry) => entry.id !== copiedDocument.id)]);
       setSelectedStatus("all");
       setSelectedOutboundDocumentId(copiedDocument.id);
-      openEditOutboundDraft(copiedDocument);
+      if (!isEmbeddedComposer && onOpenOutboundShipmentEditor) {
+        onOpenOutboundShipmentEditor(copiedDocument.id);
+      } else {
+        openEditOutboundDraft(copiedDocument);
+      }
       await onRefresh();
       showActionSuccess(t("shipmentCopiedSuccess"));
     } catch (error) {
@@ -2816,6 +2859,12 @@ export function ActivityManagementPage({
                     const displayedReorderLevel = selectedBatchItem?.reorderLevel ?? batchSkuMaster?.reorderLevel ?? batchSkuTemplate?.reorderLevel ?? line.reorderLevel;
                     const effectiveUnitsPerPallet = getEffectiveInboundUnitsPerPallet(line, batchSkuMaster);
                     const palletUnitLabel = (batchSkuMaster?.unit || batchForm.unitLabel || "CTN").toUpperCase();
+                    const lineSkuDisplay = line.sku.trim().toUpperCase() || "-";
+                    const lineStorageSectionDisplay = normalizeStorageSection(line.storageSection || batchSectionOptions[0]);
+                    const palletBreakdownTotal = getInboundPalletBreakdownTotal(line.palletBreakdown);
+                    const canExpandPalletBreakdown = batchForm.handlingMode !== "SEALED_TRANSIT" && line.pallets > 0;
+                    const isPalletBreakdownExpanded = Boolean(expandedPalletBreakdowns[line.id]);
+                    const hasPalletBreakdownMismatch = batchForm.handlingMode !== "SEALED_TRANSIT" && line.receivedQty > 0 && palletBreakdownTotal !== line.receivedQty;
 
                     return (
                       <div className="batch-line-card" key={line.id} id={`batch-line-${line.id}`}>
@@ -2836,54 +2885,40 @@ export function ActivityManagementPage({
                           <label>{t("pallets")}<input type="number" min="0" value={numberInputValue(line.pallets)} onChange={(event) => updateBatchLinePallets(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={batchForm.handlingMode === "SEALED_TRANSIT"} /></label>
                           <label>{t("unitsPerPallet")}<input type="number" min="0" value={numberInputValue(line.unitsPerPallet > 0 ? line.unitsPerPallet : effectiveUnitsPerPallet)} onChange={(event) => updateBatchLineUnitsPerPallet(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={batchForm.handlingMode === "SEALED_TRANSIT"} placeholder={batchSkuMaster?.defaultUnitsPerPallet ? String(batchSkuMaster.defaultUnitsPerPallet) : ""} /></label>
                           <label>{t("storageSection")}<select value={normalizeStorageSection(line.storageSection || batchSectionOptions[0])} onChange={(event) => updateBatchLine(line.id, { storageSection: event.target.value })}>{batchSectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}</select></label>
-                          <div className="batch-line-grid__detail batch-line-grid__detail--stacked">
-                            <div className="batch-line-grid__detail-header">
-                              <strong>{t("palletBreakdown")}</strong>
-                              <span className="batch-line-grid__detail-summary">
-                                {t("palletsDetail")}: <span className="cell--mono">{line.palletsDetailCtns || "-"}</span>
-                              </span>
-                              {batchSkuMaster?.defaultUnitsPerPallet ? (
-                                <span className="batch-line-grid__detail-summary">
-                                  {t("palletUnitsHint", { units: batchSkuMaster.defaultUnitsPerPallet, unit: palletUnitLabel })}
-                                </span>
-                              ) : null}
-                              <Button
-                                size="small"
-                                variant="text"
-                                onClick={() => resetBatchLinePalletBreakdown(line.id)}
-                                disabled={batchForm.handlingMode === "SEALED_TRANSIT" || line.pallets <= 0 || line.receivedQty <= 0}
-                              >
-                                {t("resetPalletBreakdown")}
-                              </Button>
-                            </div>
-                            {batchForm.handlingMode === "SEALED_TRANSIT" ? (
-                              <div className="sheet-note sheet-note--readonly">{t("sealedTransitDraftNotice")}</div>
-                            ) : line.pallets <= 0 ? (
-                              <div className="sheet-note sheet-note--readonly">{t("palletBreakdownEmptyHint")}</div>
-                            ) : (
-                              <div className="batch-line-pallet-breakdown">
-                                {line.palletBreakdown.map((entry, palletIndex) => (
-                                  <label key={entry.id}>
-                                    {t("pallet")} #{palletIndex + 1}
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      value={numberInputValue(entry.quantity)}
-                                      onChange={(event) => updateBatchLinePalletBreakdownQuantity(line.id, entry.id, Math.max(0, Number(event.target.value || 0)))}
-                                    />
-                                  </label>
-                                ))}
-                              </div>
-                            )}
-                            {batchForm.handlingMode !== "SEALED_TRANSIT" && line.receivedQty > 0 && getInboundPalletBreakdownTotal(line.palletBreakdown) !== line.receivedQty ? (
-                              <div className="batch-line-card__hint batch-line-card__hint--warning">
-                                {t("palletBreakdownTotalMismatch", {
-                                  assigned: getInboundPalletBreakdownTotal(line.palletBreakdown),
-                                  received: line.receivedQty
-                                })}
-                              </div>
-                            ) : null}
-                          </div>
+                          <InboundPalletBreakdownPanel
+                            title={t("palletBreakdown")}
+                            helperText={batchSkuMaster?.defaultUnitsPerPallet ? t("palletUnitsHint", { units: batchSkuMaster.defaultUnitsPerPallet, unit: palletUnitLabel }) : undefined}
+                            skuLabel={t("sku")}
+                            skuValue={lineSkuDisplay}
+                            storageSectionLabel={t("storageSection")}
+                            storageSectionValue={lineStorageSectionDisplay}
+                            palletsLabel={t("pallets")}
+                            palletCount={line.pallets}
+                            palletsDetailLabel={t("palletsDetail")}
+                            palletsDetailValue={line.palletsDetailCtns || "-"}
+                            unitLabel={palletUnitLabel}
+                            detailTone={hasPalletBreakdownMismatch ? "danger" : "default"}
+                            resetLabel={t("resetPalletBreakdown")}
+                            detailsLabel={t("details")}
+                            emptyHint={t("palletBreakdownEmptyHint")}
+                            sealedHint={t("sealedTransitDraftNotice")}
+                            resetDisabled={batchForm.handlingMode === "SEALED_TRANSIT" || line.pallets <= 0 || line.receivedQty <= 0}
+                            canExpand={canExpandPalletBreakdown}
+                            expanded={isPalletBreakdownExpanded}
+                            onToggle={() => togglePalletBreakdown(line.id)}
+                            onReset={() => resetBatchLinePalletBreakdown(line.id)}
+                            state={batchForm.handlingMode === "SEALED_TRANSIT" ? "sealed" : line.pallets <= 0 ? "empty" : "ready"}
+                            rows={line.palletBreakdown.map((entry, palletIndex) => ({
+                              id: entry.id,
+                              label: `${t("pallet")} #${palletIndex + 1}`,
+                              quantity: entry.quantity
+                            }))}
+                            onQuantityChange={(entryId, quantity) => updateBatchLinePalletBreakdownQuantity(line.id, entryId, quantity)}
+                            mismatchMessage={hasPalletBreakdownMismatch ? t("palletBreakdownTotalMismatch", {
+                              assigned: palletBreakdownTotal,
+                              received: line.receivedQty
+                            }) : null}
+                          />
                           <label>{t("reorderLevel")}<input type="number" min="0" value={numberInputValue(displayedReorderLevel)} onChange={(event) => updateBatchLine(line.id, { reorderLevel: Math.max(0, Number(event.target.value || 0)) })} placeholder={suggestedReorderLevel > 0 ? String(suggestedReorderLevel) : ""} disabled={Boolean(selectedBatchItem)} /></label>
                         </div>
                         <div className="batch-line-card__meta">
@@ -3088,6 +3123,16 @@ export function ActivityManagementPage({
 
                   {batchOutboundLines.map((line, index) => {
                     const selectedOutboundSource = findOutboundSourceOption(selectableOutboundSources, line.sourceKey);
+                    const outboundAllocationSummary = batchOutboundAllocationPreview.summaries.get(line.id);
+                    const outboundAllocationRows = batchOutboundAllocationPreview.rows.filter((row) => row.lineId === line.id);
+                    const outboundStorageSections = selectedOutboundSource
+                      ? selectedOutboundSource.storageSections.map((section) => normalizeStorageSection(section)).join(", ") || DEFAULT_STORAGE_SECTION
+                      : DEFAULT_STORAGE_SECTION;
+                    const outboundLocationDisplay = selectedOutboundSource
+                      ? `${selectedOutboundSource.locationName} / ${outboundStorageSections}`
+                      : "-";
+                    const isOutboundPickPlanExpanded = Boolean(expandedOutboundPickPlans[line.id]);
+                    const hasOutboundShortage = (outboundAllocationSummary?.shortageQty ?? 0) > 0;
 
                     return (
                       <div className="batch-line-card" key={line.id}>
@@ -3134,37 +3179,51 @@ export function ActivityManagementPage({
                         <div className="batch-line-card__meta">
                           <span className="batch-line-card__hint">
                             {selectedOutboundSource
-                              ? `${selectedOutboundSource.customerName} | ${t("itemNumber")}: ${selectedOutboundSource.itemNumber || "-"} | ${selectedOutboundSource.sku} | ${selectedOutboundSource.description} | ${selectedOutboundSource.locationName} / ${selectedOutboundSource.storageSections.join(", ") || DEFAULT_STORAGE_SECTION} | ${t("containerDistribution")}: ${selectedOutboundSource.containerSummary || "-"} | ${t("availableQty")}: ${selectedOutboundSource.availableQty}`
+                              ? `${selectedOutboundSource.customerName} | ${t("itemNumber")}: ${selectedOutboundSource.itemNumber || "-"} | ${selectedOutboundSource.sku} | ${selectedOutboundSource.description} | ${outboundLocationDisplay} | ${t("containerDistribution")}: ${selectedOutboundSource.containerSummary || "-"} | ${t("availableQty")}: ${selectedOutboundSource.availableQty}`
                               : t("selectShipmentSource")}
                           </span>
                         </div>
                         {selectedOutboundSource && outboundWizardStep === 2 ? (
-                          <div className="batch-line-pick-plan">
-                            <div className="batch-line-pick-summary">
-                              <div className="batch-line-pick-summary__stats">
-                                <div className="batch-line-pick-summary__stat">
-                                  <span>{t("requiredQty")}</span>
-                                  <strong>{line.quantity}</strong>
-                                </div>
-                                <div className="batch-line-pick-summary__stat">
-                                  <span>{t("selectedQty")}</span>
-                                  <strong>{batchOutboundAllocationPreview.summaries.get(line.id)?.allocatedQty ?? 0}</strong>
-                                </div>
-                                <div className="batch-line-pick-summary__stat">
-                                  <span>{t("remainingQty")}</span>
-                                  <strong>{batchOutboundAllocationPreview.summaries.get(line.id)?.shortageQty ?? 0}</strong>
-                                </div>
-                              </div>
-                            </div>
-                            <div className="batch-line-pick-plan__header">
-                              <div>
-                                <strong>{t("containerPickPlan")}</strong>
-                                <span>{t("pickPlanAutoModeHint")}</span>
-                              </div>
-                              <span className="batch-line-pick-plan__auto-hint">{t("autoPick")}</span>
-                            </div>
-                            <div className="sheet-note sheet-note--readonly">{t("pickPlanAutoModeHint")}</div>
-                          </div>
+                          <OutboundPickPlanPanel
+                            title={t("containerPickPlan")}
+                            helperText={t("pickPlanAutoModeHint")}
+                            autoPickLabel={t("autoPick")}
+                            detailsLabel={t("details")}
+                            skuLabel={t("sku")}
+                            skuValue={selectedOutboundSource.sku}
+                            itemNumberLabel={t("itemNumber")}
+                            itemNumberValue={selectedOutboundSource.itemNumber || undefined}
+                            locationLabel={t("currentStorage")}
+                            locationValue={outboundLocationDisplay}
+                            containersLabel={t("containers")}
+                            containerCount={outboundAllocationSummary?.containerCount ?? 0}
+                            availableQtyLabel={t("availableQty")}
+                            availableQtyValue={selectedOutboundSource.availableQty}
+                            requiredQtyLabel={t("requiredQty")}
+                            requiredQtyValue={line.quantity}
+                            selectedQtyLabel={t("selectedQty")}
+                            selectedQtyValue={outboundAllocationSummary?.allocatedQty ?? 0}
+                            remainingQtyLabel={t("remainingQty")}
+                            remainingQtyValue={outboundAllocationSummary?.shortageQty ?? 0}
+                            sourceContainerLabel={t("sourceContainer")}
+                            pickQtyLabel={t("pickQty")}
+                            unitLabel={line.unitLabel || selectedOutboundSource.unit.toUpperCase() || "PCS"}
+                            canExpand={outboundAllocationRows.length > 0}
+                            expanded={isOutboundPickPlanExpanded}
+                            onToggle={() => toggleOutboundPickPlan(line.id)}
+                            emptyHint={t("pickAllocationPreviewEmpty")}
+                            rows={outboundAllocationRows.map((row) => ({
+                              id: row.id,
+                              containerNo: row.containerNo,
+                              locationLabel: `${row.locationName} / ${normalizeStorageSection(row.storageSection)}`,
+                              allocatedQty: row.allocatedQty,
+                              itemNumber: row.itemNumber || undefined
+                            }))}
+                            shortageMessage={hasOutboundShortage ? t("outboundQtyExceedsStock", {
+                              sku: selectedOutboundSource.sku,
+                              available: outboundAllocationSummary?.allocatedQty ?? 0
+                            }) : null}
+                          />
                         ) : null}
                       </div>
                     );
@@ -3624,6 +3683,7 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
 
       rows.push({
         id: `${line.id}-${candidate.id}`,
+        lineId: line.id,
         lineLabel: summary.lineLabel,
         itemNumber: selectedSource.itemNumber || summary.itemNumber,
         sku: selectedSource.sku,

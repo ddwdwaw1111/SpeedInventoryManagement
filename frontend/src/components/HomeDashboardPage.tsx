@@ -19,7 +19,7 @@ import {
   startOfLocalWeek,
   toIsoDateString
 } from "../lib/dates";
-import { setPendingInventoryByLocationContext } from "../lib/inventoryByLocationContext";
+import { setPendingInventorySummaryContext } from "../lib/inventorySummaryContext";
 import { InlineAlert } from "./Feedback";
 import { useI18n } from "../lib/i18n";
 import type {
@@ -141,8 +141,8 @@ export function HomeDashboardPage({
         tone: "blue",
         icon: <Inventory2OutlinedIcon fontSize="small" />,
         onOpen: () => {
-          setPendingInventoryByLocationContext({ healthFilter: "ALL" });
-          onNavigate("stock-by-location");
+          setPendingInventorySummaryContext({ healthFilter: "ALL" });
+          onNavigate("inventory-summary");
         }
       },
       {
@@ -177,8 +177,8 @@ export function HomeDashboardPage({
         tone: "red",
         icon: <ReportProblemOutlinedIcon fontSize="small" />,
         onOpen: () => {
-          setPendingInventoryByLocationContext({ healthFilter: "LOW_STOCK" });
-          onNavigate("stock-by-location");
+          setPendingInventorySummaryContext({ healthFilter: "LOW_STOCK" });
+          onNavigate("inventory-summary");
         }
       }
     ];

@@ -23,19 +23,25 @@ import { Suspense, lazy, type ReactNode, useEffect, useMemo, useState } from "re
 
 import { AppHeaderUser, AuthPage } from "./components/AuthPage";
 import { ApiError, api } from "./lib/api";
+import { setPendingActivityManagementLaunchContext } from "./lib/activityManagementLaunchContext";
 import { setPendingInboundReceiptEditorLaunchContext, type InboundReceiptEditorLaunchContext } from "./lib/inboundReceiptEditorLaunchContext";
+import { setPendingOutboundShipmentEditorLaunchContext, type OutboundShipmentEditorLaunchContext } from "./lib/outboundShipmentEditorLaunchContext";
 import { useI18n } from "./lib/i18n";
 import { setPendingPalletTraceLaunchContext } from "./lib/palletTraceLaunchContext";
 import {
+  getContainerDetailContainerNoFromPath,
   getDailyOperationsDateFromPath,
   getInboundDetailIdFromPath,
   getPageFromPath,
   getReceiptEditorIdFromPath,
+  getShipmentEditorIdFromPath,
   getStorageLocationEditorIdFromPath,
+  navigateToContainerDetail,
   navigateToDailyOperations,
   navigateToInboundDetail,
   navigateToPage,
   navigateToReceiptEditor,
+  navigateToShipmentEditor,
   navigateToStorageLocationEditor,
   type PageKey
 } from "./lib/routes";
@@ -60,6 +66,10 @@ const AuditLogPage = lazy(async () => {
 const ContainerContentsPage = lazy(async () => {
   const module = await import("./components/ContainerContentsPage");
   return { default: module.ContainerContentsPage };
+});
+const ContainerDetailPage = lazy(async () => {
+  const module = await import("./components/ContainerDetailPage");
+  return { default: module.ContainerDetailPage };
 });
 const DailyOperationsPage = lazy(async () => {
   const module = await import("./components/DailyOperationsPage");
@@ -93,9 +103,9 @@ const InboundReceiptEditorPage = lazy(async () => {
   const module = await import("./components/InboundReceiptEditorPage");
   return { default: module.InboundReceiptEditorPage };
 });
-const MasterInventoryPage = lazy(async () => {
-  const module = await import("./components/MasterInventoryPage");
-  return { default: module.MasterInventoryPage };
+const OutboundShipmentEditorPage = lazy(async () => {
+  const module = await import("./components/OutboundShipmentEditorPage");
+  return { default: module.OutboundShipmentEditorPage };
 });
 const PalletTracePage = lazy(async () => {
   const module = await import("./components/PalletTracePage");
@@ -228,6 +238,20 @@ export default function App() {
     setCurrentPathname(window.location.pathname);
   }
 
+  function handleNavigateToShipmentEditor(documentId?: number | null, context?: OutboundShipmentEditorLaunchContext) {
+    if (context) {
+      setPendingOutboundShipmentEditorLaunchContext(context);
+    }
+    navigateToShipmentEditor(setActivePage, documentId);
+    setCurrentPathname(window.location.pathname);
+  }
+
+  function handleNavigateToOutboundDocument(documentId: number) {
+    setPendingActivityManagementLaunchContext("OUT", { documentId });
+    navigateToPage("outbound-management", setActivePage);
+    setCurrentPathname(window.location.pathname);
+  }
+
   function handleNavigateToPalletTrace(sourceInboundDocumentId?: number) {
     if (sourceInboundDocumentId && sourceInboundDocumentId > 0) {
       setPendingPalletTraceLaunchContext({ sourceInboundDocumentId });
@@ -235,6 +259,11 @@ export default function App() {
       setPendingPalletTraceLaunchContext({});
     }
     navigateToPage("pallet-trace", setActivePage);
+    setCurrentPathname(window.location.pathname);
+  }
+
+  function handleNavigateToContainerDetail(containerNo: string) {
+    navigateToContainerDetail(setActivePage, containerNo);
     setCurrentPathname(window.location.pathname);
   }
 
@@ -398,9 +427,11 @@ export default function App() {
     { key: "inbound-detail", label: t("inboundDetailPage"), description: t("inboundDetailPageDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
     { key: "receipt-editor", label: t("receiptEditorPage"), description: t("receiptEditorPageDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
     { key: "outbound-management", label: t("navShipping"), description: t("outboundDesc"), icon: <OutboxOutlined fontSize="small" /> },
+    { key: "shipment-editor", label: t("shipmentEditorPage"), description: t("shipmentEditorPageDesc"), icon: <OutboxOutlined fontSize="small" /> },
     { key: "inventory-summary", label: t("inventorySummary"), description: t("inventorySummaryDesc"), icon: <WarehouseOutlined fontSize="small" /> },
     { key: "warehouse-map", label: t("warehouseMap"), description: t("warehouseMapDesc"), icon: <WarehouseOutlined fontSize="small" /> },
     { key: "container-contents", label: t("containerContents"), description: t("containerContentsDesc"), icon: <WarehouseOutlined fontSize="small" /> },
+    { key: "container-detail", label: t("containerDetailPage"), description: t("containerDetailPageDesc"), icon: <WarehouseOutlined fontSize="small" /> },
     { key: "adjustments", label: t("adjustments"), description: t("adjustmentsDesc"), icon: <TuneOutlined fontSize="small" /> },
     { key: "transfers", label: t("transfers"), description: t("transfersDesc"), icon: <CompareArrowsOutlined fontSize="small" /> },
     { key: "cycle-counts", label: t("cycleCounts"), description: t("cycleCountsDesc"), icon: <FactCheckOutlined fontSize="small" /> },
@@ -410,7 +441,6 @@ export default function App() {
     ...(canViewPallets ? [{ key: "pallet-trace" as PageKey, label: t("palletTrace"), description: t("palletTraceDesc"), icon: <WarehouseOutlined fontSize="small" /> }] : []),
     ...(canManageUsers ? [{ key: "user-management" as PageKey, label: t("userManagement"), description: t("userManagementDesc"), icon: <ManageAccountsOutlined fontSize="small" /> }] : []),
     { key: "sku-master", label: t("skuMaster"), description: t("skuMasterDesc"), icon: <CategoryOutlined fontSize="small" /> },
-    { key: "stock-by-location", label: t("stockByLocation"), description: t("stockByLocationDesc"), icon: <WarehouseOutlined fontSize="small" /> },
     { key: "storage-management", label: t("storageManagement"), description: t("storageManagementDesc"), icon: <WarehouseOutlined fontSize="small" /> },
     { key: "storage-location-editor", label: t("editStorageLocation"), description: t("warehouseLayoutDesc"), icon: <WarehouseOutlined fontSize="small" /> },
     { key: "settings", label: t("settings"), description: t("settingsDesc"), icon: <SettingsOutlined fontSize="small" /> }
@@ -440,7 +470,8 @@ export default function App() {
     "daily-operations": "dashboard",
     "inbound-detail": "inbound-management",
     "receipt-editor": "inbound-management",
-    "stock-by-location": "inventory-summary",
+    "shipment-editor": "outbound-management",
+    "container-detail": "container-contents",
     adjustments: "inventory-summary",
     transfers: "inventory-summary",
     "cycle-counts": "inventory-summary",
@@ -450,7 +481,7 @@ export default function App() {
     "inventory-summary": "inventory",
     "warehouse-map": "inventory",
     "container-contents": "inventory",
-    "stock-by-location": "inventory",
+    "container-detail": "inventory",
     "adjustments": "inventory",
     "transfers": "inventory",
     "cycle-counts": "inventory",
@@ -473,6 +504,8 @@ export default function App() {
   const editingStorageLocationId = getStorageLocationEditorIdFromPath(currentPathname);
   const selectedInboundDetailId = getInboundDetailIdFromPath(currentPathname);
   const selectedReceiptEditorId = getReceiptEditorIdFromPath(currentPathname);
+  const selectedShipmentEditorId = getShipmentEditorIdFromPath(currentPathname);
+  const selectedContainerDetailNo = getContainerDetailContainerNoFromPath(currentPathname);
   const selectedDailyOperationsDate = getDailyOperationsDateFromPath(currentPathname);
   const editingStorageLocation = editingStorageLocationId
     ? locations.find((location) => location.id === editingStorageLocationId) ?? null
@@ -482,6 +515,9 @@ export default function App() {
     : null;
   const selectedReceiptEditorDocument = selectedReceiptEditorId
     ? inboundDocuments.find((document) => document.id === selectedReceiptEditorId) ?? null
+    : null;
+  const selectedShipmentEditorDocument = selectedShipmentEditorId
+    ? outboundDocuments.find((document) => document.id === selectedShipmentEditorId) ?? null
     : null;
   useEffect(() => {
     if (!activeNavSection) return;
@@ -652,24 +688,40 @@ export default function App() {
                 onOpenReceiptEditor={handleNavigateToReceiptEditor}
               />)
             ) : null}
-            {activePage === "outbound-management" ? renderWithSuspense(<ActivityManagementPage mode="OUT" items={items} skuMasters={skuMasters} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onOpenPalletTrace={handleNavigateToPalletTrace} />) : null}
+            {activePage === "outbound-management" ? renderWithSuspense(<ActivityManagementPage mode="OUT" items={items} skuMasters={skuMasters} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onOpenPalletTrace={handleNavigateToPalletTrace} onOpenOutboundShipmentEditor={handleNavigateToShipmentEditor} />) : null}
+            {activePage === "shipment-editor" ? (
+              renderWithSuspense(<OutboundShipmentEditorPage
+                routeKey={currentPathname}
+                documentId={selectedShipmentEditorId}
+                document={selectedShipmentEditorDocument}
+                items={items}
+                skuMasters={skuMasters}
+                movements={movements}
+                currentUserRole={currentUser.role}
+                isLoading={isLoading}
+                onRefresh={() => loadAppData(false)}
+                onBackToList={() => handleNavigateToPage("outbound-management")}
+                onOpenOutboundDocument={handleNavigateToOutboundDocument}
+                onOpenShipmentEditor={handleNavigateToShipmentEditor}
+              />)
+            ) : null}
             {activePage === "adjustments" ? renderWithSuspense(<AdjustmentManagementPage adjustments={adjustments} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "transfers" ? renderWithSuspense(<TransferManagementPage transfers={transfers} items={items} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "cycle-counts" ? renderWithSuspense(<CycleCountManagementPage cycleCounts={cycleCounts} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "inventory-summary" ? renderWithSuspense(<InventorySummaryPage items={items} movements={movements} customers={customers} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "warehouse-map" ? (
               <Suspense fallback={pageLoadingFallback}>
-                <WarehouseMapPage items={items} isLoading={isLoading} onNavigate={handleNavigateToPage} />
+                <WarehouseMapPage items={items} isLoading={isLoading} onNavigate={handleNavigateToPage} onOpenContainerDetail={handleNavigateToContainerDetail} />
               </Suspense>
             ) : null}
-            {activePage === "container-contents" ? renderWithSuspense(<ContainerContentsPage items={items} customers={customers} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={handleNavigateToPage} />) : null}
+            {activePage === "container-contents" ? renderWithSuspense(<ContainerContentsPage items={items} movements={movements} customers={customers} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onOpenContainerDetail={handleNavigateToContainerDetail} />) : null}
+            {activePage === "container-detail" ? renderWithSuspense(<ContainerDetailPage routeKey={currentPathname} containerNo={selectedContainerDetailNo} items={items} movements={movements} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} onBackToList={() => handleNavigateToPage("container-contents")} />) : null}
             {activePage === "all-activity" ? renderWithSuspense(<AllActivityPage movements={movements} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "customers" ? renderWithSuspense(<CustomerManagementPage customers={customers} items={items} inboundDocuments={activeInboundDocuments} outboundDocuments={activeOutboundDocuments} movements={movements} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "audit-logs" && canViewAuditLogs ? renderWithSuspense(<AuditLogPage auditLogs={auditLogs} currentUserRole={currentUser.role} isLoading={isLoading} />) : null}
             {activePage === "pallet-trace" && canViewPallets ? renderWithSuspense(<PalletTracePage />) : null}
             {activePage === "user-management" && canManageUsers ? renderWithSuspense(<UserManagementPage users={users} currentUser={currentUser} isLoading={isLoading} onRefresh={() => loadAppData(false)} />) : null}
             {activePage === "sku-master" ? renderWithSuspense(<SKUMasterPage skuMasters={skuMasters} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} />) : null}
-            {activePage === "stock-by-location" ? renderWithSuspense(<MasterInventoryPage items={items} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "storage-management" ? (
               renderWithSuspense(<StorageManagementPage
                 locations={locations}
@@ -704,8 +756,9 @@ export default function App() {
                 onOpenDate={handleNavigateToDailyOperations}
                 onOpenInboundDetail={handleNavigateToInboundDetail}
                 onOpenCreateInboundReceipt={(date) => handleNavigateToReceiptEditor(null, { scheduledDate: date })}
-                onOpenCreateOutboundComposer={(date) => handleOpenEmbeddedComposer("OUT", date)}
+                onOpenCreateOutboundShipment={(date) => handleNavigateToShipmentEditor(null, { scheduledDate: date })}
                 onOpenInboundReceiptEditor={handleNavigateToReceiptEditor}
+                onOpenOutboundShipmentEditor={handleNavigateToShipmentEditor}
               />)
             ) : null}
             {activePage === "dashboard" ? (

@@ -16,7 +16,7 @@ import { downloadExcelWorkbook, type ExcelExportColumn } from "../lib/excelExpor
 import { setPendingInventoryActionContext } from "../lib/inventoryActionContext";
 import { buildInventoryActionSourceKey } from "../lib/inventoryActionSources";
 import { useI18n } from "../lib/i18n";
-import { setPendingInventoryByLocationContext } from "../lib/inventoryByLocationContext";
+import { consumePendingInventorySummaryContext } from "../lib/inventorySummaryContext";
 import type { PageKey } from "../lib/routes";
 import { DEFAULT_STORAGE_SECTION, normalizeStorageSection, type Customer, type Item, type Location, type Movement, type UserRole } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
@@ -74,6 +74,8 @@ type ContainerBreakdownRow = {
   lastReceipt: string | null;
 };
 
+type InventorySummaryHealthFilter = "ALL" | "LOW_STOCK";
+
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
 const summaryNumberFormatter = new Intl.NumberFormat("en-US");
 const INVENTORY_SUMMARY_COLUMN_ORDER_PREFERENCE_KEY = "inventory-summary.column-order";
@@ -106,17 +108,31 @@ export function InventorySummaryPage({
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
+  const [healthFilter, setHealthFilter] = useState<InventorySummaryHealthFilter>("ALL");
   const [selectedSummaryId, setSelectedSummaryId] = useState<string | null>(null);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const deferredSearchTerm = useDeferredValue(searchTerm);
 
+  useEffect(() => {
+    const context = consumePendingInventorySummaryContext();
+    if (!context) {
+      return;
+    }
+
+    setSearchTerm(context.searchTerm?.trim() || "");
+    setSelectedCustomerId(context.customerId ? String(context.customerId) : "all");
+    setSelectedLocationId(context.locationId ? String(context.locationId) : "all");
+    setHealthFilter(context.healthFilter ?? "ALL");
+    setSelectedSummaryId(null);
+  }, []);
+
   const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
-  const summaryRows = useMemo(() => buildInventorySummaryRows(items, movements, normalizedSearch, selectedCustomerId, selectedLocationId), [items, movements, normalizedSearch, selectedCustomerId, selectedLocationId]);
+  const summaryRows = useMemo(() => buildInventorySummaryRows(items, movements, normalizedSearch, selectedCustomerId, selectedLocationId, healthFilter), [items, movements, normalizedSearch, selectedCustomerId, selectedLocationId, healthFilter]);
   const selectedSummary = useMemo(
     () => summaryRows.find((row) => row.id === selectedSummaryId) ?? null,
     [selectedSummaryId, summaryRows]
   );
-  const hasActiveFilters = normalizedSearch.length > 0 || selectedCustomerId !== "all" || selectedLocationId !== "all";
+  const hasActiveFilters = normalizedSearch.length > 0 || selectedCustomerId !== "all" || selectedLocationId !== "all" || healthFilter !== "ALL";
   const mainGridSlots = buildWorkspaceGridSlots({
     emptyTitle: t("noResults"),
     emptyDescription: hasActiveFilters ? t("filteredStateHint") : t("emptyStateHint"),
@@ -227,6 +243,7 @@ export function InventorySummaryPage({
             <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("inventorySummarySearchPlaceholder")} /></label>
             <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
             <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
+            <label>{t("stockHealth")}<select value={healthFilter} onChange={(event) => setHealthFilter(event.target.value as InventorySummaryHealthFilter)}><option value="ALL">{t("allRows")}</option><option value="LOW_STOCK">{t("lowStock")}</option></select></label>
           </div>
         </div>
 
@@ -322,19 +339,6 @@ export function InventorySummaryPage({
               ) : null}
               <Button
                 variant="contained"
-                startIcon={<WarehouseOutlinedIcon fontSize="small" />}
-                onClick={() => {
-                  setPendingInventoryByLocationContext({
-                    sku: selectedSummary.sku,
-                    customerId: selectedSummary.customerId
-                  });
-                  onNavigate("stock-by-location");
-                }}
-              >
-                {t("openInventoryByLocation")}
-              </Button>
-              <Button
-                variant="outlined"
                 startIcon={<WarehouseOutlinedIcon fontSize="small" />}
                 onClick={() => {
                   setPendingContainerContentsContext({
@@ -458,7 +462,8 @@ function buildInventorySummaryRows(
   movements: Movement[],
   normalizedSearch: string,
   selectedCustomerId: string,
-  selectedLocationId: string
+  selectedLocationId: string,
+  healthFilter: InventorySummaryHealthFilter
 ) {
   const filteredItems = items.filter((item) => {
     const matchesSearch = normalizedSearch.length === 0
@@ -523,6 +528,7 @@ function buildInventorySummaryRows(
         containerBalances
       };
     })
+    .filter((row) => healthFilter !== "LOW_STOCK" || row.items.some((item) => item.reorderLevel > 0 && item.availableQty <= item.reorderLevel))
     .sort((left, right) => {
       if (left.customerName !== right.customerName) return left.customerName.localeCompare(right.customerName);
       return left.sku.localeCompare(right.sku);

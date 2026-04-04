@@ -700,6 +700,117 @@ func (s *Store) consumePalletContentsForItemTx(ctx context.Context, tx *sql.Tx, 
 	}, quantity)
 }
 
+func (s *Store) consumeSpecificPalletContentsForBucketTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	bucket palletSourceBucket,
+	palletID int64,
+	skuMasterID int64,
+	quantity int,
+) ([]palletContentConsumption, error) {
+	if bucket.SKUMasterID <= 0 || bucket.CustomerID <= 0 || bucket.LocationID <= 0 || palletID <= 0 || skuMasterID <= 0 || quantity <= 0 {
+		return nil, fmt.Errorf("%w: invalid selected pallet consumption input", ErrInvalidInput)
+	}
+
+	storageSection := fallbackSection(bucket.StorageSection)
+	containerNo := strings.TrimSpace(bucket.ContainerNo)
+
+	var content struct {
+		PalletItemID            int64
+		PalletID                int64
+		SKUMasterID             int64
+		RemainingQty            int
+		AllocatedQty            int
+		DamagedQty              int
+		HoldQty                 int
+		CustomerID              int64
+		LocationID              int64
+		StorageSection          string
+		ContainerVisitID        int64
+		SourceInboundDocumentID int64
+		SourceInboundLineID     int64
+		ContainerNo             string
+	}
+
+	if err := tx.QueryRowContext(ctx, `
+		SELECT
+			pi.id,
+			pi.pallet_id,
+			pi.sku_master_id,
+			pi.quantity,
+			pi.allocated_qty,
+			pi.damaged_qty,
+			pi.hold_qty,
+			p.customer_id,
+			p.current_location_id,
+			COALESCE(p.current_storage_section, 'TEMP') AS current_storage_section,
+			COALESCE(p.container_visit_id, 0) AS container_visit_id,
+			COALESCE(p.source_inbound_document_id, 0) AS source_inbound_document_id,
+			COALESCE(p.source_inbound_line_id, 0) AS source_inbound_line_id,
+			COALESCE(p.current_container_no, '') AS current_container_no
+		FROM pallet_items pi
+		JOIN pallets p ON p.id = pi.pallet_id
+		WHERE p.id = ?
+		  AND pi.sku_master_id = ?
+		  AND p.customer_id = ?
+		  AND p.current_location_id = ?
+		  AND COALESCE(p.current_storage_section, 'TEMP') = ?
+		  AND COALESCE(p.current_container_no, '') = ?
+		FOR UPDATE
+	`, palletID, skuMasterID, bucket.CustomerID, bucket.LocationID, storageSection, containerNo).Scan(
+		&content.PalletItemID,
+		&content.PalletID,
+		&content.SKUMasterID,
+		&content.RemainingQty,
+		&content.AllocatedQty,
+		&content.DamagedQty,
+		&content.HoldQty,
+		&content.CustomerID,
+		&content.LocationID,
+		&content.StorageSection,
+		&content.ContainerVisitID,
+		&content.SourceInboundDocumentID,
+		&content.SourceInboundLineID,
+		&content.ContainerNo,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("%w: selected pallet is not available in this stock position", ErrInvalidInput)
+		}
+		return nil, fmt.Errorf("load selected pallet contents: %w", err)
+	}
+
+	availableQty := content.RemainingQty - content.AllocatedQty - content.DamagedQty - content.HoldQty
+	if quantity > availableQty {
+		return nil, ErrInsufficientStock
+	}
+
+	nextRemainingQty := content.RemainingQty - quantity
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE pallet_items
+		SET quantity = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, nextRemainingQty, content.PalletItemID); err != nil {
+		return nil, mapDBError(fmt.Errorf("consume selected pallet item quantity: %w", err))
+	}
+	if err := s.updatePalletStatusFromContentsTx(ctx, tx, content.PalletID); err != nil {
+		return nil, err
+	}
+
+	return []palletContentConsumption{{
+		PalletID:                content.PalletID,
+		PalletItemID:            content.PalletItemID,
+		SKUMasterID:             content.SKUMasterID,
+		Quantity:                quantity,
+		CustomerID:              content.CustomerID,
+		LocationID:              content.LocationID,
+		StorageSection:          fallbackSection(content.StorageSection),
+		ContainerVisitID:        content.ContainerVisitID,
+		SourceInboundDocumentID: content.SourceInboundDocumentID,
+		SourceInboundLineID:     content.SourceInboundLineID,
+		ContainerNo:             strings.TrimSpace(content.ContainerNo),
+	}}, nil
+}
+
 func (s *Store) consumePalletContentsForBucketTx(ctx context.Context, tx *sql.Tx, bucket palletSourceBucket, quantity int) ([]palletContentConsumption, error) {
 	if bucket.SKUMasterID <= 0 || bucket.CustomerID <= 0 || bucket.LocationID <= 0 || quantity <= 0 {
 		return nil, fmt.Errorf("%w: invalid pallet bucket consumption input", ErrInvalidInput)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -1220,6 +1221,167 @@ func TestPalletCentricOperationalLedgerIntegration(t *testing.T) {
 	}
 	if countLedgerQty != 5 {
 		t.Fatalf("expected source pallet item quantity 5 after cycle count, got %d", countLedgerQty)
+	}
+}
+
+func TestSelectedPalletInventoryActionsIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "SelectedPalletCustomer-"+suffix)
+	sourceLocation := mustCreateLocation(t, ctx, store, "SelectedPalletSource-"+suffix)
+	destinationLocation := mustCreateLocation(t, ctx, store, "SelectedPalletDestination-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, sourceLocation.ID, "SELECT-SKU-"+suffix, 0)
+
+	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:     customer.ID,
+		LocationID:     sourceLocation.ID,
+		DeliveryDate:   "2026-04-10",
+		ContainerNo:    "SELECT-CONT-" + suffix,
+		StorageSection: DefaultStorageSection,
+		UnitLabel:      "CTN",
+		Status:         DocumentStatusConfirmed,
+		DocumentNote:   "Selected pallet actions",
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:            item.SKU,
+			Description:    item.Description,
+			ExpectedQty:    12,
+			ReceivedQty:    12,
+			Pallets:        3,
+			StorageSection: DefaultStorageSection,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create selected-pallet inbound: %v", err)
+	}
+
+	sourceItem := mustFindItemByContainer(t, ctx, store, sourceLocation.ID, DefaultStorageSection, inbound.ContainerNo, item.SKU)
+	pallets, err := store.ListPallets(ctx, 50, ListPalletFilters{SourceInboundDocumentID: inbound.ID})
+	if err != nil {
+		t.Fatalf("list source pallets: %v", err)
+	}
+	if len(pallets) < 2 {
+		t.Fatalf("expected at least 2 pallets, got %d", len(pallets))
+	}
+	sort.Slice(pallets, func(left, right int) bool {
+		return pallets[left].ID < pallets[right].ID
+	})
+
+	adjustmentPallet := pallets[0]
+	transferPallet := pallets[1]
+	adjustmentQty := adjustmentPallet.Contents[0].Quantity
+	transferQty := transferPallet.Contents[0].Quantity
+
+	adjustmentLine := adjustmentLineFromItem(sourceItem, -adjustmentQty, "Selected pallet adjustment")
+	adjustmentLine.PalletID = adjustmentPallet.ID
+	adjustment, err := store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
+		AdjustmentNo: "ADJ-SEL-" + suffix,
+		ReasonCode:   "DAMAGE",
+		Notes:        "Adjust one selected pallet",
+		Lines:        []CreateInventoryAdjustmentLineInput{adjustmentLine},
+	})
+	if err != nil {
+		t.Fatalf("create selected-pallet adjustment: %v", err)
+	}
+
+	var adjustmentSelectedLedgerQty int
+	if err := store.db.GetContext(ctx, &adjustmentSelectedLedgerQty, `
+		SELECT COALESCE(SUM(quantity_change), 0)
+		FROM stock_ledger
+		WHERE source_document_type = 'ADJUSTMENT'
+		  AND source_document_id = ?
+		  AND event_type = 'ADJUST'
+		  AND pallet_id = ?
+	`, adjustment.ID, adjustmentPallet.ID); err != nil {
+		t.Fatalf("sum selected adjustment ledger quantities: %v", err)
+	}
+	if adjustmentSelectedLedgerQty != -adjustmentQty {
+		t.Fatalf("expected selected pallet adjustment quantity -%d, got %d", adjustmentQty, adjustmentSelectedLedgerQty)
+	}
+
+	var adjustmentOtherLedgerCount int
+	if err := store.db.GetContext(ctx, &adjustmentOtherLedgerCount, `
+		SELECT COUNT(*)
+		FROM stock_ledger
+		WHERE source_document_type = 'ADJUSTMENT'
+		  AND source_document_id = ?
+		  AND pallet_id = ?
+	`, adjustment.ID, transferPallet.ID); err != nil {
+		t.Fatalf("count non-selected adjustment ledger rows: %v", err)
+	}
+	if adjustmentOtherLedgerCount != 0 {
+		t.Fatalf("expected non-selected pallet to remain untouched by adjustment, got %d ledger rows", adjustmentOtherLedgerCount)
+	}
+
+	var adjustmentPalletQty int
+	if err := store.db.GetContext(ctx, &adjustmentPalletQty, `
+		SELECT COALESCE(SUM(quantity), 0)
+		FROM pallet_items
+		WHERE pallet_id = ?
+	`, adjustmentPallet.ID); err != nil {
+		t.Fatalf("load selected adjustment pallet quantity: %v", err)
+	}
+	if adjustmentPalletQty != 0 {
+		t.Fatalf("expected selected adjustment pallet quantity 0, got %d", adjustmentPalletQty)
+	}
+
+	transferLine := transferLineFromItem(sourceItem, transferQty, destinationLocation.ID, "B", "Selected pallet transfer")
+	transferLine.PalletID = transferPallet.ID
+	transfer, err := store.CreateInventoryTransfer(ctx, CreateInventoryTransferInput{
+		TransferNo: "TR-SEL-" + suffix,
+		Notes:      "Transfer one selected pallet",
+		Lines:      []CreateInventoryTransferLineInput{transferLine},
+	})
+	if err != nil {
+		t.Fatalf("create selected-pallet transfer: %v", err)
+	}
+
+	var transferSelectedLedgerQty int
+	if err := store.db.GetContext(ctx, &transferSelectedLedgerQty, `
+		SELECT COALESCE(SUM(quantity_change), 0)
+		FROM stock_ledger
+		WHERE source_document_type = 'TRANSFER'
+		  AND source_document_id = ?
+		  AND event_type = 'TRANSFER_OUT'
+		  AND pallet_id = ?
+	`, transfer.ID, transferPallet.ID); err != nil {
+		t.Fatalf("sum selected transfer-out ledger quantities: %v", err)
+	}
+	if transferSelectedLedgerQty != -transferQty {
+		t.Fatalf("expected selected pallet transfer-out quantity -%d, got %d", transferQty, transferSelectedLedgerQty)
+	}
+
+	var transferAdjustmentPalletLedgerCount int
+	if err := store.db.GetContext(ctx, &transferAdjustmentPalletLedgerCount, `
+		SELECT COUNT(*)
+		FROM stock_ledger
+		WHERE source_document_type = 'TRANSFER'
+		  AND source_document_id = ?
+		  AND event_type = 'TRANSFER_OUT'
+		  AND pallet_id = ?
+	`, transfer.ID, adjustmentPallet.ID); err != nil {
+		t.Fatalf("count transfer ledger rows on non-selected pallet: %v", err)
+	}
+	if transferAdjustmentPalletLedgerCount != 0 {
+		t.Fatalf("expected transfer to leave the previously adjusted pallet untouched, got %d ledger rows", transferAdjustmentPalletLedgerCount)
+	}
+
+	var transferPalletQtyAfter int
+	if err := store.db.GetContext(ctx, &transferPalletQtyAfter, `
+		SELECT COALESCE(SUM(quantity), 0)
+		FROM pallet_items
+		WHERE pallet_id = ?
+	`, transferPallet.ID); err != nil {
+		t.Fatalf("load selected transfer pallet quantity: %v", err)
+	}
+	if transferPalletQtyAfter != 0 {
+		t.Fatalf("expected selected transfer pallet quantity 0 after transfer, got %d", transferPalletQtyAfter)
+	}
+
+	destinationItem := mustFindItemByLocationAndSection(t, ctx, store, destinationLocation.ID, "B", sourceItem.SKU)
+	if destinationItem.Quantity != transferQty {
+		t.Fatalf("expected destination quantity %d after selected pallet transfer, got %d", transferQty, destinationItem.Quantity)
 	}
 }
 

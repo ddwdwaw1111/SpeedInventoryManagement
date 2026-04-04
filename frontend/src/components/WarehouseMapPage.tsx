@@ -5,15 +5,17 @@ import { Canvas } from "@react-three/fiber";
 import { Html, MapControls } from "@react-three/drei";
 import { useEffect, useMemo, useState } from "react";
 
+import { setPendingInventorySummaryContext } from "../lib/inventorySummaryContext";
 import { useI18n } from "../lib/i18n";
-import { setPendingInventoryByLocationContext } from "../lib/inventoryByLocationContext";
+import type { PageKey } from "../lib/routes";
 import { normalizeStorageSection, type Item } from "../lib/types";
 import { WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type WarehouseMapPageProps = {
   items: Item[];
   isLoading: boolean;
-  onNavigate: (page: "stock-by-location") => void;
+  onNavigate: (page: PageKey) => void;
+  onOpenContainerDetail: (containerNo: string) => void;
 };
 
 type NodeStatus = "normal" | "low" | "hold" | "damaged" | "mixed";
@@ -108,7 +110,7 @@ const STATUS_COLOR_MAP: Record<NodeStatus, string> = {
   mixed: "#7a5fa0"
 };
 
-export function WarehouseMapPage({ items, isLoading, onNavigate }: WarehouseMapPageProps) {
+export function WarehouseMapPage({ items, isLoading, onNavigate, onOpenContainerDetail }: WarehouseMapPageProps) {
   const { t } = useI18n();
   const [selectedWarehouseFilterId, setSelectedWarehouseFilterId] = useState<string>("all");
   const [selectedCustomerFilterId, setSelectedCustomerFilterId] = useState<string>("all");
@@ -590,13 +592,18 @@ export function WarehouseMapPage({ items, isLoading, onNavigate }: WarehouseMapP
                             type="button"
                             className="warehouse-map__item-row warehouse-map__item-row--action"
                             onClick={() => {
-                              setPendingInventoryByLocationContext({
-                                sku: item.sku,
+                              const normalizedContainerNo = selectedContainer.containerNo.trim();
+                              if (normalizedContainerNo) {
+                                onOpenContainerDetail(normalizedContainerNo);
+                                return;
+                              }
+
+                              setPendingInventorySummaryContext({
+                                searchTerm: item.sku,
                                 customerId: item.customerId,
-                                locationId: item.locationId,
-                                containerNo: selectedContainer.containerNo
+                                locationId: item.locationId
                               });
-                              onNavigate("stock-by-location");
+                              onNavigate("inventory-summary");
                             }}
                           >
                             <div>

@@ -7,6 +7,7 @@ export type PageKey =
   | "reports"
   | "all-activity"
   | "container-contents"
+  | "container-detail"
   | "customers"
   | "audit-logs"
   | "pallet-trace"
@@ -17,13 +18,13 @@ export type PageKey =
   | "transfers"
   | "cycle-counts"
   | "sku-master"
-  | "stock-by-location"
   | "storage-management"
   | "storage-location-editor"
   | "inbound-management"
   | "inbound-detail"
   | "receipt-editor"
   | "outbound-management"
+  | "shipment-editor"
   | "settings";
 
 export const pagePathMap: Record<PageKey, string> = {
@@ -33,6 +34,7 @@ export const pagePathMap: Record<PageKey, string> = {
   reports: "/reports",
   "all-activity": "/all-activity",
   "container-contents": "/container-contents",
+  "container-detail": "/container-contents",
   customers: "/customers",
   "audit-logs": "/audit-logs",
   "pallet-trace": "/pallets",
@@ -43,13 +45,13 @@ export const pagePathMap: Record<PageKey, string> = {
   transfers: "/transfers",
   "cycle-counts": "/cycle-counts",
   "sku-master": "/sku-master",
-  "stock-by-location": "/stock-by-location",
   "storage-management": "/storage-management",
   "storage-location-editor": "/storage-management/new",
   "inbound-management": "/inbound-management",
   "inbound-detail": "/inbound-management",
   "receipt-editor": "/inbound-management/new",
   "outbound-management": "/outbound-management",
+  "shipment-editor": "/outbound-management/new",
   settings: "/settings"
 };
 
@@ -69,6 +71,7 @@ export function getPageFromPath(pathname: string): PageKey {
   if (normalized === "/reports") return "reports";
   if (normalized === "/export-center") return "export-center";
   if (normalized === "/all-activity") return "all-activity";
+  if (/^\/container-contents\/[^/]+$/.test(normalized)) return "container-detail";
   if (normalized === "/container-contents") return "container-contents";
   if (normalized === "/audit-logs") return "audit-logs";
   if (normalized === "/pallets") return "pallet-trace";
@@ -81,10 +84,11 @@ export function getPageFromPath(pathname: string): PageKey {
   if (normalized === "/inbound-management/new" || /^\/inbound-management\/\d+\/edit$/.test(normalized)) return "receipt-editor";
   if (/^\/inbound-management\/\d+$/.test(normalized)) return "inbound-detail";
   if (normalized === "/inbound-management") return "inbound-management";
+  if (normalized === "/outbound-management/new" || /^\/outbound-management\/\d+\/edit$/.test(normalized)) return "shipment-editor";
   if (normalized === "/outbound-management") return "outbound-management";
   if (normalized === "/customers") return "customers";
   if (normalized === "/sku-master") return "sku-master";
-  if (normalized === "/stock-by-location") return "stock-by-location";
+  if (normalized === "/stock-by-location") return "inventory-summary";
   if (normalized === "/storage-management") return "storage-management";
   if (normalized === "/storage-management/new" || /^\/storage-management\/\d+$/.test(normalized)) return "storage-location-editor";
   if (normalized === "/settings") return "settings";
@@ -189,4 +193,50 @@ export function getReceiptEditorIdFromPath(pathname: string) {
   }
 
   return Number(match[1]);
+}
+
+export function navigateToShipmentEditor(setter: (page: PageKey) => void, documentId?: number | null) {
+  const path = documentId && documentId > 0
+    ? `/outbound-management/${documentId}/edit`
+    : "/outbound-management/new";
+  if (normalizePagePath(window.location.pathname) !== path) {
+    window.history.pushState({ page: "shipment-editor", documentId: documentId ?? null }, "", path);
+  }
+
+  setter("shipment-editor");
+}
+
+export function getShipmentEditorIdFromPath(pathname: string) {
+  const normalized = normalizePagePath(pathname);
+  const match = normalized.match(/^\/outbound-management\/(\d+)\/edit$/);
+  if (!match) {
+    return null;
+  }
+
+  return Number(match[1]);
+}
+
+export function navigateToContainerDetail(setter: (page: PageKey) => void, containerNo: string) {
+  const normalizedContainerNo = containerNo.trim().toUpperCase();
+  const encodedContainerNo = encodeURIComponent(normalizedContainerNo);
+  const path = `/container-contents/${encodedContainerNo}`;
+  if (normalizePagePath(window.location.pathname) !== path) {
+    window.history.pushState({ page: "container-detail", containerNo: normalizedContainerNo }, "", path);
+  }
+
+  setter("container-detail");
+}
+
+export function getContainerDetailContainerNoFromPath(pathname: string) {
+  const normalized = normalizePagePath(pathname);
+  const match = normalized.match(/^\/container-contents\/([^/]+)$/);
+  if (!match) {
+    return null;
+  }
+
+  try {
+    return decodeURIComponent(match[1]).trim().toUpperCase() || null;
+  } catch {
+    return null;
+  }
 }

@@ -30,6 +30,9 @@ export function PalletTracePage() {
     if (pendingContext?.sourceInboundDocumentId && pendingContext.sourceInboundDocumentId > 0) {
       setSourceInboundDocumentIdFilter(pendingContext.sourceInboundDocumentId);
     }
+    if (pendingContext?.searchTerm?.trim()) {
+      setSearchTerm(pendingContext.searchTerm.trim());
+    }
   }, []);
 
   useEffect(() => {

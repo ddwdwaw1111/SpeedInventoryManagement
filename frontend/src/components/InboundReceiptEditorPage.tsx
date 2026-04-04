@@ -20,6 +20,7 @@ import {
   type UserRole
 } from "../lib/types";
 import { InlineAlert, useFeedbackToast } from "./Feedback";
+import { InboundPalletBreakdownPanel } from "./InboundPalletBreakdownPanel";
 import { WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type InboundWizardStep = 1 | 2 | 3;
@@ -109,6 +110,7 @@ export function InboundReceiptEditorPage({
   const [inboundWizardStep, setInboundWizardStep] = useState<InboundWizardStep>(1);
   const [batchInboundLineAddCount, setBatchInboundLineAddCount] = useState(1);
   const [inboundEditorIntent, setInboundEditorIntent] = useState<InboundLaunchIntent | null>(null);
+  const [expandedPalletBreakdowns, setExpandedPalletBreakdowns] = useState<Record<string, boolean>>({});
   const [hasRestoredLocalDraft, setHasRestoredLocalDraft] = useState(false);
   const [isEditorReady, setIsEditorReady] = useState(false);
   const pendingBatchLineIDRef = useRef<string | null>(null);
@@ -246,6 +248,7 @@ export function InboundReceiptEditorPage({
     setErrorMessage("");
     setBatchSubmitting(false);
     setBatchInboundLineAddCount(1);
+    setExpandedPalletBreakdowns({});
     setIsEditorReady(true);
     lastInitializedRouteRef.current = routeKey;
   }, [customers, document, documentId, draftStorageKey, isLoading, locations, routeKey, skuMastersBySku]);
@@ -287,8 +290,16 @@ export function InboundReceiptEditorPage({
     setBatchLines(sourceState.lines);
     setInboundWizardStep(1);
     setInboundEditorIntent(sourceState.inboundEditorIntent);
+    setExpandedPalletBreakdowns({});
     setHasRestoredLocalDraft(false);
     clearInboundReceiptEditorDraft(draftStorageKey);
+  }
+
+  function togglePalletBreakdown(lineId: string) {
+    setExpandedPalletBreakdowns((current) => ({
+      ...current,
+      [lineId]: !current[lineId]
+    }));
   }
 
   function getSafeLineAddCount(value: number) {
@@ -967,6 +978,12 @@ export function InboundReceiptEditorPage({
                     const displayedReorderLevel = selectedBatchItem?.reorderLevel ?? batchSkuMaster?.reorderLevel ?? batchSkuTemplate?.reorderLevel ?? line.reorderLevel;
                     const effectiveUnitsPerPallet = getEffectiveInboundUnitsPerPallet(line, batchSkuMaster);
                     const palletUnitLabel = (batchSkuMaster?.unit || batchForm.unitLabel || "CTN").toUpperCase();
+                    const lineSkuDisplay = line.sku.trim().toUpperCase() || "-";
+                    const lineStorageSectionDisplay = normalizeStorageSection(line.storageSection || batchSectionOptions[0]);
+                    const palletBreakdownTotal = getInboundPalletBreakdownTotal(line.palletBreakdown);
+                    const canExpandPalletBreakdown = batchForm.handlingMode !== "SEALED_TRANSIT" && line.pallets > 0;
+                    const isPalletBreakdownExpanded = Boolean(expandedPalletBreakdowns[line.id]);
+                    const hasPalletBreakdownMismatch = batchForm.handlingMode !== "SEALED_TRANSIT" && line.receivedQty > 0 && palletBreakdownTotal !== line.receivedQty;
 
                     return (
                       <div className="batch-line-card" key={line.id} id={`receipt-editor-line-${line.id}`}>
@@ -987,55 +1004,41 @@ export function InboundReceiptEditorPage({
                           <label>{t("pallets")}<input type="number" min="0" value={numberInputValue(line.pallets)} onChange={(event) => updateBatchLinePallets(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={isReadOnly || batchForm.handlingMode === "SEALED_TRANSIT"} /></label>
                           <label>{t("unitsPerPallet")}<input type="number" min="0" value={numberInputValue(line.unitsPerPallet > 0 ? line.unitsPerPallet : effectiveUnitsPerPallet)} onChange={(event) => updateBatchLineUnitsPerPallet(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={isReadOnly || batchForm.handlingMode === "SEALED_TRANSIT"} placeholder={batchSkuMaster?.defaultUnitsPerPallet ? String(batchSkuMaster.defaultUnitsPerPallet) : ""} /></label>
                           <label>{t("storageSection")}<select value={normalizeStorageSection(line.storageSection || batchSectionOptions[0])} onChange={(event) => updateBatchLine(line.id, { storageSection: event.target.value })} disabled={isReadOnly}>{batchSectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}</select></label>
-                          <div className="batch-line-grid__detail batch-line-grid__detail--stacked">
-                            <div className="batch-line-grid__detail-header">
-                              <strong>{t("palletBreakdown")}</strong>
-                              <span className="batch-line-grid__detail-summary">
-                                {t("palletsDetail")}: <span className="cell--mono">{line.palletsDetailCtns || "-"}</span>
-                              </span>
-                              {batchSkuMaster?.defaultUnitsPerPallet ? (
-                                <span className="batch-line-grid__detail-summary">
-                                  {t("palletUnitsHint", { units: batchSkuMaster.defaultUnitsPerPallet, unit: palletUnitLabel })}
-                                </span>
-                              ) : null}
-                              <button
-                                className="button button--ghost button--small"
-                                type="button"
-                                onClick={() => resetBatchLinePalletBreakdown(line.id)}
-                                disabled={isReadOnly || batchForm.handlingMode === "SEALED_TRANSIT" || line.pallets <= 0 || line.receivedQty <= 0}
-                              >
-                                {t("resetPalletBreakdown")}
-                              </button>
-                            </div>
-                            {batchForm.handlingMode === "SEALED_TRANSIT" ? (
-                              <div className="sheet-note sheet-note--readonly">{t("sealedTransitDraftNotice")}</div>
-                            ) : line.pallets <= 0 ? (
-                              <div className="sheet-note sheet-note--readonly">{t("palletBreakdownEmptyHint")}</div>
-                            ) : (
-                              <div className="batch-line-pallet-breakdown">
-                                {line.palletBreakdown.map((entry, palletIndex) => (
-                                  <label key={entry.id}>
-                                    {t("pallet")} #{palletIndex + 1}
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      value={numberInputValue(entry.quantity)}
-                                      onChange={(event) => updateBatchLinePalletBreakdownQuantity(line.id, entry.id, Math.max(0, Number(event.target.value || 0)))}
-                                      disabled={isReadOnly}
-                                    />
-                                  </label>
-                                ))}
-                              </div>
-                            )}
-                            {batchForm.handlingMode !== "SEALED_TRANSIT" && line.receivedQty > 0 && getInboundPalletBreakdownTotal(line.palletBreakdown) !== line.receivedQty ? (
-                              <div className="batch-line-card__hint batch-line-card__hint--warning">
-                                {t("palletBreakdownTotalMismatch", {
-                                  assigned: getInboundPalletBreakdownTotal(line.palletBreakdown),
-                                  received: line.receivedQty
-                                })}
-                              </div>
-                            ) : null}
-                          </div>
+                          <InboundPalletBreakdownPanel
+                            title={t("palletBreakdown")}
+                            helperText={batchSkuMaster?.defaultUnitsPerPallet ? t("palletUnitsHint", { units: batchSkuMaster.defaultUnitsPerPallet, unit: palletUnitLabel }) : undefined}
+                            skuLabel={t("sku")}
+                            skuValue={lineSkuDisplay}
+                            storageSectionLabel={t("storageSection")}
+                            storageSectionValue={lineStorageSectionDisplay}
+                            palletsLabel={t("pallets")}
+                            palletCount={line.pallets}
+                            palletsDetailLabel={t("palletsDetail")}
+                            palletsDetailValue={line.palletsDetailCtns || "-"}
+                            unitLabel={palletUnitLabel}
+                            detailTone={hasPalletBreakdownMismatch ? "danger" : "default"}
+                            resetLabel={t("resetPalletBreakdown")}
+                            detailsLabel={t("details")}
+                            emptyHint={t("palletBreakdownEmptyHint")}
+                            sealedHint={t("sealedTransitDraftNotice")}
+                            resetDisabled={isReadOnly || batchForm.handlingMode === "SEALED_TRANSIT" || line.pallets <= 0 || line.receivedQty <= 0}
+                            canExpand={canExpandPalletBreakdown}
+                            expanded={isPalletBreakdownExpanded}
+                            onToggle={() => togglePalletBreakdown(line.id)}
+                            onReset={() => resetBatchLinePalletBreakdown(line.id)}
+                            state={batchForm.handlingMode === "SEALED_TRANSIT" ? "sealed" : line.pallets <= 0 ? "empty" : "ready"}
+                            rows={line.palletBreakdown.map((entry, palletIndex) => ({
+                              id: entry.id,
+                              label: `${t("pallet")} #${palletIndex + 1}`,
+                              quantity: entry.quantity
+                            }))}
+                            onQuantityChange={(entryId, quantity) => updateBatchLinePalletBreakdownQuantity(line.id, entryId, quantity)}
+                            inputDisabled={isReadOnly}
+                            mismatchMessage={hasPalletBreakdownMismatch ? t("palletBreakdownTotalMismatch", {
+                              assigned: palletBreakdownTotal,
+                              received: line.receivedQty
+                            }) : null}
+                          />
                           <label>{t("reorderLevel")}<input type="number" min="0" value={numberInputValue(displayedReorderLevel)} onChange={(event) => updateBatchLine(line.id, { reorderLevel: Math.max(0, Number(event.target.value || 0)) })} placeholder={suggestedReorderLevel > 0 ? String(suggestedReorderLevel) : ""} disabled={isReadOnly || Boolean(selectedBatchItem)} /></label>
                         </div>
                         <div className="batch-line-card__meta">
