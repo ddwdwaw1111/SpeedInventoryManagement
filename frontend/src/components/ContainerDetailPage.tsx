@@ -1,12 +1,17 @@
 import CloseIcon from "@mui/icons-material/Close";
+import CompareArrowsOutlinedIcon from "@mui/icons-material/CompareArrowsOutlined";
+import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
+import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
 import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
+import OutboxOutlinedIcon from "@mui/icons-material/OutboxOutlined";
+import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
 import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
 import { Chip, Dialog, DialogContent, DialogTitle, IconButton } from "@mui/material";
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { ApiError, api } from "../lib/api";
-import { formatDateTimeValue } from "../lib/dates";
+import { formatDateTimeValue, formatDateValue, parseDateValue } from "../lib/dates";
 import {
   buildAllContainerContentsRows,
   buildContainerSkuCards,
@@ -25,6 +30,7 @@ import {
   type Item,
   type Location,
   type Movement,
+  type PalletLocationEvent,
   type PalletTrace,
   type UserRole
 } from "../lib/types";
@@ -32,8 +38,14 @@ import { InlineAlert, useFeedbackToast } from "./Feedback";
 import { WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 const PALLETS_PER_PAGE = 6;
+const activityDateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
 
 type ActiveInventoryDialog = "adjustment" | "transfer" | null;
+type ContainerHistoryFilter = "ALL" | Movement["movementType"] | PalletLocationEvent["eventType"];
+
+type ContainerHistoryEntry =
+  | { id: string; source: "movement"; filterKey: Movement["movementType"]; sortTimestamp: number; movement: Movement }
+  | { id: string; source: "pallet-event"; filterKey: PalletLocationEvent["eventType"]; sortTimestamp: number; event: PalletLocationEvent };
 
 type ContainerAdjustmentFormState = {
   reasonCode: string;
@@ -83,11 +95,17 @@ export function ContainerDetailPage({
   const [pallets, setPallets] = useState<PalletTrace[]>([]);
   const [isPalletsLoading, setIsPalletsLoading] = useState(false);
   const [palletErrorMessage, setPalletErrorMessage] = useState("");
+  const [palletLocationEvents, setPalletLocationEvents] = useState<PalletLocationEvent[]>([]);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  const [historyErrorMessage, setHistoryErrorMessage] = useState("");
   const [palletPage, setPalletPage] = useState(1);
   const [palletReloadToken, setPalletReloadToken] = useState(0);
   const [activeInventoryDialog, setActiveInventoryDialog] = useState<ActiveInventoryDialog>(null);
   const [inventoryDialogError, setInventoryDialogError] = useState("");
   const [inventoryDialogSubmitting, setInventoryDialogSubmitting] = useState(false);
+  const [historyTypeFilter, setHistoryTypeFilter] = useState<ContainerHistoryFilter>("ALL");
+  const [activePalletWarehouse, setActivePalletWarehouse] = useState("ALL");
+  const [activePalletSection, setActivePalletSection] = useState("ALL");
   const [adjustmentForm, setAdjustmentForm] = useState<ContainerAdjustmentFormState>(createEmptyContainerAdjustmentForm());
   const [transferForm, setTransferForm] = useState<ContainerTransferFormState>(createEmptyContainerTransferForm());
 
@@ -101,9 +119,104 @@ export function ContainerDetailPage({
   );
   const skuCards = useMemo(() => buildContainerSkuCards(container?.items ?? []), [container?.items]);
   const isHistoricalOnly = Boolean(container && container.rowCount === 0);
+  const containerMovements = useMemo(
+    () => movements
+      .filter((movement) => normalizeContainerNumber(movement.containerNo) === normalizedContainerNo)
+      .sort((left, right) => getMovementSortTimestamp(right) - getMovementSortTimestamp(left)),
+    [movements, normalizedContainerNo]
+  );
+  const containerHistoryEntries = useMemo<ContainerHistoryEntry[]>(() => [
+    ...containerMovements.map((movement) => ({
+      id: `movement:${movement.id}`,
+      source: "movement" as const,
+      filterKey: movement.movementType,
+      sortTimestamp: getMovementSortTimestamp(movement),
+      movement
+    })),
+    ...palletLocationEvents.map((event) => ({
+      id: `pallet-event:${event.id}`,
+      source: "pallet-event" as const,
+      filterKey: event.eventType,
+      sortTimestamp: getPalletLocationEventSortTimestamp(event),
+      event
+    }))
+  ].sort((left, right) => right.sortTimestamp - left.sortTimestamp), [containerMovements, palletLocationEvents]);
+  const historyTypeOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const entry of containerHistoryEntries) {
+      counts.set(entry.filterKey, (counts.get(entry.filterKey) ?? 0) + 1);
+    }
+
+    const orderedTypes: string[] = ["IN", "OUT", "TRANSFER_OUT", "TRANSFER_IN", "ADJUST", "COUNT", "REVERSAL", "RECEIVED", "CANCELLED"];
+    return [
+      { key: "ALL" as const, label: t("containerDetailHistoryAll"), count: containerHistoryEntries.length },
+      ...orderedTypes
+        .filter((historyType) => counts.has(historyType))
+        .map((historyType) => ({
+          key: historyType as ContainerHistoryFilter,
+          label: getContainerHistoryFilterLabel(historyType, t),
+          count: counts.get(historyType) ?? 0
+        }))
+    ];
+  }, [containerHistoryEntries, t]);
+  const filteredHistoryEntries = useMemo(
+    () => historyTypeFilter === "ALL"
+      ? containerHistoryEntries
+      : containerHistoryEntries.filter((entry) => entry.filterKey === historyTypeFilter),
+    [containerHistoryEntries, historyTypeFilter]
+  );
+  const firstReceivedAt = useMemo(() => {
+    const firstReceivedEntry = [...containerHistoryEntries]
+      .filter((entry) => entry.filterKey === "IN" || entry.filterKey === "RECEIVED")
+      .sort((left, right) => left.sortTimestamp - right.sortTimestamp)[0];
+    return firstReceivedEntry ? getContainerHistoryEntryTimeValue(firstReceivedEntry) : null;
+  }, [containerHistoryEntries]);
+  const lastActivityAt = containerHistoryEntries[0] ? getContainerHistoryEntryTimeValue(containerHistoryEntries[0]) : null;
+  const touchedWarehouseCount = useMemo(
+    () => new Set(containerHistoryEntries.map((entry) => entry.source === "movement" ? entry.movement.locationName : entry.event.locationName).filter((value) => value.trim())).size,
+    [containerHistoryEntries]
+  );
   const actionablePallets = useMemo(
     () => pallets.filter((pallet) => isPalletActionable(pallet)),
     [pallets]
+  );
+  const palletWarehouseTabs = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const pallet of pallets) {
+      const warehouse = pallet.currentLocationName.trim() || "-";
+      counts.set(warehouse, (counts.get(warehouse) ?? 0) + 1);
+    }
+
+    return [
+      { key: "ALL", label: t("allWarehouses"), count: pallets.length },
+      ...[...counts.entries()]
+        .sort((left, right) => left[0].localeCompare(right[0]))
+        .map(([warehouse, count]) => ({ key: warehouse, label: warehouse, count }))
+    ];
+  }, [pallets, t]);
+  const palletsInWarehouse = useMemo(
+    () => activePalletWarehouse === "ALL"
+      ? pallets
+      : pallets.filter((pallet) => (pallet.currentLocationName.trim() || "-") === activePalletWarehouse),
+    [activePalletWarehouse, pallets]
+  );
+  const palletSectionTabs = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const pallet of palletsInWarehouse) {
+      const section = normalizeStorageSection(pallet.currentStorageSection);
+      counts.set(section, (counts.get(section) ?? 0) + 1);
+    }
+
+    return [
+      { key: "ALL", label: t("allSections"), count: palletsInWarehouse.length },
+      ...[...counts.entries()]
+        .sort((left, right) => left[0].localeCompare(right[0]))
+        .map(([section, count]) => ({ key: section, label: section, count }))
+    ];
+  }, [palletsInWarehouse, t]);
+  const filteredPallets = useMemo(
+    () => palletsInWarehouse.filter((pallet) => activePalletSection === "ALL" || normalizeStorageSection(pallet.currentStorageSection) === activePalletSection),
+    [activePalletSection, palletsInWarehouse]
   );
   const defaultSelectedPalletIds = useMemo(
     () => actionablePallets.length === 1 ? [actionablePallets[0].id] : [],
@@ -163,15 +276,72 @@ export function ContainerDetailPage({
     };
   }, [normalizedContainerNo, palletReloadToken, routeKey, t]);
 
-  const totalPalletPages = Math.max(1, Math.ceil(pallets.length / PALLETS_PER_PAGE));
+  useEffect(() => {
+    let active = true;
+
+    async function loadHistoryEvents() {
+      if (!normalizedContainerNo) {
+        setPalletLocationEvents([]);
+        setHistoryErrorMessage("");
+        setIsHistoryLoading(false);
+        return;
+      }
+
+      setIsHistoryLoading(true);
+      setHistoryErrorMessage("");
+      try {
+        const nextEvents = await api.getPalletLocationEvents(400, normalizedContainerNo);
+        if (!active) return;
+        setPalletLocationEvents(nextEvents
+          .filter((event) => normalizeContainerNumber(event.containerNo) === normalizedContainerNo)
+          .sort((left, right) => getPalletLocationEventSortTimestamp(right) - getPalletLocationEventSortTimestamp(left)));
+      } catch (error) {
+        if (!active) return;
+        setHistoryErrorMessage(getErrorMessage(error, t("couldNotLoadReport")));
+      } finally {
+        if (active) {
+          setIsHistoryLoading(false);
+        }
+      }
+    }
+
+    void loadHistoryEvents();
+    return () => {
+      active = false;
+    };
+  }, [normalizedContainerNo, palletReloadToken, routeKey, t]);
+
+  const totalPalletPages = Math.max(1, Math.ceil(filteredPallets.length / PALLETS_PER_PAGE));
   const paginatedPallets = useMemo(() => {
     const startIndex = (palletPage - 1) * PALLETS_PER_PAGE;
-    return pallets.slice(startIndex, startIndex + PALLETS_PER_PAGE);
-  }, [palletPage, pallets]);
+    return filteredPallets.slice(startIndex, startIndex + PALLETS_PER_PAGE);
+  }, [filteredPallets, palletPage]);
 
   useEffect(() => {
     setPalletPage(1);
   }, [normalizedContainerNo]);
+
+  useEffect(() => {
+    setHistoryTypeFilter("ALL");
+    setActivePalletWarehouse("ALL");
+    setActivePalletSection("ALL");
+  }, [normalizedContainerNo]);
+
+  useEffect(() => {
+    if (activePalletWarehouse !== "ALL" && !palletWarehouseTabs.some((tab) => tab.key === activePalletWarehouse)) {
+      setActivePalletWarehouse("ALL");
+    }
+  }, [activePalletWarehouse, palletWarehouseTabs]);
+
+  useEffect(() => {
+    if (activePalletSection !== "ALL" && !palletSectionTabs.some((tab) => tab.key === activePalletSection)) {
+      setActivePalletSection("ALL");
+    }
+  }, [activePalletSection, palletSectionTabs]);
+
+  useEffect(() => {
+    setPalletPage(1);
+  }, [activePalletWarehouse, activePalletSection]);
 
   useEffect(() => {
     setPalletPage((current) => Math.min(current, totalPalletPages));
@@ -307,8 +477,16 @@ export function ContainerDetailPage({
   }
 
   const openPalletCount = useMemo(
-    () => pallets.filter((pallet) => pallet.status === "OPEN" || pallet.status === "PARTIAL").length,
-    [pallets]
+    () => filteredPallets.filter((pallet) => pallet.status === "OPEN" || pallet.status === "PARTIAL").length,
+    [filteredPallets]
+  );
+  const filteredPalletQty = useMemo(
+    () => filteredPallets.reduce((sum, pallet) => sum + getPalletTotalQty(pallet), 0),
+    [filteredPallets]
+  );
+  const filteredPalletSectionCount = useMemo(
+    () => new Set(filteredPallets.map((pallet) => normalizeStorageSection(pallet.currentStorageSection))).size,
+    [filteredPallets]
   );
 
   return (
@@ -439,6 +617,66 @@ export function ContainerDetailPage({
 
         <section className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_16px_34px_rgba(15,23,42,0.05)]">
           <WorkspacePanelHeader
+            title={t("containerDetailHistoryTitle")}
+            description={t("containerDetailHistoryDesc")}
+            actions={containerHistoryEntries.length > 0 ? (
+              <button
+                type="button"
+                onClick={handleOpenActivity}
+                className="interactive-button-lift inline-flex items-center gap-2 rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-xs font-semibold text-[#143569] transition hover:bg-slate-50"
+              >
+                <HistoryOutlinedIcon sx={{ fontSize: 16 }} />
+                {t("allActivity")}
+              </button>
+            ) : undefined}
+            errorMessage={historyErrorMessage}
+          />
+          {isHistoryLoading ? (
+            <CardSkeletonGrid />
+          ) : containerHistoryEntries.length > 0 ? (
+            <>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <SmallMetricCard label={t("recordCount")} value={String(containerHistoryEntries.length)} />
+                <SmallMetricCard label={t("warehouses")} value={String(touchedWarehouseCount)} />
+                <SmallMetricCard label={t("containerReceivedAt")} value={formatContainerTimelineValue(firstReceivedAt, resolvedTimeZone)} />
+                <SmallMetricCard label={t("lastActivity")} value={formatContainerTimelineValue(lastActivityAt, resolvedTimeZone)} />
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                {historyTypeOptions.map((option) => {
+                  const selected = historyTypeFilter === option.key;
+                  return (
+                    <button
+                      key={option.key}
+                      type="button"
+                      onClick={() => setHistoryTypeFilter(option.key)}
+                      className={`interactive-block inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs font-semibold transition ${selected ? "bg-[#143569] text-white shadow-[0_10px_24px_rgba(20,53,105,0.16)]" : "bg-slate-100 text-slate-600 hover:bg-slate-200/80"}`}
+                    >
+                      <span>{option.label}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${selected ? "bg-white/15 text-white" : "bg-white text-slate-500"}`}>{option.count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="mt-5 space-y-3">
+                {filteredHistoryEntries.map((entry) => (
+                  <ContainerHistoryCard
+                    key={entry.id}
+                    entry={entry}
+                    resolvedTimeZone={resolvedTimeZone}
+                    t={t}
+                  />
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="sheet-note sheet-note--readonly">{t("containerDetailNoHistory")}</div>
+          )}
+        </section>
+
+        <section className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_16px_34px_rgba(15,23,42,0.05)]">
+          <WorkspacePanelHeader
             title={t("containerDetailSkuTitle")}
             description={t("containerDetailSkuDesc")}
           />
@@ -470,7 +708,7 @@ export function ContainerDetailPage({
           <WorkspacePanelHeader
             title={t("containerDetailPalletTitle")}
             description={t("containerDetailPalletDesc")}
-            actions={pallets.length > PALLETS_PER_PAGE ? (
+            actions={filteredPallets.length > PALLETS_PER_PAGE ? (
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
@@ -495,9 +733,53 @@ export function ContainerDetailPage({
             ) : undefined}
             errorMessage={palletErrorMessage}
           />
+          {pallets.length > 0 ? (
+            <>
+              <div className="mt-1 text-xs text-slate-500">{t("containerDetailPalletWarehouseHint")}</div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {palletWarehouseTabs.map((tab) => {
+                  const selected = activePalletWarehouse === tab.key;
+                  return (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => setActivePalletWarehouse(tab.key)}
+                      className={`interactive-block inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs font-semibold transition ${selected ? "bg-[#143569] text-white shadow-[0_10px_24px_rgba(20,53,105,0.16)]" : "bg-slate-100 text-slate-600 hover:bg-slate-200/80"}`}
+                    >
+                      <span>{tab.label}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${selected ? "bg-white/15 text-white" : "bg-white text-slate-500"}`}>{tab.count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {palletSectionTabs.length > 1 ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {palletSectionTabs.map((tab) => {
+                    const selected = activePalletSection === tab.key;
+                    return (
+                      <button
+                        key={tab.key}
+                        type="button"
+                        onClick={() => setActivePalletSection(tab.key)}
+                        className={`interactive-block inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs font-semibold transition ${selected ? "bg-slate-900 text-white shadow-[0_10px_24px_rgba(15,23,42,0.14)]" : "bg-slate-100 text-slate-600 hover:bg-slate-200/80"}`}
+                      >
+                        <span>{tab.label}</span>
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${selected ? "bg-white/15 text-white" : "bg-white text-slate-500"}`}>{tab.count}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <SmallMetricCard label={t("palletTrace")} value={String(filteredPallets.length)} />
+                <SmallMetricCard label={t("openPalletCount")} value={String(openPalletCount)} />
+                <SmallMetricCard label={t("sections")} value={`${filteredPalletSectionCount} · ${filteredPalletQty} ${t("quantity")}`} />
+              </div>
+            </>
+          ) : null}
           {isPalletsLoading ? (
             <CardSkeletonGrid />
-          ) : pallets.length > 0 ? (
+          ) : filteredPallets.length > 0 ? (
             <div className="grid gap-4 xl:grid-cols-2">
               {paginatedPallets.map((pallet) => (
                 <PalletTraceCard
@@ -509,7 +791,7 @@ export function ContainerDetailPage({
               ))}
             </div>
           ) : (
-            <div className="sheet-note sheet-note--readonly">{t("containerDetailNoCurrentPallets")}</div>
+            <div className="sheet-note sheet-note--readonly">{pallets.length > 0 ? t("containerDetailNoPalletsInScope") : t("containerDetailNoCurrentPallets")}</div>
           )}
         </section>
       </div>
@@ -715,6 +997,198 @@ function PalletTraceCard({
   );
 }
 
+function ContainerHistoryCard({
+  entry,
+  resolvedTimeZone,
+  t
+}: {
+  entry: ContainerHistoryEntry;
+  resolvedTimeZone: string;
+  t: (key: string, values?: Record<string, string | number>) => string;
+}) {
+  if (entry.source === "movement") {
+    const movement = entry.movement;
+    const signedQuantity = movement.quantityChange >= 0 ? `+${movement.quantityChange}` : String(movement.quantityChange);
+    const referenceSummary = [movement.referenceCode, movement.packingListNo, movement.orderRef]
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .join(" | ");
+
+    return (
+      <article className="rounded-[20px] border border-slate-200/80 bg-[linear-gradient(180deg,#fbfdff_0%,#f4f8fc_100%)] p-4 shadow-[0_10px_22px_rgba(15,23,42,0.04)]">
+        <div className="flex items-start gap-4">
+          <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${getHistoryIconSurfaceClass(entry.filterKey)}`}>
+            {getHistoryIcon(entry.filterKey)}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                {renderHistoryFilterChip(entry.filterKey, t)}
+                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                  {t("inventoryLedger")}
+                </span>
+                <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500 ring-1 ring-slate-200/80">
+                  {movement.locationName} / {normalizeStorageSection(movement.storageSection)}
+                </span>
+              </div>
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                {formatMovementActivityDate(movement, resolvedTimeZone)}
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(220px,0.9fr)]">
+              <div className="space-y-2.5">
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{t("sku")}</div>
+                  <div className="mt-1 text-base font-extrabold tracking-tight text-[#0d2d63]">
+                    {movement.sku} <span className="text-sm font-semibold text-slate-500">| {movement.itemNumber || "-"}</span>
+                  </div>
+                </div>
+                <div className="text-sm text-slate-600">{movement.description || "-"}</div>
+                {referenceSummary ? (
+                  <div className="text-xs text-slate-500">
+                    <span className="font-semibold uppercase tracking-[0.14em] text-slate-400">{t("reference")}:</span> {referenceSummary}
+                  </div>
+                ) : null}
+                {movement.reason?.trim() ? (
+                  <div className="text-xs text-slate-500">
+                    <span className="font-semibold uppercase tracking-[0.14em] text-slate-400">{t("notes")}:</span> {movement.reason}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <SmallMetricCard label={t("qtyChange")} value={signedQuantity} />
+                <SmallMetricCard label={t("palletTrace")} value={String(movement.pallets)} />
+                <SmallMetricCard label={t("containerNo")} value={movement.containerNo || "-"} />
+                <SmallMetricCard label={t("created")} value={formatDateTimeValue(movement.createdAt, resolvedTimeZone)} />
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+    );
+  }
+
+  const event = entry.event;
+  const signedQuantity = event.quantityDelta >= 0 ? `+${event.quantityDelta}` : String(event.quantityDelta);
+  const signedPalletDelta = event.palletDelta >= 0 ? `+${event.palletDelta}` : String(event.palletDelta);
+
+  return (
+    <article className="rounded-[20px] border border-slate-200/80 bg-[linear-gradient(180deg,#fffdfa_0%,#f8f4ee_100%)] p-4 shadow-[0_10px_22px_rgba(15,23,42,0.04)]">
+      <div className="flex items-start gap-4">
+        <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${getHistoryIconSurfaceClass(entry.filterKey)}`}>
+          {getHistoryIcon(entry.filterKey)}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              {renderHistoryFilterChip(entry.filterKey, t)}
+              <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700">
+                {t("palletTrace")}
+              </span>
+              <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500 ring-1 ring-slate-200/80">
+                {event.locationName} / {normalizeStorageSection(event.storageSection)}
+              </span>
+            </div>
+            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+              {formatDateTimeValue(event.eventTime, resolvedTimeZone)}
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(220px,0.9fr)]">
+            <div className="space-y-2.5">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{t("palletCode")}</div>
+                <div className="mt-1 text-base font-extrabold tracking-tight text-[#0d2d63]">{event.palletCode}</div>
+              </div>
+              <div className="text-sm text-slate-600">{event.customerName}</div>
+              <div className="text-xs text-slate-500">
+                <span className="font-semibold uppercase tracking-[0.14em] text-slate-400">{t("containerNo")}:</span> {event.containerNo || "-"}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <SmallMetricCard label={t("qtyChange")} value={signedQuantity} />
+              <SmallMetricCard label={t("palletTrace")} value={signedPalletDelta} />
+              <SmallMetricCard label={t("currentStorage")} value={event.locationName || "-"} />
+              <SmallMetricCard label={t("created")} value={formatDateTimeValue(event.createdAt, resolvedTimeZone)} />
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function ContainerActivityCard({
+  movement,
+  resolvedTimeZone,
+  t
+}: {
+  movement: Movement;
+  resolvedTimeZone: string;
+  t: (key: string, values?: Record<string, string | number>) => string;
+}) {
+  const signedQuantity = movement.quantityChange >= 0 ? `+${movement.quantityChange}` : String(movement.quantityChange);
+  const referenceSummary = [movement.referenceCode, movement.packingListNo, movement.orderRef]
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <article className="rounded-[20px] border border-slate-200/80 bg-[linear-gradient(180deg,#fbfdff_0%,#f4f8fc_100%)] p-4 shadow-[0_10px_22px_rgba(15,23,42,0.04)]">
+      <div className="flex items-start gap-4">
+        <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${getMovementIconSurfaceClass(movement.movementType)}`}>
+          {getMovementIcon(movement.movementType)}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              {renderMovementTypeChip(movement.movementType, t)}
+              <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500 ring-1 ring-slate-200/80">
+                {movement.locationName} / {normalizeStorageSection(movement.storageSection)}
+              </span>
+            </div>
+            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+              {formatMovementActivityDate(movement, resolvedTimeZone)}
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(220px,0.9fr)]">
+            <div className="space-y-2.5">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{t("sku")}</div>
+                <div className="mt-1 text-base font-extrabold tracking-tight text-[#0d2d63]">
+                  {movement.sku} <span className="text-sm font-semibold text-slate-500">· {movement.itemNumber || "-"}</span>
+                </div>
+              </div>
+              <div className="text-sm text-slate-600">{movement.description || "-"}</div>
+              {referenceSummary ? (
+                <div className="text-xs text-slate-500">
+                  <span className="font-semibold uppercase tracking-[0.14em] text-slate-400">{t("reference")}:</span> {referenceSummary}
+                </div>
+              ) : null}
+              {movement.reason?.trim() ? (
+                <div className="text-xs text-slate-500">
+                  <span className="font-semibold uppercase tracking-[0.14em] text-slate-400">{t("notes")}:</span> {movement.reason}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <SmallMetricCard label={t("qtyChange")} value={signedQuantity} />
+              <SmallMetricCard label={t("palletTrace")} value={String(movement.pallets)} />
+              <SmallMetricCard label={t("containerNo")} value={movement.containerNo || "-"} />
+              <SmallMetricCard label={t("created")} value={formatDateTimeValue(movement.createdAt, resolvedTimeZone)} />
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+  );
+}
+
 function OverviewStatCard({
   icon,
   label,
@@ -798,6 +1272,172 @@ function comparePallets(left: PalletTrace, right: PalletTrace) {
   }
 
   return left.palletCode.localeCompare(right.palletCode);
+}
+
+function getContainerHistoryFilterLabel(filterKey: string, t: (key: string) => string) {
+  switch (filterKey) {
+    case "RECEIVED":
+      return t("containerDetailHistoryPalletReceived");
+    case "CANCELLED":
+      return t("containerDetailHistoryPalletCancelled");
+    default:
+      return getMovementTypeLabel(filterKey as Movement["movementType"], t);
+  }
+}
+
+function renderHistoryFilterChip(filterKey: string, t: (key: string) => string) {
+  switch (filterKey) {
+    case "RECEIVED":
+      return <Chip label={t("containerDetailHistoryPalletReceived")} color="success" size="small" variant="outlined" />;
+    case "CANCELLED":
+      return <Chip label={t("containerDetailHistoryPalletCancelled")} color="default" size="small" variant="outlined" />;
+    default:
+      return renderMovementTypeChip(filterKey as Movement["movementType"], t);
+  }
+}
+
+function getHistoryIcon(filterKey: string) {
+  switch (filterKey) {
+    case "RECEIVED":
+      return <MoveToInboxOutlinedIcon sx={{ fontSize: 20 }} />;
+    case "CANCELLED":
+      return <HistoryOutlinedIcon sx={{ fontSize: 20 }} />;
+    default:
+      return getMovementIcon(filterKey as Movement["movementType"]);
+  }
+}
+
+function getHistoryIconSurfaceClass(filterKey: string) {
+  switch (filterKey) {
+    case "RECEIVED":
+      return "bg-emerald-100 text-emerald-700";
+    case "CANCELLED":
+      return "bg-slate-200 text-slate-700";
+    default:
+      return getMovementIconSurfaceClass(filterKey as Movement["movementType"]);
+  }
+}
+
+function getContainerHistoryEntryTimeValue(entry: ContainerHistoryEntry) {
+  return entry.source === "movement" ? getMovementActivityDateValue(entry.movement) : entry.event.eventTime;
+}
+
+function getPalletLocationEventSortTimestamp(event: PalletLocationEvent) {
+  const parsed = new Date(event.eventTime);
+  const timestamp = parsed.getTime();
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function getMovementTypeLabel(movementType: Movement["movementType"], t: (key: string) => string) {
+  switch (movementType) {
+    case "IN":
+      return t("inbound");
+    case "OUT":
+      return t("outbound");
+    case "REVERSAL":
+      return t("reversal");
+    case "COUNT":
+      return t("cycleCount");
+    case "TRANSFER_IN":
+      return t("transferIn");
+    case "TRANSFER_OUT":
+      return t("transferOut");
+    default:
+      return t("adjustment");
+  }
+}
+
+function renderMovementTypeChip(movementType: Movement["movementType"], t: (key: string) => string) {
+  if (movementType === "IN") {
+    return <Chip label={t("inbound")} color="success" size="small" />;
+  }
+
+  if (movementType === "OUT") {
+    return <Chip label={t("outbound")} color="error" size="small" />;
+  }
+
+  if (movementType === "REVERSAL") {
+    return <Chip label={t("reversal")} color="info" size="small" />;
+  }
+
+  if (movementType === "COUNT") {
+    return <Chip label={t("cycleCount")} color="warning" size="small" />;
+  }
+
+  if (movementType === "TRANSFER_IN") {
+    return <Chip label={t("transferIn")} color="success" size="small" />;
+  }
+
+  if (movementType === "TRANSFER_OUT") {
+    return <Chip label={t("transferOut")} color="default" size="small" />;
+  }
+
+  return <Chip label={t("adjustment")} color="warning" size="small" />;
+}
+
+function getMovementIcon(movementType: Movement["movementType"]) {
+  const sharedProps = { sx: { fontSize: 20 } };
+
+  switch (movementType) {
+    case "IN":
+      return <MoveToInboxOutlinedIcon {...sharedProps} />;
+    case "OUT":
+      return <OutboxOutlinedIcon {...sharedProps} />;
+    case "TRANSFER_IN":
+    case "TRANSFER_OUT":
+      return <CompareArrowsOutlinedIcon {...sharedProps} />;
+    case "COUNT":
+      return <FactCheckOutlinedIcon {...sharedProps} />;
+    case "REVERSAL":
+      return <HistoryOutlinedIcon {...sharedProps} />;
+    default:
+      return <TuneOutlinedIcon {...sharedProps} />;
+  }
+}
+
+function getMovementIconSurfaceClass(movementType: Movement["movementType"]) {
+  switch (movementType) {
+    case "IN":
+      return "bg-emerald-100 text-emerald-700";
+    case "OUT":
+      return "bg-rose-100 text-rose-700";
+    case "TRANSFER_IN":
+    case "TRANSFER_OUT":
+      return "bg-amber-100 text-amber-700";
+    case "COUNT":
+      return "bg-blue-100 text-[#143569]";
+    case "REVERSAL":
+      return "bg-violet-100 text-violet-700";
+    default:
+      return "bg-slate-200 text-slate-700";
+  }
+}
+
+function getMovementActivityDateValue(movement: Movement) {
+  return movement.outDate || movement.deliveryDate || movement.createdAt;
+}
+
+function getMovementSortTimestamp(movement: Movement) {
+  const value = getMovementActivityDateValue(movement);
+  if (!value) {
+    return 0;
+  }
+
+  const parsed = parseDateValue(value);
+  const timestamp = parsed.getTime();
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function formatMovementActivityDate(movement: Movement, resolvedTimeZone: string) {
+  if (movement.outDate) {
+    return formatDateValue(movement.outDate, activityDateFormatter);
+  }
+
+  if (movement.deliveryDate) {
+    return formatDateValue(movement.deliveryDate, activityDateFormatter);
+  }
+
+  return formatDateTimeValue(movement.createdAt, resolvedTimeZone);
 }
 
 function getPalletStatusRank(status: string) {

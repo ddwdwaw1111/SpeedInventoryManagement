@@ -10,6 +10,10 @@ const { getPallets } = vi.hoisted(() => ({
   getPallets: vi.fn()
 }));
 
+const { getPalletLocationEvents } = vi.hoisted(() => ({
+  getPalletLocationEvents: vi.fn()
+}));
+
 const { createInventoryAdjustment, createInventoryTransfer } = vi.hoisted(() => ({
   createInventoryAdjustment: vi.fn(),
   createInventoryTransfer: vi.fn()
@@ -19,6 +23,7 @@ vi.mock("../lib/api", () => ({
   ApiError: class ApiError extends Error {},
   api: {
     getPallets,
+    getPalletLocationEvents,
     createInventoryAdjustment,
     createInventoryTransfer
   }
@@ -27,11 +32,13 @@ vi.mock("../lib/api", () => ({
 describe("ContainerDetailPage", () => {
   beforeEach(() => {
     getPallets.mockReset();
+    getPalletLocationEvents.mockReset();
     createInventoryAdjustment.mockReset();
     createInventoryTransfer.mockReset();
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem("sim-timezone", "UTC");
+    getPalletLocationEvents.mockResolvedValue([]);
   });
 
   it("renders current SKU cards and only the pallets assigned to the selected container", async () => {
@@ -117,6 +124,136 @@ describe("ContainerDetailPage", () => {
 
     expect(onNavigate).toHaveBeenCalledWith("pallet-trace");
     expect(window.sessionStorage.getItem("sim-pallet-trace-launch")).toContain("GCXU5817233");
+  });
+
+  it("shows only historical activity tied to the current container", async () => {
+    getPallets.mockResolvedValue([]);
+    getPalletLocationEvents.mockResolvedValue([
+      {
+        id: 91,
+        palletId: 11,
+        palletCode: "PLT-001",
+        containerVisitId: 1,
+        customerId: 1,
+        customerName: "Imperial Bag & Paper",
+        locationId: 1,
+        locationName: "NJ",
+        storageSection: "TEMP",
+        containerNo: "GCXU5817233",
+        eventType: "RECEIVED",
+        quantityDelta: 6,
+        palletDelta: 1,
+        eventTime: "2026-04-01T08:45:00Z",
+        createdAt: "2026-04-01T08:45:00Z"
+      },
+      {
+        id: 92,
+        palletId: 12,
+        palletCode: "PLT-OTHER",
+        containerVisitId: 2,
+        customerId: 1,
+        customerName: "Imperial Bag & Paper",
+        locationId: 1,
+        locationName: "NJ",
+        storageSection: "TEMP",
+        containerNo: "MSCU0000001",
+        eventType: "RECEIVED",
+        quantityDelta: 3,
+        palletDelta: 1,
+        eventTime: "2026-04-03T08:45:00Z",
+        createdAt: "2026-04-03T08:45:00Z"
+      }
+    ]);
+
+    renderWithProviders(
+      <ContainerDetailPage
+        routeKey="/container-contents/GCXU5817233"
+        containerNo="GCXU5817233"
+        items={[createItem({ containerNo: "GCXU5817233" })]}
+        movements={[
+          createMovement({
+            id: 1,
+            containerNo: "GCXU5817233",
+            movementType: "IN",
+            orderRef: "PO-882910",
+            createdAt: "2026-04-01T08:30:00Z"
+          }),
+          createMovement({
+            id: 2,
+            containerNo: "GCXU5817233",
+            movementType: "OUT",
+            orderRef: "SO-99125",
+            createdAt: "2026-04-02T14:10:00Z"
+          }),
+          createMovement({
+            id: 3,
+            containerNo: "MSCU0000001",
+            movementType: "IN",
+            orderRef: "PO-OTHER",
+            createdAt: "2026-04-03T08:30:00Z"
+          })
+        ]}
+        locations={[createLocation()]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onNavigate={vi.fn()}
+        onBackToList={vi.fn()}
+      />
+    );
+
+    expect(await screen.findByText("Container Activity History")).toBeInTheDocument();
+    expect(screen.getByText("PO-882910")).toBeInTheDocument();
+    expect(screen.getByText("SO-99125")).toBeInTheDocument();
+    expect(screen.getByText("PLT-001")).toBeInTheDocument();
+    expect(screen.queryByText("PO-OTHER")).not.toBeInTheDocument();
+    expect(screen.queryByText("PLT-OTHER")).not.toBeInTheDocument();
+  });
+
+  it("filters pallet trace cards by warehouse tab", async () => {
+    getPallets.mockResolvedValue([
+      createPalletTrace({
+        id: 11,
+        palletCode: "PLT-NJ",
+        currentContainerNo: "GCXU5817233",
+        currentLocationName: "NJ",
+        currentStorageSection: "TEMP",
+        status: "OPEN",
+        contents: [createPalletContent({ id: 21, palletId: 11, quantity: 4 })]
+      }),
+      createPalletTrace({
+        id: 12,
+        palletCode: "PLT-LA",
+        currentContainerNo: "GCXU5817233",
+        currentLocationName: "LA",
+        currentStorageSection: "BULK",
+        status: "OPEN",
+        contents: [createPalletContent({ id: 22, palletId: 12, quantity: 3 })]
+      })
+    ]);
+
+    renderWithProviders(
+      <ContainerDetailPage
+        routeKey="/container-contents/GCXU5817233"
+        containerNo="GCXU5817233"
+        items={[createItem({ containerNo: "GCXU5817233" })]}
+        movements={[createMovement({ containerNo: "GCXU5817233" })]}
+        locations={[createLocation(), createLocation({ id: 2, name: "LA", sectionNames: ["TEMP", "BULK"] })]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onNavigate={vi.fn()}
+        onBackToList={vi.fn()}
+      />
+    );
+
+    expect(await screen.findByText("PLT-NJ")).toBeInTheDocument();
+    expect(screen.getByText("PLT-LA")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /LA/i }));
+
+    expect(await screen.findByText("PLT-LA")).toBeInTheDocument();
+    expect(screen.queryByText("PLT-NJ")).not.toBeInTheDocument();
   });
 
   it("posts inventory adjustment using the selected pallet contents", async () => {

@@ -57,6 +57,7 @@ func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName s
 	protected.GET("/transfers", server.handleListInventoryTransfers)
 	protected.GET("/cycle-counts", server.handleListCycleCounts)
 	protected.GET("/pallets", server.handleListPallets)
+	protected.GET("/pallet-location-events", server.handleListPalletLocationEvents)
 
 	operator := protected.Group("")
 	operator.Use(server.requireRoles(service.RoleAdmin, service.RoleOperator))
@@ -433,6 +434,28 @@ func (s *Server) handleListPallets(c *gin.Context) {
 	}
 
 	writeJSON(c, http.StatusOK, pallets)
+}
+
+func (s *Server) handleListPalletLocationEvents(c *gin.Context) {
+	limit := 200
+	if value := strings.TrimSpace(c.Query("limit")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, "limit must be a number")
+			return
+		}
+		limit = parsed
+	}
+
+	events, err := s.store.ListPalletLocationEvents(c.Request.Context(), limit, service.ListPalletLocationEventFilters{
+		ContainerNo: c.Query("containerNo"),
+	})
+	if err != nil {
+		writeServerError(c, err)
+		return
+	}
+
+	writeJSON(c, http.StatusOK, events)
 }
 
 func (s *Server) handleListOutboundDocuments(c *gin.Context) {

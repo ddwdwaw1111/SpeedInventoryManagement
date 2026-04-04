@@ -24,6 +24,7 @@ import type {
   Movement,
   OutboundDocument,
   OutboundDocumentPayload,
+  PalletLocationEvent,
   PalletTrace,
   SKUMaster,
   SKUMasterPayload,
@@ -279,6 +280,14 @@ export const api = {
       params.set("sourceInboundDocumentId", String(sourceInboundDocumentId));
     }
     return request<PalletTrace[]>(`/pallets?${params.toString()}`);
+  },
+
+  getPalletLocationEvents(limit = 200, containerNo = "") {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (containerNo.trim()) {
+      params.set("containerNo", containerNo.trim());
+    }
+    return request<PalletLocationEvent[]>(`/pallet-location-events?${params.toString()}`);
   },
 
   getOutboundDocuments(limit = 100, archiveScope: DocumentArchiveScope = "active") {

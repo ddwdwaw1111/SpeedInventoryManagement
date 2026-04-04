@@ -3,6 +3,7 @@ import { normalizeCalendarDate } from "./dates";
 export type PageKey =
   | "dashboard"
   | "daily-operations"
+  | "billing"
   | "export-center"
   | "reports"
   | "all-activity"
@@ -30,6 +31,7 @@ export type PageKey =
 export const pagePathMap: Record<PageKey, string> = {
   dashboard: "/",
   "daily-operations": "/daily-operations",
+  billing: "/billing",
   "export-center": "/export-center",
   reports: "/reports",
   "all-activity": "/all-activity",
@@ -68,6 +70,7 @@ export function getPageFromPath(pathname: string): PageKey {
   const normalized = normalizePagePath(pathname);
 
   if (normalized === "/daily-operations" || /^\/daily-operations\/\d{4}-\d{2}-\d{2}$/.test(normalized)) return "daily-operations";
+  if (normalized === "/billing") return "billing";
   if (normalized === "/reports") return "reports";
   if (normalized === "/export-center") return "export-center";
   if (normalized === "/all-activity") return "all-activity";

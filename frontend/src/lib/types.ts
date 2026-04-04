@@ -300,6 +300,24 @@ export type PalletTrace = {
   contents: PalletContent[];
 };
 
+export type PalletLocationEvent = {
+  id: number;
+  palletId: number;
+  palletCode: string;
+  containerVisitId: number;
+  customerId: number;
+  customerName: string;
+  locationId: number;
+  locationName: string;
+  storageSection: string;
+  containerNo: string;
+  eventType: string;
+  quantityDelta: number;
+  palletDelta: number;
+  eventTime: string;
+  createdAt: string;
+};
+
 export type OutboundDocumentLine = {
   id: number;
   documentId: number;

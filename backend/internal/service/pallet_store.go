@@ -35,6 +35,46 @@ type createPalletLocationEventInput struct {
 	EventTime        *time.Time
 }
 
+type ListPalletLocationEventFilters struct {
+	ContainerNo string
+}
+
+type PalletLocationEvent struct {
+	ID               int64     `json:"id"`
+	PalletID         int64     `json:"palletId"`
+	PalletCode       string    `json:"palletCode"`
+	ContainerVisitID int64     `json:"containerVisitId"`
+	CustomerID       int64     `json:"customerId"`
+	CustomerName     string    `json:"customerName"`
+	LocationID       int64     `json:"locationId"`
+	LocationName     string    `json:"locationName"`
+	StorageSection   string    `json:"storageSection"`
+	ContainerNo      string    `json:"containerNo"`
+	EventType        string    `json:"eventType"`
+	QuantityDelta    int       `json:"quantityDelta"`
+	PalletDelta      float64   `json:"palletDelta"`
+	EventTime        time.Time `json:"eventTime"`
+	CreatedAt        time.Time `json:"createdAt"`
+}
+
+type palletLocationEventRow struct {
+	ID               int64     `db:"id"`
+	PalletID         int64     `db:"pallet_id"`
+	PalletCode       string    `db:"pallet_code"`
+	ContainerVisitID int64     `db:"container_visit_id"`
+	CustomerID       int64     `db:"customer_id"`
+	CustomerName     string    `db:"customer_name"`
+	LocationID       int64     `db:"location_id"`
+	LocationName     string    `db:"location_name"`
+	StorageSection   string    `db:"storage_section"`
+	ContainerNo      string    `db:"container_no"`
+	EventType        string    `db:"event_type"`
+	QuantityDelta    int       `db:"quantity_delta"`
+	PalletDelta      float64   `db:"pallet_delta"`
+	EventTime        time.Time `db:"event_time"`
+	CreatedAt        time.Time `db:"created_at"`
+}
+
 func normalizePalletCount(value float64) float64 {
 	return math.Round(value*10000) / 10000
 }
@@ -219,6 +259,76 @@ func (s *Store) createPalletLocationEventTx(ctx context.Context, tx *sql.Tx, inp
 		return fmt.Errorf("%w: invalid pallet location event input", ErrInvalidInput)
 	}
 	return s.insertPalletLocationEventTx(ctx, tx, input)
+}
+
+func (s *Store) ListPalletLocationEvents(ctx context.Context, limit int, filters ListPalletLocationEventFilters) ([]PalletLocationEvent, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+
+	query := `
+		SELECT
+			ple.id,
+			ple.pallet_id,
+			p.pallet_code,
+			COALESCE(ple.container_visit_id, 0) AS container_visit_id,
+			ple.customer_id,
+			c.name AS customer_name,
+			ple.location_id,
+			l.name AS location_name,
+			ple.storage_section,
+			ple.container_no,
+			ple.event_type,
+			ple.quantity_delta,
+			ple.pallet_delta,
+			ple.event_time,
+			ple.created_at
+		FROM pallet_location_events ple
+		INNER JOIN pallets p ON p.id = ple.pallet_id
+		INNER JOIN customers c ON c.id = ple.customer_id
+		INNER JOIN storage_locations l ON l.id = ple.location_id
+		WHERE 1 = 1
+	`
+
+	args := make([]any, 0, 2)
+	if normalizedContainerNo := strings.TrimSpace(strings.ToUpper(filters.ContainerNo)); normalizedContainerNo != "" {
+		query += ` AND UPPER(TRIM(ple.container_no)) = ?`
+		args = append(args, normalizedContainerNo)
+	}
+
+	query += ` ORDER BY ple.event_time DESC, ple.id DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows := make([]palletLocationEventRow, 0)
+	if err := s.db.SelectContext(ctx, &rows, s.db.Rebind(query), args...); err != nil {
+		return nil, mapDBError(fmt.Errorf("list pallet location events: %w", err))
+	}
+
+	events := make([]PalletLocationEvent, 0, len(rows))
+	for _, row := range rows {
+		events = append(events, PalletLocationEvent{
+			ID:               row.ID,
+			PalletID:         row.PalletID,
+			PalletCode:       row.PalletCode,
+			ContainerVisitID: row.ContainerVisitID,
+			CustomerID:       row.CustomerID,
+			CustomerName:     row.CustomerName,
+			LocationID:       row.LocationID,
+			LocationName:     row.LocationName,
+			StorageSection:   row.StorageSection,
+			ContainerNo:      row.ContainerNo,
+			EventType:        row.EventType,
+			QuantityDelta:    row.QuantityDelta,
+			PalletDelta:      normalizePalletCount(row.PalletDelta),
+			EventTime:        row.EventTime,
+			CreatedAt:        row.CreatedAt,
+		})
+	}
+
+	return events, nil
 }
 
 func splitPalletsByQuantities(total float64, quantities []int) []float64 {

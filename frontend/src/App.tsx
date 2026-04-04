@@ -15,6 +15,7 @@ import {
   ManageAccountsOutlined,
   MoveToInboxOutlined,
   OutboxOutlined,
+  RequestQuoteOutlined,
   SettingsOutlined,
   TuneOutlined,
   WarehouseOutlined
@@ -62,6 +63,10 @@ const AllActivityPage = lazy(async () => {
 const AuditLogPage = lazy(async () => {
   const module = await import("./components/AuditLogPage");
   return { default: module.AuditLogPage };
+});
+const BillingPage = lazy(async () => {
+  const module = await import("./components/BillingPage");
+  return { default: module.BillingPage };
 });
 const ContainerContentsPage = lazy(async () => {
   const module = await import("./components/ContainerContentsPage");
@@ -148,6 +153,7 @@ export default function App() {
   const { t } = useI18n();
   const navLabels = {
     inventory: t("navInventory"),
+    finance: t("navFinance"),
     masterData: t("masterData"),
     reports: t("reportsSection"),
     administration: t("navAdmin")
@@ -421,6 +427,7 @@ export default function App() {
   const pageItems: Array<{ key: PageKey; label: string; description: string; icon: ReactNode }> = [
     { key: "dashboard", label: t("navDashboard"), description: t("dashboardDesc"), icon: <HomeOutlined fontSize="small" /> },
     { key: "daily-operations", label: t("dailyOperations"), description: t("dailyOperationsDesc"), icon: <HomeOutlined fontSize="small" /> },
+    { key: "billing", label: t("billingPage"), description: t("billingPageDesc"), icon: <RequestQuoteOutlined fontSize="small" /> },
     { key: "reports", label: t("report"), description: t("reportDesc"), icon: <AssessmentOutlined fontSize="small" /> },
     { key: "export-center", label: t("exportCenter"), description: t("exportCenterDesc"), icon: <FileDownloadOutlined fontSize="small" /> },
     { key: "inbound-management", label: t("navReceiving"), description: t("inboundDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
@@ -451,6 +458,7 @@ export default function App() {
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
   const navSections = [
     { key: "inventory", label: navLabels.inventory, items: ["inventory-summary", "warehouse-map", "container-contents", "pallet-trace", "all-activity"] as PageKey[] },
+    { key: "finance", label: navLabels.finance, items: ["billing"] as PageKey[] },
     { key: "master-data", label: navLabels.masterData, items: ["customers", "sku-master", "storage-management"] as PageKey[] },
     { key: "reports", label: navLabels.reports, items: ["reports", "export-center"] as PageKey[] },
     { key: "administration", label: navLabels.administration, items: ["audit-logs", "user-management", "settings"] as PageKey[] }
@@ -487,6 +495,7 @@ export default function App() {
     "cycle-counts": "inventory",
     "all-activity": "inventory",
     "pallet-trace": "inventory",
+    billing: "finance",
     customers: "master-data",
     "sku-master": "master-data",
     "storage-management": "master-data",
@@ -759,6 +768,13 @@ export default function App() {
                 onOpenCreateOutboundShipment={(date) => handleNavigateToShipmentEditor(null, { scheduledDate: date })}
                 onOpenInboundReceiptEditor={handleNavigateToReceiptEditor}
                 onOpenOutboundShipmentEditor={handleNavigateToShipmentEditor}
+              />)
+            ) : null}
+            {activePage === "billing" ? (
+              renderWithSuspense(<BillingPage
+                customers={customers}
+                inboundDocuments={inboundDocuments}
+                outboundDocuments={outboundDocuments}
               />)
             ) : null}
             {activePage === "dashboard" ? (

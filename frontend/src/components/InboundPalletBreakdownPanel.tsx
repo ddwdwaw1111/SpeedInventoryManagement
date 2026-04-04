@@ -18,7 +18,7 @@ type InboundPalletBreakdownPanelProps = {
   storageSectionValue: string;
   palletsLabel: string;
   palletCount: number;
-  palletsDetailLabel: string;
+  palletsDetailLabel: string;1
   palletsDetailValue: string;
   unitLabel: string;
   detailTone?: "default" | "danger";
