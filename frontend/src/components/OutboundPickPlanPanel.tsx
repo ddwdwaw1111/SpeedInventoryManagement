@@ -5,8 +5,11 @@ import { LineDetailAccordionPanel } from "./LineDetailAccordionPanel";
 
 type OutboundPickPlanRow = {
   id: string;
+  palletId?: number;
+  palletCode?: string;
   containerNo: string;
   locationLabel: string;
+  availableQty?: number;
   allocatedQty: number;
   itemNumber?: string;
 };
@@ -35,11 +38,15 @@ type OutboundPickPlanPanelProps = {
   sourceContainerLabel: string;
   pickQtyLabel: string;
   unitLabel: string;
+  palletLabel?: string;
   canExpand: boolean;
   expanded: boolean;
   onToggle: () => void;
   emptyHint: string;
   rows: OutboundPickPlanRow[];
+  editable?: boolean;
+  inputDisabled?: boolean;
+  onAllocatedQtyChange?: (rowId: string, quantity: number) => void;
   shortageMessage?: string | null;
 };
 
@@ -67,11 +74,15 @@ export function OutboundPickPlanPanel({
   sourceContainerLabel,
   pickQtyLabel,
   unitLabel,
+  palletLabel,
   canExpand,
   expanded,
   onToggle,
   emptyHint,
   rows,
+  editable = false,
+  inputDisabled = false,
+  onAllocatedQtyChange,
   shortageMessage
 }: OutboundPickPlanPanelProps) {
   return (
@@ -132,12 +143,26 @@ export function OutboundPickPlanPanel({
                   </div>
                   <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
                     <span>{row.locationLabel}</span>
+                    {row.palletCode ? <span>{palletLabel || "Pallet"}: <span className="font-mono">{row.palletCode}</span></span> : null}
                     {row.itemNumber ? <span className="font-mono">{row.itemNumber}</span> : null}
+                    {typeof row.availableQty === "number" ? <span>{row.availableQty} {unitLabel} available</span> : null}
                   </div>
                 </div>
                 <div className="text-right">
                   <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">{pickQtyLabel}</div>
-                  <div className="text-sm font-semibold text-[#143569]">{row.allocatedQty} {unitLabel}</div>
+                  {editable && onAllocatedQtyChange ? (
+                    <input
+                      type="number"
+                      min="0"
+                      max={typeof row.availableQty === "number" ? row.availableQty : undefined}
+                      value={row.allocatedQty === 0 ? "" : String(row.allocatedQty)}
+                      onChange={(event) => onAllocatedQtyChange(row.id, Math.max(0, Number(event.target.value || 0)))}
+                      disabled={inputDisabled}
+                      className="w-24 rounded-xl border border-slate-200/80 bg-slate-50 px-3 py-2 text-right text-sm font-semibold text-[#143569] outline-none transition focus:border-[#143569]/40 focus:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                    />
+                  ) : (
+                    <div className="text-sm font-semibold text-[#143569]">{row.allocatedQty} {unitLabel}</div>
+                  )}
                 </div>
               </div>
             </div>

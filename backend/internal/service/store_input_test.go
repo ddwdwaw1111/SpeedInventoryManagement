@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestSanitizeItemInput(t *testing.T) {
@@ -184,6 +185,52 @@ func TestParseOptionalDate(t *testing.T) {
 				t.Fatal("expected parsed date")
 			}
 			if got := parsed.Format("2006-01-02"); got != tc.want {
+				t.Fatalf("expected %s, got %s", tc.want, got)
+			}
+		})
+	}
+}
+
+func TestParseOptionalDateTime(t *testing.T) {
+	testCases := []struct {
+		name    string
+		value   string
+		wantNil bool
+		want    string
+		wantErr bool
+	}{
+		{name: "blank", value: " ", wantNil: true},
+		{name: "iso datetime", value: "2026-04-04T14:30:00Z", want: "2026-04-04T14:30:00Z"},
+		{name: "datetime local", value: "2026-04-04T14:30", want: "2026-04-04T14:30:00Z"},
+		{name: "date only", value: "2026-04-04", want: "2026-04-04T00:00:00Z"},
+		{name: "invalid", value: "2026-99-99T25:61", wantErr: true},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			parsed, err := parseOptionalDateTime(tc.value)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				if !errors.Is(err, ErrInvalidInput) {
+					t.Fatalf("expected ErrInvalidInput, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseOptionalDateTime returned error: %v", err)
+			}
+			if tc.wantNil {
+				if parsed != nil {
+					t.Fatalf("expected nil datetime, got %v", parsed)
+				}
+				return
+			}
+			if parsed == nil {
+				t.Fatal("expected parsed datetime")
+			}
+			if got := parsed.Format(time.RFC3339); got != tc.want {
 				t.Fatalf("expected %s, got %s", tc.want, got)
 			}
 		})

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -19,7 +20,8 @@ type OutboundDocument struct {
 	OrderRef            string                 `json:"orderRef"`
 	CustomerID          int64                  `json:"customerId"`
 	CustomerName        string                 `json:"customerName"`
-	OutDate             *time.Time             `json:"outDate"`
+	ExpectedShipDate    *time.Time             `json:"expectedShipDate"`
+	ActualShipDate      *time.Time             `json:"actualShipDate"`
 	ShipToName          string                 `json:"shipToName"`
 	ShipToAddress       string                 `json:"shipToAddress"`
 	ShipToContact       string                 `json:"shipToContact"`
@@ -53,6 +55,11 @@ type OutboundPickAllocation struct {
 	CreatedAt      time.Time `json:"createdAt"`
 }
 
+type OutboundLinePalletPick struct {
+	PalletID int64 `json:"palletId"`
+	Quantity int   `json:"quantity"`
+}
+
 type OutboundDocumentLine struct {
 	ID                int64                    `json:"id"`
 	DocumentID        int64                    `json:"documentId"`
@@ -71,22 +78,24 @@ type OutboundDocumentLine struct {
 	NetWeightKgs      float64                  `json:"netWeightKgs"`
 	GrossWeightKgs    float64                  `json:"grossWeightKgs"`
 	LineNote          string                   `json:"lineNote"`
+	PickPallets       []OutboundLinePalletPick `json:"pickPallets"`
 	PickAllocations   []OutboundPickAllocation `json:"pickAllocations"`
 	CreatedAt         time.Time                `json:"createdAt"`
 }
 
 type CreateOutboundDocumentInput struct {
-	PackingListNo  string                            `json:"packingListNo"`
-	OrderRef       string                            `json:"orderRef"`
-	OutDate        string                            `json:"outDate"`
-	ShipToName     string                            `json:"shipToName"`
-	ShipToAddress  string                            `json:"shipToAddress"`
-	ShipToContact  string                            `json:"shipToContact"`
-	CarrierName    string                            `json:"carrierName"`
-	Status         string                            `json:"status"`
-	TrackingStatus string                            `json:"trackingStatus"`
-	DocumentNote   string                            `json:"documentNote"`
-	Lines          []CreateOutboundDocumentLineInput `json:"lines"`
+	PackingListNo    string                            `json:"packingListNo"`
+	OrderRef         string                            `json:"orderRef"`
+	ExpectedShipDate string                            `json:"expectedShipDate"`
+	ActualShipDate   string                            `json:"actualShipDate"`
+	ShipToName       string                            `json:"shipToName"`
+	ShipToAddress    string                            `json:"shipToAddress"`
+	ShipToContact    string                            `json:"shipToContact"`
+	CarrierName      string                            `json:"carrierName"`
+	Status           string                            `json:"status"`
+	TrackingStatus   string                            `json:"trackingStatus"`
+	DocumentNote     string                            `json:"documentNote"`
+	Lines            []CreateOutboundDocumentLineInput `json:"lines"`
 }
 
 type CreateOutboundDocumentLineInput struct {
@@ -101,28 +110,30 @@ type CreateOutboundDocumentLineInput struct {
 	NetWeightKgs      float64 `json:"netWeightKgs"`
 	GrossWeightKgs    float64 `json:"grossWeightKgs"`
 	LineNote          string  `json:"lineNote"`
+	PickPallets       []OutboundLinePalletPick `json:"pickPallets"`
 }
 
 type outboundDocumentRow struct {
-	ID             int64      `db:"id"`
-	PackingListNo  string     `db:"packing_list_no"`
-	OrderRef       string     `db:"order_ref"`
-	CustomerID     int64      `db:"customer_id"`
-	CustomerName   string     `db:"customer_name"`
-	OutDate        *time.Time `db:"out_date"`
-	ShipToName     string     `db:"ship_to_name"`
-	ShipToAddress  string     `db:"ship_to_address"`
-	ShipToContact  string     `db:"ship_to_contact"`
-	CarrierName    string     `db:"carrier_name"`
-	DocumentNote   string     `db:"document_note"`
-	Status         string     `db:"status"`
-	TrackingStatus string     `db:"tracking_status"`
-	ConfirmedAt    *time.Time `db:"confirmed_at"`
-	CancelNote     string     `db:"cancel_note"`
-	CancelledAt    *time.Time `db:"cancelled_at"`
-	ArchivedAt     *time.Time `db:"archived_at"`
-	CreatedAt      time.Time  `db:"created_at"`
-	UpdatedAt      time.Time  `db:"updated_at"`
+	ID               int64      `db:"id"`
+	PackingListNo    string     `db:"packing_list_no"`
+	OrderRef         string     `db:"order_ref"`
+	CustomerID       int64      `db:"customer_id"`
+	CustomerName     string     `db:"customer_name"`
+	ExpectedShipDate *time.Time `db:"expected_ship_date"`
+	ActualShipDate   *time.Time `db:"actual_ship_date"`
+	ShipToName       string     `db:"ship_to_name"`
+	ShipToAddress    string     `db:"ship_to_address"`
+	ShipToContact    string     `db:"ship_to_contact"`
+	CarrierName      string     `db:"carrier_name"`
+	DocumentNote     string     `db:"document_note"`
+	Status           string     `db:"status"`
+	TrackingStatus   string     `db:"tracking_status"`
+	ConfirmedAt      *time.Time `db:"confirmed_at"`
+	CancelNote       string     `db:"cancel_note"`
+	CancelledAt      *time.Time `db:"cancelled_at"`
+	ArchivedAt       *time.Time `db:"archived_at"`
+	CreatedAt        time.Time  `db:"created_at"`
+	UpdatedAt        time.Time  `db:"updated_at"`
 }
 
 type CancelOutboundDocumentInput struct {
@@ -147,6 +158,7 @@ type outboundDocumentLineRow struct {
 	NetWeightKgs        float64   `db:"net_weight_kgs"`
 	GrossWeightKgs      float64   `db:"gross_weight_kgs"`
 	LineNote            string    `db:"line_note"`
+	PickPalletsJSON     string    `db:"pick_pallets_json"`
 	CreatedAt           time.Time `db:"created_at"`
 }
 
@@ -212,6 +224,13 @@ type lockedOutboundSourceRow struct {
 	CreatedAt      time.Time
 }
 
+type selectedOutboundPalletTarget struct {
+	PalletID       int64
+	LocationID     int64
+	StorageSection string
+	ContainerNo    string
+}
+
 func (s *Store) ListOutboundDocuments(ctx context.Context, limit int, archiveScope ...string) ([]OutboundDocument, error) {
 	if limit <= 0 {
 		limit = 50
@@ -231,7 +250,8 @@ func (s *Store) ListOutboundDocuments(ctx context.Context, limit int, archiveSco
 			COALESCE(d.order_ref, '') AS order_ref,
 			d.customer_id,
 			c.name AS customer_name,
-			d.out_date,
+			d.expected_ship_date,
+			d.actual_ship_date,
 			COALESCE(d.ship_to_name, '') AS ship_to_name,
 			COALESCE(d.ship_to_address, '') AS ship_to_address,
 			COALESCE(d.ship_to_contact, '') AS ship_to_contact,
@@ -248,7 +268,7 @@ func (s *Store) ListOutboundDocuments(ctx context.Context, limit int, archiveSco
 		FROM outbound_documents d
 		JOIN customers c ON c.id = d.customer_id
 		WHERE %s
-		ORDER BY COALESCE(d.out_date, d.created_at) DESC, d.id DESC
+		ORDER BY COALESCE(d.actual_ship_date, d.expected_ship_date, d.created_at) DESC, d.id DESC
 		LIMIT ?
 	`, archiveFilterClause), limit); err != nil {
 		return nil, fmt.Errorf("load outbound documents: %w", err)
@@ -264,26 +284,27 @@ func (s *Store) ListOutboundDocuments(ctx context.Context, limit int, archiveSco
 	linesByID := make(map[int64]*OutboundDocumentLine)
 	for _, row := range documentRows {
 		document := OutboundDocument{
-			ID:             row.ID,
-			PackingListNo:  row.PackingListNo,
-			OrderRef:       row.OrderRef,
-			CustomerID:     row.CustomerID,
-			CustomerName:   row.CustomerName,
-			OutDate:        row.OutDate,
-			ShipToName:     row.ShipToName,
-			ShipToAddress:  row.ShipToAddress,
-			ShipToContact:  row.ShipToContact,
-			CarrierName:    row.CarrierName,
-			DocumentNote:   row.DocumentNote,
-			Status:         normalizeDocumentStatus(row.Status),
-			TrackingStatus: normalizeOutboundTrackingStatus(row.TrackingStatus, row.Status),
-			ConfirmedAt:    row.ConfirmedAt,
-			CancelNote:     row.CancelNote,
-			CancelledAt:    row.CancelledAt,
-			ArchivedAt:     row.ArchivedAt,
-			Lines:          make([]OutboundDocumentLine, 0),
-			CreatedAt:      row.CreatedAt,
-			UpdatedAt:      row.UpdatedAt,
+			ID:               row.ID,
+			PackingListNo:    row.PackingListNo,
+			OrderRef:         row.OrderRef,
+			CustomerID:       row.CustomerID,
+			CustomerName:     row.CustomerName,
+			ExpectedShipDate: row.ExpectedShipDate,
+			ActualShipDate:   row.ActualShipDate,
+			ShipToName:       row.ShipToName,
+			ShipToAddress:    row.ShipToAddress,
+			ShipToContact:    row.ShipToContact,
+			CarrierName:      row.CarrierName,
+			DocumentNote:     row.DocumentNote,
+			Status:           normalizeDocumentStatus(row.Status),
+			TrackingStatus:   normalizeOutboundTrackingStatus(row.TrackingStatus, row.Status),
+			ConfirmedAt:      row.ConfirmedAt,
+			CancelNote:       row.CancelNote,
+			CancelledAt:      row.CancelledAt,
+			ArchivedAt:       row.ArchivedAt,
+			Lines:            make([]OutboundDocumentLine, 0),
+			CreatedAt:        row.CreatedAt,
+			UpdatedAt:        row.UpdatedAt,
 		}
 		documents = append(documents, document)
 		documentIDs = append(documentIDs, row.ID)
@@ -309,6 +330,7 @@ func (s *Store) ListOutboundDocuments(ctx context.Context, limit int, archiveSco
 			net_weight_kgs,
 			gross_weight_kgs,
 			COALESCE(line_note, '') AS line_note,
+			COALESCE(pick_pallets_json, '') AS pick_pallets_json,
 			created_at
 		FROM outbound_document_lines
 		WHERE document_id IN (?)
@@ -347,6 +369,7 @@ func (s *Store) ListOutboundDocuments(ctx context.Context, limit int, archiveSco
 			NetWeightKgs:      lineRow.NetWeightKgs,
 			GrossWeightKgs:    lineRow.GrossWeightKgs,
 			LineNote:          lineRow.LineNote,
+			PickPallets:       decodeOutboundLinePalletPicksOrEmpty(lineRow.PickPalletsJSON),
 			PickAllocations:   make([]OutboundPickAllocation, 0),
 			CreatedAt:         lineRow.CreatedAt,
 		})
@@ -372,13 +395,18 @@ func (s *Store) CreateOutboundDocument(ctx context.Context, input CreateOutbound
 		return OutboundDocument{}, err
 	}
 
-	outDate, err := parseOptionalDate(input.OutDate)
+	expectedShipDateInput := strings.TrimSpace(input.ExpectedShipDate)
+	expectedShipDate, err := parseOptionalDate(expectedShipDateInput)
 	if err != nil {
 		return OutboundDocument{}, err
 	}
-	if outDate == nil {
+	actualShipDate, err := parseOptionalDate(input.ActualShipDate)
+	if err != nil {
+		return OutboundDocument{}, err
+	}
+	if expectedShipDate == nil {
 		now := time.Now().UTC()
-		outDate = &now
+		expectedShipDate = &now
 	}
 	requestedStatus := coalesceDocumentStatus(input.Status)
 	requestedTrackingStatus := coalesceOutboundTrackingStatus(input.TrackingStatus, requestedStatus)
@@ -424,7 +452,8 @@ func (s *Store) CreateOutboundDocument(ctx context.Context, input CreateOutbound
 			packing_list_no,
 			order_ref,
 			customer_id,
-			out_date,
+			expected_ship_date,
+			actual_ship_date,
 			ship_to_name,
 			ship_to_address,
 			ship_to_contact,
@@ -434,12 +463,13 @@ func (s *Store) CreateOutboundDocument(ctx context.Context, input CreateOutbound
 			tracking_status,
 			confirmed_at,
 			posted_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
 	`,
 		nullableString(input.PackingListNo),
 		nullableString(input.OrderRef),
 		customerID,
-		nullableTime(outDate),
+		nullableTime(expectedShipDate),
+		nullableTime(actualShipDate),
 		nullableString(input.ShipToName),
 		nullableString(input.ShipToAddress),
 		nullableString(input.ShipToContact),
@@ -483,13 +513,18 @@ func (s *Store) UpdateOutboundDocument(ctx context.Context, documentID int64, in
 		return OutboundDocument{}, err
 	}
 
-	outDate, err := parseOptionalDate(input.OutDate)
+	expectedShipDateInput := strings.TrimSpace(input.ExpectedShipDate)
+	expectedShipDate, err := parseOptionalDate(expectedShipDateInput)
 	if err != nil {
 		return OutboundDocument{}, err
 	}
-	if outDate == nil {
+	actualShipDate, err := parseOptionalDate(input.ActualShipDate)
+	if err != nil {
+		return OutboundDocument{}, err
+	}
+	if expectedShipDate == nil {
 		now := time.Now().UTC()
-		outDate = &now
+		expectedShipDate = &now
 	}
 	requestedStatus := coalesceDocumentStatus(input.Status)
 	requestedTrackingStatus := coalesceOutboundTrackingStatus(input.TrackingStatus, requestedStatus)
@@ -504,7 +539,11 @@ func (s *Store) UpdateOutboundDocument(ctx context.Context, documentID int64, in
 	if err != nil {
 		return OutboundDocument{}, err
 	}
-	if normalizeDocumentStatus(documentRow.Status) != DocumentStatusDraft {
+	normalizedDocumentStatus := normalizeDocumentStatus(documentRow.Status)
+	if normalizedDocumentStatus == DocumentStatusConfirmed {
+		return OutboundDocument{}, fmt.Errorf("%w: confirmed shipments are immutable; cancel the shipment or copy it into a new draft and re-enter it", ErrInvalidInput)
+	}
+	if normalizedDocumentStatus != DocumentStatusDraft {
 		return OutboundDocument{}, fmt.Errorf("%w: only draft shipments can be edited", ErrInvalidInput)
 	}
 
@@ -544,7 +583,8 @@ func (s *Store) UpdateOutboundDocument(ctx context.Context, documentID int64, in
 			packing_list_no = ?,
 			order_ref = ?,
 			customer_id = ?,
-			out_date = ?,
+			expected_ship_date = ?,
+			actual_ship_date = ?,
 			ship_to_name = ?,
 			ship_to_address = ?,
 			ship_to_contact = ?,
@@ -560,7 +600,8 @@ func (s *Store) UpdateOutboundDocument(ctx context.Context, documentID int64, in
 		nullableString(input.PackingListNo),
 		nullableString(input.OrderRef),
 		customerID,
-		nullableTime(outDate),
+		nullableTime(expectedShipDate),
+		nullableTime(actualShipDate),
 		nullableString(input.ShipToName),
 		nullableString(input.ShipToAddress),
 		nullableString(input.ShipToContact),
@@ -631,8 +672,9 @@ func (s *Store) insertOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, d
 				net_weight_kgs,
 				gross_weight_kgs,
 				line_note,
+				pick_pallets_json,
 				sort_order
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			documentID,
 			lockedSource.SKUMasterID,
@@ -650,6 +692,7 @@ func (s *Store) insertOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, d
 			line.NetWeightKgs,
 			line.GrossWeightKgs,
 			nullableString(line.LineNote),
+			nullableString(mustEncodeOutboundLinePalletPicks(line.PickPallets)),
 			index+1,
 		)
 		if err != nil {
@@ -776,6 +819,9 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 	lineAllocations := make(map[int64][]outboundAllocationCandidate, len(lineRows))
 
 	for _, lineRow := range lineRows {
+		if len(decodeOutboundLinePalletPicksOrEmpty(lineRow.PickPalletsJSON)) > 0 {
+			continue
+		}
 		sourceKey := buildOutboundSourceKey(documentRow.CustomerID, lineRow.LocationID, lineRow.SKUMasterID)
 		lockedSource, exists := lockedSources[sourceKey]
 		if !exists {
@@ -808,7 +854,107 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 		lineAllocations[lineRow.ID] = allocations
 	}
 
+	outboundEventTime := firstNonEmptyTime(documentRow.ActualShipDate, documentRow.ConfirmedAt, documentRow.ExpectedShipDate)
+
 	for _, lineRow := range lineRows {
+		selectedPalletPicks := decodeOutboundLinePalletPicksOrEmpty(lineRow.PickPalletsJSON)
+		if len(selectedPalletPicks) > 0 {
+			totalSelectedQty := totalOutboundLinePalletPickQuantity(selectedPalletPicks)
+			if totalSelectedQty != lineRow.Quantity {
+				return fmt.Errorf("%w: selected pallet quantity must equal outbound quantity", ErrInvalidInput)
+			}
+			pickQuantities := make([]int, len(selectedPalletPicks))
+			for index, pick := range selectedPalletPicks {
+				pickQuantities[index] = pick.Quantity
+			}
+			effectiveLinePallets := lineRow.Pallets
+			if effectiveLinePallets <= 0 {
+				effectiveLinePallets = len(selectedPalletPicks)
+			}
+			pickPalletSplits := splitPalletsByQuantities(float64(effectiveLinePallets), pickQuantities)
+			netWeightSplits := splitProportionalFloat(lineRow.NetWeightKgs, lineRow.Quantity, toOutboundAllocationCandidatesFromPicks(pickQuantities))
+			grossWeightSplits := splitProportionalFloat(lineRow.GrossWeightKgs, lineRow.Quantity, toOutboundAllocationCandidatesFromPicks(pickQuantities))
+
+			for pickIndex, pick := range selectedPalletPicks {
+				target, err := s.loadSelectedOutboundPalletTargetTx(ctx, tx, documentRow.CustomerID, lineRow.LocationID, lineRow.SKUMasterID, pick.PalletID)
+				if err != nil {
+					return err
+				}
+				palletConsumptions, err := s.consumeSpecificPalletContentsForBucketTx(ctx, tx, palletSourceBucket{
+					SKUMasterID:    lineRow.SKUMasterID,
+					CustomerID:     documentRow.CustomerID,
+					LocationID:     target.LocationID,
+					StorageSection: target.StorageSection,
+					ContainerNo:    target.ContainerNo,
+				}, pick.PalletID, lineRow.SKUMasterID, pick.Quantity)
+				if err != nil {
+					return fmt.Errorf("allocate selected pallet contents for outbound movement: %w", err)
+				}
+				if len(palletConsumptions) == 0 {
+					return ErrInsufficientStock
+				}
+
+				palletDelta := pickPalletSplits[pickIndex]
+				for _, palletConsumption := range palletConsumptions {
+					if err := s.createPalletLocationEventTx(ctx, tx, createPalletLocationEventInput{
+						PalletID:         palletConsumption.PalletID,
+						ContainerVisitID: palletConsumption.ContainerVisitID,
+						CustomerID:       palletConsumption.CustomerID,
+						LocationID:       palletConsumption.LocationID,
+						StorageSection:   palletConsumption.StorageSection,
+						ContainerNo:      firstNonEmpty(palletConsumption.ContainerNo, target.ContainerNo),
+						EventType:        PalletEventOutbound,
+						QuantityDelta:    -palletConsumption.Quantity,
+						PalletDelta:      -palletDelta,
+						EventTime:        outboundEventTime,
+					}); err != nil {
+						return err
+					}
+					if err := s.createOutboundPickTx(ctx, tx, createOutboundPickInput{
+						OutboundLineID: lineRow.ID,
+						PalletID:       palletConsumption.PalletID,
+						PalletItemID:   palletConsumption.PalletItemID,
+						PickedQty:      palletConsumption.Quantity,
+					}); err != nil {
+						return err
+					}
+					_, err := s.createStockLedgerEntryTx(ctx, tx, createStockLedgerInput{
+						EventType:           StockLedgerEventShip,
+						PalletID:            palletConsumption.PalletID,
+						PalletItemID:        palletConsumption.PalletItemID,
+						SKUMasterID:         palletConsumption.SKUMasterID,
+						CustomerID:          palletConsumption.CustomerID,
+						LocationID:          palletConsumption.LocationID,
+						StorageSection:      palletConsumption.StorageSection,
+						QuantityChange:      -palletConsumption.Quantity,
+						SourceDocumentType:  StockLedgerSourceOutbound,
+						SourceDocumentID:    documentID,
+						SourceLineID:        lineRow.ID,
+						ContainerNo:         firstNonEmpty(palletConsumption.ContainerNo, target.ContainerNo),
+						OutDate:             resolveOutboundLedgerDate(documentRow.ExpectedShipDate, documentRow.ActualShipDate),
+						PackingListNo:       documentRow.PackingListNo,
+						OrderRef:            documentRow.OrderRef,
+						ItemNumber:          lineRow.ItemNumberSnapshot,
+						DescriptionSnapshot: lineRow.DescriptionSnapshot,
+						Pallets:             roundedPalletInt(palletDelta),
+						PalletsDetailCtns:   lineRow.PalletsDetailCtns,
+						CartonSizeMM:        lineRow.CartonSizeMM,
+						CartonCount:         palletConsumption.Quantity,
+						UnitLabel:           firstNonEmpty(lineRow.UnitLabel, "PCS"),
+						NetWeightKgs:        netWeightSplits[pickIndex],
+						GrossWeightKgs:      grossWeightSplits[pickIndex],
+						HeightIn:            0,
+						DocumentNote:        documentRow.DocumentNote,
+						Reason:              firstNonEmpty(lineRow.LineNote, defaultMovementReason("OUT")),
+					})
+					if err != nil {
+						return err
+					}
+				}
+			}
+			continue
+		}
+
 		allocations := lineAllocations[lineRow.ID]
 		if len(allocations) == 0 {
 			return ErrInsufficientStock
@@ -836,7 +982,13 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 				return ErrInsufficientStock
 			}
 
-			for _, palletConsumption := range palletConsumptions {
+			palletConsumptionQuantities := make([]int, len(palletConsumptions))
+			for consumptionIndex, palletConsumption := range palletConsumptions {
+				palletConsumptionQuantities[consumptionIndex] = palletConsumption.Quantity
+			}
+			palletConsumptionPalletSplits := splitPalletsByQuantities(allocationPalletSplits[allocationIndex], palletConsumptionQuantities)
+
+			for consumptionIndex, palletConsumption := range palletConsumptions {
 				if err := s.createPalletLocationEventTx(ctx, tx, createPalletLocationEventInput{
 					PalletID:         palletConsumption.PalletID,
 					ContainerVisitID: palletConsumption.ContainerVisitID,
@@ -846,6 +998,8 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 					ContainerNo:      firstNonEmpty(palletConsumption.ContainerNo, allocation.ContainerNo),
 					EventType:        PalletEventOutbound,
 					QuantityDelta:    -palletConsumption.Quantity,
+					PalletDelta:      -palletConsumptionPalletSplits[consumptionIndex],
+					EventTime:        outboundEventTime,
 				}); err != nil {
 					return err
 				}
@@ -870,13 +1024,13 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 					SourceDocumentID:    documentID,
 					SourceLineID:        lineRow.ID,
 					ContainerNo:         firstNonEmpty(palletConsumption.ContainerNo, allocation.ContainerNo),
-					OutDate:             documentRow.OutDate,
-					PackingListNo:       documentRow.PackingListNo,
-					OrderRef:            documentRow.OrderRef,
-					ItemNumber:          firstNonEmpty(allocation.ItemNumber, lineRow.ItemNumberSnapshot),
-					DescriptionSnapshot: firstNonEmpty(allocation.Description, lineRow.DescriptionSnapshot),
-					Pallets:             roundedPalletInt(allocationPalletSplits[allocationIndex]),
-					PalletsDetailCtns:   lineRow.PalletsDetailCtns,
+						OutDate:             resolveOutboundLedgerDate(documentRow.ExpectedShipDate, documentRow.ActualShipDate),
+						PackingListNo:       documentRow.PackingListNo,
+						OrderRef:            documentRow.OrderRef,
+						ItemNumber:          firstNonEmpty(allocation.ItemNumber, lineRow.ItemNumberSnapshot),
+						DescriptionSnapshot: firstNonEmpty(allocation.Description, lineRow.DescriptionSnapshot),
+						Pallets:             roundedPalletInt(palletConsumptionPalletSplits[consumptionIndex]),
+						PalletsDetailCtns:   lineRow.PalletsDetailCtns,
 					CartonSizeMM:        lineRow.CartonSizeMM,
 					CartonCount:         allocation.AllocatedQty,
 					UnitLabel:           firstNonEmpty(lineRow.UnitLabel, strings.ToUpper(allocation.Unit), "PCS"),
@@ -963,6 +1117,7 @@ func (s *Store) CancelOutboundDocument(ctx context.Context, documentID int64, in
 					EventType:      PalletEventReversal,
 					QuantityDelta:  restoredPalletPick.PickedQty,
 					PalletDelta:    restorePalletSplits[index],
+					EventTime:      &cancelledAt,
 				}); err != nil {
 					return OutboundDocument{}, err
 				}
@@ -979,7 +1134,7 @@ func (s *Store) CancelOutboundDocument(ctx context.Context, documentID int64, in
 					SourceDocumentID:    documentID,
 					SourceLineID:        lineRow.ID,
 					ContainerNo:         restoredPalletPick.ContainerNo,
-					OutDate:             documentRow.OutDate,
+					OutDate:             resolveOutboundLedgerDate(documentRow.ExpectedShipDate, documentRow.ActualShipDate),
 					PackingListNo:       documentRow.PackingListNo,
 					OrderRef:            documentRow.OrderRef,
 					ItemNumber:          lineRow.ItemNumberSnapshot,
@@ -1074,7 +1229,8 @@ func (s *Store) CopyOutboundDocument(ctx context.Context, documentID int64) (Out
 			packing_list_no,
 			order_ref,
 			customer_id,
-			out_date,
+			expected_ship_date,
+			actual_ship_date,
 			ship_to_name,
 			ship_to_address,
 			ship_to_contact,
@@ -1087,12 +1243,13 @@ func (s *Store) CopyOutboundDocument(ctx context.Context, documentID int64) (Out
 			cancel_note,
 			cancelled_at,
 			archived_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
 	`,
 		nullableString(documentRow.PackingListNo),
 		nullableString(documentRow.OrderRef),
 		documentRow.CustomerID,
-		nullableTime(documentRow.OutDate),
+		nullableTime(documentRow.ExpectedShipDate),
+		nullableTime(documentRow.ActualShipDate),
 		nullableString(documentRow.ShipToName),
 		nullableString(documentRow.ShipToAddress),
 		nullableString(documentRow.ShipToContact),
@@ -1129,8 +1286,9 @@ func (s *Store) CopyOutboundDocument(ctx context.Context, documentID int64) (Out
 				net_weight_kgs,
 				gross_weight_kgs,
 				line_note,
+				pick_pallets_json,
 				sort_order
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			newDocumentID,
 			lineRow.SKUMasterID,
@@ -1148,6 +1306,7 @@ func (s *Store) CopyOutboundDocument(ctx context.Context, documentID int64) (Out
 			lineRow.NetWeightKgs,
 			lineRow.GrossWeightKgs,
 			nullableString(lineRow.LineNote),
+			nullableString(lineRow.PickPalletsJSON),
 			index+1,
 		)
 		if err != nil {
@@ -1175,7 +1334,8 @@ func (s *Store) loadOutboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx,
 			COALESCE(d.order_ref, '') AS order_ref,
 			d.customer_id,
 			c.name AS customer_name,
-			d.out_date,
+			d.expected_ship_date,
+			d.actual_ship_date,
 			COALESCE(d.ship_to_name, '') AS ship_to_name,
 			COALESCE(d.ship_to_address, '') AS ship_to_address,
 			COALESCE(d.ship_to_contact, '') AS ship_to_contact,
@@ -1199,7 +1359,8 @@ func (s *Store) loadOutboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx,
 		&documentRow.OrderRef,
 		&documentRow.CustomerID,
 		&documentRow.CustomerName,
-		&documentRow.OutDate,
+		&documentRow.ExpectedShipDate,
+		&documentRow.ActualShipDate,
 		&documentRow.ShipToName,
 		&documentRow.ShipToAddress,
 		&documentRow.ShipToContact,
@@ -1315,7 +1476,8 @@ func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []in
 			COALESCE(d.order_ref, '') AS order_ref,
 			d.customer_id,
 			c.name AS customer_name,
-			d.out_date,
+			d.expected_ship_date,
+			d.actual_ship_date,
 			COALESCE(d.ship_to_name, '') AS ship_to_name,
 			COALESCE(d.ship_to_address, '') AS ship_to_address,
 			COALESCE(d.ship_to_contact, '') AS ship_to_contact,
@@ -1333,7 +1495,7 @@ func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []in
 		JOIN customers c ON c.id = d.customer_id
 		WHERE d.id IN (?)
 		%s
-		ORDER BY COALESCE(d.out_date, d.created_at) DESC, d.id DESC
+		ORDER BY COALESCE(d.actual_ship_date, d.expected_ship_date, d.created_at) DESC, d.id DESC
 	`, archiveFilter), documentIDs)
 	if err != nil {
 		return nil, fmt.Errorf("build outbound document query: %w", err)
@@ -1352,26 +1514,27 @@ func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []in
 	linesByID := make(map[int64]*OutboundDocumentLine)
 	for _, row := range documentRows {
 		document := OutboundDocument{
-			ID:             row.ID,
-			PackingListNo:  row.PackingListNo,
-			OrderRef:       row.OrderRef,
-			CustomerID:     row.CustomerID,
-			CustomerName:   row.CustomerName,
-			OutDate:        row.OutDate,
-			ShipToName:     row.ShipToName,
-			ShipToAddress:  row.ShipToAddress,
-			ShipToContact:  row.ShipToContact,
-			CarrierName:    row.CarrierName,
-			DocumentNote:   row.DocumentNote,
-			Status:         normalizeDocumentStatus(row.Status),
-			TrackingStatus: normalizeOutboundTrackingStatus(row.TrackingStatus, row.Status),
-			ConfirmedAt:    row.ConfirmedAt,
-			CancelNote:     row.CancelNote,
-			CancelledAt:    row.CancelledAt,
-			ArchivedAt:     row.ArchivedAt,
-			Lines:          make([]OutboundDocumentLine, 0),
-			CreatedAt:      row.CreatedAt,
-			UpdatedAt:      row.UpdatedAt,
+			ID:               row.ID,
+			PackingListNo:    row.PackingListNo,
+			OrderRef:         row.OrderRef,
+			CustomerID:       row.CustomerID,
+			CustomerName:     row.CustomerName,
+			ExpectedShipDate: row.ExpectedShipDate,
+			ActualShipDate:   row.ActualShipDate,
+			ShipToName:       row.ShipToName,
+			ShipToAddress:    row.ShipToAddress,
+			ShipToContact:    row.ShipToContact,
+			CarrierName:      row.CarrierName,
+			DocumentNote:     row.DocumentNote,
+			Status:           normalizeDocumentStatus(row.Status),
+			TrackingStatus:   normalizeOutboundTrackingStatus(row.TrackingStatus, row.Status),
+			ConfirmedAt:      row.ConfirmedAt,
+			CancelNote:       row.CancelNote,
+			CancelledAt:      row.CancelledAt,
+			ArchivedAt:       row.ArchivedAt,
+			Lines:            make([]OutboundDocumentLine, 0),
+			CreatedAt:        row.CreatedAt,
+			UpdatedAt:        row.UpdatedAt,
 		}
 		documents = append(documents, document)
 		documentsByID[row.ID] = &documents[len(documents)-1]
@@ -1543,7 +1706,7 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 				SUM(pi.quantity) - SUM(pi.allocated_qty) - SUM(pi.damaged_qty) - SUM(pi.hold_qty),
 				0
 			) AS available_qty,
-			COALESCE(d.delivery_date, cv.arrival_date, DATE(MIN(p.created_at))) AS delivery_date,
+			COALESCE(MIN(p.actual_arrival_date), d.actual_arrival_date, cv.arrival_date, d.expected_arrival_date, DATE(MIN(p.created_at))) AS delivery_date,
 			MIN(p.created_at) AS sort_at
 		FROM pallet_items pi
 		JOIN pallets p ON p.id = pi.pallet_id
@@ -1569,16 +1732,17 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 			sm.description,
 			sm.name,
 			sm.unit,
-			d.delivery_date,
+			d.expected_arrival_date,
+			d.actual_arrival_date,
 			cv.arrival_date
 		HAVING GREATEST(
 			SUM(pi.quantity) - SUM(pi.allocated_qty) - SUM(pi.damaged_qty) - SUM(pi.hold_qty),
 			0
 		) > 0
 		ORDER BY
-			CASE WHEN delivery_date IS NULL THEN 1 ELSE 0 END,
-			delivery_date ASC,
-			sort_at ASC,
+			CASE WHEN COALESCE(MIN(p.actual_arrival_date), d.actual_arrival_date, cv.arrival_date, d.expected_arrival_date, DATE(MIN(p.created_at))) IS NULL THEN 1 ELSE 0 END,
+			COALESCE(MIN(p.actual_arrival_date), d.actual_arrival_date, cv.arrival_date, d.expected_arrival_date, DATE(MIN(p.created_at))) ASC,
+			MIN(p.created_at) ASC,
 			storage_section ASC,
 			container_no ASC
 		FOR UPDATE
@@ -1872,7 +2036,7 @@ func (s *Store) listOutboundLedgerAllocationRowsByLineIDs(ctx context.Context, l
 			COALESCE(NULLIF(sl.storage_section, ''), 'TEMP') AS storage_section,
 			COALESCE(sl.container_no_snapshot, '') AS container_no_snapshot,
 			SUM(ABS(sl.quantity_change)) AS allocated_qty,
-			MIN(sl.created_at) AS created_at
+			MIN(COALESCE(sl.occurred_at, sl.created_at)) AS created_at
 		FROM stock_ledger sl
 		JOIN outbound_document_lines l ON l.id = sl.source_line_id
 		LEFT JOIN storage_locations loc ON loc.id = sl.location_id
@@ -1952,6 +2116,8 @@ func recalculateOutboundDocumentStorages(documents []OutboundDocument) {
 func sanitizeOutboundDocumentInput(input CreateOutboundDocumentInput) CreateOutboundDocumentInput {
 	input.PackingListNo = strings.TrimSpace(strings.ToUpper(input.PackingListNo))
 	input.OrderRef = strings.TrimSpace(strings.ToUpper(input.OrderRef))
+	input.ExpectedShipDate = strings.TrimSpace(input.ExpectedShipDate)
+	input.ActualShipDate = strings.TrimSpace(input.ActualShipDate)
 	input.ShipToName = strings.TrimSpace(input.ShipToName)
 	input.ShipToAddress = strings.TrimSpace(input.ShipToAddress)
 	input.ShipToContact = strings.TrimSpace(input.ShipToContact)
@@ -1965,8 +2131,12 @@ func sanitizeOutboundDocumentInput(input CreateOutboundDocumentInput) CreateOutb
 		line.CartonSizeMM = strings.TrimSpace(line.CartonSizeMM)
 		line.PalletsDetailCtns = strings.TrimSpace(line.PalletsDetailCtns)
 		line.LineNote = strings.TrimSpace(line.LineNote)
+		line.PickPallets = normalizeOutboundLinePalletPicks(line.PickPallets)
 		if line.CustomerID <= 0 || line.LocationID <= 0 || line.SKUMasterID <= 0 || line.Quantity <= 0 {
 			continue
+		}
+		if line.Pallets <= 0 && len(line.PickPallets) > 0 {
+			line.Pallets = len(line.PickPallets)
 		}
 		lines = append(lines, line)
 	}
@@ -2006,10 +2176,19 @@ func validateOutboundDocumentInput(input CreateOutboundDocumentInput) error {
 			return fmt.Errorf("%w: pallets cannot be negative", ErrInvalidInput)
 		case line.NetWeightKgs < 0 || line.GrossWeightKgs < 0:
 			return fmt.Errorf("%w: weights cannot be negative", ErrInvalidInput)
+		case len(line.PickPallets) > 0 && totalOutboundLinePalletPickQuantity(line.PickPallets) != line.Quantity:
+			return fmt.Errorf("%w: selected pallet quantity must equal outbound quantity", ErrInvalidInput)
 		}
 	}
 
 	return nil
+}
+
+func resolveOutboundLedgerDate(expectedShipDate *time.Time, actualShipDate *time.Time) *time.Time {
+	if actualShipDate != nil {
+		return actualShipDate
+	}
+	return expectedShipDate
 }
 
 func appendUniqueJoined(existing string, nextValue string) string {
@@ -2035,6 +2214,108 @@ func appendUniqueJoined(existing string, nextValue string) string {
 	}
 
 	return strings.Join(values, ", ")
+}
+
+func normalizeOutboundLinePalletPicks(entries []OutboundLinePalletPick) []OutboundLinePalletPick {
+	if len(entries) == 0 {
+		return []OutboundLinePalletPick{}
+	}
+
+	orderedIDs := make([]int64, 0, len(entries))
+	quantitiesByPalletID := make(map[int64]int)
+	for _, entry := range entries {
+		if entry.PalletID <= 0 || entry.Quantity <= 0 {
+			continue
+		}
+		if _, exists := quantitiesByPalletID[entry.PalletID]; !exists {
+			orderedIDs = append(orderedIDs, entry.PalletID)
+		}
+		quantitiesByPalletID[entry.PalletID] += entry.Quantity
+	}
+
+	normalized := make([]OutboundLinePalletPick, 0, len(orderedIDs))
+	for _, palletID := range orderedIDs {
+		normalized = append(normalized, OutboundLinePalletPick{
+			PalletID: palletID,
+			Quantity: quantitiesByPalletID[palletID],
+		})
+	}
+	return normalized
+}
+
+func decodeOutboundLinePalletPicksOrEmpty(raw string) []OutboundLinePalletPick {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return []OutboundLinePalletPick{}
+	}
+
+	var entries []OutboundLinePalletPick
+	if err := json.Unmarshal([]byte(trimmed), &entries); err != nil {
+		return []OutboundLinePalletPick{}
+	}
+	return normalizeOutboundLinePalletPicks(entries)
+}
+
+func mustEncodeOutboundLinePalletPicks(entries []OutboundLinePalletPick) string {
+	normalized := normalizeOutboundLinePalletPicks(entries)
+	if len(normalized) == 0 {
+		return ""
+	}
+	payload, err := json.Marshal(normalized)
+	if err != nil {
+		return ""
+	}
+	return string(payload)
+}
+
+func totalOutboundLinePalletPickQuantity(entries []OutboundLinePalletPick) int {
+	total := 0
+	for _, entry := range entries {
+		if entry.Quantity > 0 {
+			total += entry.Quantity
+		}
+	}
+	return total
+}
+
+func toOutboundAllocationCandidatesFromPicks(quantities []int) []outboundAllocationCandidate {
+	candidates := make([]outboundAllocationCandidate, 0, len(quantities))
+	for _, quantity := range quantities {
+		candidates = append(candidates, outboundAllocationCandidate{AllocatedQty: quantity})
+	}
+	return candidates
+}
+
+func (s *Store) loadSelectedOutboundPalletTargetTx(ctx context.Context, tx *sql.Tx, customerID int64, locationID int64, skuMasterID int64, palletID int64) (selectedOutboundPalletTarget, error) {
+	target := selectedOutboundPalletTarget{}
+	if err := tx.QueryRowContext(ctx, `
+		SELECT
+			p.id,
+			p.current_location_id,
+			COALESCE(p.current_storage_section, 'TEMP') AS current_storage_section,
+			COALESCE(p.current_container_no, '') AS current_container_no
+		FROM pallets p
+		INNER JOIN pallet_items pi ON pi.pallet_id = p.id
+		WHERE p.id = ?
+		  AND p.customer_id = ?
+		  AND p.current_location_id = ?
+		  AND pi.sku_master_id = ?
+		LIMIT 1
+		FOR UPDATE
+	`, palletID, customerID, locationID, skuMasterID).Scan(
+		&target.PalletID,
+		&target.LocationID,
+		&target.StorageSection,
+		&target.ContainerNo,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return selectedOutboundPalletTarget{}, fmt.Errorf("%w: selected pallet is not available for this outbound source", ErrInvalidInput)
+		}
+		return selectedOutboundPalletTarget{}, fmt.Errorf("load selected outbound pallet target: %w", err)
+	}
+	target.StorageSection = fallbackSection(target.StorageSection)
+	target.ContainerNo = strings.TrimSpace(target.ContainerNo)
+	return target, nil
 }
 
 func firstNonEmpty(values ...string) string {

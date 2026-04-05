@@ -14,6 +14,7 @@ import { api } from "../lib/api";
 import { setPendingAllActivityContext } from "../lib/allActivityContext";
 import { formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
+import { getOutboundDisplayShipDate } from "../lib/outboundDates";
 import { setPendingInventorySummaryContext } from "../lib/inventorySummaryContext";
 import type { PageKey } from "../lib/routes";
 import { normalizeStorageSection, type Customer, type CustomerPayload, type InboundDocument, type Item, type Movement, type OutboundDocument, type UserRole } from "../lib/types";
@@ -480,7 +481,7 @@ export function CustomerManagementPage({
                     </div>
                     <div>
                       <strong>{document.totalReceivedQty}</strong>
-                      <span>{formatDateValue(document.deliveryDate, dateFormatter)}</span>
+                      <span>{formatDateValue(document.expectedArrivalDate, dateFormatter)}</span>
                     </div>
                     <div>{renderDocumentStatusChip(document.status, t)}</div>
                   </div>
@@ -499,7 +500,7 @@ export function CustomerManagementPage({
                     </div>
                     <div>
                       <strong>{document.totalQty}</strong>
-                      <span>{formatDateValue(document.outDate, dateFormatter)}</span>
+                      <span>{formatDateValue(getOutboundDisplayShipDate(document), dateFormatter)}</span>
                     </div>
                     <div>{renderDocumentStatusChip(document.status, t)}</div>
                   </div>

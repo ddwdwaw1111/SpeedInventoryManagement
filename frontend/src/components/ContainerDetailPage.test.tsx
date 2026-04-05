@@ -445,6 +445,7 @@ function createPalletTrace(overrides: Partial<PalletTrace> = {}): PalletTrace {
     containerVisitId: 1,
     sourceInboundDocumentId: 1,
     sourceInboundLineId: 1,
+    actualArrivalDate: "2026-04-01",
     customerId: 1,
     customerName: "Imperial Bag & Paper",
     skuMasterId: 1,

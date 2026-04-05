@@ -18,7 +18,7 @@ type InboundPalletBreakdownPanelProps = {
   storageSectionValue: string;
   palletsLabel: string;
   palletCount: number;
-  palletsDetailLabel: string;1
+  palletsDetailLabel: string;
   palletsDetailValue: string;
   unitLabel: string;
   detailTone?: "default" | "danger";
@@ -86,6 +86,7 @@ export function InboundPalletBreakdownPanel({
           <Button
             size="small"
             variant="text"
+            type="button"
             onClick={onReset}
             disabled={resetDisabled}
             className="!min-h-9 !rounded-xl !px-3 !text-[12px] !font-semibold !text-[#143569]"
@@ -96,6 +97,7 @@ export function InboundPalletBreakdownPanel({
             <Button
               size="small"
               variant="outlined"
+              type="button"
               onClick={onToggle}
               aria-expanded={expanded}
               endIcon={

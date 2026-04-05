@@ -462,7 +462,7 @@ function getMovementTimestamp(movement: Movement) {
 }
 
 function getFallbackItemReceivedAt(item: Item) {
-  return item.lastRestockedAt || item.createdAt || item.deliveryDate || null;
+  return item.lastRestockedAt || item.createdAt || null;
 }
 
 function getDescriptionLabel(description: string | null | undefined, fallbackName: string | null | undefined) {

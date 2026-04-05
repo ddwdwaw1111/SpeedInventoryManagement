@@ -11,16 +11,17 @@ import (
 )
 
 type InventoryAdjustment struct {
-	ID             int64                     `json:"id"`
-	AdjustmentNo   string                    `json:"adjustmentNo"`
-	ReasonCode     string                    `json:"reasonCode"`
-	Notes          string                    `json:"notes"`
-	Status         string                    `json:"status"`
-	TotalLines     int                       `json:"totalLines"`
-	TotalAdjustQty int                       `json:"totalAdjustQty"`
-	CreatedAt      time.Time                 `json:"createdAt"`
-	UpdatedAt      time.Time                 `json:"updatedAt"`
-	Lines          []InventoryAdjustmentLine `json:"lines"`
+	ID               int64                     `json:"id"`
+	AdjustmentNo     string                    `json:"adjustmentNo"`
+	ReasonCode       string                    `json:"reasonCode"`
+	ActualAdjustedAt *time.Time                `json:"actualAdjustedAt"`
+	Notes            string                    `json:"notes"`
+	Status           string                    `json:"status"`
+	TotalLines       int                       `json:"totalLines"`
+	TotalAdjustQty   int                       `json:"totalAdjustQty"`
+	CreatedAt        time.Time                 `json:"createdAt"`
+	UpdatedAt        time.Time                 `json:"updatedAt"`
+	Lines            []InventoryAdjustmentLine `json:"lines"`
 }
 
 type InventoryAdjustmentLine struct {
@@ -41,10 +42,11 @@ type InventoryAdjustmentLine struct {
 }
 
 type CreateInventoryAdjustmentInput struct {
-	AdjustmentNo string                               `json:"adjustmentNo"`
-	ReasonCode   string                               `json:"reasonCode"`
-	Notes        string                               `json:"notes"`
-	Lines        []CreateInventoryAdjustmentLineInput `json:"lines"`
+	AdjustmentNo     string                               `json:"adjustmentNo"`
+	ReasonCode       string                               `json:"reasonCode"`
+	ActualAdjustedAt string                               `json:"actualAdjustedAt"`
+	Notes            string                               `json:"notes"`
+	Lines            []CreateInventoryAdjustmentLineInput `json:"lines"`
 }
 
 type CreateInventoryAdjustmentLineInput struct {
@@ -59,13 +61,14 @@ type CreateInventoryAdjustmentLineInput struct {
 }
 
 type inventoryAdjustmentRow struct {
-	ID           int64     `db:"id"`
-	AdjustmentNo string    `db:"adjustment_no"`
-	ReasonCode   string    `db:"reason_code"`
-	Notes        string    `db:"notes"`
-	Status       string    `db:"status"`
-	CreatedAt    time.Time `db:"created_at"`
-	UpdatedAt    time.Time `db:"updated_at"`
+	ID               int64        `db:"id"`
+	AdjustmentNo     string       `db:"adjustment_no"`
+	ReasonCode       string       `db:"reason_code"`
+	ActualAdjustedAt sql.NullTime `db:"actual_adjusted_at"`
+	Notes            string       `db:"notes"`
+	Status           string       `db:"status"`
+	CreatedAt        time.Time    `db:"created_at"`
+	UpdatedAt        time.Time    `db:"updated_at"`
 }
 
 type inventoryAdjustmentLineRow struct {
@@ -110,6 +113,7 @@ func (s *Store) ListInventoryAdjustments(ctx context.Context, limit int) ([]Inve
 			id,
 			adjustment_no,
 			reason_code,
+			actual_adjusted_at,
 			COALESCE(notes, '') AS notes,
 			status,
 			created_at,
@@ -129,14 +133,15 @@ func (s *Store) ListInventoryAdjustments(ctx context.Context, limit int) ([]Inve
 	adjustmentsByID := make(map[int64]*InventoryAdjustment, len(adjustmentRows))
 	for _, row := range adjustmentRows {
 		adjustment := InventoryAdjustment{
-			ID:           row.ID,
-			AdjustmentNo: row.AdjustmentNo,
-			ReasonCode:   row.ReasonCode,
-			Notes:        row.Notes,
-			Status:       row.Status,
-			CreatedAt:    row.CreatedAt,
-			UpdatedAt:    row.UpdatedAt,
-			Lines:        make([]InventoryAdjustmentLine, 0),
+			ID:               row.ID,
+			AdjustmentNo:     row.AdjustmentNo,
+			ReasonCode:       row.ReasonCode,
+			ActualAdjustedAt: timePointer(row.ActualAdjustedAt),
+			Notes:            row.Notes,
+			Status:           row.Status,
+			CreatedAt:        row.CreatedAt,
+			UpdatedAt:        row.UpdatedAt,
+			Lines:            make([]InventoryAdjustmentLine, 0),
 		}
 		adjustments = append(adjustments, adjustment)
 		adjustmentIDs = append(adjustmentIDs, row.ID)
@@ -208,6 +213,10 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 	if input.AdjustmentNo == "" {
 		input.AdjustmentNo = generateAdjustmentNo()
 	}
+	actualAdjustedAt, err := parseOptionalDateTime(input.ActualAdjustedAt)
+	if err != nil {
+		return InventoryAdjustment{}, err
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -219,12 +228,14 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 		INSERT INTO inventory_adjustments (
 			adjustment_no,
 			reason_code,
+			actual_adjusted_at,
 			notes,
 			status
-		) VALUES (?, ?, ?, 'POSTED')
+		) VALUES (?, ?, ?, ?, 'POSTED')
 	`,
 		input.AdjustmentNo,
 		input.ReasonCode,
+		nullableTime(actualAdjustedAt),
 		nullableString(input.Notes),
 	)
 	if err != nil {
@@ -313,6 +324,7 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 				LocationID:          palletAdjustment.LocationID,
 				StorageSection:      palletAdjustment.StorageSection,
 				QuantityChange:      deltaSign * palletAdjustment.Quantity,
+				OccurredAt:          actualAdjustedAt,
 				SourceDocumentType:  StockLedgerSourceAdjustment,
 				SourceDocumentID:    adjustmentID,
 				SourceLineID:        lineID,
@@ -353,6 +365,7 @@ func (s *Store) listInventoryAdjustmentsByIDs(ctx context.Context, adjustmentIDs
 			id,
 			adjustment_no,
 			reason_code,
+			actual_adjusted_at,
 			COALESCE(notes, '') AS notes,
 			status,
 			created_at,
@@ -377,14 +390,15 @@ func (s *Store) listInventoryAdjustmentsByIDs(ctx context.Context, adjustmentIDs
 	adjustmentsByID := make(map[int64]*InventoryAdjustment, len(adjustmentRows))
 	for _, row := range adjustmentRows {
 		adjustment := InventoryAdjustment{
-			ID:           row.ID,
-			AdjustmentNo: row.AdjustmentNo,
-			ReasonCode:   row.ReasonCode,
-			Notes:        row.Notes,
-			Status:       row.Status,
-			CreatedAt:    row.CreatedAt,
-			UpdatedAt:    row.UpdatedAt,
-			Lines:        make([]InventoryAdjustmentLine, 0),
+			ID:               row.ID,
+			AdjustmentNo:     row.AdjustmentNo,
+			ReasonCode:       row.ReasonCode,
+			ActualAdjustedAt: timePointer(row.ActualAdjustedAt),
+			Notes:            row.Notes,
+			Status:           row.Status,
+			CreatedAt:        row.CreatedAt,
+			UpdatedAt:        row.UpdatedAt,
+			Lines:            make([]InventoryAdjustmentLine, 0),
 		}
 		adjustments = append(adjustments, adjustment)
 		adjustmentsByID[row.ID] = &adjustments[len(adjustments)-1]
@@ -471,6 +485,7 @@ func (s *Store) loadLockedAdjustmentItem(ctx context.Context, tx *sql.Tx, bucket
 func sanitizeInventoryAdjustmentInput(input CreateInventoryAdjustmentInput) CreateInventoryAdjustmentInput {
 	input.AdjustmentNo = strings.TrimSpace(strings.ToUpper(input.AdjustmentNo))
 	input.ReasonCode = strings.TrimSpace(strings.ToUpper(input.ReasonCode))
+	input.ActualAdjustedAt = strings.TrimSpace(input.ActualAdjustedAt)
 	input.Notes = strings.TrimSpace(input.Notes)
 
 	lines := make([]CreateInventoryAdjustmentLineInput, 0, len(input.Lines))

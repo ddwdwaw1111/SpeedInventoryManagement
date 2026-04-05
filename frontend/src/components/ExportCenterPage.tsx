@@ -8,6 +8,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { formatDateValue } from "../lib/dates";
 import { downloadExcelWorkbook, type ExcelExportCell, type ExcelExportColumn } from "../lib/excelExport";
 import { useI18n } from "../lib/i18n";
+import { getOutboundExpectedShipDate } from "../lib/outboundDates";
 import type { PageKey } from "../lib/routes";
 import { DEFAULT_STORAGE_SECTION, normalizeStorageSection, type InboundDocument, type Item, type OutboundDocument } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
@@ -78,7 +79,7 @@ const CONTAINER_CONTENTS_EXPORT_COLUMNS = [
 ] as const;
 
 const RECEIPTS_EXPORT_COLUMNS = [
-  { key: "deliveryDate", label: "Receipt Date" },
+  { key: "expectedArrivalDate", label: "Expected Arrival Date" },
   { key: "containerNo", label: "Container No." },
   { key: "customerName", label: "Customer" },
   { key: "locationName", label: "Warehouse" },
@@ -93,7 +94,8 @@ const SHIPMENTS_EXPORT_COLUMNS = [
   { key: "orderRef", label: "Order Ref." },
   { key: "customerName", label: "Customer" },
   { key: "storages", label: "Warehouse" },
-  { key: "outDate", label: "Ship Date" },
+  { key: "expectedShipDate", label: "Expected Ship Date" },
+  { key: "actualShipDate", label: "Actual Ship Date" },
   { key: "shipToName", label: "Ship-to Name" },
   { key: "carrierName", label: "Carrier" },
   { key: "totalLines", label: "Total Lines" },
@@ -364,7 +366,7 @@ function buildContainerContentsExportRows(items: Item[]) {
 
 function buildReceiptExportRows(inboundDocuments: InboundDocument[]) {
   return inboundDocuments.map((document) => ({
-    deliveryDate: formatDateValue(document.deliveryDate, dateFormatter),
+    expectedArrivalDate: formatDateValue(document.expectedArrivalDate, dateFormatter),
     containerNo: document.containerNo || "-",
     customerName: document.customerName || "-",
     locationName: `${document.locationName} / ${summarizeInboundDocumentSections(document)}`,
@@ -381,7 +383,8 @@ function buildShipmentExportRows(outboundDocuments: OutboundDocument[]) {
     orderRef: document.orderRef || "-",
     customerName: document.customerName || "-",
     storages: document.storages || "-",
-    outDate: formatDateValue(document.outDate, dateFormatter),
+    expectedShipDate: formatDateValue(getOutboundExpectedShipDate(document), dateFormatter),
+    actualShipDate: formatDateValue(document.actualShipDate, dateFormatter),
     shipToName: document.shipToName || "-",
     carrierName: document.carrierName || "-",
     totalLines: document.totalLines,

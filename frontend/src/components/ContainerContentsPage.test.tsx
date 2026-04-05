@@ -153,4 +153,31 @@ describe("ContainerContentsPage", () => {
 
     expect(onOpenContainerDetail).toHaveBeenCalledWith("MRSU6884820");
   });
+
+  it("uses actual restock time instead of business receipt date for backfilled containers", () => {
+    const actualRecordedAt = "2026-04-03T12:45:00Z";
+
+    renderWithProviders(
+      <ContainerContentsPage
+        items={[
+          createItem({
+            containerNo: "OOLU1234567",
+            quantity: 8,
+            availableQty: 8,
+            deliveryDate: "2025-12-15",
+            lastRestockedAt: null,
+            createdAt: actualRecordedAt
+          })
+        ]}
+        movements={[]}
+        customers={[createCustomer()]}
+        locations={[createLocation()]}
+        currentUserRole="admin"
+        isLoading={false}
+        onOpenContainerDetail={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText(formatDateTimeValue(actualRecordedAt, "UTC"))).toBeInTheDocument();
+  });
 });

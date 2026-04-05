@@ -6,7 +6,7 @@ import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 
 import { ApiError, api } from "../lib/api";
-import { formatDateTimeValue } from "../lib/dates";
+import { formatDateTimeValue, formatDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import { consumePendingPalletTraceLaunchContext } from "../lib/palletTraceLaunchContext";
 import { useSettings } from "../lib/settings";
@@ -16,6 +16,10 @@ import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelC
 export function PalletTracePage() {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
+  const activityDateFormatter = useMemo(
+    () => new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }),
+    []
+  );
   const [pallets, setPallets] = useState<PalletTrace[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
@@ -156,6 +160,14 @@ export function PalletTracePage() {
       sortable: false,
       filterable: false,
       renderCell: (params) => params.row.contents.length
+    },
+    {
+      field: "actualArrivalDate",
+      headerName: t("actualArrivalDate"),
+      minWidth: 150,
+      renderCell: (params) => params.row.actualArrivalDate
+        ? formatDateValue(params.row.actualArrivalDate, activityDateFormatter)
+        : "-"
     },
     {
       field: "createdAt",
@@ -299,6 +311,7 @@ export function PalletTracePage() {
                 <div className="sheet-note"><strong>{t("storageSection")}</strong><br />{selectedPallet.currentStorageSection || "-"}</div>
                 <div className="sheet-note"><strong>{t("containerNo")}</strong><br />{selectedPallet.currentContainerNo || "-"}</div>
                 <div className="sheet-note"><strong>{t("status")}</strong><br />{getPalletStatusLabel(t, selectedPallet.status)}</div>
+                <div className="sheet-note"><strong>{t("actualArrivalDate")}</strong><br />{selectedPallet.actualArrivalDate ? formatDateValue(selectedPallet.actualArrivalDate, activityDateFormatter) : "-"}</div>
                 <div className="sheet-note"><strong>{t("created")}</strong><br />{formatDateTimeValue(selectedPallet.createdAt, resolvedTimeZone)}</div>
                 <div className="sheet-note"><strong>{t("updated")}</strong><br />{formatDateTimeValue(selectedPallet.updatedAt, resolvedTimeZone)}</div>
               </div>

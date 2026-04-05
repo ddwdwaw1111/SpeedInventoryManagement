@@ -4,6 +4,7 @@ export type PageKey =
   | "dashboard"
   | "daily-operations"
   | "billing"
+  | "billing-container-detail"
   | "export-center"
   | "reports"
   | "all-activity"
@@ -32,6 +33,7 @@ export const pagePathMap: Record<PageKey, string> = {
   dashboard: "/",
   "daily-operations": "/daily-operations",
   billing: "/billing",
+  "billing-container-detail": "/billing/container",
   "export-center": "/export-center",
   reports: "/reports",
   "all-activity": "/all-activity",
@@ -70,6 +72,7 @@ export function getPageFromPath(pathname: string): PageKey {
   const normalized = normalizePagePath(pathname);
 
   if (normalized === "/daily-operations" || /^\/daily-operations\/\d{4}-\d{2}-\d{2}$/.test(normalized)) return "daily-operations";
+  if (/^\/billing\/container\/\d{4}-\d{2}-\d{2}\/\d{4}-\d{2}-\d{2}\/(?:all|\d+)\/[^/]+$/.test(normalized)) return "billing-container-detail";
   if (normalized === "/billing") return "billing";
   if (normalized === "/reports") return "reports";
   if (normalized === "/export-center") return "export-center";
@@ -228,6 +231,61 @@ export function navigateToContainerDetail(setter: (page: PageKey) => void, conta
   }
 
   setter("container-detail");
+}
+
+export function navigateToBillingContainerDetail(
+  setter: (page: PageKey) => void,
+  startDate: string,
+  endDate: string,
+  customerId: number | "all",
+  containerNo: string
+) {
+  const fallbackDate = normalizeCalendarDate(new Date().toISOString()) ?? new Date().toISOString().slice(0, 10);
+  const normalizedStartDate = normalizeIsoDateSegment(startDate) ?? fallbackDate;
+  const normalizedEndDate = normalizeIsoDateSegment(endDate) ?? fallbackDate;
+  const [safeStartDate, safeEndDate] = normalizedStartDate <= normalizedEndDate
+    ? [normalizedStartDate, normalizedEndDate]
+    : [normalizedEndDate, normalizedStartDate];
+  const normalizedCustomerScope = customerId === "all" ? "all" : String(customerId);
+  const normalizedContainerNo = containerNo.trim().toUpperCase();
+  const encodedContainerNo = encodeURIComponent(normalizedContainerNo);
+  const path = `/billing/container/${safeStartDate}/${safeEndDate}/${normalizedCustomerScope}/${encodedContainerNo}`;
+  if (normalizePagePath(window.location.pathname) !== path) {
+    window.history.pushState({
+      page: "billing-container-detail",
+      startDate: safeStartDate,
+      endDate: safeEndDate,
+      customerId: customerId === "all" ? "all" : customerId,
+      containerNo: normalizedContainerNo
+    }, "", path);
+  }
+
+  setter("billing-container-detail");
+}
+
+export function getBillingContainerDetailFromPath(pathname: string) {
+  const normalized = normalizePagePath(pathname);
+  const match = normalized.match(/^\/billing\/container\/(\d{4}-\d{2}-\d{2})\/(\d{4}-\d{2}-\d{2})\/(all|\d+)\/([^/]+)$/);
+  if (!match) {
+    return null;
+  }
+
+  const [, startDate, endDate, customerScope, encodedContainerNo] = match;
+  try {
+    const containerNo = decodeURIComponent(encodedContainerNo).trim().toUpperCase();
+    if (!containerNo) {
+      return null;
+    }
+
+    return {
+      startDate,
+      endDate,
+      customerId: customerScope === "all" ? "all" : Number(customerScope),
+      containerNo
+    } as const;
+  } catch {
+    return null;
+  }
 }
 
 export function getContainerDetailContainerNoFromPath(pathname: string) {

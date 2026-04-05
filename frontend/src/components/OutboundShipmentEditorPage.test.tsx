@@ -35,8 +35,10 @@ vi.mock("@mui/x-data-grid", () => ({
 
 vi.mock("../lib/api", () => ({
   api: {
+    getPallets: vi.fn(),
     createOutboundDocument: vi.fn(),
-    updateOutboundDocument: vi.fn()
+    updateOutboundDocument: vi.fn(),
+    copyOutboundDocument: vi.fn()
   }
 }));
 
@@ -46,14 +48,18 @@ import { createItem, createMovement, createOutboundDocument, createSkuMaster } f
 import { OutboundShipmentEditorPage } from "./OutboundShipmentEditorPage";
 
 const mockedApi = api as unknown as {
+  getPallets: ReturnType<typeof vi.fn>;
   createOutboundDocument: ReturnType<typeof vi.fn>;
   updateOutboundDocument: ReturnType<typeof vi.fn>;
+  copyOutboundDocument: ReturnType<typeof vi.fn>;
 };
 
 describe("OutboundShipmentEditorPage", () => {
   beforeEach(() => {
+    mockedApi.getPallets.mockReset();
     mockedApi.createOutboundDocument.mockReset();
     mockedApi.updateOutboundDocument.mockReset();
+    mockedApi.copyOutboundDocument.mockReset();
     window.sessionStorage.clear();
   });
 
@@ -67,6 +73,45 @@ describe("OutboundShipmentEditorPage", () => {
       status: "DRAFT",
       trackingStatus: "SCHEDULED"
     }));
+    mockedApi.getPallets.mockResolvedValue([
+      {
+        id: 501,
+        parentPalletId: 0,
+        palletCode: "PLT-501",
+        containerVisitId: 1,
+        sourceInboundDocumentId: 1,
+        sourceInboundLineId: 1,
+        actualArrivalDate: "2026-03-24",
+        customerId: 1,
+        customerName: "Imperial Bag & Paper",
+        skuMasterId: 1,
+        sku: "608333",
+        description: "VB22GC",
+        currentLocationId: 1,
+        currentLocationName: "NJ",
+        currentStorageSection: "TEMP",
+        currentContainerNo: "GCXU5817233",
+        status: "OPEN",
+        createdAt: "2026-03-24T10:00:00Z",
+        updatedAt: "2026-03-24T10:00:00Z",
+        contents: [
+          {
+            id: 601,
+            palletId: 501,
+            skuMasterId: 1,
+            itemNumber: "608333",
+            sku: "608333",
+            description: "VB22GC",
+            quantity: 10,
+            allocatedQty: 0,
+            damagedQty: 0,
+            holdQty: 0,
+            createdAt: "2026-03-24T10:00:00Z",
+            updatedAt: "2026-03-24T10:00:00Z"
+          }
+        ]
+      }
+    ]);
 
     renderWithProviders(
       <OutboundShipmentEditorPage
@@ -92,6 +137,13 @@ describe("OutboundShipmentEditorPage", () => {
     fireEvent.change(outboundLineInputs[1] as HTMLInputElement, { target: { value: "5" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Details" })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    await waitFor(() => {
+      expect(screen.getByText("PLT-501")).toBeInTheDocument();
+    });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(screen.getByRole("button", { name: "Schedule Shipment" }));
 
@@ -99,7 +151,8 @@ describe("OutboundShipmentEditorPage", () => {
       expect(mockedApi.createOutboundDocument).toHaveBeenCalledWith({
         packingListNo: undefined,
         orderRef: undefined,
-        outDate: undefined,
+        expectedShipDate: undefined,
+        actualShipDate: undefined,
         shipToName: undefined,
         shipToAddress: undefined,
         shipToContact: undefined,
@@ -119,7 +172,8 @@ describe("OutboundShipmentEditorPage", () => {
             cartonSizeMm: undefined,
             netWeightKgs: 0,
             grossWeightKgs: 0,
-            lineNote: undefined
+            lineNote: undefined,
+            pickPallets: [{ palletId: 501, quantity: 5 }]
           }
         ]
       });
@@ -131,12 +185,52 @@ describe("OutboundShipmentEditorPage", () => {
   });
 
   it("restores and discards a local shipment draft", async () => {
+    mockedApi.getPallets.mockResolvedValue([
+      {
+        id: 501,
+        parentPalletId: 0,
+        palletCode: "PLT-501",
+        containerVisitId: 1,
+        sourceInboundDocumentId: 1,
+        sourceInboundLineId: 1,
+        actualArrivalDate: "2026-03-24",
+        customerId: 1,
+        customerName: "Imperial Bag & Paper",
+        skuMasterId: 1,
+        sku: "608333",
+        description: "VB22GC",
+        currentLocationId: 1,
+        currentLocationName: "NJ",
+        currentStorageSection: "TEMP",
+        currentContainerNo: "GCXU5817233",
+        status: "OPEN",
+        createdAt: "2026-03-24T10:00:00Z",
+        updatedAt: "2026-03-24T10:00:00Z",
+        contents: [
+          {
+            id: 601,
+            palletId: 501,
+            skuMasterId: 1,
+            itemNumber: "608333",
+            sku: "608333",
+            description: "VB22GC",
+            quantity: 10,
+            allocatedQty: 0,
+            damagedQty: 0,
+            holdQty: 0,
+            createdAt: "2026-03-24T10:00:00Z",
+            updatedAt: "2026-03-24T10:00:00Z"
+          }
+        ]
+      }
+    ]);
     window.sessionStorage.setItem("sim-outbound-shipment-editor-draft:new", JSON.stringify({
       version: 1,
       form: {
         packingListNo: "PL-LOCAL-01",
         orderRef: "SO-LOCAL-01",
-        outDate: "2026-04-02",
+        expectedShipDate: "2026-04-02",
+        actualShipDate: "",
         shipToName: "Draft Receiver",
         shipToAddress: "Draft Address",
         shipToContact: "201-555-1111",
@@ -193,5 +287,49 @@ describe("OutboundShipmentEditorPage", () => {
     expect((resetHeaderInputs[0] as HTMLInputElement).value).toBe("");
     const savedResetDraft = JSON.parse(window.sessionStorage.getItem("sim-outbound-shipment-editor-draft:new") || "null");
     expect(savedResetDraft?.form?.packingListNo).toBe("");
+  });
+
+  it("re-enters confirmed shipments by copying them into a new draft", async () => {
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    const onOpenShipmentEditor = vi.fn();
+
+    mockedApi.copyOutboundDocument.mockResolvedValue(createOutboundDocument({
+      id: 77,
+      status: "DRAFT",
+      trackingStatus: "SCHEDULED"
+    }));
+    mockedApi.getPallets.mockResolvedValue([]);
+
+    renderWithProviders(
+      <OutboundShipmentEditorPage
+        routeKey="/outbound-management/12"
+        documentId={12}
+        document={createOutboundDocument({
+          id: 12,
+          status: "CONFIRMED",
+          trackingStatus: "SHIPPED"
+        })}
+        items={[createItem({ id: 1, availableQty: 10, quantity: 10, containerNo: "GCXU5817233" })]}
+        skuMasters={[createSkuMaster()]}
+        movements={[createMovement()]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={onRefresh}
+        onBackToList={vi.fn()}
+        onOpenOutboundDocument={vi.fn()}
+        onOpenShipmentEditor={onOpenShipmentEditor}
+      />
+    );
+
+    expect(screen.getByText(/Confirmed shipments are immutable|confirmedShipmentImmutableNotice/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("button", { name: /Re-enter Shipment|reEnterShipment/ })[0]);
+
+    await waitFor(() => {
+      expect(mockedApi.copyOutboundDocument).toHaveBeenCalledWith(12);
+    });
+
+    expect(onRefresh).toHaveBeenCalled();
+    expect(onOpenShipmentEditor).toHaveBeenCalledWith(77);
   });
 });

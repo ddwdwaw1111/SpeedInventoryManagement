@@ -53,7 +53,8 @@ vi.mock("../lib/api", () => ({
   api: {
     createInboundDocument: vi.fn(),
     createOutboundDocument: vi.fn(),
-    updateInboundDocument: vi.fn()
+    updateInboundDocument: vi.fn(),
+    copyInboundDocument: vi.fn()
   }
 }));
 
@@ -66,6 +67,7 @@ const mockedApi = api as unknown as {
   createInboundDocument: ReturnType<typeof vi.fn>;
   createOutboundDocument: ReturnType<typeof vi.fn>;
   updateInboundDocument: ReturnType<typeof vi.fn>;
+  copyInboundDocument: ReturnType<typeof vi.fn>;
 };
 
 describe("ActivityManagementPage", () => {
@@ -73,6 +75,7 @@ describe("ActivityManagementPage", () => {
     mockedApi.createInboundDocument.mockReset();
     mockedApi.createOutboundDocument.mockReset();
     mockedApi.updateInboundDocument.mockReset();
+    mockedApi.copyInboundDocument.mockReset();
   });
 
   it("submits a new inbound receipt from the receipt form flow", async () => {
@@ -103,10 +106,10 @@ describe("ActivityManagementPage", () => {
     const headerInputs = dialog.querySelectorAll(".sheet-form input");
 
     fireEvent.change(headerInputs[0] as HTMLInputElement, { target: { value: "2026-03-31" } });
-    fireEvent.change(headerInputs[1] as HTMLInputElement, { target: { value: "MSCU1234567" } });
+    fireEvent.change(headerInputs[2] as HTMLInputElement, { target: { value: "MSCU1234567" } });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     const inboundLineInputs = dialog.querySelectorAll(".batch-line-grid--inbound input");
-    fireEvent.change(inboundLineInputs[0] as HTMLInputElement, { target: { value: "011423" } });
+    fireEvent.change(inboundLineInputs[0] as HTMLInputElement, { target: { value: "ABC123" } });
     fireEvent.change(inboundLineInputs[1] as HTMLInputElement, { target: { value: "Sample inbound SKU" } });
     fireEvent.change(inboundLineInputs[2] as HTMLInputElement, { target: { value: "8" } });
     fireEvent.change(inboundLineInputs[3] as HTMLInputElement, { target: { value: "8" } });
@@ -118,7 +121,8 @@ describe("ActivityManagementPage", () => {
       expect(mockedApi.createInboundDocument).toHaveBeenCalledWith({
         customerId: 1,
         locationId: 1,
-        deliveryDate: "2026-03-31",
+        expectedArrivalDate: "2026-03-31",
+        actualArrivalDate: undefined,
         containerNo: "MSCU1234567",
         handlingMode: "PALLETIZED",
         storageSection: "TEMP",
@@ -128,7 +132,7 @@ describe("ActivityManagementPage", () => {
         documentNote: undefined,
         lines: [
           {
-            sku: "011423",
+            sku: "ABC123",
             description: "Sample inbound SKU",
             reorderLevel: 2,
             expectedQty: 8,
@@ -156,9 +160,9 @@ describe("ActivityManagementPage", () => {
         items={[]}
         skuMasters={[createSkuMaster({
           id: 2,
-          sku: "011423",
-          itemNumber: "011423",
-          name: "011423",
+          sku: "ABC123",
+          itemNumber: "ABC123",
+          name: "ABC123",
           description: "Sample inbound SKU",
           defaultUnitsPerPallet: 100,
           reorderLevel: 2
@@ -180,10 +184,10 @@ describe("ActivityManagementPage", () => {
     const headerInputs = dialog.querySelectorAll(".sheet-form input");
 
     fireEvent.change(headerInputs[0] as HTMLInputElement, { target: { value: "2026-03-31" } });
-    fireEvent.change(headerInputs[1] as HTMLInputElement, { target: { value: "MSCU7654321" } });
+    fireEvent.change(headerInputs[2] as HTMLInputElement, { target: { value: "MSCU7654321" } });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
   const inboundLineInputs = dialog.querySelectorAll(".batch-line-grid--inbound input");
-    fireEvent.change(inboundLineInputs[0] as HTMLInputElement, { target: { value: "011423" } });
+    fireEvent.change(inboundLineInputs[0] as HTMLInputElement, { target: { value: "ABC123" } });
     fireEvent.change(inboundLineInputs[2] as HTMLInputElement, { target: { value: "1024" } });
     fireEvent.change(inboundLineInputs[3] as HTMLInputElement, { target: { value: "1024" } });
 
@@ -194,7 +198,8 @@ describe("ActivityManagementPage", () => {
       expect(mockedApi.createInboundDocument).toHaveBeenCalledWith({
         customerId: 1,
         locationId: 1,
-        deliveryDate: "2026-03-31",
+        expectedArrivalDate: "2026-03-31",
+        actualArrivalDate: undefined,
         containerNo: "MSCU7654321",
         handlingMode: "PALLETIZED",
         storageSection: "TEMP",
@@ -204,7 +209,7 @@ describe("ActivityManagementPage", () => {
         documentNote: undefined,
         lines: [
           {
-            sku: "011423",
+            sku: "ABC123",
             description: "Sample inbound SKU",
             reorderLevel: 2,
             expectedQty: 1024,
@@ -270,7 +275,7 @@ describe("ActivityManagementPage", () => {
     const headerInputs = dialog.querySelectorAll(".sheet-form input");
 
     fireEvent.change(headerInputs[0] as HTMLInputElement, { target: { value: "2026-03-31" } });
-    fireEvent.change(headerInputs[1] as HTMLInputElement, { target: { value: "MSCU2222222" } });
+    fireEvent.change(headerInputs[2] as HTMLInputElement, { target: { value: "MSCU2222222" } });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
   const inboundLineInputs = dialog.querySelectorAll(".batch-line-grid--inbound input");
     fireEvent.change(inboundLineInputs[0] as HTMLInputElement, { target: { value: "011424" } });
@@ -285,7 +290,8 @@ describe("ActivityManagementPage", () => {
       expect(mockedApi.createInboundDocument).toHaveBeenCalledWith({
         customerId: 1,
         locationId: 1,
-        deliveryDate: "2026-03-31",
+        expectedArrivalDate: "2026-03-31",
+        actualArrivalDate: undefined,
         containerNo: "MSCU2222222",
         handlingMode: "PALLETIZED",
         storageSection: "TEMP",
@@ -326,10 +332,18 @@ describe("ActivityManagementPage", () => {
     expect(onRefresh).toHaveBeenCalled();
   });
 
-  it("submits confirmed receipt edits for date and note changes", async () => {
+  it("re-enters confirmed receipts by copying them into a new draft", async () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
 
-    mockedApi.updateInboundDocument.mockResolvedValue(undefined);
+    mockedApi.copyInboundDocument.mockResolvedValue(
+      createInboundDocument({
+        id: 22,
+        status: "DRAFT",
+        trackingStatus: "SCHEDULED",
+        expectedArrivalDate: "2026-03-24",
+        containerNo: "GCXU5817233"
+      })
+    );
 
     renderWithProviders(
       <ActivityManagementPage
@@ -344,7 +358,7 @@ describe("ActivityManagementPage", () => {
             id: 11,
             status: "CONFIRMED",
             trackingStatus: "RECEIVED",
-            deliveryDate: "2026-03-24",
+            expectedArrivalDate: "2026-03-24",
             containerNo: "GCXU5817233",
             documentNote: "Original note",
             lines: [
@@ -370,54 +384,27 @@ describe("ActivityManagementPage", () => {
       />
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Edit Receipt" }));
-
-    const dialog = await screen.findByRole("dialog");
-    const headerInputs = dialog.querySelectorAll(".sheet-form input");
-
-    fireEvent.change(headerInputs[0] as HTMLInputElement, { target: { value: "2026-03-31" } });
-    fireEvent.change(headerInputs[2] as HTMLInputElement, { target: { value: "Updated dock note" } });
-
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    fireEvent.click(screen.getByRole("button", { name: /Re-enter Receipt|reEnterReceipt/ }));
 
     await waitFor(() => {
-      expect(mockedApi.updateInboundDocument).toHaveBeenCalledWith(11, {
-        customerId: 1,
-        locationId: 1,
-        deliveryDate: "2026-03-31",
-        containerNo: "GCXU5817233",
-        handlingMode: "PALLETIZED",
-        storageSection: "TEMP",
-        unitLabel: "CTN",
-        status: "CONFIRMED",
-        trackingStatus: "RECEIVED",
-        documentNote: "Updated dock note",
-        lines: [
-          {
-            sku: "608333",
-            description: "VB22GC",
-            reorderLevel: 5,
-            expectedQty: 10,
-            receivedQty: 10,
-            pallets: 1,
-            palletsDetailCtns: "1*10",
-            palletBreakdown: [{ quantity: 10 }],
-            storageSection: "TEMP",
-            lineNote: undefined
-          }
-        ]
-      });
+      expect(mockedApi.copyInboundDocument).toHaveBeenCalledWith(11);
     });
 
     expect(onRefresh).toHaveBeenCalled();
   });
 
-  it("submits confirmed receipt edits that change quantity and section", async () => {
+  it("re-enters confirmed receipts from the detail drawer", async () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
 
-    mockedApi.updateInboundDocument.mockResolvedValue(undefined);
+    mockedApi.copyInboundDocument.mockResolvedValue(
+      createInboundDocument({
+        id: 24,
+        status: "DRAFT",
+        trackingStatus: "SCHEDULED",
+        expectedArrivalDate: "2026-03-24",
+        containerNo: "GCXU5817233"
+      })
+    );
 
     renderWithProviders(
       <ActivityManagementPage
@@ -432,7 +419,7 @@ describe("ActivityManagementPage", () => {
             id: 12,
             status: "CONFIRMED",
             trackingStatus: "RECEIVED",
-            deliveryDate: "2026-03-24",
+            expectedArrivalDate: "2026-03-24",
             containerNo: "GCXU5817233",
             lines: [
               createInboundDocumentLine({
@@ -457,46 +444,11 @@ describe("ActivityManagementPage", () => {
       />
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Edit Receipt" }));
-
-    const dialog = await screen.findByRole("dialog");
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    const inboundLineInputs = dialog.querySelectorAll(".batch-line-grid--inbound input");
-    const inboundLineSectionSelect = dialog.querySelector(".batch-line-grid--inbound select");
-
-    fireEvent.change(inboundLineInputs[3] as HTMLInputElement, { target: { value: "12" } });
-    fireEvent.change(inboundLineSectionSelect as HTMLSelectElement, { target: { value: "A" } });
-
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Re-enter Receipt|reEnterReceipt/ }));
 
     await waitFor(() => {
-      expect(mockedApi.updateInboundDocument).toHaveBeenCalledWith(12, {
-        customerId: 1,
-        locationId: 1,
-        deliveryDate: "2026-03-24",
-        containerNo: "GCXU5817233",
-        handlingMode: "PALLETIZED",
-        storageSection: "A",
-        unitLabel: "CTN",
-        status: "CONFIRMED",
-        trackingStatus: "RECEIVED",
-        documentNote: undefined,
-        lines: [
-          {
-            sku: "608333",
-            description: "VB22GC",
-            reorderLevel: 5,
-            expectedQty: 10,
-            receivedQty: 12,
-            pallets: 1,
-            palletsDetailCtns: "12",
-            palletBreakdown: [{ quantity: 12 }],
-            storageSection: "A",
-            lineNote: undefined
-          }
-        ]
-      });
+      expect(mockedApi.copyInboundDocument).toHaveBeenCalledWith(12);
     });
 
     expect(onRefresh).toHaveBeenCalled();
@@ -553,7 +505,8 @@ describe("ActivityManagementPage", () => {
       expect(mockedApi.createOutboundDocument).toHaveBeenCalledWith({
         packingListNo: undefined,
         orderRef: undefined,
-        outDate: undefined,
+        expectedShipDate: undefined,
+        actualShipDate: undefined,
         shipToName: undefined,
         shipToAddress: undefined,
         shipToContact: undefined,

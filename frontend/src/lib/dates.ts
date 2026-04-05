@@ -31,6 +31,14 @@ export function parseDateLikeValue(value: string | null | undefined) {
   return parsed;
 }
 
+export function isCalendarDateValue(value: string | null | undefined) {
+  if (!value) {
+    return false;
+  }
+
+  return /^\d{4}-\d{2}-\d{2}(?:T00:00:00(?:\.000)?Z)?$/.test(value.trim());
+}
+
 export function toIsoDateString(date: Date) {
   const year = date.getFullYear();
   const month = `${date.getMonth() + 1}`.padStart(2, "0");
@@ -86,8 +94,64 @@ export function formatDateTimeValue(
 ) {
   if (!value) return "-";
 
+  if (isCalendarDateValue(value)) {
+    const dateOnlyOptions = stripTimeOptions(options);
+    return formatDateValue(
+      value,
+      new Intl.DateTimeFormat("en-US", {
+        ...(Object.keys(dateOnlyOptions).length > 0 ? dateOnlyOptions : { dateStyle: "medium" }),
+        timeZone
+      })
+    );
+  }
+
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
 
   return new Intl.DateTimeFormat("en-US", { ...options, timeZone }).format(parsed);
+}
+
+export function toIsoDateTimeString(value: string | null | undefined) {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    return undefined;
+  }
+
+  return parsed.toISOString();
+}
+
+export function toDateTimeLocalInputValue(value: string | null | undefined) {
+  if (!value) {
+    return "";
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+
+  const year = parsed.getFullYear();
+  const month = `${parsed.getMonth() + 1}`.padStart(2, "0");
+  const day = `${parsed.getDate()}`.padStart(2, "0");
+  const hour = `${parsed.getHours()}`.padStart(2, "0");
+  const minute = `${parsed.getMinutes()}`.padStart(2, "0");
+  return `${year}-${month}-${day}T${hour}:${minute}`;
+}
+
+function stripTimeOptions(options: Intl.DateTimeFormatOptions) {
+  const dateOnlyOptions: Intl.DateTimeFormatOptions = { ...options };
+  delete dateOnlyOptions.timeStyle;
+  delete dateOnlyOptions.hour;
+  delete dateOnlyOptions.minute;
+  delete dateOnlyOptions.second;
+  delete dateOnlyOptions.dayPeriod;
+  delete dateOnlyOptions.timeZoneName;
+  delete dateOnlyOptions.hour12;
+  delete dateOnlyOptions.hourCycle;
+  return dateOnlyOptions;
 }

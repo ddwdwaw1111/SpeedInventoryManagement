@@ -11,16 +11,17 @@ import (
 )
 
 type InventoryTransfer struct {
-	ID         int64                   `json:"id"`
-	TransferNo string                  `json:"transferNo"`
-	Notes      string                  `json:"notes"`
-	Status     string                  `json:"status"`
-	TotalLines int                     `json:"totalLines"`
-	TotalQty   int                     `json:"totalQty"`
-	Routes     string                  `json:"routes"`
-	CreatedAt  time.Time               `json:"createdAt"`
-	UpdatedAt  time.Time               `json:"updatedAt"`
-	Lines      []InventoryTransferLine `json:"lines"`
+	ID                  int64                   `json:"id"`
+	TransferNo          string                  `json:"transferNo"`
+	ActualTransferredAt *time.Time              `json:"actualTransferredAt"`
+	Notes               string                  `json:"notes"`
+	Status              string                  `json:"status"`
+	TotalLines          int                     `json:"totalLines"`
+	TotalQty            int                     `json:"totalQty"`
+	Routes              string                  `json:"routes"`
+	CreatedAt           time.Time               `json:"createdAt"`
+	UpdatedAt           time.Time               `json:"updatedAt"`
+	Lines               []InventoryTransferLine `json:"lines"`
 }
 
 type InventoryTransferLine struct {
@@ -42,9 +43,10 @@ type InventoryTransferLine struct {
 }
 
 type CreateInventoryTransferInput struct {
-	TransferNo string                             `json:"transferNo"`
-	Notes      string                             `json:"notes"`
-	Lines      []CreateInventoryTransferLineInput `json:"lines"`
+	TransferNo          string                             `json:"transferNo"`
+	ActualTransferredAt string                             `json:"actualTransferredAt"`
+	Notes               string                             `json:"notes"`
+	Lines               []CreateInventoryTransferLineInput `json:"lines"`
 }
 
 type CreateInventoryTransferLineInput struct {
@@ -61,12 +63,13 @@ type CreateInventoryTransferLineInput struct {
 }
 
 type inventoryTransferRow struct {
-	ID         int64     `db:"id"`
-	TransferNo string    `db:"transfer_no"`
-	Notes      string    `db:"notes"`
-	Status     string    `db:"status"`
-	CreatedAt  time.Time `db:"created_at"`
-	UpdatedAt  time.Time `db:"updated_at"`
+	ID                  int64        `db:"id"`
+	TransferNo          string       `db:"transfer_no"`
+	ActualTransferredAt sql.NullTime `db:"actual_transferred_at"`
+	Notes               string       `db:"notes"`
+	Status              string       `db:"status"`
+	CreatedAt           time.Time    `db:"created_at"`
+	UpdatedAt           time.Time    `db:"updated_at"`
 }
 
 type inventoryTransferLineRow struct {
@@ -116,6 +119,7 @@ func (s *Store) ListInventoryTransfers(ctx context.Context, limit int) ([]Invent
 		SELECT
 			id,
 			transfer_no,
+			actual_transferred_at,
 			COALESCE(notes, '') AS notes,
 			status,
 			created_at,
@@ -135,13 +139,14 @@ func (s *Store) ListInventoryTransfers(ctx context.Context, limit int) ([]Invent
 	transfersByID := make(map[int64]*InventoryTransfer, len(transferRows))
 	for _, row := range transferRows {
 		transfer := InventoryTransfer{
-			ID:         row.ID,
-			TransferNo: row.TransferNo,
-			Notes:      row.Notes,
-			Status:     row.Status,
-			CreatedAt:  row.CreatedAt,
-			UpdatedAt:  row.UpdatedAt,
-			Lines:      make([]InventoryTransferLine, 0),
+			ID:                  row.ID,
+			TransferNo:          row.TransferNo,
+			ActualTransferredAt: timePointer(row.ActualTransferredAt),
+			Notes:               row.Notes,
+			Status:              row.Status,
+			CreatedAt:           row.CreatedAt,
+			UpdatedAt:           row.UpdatedAt,
+			Lines:               make([]InventoryTransferLine, 0),
 		}
 		transfers = append(transfers, transfer)
 		transferIDs = append(transferIDs, row.ID)
@@ -225,6 +230,10 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 	if input.TransferNo == "" {
 		input.TransferNo = generateTransferNo()
 	}
+	actualTransferredAt, err := parseOptionalDateTime(input.ActualTransferredAt)
+	if err != nil {
+		return InventoryTransfer{}, err
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -235,11 +244,13 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO inventory_transfers (
 			transfer_no,
+			actual_transferred_at,
 			notes,
 			status
-		) VALUES (?, ?, 'POSTED')
+		) VALUES (?, ?, ?, 'POSTED')
 	`,
 		input.TransferNo,
+		nullableTime(actualTransferredAt),
 		nullableString(input.Notes),
 	)
 	if err != nil {
@@ -342,11 +353,13 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 				ContainerNo:      firstNonEmpty(palletConsumption.ContainerNo, sourceItem.ContainerNo),
 				EventType:        PalletEventTransferOut,
 				QuantityDelta:    -palletConsumption.Quantity,
+				EventTime:        actualTransferredAt,
 			}); err != nil {
 				return InventoryTransfer{}, err
 			}
 			if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
 				EventType:           StockLedgerEventTransferOut,
+				OccurredAt:          actualTransferredAt,
 				PalletID:            palletConsumption.PalletID,
 				PalletItemID:        palletConsumption.PalletItemID,
 				SKUMasterID:         palletConsumption.SKUMasterID,
@@ -372,6 +385,7 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 				ContainerVisitID:        palletConsumption.ContainerVisitID,
 				SourceInboundDocumentID: palletConsumption.SourceInboundDocumentID,
 				SourceInboundLineID:     palletConsumption.SourceInboundLineID,
+				ActualArrivalDate:       palletConsumption.ActualArrivalDate,
 				CustomerID:              sourceItem.CustomerID,
 				SKUMasterID:             palletConsumption.SKUMasterID,
 				CurrentLocationID:       line.ToLocationID,
@@ -392,6 +406,7 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 			}
 			if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
 				EventType:           StockLedgerEventTransferIn,
+				OccurredAt:          actualTransferredAt,
 				PalletID:            childPallet.ID,
 				PalletItemID:        childPalletItemID,
 				SKUMasterID:         palletConsumption.SKUMasterID,
@@ -418,6 +433,7 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 				ContainerNo:      childPallet.CurrentContainerNo,
 				EventType:        PalletEventTransferIn,
 				QuantityDelta:    palletConsumption.Quantity,
+				EventTime:        actualTransferredAt,
 			}); err != nil {
 				return InventoryTransfer{}, err
 			}
@@ -451,6 +467,7 @@ func (s *Store) listInventoryTransfersByIDs(ctx context.Context, transferIDs []i
 		SELECT
 			id,
 			transfer_no,
+			actual_transferred_at,
 			COALESCE(notes, '') AS notes,
 			status,
 			created_at,
@@ -475,13 +492,14 @@ func (s *Store) listInventoryTransfersByIDs(ctx context.Context, transferIDs []i
 	transfersByID := make(map[int64]*InventoryTransfer, len(transferRows))
 	for _, row := range transferRows {
 		transfer := InventoryTransfer{
-			ID:         row.ID,
-			TransferNo: row.TransferNo,
-			Notes:      row.Notes,
-			Status:     row.Status,
-			CreatedAt:  row.CreatedAt,
-			UpdatedAt:  row.UpdatedAt,
-			Lines:      make([]InventoryTransferLine, 0),
+			ID:                  row.ID,
+			TransferNo:          row.TransferNo,
+			ActualTransferredAt: timePointer(row.ActualTransferredAt),
+			Notes:               row.Notes,
+			Status:              row.Status,
+			CreatedAt:           row.CreatedAt,
+			UpdatedAt:           row.UpdatedAt,
+			Lines:               make([]InventoryTransferLine, 0),
 		}
 		transfers = append(transfers, transfer)
 		transfersByID[row.ID] = &transfers[len(transfers)-1]
@@ -655,6 +673,7 @@ func (s *Store) ensureTransferDestinationProjectionItem(
 
 func sanitizeInventoryTransferInput(input CreateInventoryTransferInput) CreateInventoryTransferInput {
 	input.TransferNo = strings.TrimSpace(strings.ToUpper(input.TransferNo))
+	input.ActualTransferredAt = strings.TrimSpace(input.ActualTransferredAt)
 	input.Notes = strings.TrimSpace(input.Notes)
 
 	lines := make([]CreateInventoryTransferLineInput, 0, len(input.Lines))

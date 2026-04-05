@@ -30,6 +30,7 @@ import { setPendingOutboundShipmentEditorLaunchContext, type OutboundShipmentEdi
 import { useI18n } from "./lib/i18n";
 import { setPendingPalletTraceLaunchContext } from "./lib/palletTraceLaunchContext";
 import {
+  getBillingContainerDetailFromPath,
   getContainerDetailContainerNoFromPath,
   getDailyOperationsDateFromPath,
   getInboundDetailIdFromPath,
@@ -37,6 +38,7 @@ import {
   getReceiptEditorIdFromPath,
   getShipmentEditorIdFromPath,
   getStorageLocationEditorIdFromPath,
+  navigateToBillingContainerDetail,
   navigateToContainerDetail,
   navigateToDailyOperations,
   navigateToInboundDetail,
@@ -67,6 +69,10 @@ const AuditLogPage = lazy(async () => {
 const BillingPage = lazy(async () => {
   const module = await import("./components/BillingPage");
   return { default: module.BillingPage };
+});
+const BillingContainerDetailPage = lazy(async () => {
+  const module = await import("./components/BillingContainerDetailPage");
+  return { default: module.BillingContainerDetailPage };
 });
 const ContainerContentsPage = lazy(async () => {
   const module = await import("./components/ContainerContentsPage");
@@ -273,6 +279,11 @@ export default function App() {
     setCurrentPathname(window.location.pathname);
   }
 
+  function handleNavigateToBillingContainerDetail(startDate: string, endDate: string, customerId: number | "all", containerNo: string) {
+    navigateToBillingContainerDetail(setActivePage, startDate, endDate, customerId, containerNo);
+    setCurrentPathname(window.location.pathname);
+  }
+
   function handleOpenEmbeddedComposer(mode: "IN" | "OUT", date: string) {
     setEmbeddedComposer({ mode, date });
   }
@@ -428,6 +439,7 @@ export default function App() {
     { key: "dashboard", label: t("navDashboard"), description: t("dashboardDesc"), icon: <HomeOutlined fontSize="small" /> },
     { key: "daily-operations", label: t("dailyOperations"), description: t("dailyOperationsDesc"), icon: <HomeOutlined fontSize="small" /> },
     { key: "billing", label: t("billingPage"), description: t("billingPageDesc"), icon: <RequestQuoteOutlined fontSize="small" /> },
+    { key: "billing-container-detail", label: t("billingContainerDetailPage"), description: t("billingContainerDetailPageDesc"), icon: <RequestQuoteOutlined fontSize="small" /> },
     { key: "reports", label: t("report"), description: t("reportDesc"), icon: <AssessmentOutlined fontSize="small" /> },
     { key: "export-center", label: t("exportCenter"), description: t("exportCenterDesc"), icon: <FileDownloadOutlined fontSize="small" /> },
     { key: "inbound-management", label: t("navReceiving"), description: t("inboundDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
@@ -476,6 +488,7 @@ export default function App() {
   );
   const parentPageByPage: Partial<Record<PageKey, PageKey>> = {
     "daily-operations": "dashboard",
+    "billing-container-detail": "billing",
     "inbound-detail": "inbound-management",
     "receipt-editor": "inbound-management",
     "shipment-editor": "outbound-management",
@@ -496,6 +509,7 @@ export default function App() {
     "all-activity": "inventory",
     "pallet-trace": "inventory",
     billing: "finance",
+    "billing-container-detail": "finance",
     customers: "master-data",
     "sku-master": "master-data",
     "storage-management": "master-data",
@@ -515,6 +529,7 @@ export default function App() {
   const selectedReceiptEditorId = getReceiptEditorIdFromPath(currentPathname);
   const selectedShipmentEditorId = getShipmentEditorIdFromPath(currentPathname);
   const selectedContainerDetailNo = getContainerDetailContainerNoFromPath(currentPathname);
+  const selectedBillingContainerDetail = getBillingContainerDetailFromPath(currentPathname);
   const selectedDailyOperationsDate = getDailyOperationsDateFromPath(currentPathname);
   const editingStorageLocation = editingStorageLocationId
     ? locations.find((location) => location.id === editingStorageLocationId) ?? null
@@ -775,6 +790,22 @@ export default function App() {
                 customers={customers}
                 inboundDocuments={inboundDocuments}
                 outboundDocuments={outboundDocuments}
+                onOpenBillingContainerDetail={handleNavigateToBillingContainerDetail}
+              />)
+            ) : null}
+            {activePage === "billing-container-detail" ? (
+              renderWithSuspense(<BillingContainerDetailPage
+                routeKey={currentPathname}
+                startDate={selectedBillingContainerDetail?.startDate ?? getCurrentLocalIsoDate()}
+                endDate={selectedBillingContainerDetail?.endDate ?? getCurrentLocalIsoDate()}
+                customerId={selectedBillingContainerDetail?.customerId ?? "all"}
+                containerNo={selectedBillingContainerDetail?.containerNo ?? null}
+                customers={customers}
+                inboundDocuments={inboundDocuments}
+                outboundDocuments={outboundDocuments}
+                movements={movements}
+                onBackToBilling={() => handleNavigateToPage("billing")}
+                onOpenContainerDetail={handleNavigateToContainerDetail}
               />)
             ) : null}
             {activePage === "dashboard" ? (

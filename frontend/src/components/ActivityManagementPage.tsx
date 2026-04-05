@@ -20,6 +20,7 @@ import { downloadExcelWorkbook, type ExcelExportColumn } from "../lib/excelExpor
 import type { InboundReceiptEditorLaunchContext } from "../lib/inboundReceiptEditorLaunchContext";
 import type { OutboundShipmentEditorLaunchContext } from "../lib/outboundShipmentEditorLaunchContext";
 import { useI18n } from "../lib/i18n";
+import { getOutboundDisplayShipDate, getOutboundExpectedShipDate } from "../lib/outboundDates";
 import { setPendingPalletTraceLaunchContext } from "../lib/palletTraceLaunchContext";
 import { useSettings } from "../lib/settings";
 import {
@@ -74,7 +75,8 @@ type ActivityManagementPageProps = {
 };
 
 type BatchInboundFormState = {
-  deliveryDate: string;
+  expectedArrivalDate: string;
+  actualArrivalDate: string;
   containerNo: string;
   handlingMode: InboundHandlingMode;
   customerId: string;
@@ -110,7 +112,8 @@ type BatchInboundPalletBreakdownState = {
 type BatchOutboundFormState = {
   packingListNo: string;
   orderRef: string;
-  outDate: string;
+  expectedShipDate: string;
+  actualShipDate: string;
   shipToName: string;
   shipToAddress: string;
   shipToContact: string;
@@ -212,7 +215,7 @@ const summaryNumberFormatter = new Intl.NumberFormat("en-US");
 const RECEIPTS_EXPORT_TITLE = "Receipts";
 const SHIPMENTS_EXPORT_TITLE = "Shipments";
 const RECEIPTS_EXPORT_COLUMNS = [
-  { key: "deliveryDate", label: "Receipt Date" },
+  { key: "expectedArrivalDate", label: "Expected Arrival Date" },
   { key: "containerNo", label: "Container No." },
   { key: "customerName", label: "Customer" },
   { key: "locationName", label: "Warehouse" },
@@ -227,7 +230,8 @@ const SHIPMENTS_EXPORT_COLUMNS = [
   { key: "orderRef", label: "Order Ref." },
   { key: "customerName", label: "Customer" },
   { key: "storages", label: "Warehouse" },
-  { key: "outDate", label: "Ship Date" },
+  { key: "expectedShipDate", label: "Expected Ship Date" },
+  { key: "actualShipDate", label: "Actual Ship Date" },
   { key: "shipToName", label: "Ship-to Name" },
   { key: "carrierName", label: "Carrier" },
   { key: "totalLines", label: "Total Lines" },
@@ -237,9 +241,10 @@ const SHIPMENTS_EXPORT_COLUMNS = [
   { key: "status", label: "Status" }
 ] as const;
 
-function createEmptyBatchInboundForm(deliveryDate = ""): BatchInboundFormState {
+function createEmptyBatchInboundForm(expectedArrivalDate = ""): BatchInboundFormState {
   return {
-    deliveryDate,
+    expectedArrivalDate,
+    actualArrivalDate: "",
     containerNo: "",
     handlingMode: "PALLETIZED",
     customerId: "",
@@ -284,11 +289,12 @@ function getEffectiveInboundUnitsPerPallet(
   return line.unitsPerPallet > 0 ? line.unitsPerPallet : (skuMaster?.defaultUnitsPerPallet ?? 0);
 }
 
-function createEmptyBatchOutboundForm(outDate = ""): BatchOutboundFormState {
+function createEmptyBatchOutboundForm(expectedShipDate = ""): BatchOutboundFormState {
   return {
     packingListNo: "",
     orderRef: "",
-    outDate,
+    expectedShipDate,
+    actualShipDate: "",
     shipToName: "",
     shipToAddress: "",
     shipToContact: "",
@@ -915,8 +921,8 @@ export function ActivityManagementPage({
           : !isArchived && normalizeDocumentStatus(document.status) === selectedStatus;
       return matchesCustomer && matchesLocation && matchesStatus;
     }).sort((left, right) => {
-      const leftDate = left.deliveryDate ?? left.createdAt ?? "";
-      const rightDate = right.deliveryDate ?? right.createdAt ?? "";
+      const leftDate = left.expectedArrivalDate ?? left.createdAt ?? "";
+      const rightDate = right.expectedArrivalDate ?? right.createdAt ?? "";
       return rightDate.localeCompare(leftDate);
     });
   }, [liveInboundDocuments, mode, selectedCustomerId, selectedLocationId, selectedStatus]);
@@ -938,8 +944,8 @@ export function ActivityManagementPage({
           : !isArchived && normalizeDocumentStatus(document.status) === selectedStatus;
       return matchesCustomer && matchesLocation && matchesStatus;
     }).sort((left, right) => {
-      const leftDate = left.outDate ?? left.createdAt ?? "";
-      const rightDate = right.outDate ?? right.createdAt ?? "";
+      const leftDate = getOutboundDisplayShipDate(left) ?? "";
+      const rightDate = getOutboundDisplayShipDate(right) ?? "";
       return rightDate.localeCompare(leftDate);
     });
   }, [liveOutboundDocuments, locations, mode, selectedCustomerId, selectedLocationId, selectedStatus]);
@@ -980,7 +986,7 @@ export function ActivityManagementPage({
   }, [inboundDocumentRows, mode, outboundDocumentRows, t]);
 
   const inboundDocumentColumns = useMemo<GridColDef<InboundDocument>[]>(() => [
-    { field: "deliveryDate", headerName: t("deliveryDate"), minWidth: 140, renderCell: (params) => formatDate(params.row.deliveryDate) },
+    { field: "expectedArrivalDate", headerName: t("expectedArrivalDate"), minWidth: 140, renderCell: (params) => formatDate(params.row.expectedArrivalDate) },
     { field: "containerNo", headerName: t("containerNo"), minWidth: 170, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.containerNo || "-"}</span> },
     { field: "customerName", headerName: t("customer"), minWidth: 180, flex: 1, renderCell: (params) => params.row.customerName || "-" },
     { field: "locationName", headerName: t("currentStorage"), minWidth: 180, flex: 1, renderCell: (params) => `${params.row.locationName} / ${summarizeInboundDocumentSections(params.row)}` },
@@ -1005,16 +1011,21 @@ export function ActivityManagementPage({
               icon: <VisibilityOutlinedIcon fontSize="small" />,
               onClick: () => onOpenInboundDetail ? onOpenInboundDetail(params.row.id) : setSelectedInboundDocumentId(params.row.id)
             },
-            ...(canManage && !params.row.archivedAt && ["DRAFT", "CONFIRMED"].includes(normalizeDocumentStatus(params.row.status))
+            ...(canManage && !params.row.archivedAt && normalizeDocumentStatus(params.row.status) === "DRAFT"
               ? [{
                 key: "edit",
-                label: normalizeDocumentStatus(params.row.status) === "CONFIRMED" ? t("editReceipt") : t("editDraft"),
+                label: t("editDraft"),
                 icon: <EditOutlinedIcon fontSize="small" />,
                 onClick: () => openEditInboundDocument(params.row)
               }]
               : []),
             ...(canManage
-              ? [{ key: "copy", label: t("copyReceipt"), icon: <ContentCopyOutlinedIcon fontSize="small" />, onClick: () => void handleCopyInboundDocument(params.row) }]
+              ? [{
+                key: "copy",
+                label: normalizeDocumentStatus(params.row.status) === "CONFIRMED" ? t("reEnterReceipt") : t("copyReceipt"),
+                icon: <ContentCopyOutlinedIcon fontSize="small" />,
+                onClick: () => void handleCopyInboundDocument(params.row)
+              }]
               : []),
             ...(canManage && canArchiveInboundDocument(params.row)
               ? [{ key: "archive", label: t("archiveReceipt"), icon: <ArchiveOutlinedIcon fontSize="small" />, onClick: () => void handleArchiveInboundDocument(params.row) }]
@@ -1042,7 +1053,8 @@ export function ActivityManagementPage({
     { field: "orderRef", headerName: t("orderRef"), minWidth: 140, renderCell: (params) => <span className="cell--mono">{params.row.orderRef || "-"}</span> },
     { field: "customerName", headerName: t("customer"), minWidth: 180, flex: 1, renderCell: (params) => params.row.customerName || "-" },
     { field: "storages", headerName: t("currentStorage"), minWidth: 180, flex: 1, renderCell: (params) => params.row.storages || "-" },
-    { field: "outDate", headerName: t("outDate"), minWidth: 130, renderCell: (params) => formatDate(params.row.outDate) },
+    { field: "expectedShipDate", headerName: t("expectedShipDate"), minWidth: 140, renderCell: (params) => formatDate(getOutboundExpectedShipDate(params.row)) },
+    { field: "actualShipDate", headerName: t("actualShipDate"), minWidth: 140, renderCell: (params) => formatDate(params.row.actualShipDate) },
     { field: "totalLines", headerName: t("totalLines"), minWidth: 100, type: "number" },
     { field: "totalQty", headerName: t("totalQty"), minWidth: 100, type: "number" },
     { field: "totalGrossWeightKgs", headerName: t("grossWeight"), minWidth: 120, type: "number", renderCell: (params) => params.row.totalGrossWeightKgs ? params.row.totalGrossWeightKgs.toFixed(2) : "-" },
@@ -1063,7 +1075,12 @@ export function ActivityManagementPage({
               ? [{ key: "edit", label: t("editDraft"), icon: <EditOutlinedIcon fontSize="small" />, onClick: () => openEditOutboundDraft(params.row) }]
               : []),
             ...(canManage
-              ? [{ key: "copy", label: t("copyShipment"), icon: <ContentCopyOutlinedIcon fontSize="small" />, onClick: () => void handleCopyOutboundDocument(params.row) }]
+              ? [{
+                  key: "copy",
+                  label: normalizeDocumentStatus(params.row.status) === "CONFIRMED" ? t("reEnterShipment") : t("copyShipment"),
+                  icon: <ContentCopyOutlinedIcon fontSize="small" />,
+                  onClick: () => void handleCopyOutboundDocument(params.row)
+                }]
               : []),
             ...(canManage && !params.row.archivedAt
               ? [{ key: "archive", label: t("archiveShipment"), icon: <ArchiveOutlinedIcon fontSize="small" />, onClick: () => void handleArchiveOutboundDocument(params.row) }]
@@ -1369,7 +1386,8 @@ export function ActivityManagementPage({
     setEditingOutboundDocumentId(null);
     setInboundWizardStep(1);
     setBatchForm({
-      deliveryDate: document.deliveryDate ? document.deliveryDate.slice(0, 10) : "",
+      expectedArrivalDate: document.expectedArrivalDate ? document.expectedArrivalDate.slice(0, 10) : "",
+      actualArrivalDate: document.actualArrivalDate ? document.actualArrivalDate.slice(0, 10) : "",
       containerNo: document.containerNo || "",
       handlingMode: options?.forceHandlingMode ?? document.handlingMode ?? "PALLETIZED",
       customerId: String(document.customerId),
@@ -1439,7 +1457,8 @@ export function ActivityManagementPage({
     setBatchOutboundForm({
       packingListNo: document.packingListNo || "",
       orderRef: document.orderRef || "",
-      outDate: document.outDate ? document.outDate.slice(0, 10) : "",
+      expectedShipDate: getOutboundExpectedShipDate(document)?.slice(0, 10) ?? "",
+      actualShipDate: document.actualShipDate ? document.actualShipDate.slice(0, 10) : "",
       shipToName: document.shipToName || "",
       shipToAddress: document.shipToAddress || "",
       shipToContact: document.shipToContact || "",
@@ -1814,6 +1833,12 @@ export function ActivityManagementPage({
     setBatchSubmitting(true);
     setErrorMessage("");
 
+    if (isEditingConfirmedInbound) {
+      setErrorMessage(t("confirmedReceiptImmutableNotice"));
+      setBatchSubmitting(false);
+      return;
+    }
+
     const validationError = validateInboundDraft(batchForm.handlingMode !== "SEALED_TRANSIT");
     if (validationError) {
       setErrorMessage(validationError);
@@ -1834,7 +1859,8 @@ export function ActivityManagementPage({
       const payload: InboundDocumentPayload = {
         customerId: batchCustomerId,
         locationId: batchLocationId,
-        deliveryDate: batchForm.deliveryDate || undefined,
+        expectedArrivalDate: batchForm.expectedArrivalDate || undefined,
+        actualArrivalDate: batchForm.actualArrivalDate || undefined,
         containerNo: batchForm.containerNo || undefined,
         handlingMode: batchForm.handlingMode,
         storageSection: normalizeStorageSection(validLines[0]?.storageSection || batchForm.storageSection || batchSectionOptions[0]),
@@ -1898,7 +1924,6 @@ export function ActivityManagementPage({
   function handleBatchSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (inboundWizardStep < 3) {
-      moveInboundWizardStep((inboundWizardStep + 1) as InboundWizardStep);
       return;
     }
     void submitInboundDocument(batchForm.handlingMode === "SEALED_TRANSIT" && !isEditingConfirmedInbound ? "DRAFT" : "CONFIRMED");
@@ -1922,7 +1947,8 @@ export function ActivityManagementPage({
       const payload: OutboundDocumentPayload = {
         packingListNo: batchOutboundForm.packingListNo || undefined,
         orderRef: batchOutboundForm.orderRef || undefined,
-        outDate: batchOutboundForm.outDate || undefined,
+        expectedShipDate: batchOutboundForm.expectedShipDate || undefined,
+        actualShipDate: batchOutboundForm.actualShipDate || undefined,
         shipToName: batchOutboundForm.shipToName || undefined,
         shipToAddress: batchOutboundForm.shipToAddress || undefined,
         shipToContact: batchOutboundForm.shipToContact || undefined,
@@ -2213,7 +2239,7 @@ export function ActivityManagementPage({
         fileName: title,
         columns,
         rows: inboundDocumentRows.map((document) => ({
-          deliveryDate: formatDate(document.deliveryDate),
+          expectedArrivalDate: formatDate(document.expectedArrivalDate),
           containerNo: document.containerNo || "-",
           customerName: document.customerName || "-",
           locationName: `${document.locationName} / ${summarizeInboundDocumentSections(document)}`,
@@ -2235,7 +2261,8 @@ export function ActivityManagementPage({
           orderRef: document.orderRef || "-",
           customerName: document.customerName || "-",
           storages: document.storages || "-",
-          outDate: formatDate(document.outDate),
+          expectedShipDate: formatDate(getOutboundExpectedShipDate(document)),
+          actualShipDate: formatDate(document.actualShipDate),
           shipToName: document.shipToName || "-",
           carrierName: document.carrierName || "-",
           totalLines: document.totalLines,
@@ -2362,7 +2389,7 @@ export function ActivityManagementPage({
                   <div className="document-drawer__eyebrow">{t("documentsView")}</div>
                   <h3>{selectedInboundDocument.containerNo || t("containerNo")}</h3>
                   <p>
-                    {[selectedInboundDocument.customerName || "-", formatDate(selectedInboundDocument.deliveryDate)].filter(Boolean).join(" · ")}
+                    {[selectedInboundDocument.customerName || "-", formatDate(selectedInboundDocument.expectedArrivalDate)].filter(Boolean).join(" · ")}
                   </p>
                 </div>
                 <IconButton aria-label={t("close")} onClick={() => setSelectedInboundDocumentId(null)}>
@@ -2381,9 +2408,9 @@ export function ActivityManagementPage({
                     {t("openPalletWorkspace")}
                   </Button>
                 ) : null}
-                {canManage && !selectedInboundDocument.archivedAt && ["DRAFT", "CONFIRMED"].includes(normalizeDocumentStatus(selectedInboundDocument.status)) ? (
+                {canManage && !selectedInboundDocument.archivedAt && normalizeDocumentStatus(selectedInboundDocument.status) === "DRAFT" ? (
                   <Button variant="outlined" onClick={() => openEditInboundDocument(selectedInboundDocument)}>
-                    {normalizeDocumentStatus(selectedInboundDocument.status) === "CONFIRMED" ? t("editReceipt") : t("editDraft")}
+                    {t("editDraft")}
                   </Button>
                 ) : null}
                 {canManage
@@ -2402,7 +2429,7 @@ export function ActivityManagementPage({
                   ) : null}
                 {canManage ? (
                   <Button variant="outlined" startIcon={<ContentCopyOutlinedIcon />} onClick={() => void handleCopyInboundDocument(selectedInboundDocument)}>
-                    {t("copyReceipt")}
+                    {normalizeDocumentStatus(selectedInboundDocument.status) === "CONFIRMED" ? t("reEnterReceipt") : t("copyReceipt")}
                   </Button>
                 ) : null}
                 {canManage && !selectedInboundDocument.archivedAt && getInboundTrackingAction(selectedInboundDocument, t) ? (
@@ -2473,7 +2500,8 @@ export function ActivityManagementPage({
               </div>
 
               <div className="document-drawer__meta">
-                <div className="sheet-note"><strong>{t("deliveryDate")}</strong> {formatDate(selectedInboundDocument.deliveryDate)}</div>
+                <div className="sheet-note"><strong>{t("expectedArrivalDate")}</strong> {formatDate(selectedInboundDocument.expectedArrivalDate)}</div>
+                <div className="sheet-note"><strong>{t("actualArrivalDate")}</strong> {formatDate(selectedInboundDocument.actualArrivalDate)}</div>
                 <div className="sheet-note"><strong>{t("customer")}</strong> {selectedInboundDocument.customerName || "-"}</div>
                 <div className="sheet-note"><strong>{t("currentStorage")}</strong> {`${selectedInboundDocument.locationName} / ${summarizeInboundDocumentSections(selectedInboundDocument)}`}</div>
                 <div className="sheet-note"><strong>{t("inboundUnit")}</strong> {selectedInboundDocument.unitLabel || "-"}</div>
@@ -2517,7 +2545,7 @@ export function ActivityManagementPage({
                   <div className="document-drawer__eyebrow">{t("packingListsView")}</div>
                   <h3>{selectedOutboundDocument.packingListNo || t("packingListNo")}</h3>
                   <p>
-                    {[selectedOutboundDocument.customerName || "-", formatDate(selectedOutboundDocument.outDate)].filter(Boolean).join(" · ")}
+                    {[selectedOutboundDocument.customerName || "-", formatDate(getOutboundDisplayShipDate(selectedOutboundDocument))].filter(Boolean).join(" · ")}
                   </p>
                 </div>
                 <IconButton aria-label={t("close")} onClick={() => setSelectedOutboundDocumentId(null)}>
@@ -2533,7 +2561,7 @@ export function ActivityManagementPage({
                 ) : null}
                 {canManage ? (
                   <Button variant="outlined" startIcon={<ContentCopyOutlinedIcon />} onClick={() => void handleCopyOutboundDocument(selectedOutboundDocument)}>
-                    {t("copyShipment")}
+                    {normalizeDocumentStatus(selectedOutboundDocument.status) === "CONFIRMED" ? t("reEnterShipment") : t("copyShipment")}
                   </Button>
                 ) : null}
                 {canManage && !selectedOutboundDocument.archivedAt && getOutboundTrackingAction(selectedOutboundDocument, t) ? (
@@ -2648,7 +2676,8 @@ export function ActivityManagementPage({
                 <div className="sheet-note"><strong>{t("shipToContact")}</strong> {selectedOutboundDocument.shipToContact || "-"}</div>
                 <div className="sheet-note document-drawer__meta-note"><strong>{t("shipToAddress")}</strong> {selectedOutboundDocument.shipToAddress || "-"}</div>
                 <div className="sheet-note"><strong>{t("currentStorage")}</strong> {selectedOutboundDocument.storages || "-"}</div>
-                <div className="sheet-note"><strong>{t("outDate")}</strong> {formatDate(selectedOutboundDocument.outDate)}</div>
+                <div className="sheet-note"><strong>{t("expectedShipDate")}</strong> {formatDate(getOutboundExpectedShipDate(selectedOutboundDocument))}</div>
+                <div className="sheet-note"><strong>{t("actualShipDate")}</strong> {formatDate(selectedOutboundDocument.actualShipDate)}</div>
                 <div className="sheet-note"><strong>{t("carrier")}</strong> {selectedOutboundDocument.carrierName || "-"}</div>
                 <div className="sheet-note document-drawer__meta-note"><strong>{t("documentNotes")}</strong> {selectedOutboundDocument.documentNote || "-"}</div>
                 <div className="sheet-note document-drawer__meta-note"><strong>{t("cancelNote")}</strong> {selectedOutboundDocument.cancelNote || "-"}</div>
@@ -2716,7 +2745,7 @@ export function ActivityManagementPage({
             {mode === "IN" ? (
               <form onSubmit={handleBatchSubmit}>
                 {isEditingConfirmedInbound ? (
-                  <InlineAlert severity="info">{t("confirmedReceiptEditNotice")}</InlineAlert>
+                  <InlineAlert severity="warning">{t("confirmedReceiptImmutableNotice")}</InlineAlert>
                 ) : null}
                 {inboundEditorIntent === "convert-sealed-transit" ? (
                   <InlineAlert severity="info">{t("convertToPalletizedNotice")}</InlineAlert>
@@ -2745,7 +2774,8 @@ export function ActivityManagementPage({
                 {inboundWizardStep === 1 ? (
                   <>
                     <div className="sheet-form sheet-form--compact">
-                      <label>{t("deliveryDate")}<input type="date" value={batchForm.deliveryDate} onChange={(event) => setBatchForm((current) => ({ ...current, deliveryDate: event.target.value }))} /></label>
+                      <label>{t("expectedArrivalDate")}<input type="date" value={batchForm.expectedArrivalDate} onChange={(event) => setBatchForm((current) => ({ ...current, expectedArrivalDate: event.target.value }))} /></label>
+                      <label>{t("actualArrivalDate")}<input type="date" value={batchForm.actualArrivalDate} onChange={(event) => setBatchForm((current) => ({ ...current, actualArrivalDate: event.target.value }))} /></label>
                       <label>{t("containerNo")}<input value={batchForm.containerNo} onChange={(event) => setBatchForm((current) => ({ ...current, containerNo: event.target.value }))} placeholder="MRSU8580370" /></label>
                       <label>{t("handlingMode")}<select value={batchForm.handlingMode} onChange={(event) => setBatchForm((current) => ({ ...current, handlingMode: event.target.value as InboundHandlingMode }))} disabled={isEditingConfirmedInbound}><option value="PALLETIZED">{t("handlingModePalletized")}</option><option value="SEALED_TRANSIT">{t("handlingModeSealedTransit")}</option></select></label>
                       <label>{t("customer")}<select value={batchForm.customerId} onChange={(event) => setBatchForm((current) => ({ ...current, customerId: event.target.value }))}>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
@@ -2878,7 +2908,7 @@ export function ActivityManagementPage({
                           <button className="button button--danger button--small" type="button" onClick={() => removeBatchLine(line.id)} disabled={batchLines.length === 1}>{t("removeLine")}</button>
                         </div>
                         <div className="batch-line-grid batch-line-grid--inbound">
-                          <label>{t("sku")}<input value={line.sku} onChange={(event) => updateBatchLineSku(line.id, event.target.value)} placeholder="023042" /></label>
+                          <label>{t("sku")}<input value={line.sku} onChange={(event) => updateBatchLineSku(line.id, event.target.value)} placeholder="ABC123" /></label>
                           <label className="batch-line-grid__description">{t("description")}<input value={selectedBatchItem ? displayDescription(selectedBatchItem) : (line.description || (batchSkuMaster ? getSKUMasterDescription(batchSkuMaster) : "") || displayDescription(batchSkuTemplate ?? { description: "", name: "" }))} onChange={(event) => updateBatchLine(line.id, { description: event.target.value })} placeholder={t("descriptionPlaceholder")} disabled={Boolean(selectedBatchItem)} /></label>
                           <label>{t("expectedQty")}<input type="number" min="0" value={numberInputValue(line.expectedQty)} onChange={(event) => updateBatchLineExpectedQty(line.id, Math.max(0, Number(event.target.value || 0)))} /></label>
                           <label>{t("received")}<input type="number" min="0" value={numberInputValue(line.receivedQty)} onChange={(event) => updateBatchLineReceivedQty(line.id, Math.max(0, Number(event.target.value || 0)))} onBlur={() => autofillBatchLineReceivedQty(line.id)} placeholder={line.expectedQty > 0 ? String(line.expectedQty) : ""} /></label>
@@ -2994,7 +3024,7 @@ export function ActivityManagementPage({
                           {[
                             batchLocation?.name || "-",
                             batchForm.containerNo.trim() ? batchForm.containerNo.trim().toUpperCase() : "-",
-                            batchForm.deliveryDate || "-"
+                            batchForm.expectedArrivalDate || "-"
                           ].join(" · ")}
                         </span>
                         <span className="batch-line-card__hint">
@@ -3045,15 +3075,25 @@ export function ActivityManagementPage({
                   {inboundWizardStep === 3 && !isEditingConfirmedInbound && batchForm.handlingMode !== "SEALED_TRANSIT" ? (
                     <button className="button button--ghost" type="button" disabled={batchSubmitting} onClick={() => void submitInboundDocument("DRAFT")}>{batchSubmitting ? t("saving") : isEditingInboundDraft ? t("saveChanges") : t("scheduleReceipt")}</button>
                   ) : null}
+                  {inboundWizardStep === 3 && isEditingConfirmedInbound && editingInboundDocument ? (
+                    <button
+                      className="button button--ghost"
+                      type="button"
+                      disabled={batchSubmitting}
+                      onClick={() => void handleCopyInboundDocument(editingInboundDocument)}
+                    >
+                      {t("reEnterReceipt")}
+                    </button>
+                  ) : null}
                   <div className="shipment-wizard__actions">
                     {inboundWizardStep > 1 ? (
                       <button className="button button--ghost" type="button" onClick={() => moveInboundWizardStep((inboundWizardStep - 1) as InboundWizardStep)}>{t("back")}</button>
                     ) : null}
                     {inboundWizardStep < 3 ? (
                       <button className="button button--primary" type="button" onClick={() => moveInboundWizardStep((inboundWizardStep + 1) as InboundWizardStep)}>{t("next")}</button>
-                    ) : (
+                    ) : !isEditingConfirmedInbound ? (
                       <button className="button button--primary" type="submit" disabled={batchSubmitting}>{batchSubmitting ? t("saving") : isEditingConfirmedInbound ? t("saveChanges") : batchForm.handlingMode === "SEALED_TRANSIT" ? t("saveSealedTransit") : inboundEditorIntent === "convert-sealed-transit" ? t("convertToPalletized") : t("confirmReceipt")}</button>
-                    )}
+                    ) : null}
                   </div>
                   <button className="button button--ghost" type="button" onClick={closeBatchModal}>{t("cancel")}</button>
                 </div>
@@ -3082,7 +3122,8 @@ export function ActivityManagementPage({
                 <div className="sheet-form sheet-form--compact">
                   <label>{t("packingListNo")}<input value={batchOutboundForm.packingListNo} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, packingListNo: event.target.value }))} placeholder="TGCUS180265" /></label>
                   <label>{t("orderRef")}<input value={batchOutboundForm.orderRef} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, orderRef: event.target.value }))} placeholder="J73504" /></label>
-                  <label>{t("outDate")}<input type="date" value={batchOutboundForm.outDate} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, outDate: event.target.value }))} /></label>
+                  <label>{t("expectedShipDate")}<input type="date" value={batchOutboundForm.expectedShipDate} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, expectedShipDate: event.target.value }))} /></label>
+                  <label>{t("actualShipDate")}<input type="date" value={batchOutboundForm.actualShipDate} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, actualShipDate: event.target.value }))} /></label>
                   <label>{t("shipToName")}<input value={batchOutboundForm.shipToName} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, shipToName: event.target.value }))} placeholder="Receiver name" /></label>
                   <label>{t("shipToContact")}<input value={batchOutboundForm.shipToContact} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, shipToContact: event.target.value }))} placeholder="+1 555 010 0200" /></label>
                   <label>{t("carrier")}<input value={batchOutboundForm.carrierName} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, carrierName: event.target.value }))} placeholder="FedEx" /></label>
@@ -3377,7 +3418,7 @@ function buildInboundContainerWarnings(
       documentId: document.id,
       containerNo: normalizeContainerNo(document.containerNo),
       customerName: document.customerName || "-",
-      dateLabel: formatDate(document.deliveryDate || document.createdAt || ""),
+      dateLabel: formatDate(document.expectedArrivalDate || document.createdAt || ""),
       similarity: 1
     }));
 
@@ -3402,7 +3443,7 @@ function buildInboundContainerWarnings(
       documentId: document.id,
       containerNo: normalizedCandidate,
       customerName: document.customerName || "-",
-      dateLabel: formatDate(document.deliveryDate || document.createdAt || ""),
+      dateLabel: formatDate(document.expectedArrivalDate || document.createdAt || ""),
       similarity
     };
     if (!existingMatch || nextMatch.similarity > existingMatch.similarity) {
@@ -3423,6 +3464,9 @@ function mergeDocumentsById<T extends { id: number }>(primary: T[], extra: T[]) 
     merged.set(document.id, document);
   }
   for (const document of extra) {
+    if (!document) {
+      continue;
+    }
     if (!merged.has(document.id)) {
       merged.set(document.id, document);
     }

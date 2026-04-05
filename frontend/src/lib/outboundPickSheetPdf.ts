@@ -1,6 +1,7 @@
 import * as pdfMake from "pdfmake/build/pdfmake";
 import type { Content, CustomTableLayout, Style, TableCell, TDocumentDefinitions, TFontDictionary } from "pdfmake/interfaces";
 
+import { getOutboundDisplayShipDate, getOutboundExpectedShipDate } from "./outboundDates";
 import { normalizeStorageSection, type OutboundDocument } from "./types";
 
 const PICK_SHEET_LAYOUT_NAME = "pickSheetTable";
@@ -101,7 +102,8 @@ type PickSheetDocument = {
   packingListNo: string;
   orderRef: string;
   customerSummary: string;
-  shipDate: string;
+  expectedShipDate: string;
+  actualShipDate: string;
   warehouseSummary: string;
   remarks: string;
   totalQty: number;
@@ -113,7 +115,8 @@ const LABELS = {
   packingListNo: "Packing List No.",
   orderRef: "Order No.",
   customer: "Customer",
-  shipDate: "Ship Date",
+  expectedShipDate: "Expected Ship Date",
+  actualShipDate: "Actual Ship Date",
   warehouse: "Warehouse",
   remarks: "Remarks",
   sequence: "SN",
@@ -178,7 +181,8 @@ export function buildPickSheetDocument(document: OutboundDocument): PickSheetDoc
     packingListNo: document.packingListNo || `OUT-${document.id}`,
     orderRef: safeValue(document.orderRef),
     customerSummary: safeValue(document.customerName),
-    shipDate: safeValue(document.outDate),
+    expectedShipDate: safeValue(getOutboundExpectedShipDate(document)),
+    actualShipDate: safeValue(getOutboundDisplayShipDate(document)),
     warehouseSummary: joinUniqueValues(rows.map((row) => row.warehouse)),
     remarks: safeValue(document.documentNote),
     totalQty: rows.reduce((sum, row) => sum + row.quantity, 0)
@@ -231,13 +235,13 @@ export function buildPickSheetDefinition(document: PickSheetDocument): TDocument
             metaBlock(LABELS.packingListNo, document.packingListNo),
             metaBlock(LABELS.orderRef, document.orderRef || LABELS.empty),
             metaBlock(LABELS.customer, document.customerSummary || LABELS.empty),
-            metaBlock(LABELS.shipDate, formatDateLabel(document.shipDate))
+            metaBlock(LABELS.actualShipDate, formatDateLabel(document.actualShipDate))
           ],
           [
             metaSpanBlock(LABELS.warehouse, document.warehouseSummary || LABELS.empty, 2),
             {},
-            metaSpanBlock(LABELS.remarks, document.remarks || LABELS.empty, 2),
-            {}
+            metaBlock(LABELS.expectedShipDate, formatDateLabel(document.expectedShipDate)),
+            metaBlock(LABELS.remarks, document.remarks || LABELS.empty)
           ]
         ]
       },

@@ -34,11 +34,21 @@ export type BillingStorageRow = {
   firstActivityAt: string | null;
   lastActivityAt: string | null;
   amount: number;
+  segments: BillingStorageSegment[];
 };
 
 export type BillingDailyBalanceRow = {
   date: string;
   palletCount: number;
+};
+
+export type BillingStorageSegment = {
+  startDate: string;
+  endDate: string;
+  dayEndPallets: number;
+  billedDays: number;
+  palletDays: number;
+  amount: number;
 };
 
 export type BillingPreviewSummary = {
@@ -54,7 +64,8 @@ export type BillingPreviewSummary = {
 };
 
 export type BillingPreview = {
-  month: string;
+  startDate: string;
+  endDate: string;
   customerId: number | "all";
   customerName: string;
   invoiceLines: BillingInvoiceLine[];
@@ -64,7 +75,8 @@ export type BillingPreview = {
 };
 
 type BuildBillingPreviewInput = {
-  month: string;
+  startDate: string;
+  endDate: string;
   customerId: number | "all";
   customers: Customer[];
   pallets: PalletTrace[];
@@ -82,6 +94,7 @@ type StorageInterval = {
 type MutableStorageRow = BillingStorageRow & {
   warehouseSet: Set<string>;
   palletIdSet: Set<number>;
+  dailyBalanceMap: Map<string, number>;
 };
 
 const DEFAULT_UNASSIGNED_CONTAINER = "UNASSIGNED";
@@ -94,19 +107,19 @@ export const DEFAULT_BILLING_RATES: BillingRates = {
 };
 
 export function buildBillingPreview(input: BuildBillingPreviewInput): BillingPreview {
-  const monthRange = getMonthRange(input.month);
-  const monthDays = getMonthLength(input.month);
+  const billingRange = getBillingRange(input.startDate, input.endDate);
+  const rangeDays = getRangeLength(billingRange);
   const customerName = resolveCustomerName(input.customerId, input.customers);
 
-  const inboundLines = buildInboundInvoiceLines(input.inboundDocuments, input.customerId, input.rates, monthRange);
-  const outboundLines = buildOutboundInvoiceLines(input.outboundDocuments, input.customerId, input.rates, monthRange);
+  const inboundLines = buildInboundInvoiceLines(input.inboundDocuments, input.customerId, input.rates, billingRange);
+  const outboundLines = buildOutboundInvoiceLines(input.outboundDocuments, input.customerId, input.rates, billingRange);
   const { storageRows, storageLines, dailyBalanceRows } = buildStorageCharges(
     input.pallets,
     input.palletLocationEvents,
     input.customerId,
     input.rates,
-    monthRange,
-    monthDays
+    billingRange,
+    rangeDays
   );
 
   const invoiceLines = [...inboundLines, ...storageLines, ...outboundLines]
@@ -128,7 +141,8 @@ export function buildBillingPreview(input: BuildBillingPreviewInput): BillingPre
   summary.grandTotal = roundCurrency(summary.inboundAmount + summary.wrappingAmount + summary.storageAmount + summary.outboundAmount);
 
   return {
-    month: input.month,
+    startDate: billingRange.startDate,
+    endDate: billingRange.endDate,
     customerId: input.customerId,
     customerName,
     invoiceLines,
@@ -138,15 +152,20 @@ export function buildBillingPreview(input: BuildBillingPreviewInput): BillingPre
   };
 }
 
-export function getCurrentMonthInputValue(now = new Date()) {
-  return `${now.getFullYear()}-${`${now.getMonth() + 1}`.padStart(2, "0")}`;
+export function getCurrentBillingDateRange(now = new Date()) {
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  return {
+    startDate: toIsoDateString(start),
+    endDate: toIsoDateString(end)
+  };
 }
 
 function buildInboundInvoiceLines(
   inboundDocuments: InboundDocument[],
   customerId: number | "all",
   rates: BillingRates,
-  monthRange: { start: Date; endExclusive: Date }
+  billingRange: BillingRange
 ) {
   const lines: BillingInvoiceLine[] = [];
 
@@ -159,7 +178,7 @@ function buildInboundInvoiceLines(
     }
 
     const occurredOn = resolveInboundBillingDate(document);
-    if (!isWithinMonth(occurredOn, monthRange)) {
+    if (!isWithinRange(occurredOn, billingRange)) {
       continue;
     }
 
@@ -208,7 +227,7 @@ function buildOutboundInvoiceLines(
   outboundDocuments: OutboundDocument[],
   customerId: number | "all",
   rates: BillingRates,
-  monthRange: { start: Date; endExclusive: Date }
+  billingRange: BillingRange
 ) {
   const lines: BillingInvoiceLine[] = [];
 
@@ -221,7 +240,7 @@ function buildOutboundInvoiceLines(
     }
 
     const occurredOn = resolveOutboundBillingDate(document);
-    if (!isWithinMonth(occurredOn, monthRange)) {
+    if (!isWithinRange(occurredOn, billingRange)) {
       continue;
     }
 
@@ -254,8 +273,8 @@ function buildStorageCharges(
   palletLocationEvents: PalletLocationEvent[],
   customerId: number | "all",
   rates: BillingRates,
-  monthRange: { start: Date; endExclusive: Date },
-  monthDays: number
+  billingRange: BillingRange,
+  rangeDays: number
 ) {
   const storageRatePerDay = rates.storageFeePerPalletPerWeek / 7;
   const eventsByPallet = new Map<number, PalletLocationEvent[]>();
@@ -295,7 +314,9 @@ function buildStorageCharges(
       averageDailyPallets: 0,
       firstActivityAt: null,
       lastActivityAt: null,
-      amount: 0
+      amount: 0,
+      segments: [],
+      dailyBalanceMap: new Map<string, number>()
     };
 
     const lastKnownActivity = maxIsoValue([
@@ -316,14 +337,16 @@ function buildStorageCharges(
     }
 
     let countedAnyDay = false;
-    for (let dayCursor = new Date(monthRange.start); dayCursor < monthRange.endExclusive; dayCursor = shiftDay(dayCursor, 1)) {
+    for (let dayCursor = new Date(billingRange.start); dayCursor < billingRange.endExclusive; dayCursor = shiftDay(dayCursor, 1)) {
       const nextDay = shiftDay(dayCursor, 1);
       if (!isActiveAtDayEnd(intervals, nextDay)) {
         continue;
       }
       countedAnyDay = true;
       row.palletDays += 1;
-      dailyBalanceMap.set(toIsoDateString(dayCursor), (dailyBalanceMap.get(toIsoDateString(dayCursor)) ?? 0) + 1);
+      const dayKey = toIsoDateString(dayCursor);
+      dailyBalanceMap.set(dayKey, (dailyBalanceMap.get(dayKey) ?? 0) + 1);
+      row.dailyBalanceMap.set(dayKey, (row.dailyBalanceMap.get(dayKey) ?? 0) + 1);
     }
 
     if (!countedAnyDay) {
@@ -335,18 +358,22 @@ function buildStorageCharges(
   }
 
   const storageRows = [...rowMap.values()]
-    .map((row) => ({
-      customerId: row.customerId,
-      customerName: row.customerName,
-      containerNo: row.containerNo,
-      warehousesTouched: [...row.warehouseSet].sort((left, right) => left.localeCompare(right)),
-      palletsTracked: row.palletIdSet.size,
-      palletDays: row.palletDays,
-      averageDailyPallets: roundQuantity(row.palletDays / monthDays),
-      firstActivityAt: row.firstActivityAt,
-      lastActivityAt: row.lastActivityAt,
-      amount: roundCurrency(row.palletDays * storageRatePerDay)
-    }))
+    .map((row) => {
+      const segments = buildStorageSegments(row.dailyBalanceMap, billingRange, storageRatePerDay);
+      return {
+        customerId: row.customerId,
+        customerName: row.customerName,
+        containerNo: row.containerNo,
+        warehousesTouched: [...row.warehouseSet].sort((left, right) => left.localeCompare(right)),
+        palletsTracked: row.palletIdSet.size,
+        palletDays: row.palletDays,
+        averageDailyPallets: roundQuantity(row.palletDays / rangeDays),
+        firstActivityAt: row.firstActivityAt,
+        lastActivityAt: row.lastActivityAt,
+        amount: roundCurrency(row.palletDays * storageRatePerDay),
+        segments
+      };
+    })
     .filter((row) => row.palletDays > 0)
     .sort((left, right) => {
       if (left.customerName !== right.customerName) {
@@ -371,7 +398,7 @@ function buildStorageCharges(
   }));
 
   const dailyBalanceRows: BillingDailyBalanceRow[] = [];
-  for (let dayCursor = new Date(monthRange.start); dayCursor < monthRange.endExclusive; dayCursor = shiftDay(dayCursor, 1)) {
+  for (let dayCursor = new Date(billingRange.start); dayCursor < billingRange.endExclusive; dayCursor = shiftDay(dayCursor, 1)) {
     const key = toIsoDateString(dayCursor);
     dailyBalanceRows.push({
       date: key,
@@ -386,7 +413,7 @@ function buildStorageIntervals(pallet: PalletTrace, palletEvents: PalletLocation
   const intervals: StorageInterval[] = [];
   const sortedEvents = [...palletEvents].sort(compareEventsAscending);
   const firstStartEvent = sortedEvents.find((event) => isStorageStartEvent(event.eventType));
-  const fallbackStart = parseDateLikeValue(firstStartEvent?.eventTime ?? pallet.createdAt);
+  const fallbackStart = parseDateLikeValue(firstStartEvent?.eventTime ?? pallet.actualArrivalDate ?? pallet.createdAt);
   if (!fallbackStart) {
     return intervals;
   }
@@ -427,24 +454,109 @@ function isActiveAtDayEnd(intervals: StorageInterval[], boundaryExclusive: Date)
   ));
 }
 
-function getMonthRange(month: string) {
-  const parsed = /^(\d{4})-(\d{2})$/.exec(month.trim());
-  if (!parsed) {
-    const fallback = getCurrentMonthInputValue();
-    return getMonthRange(fallback);
-  }
+type BillingRange = {
+  startDate: string;
+  endDate: string;
+  start: Date;
+  endInclusive: Date;
+  endExclusive: Date;
+};
 
-  const [, yearValue, monthValue] = parsed;
-  const year = Number(yearValue);
-  const monthIndex = Number(monthValue) - 1;
-  const start = new Date(year, monthIndex, 1);
-  const endExclusive = new Date(year, monthIndex + 1, 1);
-  return { start, endExclusive };
+function getBillingRange(startDateInput: string, endDateInput: string): BillingRange {
+  const fallback = getCurrentBillingDateRange();
+  const normalizedStart = normalizeIsoCandidate(startDateInput) ?? fallback.startDate;
+  const normalizedEnd = normalizeIsoCandidate(endDateInput) ?? fallback.endDate;
+  const start = parseDateLikeValue(normalizedStart) ?? parseDateLikeValue(fallback.startDate)!;
+  const endCandidate = parseDateLikeValue(normalizedEnd) ?? parseDateLikeValue(fallback.endDate)!;
+  const [safeStart, safeEnd] = start.getTime() <= endCandidate.getTime() ? [start, endCandidate] : [endCandidate, start];
+  return {
+    startDate: toIsoDateString(safeStart),
+    endDate: toIsoDateString(safeEnd),
+    start: safeStart,
+    endInclusive: safeEnd,
+    endExclusive: shiftDay(safeEnd, 1)
+  };
 }
 
-function getMonthLength(month: string) {
-  const { start, endExclusive } = getMonthRange(month);
-  return Math.max(Math.round((endExclusive.getTime() - start.getTime()) / 86400000), 1);
+function buildStorageSegments(
+  dailyBalanceMap: Map<string, number>,
+  billingRange: BillingRange,
+  storageRatePerDay: number
+) {
+  const segments: BillingStorageSegment[] = [];
+  let activeSegment: {
+    startDate: string;
+    endDate: string;
+    dayEndPallets: number;
+    billedDays: number;
+  } | null = null;
+
+  for (let dayCursor = new Date(billingRange.start); dayCursor < billingRange.endExclusive; dayCursor = shiftDay(dayCursor, 1)) {
+    const dayKey = toIsoDateString(dayCursor);
+    const palletCount = dailyBalanceMap.get(dayKey) ?? 0;
+
+    if (palletCount <= 0) {
+      if (activeSegment) {
+        segments.push(finalizeStorageSegment(activeSegment, storageRatePerDay));
+        activeSegment = null;
+      }
+      continue;
+    }
+
+    if (!activeSegment) {
+      activeSegment = {
+        startDate: dayKey,
+        endDate: dayKey,
+        dayEndPallets: palletCount,
+        billedDays: 1
+      };
+      continue;
+    }
+
+    if (activeSegment.dayEndPallets === palletCount) {
+      activeSegment.endDate = dayKey;
+      activeSegment.billedDays += 1;
+      continue;
+    }
+
+    segments.push(finalizeStorageSegment(activeSegment, storageRatePerDay));
+    activeSegment = {
+      startDate: dayKey,
+      endDate: dayKey,
+      dayEndPallets: palletCount,
+      billedDays: 1
+    };
+  }
+
+  if (activeSegment) {
+    segments.push(finalizeStorageSegment(activeSegment, storageRatePerDay));
+  }
+
+  return segments;
+}
+
+function finalizeStorageSegment(
+  segment: {
+    startDate: string;
+    endDate: string;
+    dayEndPallets: number;
+    billedDays: number;
+  },
+  storageRatePerDay: number
+): BillingStorageSegment {
+  const palletDays = segment.dayEndPallets * segment.billedDays;
+  return {
+    startDate: segment.startDate,
+    endDate: segment.endDate,
+    dayEndPallets: segment.dayEndPallets,
+    billedDays: segment.billedDays,
+    palletDays,
+    amount: roundCurrency(palletDays * storageRatePerDay)
+  };
+}
+
+function getRangeLength(range: BillingRange) {
+  return Math.max(Math.round((range.endExclusive.getTime() - range.start.getTime()) / 86400000), 1);
 }
 
 function resolveCustomerName(customerId: number | "all", customers: Customer[]) {
@@ -460,11 +572,21 @@ function belongsToCustomer(targetCustomerId: number, customerId: number | "all")
 }
 
 function resolveInboundBillingDate(document: InboundDocument) {
-  return normalizeIsoCandidate(document.confirmedAt ?? document.deliveryDate ?? document.createdAt);
+  return normalizeIsoCandidate(
+    document.actualArrivalDate
+      ?? document.confirmedAt
+      ?? document.createdAt
+      ?? document.expectedArrivalDate
+  );
 }
 
 function resolveOutboundBillingDate(document: OutboundDocument) {
-  return normalizeIsoCandidate(document.outDate ?? document.confirmedAt ?? document.createdAt);
+  return normalizeIsoCandidate(
+    document.actualShipDate
+    ?? document.confirmedAt
+    ?? document.createdAt
+    ?? document.expectedShipDate
+  );
 }
 
 function normalizeIsoCandidate(value: string | Date | null | undefined) {
@@ -475,7 +597,7 @@ function normalizeIsoCandidate(value: string | Date | null | undefined) {
   return parsed ? toIsoDateString(parsed) : null;
 }
 
-function isWithinMonth(value: string | null, monthRange: { start: Date; endExclusive: Date }) {
+function isWithinRange(value: string | null, billingRange: BillingRange) {
   if (!value) {
     return false;
   }
@@ -484,7 +606,7 @@ function isWithinMonth(value: string | null, monthRange: { start: Date; endExclu
     return false;
   }
 
-  return parsed.getTime() >= monthRange.start.getTime() && parsed.getTime() < monthRange.endExclusive.getTime();
+  return parsed.getTime() >= billingRange.start.getTime() && parsed.getTime() < billingRange.endExclusive.getTime();
 }
 
 function isBillableDocument(status: string) {

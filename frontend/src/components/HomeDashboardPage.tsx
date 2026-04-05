@@ -20,6 +20,7 @@ import {
   toIsoDateString
 } from "../lib/dates";
 import { setPendingInventorySummaryContext } from "../lib/inventorySummaryContext";
+import { getOutboundDisplayShipDate, getOutboundScheduledShipDate } from "../lib/outboundDates";
 import { InlineAlert } from "./Feedback";
 import { useI18n } from "../lib/i18n";
 import type {
@@ -227,7 +228,7 @@ export function HomeDashboardPage({
         code: document.containerNo || `RCV-${document.id}`,
         counterpart: document.customerName || "-",
         warehouse: `${document.locationName}${document.storageSection ? ` / ${document.storageSection}` : ""}`,
-        dateLabel: formatDashboardDate(document.deliveryDate || document.createdAt),
+        dateLabel: formatDashboardDate(document.expectedArrivalDate || document.createdAt),
         trackingLabel: formatInboundTrackingStatusLabel(document.trackingStatus, document.status, t),
         progress: inboundTrackingProgress(document.trackingStatus, document.status),
         badgeTone: trackingTone(inboundTrackingProgress(document.trackingStatus, document.status))
@@ -246,7 +247,7 @@ export function HomeDashboardPage({
         code: document.packingListNo || `SHP-${document.id}`,
         counterpart: document.shipToName || document.customerName || "-",
         warehouse: document.storages || "-",
-        dateLabel: formatDashboardDate(document.outDate || document.createdAt),
+        dateLabel: formatDashboardDate(getOutboundDisplayShipDate(document) || document.createdAt),
         trackingLabel: formatOutboundTrackingStatusLabel(document.trackingStatus, document.status, t),
         progress: outboundTrackingProgress(document.trackingStatus, document.status),
         badgeTone: trackingTone(outboundTrackingProgress(document.trackingStatus, document.status))
@@ -894,7 +895,7 @@ function buildThroughputPoints(
   }
 
   for (const document of inboundDocuments) {
-    const date = parseDateLikeValue(document.deliveryDate || document.createdAt);
+    const date = parseDateLikeValue(document.expectedArrivalDate || document.createdAt);
     if (!date) {
       continue;
     }
@@ -908,7 +909,7 @@ function buildThroughputPoints(
   }
 
   for (const document of outboundDocuments) {
-    const date = parseDateLikeValue(document.outDate || document.createdAt);
+    const date = parseDateLikeValue(getOutboundDisplayShipDate(document));
     if (!date) {
       continue;
     }
@@ -937,7 +938,7 @@ function buildProcessingCalendarDays(
     if (!isDocumentPending(document.status)) {
       continue;
     }
-    const date = parseDateLikeValue(document.deliveryDate || document.createdAt);
+    const date = parseDateLikeValue(document.expectedArrivalDate || document.createdAt);
     if (!date) {
       continue;
     }
@@ -949,7 +950,7 @@ function buildProcessingCalendarDays(
     if (!isDocumentPending(document.status)) {
       continue;
     }
-    const date = parseDateLikeValue(document.outDate || document.createdAt);
+    const date = parseDateLikeValue(getOutboundScheduledShipDate(document));
     if (!date) {
       continue;
     }
@@ -1016,7 +1017,7 @@ function buildRecentActivityEntries(
   }
 
   for (const adjustment of adjustments) {
-    const timestamp = getDocumentTime(adjustment.updatedAt || adjustment.createdAt);
+    const timestamp = getDocumentTime(adjustment.actualAdjustedAt || adjustment.updatedAt || adjustment.createdAt);
     entries.push({
       id: `adjustment-${adjustment.id}`,
       title: t("adjustments"),
@@ -1028,7 +1029,7 @@ function buildRecentActivityEntries(
   }
 
   for (const transfer of transfers) {
-    const timestamp = getDocumentTime(transfer.updatedAt || transfer.createdAt);
+    const timestamp = getDocumentTime(transfer.actualTransferredAt || transfer.updatedAt || transfer.createdAt);
     entries.push({
       id: `transfer-${transfer.id}`,
       title: t("transfers"),

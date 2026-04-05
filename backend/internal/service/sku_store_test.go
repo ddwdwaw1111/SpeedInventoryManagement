@@ -8,7 +8,7 @@ import (
 func TestSanitizeSKUMasterInput(t *testing.T) {
 	input := sanitizeSKUMasterInput(CreateSKUMasterInput{
 		ItemNumber:            " vb22gc ",
-		SKU:                   " 608333 ",
+		SKU:                   " abc123 ",
 		Name:                  " ",
 		Category:              " ",
 		Description:           "  kraft bag ",
@@ -20,7 +20,7 @@ func TestSanitizeSKUMasterInput(t *testing.T) {
 	if input.ItemNumber != "VB22GC" {
 		t.Fatalf("expected uppercase item number, got %q", input.ItemNumber)
 	}
-	if input.SKU != "608333" {
+	if input.SKU != "ABC123" {
 		t.Fatalf("expected uppercase sku, got %q", input.SKU)
 	}
 	if input.Name != "kraft bag" {
@@ -39,7 +39,7 @@ func TestSanitizeSKUMasterInput(t *testing.T) {
 
 func TestValidateSKUMasterInput(t *testing.T) {
 	validInput := CreateSKUMasterInput{
-		SKU:                   "608333",
+		SKU:                   "ABC123",
 		Description:           "kraft bag",
 		ReorderLevel:          200,
 		DefaultUnitsPerPallet: 200,
@@ -51,9 +51,9 @@ func TestValidateSKUMasterInput(t *testing.T) {
 
 	invalidInputs := []CreateSKUMasterInput{
 		{Description: "kraft bag"},
-		{SKU: "608333"},
-		{SKU: "608333", Description: "kraft bag", ReorderLevel: -1},
-		{SKU: "608333", Description: "kraft bag", DefaultUnitsPerPallet: -1},
+		{SKU: "ABC123"},
+		{SKU: "ABC123", Description: "kraft bag", ReorderLevel: -1},
+		{SKU: "ABC123", Description: "kraft bag", DefaultUnitsPerPallet: -1},
 	}
 
 	for _, input := range invalidInputs {

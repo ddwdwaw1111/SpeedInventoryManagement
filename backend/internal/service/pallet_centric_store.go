@@ -42,6 +42,7 @@ type palletItemRecord struct {
 
 type createStockLedgerInput struct {
 	EventType           string
+	OccurredAt          *time.Time
 	PalletID            int64
 	PalletItemID        int64
 	SKUMasterID         int64
@@ -93,6 +94,7 @@ type palletContentConsumption struct {
 	SourceInboundDocumentID int64
 	SourceInboundLineID     int64
 	ContainerNo             string
+	ActualArrivalDate       *time.Time
 }
 
 type outboundPickRestore struct {
@@ -109,12 +111,13 @@ type outboundPickRestore struct {
 }
 
 type inventoryItemBucket struct {
-	ID             int64  `db:"id"`
-	SKUMasterID    int64  `db:"sku_master_id"`
-	CustomerID     int64  `db:"customer_id"`
-	LocationID     int64  `db:"location_id"`
-	StorageSection string `db:"storage_section"`
-	ContainerNo    string `db:"container_no"`
+	ID             int64      `db:"id"`
+	SKUMasterID    int64      `db:"sku_master_id"`
+	CustomerID     int64      `db:"customer_id"`
+	LocationID     int64      `db:"location_id"`
+	StorageSection string     `db:"storage_section"`
+	ContainerNo    string     `db:"container_no"`
+	DeliveryDate   *time.Time `db:"delivery_date"`
 }
 
 type palletSourceBucket struct {
@@ -297,6 +300,7 @@ func (s *Store) createStockLedgerEntryTx(ctx context.Context, tx *sql.Tx, input 
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO stock_ledger (
 			event_type,
+			occurred_at,
 			pallet_id,
 			pallet_item_id,
 			sku_master_id,
@@ -327,9 +331,10 @@ func (s *Store) createStockLedgerEntryTx(ctx context.Context, tx *sql.Tx, input 
 			document_note,
 			reason,
 			reference_code
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		firstNonEmpty(input.EventType, StockLedgerEventReceive),
+		nullableTime(input.OccurredAt),
 		input.PalletID,
 		nullableInt64(input.PalletItemID),
 		nullableInt64(input.SKUMasterID),
@@ -446,7 +451,8 @@ func (s *Store) loadInventoryItemBucketTx(ctx context.Context, tx *sql.Tx, itemI
 			customer_id,
 			location_id,
 			COALESCE(NULLIF(storage_section, ''), 'TEMP') AS storage_section,
-			COALESCE(container_no, '') AS container_no
+			COALESCE(container_no, '') AS container_no,
+			delivery_date
 		FROM inventory_items
 		WHERE id = ?
 		FOR UPDATE
@@ -457,6 +463,7 @@ func (s *Store) loadInventoryItemBucketTx(ctx context.Context, tx *sql.Tx, itemI
 		&bucket.LocationID,
 		&bucket.StorageSection,
 		&bucket.ContainerNo,
+		&bucket.DeliveryDate,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return inventoryItemBucket{}, ErrNotFound
@@ -602,6 +609,7 @@ func (s *Store) applyPalletDeltaForItemTx(
 	if !rows.Next() {
 		pallet, err := s.createPalletTx(ctx, tx, createPalletInput{
 			PalletCode:            palletCodeForOperationalSeed(itemID),
+			ActualArrivalDate:     itemBucket.DeliveryDate,
 			CustomerID:            itemBucket.CustomerID,
 			SKUMasterID:           skuMasterID,
 			CurrentLocationID:     itemBucket.LocationID,
@@ -730,6 +738,7 @@ func (s *Store) consumeSpecificPalletContentsForBucketTx(
 		SourceInboundDocumentID int64
 		SourceInboundLineID     int64
 		ContainerNo             string
+		ActualArrivalDate       *time.Time
 	}
 
 	if err := tx.QueryRowContext(ctx, `
@@ -747,7 +756,8 @@ func (s *Store) consumeSpecificPalletContentsForBucketTx(
 			COALESCE(p.container_visit_id, 0) AS container_visit_id,
 			COALESCE(p.source_inbound_document_id, 0) AS source_inbound_document_id,
 			COALESCE(p.source_inbound_line_id, 0) AS source_inbound_line_id,
-			COALESCE(p.current_container_no, '') AS current_container_no
+			COALESCE(p.current_container_no, '') AS current_container_no,
+			p.actual_arrival_date
 		FROM pallet_items pi
 		JOIN pallets p ON p.id = pi.pallet_id
 		WHERE p.id = ?
@@ -772,6 +782,7 @@ func (s *Store) consumeSpecificPalletContentsForBucketTx(
 		&content.SourceInboundDocumentID,
 		&content.SourceInboundLineID,
 		&content.ContainerNo,
+		&content.ActualArrivalDate,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("%w: selected pallet is not available in this stock position", ErrInvalidInput)
@@ -808,6 +819,7 @@ func (s *Store) consumeSpecificPalletContentsForBucketTx(
 		SourceInboundDocumentID: content.SourceInboundDocumentID,
 		SourceInboundLineID:     content.SourceInboundLineID,
 		ContainerNo:             strings.TrimSpace(content.ContainerNo),
+		ActualArrivalDate:       content.ActualArrivalDate,
 	}}, nil
 }
 
@@ -834,7 +846,8 @@ func (s *Store) consumePalletContentsForBucketTx(ctx context.Context, tx *sql.Tx
 			COALESCE(p.container_visit_id, 0) AS container_visit_id,
 			COALESCE(p.source_inbound_document_id, 0) AS source_inbound_document_id,
 			COALESCE(p.source_inbound_line_id, 0) AS source_inbound_line_id,
-			COALESCE(p.current_container_no, '') AS current_container_no
+			COALESCE(p.current_container_no, '') AS current_container_no,
+			p.actual_arrival_date
 		FROM pallet_items pi
 		JOIN pallets p ON p.id = pi.pallet_id
 		WHERE pi.sku_master_id = ?
@@ -843,7 +856,7 @@ func (s *Store) consumePalletContentsForBucketTx(ctx context.Context, tx *sql.Tx
 		  AND COALESCE(p.current_storage_section, 'TEMP') = ?
 		  AND COALESCE(p.current_container_no, '') = ?
 		  AND pi.quantity > 0
-		ORDER BY pi.pallet_id ASC, pi.id ASC
+		ORDER BY COALESCE(p.actual_arrival_date, DATE(p.created_at)) ASC, p.created_at ASC, pi.pallet_id ASC, pi.id ASC
 		FOR UPDATE
 	`, bucket.SKUMasterID, bucket.CustomerID, bucket.LocationID, storageSection, containerNo)
 	if err != nil {
@@ -866,6 +879,7 @@ func (s *Store) consumePalletContentsForBucketTx(ctx context.Context, tx *sql.Tx
 		SourceInboundDocumentID int64
 		SourceInboundLineID     int64
 		ContainerNo             string
+		ActualArrivalDate       *time.Time
 	}
 
 	contentRows := make([]row, 0)
@@ -886,6 +900,7 @@ func (s *Store) consumePalletContentsForBucketTx(ctx context.Context, tx *sql.Tx
 			&content.SourceInboundDocumentID,
 			&content.SourceInboundLineID,
 			&content.ContainerNo,
+			&content.ActualArrivalDate,
 		); err != nil {
 			return nil, fmt.Errorf("scan pallet contents for bucket consumption: %w", err)
 		}
@@ -937,6 +952,7 @@ func (s *Store) consumePalletContentsForBucketTx(ctx context.Context, tx *sql.Tx
 			SourceInboundDocumentID: content.SourceInboundDocumentID,
 			SourceInboundLineID:     content.SourceInboundLineID,
 			ContainerNo:             strings.TrimSpace(content.ContainerNo),
+			ActualArrivalDate:       content.ActualArrivalDate,
 		})
 		remainingQuantity -= consumeQty
 	}
@@ -972,16 +988,17 @@ func (s *Store) consumePalletContentsForInboundLineTx(ctx context.Context, tx *s
 			COALESCE(p.container_visit_id, 0) AS container_visit_id,
 			COALESCE(p.source_inbound_document_id, 0) AS source_inbound_document_id,
 			COALESCE(p.source_inbound_line_id, 0) AS source_inbound_line_id,
-			COALESCE(p.current_container_no, '') AS current_container_no
+			COALESCE(p.current_container_no, '') AS current_container_no,
+			p.actual_arrival_date
 		FROM pallet_items pi
 		JOIN pallets p ON p.id = pi.pallet_id
 		WHERE p.source_inbound_line_id = ?
 		  AND pi.sku_master_id = ?
 		  AND pi.quantity > 0
 		  AND p.status <> ?
-		ORDER BY p.created_at %s, p.id %s, pi.id %s
+		ORDER BY COALESCE(p.actual_arrival_date, DATE(p.created_at)) %s, p.created_at %s, p.id %s, pi.id %s
 		FOR UPDATE
-	`, orderDirection, orderDirection, orderDirection), sourceInboundLineID, skuMasterID, PalletStatusCancelled)
+	`, orderDirection, orderDirection, orderDirection, orderDirection), sourceInboundLineID, skuMasterID, PalletStatusCancelled)
 	if err != nil {
 		return nil, fmt.Errorf("load pallet contents for inbound line consumption: %w", err)
 	}
@@ -1002,6 +1019,7 @@ func (s *Store) consumePalletContentsForInboundLineTx(ctx context.Context, tx *s
 		SourceInboundDocumentID int64
 		SourceInboundLineID     int64
 		ContainerNo             string
+		ActualArrivalDate       *time.Time
 	}
 
 	contentRows := make([]row, 0)
@@ -1022,6 +1040,7 @@ func (s *Store) consumePalletContentsForInboundLineTx(ctx context.Context, tx *s
 			&content.SourceInboundDocumentID,
 			&content.SourceInboundLineID,
 			&content.ContainerNo,
+			&content.ActualArrivalDate,
 		); err != nil {
 			return nil, fmt.Errorf("scan pallet contents for inbound line consumption: %w", err)
 		}
@@ -1073,6 +1092,7 @@ func (s *Store) consumePalletContentsForInboundLineTx(ctx context.Context, tx *s
 			SourceInboundDocumentID: content.SourceInboundDocumentID,
 			SourceInboundLineID:     content.SourceInboundLineID,
 			ContainerNo:             strings.TrimSpace(content.ContainerNo),
+			ActualArrivalDate:       content.ActualArrivalDate,
 		})
 		remainingQuantity -= consumeQty
 	}

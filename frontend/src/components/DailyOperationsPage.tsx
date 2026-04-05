@@ -13,6 +13,7 @@ import { setPendingActivityManagementLaunchContext } from "../lib/activityManage
 import { formatDateValue, normalizeCalendarDate, shiftIsoDate, toIsoDateString } from "../lib/dates";
 import type { OutboundShipmentEditorLaunchContext } from "../lib/outboundShipmentEditorLaunchContext";
 import { useI18n } from "../lib/i18n";
+import { getOutboundScheduledShipDate } from "../lib/outboundDates";
 import type { PageKey } from "../lib/routes";
 import type { InboundDocument, OutboundDocument, UserRole } from "../lib/types";
 import { useFeedbackToast } from "./Feedback";
@@ -97,7 +98,7 @@ export function DailyOperationsPage({
           code: document.containerNo || `RCV-${document.id}`,
           counterpart: document.customerName || "-",
           warehouse: `${document.locationName}${document.storageSection ? ` / ${document.storageSection}` : ""}`,
-          dateLabel: formatDateValue(document.deliveryDate || activeDate, shortDateFormatter),
+          dateLabel: formatDateValue(document.expectedArrivalDate || activeDate, shortDateFormatter),
           trackingLabel: formatInboundTrackingStatusLabel(document.trackingStatus, document.status, t),
           metaLabel: t("dailyOperationsReceiptMeta", {
             lines: document.totalLines,
@@ -121,7 +122,7 @@ export function DailyOperationsPage({
           code: document.packingListNo || `SHP-${document.id}`,
           counterpart: document.shipToName || document.customerName || "-",
           warehouse: document.storages || "-",
-          dateLabel: formatDateValue(document.outDate || activeDate, shortDateFormatter),
+          dateLabel: formatDateValue(getOutboundScheduledShipDate(document) || activeDate, shortDateFormatter),
           trackingLabel: formatOutboundTrackingStatusLabel(document.trackingStatus, document.status, t),
           metaLabel: t("dailyOperationsShipmentMeta", {
             lines: document.totalLines,
@@ -387,7 +388,7 @@ export function DailyOperationsPage({
             isLoading={isLoading}
             emptyLabel={t("dailyOperationsNoShipments")}
             onOpenRow={handleOpenOutbound}
-            copyLabel={t("copyShipment")}
+            copyLabel={t("reEnterShipment")}
             canManage={canManage}
             onAdvanceRow={handleAdvanceOutbound}
             onCopyRow={handleCopyOutbound}
@@ -781,11 +782,11 @@ function getDocumentTime(value: string) {
 }
 
 function getInboundDateKey(document: InboundDocument) {
-  return getDateKey(document.deliveryDate || document.createdAt);
+  return getDateKey(document.expectedArrivalDate || document.createdAt);
 }
 
 function getOutboundDateKey(document: OutboundDocument) {
-  return getDateKey(document.outDate || document.createdAt);
+  return getDateKey(getOutboundScheduledShipDate(document) || document.createdAt);
 }
 
 function getDateKey(value: string | null | undefined) {

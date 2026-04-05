@@ -18,20 +18,21 @@ const (
 )
 
 type palletRecord struct {
-	ID                      int64     `db:"id"`
-	ParentPalletID          int64     `db:"parent_pallet_id"`
-	PalletCode              string    `db:"pallet_code"`
-	ContainerVisitID        int64     `db:"container_visit_id"`
-	SourceInboundDocumentID int64     `db:"source_inbound_document_id"`
-	SourceInboundLineID     int64     `db:"source_inbound_line_id"`
-	CustomerID              int64     `db:"customer_id"`
-	SKUMasterID             int64     `db:"sku_master_id"`
-	CurrentLocationID       int64     `db:"current_location_id"`
-	CurrentStorageSection   string    `db:"current_storage_section"`
-	CurrentContainerNo      string    `db:"current_container_no"`
-	Status                  string    `db:"status"`
-	CreatedAt               time.Time `db:"created_at"`
-	UpdatedAt               time.Time `db:"updated_at"`
+	ID                      int64      `db:"id"`
+	ParentPalletID          int64      `db:"parent_pallet_id"`
+	PalletCode              string     `db:"pallet_code"`
+	ContainerVisitID        int64      `db:"container_visit_id"`
+	SourceInboundDocumentID int64      `db:"source_inbound_document_id"`
+	SourceInboundLineID     int64      `db:"source_inbound_line_id"`
+	ActualArrivalDate       *time.Time `db:"actual_arrival_date"`
+	CustomerID              int64      `db:"customer_id"`
+	SKUMasterID             int64      `db:"sku_master_id"`
+	CurrentLocationID       int64      `db:"current_location_id"`
+	CurrentStorageSection   string     `db:"current_storage_section"`
+	CurrentContainerNo      string     `db:"current_container_no"`
+	Status                  string     `db:"status"`
+	CreatedAt               time.Time  `db:"created_at"`
+	UpdatedAt               time.Time  `db:"updated_at"`
 }
 
 type createPalletInput struct {
@@ -40,6 +41,7 @@ type createPalletInput struct {
 	ContainerVisitID        int64
 	SourceInboundDocumentID int64
 	SourceInboundLineID     int64
+	ActualArrivalDate       *time.Time
 	CustomerID              int64
 	SKUMasterID             int64
 	CurrentLocationID       int64
@@ -79,6 +81,7 @@ type PalletTrace struct {
 	ContainerVisitID        int64               `json:"containerVisitId"`
 	SourceInboundDocumentID int64               `json:"sourceInboundDocumentId"`
 	SourceInboundLineID     int64               `json:"sourceInboundLineId"`
+	ActualArrivalDate       *time.Time          `json:"actualArrivalDate"`
 	CustomerID              int64               `json:"customerId"`
 	CustomerName            string              `json:"customerName"`
 	SKUMasterID             int64               `json:"skuMasterId"`
@@ -95,24 +98,25 @@ type PalletTrace struct {
 }
 
 type palletTraceRow struct {
-	ID                      int64     `db:"id"`
-	ParentPalletID          int64     `db:"parent_pallet_id"`
-	PalletCode              string    `db:"pallet_code"`
-	ContainerVisitID        int64     `db:"container_visit_id"`
-	SourceInboundDocumentID int64     `db:"source_inbound_document_id"`
-	SourceInboundLineID     int64     `db:"source_inbound_line_id"`
-	CustomerID              int64     `db:"customer_id"`
-	CustomerName            string    `db:"customer_name"`
-	SKUMasterID             int64     `db:"sku_master_id"`
-	SKU                     string    `db:"sku"`
-	Description             string    `db:"description"`
-	CurrentLocationID       int64     `db:"current_location_id"`
-	CurrentLocationName     string    `db:"current_location_name"`
-	CurrentStorageSection   string    `db:"current_storage_section"`
-	CurrentContainerNo      string    `db:"current_container_no"`
-	Status                  string    `db:"status"`
-	CreatedAt               time.Time `db:"created_at"`
-	UpdatedAt               time.Time `db:"updated_at"`
+	ID                      int64      `db:"id"`
+	ParentPalletID          int64      `db:"parent_pallet_id"`
+	PalletCode              string     `db:"pallet_code"`
+	ContainerVisitID        int64      `db:"container_visit_id"`
+	SourceInboundDocumentID int64      `db:"source_inbound_document_id"`
+	SourceInboundLineID     int64      `db:"source_inbound_line_id"`
+	ActualArrivalDate       *time.Time `db:"actual_arrival_date"`
+	CustomerID              int64      `db:"customer_id"`
+	CustomerName            string     `db:"customer_name"`
+	SKUMasterID             int64      `db:"sku_master_id"`
+	SKU                     string     `db:"sku"`
+	Description             string     `db:"description"`
+	CurrentLocationID       int64      `db:"current_location_id"`
+	CurrentLocationName     string     `db:"current_location_name"`
+	CurrentStorageSection   string     `db:"current_storage_section"`
+	CurrentContainerNo      string     `db:"current_container_no"`
+	Status                  string     `db:"status"`
+	CreatedAt               time.Time  `db:"created_at"`
+	UpdatedAt               time.Time  `db:"updated_at"`
 }
 
 type palletContentRow struct {
@@ -205,19 +209,21 @@ func (s *Store) createPalletTx(ctx context.Context, tx *sql.Tx, input createPall
 			container_visit_id,
 			source_inbound_document_id,
 			source_inbound_line_id,
+			actual_arrival_date,
 			customer_id,
 			sku_master_id,
 			current_location_id,
 			current_storage_section,
 			current_container_no,
 			status
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		nullableInt64(input.ParentPalletID),
 		strings.TrimSpace(input.PalletCode),
 		nullableInt64(input.ContainerVisitID),
 		nullableInt64(input.SourceInboundDocumentID),
 		nullableInt64(input.SourceInboundLineID),
+		nullableTime(input.ActualArrivalDate),
 		input.CustomerID,
 		input.SKUMasterID,
 		input.CurrentLocationID,
@@ -241,6 +247,7 @@ func (s *Store) createPalletTx(ctx context.Context, tx *sql.Tx, input createPall
 		ContainerVisitID:        input.ContainerVisitID,
 		SourceInboundDocumentID: input.SourceInboundDocumentID,
 		SourceInboundLineID:     input.SourceInboundLineID,
+		ActualArrivalDate:       input.ActualArrivalDate,
 		CustomerID:              input.CustomerID,
 		SKUMasterID:             input.SKUMasterID,
 		CurrentLocationID:       input.CurrentLocationID,
@@ -270,6 +277,7 @@ func (s *Store) createPalletsForInboundLineTx(
 	locationID int64,
 	storageSection string,
 	containerNo string,
+	actualArrivalDate *time.Time,
 	palletBreakdown []InboundPalletBreakdown,
 	unitsPerPallet int,
 	palletCount int,
@@ -295,6 +303,7 @@ func (s *Store) createPalletsForInboundLineTx(
 			ContainerVisitID:        containerVisitID,
 			SourceInboundDocumentID: sourceInboundDocumentID,
 			SourceInboundLineID:     sourceInboundLineID,
+			ActualArrivalDate:       actualArrivalDate,
 			CustomerID:              customerID,
 			SKUMasterID:             skuMasterID,
 			CurrentLocationID:       locationID,
@@ -362,6 +371,7 @@ func (s *Store) ListPallets(ctx context.Context, limit int, filters ListPalletFi
 			COALESCE(p.container_visit_id, 0) AS container_visit_id,
 			p.source_inbound_document_id,
 			p.source_inbound_line_id,
+			p.actual_arrival_date,
 			p.customer_id,
 			COALESCE(c.name, '') AS customer_name,
 			p.sku_master_id,
@@ -407,6 +417,7 @@ func (s *Store) ListPallets(ctx context.Context, limit int, filters ListPalletFi
 			ContainerVisitID:        row.ContainerVisitID,
 			SourceInboundDocumentID: row.SourceInboundDocumentID,
 			SourceInboundLineID:     row.SourceInboundLineID,
+			ActualArrivalDate:       row.ActualArrivalDate,
 			CustomerID:              row.CustomerID,
 			CustomerName:            row.CustomerName,
 			SKUMasterID:             row.SKUMasterID,

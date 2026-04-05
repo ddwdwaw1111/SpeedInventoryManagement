@@ -120,7 +120,7 @@ func ensureContainerVisitForInboundDocumentTx(ctx context.Context, tx *sql.Tx, d
 		return 0, fmt.Errorf("load container visit: %w", err)
 	}
 
-	receivedAt := firstNonEmptyTime(documentRow.ConfirmedAt, documentRow.DeliveryDate)
+	receivedAt := firstNonEmptyTime(documentRow.ConfirmedAt)
 	if receivedAt == nil {
 		now := time.Now().UTC()
 		receivedAt = &now
@@ -142,7 +142,7 @@ func ensureContainerVisitForInboundDocumentTx(ctx context.Context, tx *sql.Tx, d
 		documentRow.CustomerID,
 		documentRow.LocationID,
 		normalizedContainer,
-		nullableTime(documentRow.DeliveryDate),
+		nullableTime(firstNonEmptyTime(documentRow.ActualArrivalDate, documentRow.ExpectedArrivalDate)),
 		nullableTime(receivedAt),
 		coalesceInboundHandlingMode(documentRow.HandlingMode),
 		ContainerVisitStatusOpen,

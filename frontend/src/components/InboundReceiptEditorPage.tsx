@@ -27,7 +27,8 @@ type InboundWizardStep = 1 | 2 | 3;
 type InboundReceiptVariance = "MATCHED" | "SHORT" | "OVER";
 
 type BatchInboundFormState = {
-  deliveryDate: string;
+  expectedArrivalDate: string;
+  actualArrivalDate: string;
   containerNo: string;
   handlingMode: InboundHandlingMode;
   customerId: string;
@@ -164,7 +165,7 @@ export function InboundReceiptEditorPage({
   const isEditingConfirmedInbound = normalizeDocumentStatus(document?.status ?? "") === "CONFIRMED";
   const isEditingExistingDocument = Boolean(documentId && document);
   const isEditorMissing = Boolean(documentId) && !document && !isLoading;
-  const canEditCurrentDocument = !document || (!document.archivedAt && ["DRAFT", "CONFIRMED"].includes(normalizeDocumentStatus(document.status)));
+  const canEditCurrentDocument = !document || (!document.archivedAt && normalizeDocumentStatus(document.status) === "DRAFT");
   const isReadOnly = !canManage || !canEditCurrentDocument;
 
   useEffect(() => {
@@ -276,6 +277,21 @@ export function InboundReceiptEditorPage({
   function showActionSuccess(message: string) {
     setErrorMessage("");
     showSuccess(message);
+  }
+
+  async function handleCopyCurrentReceipt() {
+    if (!document?.id) {
+      return;
+    }
+
+    try {
+      const copiedDocument = await api.copyInboundDocument(document.id);
+      showActionSuccess(t("receiptCopiedSuccess"));
+      await onRefresh();
+      onOpenReceiptEditor(copiedDocument.id);
+    } catch (error) {
+      showActionError(error, t("couldNotSaveActivity"));
+    }
   }
 
   function resetToSourceState() {
@@ -650,6 +666,12 @@ export function InboundReceiptEditorPage({
     setBatchSubmitting(true);
     setErrorMessage("");
 
+    if (isEditingConfirmedInbound) {
+      setErrorMessage(t("confirmedReceiptImmutableNotice"));
+      setBatchSubmitting(false);
+      return;
+    }
+
     const validationError = validateInboundDraft(batchForm.handlingMode !== "SEALED_TRANSIT");
     if (validationError) {
       setErrorMessage(validationError);
@@ -666,7 +688,8 @@ export function InboundReceiptEditorPage({
       const payload: InboundDocumentPayload = {
         customerId: batchCustomerId,
         locationId: batchLocationId,
-        deliveryDate: batchForm.deliveryDate || undefined,
+        expectedArrivalDate: batchForm.expectedArrivalDate || undefined,
+        actualArrivalDate: batchForm.actualArrivalDate || undefined,
         containerNo: batchForm.containerNo || undefined,
         handlingMode: batchForm.handlingMode,
         storageSection: normalizeStorageSection(validBatchInboundLines[0]?.storageSection || batchForm.storageSection || batchSectionOptions[0]),
@@ -735,7 +758,6 @@ export function InboundReceiptEditorPage({
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (inboundWizardStep < 3) {
-      moveInboundWizardStep((inboundWizardStep + 1) as InboundWizardStep);
       return;
     }
 
@@ -803,6 +825,15 @@ export function InboundReceiptEditorPage({
                   {t("details")}
                 </button>
               ) : null}
+              {document?.id && isEditingConfirmedInbound && canManage ? (
+                <button
+                  type="button"
+                  onClick={() => void handleCopyCurrentReceipt()}
+                  className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50"
+                >
+                  {t("reEnterReceipt")}
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={onBackToList}
@@ -826,11 +857,11 @@ export function InboundReceiptEditorPage({
               </div>
             </InlineAlert>
           ) : null}
-          {isReadOnly ? (
+          {isReadOnly && !isEditingConfirmedInbound ? (
             <InlineAlert severity="warning">{t("readOnlyModeNotice")}</InlineAlert>
           ) : null}
           {isEditingConfirmedInbound ? (
-            <InlineAlert severity="info">{t("confirmedReceiptEditNotice")}</InlineAlert>
+            <InlineAlert severity="warning">{t("confirmedReceiptImmutableNotice")}</InlineAlert>
           ) : null}
           {inboundEditorIntent === "convert-sealed-transit" ? (
             <InlineAlert severity="info">{t("convertToPalletizedNotice")}</InlineAlert>
@@ -862,7 +893,8 @@ export function InboundReceiptEditorPage({
             {inboundWizardStep === 1 ? (
               <>
                 <div className="sheet-form sheet-form--compact">
-                  <label>{t("deliveryDate")}<input type="date" value={batchForm.deliveryDate} disabled={isReadOnly} onChange={(event) => setBatchForm((current) => ({ ...current, deliveryDate: event.target.value }))} /></label>
+                  <label>{t("expectedArrivalDate")}<input type="date" value={batchForm.expectedArrivalDate} disabled={isReadOnly} onChange={(event) => setBatchForm((current) => ({ ...current, expectedArrivalDate: event.target.value }))} /></label>
+                  <label>{t("actualArrivalDate")}<input type="date" value={batchForm.actualArrivalDate} disabled={isReadOnly} onChange={(event) => setBatchForm((current) => ({ ...current, actualArrivalDate: event.target.value }))} /></label>
                   <label>{t("containerNo")}<input value={batchForm.containerNo} disabled={isReadOnly} onChange={(event) => setBatchForm((current) => ({ ...current, containerNo: event.target.value }))} placeholder="MRSU8580370" /></label>
                   <label>{t("handlingMode")}<select value={batchForm.handlingMode} onChange={(event) => setBatchForm((current) => ({ ...current, handlingMode: event.target.value as InboundHandlingMode }))} disabled={isReadOnly || isEditingConfirmedInbound}><option value="PALLETIZED">{t("handlingModePalletized")}</option><option value="SEALED_TRANSIT">{t("handlingModeSealedTransit")}</option></select></label>
                   <label>{t("customer")}<select value={batchForm.customerId} onChange={(event) => setBatchForm((current) => ({ ...current, customerId: event.target.value }))} disabled={isReadOnly}>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
@@ -997,7 +1029,7 @@ export function InboundReceiptEditorPage({
                           <button className="button button--danger button--small" type="button" onClick={() => removeBatchLine(line.id)} disabled={isReadOnly || batchLines.length === 1}>{t("removeLine")}</button>
                         </div>
                         <div className="batch-line-grid batch-line-grid--inbound">
-                          <label>{t("sku")}<input value={line.sku} onChange={(event) => updateBatchLineSku(line.id, event.target.value)} placeholder="023042" disabled={isReadOnly} /></label>
+                          <label>{t("sku")}<input value={line.sku} onChange={(event) => updateBatchLineSku(line.id, event.target.value)} placeholder="ABC123" disabled={isReadOnly} /></label>
                           <label className="batch-line-grid__description">{t("description")}<input value={selectedBatchItem ? displayDescription(selectedBatchItem) : (line.description || (batchSkuMaster ? getSKUMasterDescription(batchSkuMaster) : "") || displayDescription(batchSkuTemplate ?? { description: "", name: "" }))} onChange={(event) => updateBatchLine(line.id, { description: event.target.value })} placeholder={t("descriptionPlaceholder")} disabled={isReadOnly || Boolean(selectedBatchItem)} /></label>
                           <label>{t("expectedQty")}<input type="number" min="0" value={numberInputValue(line.expectedQty)} onChange={(event) => updateBatchLineExpectedQty(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={isReadOnly} /></label>
                           <label>{t("received")}<input type="number" min="0" value={numberInputValue(line.receivedQty)} onChange={(event) => updateBatchLineReceivedQty(line.id, Math.max(0, Number(event.target.value || 0)))} onBlur={() => autofillBatchLineReceivedQty(line.id)} placeholder={line.expectedQty > 0 ? String(line.expectedQty) : ""} disabled={isReadOnly} /></label>
@@ -1114,7 +1146,7 @@ export function InboundReceiptEditorPage({
                         {[
                           batchLocation?.name || "-",
                           batchForm.containerNo.trim() ? batchForm.containerNo.trim().toUpperCase() : "-",
-                          batchForm.deliveryDate || "-"
+                          batchForm.expectedArrivalDate || "-"
                         ].join(" · ")}
                       </span>
                       <span className="batch-line-card__hint">
@@ -1165,15 +1197,18 @@ export function InboundReceiptEditorPage({
               {inboundWizardStep === 3 && !isEditingConfirmedInbound ? (
                 <button className="button button--ghost" type="button" disabled={batchSubmitting || isReadOnly} onClick={() => void submitInboundDocument("DRAFT")}>{batchSubmitting ? t("saving") : isEditingInboundDraft ? t("saveChanges") : t("saveDraft")}</button>
               ) : null}
+              {inboundWizardStep === 3 && isEditingConfirmedInbound && document?.id && canManage ? (
+                <button className="button button--ghost" type="button" disabled={batchSubmitting} onClick={() => void handleCopyCurrentReceipt()}>{t("reEnterReceipt")}</button>
+              ) : null}
               <div className="shipment-wizard__actions">
                 {inboundWizardStep > 1 ? (
                   <button className="button button--ghost" type="button" onClick={() => moveInboundWizardStep((inboundWizardStep - 1) as InboundWizardStep)} disabled={isReadOnly}>{t("back")}</button>
                 ) : null}
                 {inboundWizardStep < 3 ? (
                   <button className="button button--primary" type="button" onClick={() => moveInboundWizardStep((inboundWizardStep + 1) as InboundWizardStep)} disabled={isReadOnly}>{t("next")}</button>
-                ) : (
+                ) : !isEditingConfirmedInbound ? (
                   <button className="button button--primary" type="submit" disabled={batchSubmitting || isReadOnly}>{batchSubmitting ? t("saving") : isEditingConfirmedInbound ? t("saveChanges") : batchForm.handlingMode === "SEALED_TRANSIT" ? t("saveSealedTransit") : inboundEditorIntent === "convert-sealed-transit" ? t("convertToPalletized") : t("confirmReceipt")}</button>
-                )}
+                ) : null}
               </div>
               <button className="button button--ghost" type="button" onClick={onBackToList}>{t("cancel")}</button>
             </div>
@@ -1214,7 +1249,8 @@ function buildInboundEditorSourceState({
   const normalizedStatus = normalizeDocumentStatus(document.status);
   return {
     form: {
-      deliveryDate: document.deliveryDate ? document.deliveryDate.slice(0, 10) : "",
+      expectedArrivalDate: document.expectedArrivalDate ? document.expectedArrivalDate.slice(0, 10) : "",
+      actualArrivalDate: document.actualArrivalDate ? document.actualArrivalDate.slice(0, 10) : "",
       containerNo: document.containerNo || "",
       handlingMode: launchContext?.forceHandlingMode ?? document.handlingMode ?? "PALLETIZED",
       customerId: String(document.customerId),
@@ -1249,9 +1285,10 @@ function buildInboundEditorSourceState({
   };
 }
 
-function createEmptyBatchInboundForm(deliveryDate = ""): BatchInboundFormState {
+function createEmptyBatchInboundForm(expectedArrivalDate = ""): BatchInboundFormState {
   return {
-    deliveryDate,
+    expectedArrivalDate,
+    actualArrivalDate: "",
     containerNo: "",
     handlingMode: "PALLETIZED",
     customerId: "",
@@ -1572,7 +1609,7 @@ function buildInboundContainerWarnings(
       documentId: nextDocument.id,
       containerNo: normalizeContainerNo(nextDocument.containerNo),
       customerName: nextDocument.customerName || "-",
-      dateLabel: nextDocument.deliveryDate || nextDocument.createdAt || "-",
+      dateLabel: nextDocument.expectedArrivalDate || nextDocument.createdAt || "-",
       similarity: 1
     }));
 
@@ -1597,7 +1634,7 @@ function buildInboundContainerWarnings(
       documentId: nextDocument.id,
       containerNo: normalizedCandidate,
       customerName: nextDocument.customerName || "-",
-      dateLabel: nextDocument.deliveryDate || nextDocument.createdAt || "-",
+      dateLabel: nextDocument.expectedArrivalDate || nextDocument.createdAt || "-",
       similarity
     };
     if (!existingMatch || nextMatch.similarity > existingMatch.similarity) {
@@ -1683,6 +1720,12 @@ function loadInboundReceiptEditorDraft(storageKey: string) {
     if (parsed.version !== 1) {
       return null;
     }
+    parsed.form = {
+      ...createEmptyBatchInboundForm(),
+      ...parsed.form,
+      expectedArrivalDate: String(parsed.form?.expectedArrivalDate ?? ""),
+      actualArrivalDate: String(parsed.form?.actualArrivalDate ?? "")
+    };
     return parsed;
   } catch {
     return null;

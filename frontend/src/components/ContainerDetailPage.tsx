@@ -965,7 +965,8 @@ function PalletTraceCard({
       </div>
 
       <div className="mt-4 rounded-[16px] border border-slate-200/80 bg-white/90 px-3 py-3">
-        <div className="grid gap-2 md:grid-cols-2">
+        <div className="grid gap-2 md:grid-cols-3">
+          <TimelineStat label={t("actualArrivalDate")} value={pallet.actualArrivalDate ? formatDateValue(pallet.actualArrivalDate, activityDateFormatter) : "-"} />
           <TimelineStat label={t("created")} value={formatDateTimeValue(pallet.createdAt, resolvedTimeZone)} />
           <TimelineStat label={t("updated")} value={formatDateTimeValue(pallet.updatedAt, resolvedTimeZone)} />
         </div>
@@ -1414,7 +1415,11 @@ function getMovementIconSurfaceClass(movementType: Movement["movementType"]) {
 }
 
 function getMovementActivityDateValue(movement: Movement) {
-  return movement.outDate || movement.deliveryDate || movement.createdAt;
+  if (movement.movementType === "OUT" || movement.movementType === "REVERSAL") {
+    return movement.outDate || movement.createdAt;
+  }
+
+  return movement.createdAt || movement.deliveryDate || movement.outDate;
 }
 
 function getMovementSortTimestamp(movement: Movement) {
@@ -1429,15 +1434,19 @@ function getMovementSortTimestamp(movement: Movement) {
 }
 
 function formatMovementActivityDate(movement: Movement, resolvedTimeZone: string) {
-  if (movement.outDate) {
+  if ((movement.movementType === "OUT" || movement.movementType === "REVERSAL") && movement.outDate) {
     return formatDateValue(movement.outDate, activityDateFormatter);
+  }
+
+  if (movement.createdAt) {
+    return formatDateTimeValue(movement.createdAt, resolvedTimeZone);
   }
 
   if (movement.deliveryDate) {
     return formatDateValue(movement.deliveryDate, activityDateFormatter);
   }
 
-  return formatDateTimeValue(movement.createdAt, resolvedTimeZone);
+  return "-";
 }
 
 function getPalletStatusRank(status: string) {

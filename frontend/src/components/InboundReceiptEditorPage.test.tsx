@@ -58,11 +58,11 @@ describe("InboundReceiptEditorPage", () => {
 
     const headerInputs = document.querySelectorAll(".sheet-form input");
     fireEvent.change(headerInputs[0] as HTMLInputElement, { target: { value: "2026-03-31" } });
-    fireEvent.change(headerInputs[1] as HTMLInputElement, { target: { value: "MSCU1234567" } });
+    fireEvent.change(headerInputs[2] as HTMLInputElement, { target: { value: "MSCU1234567" } });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
 
     const inboundLineInputs = document.querySelectorAll(".batch-line-grid--inbound input");
-    fireEvent.change(inboundLineInputs[0] as HTMLInputElement, { target: { value: "011423" } });
+    fireEvent.change(inboundLineInputs[0] as HTMLInputElement, { target: { value: "ABC123" } });
     fireEvent.change(inboundLineInputs[1] as HTMLInputElement, { target: { value: "Sample inbound SKU" } });
     fireEvent.change(inboundLineInputs[2] as HTMLInputElement, { target: { value: "8" } });
     fireEvent.change(inboundLineInputs[3] as HTMLInputElement, { target: { value: "8" } });
@@ -74,7 +74,8 @@ describe("InboundReceiptEditorPage", () => {
       expect(mockedApi.createInboundDocument).toHaveBeenCalledWith({
         customerId: 1,
         locationId: 1,
-        deliveryDate: "2026-03-31",
+        expectedArrivalDate: "2026-03-31",
+        actualArrivalDate: undefined,
         containerNo: "MSCU1234567",
         handlingMode: "PALLETIZED",
         storageSection: "TEMP",
@@ -84,7 +85,7 @@ describe("InboundReceiptEditorPage", () => {
         documentNote: undefined,
         lines: [
           {
-            sku: "011423",
+            sku: "ABC123",
             description: "Sample inbound SKU",
             reorderLevel: 2,
             expectedQty: 8,
@@ -107,7 +108,7 @@ describe("InboundReceiptEditorPage", () => {
     window.sessionStorage.setItem("sim-inbound-receipt-editor-draft:new", JSON.stringify({
       version: 1,
       form: {
-        deliveryDate: "2026-04-01",
+        expectedArrivalDate: "2026-04-01",
         containerNo: "MSCU7654321",
         handlingMode: "PALLETIZED",
         customerId: "1",
@@ -162,7 +163,7 @@ describe("InboundReceiptEditorPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "1 Receipt" }));
     const restoredHeaderInputs = document.querySelectorAll(".sheet-form input");
-    expect((restoredHeaderInputs[1] as HTMLInputElement).value).toBe("MSCU7654321");
+    expect((restoredHeaderInputs[2] as HTMLInputElement).value).toBe("MSCU7654321");
 
     fireEvent.click(screen.getByRole("button", { name: "Discard local draft" }));
 
@@ -170,7 +171,7 @@ describe("InboundReceiptEditorPage", () => {
       expect(screen.queryByText("Restored the unsaved local draft from this browser session.")).not.toBeInTheDocument();
     });
     const resetHeaderInputs = document.querySelectorAll(".sheet-form input");
-    expect((resetHeaderInputs[1] as HTMLInputElement).value).toBe("");
+    expect((resetHeaderInputs[2] as HTMLInputElement).value).toBe("");
     const savedResetDraft = JSON.parse(window.sessionStorage.getItem("sim-inbound-receipt-editor-draft:new") || "null");
     expect(savedResetDraft?.form?.containerNo).toBe("");
   });

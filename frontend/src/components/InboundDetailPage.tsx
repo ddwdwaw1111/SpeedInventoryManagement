@@ -1,3 +1,4 @@
+import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
 import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
@@ -11,6 +12,7 @@ import { useI18n } from "../lib/i18n";
 import { setPendingPalletTraceLaunchContext } from "../lib/palletTraceLaunchContext";
 import type { PageKey } from "../lib/routes";
 import type { InboundDocument, InboundDocumentLine, PalletTrace, UserRole } from "../lib/types";
+import { useFeedbackToast } from "./Feedback";
 import { WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type InboundDetailPageProps = {
@@ -39,6 +41,7 @@ export function InboundDetailPage({
   onOpenReceiptEditor
 }: InboundDetailPageProps) {
   const { t } = useI18n();
+  const { showError, showSuccess, feedbackToast } = useFeedbackToast();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
   const [pallets, setPallets] = useState<PalletTrace[]>([]);
   const [isPalletsLoading, setIsPalletsLoading] = useState(false);
@@ -128,6 +131,20 @@ export function InboundDetailPage({
     });
   }
 
+  async function handleCopyReceipt() {
+    if (!document?.id) {
+      return;
+    }
+
+    try {
+      const copiedDocument = await api.copyInboundDocument(document.id);
+      showSuccess(t("receiptCopiedSuccess"));
+      onOpenReceiptEditor(copiedDocument.id);
+    } catch (error) {
+      showError(getErrorMessage(error, t("couldNotSaveActivity")));
+    }
+  }
+
   const canConvertSealedTransit =
     canManage
     && !document?.archivedAt
@@ -193,15 +210,28 @@ export function InboundDetailPage({
                   {t("convertToPalletized")}
                 </button>
               ) : null}
-              <button
-                type="button"
-                onClick={canManage ? () => onOpenReceiptEditor(document?.id ?? null) : handleOpenWorkspace}
-                disabled={!document}
-                className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-[#143569] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(20,53,105,0.18)] transition hover:bg-[#102f5f] disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <MoveToInboxOutlinedIcon sx={{ fontSize: 18 }} />
-                {canManage ? t("editReceipt") : t("documentsView")}
-              </button>
+              {canManage && normalizeDocumentStatus(document?.status ?? "") === "DRAFT" ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenReceiptEditor(document?.id ?? null)}
+                  disabled={!document}
+                  className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-[#143569] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(20,53,105,0.18)] transition hover:bg-[#102f5f] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <MoveToInboxOutlinedIcon sx={{ fontSize: 18 }} />
+                  {t("editDraft")}
+                </button>
+              ) : null}
+              {canManage && normalizeDocumentStatus(document?.status ?? "") === "CONFIRMED" ? (
+                <button
+                  type="button"
+                  onClick={() => void handleCopyReceipt()}
+                  disabled={!document}
+                  className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-[#143569] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(20,53,105,0.18)] transition hover:bg-[#102f5f] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <ContentCopyOutlinedIcon sx={{ fontSize: 18 }} />
+                  {t("reEnterReceipt")}
+                </button>
+              ) : null}
             </div>
           </div>
 
@@ -474,7 +504,8 @@ export function InboundDetailPage({
               <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-blue-100/80">{t("receiptSummary")}</div>
               <div className="mt-4 grid gap-4">
                 <DetailStatRow label={t("customer")} value={document?.customerName || "-"} />
-                <DetailStatRow label={t("deliveryDate")} value={document ? formatDate(document.deliveryDate, dateFormatter) : "-"} />
+                <DetailStatRow label={t("expectedArrivalDate")} value={document ? formatDate(document.expectedArrivalDate, dateFormatter) : "-"} />
+                <DetailStatRow label={t("actualArrivalDate")} value={document ? formatDate(document.actualArrivalDate, dateFormatter) : "-"} />
                 <DetailStatRow label={t("currentStorage")} value={document ? `${document.locationName || "-"} / ${sectionSummary}` : "-"} />
                 <DetailStatRow label={t("trackingStatus")} value={document ? formatInboundTrackingStatusLabel(document.trackingStatus, document.status, t) : "-"} />
                 <DetailStatRow label={t("documentNotes")} value={document?.documentNote || "-"} multiline />
@@ -483,6 +514,7 @@ export function InboundDetailPage({
           </div>
         </div>
       </div>
+      {feedbackToast}
     </main>
   );
 }

@@ -27,6 +27,15 @@ var acceptedDateLayouts = []string{
 	time.RFC3339,
 }
 
+var acceptedDateTimeLayouts = []string{
+	time.RFC3339Nano,
+	time.RFC3339,
+	"2006-01-02T15:04",
+	"2006-01-02T15:04:05",
+	"2006-01-02 15:04",
+	"2006-01-02 15:04:05",
+}
+
 const DefaultStorageSection = "TEMP"
 
 func normalizeStorageSection(value string) string {
@@ -703,7 +712,7 @@ func (s *Store) listStockLedgerMovements(ctx context.Context, limit int) ([]Move
 			END AS movement_type,
 			SUM(sl.quantity_change) AS quantity_change,
 			MAX(CASE
-				WHEN sl.event_type = 'RECEIVE' THEN COALESCE(sl.delivery_date, idoc.delivery_date)
+				WHEN sl.event_type = 'RECEIVE' THEN COALESCE(sl.delivery_date, idoc.actual_arrival_date, idoc.expected_arrival_date)
 				ELSE NULL
 			END) AS delivery_date,
 			COALESCE(MAX(NULLIF(sl.container_no_snapshot, '')), MAX(NULLIF(idoc.container_no, '')), '') AS container_no,
@@ -744,8 +753,8 @@ func (s *Store) listStockLedgerMovements(ctx context.Context, limit int) ([]Move
 			COALESCE(MAX(sl.gross_weight_kgs), MAX(oline.gross_weight_kgs), 0) AS gross_weight_kgs,
 			COALESCE(MAX(sl.height_in), 0) AS height_in,
 			MAX(CASE
-				WHEN sl.event_type = 'SHIP' THEN COALESCE(sl.out_date, odoc.out_date)
-				WHEN sl.event_type = 'REVERSAL' THEN COALESCE(sl.out_date, odoc.out_date)
+				WHEN sl.event_type = 'SHIP' THEN COALESCE(sl.out_date, odoc.actual_ship_date, odoc.expected_ship_date)
+				WHEN sl.event_type = 'REVERSAL' THEN COALESCE(sl.out_date, odoc.actual_ship_date, odoc.expected_ship_date)
 				ELSE NULL
 			END) AS out_date,
 			COALESCE(
@@ -763,7 +772,7 @@ func (s *Store) listStockLedgerMovements(ctx context.Context, limit int) ([]Move
 				''
 			) AS reason,
 			COALESCE(MAX(NULLIF(sl.reference_code, '')), '') AS reference_code,
-			MAX(sl.created_at) AS created_at
+			MAX(COALESCE(sl.occurred_at, sl.created_at)) AS created_at
 		FROM stock_ledger sl
 		JOIN pallets p ON p.id = sl.pallet_id
 		LEFT JOIN pallet_items pi ON pi.id = sl.pallet_item_id
@@ -813,11 +822,11 @@ func (s *Store) listStockLedgerMovements(ctx context.Context, limit int) ([]Move
 			COALESCE(sm.sku, ''),
 			COALESCE(NULLIF(sl.item_number_snapshot, ''), COALESCE(sm.item_number, ''))
 		ORDER BY COALESCE(MAX(CASE
-			WHEN sl.event_type = 'RECEIVE' THEN COALESCE(sl.delivery_date, idoc.delivery_date)
-			WHEN sl.event_type = 'SHIP' THEN COALESCE(sl.out_date, odoc.out_date)
-			WHEN sl.event_type = 'REVERSAL' THEN COALESCE(sl.out_date, odoc.out_date)
+			WHEN sl.event_type = 'RECEIVE' THEN COALESCE(sl.delivery_date, idoc.actual_arrival_date, idoc.expected_arrival_date)
+			WHEN sl.event_type = 'SHIP' THEN COALESCE(sl.out_date, odoc.actual_ship_date, odoc.expected_ship_date)
+			WHEN sl.event_type = 'REVERSAL' THEN COALESCE(sl.out_date, odoc.actual_ship_date, odoc.expected_ship_date)
 			ELSE NULL
-		END), MAX(sl.created_at)) DESC, MAX(sl.id) DESC
+		END), MAX(COALESCE(sl.occurred_at, sl.created_at))) DESC, MAX(sl.id) DESC
 		LIMIT ?
 	`, limit)
 	if err != nil {
@@ -1199,6 +1208,39 @@ func parseOptionalDate(value string) (*time.Time, error) {
 	return nil, fmt.Errorf("%w: use YYYY-MM-DD for dates", ErrInvalidInput)
 }
 
+func parseOptionalDateTime(value string) (*time.Time, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, nil
+	}
+
+	for _, layout := range acceptedDateTimeLayouts {
+		var (
+			parsed time.Time
+			err    error
+		)
+		if layout == time.RFC3339 || layout == time.RFC3339Nano {
+			parsed, err = time.Parse(layout, trimmed)
+		} else {
+			parsed, err = time.ParseInLocation(layout, trimmed, time.UTC)
+		}
+		if err == nil {
+			normalized := parsed.UTC()
+			return &normalized, nil
+		}
+	}
+
+	for _, layout := range acceptedDateLayouts {
+		parsed, err := time.Parse(layout, trimmed)
+		if err == nil {
+			normalized := parsed.UTC()
+			return &normalized, nil
+		}
+	}
+
+	return nil, fmt.Errorf("%w: use YYYY-MM-DDTHH:MM for date and time", ErrInvalidInput)
+}
+
 func defaultMovementReason(movementType string) string {
 	switch movementType {
 	case "IN":
@@ -1350,6 +1392,7 @@ func (s *Store) createSeedPalletForInventoryItemTx(
 
 	pallet, err := s.createPalletTx(ctx, tx, createPalletInput{
 		PalletCode:            strings.TrimSpace(palletCode),
+		ActualArrivalDate:     deliveryDate,
 		CustomerID:            input.CustomerID,
 		SKUMasterID:           skuMasterID,
 		CurrentLocationID:     input.LocationID,
@@ -1442,6 +1485,14 @@ func nullableTime(value *time.Time) any {
 		return nil
 	}
 	return *value
+}
+
+func timePointer(value sql.NullTime) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	parsed := value.Time
+	return &parsed
 }
 
 func mapDBError(err error) error {

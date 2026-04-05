@@ -285,6 +285,7 @@ export type PalletTrace = {
   containerVisitId: number;
   sourceInboundDocumentId: number;
   sourceInboundLineId: number;
+  actualArrivalDate: string | null;
   customerId: number;
   customerName: string;
   skuMasterId: number;
@@ -336,8 +337,14 @@ export type OutboundDocumentLine = {
   netWeightKgs: number;
   grossWeightKgs: number;
   lineNote: string;
+  pickPallets: OutboundLinePalletPick[];
   pickAllocations: OutboundPickAllocation[];
   createdAt: string;
+};
+
+export type OutboundLinePalletPick = {
+  palletId: number;
+  quantity: number;
 };
 
 export type OutboundPickAllocation = {
@@ -358,7 +365,8 @@ export type OutboundDocument = {
   orderRef: string;
   customerId: number;
   customerName: string;
-  outDate: string | null;
+  expectedShipDate: string | null;
+  actualShipDate: string | null;
   shipToName: string;
   shipToAddress: string;
   shipToContact: string;
@@ -392,12 +400,14 @@ export type OutboundDocumentLinePayload = {
   netWeightKgs?: number;
   grossWeightKgs?: number;
   lineNote?: string;
+  pickPallets?: OutboundLinePalletPick[];
 };
 
 export type OutboundDocumentPayload = {
   packingListNo?: string;
   orderRef?: string;
-  outDate?: string;
+  expectedShipDate?: string;
+  actualShipDate?: string;
   shipToName?: string;
   shipToAddress?: string;
   shipToContact?: string;
@@ -440,7 +450,8 @@ export type InboundDocument = {
   customerName: string;
   locationId: number;
   locationName: string;
-  deliveryDate: string | null;
+  expectedArrivalDate: string | null;
+  actualArrivalDate: string | null;
   containerNo: string;
   handlingMode: "PALLETIZED" | "SEALED_TRANSIT";
   storageSection: string;
@@ -477,7 +488,8 @@ export type InboundDocumentLinePayload = {
 export type InboundDocumentPayload = {
   customerId: number;
   locationId: number;
-  deliveryDate?: string;
+  expectedArrivalDate?: string;
+  actualArrivalDate?: string;
   containerNo?: string;
   handlingMode?: string;
   storageSection?: string;
@@ -543,6 +555,7 @@ export type InventoryAdjustment = {
   id: number;
   adjustmentNo: string;
   reasonCode: string;
+  actualAdjustedAt: string | null;
   notes: string;
   status: string;
   totalLines: number;
@@ -566,6 +579,7 @@ export type InventoryAdjustmentLinePayload = {
 export type InventoryAdjustmentPayload = {
   adjustmentNo?: string;
   reasonCode: string;
+  actualAdjustedAt?: string;
   notes?: string;
   lines: InventoryAdjustmentLinePayload[];
 };
@@ -591,6 +605,7 @@ export type InventoryTransferLine = {
 export type InventoryTransfer = {
   id: number;
   transferNo: string;
+  actualTransferredAt: string | null;
   notes: string;
   status: string;
   totalLines: number;
@@ -616,6 +631,7 @@ export type InventoryTransferLinePayload = {
 
 export type InventoryTransferPayload = {
   transferNo?: string;
+  actualTransferredAt?: string;
   notes?: string;
   lines: InventoryTransferLinePayload[];
 };

@@ -8,13 +8,16 @@ import { api } from "../lib/api";
 import { buildItemContainerBalances, formatContainerDistributionSummary as formatContainerDistributionSummaryValue, type ItemContainerBalance } from "../lib/containerBalances";
 import { consumePendingOutboundShipmentEditorLaunchContext, type OutboundShipmentEditorLaunchContext } from "../lib/outboundShipmentEditorLaunchContext";
 import { useI18n } from "../lib/i18n";
+import { getOutboundExpectedShipDate } from "../lib/outboundDates";
 import {
   DEFAULT_STORAGE_SECTION,
   normalizeStorageSection,
   type Item,
   type Movement,
   type OutboundDocument,
+  type OutboundLinePalletPick,
   type OutboundDocumentPayload,
+  type PalletTrace,
   type SKUMaster,
   type UserRole
 } from "../lib/types";
@@ -27,7 +30,8 @@ type OutboundWizardStep = 1 | 2 | 3;
 type BatchOutboundFormState = {
   packingListNo: string;
   orderRef: string;
-  outDate: string;
+  expectedShipDate: string;
+  actualShipDate: string;
   shipToName: string;
   shipToAddress: string;
   shipToContact: string;
@@ -46,6 +50,8 @@ type BatchOutboundLineState = {
   netWeightKgs: number;
   grossWeightKgs: number;
   reason: string;
+  pickPallets: OutboundLinePalletPick[];
+  pickPalletsTouched: boolean;
 };
 
 type OutboundShipmentEditorLocalDraft = {
@@ -65,6 +71,9 @@ type OutboundAllocationPreviewRow = {
   locationName: string;
   storageSection: string;
   containerNo: string;
+  palletId: number;
+  palletCode: string;
+  availableQty: number;
   allocatedQty: number;
 };
 
@@ -105,10 +114,31 @@ type OutboundSourceOption = {
   description: string;
   unit: string;
   availableQty: number;
+  palletCount: number;
   storageSections: string[];
   containerCount: number;
   containerSummary: string;
-  candidates: ItemContainerBalance[];
+  candidates: OutboundPalletCandidate[];
+};
+
+type OutboundPalletCandidate = {
+  id: string;
+  palletId: number;
+  palletCode: string;
+  customerId: number;
+  customerName: string;
+  locationId: number;
+  locationName: string;
+  storageSection: string;
+  containerNo: string;
+  skuMasterId: number;
+  sku: string;
+  itemNumber: string;
+  description: string;
+  unit: string;
+  availableQty: number;
+  actualArrivalDate: string | null;
+  createdAt: string;
 };
 
 type OutboundShipmentEditorPageProps = {
@@ -143,6 +173,7 @@ export function OutboundShipmentEditorPage({
   const { t } = useI18n();
   const { showSuccess, showError, feedbackToast } = useFeedbackToast();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
+  const [pallets, setPallets] = useState<PalletTrace[]>([]);
   const [batchOutboundForm, setBatchOutboundForm] = useState<BatchOutboundFormState>(() => createEmptyBatchOutboundForm());
   const [batchOutboundLines, setBatchOutboundLines] = useState<BatchOutboundLineState[]>(() => [createEmptyBatchOutboundLine()]);
   const [errorMessage, setErrorMessage] = useState("");
@@ -158,9 +189,14 @@ export function OutboundShipmentEditorPage({
   const skuMastersBySku = useMemo(() => new Map(
     skuMasters.map((skuMaster) => [normalizeSkuLookupValue(skuMaster.sku), skuMaster] as const)
   ), [skuMasters]);
+  const skuMastersByID = useMemo(() => new Map(
+    skuMasters.map((skuMaster) => [skuMaster.id, skuMaster] as const)
+  ), [skuMasters]);
   const availableOutboundSources = useMemo(
-    () => buildOutboundSourceOptions(items.filter((item) => item.availableQty > 0), movements),
-    [items, movements]
+    () => pallets.length > 0
+      ? buildOutboundSourceOptionsFromPallets(pallets, skuMastersByID)
+      : buildOutboundSourceOptions(items.filter((item) => item.availableQty > 0), movements),
+    [items, movements, pallets, skuMastersByID]
   );
   const selectableOutboundSources = useMemo(() => {
     const selectedKeys = new Set(
@@ -204,17 +240,42 @@ export function OutboundShipmentEditorPage({
     { field: "lineLabel", headerName: t("shipmentLine"), minWidth: 120, renderCell: (params) => params.row.lineLabel },
     { field: "locationName", headerName: t("currentStorage"), minWidth: 150, flex: 1, renderCell: (params) => `${params.row.locationName} / ${normalizeStorageSection(params.row.storageSection)}` },
     { field: "containerNo", headerName: t("sourceContainer"), minWidth: 170, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.containerNo || "-"}</span> },
+    { field: "palletCode", headerName: t("palletCode"), minWidth: 150, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.palletCode || "-"}</span> },
     { field: "allocatedQty", headerName: t("pickQty"), minWidth: 100, type: "number" },
     { field: "itemNumber", headerName: t("itemNumber"), minWidth: 120, renderCell: (params) => <span className="cell--mono">{params.row.itemNumber || "-"}</span> },
     { field: "sku", headerName: t("sku"), minWidth: 110, renderCell: (params) => <span className="cell--mono">{params.row.sku}</span> },
     { field: "description", headerName: t("description"), minWidth: 220, flex: 1.2, renderCell: (params) => params.row.description || "-" }
   ], [t]);
   const isEditingOutboundDraft = normalizeDocumentStatus(document?.status ?? "") === "DRAFT";
+  const isEditingConfirmedOutbound = normalizeDocumentStatus(document?.status ?? "") === "CONFIRMED";
   const isEditingExistingDocument = Boolean(documentId && document);
   const isEditorMissing = Boolean(documentId) && !document && !isLoading;
   const canEditCurrentDocument = !document || (!document.archivedAt && normalizeDocumentStatus(document.status) === "DRAFT");
   const isReadOnly = !canManage || !canEditCurrentDocument;
-  const hasNoAvailableSources = availableOutboundSources.length === 0 && !isEditingOutboundDraft;
+  const hasNoAvailableSources = availableOutboundSources.length === 0 && !isEditingOutboundDraft && !isEditingConfirmedOutbound;
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadPallets() {
+      try {
+        const nextPallets = await api.getPallets(50000);
+        if (!active) {
+          return;
+        }
+        setPallets(nextPallets);
+      } catch {
+        if (active) {
+          setPallets([]);
+        }
+      }
+    }
+
+    void loadPallets();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!pendingBatchLineIDRef.current) {
@@ -288,6 +349,36 @@ export function OutboundShipmentEditorPage({
     });
   }, [batchOutboundForm, batchOutboundLines, draftStorageKey, isEditorReady, isReadOnly, outboundWizardStep]);
 
+  useEffect(() => {
+    setBatchOutboundLines((current) => {
+      let changed = false;
+      const nextLines = current.map((line) => {
+        if (!line.sourceKey.trim() || line.pickPalletsTouched) {
+          return line;
+        }
+        const selectedSource = findOutboundSourceOption(selectableOutboundSources, line.sourceKey);
+        if (!selectedSource) {
+          return line;
+        }
+        const nextPickPallets = buildAutoOutboundPalletSelections(line.quantity, selectedSource.candidates);
+        const nextPalletCount = countSelectedOutboundPallets(nextPickPallets);
+        if (
+          areOutboundLinePalletPicksEqual(line.pickPallets, nextPickPallets)
+          && line.pallets === nextPalletCount
+        ) {
+          return line;
+        }
+        changed = true;
+        return {
+          ...line,
+          pallets: nextPalletCount,
+          pickPallets: nextPickPallets
+        };
+      });
+      return changed ? nextLines : current;
+    });
+  }, [selectableOutboundSources]);
+
   function showActionError(error: unknown, fallbackMessage: string) {
     const message = error instanceof Error ? error.message : fallbackMessage;
     setErrorMessage(message);
@@ -297,6 +388,25 @@ export function OutboundShipmentEditorPage({
   function showActionSuccess(message: string) {
     setErrorMessage("");
     showSuccess(message);
+  }
+
+  async function handleCopyCurrentShipment() {
+    if (!canManage || !document?.id) {
+      return;
+    }
+
+    setBatchSubmitting(true);
+    setErrorMessage("");
+    try {
+      const copiedDocument = await api.copyOutboundDocument(document.id);
+      await onRefresh();
+      showActionSuccess(t("shipmentCopiedSuccess"));
+      onOpenShipmentEditor(copiedDocument.id);
+    } catch (error) {
+      showActionError(error, t("couldNotCopyDocument"));
+    } finally {
+      setBatchSubmitting(false);
+    }
   }
 
   function resetToSourceState() {
@@ -328,7 +438,9 @@ export function OutboundShipmentEditorPage({
     if (!nextSource) {
       return {
         ...currentLine,
-        sourceKey: ""
+        sourceKey: "",
+        pickPallets: [],
+        pickPalletsTouched: false
       };
     }
 
@@ -338,12 +450,15 @@ export function OutboundShipmentEditorPage({
     const previousAutoPalletPlan = buildAutoPalletPlan(currentLine.quantity, previousSkuMaster?.defaultUnitsPerPallet ?? 0);
     const nextAutoPalletPlan = buildAutoPalletPlan(currentLine.quantity, nextSkuMaster?.defaultUnitsPerPallet ?? 0);
     const shouldRefreshPallets = currentLine.pallets <= 0 || (previousSkuMaster !== undefined && currentLine.pallets === previousAutoPalletPlan.pallets);
+    const nextPickPallets = buildAutoOutboundPalletSelections(currentLine.quantity, nextSource.candidates);
     return {
       ...currentLine,
       sourceKey: nextSource.sourceKey,
       unitLabel: nextSource.unit?.toUpperCase() || currentLine.unitLabel || "PCS",
-      pallets: shouldRefreshPallets ? nextAutoPalletPlan.pallets : currentLine.pallets,
-      palletsDetailCtns: ""
+      pallets: shouldRefreshPallets ? Math.max(nextAutoPalletPlan.pallets, nextPickPallets.length) : currentLine.pallets,
+      palletsDetailCtns: "",
+      pickPallets: nextPickPallets,
+      pickPalletsTouched: false
     };
   }
 
@@ -362,11 +477,35 @@ export function OutboundShipmentEditorPage({
       const previousAutoPalletPlan = buildAutoPalletPlan(line.quantity, skuMaster?.defaultUnitsPerPallet ?? 0);
       const nextAutoPalletPlan = buildAutoPalletPlan(nextQuantity, skuMaster?.defaultUnitsPerPallet ?? 0);
       const shouldKeepAutoPallets = line.pallets <= 0 || line.pallets === previousAutoPalletPlan.pallets;
+      const nextPickPallets = line.pickPalletsTouched
+        ? line.pickPallets
+        : buildAutoOutboundPalletSelections(nextQuantity, selectedSource?.candidates ?? []);
       return {
         ...line,
         quantity: nextQuantity,
-        pallets: shouldKeepAutoPallets ? nextAutoPalletPlan.pallets : line.pallets,
-        palletsDetailCtns: ""
+        pallets: line.pickPalletsTouched
+          ? countSelectedOutboundPallets(nextPickPallets)
+          : shouldKeepAutoPallets ? Math.max(nextAutoPalletPlan.pallets, nextPickPallets.length) : line.pallets,
+        palletsDetailCtns: "",
+        pickPallets: nextPickPallets
+      };
+    }));
+  }
+
+  function updateBatchOutboundLinePickPalletQuantity(lineID: string, palletID: number, nextQuantity: number) {
+    setBatchOutboundLines((current) => current.map((line) => {
+      if (line.id !== lineID) {
+        return line;
+      }
+      const nextPickPallets = normalizeOutboundLinePalletPicks([
+        ...line.pickPallets.filter((entry) => entry.palletId !== palletID),
+        ...(nextQuantity > 0 ? [{ palletId: palletID, quantity: nextQuantity }] : [])
+      ]);
+      return {
+        ...line,
+        pickPallets: nextPickPallets,
+        pickPalletsTouched: true,
+        pallets: countSelectedOutboundPallets(nextPickPallets)
       };
     }));
   }
@@ -394,7 +533,7 @@ export function OutboundShipmentEditorPage({
       }
 
       const allocationSummary = batchOutboundAllocationPreview.summaries.get(line.id);
-      if (!allocationSummary || allocationSummary.shortageQty > 0) {
+      if (!allocationSummary || allocationSummary.shortageQty > 0 || allocationSummary.allocatedQty !== line.quantity) {
         return t("outboundQtyExceedsStock", {
           sku: selectedOutboundSource.sku,
           available: allocationSummary?.allocatedQty ?? 0
@@ -425,10 +564,24 @@ export function OutboundShipmentEditorPage({
     }
 
     setErrorMessage("");
+    if (nextStep === 2) {
+      setExpandedOutboundPickPlans(
+        Object.fromEntries(
+          batchOutboundLines
+            .filter((line) => line.sourceKey.trim() !== "")
+            .map((line) => [line.id, true] as const)
+        )
+      );
+    }
     setOutboundWizardStep(nextStep);
   }
 
   async function submitOutboundDocument(status: "DRAFT" | "CONFIRMED") {
+    if (isEditingConfirmedOutbound) {
+      setErrorMessage(t("confirmedShipmentImmutableNotice"));
+      return;
+    }
+
     setBatchSubmitting(true);
     setErrorMessage("");
 
@@ -443,7 +596,8 @@ export function OutboundShipmentEditorPage({
       const payload: OutboundDocumentPayload = {
         packingListNo: batchOutboundForm.packingListNo || undefined,
         orderRef: batchOutboundForm.orderRef || undefined,
-        outDate: batchOutboundForm.outDate || undefined,
+        expectedShipDate: batchOutboundForm.expectedShipDate || undefined,
+        actualShipDate: batchOutboundForm.actualShipDate || undefined,
         shipToName: batchOutboundForm.shipToName || undefined,
         shipToAddress: batchOutboundForm.shipToAddress || undefined,
         shipToContact: batchOutboundForm.shipToContact || undefined,
@@ -464,13 +618,14 @@ export function OutboundShipmentEditorPage({
             locationId: selectedOutboundSource.locationId,
             skuMasterId: selectedOutboundSource.skuMasterId,
             quantity: line.quantity,
-            pallets: line.pallets,
+            pallets: line.pallets > 0 ? line.pallets : countSelectedOutboundPallets(line.pickPallets),
             palletsDetailCtns: undefined,
             unitLabel: line.unitLabel || selectedOutboundSource.unit.toUpperCase() || "PCS",
             cartonSizeMm: line.cartonSizeMm || undefined,
             netWeightKgs: line.netWeightKgs,
             grossWeightKgs: line.grossWeightKgs,
-            lineNote: line.reason || undefined
+            lineNote: line.reason || undefined,
+            pickPallets: line.pickPallets.length > 0 ? line.pickPallets : undefined
           };
         })
       };
@@ -550,7 +705,9 @@ export function OutboundShipmentEditorPage({
               </div>
               <div>
                 <h1 className="font-headline text-3xl font-extrabold tracking-tight text-[#0d2d63]">
-                  {document ? t("shipmentEditorDraftTitle") : t("shipmentEditorNewTitle")}
+                  {document
+                    ? (isEditingConfirmedOutbound ? t("shipmentEditorConfirmedTitle") : t("shipmentEditorDraftTitle"))
+                    : t("shipmentEditorNewTitle")}
                 </h1>
                 <p className="mt-1.5 max-w-3xl text-sm text-slate-600">
                   {t("shipmentEditorPageDesc")}
@@ -559,6 +716,15 @@ export function OutboundShipmentEditorPage({
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
+              {canManage && isEditingConfirmedOutbound && document?.id ? (
+                <button
+                  type="button"
+                  onClick={() => void handleCopyCurrentShipment()}
+                  className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50"
+                >
+                  {t("reEnterShipment")}
+                </button>
+              ) : null}
               {document?.id ? (
                 <button
                   type="button"
@@ -592,7 +758,10 @@ export function OutboundShipmentEditorPage({
               </div>
             </InlineAlert>
           ) : null}
-          {isReadOnly ? (
+          {isEditingConfirmedOutbound ? (
+            <InlineAlert severity="warning">{t("confirmedShipmentImmutableNotice")}</InlineAlert>
+          ) : null}
+          {isReadOnly && !isEditingConfirmedOutbound ? (
             <InlineAlert severity="warning">{t("readOnlyModeNotice")}</InlineAlert>
           ) : null}
           {hasNoAvailableSources ? (
@@ -623,7 +792,8 @@ export function OutboundShipmentEditorPage({
               <div className="sheet-form sheet-form--compact">
                 <label>{t("packingListNo")}<input value={batchOutboundForm.packingListNo} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, packingListNo: event.target.value }))} placeholder="TGCUS180265" disabled={isReadOnly} /></label>
                 <label>{t("orderRef")}<input value={batchOutboundForm.orderRef} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, orderRef: event.target.value }))} placeholder="J73504" disabled={isReadOnly} /></label>
-                <label>{t("outDate")}<input type="date" value={batchOutboundForm.outDate} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, outDate: event.target.value }))} disabled={isReadOnly} /></label>
+                <label>{t("expectedShipDate")}<input type="date" value={batchOutboundForm.expectedShipDate} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, expectedShipDate: event.target.value }))} disabled={isReadOnly} /></label>
+                <label>{t("actualShipDate")}<input type="date" value={batchOutboundForm.actualShipDate} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, actualShipDate: event.target.value }))} disabled={isReadOnly} /></label>
                 <label>{t("shipToName")}<input value={batchOutboundForm.shipToName} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, shipToName: event.target.value }))} placeholder="Receiver name" disabled={isReadOnly} /></label>
                 <label>{t("shipToContact")}<input value={batchOutboundForm.shipToContact} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, shipToContact: event.target.value }))} placeholder="+1 555 010 0200" disabled={isReadOnly} /></label>
                 <label>{t("carrier")}<input value={batchOutboundForm.carrierName} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, carrierName: event.target.value }))} placeholder="FedEx" disabled={isReadOnly} /></label>
@@ -712,7 +882,7 @@ export function OutboundShipmentEditorPage({
                           </label>
                           <label>{t("availableQty")}<input value={selectedOutboundSource ? String(selectedOutboundSource.availableQty) : ""} readOnly /></label>
                           <label>{t("outQty")}<input type="number" min="0" value={numberInputValue(line.quantity)} onChange={(event) => updateBatchOutboundLineQuantity(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={isReadOnly} /></label>
-                          <label>{t("pallets")}<input type="number" min="0" value={numberInputValue(line.pallets)} onChange={(event) => updateBatchOutboundLine(line.id, { pallets: Math.max(0, Number(event.target.value || 0)) })} disabled={isReadOnly} /></label>
+                          <label>{t("pallets")}<input type="number" min="0" value={numberInputValue(line.pallets)} readOnly disabled /></label>
                           <label>{t("unit")}<input value={line.unitLabel} onChange={(event) => updateBatchOutboundLine(line.id, { unitLabel: event.target.value })} placeholder="PCS" disabled={isReadOnly} /></label>
                           <label>{t("cartonSize")}<input value={line.cartonSizeMm} onChange={(event) => updateBatchOutboundLine(line.id, { cartonSizeMm: event.target.value })} placeholder="455*330*325" disabled={isReadOnly} /></label>
                           <label>{t("netWeight")}<input type="number" min="0" step="0.01" value={numberInputValue(line.netWeightKgs)} onChange={(event) => updateBatchOutboundLine(line.id, { netWeightKgs: Math.max(0, Number(event.target.value || 0)) })} disabled={isReadOnly} /></label>
@@ -752,17 +922,30 @@ export function OutboundShipmentEditorPage({
                           sourceContainerLabel={t("sourceContainer")}
                           pickQtyLabel={t("pickQty")}
                           unitLabel={line.unitLabel || selectedOutboundSource.unit.toUpperCase() || "PCS"}
+                          palletLabel={t("pallet")}
                           canExpand={outboundAllocationRows.length > 0}
                           expanded={isOutboundPickPlanExpanded}
                           onToggle={() => toggleOutboundPickPlan(line.id)}
                           emptyHint={t("pickAllocationPreviewEmpty")}
                           rows={outboundAllocationRows.map((row) => ({
                             id: row.id,
+                            palletId: row.palletId,
+                            palletCode: row.palletCode,
                             containerNo: row.containerNo,
                             locationLabel: `${row.locationName} / ${normalizeStorageSection(row.storageSection)}`,
+                            availableQty: row.availableQty,
                             allocatedQty: row.allocatedQty,
                             itemNumber: row.itemNumber || undefined
                           }))}
+                          editable={!isReadOnly}
+                          inputDisabled={isReadOnly}
+                          onAllocatedQtyChange={(rowId, allocatedQty) => {
+                            const palletRow = outboundAllocationRows.find((row) => row.id === rowId);
+                            if (!palletRow) {
+                              return;
+                            }
+                            updateBatchOutboundLinePickPalletQuantity(line.id, palletRow.palletId, allocatedQty);
+                          }}
                           shortageMessage={hasOutboundShortage ? t("outboundQtyExceedsStock", {
                             sku: selectedOutboundSource.sku,
                             available: outboundAllocationSummary?.allocatedQty ?? 0
@@ -819,7 +1002,7 @@ export function OutboundShipmentEditorPage({
                     <div className="batch-line-card__meta">
                       <span className="batch-line-card__hint">
                         {[
-                          batchOutboundForm.outDate || "-",
+                          batchOutboundForm.actualShipDate || batchOutboundForm.expectedShipDate || "-",
                           batchOutboundForm.shipToName.trim() || "-",
                           batchOutboundForm.carrierName.trim() || "-"
                         ].join(" | ")}
@@ -881,16 +1064,20 @@ export function OutboundShipmentEditorPage({
             ) : null}
 
             <div className="sheet-form__actions" style={{ marginTop: "1rem" }}>
-              <button className="button button--ghost" type="button" disabled={batchSubmitting || isReadOnly || hasNoAvailableSources} onClick={() => void submitOutboundDocument("DRAFT")}>{batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("scheduleShipment")}</button>
+              {isEditingConfirmedOutbound ? (
+                <button className="button button--ghost" type="button" disabled={batchSubmitting} onClick={() => void handleCopyCurrentShipment()}>{t("reEnterShipment")}</button>
+              ) : (
+                <button className="button button--ghost" type="button" disabled={batchSubmitting || isReadOnly || hasNoAvailableSources} onClick={() => void submitOutboundDocument("DRAFT")}>{batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("scheduleShipment")}</button>
+              )}
               <div className="shipment-wizard__actions">
                 {outboundWizardStep > 1 ? (
                   <button className="button button--ghost" type="button" onClick={() => moveOutboundWizardStep((outboundWizardStep - 1) as OutboundWizardStep)} disabled={isReadOnly}>{t("back")}</button>
                 ) : null}
                 {outboundWizardStep < 3 ? (
                   <button className="button button--primary" type="button" onClick={() => moveOutboundWizardStep((outboundWizardStep + 1) as OutboundWizardStep)} disabled={isReadOnly}>{t("next")}</button>
-                ) : (
+                ) : !isEditingConfirmedOutbound ? (
                   <button className="button button--primary" type="submit" disabled={batchSubmitting || isReadOnly || hasNoAvailableSources}>{batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("confirmShipment")}</button>
-                )}
+                ) : null}
               </div>
               <button className="button button--ghost" type="button" onClick={onBackToList}>{t("cancel")}</button>
             </div>
@@ -902,11 +1089,12 @@ export function OutboundShipmentEditorPage({
   );
 }
 
-function createEmptyBatchOutboundForm(outDate = ""): BatchOutboundFormState {
+function createEmptyBatchOutboundForm(expectedShipDate = ""): BatchOutboundFormState {
   return {
     packingListNo: "",
     orderRef: "",
-    outDate,
+    expectedShipDate,
+    actualShipDate: "",
     shipToName: "",
     shipToAddress: "",
     shipToContact: "",
@@ -926,7 +1114,9 @@ function createEmptyBatchOutboundLine(): BatchOutboundLineState {
     cartonSizeMm: "",
     netWeightKgs: 0,
     grossWeightKgs: 0,
-    reason: ""
+    reason: "",
+    pickPallets: [],
+    pickPalletsTouched: false
   };
 }
 
@@ -979,7 +1169,6 @@ function buildAutoPalletPlan(totalQty: number, unitsPerPallet: number) {
 }
 
 function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceOptions: OutboundSourceOption[]): OutboundAllocationPreviewResult {
-  const reservedBySourceId = new Map<string, number>();
   const rows: OutboundAllocationPreviewRow[] = [];
   const summaries = new Map<string, OutboundAllocationLineSummary>();
   for (let index = 0; index < lines.length; index += 1) {
@@ -1008,21 +1197,17 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
       containerCount: 0
     };
 
-    let remainingQty = line.quantity;
+    const selectedPalletQuantities = new Map(
+      normalizeOutboundLinePalletPicks(line.pickPallets).map((entry) => [entry.palletId, entry.quantity] as const)
+    );
     for (const candidate of selectedSource.candidates) {
-      const sourceId = candidate.id;
-      const effectiveAvailable = candidate.availableQty - (reservedBySourceId.get(sourceId) ?? 0);
-      if (effectiveAvailable <= 0) {
-        continue;
-      }
-
-      const allocatedQty = Math.min(effectiveAvailable, remainingQty);
-      if (allocatedQty <= 0) {
+      const allocatedQty = selectedPalletQuantities.get(candidate.palletId) ?? 0;
+      if (allocatedQty <= 0 || allocatedQty > candidate.availableQty) {
         continue;
       }
 
       rows.push({
-        id: `${line.id}-${candidate.id}`,
+        id: `${line.id}-${candidate.palletId}`,
         lineId: line.id,
         lineLabel: summary.lineLabel,
         itemNumber: selectedSource.itemNumber || summary.itemNumber,
@@ -1031,15 +1216,12 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
         locationName: candidate.locationName,
         storageSection: normalizeStorageSection(candidate.storageSection),
         containerNo: candidate.containerNo || "",
+        palletId: candidate.palletId,
+        palletCode: candidate.palletCode,
+        availableQty: candidate.availableQty,
         allocatedQty
       });
-      reservedBySourceId.set(sourceId, (reservedBySourceId.get(sourceId) ?? 0) + allocatedQty);
       summary.allocatedQty += allocatedQty;
-      remainingQty -= allocatedQty;
-
-      if (remainingQty === 0) {
-        break;
-      }
     }
 
     const containers = new Set(
@@ -1048,7 +1230,7 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
         .map((row) => row.containerNo || `${row.locationName}/${row.storageSection}`)
     );
     summary.containerCount = containers.size;
-    summary.shortageQty = Math.max(0, remainingQty);
+    summary.shortageQty = Math.max(0, line.quantity - summary.allocatedQty);
     summaries.set(line.id, summary);
   }
 
@@ -1075,6 +1257,72 @@ function compareOutboundAllocationCandidates(left: Item, right: Item) {
   }
 
   return left.id - right.id;
+}
+
+function compareOutboundPalletCandidates(left: OutboundPalletCandidate, right: OutboundPalletCandidate) {
+  const leftArrival = left.actualArrivalDate || left.createdAt || "";
+  const rightArrival = right.actualArrivalDate || right.createdAt || "";
+  if (!leftArrival && rightArrival) return 1;
+  if (leftArrival && !rightArrival) return -1;
+  if (leftArrival !== rightArrival) return leftArrival.localeCompare(rightArrival);
+  if (left.locationName !== right.locationName) return left.locationName.localeCompare(right.locationName);
+  if (left.storageSection !== right.storageSection) return left.storageSection.localeCompare(right.storageSection);
+  if (left.containerNo !== right.containerNo) return left.containerNo.localeCompare(right.containerNo);
+  return left.palletCode.localeCompare(right.palletCode);
+}
+
+function normalizeOutboundLinePalletPicks(entries: OutboundLinePalletPick[] | null | undefined) {
+  const normalized = new Map<number, number>();
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    if (entry.palletId <= 0 || entry.quantity <= 0) {
+      continue;
+    }
+    normalized.set(entry.palletId, (normalized.get(entry.palletId) ?? 0) + entry.quantity);
+  }
+  return [...normalized.entries()].map(([palletId, quantity]) => ({ palletId, quantity }));
+}
+
+function countSelectedOutboundPallets(entries: OutboundLinePalletPick[]) {
+  return normalizeOutboundLinePalletPicks(entries).filter((entry) => entry.quantity > 0).length;
+}
+
+function areOutboundLinePalletPicksEqual(
+  left: OutboundLinePalletPick[] | null | undefined,
+  right: OutboundLinePalletPick[] | null | undefined
+) {
+  const normalizedLeft = normalizeOutboundLinePalletPicks(left);
+  const normalizedRight = normalizeOutboundLinePalletPicks(right);
+  if (normalizedLeft.length !== normalizedRight.length) {
+    return false;
+  }
+  return normalizedLeft.every((entry, index) => (
+    entry.palletId === normalizedRight[index]?.palletId
+    && entry.quantity === normalizedRight[index]?.quantity
+  ));
+}
+
+function buildAutoOutboundPalletSelections(quantity: number, candidates: OutboundPalletCandidate[]) {
+  if (quantity <= 0) {
+    return [];
+  }
+
+  let remainingQty = quantity;
+  const selections: OutboundLinePalletPick[] = [];
+  for (const candidate of [...candidates].sort(compareOutboundPalletCandidates)) {
+    if (remainingQty <= 0) {
+      break;
+    }
+    if (candidate.palletId <= 0) {
+      continue;
+    }
+    const selectedQty = Math.min(candidate.availableQty, remainingQty);
+    if (selectedQty <= 0) {
+      continue;
+    }
+    selections.push({ palletId: candidate.palletId, quantity: selectedQty });
+    remainingQty -= selectedQty;
+  }
+  return selections;
 }
 
 function buildOutboundSourceKey(customerId: number, locationId: number, skuMasterId: number) {
@@ -1111,6 +1359,25 @@ function buildOutboundSourceOptions(items: Item[], movements: Movement[]): Outbo
     const sourceItemNumber = sourceItemWithNumber?.itemNumber || "";
     const sourceDescription = sourceItemWithDescription ? displayDescription(sourceItemWithDescription) : displayDescription(representative);
     const sourceUnit = sourceItems.find((item) => item.unit.trim())?.unit || representative.unit;
+    const normalizedCandidates: OutboundPalletCandidate[] = candidates.map((candidate, index) => ({
+      id: candidate.id,
+      palletId: -((index + 1) * 100000 + representative.id),
+      palletCode: "",
+      customerId: candidate.customerId,
+      customerName: representative.customerName,
+      locationId: candidate.locationId,
+      locationName: candidate.locationName,
+      storageSection: normalizeStorageSection(candidate.storageSection),
+      containerNo: candidate.containerNo,
+      skuMasterId: representative.skuMasterId,
+      sku: representative.sku,
+      itemNumber: sourceItemWithNumber?.itemNumber || "",
+      description: sourceItemWithDescription ? displayDescription(sourceItemWithDescription) : displayDescription(representative),
+      unit: (sourceItems.find((item) => item.unit.trim())?.unit || representative.unit || "PCS").toUpperCase(),
+      availableQty: candidate.availableQty,
+      actualArrivalDate: representative.deliveryDate || null,
+      createdAt: representative.createdAt
+    }));
     const sections = new Set<string>();
     let availableQty = 0;
 
@@ -1133,10 +1400,102 @@ function buildOutboundSourceOptions(items: Item[], movements: Movement[]): Outbo
       description: sourceDescription,
       unit: sourceUnit,
       availableQty,
+      palletCount: normalizedCandidates.length,
       storageSections: [...sections].sort(),
       containerCount: new Set(candidates.map((candidate) => candidate.containerNo || `${candidate.locationName}/${normalizeStorageSection(candidate.storageSection)}`)).size,
       containerSummary: formatContainerDistributionSummaryValue(candidates),
-      candidates
+      candidates: normalizedCandidates
+    };
+  }).sort((left, right) => {
+    const customerCompare = left.customerName.localeCompare(right.customerName);
+    if (customerCompare !== 0) return customerCompare;
+    const locationCompare = left.locationName.localeCompare(right.locationName);
+    if (locationCompare !== 0) return locationCompare;
+    return left.sku.localeCompare(right.sku);
+  });
+}
+
+function buildOutboundSourceOptionsFromPallets(pallets: PalletTrace[], skuMastersByID: Map<number, SKUMaster>): OutboundSourceOption[] {
+  const candidates: OutboundPalletCandidate[] = [];
+  for (const pallet of pallets) {
+    if (pallet.status !== "OPEN" && pallet.status !== "PARTIAL") {
+      continue;
+    }
+    for (const content of pallet.contents) {
+      const availableQty = Math.max(0, content.quantity - (content.allocatedQty ?? 0) - (content.damagedQty ?? 0) - (content.holdQty ?? 0));
+      if (availableQty <= 0) {
+        continue;
+      }
+      const skuMaster = skuMastersByID.get(content.skuMasterId);
+      candidates.push({
+        id: `${pallet.id}-${content.id}`,
+        palletId: pallet.id,
+        palletCode: pallet.palletCode,
+        customerId: pallet.customerId,
+        customerName: pallet.customerName,
+        locationId: pallet.currentLocationId,
+        locationName: pallet.currentLocationName,
+        storageSection: normalizeStorageSection(pallet.currentStorageSection),
+        containerNo: pallet.currentContainerNo || "",
+        skuMasterId: content.skuMasterId,
+        sku: content.sku,
+        itemNumber: content.itemNumber || "",
+        description: content.description || pallet.description || "",
+        unit: (skuMaster?.unit || "PCS").toUpperCase(),
+        availableQty,
+        actualArrivalDate: pallet.actualArrivalDate,
+        createdAt: pallet.createdAt
+      });
+    }
+  }
+
+  const grouped = new Map<string, OutboundSourceOption>();
+  for (const candidate of candidates.sort(compareOutboundPalletCandidates)) {
+    const sourceKey = buildOutboundSourceKey(candidate.customerId, candidate.locationId, candidate.skuMasterId);
+    const existing = grouped.get(sourceKey);
+    if (!existing) {
+      grouped.set(sourceKey, {
+        sourceKey,
+        customerId: candidate.customerId,
+        customerName: candidate.customerName,
+        locationId: candidate.locationId,
+        locationName: candidate.locationName,
+        skuMasterId: candidate.skuMasterId,
+        sku: candidate.sku,
+        itemNumber: candidate.itemNumber,
+        description: candidate.description,
+        unit: candidate.unit,
+        availableQty: candidate.availableQty,
+        palletCount: 1,
+        storageSections: [candidate.storageSection],
+        containerCount: 1,
+        containerSummary: "",
+        candidates: [candidate]
+      });
+      continue;
+    }
+
+    existing.availableQty += candidate.availableQty;
+    existing.palletCount += 1;
+    if (!existing.storageSections.includes(candidate.storageSection)) {
+      existing.storageSections.push(candidate.storageSection);
+    }
+    existing.candidates.push(candidate);
+  }
+
+  return [...grouped.values()].map((source) => {
+    const sortedCandidates = [...source.candidates].sort(compareOutboundPalletCandidates);
+    return {
+      ...source,
+      storageSections: [...source.storageSections].sort(),
+      containerCount: new Set(sortedCandidates.map((candidate) => candidate.containerNo || `${candidate.locationName}/${candidate.storageSection}`)).size,
+      containerSummary: formatContainerDistributionSummaryValue(sortedCandidates.map((candidate) => ({
+        containerNo: candidate.containerNo,
+        availableQty: candidate.availableQty,
+        locationName: candidate.locationName,
+        storageSection: candidate.storageSection
+      }))),
+      candidates: sortedCandidates
     };
   }).sort((left, right) => {
     const customerCompare = left.customerName.localeCompare(right.customerName);
@@ -1159,7 +1518,8 @@ function buildOutboundEditorSourceState({
       form: {
         packingListNo: document.packingListNo || "",
         orderRef: document.orderRef || "",
-        outDate: document.outDate ? document.outDate.slice(0, 10) : "",
+        expectedShipDate: getOutboundExpectedShipDate(document)?.slice(0, 10) ?? "",
+        actualShipDate: document.actualShipDate ? document.actualShipDate.slice(0, 10) : "",
         shipToName: document.shipToName || "",
         shipToAddress: document.shipToAddress || "",
         shipToContact: document.shipToContact || "",
@@ -1177,7 +1537,9 @@ function buildOutboundEditorSourceState({
             cartonSizeMm: line.cartonSizeMm || "",
             netWeightKgs: line.netWeightKgs || 0,
             grossWeightKgs: line.grossWeightKgs || 0,
-            reason: line.lineNote || ""
+            reason: line.lineNote || "",
+            pickPallets: line.pickPallets ?? [],
+            pickPalletsTouched: (line.pickPallets?.length ?? 0) > 0
           }))
         : [createEmptyBatchOutboundLine()]
     };
@@ -1204,6 +1566,27 @@ function loadOutboundShipmentEditorDraft(storageKey: string) {
     if (parsed.version !== 1) {
       return null;
     }
+    const legacyForm = parsed.form as BatchOutboundFormState & { outDate?: string };
+    parsed.form = {
+      packingListNo: String(legacyForm.packingListNo ?? ""),
+      orderRef: String(legacyForm.orderRef ?? ""),
+      expectedShipDate: String(legacyForm.expectedShipDate ?? legacyForm.outDate ?? ""),
+      actualShipDate: String(legacyForm.actualShipDate ?? ""),
+      shipToName: String(legacyForm.shipToName ?? ""),
+      shipToAddress: String(legacyForm.shipToAddress ?? ""),
+      shipToContact: String(legacyForm.shipToContact ?? ""),
+      carrierName: String(legacyForm.carrierName ?? ""),
+      documentNote: String(legacyForm.documentNote ?? "")
+    };
+    parsed.lines = Array.isArray(parsed.lines)
+      ? parsed.lines.map((line) => ({
+          ...line,
+          pickPallets: normalizeOutboundLinePalletPicks((line as Partial<BatchOutboundLineState>).pickPallets),
+          pickPalletsTouched: Array.isArray((line as Partial<BatchOutboundLineState>).pickPallets)
+            ? normalizeOutboundLinePalletPicks((line as Partial<BatchOutboundLineState>).pickPallets).length > 0
+            : false
+        }))
+      : [];
     return parsed;
   } catch {
     return null;

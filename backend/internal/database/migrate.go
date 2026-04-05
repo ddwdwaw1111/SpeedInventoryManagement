@@ -148,7 +148,8 @@ func Migrate(db *sql.DB) error {
 			packing_list_no VARCHAR(120) DEFAULT NULL,
 			order_ref VARCHAR(120) DEFAULT NULL,
 			customer_id BIGINT NOT NULL,
-			out_date DATE DEFAULT NULL,
+			expected_ship_date DATE DEFAULT NULL,
+			actual_ship_date DATE DEFAULT NULL,
 			ship_to_name VARCHAR(160) DEFAULT NULL,
 			ship_to_address VARCHAR(255) DEFAULT NULL,
 			ship_to_contact VARCHAR(160) DEFAULT NULL,
@@ -165,12 +166,17 @@ func Migrate(db *sql.DB) error {
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			PRIMARY KEY (id),
 			KEY idx_outbound_documents_customer_id (customer_id),
-			KEY idx_outbound_documents_out_date (out_date),
+			KEY idx_outbound_documents_expected_ship_date (expected_ship_date),
 			KEY idx_outbound_documents_packing_list_no (packing_list_no),
 			CONSTRAINT fk_outbound_documents_customer
 				FOREIGN KEY (customer_id) REFERENCES customers (id)
 		)`,
-		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS ship_to_name VARCHAR(160) DEFAULT NULL AFTER out_date`,
+		`ALTER TABLE outbound_documents CHANGE COLUMN IF EXISTS out_date expected_ship_date DATE DEFAULT NULL`,
+		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS expected_ship_date DATE DEFAULT NULL AFTER customer_id`,
+		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS actual_ship_date DATE DEFAULT NULL AFTER expected_ship_date`,
+		`ALTER TABLE outbound_documents DROP INDEX IF EXISTS idx_outbound_documents_out_date`,
+		`CREATE INDEX IF NOT EXISTS idx_outbound_documents_expected_ship_date ON outbound_documents (expected_ship_date)`,
+		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS ship_to_name VARCHAR(160) DEFAULT NULL AFTER actual_ship_date`,
 		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS ship_to_address VARCHAR(255) DEFAULT NULL AFTER ship_to_name`,
 		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS ship_to_contact VARCHAR(160) DEFAULT NULL AFTER ship_to_address`,
 		`ALTER TABLE outbound_documents ADD COLUMN IF NOT EXISTS carrier_name VARCHAR(160) DEFAULT NULL AFTER ship_to_contact`,
@@ -197,7 +203,8 @@ func Migrate(db *sql.DB) error {
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			customer_id BIGINT NOT NULL,
 			location_id BIGINT NOT NULL,
-			delivery_date DATE DEFAULT NULL,
+			expected_arrival_date DATE DEFAULT NULL,
+			actual_arrival_date DATE DEFAULT NULL,
 			container_no VARCHAR(120) DEFAULT NULL,
 			handling_mode VARCHAR(32) NOT NULL DEFAULT 'PALLETIZED',
 			storage_section VARCHAR(16) NOT NULL DEFAULT 'TEMP',
@@ -215,7 +222,7 @@ func Migrate(db *sql.DB) error {
 			PRIMARY KEY (id),
 			KEY idx_inbound_documents_customer_id (customer_id),
 			KEY idx_inbound_documents_location_id (location_id),
-			KEY idx_inbound_documents_delivery_date (delivery_date),
+			KEY idx_inbound_documents_expected_arrival_date (expected_arrival_date),
 			KEY idx_inbound_documents_container_no (container_no),
 			CONSTRAINT fk_inbound_documents_customer
 				FOREIGN KEY (customer_id) REFERENCES customers (id),
@@ -224,6 +231,11 @@ func Migrate(db *sql.DB) error {
 		)`,
 		`ALTER TABLE inbound_documents MODIFY COLUMN status VARCHAR(32) NOT NULL DEFAULT 'CONFIRMED'`,
 		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS handling_mode VARCHAR(32) NOT NULL DEFAULT 'PALLETIZED' AFTER container_no`,
+		`ALTER TABLE inbound_documents CHANGE COLUMN IF EXISTS delivery_date expected_arrival_date DATE DEFAULT NULL`,
+		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS expected_arrival_date DATE DEFAULT NULL AFTER location_id`,
+		`ALTER TABLE inbound_documents DROP INDEX IF EXISTS idx_inbound_documents_delivery_date`,
+		`CREATE INDEX IF NOT EXISTS idx_inbound_documents_expected_arrival_date ON inbound_documents (expected_arrival_date)`,
+		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS actual_arrival_date DATE DEFAULT NULL AFTER expected_arrival_date`,
 		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS tracking_status VARCHAR(32) NOT NULL DEFAULT 'SCHEDULED' AFTER status`,
 		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMP NULL DEFAULT NULL AFTER status`,
 		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP NULL DEFAULT NULL AFTER confirmed_at`,
@@ -317,6 +329,7 @@ func Migrate(db *sql.DB) error {
 			quantity INT NOT NULL DEFAULT 0,
 			pallets INT NOT NULL DEFAULT 0,
 			pallets_detail_ctns VARCHAR(255) DEFAULT NULL,
+			pick_pallets_json TEXT DEFAULT NULL,
 			unit_label VARCHAR(32) DEFAULT NULL,
 			carton_size_mm VARCHAR(120) DEFAULT NULL,
 			net_weight_kgs DECIMAL(12,2) NOT NULL DEFAULT 0,
@@ -339,6 +352,7 @@ func Migrate(db *sql.DB) error {
 		`ALTER TABLE outbound_document_lines ADD COLUMN IF NOT EXISTS item_number_snapshot VARCHAR(120) DEFAULT NULL AFTER storage_section`,
 		`ALTER TABLE outbound_document_lines ADD COLUMN IF NOT EXISTS pallets INT NOT NULL DEFAULT 0 AFTER quantity`,
 		`ALTER TABLE outbound_document_lines ADD COLUMN IF NOT EXISTS pallets_detail_ctns VARCHAR(255) DEFAULT NULL AFTER pallets`,
+		`ALTER TABLE outbound_document_lines ADD COLUMN IF NOT EXISTS pick_pallets_json TEXT DEFAULT NULL AFTER pallets_detail_ctns`,
 		`CREATE TABLE IF NOT EXISTS pallets (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			parent_pallet_id BIGINT DEFAULT NULL,
@@ -346,6 +360,7 @@ func Migrate(db *sql.DB) error {
 			container_visit_id BIGINT DEFAULT NULL,
 			source_inbound_document_id BIGINT DEFAULT NULL,
 			source_inbound_line_id BIGINT DEFAULT NULL,
+			actual_arrival_date DATE DEFAULT NULL,
 			customer_id BIGINT NOT NULL,
 			sku_master_id BIGINT NOT NULL,
 			current_location_id BIGINT NOT NULL,
@@ -380,6 +395,7 @@ func Migrate(db *sql.DB) error {
 			CONSTRAINT fk_pallets_current_location
 				FOREIGN KEY (current_location_id) REFERENCES storage_locations (id)
 		)`,
+		`ALTER TABLE pallets ADD COLUMN IF NOT EXISTS actual_arrival_date DATE DEFAULT NULL AFTER source_inbound_line_id`,
 		`ALTER TABLE pallets MODIFY COLUMN source_inbound_document_id BIGINT DEFAULT NULL`,
 		`ALTER TABLE pallets MODIFY COLUMN source_inbound_line_id BIGINT DEFAULT NULL`,
 		`CREATE TABLE IF NOT EXISTS pallet_items (
@@ -404,6 +420,7 @@ func Migrate(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS stock_ledger (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			event_type VARCHAR(32) NOT NULL,
+			occurred_at TIMESTAMP NULL DEFAULT NULL,
 			pallet_id BIGINT NOT NULL,
 			pallet_item_id BIGINT DEFAULT NULL,
 			sku_master_id BIGINT DEFAULT NULL,
@@ -511,6 +528,7 @@ func Migrate(db *sql.DB) error {
 		`ALTER TABLE pallet_items ADD COLUMN IF NOT EXISTS damaged_qty INT NOT NULL DEFAULT 0 AFTER allocated_qty`,
 		`ALTER TABLE pallet_items ADD COLUMN IF NOT EXISTS hold_qty INT NOT NULL DEFAULT 0 AFTER damaged_qty`,
 		`ALTER TABLE stock_ledger ADD COLUMN IF NOT EXISTS container_no_snapshot VARCHAR(120) NOT NULL DEFAULT '' AFTER source_line_id`,
+		`ALTER TABLE stock_ledger ADD COLUMN IF NOT EXISTS occurred_at TIMESTAMP NULL DEFAULT NULL AFTER event_type`,
 		`ALTER TABLE stock_ledger ADD COLUMN IF NOT EXISTS delivery_date DATE DEFAULT NULL AFTER container_no_snapshot`,
 		`ALTER TABLE stock_ledger ADD COLUMN IF NOT EXISTS out_date DATE DEFAULT NULL AFTER delivery_date`,
 		`ALTER TABLE stock_ledger ADD COLUMN IF NOT EXISTS packing_list_no VARCHAR(120) DEFAULT NULL AFTER out_date`,
@@ -532,6 +550,7 @@ func Migrate(db *sql.DB) error {
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			adjustment_no VARCHAR(120) NOT NULL,
 			reason_code VARCHAR(64) NOT NULL,
+			actual_adjusted_at TIMESTAMP NULL DEFAULT NULL,
 			notes TEXT DEFAULT NULL,
 			status VARCHAR(32) NOT NULL DEFAULT 'POSTED',
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -567,9 +586,11 @@ func Migrate(db *sql.DB) error {
 			CONSTRAINT fk_inventory_adjustment_lines_location
 				FOREIGN KEY (location_id) REFERENCES storage_locations (id)
 		)`,
+		`ALTER TABLE inventory_adjustments ADD COLUMN IF NOT EXISTS actual_adjusted_at TIMESTAMP NULL DEFAULT NULL AFTER reason_code`,
 		`CREATE TABLE IF NOT EXISTS inventory_transfers (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			transfer_no VARCHAR(120) NOT NULL,
+			actual_transferred_at TIMESTAMP NULL DEFAULT NULL,
 			notes TEXT DEFAULT NULL,
 			status VARCHAR(32) NOT NULL DEFAULT 'POSTED',
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -607,6 +628,7 @@ func Migrate(db *sql.DB) error {
 			CONSTRAINT fk_inventory_transfer_lines_to_location
 				FOREIGN KEY (to_location_id) REFERENCES storage_locations (id)
 		)`,
+		`ALTER TABLE inventory_transfers ADD COLUMN IF NOT EXISTS actual_transferred_at TIMESTAMP NULL DEFAULT NULL AFTER transfer_no`,
 		`CREATE TABLE IF NOT EXISTS cycle_counts (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			count_no VARCHAR(120) NOT NULL,

@@ -4,11 +4,14 @@ import { BarChart } from "@mui/x-charts";
 import { useEffect, useMemo, useState } from "react";
 
 import { ApiError, api } from "../lib/api";
+import { setBillingWorkspaceContext } from "../lib/billingWorkspaceContext";
 import {
   buildBillingPreview,
   DEFAULT_BILLING_RATES,
-  getCurrentMonthInputValue,
-  type BillingRates
+  getCurrentBillingDateRange,
+  type BillingInvoiceLine,
+  type BillingRates,
+  type BillingStorageRow
 } from "../lib/billingPreview";
 import { formatDateTimeValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
@@ -20,12 +23,27 @@ type BillingPageProps = {
   customers: Customer[];
   inboundDocuments: InboundDocument[];
   outboundDocuments: OutboundDocument[];
+  onOpenBillingContainerDetail: (startDate: string, endDate: string, customerId: number | "all", containerNo: string) => void;
 };
 
-export function BillingPage({ customers, inboundDocuments, outboundDocuments }: BillingPageProps) {
+type BillingContainerSummaryRow = {
+  customerId: number;
+  customerName: string;
+  containerNo: string;
+  references: string[];
+  warehousesTouched: string[];
+  inboundAmount: number;
+  wrappingAmount: number;
+  storageAmount: number;
+  outboundAmount: number;
+  totalAmount: number;
+};
+
+export function BillingPage({ customers, inboundDocuments, outboundDocuments, onOpenBillingContainerDetail }: BillingPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
-  const [selectedMonth, setSelectedMonth] = useState(() => getCurrentMonthInputValue());
+  const [selectedStartDate, setSelectedStartDate] = useState(() => getCurrentBillingDateRange().startDate);
+  const [selectedEndDate, setSelectedEndDate] = useState(() => getCurrentBillingDateRange().endDate);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>("all");
   const [rates, setRates] = useState<BillingRates>(DEFAULT_BILLING_RATES);
   const [pallets, setPallets] = useState<PalletTrace[]>([]);
@@ -41,8 +59,8 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments }: 
       setErrorMessage("");
       try {
         const [nextPallets, nextEvents] = await Promise.all([
-          api.getPallets(5000),
-          api.getPalletLocationEvents(5000)
+          api.getPallets(50000),
+          api.getPalletLocationEvents(50000)
         ]);
         if (!active) {
           return;
@@ -68,8 +86,18 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments }: 
   }, [t]);
 
   const customerId = selectedCustomerId === "all" ? "all" : Number(selectedCustomerId);
+  useEffect(() => {
+    setBillingWorkspaceContext({
+      startDate: selectedStartDate,
+      endDate: selectedEndDate,
+      customerId,
+      rates
+    });
+  }, [customerId, rates, selectedEndDate, selectedStartDate]);
+
   const billingPreview = useMemo(() => buildBillingPreview({
-    month: selectedMonth,
+    startDate: selectedStartDate,
+    endDate: selectedEndDate,
     customerId,
     customers,
     pallets,
@@ -77,7 +105,11 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments }: 
     inboundDocuments,
     outboundDocuments,
     rates
-  }), [customerId, customers, inboundDocuments, outboundDocuments, palletLocationEvents, pallets, rates, selectedMonth]);
+  }), [customerId, customers, inboundDocuments, outboundDocuments, palletLocationEvents, pallets, rates, selectedEndDate, selectedStartDate]);
+  const containerSummaryRows = useMemo(
+    () => buildBillingContainerSummaryRows(billingPreview.invoiceLines, billingPreview.storageRows),
+    [billingPreview.invoiceLines, billingPreview.storageRows]
+  );
 
   const dailyBalanceDataset = useMemo(
     () => billingPreview.dailyBalanceRows.map((row) => ({
@@ -95,7 +127,7 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments }: 
         startIcon={<RefreshOutlinedIcon fontSize="small" />}
         onClick={() => {
           setIsLoading(true);
-          void Promise.all([api.getPallets(5000), api.getPalletLocationEvents(5000)])
+          void Promise.all([api.getPallets(50000), api.getPalletLocationEvents(50000)])
             .then(([nextPallets, nextEvents]) => {
               setPallets(nextPallets);
               setPalletLocationEvents(nextEvents);
@@ -127,8 +159,12 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments }: 
 
         <div className="filter-bar">
           <label>
-            {t("billingMonth")}
-            <input type="month" value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)} />
+            {t("fromDate")}
+            <input type="date" value={selectedStartDate} onChange={(event) => setSelectedStartDate(event.target.value)} />
+          </label>
+          <label>
+            {t("toDate")}
+            <input type="date" value={selectedEndDate} onChange={(event) => setSelectedEndDate(event.target.value)} />
           </label>
           <label>
             {t("customer")}
@@ -210,7 +246,7 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments }: 
                   height={300}
                   margin={{ top: 20, bottom: 20, left: 36, right: 12 }}
                   xAxis={[{ scaleType: "band", dataKey: "label" }]}
-                  series={[{ dataKey: "palletCount", label: t("palletDays"), color: "#274c77" }]}
+                  series={[{ dataKey: "palletCount", label: t("billingDayEndPallets"), color: "#274c77" }]}
                   hideLegend
                   grid={{ horizontal: true }}
                 />
@@ -218,6 +254,14 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments }: 
             ) : (
               <WorkspaceTableEmptyState title={t("noBillingData")} description={t("dailyPalletBalanceDesc")} />
             )}
+            <div className="sheet-note sheet-note--readonly" style={{ marginTop: "1rem" }}>
+              <strong>{t("billingCalculationFormula")}</strong>
+              <br />
+              {t("billingStorageFormulaHint", {
+                palletDays: formatNumber(billingPreview.summary.palletDays),
+                dailyRate: formatMoney(rates.storageFeePerPalletPerWeek / 7)
+              })}
+            </div>
           </article>
         </div>
 
@@ -265,25 +309,56 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments }: 
 
           <article className="report-card">
             <div className="report-card__header">
-              <h3>{t("billingStorageCharges")}</h3>
-              <p>{t("billingStorageChargesDesc")}</p>
+            <h3>{t("billingContainerTrace")}</h3>
+            <p>{t("billingContainerTraceDesc")}</p>
             </div>
-            {billingPreview.storageRows.length === 0 ? (
-              <WorkspaceTableEmptyState title={t("noBillingData")} description={t("billingStorageChargesDesc")} />
+          {containerSummaryRows.length === 0 ? (
+            <WorkspaceTableEmptyState title={t("noBillingData")} description={t("billingContainerTraceDesc")} />
             ) : (
-              <div className="report-bars report-bars--summary">
-                {billingPreview.storageRows.map((row) => (
-                  <div className="report-bars__row" key={`${row.customerId}-${row.containerNo}`}>
-                    <div className="report-bars__labels">
-                      <strong>{row.containerNo}</strong>
-                      <span>{row.warehousesTouched.join(", ") || "-"}</span>
-                    </div>
-                    <div className="report-bars__value">
-                      {formatNumber(row.palletDays)} PD / {formatMoney(row.amount)}
-                    </div>
-                  </div>
-                ))}
-              </div>
+            <div className="sheet-table-wrap">
+            <table className="sheet-table" aria-label={t("billingContainerTrace")}>
+              <thead>
+              <tr>
+                <th>{t("containerNo")}</th>
+                <th>{t("customer")}</th>
+                <th>{t("reference")}</th>
+                <th>{t("currentStorage")}</th>
+                <th>{t("billingInboundCharges")}</th>
+                <th>{t("billingWrappingCharges")}</th>
+                <th>{t("billingStorageCharges")}</th>
+                <th>{t("billingOutboundCharges")}</th>
+                <th>{t("amount")}</th>
+                <th>{t("actions")}</th>
+              </tr>
+              </thead>
+              <tbody>
+              {containerSummaryRows.map((row) => (
+                <tr key={`${row.customerId}-${row.containerNo}`}>
+                <td className="cell--mono">{row.containerNo}</td>
+                <td>{row.customerName}</td>
+                <td>{renderReferencePreview(row.references)}</td>
+                <td>{row.warehousesTouched.join(", ") || "-"}</td>
+                <td className="cell--mono">{formatMoney(row.inboundAmount)}</td>
+                <td className="cell--mono">{formatMoney(row.wrappingAmount)}</td>
+                <td className="cell--mono">{formatMoney(row.storageAmount)}</td>
+                <td className="cell--mono">{formatMoney(row.outboundAmount)}</td>
+                <td className="cell--mono">{formatMoney(row.totalAmount)}</td>
+                <td>
+                  {isNavigableContainerNo(row.containerNo) ? (
+                  <Button
+                    size="small"
+                    variant="text"
+                    onClick={() => onOpenBillingContainerDetail(billingPreview.startDate, billingPreview.endDate, customerId, row.containerNo)}
+                  >
+                    {t("billingViewContainerInvoice")}
+                  </Button>
+                  ) : "-"}
+                </td>
+                </tr>
+              ))}
+              </tbody>
+            </table>
+            </div>
             )}
           </article>
         </div>
@@ -381,4 +456,125 @@ function getErrorMessage(error: unknown, fallbackMessage: string) {
     return error.message || fallbackMessage;
   }
   return fallbackMessage;
+}
+
+function buildBillingContainerSummaryRows(invoiceLines: BillingInvoiceLine[], storageRows: BillingStorageRow[]) {
+  const rowMap = new Map<string, BillingContainerSummaryRow & { referenceSet: Set<string>; warehouseSet: Set<string> }>();
+
+  for (const line of invoiceLines) {
+    const containerNo = normalizeContainerNo(line.containerNo);
+    if (!isNavigableContainerNo(containerNo)) {
+      continue;
+    }
+    const rowKey = `${line.customerId}|${containerNo}`;
+    const row = rowMap.get(rowKey) ?? {
+      customerId: line.customerId,
+      customerName: line.customerName,
+      containerNo,
+      references: [],
+      warehousesTouched: [],
+      inboundAmount: 0,
+      wrappingAmount: 0,
+      storageAmount: 0,
+      outboundAmount: 0,
+      totalAmount: 0,
+      referenceSet: new Set<string>(),
+      warehouseSet: new Set<string>()
+    };
+
+    if (line.reference.trim()) {
+      row.referenceSet.add(line.reference.trim());
+    }
+    if (line.warehouseSummary.trim() && line.warehouseSummary.trim() !== "-") {
+      row.warehouseSet.add(line.warehouseSummary.trim());
+    }
+
+    switch (line.chargeType) {
+      case "INBOUND":
+        row.inboundAmount += line.amount;
+        break;
+      case "WRAPPING":
+        row.wrappingAmount += line.amount;
+        break;
+      case "STORAGE":
+        row.storageAmount += line.amount;
+        break;
+      case "OUTBOUND":
+        row.outboundAmount += line.amount;
+        break;
+    }
+    row.totalAmount += line.amount;
+    rowMap.set(rowKey, row);
+  }
+
+  for (const storageRow of storageRows) {
+    const containerNo = normalizeContainerNo(storageRow.containerNo);
+    if (!isNavigableContainerNo(containerNo)) {
+      continue;
+    }
+    const rowKey = `${storageRow.customerId}|${containerNo}`;
+    const row = rowMap.get(rowKey) ?? {
+      customerId: storageRow.customerId,
+      customerName: storageRow.customerName,
+      containerNo,
+      references: [],
+      warehousesTouched: [],
+      inboundAmount: 0,
+      wrappingAmount: 0,
+      storageAmount: 0,
+      outboundAmount: 0,
+      totalAmount: 0,
+      referenceSet: new Set<string>(),
+      warehouseSet: new Set<string>()
+    };
+    for (const warehouse of storageRow.warehousesTouched) {
+      if (warehouse.trim()) {
+        row.warehouseSet.add(warehouse.trim());
+      }
+    }
+    row.storageAmount = Math.max(row.storageAmount, storageRow.amount);
+    row.totalAmount = row.inboundAmount + row.wrappingAmount + row.storageAmount + row.outboundAmount;
+    rowMap.set(rowKey, row);
+  }
+
+  return [...rowMap.values()]
+    .map((row) => ({
+      customerId: row.customerId,
+      customerName: row.customerName,
+      containerNo: row.containerNo,
+      references: [...row.referenceSet].sort((left, right) => left.localeCompare(right)),
+      warehousesTouched: [...row.warehouseSet].sort((left, right) => left.localeCompare(right)),
+      inboundAmount: row.inboundAmount,
+      wrappingAmount: row.wrappingAmount,
+      storageAmount: row.storageAmount,
+      outboundAmount: row.outboundAmount,
+      totalAmount: row.totalAmount
+    }))
+    .sort((left, right) => {
+      if (left.customerName !== right.customerName) {
+        return left.customerName.localeCompare(right.customerName);
+      }
+      if (left.totalAmount !== right.totalAmount) {
+        return right.totalAmount - left.totalAmount;
+      }
+      return left.containerNo.localeCompare(right.containerNo);
+    });
+}
+
+function renderReferencePreview(references: string[]) {
+  if (references.length === 0) {
+    return "-";
+  }
+  if (references.length <= 2) {
+    return references.join(", ");
+  }
+  return `${references.slice(0, 2).join(", ")} +${references.length - 2}`;
+}
+
+function normalizeContainerNo(value: string | null | undefined) {
+  return (value ?? "").trim().toUpperCase();
+}
+
+function isNavigableContainerNo(containerNo: string) {
+  return containerNo.trim() !== "" && containerNo.trim() !== "-" && containerNo.trim().toUpperCase() !== "UNASSIGNED";
 }

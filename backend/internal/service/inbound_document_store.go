@@ -13,29 +13,30 @@ import (
 )
 
 type InboundDocument struct {
-	ID               int64                 `json:"id"`
-	CustomerID       int64                 `json:"customerId"`
-	CustomerName     string                `json:"customerName"`
-	LocationID       int64                 `json:"locationId"`
-	LocationName     string                `json:"locationName"`
-	DeliveryDate     *time.Time            `json:"deliveryDate"`
-	ContainerNo      string                `json:"containerNo"`
-	HandlingMode     string                `json:"handlingMode"`
-	StorageSection   string                `json:"storageSection"`
-	UnitLabel        string                `json:"unitLabel"`
-	DocumentNote     string                `json:"documentNote"`
-	Status           string                `json:"status"`
-	TrackingStatus   string                `json:"trackingStatus"`
-	ConfirmedAt      *time.Time            `json:"confirmedAt"`
-	CancelNote       string                `json:"cancelNote"`
-	CancelledAt      *time.Time            `json:"cancelledAt"`
-	ArchivedAt       *time.Time            `json:"archivedAt"`
-	TotalLines       int                   `json:"totalLines"`
-	TotalExpectedQty int                   `json:"totalExpectedQty"`
-	TotalReceivedQty int                   `json:"totalReceivedQty"`
-	CreatedAt        time.Time             `json:"createdAt"`
-	UpdatedAt        time.Time             `json:"updatedAt"`
-	Lines            []InboundDocumentLine `json:"lines"`
+	ID                  int64                 `json:"id"`
+	CustomerID          int64                 `json:"customerId"`
+	CustomerName        string                `json:"customerName"`
+	LocationID          int64                 `json:"locationId"`
+	LocationName        string                `json:"locationName"`
+	ExpectedArrivalDate *time.Time            `json:"expectedArrivalDate"`
+	ActualArrivalDate   *time.Time            `json:"actualArrivalDate"`
+	ContainerNo         string                `json:"containerNo"`
+	HandlingMode        string                `json:"handlingMode"`
+	StorageSection      string                `json:"storageSection"`
+	UnitLabel           string                `json:"unitLabel"`
+	DocumentNote        string                `json:"documentNote"`
+	Status              string                `json:"status"`
+	TrackingStatus      string                `json:"trackingStatus"`
+	ConfirmedAt         *time.Time            `json:"confirmedAt"`
+	CancelNote          string                `json:"cancelNote"`
+	CancelledAt         *time.Time            `json:"cancelledAt"`
+	ArchivedAt          *time.Time            `json:"archivedAt"`
+	TotalLines          int                   `json:"totalLines"`
+	TotalExpectedQty    int                   `json:"totalExpectedQty"`
+	TotalReceivedQty    int                   `json:"totalReceivedQty"`
+	CreatedAt           time.Time             `json:"createdAt"`
+	UpdatedAt           time.Time             `json:"updatedAt"`
+	Lines               []InboundDocumentLine `json:"lines"`
 }
 
 type InboundDocumentLine struct {
@@ -61,17 +62,18 @@ type InboundPalletBreakdown struct {
 }
 
 type CreateInboundDocumentInput struct {
-	CustomerID     int64                            `json:"customerId"`
-	LocationID     int64                            `json:"locationId"`
-	DeliveryDate   string                           `json:"deliveryDate"`
-	ContainerNo    string                           `json:"containerNo"`
-	HandlingMode   string                           `json:"handlingMode"`
-	StorageSection string                           `json:"storageSection"`
-	UnitLabel      string                           `json:"unitLabel"`
-	Status         string                           `json:"status"`
-	TrackingStatus string                           `json:"trackingStatus"`
-	DocumentNote   string                           `json:"documentNote"`
-	Lines          []CreateInboundDocumentLineInput `json:"lines"`
+	CustomerID          int64                            `json:"customerId"`
+	LocationID          int64                            `json:"locationId"`
+	ExpectedArrivalDate string                           `json:"expectedArrivalDate"`
+	ActualArrivalDate   string                           `json:"actualArrivalDate"`
+	ContainerNo         string                           `json:"containerNo"`
+	HandlingMode        string                           `json:"handlingMode"`
+	StorageSection      string                           `json:"storageSection"`
+	UnitLabel           string                           `json:"unitLabel"`
+	Status              string                           `json:"status"`
+	TrackingStatus      string                           `json:"trackingStatus"`
+	DocumentNote        string                           `json:"documentNote"`
+	Lines               []CreateInboundDocumentLineInput `json:"lines"`
 }
 
 type CreateInboundDocumentLineInput struct {
@@ -89,25 +91,26 @@ type CreateInboundDocumentLineInput struct {
 }
 
 type inboundDocumentRow struct {
-	ID             int64      `db:"id"`
-	CustomerID     int64      `db:"customer_id"`
-	CustomerName   string     `db:"customer_name"`
-	LocationID     int64      `db:"location_id"`
-	LocationName   string     `db:"location_name"`
-	DeliveryDate   *time.Time `db:"delivery_date"`
-	ContainerNo    string     `db:"container_no"`
-	HandlingMode   string     `db:"handling_mode"`
-	StorageSection string     `db:"storage_section"`
-	UnitLabel      string     `db:"unit_label"`
-	DocumentNote   string     `db:"document_note"`
-	Status         string     `db:"status"`
-	TrackingStatus string     `db:"tracking_status"`
-	ConfirmedAt    *time.Time `db:"confirmed_at"`
-	CancelNote     string     `db:"cancel_note"`
-	CancelledAt    *time.Time `db:"cancelled_at"`
-	ArchivedAt     *time.Time `db:"archived_at"`
-	CreatedAt      time.Time  `db:"created_at"`
-	UpdatedAt      time.Time  `db:"updated_at"`
+	ID                  int64      `db:"id"`
+	CustomerID          int64      `db:"customer_id"`
+	CustomerName        string     `db:"customer_name"`
+	LocationID          int64      `db:"location_id"`
+	LocationName        string     `db:"location_name"`
+	ExpectedArrivalDate *time.Time `db:"expected_arrival_date"`
+	ActualArrivalDate   *time.Time `db:"actual_arrival_date"`
+	ContainerNo         string     `db:"container_no"`
+	HandlingMode        string     `db:"handling_mode"`
+	StorageSection      string     `db:"storage_section"`
+	UnitLabel           string     `db:"unit_label"`
+	DocumentNote        string     `db:"document_note"`
+	Status              string     `db:"status"`
+	TrackingStatus      string     `db:"tracking_status"`
+	ConfirmedAt         *time.Time `db:"confirmed_at"`
+	CancelNote          string     `db:"cancel_note"`
+	CancelledAt         *time.Time `db:"cancelled_at"`
+	ArchivedAt          *time.Time `db:"archived_at"`
+	CreatedAt           time.Time  `db:"created_at"`
+	UpdatedAt           time.Time  `db:"updated_at"`
 }
 
 type inboundDocumentLineRow struct {
@@ -151,7 +154,8 @@ func (s *Store) ListInboundDocuments(ctx context.Context, limit int, archiveScop
 			c.name AS customer_name,
 			d.location_id,
 			l.name AS location_name,
-			d.delivery_date,
+			d.expected_arrival_date,
+			d.actual_arrival_date,
 			COALESCE(d.container_no, '') AS container_no,
 			COALESCE(d.handling_mode, '') AS handling_mode,
 			d.storage_section,
@@ -169,7 +173,7 @@ func (s *Store) ListInboundDocuments(ctx context.Context, limit int, archiveScop
 		JOIN customers c ON c.id = d.customer_id
 		JOIN storage_locations l ON l.id = d.location_id
 		WHERE %s
-		ORDER BY COALESCE(d.delivery_date, d.created_at) DESC, d.id DESC
+		ORDER BY COALESCE(d.expected_arrival_date, d.created_at) DESC, d.id DESC
 		LIMIT ?
 	`, archiveFilterClause), limit); err != nil {
 		return nil, fmt.Errorf("load inbound documents: %w", err)
@@ -183,26 +187,27 @@ func (s *Store) ListInboundDocuments(ctx context.Context, limit int, archiveScop
 	documentsByID := make(map[int64]*InboundDocument, len(documentRows))
 	for _, row := range documentRows {
 		document := InboundDocument{
-			ID:             row.ID,
-			CustomerID:     row.CustomerID,
-			CustomerName:   row.CustomerName,
-			LocationID:     row.LocationID,
-			LocationName:   row.LocationName,
-			DeliveryDate:   row.DeliveryDate,
-			ContainerNo:    row.ContainerNo,
-			HandlingMode:   coalesceInboundHandlingMode(row.HandlingMode),
-			StorageSection: fallbackSection(row.StorageSection),
-			UnitLabel:      row.UnitLabel,
-			DocumentNote:   row.DocumentNote,
-			Status:         normalizeDocumentStatus(row.Status),
-			TrackingStatus: normalizeInboundTrackingStatus(row.TrackingStatus, row.Status),
-			ConfirmedAt:    row.ConfirmedAt,
-			CancelNote:     row.CancelNote,
-			CancelledAt:    row.CancelledAt,
-			ArchivedAt:     row.ArchivedAt,
-			CreatedAt:      row.CreatedAt,
-			UpdatedAt:      row.UpdatedAt,
-			Lines:          make([]InboundDocumentLine, 0),
+			ID:                  row.ID,
+			CustomerID:          row.CustomerID,
+			CustomerName:        row.CustomerName,
+			LocationID:          row.LocationID,
+			LocationName:        row.LocationName,
+			ExpectedArrivalDate: row.ExpectedArrivalDate,
+			ActualArrivalDate:   row.ActualArrivalDate,
+			ContainerNo:         row.ContainerNo,
+			HandlingMode:        coalesceInboundHandlingMode(row.HandlingMode),
+			StorageSection:      fallbackSection(row.StorageSection),
+			UnitLabel:           row.UnitLabel,
+			DocumentNote:        row.DocumentNote,
+			Status:              normalizeDocumentStatus(row.Status),
+			TrackingStatus:      normalizeInboundTrackingStatus(row.TrackingStatus, row.Status),
+			ConfirmedAt:         row.ConfirmedAt,
+			CancelNote:          row.CancelNote,
+			CancelledAt:         row.CancelledAt,
+			ArchivedAt:          row.ArchivedAt,
+			CreatedAt:           row.CreatedAt,
+			UpdatedAt:           row.UpdatedAt,
+			Lines:               make([]InboundDocumentLine, 0),
 		}
 		documents = append(documents, document)
 		documentIDs = append(documentIDs, row.ID)
@@ -275,13 +280,17 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 		return InboundDocument{}, err
 	}
 
-	deliveryDate, err := parseOptionalDate(input.DeliveryDate)
+	expectedArrivalDate, err := parseOptionalDate(input.ExpectedArrivalDate)
 	if err != nil {
 		return InboundDocument{}, err
 	}
-	if deliveryDate == nil {
+	actualArrivalDate, err := parseOptionalDate(input.ActualArrivalDate)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+	if expectedArrivalDate == nil {
 		now := time.Now().UTC()
-		deliveryDate = &now
+		expectedArrivalDate = &now
 	}
 	requestedStatus := coalesceDocumentStatus(input.Status)
 	requestedTrackingStatus := coalesceInboundTrackingStatus(input.TrackingStatus, requestedStatus)
@@ -301,7 +310,8 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 		INSERT INTO inbound_documents (
 			customer_id,
 			location_id,
-			delivery_date,
+			expected_arrival_date,
+			actual_arrival_date,
 			container_no,
 			handling_mode,
 			storage_section,
@@ -313,11 +323,12 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 			posted_at,
 			cancel_note,
 			cancelled_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)
 	`,
 		input.CustomerID,
 		input.LocationID,
-		nullableTime(deliveryDate),
+		nullableTime(expectedArrivalDate),
+		nullableTime(actualArrivalDate),
 		nullableString(input.ContainerNo),
 		coalesceInboundHandlingMode(input.HandlingMode),
 		fallbackSection(input.StorageSection),
@@ -395,13 +406,17 @@ func (s *Store) UpdateInboundDocument(ctx context.Context, documentID int64, inp
 		return InboundDocument{}, err
 	}
 
-	deliveryDate, err := parseOptionalDate(input.DeliveryDate)
+	expectedArrivalDate, err := parseOptionalDate(input.ExpectedArrivalDate)
 	if err != nil {
 		return InboundDocument{}, err
 	}
-	if deliveryDate == nil {
+	actualArrivalDate, err := parseOptionalDate(input.ActualArrivalDate)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+	if expectedArrivalDate == nil {
 		now := time.Now().UTC()
-		deliveryDate = &now
+		expectedArrivalDate = &now
 	}
 	requestedStatus := coalesceDocumentStatus(input.Status)
 	requestedTrackingStatus := coalesceInboundTrackingStatus(input.TrackingStatus, requestedStatus)
@@ -416,17 +431,15 @@ func (s *Store) UpdateInboundDocument(ctx context.Context, documentID int64, inp
 	if err != nil {
 		return InboundDocument{}, err
 	}
-	switch normalizeDocumentStatus(documentRow.Status) {
-	case DocumentStatusDraft:
-		if err := s.updateDraftInboundDocumentTx(ctx, tx, documentID, documentRow, input, deliveryDate, requestedStatus, requestedTrackingStatus); err != nil {
-			return InboundDocument{}, err
-		}
-	case DocumentStatusConfirmed:
-		if err := s.updateConfirmedInboundDocumentTx(ctx, tx, documentID, documentRow, input, deliveryDate); err != nil {
-			return InboundDocument{}, err
-		}
-	default:
-		return InboundDocument{}, fmt.Errorf("%w: only draft or confirmed receipts can be edited", ErrInvalidInput)
+	normalizedDocumentStatus := normalizeDocumentStatus(documentRow.Status)
+	if normalizedDocumentStatus == DocumentStatusConfirmed {
+		return InboundDocument{}, fmt.Errorf("%w: confirmed receipts are immutable; cancel the receipt or copy it into a new draft and record any net change through correction documents", ErrInvalidInput)
+	}
+	if normalizedDocumentStatus != DocumentStatusDraft {
+		return InboundDocument{}, fmt.Errorf("%w: only draft receipts can be edited", ErrInvalidInput)
+	}
+	if err := s.updateDraftInboundDocumentTx(ctx, tx, documentID, documentRow, input, expectedArrivalDate, actualArrivalDate, requestedStatus, requestedTrackingStatus); err != nil {
+		return InboundDocument{}, err
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -440,12 +453,21 @@ func (s *Store) updateDraftInboundDocumentTx(
 	ctx context.Context,
 	tx *sql.Tx,
 	documentID int64,
-	_ inboundDocumentRow,
+	documentRow inboundDocumentRow,
 	input CreateInboundDocumentInput,
-	deliveryDate *time.Time,
+	expectedArrivalDate *time.Time,
+	actualArrivalDate *time.Time,
 	requestedStatus string,
 	requestedTrackingStatus string,
 ) error {
+	normalizedDocumentStatus := normalizeDocumentStatus(documentRow.Status)
+	if normalizedDocumentStatus == DocumentStatusConfirmed {
+		return fmt.Errorf("%w: confirmed receipts are immutable; cancel the receipt or copy it into a new draft and record any net change through correction documents", ErrInvalidInput)
+	}
+	if normalizedDocumentStatus != DocumentStatusDraft {
+		return fmt.Errorf("%w: only draft receipts can be edited", ErrInvalidInput)
+	}
+
 	persistedStatus := requestedStatus
 	if requestedStatus == DocumentStatusConfirmed {
 		persistedStatus = DocumentStatusDraft
@@ -456,7 +478,8 @@ func (s *Store) updateDraftInboundDocumentTx(
 		SET
 			customer_id = ?,
 			location_id = ?,
-			delivery_date = ?,
+			expected_arrival_date = ?,
+			actual_arrival_date = ?,
 			container_no = ?,
 			handling_mode = ?,
 			storage_section = ?,
@@ -471,7 +494,8 @@ func (s *Store) updateDraftInboundDocumentTx(
 	`,
 		input.CustomerID,
 		input.LocationID,
-		nullableTime(deliveryDate),
+		nullableTime(expectedArrivalDate),
+		nullableTime(actualArrivalDate),
 		nullableString(input.ContainerNo),
 		coalesceInboundHandlingMode(input.HandlingMode),
 		fallbackSection(input.StorageSection),
@@ -648,7 +672,7 @@ func (s *Store) updateConfirmedInboundDocumentTx(
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE inbound_documents
 		SET
-			delivery_date = ?,
+			expected_arrival_date = ?,
 			container_no = ?,
 			handling_mode = ?,
 			storage_section = ?,
@@ -673,13 +697,13 @@ func (s *Store) updateConfirmedInboundDocumentTx(
 	}
 	if strings.TrimSpace(oldContainerNo) != "" || strings.TrimSpace(newContainerNo) != "" {
 		visitID, err := ensureContainerVisitForInboundDocumentTx(ctx, tx, inboundDocumentRow{
-			ID:           documentID,
-			CustomerID:   documentRow.CustomerID,
-			LocationID:   documentRow.LocationID,
-			DeliveryDate: deliveryDate,
-			ContainerNo:  firstNonEmpty(newContainerNo, oldContainerNo),
-			HandlingMode: InboundHandlingModePalletized,
-			ConfirmedAt:  documentRow.ConfirmedAt,
+			ID:                  documentID,
+			CustomerID:          documentRow.CustomerID,
+			LocationID:          documentRow.LocationID,
+			ExpectedArrivalDate: deliveryDate,
+			ContainerNo:         firstNonEmpty(newContainerNo, oldContainerNo),
+			HandlingMode:        InboundHandlingModePalletized,
+			ConfirmedAt:         documentRow.ConfirmedAt,
 		})
 		if err != nil {
 			return err
@@ -742,6 +766,7 @@ type inboundLinePalletState struct {
 	ContainerVisitID        int64
 	SourceInboundDocumentID int64
 	SourceInboundLineID     int64
+	ActualArrivalDate       *time.Time
 }
 
 func (s *Store) loadLockedInboundEditableItemTx(ctx context.Context, tx *sql.Tx, itemID int64) (inboundEditableItem, error) {
@@ -783,13 +808,12 @@ func (s *Store) updateInboundEditableItemStateTx(
 			storage_section = ?,
 			container_no = ?,
 			delivery_date = ?,
-			last_restocked_at = COALESCE(?, last_restocked_at),
+			last_restocked_at = CURRENT_TIMESTAMP,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`,
 		fallbackSection(storageSection),
 		nullableString(containerNo),
-		nullableTime(deliveryDate),
 		nullableTime(deliveryDate),
 		itemID,
 	); err != nil {
@@ -843,7 +867,8 @@ func (s *Store) listActiveInboundLinePalletStatesTx(ctx context.Context, tx *sql
 			COALESCE(p.current_container_no, '') AS current_container_no,
 			COALESCE(p.container_visit_id, 0) AS container_visit_id,
 			COALESCE(p.source_inbound_document_id, 0) AS source_inbound_document_id,
-			COALESCE(p.source_inbound_line_id, 0) AS source_inbound_line_id
+			COALESCE(p.source_inbound_line_id, 0) AS source_inbound_line_id,
+			p.actual_arrival_date
 		FROM pallets p
 		JOIN pallet_items pi
 			ON pi.pallet_id = p.id
@@ -851,9 +876,9 @@ func (s *Store) listActiveInboundLinePalletStatesTx(ctx context.Context, tx *sql
 		WHERE p.source_inbound_line_id = ?
 		  AND pi.quantity > 0
 		  AND p.status <> ?
-		ORDER BY p.created_at %s, p.id %s
+		ORDER BY COALESCE(p.actual_arrival_date, DATE(p.created_at)) %s, p.created_at %s, p.id %s
 		FOR UPDATE
-	`, orderDirection, orderDirection), inboundLineID, PalletStatusCancelled)
+	`, orderDirection, orderDirection, orderDirection), inboundLineID, PalletStatusCancelled)
 	if err != nil {
 		return nil, fmt.Errorf("load active inbound-line pallets: %w", err)
 	}
@@ -877,6 +902,7 @@ func (s *Store) listActiveInboundLinePalletStatesTx(ctx context.Context, tx *sql
 			&state.ContainerVisitID,
 			&state.SourceInboundDocumentID,
 			&state.SourceInboundLineID,
+			&state.ActualArrivalDate,
 		); err != nil {
 			return nil, fmt.Errorf("scan active inbound-line pallet: %w", err)
 		}
@@ -1056,13 +1082,13 @@ func (s *Store) moveConfirmedInboundReceiptLotsTx(
 	}
 
 	_, _, err = s.findOrCreateInboundItem(ctx, tx, CreateInboundDocumentInput{
-		CustomerID:     documentRow.CustomerID,
-		LocationID:     documentRow.LocationID,
-		DeliveryDate:   safeDateInput(deliveryDate),
-		ContainerNo:    targetContainerNo,
-		StorageSection: targetSection,
-		UnitLabel:      unitLabel,
-		DocumentNote:   documentRow.DocumentNote,
+		CustomerID:          documentRow.CustomerID,
+		LocationID:          documentRow.LocationID,
+		ExpectedArrivalDate: safeDateInput(deliveryDate),
+		ContainerNo:         targetContainerNo,
+		StorageSection:      targetSection,
+		UnitLabel:           unitLabel,
+		DocumentNote:        documentRow.DocumentNote,
 	}, CreateInboundDocumentLineInput{
 		SKU:               existingLine.SKUSnapshot,
 		Description:       lineDescription,
@@ -1146,6 +1172,7 @@ func (s *Store) moveConfirmedInboundReceiptLotsTx(
 			ContainerVisitID:        palletState.ContainerVisitID,
 			SourceInboundDocumentID: palletState.SourceInboundDocumentID,
 			SourceInboundLineID:     palletState.SourceInboundLineID,
+			ActualArrivalDate:       palletState.ActualArrivalDate,
 			CustomerID:              documentRow.CustomerID,
 			SKUMasterID:             palletState.SKUMasterID,
 			CurrentLocationID:       documentRow.LocationID,
@@ -1219,13 +1246,13 @@ func (s *Store) increaseConfirmedInboundReceiptLotsTx(
 	}
 
 	targetItemID, _, err := s.findOrCreateInboundItem(ctx, tx, CreateInboundDocumentInput{
-		CustomerID:     documentRow.CustomerID,
-		LocationID:     documentRow.LocationID,
-		DeliveryDate:   safeDateInput(deliveryDate),
-		ContainerNo:    targetContainerNo,
-		StorageSection: targetSection,
-		UnitLabel:      unitLabel,
-		DocumentNote:   documentRow.DocumentNote,
+		CustomerID:          documentRow.CustomerID,
+		LocationID:          documentRow.LocationID,
+		ExpectedArrivalDate: safeDateInput(deliveryDate),
+		ContainerNo:         targetContainerNo,
+		StorageSection:      targetSection,
+		UnitLabel:           unitLabel,
+		DocumentNote:        documentRow.DocumentNote,
 	}, CreateInboundDocumentLineInput{
 		SKU:               existingLine.SKUSnapshot,
 		Description:       lineDescription,
@@ -1272,7 +1299,7 @@ func (s *Store) increaseConfirmedInboundReceiptLotsTx(
 	if palletCount <= 0 {
 		palletCount = 1
 	}
-	createdPallets, err := s.createPalletsForInboundLineTx(ctx, tx, documentID, existingLine.ID, containerVisitID, targetItem.SKUMasterID, increaseQty, documentRow.CustomerID, documentRow.LocationID, targetSection, targetContainerNo, nil, nextLine.UnitsPerPallet, palletCount)
+	createdPallets, err := s.createPalletsForInboundLineTx(ctx, tx, documentID, existingLine.ID, containerVisitID, targetItem.SKUMasterID, increaseQty, documentRow.CustomerID, documentRow.LocationID, targetSection, targetContainerNo, documentRow.ActualArrivalDate, nil, nextLine.UnitsPerPallet, palletCount)
 	if err != nil {
 		return err
 	}
@@ -1430,21 +1457,22 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 	if err != nil {
 		return err
 	}
+	confirmedAt := time.Now().UTC()
+	documentRow.ConfirmedAt = &confirmedAt
 	containerVisitID, err := ensureContainerVisitForInboundDocumentTx(ctx, tx, documentRow)
 	if err != nil {
 		return err
 	}
-	confirmedAt := time.Now().UTC()
 
 	for _, lineRow := range lineRows {
 		itemID, itemDescription, err := s.findOrCreateInboundItem(ctx, tx, CreateInboundDocumentInput{
-			CustomerID:     documentRow.CustomerID,
-			LocationID:     documentRow.LocationID,
-			DeliveryDate:   safeDateInput(documentRow.DeliveryDate),
-			ContainerNo:    documentRow.ContainerNo,
-			StorageSection: documentRow.StorageSection,
-			UnitLabel:      documentRow.UnitLabel,
-			DocumentNote:   documentRow.DocumentNote,
+			CustomerID:          documentRow.CustomerID,
+			LocationID:          documentRow.LocationID,
+			ExpectedArrivalDate: safeDateInput(documentRow.ExpectedArrivalDate),
+			ContainerNo:         documentRow.ContainerNo,
+			StorageSection:      documentRow.StorageSection,
+			UnitLabel:           documentRow.UnitLabel,
+			DocumentNote:        documentRow.DocumentNote,
 		}, CreateInboundDocumentLineInput{
 			SKU:               lineRow.SKUSnapshot,
 			Description:       lineRow.DescriptionSnapshot,
@@ -1455,7 +1483,7 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 			PalletsDetailCtns: lineRow.PalletsDetailCtns,
 			StorageSection:    lineRow.StorageSection,
 			LineNote:          lineRow.LineNote,
-		}, documentRow.DeliveryDate)
+		}, documentRow.ExpectedArrivalDate)
 		if err != nil {
 			return err
 		}
@@ -1467,9 +1495,13 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 		receivedQty := lineRow.receivedOrExpectedQty()
 		lotSection := fallbackSection(firstNonEmpty(lineRow.StorageSection, documentRow.StorageSection))
 		lotContainer := documentRow.ContainerNo
-		createdPallets, err := s.createPalletsForInboundLineTx(ctx, tx, documentID, lineRow.ID, containerVisitID, skuMasterID, receivedQty, documentRow.CustomerID, documentRow.LocationID, lotSection, lotContainer, lineRow.palletBreakdown(), lineRow.UnitsPerPallet, lineRow.Pallets)
+		createdPallets, err := s.createPalletsForInboundLineTx(ctx, tx, documentID, lineRow.ID, containerVisitID, skuMasterID, receivedQty, documentRow.CustomerID, documentRow.LocationID, lotSection, lotContainer, documentRow.ActualArrivalDate, lineRow.palletBreakdown(), lineRow.UnitsPerPallet, lineRow.Pallets)
 		if err != nil {
 			return err
+		}
+		receiptEventTime := firstNonEmptyTime(documentRow.ActualArrivalDate, &confirmedAt)
+		if receiptEventTime == nil {
+			receiptEventTime = &confirmedAt
 		}
 		for _, createdPallet := range createdPallets {
 			if err := s.createPalletLocationEventTx(ctx, tx, createPalletLocationEventInput{
@@ -1482,7 +1514,7 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 				EventType:        PalletEventReceived,
 				QuantityDelta:    createdPallet.Quantity,
 				PalletDelta:      1,
-				EventTime:        &confirmedAt,
+				EventTime:        receiptEventTime,
 			}); err != nil {
 				return err
 			}
@@ -1499,7 +1531,7 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 				SourceDocumentID:    documentID,
 				SourceLineID:        lineRow.ID,
 				ContainerNo:         lotContainer,
-				DeliveryDate:        documentRow.DeliveryDate,
+				DeliveryDate:        firstNonEmptyTime(documentRow.ActualArrivalDate, documentRow.ExpectedArrivalDate),
 				ItemNumber:          lineRow.SKUSnapshot,
 				DescriptionSnapshot: itemDescription,
 				ExpectedQty:         lineRow.ExpectedQty,
@@ -1535,7 +1567,7 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 				location_id = ?,
 				container_no = ?,
 				arrival_date = ?,
-				received_at = COALESCE(received_at, ?),
+				received_at = ?,
 				handling_mode = ?,
 				status = ?,
 				updated_at = CURRENT_TIMESTAMP
@@ -1544,7 +1576,7 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 			documentRow.CustomerID,
 			documentRow.LocationID,
 			nullableString(documentRow.ContainerNo),
-			nullableTime(documentRow.DeliveryDate),
+			nullableTime(firstNonEmptyTime(documentRow.ActualArrivalDate, documentRow.ExpectedArrivalDate)),
 			nullableTime(&confirmedAt),
 			InboundHandlingModePalletized,
 			ContainerVisitStatusOpen,
@@ -1726,7 +1758,8 @@ func (s *Store) CopyInboundDocument(ctx context.Context, documentID int64) (Inbo
 		INSERT INTO inbound_documents (
 			customer_id,
 			location_id,
-			delivery_date,
+			expected_arrival_date,
+			actual_arrival_date,
 			container_no,
 			handling_mode,
 			storage_section,
@@ -1739,11 +1772,12 @@ func (s *Store) CopyInboundDocument(ctx context.Context, documentID int64) (Inbo
 			cancel_note,
 			cancelled_at,
 			archived_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
 	`,
 		documentRow.CustomerID,
 		documentRow.LocationID,
-		nullableTime(documentRow.DeliveryDate),
+		nullableTime(documentRow.ExpectedArrivalDate),
+		nullableTime(documentRow.ActualArrivalDate),
 		nullableString(documentRow.ContainerNo),
 		coalesceInboundHandlingMode(documentRow.HandlingMode),
 		fallbackSection(documentRow.StorageSection),
@@ -1815,7 +1849,8 @@ func (s *Store) loadInboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx, 
 			c.name AS customer_name,
 			d.location_id,
 			l.name AS location_name,
-			d.delivery_date,
+			d.expected_arrival_date,
+			d.actual_arrival_date,
 			COALESCE(d.container_no, '') AS container_no,
 			COALESCE(d.handling_mode, '') AS handling_mode,
 			d.storage_section,
@@ -1840,7 +1875,8 @@ func (s *Store) loadInboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx, 
 		&documentRow.CustomerName,
 		&documentRow.LocationID,
 		&documentRow.LocationName,
-		&documentRow.DeliveryDate,
+		&documentRow.ExpectedArrivalDate,
+		&documentRow.ActualArrivalDate,
 		&documentRow.ContainerNo,
 		&documentRow.HandlingMode,
 		&documentRow.StorageSection,
@@ -1950,7 +1986,8 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 			c.name AS customer_name,
 			d.location_id,
 			l.name AS location_name,
-			d.delivery_date,
+			d.expected_arrival_date,
+			d.actual_arrival_date,
 			COALESCE(d.container_no, '') AS container_no,
 			COALESCE(d.handling_mode, '') AS handling_mode,
 			d.storage_section,
@@ -1969,7 +2006,7 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 		JOIN storage_locations l ON l.id = d.location_id
 		WHERE d.id IN (?)
 		%s
-		ORDER BY COALESCE(d.delivery_date, d.created_at) DESC, d.id DESC
+		ORDER BY COALESCE(d.expected_arrival_date, d.created_at) DESC, d.id DESC
 	`, archiveFilter), documentIDs)
 	if err != nil {
 		return nil, fmt.Errorf("build inbound document query: %w", err)
@@ -1987,26 +2024,27 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 	documentsByID := make(map[int64]*InboundDocument, len(documentRows))
 	for _, row := range documentRows {
 		document := InboundDocument{
-			ID:             row.ID,
-			CustomerID:     row.CustomerID,
-			CustomerName:   row.CustomerName,
-			LocationID:     row.LocationID,
-			LocationName:   row.LocationName,
-			DeliveryDate:   row.DeliveryDate,
-			ContainerNo:    row.ContainerNo,
-			HandlingMode:   coalesceInboundHandlingMode(row.HandlingMode),
-			StorageSection: fallbackSection(row.StorageSection),
-			UnitLabel:      row.UnitLabel,
-			DocumentNote:   row.DocumentNote,
-			Status:         normalizeDocumentStatus(row.Status),
-			TrackingStatus: normalizeInboundTrackingStatus(row.TrackingStatus, row.Status),
-			ConfirmedAt:    row.ConfirmedAt,
-			CancelNote:     row.CancelNote,
-			CancelledAt:    row.CancelledAt,
-			ArchivedAt:     row.ArchivedAt,
-			CreatedAt:      row.CreatedAt,
-			UpdatedAt:      row.UpdatedAt,
-			Lines:          make([]InboundDocumentLine, 0),
+			ID:                  row.ID,
+			CustomerID:          row.CustomerID,
+			CustomerName:        row.CustomerName,
+			LocationID:          row.LocationID,
+			LocationName:        row.LocationName,
+			ExpectedArrivalDate: row.ExpectedArrivalDate,
+			ActualArrivalDate:   row.ActualArrivalDate,
+			ContainerNo:         row.ContainerNo,
+			HandlingMode:        coalesceInboundHandlingMode(row.HandlingMode),
+			StorageSection:      fallbackSection(row.StorageSection),
+			UnitLabel:           row.UnitLabel,
+			DocumentNote:        row.DocumentNote,
+			Status:              normalizeDocumentStatus(row.Status),
+			TrackingStatus:      normalizeInboundTrackingStatus(row.TrackingStatus, row.Status),
+			ConfirmedAt:         row.ConfirmedAt,
+			CancelNote:          row.CancelNote,
+			CancelledAt:         row.CancelledAt,
+			ArchivedAt:          row.ArchivedAt,
+			CreatedAt:           row.CreatedAt,
+			UpdatedAt:           row.UpdatedAt,
+			Lines:               make([]InboundDocumentLine, 0),
 		}
 		documents = append(documents, document)
 		documentsByID[row.ID] = &documents[len(documents)-1]
@@ -2174,7 +2212,7 @@ func (s *Store) findOrCreateInboundItem(ctx context.Context, tx *sql.Tx, documen
 			delivery_date,
 			container_no,
 			last_restocked_at
-		) VALUES (?, ?, ?, ?, ?, ?, NULL)
+		) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 	`,
 		skuMasterID,
 		itemInput.CustomerID,
@@ -2202,13 +2240,12 @@ func (s *Store) syncInboundItemSnapshotTx(ctx context.Context, tx *sql.Tx, itemI
 			storage_section = ?,
 			container_no = ?,
 			delivery_date = COALESCE(?, delivery_date),
-			last_restocked_at = COALESCE(?, last_restocked_at),
+			last_restocked_at = CURRENT_TIMESTAMP,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`,
 		fallbackSection(storageSection),
 		nullableString(containerNo),
-		nullableTime(deliveryDate),
 		nullableTime(deliveryDate),
 		itemID,
 	); err != nil {
@@ -2218,6 +2255,8 @@ func (s *Store) syncInboundItemSnapshotTx(ctx context.Context, tx *sql.Tx, itemI
 }
 
 func sanitizeInboundDocumentInput(input CreateInboundDocumentInput) CreateInboundDocumentInput {
+	input.ExpectedArrivalDate = strings.TrimSpace(input.ExpectedArrivalDate)
+	input.ActualArrivalDate = strings.TrimSpace(input.ActualArrivalDate)
 	input.ContainerNo = strings.TrimSpace(strings.ToUpper(input.ContainerNo))
 	input.HandlingMode = strings.TrimSpace(strings.ToUpper(input.HandlingMode))
 	input.StorageSection = fallbackSection(strings.TrimSpace(strings.ToUpper(input.StorageSection)))

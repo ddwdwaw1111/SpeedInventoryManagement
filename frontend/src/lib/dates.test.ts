@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatDateTimeValue,
   getLocalDayBucketKey,
   normalizeCalendarDate,
   shiftIsoDate,
@@ -25,5 +26,10 @@ describe("date helpers", () => {
 
     expect(toIsoDateString(weekStart)).toBe("2026-03-29");
     expect(getLocalDayBucketKey(sample)).toBe("2026-2-31");
+  });
+
+  it("formats business date values without shifting them into the previous day", () => {
+    expect(formatDateTimeValue("2026-03-01", "America/New_York", { dateStyle: "medium", timeStyle: "short" })).toBe("Mar 1, 2026");
+    expect(formatDateTimeValue("2026-03-01T00:00:00Z", "America/New_York", { dateStyle: "medium", timeStyle: "short" })).toBe("Mar 1, 2026");
   });
 });

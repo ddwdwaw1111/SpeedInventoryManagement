@@ -1,6 +1,7 @@
 import * as pdfMake from "pdfmake/build/pdfmake";
 import type { Content, CustomTableLayout, Style, TableCell, TDocumentDefinitions, TFontDictionary } from "pdfmake/interfaces";
 
+import { getOutboundDisplayShipDate, getOutboundExpectedShipDate } from "./outboundDates";
 import type { OutboundDocument, OutboundDocumentLine } from "./types";
 
 const DELIVERY_NOTE_LAYOUT_NAME = "deliveryNoteTable";
@@ -102,7 +103,8 @@ type DeliveryNoteDocument = {
   shipToContact: string;
   carrierName: string;
   storageSummary: string;
-  outDate: string;
+  expectedShipDate: string;
+  actualShipDate: string;
   notes: string[];
   totalQty: number;
   totalNetWeightKgs: number;
@@ -122,7 +124,8 @@ type DeliveryNoteRow = {
   grossWeightKgs: number;
   documentNote: string;
   createdAt: string;
-  outDate: string | null;
+  expectedShipDate: string | null;
+  actualShipDate: string | null;
 };
 
 const LABELS = {
@@ -134,7 +137,8 @@ const LABELS = {
   shipToName: "Ship-to Name",
   shipToAddress: "Ship-to Address",
   shipToContact: "Ship-to Contact",
-  outDate: "Ship Date",
+  expectedShipDate: "Expected Ship Date",
+  actualShipDate: "Actual Ship Date",
   warehouse: "Warehouse",
   carrier: "Carrier",
   remarks: "Remarks",
@@ -177,7 +181,8 @@ export function buildDeliveryNoteDocumentFromDocument(document: OutboundDocument
     shipToContact: safeValue(document.shipToContact),
     carrierName: safeValue(document.carrierName),
     storageSummary: joinUniqueValues(document.lines.map((line) => `${line.locationName}${line.storageSection ? ` / ${line.storageSection}` : ""}`)),
-    outDate: safeValue(document.outDate),
+    expectedShipDate: safeValue(getOutboundExpectedShipDate(document)),
+    actualShipDate: safeValue(getOutboundDisplayShipDate(document)),
     notes: collectNotes(document.lines.map((line) => toDeliveryNoteRowFromLine(line, document))),
     totalQty: document.totalQty,
     totalNetWeightKgs: document.totalNetWeightKgs,
@@ -230,19 +235,19 @@ export function buildDeliveryNoteDefinition(document: DeliveryNoteDocument): TDo
             metaBlock(LABELS.packingListNo, document.packingListNo),
             metaBlock(LABELS.orderRef, document.orderRef || LABELS.empty),
             metaBlock(LABELS.customer, document.customerSummary || LABELS.empty),
-            metaBlock(LABELS.outDate, formatDateLabel(document.outDate))
+            metaBlock(LABELS.actualShipDate, formatDateLabel(document.actualShipDate))
           ],
           [
             metaBlock(LABELS.shipToName, document.shipToName || LABELS.empty),
             metaBlock(LABELS.shipToContact, document.shipToContact || LABELS.empty),
             metaBlock(LABELS.carrier, document.carrierName || LABELS.empty),
-            metaBlock(LABELS.warehouse, document.storageSummary || LABELS.empty)
+            metaBlock(LABELS.expectedShipDate, formatDateLabel(document.expectedShipDate))
           ],
           [
             metaSpanBlock(LABELS.shipToAddress, document.shipToAddress || LABELS.empty, 2),
             {},
-            metaSpanBlock(LABELS.remarks, noteText, 2),
-            {}
+            metaBlock(LABELS.remarks, noteText),
+            metaBlock(LABELS.warehouse, document.storageSummary || LABELS.empty)
           ]
         ]
       },
@@ -356,7 +361,8 @@ function toDeliveryNoteRowFromLine(line: OutboundDocumentLine, document: Outboun
     grossWeightKgs: line.grossWeightKgs,
     documentNote: document.documentNote,
     createdAt: line.createdAt,
-    outDate: document.outDate
+    expectedShipDate: getOutboundExpectedShipDate(document),
+    actualShipDate: getOutboundDisplayShipDate(document)
   };
 }
 

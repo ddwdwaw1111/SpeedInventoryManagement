@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -116,14 +117,14 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0)
 
 	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     location.ID,
-		DeliveryDate:   "2026-03-22",
-		ContainerNo:    "CONT-" + suffix,
-		StorageSection: DefaultStorageSection,
-		UnitLabel:      "CTN",
-		Status:         DocumentStatusDraft,
-		DocumentNote:   "Inbound integration test",
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-22",
+		ContainerNo:         "CONT-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusDraft,
+		DocumentNote:        "Inbound integration test",
 		Lines: []CreateInboundDocumentLineInput{
 			{
 				SKU:               item.SKU,
@@ -169,15 +170,15 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 	}
 
 	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
-		PackingListNo: "PL-" + suffix,
-		OrderRef:      "SO-" + suffix,
-		OutDate:       "2026-03-22",
-		ShipToName:    "Receiver " + suffix,
-		ShipToAddress: "123 Warehouse Ln",
-		ShipToContact: "Dock 5",
-		CarrierName:   "FedEx",
-		Status:        DocumentStatusDraft,
-		DocumentNote:  "Outbound integration test",
+		PackingListNo:    "PL-" + suffix,
+		OrderRef:         "SO-" + suffix,
+		ExpectedShipDate: "2026-03-22",
+		ShipToName:       "Receiver " + suffix,
+		ShipToAddress:    "123 Warehouse Ln",
+		ShipToContact:    "Dock 5",
+		CarrierName:      "FedEx",
+		Status:           DocumentStatusDraft,
+		DocumentNote:     "Outbound integration test",
 		Lines: []CreateOutboundDocumentLineInput{
 			{
 				CustomerID:   itemAfterInbound.CustomerID,
@@ -261,6 +262,153 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 	assertMovementTypeCount(t, movements, itemAfterInbound.ID, "REVERSAL", 2)
 }
 
+func TestBackfilledInboundUsesActualReceivedTimestampIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Backfill Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "BK-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-BK-"+suffix, 0)
+
+	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2025-12-15",
+		ContainerNo:         "BKCONT-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusDraft,
+		Lines: []CreateInboundDocumentLineInput{
+			{
+				SKU:               item.SKU,
+				Description:       item.Description,
+				ExpectedQty:       12,
+				ReceivedQty:       12,
+				StorageSection:    DefaultStorageSection,
+				Pallets:           1,
+				PalletsDetailCtns: "1*12",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create backfilled inbound document: %v", err)
+	}
+
+	confirmedWindowStart := time.Now().UTC().Add(-1 * time.Minute)
+	inbound, err = store.ConfirmInboundDocument(ctx, inbound.ID)
+	if err != nil {
+		t.Fatalf("confirm backfilled inbound document: %v", err)
+	}
+	if inbound.ConfirmedAt == nil {
+		t.Fatalf("expected confirmedAt to be set")
+	}
+
+	var arrivalDate sql.NullTime
+	var receivedAt sql.NullTime
+	if err := store.db.QueryRowContext(ctx, `
+		SELECT arrival_date, received_at
+		FROM container_visits
+		WHERE inbound_document_id = ?
+	`, inbound.ID).Scan(&arrivalDate, &receivedAt); err != nil {
+		t.Fatalf("load container visit timestamps: %v", err)
+	}
+	if !arrivalDate.Valid || arrivalDate.Time.Format("2006-01-02") != "2025-12-15" {
+		t.Fatalf("expected arrival_date to remain business date 2025-12-15, got %v", arrivalDate.Time)
+	}
+	if !receivedAt.Valid {
+		t.Fatalf("expected received_at to be set")
+	}
+	if receivedAt.Time.Before(confirmedWindowStart) {
+		t.Fatalf("expected received_at to reflect actual confirmation time, got %v", receivedAt.Time)
+	}
+
+	itemAfterInbound := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "BKCONT-"+suffix, item.SKU)
+	if itemAfterInbound.LastRestockedAt == nil {
+		t.Fatalf("expected lastRestockedAt to be set")
+	}
+	if itemAfterInbound.LastRestockedAt.Before(confirmedWindowStart) {
+		t.Fatalf("expected lastRestockedAt to reflect actual confirmation time, got %v", itemAfterInbound.LastRestockedAt)
+	}
+}
+
+func TestInboundActualArrivalDateOverridesContainerArrivalDateIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+	beforeConfirm := time.Now().UTC()
+
+	customer := mustCreateCustomer(t, ctx, store, "Arrival Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "AR-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-AR-"+suffix, 0)
+
+	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2025-12-15",
+		ActualArrivalDate:   "2025-12-18",
+		ContainerNo:         "ARCONT-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusDraft,
+		Lines: []CreateInboundDocumentLineInput{
+			{
+				SKU:               item.SKU,
+				Description:       item.Description,
+				ExpectedQty:       6,
+				ReceivedQty:       6,
+				StorageSection:    DefaultStorageSection,
+				Pallets:           1,
+				PalletsDetailCtns: "1*6",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create inbound with actual arrival date: %v", err)
+	}
+
+	inbound, err = store.ConfirmInboundDocument(ctx, inbound.ID)
+	if err != nil {
+		t.Fatalf("confirm inbound with actual arrival date: %v", err)
+	}
+	afterConfirm := time.Now().UTC()
+	if inbound.ActualArrivalDate == nil || inbound.ActualArrivalDate.Format("2006-01-02") != "2025-12-18" {
+		t.Fatalf("expected actualArrivalDate to persist, got %+v", inbound.ActualArrivalDate)
+	}
+
+	var arrivalDate sql.NullTime
+	if err := store.db.QueryRowContext(ctx, `
+		SELECT arrival_date
+		FROM container_visits
+		WHERE inbound_document_id = ?
+	`, inbound.ID).Scan(&arrivalDate); err != nil {
+		t.Fatalf("load container visit arrival date: %v", err)
+	}
+	if !arrivalDate.Valid || arrivalDate.Time.Format("2006-01-02") != "2025-12-18" {
+		t.Fatalf("expected container visit arrival_date to use actual arrival date, got %v", arrivalDate.Time)
+	}
+
+	var (
+		palletActualArrival sql.NullTime
+		palletCreatedAt     time.Time
+	)
+	if err := store.db.QueryRowContext(ctx, `
+		SELECT actual_arrival_date, created_at
+		FROM pallets
+		WHERE source_inbound_document_id = ?
+		ORDER BY id ASC
+		LIMIT 1
+	`, inbound.ID).Scan(&palletActualArrival, &palletCreatedAt); err != nil {
+		t.Fatalf("load pallet arrival date: %v", err)
+	}
+	if !palletActualArrival.Valid || palletActualArrival.Time.Format("2006-01-02") != "2025-12-18" {
+		t.Fatalf("expected pallet actual_arrival_date to use actual arrival date, got %v", palletActualArrival.Time)
+	}
+	if palletCreatedAt.Before(beforeConfirm.Add(-2*time.Second)) || palletCreatedAt.After(afterConfirm.Add(2*time.Second)) {
+		t.Fatalf("expected pallet created_at to reflect real creation time, got %v", palletCreatedAt)
+	}
+}
+
 func TestOutboundDocumentUsesPalletsWithoutReceiptLotsIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
@@ -271,15 +419,15 @@ func TestOutboundDocumentUsesPalletsWithoutReceiptLotsIntegration(t *testing.T) 
 	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 10, DefaultStorageSection)
 
 	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
-		PackingListNo: "PLT-OUT-" + suffix,
-		OrderRef:      "SO-" + suffix,
-		OutDate:       "2026-04-02",
-		ShipToName:    "Receiver " + suffix,
-		ShipToAddress: "123 Warehouse Ln",
-		ShipToContact: "Dock 5",
-		CarrierName:   "Local Carrier",
-		Status:        DocumentStatusConfirmed,
-		DocumentNote:  "Seed pallet outbound",
+		PackingListNo:    "PLT-OUT-" + suffix,
+		OrderRef:         "SO-" + suffix,
+		ExpectedShipDate: "2026-04-02",
+		ShipToName:       "Receiver " + suffix,
+		ShipToAddress:    "123 Warehouse Ln",
+		ShipToContact:    "Dock 5",
+		CarrierName:      "Local Carrier",
+		Status:           DocumentStatusConfirmed,
+		DocumentNote:     "Seed pallet outbound",
 		Lines: []CreateOutboundDocumentLineInput{{
 			CustomerID:  item.CustomerID,
 			LocationID:  item.LocationID,
@@ -383,7 +531,7 @@ func TestInventoryTransferUsesPalletBalanceIntegration(t *testing.T) {
 	}
 }
 
-func TestConfirmedInboundDocumentEditCreatesCorrectionsIntegration(t *testing.T) {
+func TestConfirmedInboundDocumentIsImmutableIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
@@ -393,14 +541,14 @@ func TestConfirmedInboundDocumentEditCreatesCorrectionsIntegration(t *testing.T)
 	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0)
 
 	receipt, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     location.ID,
-		DeliveryDate:   "2026-03-24",
-		ContainerNo:    "EDIT-OLD-" + suffix,
-		StorageSection: DefaultStorageSection,
-		UnitLabel:      "CTN",
-		Status:         DocumentStatusConfirmed,
-		DocumentNote:   "Original receipt",
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-24",
+		ContainerNo:         "EDIT-OLD-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Original receipt",
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:               item.SKU,
 			Description:       item.Description,
@@ -416,15 +564,15 @@ func TestConfirmedInboundDocumentEditCreatesCorrectionsIntegration(t *testing.T)
 		t.Fatalf("create confirmed inbound document: %v", err)
 	}
 
-	updatedReceipt, err := store.UpdateInboundDocument(ctx, receipt.ID, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     location.ID,
-		DeliveryDate:   "2026-03-27",
-		ContainerNo:    "EDIT-NEW-" + suffix,
-		StorageSection: "B",
-		UnitLabel:      "CTN",
-		Status:         DocumentStatusConfirmed,
-		DocumentNote:   "Corrected receipt",
+	_, err = store.UpdateInboundDocument(ctx, receipt.ID, CreateInboundDocumentInput{
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-27",
+		ContainerNo:         "EDIT-NEW-" + suffix,
+		StorageSection:      "B",
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Corrected receipt",
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:               item.SKU,
 			Description:       item.Description,
@@ -436,72 +584,28 @@ func TestConfirmedInboundDocumentEditCreatesCorrectionsIntegration(t *testing.T)
 			LineNote:          "Corrected line",
 		}},
 	})
+	if err == nil || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected confirmed inbound update to fail with ErrInvalidInput, got %v", err)
+	}
+
+	reloadedReceipt, err := store.getInboundDocument(ctx, receipt.ID)
 	if err != nil {
-		t.Fatalf("update confirmed inbound document: %v", err)
+		t.Fatalf("reload confirmed inbound document: %v", err)
+	}
+	if reloadedReceipt.ContainerNo != "EDIT-OLD-"+suffix {
+		t.Fatalf("expected confirmed inbound container to remain unchanged, got %q", reloadedReceipt.ContainerNo)
+	}
+	if len(reloadedReceipt.Lines) != 1 || reloadedReceipt.Lines[0].ReceivedQty != 10 {
+		t.Fatalf("expected confirmed inbound line to remain unchanged, got %#v", reloadedReceipt.Lines)
 	}
 
-	if !strings.EqualFold(updatedReceipt.Status, DocumentStatusConfirmed) {
-		t.Fatalf("expected confirmed receipt after correction, got %q", updatedReceipt.Status)
-	}
-	if updatedReceipt.ContainerNo != "EDIT-NEW-"+suffix {
-		t.Fatalf("expected updated container no, got %q", updatedReceipt.ContainerNo)
-	}
-	if len(updatedReceipt.Lines) != 1 {
-		t.Fatalf("expected 1 corrected receipt line, got %d", len(updatedReceipt.Lines))
-	}
-	if updatedReceipt.Lines[0].StorageSection != "B" {
-		t.Fatalf("expected corrected storage section B, got %q", updatedReceipt.Lines[0].StorageSection)
-	}
-	if updatedReceipt.Lines[0].ReceivedQty != 12 {
-		t.Fatalf("expected corrected received qty 12, got %d", updatedReceipt.Lines[0].ReceivedQty)
-	}
-
-	assertItemHiddenByContainer(t, ctx, store, location.ID, DefaultStorageSection, "EDIT-OLD-"+suffix, item.SKU)
-
-	newItem := mustFindItemByContainer(t, ctx, store, location.ID, "B", "EDIT-NEW-"+suffix, item.SKU)
-	if newItem.Quantity != 12 {
-		t.Fatalf("expected corrected receipt quantity 12 at new position, got %d", newItem.Quantity)
-	}
-
-	movements, err := store.ListMovements(ctx, 20)
-	if err != nil {
-		t.Fatalf("list movements after confirmed inbound edit: %v", err)
-	}
-
-	lineID := updatedReceipt.Lines[0].ID
-	var inMovement, transferOutMovement, transferInMovement, adjustMovement *Movement
-	for index := range movements {
-		movement := &movements[index]
-		if movement.InboundDocumentLineID != lineID {
-			continue
-		}
-		switch movement.MovementType {
-		case "IN":
-			inMovement = movement
-		case "TRANSFER_OUT":
-			transferOutMovement = movement
-		case "TRANSFER_IN":
-			transferInMovement = movement
-		case "ADJUST":
-			adjustMovement = movement
-		}
-	}
-
-	if inMovement == nil || inMovement.QuantityChange != 10 || inMovement.ContainerNo != "EDIT-OLD-"+suffix {
-		t.Fatalf("expected original IN movement to remain at old container with qty 10, got %+v", inMovement)
-	}
-	if transferOutMovement == nil || transferOutMovement.QuantityChange != -10 || transferOutMovement.ContainerNo != "EDIT-NEW-"+suffix {
-		t.Fatalf("expected transfer-out correction to snapshot the corrected container, got %+v", transferOutMovement)
-	}
-	if transferInMovement == nil || transferInMovement.QuantityChange != 10 || transferInMovement.ContainerNo != "EDIT-NEW-"+suffix {
-		t.Fatalf("expected transfer-in correction into new container, got %+v", transferInMovement)
-	}
-	if adjustMovement == nil || adjustMovement.QuantityChange != 2 || adjustMovement.ContainerNo != "EDIT-NEW-"+suffix {
-		t.Fatalf("expected adjust correction of +2 at new container, got %+v", adjustMovement)
+	unchangedItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "EDIT-OLD-"+suffix, item.SKU)
+	if unchangedItem.Quantity != 10 {
+		t.Fatalf("expected confirmed inbound stock to remain at original quantity 10, got %d", unchangedItem.Quantity)
 	}
 }
 
-func TestConfirmedInboundDocumentEditMovesRemainingLotsAfterPartialConsumptionIntegration(t *testing.T) {
+func TestConfirmedInboundDocumentRemainsImmutableAfterPartialConsumptionIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
@@ -511,14 +615,14 @@ func TestConfirmedInboundDocumentEditMovesRemainingLotsAfterPartialConsumptionIn
 	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0)
 
 	receipt, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     location.ID,
-		DeliveryDate:   "2026-03-24",
-		ContainerNo:    "USED-OLD-" + suffix,
-		StorageSection: DefaultStorageSection,
-		UnitLabel:      "CTN",
-		Status:         DocumentStatusConfirmed,
-		DocumentNote:   "Original receipt",
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-24",
+		ContainerNo:         "USED-OLD-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Original receipt",
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:               item.SKU,
 			Description:       item.Description,
@@ -535,15 +639,15 @@ func TestConfirmedInboundDocumentEditMovesRemainingLotsAfterPartialConsumptionIn
 
 	receivedItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "USED-OLD-"+suffix, item.SKU)
 	if _, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
-		PackingListNo: "USED-OUT-" + suffix,
-		OrderRef:      "SO-" + suffix,
-		OutDate:       "2026-03-24",
-		ShipToName:    "Receiver " + suffix,
-		ShipToAddress: "123 Warehouse Ln",
-		ShipToContact: "Dock 4",
-		CarrierName:   "Local Carrier",
-		Status:        DocumentStatusConfirmed,
-		DocumentNote:  "Consume part of receipt",
+		PackingListNo:    "USED-OUT-" + suffix,
+		OrderRef:         "SO-" + suffix,
+		ExpectedShipDate: "2026-03-24",
+		ShipToName:       "Receiver " + suffix,
+		ShipToAddress:    "123 Warehouse Ln",
+		ShipToContact:    "Dock 4",
+		CarrierName:      "Local Carrier",
+		Status:           DocumentStatusConfirmed,
+		DocumentNote:     "Consume part of receipt",
 		Lines: []CreateOutboundDocumentLineInput{{
 			CustomerID:  receivedItem.CustomerID,
 			LocationID:  receivedItem.LocationID,
@@ -555,15 +659,15 @@ func TestConfirmedInboundDocumentEditMovesRemainingLotsAfterPartialConsumptionIn
 		t.Fatalf("create consuming outbound document: %v", err)
 	}
 
-	metadataOnly, err := store.UpdateInboundDocument(ctx, receipt.ID, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     location.ID,
-		DeliveryDate:   "2026-03-28",
-		ContainerNo:    "USED-OLD-" + suffix,
-		StorageSection: DefaultStorageSection,
-		UnitLabel:      "CTN",
-		Status:         DocumentStatusConfirmed,
-		DocumentNote:   "Metadata only correction",
+	_, err = store.UpdateInboundDocument(ctx, receipt.ID, CreateInboundDocumentInput{
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-28",
+		ContainerNo:         "USED-OLD-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Metadata only correction",
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:               item.SKU,
 			Description:       item.Description,
@@ -575,108 +679,16 @@ func TestConfirmedInboundDocumentEditMovesRemainingLotsAfterPartialConsumptionIn
 			LineNote:          "Metadata correction",
 		}},
 	})
-	if err != nil {
-		t.Fatalf("update confirmed inbound metadata after outbound: %v", err)
-	}
-	if metadataOnly.DocumentNote != "Metadata only correction" {
-		t.Fatalf("expected metadata-only update to succeed, got note %q", metadataOnly.DocumentNote)
-	}
-	metadataOnlyItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "USED-OLD-"+suffix, item.SKU)
-	if metadataOnlyItem.DeliveryDate == nil || metadataOnlyItem.DeliveryDate.Format("2006-01-02") != "2026-03-28" {
-		t.Fatalf("expected metadata-only correction to refresh inventory delivery date to 2026-03-28, got %+v", metadataOnlyItem.DeliveryDate)
-	}
-	if metadataOnlyItem.LastRestockedAt == nil || metadataOnlyItem.LastRestockedAt.Format("2006-01-02") != "2026-03-28" {
-		t.Fatalf("expected metadata-only correction to refresh inventory last restocked at to 2026-03-28, got %+v", metadataOnlyItem.LastRestockedAt)
+	if err == nil || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected partially consumed confirmed inbound update to fail with ErrInvalidInput, got %v", err)
 	}
 
-	updatedReceipt, err := store.UpdateInboundDocument(ctx, receipt.ID, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     location.ID,
-		DeliveryDate:   "2026-03-28",
-		ContainerNo:    "USED-NEW-" + suffix,
-		StorageSection: "B",
-		UnitLabel:      "CTN",
-		Status:         DocumentStatusConfirmed,
-		DocumentNote:   "Try critical correction",
-		Lines: []CreateInboundDocumentLineInput{{
-			SKU:               item.SKU,
-			Description:       item.Description,
-			ExpectedQty:       8,
-			ReceivedQty:       8,
-			StorageSection:    "B",
-			Pallets:           2,
-			PalletsDetailCtns: "2*4",
-			LineNote:          "Move remaining stock",
-		}},
-	})
-	if err != nil {
-		t.Fatalf("update partially consumed confirmed inbound receipt: %v", err)
+	remainingItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "USED-OLD-"+suffix, item.SKU)
+	if remainingItem.Quantity != 6 {
+		t.Fatalf("expected remaining pallet-backed quantity 6 after outbound, got %d", remainingItem.Quantity)
 	}
-
-	if updatedReceipt.ContainerNo != "USED-NEW-"+suffix {
-		t.Fatalf("expected updated container no, got %q", updatedReceipt.ContainerNo)
-	}
-	if len(updatedReceipt.Lines) != 1 || updatedReceipt.Lines[0].StorageSection != "B" {
-		t.Fatalf("expected updated receipt line to move to section B, got %#v", updatedReceipt.Lines)
-	}
-	if updatedReceipt.Lines[0].ReceivedQty != 8 {
-		t.Fatalf("expected updated receipt quantity 8, got %d", updatedReceipt.Lines[0].ReceivedQty)
-	}
-
-	assertItemHiddenByContainer(t, ctx, store, location.ID, DefaultStorageSection, "USED-OLD-"+suffix, item.SKU)
-
-	newItem := mustFindItemByContainer(t, ctx, store, location.ID, "B", "USED-NEW-"+suffix, item.SKU)
-	if newItem.Quantity != 4 {
-		t.Fatalf("expected moved remaining quantity 4 at corrected position, got %d", newItem.Quantity)
-	}
-
-	movements, err := store.ListMovements(ctx, 20)
-	if err != nil {
-		t.Fatalf("list movements after consumed inbound edit: %v", err)
-	}
-
-	lineID := updatedReceipt.Lines[0].ID
-	var originalInMovement, outboundMovement, adjustMovement, transferOutMovement, transferInMovement *Movement
-	for index := range movements {
-		movement := &movements[index]
-		switch movement.MovementType {
-		case "IN":
-			if movement.InboundDocumentLineID == lineID {
-				originalInMovement = movement
-			}
-		case "OUT":
-			if movement.ItemID == receivedItem.ID && movement.ContainerNo == "USED-OLD-"+suffix {
-				outboundMovement = movement
-			}
-		case "ADJUST":
-			if movement.InboundDocumentLineID == lineID {
-				adjustMovement = movement
-			}
-		case "TRANSFER_OUT":
-			if movement.InboundDocumentLineID == lineID {
-				transferOutMovement = movement
-			}
-		case "TRANSFER_IN":
-			if movement.InboundDocumentLineID == lineID {
-				transferInMovement = movement
-			}
-		}
-	}
-
-	if originalInMovement == nil || originalInMovement.QuantityChange != 10 || originalInMovement.ContainerNo != "USED-OLD-"+suffix {
-		t.Fatalf("expected original IN movement to remain unchanged, got %+v", originalInMovement)
-	}
-	if outboundMovement == nil || outboundMovement.QuantityChange != -4 || outboundMovement.ContainerNo != "USED-OLD-"+suffix {
-		t.Fatalf("expected existing OUT movement to remain on original container, got %+v", outboundMovement)
-	}
-	if adjustMovement == nil || adjustMovement.QuantityChange != -2 || adjustMovement.ContainerNo != "USED-NEW-"+suffix {
-		t.Fatalf("expected quantity correction of -2 to snapshot the corrected container, got %+v", adjustMovement)
-	}
-	if transferOutMovement == nil || transferOutMovement.QuantityChange != -4 || transferOutMovement.ContainerNo != "USED-NEW-"+suffix {
-		t.Fatalf("expected transfer-out of remaining quantity to snapshot the corrected container, got %+v", transferOutMovement)
-	}
-	if transferInMovement == nil || transferInMovement.QuantityChange != 4 || transferInMovement.ContainerNo != "USED-NEW-"+suffix {
-		t.Fatalf("expected transfer-in of remaining quantity into corrected container, got %+v", transferInMovement)
+	if remainingItem.DeliveryDate == nil || remainingItem.DeliveryDate.Format("2006-01-02") != "2026-03-24" {
+		t.Fatalf("expected original delivery date to remain unchanged, got %+v", remainingItem.DeliveryDate)
 	}
 }
 
@@ -699,13 +711,13 @@ func TestInboundConfirmationMatchesInventoryBySKUMasterIDIntegration(t *testing.
 	}
 
 	receipt, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     location.ID,
-		DeliveryDate:   "2026-03-31",
-		ContainerNo:    containerNo,
-		StorageSection: DefaultStorageSection,
-		UnitLabel:      "CTN",
-		Status:         DocumentStatusConfirmed,
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-31",
+		ContainerNo:         containerNo,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:            item.SKU,
 			Description:    "Matched by SKU master",
@@ -741,14 +753,14 @@ func TestConfirmedInboundCreatesPalletEntities(t *testing.T) {
 	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "PLT-SKU-"+suffix, 0)
 
 	receipt, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     location.ID,
-		DeliveryDate:   "2026-04-02",
-		ContainerNo:    "PLT-" + suffix,
-		StorageSection: DefaultStorageSection,
-		UnitLabel:      "CTN",
-		Status:         DocumentStatusConfirmed,
-		DocumentNote:   "Create pallet entities",
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-04-02",
+		ContainerNo:         "PLT-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Create pallet entities",
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:            item.SKU,
 			Description:    item.Description,
@@ -822,14 +834,14 @@ func TestPalletCentricDualWriteLifecycleIntegration(t *testing.T) {
 	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "DUAL-SKU-"+suffix, 0)
 
 	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     location.ID,
-		DeliveryDate:   "2026-04-02",
-		ContainerNo:    "DUAL-CONT-" + suffix,
-		StorageSection: DefaultStorageSection,
-		UnitLabel:      "CTN",
-		Status:         DocumentStatusConfirmed,
-		DocumentNote:   "Dual write inbound",
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-04-02",
+		ContainerNo:         "DUAL-CONT-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Dual write inbound",
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:            item.SKU,
 			Description:    item.Description,
@@ -899,15 +911,15 @@ func TestPalletCentricDualWriteLifecycleIntegration(t *testing.T) {
 
 	inboundItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "DUAL-CONT-"+suffix, item.SKU)
 	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
-		PackingListNo: "DUAL-PL-" + suffix,
-		OrderRef:      "DUAL-SO-" + suffix,
-		OutDate:       "2026-04-03",
-		ShipToName:    "Receiver " + suffix,
-		ShipToAddress: "456 Dock Rd",
-		ShipToContact: "Gate 2",
-		CarrierName:   "UPS",
-		Status:        DocumentStatusConfirmed,
-		DocumentNote:  "Dual write outbound",
+		PackingListNo:    "DUAL-PL-" + suffix,
+		OrderRef:         "DUAL-SO-" + suffix,
+		ExpectedShipDate: "2026-04-03",
+		ShipToName:       "Receiver " + suffix,
+		ShipToAddress:    "456 Dock Rd",
+		ShipToContact:    "Gate 2",
+		CarrierName:      "UPS",
+		Status:           DocumentStatusConfirmed,
+		DocumentNote:     "Dual write outbound",
 		Lines: []CreateOutboundDocumentLineInput{{
 			CustomerID:   inboundItem.CustomerID,
 			LocationID:   inboundItem.LocationID,
@@ -1002,13 +1014,13 @@ func TestInboundDocumentCreatesPalletsFromExplicitBreakdownIntegration(t *testin
 	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "BREAK-SKU-"+suffix, 0)
 
 	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     location.ID,
-		DeliveryDate:   "2026-04-03",
-		ContainerNo:    "BREAK-CONT-" + suffix,
-		StorageSection: DefaultStorageSection,
-		UnitLabel:      "CTN",
-		Status:         DocumentStatusConfirmed,
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-04-03",
+		ContainerNo:         "BREAK-CONT-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:            item.SKU,
 			Description:    item.Description,
@@ -1055,14 +1067,14 @@ func TestPalletCentricOperationalLedgerIntegration(t *testing.T) {
 	item := mustCreateItem(t, ctx, store, customer.ID, sourceLocation.ID, "OPS-SKU-"+suffix, 0)
 
 	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     sourceLocation.ID,
-		DeliveryDate:   "2026-04-02",
-		ContainerNo:    "OPS-CONT-" + suffix,
-		StorageSection: DefaultStorageSection,
-		UnitLabel:      "CTN",
-		Status:         DocumentStatusConfirmed,
-		DocumentNote:   "Operational ledger inbound",
+		CustomerID:          customer.ID,
+		LocationID:          sourceLocation.ID,
+		ExpectedArrivalDate: "2026-04-02",
+		ContainerNo:         "OPS-CONT-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Operational ledger inbound",
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:            item.SKU,
 			Description:    item.Description,
@@ -1235,14 +1247,14 @@ func TestSelectedPalletInventoryActionsIntegration(t *testing.T) {
 	item := mustCreateItem(t, ctx, store, customer.ID, sourceLocation.ID, "SELECT-SKU-"+suffix, 0)
 
 	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     sourceLocation.ID,
-		DeliveryDate:   "2026-04-10",
-		ContainerNo:    "SELECT-CONT-" + suffix,
-		StorageSection: DefaultStorageSection,
-		UnitLabel:      "CTN",
-		Status:         DocumentStatusConfirmed,
-		DocumentNote:   "Selected pallet actions",
+		CustomerID:          customer.ID,
+		LocationID:          sourceLocation.ID,
+		ExpectedArrivalDate: "2026-04-10",
+		ContainerNo:         "SELECT-CONT-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Selected pallet actions",
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:            item.SKU,
 			Description:    item.Description,
@@ -1385,6 +1397,120 @@ func TestSelectedPalletInventoryActionsIntegration(t *testing.T) {
 	}
 }
 
+func TestAdjustmentAndTransferActualTimesIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "ActualTimeCustomer-"+suffix)
+	sourceLocation := mustCreateLocation(t, ctx, store, "ActualTimeSource-"+suffix)
+	destinationLocation := mustCreateLocation(t, ctx, store, "ActualTimeDestination-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, sourceLocation.ID, "ACTUAL-TIME-SKU-"+suffix, 0)
+
+	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:          customer.ID,
+		LocationID:          sourceLocation.ID,
+		ExpectedArrivalDate: "2026-04-10",
+		ContainerNo:         "ACTUAL-TIME-CONT-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Actual-time seed inbound",
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:            item.SKU,
+			Description:    item.Description,
+			ExpectedQty:    12,
+			ReceivedQty:    12,
+			Pallets:        2,
+			StorageSection: DefaultStorageSection,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create seed inbound for actual-time test: %v", err)
+	}
+
+	sourceItem := mustFindItemByContainer(t, ctx, store, sourceLocation.ID, DefaultStorageSection, inbound.ContainerNo, item.SKU)
+
+	adjustmentActual := "2026-04-11T14:30:00Z"
+	adjustment, err := store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
+		AdjustmentNo:     "ADJ-ACT-" + suffix,
+		ReasonCode:       "CORRECTION",
+		ActualAdjustedAt: adjustmentActual,
+		Notes:            "Backfilled adjustment time",
+		Lines: []CreateInventoryAdjustmentLineInput{
+			adjustmentLineFromItem(sourceItem, -2, "actual-time adjustment"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("create actual-time adjustment: %v", err)
+	}
+	if adjustment.ActualAdjustedAt == nil || adjustment.ActualAdjustedAt.UTC().Format(time.RFC3339) != adjustmentActual {
+		t.Fatalf("expected actualAdjustedAt %s, got %#v", adjustmentActual, adjustment.ActualAdjustedAt)
+	}
+
+	var adjustmentOccurredAt sql.NullTime
+	if err := store.db.GetContext(ctx, &adjustmentOccurredAt, `
+		SELECT occurred_at
+		FROM stock_ledger
+		WHERE source_document_type = 'ADJUSTMENT'
+		  AND source_document_id = ?
+		ORDER BY id ASC
+		LIMIT 1
+	`, adjustment.ID); err != nil {
+		t.Fatalf("load adjustment stock ledger occurred_at: %v", err)
+	}
+	if !adjustmentOccurredAt.Valid || adjustmentOccurredAt.Time.UTC().Format(time.RFC3339) != adjustmentActual {
+		t.Fatalf("expected adjustment ledger occurred_at %s, got %v", adjustmentActual, adjustmentOccurredAt)
+	}
+
+	transferActual := "2026-04-12T11:15:00Z"
+	transfer, err := store.CreateInventoryTransfer(ctx, CreateInventoryTransferInput{
+		TransferNo:          "TR-ACT-" + suffix,
+		ActualTransferredAt: transferActual,
+		Notes:               "Backfilled transfer time",
+		Lines: []CreateInventoryTransferLineInput{
+			transferLineFromItem(sourceItem, 3, destinationLocation.ID, "B", "actual-time transfer"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("create actual-time transfer: %v", err)
+	}
+	if transfer.ActualTransferredAt == nil || transfer.ActualTransferredAt.UTC().Format(time.RFC3339) != transferActual {
+		t.Fatalf("expected actualTransferredAt %s, got %#v", transferActual, transfer.ActualTransferredAt)
+	}
+
+	var transferOccurredAt sql.NullTime
+	if err := store.db.GetContext(ctx, &transferOccurredAt, `
+		SELECT occurred_at
+		FROM stock_ledger
+		WHERE source_document_type = 'TRANSFER'
+		  AND source_document_id = ?
+		  AND event_type = 'TRANSFER_OUT'
+		ORDER BY id ASC
+		LIMIT 1
+	`, transfer.ID); err != nil {
+		t.Fatalf("load transfer stock ledger occurred_at: %v", err)
+	}
+	if !transferOccurredAt.Valid || transferOccurredAt.Time.UTC().Format(time.RFC3339) != transferActual {
+		t.Fatalf("expected transfer ledger occurred_at %s, got %v", transferActual, transferOccurredAt)
+	}
+
+	var transferEventTime sql.NullTime
+	if err := store.db.GetContext(ctx, &transferEventTime, `
+		SELECT event_time
+		FROM pallet_location_events
+		WHERE event_type = ?
+		  AND container_no = ?
+		ORDER BY id ASC
+		LIMIT 1
+	`, PalletEventTransferOut, inbound.ContainerNo); err != nil {
+		t.Fatalf("load transfer pallet event_time: %v", err)
+	}
+	if !transferEventTime.Valid || transferEventTime.Time.UTC().Format(time.RFC3339) != transferActual {
+		t.Fatalf("expected transfer pallet event_time %s, got %v", transferActual, transferEventTime)
+	}
+}
+
 func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
@@ -1395,14 +1521,14 @@ func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0)
 
 	original, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     location.ID,
-		DeliveryDate:   "2026-03-26",
-		ContainerNo:    "COPY-IN-" + suffix,
-		StorageSection: DefaultStorageSection,
-		UnitLabel:      "CTN",
-		Status:         DocumentStatusConfirmed,
-		DocumentNote:   "Inbound copy/archive test",
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-26",
+		ContainerNo:         "COPY-IN-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Inbound copy/archive test",
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:               item.SKU,
 			Description:       item.Description,
@@ -1492,15 +1618,15 @@ func TestOutboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 18, DefaultStorageSection)
 
 	original, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
-		PackingListNo: "COPY-OUT-" + suffix,
-		OrderRef:      "SO-" + suffix,
-		OutDate:       "2026-03-26",
-		ShipToName:    "Receiver " + suffix,
-		ShipToAddress: "200 Export Rd",
-		ShipToContact: "Dock 8",
-		CarrierName:   "Local Carrier",
-		Status:        DocumentStatusConfirmed,
-		DocumentNote:  "Outbound copy/archive test",
+		PackingListNo:    "COPY-OUT-" + suffix,
+		OrderRef:         "SO-" + suffix,
+		ExpectedShipDate: "2026-03-26",
+		ShipToName:       "Receiver " + suffix,
+		ShipToAddress:    "200 Export Rd",
+		ShipToContact:    "Dock 8",
+		CarrierName:      "Local Carrier",
+		Status:           DocumentStatusConfirmed,
+		DocumentNote:     "Outbound copy/archive test",
 		Lines: []CreateOutboundDocumentLineInput{{
 			CustomerID:   item.CustomerID,
 			LocationID:   item.LocationID,
@@ -1590,15 +1716,15 @@ func TestInboundTrackingLifecycleIntegration(t *testing.T) {
 	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0)
 
 	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     location.ID,
-		DeliveryDate:   "2026-03-25",
-		ContainerNo:    "TRACK-IN-" + suffix,
-		StorageSection: DefaultStorageSection,
-		UnitLabel:      "CTN",
-		Status:         DocumentStatusDraft,
-		TrackingStatus: InboundTrackingScheduled,
-		DocumentNote:   "Inbound tracking integration test",
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-25",
+		ContainerNo:         "TRACK-IN-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusDraft,
+		TrackingStatus:      InboundTrackingScheduled,
+		DocumentNote:        "Inbound tracking integration test",
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:            item.SKU,
 			Description:    item.Description,
@@ -1654,16 +1780,16 @@ func TestOutboundTrackingLifecycleIntegration(t *testing.T) {
 	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 10, DefaultStorageSection)
 
 	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
-		PackingListNo:  "TRACK-OUT-" + suffix,
-		OrderRef:       "SO-" + suffix,
-		OutDate:        "2026-03-25",
-		ShipToName:     "Receiver " + suffix,
-		ShipToAddress:  "123 Warehouse Ln",
-		ShipToContact:  "Dock 3",
-		CarrierName:    "Local Carrier",
-		Status:         DocumentStatusDraft,
-		TrackingStatus: OutboundTrackingScheduled,
-		DocumentNote:   "Outbound tracking integration test",
+		PackingListNo:    "TRACK-OUT-" + suffix,
+		OrderRef:         "SO-" + suffix,
+		ExpectedShipDate: "2026-03-25",
+		ShipToName:       "Receiver " + suffix,
+		ShipToAddress:    "123 Warehouse Ln",
+		ShipToContact:    "Dock 3",
+		CarrierName:      "Local Carrier",
+		Status:           DocumentStatusDraft,
+		TrackingStatus:   OutboundTrackingScheduled,
+		DocumentNote:     "Outbound tracking integration test",
 		Lines: []CreateOutboundDocumentLineInput{{
 			CustomerID:  item.CustomerID,
 			LocationID:  item.LocationID,
@@ -1751,14 +1877,14 @@ func TestInboundDocumentSupportsMultipleSectionsIntegration(t *testing.T) {
 	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0)
 
 	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     location.ID,
-		DeliveryDate:   "2026-03-24",
-		ContainerNo:    "CONT-MULTI-" + suffix,
-		StorageSection: DefaultStorageSection,
-		UnitLabel:      "CTN",
-		Status:         DocumentStatusConfirmed,
-		DocumentNote:   "Multi-section receipt",
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-24",
+		ContainerNo:         "CONT-MULTI-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Multi-section receipt",
 		Lines: []CreateInboundDocumentLineInput{
 			{
 				SKU:            item.SKU,
@@ -1806,14 +1932,14 @@ func TestDraftDocumentUpdateIntegration(t *testing.T) {
 	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0)
 
 	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     location.ID,
-		DeliveryDate:   "2026-03-22",
-		ContainerNo:    "CONT-OLD-" + suffix,
-		StorageSection: DefaultStorageSection,
-		UnitLabel:      "CTN",
-		Status:         DocumentStatusDraft,
-		DocumentNote:   "Inbound draft before edit",
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-22",
+		ContainerNo:         "CONT-OLD-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusDraft,
+		DocumentNote:        "Inbound draft before edit",
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:            item.SKU,
 			Description:    item.Description,
@@ -1827,14 +1953,14 @@ func TestDraftDocumentUpdateIntegration(t *testing.T) {
 	}
 
 	inbound, err = store.UpdateInboundDocument(ctx, inbound.ID, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     location.ID,
-		DeliveryDate:   "2026-03-23",
-		ContainerNo:    "CONT-EDIT-" + suffix,
-		StorageSection: "B",
-		UnitLabel:      "CTN",
-		Status:         DocumentStatusDraft,
-		DocumentNote:   "Inbound draft edited",
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-23",
+		ContainerNo:         "CONT-EDIT-" + suffix,
+		StorageSection:      "B",
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusDraft,
+		DocumentNote:        "Inbound draft edited",
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:               item.SKU,
 			Description:       item.Description,
@@ -1864,14 +1990,14 @@ func TestDraftDocumentUpdateIntegration(t *testing.T) {
 	}
 
 	inbound, err = store.UpdateInboundDocument(ctx, inbound.ID, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     location.ID,
-		DeliveryDate:   "2026-03-23",
-		ContainerNo:    "CONT-EDIT-" + suffix,
-		StorageSection: "B",
-		UnitLabel:      "CTN",
-		Status:         DocumentStatusConfirmed,
-		DocumentNote:   "Inbound draft confirmed from edit",
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-23",
+		ContainerNo:         "CONT-EDIT-" + suffix,
+		StorageSection:      "B",
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Inbound draft confirmed from edit",
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:               item.SKU,
 			Description:       item.Description,
@@ -1895,15 +2021,15 @@ func TestDraftDocumentUpdateIntegration(t *testing.T) {
 	}
 
 	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
-		PackingListNo: "PL-" + suffix,
-		OrderRef:      "SO-" + suffix,
-		OutDate:       "2026-03-23",
-		ShipToName:    "Receiver " + suffix,
-		ShipToAddress: "123 Dock Ln",
-		ShipToContact: "Dock 3",
-		CarrierName:   "Internal Fleet",
-		Status:        DocumentStatusDraft,
-		DocumentNote:  "Outbound draft before edit",
+		PackingListNo:    "PL-" + suffix,
+		OrderRef:         "SO-" + suffix,
+		ExpectedShipDate: "2026-03-23",
+		ShipToName:       "Receiver " + suffix,
+		ShipToAddress:    "123 Dock Ln",
+		ShipToContact:    "Dock 3",
+		CarrierName:      "Internal Fleet",
+		Status:           DocumentStatusDraft,
+		DocumentNote:     "Outbound draft before edit",
 		Lines: []CreateOutboundDocumentLineInput{{
 			CustomerID:   itemAfterInboundConfirm.CustomerID,
 			LocationID:   itemAfterInboundConfirm.LocationID,
@@ -1918,15 +2044,15 @@ func TestDraftDocumentUpdateIntegration(t *testing.T) {
 	}
 
 	outbound, err = store.UpdateOutboundDocument(ctx, outbound.ID, CreateOutboundDocumentInput{
-		PackingListNo: "PL-EDIT-" + suffix,
-		OrderRef:      "SO-EDIT-" + suffix,
-		OutDate:       "2026-03-23",
-		ShipToName:    "Edited Receiver " + suffix,
-		ShipToAddress: "456 Dock Ln",
-		ShipToContact: "Dock 4",
-		CarrierName:   "Internal Fleet",
-		Status:        DocumentStatusDraft,
-		DocumentNote:  "Outbound draft edited",
+		PackingListNo:    "PL-EDIT-" + suffix,
+		OrderRef:         "SO-EDIT-" + suffix,
+		ExpectedShipDate: "2026-03-23",
+		ShipToName:       "Edited Receiver " + suffix,
+		ShipToAddress:    "456 Dock Ln",
+		ShipToContact:    "Dock 4",
+		CarrierName:      "Internal Fleet",
+		Status:           DocumentStatusDraft,
+		DocumentNote:     "Outbound draft edited",
 		Lines: []CreateOutboundDocumentLineInput{{
 			CustomerID:   itemAfterInboundConfirm.CustomerID,
 			LocationID:   itemAfterInboundConfirm.LocationID,
@@ -1958,15 +2084,15 @@ func TestDraftDocumentUpdateIntegration(t *testing.T) {
 	}
 
 	outbound, err = store.UpdateOutboundDocument(ctx, outbound.ID, CreateOutboundDocumentInput{
-		PackingListNo: "PL-EDIT-" + suffix,
-		OrderRef:      "SO-FINAL-" + suffix,
-		OutDate:       "2026-03-23",
-		ShipToName:    "Final Receiver " + suffix,
-		ShipToAddress: "789 Dock Ln",
-		ShipToContact: "Dock 8",
-		CarrierName:   "Internal Fleet",
-		Status:        DocumentStatusConfirmed,
-		DocumentNote:  "Outbound draft confirmed from edit",
+		PackingListNo:    "PL-EDIT-" + suffix,
+		OrderRef:         "SO-FINAL-" + suffix,
+		ExpectedShipDate: "2026-03-23",
+		ShipToName:       "Final Receiver " + suffix,
+		ShipToAddress:    "789 Dock Ln",
+		ShipToContact:    "Dock 8",
+		CarrierName:      "Internal Fleet",
+		Status:           DocumentStatusConfirmed,
+		DocumentNote:     "Outbound draft confirmed from edit",
 		Lines: []CreateOutboundDocumentLineInput{{
 			CustomerID:   itemAfterInboundConfirm.CustomerID,
 			LocationID:   itemAfterInboundConfirm.LocationID,
@@ -2000,15 +2126,15 @@ func TestOutboundAutoAllocationIntegration(t *testing.T) {
 	itemB := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 7, "B")
 
 	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
-		PackingListNo: "PL-SPLIT-" + suffix,
-		OrderRef:      "SO-SPLIT-" + suffix,
-		OutDate:       "2026-03-22",
-		ShipToName:    "Receiver " + suffix,
-		ShipToAddress: "123 Warehouse Ln",
-		ShipToContact: "Dock 5",
-		CarrierName:   "Internal Fleet",
-		Status:        DocumentStatusDraft,
-		DocumentNote:  "Split allocation integration test",
+		PackingListNo:    "PL-SPLIT-" + suffix,
+		OrderRef:         "SO-SPLIT-" + suffix,
+		ExpectedShipDate: "2026-03-22",
+		ShipToName:       "Receiver " + suffix,
+		ShipToAddress:    "123 Warehouse Ln",
+		ShipToContact:    "Dock 5",
+		CarrierName:      "Internal Fleet",
+		Status:           DocumentStatusDraft,
+		DocumentNote:     "Split allocation integration test",
 		Lines: []CreateOutboundDocumentLineInput{
 			{
 				CustomerID:   itemA.CustomerID,
@@ -2066,6 +2192,78 @@ func TestOutboundAutoAllocationIntegration(t *testing.T) {
 	}
 }
 
+func TestConfirmedOutboundDocumentIsImmutableIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 8, DefaultStorageSection)
+
+	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo:    "PL-" + suffix,
+		OrderRef:         "SO-" + suffix,
+		ExpectedShipDate: "2026-03-23",
+		ShipToName:       "Receiver " + suffix,
+		ShipToAddress:    "123 Dock Ln",
+		ShipToContact:    "Dock 3",
+		CarrierName:      "Internal Fleet",
+		Status:           DocumentStatusConfirmed,
+		DocumentNote:     "Immutable outbound baseline",
+		Lines: []CreateOutboundDocumentLineInput{{
+			CustomerID:   item.CustomerID,
+			LocationID:   item.LocationID,
+			SKUMasterID:  item.SKUMasterID,
+			Quantity:     3,
+			UnitLabel:    "CTN",
+			CartonSizeMM: "400*300*200",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create confirmed outbound: %v", err)
+	}
+
+	_, err = store.UpdateOutboundDocument(ctx, outbound.ID, CreateOutboundDocumentInput{
+		PackingListNo:    "PL-EDIT-" + suffix,
+		OrderRef:         "SO-EDIT-" + suffix,
+		ExpectedShipDate: "2026-03-24",
+		ShipToName:       "Edited Receiver " + suffix,
+		ShipToAddress:    "456 Dock Ln",
+		ShipToContact:    "Dock 4",
+		CarrierName:      "Internal Fleet",
+		Status:           DocumentStatusConfirmed,
+		DocumentNote:     "Should be rejected",
+		Lines: []CreateOutboundDocumentLineInput{{
+			CustomerID:   item.CustomerID,
+			LocationID:   item.LocationID,
+			SKUMasterID:  item.SKUMasterID,
+			Quantity:     1,
+			UnitLabel:    "CTN",
+			CartonSizeMM: "420*310*210",
+		}},
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput when editing confirmed outbound, got %v", err)
+	}
+
+	reloaded, err := store.getOutboundDocument(ctx, outbound.ID)
+	if err != nil {
+		t.Fatalf("reload confirmed outbound: %v", err)
+	}
+	if reloaded.PackingListNo != "PL-"+suffix {
+		t.Fatalf("expected confirmed outbound packing list to remain unchanged, got %q", reloaded.PackingListNo)
+	}
+	if reloaded.TotalQty != 3 {
+		t.Fatalf("expected confirmed outbound quantity to remain 3, got %d", reloaded.TotalQty)
+	}
+
+	itemAfter := mustFindItemByID(t, ctx, store, item.ID)
+	if itemAfter.Quantity != 5 {
+		t.Fatalf("expected on-hand quantity 5 after immutable confirmed outbound, got %d", itemAfter.Quantity)
+	}
+}
+
 func TestSealedTransitDraftCanBeConvertedToPalletizedBeforeConfirmationIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
@@ -2075,16 +2273,16 @@ func TestSealedTransitDraftCanBeConvertedToPalletizedBeforeConfirmationIntegrati
 	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
 
 	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     location.ID,
-		DeliveryDate:   "2026-04-02",
-		ContainerNo:    "SEALED-" + suffix,
-		HandlingMode:   InboundHandlingModeSealedTransit,
-		StorageSection: DefaultStorageSection,
-		UnitLabel:      "CTN",
-		Status:         DocumentStatusDraft,
-		TrackingStatus: InboundTrackingArrived,
-		DocumentNote:   "Sealed transit arrival",
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-04-02",
+		ContainerNo:         "SEALED-" + suffix,
+		HandlingMode:        InboundHandlingModeSealedTransit,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusDraft,
+		TrackingStatus:      InboundTrackingArrived,
+		DocumentNote:        "Sealed transit arrival",
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:            "SKU-" + suffix,
 			Description:    "Sealed transit line",
@@ -2109,16 +2307,16 @@ func TestSealedTransitDraftCanBeConvertedToPalletizedBeforeConfirmationIntegrati
 	}
 
 	converted, err := store.UpdateInboundDocument(ctx, inbound.ID, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     location.ID,
-		DeliveryDate:   "2026-04-03",
-		ContainerNo:    "SEALED-" + suffix,
-		HandlingMode:   InboundHandlingModePalletized,
-		StorageSection: DefaultStorageSection,
-		UnitLabel:      "CTN",
-		Status:         DocumentStatusConfirmed,
-		TrackingStatus: InboundTrackingReceived,
-		DocumentNote:   "Converted to palletized",
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-04-03",
+		ContainerNo:         "SEALED-" + suffix,
+		HandlingMode:        InboundHandlingModePalletized,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		TrackingStatus:      InboundTrackingReceived,
+		DocumentNote:        "Converted to palletized",
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:            "SKU-" + suffix,
 			Description:    "Sealed transit line",
@@ -2172,12 +2370,12 @@ func TestOutboundAutoAllocationFromMergedContainerLedgerIntegration(t *testing.T
 	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0, DefaultStorageSection)
 
 	if _, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     location.ID,
-		DeliveryDate:   "2026-03-23",
-		ContainerNo:    "CONT-A-" + suffix,
-		StorageSection: DefaultStorageSection,
-		Status:         DocumentStatusConfirmed,
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-23",
+		ContainerNo:         "CONT-A-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		Status:              DocumentStatusConfirmed,
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:            item.SKU,
 			Description:    item.Description,
@@ -2190,12 +2388,12 @@ func TestOutboundAutoAllocationFromMergedContainerLedgerIntegration(t *testing.T
 		t.Fatalf("create first inbound receipt: %v", err)
 	}
 	if _, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     location.ID,
-		DeliveryDate:   "2026-03-23",
-		ContainerNo:    "CONT-B-" + suffix,
-		StorageSection: DefaultStorageSection,
-		Status:         DocumentStatusConfirmed,
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-23",
+		ContainerNo:         "CONT-B-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		Status:              DocumentStatusConfirmed,
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:            item.SKU,
 			Description:    item.Description,
@@ -2215,15 +2413,15 @@ func TestOutboundAutoAllocationFromMergedContainerLedgerIntegration(t *testing.T
 	}
 
 	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
-		PackingListNo: "PL-MERGED-" + suffix,
-		OrderRef:      "SO-MERGED-" + suffix,
-		OutDate:       "2026-03-23",
-		ShipToName:    "Receiver " + suffix,
-		ShipToAddress: "123 Warehouse Ln",
-		ShipToContact: "Dock 5",
-		CarrierName:   "Internal Fleet",
-		Status:        DocumentStatusDraft,
-		DocumentNote:  "Merged container allocation test",
+		PackingListNo:    "PL-MERGED-" + suffix,
+		OrderRef:         "SO-MERGED-" + suffix,
+		ExpectedShipDate: "2026-03-23",
+		ShipToName:       "Receiver " + suffix,
+		ShipToAddress:    "123 Warehouse Ln",
+		ShipToContact:    "Dock 5",
+		CarrierName:      "Internal Fleet",
+		Status:           DocumentStatusDraft,
+		DocumentNote:     "Merged container allocation test",
 		Lines: []CreateOutboundDocumentLineInput{
 			{
 				CustomerID:   itemA.CustomerID,
@@ -2270,12 +2468,12 @@ func TestOutboundAutoContainerAllocationIntegration(t *testing.T) {
 	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0, DefaultStorageSection)
 
 	if _, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     location.ID,
-		DeliveryDate:   "2026-03-23",
-		ContainerNo:    "CONT-A-" + suffix,
-		StorageSection: DefaultStorageSection,
-		Status:         DocumentStatusConfirmed,
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-23",
+		ContainerNo:         "CONT-A-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		Status:              DocumentStatusConfirmed,
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:            item.SKU,
 			Description:    item.Description,
@@ -2288,12 +2486,12 @@ func TestOutboundAutoContainerAllocationIntegration(t *testing.T) {
 		t.Fatalf("create first inbound receipt: %v", err)
 	}
 	if _, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:     customer.ID,
-		LocationID:     location.ID,
-		DeliveryDate:   "2026-03-23",
-		ContainerNo:    "CONT-B-" + suffix,
-		StorageSection: DefaultStorageSection,
-		Status:         DocumentStatusConfirmed,
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-23",
+		ContainerNo:         "CONT-B-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		Status:              DocumentStatusConfirmed,
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:            item.SKU,
 			Description:    item.Description,
@@ -2309,15 +2507,15 @@ func TestOutboundAutoContainerAllocationIntegration(t *testing.T) {
 	itemA := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "CONT-A-"+suffix, item.SKU)
 
 	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
-		PackingListNo: "PL-MANUAL-" + suffix,
-		OrderRef:      "SO-MANUAL-" + suffix,
-		OutDate:       "2026-03-23",
-		ShipToName:    "Receiver " + suffix,
-		ShipToAddress: "123 Warehouse Ln",
-		ShipToContact: "Dock 5",
-		CarrierName:   "Internal Fleet",
-		Status:        DocumentStatusDraft,
-		DocumentNote:  "Automatic container allocation test",
+		PackingListNo:    "PL-MANUAL-" + suffix,
+		OrderRef:         "SO-MANUAL-" + suffix,
+		ExpectedShipDate: "2026-03-23",
+		ShipToName:       "Receiver " + suffix,
+		ShipToAddress:    "123 Warehouse Ln",
+		ShipToContact:    "Dock 5",
+		CarrierName:      "Internal Fleet",
+		Status:           DocumentStatusDraft,
+		DocumentNote:     "Automatic container allocation test",
 		Lines: []CreateOutboundDocumentLineInput{
 			{
 				CustomerID:   itemA.CustomerID,
