@@ -611,7 +611,7 @@ function isWithinRange(value: string | null, billingRange: BillingRange) {
 
 function isBillableDocument(status: string) {
   const normalized = status.trim().toUpperCase();
-  return normalized !== "CANCELLED";
+  return normalized !== "DELETED";
 }
 
 function normalizeContainerNo(value: string | null | undefined) {

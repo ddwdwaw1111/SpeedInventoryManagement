@@ -219,7 +219,7 @@ export function HomeDashboardPage({
 
   const inboundTrackerRows = useMemo<TrackerRow[]>(
     () => inboundDocuments
-      .filter((document) => normalizeDocumentStatus(document.status) !== "CANCELLED")
+      .filter((document) => normalizeDocumentStatus(document.status) !== "DELETED")
       .slice()
       .sort((left, right) => getDocumentTime(right.updatedAt || right.createdAt) - getDocumentTime(left.updatedAt || left.createdAt))
       .slice(0, 6)
@@ -238,7 +238,7 @@ export function HomeDashboardPage({
 
   const outboundTrackerRows = useMemo<TrackerRow[]>(
     () => outboundDocuments
-      .filter((document) => normalizeDocumentStatus(document.status) !== "CANCELLED")
+      .filter((document) => normalizeDocumentStatus(document.status) !== "DELETED")
       .slice()
       .sort((left, right) => getDocumentTime(right.updatedAt || right.createdAt) - getDocumentTime(left.updatedAt || left.createdAt))
       .slice(0, 6)
@@ -979,7 +979,7 @@ function formatLocalDateString(date: Date) {
 
 function isDocumentPending(status: string) {
   const normalizedStatus = normalizeDocumentStatus(status);
-  return normalizedStatus !== "CONFIRMED" && normalizedStatus !== "CANCELLED" && normalizedStatus !== "ARCHIVED";
+  return normalizedStatus !== "CONFIRMED" && normalizedStatus !== "DELETED" && normalizedStatus !== "ARCHIVED";
 }
 
 function buildRecentActivityEntries(

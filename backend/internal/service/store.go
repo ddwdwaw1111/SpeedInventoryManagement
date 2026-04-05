@@ -1508,3 +1508,30 @@ func mapDBError(err error) error {
 
 	return err
 }
+
+func buildInClause(ids []int64) (string, []any) {
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	return strings.Join(placeholders, ","), args
+}
+
+func (s *Store) collectPalletIDsByInboundDocumentTx(ctx context.Context, tx *sql.Tx, inboundDocumentID int64) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM pallets WHERE source_inbound_document_id = ? FOR UPDATE`, inboundDocumentID)
+	if err != nil {
+		return nil, mapDBError(fmt.Errorf("collect inbound pallet ids: %w", err))
+	}
+	defer rows.Close()
+	ids := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan pallet id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}

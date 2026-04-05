@@ -30,8 +30,8 @@ type OutboundDocument struct {
 	Status              string                 `json:"status"`
 	TrackingStatus      string                 `json:"trackingStatus"`
 	ConfirmedAt         *time.Time             `json:"confirmedAt"`
-	CancelNote          string                 `json:"cancelNote"`
-	CancelledAt         *time.Time             `json:"cancelledAt"`
+	DeleteNote          string                 `json:"deleteNote"`
+	DeletedAt           *time.Time             `json:"deletedAt"`
 	ArchivedAt          *time.Time             `json:"archivedAt"`
 	TotalLines          int                    `json:"totalLines"`
 	TotalQty            int                    `json:"totalQty"`
@@ -129,8 +129,8 @@ type outboundDocumentRow struct {
 	Status           string     `db:"status"`
 	TrackingStatus   string     `db:"tracking_status"`
 	ConfirmedAt      *time.Time `db:"confirmed_at"`
-	CancelNote       string     `db:"cancel_note"`
-	CancelledAt      *time.Time `db:"cancelled_at"`
+	DeleteNote       string     `db:"cancel_note"`
+	DeletedAt        *time.Time `db:"cancelled_at"`
 	ArchivedAt       *time.Time `db:"archived_at"`
 	CreatedAt        time.Time  `db:"created_at"`
 	UpdatedAt        time.Time  `db:"updated_at"`
@@ -299,8 +299,8 @@ func (s *Store) ListOutboundDocuments(ctx context.Context, limit int, archiveSco
 			Status:           normalizeDocumentStatus(row.Status),
 			TrackingStatus:   normalizeOutboundTrackingStatus(row.TrackingStatus, row.Status),
 			ConfirmedAt:      row.ConfirmedAt,
-			CancelNote:       row.CancelNote,
-			CancelledAt:      row.CancelledAt,
+			DeleteNote:       row.DeleteNote,
+			DeletedAt:        row.DeletedAt,
 			ArchivedAt:       row.ArchivedAt,
 			Lines:            make([]OutboundDocumentLine, 0),
 			CreatedAt:        row.CreatedAt,
@@ -720,8 +720,8 @@ func (s *Store) ConfirmOutboundDocument(ctx context.Context, documentID int64) (
 	}
 
 	status := normalizeDocumentStatus(documentRow.Status)
-	if status == DocumentStatusCancelled {
-		return OutboundDocument{}, fmt.Errorf("%w: cancelled outbound document cannot be confirmed", ErrInvalidInput)
+	if status == DocumentStatusDeleted {
+		return OutboundDocument{}, fmt.Errorf("%w: deleted outbound document cannot be confirmed", ErrInvalidInput)
 	}
 	if status == DocumentStatusConfirmed {
 		return OutboundDocument{}, fmt.Errorf("%w: outbound document is already confirmed", ErrInvalidInput)
@@ -750,8 +750,8 @@ func (s *Store) UpdateOutboundDocumentTrackingStatus(ctx context.Context, docume
 	}
 
 	documentStatus := normalizeDocumentStatus(documentRow.Status)
-	if documentStatus == DocumentStatusCancelled {
-		return OutboundDocument{}, fmt.Errorf("%w: cancelled shipment cannot change tracking status", ErrInvalidInput)
+	if documentStatus == DocumentStatusDeleted {
+		return OutboundDocument{}, fmt.Errorf("%w: deleted shipment cannot change tracking status", ErrInvalidInput)
 	}
 
 	currentTrackingStatus := normalizeOutboundTrackingStatus(documentRow.TrackingStatus, documentRow.Status)
@@ -799,8 +799,8 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 	}
 
 	status := normalizeDocumentStatus(documentRow.Status)
-	if status == DocumentStatusCancelled {
-		return fmt.Errorf("%w: cancelled outbound document cannot be confirmed", ErrInvalidInput)
+	if status == DocumentStatusDeleted {
+		return fmt.Errorf("%w: deleted outbound document cannot be confirmed", ErrInvalidInput)
 	}
 	if status == DocumentStatusConfirmed {
 		return fmt.Errorf("%w: outbound document is already confirmed", ErrInvalidInput)
@@ -952,6 +952,11 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 					}
 				}
 			}
+			if lineRow.Pallets <= 0 && effectiveLinePallets > 0 {
+				if _, err := tx.ExecContext(ctx, `UPDATE outbound_document_lines SET pallets = ? WHERE id = ?`, effectiveLinePallets, lineRow.ID); err != nil {
+					return mapDBError(fmt.Errorf("update outbound line pallets: %w", err))
+				}
+			}
 			continue
 		}
 
@@ -966,6 +971,7 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 		for index, allocation := range allocations {
 			allocationQuantities[index] = allocation.AllocatedQty
 		}
+		distinctPalletIDs := make(map[int64]struct{})
 		allocationPalletSplits := splitPalletsByQuantities(float64(lineRow.Pallets), allocationQuantities)
 		for allocationIndex, allocation := range allocations {
 			palletConsumptions, err := s.consumePalletContentsForBucketTx(ctx, tx, palletSourceBucket{
@@ -989,6 +995,7 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 			palletConsumptionPalletSplits := splitPalletsByQuantities(allocationPalletSplits[allocationIndex], palletConsumptionQuantities)
 
 			for consumptionIndex, palletConsumption := range palletConsumptions {
+				distinctPalletIDs[palletConsumption.PalletID] = struct{}{}
 				if err := s.createPalletLocationEventTx(ctx, tx, createPalletLocationEventInput{
 					PalletID:         palletConsumption.PalletID,
 					ContainerVisitID: palletConsumption.ContainerVisitID,
@@ -1045,6 +1052,11 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 				}
 			}
 		}
+		if lineRow.Pallets <= 0 && len(distinctPalletIDs) > 0 {
+			if _, err := tx.ExecContext(ctx, `UPDATE outbound_document_lines SET pallets = ? WHERE id = ?`, len(distinctPalletIDs), lineRow.ID); err != nil {
+				return mapDBError(fmt.Errorf("update outbound line pallets: %w", err))
+			}
+		}
 
 	}
 
@@ -1079,12 +1091,12 @@ func (s *Store) CancelOutboundDocument(ctx context.Context, documentID int64, in
 	}
 
 	status := normalizeDocumentStatus(documentRow.Status)
-	if status == DocumentStatusCancelled {
-		return OutboundDocument{}, fmt.Errorf("%w: outbound document is already cancelled", ErrInvalidInput)
+	if status == DocumentStatusDeleted {
+		return OutboundDocument{}, fmt.Errorf("%w: outbound document is already deleted", ErrInvalidInput)
 	}
 
 	cancellationReason := firstNonEmpty(input.Reason, fmt.Sprintf("Reversal of outbound %s", firstNonEmpty(documentRow.PackingListNo, fmt.Sprintf("OUT-%d", documentID))))
-	cancelledAt := time.Now().UTC()
+	deletedAt := time.Now().UTC()
 
 	if status == DocumentStatusConfirmed {
 		lineRows, err := s.loadOutboundDocumentLinesTx(ctx, tx, documentID)
@@ -1092,86 +1104,40 @@ func (s *Store) CancelOutboundDocument(ctx context.Context, documentID int64, in
 			return OutboundDocument{}, err
 		}
 
-		lineIDs := make([]int64, 0, len(lineRows))
 		for _, lineRow := range lineRows {
-			lineIDs = append(lineIDs, lineRow.ID)
-		}
-
-		for _, lineRow := range lineRows {
-			restoredPalletPicks, err := s.restorePalletContentsForLineTx(ctx, tx, lineRow.ID)
-			if err != nil {
+			// Restore pallet item quantities (reads outbound_picks, restores pallet_items)
+			if _, err := s.restorePalletContentsForLineTx(ctx, tx, lineRow.ID); err != nil {
 				return OutboundDocument{}, err
 			}
-			restoreQuantities := make([]int, len(restoredPalletPicks))
-			for index, restoredPalletPick := range restoredPalletPicks {
-				restoreQuantities[index] = restoredPalletPick.PickedQty
-			}
-			restorePalletSplits := splitPalletsByQuantities(float64(lineRow.Pallets), restoreQuantities)
-			for index, restoredPalletPick := range restoredPalletPicks {
-				if err := s.createPalletLocationEventTx(ctx, tx, createPalletLocationEventInput{
-					PalletID:       restoredPalletPick.PalletID,
-					CustomerID:     restoredPalletPick.CustomerID,
-					LocationID:     restoredPalletPick.LocationID,
-					StorageSection: restoredPalletPick.StorageSection,
-					ContainerNo:    restoredPalletPick.ContainerNo,
-					EventType:      PalletEventReversal,
-					QuantityDelta:  restoredPalletPick.PickedQty,
-					PalletDelta:    restorePalletSplits[index],
-					EventTime:      &cancelledAt,
-				}); err != nil {
-					return OutboundDocument{}, err
-				}
-				if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
-					EventType:           StockLedgerEventReversal,
-					PalletID:            restoredPalletPick.PalletID,
-					PalletItemID:        restoredPalletPick.PalletItemID,
-					SKUMasterID:         restoredPalletPick.SKUMasterID,
-					CustomerID:          restoredPalletPick.CustomerID,
-					LocationID:          restoredPalletPick.LocationID,
-					StorageSection:      restoredPalletPick.StorageSection,
-					QuantityChange:      restoredPalletPick.PickedQty,
-					SourceDocumentType:  StockLedgerSourceOutbound,
-					SourceDocumentID:    documentID,
-					SourceLineID:        lineRow.ID,
-					ContainerNo:         restoredPalletPick.ContainerNo,
-					OutDate:             resolveOutboundLedgerDate(documentRow.ExpectedShipDate, documentRow.ActualShipDate),
-					PackingListNo:       documentRow.PackingListNo,
-					OrderRef:            documentRow.OrderRef,
-					ItemNumber:          lineRow.ItemNumberSnapshot,
-					DescriptionSnapshot: lineRow.DescriptionSnapshot,
-					Pallets:             lineRow.Pallets,
-					PalletsDetailCtns:   lineRow.PalletsDetailCtns,
-					CartonSizeMM:        lineRow.CartonSizeMM,
-					CartonCount:         lineRow.Quantity,
-					UnitLabel:           firstNonEmpty(lineRow.UnitLabel, "PCS"),
-					NetWeightKgs:        lineRow.NetWeightKgs,
-					GrossWeightKgs:      lineRow.GrossWeightKgs,
-					Reason:              cancellationReason,
-				}); err != nil {
-					return OutboundDocument{}, err
-				}
-			}
+		}
 
+		// Delete stock_ledger entries created by this outbound document
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM stock_ledger WHERE source_document_type = ? AND source_document_id = ?`,
+			StockLedgerSourceOutbound, documentID); err != nil {
+			return OutboundDocument{}, mapDBError(fmt.Errorf("delete stock ledger for outbound: %w", err))
 		}
 	}
 
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE outbound_documents
-		SET
-			status = 'CANCELLED',
-			cancel_note = ?,
-			cancelled_at = ?,
-			updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`, nullableString(cancellationReason), cancelledAt, documentID); err != nil {
-		return OutboundDocument{}, mapDBError(fmt.Errorf("cancel outbound document: %w", err))
+	// Delete outbound document (cascades to outbound_document_lines → outbound_picks)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM outbound_documents WHERE id = ?`, documentID); err != nil {
+		return OutboundDocument{}, mapDBError(fmt.Errorf("delete outbound document: %w", err))
 	}
 
 	if err := tx.Commit(); err != nil {
 		return OutboundDocument{}, fmt.Errorf("commit outbound cancel: %w", err)
 	}
 
-	return s.getOutboundDocument(ctx, documentID)
+	return OutboundDocument{
+		ID:            documentRow.ID,
+		PackingListNo: documentRow.PackingListNo,
+		OrderRef:      documentRow.OrderRef,
+		CustomerID:    documentRow.CustomerID,
+		Status:        DocumentStatusDeleted,
+		DeleteNote:    cancellationReason,
+		DeletedAt:     &deletedAt,
+		CreatedAt:     documentRow.CreatedAt,
+	}, nil
 }
 
 func (s *Store) ArchiveOutboundDocument(ctx context.Context, documentID int64) (OutboundDocument, error) {
@@ -1369,8 +1335,8 @@ func (s *Store) loadOutboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx,
 		&documentRow.Status,
 		&documentRow.TrackingStatus,
 		&documentRow.ConfirmedAt,
-		&documentRow.CancelNote,
-		&documentRow.CancelledAt,
+		&documentRow.DeleteNote,
+		&documentRow.DeletedAt,
 		&documentRow.ArchivedAt,
 		&documentRow.CreatedAt,
 		&documentRow.UpdatedAt,
@@ -1529,8 +1495,8 @@ func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []in
 			Status:           normalizeDocumentStatus(row.Status),
 			TrackingStatus:   normalizeOutboundTrackingStatus(row.TrackingStatus, row.Status),
 			ConfirmedAt:      row.ConfirmedAt,
-			CancelNote:       row.CancelNote,
-			CancelledAt:      row.CancelledAt,
+			DeleteNote:       row.DeleteNote,
+			DeletedAt:        row.DeletedAt,
 			ArchivedAt:       row.ArchivedAt,
 			Lines:            make([]OutboundDocumentLine, 0),
 			CreatedAt:        row.CreatedAt,

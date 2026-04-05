@@ -1599,7 +1599,7 @@ function buildInboundContainerWarnings(
 
   const candidateDocuments = inboundDocuments.filter((document) =>
     document.id !== editingInboundDocumentId
-    && normalizeDocumentStatus(document.status) !== "CANCELLED"
+    && normalizeDocumentStatus(document.status) !== "DELETED"
     && normalizeContainerNo(document.containerNo)
   );
 

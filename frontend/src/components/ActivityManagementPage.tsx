@@ -1087,7 +1087,7 @@ export function ActivityManagementPage({
               : []),
             { key: "download-pick-sheet", label: t("downloadPickSheet"), icon: <PictureAsPdfOutlinedIcon fontSize="small" />, onClick: () => void handleDownloadPickSheet(params.row) },
             { key: "download-delivery-note", label: t("downloadDeliveryNote"), icon: <PictureAsPdfOutlinedIcon fontSize="small" />, onClick: () => void handleDownloadDeliveryNote(params.row) },
-            ...(canManage && !params.row.archivedAt && params.row.status !== "CANCELLED"
+            ...(canManage && !params.row.archivedAt && params.row.status !== "DELETED"
               ? [{ key: "cancel", label: t("cancelShipment"), icon: <DeleteOutlineOutlinedIcon fontSize="small" />, danger: true, onClick: () => void handleCancelOutboundDocument(params.row) }]
               : [])
           ]}
@@ -2052,12 +2052,12 @@ export function ActivityManagementPage({
 
     setErrorMessage("");
     try {
-      const updatedDocument = await api.cancelInboundDocument(document.id, {
+      await api.cancelInboundDocument(document.id, {
         reason: document.documentNote || undefined
       });
-      setSelectedInboundDocumentId(updatedDocument.id);
+      setSelectedInboundDocumentId(null);
       await onRefresh();
-      showActionSuccess(t("receiptCancelledSuccess"));
+      showActionSuccess(t("receiptDeletedSuccess"));
     } catch (error) {
       showActionError(error, t("couldNotSaveActivity"));
     }
@@ -2164,12 +2164,12 @@ export function ActivityManagementPage({
 
     setErrorMessage("");
     try {
-      const updatedDocument = await api.cancelOutboundDocument(document.id, {
+      await api.cancelOutboundDocument(document.id, {
         reason: document.documentNote || undefined
       });
-      setSelectedOutboundDocumentId(updatedDocument.id);
+      setSelectedOutboundDocumentId(null);
       await onRefresh();
-      showActionSuccess(t("shipmentCancelledSuccess"));
+      showActionSuccess(t("shipmentDeletedSuccess"));
     } catch (error) {
       showActionError(error, t("couldNotSaveActivity"));
     }
@@ -2312,7 +2312,7 @@ export function ActivityManagementPage({
             <div className="filter-bar">
               <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
               <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
-              <label>{t("status")}<select value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value)}><option value="all">{t("allStatuses")}</option><option value="DRAFT">{t("draft")}</option><option value="CONFIRMED">{t("confirmed")}</option><option value="CANCELLED">{t("cancelled")}</option><option value="ARCHIVED">{t("archived")}</option></select></label>
+              <label>{t("status")}<select value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value)}><option value="all">{t("allStatuses")}</option><option value="DRAFT">{t("draft")}</option><option value="CONFIRMED">{t("confirmed")}</option><option value="DELETED">{t("deleted")}</option><option value="ARCHIVED">{t("archived")}</option></select></label>
             </div>
           </div>
           <div className="workspace-summary-strip">
@@ -2445,7 +2445,7 @@ export function ActivityManagementPage({
                     {getInboundTrackingAction(selectedInboundDocument, t)?.label}
                   </Button>
                 ) : null}
-                {canManage && !selectedInboundDocument.archivedAt && normalizeDocumentStatus(selectedInboundDocument.status) !== "CANCELLED" ? (
+                {canManage && !selectedInboundDocument.archivedAt && normalizeDocumentStatus(selectedInboundDocument.status) !== "DELETED" ? (
                   <Button variant="outlined" color="error" startIcon={<DeleteOutlineOutlinedIcon />} onClick={() => void handleCancelInboundDocument(selectedInboundDocument)}>
                     {t("cancelReceipt")}
                   </Button>
@@ -2487,7 +2487,7 @@ export function ActivityManagementPage({
                 </div>
                 <div className="document-drawer__audit-item">
                   <strong>{t("status")}</strong>
-                  <span>{formatDocumentStatusAuditValue(selectedInboundDocument.status, selectedInboundDocument.archivedAt, selectedInboundDocument.cancelledAt, resolvedTimeZone, t)}</span>
+                  <span>{formatDocumentStatusAuditValue(selectedInboundDocument.status, selectedInboundDocument.archivedAt, selectedInboundDocument.deletedAt, resolvedTimeZone, t)}</span>
                 </div>
                 <div className="document-drawer__audit-item">
                   <strong>{t("trackingStatus")}</strong>
@@ -2506,7 +2506,7 @@ export function ActivityManagementPage({
                 <div className="sheet-note"><strong>{t("currentStorage")}</strong> {`${selectedInboundDocument.locationName} / ${summarizeInboundDocumentSections(selectedInboundDocument)}`}</div>
                 <div className="sheet-note"><strong>{t("inboundUnit")}</strong> {selectedInboundDocument.unitLabel || "-"}</div>
                 <div className="sheet-note document-drawer__meta-note"><strong>{t("documentNotes")}</strong> {selectedInboundDocument.documentNote || "-"}</div>
-                <div className="sheet-note document-drawer__meta-note"><strong>{t("cancelNote")}</strong> {selectedInboundDocument.cancelNote || "-"}</div>
+                <div className="sheet-note document-drawer__meta-note"><strong>{t("deleteNote")}</strong> {selectedInboundDocument.deleteNote || "-"}</div>
               </div>
 
               <div className="document-drawer__section-title">{t("skuLines")}</div>
@@ -2591,7 +2591,7 @@ export function ActivityManagementPage({
                 >
                   {t("downloadDeliveryNote")}
                 </Button>
-                {canManage && !selectedOutboundDocument.archivedAt && normalizeDocumentStatus(selectedOutboundDocument.status) !== "CANCELLED" ? (
+                {canManage && !selectedOutboundDocument.archivedAt && normalizeDocumentStatus(selectedOutboundDocument.status) !== "DELETED" ? (
                   <Button
                     variant="outlined"
                     color="error"
@@ -2657,7 +2657,7 @@ export function ActivityManagementPage({
                 </div>
                 <div className="document-drawer__audit-item">
                   <strong>{t("status")}</strong>
-                  <span>{formatDocumentStatusAuditValue(selectedOutboundDocument.status, selectedOutboundDocument.archivedAt, selectedOutboundDocument.cancelledAt, resolvedTimeZone, t)}</span>
+                  <span>{formatDocumentStatusAuditValue(selectedOutboundDocument.status, selectedOutboundDocument.archivedAt, selectedOutboundDocument.deletedAt, resolvedTimeZone, t)}</span>
                 </div>
                 <div className="document-drawer__audit-item">
                   <strong>{t("trackingStatus")}</strong>
@@ -2680,7 +2680,7 @@ export function ActivityManagementPage({
                 <div className="sheet-note"><strong>{t("actualShipDate")}</strong> {formatDate(selectedOutboundDocument.actualShipDate)}</div>
                 <div className="sheet-note"><strong>{t("carrier")}</strong> {selectedOutboundDocument.carrierName || "-"}</div>
                 <div className="sheet-note document-drawer__meta-note"><strong>{t("documentNotes")}</strong> {selectedOutboundDocument.documentNote || "-"}</div>
-                <div className="sheet-note document-drawer__meta-note"><strong>{t("cancelNote")}</strong> {selectedOutboundDocument.cancelNote || "-"}</div>
+                <div className="sheet-note document-drawer__meta-note"><strong>{t("deleteNote")}</strong> {selectedOutboundDocument.deleteNote || "-"}</div>
               </div>
 
               {selectedOutboundPickAllocationRows.length > 0 ? (
@@ -3408,7 +3408,7 @@ function buildInboundContainerWarnings(
 
   const candidateDocuments = inboundDocuments.filter((document) =>
     document.id !== editingInboundDocumentId
-    && normalizeDocumentStatus(document.status) !== "CANCELLED"
+    && normalizeDocumentStatus(document.status) !== "DELETED"
     && normalizeContainerNo(document.containerNo)
   );
 
@@ -3539,8 +3539,8 @@ function renderDocumentStatus(status: string, archivedAt: string | null | undefi
 
   const normalizedStatus = normalizeDocumentStatus(status);
 
-  if (normalizedStatus === "CANCELLED") {
-    return <Chip label={t("cancelled")} color="error" size="small" />;
+  if (normalizedStatus === "DELETED") {
+    return <Chip label={t("deleted")} color="error" size="small" />;
   }
 
   if (normalizedStatus === "CONFIRMED") {
@@ -3553,15 +3553,15 @@ function renderDocumentStatus(status: string, archivedAt: string | null | undefi
 function formatDocumentStatusAuditValue(
   status: string,
   archivedAt: string | null | undefined,
-  cancelledAt: string | null | undefined,
+  deletedAt: string | null | undefined,
   resolvedTimeZone: string,
   t: (key: string) => string
 ) {
   if (archivedAt) {
     return `${t("archived")} | ${formatDateTimeValue(archivedAt, resolvedTimeZone)}`;
   }
-  if (cancelledAt) {
-    return `${status} | ${formatDateTimeValue(cancelledAt, resolvedTimeZone)}`;
+  if (deletedAt) {
+    return `${status} | ${formatDateTimeValue(deletedAt, resolvedTimeZone)}`;
   }
   return status;
 }

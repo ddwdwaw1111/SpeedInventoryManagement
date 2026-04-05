@@ -642,12 +642,12 @@ function buildActivityLog(document: InboundDocument, t: Translate): ActivityEven
       tone: "emerald"
     });
   }
-  if (document.cancelledAt) {
+  if (document.deletedAt) {
     events.push({
       key: "cancelled",
       label: t("inboundDetailEventCancelled"),
-      detail: document.cancelNote || t("cancelReceipt"),
-      timestamp: document.cancelledAt,
+      detail: document.deleteNote || t("cancelReceipt"),
+      timestamp: document.deletedAt,
       tone: "slate"
     });
   }

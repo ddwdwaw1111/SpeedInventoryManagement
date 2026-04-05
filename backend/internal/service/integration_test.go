@@ -230,8 +230,8 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cancel outbound document: %v", err)
 	}
-	if !strings.EqualFold(cancelled.Status, "CANCELLED") {
-		t.Fatalf("expected cancelled outbound status, got %q", cancelled.Status)
+	if !strings.EqualFold(cancelled.Status, "DELETED") {
+		t.Fatalf("expected deleted outbound status, got %q", cancelled.Status)
 	}
 
 	itemAfterReversal := mustFindItemByID(t, ctx, store, itemAfterInbound.ID)
@@ -243,8 +243,8 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cancel inbound document: %v", err)
 	}
-	if !strings.EqualFold(cancelledInbound.Status, DocumentStatusCancelled) {
-		t.Fatalf("expected cancelled inbound status, got %q", cancelledInbound.Status)
+	if !strings.EqualFold(cancelledInbound.Status, DocumentStatusDeleted) {
+		t.Fatalf("expected deleted inbound status, got %q", cancelledInbound.Status)
 	}
 
 	itemAfterInboundReversal := mustFindItemByID(t, ctx, store, itemAfterInbound.ID)
@@ -257,9 +257,11 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 		t.Fatalf("list movements: %v", err)
 	}
 
-	assertMovementTypeCount(t, movements, itemAfterInbound.ID, "IN", 1)
-	assertMovementTypeCount(t, movements, itemAfterInbound.ID, "OUT", 1)
-	assertMovementTypeCount(t, movements, itemAfterInbound.ID, "REVERSAL", 2)
+	// After hard-delete cancel, all stock_ledger entries for the deleted
+	// pallets and documents are removed, so no movements should remain.
+	assertMovementTypeCount(t, movements, itemAfterInbound.ID, "IN", 0)
+	assertMovementTypeCount(t, movements, itemAfterInbound.ID, "OUT", 0)
+	assertMovementTypeCount(t, movements, itemAfterInbound.ID, "REVERSAL", 0)
 }
 
 func TestBackfilledInboundUsesActualReceivedTimestampIntegration(t *testing.T) {
@@ -989,18 +991,18 @@ func TestPalletCentricDualWriteLifecycleIntegration(t *testing.T) {
 		t.Fatalf("expected pallet item quantity 12 after outbound reversal, got %d", palletItemQty)
 	}
 
-	var reversalLedgerQty int
-	if err := store.db.GetContext(ctx, &reversalLedgerQty, `
-		SELECT COALESCE(SUM(quantity_change), 0)
+	// After hard-delete cancel, all outbound stock_ledger entries are removed
+	var remainingOutboundLedgerCount int
+	if err := store.db.GetContext(ctx, &remainingOutboundLedgerCount, `
+		SELECT COUNT(*)
 		FROM stock_ledger
 		WHERE source_document_type = 'OUTBOUND'
 		  AND source_document_id = ?
-		  AND event_type = 'REVERSAL'
 	`, outbound.ID); err != nil {
-		t.Fatalf("sum outbound reversal stock ledger quantities: %v", err)
+		t.Fatalf("count remaining outbound stock ledger entries: %v", err)
 	}
-	if reversalLedgerQty != 5 {
-		t.Fatalf("expected outbound reversal stock ledger quantity 5, got %d", reversalLedgerQty)
+	if remainingOutboundLedgerCount != 0 {
+		t.Fatalf("expected 0 outbound stock ledger entries after hard-delete cancel, got %d", remainingOutboundLedgerCount)
 	}
 }
 
@@ -1547,19 +1549,12 @@ func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 		t.Fatal("expected archiving a confirmed inbound document to fail")
 	}
 
-	cancelled, err := store.CancelInboundDocument(ctx, original.ID, CancelInboundDocumentInput{Reason: "Inbound copy source"})
+	// Copy the confirmed document before cancelling (cancel now hard-deletes)
+	copied, err := store.CopyInboundDocument(ctx, original.ID)
 	if err != nil {
-		t.Fatalf("cancel inbound document: %v", err)
+		t.Fatalf("copy confirmed inbound document: %v", err)
 	}
-	if cancelled.Status != DocumentStatusCancelled {
-		t.Fatalf("expected cancelled inbound status, got %q", cancelled.Status)
-	}
-
-	copied, err := store.CopyInboundDocument(ctx, cancelled.ID)
-	if err != nil {
-		t.Fatalf("copy cancelled inbound document: %v", err)
-	}
-	if copied.ID == cancelled.ID {
+	if copied.ID == original.ID {
 		t.Fatal("expected copied inbound document to have a new id")
 	}
 	if copied.Status != DocumentStatusDraft {
@@ -1572,14 +1567,16 @@ func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 		t.Fatalf("expected copied inbound line for %q, got %#v", item.SKU, copied.Lines)
 	}
 
-	archived, err := store.ArchiveInboundDocument(ctx, cancelled.ID)
+	// Cancel (hard-delete) the original document and all related records
+	cancelled, err := store.CancelInboundDocument(ctx, original.ID, CancelInboundDocumentInput{Reason: "Inbound copy source"})
 	if err != nil {
-		t.Fatalf("archive inbound document: %v", err)
+		t.Fatalf("cancel inbound document: %v", err)
 	}
-	if archived.ArchivedAt == nil {
-		t.Fatal("expected archived inbound document to have archived_at set")
+	if cancelled.Status != DocumentStatusDeleted {
+		t.Fatalf("expected deleted inbound status, got %q", cancelled.Status)
 	}
 
+	// After cancel/hard-delete, only the copied document should remain
 	inboundDocuments, err := store.ListInboundDocuments(ctx, 20)
 	if err != nil {
 		t.Fatalf("list inbound documents: %v", err)
@@ -1591,20 +1588,21 @@ func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 		t.Fatalf("expected copied inbound document %d in active list, got %d", copied.ID, inboundDocuments[0].ID)
 	}
 
+	// Archived and all-scope lists should also have only the copy
 	archivedInboundDocuments, err := store.ListInboundDocuments(ctx, 20, DocumentArchiveScopeArchived)
 	if err != nil {
 		t.Fatalf("list archived inbound documents: %v", err)
 	}
-	if len(archivedInboundDocuments) != 1 || archivedInboundDocuments[0].ID != cancelled.ID {
-		t.Fatalf("expected archived inbound document %d in archived list, got %#v", cancelled.ID, archivedInboundDocuments)
+	if len(archivedInboundDocuments) != 0 {
+		t.Fatalf("expected no archived inbound documents after hard-delete, got %d", len(archivedInboundDocuments))
 	}
 
 	allInboundDocuments, err := store.ListInboundDocuments(ctx, 20, DocumentArchiveScopeAll)
 	if err != nil {
 		t.Fatalf("list all inbound documents: %v", err)
 	}
-	if len(allInboundDocuments) != 2 {
-		t.Fatalf("expected copied and archived inbound documents in all list, got %d", len(allInboundDocuments))
+	if len(allInboundDocuments) != 1 {
+		t.Fatalf("expected only copied inbound document in all list, got %d", len(allInboundDocuments))
 	}
 }
 
@@ -1642,19 +1640,12 @@ func TestOutboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 		t.Fatalf("create outbound document: %v", err)
 	}
 
-	cancelled, err := store.CancelOutboundDocument(ctx, original.ID, CancelOutboundDocumentInput{Reason: "Outbound copy source"})
+	// Copy the confirmed document before cancelling (cancel now hard-deletes)
+	copied, err := store.CopyOutboundDocument(ctx, original.ID)
 	if err != nil {
-		t.Fatalf("cancel outbound document: %v", err)
+		t.Fatalf("copy confirmed outbound document: %v", err)
 	}
-	if cancelled.Status != DocumentStatusCancelled {
-		t.Fatalf("expected cancelled outbound status, got %q", cancelled.Status)
-	}
-
-	copied, err := store.CopyOutboundDocument(ctx, cancelled.ID)
-	if err != nil {
-		t.Fatalf("copy cancelled outbound document: %v", err)
-	}
-	if copied.ID == cancelled.ID {
+	if copied.ID == original.ID {
 		t.Fatal("expected copied outbound document to have a new id")
 	}
 	if copied.Status != DocumentStatusDraft {
@@ -1670,14 +1661,16 @@ func TestOutboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 		t.Fatal("expected copied outbound draft to recompute pick allocations on confirm, not retain them")
 	}
 
-	archived, err := store.ArchiveOutboundDocument(ctx, cancelled.ID)
+	// Cancel (hard-delete) the original document and all related records
+	cancelled, err := store.CancelOutboundDocument(ctx, original.ID, CancelOutboundDocumentInput{Reason: "Outbound copy source"})
 	if err != nil {
-		t.Fatalf("archive outbound document: %v", err)
+		t.Fatalf("cancel outbound document: %v", err)
 	}
-	if archived.ArchivedAt == nil {
-		t.Fatal("expected archived outbound document to have archived_at set")
+	if cancelled.Status != DocumentStatusDeleted {
+		t.Fatalf("expected deleted outbound status, got %q", cancelled.Status)
 	}
 
+	// After cancel/hard-delete, only the copied document should remain
 	outboundDocuments, err := store.ListOutboundDocuments(ctx, 20)
 	if err != nil {
 		t.Fatalf("list outbound documents: %v", err)
@@ -1689,20 +1682,21 @@ func TestOutboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 		t.Fatalf("expected copied outbound document %d in active list, got %d", copied.ID, outboundDocuments[0].ID)
 	}
 
+	// Archived and all-scope lists should have only the copy
 	archivedOutboundDocuments, err := store.ListOutboundDocuments(ctx, 20, DocumentArchiveScopeArchived)
 	if err != nil {
 		t.Fatalf("list archived outbound documents: %v", err)
 	}
-	if len(archivedOutboundDocuments) != 1 || archivedOutboundDocuments[0].ID != cancelled.ID {
-		t.Fatalf("expected archived outbound document %d in archived list, got %#v", cancelled.ID, archivedOutboundDocuments)
+	if len(archivedOutboundDocuments) != 0 {
+		t.Fatalf("expected no archived outbound documents after hard-delete, got %d", len(archivedOutboundDocuments))
 	}
 
 	allOutboundDocuments, err := store.ListOutboundDocuments(ctx, 20, DocumentArchiveScopeAll)
 	if err != nil {
 		t.Fatalf("list all outbound documents: %v", err)
 	}
-	if len(allOutboundDocuments) != 2 {
-		t.Fatalf("expected copied and archived outbound documents in all list, got %d", len(allOutboundDocuments))
+	if len(allOutboundDocuments) != 1 {
+		t.Fatalf("expected only copied outbound document in all list, got %d", len(allOutboundDocuments))
 	}
 }
 
@@ -2177,8 +2171,8 @@ func TestOutboundAutoAllocationIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cancel split outbound document: %v", err)
 	}
-	if !strings.EqualFold(cancelled.Status, DocumentStatusCancelled) {
-		t.Fatalf("expected cancelled outbound status, got %q", cancelled.Status)
+	if !strings.EqualFold(cancelled.Status, DocumentStatusDeleted) {
+		t.Fatalf("expected deleted outbound status, got %q", cancelled.Status)
 	}
 
 	itemARestored := mustFindItemByID(t, ctx, store, itemA.ID)

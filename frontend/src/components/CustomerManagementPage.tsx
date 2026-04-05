@@ -581,8 +581,8 @@ function isOpenStatus(status: string) {
 
 function renderDocumentStatusChip(status: string, t: (key: string) => string) {
   const normalized = status.trim().toUpperCase();
-  if (normalized === "CANCELLED") {
-    return <Chip label={t("cancelled")} color="error" size="small" />;
+  if (normalized === "DELETED") {
+    return <Chip label={t("deleted")} color="error" size="small" />;
   }
   if (normalized === "CONFIRMED") {
     return <Chip label={t("confirmed")} color="success" size="small" />;

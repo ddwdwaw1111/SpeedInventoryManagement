@@ -589,7 +589,7 @@ function normalizeDocumentStatus(status: string) {
 
 function isPendingDocument(status: string) {
   const normalizedStatus = normalizeDocumentStatus(status);
-  return normalizedStatus !== "CONFIRMED" && normalizedStatus !== "CANCELLED" && normalizedStatus !== "ARCHIVED";
+  return normalizedStatus !== "CONFIRMED" && normalizedStatus !== "DELETED" && normalizedStatus !== "ARCHIVED";
 }
 
 function normalizeInboundTrackingStatus(trackingStatus: string, documentStatus: string) {

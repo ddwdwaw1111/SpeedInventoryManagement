@@ -583,7 +583,7 @@ func (s *Server) handleUpdateOutboundDocumentTrackingStatus(c *gin.Context) {
 		"status":         document.Status,
 		"trackingStatus": document.TrackingStatus,
 		"confirmedAt":    document.ConfirmedAt,
-		"cancelledAt":    document.CancelledAt,
+		"cancelledAt":    document.DeletedAt,
 	})
 
 	writeJSON(c, http.StatusOK, document)
@@ -610,14 +610,12 @@ func (s *Server) handleCancelOutboundDocument(c *gin.Context) {
 		return
 	}
 
-	s.writeAuditLog(c, "CANCEL", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Cancelled outbound document", map[string]any{
+	s.writeAuditLog(c, "DELETE", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Deleted outbound document and all related records", map[string]any{
 		"packingListNo": document.PackingListNo,
-		"status":        document.Status,
-		"reason":        document.CancelNote,
-		"cancelledAt":   document.CancelledAt,
+		"reason":        document.DeleteNote,
 	})
 
-	writeJSON(c, http.StatusOK, document)
+	c.Status(http.StatusNoContent)
 }
 
 func (s *Server) handleArchiveOutboundDocument(c *gin.Context) {
@@ -818,14 +816,12 @@ func (s *Server) handleCancelInboundDocument(c *gin.Context) {
 		return
 	}
 
-	s.writeAuditLog(c, "CANCEL", "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), "Cancelled inbound document", map[string]any{
+	s.writeAuditLog(c, "DELETE", "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), "Deleted inbound document and all related records", map[string]any{
 		"containerNo": document.ContainerNo,
-		"status":      document.Status,
-		"reason":      document.CancelNote,
-		"cancelledAt": document.CancelledAt,
+		"reason":      document.DeleteNote,
 	})
 
-	writeJSON(c, http.StatusOK, document)
+	c.Status(http.StatusNoContent)
 }
 
 func (s *Server) handleArchiveInboundDocument(c *gin.Context) {
@@ -899,7 +895,7 @@ func (s *Server) handleUpdateInboundDocumentTrackingStatus(c *gin.Context) {
 		"status":         document.Status,
 		"trackingStatus": document.TrackingStatus,
 		"confirmedAt":    document.ConfirmedAt,
-		"cancelledAt":    document.CancelledAt,
+		"cancelledAt":    document.DeletedAt,
 	})
 
 	writeJSON(c, http.StatusOK, document)

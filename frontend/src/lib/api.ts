@@ -1,10 +1,10 @@
 import type {
   AuditLog,
   AuthResponse,
-  CancelInboundDocumentPayload,
+  DeleteInboundDocumentPayload,
   CycleCount,
   CycleCountPayload,
-  CancelOutboundDocumentPayload,
+  DeleteOutboundDocumentPayload,
   CreateUserPayload,
   Customer,
   CustomerPayload,
@@ -321,8 +321,8 @@ export const api = {
     });
   },
 
-  cancelOutboundDocument(documentId: number, payload?: CancelOutboundDocumentPayload) {
-    return request<OutboundDocument>(`/outbound-documents/${documentId}/cancel`, {
+  cancelOutboundDocument(documentId: number, payload?: DeleteOutboundDocumentPayload) {
+    return request<void>(`/outbound-documents/${documentId}/cancel`, {
       method: "POST",
       body: JSON.stringify(payload ?? {})
     });
@@ -381,8 +381,8 @@ export const api = {
     });
   },
 
-  cancelInboundDocument(documentId: number, payload?: CancelInboundDocumentPayload) {
-    return request<InboundDocument>(`/inbound-documents/${documentId}/cancel`, {
+  cancelInboundDocument(documentId: number, payload?: DeleteInboundDocumentPayload) {
+    return request<void>(`/inbound-documents/${documentId}/cancel`, {
       method: "POST",
       body: JSON.stringify(payload ?? {})
     });

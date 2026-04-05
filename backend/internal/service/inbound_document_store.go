@@ -28,8 +28,8 @@ type InboundDocument struct {
 	Status              string                `json:"status"`
 	TrackingStatus      string                `json:"trackingStatus"`
 	ConfirmedAt         *time.Time            `json:"confirmedAt"`
-	CancelNote          string                `json:"cancelNote"`
-	CancelledAt         *time.Time            `json:"cancelledAt"`
+	DeleteNote          string                `json:"deleteNote"`
+	DeletedAt           *time.Time            `json:"deletedAt"`
 	ArchivedAt          *time.Time            `json:"archivedAt"`
 	TotalLines          int                   `json:"totalLines"`
 	TotalExpectedQty    int                   `json:"totalExpectedQty"`
@@ -106,8 +106,8 @@ type inboundDocumentRow struct {
 	Status              string     `db:"status"`
 	TrackingStatus      string     `db:"tracking_status"`
 	ConfirmedAt         *time.Time `db:"confirmed_at"`
-	CancelNote          string     `db:"cancel_note"`
-	CancelledAt         *time.Time `db:"cancelled_at"`
+	DeleteNote          string     `db:"cancel_note"`
+	DeletedAt           *time.Time `db:"cancelled_at"`
 	ArchivedAt          *time.Time `db:"archived_at"`
 	CreatedAt           time.Time  `db:"created_at"`
 	UpdatedAt           time.Time  `db:"updated_at"`
@@ -202,8 +202,8 @@ func (s *Store) ListInboundDocuments(ctx context.Context, limit int, archiveScop
 			Status:              normalizeDocumentStatus(row.Status),
 			TrackingStatus:      normalizeInboundTrackingStatus(row.TrackingStatus, row.Status),
 			ConfirmedAt:         row.ConfirmedAt,
-			CancelNote:          row.CancelNote,
-			CancelledAt:         row.CancelledAt,
+			DeleteNote:          row.DeleteNote,
+			DeletedAt:           row.DeletedAt,
 			ArchivedAt:          row.ArchivedAt,
 			CreatedAt:           row.CreatedAt,
 			UpdatedAt:           row.UpdatedAt,
@@ -1361,8 +1361,8 @@ func (s *Store) ConfirmInboundDocument(ctx context.Context, documentID int64) (I
 	}
 
 	status := normalizeDocumentStatus(documentRow.Status)
-	if status == DocumentStatusCancelled {
-		return InboundDocument{}, fmt.Errorf("%w: cancelled receipt cannot be confirmed", ErrInvalidInput)
+	if status == DocumentStatusDeleted {
+		return InboundDocument{}, fmt.Errorf("%w: deleted receipt cannot be confirmed", ErrInvalidInput)
 	}
 	if status == DocumentStatusConfirmed {
 		return InboundDocument{}, fmt.Errorf("%w: receipt is already confirmed", ErrInvalidInput)
@@ -1391,8 +1391,8 @@ func (s *Store) UpdateInboundDocumentTrackingStatus(ctx context.Context, documen
 	}
 
 	documentStatus := normalizeDocumentStatus(documentRow.Status)
-	if documentStatus == DocumentStatusCancelled {
-		return InboundDocument{}, fmt.Errorf("%w: cancelled receipt cannot change tracking status", ErrInvalidInput)
+	if documentStatus == DocumentStatusDeleted {
+		return InboundDocument{}, fmt.Errorf("%w: deleted receipt cannot change tracking status", ErrInvalidInput)
 	}
 
 	currentTrackingStatus := normalizeInboundTrackingStatus(documentRow.TrackingStatus, documentRow.Status)
@@ -1443,8 +1443,8 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 	}
 
 	status := normalizeDocumentStatus(documentRow.Status)
-	if status == DocumentStatusCancelled {
-		return fmt.Errorf("%w: cancelled receipt cannot be confirmed", ErrInvalidInput)
+	if status == DocumentStatusDeleted {
+		return fmt.Errorf("%w: deleted receipt cannot be confirmed", ErrInvalidInput)
 	}
 	if status == DocumentStatusConfirmed {
 		return fmt.Errorf("%w: receipt is already confirmed", ErrInvalidInput)
@@ -1604,101 +1604,84 @@ func (s *Store) CancelInboundDocument(ctx context.Context, documentID int64, inp
 	}
 
 	status := normalizeDocumentStatus(documentRow.Status)
-	if status == DocumentStatusCancelled {
-		return InboundDocument{}, fmt.Errorf("%w: inbound document is already cancelled", ErrInvalidInput)
+	if status == DocumentStatusDeleted {
+		return InboundDocument{}, fmt.Errorf("%w: inbound document is already deleted", ErrInvalidInput)
 	}
 
 	cancellationReason := firstNonEmpty(input.Reason, fmt.Sprintf("Reversal of inbound %s", firstNonEmpty(documentRow.ContainerNo, fmt.Sprintf("IN-%d", documentID))))
-	cancelledAt := time.Now().UTC()
+	deletedAt := time.Now().UTC()
 
 	if status == DocumentStatusConfirmed {
-		lineRows, err := s.loadInboundDocumentLinesTx(ctx, tx, documentID)
+		// Collect pallet IDs created by this inbound
+		palletIDs, err := s.collectPalletIDsByInboundDocumentTx(ctx, tx, documentID)
 		if err != nil {
 			return InboundDocument{}, err
 		}
+		if len(palletIDs) > 0 {
+			inClause, args := buildInClause(palletIDs)
 
-		for _, lineRow := range lineRows {
-			activePallets, err := s.listActiveInboundLinePalletStatesTx(ctx, tx, lineRow.ID, false)
-			if err != nil {
-				return InboundDocument{}, err
+			// Block delete if any pallet has been partially consumed by outbound picks
+			var outboundPickCount int
+			if err := tx.QueryRowContext(ctx, fmt.Sprintf(
+				`SELECT COUNT(*) FROM outbound_picks WHERE pallet_id IN (%s)`, inClause), args...).Scan(&outboundPickCount); err != nil {
+				return InboundDocument{}, mapDBError(fmt.Errorf("check outbound picks for inbound pallets: %w", err))
 			}
-			totalOpenQty := 0
-			for _, palletState := range activePallets {
-				totalOpenQty += palletState.Quantity
-			}
-			if totalOpenQty != lineRow.receivedOrExpectedQty() {
-				return InboundDocument{}, fmt.Errorf("%w: confirmed receipt with downstream pallet activity cannot be cancelled", ErrInvalidInput)
+			if outboundPickCount > 0 {
+				return InboundDocument{}, fmt.Errorf("%w: receipt has pallets referenced by outbound shipments and cannot be deleted", ErrInvalidInput)
 			}
 
-			for _, palletState := range activePallets {
-				if palletState.Quantity <= 0 {
-					continue
-				}
-				if err := s.createPalletLocationEventTx(ctx, tx, createPalletLocationEventInput{
-					PalletID:         palletState.PalletID,
-					ContainerVisitID: palletState.ContainerVisitID,
-					CustomerID:       palletState.CustomerID,
-					LocationID:       palletState.LocationID,
-					StorageSection:   palletState.StorageSection,
-					ContainerNo:      palletState.ContainerNo,
-					EventType:        PalletEventCancelled,
-					QuantityDelta:    -palletState.Quantity,
-					PalletDelta:      -1,
-				}); err != nil {
-					return InboundDocument{}, err
-				}
-				if _, err := tx.ExecContext(ctx, `
-					UPDATE pallet_items
-					SET quantity = 0, updated_at = CURRENT_TIMESTAMP
-					WHERE id = ?
-				`, palletState.PalletItemID); err != nil {
-					return InboundDocument{}, mapDBError(fmt.Errorf("cancel inbound pallet quantity: %w", err))
-				}
-				if err := s.setPalletCancelledTx(ctx, tx, palletState.PalletID); err != nil {
-					return InboundDocument{}, err
-				}
-				if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
-					EventType:           StockLedgerEventReversal,
-					PalletID:            palletState.PalletID,
-					PalletItemID:        palletState.PalletItemID,
-					SKUMasterID:         palletState.SKUMasterID,
-					CustomerID:          palletState.CustomerID,
-					LocationID:          palletState.LocationID,
-					StorageSection:      palletState.StorageSection,
-					QuantityChange:      -palletState.Quantity,
-					SourceDocumentType:  StockLedgerSourceInbound,
-					SourceDocumentID:    documentID,
-					SourceLineID:        lineRow.ID,
-					ContainerNo:         palletState.ContainerNo,
-					DescriptionSnapshot: firstNonEmpty(lineRow.DescriptionSnapshot, lineRow.SKUSnapshot),
-					Reason:              cancellationReason,
-				}); err != nil {
-					return InboundDocument{}, err
-				}
+			// Block delete if any pallet has child pallets (from transfers)
+			var childPalletCount int
+			if err := tx.QueryRowContext(ctx, fmt.Sprintf(
+				`SELECT COUNT(*) FROM pallets WHERE parent_pallet_id IN (%s)`, inClause), args...).Scan(&childPalletCount); err != nil {
+				return InboundDocument{}, mapDBError(fmt.Errorf("check child pallets for inbound pallets: %w", err))
 			}
-		}
-		if err := s.closeContainerVisitForInboundDocumentTx(ctx, tx, documentID, ContainerVisitStatusCancelled); err != nil {
-			return InboundDocument{}, err
+			if childPalletCount > 0 {
+				return InboundDocument{}, fmt.Errorf("%w: receipt has pallets that were split by transfers and cannot be deleted", ErrInvalidInput)
+			}
+
+			// Block delete if any pallet item has allocated, damaged, or hold quantities
+			var allocatedCount int
+			if err := tx.QueryRowContext(ctx, fmt.Sprintf(
+				`SELECT COUNT(*) FROM pallet_items WHERE pallet_id IN (%s) AND (allocated_qty > 0 OR damaged_qty > 0 OR hold_qty > 0)`, inClause), args...).Scan(&allocatedCount); err != nil {
+				return InboundDocument{}, mapDBError(fmt.Errorf("check pallet item flags for inbound pallets: %w", err))
+			}
+			if allocatedCount > 0 {
+				return InboundDocument{}, fmt.Errorf("%w: receipt has pallets with allocated, damaged, or held stock and cannot be deleted", ErrInvalidInput)
+			}
+
+			// Safe to delete — remove stock_ledger entries (no FK cascade to pallets)
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf(
+				`DELETE FROM stock_ledger WHERE pallet_id IN (%s)`, inClause), args...); err != nil {
+				return InboundDocument{}, mapDBError(fmt.Errorf("delete stock ledger for inbound pallets: %w", err))
+			}
+			// Delete pallets (cascades to pallet_items, pallet_location_events)
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf(
+				`DELETE FROM pallets WHERE id IN (%s)`, inClause), args...); err != nil {
+				return InboundDocument{}, mapDBError(fmt.Errorf("delete inbound pallets: %w", err))
+			}
 		}
 	}
 
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE inbound_documents
-		SET
-			status = ?,
-			cancel_note = ?,
-			cancelled_at = ?,
-			updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`, DocumentStatusCancelled, nullableString(cancellationReason), cancelledAt, documentID); err != nil {
-		return InboundDocument{}, mapDBError(fmt.Errorf("cancel inbound document: %w", err))
+	// Delete inbound document (cascades to inbound_document_lines, container_visits)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM inbound_documents WHERE id = ?`, documentID); err != nil {
+		return InboundDocument{}, mapDBError(fmt.Errorf("delete inbound document: %w", err))
 	}
 
 	if err := tx.Commit(); err != nil {
 		return InboundDocument{}, fmt.Errorf("commit inbound cancel: %w", err)
 	}
 
-	return s.getInboundDocument(ctx, documentID)
+	return InboundDocument{
+		ID:          documentRow.ID,
+		CustomerID:  documentRow.CustomerID,
+		LocationID:  documentRow.LocationID,
+		ContainerNo: documentRow.ContainerNo,
+		Status:      DocumentStatusDeleted,
+		DeleteNote:  cancellationReason,
+		DeletedAt:   &deletedAt,
+		CreatedAt:   documentRow.CreatedAt,
+	}, nil
 }
 
 func (s *Store) ArchiveInboundDocument(ctx context.Context, documentID int64) (InboundDocument, error) {
@@ -1885,8 +1868,8 @@ func (s *Store) loadInboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx, 
 		&documentRow.Status,
 		&documentRow.TrackingStatus,
 		&documentRow.ConfirmedAt,
-		&documentRow.CancelNote,
-		&documentRow.CancelledAt,
+		&documentRow.DeleteNote,
+		&documentRow.DeletedAt,
 		&documentRow.ArchivedAt,
 		&documentRow.CreatedAt,
 		&documentRow.UpdatedAt,
@@ -2039,8 +2022,8 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 			Status:              normalizeDocumentStatus(row.Status),
 			TrackingStatus:      normalizeInboundTrackingStatus(row.TrackingStatus, row.Status),
 			ConfirmedAt:         row.ConfirmedAt,
-			CancelNote:          row.CancelNote,
-			CancelledAt:         row.CancelledAt,
+			DeleteNote:          row.DeleteNote,
+			DeletedAt:           row.DeletedAt,
 			ArchivedAt:          row.ArchivedAt,
 			CreatedAt:           row.CreatedAt,
 			UpdatedAt:           row.UpdatedAt,

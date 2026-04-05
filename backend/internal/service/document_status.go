@@ -9,7 +9,7 @@ const (
 	DocumentStatusDraft     = "DRAFT"
 	DocumentStatusConfirmed = "CONFIRMED"
 	DocumentStatusPosted    = "POSTED"
-	DocumentStatusCancelled = "CANCELLED"
+	DocumentStatusDeleted   = "DELETED"
 	DocumentStatusArchived  = "ARCHIVED"
 
 	DocumentArchiveScopeActive   = "ACTIVE"
@@ -38,8 +38,8 @@ func normalizeDocumentStatus(raw string) string {
 		return DocumentStatusConfirmed
 	case DocumentStatusPosted:
 		return DocumentStatusConfirmed
-	case DocumentStatusCancelled:
-		return DocumentStatusCancelled
+	case DocumentStatusDeleted, "CANCELLED":
+		return DocumentStatusDeleted
 	default:
 		return strings.TrimSpace(strings.ToUpper(raw))
 	}
@@ -56,7 +56,7 @@ func validateCreatableDocumentStatus(status string) error {
 
 func validateTransitionStatus(status string) error {
 	switch normalizeDocumentStatus(status) {
-	case DocumentStatusConfirmed, DocumentStatusCancelled:
+	case DocumentStatusConfirmed, DocumentStatusDeleted:
 		return nil
 	default:
 		return fmt.Errorf("%w: invalid document transition status", ErrInvalidInput)
