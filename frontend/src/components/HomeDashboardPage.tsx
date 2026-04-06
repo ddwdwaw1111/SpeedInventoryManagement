@@ -1197,6 +1197,19 @@ function summaryToneBadgeClass(tone: SummaryCard["tone"]) {
   }
 }
 
+function summaryToneBadgeGlass(tone: SummaryCard["tone"]) {
+  switch (tone) {
+    case "emerald":
+      return "bg-emerald-400/25 text-emerald-200";
+    case "amber":
+      return "bg-amber-400/25 text-amber-200";
+    case "red":
+      return "bg-rose-400/25 text-rose-200";
+    default:
+      return "bg-blue-400/25 text-blue-200";
+  }
+}
+
 function badgeToneClass(tone: ActivityEntry["tone"]) {
   switch (tone) {
     case "emerald":

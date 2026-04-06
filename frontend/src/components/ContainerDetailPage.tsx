@@ -1,8 +1,11 @@
 import CloseIcon from "@mui/icons-material/Close";
 import CompareArrowsOutlinedIcon from "@mui/icons-material/CompareArrowsOutlined";
+import ExpandMoreRoundedIcon from "@mui/icons-material/ExpandMoreRounded";
+import SwapVertRoundedIcon from "@mui/icons-material/SwapVertRounded";
 import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
+import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
 import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
 import OutboxOutlinedIcon from "@mui/icons-material/OutboxOutlined";
 import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
@@ -38,6 +41,7 @@ import { InlineAlert, useFeedbackToast } from "./Feedback";
 import { WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 const PALLETS_PER_PAGE = 6;
+const HISTORY_PER_PAGE = 15;
 const activityDateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
 
 type ActiveInventoryDialog = "adjustment" | "transfer" | null;
@@ -99,6 +103,8 @@ export function ContainerDetailPage({
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [historyErrorMessage, setHistoryErrorMessage] = useState("");
   const [palletPage, setPalletPage] = useState(1);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyAscending, setHistoryAscending] = useState(false);
   const [palletReloadToken, setPalletReloadToken] = useState(0);
   const [activeInventoryDialog, setActiveInventoryDialog] = useState<ActiveInventoryDialog>(null);
   const [inventoryDialogError, setInventoryDialogError] = useState("");
@@ -164,6 +170,10 @@ export function ContainerDetailPage({
       ? containerHistoryEntries
       : containerHistoryEntries.filter((entry) => entry.filterKey === historyTypeFilter),
     [containerHistoryEntries, historyTypeFilter]
+  );
+  const sortedFilteredHistoryEntries = useMemo(
+    () => historyAscending ? [...filteredHistoryEntries].reverse() : filteredHistoryEntries,
+    [filteredHistoryEntries, historyAscending]
   );
   const firstReceivedAt = useMemo(() => {
     const firstReceivedEntry = [...containerHistoryEntries]
@@ -316,6 +326,11 @@ export function ContainerDetailPage({
     const startIndex = (palletPage - 1) * PALLETS_PER_PAGE;
     return filteredPallets.slice(startIndex, startIndex + PALLETS_PER_PAGE);
   }, [filteredPallets, palletPage]);
+  const totalHistoryPages = Math.max(1, Math.ceil(filteredHistoryEntries.length / HISTORY_PER_PAGE));
+  const paginatedHistoryEntries = useMemo(() => {
+    const startIndex = (historyPage - 1) * HISTORY_PER_PAGE;
+    return sortedFilteredHistoryEntries.slice(startIndex, startIndex + HISTORY_PER_PAGE);
+  }, [sortedFilteredHistoryEntries, historyPage]);
 
   useEffect(() => {
     setPalletPage(1);
@@ -325,7 +340,17 @@ export function ContainerDetailPage({
     setHistoryTypeFilter("ALL");
     setActivePalletWarehouse("ALL");
     setActivePalletSection("ALL");
+    setHistoryPage(1);
+    setHistoryAscending(false);
   }, [normalizedContainerNo]);
+
+  useEffect(() => {
+    setHistoryPage(1);
+  }, [historyTypeFilter, historyAscending]);
+
+  useEffect(() => {
+    setHistoryPage((current) => Math.min(current, totalHistoryPages));
+  }, [totalHistoryPages]);
 
   useEffect(() => {
     if (activePalletWarehouse !== "ALL" && !palletWarehouseTabs.some((tab) => tab.key === activePalletWarehouse)) {
@@ -480,6 +505,10 @@ export function ContainerDetailPage({
     () => filteredPallets.filter((pallet) => pallet.status === "OPEN" || pallet.status === "PARTIAL").length,
     [filteredPallets]
   );
+  const totalOpenPalletCount = useMemo(
+    () => pallets.filter((pallet) => pallet.status === "OPEN" || pallet.status === "PARTIAL").length,
+    [pallets]
+  );
   const filteredPalletQty = useMemo(
     () => filteredPallets.reduce((sum, pallet) => sum + getPalletTotalQty(pallet), 0),
     [filteredPallets]
@@ -491,23 +520,23 @@ export function ContainerDetailPage({
 
   return (
     <main className="workspace-main">
-      <div className="space-y-6 pb-6">
-        <section className="rounded-[24px] border border-slate-200/80 bg-[linear-gradient(180deg,#f4f8ff_0%,#eef4fb_100%)] px-5 py-5 shadow-[0_18px_48px_rgba(10,31,68,0.06)]">
-          <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-            <div className="space-y-2.5">
-              <div className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500 ring-1 ring-slate-200/70">
+      <div className="space-y-4 pb-4">
+        <section className="rounded-[24px] bg-[radial-gradient(ellipse_at_top_right,rgba(96,165,250,0.12),transparent_55%),radial-gradient(ellipse_at_bottom_left,rgba(99,102,241,0.08),transparent_50%),linear-gradient(135deg,#09193a_0%,#0f2d63_50%,#173a7a_100%)] px-5 py-5 shadow-[0_20px_60px_rgba(8,20,50,0.28)]">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+            <div className="space-y-1.5">
+              <div className="inline-flex items-center gap-2 rounded-full bg-white/15 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.22em] text-white/70 ring-1 ring-white/20">
                 <span>{t("containerDetailEyebrow")}</span>
               </div>
               <div>
-                <h1 className="font-headline text-3xl font-extrabold tracking-tight text-[#0d2d63]">
+                <h1 className="font-headline text-2xl font-extrabold tracking-tight text-white">
                   {normalizedContainerNo || t("containerDetailMissingTitle")}
                 </h1>
                 {container ? (
-                  <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-white/85 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#143569] ring-1 ring-slate-200/80">
+                  <div className="mt-1 inline-flex items-center gap-2 rounded-full bg-white/15 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/80 ring-1 ring-white/25">
                     <span>{isHistoricalOnly ? t("containerDetailHistoricalBadge") : t("containerDetailCurrentBadge")}</span>
                   </div>
                 ) : null}
-                <p className="mt-1.5 max-w-3xl text-sm text-slate-600">
+                <p className="mt-1 max-w-3xl text-sm text-white/65">
                   {container
                     ? t("containerDetailSubtitle", {
                       customer: container.customerSummary || "-",
@@ -518,80 +547,58 @@ export function ContainerDetailPage({
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={onBackToList}
-                className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50"
+                className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25"
               >
-                <OpenInNewRoundedIcon sx={{ fontSize: 18 }} />
+                <ArrowBackRoundedIcon sx={{ fontSize: 15 }} />
                 {t("back")}
               </button>
               <button
                 type="button"
                 onClick={handleOpenActivity}
                 disabled={!container}
-                className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <HistoryOutlinedIcon sx={{ fontSize: 18 }} />
+                <HistoryOutlinedIcon sx={{ fontSize: 15 }} />
                 {t("allActivity")}
               </button>
-              {canManageInventory ? (
-                <button
-                  type="button"
-                  onClick={openAdjustmentDialog}
-                  disabled={!canOpenAdjustmentDialog}
-                  className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <WarehouseOutlinedIcon sx={{ fontSize: 18 }} />
-                  {t("addAdjustment")}
-                </button>
-              ) : null}
-              {canManageInventory ? (
-                <button
-                  type="button"
-                  onClick={openTransferDialog}
-                  disabled={!canOpenTransferDialog}
-                  className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <WarehouseOutlinedIcon sx={{ fontSize: 18 }} />
-                  {t("addTransfer")}
-                </button>
-              ) : null}
               <button
                 type="button"
                 onClick={handleOpenPalletWorkspace}
                 disabled={!normalizedContainerNo}
-                className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <WarehouseOutlinedIcon sx={{ fontSize: 18 }} />
+                <OpenInNewRoundedIcon sx={{ fontSize: 15 }} />
                 {t("openPalletWorkspace")}
               </button>
             </div>
           </div>
 
-          <div className="mt-5 rounded-[22px] border border-slate-200/80 bg-white/95 p-4 shadow-[0_16px_32px_rgba(15,23,42,0.04)]">
+          <div className="mt-3 rounded-[18px] bg-white/10 p-3 ring-1 ring-white/15 backdrop-blur-sm">
             {isLoading ? (
-              <div className="grid gap-4 md:grid-cols-4 animate-pulse">
+              <div className="grid gap-3 md:grid-cols-4 animate-pulse">
                 {Array.from({ length: 4 }, (_, index) => (
-                  <div key={index} className="rounded-[18px] border border-slate-200/80 bg-slate-50/80 p-4">
-                    <div className="h-4 w-24 rounded-full bg-slate-200" />
-                    <div className="mt-4 h-8 w-20 rounded-full bg-slate-200" />
-                    <div className="mt-3 h-3 w-full rounded-full bg-slate-200" />
+                  <div key={index} className="rounded-[14px] bg-white/10 p-3 ring-1 ring-white/15">
+                    <div className="h-3 w-20 rounded-full bg-white/20" />
+                    <div className="mt-3 h-6 w-16 rounded-full bg-white/20" />
+                    <div className="mt-2 h-3 w-full rounded-full bg-white/15" />
                   </div>
                 ))}
               </div>
             ) : container ? (
               <>
-                <div className="grid gap-3 md:grid-cols-4">
-                  <OverviewStatCard icon={<WarehouseOutlinedIcon sx={{ fontSize: 18 }} />} label={t("skuCount")} value={String(skuCards.length)} meta={t("containerItems")} />
-                  <OverviewStatCard icon={<WarehouseOutlinedIcon sx={{ fontSize: 18 }} />} label={t("onHand")} value={String(container.onHand)} meta={t("availableQty")} secondaryValue={String(container.availableQty)} />
-                  <OverviewStatCard icon={<WarehouseOutlinedIcon sx={{ fontSize: 18 }} />} label={t("palletTrace")} value={String(pallets.length)} meta={t("palletOpenCount")} secondaryValue={String(openPalletCount)} />
-                  <OverviewStatCard icon={<WarehouseOutlinedIcon sx={{ fontSize: 18 }} />} label={t("currentInventoryRows")} value={String(container.rowCount)} meta={container.warehouseSummary || "-"} />
+                <div className="grid gap-2 md:grid-cols-4">
+                  <OverviewStatCard icon={<FactCheckOutlinedIcon sx={{ fontSize: 16 }} />} label={t("skuCount")} value={String(skuCards.length)} meta={t("containerItems")} />
+                  <OverviewStatCard icon={<MoveToInboxOutlinedIcon sx={{ fontSize: 16 }} />} label={t("onHand")} value={String(container.onHand)} meta={t("availableQty")} secondaryValue={String(container.availableQty)} />
+                  <OverviewStatCard icon={<WarehouseOutlinedIcon sx={{ fontSize: 16 }} />} label={t("palletTrace")} value={String(pallets.length)} meta={t("palletOpenCount")} secondaryValue={String(totalOpenPalletCount)} />
+                  <OverviewStatCard icon={<TuneOutlinedIcon sx={{ fontSize: 16 }} />} label={t("currentInventoryRows")} value={String(container.rowCount)} meta={container.warehouseSummary || "-"} />
                 </div>
 
-                <div className="mt-4 rounded-[20px] bg-[#143569] px-4 py-4 text-white shadow-[0_14px_30px_rgba(20,53,105,0.22)]">
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                <div className="mt-3 rounded-[16px] bg-white/10 px-3 py-2.5 ring-1 ring-white/15">
+                  <div className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-5">
                     <DetailStatRow label={t("customer")} value={container.customerSummary} />
                     <DetailStatRow label={t("currentStorage")} value={container.warehouseSummary} />
                     <DetailStatRow label={t("pickLocations")} value={container.pickLocationSummary} />
@@ -601,81 +608,41 @@ export function ContainerDetailPage({
                 </div>
 
                 {isHistoricalOnly ? (
-                  <div className="mt-4 rounded-[18px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
+                  <div className="mt-3 rounded-[14px] border border-amber-400/30 bg-amber-500/20 px-3 py-2 text-sm font-medium text-amber-200">
                     {t("containerNoCurrentInventoryNotice")}
                   </div>
                 ) : null}
               </>
             ) : (
-              <div className="rounded-[18px] border border-slate-200/80 bg-slate-50/80 px-4 py-5 text-sm text-slate-600">
-                <strong className="block text-base font-semibold text-slate-800">{t("containerDetailMissingTitle")}</strong>
-                <span className="mt-2 block">{t("containerDetailMissingDesc")}</span>
+              <div className="rounded-[14px] bg-white/10 px-3 py-4 text-sm text-white/70 ring-1 ring-white/15">
+                <strong className="block text-base font-semibold text-white/90">{t("containerDetailMissingTitle")}</strong>
+                <span className="mt-1 block">{t("containerDetailMissingDesc")}</span>
               </div>
             )}
           </div>
         </section>
 
-        <section className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_16px_34px_rgba(15,23,42,0.05)]">
-          <WorkspacePanelHeader
-            title={t("containerDetailHistoryTitle")}
-            description={t("containerDetailHistoryDesc")}
-            actions={containerHistoryEntries.length > 0 ? (
+        {container ? (
+          <div className="flex flex-wrap items-center gap-2.5 rounded-2xl bg-white px-3.5 py-2.5 shadow-[0_4px_16px_rgba(15,23,42,0.07)] ring-1 ring-slate-200/60">
+            {[
+              { id: "section-sku", label: t("containerNavSku"), count: skuCards.length },
+              { id: "section-pallets", label: t("containerNavPallets"), count: pallets.length },
+              { id: "section-history", label: t("containerNavHistory"), count: containerHistoryEntries.length },
+            ].map((section) => (
               <button
+                key={section.id}
                 type="button"
-                onClick={handleOpenActivity}
-                className="interactive-button-lift inline-flex items-center gap-2 rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-xs font-semibold text-[#143569] transition hover:bg-slate-50"
+                onClick={() => document.getElementById(section.id)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                className="group inline-flex items-center gap-2 rounded-xl bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-[#143569] hover:text-white hover:shadow-[0_4px_12px_rgba(20,53,105,0.20)]"
               >
-                <HistoryOutlinedIcon sx={{ fontSize: 16 }} />
-                {t("allActivity")}
+                <span>{section.label}</span>
+                <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-bold text-slate-500 group-hover:bg-white/20 group-hover:text-white/90">{section.count}</span>
               </button>
-            ) : undefined}
-            errorMessage={historyErrorMessage}
-          />
-          {isHistoryLoading ? (
-            <CardSkeletonGrid />
-          ) : containerHistoryEntries.length > 0 ? (
-            <>
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <SmallMetricCard label={t("recordCount")} value={String(containerHistoryEntries.length)} />
-                <SmallMetricCard label={t("warehouses")} value={String(touchedWarehouseCount)} />
-                <SmallMetricCard label={t("containerReceivedAt")} value={formatContainerTimelineValue(firstReceivedAt, resolvedTimeZone)} />
-                <SmallMetricCard label={t("lastActivity")} value={formatContainerTimelineValue(lastActivityAt, resolvedTimeZone)} />
-              </div>
+            ))}
+          </div>
+        ) : null}
 
-              <div className="mt-4 flex flex-wrap gap-2">
-                {historyTypeOptions.map((option) => {
-                  const selected = historyTypeFilter === option.key;
-                  return (
-                    <button
-                      key={option.key}
-                      type="button"
-                      onClick={() => setHistoryTypeFilter(option.key)}
-                      className={`interactive-block inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs font-semibold transition ${selected ? "bg-[#143569] text-white shadow-[0_10px_24px_rgba(20,53,105,0.16)]" : "bg-slate-100 text-slate-600 hover:bg-slate-200/80"}`}
-                    >
-                      <span>{option.label}</span>
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${selected ? "bg-white/15 text-white" : "bg-white text-slate-500"}`}>{option.count}</span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="mt-5 space-y-3">
-                {filteredHistoryEntries.map((entry) => (
-                  <ContainerHistoryCard
-                    key={entry.id}
-                    entry={entry}
-                    resolvedTimeZone={resolvedTimeZone}
-                    t={t}
-                  />
-                ))}
-              </div>
-            </>
-          ) : (
-            <div className="sheet-note sheet-note--readonly">{t("containerDetailNoHistory")}</div>
-          )}
-        </section>
-
-        <section className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_16px_34px_rgba(15,23,42,0.05)]">
+        <section id="section-sku" className="rounded-[20px] border border-slate-200/80 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
           <WorkspacePanelHeader
             title={t("containerDetailSkuTitle")}
             description={t("containerDetailSkuDesc")}
@@ -704,38 +671,63 @@ export function ContainerDetailPage({
           )}
         </section>
 
-        <section className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_16px_34px_rgba(15,23,42,0.05)]">
+        <section id="section-pallets" className="rounded-[20px] border border-slate-200/80 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
           <WorkspacePanelHeader
             title={t("containerDetailPalletTitle")}
             description={t("containerDetailPalletDesc")}
-            actions={filteredPallets.length > PALLETS_PER_PAGE ? (
+            actions={canManageInventory || filteredPallets.length > PALLETS_PER_PAGE ? (
               <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPalletPage((current) => Math.max(1, current - 1))}
-                  disabled={palletPage === 1}
-                  className="inline-flex items-center rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-xs font-semibold text-[#143569] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {t("previousPage")}
-                </button>
-                <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                  {t("containerDetailPalletPageStatus", { page: palletPage, pages: totalPalletPages })}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setPalletPage((current) => Math.min(totalPalletPages, current + 1))}
-                  disabled={palletPage >= totalPalletPages}
-                  className="inline-flex items-center rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-xs font-semibold text-[#143569] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {t("nextPage")}
-                </button>
+                {canManageInventory ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={openAdjustmentDialog}
+                      disabled={!canOpenAdjustmentDialog}
+                      className="interactive-button-lift inline-flex items-center gap-1.5 rounded-xl bg-[#143569] px-3 py-1.5 text-xs font-semibold text-white shadow-[0_4px_12px_rgba(20,53,105,0.22)] transition hover:bg-[#0f2d63] hover:shadow-[0_6px_16px_rgba(20,53,105,0.28)] disabled:cursor-not-allowed disabled:opacity-55"
+                    >
+                      <TuneOutlinedIcon sx={{ fontSize: 14 }} />
+                      {t("addAdjustment")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openTransferDialog}
+                      disabled={!canOpenTransferDialog}
+                      className="interactive-button-lift inline-flex items-center gap-1.5 rounded-xl bg-[#143569] px-3 py-1.5 text-xs font-semibold text-white shadow-[0_4px_12px_rgba(20,53,105,0.22)] transition hover:bg-[#0f2d63] hover:shadow-[0_6px_16px_rgba(20,53,105,0.28)] disabled:cursor-not-allowed disabled:opacity-55"
+                    >
+                      <CompareArrowsOutlinedIcon sx={{ fontSize: 14 }} />
+                      {t("addTransfer")}
+                    </button>
+                  </>
+                ) : null}
+                {filteredPallets.length > PALLETS_PER_PAGE ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setPalletPage((current) => Math.max(1, current - 1))}
+                      disabled={palletPage === 1}
+                      className="inline-flex items-center rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-xs font-semibold text-[#143569] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {t("previousPage")}
+                    </button>
+                    <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                      {t("containerDetailPalletPageStatus", { page: palletPage, pages: totalPalletPages })}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPalletPage((current) => Math.min(totalPalletPages, current + 1))}
+                      disabled={palletPage >= totalPalletPages}
+                      className="inline-flex items-center rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-xs font-semibold text-[#143569] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {t("nextPage")}
+                    </button>
+                  </>
+                ) : null}
               </div>
             ) : undefined}
             errorMessage={palletErrorMessage}
           />
           {pallets.length > 0 ? (
             <>
-              <div className="mt-1 text-xs text-slate-500">{t("containerDetailPalletWarehouseHint")}</div>
               <div className="mt-4 flex flex-wrap gap-2">
                 {palletWarehouseTabs.map((tab) => {
                   const selected = activePalletWarehouse === tab.key;
@@ -744,7 +736,7 @@ export function ContainerDetailPage({
                       key={tab.key}
                       type="button"
                       onClick={() => setActivePalletWarehouse(tab.key)}
-                      className={`interactive-block inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs font-semibold transition ${selected ? "bg-[#143569] text-white shadow-[0_10px_24px_rgba(20,53,105,0.16)]" : "bg-slate-100 text-slate-600 hover:bg-slate-200/80"}`}
+                      className={`interactive-block inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold transition ${selected ? "bg-[#143569] text-white shadow-[0_10px_24px_rgba(20,53,105,0.16)]" : "bg-slate-100 text-slate-600 hover:bg-slate-200/80"}`}
                     >
                       <span>{tab.label}</span>
                       <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${selected ? "bg-white/15 text-white" : "bg-white text-slate-500"}`}>{tab.count}</span>
@@ -753,7 +745,7 @@ export function ContainerDetailPage({
                 })}
               </div>
               {palletSectionTabs.length > 1 ? (
-                <div className="mt-3 flex flex-wrap gap-2">
+                <div className="mt-2 flex flex-wrap gap-2">
                   {palletSectionTabs.map((tab) => {
                     const selected = activePalletSection === tab.key;
                     return (
@@ -761,7 +753,7 @@ export function ContainerDetailPage({
                         key={tab.key}
                         type="button"
                         onClick={() => setActivePalletSection(tab.key)}
-                        className={`interactive-block inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs font-semibold transition ${selected ? "bg-slate-900 text-white shadow-[0_10px_24px_rgba(15,23,42,0.14)]" : "bg-slate-100 text-slate-600 hover:bg-slate-200/80"}`}
+                        className={`interactive-block inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold transition ${selected ? "bg-slate-900 text-white shadow-[0_10px_24px_rgba(15,23,42,0.14)]" : "bg-slate-100 text-slate-600 hover:bg-slate-200/80"}`}
                       >
                         <span>{tab.label}</span>
                         <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${selected ? "bg-white/15 text-white" : "bg-white text-slate-500"}`}>{tab.count}</span>
@@ -770,17 +762,19 @@ export function ContainerDetailPage({
                   })}
                 </div>
               ) : null}
-              <div className="mt-4 grid gap-3 md:grid-cols-3">
-                <SmallMetricCard label={t("palletTrace")} value={String(filteredPallets.length)} />
-                <SmallMetricCard label={t("openPalletCount")} value={String(openPalletCount)} />
-                <SmallMetricCard label={t("sections")} value={`${filteredPalletSectionCount} · ${filteredPalletQty} ${t("quantity")}`} />
+              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-[14px] border border-slate-200/80 bg-slate-50/80 px-3 py-2 text-xs text-slate-500">
+                <span><span className="font-semibold text-slate-700">{filteredPallets.length}</span> {t("palletTrace")}</span>
+                <span className="text-slate-300">·</span>
+                <span><span className="font-semibold text-slate-700">{openPalletCount}</span> {t("openPalletCount")}</span>
+                <span className="text-slate-300">·</span>
+                <span><span className="font-semibold text-slate-700">{filteredPalletSectionCount}</span> {t("sections")} · <span className="font-semibold text-slate-700">{filteredPalletQty}</span> {t("quantity")}</span>
               </div>
             </>
           ) : null}
           {isPalletsLoading ? (
             <CardSkeletonGrid />
           ) : filteredPallets.length > 0 ? (
-            <div className="grid gap-4 xl:grid-cols-2">
+            <div className="mt-4 grid gap-3 xl:grid-cols-3">
               {paginatedPallets.map((pallet) => (
                 <PalletTraceCard
                   key={pallet.id}
@@ -792,6 +786,103 @@ export function ContainerDetailPage({
             </div>
           ) : (
             <div className="sheet-note sheet-note--readonly">{pallets.length > 0 ? t("containerDetailNoPalletsInScope") : t("containerDetailNoCurrentPallets")}</div>
+          )}
+        </section>
+
+        <section id="section-history" className="rounded-[20px] border border-slate-200/80 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
+          <WorkspacePanelHeader
+            title={t("containerDetailHistoryTitle")}
+            description={t("containerDetailHistoryDesc")}
+            actions={containerHistoryEntries.length > 0 ? (
+              <button
+                type="button"
+                onClick={handleOpenActivity}
+                className="interactive-button-lift inline-flex items-center gap-1.5 rounded-xl border border-[#143569]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#143569] shadow-[0_2px_8px_rgba(20,53,105,0.10)] transition hover:bg-[#f4f8ff] hover:shadow-[0_4px_12px_rgba(20,53,105,0.16)]"
+              >
+                <HistoryOutlinedIcon sx={{ fontSize: 14 }} />
+                {t("allActivity")}
+              </button>
+            ) : undefined}
+            errorMessage={historyErrorMessage}
+          />
+          {isHistoryLoading ? (
+            <CardSkeletonGrid />
+          ) : containerHistoryEntries.length > 0 ? (
+            <>
+              <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-[12px] border border-slate-200/80 bg-slate-50/80 px-3 py-2 text-xs text-slate-500">
+                <span><span className="font-semibold text-slate-700">{containerHistoryEntries.length}</span> {t("recordCount")}</span>
+                <span className="text-slate-300">·</span>
+                <span><span className="font-semibold text-slate-700">{touchedWarehouseCount}</span> {t("warehouses")}</span>
+                <span className="text-slate-300">·</span>
+                <span>{t("containerReceivedAt")}: <span className="font-semibold text-slate-700">{formatContainerTimelineValue(firstReceivedAt, resolvedTimeZone)}</span></span>
+                <span className="text-slate-300">·</span>
+                <span>{t("lastActivity")}: <span className="font-semibold text-slate-700">{formatContainerTimelineValue(lastActivityAt, resolvedTimeZone)}</span></span>
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {historyTypeOptions.map((option) => {
+                    const selected = historyTypeFilter === option.key;
+                    return (
+                      <button
+                        key={option.key}
+                        type="button"
+                        onClick={() => setHistoryTypeFilter(option.key)}
+                        className={`interactive-block inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs font-semibold transition ${selected ? "bg-[#143569] text-white shadow-[0_10px_24px_rgba(20,53,105,0.16)]" : "bg-slate-100 text-slate-600 hover:bg-slate-200/80"}`}
+                      >
+                        <span>{option.label}</span>
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${selected ? "bg-white/15 text-white" : "bg-white text-slate-500"}`}>{option.count}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setHistoryAscending((v) => !v)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200/80 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-[#143569]/30 hover:bg-[#f4f8ff] hover:text-[#143569]"
+                >
+                  <SwapVertRoundedIcon sx={{ fontSize: 14 }} />
+                  {historyAscending ? t("historySortOldest") : t("historySortNewest")}
+                </button>
+              </div>
+
+              <div className="relative mt-5">
+                <div className={`pointer-events-none absolute bottom-4 left-[15px] top-3 w-0.5 bg-gradient-to-b ${historyAscending ? "from-transparent via-slate-200 to-violet-200" : "from-violet-200 via-slate-200 to-transparent"}`} />
+                {paginatedHistoryEntries.map((entry) => (
+                  <ContainerHistoryCard
+                    key={entry.id}
+                    entry={entry}
+                    resolvedTimeZone={resolvedTimeZone}
+                    t={t}
+                  />
+                ))}
+              </div>
+              {filteredHistoryEntries.length > HISTORY_PER_PAGE ? (
+                <div className="mt-4 flex items-center justify-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setHistoryPage((current) => Math.max(1, current - 1))}
+                    disabled={historyPage === 1}
+                    className="inline-flex items-center rounded-xl border border-slate-200/80 bg-white px-4 py-2 text-sm font-semibold text-[#143569] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {t("previousPage")}
+                  </button>
+                  <span className="text-sm font-semibold text-slate-500">
+                    {t("containerDetailPalletPageStatus", { page: historyPage, pages: totalHistoryPages })}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setHistoryPage((current) => Math.min(totalHistoryPages, current + 1))}
+                    disabled={historyPage >= totalHistoryPages}
+                    className="inline-flex items-center rounded-xl border border-slate-200/80 bg-white px-4 py-2 text-sm font-semibold text-[#143569] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {t("nextPage")}
+                  </button>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <div className="sheet-note sheet-note--readonly">{t("containerDetailNoHistory")}</div>
           )}
         </section>
       </div>
@@ -897,34 +988,35 @@ function SkuSnapshotCard({
   onOpenActivity: () => void;
 }) {
   return (
-    <article className="rounded-[20px] border border-slate-200/80 bg-[linear-gradient(180deg,#f8fbff_0%,#f2f6fb_100%)] p-4 shadow-[0_10px_22px_rgba(15,23,42,0.04)]">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{card.itemNumber || t("itemNumber")}</div>
-          <h3 className="mt-1 text-lg font-extrabold tracking-tight text-[#0d2d63]">{card.sku}</h3>
+    <article className="rounded-[16px] border border-slate-200/80 bg-[linear-gradient(180deg,#f8fbff_0%,#f2f6fb_100%)] px-3 py-2.5 shadow-[0_4px_12px_rgba(15,23,42,0.04)] transition hover:shadow-[0_8px_22px_rgba(20,53,105,0.09)] hover:border-slate-300">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400 truncate">{card.itemNumber || t("itemNumber")}</div>
+          <h3 className="mt-0.5 text-sm font-extrabold tracking-tight text-[#0d2d63] truncate">{card.sku}</h3>
         </div>
-        <span className="rounded-full bg-white/85 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#143569] ring-1 ring-slate-200/80">
+        <span className="shrink-0 rounded-full bg-white/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#143569] ring-1 ring-slate-200/80">
           {card.customerSummary}
         </span>
       </div>
-      <p className="mt-3 text-sm text-slate-600">{card.description}</p>
-      <div className="mt-4 rounded-[16px] border border-slate-200/80 bg-white/90 px-3 py-3">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{t("currentStorage")}</div>
-        <div className="mt-1 text-sm font-semibold text-slate-700">{card.storageSummary}</div>
+      {card.description ? <p className="mt-1 text-[11px] text-slate-500 line-clamp-1">{card.description}</p> : null}
+      <div className="mt-1.5 text-[11px] text-slate-500 truncate">
+        <span className="font-semibold text-slate-600">{card.storageSummary || "-"}</span>
       </div>
-      <div className="mt-4 grid grid-cols-2 gap-3">
-        <SmallMetricCard label={t("onHand")} value={String(card.onHand)} />
-        <SmallMetricCard label={t("availableQty")} value={String(card.availableQty)} />
-        <SmallMetricCard label={t("damagedQty")} value={String(card.damagedQty)} />
-        <SmallMetricCard label={t("currentInventoryRows")} value={String(card.rowCount)} />
-      </div>
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="mt-2 flex items-center justify-between gap-2 rounded-[10px] border border-slate-200/70 bg-white/80 px-2.5 py-1.5">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-slate-500">
+          <span><span className="font-extrabold text-[#0d2d63]">{card.onHand}</span> {t("onHand")}</span>
+          <span className="text-slate-200">·</span>
+          <span><span className="font-semibold text-slate-700">{card.availableQty}</span> {t("availableQty")}</span>
+          {card.damagedQty > 0 ? <><span className="text-slate-200">·</span><span className="text-rose-500"><span className="font-semibold">{card.damagedQty}</span> {t("damagedQty")}</span></> : null}
+          <span className="text-slate-200">·</span>
+          <span><span className="font-semibold text-slate-600">{card.rowCount}</span> rows</span>
+        </div>
         <button
           type="button"
           onClick={onOpenActivity}
-          className="inline-flex items-center rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-xs font-semibold text-[#143569] transition hover:bg-slate-50"
+          className="shrink-0 text-[11px] font-semibold text-[#143569]/70 hover:text-[#143569] transition"
         >
-          {t("allActivity")}
+          {t("allActivity")} →
         </button>
       </div>
     </article>
@@ -941,14 +1033,19 @@ function PalletTraceCard({
   t: (key: string) => string;
 }) {
   const totalQuantity = pallet.contents.reduce((sum, content) => sum + content.quantity, 0);
+  const [contentsExpanded, setContentsExpanded] = useState(false);
+  const statusStyle = pallet.status === "OPEN"
+    ? "border-l-emerald-400 bg-[linear-gradient(135deg,#f0fdf4_0%,#f8fbff_100%)]"
+    : pallet.status === "SHIPPED"
+      ? "border-l-slate-300 bg-[linear-gradient(135deg,#f8fafc_0%,#f1f5f9_100%)]"
+      : pallet.status === "CANCELLED"
+        ? "border-l-rose-300 bg-[linear-gradient(135deg,#fff5f5_0%,#f8fbff_100%)]"
+        : "border-l-blue-400 bg-[linear-gradient(135deg,#eff6ff_0%,#f8fbff_100%)]";
 
   return (
-    <article className="rounded-[20px] border border-slate-200/80 bg-slate-50/70 p-4 shadow-[0_10px_22px_rgba(15,23,42,0.04)]">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{t("palletCode")}</div>
-          <h3 className="mt-1 text-lg font-extrabold tracking-tight text-[#0d2d63]">{pallet.palletCode}</h3>
-        </div>
+    <article className={`rounded-[18px] border border-slate-200/80 border-l-4 p-3 shadow-[0_6px_16px_rgba(15,23,42,0.04)] transition hover:shadow-[0_10px_24px_rgba(15,23,42,0.09)] ${statusStyle}`}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm font-extrabold tracking-tight text-[#0d2d63] truncate">{pallet.palletCode}</span>
         <Chip
           size="small"
           label={getPalletStatusLabel(t, pallet.status)}
@@ -957,42 +1054,51 @@ function PalletTraceCard({
         />
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
-        <SmallMetricCard label={t("currentStorage")} value={pallet.currentLocationName || "-"} />
-        <SmallMetricCard label={t("storageSection")} value={pallet.currentStorageSection || "-"} />
-        <SmallMetricCard label={t("recordCount")} value={String(pallet.contents.length)} />
-        <SmallMetricCard label={t("quantity")} value={String(totalQuantity)} />
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+        <span className="font-semibold text-slate-700">{pallet.currentLocationName || "-"}</span>
+        {pallet.currentStorageSection ? (
+          <span className="rounded-full bg-slate-200/70 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{pallet.currentStorageSection}</span>
+        ) : null}
+        <span className="text-slate-300">·</span>
+        <span><span className="font-semibold text-slate-700">{totalQuantity}</span> {t("quantity")}</span>
+        <span className="text-slate-300">·</span>
+        <span><span className="font-semibold text-slate-700">{pallet.contents.length}</span> SKU</span>
       </div>
 
-      <div className="mt-4 rounded-[16px] border border-slate-200/80 bg-white/90 px-3 py-3">
-        <div className="grid gap-2 md:grid-cols-3">
-          <TimelineStat label={t("actualArrivalDate")} value={pallet.actualArrivalDate ? formatDateValue(pallet.actualArrivalDate, activityDateFormatter) : "-"} />
-          <TimelineStat label={t("created")} value={formatDateTimeValue(pallet.createdAt, resolvedTimeZone)} />
-          <TimelineStat label={t("updated")} value={formatDateTimeValue(pallet.updatedAt, resolvedTimeZone)} />
-        </div>
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400">
+        {pallet.actualArrivalDate ? (
+          <span>{t("actualArrivalDate")}: <span className="text-slate-500">{formatDateValue(pallet.actualArrivalDate, activityDateFormatter)}</span></span>
+        ) : null}
+        <span>{t("created")}: <span className="text-slate-500">{formatDateTimeValue(pallet.createdAt, resolvedTimeZone)}</span></span>
       </div>
-      <div className="mt-4 rounded-[16px] border border-slate-200/80 bg-white/90 px-3 py-3">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{t("palletContents")}</div>
-        {pallet.contents.length > 0 ? (
-          <div className="mt-3 space-y-2.5">
+
+      <div className="mt-2 border-t border-slate-200/60 pt-2">
+        <button
+          type="button"
+          onClick={() => setContentsExpanded((v) => !v)}
+          className="flex w-full items-center justify-between gap-2 text-left"
+        >
+          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">{t("palletContents")}</span>
+          <span className="flex items-center gap-0.5 text-[11px] font-semibold text-[#143569]/70">
+            {contentsExpanded ? t("palletContentsCollapse") : t("palletContentsExpand", { count: pallet.contents.length })}
+            <ExpandMoreRoundedIcon sx={{ fontSize: 14, transition: "transform 0.2s", transform: contentsExpanded ? "rotate(180deg)" : "rotate(0deg)" }} />
+          </span>
+        </button>
+        {contentsExpanded && pallet.contents.length > 0 ? (
+          <div className="mt-2 space-y-1.5">
             {pallet.contents.map((content) => (
-              <div key={content.id} className="rounded-[14px] border border-slate-200/80 bg-slate-50/80 px-3 py-2.5">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="font-semibold text-slate-800">{content.itemNumber || content.sku || "-"}</div>
-                    <div className="mt-1 text-sm text-slate-600">{content.description || "-"}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{t("quantity")}</div>
-                    <div className="mt-1 text-base font-extrabold tracking-tight text-[#0d2d63]">{content.quantity}</div>
-                  </div>
+              <div key={content.id} className="flex items-center justify-between gap-3 rounded-[10px] border border-slate-200/80 bg-white/90 px-2.5 py-2">
+                <div className="min-w-0">
+                  <div className="truncate text-xs font-semibold text-slate-800">{content.itemNumber || content.sku || "-"}</div>
+                  <div className="truncate text-[11px] text-slate-500">{content.description || "-"}</div>
                 </div>
+                <div className="shrink-0 text-sm font-extrabold tracking-tight text-[#0d2d63]">{content.quantity}</div>
               </div>
             ))}
           </div>
-        ) : (
-          <div className="mt-3 text-sm text-slate-500">{t("palletNoContents")}</div>
-        )}
+        ) : contentsExpanded ? (
+          <div className="mt-2 text-xs text-slate-500">{t("palletNoContents")}</div>
+        ) : null}
       </div>
     </article>
   );
@@ -1007,6 +1113,12 @@ function ContainerHistoryCard({
   resolvedTimeZone: string;
   t: (key: string, values?: Record<string, string | number>) => string;
 }) {
+  const iconNode = (
+    <div className={`relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ring-2 ring-white shadow-[0_2px_8px_rgba(15,23,42,0.12)] ${getHistoryIconSurfaceClass(entry.filterKey)}`}>
+      {getHistoryIcon(entry.filterKey)}
+    </div>
+  );
+
   if (entry.source === "movement") {
     const movement = entry.movement;
     const signedQuantity = movement.quantityChange >= 0 ? `+${movement.quantityChange}` : String(movement.quantityChange);
@@ -1016,58 +1128,38 @@ function ContainerHistoryCard({
       .join(" | ");
 
     return (
-      <article className="rounded-[20px] border border-slate-200/80 bg-[linear-gradient(180deg,#fbfdff_0%,#f4f8fc_100%)] p-4 shadow-[0_10px_22px_rgba(15,23,42,0.04)]">
-        <div className="flex items-start gap-4">
-          <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${getHistoryIconSurfaceClass(entry.filterKey)}`}>
-            {getHistoryIcon(entry.filterKey)}
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-2">
-                {renderHistoryFilterChip(entry.filterKey, t)}
-                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-                  {t("inventoryLedger")}
-                </span>
-                <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500 ring-1 ring-slate-200/80">
-                  {movement.locationName} / {normalizeStorageSection(movement.storageSection)}
-                </span>
-              </div>
-              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                {formatMovementActivityDate(movement, resolvedTimeZone)}
-              </div>
+      <div className="relative flex items-start gap-3 pb-4">
+        {iconNode}
+        <div className="min-w-0 flex-1 rounded-[14px] border border-slate-100 bg-[linear-gradient(135deg,#fbfdff_0%,#f4f8fc_100%)] px-3 py-2.5 shadow-[0_2px_8px_rgba(15,23,42,0.04)] transition hover:border-slate-200 hover:shadow-[0_4px_14px_rgba(15,23,42,0.09)]">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {renderHistoryFilterChip(entry.filterKey, t)}
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                {t("inventoryLedger")}
+              </span>
+              <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500 ring-1 ring-slate-200/80">
+                {movement.locationName}{movement.storageSection ? ` / ${normalizeStorageSection(movement.storageSection)}` : ""}
+              </span>
             </div>
-
-            <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(220px,0.9fr)]">
-              <div className="space-y-2.5">
-                <div>
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{t("sku")}</div>
-                  <div className="mt-1 text-base font-extrabold tracking-tight text-[#0d2d63]">
-                    {movement.sku} <span className="text-sm font-semibold text-slate-500">| {movement.itemNumber || "-"}</span>
-                  </div>
-                </div>
-                <div className="text-sm text-slate-600">{movement.description || "-"}</div>
-                {referenceSummary ? (
-                  <div className="text-xs text-slate-500">
-                    <span className="font-semibold uppercase tracking-[0.14em] text-slate-400">{t("reference")}:</span> {referenceSummary}
-                  </div>
-                ) : null}
-                {movement.reason?.trim() ? (
-                  <div className="text-xs text-slate-500">
-                    <span className="font-semibold uppercase tracking-[0.14em] text-slate-400">{t("notes")}:</span> {movement.reason}
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <SmallMetricCard label={t("qtyChange")} value={signedQuantity} />
-                <SmallMetricCard label={t("palletTrace")} value={String(movement.pallets)} />
-                <SmallMetricCard label={t("containerNo")} value={movement.containerNo || "-"} />
-                <SmallMetricCard label={t("created")} value={formatDateTimeValue(movement.createdAt, resolvedTimeZone)} />
-              </div>
+            <time className="text-[11px] font-semibold tabular-nums text-slate-400">
+              {formatMovementActivityDate(movement, resolvedTimeZone)}
+            </time>
+          </div>
+          <div className="mt-1.5">
+            <div className="text-sm font-extrabold tracking-tight text-[#0d2d63]">
+              {movement.sku} <span className="text-xs font-normal text-slate-400">| {movement.itemNumber || "-"}</span>
+            </div>
+            {movement.description ? <div className="mt-0.5 text-xs text-slate-500 line-clamp-1">{movement.description}</div> : null}
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-slate-400">
+              <span><span className="font-semibold text-slate-700">{signedQuantity}</span> {t("qtyChange")}</span>
+              <span className="text-slate-200">·</span>
+              <span><span className="font-semibold text-slate-700">{movement.pallets}</span> pallets</span>
+              {referenceSummary ? <><span className="text-slate-200">·</span><span className="text-slate-500">{referenceSummary}</span></> : null}
+              {movement.reason?.trim() ? <><span className="text-slate-200">·</span><span className="text-slate-500">{movement.reason}</span></> : null}
             </div>
           </div>
         </div>
-      </article>
+      </div>
     );
   }
 
@@ -1076,117 +1168,35 @@ function ContainerHistoryCard({
   const signedPalletDelta = event.palletDelta >= 0 ? `+${event.palletDelta}` : String(event.palletDelta);
 
   return (
-    <article className="rounded-[20px] border border-slate-200/80 bg-[linear-gradient(180deg,#fffdfa_0%,#f8f4ee_100%)] p-4 shadow-[0_10px_22px_rgba(15,23,42,0.04)]">
-      <div className="flex items-start gap-4">
-        <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${getHistoryIconSurfaceClass(entry.filterKey)}`}>
-          {getHistoryIcon(entry.filterKey)}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              {renderHistoryFilterChip(entry.filterKey, t)}
-              <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700">
-                {t("palletTrace")}
-              </span>
-              <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500 ring-1 ring-slate-200/80">
-                {event.locationName} / {normalizeStorageSection(event.storageSection)}
-              </span>
-            </div>
-            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-              {formatDateTimeValue(event.eventTime, resolvedTimeZone)}
-            </div>
+    <div className="relative flex items-start gap-3 pb-4">
+      {iconNode}
+      <div className="min-w-0 flex-1 rounded-[14px] border border-amber-100/80 bg-[linear-gradient(135deg,#fffdf8_0%,#fdf8ef_100%)] px-3 py-2.5 shadow-[0_2px_8px_rgba(15,23,42,0.04)] transition hover:border-amber-200 hover:shadow-[0_4px_14px_rgba(15,23,42,0.09)]">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {renderHistoryFilterChip(entry.filterKey, t)}
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-700">
+              {t("palletTrace")}
+            </span>
+            <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500 ring-1 ring-slate-200/80">
+              {event.locationName}{event.storageSection ? ` / ${normalizeStorageSection(event.storageSection)}` : ""}
+            </span>
           </div>
-
-          <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(220px,0.9fr)]">
-            <div className="space-y-2.5">
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{t("palletCode")}</div>
-                <div className="mt-1 text-base font-extrabold tracking-tight text-[#0d2d63]">{event.palletCode}</div>
-              </div>
-              <div className="text-sm text-slate-600">{event.customerName}</div>
-              <div className="text-xs text-slate-500">
-                <span className="font-semibold uppercase tracking-[0.14em] text-slate-400">{t("containerNo")}:</span> {event.containerNo || "-"}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <SmallMetricCard label={t("qtyChange")} value={signedQuantity} />
-              <SmallMetricCard label={t("palletTrace")} value={signedPalletDelta} />
-              <SmallMetricCard label={t("currentStorage")} value={event.locationName || "-"} />
-              <SmallMetricCard label={t("created")} value={formatDateTimeValue(event.createdAt, resolvedTimeZone)} />
-            </div>
+          <time className="text-[11px] font-semibold tabular-nums text-slate-400">
+            {formatDateTimeValue(event.eventTime, resolvedTimeZone)}
+          </time>
+        </div>
+        <div className="mt-1.5">
+          <div className="text-sm font-extrabold tracking-tight text-[#0d2d63]">{event.palletCode}</div>
+          {event.customerName ? <div className="mt-0.5 text-xs text-slate-500">{event.customerName}</div> : null}
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-slate-400">
+            <span><span className="font-semibold text-slate-700">{signedQuantity}</span> {t("qtyChange")}</span>
+            <span className="text-slate-200">·</span>
+            <span><span className="font-semibold text-slate-700">{signedPalletDelta}</span> pallets</span>
+            {event.containerNo ? <><span className="text-slate-200">·</span><span className="text-slate-500">{event.containerNo}</span></> : null}
           </div>
         </div>
       </div>
-    </article>
-  );
-}
-
-function ContainerActivityCard({
-  movement,
-  resolvedTimeZone,
-  t
-}: {
-  movement: Movement;
-  resolvedTimeZone: string;
-  t: (key: string, values?: Record<string, string | number>) => string;
-}) {
-  const signedQuantity = movement.quantityChange >= 0 ? `+${movement.quantityChange}` : String(movement.quantityChange);
-  const referenceSummary = [movement.referenceCode, movement.packingListNo, movement.orderRef]
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .join(" · ");
-
-  return (
-    <article className="rounded-[20px] border border-slate-200/80 bg-[linear-gradient(180deg,#fbfdff_0%,#f4f8fc_100%)] p-4 shadow-[0_10px_22px_rgba(15,23,42,0.04)]">
-      <div className="flex items-start gap-4">
-        <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${getMovementIconSurfaceClass(movement.movementType)}`}>
-          {getMovementIcon(movement.movementType)}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              {renderMovementTypeChip(movement.movementType, t)}
-              <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500 ring-1 ring-slate-200/80">
-                {movement.locationName} / {normalizeStorageSection(movement.storageSection)}
-              </span>
-            </div>
-            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-              {formatMovementActivityDate(movement, resolvedTimeZone)}
-            </div>
-          </div>
-
-          <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(220px,0.9fr)]">
-            <div className="space-y-2.5">
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{t("sku")}</div>
-                <div className="mt-1 text-base font-extrabold tracking-tight text-[#0d2d63]">
-                  {movement.sku} <span className="text-sm font-semibold text-slate-500">· {movement.itemNumber || "-"}</span>
-                </div>
-              </div>
-              <div className="text-sm text-slate-600">{movement.description || "-"}</div>
-              {referenceSummary ? (
-                <div className="text-xs text-slate-500">
-                  <span className="font-semibold uppercase tracking-[0.14em] text-slate-400">{t("reference")}:</span> {referenceSummary}
-                </div>
-              ) : null}
-              {movement.reason?.trim() ? (
-                <div className="text-xs text-slate-500">
-                  <span className="font-semibold uppercase tracking-[0.14em] text-slate-400">{t("notes")}:</span> {movement.reason}
-                </div>
-              ) : null}
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <SmallMetricCard label={t("qtyChange")} value={signedQuantity} />
-              <SmallMetricCard label={t("palletTrace")} value={String(movement.pallets)} />
-              <SmallMetricCard label={t("containerNo")} value={movement.containerNo || "-"} />
-              <SmallMetricCard label={t("created")} value={formatDateTimeValue(movement.createdAt, resolvedTimeZone)} />
-            </div>
-          </div>
-        </div>
-      </div>
-    </article>
+    </div>
   );
 }
 
@@ -1204,16 +1214,16 @@ function OverviewStatCard({
   secondaryValue?: string;
 }) {
   return (
-    <article className="rounded-[18px] border border-slate-200/80 bg-slate-50/70 p-3 shadow-[0_8px_18px_rgba(15,23,42,0.03)]">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-100 text-[#143569]">
+    <article className="rounded-[14px] bg-white/10 p-2.5 ring-1 ring-white/15">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-white/20 text-white">
           {icon}
         </div>
-        {secondaryValue ? <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">{secondaryValue}</span> : null}
+        {secondaryValue ? <span className="text-[11px] font-semibold text-white/55">{secondaryValue}</span> : null}
       </div>
-      <div className="mt-4 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">{label}</div>
-      <div className="mt-1.5 text-xl font-extrabold tracking-tight text-[#0d2d63]">{value}</div>
-      <div className="mt-1 text-xs text-slate-500">{meta}</div>
+      <div className="mt-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/55">{label}</div>
+      <div className="mt-0.5 text-lg font-extrabold tracking-tight text-white">{value}</div>
+      <div className="text-[11px] text-white/50">{meta}</div>
     </article>
   );
 }
@@ -1229,9 +1239,9 @@ function DetailStatRow({ label, value }: { label: string; value: string }) {
 
 function SmallMetricCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[14px] border border-slate-200/80 bg-white/90 px-3 py-3">
-      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</div>
-      <div className="mt-1 text-base font-extrabold tracking-tight text-[#0d2d63] break-words">{value}</div>
+    <div className="rounded-[10px] border border-slate-200/80 bg-white/90 px-2.5 py-2">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">{label}</div>
+      <div className="mt-0.5 text-sm font-extrabold tracking-tight text-[#0d2d63] break-words">{value}</div>
     </div>
   );
 }

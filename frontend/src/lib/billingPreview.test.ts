@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildBillingPreview, DEFAULT_BILLING_RATES } from "./billingPreview";
+import type { BillingRates } from "./billingPreview";
 import type { Customer, InboundDocument, OutboundDocument, PalletLocationEvent, PalletTrace } from "./types";
 
 const customers: Customer[] = [
@@ -445,4 +446,1070 @@ describe("buildBillingPreview", () => {
     expect(preview.invoiceLines).toHaveLength(1);
     expect(preview.invoiceLines[0]?.occurredOn).toBe("2026-04-01");
   });
+
+  describe("edge cases", () => {
+    // ──────────────────────────────────────────────────────────────
+    // Empty / zero-data
+    // ──────────────────────────────────────────────────────────────
+
+    it("returns zeroed summary and empty collections for completely empty input", () => {
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: "all",
+        customers: [],
+        pallets: [],
+        palletLocationEvents: [],
+        inboundDocuments: [],
+        outboundDocuments: [],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      expect(preview.invoiceLines).toHaveLength(0);
+      expect(preview.storageRows).toHaveLength(0);
+      expect(preview.summary.grandTotal).toBe(0);
+      expect(preview.summary.palletDays).toBe(0);
+      // Daily balance rows still produced for every day in the range (31 days in March)
+      expect(preview.dailyBalanceRows).toHaveLength(31);
+      expect(preview.dailyBalanceRows.every((row) => row.palletCount === 0)).toBe(true);
+    });
+
+    // ──────────────────────────────────────────────────────────────
+    // Billability guards — status & date range
+    // ──────────────────────────────────────────────────────────────
+
+    it("skips DELETED inbound documents", () => {
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: "all",
+        customers,
+        pallets: [],
+        palletLocationEvents: [],
+        inboundDocuments: [makeInboundDoc(1, 1, { status: "DELETED", actualArrivalDate: "2026-03-05" })],
+        outboundDocuments: [],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      expect(preview.invoiceLines).toHaveLength(0);
+      expect(preview.summary.inboundAmount).toBe(0);
+    });
+
+    it("excludes an inbound document whose billing date falls before the range startDate", () => {
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: "all",
+        customers,
+        pallets: [],
+        palletLocationEvents: [],
+        inboundDocuments: [makeInboundDoc(1, 1, { actualArrivalDate: "2026-02-28" })],
+        outboundDocuments: [],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      expect(preview.invoiceLines).toHaveLength(0);
+    });
+
+    it("includes an inbound document arriving on the billing range endDate (inclusive boundary)", () => {
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: "all",
+        customers,
+        pallets: [],
+        palletLocationEvents: [],
+        inboundDocuments: [makeInboundDoc(1, 1, { actualArrivalDate: "2026-03-31", pallets: 3 })],
+        outboundDocuments: [],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      // Expect INBOUND + WRAPPING lines both dated on Mar 31
+      expect(preview.invoiceLines).toHaveLength(2);
+      expect(preview.invoiceLines.every((line) => line.occurredOn === "2026-03-31")).toBe(true);
+    });
+
+    // ──────────────────────────────────────────────────────────────
+    // Zero-pallet documents
+    // ──────────────────────────────────────────────────────────────
+
+    it("generates only the container fee and no wrapping line when an inbound document has 0 pallets", () => {
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: "all",
+        customers,
+        pallets: [],
+        palletLocationEvents: [],
+        inboundDocuments: [makeInboundDoc(1, 1, { actualArrivalDate: "2026-03-05", pallets: 0 })],
+        outboundDocuments: [],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      expect(preview.invoiceLines).toHaveLength(1);
+      expect(preview.invoiceLines[0]?.chargeType).toBe("INBOUND");
+      expect(preview.summary.wrappingAmount).toBe(0);
+    });
+
+    it("generates no invoice line for an outbound document with 0 pallets", () => {
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: "all",
+        customers,
+        pallets: [],
+        palletLocationEvents: [],
+        inboundDocuments: [],
+        outboundDocuments: [makeOutboundDoc(1, 1, { actualShipDate: "2026-03-10", pallets: 0 })],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      expect(preview.invoiceLines).toHaveLength(0);
+    });
+
+    // ──────────────────────────────────────────────────────────────
+    // Customer scoping
+    // ──────────────────────────────────────────────────────────────
+
+    it("customerId filter excludes documents and pallets belonging to other customers", () => {
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: 1,
+        customers,
+        pallets: [makePallet(10, 2, "CONT-CX2")],
+        palletLocationEvents: [makeEvent(10, 10, "PLT-010", "CONT-CX2", "RECEIVED", "2026-03-01T09:00:00Z", 1, 10, 2)],
+        inboundDocuments: [
+          makeInboundDoc(1, 1, { actualArrivalDate: "2026-03-05", containerNo: "CONT-CX1" }),
+          makeInboundDoc(2, 2, { actualArrivalDate: "2026-03-05", containerNo: "CONT-CX2" })
+        ],
+        outboundDocuments: [],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      // Only customer 1's INBOUND + WRAPPING lines should appear; customer 2 excluded
+      expect(preview.invoiceLines.every((line) => line.customerId === 1)).toBe(true);
+      // Storage row for customer 2's pallet excluded
+      expect(preview.storageRows.every((row) => row.customerId === 1)).toBe(true);
+    });
+
+    it("customerId all aggregates invoice lines across all customers", () => {
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: "all",
+        customers,
+        pallets: [],
+        palletLocationEvents: [],
+        inboundDocuments: [
+          makeInboundDoc(1, 1, { actualArrivalDate: "2026-03-05" }),
+          makeInboundDoc(2, 2, { actualArrivalDate: "2026-03-10" })
+        ],
+        outboundDocuments: [],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      // 2 customers × (INBOUND + WRAPPING) = 4 lines
+      expect(preview.invoiceLines).toHaveLength(4);
+      expect(preview.summary.inboundAmount).toBe(DEFAULT_BILLING_RATES.inboundContainerFee * 2);
+    });
+
+    // ──────────────────────────────────────────────────────────────
+    // Date-range normalization
+    // ──────────────────────────────────────────────────────────────
+
+    it("auto-normalizes a reversed startDate/endDate pair and still bills correctly", () => {
+      const preview = buildBillingPreview({
+        startDate: "2026-03-31",  // reversed intentionally
+        endDate: "2026-03-01",
+        customerId: "all",
+        customers,
+        pallets: [],
+        palletLocationEvents: [],
+        inboundDocuments: [makeInboundDoc(1, 1, { actualArrivalDate: "2026-03-15" })],
+        outboundDocuments: [],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      expect(preview.startDate).toBe("2026-03-01");
+      expect(preview.endDate).toBe("2026-03-31");
+      // Document at Mar 15 is within the corrected range
+      expect(preview.invoiceLines.length).toBeGreaterThan(0);
+    });
+
+    // ──────────────────────────────────────────────────────────────
+    // Storage interval logic
+    // ──────────────────────────────────────────────────────────────
+
+    it("bills a STORED pallet for every day in the billing period", () => {
+      const pallet = makePallet(1, 1, "CONT-FULL", "STORED");
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: 1,
+        customers,
+        pallets: [pallet],
+        palletLocationEvents: [makeEvent(1, 1, "PLT-001", "CONT-FULL", "RECEIVED", "2026-03-01T09:00:00Z")],
+        inboundDocuments: [],
+        outboundDocuments: [],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      expect(preview.summary.palletDays).toBe(31);
+    });
+
+    it("bills a pallet that arrived before the billing range for the full range duration", () => {
+      const pallet = makePallet(1, 1, "CONT-PRE", "STORED", {
+        createdAt: "2026-02-01T09:00:00Z",
+        updatedAt: "2026-03-31T23:59:00Z"
+      });
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: 1,
+        customers,
+        pallets: [pallet],
+        palletLocationEvents: [makeEvent(1, 1, "PLT-001", "CONT-PRE", "RECEIVED", "2026-02-01T09:00:00Z")],
+        inboundDocuments: [],
+        outboundDocuments: [],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      expect(preview.summary.palletDays).toBe(31);
+    });
+
+    it("stops billing storage on the day a CANCELLED event is recorded mid-period", () => {
+      // Received Mar 1, cancelled Mar 10 at 12:00.
+      // Day-end check uses start-of-next-calendar-day as the boundary:
+      //   Mar 1–9 day-ends → interval still open (end=Mar10 12:00 ≥ Mar10 00:00) → 9 counted
+      //   Mar 10 day-end → interval.end=Mar10 12:00 < Mar11 00:00 → not counted
+      const pallet = makePallet(1, 1, "CONT-CANCEL", "CANCELLED", { updatedAt: "2026-03-10T12:00:00Z" });
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: 1,
+        customers,
+        pallets: [pallet],
+        palletLocationEvents: [
+          makeEvent(1, 1, "PLT-001", "CONT-CANCEL", "RECEIVED", "2026-03-01T09:00:00Z"),
+          makeEvent(2, 1, "PLT-001", "CONT-CANCEL", "CANCELLED", "2026-03-10T12:00:00Z", -1, -10)
+        ],
+        inboundDocuments: [],
+        outboundDocuments: [],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      expect(preview.summary.palletDays).toBe(9);
+    });
+
+    it("produces 0 pallet-days when a pallet is received and shipped on the same calendar day", () => {
+      // Received Mar 10 08:00, OUTBOUND Mar 10 20:00.
+      // Day-end of Mar 10 → boundary = Mar 11 00:00, interval.end = Mar 10 20:00 < Mar 11 00:00 → not counted.
+      // Days before Mar 10 → interval.start = Mar 10 08:00, start < Mar 10 00:00? No → not counted.
+      const pallet = makePallet(1, 1, "CONT-SAME", "SHIPPED", { updatedAt: "2026-03-10T20:00:00Z" });
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: 1,
+        customers,
+        pallets: [pallet],
+        palletLocationEvents: [
+          makeEvent(1, 1, "PLT-001", "CONT-SAME", "RECEIVED", "2026-03-10T08:00:00Z"),
+          makeEvent(2, 1, "PLT-001", "CONT-SAME", "OUTBOUND", "2026-03-10T20:00:00Z", -1, -10)
+        ],
+        inboundDocuments: [],
+        outboundDocuments: [],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      expect(preview.summary.palletDays).toBe(0);
+      expect(preview.storageRows).toHaveLength(0);
+    });
+
+    // ──────────────────────────────────────────────────────────────
+    // Storage row grouping
+    // ──────────────────────────────────────────────────────────────
+
+    it("merges multiple pallets from the same container into a single storage row", () => {
+      const pallets = [1, 2, 3].map((id) => makePallet(id, 1, "CONT-MULTI"));
+      const events = [1, 2, 3].map((id) =>
+        makeEvent(id * 10, id, `PLT-00${id}`, "CONT-MULTI", "RECEIVED", "2026-03-01T09:00:00Z")
+      );
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-07",
+        customerId: 1,
+        customers,
+        pallets,
+        palletLocationEvents: events,
+        inboundDocuments: [],
+        outboundDocuments: [],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      expect(preview.storageRows).toHaveLength(1);
+      expect(preview.storageRows[0]?.palletsTracked).toBe(3);
+      expect(preview.storageRows[0]?.palletDays).toBe(21); // 3 pallets × 7 days
+    });
+
+    it("creates separate storage rows for different containers of the same customer", () => {
+      const pallets = [
+        makePallet(1, 1, "CONT-A"),
+        makePallet(2, 1, "CONT-B")
+      ];
+      const events = [
+        makeEvent(1, 1, "PLT-001", "CONT-A", "RECEIVED", "2026-03-01T09:00:00Z"),
+        makeEvent(2, 2, "PLT-002", "CONT-B", "RECEIVED", "2026-03-01T09:00:00Z")
+      ];
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-07",
+        customerId: 1,
+        customers,
+        pallets,
+        palletLocationEvents: events,
+        inboundDocuments: [],
+        outboundDocuments: [],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      expect(preview.storageRows).toHaveLength(2);
+      const containerNos = preview.storageRows.map((row) => row.containerNo).sort();
+      expect(containerNos).toEqual(["CONT-A", "CONT-B"]);
+    });
+
+    // ──────────────────────────────────────────────────────────────
+    // Storage fee arithmetic
+    // ──────────────────────────────────────────────────────────────
+
+    it("computes storage amount for 1 pallet over exactly 7 days equal to storageFeePerPalletPerWeek", () => {
+      const rates: BillingRates = { ...DEFAULT_BILLING_RATES, storageFeePerPalletPerWeek: 14 };
+      const pallet = makePallet(1, 1, "CONT-RATE");
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-07",
+        customerId: 1,
+        customers,
+        pallets: [pallet],
+        palletLocationEvents: [makeEvent(1, 1, "PLT-001", "CONT-RATE", "RECEIVED", "2026-03-01T09:00:00Z")],
+        inboundDocuments: [],
+        outboundDocuments: [],
+        rates
+      });
+
+      expect(preview.summary.palletDays).toBe(7);
+      expect(preview.summary.storageAmount).toBe(14); // 7 × (14/7) = 14
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Full container lifecycle integration
+  //
+  // Scenario:
+  //   Container GCXU5050505, Customer "Acme" (id=1), billing range 2026-03-01..31
+  //
+  //   Receipt (Mar 3):
+  //     PLT-001 RECEIVED 2026-03-03 09:00  (status: SHIPPED after outbound)
+  //     PLT-002 RECEIVED 2026-03-03 09:00  (status: SHIPPED after outbound)
+  //     PLT-003 RECEIVED 2026-03-03 09:00  (status: CANCELLED)
+  //
+  //   Adjustment (Mar 8):
+  //     PLT-001 REVERSAL event – stock correction; must NOT break storage interval
+  //
+  //   Shipment 1 (Mar 10): PLT-001 OUTBOUND 10:00
+  //   Shipment 2 (Mar 18): PLT-002 OUTBOUND 14:00
+  //   Inventory adjustment (Mar 20): PLT-003 CANCELLED 11:00
+  //
+  //   Expected pallet-days (day-end midnight boundary):
+  //     PLT-001: Mar 3–9  →  7 days  (interval.end=Mar10 10:00; not ≥ midnight Mar11)
+  //     PLT-002: Mar 3–17 → 15 days  (interval.end=Mar18 14:00; not ≥ midnight Mar19)
+  //     PLT-003: Mar 3–19 → 17 days  (interval.end=Mar20 11:00; not ≥ midnight Mar21)
+  //     Total: 39 pallet-days → $39 storage at DEFAULT rates ($1/pallet/day)
+  //
+  //   Expected invoice lines (5 total):
+  //     INBOUND  Mar 3   $450
+  //     WRAPPING Mar 3   3 × $10 = $30
+  //     OUTBOUND Mar 10  1 × $10 = $10  (SO-001 / packingListNo "SO-001")
+  //     OUTBOUND Mar 18  1 × $10 = $10  (SO-002 / packingListNo "SO-002")
+  //     STORAGE  –       $39
+  //     Grand total: $539
+  // ═══════════════════════════════════════════════════════════════════════════
+  describe("full container lifecycle", () => {
+    const CONTAINER = "GCXU5050505";
+
+    // ── pallets ────────────────────────────────────────────────────
+    const plt001 = makePallet(1, 1, CONTAINER, "SHIPPED", {
+      palletCode: "PLT-001",
+      updatedAt: "2026-03-10T10:00:00Z"
+    });
+    const plt002 = makePallet(2, 1, CONTAINER, "SHIPPED", {
+      palletCode: "PLT-002",
+      updatedAt: "2026-03-18T14:00:00Z"
+    });
+    const plt003 = makePallet(3, 1, CONTAINER, "CANCELLED", {
+      palletCode: "PLT-003",
+      updatedAt: "2026-03-20T11:00:00Z"
+    });
+    const pallets = [plt001, plt002, plt003];
+
+    // ── pallet-location events ─────────────────────────────────────
+    // RECEIVED events (all three pallets arrive together Mar 3)
+    const evtRecv001 = makeEvent(101, 1, "PLT-001", CONTAINER, "RECEIVED",  "2026-03-03T09:00:00Z",  1, 100);
+    const evtRecv002 = makeEvent(102, 2, "PLT-002", CONTAINER, "RECEIVED",  "2026-03-03T09:00:00Z",  1, 100);
+    const evtRecv003 = makeEvent(103, 3, "PLT-003", CONTAINER, "RECEIVED",  "2026-03-03T09:00:00Z",  1,  50);
+    // REVERSAL adjustment on PLT-001 Mar 8 – should NOT split the storage interval
+    const evtReversal = makeEvent(104, 1, "PLT-001", CONTAINER, "REVERSAL", "2026-03-08T11:00:00Z",  0,  20);
+    // OUTBOUND events
+    const evtOut001 = makeEvent(105, 1, "PLT-001", CONTAINER, "OUTBOUND", "2026-03-10T10:00:00Z", -1, -100);
+    const evtOut002 = makeEvent(106, 2, "PLT-002", CONTAINER, "OUTBOUND", "2026-03-18T14:00:00Z", -1, -100);
+    // CANCELLED event on PLT-003 Mar 20
+    const evtCancel = makeEvent(107, 3, "PLT-003", CONTAINER, "CANCELLED", "2026-03-20T11:00:00Z", -1,  -50);
+
+    const palletLocationEvents = [
+      evtRecv001, evtRecv002, evtRecv003,
+      evtReversal,
+      evtOut001, evtOut002,
+      evtCancel
+    ];
+
+    // ── inbound / outbound documents ───────────────────────────────
+    const inboundDoc = {
+      ...makeInboundDoc(10, 1, {
+        containerNo: CONTAINER,
+        actualArrivalDate: "2026-03-03",
+        pallets: 3
+      })
+    };
+
+    // Override packingListNo so buildOutboundReference uses "SO-001" / "SO-002"
+    const outboundDoc1: OutboundDocument = {
+      ...makeOutboundDoc(1, 1, { actualShipDate: "2026-03-10", pallets: 1 }),
+      packingListNo: "SO-001",
+      confirmedAt: "2026-03-10T10:00:00Z",
+      lines: [{
+        ...makeOutboundDoc(1, 1, { pallets: 1 }).lines[0]!,
+        pallets: 1,
+        quantity: 100
+      }]
+    };
+    const outboundDoc2: OutboundDocument = {
+      ...makeOutboundDoc(2, 1, { actualShipDate: "2026-03-18", pallets: 1 }),
+      packingListNo: "SO-002",
+      confirmedAt: "2026-03-18T14:00:00Z",
+      lines: [{
+        ...makeOutboundDoc(2, 1, { pallets: 1 }).lines[0]!,
+        pallets: 1,
+        quantity: 100
+      }]
+    };
+
+    function buildLifecyclePreview(overrides: Partial<Parameters<typeof buildBillingPreview>[0]> = {}) {
+      return buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: 1,
+        customers,
+        pallets,
+        palletLocationEvents,
+        inboundDocuments: [inboundDoc],
+        outboundDocuments: [outboundDoc1, outboundDoc2],
+        rates: DEFAULT_BILLING_RATES,
+        ...overrides
+      });
+    }
+
+    // ── tests ──────────────────────────────────────────────────────
+
+    it("grand total is $539: $450 inbound + $30 wrapping + $39 storage + $10 + $10 outbound", () => {
+      const preview = buildLifecyclePreview();
+      expect(preview.summary.inboundAmount).toBe(450);
+      expect(preview.summary.wrappingAmount).toBe(30);
+      expect(preview.summary.storageAmount).toBe(39);
+      expect(preview.summary.outboundAmount).toBe(20);
+      expect(preview.summary.grandTotal).toBe(539);
+    });
+
+    it("produces exactly 5 invoice lines (INBOUND + WRAPPING + OUTBOUND×2 + STORAGE)", () => {
+      const preview = buildLifecyclePreview();
+      expect(preview.invoiceLines).toHaveLength(5);
+      const types = preview.invoiceLines.map((l) => l.chargeType);
+      expect(types.filter((t) => t === "INBOUND")).toHaveLength(1);
+      expect(types.filter((t) => t === "WRAPPING")).toHaveLength(1);
+      expect(types.filter((t) => t === "OUTBOUND")).toHaveLength(2);
+      expect(types.filter((t) => t === "STORAGE")).toHaveLength(1);
+    });
+
+    it("invoice lines are sorted chronologically: INBOUND/WRAPPING Mar3, OUTBOUND Mar10, OUTBOUND Mar18, STORAGE", () => {
+      const preview = buildLifecyclePreview();
+      const nonStorage = preview.invoiceLines.filter((l) => l.chargeType !== "STORAGE");
+      const dates = nonStorage.map((l) => l.occurredOn);
+      expect(dates).toEqual(["2026-03-03", "2026-03-03", "2026-03-10", "2026-03-18"]);
+    });
+
+    it("total storage pallet-days is 39 (7 + 15 + 17)", () => {
+      const preview = buildLifecyclePreview();
+      expect(preview.summary.palletDays).toBe(39);
+    });
+
+    it("all 3 pallets contribute to a single storage row for GCXU5050505 with palletsTracked=3", () => {
+      const preview = buildLifecyclePreview();
+      expect(preview.storageRows).toHaveLength(1);
+      expect(preview.storageRows[0]?.containerNo).toBe(CONTAINER);
+      expect(preview.storageRows[0]?.palletsTracked).toBe(3);
+      expect(preview.storageRows[0]?.palletDays).toBe(39);
+    });
+
+    it("storage segments correctly reflect pallet count drops after each shipment/cancellation", () => {
+      const preview = buildLifecyclePreview();
+      const segments = preview.storageRows[0]?.segments ?? [];
+
+      // Expect 3 segments: [3 pallets Mar3–9, 2 pallets Mar10–17, 1 pallet Mar18–19]
+      // Note: a pallet-day is counted for day D if it's active at day-end (midnight D+1).
+      // PLT-001 last counted Mar 9 (outbound Mar 10 10:00 → not active at midnight Mar 11).
+      // So segment with 3 pallets covers Mar 3–9 = 7 days.
+      // Segment with 2 pallets covers Mar 10–17 = 8 days. PLT-002 last counted Mar 17.
+      // Segment with 1 pallet covers Mar 18–19 = 2 days. PLT-003 last counted Mar 19.
+      const totalPalletDays = segments.reduce((sum, s) => sum + s.palletDays, 0);
+      expect(totalPalletDays).toBe(39);
+
+      // The first segment should have 3 pallets and the last should have 1 pallet
+      const sorted = [...segments].sort((a, b) => a.startDate.localeCompare(b.startDate));
+      expect(sorted[0]?.dayEndPallets).toBe(3);
+      expect(sorted[0]?.billedDays).toBe(7);
+      expect(sorted[sorted.length - 1]?.dayEndPallets).toBe(1);
+      expect(sorted[sorted.length - 1]?.billedDays).toBe(2);
+    });
+
+    it("REVERSAL adjustment on Mar 8 does NOT split PLT-001 storage interval — still billed for 7 contiguous days", () => {
+      // If REVERSAL incorrectly closed and reopened the interval, PLT-001 would lose the Mar 3–7 days
+      // (interval start would become Mar 8), giving only 2 days instead of 7.
+      // Verify that PLT-001's contribution accounts for all 7 days Mar 3–9.
+      //
+      // We check this indirectly: build without REVERSAL and confirm same pallet-day count.
+      const withoutReversal = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: 1,
+        customers,
+        pallets,
+        palletLocationEvents: palletLocationEvents.filter((e) => e.eventType !== "REVERSAL"),
+        inboundDocuments: [inboundDoc],
+        outboundDocuments: [outboundDoc1, outboundDoc2],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      const withReversal = buildLifecyclePreview();
+
+      // Both should produce identical pallet-day totals because REVERSAL is a start-event
+      // that merely re-opens/continues an existing interval without penalizing prior days.
+      expect(withReversal.summary.palletDays).toBe(withoutReversal.summary.palletDays);
+    });
+
+    it("CANCELLED pallet (PLT-003) stops accumulating storage on Mar 20, not at month-end", () => {
+      // PLT-003 cancelled Mar 20 11:00 → last active day-end: midnight Mar 21 > Mar20 11:00? No.
+      // So last counted day is Mar 19 → 17 days (Mar 3–19).
+      // If it were STORED all month it would be 29 days; the difference confirms billing stops at cancellation.
+      const noCancelPreview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: 1,
+        customers,
+        pallets: [plt001, plt002, makePallet(3, 1, CONTAINER, "STORED", {
+          palletCode: "PLT-003",
+          updatedAt: "2026-03-31T23:59:00Z"
+        })],
+        palletLocationEvents: palletLocationEvents.filter(
+          (e) => !(e.palletId === 3 && e.eventType === "CANCELLED")
+        ),
+        inboundDocuments: [inboundDoc],
+        outboundDocuments: [outboundDoc1, outboundDoc2],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      const withCancel = buildLifecyclePreview();
+
+      // Without cancellation PLT-003 would run from Mar 3 to Mar 31 = 29 days.
+      // With cancellation it's only 17 days — a reduction of 12 days.
+      expect(withCancel.summary.palletDays).toBe(noCancelPreview.summary.palletDays - 12);
+    });
+
+    it("outbound SO-001 dated Feb 28 is excluded from the March billing period", () => {
+      const earlyDoc: OutboundDocument = {
+        ...outboundDoc1,
+        actualShipDate: "2026-02-28",
+        confirmedAt: "2026-02-28T10:00:00Z"
+      };
+
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: 1,
+        customers,
+        pallets,
+        palletLocationEvents,
+        inboundDocuments: [inboundDoc],
+        outboundDocuments: [earlyDoc, outboundDoc2],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      const outboundLines = preview.invoiceLines.filter((l) => l.chargeType === "OUTBOUND");
+      // Only SO-002 (Mar 18) should appear; SO-001 (Feb 28) is out of range
+      expect(outboundLines).toHaveLength(1);
+      expect(outboundLines[0]?.reference).toContain("SO-002");
+      expect(preview.summary.outboundAmount).toBe(10);
+    });
+
+    it("inbound reference includes both receipt id and container number", () => {
+      const preview = buildLifecyclePreview();
+      const inboundLine = preview.invoiceLines.find((l) => l.chargeType === "INBOUND");
+      expect(inboundLine?.reference).toContain(String(inboundDoc.id));
+      expect(inboundLine?.reference).toContain(CONTAINER);
+    });
+
+    it("outbound references use packingListNo (SO-001, SO-002)", () => {
+      const preview = buildLifecyclePreview();
+      const outboundLines = preview.invoiceLines.filter((l) => l.chargeType === "OUTBOUND");
+      const refs = outboundLines.map((l) => l.reference).sort();
+      expect(refs[0]).toContain("SO-001");
+      expect(refs[1]).toContain("SO-002");
+    });
+
+    it("daily balance rows reflect pallet count declining as shipments and cancellation occur", () => {
+      const preview = buildLifecyclePreview();
+      const rows = preview.dailyBalanceRows;
+
+      // Before receipt there are no pallets (Mar 1–2)
+      const beforeReceipt = rows.filter((r) => r.date < "2026-03-03");
+      expect(beforeReceipt.every((r) => r.palletCount === 0)).toBe(true);
+
+      // Between receipt and first outbound: 3 pallets (Mar 3–9, using day-end count)
+      // The daily balance row for Mar 9 should show count=3
+      const mar9 = rows.find((r) => r.date === "2026-03-09");
+      expect(mar9?.palletCount).toBe(3);
+
+      // After PLT-001 outbound (Mar 10) and before PLT-002 outbound (Mar 17): 2 pallets
+      const mar14 = rows.find((r) => r.date === "2026-03-14");
+      expect(mar14?.palletCount).toBe(2);
+
+      // After PLT-002 outbound (Mar 18) and before PLT-003 cancellation (Mar 19): 1 pallet
+      const mar19 = rows.find((r) => r.date === "2026-03-19");
+      expect(mar19?.palletCount).toBe(1);
+
+      // After PLT-003 cancellation (Mar 20 onwards): 0 pallets
+      const mar25 = rows.find((r) => r.date === "2026-03-25");
+      expect(mar25?.palletCount).toBe(0);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Billing date fallbacks and reference formatting
+  // ═══════════════════════════════════════════════════════════════════════════
+  describe("billing date fallbacks and reference formatting", () => {
+
+    // ── Inbound date fallback chain ────────────────────────────────
+
+    it("uses confirmedAt as inbound billing date when actualArrivalDate is null", () => {
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: "all",
+        customers,
+        pallets: [],
+        palletLocationEvents: [],
+        inboundDocuments: [makeInboundDoc(1, 1, {
+          actualArrivalDate: null,
+          confirmedAt: "2026-03-12T10:00:00Z"
+        })],
+        outboundDocuments: [],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      expect(preview.invoiceLines.length).toBeGreaterThan(0);
+      expect(preview.invoiceLines[0]?.occurredOn).toBe("2026-03-12");
+    });
+
+    it("uses createdAt as inbound billing date when actualArrivalDate and confirmedAt are both null", () => {
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: "all",
+        customers,
+        pallets: [],
+        palletLocationEvents: [],
+        inboundDocuments: [makeInboundDoc(1, 1, {
+          actualArrivalDate: null,
+          confirmedAt: null
+        })],
+        outboundDocuments: [],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      // makeInboundDoc sets createdAt = "2026-03-01T09:00:00Z"
+      expect(preview.invoiceLines.length).toBeGreaterThan(0);
+      expect(preview.invoiceLines[0]?.occurredOn).toBe("2026-03-01");
+    });
+
+    // ── Outbound date fallback chain ───────────────────────────────
+
+    it("uses confirmedAt as outbound billing date when actualShipDate is null", () => {
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: "all",
+        customers,
+        pallets: [],
+        palletLocationEvents: [],
+        inboundDocuments: [],
+        outboundDocuments: [makeOutboundDoc(1, 1, {
+          actualShipDate: null,
+          confirmedAt: "2026-03-14T08:00:00Z",
+          pallets: 2
+        })],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      expect(preview.invoiceLines).toHaveLength(1);
+      expect(preview.invoiceLines[0]?.occurredOn).toBe("2026-03-14");
+    });
+
+    it("uses createdAt as outbound billing date when actualShipDate and confirmedAt are both null", () => {
+      // makeOutboundDoc sets createdAt = "2026-03-10T09:00:00Z"
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: "all",
+        customers,
+        pallets: [],
+        palletLocationEvents: [],
+        inboundDocuments: [],
+        outboundDocuments: [makeOutboundDoc(1, 1, {
+          actualShipDate: null,
+          confirmedAt: null,
+          pallets: 2
+        })],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      expect(preview.invoiceLines).toHaveLength(1);
+      expect(preview.invoiceLines[0]?.occurredOn).toBe("2026-03-10");
+    });
+
+    // ── DELETED outbound ───────────────────────────────────────────
+
+    it("skips DELETED outbound documents", () => {
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: "all",
+        customers,
+        pallets: [],
+        palletLocationEvents: [],
+        inboundDocuments: [],
+        outboundDocuments: [makeOutboundDoc(1, 1, { status: "DELETED", actualShipDate: "2026-03-15", pallets: 2 })],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      expect(preview.invoiceLines).toHaveLength(0);
+      expect(preview.summary.outboundAmount).toBe(0);
+    });
+
+    // ── containerNo normalisation ──────────────────────────────────
+
+    it("normalises a blank containerNo to UNASSIGNED and omits it from the inbound reference", () => {
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: "all",
+        customers,
+        pallets: [],
+        palletLocationEvents: [],
+        inboundDocuments: [makeInboundDoc(1, 1, { containerNo: "" })],
+        outboundDocuments: [],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      const inboundLine = preview.invoiceLines.find((l) => l.chargeType === "INBOUND");
+      // Reference should be "Receipt 1" only — no "| UNASSIGNED" suffix
+      expect(inboundLine?.reference).toBe("Receipt 1");
+      // Storage row (if any pallets were passed) would use "UNASSIGNED" as containerNo;
+      // with no pallets the storage row list is empty, confirming no crash
+      expect(preview.storageRows).toHaveLength(0);
+    });
+
+    it("storage row containerNo is UNASSIGNED when pallet containerNo is blank", () => {
+      const pallet = makePallet(1, 1, ""); // blank containerNo
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-07",
+        customerId: 1,
+        customers,
+        pallets: [pallet],
+        palletLocationEvents: [makeEvent(1, 1, "PLT-001", "", "RECEIVED", "2026-03-01T09:00:00Z")],
+        inboundDocuments: [],
+        outboundDocuments: [],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      expect(preview.storageRows).toHaveLength(1);
+      expect(preview.storageRows[0]?.containerNo).toBe("UNASSIGNED");
+    });
+
+    // ── Outbound reference fallback chain ──────────────────────────
+
+    it("uses orderRef as outbound reference when packingListNo is blank", () => {
+      const doc: OutboundDocument = {
+        ...makeOutboundDoc(5, 1, { actualShipDate: "2026-03-10", pallets: 1 }),
+        packingListNo: "",
+        orderRef: "ORD-2026-999"
+      };
+
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: "all",
+        customers,
+        pallets: [],
+        palletLocationEvents: [],
+        inboundDocuments: [],
+        outboundDocuments: [doc],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      const outboundLine = preview.invoiceLines.find((l) => l.chargeType === "OUTBOUND");
+      expect(outboundLine?.reference).toBe("ORD-2026-999");
+    });
+
+    it("falls back to 'Shipment {id}' when both packingListNo and orderRef are blank", () => {
+      const doc: OutboundDocument = {
+        ...makeOutboundDoc(7, 1, { actualShipDate: "2026-03-10", pallets: 1 }),
+        packingListNo: "",
+        orderRef: ""
+      };
+
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: "all",
+        customers,
+        pallets: [],
+        palletLocationEvents: [],
+        inboundDocuments: [],
+        outboundDocuments: [doc],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      const outboundLine = preview.invoiceLines.find((l) => l.chargeType === "OUTBOUND");
+      expect(outboundLine?.reference).toBe("Shipment 7");
+    });
+
+    // ── TRANSFER_IN as storage start event ─────────────────────────
+
+    it("TRANSFER_IN event opens a storage interval and the pallet accrues pallet-days from that point", () => {
+      // Pallet transferred in on Mar 5; no RECEIVED event.
+      // Should be billed for Mar 5–31 = 27 days.
+      const pallet = makePallet(1, 1, "CONT-XFER", "STORED", {
+        palletCode: "PLT-001",
+        createdAt: "2026-03-05T08:00:00Z",
+        updatedAt: "2026-03-31T23:59:00Z"
+      });
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: 1,
+        customers,
+        pallets: [pallet],
+        palletLocationEvents: [
+          makeEvent(1, 1, "PLT-001", "CONT-XFER", "TRANSFER_IN", "2026-03-05T08:00:00Z")
+        ],
+        inboundDocuments: [],
+        outboundDocuments: [],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      expect(preview.summary.palletDays).toBe(27);
+    });
+  });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Local factory helpers for edge-case tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+function makeInboundDoc(
+  id: number,
+  customerId: number,
+  overrides: {
+    containerNo?: string;
+    status?: string;
+    actualArrivalDate?: string | null;
+    confirmedAt?: string | null;
+    pallets?: number;
+  } = {}
+): InboundDocument {
+  const pallets = overrides.pallets ?? 2;
+  return {
+    id,
+    customerId,
+    customerName: `Customer ${customerId}`,
+    locationId: 1,
+    locationName: "NJ",
+    expectedArrivalDate: "2026-03-01",
+    actualArrivalDate: overrides.actualArrivalDate !== undefined ? overrides.actualArrivalDate : "2026-03-01",
+    containerNo: overrides.containerNo ?? `CONT-${String(id).padStart(3, "0")}`,
+    handlingMode: "PALLETIZED",
+    storageSection: "A",
+    unitLabel: "CTN",
+    documentNote: "",
+    status: overrides.status ?? "CONFIRMED",
+    trackingStatus: "RECEIVED",
+    confirmedAt: overrides.confirmedAt !== undefined ? overrides.confirmedAt : "2026-03-01T09:00:00Z",
+    deleteNote: "",
+    deletedAt: null,
+    archivedAt: null,
+    totalLines: 1,
+    totalExpectedQty: pallets * 10,
+    totalReceivedQty: pallets * 10,
+    createdAt: "2026-03-01T09:00:00Z",
+    updatedAt: "2026-03-01T09:00:00Z",
+    lines: [{
+      id: id * 100,
+      documentId: id,
+      sku: "SKU-1",
+      description: "Widget",
+      storageSection: "A",
+      reorderLevel: 0,
+      expectedQty: pallets * 10,
+      receivedQty: pallets * 10,
+      pallets,
+      unitsPerPallet: 10,
+      palletsDetailCtns: String(pallets),
+      unitLabel: "CTN",
+      lineNote: "",
+      createdAt: "2026-03-01T09:00:00Z"
+    }]
+  };
+}
+
+function makeOutboundDoc(
+  id: number,
+  customerId: number,
+  overrides: {
+    status?: string;
+    actualShipDate?: string | null;
+    confirmedAt?: string | null;
+    pallets?: number;
+  } = {}
+): OutboundDocument {
+  const pallets = overrides.pallets ?? 2;
+  return {
+    id,
+    packingListNo: `SO-${id}`,
+    orderRef: "",
+    customerId,
+    customerName: `Customer ${customerId}`,
+    expectedShipDate: "2026-03-10",
+    actualShipDate: overrides.actualShipDate !== undefined ? overrides.actualShipDate : "2026-03-10",
+    shipToName: "",
+    shipToAddress: "",
+    shipToContact: "",
+    carrierName: "",
+    documentNote: "",
+    status: overrides.status ?? "CONFIRMED",
+    trackingStatus: "SHIPPED",
+    confirmedAt: overrides.confirmedAt !== undefined ? overrides.confirmedAt : "2026-03-10T10:00:00Z",
+    deleteNote: "",
+    deletedAt: null,
+    archivedAt: null,
+    totalLines: 1,
+    totalQty: pallets * 10,
+    totalNetWeightKgs: 0,
+    totalGrossWeightKgs: 0,
+    storages: "NJ / A",
+    createdAt: "2026-03-10T09:00:00Z",
+    updatedAt: "2026-03-10T10:00:00Z",
+    lines: [{
+      id: id * 100,
+      documentId: id,
+      skuMasterId: 1,
+      itemNumber: "ITM-1",
+      locationId: 1,
+      locationName: "NJ",
+      storageSection: "A",
+      sku: "SKU-1",
+      description: "Widget",
+      quantity: pallets * 10,
+      pallets,
+      palletsDetailCtns: String(pallets),
+      unitLabel: "CTN",
+      cartonSizeMm: "",
+      netWeightKgs: 0,
+      grossWeightKgs: 0,
+      lineNote: "",
+      pickPallets: [],
+      pickAllocations: [],
+      createdAt: "2026-03-10T09:00:00Z"
+    }]
+  };
+}
+
+function makePallet(
+  id: number,
+  customerId: number,
+  containerNo: string,
+  status: PalletTrace["status"] = "STORED",
+  overrides: Partial<PalletTrace> = {}
+): PalletTrace {
+  return {
+    id,
+    parentPalletId: 0,
+    palletCode: `PLT-${String(id).padStart(3, "0")}`,
+    containerVisitId: 1,
+    sourceInboundDocumentId: 1,
+    sourceInboundLineId: 1,
+    actualArrivalDate: "2026-03-01",
+    customerId,
+    customerName: `Customer ${customerId}`,
+    skuMasterId: 1,
+    sku: "SKU-1",
+    description: "Widget",
+    currentLocationId: 1,
+    currentLocationName: "NJ",
+    currentStorageSection: "A",
+    currentContainerNo: containerNo,
+    status,
+    createdAt: "2026-03-01T09:00:00Z",
+    updatedAt: "2026-03-31T23:59:00Z",
+    contents: [],
+    ...overrides
+  };
+}
+
+function makeEvent(
+  id: number,
+  palletId: number,
+  palletCode: string,
+  containerNo: string,
+  eventType: string,
+  eventTime: string,
+  palletDelta = 1,
+  quantityDelta = 10,
+  customerId = 1
+): PalletLocationEvent {
+  return {
+    id,
+    palletId,
+    palletCode,
+    containerVisitId: 1,
+    customerId,
+    customerName: `Customer ${customerId}`,
+    locationId: 1,
+    locationName: "NJ",
+    storageSection: "A",
+    containerNo,
+    eventType,
+    quantityDelta,
+    palletDelta,
+    eventTime,
+    createdAt: eventTime
+  };
+}
