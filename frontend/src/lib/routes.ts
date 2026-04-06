@@ -5,6 +5,7 @@ export type PageKey =
   | "daily-operations"
   | "billing"
   | "billing-container-detail"
+  | "billing-invoice-editor"
   | "export-center"
   | "reports"
   | "all-activity"
@@ -34,6 +35,7 @@ export const pagePathMap: Record<PageKey, string> = {
   "daily-operations": "/daily-operations",
   billing: "/billing",
   "billing-container-detail": "/billing/container",
+  "billing-invoice-editor": "/billing/invoices",
   "export-center": "/export-center",
   reports: "/reports",
   "all-activity": "/all-activity",
@@ -73,6 +75,7 @@ export function getPageFromPath(pathname: string): PageKey {
 
   if (normalized === "/daily-operations" || /^\/daily-operations\/\d{4}-\d{2}-\d{2}$/.test(normalized)) return "daily-operations";
   if (/^\/billing\/container\/\d{4}-\d{2}-\d{2}\/\d{4}-\d{2}-\d{2}\/(?:all|\d+)\/[^/]+$/.test(normalized)) return "billing-container-detail";
+  if (/^\/billing\/invoices\/\d+$/.test(normalized)) return "billing-invoice-editor";
   if (normalized === "/billing") return "billing";
   if (normalized === "/reports") return "reports";
   if (normalized === "/export-center") return "export-center";
@@ -286,6 +289,25 @@ export function getBillingContainerDetailFromPath(pathname: string) {
   } catch {
     return null;
   }
+}
+
+export function navigateToBillingInvoiceEditor(
+  setter: (page: PageKey) => void,
+  invoiceId: number
+) {
+  const path = `/billing/invoices/${invoiceId}`;
+  if (normalizePagePath(window.location.pathname) !== path) {
+    window.history.pushState({ page: "billing-invoice-editor", invoiceId }, "", path);
+  }
+  setter("billing-invoice-editor");
+}
+
+export function getBillingInvoiceIdFromPath(pathname: string): number | null {
+  const normalized = normalizePagePath(pathname);
+  const match = normalized.match(/^\/billing\/invoices\/(\d+)$/);
+  if (!match) return null;
+  const id = Number(match[1]);
+  return id > 0 ? id : null;
 }
 
 export function getContainerDetailContainerNoFromPath(pathname: string) {

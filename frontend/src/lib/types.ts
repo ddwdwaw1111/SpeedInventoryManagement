@@ -680,3 +680,106 @@ export type CycleCountPayload = {
   notes?: string;
   lines: CycleCountLinePayload[];
 };
+
+// --- Billing Invoice Types ---
+
+export type BillingInvoiceStatus = "DRAFT" | "FINALIZED" | "PAID" | "VOID";
+
+export type BillingRatesSnapshot = {
+  inboundContainerFee: number;
+  wrappingFeePerPallet: number;
+  storageFeePerPalletPerWeek: number;
+  outboundFeePerPallet: number;
+};
+
+export type BillingInvoiceLineData = {
+  id: number;
+  invoiceId: number;
+  chargeType: string;
+  description: string;
+  reference: string;
+  containerNo: string;
+  warehouse: string;
+  occurredOn: string;
+  quantity: number;
+  unitRate: number;
+  amount: number;
+  notes: string;
+  sourceType: "AUTO" | "MANUAL";
+  sortOrder: number;
+  createdAt: string;
+};
+
+export type BillingInvoice = {
+  id: number;
+  invoiceNo: string;
+  customerId: number;
+  customerNameSnapshot: string;
+  periodStart: string;
+  periodEnd: string;
+  currencyCode: string;
+  rates: BillingRatesSnapshot;
+  subtotal: number;
+  discountTotal: number;
+  grandTotal: number;
+  status: BillingInvoiceStatus;
+  notes: string;
+  finalizedAt: string | null;
+  finalizedByUserId: number | null;
+  paidAt: string | null;
+  voidedAt: string | null;
+  createdByUserId: number;
+  createdAt: string;
+  updatedAt: string;
+  lines: BillingInvoiceLineData[];
+};
+
+export type CreateBillingInvoiceLinePayload = {
+  chargeType: string;
+  description: string;
+  reference?: string;
+  containerNo?: string;
+  warehouse?: string;
+  occurredOn?: string;
+  quantity: number;
+  unitRate: number;
+  amount: number;
+  notes?: string;
+  sourceType?: string;
+};
+
+export type CreateBillingInvoicePayload = {
+  customerId: number;
+  customerName: string;
+  periodStart: string;
+  periodEnd: string;
+  rates: BillingRatesSnapshot;
+  notes?: string;
+  lines: CreateBillingInvoiceLinePayload[];
+};
+
+export type AddBillingInvoiceLinePayload = {
+  chargeType: string;
+  description: string;
+  reference?: string;
+  containerNo?: string;
+  warehouse?: string;
+  occurredOn?: string;
+  quantity: number;
+  unitRate: number;
+  amount: number;
+  notes?: string;
+};
+
+export type UpdateBillingInvoiceLinePayload = {
+  chargeType: string;
+  description: string;
+  reference?: string;
+  containerNo?: string;
+  warehouse?: string;
+  occurredOn?: string;
+  quantity: number;
+  unitRate: number;
+  amount: number;
+  notes?: string;
+};

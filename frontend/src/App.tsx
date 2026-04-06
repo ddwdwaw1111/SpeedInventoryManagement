@@ -31,6 +31,7 @@ import { useI18n } from "./lib/i18n";
 import { setPendingPalletTraceLaunchContext } from "./lib/palletTraceLaunchContext";
 import {
   getBillingContainerDetailFromPath,
+  getBillingInvoiceIdFromPath,
   getContainerDetailContainerNoFromPath,
   getDailyOperationsDateFromPath,
   getInboundDetailIdFromPath,
@@ -39,6 +40,7 @@ import {
   getShipmentEditorIdFromPath,
   getStorageLocationEditorIdFromPath,
   navigateToBillingContainerDetail,
+  navigateToBillingInvoiceEditor,
   navigateToContainerDetail,
   navigateToDailyOperations,
   navigateToInboundDetail,
@@ -73,6 +75,10 @@ const BillingPage = lazy(async () => {
 const BillingContainerDetailPage = lazy(async () => {
   const module = await import("./components/BillingContainerDetailPage");
   return { default: module.BillingContainerDetailPage };
+});
+const BillingInvoiceEditorPage = lazy(async () => {
+  const module = await import("./components/BillingInvoiceEditorPage");
+  return { default: module.BillingInvoiceEditorPage };
 });
 const ContainerContentsPage = lazy(async () => {
   const module = await import("./components/ContainerContentsPage");
@@ -281,6 +287,11 @@ export default function App() {
 
   function handleNavigateToBillingContainerDetail(startDate: string, endDate: string, customerId: number | "all", containerNo: string) {
     navigateToBillingContainerDetail(setActivePage, startDate, endDate, customerId, containerNo);
+    setCurrentPathname(window.location.pathname);
+  }
+
+  function handleNavigateToBillingInvoice(invoiceId: number) {
+    navigateToBillingInvoiceEditor(setActivePage, invoiceId);
     setCurrentPathname(window.location.pathname);
   }
 
@@ -530,6 +541,7 @@ export default function App() {
   const selectedShipmentEditorId = getShipmentEditorIdFromPath(currentPathname);
   const selectedContainerDetailNo = getContainerDetailContainerNoFromPath(currentPathname);
   const selectedBillingContainerDetail = getBillingContainerDetailFromPath(currentPathname);
+  const selectedBillingInvoiceId = getBillingInvoiceIdFromPath(currentPathname);
   const selectedDailyOperationsDate = getDailyOperationsDateFromPath(currentPathname);
   const editingStorageLocation = editingStorageLocationId
     ? locations.find((location) => location.id === editingStorageLocationId) ?? null
@@ -790,7 +802,16 @@ export default function App() {
                 customers={customers}
                 inboundDocuments={inboundDocuments}
                 outboundDocuments={outboundDocuments}
+                currentUserRole={currentUser?.role ?? "viewer"}
                 onOpenBillingContainerDetail={handleNavigateToBillingContainerDetail}
+                onOpenBillingInvoice={handleNavigateToBillingInvoice}
+              />)
+            ) : null}
+            {activePage === "billing-invoice-editor" ? (
+              renderWithSuspense(<BillingInvoiceEditorPage
+                invoiceId={selectedBillingInvoiceId ?? 0}
+                currentUserRole={currentUser?.role ?? "viewer"}
+                onBackToBilling={() => handleNavigateToPage("billing")}
               />)
             ) : null}
             {activePage === "billing-container-detail" ? (

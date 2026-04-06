@@ -1,5 +1,8 @@
+import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
+import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
+import ExpandLessOutlinedIcon from "@mui/icons-material/ExpandLessOutlined";
 import RefreshOutlinedIcon from "@mui/icons-material/RefreshOutlined";
-import { Button } from "@mui/material";
+import { Button, Chip } from "@mui/material";
 import { BarChart } from "@mui/x-charts";
 import { useEffect, useMemo, useState } from "react";
 
@@ -16,14 +19,26 @@ import {
 import { formatDateTimeValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
-import type { Customer, InboundDocument, OutboundDocument, PalletLocationEvent, PalletTrace } from "../lib/types";
+import type {
+  BillingInvoice,
+  BillingInvoiceStatus,
+  CreateBillingInvoicePayload,
+  Customer,
+  InboundDocument,
+  OutboundDocument,
+  PalletLocationEvent,
+  PalletTrace,
+  UserRole
+} from "../lib/types";
 import { WorkspacePanelHeader, WorkspaceTableEmptyState } from "./WorkspacePanelChrome";
 
 type BillingPageProps = {
   customers: Customer[];
   inboundDocuments: InboundDocument[];
   outboundDocuments: OutboundDocument[];
+  currentUserRole: UserRole;
   onOpenBillingContainerDetail: (startDate: string, endDate: string, customerId: number | "all", containerNo: string) => void;
+  onOpenBillingInvoice: (invoiceId: number) => void;
 };
 
 type BillingContainerSummaryRow = {
@@ -39,7 +54,7 @@ type BillingContainerSummaryRow = {
   totalAmount: number;
 };
 
-export function BillingPage({ customers, inboundDocuments, outboundDocuments, onOpenBillingContainerDetail }: BillingPageProps) {
+export function BillingPage({ customers, inboundDocuments, outboundDocuments, currentUserRole, onOpenBillingContainerDetail, onOpenBillingInvoice }: BillingPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const [selectedStartDate, setSelectedStartDate] = useState(() => getCurrentBillingDateRange().startDate);
@@ -50,6 +65,10 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, on
   const [palletLocationEvents, setPalletLocationEvents] = useState<PalletLocationEvent[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [invoices, setInvoices] = useState<BillingInvoice[]>([]);
+  const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
+  const [invoiceStatusFilter, setInvoiceStatusFilter] = useState<BillingInvoiceStatus | "ALL">("ALL");
+  const [showDetailSections, setShowDetailSections] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -95,6 +114,64 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, on
     });
   }, [customerId, rates, selectedEndDate, selectedStartDate]);
 
+  // Load invoice history
+  useEffect(() => {
+    let active = true;
+    async function loadInvoices() {
+      try {
+        const cid = customerId === "all" ? undefined : customerId;
+        const data = await api.getBillingInvoices(cid);
+        if (active) setInvoices(data);
+      } catch {
+        // silent — invoice history is secondary
+      }
+    }
+    void loadInvoices();
+    return () => { active = false; };
+  }, [customerId]);
+
+  async function handleCreateInvoice() {
+    if (customerId === "all" || billingPreview.invoiceLines.length === 0) return;
+
+    const selectedCustomer = customers.find((c) => c.id === customerId);
+    const customerName = selectedCustomer?.name ?? billingPreview.customerName;
+
+    setIsCreatingInvoice(true);
+    setErrorMessage("");
+    try {
+      const payload: CreateBillingInvoicePayload = {
+        customerId,
+        customerName,
+        periodStart: selectedStartDate,
+        periodEnd: selectedEndDate,
+        rates: {
+          inboundContainerFee: rates.inboundContainerFee,
+          wrappingFeePerPallet: rates.wrappingFeePerPallet,
+          storageFeePerPalletPerWeek: rates.storageFeePerPalletPerWeek,
+          outboundFeePerPallet: rates.outboundFeePerPallet,
+        },
+        lines: billingPreview.invoiceLines.map((line) => ({
+          chargeType: line.chargeType,
+          description: line.meta || chargeTypeDescription(line.chargeType),
+          reference: line.reference,
+          containerNo: line.containerNo,
+          warehouse: line.warehouseSummary,
+          occurredOn: line.occurredOn ?? undefined,
+          quantity: line.quantity,
+          unitRate: line.unitRate,
+          amount: line.amount,
+          sourceType: "AUTO"
+        }))
+      };
+      const created = await api.createBillingInvoice(payload);
+      onOpenBillingInvoice(created.id);
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error, "Could not create invoice."));
+    } finally {
+      setIsCreatingInvoice(false);
+    }
+  }
+
   const billingPreview = useMemo(() => buildBillingPreview({
     startDate: selectedStartDate,
     endDate: selectedEndDate,
@@ -119,6 +196,21 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, on
     [billingPreview.dailyBalanceRows]
   );
 
+  const filteredInvoices = useMemo(() => {
+    if (invoiceStatusFilter === "ALL") return invoices;
+    return invoices.filter((inv) => inv.status === invoiceStatusFilter);
+  }, [invoices, invoiceStatusFilter]);
+
+  const invoiceStatusCounts = useMemo(() => {
+    const counts = { DRAFT: 0, FINALIZED: 0, PAID: 0, VOID: 0 };
+    for (const inv of invoices) {
+      if (inv.status in counts) counts[inv.status as keyof typeof counts]++;
+    }
+    return counts;
+  }, [invoices]);
+
+  const canCreateInvoice = customerId !== "all" && billingPreview.invoiceLines.length > 0;
+
   const rateActions = (
     <div className="sheet-actions">
       <Button
@@ -139,6 +231,14 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, on
       >
         {t("refresh")}
       </Button>
+      <Button
+        size="small"
+        variant={showDetailSections ? "contained" : "outlined"}
+        startIcon={showDetailSections ? <ExpandLessOutlinedIcon fontSize="small" /> : <ExpandMoreOutlinedIcon fontSize="small" />}
+        onClick={() => setShowDetailSections((prev) => !prev)}
+      >
+        {showDetailSections ? t("billingHideDetails") : t("billingShowDetails")}
+      </Button>
     </div>
   );
 
@@ -157,6 +257,7 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, on
           />
         </div>
 
+        {/* ── Filter bar ── */}
         <div className="filter-bar">
           <label>
             {t("fromDate")}
@@ -177,94 +278,7 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, on
           </label>
         </div>
 
-        <div className="report-grid">
-          <article className="report-card">
-            <div className="report-card__header">
-              <h3>{t("billingRateCard")}</h3>
-              <p>{t("billingRateCardDesc")}</p>
-            </div>
-            <div className="sheet-form">
-              <label>
-                {t("billingInboundContainerFee")}
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={rates.inboundContainerFee}
-                  onChange={(event) => setRates((current) => ({ ...current, inboundContainerFee: toNumber(event.target.value) }))}
-                />
-              </label>
-              <label>
-                {t("billingWrappingFee")}
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={rates.wrappingFeePerPallet}
-                  onChange={(event) => setRates((current) => ({ ...current, wrappingFeePerPallet: toNumber(event.target.value) }))}
-                />
-              </label>
-              <label>
-                {t("billingStorageRate")}
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={rates.storageFeePerPalletPerWeek}
-                  onChange={(event) => setRates((current) => ({ ...current, storageFeePerPalletPerWeek: toNumber(event.target.value) }))}
-                />
-              </label>
-              <label>
-                {t("billingOutboundFee")}
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={rates.outboundFeePerPallet}
-                  onChange={(event) => setRates((current) => ({ ...current, outboundFeePerPallet: toNumber(event.target.value) }))}
-                />
-              </label>
-            </div>
-            <div className="sheet-note" style={{ marginTop: "1rem" }}>
-              <strong>{t("billingCustomerScope")}</strong>
-              <br />
-              {billingPreview.customerName}
-            </div>
-          </article>
-
-          <article className="report-card">
-            <div className="report-card__header">
-              <h3>{t("dailyPalletBalance")}</h3>
-              <p>{t("dailyPalletBalanceDesc")}</p>
-            </div>
-            {isLoading ? (
-              <div className="empty-state">{t("loadingRecords")}</div>
-            ) : billingPreview.dailyBalanceRows.some((row) => row.palletCount > 0) ? (
-              <div className="report-chart-wrap">
-                <BarChart
-                  dataset={dailyBalanceDataset}
-                  height={300}
-                  margin={{ top: 20, bottom: 20, left: 36, right: 12 }}
-                  xAxis={[{ scaleType: "band", dataKey: "label" }]}
-                  series={[{ dataKey: "palletCount", label: t("billingDayEndPallets"), color: "#274c77" }]}
-                  hideLegend
-                  grid={{ horizontal: true }}
-                />
-              </div>
-            ) : (
-              <WorkspaceTableEmptyState title={t("noBillingData")} description={t("dailyPalletBalanceDesc")} />
-            )}
-            <div className="sheet-note sheet-note--readonly" style={{ marginTop: "1rem" }}>
-              <strong>{t("billingCalculationFormula")}</strong>
-              <br />
-              {t("billingStorageFormulaHint", {
-                palletDays: formatNumber(billingPreview.summary.palletDays),
-                dailyRate: formatMoney(rates.storageFeePerPalletPerWeek / 7)
-              })}
-            </div>
-          </article>
-        </div>
-
+        {/* ── Quick metrics ── */}
         <div className="metric-ribbon" style={{ padding: "0 1rem 1rem" }}>
           <article className="metric-card">
             <span>{t("billingReceivedContainers")}</span>
@@ -284,6 +298,7 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, on
           </article>
         </div>
 
+        {/* ── Charge summary bars ── */}
         <div className="report-grid" style={{ paddingTop: 0 }}>
           <article className="report-card">
             <div className="report-card__header">
@@ -306,100 +321,113 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, on
               ))}
             </div>
           </article>
-
-          <article className="report-card">
-            <div className="report-card__header">
-            <h3>{t("billingContainerTrace")}</h3>
-            <p>{t("billingContainerTraceDesc")}</p>
-            </div>
-          {containerSummaryRows.length === 0 ? (
-            <WorkspaceTableEmptyState title={t("noBillingData")} description={t("billingContainerTraceDesc")} />
-            ) : (
-            <div className="sheet-table-wrap">
-            <table className="sheet-table" aria-label={t("billingContainerTrace")}>
-              <thead>
-              <tr>
-                <th>{t("containerNo")}</th>
-                <th>{t("customer")}</th>
-                <th>{t("reference")}</th>
-                <th>{t("currentStorage")}</th>
-                <th>{t("billingInboundCharges")}</th>
-                <th>{t("billingWrappingCharges")}</th>
-                <th>{t("billingStorageCharges")}</th>
-                <th>{t("billingOutboundCharges")}</th>
-                <th>{t("amount")}</th>
-                <th>{t("actions")}</th>
-              </tr>
-              </thead>
-              <tbody>
-              {containerSummaryRows.map((row) => (
-                <tr key={`${row.customerId}-${row.containerNo}`}>
-                <td className="cell--mono">{row.containerNo}</td>
-                <td>{row.customerName}</td>
-                <td>{renderReferencePreview(row.references)}</td>
-                <td>{row.warehousesTouched.join(", ") || "-"}</td>
-                <td className="cell--mono">{formatMoney(row.inboundAmount)}</td>
-                <td className="cell--mono">{formatMoney(row.wrappingAmount)}</td>
-                <td className="cell--mono">{formatMoney(row.storageAmount)}</td>
-                <td className="cell--mono">{formatMoney(row.outboundAmount)}</td>
-                <td className="cell--mono">{formatMoney(row.totalAmount)}</td>
-                <td>
-                  {isNavigableContainerNo(row.containerNo) ? (
-                  <Button
-                    size="small"
-                    variant="text"
-                    onClick={() => onOpenBillingContainerDetail(billingPreview.startDate, billingPreview.endDate, customerId, row.containerNo)}
-                  >
-                    {t("billingViewContainerInvoice")}
-                  </Button>
-                  ) : "-"}
-                </td>
-                </tr>
-              ))}
-              </tbody>
-            </table>
-            </div>
-            )}
-          </article>
         </div>
 
+        {/* ── Create Invoice CTA ── */}
+        {customerId !== "all" && (
+          <div className="billing-cta-banner" style={{ margin: "0 1rem 1rem", padding: "1rem 1.25rem", background: canCreateInvoice ? "rgba(39, 76, 119, 0.06)" : "rgba(0,0,0,0.02)", borderRadius: "var(--radius-md)", border: canCreateInvoice ? "1px solid rgba(39, 76, 119, 0.15)" : "1px dashed var(--gray-4)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
+            <div>
+              <strong style={{ fontSize: "0.938rem" }}>
+                {canCreateInvoice
+                  ? `${t("billingCreateInvoice")} — ${billingPreview.customerName}`
+                  : t("billingSelectCustomerHint")
+                }
+              </strong>
+              {canCreateInvoice && (
+                <div style={{ fontSize: "0.813rem", color: "var(--ink-soft)", marginTop: "0.25rem" }}>
+                  {billingPreview.invoiceLines.length} {t("billingLineCount").toLowerCase()} · {formatMoney(billingPreview.summary.grandTotal)}
+                </div>
+              )}
+            </div>
+            {canCreateInvoice && (
+              <Button
+                variant="contained"
+                color="primary"
+                disabled={isCreatingInvoice}
+                startIcon={<AddCircleOutlineOutlinedIcon fontSize="small" />}
+                onClick={handleCreateInvoice}
+              >
+                {isCreatingInvoice ? "..." : t("billingCreateInvoice")}
+              </Button>
+            )}
+          </div>
+        )}
+
+        {customerId === "all" && billingPreview.invoiceLines.length === 0 && (
+          <div style={{ margin: "0 1rem 1rem", padding: "1rem 1.25rem", background: "rgba(0,0,0,0.02)", borderRadius: "var(--radius-md)", border: "1px dashed var(--gray-4)", textAlign: "center", color: "var(--ink-soft)", fontSize: "0.875rem" }}>
+            {t("billingWorkflowHint")}
+          </div>
+        )}
+
+        {/* ── Settlement overview / Invoice history (always visible) ── */}
         <section className="workbook-panel" style={{ margin: "0 1rem 1rem" }}>
           <WorkspacePanelHeader
-            title={t("billingInvoicePreview")}
-            description={t("billingInvoicePreviewDesc")}
+            title={t("billingSettlementOverview")}
+            description={t("billingSettlementOverviewDesc")}
           />
-          {billingPreview.invoiceLines.length === 0 ? (
-            <WorkspaceTableEmptyState title={t("noBillingData")} description={t("billingInvoicePreviewDesc")} />
+          {/* Status filter chips */}
+          {invoices.length > 0 && (
+            <div style={{ display: "flex", gap: "0.5rem", padding: "0 1rem 0.75rem", flexWrap: "wrap" }}>
+              {([
+                { key: "ALL" as const, label: t("billingAllStatuses"), count: invoices.length, color: "default" as const },
+                { key: "DRAFT" as const, label: t("billingDraftCount"), count: invoiceStatusCounts.DRAFT, color: "default" as const },
+                { key: "FINALIZED" as const, label: t("billingFinalizedCount"), count: invoiceStatusCounts.FINALIZED, color: "primary" as const },
+                { key: "PAID" as const, label: t("billingPaidCount"), count: invoiceStatusCounts.PAID, color: "success" as const },
+                { key: "VOID" as const, label: t("billingVoidCount"), count: invoiceStatusCounts.VOID, color: "error" as const },
+              ]).filter((chip) => chip.key === "ALL" || chip.count > 0).map((chip) => (
+                <Chip
+                  key={chip.key}
+                  size="small"
+                  label={`${chip.label} (${chip.count})`}
+                  color={chip.color}
+                  variant={invoiceStatusFilter === chip.key ? "filled" : "outlined"}
+                  onClick={() => setInvoiceStatusFilter(chip.key)}
+                  style={{ cursor: "pointer" }}
+                />
+              ))}
+            </div>
+          )}
+          {invoices.length === 0 ? (
+            <WorkspaceTableEmptyState title={t("billingNoInvoicesTitle")} description={t("billingNoInvoicesDesc")} />
+          ) : filteredInvoices.length === 0 ? (
+            <WorkspaceTableEmptyState title={t("billingNoInvoicesTitle")} description={t("billingNoInvoicesDesc")} />
           ) : (
             <div className="sheet-table-wrap">
               <table className="sheet-table">
                 <thead>
                   <tr>
+                    <th>{t("billingInvoiceNo")}</th>
                     <th>{t("customer")}</th>
-                    <th>{t("chargeType")}</th>
-                    <th>{t("reference")}</th>
-                    <th>{t("containerNo")}</th>
-                    <th>{t("currentStorage")}</th>
-                    <th>{t("quantity")}</th>
-                    <th>{t("unitRate")}</th>
-                    <th>{t("amount")}</th>
-                    <th>{t("notes")}</th>
+                    <th>{t("billingPeriod")}</th>
+                    <th>{t("billingLineCount")}</th>
+                    <th>{t("billingGrandTotal")}</th>
+                    <th>{t("status")}</th>
                     <th>{t("created")}</th>
+                    <th>{t("actions")}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {billingPreview.invoiceLines.map((line) => (
-                    <tr key={line.id}>
-                      <td>{line.customerName}</td>
-                      <td>{renderChargeTypeLabel(line.chargeType, t)}</td>
-                      <td className="cell--mono">{line.reference}</td>
-                      <td className="cell--mono">{line.containerNo}</td>
-                      <td>{line.warehouseSummary}</td>
-                      <td className="cell--mono">{formatNumber(line.quantity)}</td>
-                      <td className="cell--mono">{formatMoney(line.unitRate)}</td>
-                      <td className="cell--mono">{formatMoney(line.amount)}</td>
-                      <td>{line.meta}</td>
-                      <td>{line.occurredOn ? formatDateTimeValue(line.occurredOn, resolvedTimeZone, { dateStyle: "medium" }) : "-"}</td>
+                  {filteredInvoices.map((inv) => (
+                    <tr key={inv.id}>
+                      <td className="cell--mono">{inv.invoiceNo}</td>
+                      <td>{inv.customerNameSnapshot}</td>
+                      <td>{inv.periodStart} — {inv.periodEnd}</td>
+                      <td className="cell--mono">{inv.lines.length}</td>
+                      <td className="cell--mono">{formatMoney(inv.grandTotal)}</td>
+                      <td>
+                        <Chip
+                          size="small"
+                          label={invoiceStatusLabel(inv.status, t)}
+                          color={invoiceStatusColor(inv.status)}
+                          variant="outlined"
+                        />
+                      </td>
+                      <td>{formatDateTimeValue(inv.createdAt, resolvedTimeZone)}</td>
+                      <td>
+                        <Button size="small" variant="text" onClick={() => onOpenBillingInvoice(inv.id)}>
+                          {t("billingOpenInvoice")}
+                        </Button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -407,6 +435,204 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, on
             </div>
           )}
         </section>
+
+        {/* ── Collapsible detail sections ── */}
+        {showDetailSections && (
+          <>
+            {/* Rate card + Daily pallet balance */}
+            <div className="report-grid">
+              <article className="report-card">
+                <div className="report-card__header">
+                  <h3>{t("billingRateCard")}</h3>
+                  <p>{t("billingRateCardDesc")}</p>
+                </div>
+                <div className="sheet-form">
+                  <label>
+                    {t("billingInboundContainerFee")}
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={rates.inboundContainerFee}
+                      onChange={(event) => setRates((current) => ({ ...current, inboundContainerFee: toNumber(event.target.value) }))}
+                    />
+                  </label>
+                  <label>
+                    {t("billingWrappingFee")}
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={rates.wrappingFeePerPallet}
+                      onChange={(event) => setRates((current) => ({ ...current, wrappingFeePerPallet: toNumber(event.target.value) }))}
+                    />
+                  </label>
+                  <label>
+                    {t("billingStorageRate")}
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={rates.storageFeePerPalletPerWeek}
+                      onChange={(event) => setRates((current) => ({ ...current, storageFeePerPalletPerWeek: toNumber(event.target.value) }))}
+                    />
+                  </label>
+                  <label>
+                    {t("billingOutboundFee")}
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={rates.outboundFeePerPallet}
+                      onChange={(event) => setRates((current) => ({ ...current, outboundFeePerPallet: toNumber(event.target.value) }))}
+                    />
+                  </label>
+                </div>
+                <div className="sheet-note" style={{ marginTop: "1rem" }}>
+                  <strong>{t("billingCustomerScope")}</strong>
+                  <br />
+                  {billingPreview.customerName}
+                </div>
+              </article>
+
+              <article className="report-card">
+                <div className="report-card__header">
+                  <h3>{t("dailyPalletBalance")}</h3>
+                  <p>{t("dailyPalletBalanceDesc")}</p>
+                </div>
+                {isLoading ? (
+                  <div className="empty-state">{t("loadingRecords")}</div>
+                ) : billingPreview.dailyBalanceRows.some((row) => row.palletCount > 0) ? (
+                  <div className="report-chart-wrap">
+                    <BarChart
+                      dataset={dailyBalanceDataset}
+                      height={300}
+                      margin={{ top: 20, bottom: 20, left: 36, right: 12 }}
+                      xAxis={[{ scaleType: "band", dataKey: "label" }]}
+                      series={[{ dataKey: "palletCount", label: t("billingDayEndPallets"), color: "#274c77" }]}
+                      hideLegend
+                      grid={{ horizontal: true }}
+                    />
+                  </div>
+                ) : (
+                  <WorkspaceTableEmptyState title={t("noBillingData")} description={t("dailyPalletBalanceDesc")} />
+                )}
+                <div className="sheet-note sheet-note--readonly" style={{ marginTop: "1rem" }}>
+                  <strong>{t("billingCalculationFormula")}</strong>
+                  <br />
+                  {t("billingStorageFormulaHint", {
+                    palletDays: formatNumber(billingPreview.summary.palletDays),
+                    dailyRate: formatMoney(rates.storageFeePerPalletPerWeek / 7)
+                  })}
+                </div>
+              </article>
+            </div>
+
+            {/* Container trace */}
+            <div className="report-grid" style={{ paddingTop: 0 }}>
+              <article className="report-card">
+                <div className="report-card__header">
+                  <h3>{t("billingContainerTrace")}</h3>
+                  <p>{t("billingContainerTraceDesc")}</p>
+                </div>
+                {containerSummaryRows.length === 0 ? (
+                  <WorkspaceTableEmptyState title={t("noBillingData")} description={t("billingContainerTraceDesc")} />
+                ) : (
+                  <div className="sheet-table-wrap">
+                    <table className="sheet-table" aria-label={t("billingContainerTrace")}>
+                      <thead>
+                        <tr>
+                          <th>{t("containerNo")}</th>
+                          <th>{t("customer")}</th>
+                          <th>{t("reference")}</th>
+                          <th>{t("currentStorage")}</th>
+                          <th>{t("billingInboundCharges")}</th>
+                          <th>{t("billingWrappingCharges")}</th>
+                          <th>{t("billingStorageCharges")}</th>
+                          <th>{t("billingOutboundCharges")}</th>
+                          <th>{t("amount")}</th>
+                          <th>{t("actions")}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {containerSummaryRows.map((row) => (
+                          <tr key={`${row.customerId}-${row.containerNo}`}>
+                            <td className="cell--mono">{row.containerNo}</td>
+                            <td>{row.customerName}</td>
+                            <td>{renderReferencePreview(row.references)}</td>
+                            <td>{row.warehousesTouched.join(", ") || "-"}</td>
+                            <td className="cell--mono">{formatMoney(row.inboundAmount)}</td>
+                            <td className="cell--mono">{formatMoney(row.wrappingAmount)}</td>
+                            <td className="cell--mono">{formatMoney(row.storageAmount)}</td>
+                            <td className="cell--mono">{formatMoney(row.outboundAmount)}</td>
+                            <td className="cell--mono">{formatMoney(row.totalAmount)}</td>
+                            <td>
+                              {isNavigableContainerNo(row.containerNo) ? (
+                                <Button
+                                  size="small"
+                                  variant="text"
+                                  onClick={() => onOpenBillingContainerDetail(billingPreview.startDate, billingPreview.endDate, customerId, row.containerNo)}
+                                >
+                                  {t("billingViewContainerInvoice")}
+                                </Button>
+                              ) : "-"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </article>
+            </div>
+
+            {/* Invoice preview lines */}
+            <section className="workbook-panel" style={{ margin: "0 1rem 1rem" }}>
+              <WorkspacePanelHeader
+                title={t("billingInvoicePreview")}
+                description={t("billingInvoicePreviewDesc")}
+              />
+              {billingPreview.invoiceLines.length === 0 ? (
+                <WorkspaceTableEmptyState title={t("noBillingData")} description={t("billingInvoicePreviewDesc")} />
+              ) : (
+                <div className="sheet-table-wrap">
+                  <table className="sheet-table">
+                    <thead>
+                      <tr>
+                        <th>{t("customer")}</th>
+                        <th>{t("chargeType")}</th>
+                        <th>{t("reference")}</th>
+                        <th>{t("containerNo")}</th>
+                        <th>{t("currentStorage")}</th>
+                        <th>{t("quantity")}</th>
+                        <th>{t("unitRate")}</th>
+                        <th>{t("amount")}</th>
+                        <th>{t("notes")}</th>
+                        <th>{t("created")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {billingPreview.invoiceLines.map((line) => (
+                        <tr key={line.id}>
+                          <td>{line.customerName}</td>
+                          <td>{renderChargeTypeLabel(line.chargeType, t)}</td>
+                          <td className="cell--mono">{line.reference}</td>
+                          <td className="cell--mono">{line.containerNo}</td>
+                          <td>{line.warehouseSummary}</td>
+                          <td className="cell--mono">{formatNumber(line.quantity)}</td>
+                          <td className="cell--mono">{formatMoney(line.unitRate)}</td>
+                          <td className="cell--mono">{formatMoney(line.amount)}</td>
+                          <td>{line.meta}</td>
+                          <td>{line.occurredOn ? formatDateTimeValue(line.occurredOn, resolvedTimeZone, { dateStyle: "medium" }) : "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          </>
+        )}
       </section>
     </main>
   );
@@ -577,4 +803,34 @@ function normalizeContainerNo(value: string | null | undefined) {
 
 function isNavigableContainerNo(containerNo: string) {
   return containerNo.trim() !== "" && containerNo.trim() !== "-" && containerNo.trim().toUpperCase() !== "UNASSIGNED";
+}
+
+function invoiceStatusLabel(status: BillingInvoiceStatus, t: (key: string) => string) {
+  switch (status) {
+    case "DRAFT": return t("billingInvoiceStatusDraft");
+    case "FINALIZED": return t("billingInvoiceStatusFinalized");
+    case "PAID": return t("billingInvoiceStatusPaid");
+    case "VOID": return t("billingInvoiceStatusVoid");
+    default: return status;
+  }
+}
+
+function invoiceStatusColor(status: BillingInvoiceStatus): "default" | "primary" | "success" | "error" {
+  switch (status) {
+    case "DRAFT": return "default";
+    case "FINALIZED": return "primary";
+    case "PAID": return "success";
+    case "VOID": return "error";
+    default: return "default";
+  }
+}
+
+function chargeTypeDescription(chargeType: string): string {
+  switch (chargeType) {
+    case "INBOUND": return "Inbound container fee";
+    case "WRAPPING": return "Wrapping fee";
+    case "STORAGE": return "Storage charges";
+    case "OUTBOUND": return "Outbound fee";
+    default: return chargeType;
+  }
 }

@@ -97,6 +97,21 @@ func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName s
 	admin.PUT("/sku-master/:id", server.handleUpdateSKUMaster)
 	admin.DELETE("/sku-master/:id", server.handleDeleteSKUMaster)
 
+	// Billing invoices — read for all authenticated users
+	protected.GET("/billing/invoices", server.handleListBillingInvoices)
+	protected.GET("/billing/invoices/:id", server.handleGetBillingInvoice)
+	// Billing invoices — create/edit for operators+
+	operator.POST("/billing/invoices", server.handleCreateBillingInvoice)
+	operator.PUT("/billing/invoices/:id", server.handleUpdateBillingInvoice)
+	operator.POST("/billing/invoices/:id/lines", server.handleAddBillingInvoiceLine)
+	operator.PUT("/billing/invoices/:id/lines/:lineId", server.handleUpdateBillingInvoiceLine)
+	operator.DELETE("/billing/invoices/:id/lines/:lineId", server.handleDeleteBillingInvoiceLine)
+	// Billing invoices — finalize/settle/void/delete for admins
+	admin.POST("/billing/invoices/:id/finalize", server.handleFinalizeBillingInvoice)
+	admin.POST("/billing/invoices/:id/mark-paid", server.handleMarkBillingInvoicePaid)
+	admin.POST("/billing/invoices/:id/void", server.handleVoidBillingInvoice)
+	admin.DELETE("/billing/invoices/:id", server.handleDeleteBillingInvoice)
+
 	return router
 }
 
@@ -1066,6 +1081,251 @@ func (s *Server) writeAuditLog(c *gin.Context, action string, entityType string,
 		RequestPath:   c.FullPath(),
 		Details:       details,
 	})
+}
+
+// --- Billing Invoice Handlers ---
+
+func (s *Server) handleListBillingInvoices(c *gin.Context) {
+	customerID, err := parseOptionalInt64Query(c, "customerId", "invalid customer id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	status := strings.TrimSpace(c.Query("status"))
+
+	invoices, err := s.store.ListBillingInvoices(c.Request.Context(), customerID, status)
+	if err != nil {
+		writeServerError(c, err)
+		return
+	}
+
+	writeJSON(c, http.StatusOK, invoices)
+}
+
+func (s *Server) handleGetBillingInvoice(c *gin.Context) {
+	id, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	invoice, err := s.store.GetBillingInvoice(c.Request.Context(), id)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	writeJSON(c, http.StatusOK, invoice)
+}
+
+func (s *Server) handleCreateBillingInvoice(c *gin.Context) {
+	var input service.CreateBillingInvoiceInput
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+		return
+	}
+
+	authPayload, _ := userFromContext(c)
+
+	invoice, err := s.store.CreateBillingInvoice(c.Request.Context(), input, authPayload.User.ID)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "CREATE", "billing_invoice", invoice.ID,
+		invoice.InvoiceNo,
+		fmt.Sprintf("Created billing invoice %s for %s", invoice.InvoiceNo, invoice.CustomerNameSnapshot),
+		nil)
+
+	writeJSON(c, http.StatusCreated, invoice)
+}
+
+func (s *Server) handleUpdateBillingInvoice(c *gin.Context) {
+	id, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var input service.UpdateBillingInvoiceInput
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+		return
+	}
+
+	invoice, err := s.store.UpdateBillingInvoice(c.Request.Context(), id, input)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	writeJSON(c, http.StatusOK, invoice)
+}
+
+func (s *Server) handleAddBillingInvoiceLine(c *gin.Context) {
+	id, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var input service.AddBillingInvoiceLineInput
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+		return
+	}
+
+	invoice, err := s.store.AddBillingInvoiceLine(c.Request.Context(), id, input)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	writeJSON(c, http.StatusOK, invoice)
+}
+
+func (s *Server) handleUpdateBillingInvoiceLine(c *gin.Context) {
+	id, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	lineID, err := parseIDParam(c, "lineId")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var input service.UpdateBillingInvoiceLineInput
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, fmt.Sprintf("invalid request body: %v", err))
+		return
+	}
+
+	invoice, err := s.store.UpdateBillingInvoiceLine(c.Request.Context(), id, lineID, input)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	writeJSON(c, http.StatusOK, invoice)
+}
+
+func (s *Server) handleDeleteBillingInvoiceLine(c *gin.Context) {
+	id, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	lineID, err := parseIDParam(c, "lineId")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	invoice, err := s.store.DeleteBillingInvoiceLine(c.Request.Context(), id, lineID)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	writeJSON(c, http.StatusOK, invoice)
+}
+
+func (s *Server) handleFinalizeBillingInvoice(c *gin.Context) {
+	id, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	authPayload, _ := userFromContext(c)
+
+	invoice, err := s.store.FinalizeBillingInvoice(c.Request.Context(), id, authPayload.User.ID)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "FINALIZE", "billing_invoice", invoice.ID,
+		invoice.InvoiceNo,
+		fmt.Sprintf("Finalized billing invoice %s (grand total: %.2f)", invoice.InvoiceNo, invoice.GrandTotal),
+		nil)
+
+	writeJSON(c, http.StatusOK, invoice)
+}
+
+func (s *Server) handleMarkBillingInvoicePaid(c *gin.Context) {
+	id, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	invoice, err := s.store.MarkBillingInvoicePaid(c.Request.Context(), id)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "MARK_PAID", "billing_invoice", invoice.ID,
+		invoice.InvoiceNo,
+		fmt.Sprintf("Marked billing invoice %s as paid", invoice.InvoiceNo),
+		nil)
+
+	writeJSON(c, http.StatusOK, invoice)
+}
+
+func (s *Server) handleVoidBillingInvoice(c *gin.Context) {
+	id, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	invoice, err := s.store.VoidBillingInvoice(c.Request.Context(), id)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "VOID", "billing_invoice", invoice.ID,
+		invoice.InvoiceNo,
+		fmt.Sprintf("Voided billing invoice %s", invoice.InvoiceNo),
+		nil)
+
+	writeJSON(c, http.StatusOK, invoice)
+}
+
+func (s *Server) handleDeleteBillingInvoice(c *gin.Context) {
+	id, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Fetch for audit log before deleting
+	invoice, err := s.store.GetBillingInvoice(c.Request.Context(), id)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	if err := s.store.DeleteBillingInvoice(c.Request.Context(), id); err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "DELETE", "billing_invoice", invoice.ID,
+		invoice.InvoiceNo,
+		fmt.Sprintf("Deleted draft billing invoice %s", invoice.InvoiceNo),
+		nil)
+
+	writeJSON(c, http.StatusOK, gin.H{"ok": true})
 }
 
 func firstNonEmptyString(values ...string) string {

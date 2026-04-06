@@ -689,6 +689,59 @@ func Migrate(db *sql.DB) error {
 				FOREIGN KEY (actor_user_id) REFERENCES users (id)
 		)`,
 		`DELETE FROM user_sessions WHERE expires_at < CURRENT_TIMESTAMP`,
+		`CREATE TABLE IF NOT EXISTS billing_invoices (
+			id BIGINT NOT NULL AUTO_INCREMENT,
+			invoice_no VARCHAR(64) NOT NULL,
+			customer_id BIGINT NOT NULL,
+			customer_name_snapshot VARCHAR(160) NOT NULL DEFAULT '',
+			period_start DATE NOT NULL,
+			period_end DATE NOT NULL,
+			currency_code VARCHAR(8) NOT NULL DEFAULT 'USD',
+			rates_json JSON NOT NULL,
+			subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
+			discount_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+			grand_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+			status VARCHAR(32) NOT NULL DEFAULT 'DRAFT',
+			notes TEXT DEFAULT NULL,
+			finalized_at TIMESTAMP NULL DEFAULT NULL,
+			finalized_by_user_id BIGINT DEFAULT NULL,
+			paid_at TIMESTAMP NULL DEFAULT NULL,
+			voided_at TIMESTAMP NULL DEFAULT NULL,
+			created_by_user_id BIGINT NOT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			UNIQUE KEY uq_billing_invoices_invoice_no (invoice_no),
+			KEY idx_billing_invoices_customer_id (customer_id),
+			KEY idx_billing_invoices_status (status),
+			KEY idx_billing_invoices_period (period_start, period_end),
+			CONSTRAINT fk_billing_invoices_customer
+				FOREIGN KEY (customer_id) REFERENCES customers (id),
+			CONSTRAINT fk_billing_invoices_created_by
+				FOREIGN KEY (created_by_user_id) REFERENCES users (id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS billing_invoice_lines (
+			id BIGINT NOT NULL AUTO_INCREMENT,
+			invoice_id BIGINT NOT NULL,
+			charge_type VARCHAR(32) NOT NULL,
+			description VARCHAR(255) NOT NULL DEFAULT '',
+			reference VARCHAR(255) DEFAULT NULL,
+			container_no VARCHAR(120) DEFAULT NULL,
+			warehouse VARCHAR(160) DEFAULT NULL,
+			occurred_on DATE DEFAULT NULL,
+			quantity DECIMAL(12,4) NOT NULL DEFAULT 0,
+			unit_rate DECIMAL(12,4) NOT NULL DEFAULT 0,
+			amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+			notes VARCHAR(255) DEFAULT NULL,
+			source_type VARCHAR(16) NOT NULL DEFAULT 'AUTO',
+			sort_order INT NOT NULL DEFAULT 0,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			KEY idx_billing_invoice_lines_invoice_id (invoice_id),
+			CONSTRAINT fk_billing_invoice_lines_invoice
+				FOREIGN KEY (invoice_id) REFERENCES billing_invoices (id)
+				ON DELETE CASCADE
+		)`,
 	}
 
 	for _, statement := range statements {

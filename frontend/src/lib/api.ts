@@ -2,6 +2,10 @@ import type {
   AuditLog,
   AuthResponse,
   DeleteInboundDocumentPayload,
+  BillingInvoice,
+  CreateBillingInvoicePayload,
+  AddBillingInvoiceLinePayload,
+  UpdateBillingInvoiceLinePayload,
   CycleCount,
   CycleCountPayload,
   DeleteOutboundDocumentPayload,
@@ -430,6 +434,78 @@ export const api = {
     return request<CycleCount>("/cycle-counts", {
       method: "POST",
       body: JSON.stringify(payload)
+    });
+  },
+
+  // --- Billing Invoices ---
+
+  getBillingInvoices(customerId?: number, status?: string) {
+    const params = new URLSearchParams();
+    if (customerId) params.set("customerId", String(customerId));
+    if (status) params.set("status", status);
+    const qs = params.toString();
+    return request<BillingInvoice[]>(`/billing/invoices${qs ? `?${qs}` : ""}`);
+  },
+
+  getBillingInvoice(invoiceId: number) {
+    return request<BillingInvoice>(`/billing/invoices/${invoiceId}`);
+  },
+
+  createBillingInvoice(payload: CreateBillingInvoicePayload) {
+    return request<BillingInvoice>("/billing/invoices", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  updateBillingInvoice(invoiceId: number, payload: { notes: string }) {
+    return request<BillingInvoice>(`/billing/invoices/${invoiceId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  addBillingInvoiceLine(invoiceId: number, payload: AddBillingInvoiceLinePayload) {
+    return request<BillingInvoice>(`/billing/invoices/${invoiceId}/lines`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  updateBillingInvoiceLine(invoiceId: number, lineId: number, payload: UpdateBillingInvoiceLinePayload) {
+    return request<BillingInvoice>(`/billing/invoices/${invoiceId}/lines/${lineId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  deleteBillingInvoiceLine(invoiceId: number, lineId: number) {
+    return request<BillingInvoice>(`/billing/invoices/${invoiceId}/lines/${lineId}`, {
+      method: "DELETE"
+    });
+  },
+
+  finalizeBillingInvoice(invoiceId: number) {
+    return request<BillingInvoice>(`/billing/invoices/${invoiceId}/finalize`, {
+      method: "POST"
+    });
+  },
+
+  markBillingInvoicePaid(invoiceId: number) {
+    return request<BillingInvoice>(`/billing/invoices/${invoiceId}/mark-paid`, {
+      method: "POST"
+    });
+  },
+
+  voidBillingInvoice(invoiceId: number) {
+    return request<BillingInvoice>(`/billing/invoices/${invoiceId}/void`, {
+      method: "POST"
+    });
+  },
+
+  deleteBillingInvoice(invoiceId: number) {
+    return request<{ ok: boolean }>(`/billing/invoices/${invoiceId}`, {
+      method: "DELETE"
     });
   }
 };
