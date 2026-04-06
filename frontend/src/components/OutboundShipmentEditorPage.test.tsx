@@ -184,7 +184,7 @@ describe("OutboundShipmentEditorPage", () => {
     expect(onOpenOutboundDocument).not.toHaveBeenCalled();
   });
 
-  it("restores and discards a local shipment draft", async () => {
+  it("ignores browser session shipment drafts and starts from the source state", async () => {
     mockedApi.getPallets.mockResolvedValue([
       {
         id: 501,
@@ -271,22 +271,38 @@ describe("OutboundShipmentEditorPage", () => {
       />
     );
 
-    expect(screen.getByText("Restored the unsaved shipment draft from this browser session.")).toBeInTheDocument();
+    const headerInputs = document.querySelectorAll(".sheet-form input");
+    expect((headerInputs[0] as HTMLInputElement).value).toBe("");
+    expect(screen.queryByDisplayValue("Draft Receiver")).not.toBeInTheDocument();
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: "1 Shipment" }));
-    const restoredHeaderInputs = document.querySelectorAll(".sheet-form input");
-    expect((restoredHeaderInputs[0] as HTMLInputElement).value).toBe("PL-LOCAL-01");
+  it("auto-fills expected ship date when actual ship date is entered first", async () => {
+    mockedApi.getPallets.mockResolvedValue([]);
 
-    fireEvent.click(screen.getByRole("button", { name: "Discard local draft" }));
+    renderWithProviders(
+      <OutboundShipmentEditorPage
+        routeKey="/outbound-management/new"
+        documentId={null}
+        document={null}
+        items={[createItem({ id: 1, availableQty: 10, quantity: 10 })]}
+        skuMasters={[createSkuMaster()]}
+        movements={[createMovement()]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onBackToList={vi.fn()}
+        onOpenOutboundDocument={vi.fn()}
+        onOpenShipmentEditor={vi.fn()}
+      />
+    );
 
-    await waitFor(() => {
-      expect(screen.queryByText("Restored the unsaved shipment draft from this browser session.")).not.toBeInTheDocument();
-    });
+    const expectedShipInput = screen.getByLabelText("Expected Ship Date") as HTMLInputElement;
+    const actualShipInput = screen.getByLabelText("Actual Ship Date") as HTMLInputElement;
 
-    const resetHeaderInputs = document.querySelectorAll(".sheet-form input");
-    expect((resetHeaderInputs[0] as HTMLInputElement).value).toBe("");
-    const savedResetDraft = JSON.parse(window.sessionStorage.getItem("sim-outbound-shipment-editor-draft:new") || "null");
-    expect(savedResetDraft?.form?.packingListNo).toBe("");
+    fireEvent.change(actualShipInput, { target: { value: "2026-04-03" } });
+
+    expect(actualShipInput.value).toBe("2026-04-03");
+    expect(expectedShipInput.value).toBe("2026-04-03");
   });
 
   it("re-enters confirmed shipments by copying them into a new draft", async () => {

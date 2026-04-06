@@ -78,6 +78,7 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
   const [showDetailSections, setShowDetailSections] = useState(false);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [exportMenuAnchor, setExportMenuAnchor] = useState<HTMLElement | null>(null);
+  const [containerNoFilter, setContainerNoFilter] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -140,7 +141,7 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
   }, [customerId]);
 
   async function handleCreateInvoice() {
-    if (customerId === "all" || billingPreview.invoiceLines.length === 0) return;
+    if (customerId === "all" || activeInvoiceLines.length === 0) return;
 
     const selectedCustomer = customers.find((c) => c.id === customerId);
     const customerName = selectedCustomer?.name ?? billingPreview.customerName;
@@ -159,7 +160,7 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
           storageFeePerPalletPerWeek: rates.storageFeePerPalletPerWeek,
           outboundFeePerPallet: rates.outboundFeePerPallet,
         },
-        lines: billingPreview.invoiceLines.map((line) => ({
+        lines: activeInvoiceLines.map((line) => ({
           chargeType: line.chargeType,
           description: line.meta || chargeTypeDescription(line.chargeType),
           reference: line.reference,
@@ -197,6 +198,23 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
     [billingPreview.invoiceLines, billingPreview.storageRows]
   );
 
+  const activeInvoiceLines = useMemo(() => {
+    const filter = containerNoFilter.trim().toUpperCase();
+    if (!filter) return billingPreview.invoiceLines;
+    return billingPreview.invoiceLines.filter((line) => line.containerNo.toUpperCase().includes(filter));
+  }, [billingPreview.invoiceLines, containerNoFilter]);
+
+  const activeContainerRows = useMemo(() => {
+    const filter = containerNoFilter.trim().toUpperCase();
+    if (!filter) return containerSummaryRows;
+    return containerSummaryRows.filter((row) => row.containerNo.toUpperCase().includes(filter));
+  }, [containerSummaryRows, containerNoFilter]);
+
+  const activeGrandTotal = useMemo(
+    () => activeInvoiceLines.reduce((sum, line) => sum + line.amount, 0),
+    [activeInvoiceLines]
+  );
+
   const dailyBalanceDataset = useMemo(
     () => billingPreview.dailyBalanceRows.map((row) => ({
       label: row.date.slice(-2),
@@ -218,8 +236,8 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
     return counts;
   }, [invoices]);
 
-  const canCreateInvoice = customerId !== "all" && billingPreview.invoiceLines.length > 0;
-  const hasBillablePreview = billingPreview.invoiceLines.length > 0;
+  const canCreateInvoice = customerId !== "all" && activeInvoiceLines.length > 0;
+  const hasBillablePreview = activeInvoiceLines.length > 0;
   const exportTitle = useMemo(
     () => buildBillingExportTitle(t("billingPage"), billingPreview.customerName, billingPreview.startDate, billingPreview.endDate),
     [billingPreview.customerName, billingPreview.endDate, billingPreview.startDate, t]
@@ -377,6 +395,15 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
               ))}
             </select>
           </label>
+          <label>
+            {t("containerNo")}
+            <input
+              type="search"
+              placeholder={t("billingContainerSearchPlaceholder")}
+              value={containerNoFilter}
+              onChange={(event) => setContainerNoFilter(event.target.value)}
+            />
+          </label>
         </div>
 
         {/* ── Quick metrics ── */}
@@ -435,8 +462,13 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
                 }
               </strong>
               {canCreateInvoice && (
-                <div style={{ fontSize: "0.813rem", color: "var(--ink-soft)", marginTop: "0.25rem" }}>
-                  {billingPreview.invoiceLines.length} {t("billingLineCount").toLowerCase()} · {formatMoney(billingPreview.summary.grandTotal)}
+                <div style={{ fontSize: "0.813rem", color: "var(--ink-soft)", marginTop: "0.25rem", display: "flex", alignItems: "center", flexWrap: "wrap", gap: "0.375rem" }}>
+                  {activeInvoiceLines.length} {t("billingLineCount").toLowerCase()} · {formatMoney(activeGrandTotal)}
+                  {containerNoFilter.trim() && (
+                    <span style={{ background: "rgba(39,76,119,0.12)", borderRadius: "var(--radius-sm)", padding: "0 0.4rem", fontSize: "0.75rem", fontFamily: "monospace", letterSpacing: "0.03em" }}>
+                      {containerNoFilter.trim().toUpperCase()}
+                    </span>
+                  )}
                 </div>
               )}
             </div>
@@ -537,6 +569,70 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
           )}
         </section>
 
+        {/* ── Container billing breakdown (always visible) ── */}
+        {!isLoading && (
+          <section className="workbook-panel" style={{ margin: "0 1rem 1rem" }}>
+            <WorkspacePanelHeader
+              title={t("billingContainerTrace")}
+              description={t("billingContainerTraceDesc")}
+            />
+            {activeContainerRows.length === 0 ? (
+              <WorkspaceTableEmptyState
+                title={containerNoFilter.trim() ? `${t("noBillingData")} — ${containerNoFilter.trim().toUpperCase()}` : t("noBillingData")}
+                description={t("billingContainerTraceDesc")}
+              />
+            ) : (
+              <div className="sheet-table-wrap">
+                <table className="sheet-table" aria-label={t("billingContainerTrace")}>
+                  <thead>
+                    <tr>
+                      <th>{t("containerNo")}</th>
+                      <th>{t("customer")}</th>
+                      <th>{t("reference")}</th>
+                      <th>{t("currentStorage")}</th>
+                      <th>{t("billingInboundCharges")}</th>
+                      <th>{t("billingWrappingCharges")}</th>
+                      <th>{t("billingStorageCharges")}</th>
+                      <th>{t("billingOutboundCharges")}</th>
+                      <th>{t("amount")}</th>
+                      <th>{t("actions")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeContainerRows.map((row) => (
+                      <tr key={`${row.customerId}-${row.containerNo}`}>
+                        <td className="cell--mono">{row.containerNo}</td>
+                        <td>{row.customerName}</td>
+                        <td>{renderReferencePreview(row.references)}</td>
+                        <td>{row.warehousesTouched.join(", ") || "-"}</td>
+                        <td className="cell--mono">{formatMoney(row.inboundAmount)}</td>
+                        <td className="cell--mono">{formatMoney(row.wrappingAmount)}</td>
+                        <td className="cell--mono">{formatMoney(row.storageAmount)}</td>
+                        <td className="cell--mono">{formatMoney(row.outboundAmount)}</td>
+                        <td className="cell--mono">{formatMoney(row.totalAmount)}</td>
+                        <td>
+                          {isNavigableContainerNo(row.containerNo) ? (
+                            <Button
+                              size="small"
+                              variant="text"
+                              onClick={() => {
+                                setContainerNoFilter(row.containerNo);
+                                onOpenBillingContainerDetail(billingPreview.startDate, billingPreview.endDate, customerId, row.containerNo);
+                              }}
+                            >
+                              {t("billingViewContainerInvoice")}
+                            </Button>
+                          ) : "-"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        )}
+
         {/* ── Collapsible detail sections ── */}
         {showDetailSections && (
           <>
@@ -626,64 +722,6 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
                     dailyRate: formatMoney(rates.storageFeePerPalletPerWeek / 7)
                   })}
                 </div>
-              </article>
-            </div>
-
-            {/* Container trace */}
-            <div className="report-grid" style={{ paddingTop: 0 }}>
-              <article className="report-card">
-                <div className="report-card__header">
-                  <h3>{t("billingContainerTrace")}</h3>
-                  <p>{t("billingContainerTraceDesc")}</p>
-                </div>
-                {containerSummaryRows.length === 0 ? (
-                  <WorkspaceTableEmptyState title={t("noBillingData")} description={t("billingContainerTraceDesc")} />
-                ) : (
-                  <div className="sheet-table-wrap">
-                    <table className="sheet-table" aria-label={t("billingContainerTrace")}>
-                      <thead>
-                        <tr>
-                          <th>{t("containerNo")}</th>
-                          <th>{t("customer")}</th>
-                          <th>{t("reference")}</th>
-                          <th>{t("currentStorage")}</th>
-                          <th>{t("billingInboundCharges")}</th>
-                          <th>{t("billingWrappingCharges")}</th>
-                          <th>{t("billingStorageCharges")}</th>
-                          <th>{t("billingOutboundCharges")}</th>
-                          <th>{t("amount")}</th>
-                          <th>{t("actions")}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {containerSummaryRows.map((row) => (
-                          <tr key={`${row.customerId}-${row.containerNo}`}>
-                            <td className="cell--mono">{row.containerNo}</td>
-                            <td>{row.customerName}</td>
-                            <td>{renderReferencePreview(row.references)}</td>
-                            <td>{row.warehousesTouched.join(", ") || "-"}</td>
-                            <td className="cell--mono">{formatMoney(row.inboundAmount)}</td>
-                            <td className="cell--mono">{formatMoney(row.wrappingAmount)}</td>
-                            <td className="cell--mono">{formatMoney(row.storageAmount)}</td>
-                            <td className="cell--mono">{formatMoney(row.outboundAmount)}</td>
-                            <td className="cell--mono">{formatMoney(row.totalAmount)}</td>
-                            <td>
-                              {isNavigableContainerNo(row.containerNo) ? (
-                                <Button
-                                  size="small"
-                                  variant="text"
-                                  onClick={() => onOpenBillingContainerDetail(billingPreview.startDate, billingPreview.endDate, customerId, row.containerNo)}
-                                >
-                                  {t("billingViewContainerInvoice")}
-                                </Button>
-                              ) : "-"}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
               </article>
             </div>
 

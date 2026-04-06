@@ -54,13 +54,6 @@ type BatchOutboundLineState = {
   pickPalletsTouched: boolean;
 };
 
-type OutboundShipmentEditorLocalDraft = {
-  version: 1;
-  form: BatchOutboundFormState;
-  lines: BatchOutboundLineState[];
-  step: OutboundWizardStep;
-};
-
 type OutboundAllocationPreviewRow = {
   id: string;
   lineId: string;
@@ -181,11 +174,9 @@ export function OutboundShipmentEditorPage({
   const [outboundWizardStep, setOutboundWizardStep] = useState<OutboundWizardStep>(1);
   const [batchOutboundLineAddCount, setBatchOutboundLineAddCount] = useState(1);
   const [expandedOutboundPickPlans, setExpandedOutboundPickPlans] = useState<Record<string, boolean>>({});
-  const [hasRestoredLocalDraft, setHasRestoredLocalDraft] = useState(false);
   const [isEditorReady, setIsEditorReady] = useState(false);
   const pendingBatchLineIDRef = useRef<string | null>(null);
   const lastInitializedRouteRef = useRef<string | null>(null);
-  const draftStorageKey = useMemo(() => getOutboundShipmentEditorDraftStorageKey(documentId), [documentId]);
   const skuMastersBySku = useMemo(() => new Map(
     skuMasters.map((skuMaster) => [normalizeSkuLookupValue(skuMaster.sku), skuMaster] as const)
   ), [skuMasters]);
@@ -313,41 +304,18 @@ export function OutboundShipmentEditorPage({
     }
 
     const launchContext = consumePendingOutboundShipmentEditorLaunchContext();
-    const localDraft = loadOutboundShipmentEditorDraft(draftStorageKey);
     const sourceState = buildOutboundEditorSourceState({ document, launchContext });
 
-    if (localDraft) {
-      setBatchOutboundForm(localDraft.form);
-      setBatchOutboundLines(localDraft.lines.length > 0 ? localDraft.lines : [createEmptyBatchOutboundLine()]);
-      setOutboundWizardStep(localDraft.step);
-      setHasRestoredLocalDraft(true);
-    } else {
-      setBatchOutboundForm(sourceState.form);
-      setBatchOutboundLines(sourceState.lines);
-      setOutboundWizardStep(1);
-      setHasRestoredLocalDraft(false);
-    }
-
+    setBatchOutboundForm(sourceState.form);
+    setBatchOutboundLines(sourceState.lines);
+    setOutboundWizardStep(1);
     setErrorMessage("");
     setBatchSubmitting(false);
     setBatchOutboundLineAddCount(1);
     setExpandedOutboundPickPlans({});
     setIsEditorReady(true);
     lastInitializedRouteRef.current = routeKey;
-  }, [document, documentId, draftStorageKey, isLoading, routeKey]);
-
-  useEffect(() => {
-    if (!isEditorReady || isReadOnly) {
-      return;
-    }
-
-    saveOutboundShipmentEditorDraft(draftStorageKey, {
-      version: 1,
-      form: batchOutboundForm,
-      lines: batchOutboundLines,
-      step: outboundWizardStep
-    });
-  }, [batchOutboundForm, batchOutboundLines, draftStorageKey, isEditorReady, isReadOnly, outboundWizardStep]);
+  }, [document, documentId, isLoading, routeKey]);
 
   useEffect(() => {
     setBatchOutboundLines((current) => {
@@ -407,16 +375,6 @@ export function OutboundShipmentEditorPage({
     } finally {
       setBatchSubmitting(false);
     }
-  }
-
-  function resetToSourceState() {
-    const sourceState = buildOutboundEditorSourceState({ document, launchContext: null });
-    setBatchOutboundForm(sourceState.form);
-    setBatchOutboundLines(sourceState.lines);
-    setOutboundWizardStep(1);
-    setExpandedOutboundPickPlans({});
-    setHasRestoredLocalDraft(false);
-    clearOutboundShipmentEditorDraft(draftStorageKey);
   }
 
   function getSafeLineAddCount(value: number) {
@@ -652,8 +610,6 @@ export function OutboundShipmentEditorPage({
         ? await api.updateOutboundDocument(document.id, payload)
         : await api.createOutboundDocument(payload);
 
-      clearOutboundShipmentEditorDraft(draftStorageKey);
-      setHasRestoredLocalDraft(false);
       await onRefresh();
 
       if (status === "DRAFT") {
@@ -768,14 +724,6 @@ export function OutboundShipmentEditorPage({
           <WorkspacePanelHeader title={t("shipmentEditorPage")} description={t("shipmentEditorStepHint")} />
 
           {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
-          {hasRestoredLocalDraft ? (
-            <InlineAlert severity="info">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <span>{t("shipmentLocalDraftRestored")}</span>
-                <button className="button button--ghost" type="button" onClick={resetToSourceState}>{t("discardLocalDraft")}</button>
-              </div>
-            </InlineAlert>
-          ) : null}
           {isEditingConfirmedOutbound ? (
             <InlineAlert severity="warning">{t("confirmedShipmentImmutableNotice")}</InlineAlert>
           ) : null}
@@ -811,7 +759,14 @@ export function OutboundShipmentEditorPage({
                 <label>{t("packingListNo")}<input value={batchOutboundForm.packingListNo} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, packingListNo: event.target.value }))} placeholder="TGCUS180265" disabled={isReadOnly} /></label>
                 <label>{t("orderRef")}<input value={batchOutboundForm.orderRef} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, orderRef: event.target.value }))} placeholder="J73504" disabled={isReadOnly} /></label>
                 <label>{t("expectedShipDate")}<input type="date" value={batchOutboundForm.expectedShipDate} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, expectedShipDate: event.target.value }))} disabled={isReadOnly} /></label>
-                <label>{t("actualShipDate")}<input type="date" value={batchOutboundForm.actualShipDate} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, actualShipDate: event.target.value }))} disabled={isReadOnly} /></label>
+                <label>{t("actualShipDate")}<input type="date" value={batchOutboundForm.actualShipDate} onChange={(event) => {
+                  const nextValue = event.target.value;
+                  setBatchOutboundForm((current) => ({
+                    ...current,
+                    actualShipDate: nextValue,
+                    expectedShipDate: !current.expectedShipDate && nextValue ? nextValue : current.expectedShipDate
+                  }));
+                }} disabled={isReadOnly} /></label>
                 <label>{t("shipToName")}<input value={batchOutboundForm.shipToName} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, shipToName: event.target.value }))} placeholder="Receiver name" disabled={isReadOnly} /></label>
                 <label>{t("shipToContact")}<input value={batchOutboundForm.shipToContact} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, shipToContact: event.target.value }))} placeholder="+1 555 010 0200" disabled={isReadOnly} /></label>
                 <label>{t("carrier")}<input value={batchOutboundForm.carrierName} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, carrierName: event.target.value }))} placeholder="FedEx" disabled={isReadOnly} /></label>
@@ -1583,52 +1538,3 @@ function buildOutboundEditorSourceState({
   };
 }
 
-function getOutboundShipmentEditorDraftStorageKey(documentId: number | null) {
-  return `sim-outbound-shipment-editor-draft:${documentId && documentId > 0 ? documentId : "new"}`;
-}
-
-function loadOutboundShipmentEditorDraft(storageKey: string) {
-  const raw = window.sessionStorage.getItem(storageKey);
-  if (!raw) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as OutboundShipmentEditorLocalDraft;
-    if (parsed.version !== 1) {
-      return null;
-    }
-    const legacyForm = parsed.form as BatchOutboundFormState & { outDate?: string };
-    parsed.form = {
-      packingListNo: String(legacyForm.packingListNo ?? ""),
-      orderRef: String(legacyForm.orderRef ?? ""),
-      expectedShipDate: String(legacyForm.expectedShipDate ?? legacyForm.outDate ?? ""),
-      actualShipDate: String(legacyForm.actualShipDate ?? ""),
-      shipToName: String(legacyForm.shipToName ?? ""),
-      shipToAddress: String(legacyForm.shipToAddress ?? ""),
-      shipToContact: String(legacyForm.shipToContact ?? ""),
-      carrierName: String(legacyForm.carrierName ?? ""),
-      documentNote: String(legacyForm.documentNote ?? "")
-    };
-    parsed.lines = Array.isArray(parsed.lines)
-      ? parsed.lines.map((line) => ({
-          ...line,
-          pickPallets: normalizeOutboundLinePalletPicks((line as Partial<BatchOutboundLineState>).pickPallets),
-          pickPalletsTouched: Array.isArray((line as Partial<BatchOutboundLineState>).pickPallets)
-            ? normalizeOutboundLinePalletPicks((line as Partial<BatchOutboundLineState>).pickPallets).length > 0
-            : false
-        }))
-      : [];
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function saveOutboundShipmentEditorDraft(storageKey: string, draft: OutboundShipmentEditorLocalDraft) {
-  window.sessionStorage.setItem(storageKey, JSON.stringify(draft));
-}
-
-function clearOutboundShipmentEditorDraft(storageKey: string) {
-  window.sessionStorage.removeItem(storageKey);
-}

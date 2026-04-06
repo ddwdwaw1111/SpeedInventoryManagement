@@ -60,14 +60,6 @@ type BatchInboundLineState = {
   lineNote: string;
 };
 
-type InboundReceiptEditorLocalDraft = {
-  version: 1;
-  form: BatchInboundFormState;
-  lines: BatchInboundLineState[];
-  step: InboundWizardStep;
-  inboundEditorIntent: InboundLaunchIntent | null;
-};
-
 type InboundReceiptEditorPageProps = {
   routeKey: string;
   documentId: number | null;
@@ -112,11 +104,9 @@ export function InboundReceiptEditorPage({
   const [batchInboundLineAddCount, setBatchInboundLineAddCount] = useState(1);
   const [inboundEditorIntent, setInboundEditorIntent] = useState<InboundLaunchIntent | null>(null);
   const [expandedPalletBreakdowns, setExpandedPalletBreakdowns] = useState<Record<string, boolean>>({});
-  const [hasRestoredLocalDraft, setHasRestoredLocalDraft] = useState(false);
   const [isEditorReady, setIsEditorReady] = useState(false);
   const pendingBatchLineIDRef = useRef<string | null>(null);
   const lastInitializedRouteRef = useRef<string | null>(null);
-  const draftStorageKey = useMemo(() => getInboundReceiptEditorDraftStorageKey(documentId), [documentId]);
   const skuMastersBySku = useMemo(() => new Map(
     skuMasters.map((skuMaster) => [normalizeSkuLookupValue(skuMaster.sku), skuMaster] as const)
   ), [skuMasters]);
@@ -223,7 +213,6 @@ export function InboundReceiptEditorPage({
     }
 
     const launchContext = consumePendingInboundReceiptEditorLaunchContext();
-    const localDraft = loadInboundReceiptEditorDraft(draftStorageKey);
     const sourceState = buildInboundEditorSourceState({
       document,
       customers,
@@ -232,41 +221,17 @@ export function InboundReceiptEditorPage({
       skuMastersBySku
     });
 
-    if (localDraft) {
-      setBatchForm(localDraft.form);
-      setBatchLines(localDraft.lines.length > 0 ? localDraft.lines : [createEmptyBatchInboundLine()]);
-      setInboundWizardStep(localDraft.step);
-      setInboundEditorIntent(localDraft.inboundEditorIntent);
-      setHasRestoredLocalDraft(true);
-    } else {
-      setBatchForm(sourceState.form);
-      setBatchLines(sourceState.lines);
-      setInboundWizardStep(1);
-      setInboundEditorIntent(sourceState.inboundEditorIntent);
-      setHasRestoredLocalDraft(false);
-    }
-
+    setBatchForm(sourceState.form);
+    setBatchLines(sourceState.lines);
+    setInboundWizardStep(1);
+    setInboundEditorIntent(sourceState.inboundEditorIntent);
     setErrorMessage("");
     setBatchSubmitting(false);
     setBatchInboundLineAddCount(1);
     setExpandedPalletBreakdowns({});
     setIsEditorReady(true);
     lastInitializedRouteRef.current = routeKey;
-  }, [customers, document, documentId, draftStorageKey, isLoading, locations, routeKey, skuMastersBySku]);
-
-  useEffect(() => {
-    if (!isEditorReady || isReadOnly) {
-      return;
-    }
-
-    saveInboundReceiptEditorDraft(draftStorageKey, {
-      version: 1,
-      form: batchForm,
-      lines: batchLines,
-      step: inboundWizardStep,
-      inboundEditorIntent
-    });
-  }, [batchForm, batchLines, draftStorageKey, inboundEditorIntent, inboundWizardStep, isEditorReady, isReadOnly]);
+  }, [customers, document, documentId, isLoading, locations, routeKey, skuMastersBySku]);
 
   function showActionError(error: unknown, fallbackMessage: string) {
     const message = error instanceof Error ? error.message : fallbackMessage;
@@ -292,23 +257,6 @@ export function InboundReceiptEditorPage({
     } catch (error) {
       showActionError(error, t("couldNotSaveActivity"));
     }
-  }
-
-  function resetToSourceState() {
-    const sourceState = buildInboundEditorSourceState({
-      document,
-      customers,
-      locations,
-      launchContext: null,
-      skuMastersBySku
-    });
-    setBatchForm(sourceState.form);
-    setBatchLines(sourceState.lines);
-    setInboundWizardStep(1);
-    setInboundEditorIntent(sourceState.inboundEditorIntent);
-    setExpandedPalletBreakdowns({});
-    setHasRestoredLocalDraft(false);
-    clearInboundReceiptEditorDraft(draftStorageKey);
   }
 
   function togglePalletBreakdown(lineId: string) {
@@ -768,8 +716,6 @@ export function InboundReceiptEditorPage({
         ? await api.updateInboundDocument(document.id, payload)
         : await api.createInboundDocument(payload);
 
-      clearInboundReceiptEditorDraft(draftStorageKey);
-      setHasRestoredLocalDraft(false);
       await onRefresh();
 
       if (effectiveStatus === "DRAFT") {
@@ -883,14 +829,6 @@ export function InboundReceiptEditorPage({
           <WorkspacePanelHeader title={t("receiptEditorPage")} description={t("receiptEditorStepHint")} />
 
           {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
-          {hasRestoredLocalDraft ? (
-            <InlineAlert severity="info">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <span>{t("receiptLocalDraftRestored")}</span>
-                <button className="button button--ghost" type="button" onClick={resetToSourceState}>{t("discardLocalDraft")}</button>
-              </div>
-            </InlineAlert>
-          ) : null}
           {isReadOnly && !isEditingConfirmedInbound ? (
             <InlineAlert severity="warning">{t("readOnlyModeNotice")}</InlineAlert>
           ) : null}
@@ -928,7 +866,14 @@ export function InboundReceiptEditorPage({
               <>
                 <div className="sheet-form sheet-form--compact">
                   <label>{t("expectedArrivalDate")}<input type="date" value={batchForm.expectedArrivalDate} disabled={isReadOnly} onChange={(event) => setBatchForm((current) => ({ ...current, expectedArrivalDate: event.target.value }))} /></label>
-                  <label>{t("actualArrivalDate")}<input type="date" value={batchForm.actualArrivalDate} disabled={isReadOnly} onChange={(event) => setBatchForm((current) => ({ ...current, actualArrivalDate: event.target.value }))} /></label>
+                  <label>{t("actualArrivalDate")}<input type="date" value={batchForm.actualArrivalDate} disabled={isReadOnly} onChange={(event) => {
+                    const nextValue = event.target.value;
+                    setBatchForm((current) => ({
+                      ...current,
+                      actualArrivalDate: nextValue,
+                      expectedArrivalDate: !current.expectedArrivalDate && nextValue ? nextValue : current.expectedArrivalDate
+                    }));
+                  }} /></label>
                   <label>{t("containerNo")}<input value={batchForm.containerNo} disabled={isReadOnly} onChange={(event) => setBatchForm((current) => ({ ...current, containerNo: event.target.value }))} placeholder="MRSU8580370" /></label>
                   <label>{t("handlingMode")}<select value={batchForm.handlingMode} onChange={(event) => setBatchForm((current) => ({ ...current, handlingMode: event.target.value as InboundHandlingMode }))} disabled={isReadOnly || isEditingConfirmedInbound}><option value="PALLETIZED">{t("handlingModePalletized")}</option><option value="SEALED_TRANSIT">{t("handlingModeSealedTransit")}</option></select></label>
                   <label>{t("customer")}<select value={batchForm.customerId} onChange={(event) => setBatchForm((current) => ({ ...current, customerId: event.target.value }))} disabled={isReadOnly}>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
@@ -1760,37 +1705,3 @@ function normalizeInboundTrackingStatusValue(trackingStatus?: string | null, doc
   return "SCHEDULED";
 }
 
-function getInboundReceiptEditorDraftStorageKey(documentId: number | null) {
-  return `sim-inbound-receipt-editor-draft:${documentId && documentId > 0 ? documentId : "new"}`;
-}
-
-function loadInboundReceiptEditorDraft(storageKey: string) {
-  const raw = window.sessionStorage.getItem(storageKey);
-  if (!raw) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as InboundReceiptEditorLocalDraft;
-    if (parsed.version !== 1) {
-      return null;
-    }
-    parsed.form = {
-      ...createEmptyBatchInboundForm(),
-      ...parsed.form,
-      expectedArrivalDate: String(parsed.form?.expectedArrivalDate ?? ""),
-      actualArrivalDate: String(parsed.form?.actualArrivalDate ?? "")
-    };
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function saveInboundReceiptEditorDraft(storageKey: string, draft: InboundReceiptEditorLocalDraft) {
-  window.sessionStorage.setItem(storageKey, JSON.stringify(draft));
-}
-
-function clearInboundReceiptEditorDraft(storageKey: string) {
-  window.sessionStorage.removeItem(storageKey);
-}

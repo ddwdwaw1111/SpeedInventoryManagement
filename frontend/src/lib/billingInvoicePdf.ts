@@ -5,6 +5,8 @@ import { formatDateTimeValue } from "./dates";
 import type { BillingInvoice } from "./types";
 
 const BILLING_TABLE_LAYOUT_NAME = "billingInvoiceTable";
+const SUBTOTAL_ROW_MARGIN: [number, number, number, number] = [0, 1, 0, 1];
+const GRAND_TOTAL_ROW_MARGIN: [number, number, number, number] = [0, 2, 0, 2];
 const CJK_FONT_NAME = "NotoSansCJKSC";
 const CJK_FONT_URL_BASE = "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/OTF/SimplifiedChinese";
 
@@ -188,23 +190,23 @@ export function buildBillingInvoicePdfDefinition({ invoice, timeZone }: BillingI
           ])),
           // Subtotal row
           [
-            { text: "Subtotal", style: "tableTotalLabel", colSpan: 7, margin: [0, 1, 0, 1] },
+            { text: "Subtotal", style: "tableTotalLabel", colSpan: 7, margin: SUBTOTAL_ROW_MARGIN },
             {}, {}, {}, {}, {}, {},
-            { text: formatMoney(invoice.subtotal), style: "tableTotalValue", margin: [0, 1, 0, 1] },
+            { text: formatMoney(invoice.subtotal), style: "tableTotalValue", margin: SUBTOTAL_ROW_MARGIN },
             { text: "", style: "tableCell" }
           ],
           // Discount row (only when non-zero)
           ...(invoice.discountTotal !== 0 ? [[
-            { text: "Discount", style: "tableTotalLabel", colSpan: 7, margin: [0, 1, 0, 1] },
+            { text: "Discount", style: "tableTotalLabel", colSpan: 7, margin: SUBTOTAL_ROW_MARGIN },
             {}, {}, {}, {}, {}, {},
-            { text: formatMoney(invoice.discountTotal), style: "tableTotalValue", margin: [0, 1, 0, 1] },
+            { text: formatMoney(invoice.discountTotal), style: "tableTotalValue", margin: SUBTOTAL_ROW_MARGIN },
             { text: "", style: "tableCell" }
           ]] : []),
           // Grand total row
           [
-            { text: "Grand Total", style: "tableGrandTotalLabel", colSpan: 7, margin: [0, 2, 0, 2] },
+            { text: "Grand Total", style: "tableGrandTotalLabel", colSpan: 7, margin: GRAND_TOTAL_ROW_MARGIN },
             {}, {}, {}, {}, {}, {},
-            { text: formatMoney(invoice.grandTotal), style: "tableGrandTotalValue", margin: [0, 2, 0, 2] },
+            { text: formatMoney(invoice.grandTotal), style: "tableGrandTotalValue", margin: GRAND_TOTAL_ROW_MARGIN },
             { text: "", style: "tableGrandTotalLabel" }
           ]
         ]

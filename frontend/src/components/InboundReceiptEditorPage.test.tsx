@@ -104,7 +104,7 @@ describe("InboundReceiptEditorPage", () => {
     expect(onOpenInboundDetail).not.toHaveBeenCalled();
   });
 
-  it("restores and discards a local browser draft", async () => {
+  it("ignores browser session drafts and starts from the source state", async () => {
     window.sessionStorage.setItem("sim-inbound-receipt-editor-draft:new", JSON.stringify({
       version: 1,
       form: {
@@ -158,21 +158,37 @@ describe("InboundReceiptEditorPage", () => {
       />
     );
 
-    expect(screen.getByText("Restored the unsaved local draft from this browser session.")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Local draft SKU")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("Local draft SKU")).not.toBeInTheDocument();
+    const headerInputs = document.querySelectorAll(".sheet-form input");
+    expect((headerInputs[2] as HTMLInputElement).value).toBe("");
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: "1 Receipt" }));
-    const restoredHeaderInputs = document.querySelectorAll(".sheet-form input");
-    expect((restoredHeaderInputs[2] as HTMLInputElement).value).toBe("MSCU7654321");
+  it("auto-fills expected arrival date when actual arrival date is entered first", () => {
+    renderWithProviders(
+      <InboundReceiptEditorPage
+        routeKey="/inbound-management/new"
+        documentId={null}
+        document={null}
+        items={[]}
+        skuMasters={[]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        inboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onBackToList={vi.fn()}
+        onOpenInboundDetail={vi.fn()}
+        onOpenReceiptEditor={vi.fn()}
+      />
+    );
 
-    fireEvent.click(screen.getByRole("button", { name: "Discard local draft" }));
+    const expectedArrivalInput = screen.getByLabelText("Expected Arrival Date") as HTMLInputElement;
+    const actualArrivalInput = screen.getByLabelText("Actual Arrival Date") as HTMLInputElement;
 
-    await waitFor(() => {
-      expect(screen.queryByText("Restored the unsaved local draft from this browser session.")).not.toBeInTheDocument();
-    });
-    const resetHeaderInputs = document.querySelectorAll(".sheet-form input");
-    expect((resetHeaderInputs[2] as HTMLInputElement).value).toBe("");
-    const savedResetDraft = JSON.parse(window.sessionStorage.getItem("sim-inbound-receipt-editor-draft:new") || "null");
-    expect(savedResetDraft?.form?.containerNo).toBe("");
+    fireEvent.change(actualArrivalInput, { target: { value: "2026-04-02" } });
+
+    expect(actualArrivalInput.value).toBe("2026-04-02");
+    expect(expectedArrivalInput.value).toBe("2026-04-02");
   });
 });
