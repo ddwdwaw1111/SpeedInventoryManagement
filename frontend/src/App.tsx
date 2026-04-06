@@ -480,7 +480,7 @@ export default function App() {
     .map((pageKey) => pageItemMap.get(pageKey))
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
   const navSections = [
-    { key: "inventory", label: navLabels.inventory, items: ["inventory-summary", "warehouse-map", "container-contents", "pallet-trace", "all-activity"] as PageKey[] },
+    { key: "inventory", label: navLabels.inventory, items: ["inventory-summary", "pallet-trace"] as PageKey[] },
     { key: "finance", label: navLabels.finance, items: ["billing"] as PageKey[] },
     { key: "master-data", label: navLabels.masterData, items: ["customers", "sku-master", "storage-management"] as PageKey[] },
     { key: "reports", label: navLabels.reports, items: ["reports", "export-center"] as PageKey[] },
@@ -500,10 +500,14 @@ export default function App() {
   const parentPageByPage: Partial<Record<PageKey, PageKey>> = {
     "daily-operations": "dashboard",
     "billing-container-detail": "billing",
+    "billing-invoice-editor": "billing",
     "inbound-detail": "inbound-management",
     "receipt-editor": "inbound-management",
     "shipment-editor": "outbound-management",
     "container-detail": "container-contents",
+    "container-contents": "inventory-summary",
+    "warehouse-map": "inventory-summary",
+    "all-activity": "inventory-summary",
     adjustments: "inventory-summary",
     transfers: "inventory-summary",
     "cycle-counts": "inventory-summary",
@@ -750,12 +754,12 @@ export default function App() {
                 <WarehouseMapPage items={items} isLoading={isLoading} onNavigate={handleNavigateToPage} onOpenContainerDetail={handleNavigateToContainerDetail} />
               </Suspense>
             ) : null}
-            {activePage === "container-contents" ? renderWithSuspense(<ContainerContentsPage items={items} movements={movements} customers={customers} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onOpenContainerDetail={handleNavigateToContainerDetail} />) : null}
+            {activePage === "container-contents" ? renderWithSuspense(<ContainerContentsPage items={items} movements={movements} customers={customers} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onOpenContainerDetail={handleNavigateToContainerDetail} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "container-detail" ? renderWithSuspense(<ContainerDetailPage routeKey={currentPathname} containerNo={selectedContainerDetailNo} items={items} movements={movements} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} onBackToList={() => handleNavigateToPage("container-contents")} />) : null}
             {activePage === "all-activity" ? renderWithSuspense(<AllActivityPage movements={movements} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "customers" ? renderWithSuspense(<CustomerManagementPage customers={customers} items={items} inboundDocuments={activeInboundDocuments} outboundDocuments={activeOutboundDocuments} movements={movements} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "audit-logs" && canViewAuditLogs ? renderWithSuspense(<AuditLogPage auditLogs={auditLogs} currentUserRole={currentUser.role} isLoading={isLoading} />) : null}
-            {activePage === "pallet-trace" && canViewPallets ? renderWithSuspense(<PalletTracePage />) : null}
+            {activePage === "pallet-trace" && canViewPallets ? renderWithSuspense(<PalletTracePage onNavigate={handleNavigateToPage} />) : null}
             {activePage === "user-management" && canManageUsers ? renderWithSuspense(<UserManagementPage users={users} currentUser={currentUser} isLoading={isLoading} onRefresh={() => loadAppData(false)} />) : null}
             {activePage === "sku-master" ? renderWithSuspense(<SKUMasterPage skuMasters={skuMasters} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} />) : null}
             {activePage === "storage-management" ? (

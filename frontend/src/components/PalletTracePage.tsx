@@ -11,9 +11,9 @@ import { useI18n } from "../lib/i18n";
 import { consumePendingPalletTraceLaunchContext } from "../lib/palletTraceLaunchContext";
 import { useSettings } from "../lib/settings";
 import type { PalletTrace } from "../lib/types";
-import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
+import { buildWorkspaceGridSlots, InventoryViewSwitcher, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
-export function PalletTracePage() {
+export function PalletTracePage({ onNavigate }: { onNavigate?: (page: import("../lib/routes").PageKey) => void }) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const activityDateFormatter = useMemo(
@@ -234,6 +234,8 @@ export function PalletTracePage() {
             </div>
           )}
         />
+
+        {onNavigate ? <InventoryViewSwitcher activeView="pallet-trace" onNavigate={onNavigate} /> : null}
 
         <div className="report-card-grid" style={{ marginBottom: "1rem" }}>
           <article className="metric-card">

@@ -20,7 +20,7 @@ import { consumePendingInventorySummaryContext } from "../lib/inventorySummaryCo
 import type { PageKey } from "../lib/routes";
 import { DEFAULT_STORAGE_SECTION, normalizeStorageSection, type Customer, type Item, type Location, type Movement, type UserRole } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
-import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
+import { buildWorkspaceGridSlots, InventoryViewSwitcher, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
 
 type InventorySummaryPageProps = {
@@ -246,6 +246,7 @@ export function InventorySummaryPage({
             <label>{t("stockHealth")}<select value={healthFilter} onChange={(event) => setHealthFilter(event.target.value as InventorySummaryHealthFilter)}><option value="ALL">{t("allRows")}</option><option value="LOW_STOCK">{t("lowStock")}</option></select></label>
           </div>
         </div>
+        <InventoryViewSwitcher activeView="inventory-summary" onNavigate={onNavigate} />
 
         <div className="workspace-summary-strip">
           {overviewStats.map((stat) => (

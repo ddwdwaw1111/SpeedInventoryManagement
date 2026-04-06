@@ -15,7 +15,7 @@ import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
 import { useSettings } from "../lib/settings";
 import { normalizeStorageSection, type Customer, type Location, type Movement, type UserRole } from "../lib/types";
-import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
+import { buildWorkspaceGridSlots, InventoryViewSwitcher, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
 
 type AllActivityPageProps = {
@@ -190,6 +190,7 @@ export function AllActivityPage({ movements, customers, locations, currentUserRo
             <label>{t("toDate")}<input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label>
           </div>
         </div>
+        <InventoryViewSwitcher activeView="all-activity" onNavigate={onNavigate} />
 
         <div className="sheet-table-wrap">
           <Box sx={{ minWidth: 0 }}>

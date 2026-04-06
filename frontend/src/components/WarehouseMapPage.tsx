@@ -9,7 +9,7 @@ import { setPendingInventorySummaryContext } from "../lib/inventorySummaryContex
 import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
 import { normalizeStorageSection, type Item } from "../lib/types";
-import { WorkspacePanelHeader } from "./WorkspacePanelChrome";
+import { InventoryViewSwitcher, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type WarehouseMapPageProps = {
   items: Item[];
@@ -295,6 +295,7 @@ export function WarehouseMapPage({ items, isLoading, onNavigate, onOpenContainer
             </div>
           )}
         />
+        <InventoryViewSwitcher activeView="warehouse-map" onNavigate={onNavigate} />
         <div className="warehouse-map__filters">
           <TextField
             select

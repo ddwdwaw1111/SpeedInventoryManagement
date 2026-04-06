@@ -1,7 +1,13 @@
 import { type ReactNode } from "react";
 import { Alert } from "@mui/material";
+import CategoryOutlinedIcon from "@mui/icons-material/CategoryOutlined";
+import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
+import MapOutlinedIcon from "@mui/icons-material/MapOutlined";
+import ViewInArOutlinedIcon from "@mui/icons-material/ViewInArOutlined";
+import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
 
 import { InlineAlert } from "./Feedback";
+import type { PageKey } from "../lib/routes";
 
 type WorkspacePanelHeaderProps = {
   title?: string;
@@ -150,4 +156,35 @@ export function buildWorkspaceGridSlots({
     noResultsOverlay: () => <WorkspaceTableEmptyState title={emptyTitle} description={emptyDescription} />,
     loadingOverlay: () => <WorkspaceTableLoadingState title={loadingTitle} description={loadingDescription} />
   };
+}
+
+type InventoryViewSwitcherProps = {
+  activeView: PageKey;
+  onNavigate: (page: PageKey) => void;
+};
+
+const INVENTORY_VIEWS: Array<{ key: PageKey; label: string; icon: ReactNode }> = [
+  { key: "inventory-summary", label: "Summary", icon: <WarehouseOutlinedIcon style={{ fontSize: "0.9rem" }} /> },
+  { key: "container-contents", label: "Containers", icon: <CategoryOutlinedIcon style={{ fontSize: "0.9rem" }} /> },
+  { key: "warehouse-map", label: "Map", icon: <MapOutlinedIcon style={{ fontSize: "0.9rem" }} /> },
+  { key: "all-activity", label: "Activity", icon: <HistoryOutlinedIcon style={{ fontSize: "0.9rem" }} /> },
+  { key: "pallet-trace", label: "Pallets", icon: <ViewInArOutlinedIcon style={{ fontSize: "0.9rem" }} /> },
+];
+
+export function InventoryViewSwitcher({ activeView, onNavigate }: InventoryViewSwitcherProps) {
+  return (
+    <div className="inv-view-switcher">
+      {INVENTORY_VIEWS.map((view) => (
+        <button
+          key={view.key}
+          type="button"
+          className={`inv-view-switcher__btn ${activeView === view.key ? "inv-view-switcher__btn--active" : ""}`}
+          onClick={() => { if (activeView !== view.key) onNavigate(view.key); }}
+        >
+          {view.icon}
+          {view.label}
+        </button>
+      ))}
+    </div>
+  );
 }

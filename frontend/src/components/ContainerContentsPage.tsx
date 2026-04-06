@@ -16,7 +16,7 @@ import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import { normalizeStorageSection, type Customer, type Item, type Location, type Movement, type UserRole } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
-import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
+import { buildWorkspaceGridSlots, InventoryViewSwitcher, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
 
 type ContainerContentsPageProps = {
@@ -27,6 +27,7 @@ type ContainerContentsPageProps = {
   currentUserRole: UserRole;
   isLoading: boolean;
   onOpenContainerDetail: (containerNo: string) => void;
+  onNavigate: (page: import("../lib/routes").PageKey) => void;
 };
 const CONTAINER_CONTENTS_COLUMN_ORDER_PREFERENCE_KEY = "container-contents.column-order";
 const CONTAINER_CONTENTS_EXPORT_TITLE = "Container Contents";
@@ -54,7 +55,8 @@ export function ContainerContentsPage({
   locations,
   currentUserRole,
   isLoading,
-  onOpenContainerDetail
+  onOpenContainerDetail,
+  onNavigate
 }: ContainerContentsPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
@@ -224,6 +226,7 @@ export function ContainerContentsPage({
             <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
           </div>
         </div>
+        <InventoryViewSwitcher activeView="container-contents" onNavigate={onNavigate} />
 
         <div className="sheet-table-wrap">
           <Box sx={{ minWidth: 0 }}>
