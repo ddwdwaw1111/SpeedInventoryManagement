@@ -1,8 +1,10 @@
 import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
 import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
 import ExpandLessOutlinedIcon from "@mui/icons-material/ExpandLessOutlined";
+import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
+import PictureAsPdfOutlinedIcon from "@mui/icons-material/PictureAsPdfOutlined";
 import RefreshOutlinedIcon from "@mui/icons-material/RefreshOutlined";
-import { Button, Chip } from "@mui/material";
+import { Button, Chip, Divider, ListItemIcon, ListItemText, Menu, MenuItem } from "@mui/material";
 import { BarChart } from "@mui/x-charts";
 import { useEffect, useMemo, useState } from "react";
 
@@ -16,7 +18,9 @@ import {
   type BillingRates,
   type BillingStorageRow
 } from "../lib/billingPreview";
+import { downloadBillingPreviewPdf } from "../lib/billingPreviewPdf";
 import { formatDateTimeValue } from "../lib/dates";
+import { downloadExcelWorkbook, type ExcelExportCell, type ExcelExportColumn } from "../lib/excelExport";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type {
@@ -30,6 +34,7 @@ import type {
   PalletTrace,
   UserRole
 } from "../lib/types";
+import { ExportExcelDialog } from "./ExportExcelDialog";
 import { WorkspacePanelHeader, WorkspaceTableEmptyState } from "./WorkspacePanelChrome";
 
 type BillingPageProps = {
@@ -54,6 +59,8 @@ type BillingContainerSummaryRow = {
   totalAmount: number;
 };
 
+const BILLING_EXPORT_SHEET_NAME = "Billing Preview";
+
 export function BillingPage({ customers, inboundDocuments, outboundDocuments, currentUserRole, onOpenBillingContainerDetail, onOpenBillingInvoice }: BillingPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
@@ -69,6 +76,8 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
   const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
   const [invoiceStatusFilter, setInvoiceStatusFilter] = useState<BillingInvoiceStatus | "ALL">("ALL");
   const [showDetailSections, setShowDetailSections] = useState(false);
+  const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
+  const [exportMenuAnchor, setExportMenuAnchor] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -210,9 +219,101 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
   }, [invoices]);
 
   const canCreateInvoice = customerId !== "all" && billingPreview.invoiceLines.length > 0;
+  const hasBillablePreview = billingPreview.invoiceLines.length > 0;
+  const exportTitle = useMemo(
+    () => buildBillingExportTitle(t("billingPage"), billingPreview.customerName, billingPreview.startDate, billingPreview.endDate),
+    [billingPreview.customerName, billingPreview.endDate, billingPreview.startDate, t]
+  );
+  const exportColumns = useMemo<ExcelExportColumn[]>(() => ([
+    { key: "customerName", label: t("customer") },
+    { key: "chargeType", label: t("chargeType") },
+    { key: "reference", label: t("reference") },
+    { key: "containerNo", label: t("containerNo") },
+    { key: "warehouseSummary", label: t("currentStorage") },
+    { key: "quantity", label: t("quantity"), numberFormat: "number" },
+    { key: "unitRate", label: t("unitRate"), numberFormat: "currency" },
+    { key: "amount", label: t("amount"), numberFormat: "currency" },
+    { key: "meta", label: t("notes") },
+    { key: "occurredOn", label: t("billingOccurredAt") }
+  ]), [t]);
+  const exportRows = useMemo<Array<Record<string, ExcelExportCell>>>(() => billingPreview.invoiceLines.map((line) => ({
+    customerName: line.customerName,
+    chargeType: renderChargeTypeLabel(line.chargeType, t),
+    reference: line.reference,
+    containerNo: line.containerNo,
+    warehouseSummary: line.warehouseSummary,
+    quantity: line.quantity,
+    unitRate: line.unitRate,
+    amount: line.amount,
+    meta: line.meta,
+    occurredOn: line.occurredOn ? formatDateTimeValue(line.occurredOn, resolvedTimeZone, { dateStyle: "medium" }) : "-"
+  })), [billingPreview.invoiceLines, resolvedTimeZone, t]);
+
+  function handleExportExcel({ title, columns }: { title: string; columns: ExcelExportColumn[] }) {
+    downloadExcelWorkbook({
+      title,
+      sheetName: BILLING_EXPORT_SHEET_NAME,
+      fileName: title,
+      columns,
+      rows: exportRows,
+      summaryRows: [
+        { label: t("billingInboundCharges"), value: billingPreview.summary.inboundAmount, numberFormat: "currency" },
+        { label: t("billingWrappingCharges"), value: billingPreview.summary.wrappingAmount, numberFormat: "currency" },
+        { label: t("billingStorageCharges"), value: billingPreview.summary.storageAmount, numberFormat: "currency" },
+        { label: t("billingOutboundCharges"), value: billingPreview.summary.outboundAmount, numberFormat: "currency" },
+        { label: t("billingGrandTotal"), value: billingPreview.summary.grandTotal, numberFormat: "currency", bold: true }
+      ]
+    });
+    setIsExportDialogOpen(false);
+  }
+
+  function handleDownloadPdf() {
+    downloadBillingPreviewPdf({
+      preview: billingPreview,
+      rates,
+      timeZone: resolvedTimeZone
+    });
+  }
 
   const rateActions = (
     <div className="sheet-actions">
+      <Button
+        size="small"
+        variant="outlined"
+        startIcon={<FileDownloadOutlinedIcon fontSize="small" />}
+        endIcon={<ExpandMoreOutlinedIcon fontSize="small" />}
+        onClick={(event) => setExportMenuAnchor(event.currentTarget)}
+        disabled={!hasBillablePreview}
+      >
+        {t("export")}
+      </Button>
+      <Menu
+        anchorEl={exportMenuAnchor}
+        open={Boolean(exportMenuAnchor)}
+        onClose={() => setExportMenuAnchor(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
+      >
+        <MenuItem
+          onClick={() => {
+            setExportMenuAnchor(null);
+            setIsExportDialogOpen(true);
+          }}
+        >
+          <ListItemIcon><FileDownloadOutlinedIcon fontSize="small" /></ListItemIcon>
+          <ListItemText primary={t("exportExcel")} secondary={t("exportExcelDesc")} />
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            setExportMenuAnchor(null);
+            handleDownloadPdf();
+          }}
+        >
+          <ListItemIcon><PictureAsPdfOutlinedIcon fontSize="small" /></ListItemIcon>
+          <ListItemText primary={t("downloadPdf")} secondary={t("downloadPdfDesc")} />
+        </MenuItem>
+      </Menu>
+      <Divider orientation="vertical" flexItem />
       <Button
         size="small"
         variant="outlined"
@@ -634,6 +735,13 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
           </>
         )}
       </section>
+      <ExportExcelDialog
+        open={isExportDialogOpen}
+        defaultTitle={exportTitle}
+        defaultColumns={exportColumns}
+        onClose={() => setIsExportDialogOpen(false)}
+        onExport={handleExportExcel}
+      />
     </main>
   );
 }
@@ -833,4 +941,9 @@ function chargeTypeDescription(chargeType: string): string {
     case "OUTBOUND": return "Outbound fee";
     default: return chargeType;
   }
+}
+
+function buildBillingExportTitle(baseTitle: string, customerName: string, startDate: string, endDate: string) {
+  const normalizedCustomer = customerName.trim() || "all-customers";
+  return `${baseTitle} ${normalizedCustomer} ${startDate} to ${endDate}`;
 }

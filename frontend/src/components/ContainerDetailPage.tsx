@@ -957,7 +957,7 @@ function SkuSnapshotCard({
   onOpenActivity
 }: {
   card: ContainerSkuCard;
-  t: (key: string) => string;
+  t: (key: string, params?: Record<string, string | number>) => string;
   onOpenActivity: () => void;
 }) {
   return (
@@ -1003,7 +1003,7 @@ function PalletTraceCard({
 }: {
   pallet: PalletTrace;
   resolvedTimeZone: string;
-  t: (key: string) => string;
+  t: (key: string, params?: Record<string, string | number>) => string;
 }) {
   const totalQuantity = pallet.contents.reduce((sum, content) => sum + content.quantity, 0);
   const [contentsExpanded, setContentsExpanded] = useState(false);
@@ -1508,7 +1508,7 @@ function PalletSelectionList({
   pallets: PalletTrace[];
   selectedPalletIds: number[];
   onToggle: (palletId: number) => void;
-  t: (key: string) => string;
+  t: (key: string, params?: Record<string, string | number>) => string;
 }) {
   const selectedCount = selectedPalletIds.length;
   const selectedAvailableQty = pallets

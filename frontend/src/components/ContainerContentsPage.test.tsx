@@ -88,6 +88,7 @@ describe("ContainerContentsPage", () => {
         currentUserRole="admin"
         isLoading={false}
         onOpenContainerDetail={onOpenContainerDetail}
+        onNavigate={vi.fn()}
       />
     );
 
@@ -143,6 +144,7 @@ describe("ContainerContentsPage", () => {
         currentUserRole="admin"
         isLoading={false}
         onOpenContainerDetail={onOpenContainerDetail}
+        onNavigate={vi.fn()}
       />
     );
 
@@ -175,6 +177,7 @@ describe("ContainerContentsPage", () => {
         currentUserRole="admin"
         isLoading={false}
         onOpenContainerDetail={vi.fn()}
+        onNavigate={vi.fn()}
       />
     );
 

@@ -3,12 +3,17 @@ import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOu
 import CheckCircleOutlineOutlinedIcon from "@mui/icons-material/CheckCircleOutlineOutlined";
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
+import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
+import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
 import PaidOutlinedIcon from "@mui/icons-material/PaidOutlined";
+import PictureAsPdfOutlinedIcon from "@mui/icons-material/PictureAsPdfOutlined";
 import BlockOutlinedIcon from "@mui/icons-material/BlockOutlined";
 import { useState, useEffect, useCallback, type FormEvent } from "react";
-import { Button, Chip, Dialog, DialogTitle, DialogContent, DialogActions } from "@mui/material";
+import { Button, Chip, Dialog, DialogTitle, DialogContent, DialogActions, Divider, ListItemIcon, ListItemText, Menu, MenuItem } from "@mui/material";
 
 import { ApiError, api } from "../lib/api";
+import { downloadExcelWorkbook, type ExcelExportCell, type ExcelExportColumn } from "../lib/excelExport";
+import { downloadBillingInvoicePdf } from "../lib/billingInvoicePdf";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import { formatDateTimeValue } from "../lib/dates";
@@ -19,6 +24,7 @@ import type {
   UpdateBillingInvoiceLinePayload,
   UserRole
 } from "../lib/types";
+import { ExportExcelDialog } from "./ExportExcelDialog";
 import { WorkspacePanelHeader, WorkspaceTableEmptyState } from "./WorkspacePanelChrome";
 
 type BillingInvoiceEditorPageProps = {
@@ -76,6 +82,8 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
   // Notes editing
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [notesValue, setNotesValue] = useState("");
+  const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
+  const [exportMenuAnchor, setExportMenuAnchor] = useState<HTMLElement | null>(null);
 
   const isDraft = invoice?.status === "DRAFT";
   const isAdmin = currentUserRole === "admin";
@@ -289,13 +297,114 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
     />
   );
 
+  const exportColumns: ExcelExportColumn[] = [
+    { key: "chargeType", label: t("billingChargeType") },
+    { key: "description", label: t("description") },
+    { key: "reference", label: t("reference") },
+    { key: "containerNo", label: t("containerNo") },
+    { key: "warehouse", label: t("currentStorage") },
+    { key: "occurredOn", label: t("billingOccurredAt") },
+    { key: "quantity", label: t("quantity"), numberFormat: "number" },
+    { key: "unitRate", label: t("unitRate"), numberFormat: "currency" },
+    { key: "amount", label: t("amount"), numberFormat: "currency" },
+    { key: "sourceType", label: t("billingSourceType") },
+    { key: "notes", label: t("notes") }
+  ];
+
+  function handleExportExcel({ title, columns }: { title: string; columns: ExcelExportColumn[] }) {
+    if (!invoice) {
+      return;
+    }
+
+    const rows: Array<Record<string, ExcelExportCell>> = invoice.lines.map((line) => ({
+      chargeType: chargeTypeLabel(line.chargeType, t),
+      description: line.description || "-",
+      reference: line.reference || "-",
+      containerNo: line.containerNo || "-",
+      warehouse: line.warehouse || "-",
+      occurredOn: line.occurredOn ? formatDateTimeValue(line.occurredOn, resolvedTimeZone, { dateStyle: "medium" }) : "-",
+      quantity: line.quantity,
+      unitRate: line.unitRate,
+      amount: line.amount,
+      sourceType: line.sourceType === "AUTO" ? t("billingSourceTypeAuto") : t("billingSourceTypeManual"),
+      notes: line.notes || "-"
+    }));
+
+    downloadExcelWorkbook({
+      title,
+      sheetName: "Billing Invoice",
+      fileName: title,
+      columns,
+      rows,
+      summaryRows: [
+        ...(invoice.subtotal !== invoice.grandTotal
+          ? [{ label: t("billingInvoiceSubtotal"), value: invoice.subtotal, numberFormat: "currency" as const }]
+          : []),
+        ...(invoice.discountTotal !== 0
+          ? [{ label: t("billingDiscount"), value: invoice.discountTotal, numberFormat: "currency" as const }]
+          : []),
+        { label: t("billingGrandTotal"), value: invoice.grandTotal, numberFormat: "currency", bold: true }
+      ]
+    });
+    setIsExportDialogOpen(false);
+  }
+
+  function handleDownloadPdf() {
+    if (!invoice) {
+      return;
+    }
+
+    downloadBillingInvoicePdf({
+      invoice,
+      timeZone: resolvedTimeZone
+    });
+  }
+
   const headerActions = (
     <div className="sheet-actions">
       <Button size="small" variant="outlined" startIcon={<ArrowBackOutlinedIcon fontSize="small" />} onClick={onBackToBilling}>
         {t("billingBackToPreview")}
       </Button>
+      <Divider orientation="vertical" flexItem />
+      <Button
+        size="small"
+        variant="outlined"
+        startIcon={<FileDownloadOutlinedIcon fontSize="small" />}
+        endIcon={<ExpandMoreOutlinedIcon fontSize="small" />}
+        onClick={(event) => setExportMenuAnchor(event.currentTarget)}
+        disabled={invoice.lines.length === 0}
+      >
+        {t("export")}
+      </Button>
+      <Menu
+        anchorEl={exportMenuAnchor}
+        open={Boolean(exportMenuAnchor)}
+        onClose={() => setExportMenuAnchor(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
+      >
+        <MenuItem
+          onClick={() => {
+            setExportMenuAnchor(null);
+            setIsExportDialogOpen(true);
+          }}
+        >
+          <ListItemIcon><FileDownloadOutlinedIcon fontSize="small" /></ListItemIcon>
+          <ListItemText primary={t("exportExcel")} secondary={t("exportExcelDesc")} />
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            setExportMenuAnchor(null);
+            handleDownloadPdf();
+          }}
+        >
+          <ListItemIcon><PictureAsPdfOutlinedIcon fontSize="small" /></ListItemIcon>
+          <ListItemText primary={t("downloadPdf")} secondary={t("downloadPdfDesc")} />
+        </MenuItem>
+      </Menu>
       {isDraft && (
         <>
+          <Divider orientation="vertical" flexItem />
           <Button size="small" variant="outlined" startIcon={<AddCircleOutlineOutlinedIcon fontSize="small" />} onClick={() => handleOpenAddLine("MANUAL")}>
             {t("billingAddLine")}
           </Button>
@@ -638,6 +747,13 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
           </Button>
         </DialogActions>
       </Dialog>
+      <ExportExcelDialog
+        open={isExportDialogOpen}
+        defaultTitle={invoice ? `Billing Invoice ${invoice.invoiceNo}` : t("billingInvoiceEditor")}
+        defaultColumns={exportColumns}
+        onClose={() => setIsExportDialogOpen(false)}
+        onExport={handleExportExcel}
+      />
     </main>
   );
 }
