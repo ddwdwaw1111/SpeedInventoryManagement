@@ -517,6 +517,24 @@ export function OutboundShipmentEditorPage({
     }));
   }
 
+  function resetOutboundLinePickPallets(lineID: string) {
+    setBatchOutboundLines((current) => current.map((line) => {
+      if (line.id !== lineID) {
+        return line;
+      }
+      const selectedSource = findOutboundSourceOption(selectableOutboundSources, line.sourceKey);
+      const skuMaster = selectedSource ? skuMastersBySku.get(normalizeSkuLookupValue(selectedSource.sku)) : undefined;
+      const nextAutoPalletPlan = buildAutoPalletPlan(line.quantity, skuMaster?.defaultUnitsPerPallet ?? 0);
+      const nextPickPallets = buildAutoOutboundPalletSelections(line.quantity, selectedSource?.candidates ?? []);
+      return {
+        ...line,
+        pickPallets: nextPickPallets,
+        pickPalletsTouched: false,
+        pallets: Math.max(nextAutoPalletPlan.pallets, nextPickPallets.length)
+      };
+    }));
+  }
+
   function validateOutboundDraft(requireAllocationReady: boolean) {
     if (validBatchOutboundLines.length === 0) {
       return t("batchOutboundRequireLine");
@@ -833,6 +851,12 @@ export function OutboundShipmentEditorPage({
                     <span className="batch-line-card__hint">{t("pickPlanStepHint")}</span>
                   )}
                 </div>
+                <datalist id="outbound-unit-presets">
+                  <option value="PCS" />
+                  <option value="CTN" />
+                  <option value="PLT" />
+                  <option value="BAG" />
+                </datalist>
 
                 {batchOutboundLines.map((line, index) => {
                   const selectedOutboundSource = findOutboundSourceOption(selectableOutboundSources, line.sourceKey);
@@ -855,6 +879,9 @@ export function OutboundShipmentEditorPage({
                           <span className={`status-pill ${selectedOutboundSource ? "status-pill--ok" : "status-pill--alert"}`}>
                             {selectedOutboundSource ? t("selected") : t("selectShipmentSource")}
                           </span>
+                          {outboundWizardStep === 1 && selectedOutboundSource && line.quantity > 0 && line.quantity > selectedOutboundSource.availableQty ? (
+                            <span className="status-pill status-pill--alert">{t("insufficientStock")}</span>
+                          ) : null}
                         </div>
                         <button className="button button--danger button--small" type="button" onClick={() => removeBatchOutboundLine(line.id)} disabled={isReadOnly || batchOutboundLines.length === 1}>{t("removeLine")}</button>
                       </div>
@@ -883,7 +910,7 @@ export function OutboundShipmentEditorPage({
                           <label>{t("availableQty")}<input value={selectedOutboundSource ? String(selectedOutboundSource.availableQty) : ""} readOnly /></label>
                           <label>{t("outQty")}<input type="number" min="0" value={numberInputValue(line.quantity)} onChange={(event) => updateBatchOutboundLineQuantity(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={isReadOnly} /></label>
                           <label>{t("pallets")}<input type="number" min="0" value={numberInputValue(line.pallets)} readOnly disabled /></label>
-                          <label>{t("unit")}<input value={line.unitLabel} onChange={(event) => updateBatchOutboundLine(line.id, { unitLabel: event.target.value })} placeholder="PCS" disabled={isReadOnly} /></label>
+                          <label>{t("unit")}<input value={line.unitLabel} onChange={(event) => updateBatchOutboundLine(line.id, { unitLabel: event.target.value })} placeholder="PCS" disabled={isReadOnly} list="outbound-unit-presets" /></label>
                           <label>{t("cartonSize")}<input value={line.cartonSizeMm} onChange={(event) => updateBatchOutboundLine(line.id, { cartonSizeMm: event.target.value })} placeholder="455*330*325" disabled={isReadOnly} /></label>
                           <label>{t("netWeight")}<input type="number" min="0" step="0.01" value={numberInputValue(line.netWeightKgs)} onChange={(event) => updateBatchOutboundLine(line.id, { netWeightKgs: Math.max(0, Number(event.target.value || 0)) })} disabled={isReadOnly} /></label>
                           <label>{t("grossWeight")}<input type="number" min="0" step="0.01" value={numberInputValue(line.grossWeightKgs)} onChange={(event) => updateBatchOutboundLine(line.id, { grossWeightKgs: Math.max(0, Number(event.target.value || 0)) })} disabled={isReadOnly} /></label>
@@ -897,6 +924,11 @@ export function OutboundShipmentEditorPage({
                             : t("selectShipmentSource")}
                         </span>
                       </div>
+                      {selectedOutboundSource && outboundWizardStep === 2 && line.pickPalletsTouched ? (
+                        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.25rem" }}>
+                          <button className="button button--ghost button--small" type="button" onClick={() => resetOutboundLinePickPallets(line.id)}>{t("resetToAutoPick")}</button>
+                        </div>
+                      ) : null}
                       {selectedOutboundSource && outboundWizardStep === 2 ? (
                         <OutboundPickPlanPanel
                           title={t("containerPickPlan")}

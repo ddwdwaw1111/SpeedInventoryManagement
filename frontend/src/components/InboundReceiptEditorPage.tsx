@@ -492,6 +492,40 @@ export function InboundReceiptEditorPage({
     }));
   }
 
+  function autofillAllReceivedQty() {
+    setBatchLines((current) => current.map((line) => {
+      if (line.receivedQty > 0 || line.expectedQty <= 0) {
+        return line;
+      }
+      const skuMaster = skuMastersBySku.get(normalizeSkuLookupValue(line.sku));
+      const unitsPerPallet = getEffectiveInboundUnitsPerPallet(line, skuMaster);
+      const nextReceivedQty = line.expectedQty;
+      const previousSuggested = calculateSuggestedReorderLevel(line.expectedQty, line.receivedQty);
+      const nextSuggested = calculateSuggestedReorderLevel(line.expectedQty, nextReceivedQty);
+      const shouldKeepAutoReorder = line.reorderLevel <= 0 || line.reorderLevel === previousSuggested;
+      const previousAutoPalletPlan = buildAutoPalletPlan(line.receivedQty, unitsPerPallet);
+      const nextAutoPalletPlan = buildAutoPalletPlan(nextReceivedQty, unitsPerPallet);
+      const shouldKeepAutoPallets = line.pallets <= 0 || line.pallets === previousAutoPalletPlan.pallets;
+      const nextPallets = shouldKeepAutoPallets ? nextAutoPalletPlan.pallets : line.pallets;
+      const shouldPreserveExplicitBreakdown = line.palletBreakdownExplicit || line.palletBreakdownTouched;
+      const nextPalletBreakdown = shouldPreserveExplicitBreakdown
+        ? line.palletBreakdown
+        : buildInboundPalletBreakdown(nextReceivedQty, nextPallets, unitsPerPallet);
+      const nextPalletDetail = shouldPreserveExplicitBreakdown
+        ? line.palletsDetailCtns
+        : formatInboundPalletBreakdownDetail(nextPalletBreakdown);
+      return {
+        ...line,
+        receivedQty: nextReceivedQty,
+        reorderLevel: shouldKeepAutoReorder ? nextSuggested : line.reorderLevel,
+        pallets: nextPallets,
+        palletBreakdown: nextPalletBreakdown,
+        palletBreakdownExplicit: line.palletBreakdownExplicit,
+        palletsDetailCtns: nextPalletDetail
+      };
+    }));
+  }
+
   function updateBatchLinePallets(lineID: string, nextPallets: number) {
     setBatchLines((current) => current.map((line) => {
       if (line.id !== lineID) {
@@ -994,8 +1028,21 @@ export function InboundReceiptEditorPage({
                         <AddCircleOutlineOutlinedIcon fontSize="small" />
                         {t("addSkuLine")}
                       </button>
+                      <button
+                        className="button button--ghost"
+                        type="button"
+                        onClick={() => autofillAllReceivedQty()}
+                        disabled={isReadOnly}
+                      >
+                        {t("fillAllReceivedQty")}
+                      </button>
                     </div>
                   </div>
+                  <datalist id="inbound-sku-list">
+                    {Array.from(new Set([...items.map((item) => item.sku.trim().toUpperCase()), ...Array.from(skuMastersBySku.keys())])).filter(Boolean).map((sku) => (
+                      <option key={sku} value={sku} />
+                    ))}
+                  </datalist>
 
                   {batchLines.map((line, index) => {
                     const normalizedBatchLineSku = normalizeSkuLookupValue(line.sku);
@@ -1025,11 +1072,19 @@ export function InboundReceiptEditorPage({
                             <span className={`status-pill ${selectedBatchItem ? "status-pill--ok" : "status-pill--alert"}`}>
                               {selectedBatchItem ? t("useExistingSku") : t("createNewSku")}
                             </span>
+                            {line.receivedQty > 0 ? (() => {
+                              const lineVariance = getInboundReceiptVariance(line.expectedQty, line.receivedQty);
+                              return (
+                                <span className={`status-pill ${getInboundReceiptVarianceClassName(lineVariance)}`}>
+                                  {t(getInboundReceiptVarianceLabelKey(lineVariance))}
+                                </span>
+                              );
+                            })() : null}
                           </div>
                           <button className="button button--danger button--small" type="button" onClick={() => removeBatchLine(line.id)} disabled={isReadOnly || batchLines.length === 1}>{t("removeLine")}</button>
                         </div>
                         <div className="batch-line-grid batch-line-grid--inbound">
-                          <label>{t("sku")}<input value={line.sku} onChange={(event) => updateBatchLineSku(line.id, event.target.value)} placeholder="ABC123" disabled={isReadOnly} /></label>
+                          <label>{t("sku")}<input value={line.sku} onChange={(event) => updateBatchLineSku(line.id, event.target.value)} placeholder="ABC123" disabled={isReadOnly} list="inbound-sku-list" /></label>
                           <label className="batch-line-grid__description">{t("description")}<input value={selectedBatchItem ? displayDescription(selectedBatchItem) : (line.description || (batchSkuMaster ? getSKUMasterDescription(batchSkuMaster) : "") || displayDescription(batchSkuTemplate ?? { description: "", name: "" }))} onChange={(event) => updateBatchLine(line.id, { description: event.target.value })} placeholder={t("descriptionPlaceholder")} disabled={isReadOnly || Boolean(selectedBatchItem)} /></label>
                           <label>{t("expectedQty")}<input type="number" min="0" value={numberInputValue(line.expectedQty)} onChange={(event) => updateBatchLineExpectedQty(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={isReadOnly} /></label>
                           <label>{t("received")}<input type="number" min="0" value={numberInputValue(line.receivedQty)} onChange={(event) => updateBatchLineReceivedQty(line.id, Math.max(0, Number(event.target.value || 0)))} onBlur={() => autofillBatchLineReceivedQty(line.id)} placeholder={line.expectedQty > 0 ? String(line.expectedQty) : ""} disabled={isReadOnly} /></label>

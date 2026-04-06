@@ -120,11 +120,15 @@ export function TransferManagementPage({
   }, [selectedTransfer, selectedTransferId]);
 
   useEffect(() => {
-    setLines((current) => current.map((line) => (
-      selectableSourceItems.some((item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.sourceBucketKey)
-        ? line
-        : { ...line, sourceBucketKey: "" }
-    )));
+    const onlyBucketKey = selectableSourceItems.length === 1
+      ? buildInventoryProjectionKey(toInventoryProjectionRef(selectableSourceItems[0]!))
+      : null;
+    setLines((current) => current.map((line) => {
+      if (selectableSourceItems.some((item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.sourceBucketKey)) {
+        return line;
+      }
+      return { ...line, sourceBucketKey: onlyBucketKey ?? "" };
+    }));
   }, [selectableSourceItems]);
 
   useEffect(() => {
@@ -263,8 +267,16 @@ export function TransferManagementPage({
     showError(message);
   }
 
+  const hasQtyOverflow = lines.some((line) => {
+    const item = selectableSourceItems.find(
+      (i) => buildInventoryProjectionKey(toInventoryProjectionRef(i)) === line.sourceBucketKey
+    );
+    return item !== undefined && line.quantity > item.availableQty;
+  });
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (hasQtyOverflow) return;
     setSubmitting(true);
     setErrorMessage("");
 
@@ -531,7 +543,20 @@ export function TransferManagementPage({
                           </select>
                         </label>
                         <label>{t("availableQty")}<input value={selectedItem ? String(selectedItem.availableQty) : ""} readOnly /></label>
-                        <label>{t("transferQty")}<input type="number" min="0" value={numberInputValue(line.quantity)} onChange={(event) => updateLine(line.id, { quantity: Math.max(0, Number(event.target.value || 0)) })} /></label>
+                        <label>
+                          {t("transferQty")}
+                          <input type="number" min="0" value={numberInputValue(line.quantity)} onChange={(event) => updateLine(line.id, { quantity: Math.max(0, Number(event.target.value || 0)) })} />
+                          {selectedItem && line.quantity > selectedItem.availableQty && (
+                            <small style={{ color: "#b76857", display: "block", marginTop: 2, fontWeight: 600 }}>
+                              {t("transferQtyExceedsAvailable", { available: String(selectedItem.availableQty) })}
+                            </small>
+                          )}
+                          {selectedItem && line.quantity > 0 && line.quantity <= selectedItem.availableQty && (
+                            <small style={{ color: "#6c757d", display: "block", marginTop: 2 }}>
+                              {t("remainingAfterTransfer")}: {selectedItem.availableQty - line.quantity}
+                            </small>
+                          )}
+                        </label>
                         <label>{t("destinationStorage")}<select value={line.toLocationId} onChange={(event) => updateLine(line.id, { toLocationId: event.target.value, toStorageSection: getLocationSectionOptions(locations.find((location) => location.id === Number(event.target.value)))[0] || DEFAULT_STORAGE_SECTION })}><option value="">{t("selectStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
                         <label>{t("toSection")}<select value={line.toStorageSection} onChange={(event) => updateLine(line.id, { toStorageSection: event.target.value })}>{sectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}</select></label>
                         <label className="batch-line-grid__detail">{t("internalNotes")}<input value={line.lineNote} onChange={(event) => updateLine(line.id, { lineNote: event.target.value })} placeholder={t("transferLineNotePlaceholder")} /></label>
@@ -543,7 +568,7 @@ export function TransferManagementPage({
             </div>
 
             <div className="sheet-form__actions sheet-form__wide">
-              <button className="button button--primary" type="submit" disabled={submitting}>{submitting ? t("saving") : t("saveTransfer")}</button>
+              <button className="button button--primary" type="submit" disabled={submitting || hasQtyOverflow}>{submitting ? t("saving") : t("saveTransfer")}</button>
               <button className="button button--ghost" type="button" onClick={closeCreateModal}>{t("cancel")}</button>
             </div>
           </form>

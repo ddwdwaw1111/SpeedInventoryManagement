@@ -5,8 +5,6 @@ import SwapVertRoundedIcon from "@mui/icons-material/SwapVertRounded";
 import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
-import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
-import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
 import OutboxOutlinedIcon from "@mui/icons-material/OutboxOutlined";
 import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
 import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
@@ -24,7 +22,6 @@ import {
 } from "../lib/containerInventory";
 import { setPendingAllActivityContext } from "../lib/allActivityContext";
 import { useI18n } from "../lib/i18n";
-import { setPendingPalletTraceLaunchContext } from "../lib/palletTraceLaunchContext";
 import { useSettings } from "../lib/settings";
 import type { PageKey } from "../lib/routes";
 import {
@@ -492,15 +489,6 @@ export function ContainerDetailPage({
     onNavigate("all-activity");
   }
 
-  function handleOpenPalletWorkspace() {
-    if (!normalizedContainerNo) {
-      return;
-    }
-
-    setPendingPalletTraceLaunchContext({ searchTerm: normalizedContainerNo });
-    onNavigate("pallet-trace");
-  }
-
   const openPalletCount = useMemo(
     () => filteredPallets.filter((pallet) => pallet.status === "OPEN" || pallet.status === "PARTIAL").length,
     [filteredPallets]
@@ -547,34 +535,28 @@ export function ContainerDetailPage({
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={onBackToList}
-                className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25"
-              >
-                <ArrowBackRoundedIcon sx={{ fontSize: 15 }} />
-                {t("back")}
-              </button>
-              <button
-                type="button"
-                onClick={handleOpenActivity}
-                disabled={!container}
-                className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <HistoryOutlinedIcon sx={{ fontSize: 15 }} />
-                {t("allActivity")}
-              </button>
-              <button
-                type="button"
-                onClick={handleOpenPalletWorkspace}
-                disabled={!normalizedContainerNo}
-                className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <OpenInNewRoundedIcon sx={{ fontSize: 15 }} />
-                {t("openPalletWorkspace")}
-              </button>
-            </div>
+            {canManageInventory ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={openAdjustmentDialog}
+                  disabled={!canOpenAdjustmentDialog}
+                  className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <TuneOutlinedIcon sx={{ fontSize: 15 }} />
+                  {t("addAdjustment")}
+                </button>
+                <button
+                  type="button"
+                  onClick={openTransferDialog}
+                  disabled={!canOpenTransferDialog}
+                  className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <CompareArrowsOutlinedIcon sx={{ fontSize: 15 }} />
+                  {t("addTransfer")}
+                </button>
+              </div>
+            ) : null}
           </div>
 
           <div className="mt-3 rounded-[18px] bg-white/10 p-3 ring-1 ring-white/15 backdrop-blur-sm">
@@ -675,53 +657,27 @@ export function ContainerDetailPage({
           <WorkspacePanelHeader
             title={t("containerDetailPalletTitle")}
             description={t("containerDetailPalletDesc")}
-            actions={canManageInventory || filteredPallets.length > PALLETS_PER_PAGE ? (
+            actions={filteredPallets.length > PALLETS_PER_PAGE ? (
               <div className="flex flex-wrap items-center gap-2">
-                {canManageInventory ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={openAdjustmentDialog}
-                      disabled={!canOpenAdjustmentDialog}
-                      className="interactive-button-lift inline-flex items-center gap-1.5 rounded-xl bg-[#143569] px-3 py-1.5 text-xs font-semibold text-white shadow-[0_4px_12px_rgba(20,53,105,0.22)] transition hover:bg-[#0f2d63] hover:shadow-[0_6px_16px_rgba(20,53,105,0.28)] disabled:cursor-not-allowed disabled:opacity-55"
-                    >
-                      <TuneOutlinedIcon sx={{ fontSize: 14 }} />
-                      {t("addAdjustment")}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={openTransferDialog}
-                      disabled={!canOpenTransferDialog}
-                      className="interactive-button-lift inline-flex items-center gap-1.5 rounded-xl bg-[#143569] px-3 py-1.5 text-xs font-semibold text-white shadow-[0_4px_12px_rgba(20,53,105,0.22)] transition hover:bg-[#0f2d63] hover:shadow-[0_6px_16px_rgba(20,53,105,0.28)] disabled:cursor-not-allowed disabled:opacity-55"
-                    >
-                      <CompareArrowsOutlinedIcon sx={{ fontSize: 14 }} />
-                      {t("addTransfer")}
-                    </button>
-                  </>
-                ) : null}
-                {filteredPallets.length > PALLETS_PER_PAGE ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setPalletPage((current) => Math.max(1, current - 1))}
-                      disabled={palletPage === 1}
-                      className="inline-flex items-center rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-xs font-semibold text-[#143569] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {t("previousPage")}
-                    </button>
-                    <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                      {t("containerDetailPalletPageStatus", { page: palletPage, pages: totalPalletPages })}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setPalletPage((current) => Math.min(totalPalletPages, current + 1))}
-                      disabled={palletPage >= totalPalletPages}
-                      className="inline-flex items-center rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-xs font-semibold text-[#143569] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {t("nextPage")}
-                    </button>
-                  </>
-                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setPalletPage((current) => Math.max(1, current - 1))}
+                  disabled={palletPage === 1}
+                  className="inline-flex items-center rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-xs font-semibold text-[#143569] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {t("previousPage")}
+                </button>
+                <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  {t("containerDetailPalletPageStatus", { page: palletPage, pages: totalPalletPages })}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPalletPage((current) => Math.min(totalPalletPages, current + 1))}
+                  disabled={palletPage >= totalPalletPages}
+                  className="inline-flex items-center rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-xs font-semibold text-[#143569] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {t("nextPage")}
+                </button>
               </div>
             ) : undefined}
             errorMessage={palletErrorMessage}
@@ -915,7 +871,24 @@ export function ContainerDetailPage({
               }))}
               t={t}
             />
-            <label>{t("reasonCode")}<input value={adjustmentForm.reasonCode} onChange={(event) => setAdjustmentForm((current) => ({ ...current, reasonCode: event.target.value }))} placeholder="COUNT_GAIN / DAMAGE / CORRECTION" required /></label>
+            <label>
+              {t("reasonCode")}
+              <input
+                value={adjustmentForm.reasonCode}
+                onChange={(event) => setAdjustmentForm((current) => ({ ...current, reasonCode: event.target.value }))}
+                list="container-reason-code-presets"
+                placeholder="COUNT_GAIN / COUNT_LOSS / DAMAGE / CORRECTION"
+                required
+              />
+              <datalist id="container-reason-code-presets">
+                <option value="COUNT_GAIN" />
+                <option value="COUNT_LOSS" />
+                <option value="DAMAGE" />
+                <option value="CORRECTION" />
+                <option value="WRITE_OFF" />
+                <option value="RETURN" />
+              </datalist>
+            </label>
             <label className="sheet-form__wide">{t("notes")}<input value={adjustmentForm.notes} onChange={(event) => setAdjustmentForm((current) => ({ ...current, notes: event.target.value }))} placeholder={t("adjustmentNotesPlaceholder")} /></label>
             <label className="sheet-form__wide">{t("internalNotes")}<input value={adjustmentForm.lineNote} onChange={(event) => setAdjustmentForm((current) => ({ ...current, lineNote: event.target.value }))} placeholder={t("adjustmentLineNotePlaceholder")} /></label>
 
