@@ -803,10 +803,12 @@ const enTranslations = {
     pickAllocationPreviewShortage: "Some shipment lines cannot be fully allocated from current available stock in the selected warehouse.",
     containerPickPlan: "Container Pick Plan",
     autoPick: "Auto Pick",
+    manualPick: "Manual Pick",
     requiredQty: "Required Qty",
     selectedQty: "Selected Qty",
     remainingQty: "Remaining Qty",
     pickPlanAutoModeHint: "The system will automatically allocate picks across available containers for this shipment line.",
+    pickPlanSearchPlaceholder: "Search container or pallet",
     sourceContainer: "Source Container",
     pickQty: "Pick Qty",
     pickRows: "Pick Rows",
@@ -1782,10 +1784,12 @@ const zhTranslations = {
     pickAllocationPreviewShortage: "当前选中的仓库可用库存不足，部分出货行还不能被完整分配。",
     containerPickPlan: "货柜拣货计划",
     autoPick: "自动拣货",
+    manualPick: "手动分配",
     requiredQty: "需求数量",
     selectedQty: "当前已选",
     remainingQty: "剩余数量",
     pickPlanAutoModeHint: "系统会按当前可用库存自动把这一行分配到对应货柜。",
+    pickPlanSearchPlaceholder: "搜索货柜或托盘",
     sourceContainer: "来源货柜",
     pickQty: "拣货数量",
     pickRows: "拣货分配行",
@@ -2175,6 +2179,4 @@ export function useI18n() {
   }
   return context;
 }
-
-
 

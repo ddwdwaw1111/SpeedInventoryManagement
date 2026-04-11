@@ -3226,12 +3226,14 @@ export function ActivityManagementPage({
                         </div>
                         {selectedOutboundSource && outboundWizardStep === 2 ? (
                           <OutboundPickPlanPanel
-                            title={t("containerPickPlan")}
-                            helperText={t("pickPlanAutoModeHint")}
-                            autoPickLabel={t("autoPick")}
-                            detailsLabel={t("details")}
-                            skuLabel={t("sku")}
-                            skuValue={selectedOutboundSource.sku}
+                          title={t("containerPickPlan")}
+                          helperText={t("pickPlanAutoModeHint")}
+                          autoPickLabel={t("autoPick")}
+                          searchLabel={t("search")}
+                          searchPlaceholder={t("pickPlanSearchPlaceholder")}
+                          detailsLabel={t("details")}
+                          skuLabel={t("sku")}
+                          skuValue={selectedOutboundSource.sku}
                             itemNumberLabel={t("itemNumber")}
                             itemNumberValue={selectedOutboundSource.itemNumber || undefined}
                             locationLabel={t("currentStorage")}

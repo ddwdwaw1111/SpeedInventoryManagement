@@ -305,6 +305,122 @@ describe("OutboundShipmentEditorPage", () => {
     expect(expectedShipInput.value).toBe("2026-04-03");
   });
 
+  it("lets manual pick mode choose from all pallet and container candidates", async () => {
+    mockedApi.getPallets.mockResolvedValue([
+      {
+        id: 501,
+        parentPalletId: 0,
+        palletCode: "PLT-501",
+        containerVisitId: 1,
+        sourceInboundDocumentId: 1,
+        sourceInboundLineId: 1,
+        actualArrivalDate: "2026-03-24",
+        customerId: 1,
+        customerName: "Imperial Bag & Paper",
+        skuMasterId: 1,
+        sku: "608333",
+        description: "VB22GC",
+        currentLocationId: 1,
+        currentLocationName: "NJ",
+        currentStorageSection: "TEMP",
+        currentContainerNo: "GCXU5817233",
+        status: "OPEN",
+        createdAt: "2026-03-24T10:00:00Z",
+        updatedAt: "2026-03-24T10:00:00Z",
+        contents: [
+          {
+            id: 601,
+            palletId: 501,
+            skuMasterId: 1,
+            itemNumber: "608333",
+            sku: "608333",
+            description: "VB22GC",
+            quantity: 10,
+            allocatedQty: 0,
+            damagedQty: 0,
+            holdQty: 0,
+            createdAt: "2026-03-24T10:00:00Z",
+            updatedAt: "2026-03-24T10:00:00Z"
+          }
+        ]
+      },
+      {
+        id: 502,
+        parentPalletId: 0,
+        palletCode: "PLT-502",
+        containerVisitId: 2,
+        sourceInboundDocumentId: 2,
+        sourceInboundLineId: 2,
+        actualArrivalDate: "2026-03-25",
+        customerId: 1,
+        customerName: "Imperial Bag & Paper",
+        skuMasterId: 1,
+        sku: "608333",
+        description: "VB22GC",
+        currentLocationId: 1,
+        currentLocationName: "NJ",
+        currentStorageSection: "TEMP",
+        currentContainerNo: "GCXU5817234",
+        status: "OPEN",
+        createdAt: "2026-03-25T10:00:00Z",
+        updatedAt: "2026-03-25T10:00:00Z",
+        contents: [
+          {
+            id: 602,
+            palletId: 502,
+            skuMasterId: 1,
+            itemNumber: "608333",
+            sku: "608333",
+            description: "VB22GC",
+            quantity: 10,
+            allocatedQty: 0,
+            damagedQty: 0,
+            holdQty: 0,
+            createdAt: "2026-03-25T10:00:00Z",
+            updatedAt: "2026-03-25T10:00:00Z"
+          }
+        ]
+      }
+    ]);
+
+    renderWithProviders(
+      <OutboundShipmentEditorPage
+        routeKey="/outbound-management/new"
+        documentId={null}
+        document={null}
+        items={[createItem({ id: 1, availableQty: 10, quantity: 10, containerNo: "GCXU5817233" })]}
+        skuMasters={[createSkuMaster()]}
+        movements={[createMovement()]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onBackToList={vi.fn()}
+        onOpenOutboundDocument={vi.fn()}
+        onOpenShipmentEditor={vi.fn()}
+      />
+    );
+
+    const outboundLineSelect = document.querySelector(".batch-line-grid--outbound select");
+    const outboundLineInputs = document.querySelectorAll(".batch-line-grid--outbound input");
+
+    fireEvent.change(outboundLineSelect as HTMLSelectElement, { target: { value: "1|1|1" } });
+    fireEvent.change(outboundLineInputs[1] as HTMLInputElement, { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    const manualPickButton = await screen.findByRole("button", { name: "Manual Pick" });
+    fireEvent.click(manualPickButton);
+
+    expect(screen.getByRole("button", { name: "Reset to Auto Pick" })).toBeInTheDocument();
+    expect(screen.getByText("PLT-501")).toBeInTheDocument();
+    expect(screen.getByText("PLT-502")).toBeInTheDocument();
+    expect(screen.getByText("GCXU5817234")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText("Search container or pallet"), { target: { value: "7234" } });
+
+    expect(screen.queryByText("PLT-501")).not.toBeInTheDocument();
+    expect(screen.getByText("PLT-502")).toBeInTheDocument();
+  });
+
   it("re-enters confirmed shipments by copying them into a new draft", async () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     const onOpenShipmentEditor = vi.fn();
