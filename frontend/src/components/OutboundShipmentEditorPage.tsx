@@ -171,6 +171,7 @@ export function OutboundShipmentEditorPage({
   const [batchOutboundLines, setBatchOutboundLines] = useState<BatchOutboundLineState[]>(() => [createEmptyBatchOutboundLine()]);
   const [errorMessage, setErrorMessage] = useState("");
   const [batchSubmitting, setBatchSubmitting] = useState(false);
+  const [noteSubmitting, setNoteSubmitting] = useState(false);
   const [outboundWizardStep, setOutboundWizardStep] = useState<OutboundWizardStep>(1);
   const [batchOutboundLineAddCount, setBatchOutboundLineAddCount] = useState(1);
   const [expandedOutboundPickPlans, setExpandedOutboundPickPlans] = useState<Record<string, boolean>>({});
@@ -243,6 +244,8 @@ export function OutboundShipmentEditorPage({
   const isEditorMissing = Boolean(documentId) && !document && !isLoading;
   const canEditCurrentDocument = !document || (!document.archivedAt && normalizeDocumentStatus(document.status) === "DRAFT");
   const isReadOnly = !canManage || !canEditCurrentDocument;
+  const canEditOutboundNote = canManage && Boolean(document?.id);
+  const isOutboundNoteDirty = canEditOutboundNote && batchOutboundForm.documentNote.trim() !== (document?.documentNote ?? "").trim();
   const hasNoAvailableSources = availableOutboundSources.length === 0 && !isEditingOutboundDraft && !isEditingConfirmedOutbound;
 
   useEffect(() => {
@@ -374,6 +377,26 @@ export function OutboundShipmentEditorPage({
       showActionError(error, t("couldNotCopyDocument"));
     } finally {
       setBatchSubmitting(false);
+    }
+  }
+
+  async function handleSaveDocumentNote() {
+    if (!document?.id || !canEditOutboundNote) {
+      return;
+    }
+
+    setNoteSubmitting(true);
+    setErrorMessage("");
+    try {
+      await api.updateOutboundDocumentNote(document.id, {
+        documentNote: batchOutboundForm.documentNote || undefined
+      });
+      await onRefresh();
+      showActionSuccess(t("shipmentNoteSavedSuccess"));
+    } catch (error) {
+      showActionError(error, t("couldNotSaveActivity"));
+    } finally {
+      setNoteSubmitting(false);
     }
   }
 
@@ -643,6 +666,9 @@ export function OutboundShipmentEditorPage({
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (document?.id && !canEditCurrentDocument) {
+      return;
+    }
     if (outboundWizardStep < 3) {
       moveOutboundWizardStep((outboundWizardStep + 1) as OutboundWizardStep);
       return;
@@ -783,7 +809,16 @@ export function OutboundShipmentEditorPage({
                 <label>{t("shipToContact")}<input value={batchOutboundForm.shipToContact} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, shipToContact: event.target.value }))} placeholder="+1 555 010 0200" disabled={isReadOnly} /></label>
                 <label>{t("carrier")}<input value={batchOutboundForm.carrierName} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, carrierName: event.target.value }))} placeholder="FedEx" disabled={isReadOnly} /></label>
                 <label className="sheet-form__wide">{t("shipToAddress")}<input value={batchOutboundForm.shipToAddress} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, shipToAddress: event.target.value }))} placeholder="Delivery address" disabled={isReadOnly} /></label>
-                <label className="sheet-form__wide">{t("documentNotes")}<input value={batchOutboundForm.documentNote} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, documentNote: event.target.value }))} placeholder={t("outboundDocumentNotePlaceholder")} disabled={isReadOnly} /></label>
+                <div className="sheet-form__wide">
+                  <label className="sheet-form__wide">{t("documentNotes")}<input value={batchOutboundForm.documentNote} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, documentNote: event.target.value }))} placeholder={t("outboundDocumentNotePlaceholder")} disabled={!canManage} /></label>
+                  {document?.id && canManage ? (
+                    <div className="sheet-form__actions" style={{ marginTop: "0.5rem" }}>
+                      <button className="button button--ghost" type="button" onClick={() => void handleSaveDocumentNote()} disabled={noteSubmitting || !isOutboundNoteDirty}>
+                        {noteSubmitting ? t("saving") : t("saveNote")}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             ) : null}
 

@@ -545,6 +545,10 @@ export function ActivityManagementPage({
   const [editingOutboundDocumentId, setEditingOutboundDocumentId] = useState<number | null>(null);
   const [selectedInboundDocumentId, setSelectedInboundDocumentId] = useState<number | null>(null);
   const [selectedOutboundDocumentId, setSelectedOutboundDocumentId] = useState<number | null>(null);
+  const [selectedInboundDocumentNoteDraft, setSelectedInboundDocumentNoteDraft] = useState("");
+  const [selectedInboundDocumentNoteSaving, setSelectedInboundDocumentNoteSaving] = useState(false);
+  const [selectedOutboundDocumentNoteDraft, setSelectedOutboundDocumentNoteDraft] = useState("");
+  const [selectedOutboundDocumentNoteSaving, setSelectedOutboundDocumentNoteSaving] = useState(false);
   const [inboundDrawerReady, setInboundDrawerReady] = useState(false);
   const [outboundDrawerReady, setOutboundDrawerReady] = useState(false);
   const [batchSubmitting, setBatchSubmitting] = useState(false);
@@ -583,10 +587,14 @@ export function ActivityManagementPage({
     () => (selectedInboundDocumentId ? liveInboundDocuments.find((document) => document.id === selectedInboundDocumentId) ?? null : null),
     [liveInboundDocuments, selectedInboundDocumentId]
   );
+  const isSelectedInboundNoteDirty = Boolean(selectedInboundDocument)
+    && selectedInboundDocumentNoteDraft.trim() !== (selectedInboundDocument?.documentNote ?? "").trim();
   const selectedOutboundDocument = useMemo(
     () => (selectedOutboundDocumentId ? liveOutboundDocuments.find((document) => document.id === selectedOutboundDocumentId) ?? null : null),
     [liveOutboundDocuments, selectedOutboundDocumentId]
   );
+  const isSelectedOutboundNoteDirty = Boolean(selectedOutboundDocument)
+    && selectedOutboundDocumentNoteDraft.trim() !== (selectedOutboundDocument?.documentNote ?? "").trim();
   const isEditingInboundDraft = normalizeDocumentStatus(editingInboundDocument?.status ?? "") === "DRAFT";
   const isEditingConfirmedInbound = normalizeDocumentStatus(editingInboundDocument?.status ?? "") === "CONFIRMED";
   const isEditingOutboundDraft = editingOutboundDocumentId !== null;
@@ -673,6 +681,14 @@ export function ActivityManagementPage({
     const timeoutId = window.setTimeout(() => setOutboundDrawerReady(true), 140);
     return () => window.clearTimeout(timeoutId);
   }, [selectedOutboundDocumentId]);
+
+  useEffect(() => {
+    setSelectedInboundDocumentNoteDraft(selectedInboundDocument?.documentNote ?? "");
+  }, [selectedInboundDocument]);
+
+  useEffect(() => {
+    setSelectedOutboundDocumentNoteDraft(selectedOutboundDocument?.documentNote ?? "");
+  }, [selectedOutboundDocument]);
 
   useEffect(() => {
     setOptimisticInboundDocuments((current) => current.filter((document) => !inboundDocuments.some((next) => next.id === document.id)));
@@ -2052,9 +2068,7 @@ export function ActivityManagementPage({
 
     setErrorMessage("");
     try {
-      await api.cancelInboundDocument(document.id, {
-        reason: document.documentNote || undefined
-      });
+      await api.cancelInboundDocument(document.id);
       setSelectedInboundDocumentId(null);
       await onRefresh();
       showActionSuccess(t("receiptDeletedSuccess"));
@@ -2164,9 +2178,7 @@ export function ActivityManagementPage({
 
     setErrorMessage("");
     try {
-      await api.cancelOutboundDocument(document.id, {
-        reason: document.documentNote || undefined
-      });
+      await api.cancelOutboundDocument(document.id);
       setSelectedOutboundDocumentId(null);
       await onRefresh();
       showActionSuccess(t("shipmentDeletedSuccess"));
@@ -2222,6 +2234,48 @@ export function ActivityManagementPage({
       showActionSuccess(t("shipmentCopiedSuccess"));
     } catch (error) {
       showActionError(error, t("couldNotCopyDocument"));
+    }
+  }
+
+  async function handleSaveSelectedInboundDocumentNote(document: InboundDocument) {
+    if (!canManage) {
+      return;
+    }
+
+    setErrorMessage("");
+    setSelectedInboundDocumentNoteSaving(true);
+    try {
+      const updatedDocument = await api.updateInboundDocumentNote(document.id, {
+        documentNote: selectedInboundDocumentNoteDraft || undefined
+      });
+      setSelectedInboundDocumentNoteDraft(updatedDocument.documentNote || "");
+      await onRefresh();
+      showActionSuccess(t("receiptNoteSavedSuccess"));
+    } catch (error) {
+      showActionError(error, t("couldNotSaveActivity"));
+    } finally {
+      setSelectedInboundDocumentNoteSaving(false);
+    }
+  }
+
+  async function handleSaveSelectedOutboundDocumentNote(document: OutboundDocument) {
+    if (!canManage) {
+      return;
+    }
+
+    setErrorMessage("");
+    setSelectedOutboundDocumentNoteSaving(true);
+    try {
+      const updatedDocument = await api.updateOutboundDocumentNote(document.id, {
+        documentNote: selectedOutboundDocumentNoteDraft || undefined
+      });
+      setSelectedOutboundDocumentNoteDraft(updatedDocument.documentNote || "");
+      await onRefresh();
+      showActionSuccess(t("shipmentNoteSavedSuccess"));
+    } catch (error) {
+      showActionError(error, t("couldNotSaveActivity"));
+    } finally {
+      setSelectedOutboundDocumentNoteSaving(false);
     }
   }
 
@@ -2505,8 +2559,32 @@ export function ActivityManagementPage({
                 <div className="sheet-note"><strong>{t("customer")}</strong> {selectedInboundDocument.customerName || "-"}</div>
                 <div className="sheet-note"><strong>{t("currentStorage")}</strong> {`${selectedInboundDocument.locationName} / ${summarizeInboundDocumentSections(selectedInboundDocument)}`}</div>
                 <div className="sheet-note"><strong>{t("inboundUnit")}</strong> {selectedInboundDocument.unitLabel || "-"}</div>
-                <div className="sheet-note document-drawer__meta-note"><strong>{t("documentNotes")}</strong> {selectedInboundDocument.documentNote || "-"}</div>
-                <div className="sheet-note document-drawer__meta-note"><strong>{t("deleteNote")}</strong> {selectedInboundDocument.deleteNote || "-"}</div>
+                <div className="sheet-note document-drawer__meta-note">
+                  <strong>{t("documentNotes")}</strong>
+                  {canManage ? (
+                    <>
+                      <textarea
+                        rows={3}
+                        value={selectedInboundDocumentNoteDraft}
+                        onChange={(event) => setSelectedInboundDocumentNoteDraft(event.target.value)}
+                        placeholder={t("inboundNotePlaceholder")}
+                        disabled={selectedInboundDocumentNoteSaving}
+                      />
+                      <div className="sheet-form__actions" style={{ marginTop: "0.5rem" }}>
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          onClick={() => void handleSaveSelectedInboundDocumentNote(selectedInboundDocument)}
+                          disabled={selectedInboundDocumentNoteSaving || !isSelectedInboundNoteDirty}
+                        >
+                          {selectedInboundDocumentNoteSaving ? t("saving") : t("saveNote")}
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    selectedInboundDocument.documentNote || "-"
+                  )}
+                </div>
               </div>
 
               <div className="document-drawer__section-title">{t("skuLines")}</div>
@@ -2679,8 +2757,32 @@ export function ActivityManagementPage({
                 <div className="sheet-note"><strong>{t("expectedShipDate")}</strong> {formatDate(getOutboundExpectedShipDate(selectedOutboundDocument))}</div>
                 <div className="sheet-note"><strong>{t("actualShipDate")}</strong> {formatDate(selectedOutboundDocument.actualShipDate)}</div>
                 <div className="sheet-note"><strong>{t("carrier")}</strong> {selectedOutboundDocument.carrierName || "-"}</div>
-                <div className="sheet-note document-drawer__meta-note"><strong>{t("documentNotes")}</strong> {selectedOutboundDocument.documentNote || "-"}</div>
-                <div className="sheet-note document-drawer__meta-note"><strong>{t("deleteNote")}</strong> {selectedOutboundDocument.deleteNote || "-"}</div>
+                <div className="sheet-note document-drawer__meta-note">
+                  <strong>{t("documentNotes")}</strong>
+                  {canManage ? (
+                    <>
+                      <textarea
+                        rows={3}
+                        value={selectedOutboundDocumentNoteDraft}
+                        onChange={(event) => setSelectedOutboundDocumentNoteDraft(event.target.value)}
+                        placeholder={t("outboundDocumentNotePlaceholder")}
+                        disabled={selectedOutboundDocumentNoteSaving}
+                      />
+                      <div className="sheet-form__actions" style={{ marginTop: "0.5rem" }}>
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          onClick={() => void handleSaveSelectedOutboundDocumentNote(selectedOutboundDocument)}
+                          disabled={selectedOutboundDocumentNoteSaving || !isSelectedOutboundNoteDirty}
+                        >
+                          {selectedOutboundDocumentNoteSaving ? t("saving") : t("saveNote")}
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    selectedOutboundDocument.documentNote || "-"
+                  )}
+                </div>
               </div>
 
               {selectedOutboundPickAllocationRows.length > 0 ? (

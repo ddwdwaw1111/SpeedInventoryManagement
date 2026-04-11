@@ -418,6 +418,10 @@ export type OutboundDocumentPayload = {
   lines: OutboundDocumentLinePayload[];
 };
 
+export type UpdateOutboundDocumentNotePayload = {
+  documentNote?: string;
+};
+
 export type DeleteOutboundDocumentPayload = {
   reason?: string;
 };
@@ -498,6 +502,10 @@ export type InboundDocumentPayload = {
   trackingStatus?: string;
   documentNote?: string;
   lines: InboundDocumentLinePayload[];
+};
+
+export type UpdateInboundDocumentNotePayload = {
+  documentNote?: string;
 };
 
 export type DocumentTrackingStatusPayload = {

@@ -98,18 +98,22 @@ type CreateOutboundDocumentInput struct {
 	Lines            []CreateOutboundDocumentLineInput `json:"lines"`
 }
 
+type UpdateOutboundDocumentNoteInput struct {
+	DocumentNote string `json:"documentNote"`
+}
+
 type CreateOutboundDocumentLineInput struct {
-	CustomerID        int64   `json:"customerId"`
-	LocationID        int64   `json:"locationId"`
-	SKUMasterID       int64   `json:"skuMasterId"`
-	Quantity          int     `json:"quantity"`
-	Pallets           int     `json:"pallets"`
-	PalletsDetailCtns string  `json:"palletsDetailCtns"`
-	UnitLabel         string  `json:"unitLabel"`
-	CartonSizeMM      string  `json:"cartonSizeMm"`
-	NetWeightKgs      float64 `json:"netWeightKgs"`
-	GrossWeightKgs    float64 `json:"grossWeightKgs"`
-	LineNote          string  `json:"lineNote"`
+	CustomerID        int64                    `json:"customerId"`
+	LocationID        int64                    `json:"locationId"`
+	SKUMasterID       int64                    `json:"skuMasterId"`
+	Quantity          int                      `json:"quantity"`
+	Pallets           int                      `json:"pallets"`
+	PalletsDetailCtns string                   `json:"palletsDetailCtns"`
+	UnitLabel         string                   `json:"unitLabel"`
+	CartonSizeMM      string                   `json:"cartonSizeMm"`
+	NetWeightKgs      float64                  `json:"netWeightKgs"`
+	GrossWeightKgs    float64                  `json:"grossWeightKgs"`
+	LineNote          string                   `json:"lineNote"`
 	PickPallets       []OutboundLinePalletPick `json:"pickPallets"`
 }
 
@@ -635,6 +639,47 @@ func (s *Store) UpdateOutboundDocument(ctx context.Context, documentID int64, in
 	return s.getOutboundDocument(ctx, documentID)
 }
 
+func (s *Store) UpdateOutboundDocumentNote(ctx context.Context, documentID int64, input UpdateOutboundDocumentNoteInput) (OutboundDocument, error) {
+	input.DocumentNote = strings.TrimSpace(input.DocumentNote)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return OutboundDocument{}, fmt.Errorf("begin outbound note update transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	documentRow, err := s.loadOutboundDocumentForUpdateTx(ctx, tx, documentID)
+	if err != nil {
+		return OutboundDocument{}, err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE outbound_documents
+		SET
+			document_note = ?,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`,
+		nullableString(input.DocumentNote),
+		documentID,
+	); err != nil {
+		return OutboundDocument{}, mapDBError(fmt.Errorf("update outbound document note: %w", err))
+	}
+
+	if err := tx.Commit(); err != nil {
+		return OutboundDocument{}, fmt.Errorf("commit outbound note update: %w", err)
+	}
+
+	document, err := s.getOutboundDocument(ctx, documentID)
+	if err != nil {
+		return OutboundDocument{}, err
+	}
+	if document.PackingListNo == "" {
+		document.PackingListNo = documentRow.PackingListNo
+	}
+	return document, nil
+}
+
 func (s *Store) insertOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, documentID int64, input CreateOutboundDocumentInput, lockedSources map[string]lockedOutboundSource) error {
 	reservationState := newOutboundAllocationReservationState()
 	for index, line := range input.Lines {
@@ -1031,13 +1076,13 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 					SourceDocumentID:    documentID,
 					SourceLineID:        lineRow.ID,
 					ContainerNo:         firstNonEmpty(palletConsumption.ContainerNo, allocation.ContainerNo),
-						OutDate:             resolveOutboundLedgerDate(documentRow.ExpectedShipDate, documentRow.ActualShipDate),
-						PackingListNo:       documentRow.PackingListNo,
-						OrderRef:            documentRow.OrderRef,
-						ItemNumber:          firstNonEmpty(allocation.ItemNumber, lineRow.ItemNumberSnapshot),
-						DescriptionSnapshot: firstNonEmpty(allocation.Description, lineRow.DescriptionSnapshot),
-						Pallets:             roundedPalletInt(palletConsumptionPalletSplits[consumptionIndex]),
-						PalletsDetailCtns:   lineRow.PalletsDetailCtns,
+					OutDate:             resolveOutboundLedgerDate(documentRow.ExpectedShipDate, documentRow.ActualShipDate),
+					PackingListNo:       documentRow.PackingListNo,
+					OrderRef:            documentRow.OrderRef,
+					ItemNumber:          firstNonEmpty(allocation.ItemNumber, lineRow.ItemNumberSnapshot),
+					DescriptionSnapshot: firstNonEmpty(allocation.Description, lineRow.DescriptionSnapshot),
+					Pallets:             roundedPalletInt(palletConsumptionPalletSplits[consumptionIndex]),
+					PalletsDetailCtns:   lineRow.PalletsDetailCtns,
 					CartonSizeMM:        lineRow.CartonSizeMM,
 					CartonCount:         allocation.AllocatedQty,
 					UnitLabel:           firstNonEmpty(lineRow.UnitLabel, strings.ToUpper(allocation.Unit), "PCS"),

@@ -76,6 +76,10 @@ type CreateInboundDocumentInput struct {
 	Lines               []CreateInboundDocumentLineInput `json:"lines"`
 }
 
+type UpdateInboundDocumentNoteInput struct {
+	DocumentNote string `json:"documentNote"`
+}
+
 type CreateInboundDocumentLineInput struct {
 	SKU               string                   `json:"sku"`
 	Description       string                   `json:"description"`
@@ -444,6 +448,39 @@ func (s *Store) UpdateInboundDocument(ctx context.Context, documentID int64, inp
 
 	if err := tx.Commit(); err != nil {
 		return InboundDocument{}, fmt.Errorf("commit inbound update: %w", err)
+	}
+
+	return s.getInboundDocument(ctx, documentID)
+}
+
+func (s *Store) UpdateInboundDocumentNote(ctx context.Context, documentID int64, input UpdateInboundDocumentNoteInput) (InboundDocument, error) {
+	input.DocumentNote = strings.TrimSpace(input.DocumentNote)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return InboundDocument{}, fmt.Errorf("begin inbound note update transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID); err != nil {
+		return InboundDocument{}, err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE inbound_documents
+		SET
+			document_note = ?,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`,
+		nullableString(input.DocumentNote),
+		documentID,
+	); err != nil {
+		return InboundDocument{}, mapDBError(fmt.Errorf("update inbound document note: %w", err))
+	}
+
+	if err := tx.Commit(); err != nil {
+		return InboundDocument{}, fmt.Errorf("commit inbound note update: %w", err)
 	}
 
 	return s.getInboundDocument(ctx, documentID)

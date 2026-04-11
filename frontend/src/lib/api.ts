@@ -20,6 +20,7 @@ import type {
   InventoryTransferPayload,
   InboundDocument,
   InboundDocumentPayload,
+  UpdateInboundDocumentNotePayload,
   InboundPackingListImportPreview,
   Item,
   LoginPayload,
@@ -28,6 +29,7 @@ import type {
   Movement,
   OutboundDocument,
   OutboundDocumentPayload,
+  UpdateOutboundDocumentNotePayload,
   PalletLocationEvent,
   PalletTrace,
   SKUMaster,
@@ -312,6 +314,13 @@ export const api = {
     });
   },
 
+  updateOutboundDocumentNote(documentId: number, payload: UpdateOutboundDocumentNotePayload) {
+    return request<OutboundDocument>(`/outbound-documents/${documentId}/document-note`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    });
+  },
+
   confirmOutboundDocument(documentId: number) {
     return request<OutboundDocument>(`/outbound-documents/${documentId}/confirm`, {
       method: "POST"
@@ -367,6 +376,13 @@ export const api = {
 
   updateInboundDocument(documentId: number, payload: InboundDocumentPayload) {
     return request<InboundDocument>(`/inbound-documents/${documentId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  updateInboundDocumentNote(documentId: number, payload: UpdateInboundDocumentNotePayload) {
+    return request<InboundDocument>(`/inbound-documents/${documentId}/document-note`, {
       method: "PUT",
       body: JSON.stringify(payload)
     });

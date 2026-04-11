@@ -100,6 +100,7 @@ export function InboundReceiptEditorPage({
   const [batchLines, setBatchLines] = useState<BatchInboundLineState[]>(() => [createEmptyBatchInboundLine()]);
   const [errorMessage, setErrorMessage] = useState("");
   const [batchSubmitting, setBatchSubmitting] = useState(false);
+  const [noteSubmitting, setNoteSubmitting] = useState(false);
   const [inboundWizardStep, setInboundWizardStep] = useState<InboundWizardStep>(1);
   const [batchInboundLineAddCount, setBatchInboundLineAddCount] = useState(1);
   const [inboundEditorIntent, setInboundEditorIntent] = useState<InboundLaunchIntent | null>(null);
@@ -157,6 +158,8 @@ export function InboundReceiptEditorPage({
   const isEditorMissing = Boolean(documentId) && !document && !isLoading;
   const canEditCurrentDocument = !document || (!document.archivedAt && normalizeDocumentStatus(document.status) === "DRAFT");
   const isReadOnly = !canManage || !canEditCurrentDocument;
+  const canEditInboundNote = canManage && Boolean(document?.id);
+  const isInboundNoteDirty = canEditInboundNote && batchForm.documentNote.trim() !== (document?.documentNote ?? "").trim();
 
   useEffect(() => {
     if (!pendingBatchLineIDRef.current) {
@@ -256,6 +259,26 @@ export function InboundReceiptEditorPage({
       onOpenReceiptEditor(copiedDocument.id);
     } catch (error) {
       showActionError(error, t("couldNotSaveActivity"));
+    }
+  }
+
+  async function handleSaveDocumentNote() {
+    if (!document?.id || !canEditInboundNote) {
+      return;
+    }
+
+    setNoteSubmitting(true);
+    setErrorMessage("");
+    try {
+      await api.updateInboundDocumentNote(document.id, {
+        documentNote: batchForm.documentNote || undefined
+      });
+      await onRefresh();
+      showActionSuccess(t("receiptNoteSavedSuccess"));
+    } catch (error) {
+      showActionError(error, t("couldNotSaveActivity"));
+    } finally {
+      setNoteSubmitting(false);
     }
   }
 
@@ -737,6 +760,9 @@ export function InboundReceiptEditorPage({
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (document?.id && !canEditCurrentDocument) {
+      return;
+    }
     if (inboundWizardStep < 3) {
       return;
     }
@@ -879,7 +905,16 @@ export function InboundReceiptEditorPage({
                   <label>{t("customer")}<select value={batchForm.customerId} onChange={(event) => setBatchForm((current) => ({ ...current, customerId: event.target.value }))} disabled={isReadOnly}>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
                   <label>{t("currentStorage")}<select value={batchForm.locationId} onChange={(event) => setBatchForm((current) => ({ ...current, locationId: event.target.value }))} disabled={isReadOnly}>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
                   <label>{t("inboundUnit")}<select value={batchForm.unitLabel} onChange={(event) => setBatchForm((current) => ({ ...current, unitLabel: event.target.value }))} disabled={isReadOnly}><option value="CTN">CTN</option><option value="PCS">PCS</option><option value="PALLET">PALLET</option></select></label>
-                  <label className="sheet-form__wide">{t("documentNotes")}<input value={batchForm.documentNote} disabled={isReadOnly} onChange={(event) => setBatchForm((current) => ({ ...current, documentNote: event.target.value }))} placeholder={t("inboundNotePlaceholder")} /></label>
+                  <div className="sheet-form__wide">
+                    <label className="sheet-form__wide">{t("documentNotes")}<input value={batchForm.documentNote} disabled={!canManage} onChange={(event) => setBatchForm((current) => ({ ...current, documentNote: event.target.value }))} placeholder={t("inboundNotePlaceholder")} /></label>
+                    {document?.id && canManage ? (
+                      <div className="sheet-form__actions" style={{ marginTop: "0.5rem" }}>
+                        <button className="button button--ghost" type="button" onClick={() => void handleSaveDocumentNote()} disabled={noteSubmitting || !isInboundNoteDirty}>
+                          {noteSubmitting ? t("saving") : t("saveNote")}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
 
                 {inboundContainerWarnings.exact.length > 0 ? (

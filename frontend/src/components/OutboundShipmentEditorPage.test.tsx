@@ -38,6 +38,7 @@ vi.mock("../lib/api", () => ({
     getPallets: vi.fn(),
     createOutboundDocument: vi.fn(),
     updateOutboundDocument: vi.fn(),
+    updateOutboundDocumentNote: vi.fn(),
     copyOutboundDocument: vi.fn()
   }
 }));
@@ -51,6 +52,7 @@ const mockedApi = api as unknown as {
   getPallets: ReturnType<typeof vi.fn>;
   createOutboundDocument: ReturnType<typeof vi.fn>;
   updateOutboundDocument: ReturnType<typeof vi.fn>;
+  updateOutboundDocumentNote: ReturnType<typeof vi.fn>;
   copyOutboundDocument: ReturnType<typeof vi.fn>;
 };
 
@@ -59,6 +61,7 @@ describe("OutboundShipmentEditorPage", () => {
     mockedApi.getPallets.mockReset();
     mockedApi.createOutboundDocument.mockReset();
     mockedApi.updateOutboundDocument.mockReset();
+    mockedApi.updateOutboundDocumentNote.mockReset();
     mockedApi.copyOutboundDocument.mockReset();
     window.sessionStorage.clear();
   });
@@ -410,7 +413,7 @@ describe("OutboundShipmentEditorPage", () => {
     const manualPickButton = await screen.findByRole("button", { name: "Manual Pick" });
     fireEvent.click(manualPickButton);
 
-    expect(screen.getByRole("button", { name: "Reset to Auto Pick" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reset to Auto" })).toBeInTheDocument();
     expect(screen.getByText("PLT-501")).toBeInTheDocument();
     expect(screen.getByText("PLT-502")).toBeInTheDocument();
     expect(screen.getByText("GCXU5817234")).toBeInTheDocument();
@@ -453,7 +456,7 @@ describe("OutboundShipmentEditorPage", () => {
       />
     );
 
-    expect(screen.getByText(/Confirmed shipments are immutable|confirmedShipmentImmutableNotice/)).toBeInTheDocument();
+    expect(screen.getByText("Confirmed shipment details are locked. You can still update the document note.")).toBeInTheDocument();
 
     fireEvent.click(screen.getAllByRole("button", { name: /Re-enter Shipment|reEnterShipment/ })[0]);
 
@@ -463,5 +466,50 @@ describe("OutboundShipmentEditorPage", () => {
 
     expect(onRefresh).toHaveBeenCalled();
     expect(onOpenShipmentEditor).toHaveBeenCalledWith(77);
+  });
+
+  it("allows confirmed shipments to save document notes independently", async () => {
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+
+    mockedApi.getPallets.mockResolvedValue([]);
+    mockedApi.updateOutboundDocumentNote.mockResolvedValue(createOutboundDocument({
+      id: 12,
+      status: "CONFIRMED",
+      trackingStatus: "SHIPPED",
+      documentNote: "Updated confirmed note"
+    }));
+
+    renderWithProviders(
+      <OutboundShipmentEditorPage
+        routeKey="/outbound-management/12"
+        documentId={12}
+        document={createOutboundDocument({
+          id: 12,
+          status: "CONFIRMED",
+          trackingStatus: "SHIPPED",
+          documentNote: "Original confirmed note"
+        })}
+        items={[createItem({ id: 1, availableQty: 10, quantity: 10, containerNo: "GCXU5817233" })]}
+        skuMasters={[createSkuMaster()]}
+        movements={[createMovement()]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={onRefresh}
+        onBackToList={vi.fn()}
+        onOpenOutboundDocument={vi.fn()}
+        onOpenShipmentEditor={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText("Document Notes"), { target: { value: "Updated confirmed note" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Note" }));
+
+    await waitFor(() => {
+      expect(mockedApi.updateOutboundDocumentNote).toHaveBeenCalledWith(12, {
+        documentNote: "Updated confirmed note"
+      });
+    });
+
+    expect(onRefresh).toHaveBeenCalled();
   });
 });

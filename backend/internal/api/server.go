@@ -63,6 +63,7 @@ func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName s
 	operator.Use(server.requireRoles(service.RoleAdmin, service.RoleOperator))
 	operator.POST("/outbound-documents", server.handleCreateOutboundDocument)
 	operator.PUT("/outbound-documents/:id", server.handleUpdateOutboundDocument)
+	operator.PUT("/outbound-documents/:id/document-note", server.handleUpdateOutboundDocumentNote)
 	operator.POST("/outbound-documents/:id/confirm", server.handleConfirmOutboundDocument)
 	operator.POST("/outbound-documents/:id/tracking-status", server.handleUpdateOutboundDocumentTrackingStatus)
 	operator.POST("/outbound-documents/:id/cancel", server.handleCancelOutboundDocument)
@@ -71,6 +72,7 @@ func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName s
 	operator.POST("/inbound-documents", server.handleCreateInboundDocument)
 	operator.POST("/inbound-documents/import-preview", server.handleImportInboundDocumentPreview)
 	operator.PUT("/inbound-documents/:id", server.handleUpdateInboundDocument)
+	operator.PUT("/inbound-documents/:id/document-note", server.handleUpdateInboundDocumentNote)
 	operator.POST("/inbound-documents/:id/confirm", server.handleConfirmInboundDocument)
 	operator.POST("/inbound-documents/:id/tracking-status", server.handleUpdateInboundDocumentTrackingStatus)
 	operator.POST("/inbound-documents/:id/cancel", server.handleCancelInboundDocument)
@@ -552,6 +554,34 @@ func (s *Server) handleUpdateOutboundDocument(c *gin.Context) {
 	writeJSON(c, http.StatusOK, document)
 }
 
+func (s *Server) handleUpdateOutboundDocumentNote(c *gin.Context) {
+	documentID, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var input service.UpdateOutboundDocumentNoteInput
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	document, err := s.store.UpdateOutboundDocumentNote(c.Request.Context(), documentID, input)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "ANNOTATE", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Updated outbound document note", map[string]any{
+		"packingListNo": document.PackingListNo,
+		"status":        document.Status,
+		"documentNote":  document.DocumentNote,
+	})
+
+	writeJSON(c, http.StatusOK, document)
+}
+
 func (s *Server) handleConfirmOutboundDocument(c *gin.Context) {
 	documentID, err := parseIDParam(c, "id")
 	if err != nil {
@@ -781,6 +811,35 @@ func (s *Server) handleUpdateInboundDocument(c *gin.Context) {
 		"status":        document.Status,
 		"totalLines":    document.TotalLines,
 		"totalReceived": document.TotalReceivedQty,
+	})
+
+	writeJSON(c, http.StatusOK, document)
+}
+
+func (s *Server) handleUpdateInboundDocumentNote(c *gin.Context) {
+	documentID, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var input service.UpdateInboundDocumentNoteInput
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	document, err := s.store.UpdateInboundDocumentNote(c.Request.Context(), documentID, input)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "ANNOTATE", "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), "Updated inbound document note", map[string]any{
+		"containerNo":    document.ContainerNo,
+		"status":         document.Status,
+		"documentNote":   document.DocumentNote,
+		"trackingStatus": document.TrackingStatus,
 	})
 
 	writeJSON(c, http.StatusOK, document)

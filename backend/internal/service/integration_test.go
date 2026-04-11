@@ -607,6 +607,54 @@ func TestConfirmedInboundDocumentIsImmutableIntegration(t *testing.T) {
 	}
 }
 
+func TestConfirmedInboundDocumentNoteCanBeUpdatedIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0)
+
+	receipt, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-24",
+		ContainerNo:         "NOTE-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Original receipt note",
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:               item.SKU,
+			Description:       item.Description,
+			ExpectedQty:       10,
+			ReceivedQty:       10,
+			StorageSection:    DefaultStorageSection,
+			Pallets:           1,
+			PalletsDetailCtns: "1*10",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create confirmed inbound document: %v", err)
+	}
+
+	updated, err := store.UpdateInboundDocumentNote(ctx, receipt.ID, UpdateInboundDocumentNoteInput{
+		DocumentNote: "Updated receipt note",
+	})
+	if err != nil {
+		t.Fatalf("update confirmed inbound note: %v", err)
+	}
+	if updated.DocumentNote != "Updated receipt note" {
+		t.Fatalf("expected updated note %q, got %q", "Updated receipt note", updated.DocumentNote)
+	}
+
+	unchangedItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "NOTE-"+suffix, item.SKU)
+	if unchangedItem.Quantity != 10 {
+		t.Fatalf("expected confirmed inbound stock to remain 10 after note update, got %d", unchangedItem.Quantity)
+	}
+}
+
 func TestConfirmedInboundDocumentRemainsImmutableAfterPartialConsumptionIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
@@ -2255,6 +2303,57 @@ func TestConfirmedOutboundDocumentIsImmutableIntegration(t *testing.T) {
 	itemAfter := mustFindItemByID(t, ctx, store, item.ID)
 	if itemAfter.Quantity != 5 {
 		t.Fatalf("expected on-hand quantity 5 after immutable confirmed outbound, got %d", itemAfter.Quantity)
+	}
+}
+
+func TestConfirmedOutboundDocumentNoteCanBeUpdatedIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 8, DefaultStorageSection)
+
+	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo:    "PL-" + suffix,
+		OrderRef:         "SO-" + suffix,
+		ExpectedShipDate: "2026-03-23",
+		ShipToName:       "Receiver " + suffix,
+		ShipToAddress:    "123 Dock Ln",
+		ShipToContact:    "Dock 3",
+		CarrierName:      "Internal Fleet",
+		Status:           DocumentStatusConfirmed,
+		DocumentNote:     "Original note",
+		Lines: []CreateOutboundDocumentLineInput{{
+			CustomerID:   item.CustomerID,
+			LocationID:   item.LocationID,
+			SKUMasterID:  item.SKUMasterID,
+			Quantity:     3,
+			UnitLabel:    "CTN",
+			CartonSizeMM: "400*300*200",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create confirmed outbound: %v", err)
+	}
+
+	updated, err := store.UpdateOutboundDocumentNote(ctx, outbound.ID, UpdateOutboundDocumentNoteInput{
+		DocumentNote: "Updated note",
+	})
+	if err != nil {
+		t.Fatalf("update confirmed outbound note: %v", err)
+	}
+	if updated.DocumentNote != "Updated note" {
+		t.Fatalf("expected updated note %q, got %q", "Updated note", updated.DocumentNote)
+	}
+	if updated.TotalQty != 3 {
+		t.Fatalf("expected confirmed outbound quantity to remain 3, got %d", updated.TotalQty)
+	}
+
+	itemAfter := mustFindItemByID(t, ctx, store, item.ID)
+	if itemAfter.Quantity != 5 {
+		t.Fatalf("expected on-hand quantity 5 after note update, got %d", itemAfter.Quantity)
 	}
 }
 

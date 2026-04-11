@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../lib/api", () => ({
   api: {
     createInboundDocument: vi.fn(),
-    updateInboundDocument: vi.fn()
+    updateInboundDocument: vi.fn(),
+    updateInboundDocumentNote: vi.fn()
   }
 }));
 
@@ -16,12 +17,14 @@ import { InboundReceiptEditorPage } from "./InboundReceiptEditorPage";
 const mockedApi = api as unknown as {
   createInboundDocument: ReturnType<typeof vi.fn>;
   updateInboundDocument: ReturnType<typeof vi.fn>;
+  updateInboundDocumentNote: ReturnType<typeof vi.fn>;
 };
 
 describe("InboundReceiptEditorPage", () => {
   beforeEach(() => {
     mockedApi.createInboundDocument.mockReset();
     mockedApi.updateInboundDocument.mockReset();
+    mockedApi.updateInboundDocumentNote.mockReset();
     window.sessionStorage.clear();
   });
 
@@ -190,5 +193,51 @@ describe("InboundReceiptEditorPage", () => {
 
     expect(actualArrivalInput.value).toBe("2026-04-02");
     expect(expectedArrivalInput.value).toBe("2026-04-02");
+  });
+
+  it("allows confirmed receipts to save document notes independently", async () => {
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+
+    mockedApi.updateInboundDocumentNote.mockResolvedValue(createInboundDocument({
+      id: 12,
+      status: "CONFIRMED",
+      trackingStatus: "RECEIVED",
+      documentNote: "Updated confirmed receipt note"
+    }));
+
+    renderWithProviders(
+      <InboundReceiptEditorPage
+        routeKey="/inbound-management/12"
+        documentId={12}
+        document={createInboundDocument({
+          id: 12,
+          status: "CONFIRMED",
+          trackingStatus: "RECEIVED",
+          documentNote: "Original confirmed receipt note"
+        })}
+        items={[]}
+        skuMasters={[]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        inboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={onRefresh}
+        onBackToList={vi.fn()}
+        onOpenInboundDetail={vi.fn()}
+        onOpenReceiptEditor={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText("Document Notes"), { target: { value: "Updated confirmed receipt note" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Note" }));
+
+    await waitFor(() => {
+      expect(mockedApi.updateInboundDocumentNote).toHaveBeenCalledWith(12, {
+        documentNote: "Updated confirmed receipt note"
+      });
+    });
+
+    expect(onRefresh).toHaveBeenCalled();
   });
 });

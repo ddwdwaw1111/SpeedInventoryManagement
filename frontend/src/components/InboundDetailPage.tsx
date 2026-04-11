@@ -646,7 +646,7 @@ function buildActivityLog(document: InboundDocument, t: Translate): ActivityEven
     events.push({
       key: "cancelled",
       label: t("inboundDetailEventCancelled"),
-      detail: document.deleteNote || t("cancelReceipt"),
+      detail: t("cancelReceipt"),
       timestamp: document.deletedAt,
       tone: "slate"
     });
