@@ -46,11 +46,13 @@ vi.mock("@mui/x-data-grid", () => ({
 vi.mock("../lib/api", () => ({
   ApiError: class ApiError extends Error {},
   api: {
+    getPallets: vi.fn().mockResolvedValue([]),
     getUIPreference: vi.fn().mockResolvedValue({ value: null }),
     updateUIPreference: vi.fn().mockResolvedValue({ value: null })
   }
 }));
 
+import { api } from "../lib/api";
 import { setPendingInventorySummaryContext } from "../lib/inventorySummaryContext";
 import { setPendingInventoryActionContext } from "../lib/inventoryActionContext";
 import { setPendingAllActivityContext } from "../lib/allActivityContext";
@@ -58,6 +60,12 @@ import { setPendingContainerContentsContext } from "../lib/containerContentsCont
 import { InventorySummaryPage } from "./InventorySummaryPage";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { createCustomer, createItem, createLocation } from "../test/fixtures";
+
+const mockedApi = api as unknown as {
+  getPallets: ReturnType<typeof vi.fn>;
+  getUIPreference: ReturnType<typeof vi.fn>;
+  updateUIPreference: ReturnType<typeof vi.fn>;
+};
 
 function defaultProps(overrides: Partial<Parameters<typeof InventorySummaryPage>[0]> = {}) {
   return {
@@ -76,6 +84,8 @@ describe("InventorySummaryPage", () => {
   beforeEach(() => {
     window.localStorage.clear();
     window.sessionStorage.clear();
+    mockedApi.getPallets.mockReset();
+    mockedApi.getPallets.mockResolvedValue([]);
   });
 
   // ──────────────────────────────────────────────────────────────
@@ -373,6 +383,118 @@ describe("InventorySummaryPage", () => {
       expect(within(drawer as HTMLElement).getByText("Warehouse Breakdown")).toBeInTheDocument();
       expect(within(drawer as HTMLElement).getByText("Container Breakdown")).toBeInTheDocument();
       expect(within(drawer as HTMLElement).getByText("NJ")).toBeInTheDocument();
+    });
+  });
+
+  it("shows pallet counts in the container breakdown drawer rows", async () => {
+    mockedApi.getPallets.mockResolvedValue([
+      {
+        id: 501,
+        parentPalletId: 0,
+        palletCode: "PLT-501",
+        containerVisitId: 1,
+        sourceInboundDocumentId: 1,
+        sourceInboundLineId: 1,
+        actualArrivalDate: "2026-04-01",
+        customerId: 1,
+        customerName: "Imperial Bag & Paper",
+        skuMasterId: 1,
+        sku: "608333",
+        description: "VB22GC",
+        currentLocationId: 1,
+        currentLocationName: "NJ",
+        currentStorageSection: "TEMP",
+        currentContainerNo: "GCXU5817233",
+        status: "OPEN",
+        createdAt: "2026-04-01T10:00:00Z",
+        updatedAt: "2026-04-01T10:00:00Z",
+        contents: [
+          {
+            id: 601,
+            palletId: 501,
+            skuMasterId: 1,
+            itemNumber: "608333",
+            sku: "608333",
+            description: "VB22GC",
+            quantity: 10,
+            allocatedQty: 0,
+            damagedQty: 0,
+            holdQty: 0,
+            createdAt: "2026-04-01T10:00:00Z",
+            updatedAt: "2026-04-01T10:00:00Z"
+          }
+        ]
+      },
+      {
+        id: 502,
+        parentPalletId: 0,
+        palletCode: "PLT-502",
+        containerVisitId: 1,
+        sourceInboundDocumentId: 1,
+        sourceInboundLineId: 1,
+        actualArrivalDate: "2026-04-01",
+        customerId: 1,
+        customerName: "Imperial Bag & Paper",
+        skuMasterId: 1,
+        sku: "608333",
+        description: "VB22GC",
+        currentLocationId: 1,
+        currentLocationName: "NJ",
+        currentStorageSection: "TEMP",
+        currentContainerNo: "GCXU5817233",
+        status: "OPEN",
+        createdAt: "2026-04-01T11:00:00Z",
+        updatedAt: "2026-04-01T11:00:00Z",
+        contents: [
+          {
+            id: 602,
+            palletId: 502,
+            skuMasterId: 1,
+            itemNumber: "608333",
+            sku: "608333",
+            description: "VB22GC",
+            quantity: 10,
+            allocatedQty: 0,
+            damagedQty: 0,
+            holdQty: 0,
+            createdAt: "2026-04-01T11:00:00Z",
+            updatedAt: "2026-04-01T11:00:00Z"
+          }
+        ]
+      }
+    ]);
+
+    renderWithProviders(
+      <InventorySummaryPage
+        {...defaultProps({
+          items: [
+            createItem({
+              id: 1,
+              skuMasterId: 1,
+              sku: "608333",
+              description: "VB22GC",
+              quantity: 20,
+              availableQty: 15,
+              locationId: 1,
+              locationName: "NJ",
+              storageSection: "TEMP",
+              containerNo: "GCXU5817233"
+            })
+          ]
+        })}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId("grid-row-1:608333"));
+
+    await waitFor(() => {
+      const drawer = document.querySelector(".document-drawer");
+      expect(drawer).toBeInTheDocument();
+      const palletsLabel = within(drawer as HTMLElement).getAllByText(/pallets/i).find((element) =>
+        element.tagName.toLowerCase() === "strong"
+      );
+      expect(palletsLabel).toBeInTheDocument();
+      expect(palletsLabel?.nextElementSibling?.textContent).toBe("2");
     });
   });
 

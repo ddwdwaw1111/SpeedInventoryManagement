@@ -8,6 +8,7 @@ import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Box, Button, Drawer, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
+import { api } from "../lib/api";
 import { setPendingAllActivityContext } from "../lib/allActivityContext";
 import { buildItemContainerBalances, type ItemContainerBalance } from "../lib/containerBalances";
 import { setPendingContainerContentsContext } from "../lib/containerContentsContext";
@@ -18,7 +19,7 @@ import { buildInventoryActionSourceKey } from "../lib/inventoryActionSources";
 import { useI18n } from "../lib/i18n";
 import { consumePendingInventorySummaryContext } from "../lib/inventorySummaryContext";
 import type { PageKey } from "../lib/routes";
-import { DEFAULT_STORAGE_SECTION, normalizeStorageSection, type Customer, type Item, type Location, type Movement, type UserRole } from "../lib/types";
+import { DEFAULT_STORAGE_SECTION, normalizeStorageSection, type Customer, type Item, type Location, type Movement, type PalletTrace, type UserRole } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
 import { buildWorkspaceGridSlots, InventoryViewSwitcher, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
@@ -37,6 +38,7 @@ type InventorySummaryRow = {
   id: string;
   itemNumber: string;
   sku: string;
+  skuMasterId: number;
   description: string;
   customerId: number;
   customerName: string;
@@ -71,7 +73,7 @@ type ContainerBreakdownRow = {
   storageSections: string[];
   onHand: number;
   availableQty: number;
-  lastReceipt: string | null;
+  palletCount: number;
 };
 
 type InventorySummaryHealthFilter = "ALL" | "LOW_STOCK";
@@ -111,6 +113,7 @@ export function InventorySummaryPage({
   const [healthFilter, setHealthFilter] = useState<InventorySummaryHealthFilter>("ALL");
   const [selectedSummaryId, setSelectedSummaryId] = useState<string | null>(null);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
+  const [pallets, setPallets] = useState<PalletTrace[]>([]);
   const deferredSearchTerm = useDeferredValue(searchTerm);
 
   useEffect(() => {
@@ -124,6 +127,29 @@ export function InventorySummaryPage({
     setSelectedLocationId(context.locationId ? String(context.locationId) : "all");
     setHealthFilter(context.healthFilter ?? "ALL");
     setSelectedSummaryId(null);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadPallets() {
+      try {
+        const nextPallets = await api.getPallets(50000);
+        if (!active) {
+          return;
+        }
+        setPallets(nextPallets);
+      } catch {
+        if (active) {
+          setPallets([]);
+        }
+      }
+    }
+
+    void loadPallets();
+    return () => {
+      active = false;
+    };
   }, []);
 
   const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
@@ -180,8 +206,13 @@ export function InventorySummaryPage({
   );
 
   const containerBreakdown = useMemo(
-    () => buildContainerBreakdown(selectedSummary?.containerBalances ?? []),
-    [selectedSummary]
+    () => buildContainerBreakdown(
+      selectedSummary?.containerBalances ?? [],
+      pallets,
+      selectedSummary?.customerId ?? null,
+      selectedSummary?.skuMasterId ?? null
+    ),
+    [pallets, selectedSummary]
   );
   const overviewStats = useMemo(() => {
     const totalOnHand = summaryRows.reduce((sum, row) => sum + row.onHand, 0);
@@ -445,8 +476,8 @@ export function InventorySummaryPage({
                     <span>{row.availableQty}</span>
                   </div>
                   <div>
-                    <strong>{t("lastReceipt")}</strong>
-                    <span>{formatDateValue(row.lastReceipt, dateFormatter)}</span>
+                    <strong>{t("pallets")}</strong>
+                    <span>{row.palletCount}</span>
                   </div>
                 </div>
               ))}
@@ -492,6 +523,7 @@ function buildInventorySummaryRows(
         id: key,
         itemNumber: item.itemNumber,
         sku: item.sku,
+        skuMasterId: item.skuMasterId,
         description: displayDescription(item),
         customerId: item.customerId,
         customerName: item.customerName,
@@ -577,14 +609,34 @@ function buildWarehouseBreakdown(containerBalances: ItemContainerBalance[]): War
     .sort((left, right) => left.locationName.localeCompare(right.locationName));
 }
 
-function buildContainerBreakdown(containerBalances: ItemContainerBalance[]): ContainerBreakdownRow[] {
+function buildContainerBreakdown(
+  containerBalances: ItemContainerBalance[],
+  pallets: PalletTrace[],
+  customerId: number | null,
+  skuMasterId: number | null
+): ContainerBreakdownRow[] {
   const rowMap = new Map<string, ContainerBreakdownRow>();
+  const palletCountByKey = new Map<string, number>();
+
+  if (customerId !== null && skuMasterId !== null) {
+    for (const pallet of pallets) {
+      if (pallet.customerId !== customerId || pallet.status === "CANCELLED") {
+        continue;
+      }
+      const matchesSku = pallet.contents.some((content) => content.skuMasterId === skuMasterId && content.quantity > 0)
+        || (pallet.skuMasterId === skuMasterId && pallet.contents.length === 0);
+      if (!matchesSku) {
+        continue;
+      }
+      const key = `${pallet.currentLocationId}:${normalizeStorageSection(pallet.currentStorageSection)}:${(pallet.currentContainerNo || "-").trim() || "-"}`;
+      palletCountByKey.set(key, (palletCountByKey.get(key) ?? 0) + 1);
+    }
+  }
 
   for (const balance of containerBalances) {
     const containerNo = balance.containerNo.trim() || "-";
     const key = `${balance.locationId}:${normalizeStorageSection(balance.storageSection)}:${containerNo}`;
     const existing = rowMap.get(key);
-    const receiptDate = Number.isFinite(balance.sortAt) && balance.sortAt > 0 ? new Date(balance.sortAt).toISOString() : null;
 
     if (!existing) {
       rowMap.set(key, {
@@ -594,7 +646,7 @@ function buildContainerBreakdown(containerBalances: ItemContainerBalance[]): Con
         storageSections: balance.storageSection ? [balance.storageSection] : [],
         onHand: balance.onHandQty,
         availableQty: balance.availableQty,
-        lastReceipt: receiptDate
+        palletCount: palletCountByKey.get(key) ?? 0
       });
       continue;
     }
@@ -604,7 +656,6 @@ function buildContainerBreakdown(containerBalances: ItemContainerBalance[]): Con
     if (balance.storageSection && !existing.storageSections.includes(balance.storageSection)) {
       existing.storageSections.push(balance.storageSection);
     }
-    existing.lastReceipt = getLatestDate(existing.lastReceipt, receiptDate);
   }
 
   return [...rowMap.values()].sort((left, right) => {
