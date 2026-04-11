@@ -1,14 +1,12 @@
 import type {
   AuditLog,
   AuthResponse,
-  DeleteInboundDocumentPayload,
   BillingInvoice,
   CreateBillingInvoicePayload,
   AddBillingInvoiceLinePayload,
   UpdateBillingInvoiceLinePayload,
   CycleCount,
   CycleCountPayload,
-  DeleteOutboundDocumentPayload,
   CreateUserPayload,
   Customer,
   CustomerPayload,
@@ -334,10 +332,9 @@ export const api = {
     });
   },
 
-  cancelOutboundDocument(documentId: number, payload?: DeleteOutboundDocumentPayload) {
+  cancelOutboundDocument(documentId: number) {
     return request<void>(`/outbound-documents/${documentId}/cancel`, {
-      method: "POST",
-      body: JSON.stringify(payload ?? {})
+      method: "POST"
     });
   },
 
@@ -401,10 +398,9 @@ export const api = {
     });
   },
 
-  cancelInboundDocument(documentId: number, payload?: DeleteInboundDocumentPayload) {
+  cancelInboundDocument(documentId: number) {
     return request<void>(`/inbound-documents/${documentId}/cancel`, {
-      method: "POST",
-      body: JSON.stringify(payload ?? {})
+      method: "POST"
     });
   },
 

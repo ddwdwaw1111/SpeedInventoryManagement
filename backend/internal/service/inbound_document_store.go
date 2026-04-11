@@ -28,7 +28,6 @@ type InboundDocument struct {
 	Status              string                `json:"status"`
 	TrackingStatus      string                `json:"trackingStatus"`
 	ConfirmedAt         *time.Time            `json:"confirmedAt"`
-	DeleteNote          string                `json:"deleteNote"`
 	DeletedAt           *time.Time            `json:"deletedAt"`
 	ArchivedAt          *time.Time            `json:"archivedAt"`
 	TotalLines          int                   `json:"totalLines"`
@@ -110,7 +109,6 @@ type inboundDocumentRow struct {
 	Status              string     `db:"status"`
 	TrackingStatus      string     `db:"tracking_status"`
 	ConfirmedAt         *time.Time `db:"confirmed_at"`
-	DeleteNote          string     `db:"cancel_note"`
 	DeletedAt           *time.Time `db:"cancelled_at"`
 	ArchivedAt          *time.Time `db:"archived_at"`
 	CreatedAt           time.Time  `db:"created_at"`
@@ -133,10 +131,6 @@ type inboundDocumentLineRow struct {
 	UnitLabel           string    `db:"unit_label"`
 	LineNote            string    `db:"line_note"`
 	CreatedAt           time.Time `db:"created_at"`
-}
-
-type CancelInboundDocumentInput struct {
-	Reason string `json:"reason"`
 }
 
 func (s *Store) ListInboundDocuments(ctx context.Context, limit int, archiveScope ...string) ([]InboundDocument, error) {
@@ -168,7 +162,6 @@ func (s *Store) ListInboundDocuments(ctx context.Context, limit int, archiveScop
 			d.status,
 			COALESCE(d.tracking_status, '') AS tracking_status,
 			d.confirmed_at,
-			COALESCE(d.cancel_note, '') AS cancel_note,
 			d.cancelled_at,
 			d.archived_at,
 			d.created_at,
@@ -206,7 +199,6 @@ func (s *Store) ListInboundDocuments(ctx context.Context, limit int, archiveScop
 			Status:              normalizeDocumentStatus(row.Status),
 			TrackingStatus:      normalizeInboundTrackingStatus(row.TrackingStatus, row.Status),
 			ConfirmedAt:         row.ConfirmedAt,
-			DeleteNote:          row.DeleteNote,
 			DeletedAt:           row.DeletedAt,
 			ArchivedAt:          row.ArchivedAt,
 			CreatedAt:           row.CreatedAt,
@@ -1626,9 +1618,7 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 	return nil
 }
 
-func (s *Store) CancelInboundDocument(ctx context.Context, documentID int64, input CancelInboundDocumentInput) (InboundDocument, error) {
-	input.Reason = strings.TrimSpace(input.Reason)
-
+func (s *Store) CancelInboundDocument(ctx context.Context, documentID int64) (InboundDocument, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return InboundDocument{}, fmt.Errorf("begin inbound cancel transaction: %w", err)
@@ -1645,7 +1635,6 @@ func (s *Store) CancelInboundDocument(ctx context.Context, documentID int64, inp
 		return InboundDocument{}, fmt.Errorf("%w: inbound document is already deleted", ErrInvalidInput)
 	}
 
-	cancellationReason := firstNonEmpty(input.Reason, fmt.Sprintf("Reversal of inbound %s", firstNonEmpty(documentRow.ContainerNo, fmt.Sprintf("IN-%d", documentID))))
 	deletedAt := time.Now().UTC()
 
 	if status == DocumentStatusConfirmed {
@@ -1715,7 +1704,6 @@ func (s *Store) CancelInboundDocument(ctx context.Context, documentID int64, inp
 		LocationID:  documentRow.LocationID,
 		ContainerNo: documentRow.ContainerNo,
 		Status:      DocumentStatusDeleted,
-		DeleteNote:  cancellationReason,
 		DeletedAt:   &deletedAt,
 		CreatedAt:   documentRow.CreatedAt,
 	}, nil
@@ -1879,7 +1867,6 @@ func (s *Store) loadInboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx, 
 			d.status,
 			COALESCE(d.tracking_status, '') AS tracking_status,
 			d.confirmed_at,
-			COALESCE(d.cancel_note, '') AS cancel_note,
 			d.cancelled_at,
 			d.archived_at,
 			d.created_at,
@@ -1905,7 +1892,6 @@ func (s *Store) loadInboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx, 
 		&documentRow.Status,
 		&documentRow.TrackingStatus,
 		&documentRow.ConfirmedAt,
-		&documentRow.DeleteNote,
 		&documentRow.DeletedAt,
 		&documentRow.ArchivedAt,
 		&documentRow.CreatedAt,
@@ -2016,7 +2002,6 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 			d.status,
 			COALESCE(d.tracking_status, '') AS tracking_status,
 			d.confirmed_at,
-			COALESCE(d.cancel_note, '') AS cancel_note,
 			d.cancelled_at,
 			d.archived_at,
 			d.created_at,
@@ -2059,7 +2044,6 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 			Status:              normalizeDocumentStatus(row.Status),
 			TrackingStatus:      normalizeInboundTrackingStatus(row.TrackingStatus, row.Status),
 			ConfirmedAt:         row.ConfirmedAt,
-			DeleteNote:          row.DeleteNote,
 			DeletedAt:           row.DeletedAt,
 			ArchivedAt:          row.ArchivedAt,
 			CreatedAt:           row.CreatedAt,

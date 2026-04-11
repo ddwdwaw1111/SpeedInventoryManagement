@@ -226,7 +226,7 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 		t.Fatalf("expected on-hand 6 after outbound, got %d", itemAfterOutbound.Quantity)
 	}
 
-	cancelled, err := store.CancelOutboundDocument(ctx, outbound.ID, CancelOutboundDocumentInput{Reason: "Customer changed order"})
+	cancelled, err := store.CancelOutboundDocument(ctx, outbound.ID)
 	if err != nil {
 		t.Fatalf("cancel outbound document: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 		t.Fatalf("expected on-hand 10 after reversal, got %d", itemAfterReversal.Quantity)
 	}
 
-	cancelledInbound, err := store.CancelInboundDocument(ctx, inbound.ID, CancelInboundDocumentInput{Reason: "Supplier return"})
+	cancelledInbound, err := store.CancelInboundDocument(ctx, inbound.ID)
 	if err != nil {
 		t.Fatalf("cancel inbound document: %v", err)
 	}
@@ -1023,7 +1023,7 @@ func TestPalletCentricDualWriteLifecycleIntegration(t *testing.T) {
 		t.Fatalf("expected outbound stock ledger quantity -5, got %d", outboundLedgerQty)
 	}
 
-	if _, err := store.CancelOutboundDocument(ctx, outbound.ID, CancelOutboundDocumentInput{Reason: "Dual write reversal"}); err != nil {
+	if _, err := store.CancelOutboundDocument(ctx, outbound.ID); err != nil {
 		t.Fatalf("cancel outbound document: %v", err)
 	}
 
@@ -1616,7 +1616,7 @@ func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 	}
 
 	// Cancel (hard-delete) the original document and all related records
-	cancelled, err := store.CancelInboundDocument(ctx, original.ID, CancelInboundDocumentInput{Reason: "Inbound copy source"})
+	cancelled, err := store.CancelInboundDocument(ctx, original.ID)
 	if err != nil {
 		t.Fatalf("cancel inbound document: %v", err)
 	}
@@ -1710,7 +1710,7 @@ func TestOutboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 	}
 
 	// Cancel (hard-delete) the original document and all related records
-	cancelled, err := store.CancelOutboundDocument(ctx, original.ID, CancelOutboundDocumentInput{Reason: "Outbound copy source"})
+	cancelled, err := store.CancelOutboundDocument(ctx, original.ID)
 	if err != nil {
 		t.Fatalf("cancel outbound document: %v", err)
 	}
@@ -2215,7 +2215,7 @@ func TestOutboundAutoAllocationIntegration(t *testing.T) {
 		t.Fatalf("expected total remaining quantity 2 after split allocation, got %d", itemAAfter.Quantity+itemBAfter.Quantity)
 	}
 
-	cancelled, err := store.CancelOutboundDocument(ctx, outbound.ID, CancelOutboundDocumentInput{Reason: "Split allocation cancelled"})
+	cancelled, err := store.CancelOutboundDocument(ctx, outbound.ID)
 	if err != nil {
 		t.Fatalf("cancel split outbound document: %v", err)
 	}

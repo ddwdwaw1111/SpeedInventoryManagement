@@ -375,7 +375,6 @@ export type OutboundDocument = {
   status: string;
   trackingStatus: string;
   confirmedAt: string | null;
-  deleteNote: string;
   deletedAt: string | null;
   archivedAt: string | null;
   totalLines: number;
@@ -422,10 +421,6 @@ export type UpdateOutboundDocumentNotePayload = {
   documentNote?: string;
 };
 
-export type DeleteOutboundDocumentPayload = {
-  reason?: string;
-};
-
 export type InboundDocumentLine = {
   id: number;
   documentId: number;
@@ -464,7 +459,6 @@ export type InboundDocument = {
   status: string;
   trackingStatus: string;
   confirmedAt: string | null;
-  deleteNote: string;
   deletedAt: string | null;
   archivedAt: string | null;
   totalLines: number;
@@ -536,10 +530,6 @@ export type InboundPackingListImportPreview = {
   totalNetWeightKgs: number;
   totalGrossWeightKgs: number;
   lines: InboundPackingListImportLine[];
-};
-
-export type DeleteInboundDocumentPayload = {
-  reason?: string;
 };
 
 export type InventoryAdjustmentLine = {

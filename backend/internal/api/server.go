@@ -641,15 +641,7 @@ func (s *Server) handleCancelOutboundDocument(c *gin.Context) {
 		return
 	}
 
-	var input service.CancelOutboundDocumentInput
-	if c.Request.ContentLength > 0 {
-		if err := bindJSON(c, &input); err != nil {
-			writeError(c, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
-
-	document, err := s.store.CancelOutboundDocument(c.Request.Context(), documentID, input)
+	document, err := s.store.CancelOutboundDocument(c.Request.Context(), documentID)
 	if err != nil {
 		writeDomainError(c, err)
 		return
@@ -657,7 +649,6 @@ func (s *Server) handleCancelOutboundDocument(c *gin.Context) {
 
 	s.writeAuditLog(c, "DELETE", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Deleted outbound document and all related records", map[string]any{
 		"packingListNo": document.PackingListNo,
-		"reason":        document.DeleteNote,
 	})
 
 	c.Status(http.StatusNoContent)
@@ -876,15 +867,7 @@ func (s *Server) handleCancelInboundDocument(c *gin.Context) {
 		return
 	}
 
-	var input service.CancelInboundDocumentInput
-	if c.Request.ContentLength > 0 {
-		if err := bindJSON(c, &input); err != nil {
-			writeError(c, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
-
-	document, err := s.store.CancelInboundDocument(c.Request.Context(), documentID, input)
+	document, err := s.store.CancelInboundDocument(c.Request.Context(), documentID)
 	if err != nil {
 		writeDomainError(c, err)
 		return
@@ -892,7 +875,6 @@ func (s *Server) handleCancelInboundDocument(c *gin.Context) {
 
 	s.writeAuditLog(c, "DELETE", "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), "Deleted inbound document and all related records", map[string]any{
 		"containerNo": document.ContainerNo,
-		"reason":      document.DeleteNote,
 	})
 
 	c.Status(http.StatusNoContent)

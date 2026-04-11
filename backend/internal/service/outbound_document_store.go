@@ -30,7 +30,6 @@ type OutboundDocument struct {
 	Status              string                 `json:"status"`
 	TrackingStatus      string                 `json:"trackingStatus"`
 	ConfirmedAt         *time.Time             `json:"confirmedAt"`
-	DeleteNote          string                 `json:"deleteNote"`
 	DeletedAt           *time.Time             `json:"deletedAt"`
 	ArchivedAt          *time.Time             `json:"archivedAt"`
 	TotalLines          int                    `json:"totalLines"`
@@ -133,15 +132,10 @@ type outboundDocumentRow struct {
 	Status           string     `db:"status"`
 	TrackingStatus   string     `db:"tracking_status"`
 	ConfirmedAt      *time.Time `db:"confirmed_at"`
-	DeleteNote       string     `db:"cancel_note"`
 	DeletedAt        *time.Time `db:"cancelled_at"`
 	ArchivedAt       *time.Time `db:"archived_at"`
 	CreatedAt        time.Time  `db:"created_at"`
 	UpdatedAt        time.Time  `db:"updated_at"`
-}
-
-type CancelOutboundDocumentInput struct {
-	Reason string `json:"reason"`
 }
 
 type outboundDocumentLineRow struct {
@@ -264,7 +258,6 @@ func (s *Store) ListOutboundDocuments(ctx context.Context, limit int, archiveSco
 			d.status,
 			COALESCE(d.tracking_status, '') AS tracking_status,
 			d.confirmed_at,
-			COALESCE(d.cancel_note, '') AS cancel_note,
 			d.cancelled_at,
 			d.archived_at,
 			d.created_at,
@@ -303,7 +296,6 @@ func (s *Store) ListOutboundDocuments(ctx context.Context, limit int, archiveSco
 			Status:           normalizeDocumentStatus(row.Status),
 			TrackingStatus:   normalizeOutboundTrackingStatus(row.TrackingStatus, row.Status),
 			ConfirmedAt:      row.ConfirmedAt,
-			DeleteNote:       row.DeleteNote,
 			DeletedAt:        row.DeletedAt,
 			ArchivedAt:       row.ArchivedAt,
 			Lines:            make([]OutboundDocumentLine, 0),
@@ -1121,9 +1113,7 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 	return nil
 }
 
-func (s *Store) CancelOutboundDocument(ctx context.Context, documentID int64, input CancelOutboundDocumentInput) (OutboundDocument, error) {
-	input.Reason = strings.TrimSpace(input.Reason)
-
+func (s *Store) CancelOutboundDocument(ctx context.Context, documentID int64) (OutboundDocument, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return OutboundDocument{}, fmt.Errorf("begin outbound cancel transaction: %w", err)
@@ -1140,7 +1130,6 @@ func (s *Store) CancelOutboundDocument(ctx context.Context, documentID int64, in
 		return OutboundDocument{}, fmt.Errorf("%w: outbound document is already deleted", ErrInvalidInput)
 	}
 
-	cancellationReason := firstNonEmpty(input.Reason, fmt.Sprintf("Reversal of outbound %s", firstNonEmpty(documentRow.PackingListNo, fmt.Sprintf("OUT-%d", documentID))))
 	deletedAt := time.Now().UTC()
 
 	if status == DocumentStatusConfirmed {
@@ -1179,7 +1168,6 @@ func (s *Store) CancelOutboundDocument(ctx context.Context, documentID int64, in
 		OrderRef:      documentRow.OrderRef,
 		CustomerID:    documentRow.CustomerID,
 		Status:        DocumentStatusDeleted,
-		DeleteNote:    cancellationReason,
 		DeletedAt:     &deletedAt,
 		CreatedAt:     documentRow.CreatedAt,
 	}, nil
@@ -1355,7 +1343,6 @@ func (s *Store) loadOutboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx,
 			d.status,
 			COALESCE(d.tracking_status, '') AS tracking_status,
 			d.confirmed_at,
-			COALESCE(d.cancel_note, '') AS cancel_note,
 			d.cancelled_at,
 			d.archived_at,
 			d.created_at,
@@ -1380,7 +1367,6 @@ func (s *Store) loadOutboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx,
 		&documentRow.Status,
 		&documentRow.TrackingStatus,
 		&documentRow.ConfirmedAt,
-		&documentRow.DeleteNote,
 		&documentRow.DeletedAt,
 		&documentRow.ArchivedAt,
 		&documentRow.CreatedAt,
@@ -1497,7 +1483,6 @@ func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []in
 			d.status,
 			COALESCE(d.tracking_status, '') AS tracking_status,
 			d.confirmed_at,
-			COALESCE(d.cancel_note, '') AS cancel_note,
 			d.cancelled_at,
 			d.archived_at,
 			d.created_at,
@@ -1540,7 +1525,6 @@ func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []in
 			Status:           normalizeDocumentStatus(row.Status),
 			TrackingStatus:   normalizeOutboundTrackingStatus(row.TrackingStatus, row.Status),
 			ConfirmedAt:      row.ConfirmedAt,
-			DeleteNote:       row.DeleteNote,
 			DeletedAt:        row.DeletedAt,
 			ArchivedAt:       row.ArchivedAt,
 			Lines:            make([]OutboundDocumentLine, 0),
