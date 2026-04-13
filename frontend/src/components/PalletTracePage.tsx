@@ -13,6 +13,8 @@ import { useSettings } from "../lib/settings";
 import type { PalletTrace } from "../lib/types";
 import { buildWorkspaceGridSlots, InventoryViewSwitcher, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
+const PALLET_TRACE_LOAD_LIMIT = 50000;
+
 export function PalletTracePage({ onNavigate }: { onNavigate?: (page: import("../lib/routes").PageKey) => void }) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
@@ -46,7 +48,7 @@ export function PalletTracePage({ onNavigate }: { onNavigate?: (page: import("..
       setIsLoading(true);
       setErrorMessage("");
       try {
-        const nextPallets = await api.getPallets(500, normalizedSearch, sourceInboundDocumentIdFilter ?? undefined);
+        const nextPallets = await api.getPallets(PALLET_TRACE_LOAD_LIMIT, normalizedSearch, sourceInboundDocumentIdFilter ?? undefined);
         if (!active) return;
         setPallets(nextPallets);
       } catch (error) {
@@ -154,12 +156,10 @@ export function PalletTracePage({ onNavigate }: { onNavigate?: (page: import("..
       )
     },
     {
-      field: "contents",
-      headerName: t("palletContents"),
+      field: "quantity",
+      headerName: t("quantity"),
       minWidth: 110,
-      sortable: false,
-      filterable: false,
-      renderCell: (params) => params.row.contents.length
+      renderCell: (params) => getPalletTotalQty(params.row)
     },
     {
       field: "actualArrivalDate",
@@ -221,7 +221,7 @@ export function PalletTracePage({ onNavigate }: { onNavigate?: (page: import("..
                 onClick={() => {
                   setSearchTerm((current) => current.trim());
                   setIsLoading(true);
-                  void api.getPallets(500, normalizedSearch, sourceInboundDocumentIdFilter ?? undefined).then((nextPallets) => {
+                  void api.getPallets(PALLET_TRACE_LOAD_LIMIT, normalizedSearch, sourceInboundDocumentIdFilter ?? undefined).then((nextPallets) => {
                     setPallets(nextPallets);
                     setErrorMessage("");
                   }).catch((error) => {
@@ -372,6 +372,10 @@ function getPalletStatusColor(status: string): "success" | "warning" | "default"
     default:
       return "default";
   }
+}
+
+function getPalletTotalQty(pallet: PalletTrace) {
+  return pallet.contents.reduce((sum, content) => sum + content.quantity, 0);
 }
 
 function getErrorMessage(error: unknown, fallbackMessage: string) {

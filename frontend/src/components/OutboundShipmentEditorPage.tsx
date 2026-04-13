@@ -2,7 +2,7 @@ import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOu
 import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
 import { Box, Button } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
 import { buildItemContainerBalances, formatContainerDistributionSummary as formatContainerDistributionSummaryValue, type ItemContainerBalance } from "../lib/containerBalances";
@@ -41,7 +41,9 @@ type BatchOutboundFormState = {
 
 type BatchOutboundLineState = {
   id: string;
+  locationId: string;
   sourceKey: string;
+  sourceSearch: string;
   quantity: number;
   pallets: number;
   palletsDetailCtns: string;
@@ -95,6 +97,35 @@ type OutboundAllocationPreviewResult = {
   shortageLineCount: number;
 };
 
+type OutboundShipmentReviewItemGroup = {
+  key: string;
+  sku: string;
+  itemNumber: string;
+  description: string;
+  totalQty: number;
+  lineLabels: string[];
+};
+
+type OutboundShipmentReviewContainerGroup = {
+  key: string;
+  containerNo: string;
+  storageSections: string[];
+  totalQty: number;
+  palletCount: number;
+  lineCount: number;
+  items: OutboundShipmentReviewItemGroup[];
+};
+
+type OutboundShipmentReviewWarehouseGroup = {
+  key: string;
+  locationName: string;
+  totalQty: number;
+  palletCount: number;
+  lineCount: number;
+  containerCount: number;
+  containers: OutboundShipmentReviewContainerGroup[];
+};
+
 type OutboundSourceOption = {
   sourceKey: string;
   customerId: number;
@@ -113,6 +144,41 @@ type OutboundSourceOption = {
   containerSummary: string;
   candidates: OutboundPalletCandidate[];
 };
+
+type WarehouseOption = {
+  id: string;
+  name: string;
+};
+
+type OutboundLineValidationState = {
+  lineId: string;
+  isActive: boolean;
+  isReady: boolean;
+  hasBlockingStep1: boolean;
+  hasBlockingStep2: boolean;
+  warehouseMessage: string;
+  skuMessage: string;
+  quantityMessage: string;
+  pickMessage: string;
+};
+
+type OutboundStepOverview = {
+  readyLines: number;
+  blockedLines: number;
+  totalRequestedQty: number;
+  totalPickedQty: number;
+  shortageLines: number;
+  shortageQty: number;
+  warehouseCount: number;
+  containerCount: number;
+  palletCount: number;
+  reviewStatus: "ready" | "incomplete" | "shortage";
+};
+
+type RememberedOutboundHeaderDefaults = Pick<
+  BatchOutboundFormState,
+  "shipToName" | "shipToAddress" | "shipToContact" | "carrierName"
+>;
 
 type OutboundPalletCandidate = {
   id: string;
@@ -173,6 +239,8 @@ export function OutboundShipmentEditorPage({
   const [batchSubmitting, setBatchSubmitting] = useState(false);
   const [noteSubmitting, setNoteSubmitting] = useState(false);
   const [outboundWizardStep, setOutboundWizardStep] = useState<OutboundWizardStep>(1);
+  const [reviewConfirmed, setReviewConfirmed] = useState(false);
+  const [usedRememberedOutboundDefaults, setUsedRememberedOutboundDefaults] = useState(false);
   const [batchOutboundLineAddCount, setBatchOutboundLineAddCount] = useState(1);
   const [expandedOutboundPickPlans, setExpandedOutboundPickPlans] = useState<Record<string, boolean>>({});
   const [isEditorReady, setIsEditorReady] = useState(false);
@@ -189,6 +257,10 @@ export function OutboundShipmentEditorPage({
       ? buildOutboundSourceOptionsFromPallets(pallets, skuMastersByID)
       : buildOutboundSourceOptions(items.filter((item) => item.availableQty > 0), movements),
     [items, movements, pallets, skuMastersByID]
+  );
+  const warehouseOptions = useMemo<WarehouseOption[]>(
+    () => buildWarehouseOptions(availableOutboundSources),
+    [availableOutboundSources]
   );
   const selectableOutboundSources = useMemo(() => {
     const selectedKeys = new Set(
@@ -224,6 +296,18 @@ export function OutboundShipmentEditorPage({
     () => buildOutboundAllocationPreview(batchOutboundLines, selectableOutboundSources),
     [batchOutboundLines, selectableOutboundSources]
   );
+  const outboundShipmentReviewGroups = useMemo(
+    () => buildOutboundShipmentReviewGroups(batchOutboundAllocationPreview.rows),
+    [batchOutboundAllocationPreview.rows]
+  );
+  const outboundLineValidations = useMemo(
+    () => buildOutboundLineValidations(batchOutboundLines, selectableOutboundSources, batchOutboundAllocationPreview, t),
+    [batchOutboundAllocationPreview, batchOutboundLines, selectableOutboundSources, t]
+  );
+  const outboundStepOverview = useMemo(
+    () => buildOutboundStepOverview(batchOutboundLines, outboundLineValidations, batchOutboundAllocationPreview, outboundShipmentReviewGroups),
+    [batchOutboundAllocationPreview, batchOutboundLines, outboundLineValidations, outboundShipmentReviewGroups]
+  );
   const validBatchOutboundLines = useMemo(
     () => batchOutboundLines.filter((line) => line.sourceKey.trim() !== "" && line.quantity > 0),
     [batchOutboundLines]
@@ -247,6 +331,8 @@ export function OutboundShipmentEditorPage({
   const canEditOutboundNote = canManage && Boolean(document?.id);
   const isOutboundNoteDirty = canEditOutboundNote && batchOutboundForm.documentNote.trim() !== (document?.documentNote ?? "").trim();
   const hasNoAvailableSources = availableOutboundSources.length === 0 && !isEditingOutboundDraft && !isEditingConfirmedOutbound;
+  const hasBlockingStep1Issues = outboundStepOverview.blockedLines > 0 || outboundStepOverview.readyLines === 0;
+  const hasBlockingStep2Issues = outboundStepOverview.shortageLines > 0 || outboundStepOverview.readyLines === 0;
 
   useEffect(() => {
     let active = true;
@@ -307,18 +393,25 @@ export function OutboundShipmentEditorPage({
     }
 
     const launchContext = consumePendingOutboundShipmentEditorLaunchContext();
-    const sourceState = buildOutboundEditorSourceState({ document, launchContext });
+    const rememberedHeaderDefaults = loadRememberedOutboundHeaderDefaults();
+    const sourceState = buildOutboundEditorSourceState({ document, launchContext, rememberedHeaderDefaults });
 
     setBatchOutboundForm(sourceState.form);
     setBatchOutboundLines(sourceState.lines);
+    setUsedRememberedOutboundDefaults(sourceState.usedRememberedDefaults);
     setOutboundWizardStep(1);
     setErrorMessage("");
     setBatchSubmitting(false);
+    setReviewConfirmed(false);
     setBatchOutboundLineAddCount(1);
     setExpandedOutboundPickPlans({});
     setIsEditorReady(true);
     lastInitializedRouteRef.current = routeKey;
   }, [document, documentId, isLoading, routeKey]);
+
+  useEffect(() => {
+    setReviewConfirmed(false);
+  }, [batchOutboundForm, batchOutboundLines]);
 
   useEffect(() => {
     setBatchOutboundLines((current) => {
@@ -404,9 +497,69 @@ export function OutboundShipmentEditorPage({
     return Math.min(50, Math.max(1, Math.floor(value) || 1));
   }
 
+  function focusShipmentEditorField(fieldID: string) {
+    window.setTimeout(() => {
+      const nextField = window.document.getElementById(fieldID);
+      if (nextField instanceof HTMLInputElement || nextField instanceof HTMLSelectElement || nextField instanceof HTMLButtonElement) {
+        nextField.focus();
+        if (nextField instanceof HTMLInputElement) {
+          nextField.select();
+        }
+      }
+    }, 0);
+  }
+
+  function focusShipmentLineField(lineID: string, field: "warehouse" | "sku" | "quantity") {
+    focusShipmentEditorField(`shipment-editor-${field}-${lineID}`);
+  }
+
+  function focusNextShipmentLine(lineID: string) {
+    const lineIndex = batchOutboundLines.findIndex((line) => line.id === lineID);
+    const nextLine = lineIndex >= 0 ? batchOutboundLines[lineIndex + 1] : null;
+    if (nextLine) {
+      focusShipmentLineField(nextLine.id, "warehouse");
+      return;
+    }
+    focusShipmentEditorField("shipment-editor-next-action");
+  }
+
+  function handleShipmentLineFieldKeyDown(
+    event: KeyboardEvent<HTMLInputElement | HTMLSelectElement>,
+    lineID: string,
+    field: "warehouse" | "sku" | "quantity"
+  ) {
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    if (event.shiftKey) {
+      if (field === "quantity") {
+        focusShipmentLineField(lineID, "sku");
+        return;
+      }
+      if (field === "sku") {
+        focusShipmentLineField(lineID, "warehouse");
+      }
+      return;
+    }
+
+    if (field === "warehouse") {
+      focusShipmentLineField(lineID, "sku");
+      return;
+    }
+    if (field === "sku") {
+      focusShipmentLineField(lineID, "quantity");
+      return;
+    }
+    focusNextShipmentLine(lineID);
+  }
+
   function addBatchOutboundLine(count = batchOutboundLineAddCount) {
     const safeCount = getSafeLineAddCount(count);
-    const nextLines = Array.from({ length: safeCount }, () => createEmptyBatchOutboundLine());
+    const lastUsedLocationId = [...batchOutboundLines]
+      .reverse()
+      .find((line) => line.locationId.trim())?.locationId ?? "";
+    const nextLines = Array.from({ length: safeCount }, () => createEmptyBatchOutboundLine({ locationId: lastUsedLocationId }));
     pendingBatchLineIDRef.current = nextLines[0]?.id ?? null;
     setBatchOutboundLines((current) => [...current, ...nextLines]);
   }
@@ -419,24 +572,24 @@ export function OutboundShipmentEditorPage({
     if (!nextSource) {
       return {
         ...currentLine,
+        locationId: currentLine.locationId,
         sourceKey: "",
+        sourceSearch: currentLine.sourceSearch,
+        pallets: 0,
+        palletsDetailCtns: "",
         pickPallets: [],
         pickPalletsTouched: false
       };
     }
 
-    const previousSource = findOutboundSourceOption(selectableOutboundSources, currentLine.sourceKey);
-    const previousSkuMaster = previousSource ? skuMastersBySku.get(normalizeSkuLookupValue(previousSource.sku)) : undefined;
-    const nextSkuMaster = skuMastersBySku.get(normalizeSkuLookupValue(nextSource.sku));
-    const previousAutoPalletPlan = buildAutoPalletPlan(currentLine.quantity, previousSkuMaster?.defaultUnitsPerPallet ?? 0);
-    const nextAutoPalletPlan = buildAutoPalletPlan(currentLine.quantity, nextSkuMaster?.defaultUnitsPerPallet ?? 0);
-    const shouldRefreshPallets = currentLine.pallets <= 0 || (previousSkuMaster !== undefined && currentLine.pallets === previousAutoPalletPlan.pallets);
     const nextPickPallets = buildAutoOutboundPalletSelections(currentLine.quantity, nextSource.candidates);
     return {
       ...currentLine,
+      locationId: String(nextSource.locationId),
       sourceKey: nextSource.sourceKey,
+      sourceSearch: formatOutboundSourceOptionLabel(nextSource),
       unitLabel: nextSource.unit?.toUpperCase() || currentLine.unitLabel || "PCS",
-      pallets: shouldRefreshPallets ? Math.max(nextAutoPalletPlan.pallets, nextPickPallets.length) : currentLine.pallets,
+      pallets: countSelectedOutboundPallets(nextPickPallets),
       palletsDetailCtns: "",
       pickPallets: nextPickPallets,
       pickPalletsTouched: false
@@ -447,6 +600,79 @@ export function OutboundShipmentEditorPage({
     setBatchOutboundLines((current) => current.map((line) => line.id === lineID ? { ...line, ...updates } : line));
   }
 
+  function updateBatchOutboundLineWarehouse(lineID: string, nextLocationId: string) {
+    setBatchOutboundLines((current) => current.map((line) => {
+      if (line.id !== lineID) {
+        return line;
+      }
+
+      const normalizedLocationId = nextLocationId.trim();
+      const selectedSource = findOutboundSourceOption(selectableOutboundSources, line.sourceKey);
+      const shouldKeepSource = selectedSource && String(selectedSource.locationId) === normalizedLocationId;
+      if (shouldKeepSource) {
+        return {
+          ...line,
+          locationId: normalizedLocationId
+        };
+      }
+
+      return {
+        ...line,
+        locationId: normalizedLocationId,
+        sourceKey: "",
+        sourceSearch: "",
+        quantity: 0,
+        pallets: 0,
+        palletsDetailCtns: "",
+        pickPallets: [],
+        pickPalletsTouched: false
+      };
+    }));
+  }
+
+  function updateBatchOutboundLineSourceInput(
+    lineID: string,
+    nextSearchValue: string,
+    sourceOptions: OutboundSourceOption[]
+  ) {
+    const resolvedSource = findOutboundSourceOptionBySearchValue(sourceOptions, nextSearchValue);
+    setBatchOutboundLines((current) => current.map((line) => {
+      if (line.id !== lineID) {
+        return line;
+      }
+
+      if (!nextSearchValue.trim()) {
+        return {
+          ...line,
+          sourceKey: "",
+          sourceSearch: "",
+          quantity: 0,
+          pallets: 0,
+          palletsDetailCtns: "",
+          pickPallets: [],
+          pickPalletsTouched: false
+        };
+      }
+
+      if (resolvedSource) {
+        return buildOutboundLineDefaults({
+          ...line,
+          sourceSearch: nextSearchValue
+        }, resolvedSource);
+      }
+
+      return {
+        ...line,
+        sourceKey: "",
+        sourceSearch: nextSearchValue,
+        pallets: 0,
+        palletsDetailCtns: "",
+        pickPallets: [],
+        pickPalletsTouched: false
+      };
+    }));
+  }
+
   function updateBatchOutboundLineQuantity(lineID: string, nextQuantity: number) {
     setBatchOutboundLines((current) => current.map((line) => {
       if (line.id !== lineID) {
@@ -454,19 +680,13 @@ export function OutboundShipmentEditorPage({
       }
 
       const selectedSource = findOutboundSourceOption(selectableOutboundSources, line.sourceKey);
-      const skuMaster = selectedSource ? skuMastersBySku.get(normalizeSkuLookupValue(selectedSource.sku)) : undefined;
-      const previousAutoPalletPlan = buildAutoPalletPlan(line.quantity, skuMaster?.defaultUnitsPerPallet ?? 0);
-      const nextAutoPalletPlan = buildAutoPalletPlan(nextQuantity, skuMaster?.defaultUnitsPerPallet ?? 0);
-      const shouldKeepAutoPallets = line.pallets <= 0 || line.pallets === previousAutoPalletPlan.pallets;
       const nextPickPallets = line.pickPalletsTouched
         ? line.pickPallets
         : buildAutoOutboundPalletSelections(nextQuantity, selectedSource?.candidates ?? []);
       return {
         ...line,
         quantity: nextQuantity,
-        pallets: line.pickPalletsTouched
-          ? countSelectedOutboundPallets(nextPickPallets)
-          : shouldKeepAutoPallets ? Math.max(nextAutoPalletPlan.pallets, nextPickPallets.length) : line.pallets,
+        pallets: countSelectedOutboundPallets(nextPickPallets),
         palletsDetailCtns: "",
         pickPallets: nextPickPallets
       };
@@ -503,52 +723,58 @@ export function OutboundShipmentEditorPage({
       ...current,
       [lineID]: true
     }));
-    setBatchOutboundLines((current) => current.map((line) => (
-      line.id === lineID && !line.pickPalletsTouched
-        ? { ...line, pickPalletsTouched: true }
-        : line
-    )));
+    let switchedToManual = false;
+    setBatchOutboundLines((current) => current.map((line) => {
+      if (line.id !== lineID || line.pickPalletsTouched) {
+        return line;
+      }
+      switchedToManual = true;
+      return { ...line, pickPalletsTouched: true };
+    }));
+    if (switchedToManual) {
+      showSuccess(t("manualPickEnabledSuccess"));
+    }
   }
 
   function resetOutboundLinePickPallets(lineID: string) {
+    let nextPalletCount = 0;
+    let nextPickedQty = 0;
     setBatchOutboundLines((current) => current.map((line) => {
       if (line.id !== lineID) {
         return line;
       }
       const selectedSource = findOutboundSourceOption(selectableOutboundSources, line.sourceKey);
-      const skuMaster = selectedSource ? skuMastersBySku.get(normalizeSkuLookupValue(selectedSource.sku)) : undefined;
-      const nextAutoPalletPlan = buildAutoPalletPlan(line.quantity, skuMaster?.defaultUnitsPerPallet ?? 0);
       const nextPickPallets = buildAutoOutboundPalletSelections(line.quantity, selectedSource?.candidates ?? []);
+      nextPalletCount = countSelectedOutboundPallets(nextPickPallets);
+      nextPickedQty = nextPickPallets.reduce((sum, entry) => sum + entry.quantity, 0);
       return {
         ...line,
         pickPallets: nextPickPallets,
         pickPalletsTouched: false,
-        pallets: Math.max(nextAutoPalletPlan.pallets, nextPickPallets.length)
+        pallets: nextPalletCount
       };
+    }));
+    showSuccess(t("autoPickRestoredSuccess", {
+      pallets: nextPalletCount,
+      qty: nextPickedQty
     }));
   }
 
   function validateOutboundDraft(requireAllocationReady: boolean) {
-    if (validBatchOutboundLines.length === 0) {
+    if (outboundStepOverview.readyLines === 0) {
       return t("batchOutboundRequireLine");
     }
 
-    for (const line of validBatchOutboundLines) {
-      const selectedOutboundSource = findOutboundSourceOption(selectableOutboundSources, line.sourceKey);
-      if (!selectedOutboundSource) {
-        return t("chooseSkuAndQty");
-      }
-
-      if (!requireAllocationReady) {
+    for (const line of batchOutboundLines) {
+      const validation = outboundLineValidations.get(line.id);
+      if (!validation?.isActive) {
         continue;
       }
-
-      const allocationSummary = batchOutboundAllocationPreview.summaries.get(line.id);
-      if (!allocationSummary || allocationSummary.shortageQty > 0 || allocationSummary.allocatedQty !== line.quantity) {
-        return t("outboundQtyExceedsStock", {
-          sku: selectedOutboundSource.sku,
-          available: allocationSummary?.allocatedQty ?? 0
-        });
+      if (validation.hasBlockingStep1) {
+        return validation.warehouseMessage || validation.skuMessage || validation.quantityMessage || t("chooseSkuAndQty");
+      }
+      if (requireAllocationReady && validation.hasBlockingStep2) {
+        return validation.pickMessage || validation.quantityMessage || t("pickQtyMustMatchRequired");
       }
     }
 
@@ -580,7 +806,11 @@ export function OutboundShipmentEditorPage({
         Object.fromEntries(
           batchOutboundLines
             .filter((line) => line.sourceKey.trim() !== "")
-            .map((line) => [line.id, true] as const)
+            .map((line) => {
+              const summary = batchOutboundAllocationPreview.summaries.get(line.id);
+              const shouldExpand = line.pickPalletsTouched || (summary?.shortageQty ?? 0) > 0 || (summary?.containerCount ?? 0) > 1;
+              return [line.id, shouldExpand] as const;
+            })
         )
       );
     }
@@ -629,7 +859,7 @@ export function OutboundShipmentEditorPage({
             locationId: selectedOutboundSource.locationId,
             skuMasterId: selectedOutboundSource.skuMasterId,
             quantity: line.quantity,
-            pallets: line.pallets > 0 ? line.pallets : countSelectedOutboundPallets(line.pickPallets),
+            pallets: resolveOutboundLinePalletCount(line.pickPallets, line.pallets),
             palletsDetailCtns: undefined,
             unitLabel: line.unitLabel || selectedOutboundSource.unit.toUpperCase() || "PCS",
             cartonSizeMm: line.cartonSizeMm || undefined,
@@ -645,6 +875,7 @@ export function OutboundShipmentEditorPage({
         ? await api.updateOutboundDocument(document.id, payload)
         : await api.createOutboundDocument(payload);
 
+      saveRememberedOutboundHeaderDefaults(batchOutboundForm);
       await onRefresh();
 
       if (status === "DRAFT") {
@@ -671,6 +902,10 @@ export function OutboundShipmentEditorPage({
     }
     if (outboundWizardStep < 3) {
       moveOutboundWizardStep((outboundWizardStep + 1) as OutboundWizardStep);
+      return;
+    }
+    if (!reviewConfirmed) {
+      setErrorMessage(t("shipmentFinalConfirmRequired"));
       return;
     }
 
@@ -809,6 +1044,11 @@ export function OutboundShipmentEditorPage({
                 <label>{t("shipToContact")}<input value={batchOutboundForm.shipToContact} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, shipToContact: event.target.value }))} placeholder="+1 555 010 0200" disabled={isReadOnly} /></label>
                 <label>{t("carrier")}<input value={batchOutboundForm.carrierName} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, carrierName: event.target.value }))} placeholder="FedEx" disabled={isReadOnly} /></label>
                 <label className="sheet-form__wide">{t("shipToAddress")}<input value={batchOutboundForm.shipToAddress} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, shipToAddress: event.target.value }))} placeholder="Delivery address" disabled={isReadOnly} /></label>
+                {usedRememberedOutboundDefaults ? (
+                  <div className="sheet-form__wide rounded-2xl border border-sky-200/80 bg-sky-50/70 px-4 py-3 text-sm font-medium text-sky-800">
+                    {t("shipmentHeaderDefaultsApplied")}
+                  </div>
+                ) : null}
                 <div className="sheet-form__wide">
                   <label className="sheet-form__wide">{t("documentNotes")}<input value={batchOutboundForm.documentNote} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, documentNote: event.target.value }))} placeholder={t("outboundDocumentNotePlaceholder")} disabled={!canManage} /></label>
                   {document?.id && canManage ? (
@@ -824,34 +1064,60 @@ export function OutboundShipmentEditorPage({
 
             {outboundWizardStep !== 3 ? (
               <div className="batch-lines">
-                <div className="batch-lines__toolbar batch-lines__toolbar--sticky">
-                  <strong>{outboundWizardStep === 2 ? t("pickAllocations") : t("outboundLines")}</strong>
-                  {outboundWizardStep === 1 ? (
-                    <div className="batch-lines__adder">
-                      <label className="batch-lines__adder-label">
-                        {t("rowsToAdd")}
-                        <input
-                          type="number"
-                          min="1"
-                          max="50"
-                          value={batchOutboundLineAddCount}
-                          onChange={(event) => setBatchOutboundLineAddCount(getSafeLineAddCount(Number(event.target.value || 1)))}
+                <div className="batch-lines__toolbar batch-lines__toolbar--sticky !flex-col !items-stretch !gap-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <strong>{outboundWizardStep === 2 ? t("pickAllocations") : t("outboundLines")}</strong>
+                    {outboundWizardStep === 1 ? (
+                      <div className="batch-lines__adder">
+                        <label className="batch-lines__adder-label">
+                          {t("rowsToAdd")}
+                          <input
+                            type="number"
+                            min="1"
+                            max="50"
+                            value={batchOutboundLineAddCount}
+                            onChange={(event) => setBatchOutboundLineAddCount(getSafeLineAddCount(Number(event.target.value || 1)))}
+                            disabled={isReadOnly}
+                          />
+                        </label>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          startIcon={<AddCircleOutlineOutlinedIcon />}
+                          onClick={() => addBatchOutboundLine()}
                           disabled={isReadOnly}
-                        />
-                      </label>
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        startIcon={<AddCircleOutlineOutlinedIcon />}
-                        onClick={() => addBatchOutboundLine()}
-                        disabled={isReadOnly}
-                      >
-                        {t("addOutboundLine")}
-                      </Button>
-                    </div>
-                  ) : (
-                    <span className="batch-line-card__hint">{t("pickPlanStepHint")}</span>
-                  )}
+                        >
+                          {t("addOutboundLine")}
+                        </Button>
+                      </div>
+                    ) : (
+                      <span className="batch-line-card__hint">{t("pickPlanStepHint")}</span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {outboundWizardStep === 1 ? (
+                      <>
+                        <span className="rounded-full border border-emerald-200/80 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                          {`${t("shipmentStepSummaryReadyLines")}: ${outboundStepOverview.readyLines}`}
+                        </span>
+                        <span className="rounded-full border border-amber-200/80 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+                          {`${t("shipmentStepSummaryBlockedLines")}: ${outboundStepOverview.blockedLines}`}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="rounded-full border border-sky-200/80 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
+                          {`${t("requiredQty")}: ${outboundStepOverview.totalRequestedQty}`}
+                        </span>
+                        <span className="rounded-full border border-emerald-200/80 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                          {`${t("selectedQty")}: ${outboundStepOverview.totalPickedQty}`}
+                        </span>
+                        <span className="rounded-full border border-amber-200/80 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+                          {`${t("remainingQty")}: ${outboundStepOverview.shortageQty}`}
+                        </span>
+                      </>
+                    )}
+                  </div>
                 </div>
                 <datalist id="outbound-unit-presets">
                   <option value="PCS" />
@@ -861,6 +1127,7 @@ export function OutboundShipmentEditorPage({
                 </datalist>
 
                 {batchOutboundLines.map((line, index) => {
+                  const lineWarehouseSources = filterOutboundSourcesByLocation(selectableOutboundSources, line.locationId);
                   const selectedOutboundSource = findOutboundSourceOption(selectableOutboundSources, line.sourceKey);
                   const outboundAllocationSummary = batchOutboundAllocationPreview.summaries.get(line.id);
                   const outboundPickPlanRows = selectedOutboundSource
@@ -874,51 +1141,187 @@ export function OutboundShipmentEditorPage({
                     : "-";
                   const isOutboundPickPlanExpanded = Boolean(expandedOutboundPickPlans[line.id]);
                   const hasOutboundShortage = (outboundAllocationSummary?.shortageQty ?? 0) > 0;
+                  const lineValidation = outboundLineValidations.get(line.id) ?? {
+                    lineId: line.id,
+                    isActive: false,
+                    isReady: false,
+                    hasBlockingStep1: false,
+                    hasBlockingStep2: false,
+                    warehouseMessage: "",
+                    skuMessage: "",
+                    quantityMessage: "",
+                    pickMessage: ""
+                  };
+                  const lineUnitLabel = line.unitLabel || selectedOutboundSource?.unit.toUpperCase() || "PCS";
+                  const linePalletCount = resolveOutboundLinePalletCount(line.pickPallets, line.pallets);
+                  const lineSourceInputValue = line.sourceSearch || (selectedOutboundSource ? formatOutboundSourceOptionLabel(selectedOutboundSource) : "");
+                  const skuInputListID = `shipment-editor-sku-options-${line.id}`;
+                  const lineStatusLabel = lineValidation.hasBlockingStep1 || lineValidation.hasBlockingStep2
+                    ? t("needsAttention")
+                    : lineValidation.isReady
+                      ? t("ready")
+                      : t("reviewIncomplete");
+                  const lineStatusTone = lineValidation.hasBlockingStep1 || lineValidation.hasBlockingStep2
+                    ? "status-pill--alert"
+                    : lineValidation.isReady
+                      ? "status-pill--ok"
+                      : "";
 
                   return (
-                    <div className="batch-line-card" key={line.id} id={`shipment-editor-line-${line.id}`}>
+                    <div className={`batch-line-card ${lineValidation.hasBlockingStep1 || lineValidation.hasBlockingStep2 ? "ring-1 ring-amber-200/80" : ""}`} key={line.id} id={`shipment-editor-line-${line.id}`}>
                       <div className="batch-line-card__header">
                         <div className="batch-line-card__title">
                           <strong>{t("shipmentSource")} #{index + 1}</strong>
-                          <span className={`status-pill ${selectedOutboundSource ? "status-pill--ok" : "status-pill--alert"}`}>
-                            {selectedOutboundSource ? t("selected") : t("selectShipmentSource")}
-                          </span>
-                          {outboundWizardStep === 1 && selectedOutboundSource && line.quantity > 0 && line.quantity > selectedOutboundSource.availableQty ? (
-                            <span className="status-pill status-pill--alert">{t("insufficientStock")}</span>
+                          <span className={`status-pill ${lineStatusTone}`}>{lineStatusLabel}</span>
+                          {line.pickPalletsTouched ? (
+                            <span className="status-pill status-pill--ok">{t("manualPick")}</span>
                           ) : null}
                         </div>
                         <button className="button button--danger button--small" type="button" onClick={() => removeBatchOutboundLine(line.id)} disabled={isReadOnly || batchOutboundLines.length === 1}>{t("removeLine")}</button>
                       </div>
                       {outboundWizardStep === 1 ? (
-                        <div className="batch-line-grid batch-line-grid--outbound">
-                          <label className="batch-line-grid__description">
-                            {t("shipmentSource")}
-                            <select
-                              value={line.sourceKey}
-                              onChange={(event) => {
-                                const nextItem = findOutboundSourceOption(selectableOutboundSources, event.target.value);
-                                setBatchOutboundLines((current) => current.map((currentLine) =>
-                                  currentLine.id === line.id ? buildOutboundLineDefaults(currentLine, nextItem) : currentLine
-                                ));
-                              }}
-                              disabled={isReadOnly}
-                            >
-                              <option value="">{t("selectShipmentSource")}</option>
-                              {selectableOutboundSources.map((item) => (
-                                <option key={item.sourceKey} value={item.sourceKey}>
-                                  {`${item.customerName} | ${item.locationName} / ${item.storageSections.join(", ") || DEFAULT_STORAGE_SECTION} | ${t("containers")}: ${item.containerCount} | ${t("itemNumber")}: ${item.itemNumber || "-"} | ${item.sku} - ${item.description} (${t("availableQty")}: ${item.availableQty})`}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label>{t("availableQty")}<input value={selectedOutboundSource ? String(selectedOutboundSource.availableQty) : ""} readOnly /></label>
-                          <label>{t("outQty")}<input type="number" min="0" value={numberInputValue(line.quantity)} onChange={(event) => updateBatchOutboundLineQuantity(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={isReadOnly} /></label>
-                          <label>{t("pallets")}<input type="number" min="0" value={numberInputValue(line.pallets)} readOnly disabled /></label>
-                          <label>{t("unit")}<input value={line.unitLabel} onChange={(event) => updateBatchOutboundLine(line.id, { unitLabel: event.target.value })} placeholder="PCS" disabled={isReadOnly} list="outbound-unit-presets" /></label>
-                          <label>{t("cartonSize")}<input value={line.cartonSizeMm} onChange={(event) => updateBatchOutboundLine(line.id, { cartonSizeMm: event.target.value })} placeholder="455*330*325" disabled={isReadOnly} /></label>
-                          <label>{t("netWeight")}<input type="number" min="0" step="0.01" value={numberInputValue(line.netWeightKgs)} onChange={(event) => updateBatchOutboundLine(line.id, { netWeightKgs: Math.max(0, Number(event.target.value || 0)) })} disabled={isReadOnly} /></label>
-                          <label>{t("grossWeight")}<input type="number" min="0" step="0.01" value={numberInputValue(line.grossWeightKgs)} onChange={(event) => updateBatchOutboundLine(line.id, { grossWeightKgs: Math.max(0, Number(event.target.value || 0)) })} disabled={isReadOnly} /></label>
-                          <label className="batch-line-grid__detail">{t("internalNotes")}<input value={line.reason} onChange={(event) => updateBatchOutboundLine(line.id, { reason: event.target.value })} placeholder={t("outboundInternalNotePlaceholder")} disabled={isReadOnly} /></label>
+                        <div className="space-y-4">
+                          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(17rem,0.9fr)]">
+                            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(12rem,0.8fr)_minmax(0,1.5fr)_minmax(9rem,0.7fr)_minmax(9rem,0.7fr)]">
+                              <label className="grid gap-1.5 text-sm font-semibold text-slate-700">
+                                {t("currentStorage")}
+                                <select
+                                  id={`shipment-editor-warehouse-${line.id}`}
+                                  value={line.locationId}
+                                  onChange={(event) => {
+                                    updateBatchOutboundLineWarehouse(line.id, event.target.value);
+                                    focusShipmentLineField(line.id, "sku");
+                                  }}
+                                  onKeyDown={(event) => handleShipmentLineFieldKeyDown(event, line.id, "warehouse")}
+                                  disabled={isReadOnly}
+                                  aria-invalid={lineValidation.warehouseMessage ? "true" : "false"}
+                                  className={`min-h-12 rounded-2xl border bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none transition focus:border-[#143569]/40 ${lineValidation.warehouseMessage ? "border-amber-300 bg-amber-50/40" : "border-slate-200/80"}`}
+                                >
+                                  <option value="">{t("selectWarehouseFirst")}</option>
+                                  {warehouseOptions.map((warehouse) => (
+                                    <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>
+                                  ))}
+                                </select>
+                                <span className={`text-xs ${lineValidation.warehouseMessage ? "font-semibold text-amber-700" : "text-slate-500"}`}>
+                                  {lineValidation.warehouseMessage || t("copyPreviousWarehouse")}
+                                </span>
+                              </label>
+                              <label className="grid gap-1.5 text-sm font-semibold text-slate-700">
+                                {t("sku")}
+                                <input
+                                  id={`shipment-editor-sku-${line.id}`}
+                                  type="text"
+                                  list={skuInputListID}
+                                  value={lineSourceInputValue}
+                                  onChange={(event) => {
+                                    updateBatchOutboundLineSourceInput(line.id, event.target.value, lineWarehouseSources);
+                                    if (findOutboundSourceOptionBySearchValue(lineWarehouseSources, event.target.value)) {
+                                      focusShipmentLineField(line.id, "quantity");
+                                    }
+                                  }}
+                                  onKeyDown={(event) => handleShipmentLineFieldKeyDown(event, line.id, "sku")}
+                                  disabled={isReadOnly || !line.locationId}
+                                  aria-invalid={lineValidation.skuMessage ? "true" : "false"}
+                                  placeholder={line.locationId ? t("typeSkuToSearch") : t("selectWarehouseFirst")}
+                                  className={`min-h-12 rounded-2xl border bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none transition focus:border-[#143569]/40 ${lineValidation.skuMessage ? "border-amber-300 bg-amber-50/40" : "border-slate-200/80"}`}
+                                />
+                                <datalist id={skuInputListID}>
+                                  {lineWarehouseSources.map((item) => (
+                                    <option key={item.sourceKey} value={formatOutboundSourceOptionLabel(item)} />
+                                  ))}
+                                </datalist>
+                                <span className={`text-xs ${lineValidation.skuMessage ? "font-semibold text-amber-700" : "text-slate-500"}`}>
+                                  {lineValidation.skuMessage || (selectedOutboundSource
+                                    ? `${selectedOutboundSource.customerName} · ${t("itemNumber")}: ${selectedOutboundSource.itemNumber || "-"} · ${selectedOutboundSource.sku}`
+                                    : t("selectShipmentSource"))}
+                                </span>
+                              </label>
+                              <label className="grid gap-1.5 text-sm font-semibold text-slate-700">
+                                {t("outQty")}
+                                <input
+                                  id={`shipment-editor-quantity-${line.id}`}
+                                  type="number"
+                                  min="0"
+                                  max={selectedOutboundSource?.availableQty || undefined}
+                                  value={numberInputValue(line.quantity)}
+                                  onChange={(event) => updateBatchOutboundLineQuantity(line.id, Math.max(0, Math.min(selectedOutboundSource?.availableQty ?? Number.MAX_SAFE_INTEGER, Number(event.target.value || 0))))}
+                                  onKeyDown={(event) => handleShipmentLineFieldKeyDown(event, line.id, "quantity")}
+                                  disabled={isReadOnly || !selectedOutboundSource}
+                                  aria-invalid={lineValidation.quantityMessage ? "true" : "false"}
+                                  className={`min-h-12 rounded-2xl border bg-white px-3 py-2 text-right text-lg font-bold text-[#143569] outline-none transition focus:border-[#143569]/40 ${lineValidation.quantityMessage ? "border-amber-300 bg-amber-50/40" : "border-slate-200/80"}`}
+                                />
+                                <span className={`text-xs ${lineValidation.quantityMessage ? "font-semibold text-amber-700" : "text-slate-500"}`}>
+                                  {lineValidation.quantityMessage || (selectedOutboundSource
+                                    ? `${t("maxLabel")} ${selectedOutboundSource.availableQty} ${lineUnitLabel} · ${t("lineAutoPickSummary", {
+                                      selected: outboundAllocationSummary?.allocatedQty ?? 0,
+                                      unit: lineUnitLabel,
+                                      pallets: linePalletCount,
+                                      containers: outboundAllocationSummary?.containerCount ?? 0
+                                    })}`
+                                    : t("selectSkuAfterWarehouse"))}
+                                </span>
+                              </label>
+                              <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-3">
+                                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">{t("pallets")}</div>
+                                <div className="mt-1 text-3xl font-extrabold text-[#143569]">{linePalletCount}</div>
+                                <div className="mt-2 space-y-1 text-xs text-slate-500">
+                                  <div>{`${t("availableQty")}: ${selectedOutboundSource?.availableQty ?? 0}`}</div>
+                                  <div>{`${t("containers")}: ${outboundAllocationSummary?.containerCount ?? 0}`}</div>
+                                  <div>{`${t("selectedQty")}: ${outboundAllocationSummary?.allocatedQty ?? 0} ${lineUnitLabel}`}</div>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="rounded-2xl border border-slate-200/80 bg-white/90 px-4 py-4">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">{t("shipmentReviewStatus")}</div>
+                                <span className={`status-pill ${lineStatusTone}`}>{lineStatusLabel}</span>
+                              </div>
+                              <div className="mt-3 space-y-2 text-sm text-slate-600">
+                                <div className="flex items-center justify-between gap-3">
+                                  <span>{t("requiredQty")}</span>
+                                  <strong className="font-mono text-slate-700">{line.quantity || 0}</strong>
+                                </div>
+                                <div className="flex items-center justify-between gap-3">
+                                  <span>{t("selectedQty")}</span>
+                                  <strong className="font-mono text-slate-700">{outboundAllocationSummary?.allocatedQty ?? 0}</strong>
+                                </div>
+                                <div className="flex items-center justify-between gap-3">
+                                  <span>{t("remainingQty")}</span>
+                                  <strong className={`font-mono ${(outboundAllocationSummary?.shortageQty ?? 0) > 0 ? "text-amber-700" : "text-slate-700"}`}>{outboundAllocationSummary?.shortageQty ?? 0}</strong>
+                                </div>
+                              </div>
+                              <div className="mt-3 text-xs text-slate-500">
+                                {selectedOutboundSource
+                                  ? `${selectedOutboundSource.description || selectedOutboundSource.sku} · ${t("containerDistribution")}: ${selectedOutboundSource.containerSummary || "-"}`
+                                  : t("selectShipmentSource")}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="rounded-2xl border border-dashed border-slate-200/80 bg-slate-50/60 px-4 py-4">
+                            <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">{t("optionalDetails")}</div>
+                            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                              <label className="grid gap-1.5 text-sm font-medium text-slate-700">
+                                {t("unit")}
+                                <input value={line.unitLabel} onChange={(event) => updateBatchOutboundLine(line.id, { unitLabel: event.target.value })} placeholder="PCS" disabled={isReadOnly} list="outbound-unit-presets" className="min-h-11 rounded-2xl border border-slate-200/80 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-[#143569]/40" />
+                              </label>
+                              <label className="grid gap-1.5 text-sm font-medium text-slate-700">
+                                {t("cartonSize")}
+                                <input value={line.cartonSizeMm} onChange={(event) => updateBatchOutboundLine(line.id, { cartonSizeMm: event.target.value })} placeholder="455*330*325" disabled={isReadOnly} className="min-h-11 rounded-2xl border border-slate-200/80 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-[#143569]/40" />
+                              </label>
+                              <label className="grid gap-1.5 text-sm font-medium text-slate-700">
+                                {t("netWeight")}
+                                <input type="number" min="0" step="0.01" value={numberInputValue(line.netWeightKgs)} onChange={(event) => updateBatchOutboundLine(line.id, { netWeightKgs: Math.max(0, Number(event.target.value || 0)) })} disabled={isReadOnly} className="min-h-11 rounded-2xl border border-slate-200/80 bg-white px-3 py-2 text-right text-sm text-slate-700 outline-none transition focus:border-[#143569]/40" />
+                              </label>
+                              <label className="grid gap-1.5 text-sm font-medium text-slate-700">
+                                {t("grossWeight")}
+                                <input type="number" min="0" step="0.01" value={numberInputValue(line.grossWeightKgs)} onChange={(event) => updateBatchOutboundLine(line.id, { grossWeightKgs: Math.max(0, Number(event.target.value || 0)) })} disabled={isReadOnly} className="min-h-11 rounded-2xl border border-slate-200/80 bg-white px-3 py-2 text-right text-sm text-slate-700 outline-none transition focus:border-[#143569]/40" />
+                              </label>
+                              <label className="grid gap-1.5 text-sm font-medium text-slate-700 md:col-span-2 xl:col-span-4">
+                                {t("internalNotes")}
+                                <input value={line.reason} onChange={(event) => updateBatchOutboundLine(line.id, { reason: event.target.value })} placeholder={t("outboundInternalNotePlaceholder")} disabled={isReadOnly} className="min-h-11 rounded-2xl border border-slate-200/80 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-[#143569]/40" />
+                              </label>
+                            </div>
+                          </div>
                         </div>
                       ) : null}
                       <div className="batch-line-card__meta">
@@ -931,7 +1334,7 @@ export function OutboundShipmentEditorPage({
                       {selectedOutboundSource && outboundWizardStep === 2 ? (
                         <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem", marginBottom: "0.25rem" }}>
                           {!line.pickPalletsTouched ? (
-                            <button className="button button--ghost button--small" type="button" onClick={() => startManualOutboundLinePick(line.id)}>{t("manualPick")}</button>
+                            <button className="button button--ghost button--small" type="button" onClick={() => startManualOutboundLinePick(line.id)}>{t("switchToManualPick")}</button>
                           ) : null}
                           {line.pickPalletsTouched ? (
                             <button className="button button--ghost button--small" type="button" onClick={() => resetOutboundLinePickPallets(line.id)}>{t("resetToAutoPick")}</button>
@@ -941,8 +1344,9 @@ export function OutboundShipmentEditorPage({
                       {selectedOutboundSource && outboundWizardStep === 2 ? (
                         <OutboundPickPlanPanel
                           title={t("containerPickPlan")}
-                          helperText={t("pickPlanAutoModeHint")}
-                          autoPickLabel={t("autoPick")}
+                          helperText={line.pickPalletsTouched ? t("pickPlanManualModeHint") : t("pickPlanAutoModeHint")}
+                          autoPickLabel={line.pickPalletsTouched ? t("manualPick") : t("autoPick")}
+                          selectPalletLabel={t("selectPallet")}
                           searchLabel={t("search")}
                           searchPlaceholder={t("pickPlanSearchPlaceholder")}
                           detailsLabel={t("details")}
@@ -968,6 +1372,14 @@ export function OutboundShipmentEditorPage({
                           pickQtyLabel={t("pickQty")}
                           unitLabel={line.unitLabel || selectedOutboundSource.unit.toUpperCase() || "PCS"}
                           palletLabel={t("pallet")}
+                          fillRemainingLabel={t("fillRemaining")}
+                          fullPalletLabel={t("useFullPallet")}
+                          clearLabel={t("clear")}
+                          repeatLastPickQtyLabel={t("repeatLastPickQty")}
+                          increaseQtyLabel={t("increaseQty")}
+                          decreaseQtyLabel={t("decreaseQty")}
+                          maxHintLabel={t("maxLabel")}
+                          searchShortcutHint={t("pickPlanSearchShortcutHint")}
                           canExpand={outboundPickPlanRows.length > 0}
                           expanded={isOutboundPickPlanExpanded}
                           onToggle={() => toggleOutboundPickPlan(line.id)}
@@ -982,7 +1394,7 @@ export function OutboundShipmentEditorPage({
                             allocatedQty: row.allocatedQty,
                             itemNumber: row.itemNumber || undefined
                           }))}
-                          editable={!isReadOnly}
+                          editable={!isReadOnly && line.pickPalletsTouched}
                           inputDisabled={isReadOnly}
                           onAllocatedQtyChange={(rowId, allocatedQty) => {
                             const palletRow = outboundPickPlanRows.find((row) => row.id === rowId);
@@ -1007,8 +1419,35 @@ export function OutboundShipmentEditorPage({
               <div className="batch-allocation-preview">
                 <div className="batch-allocation-preview__header">
                   <div>
-                    <strong>{t("pickAllocationPreview")}</strong>
-                    <span>{t("reviewStepHint")}</span>
+                    <strong>{t("shipmentFinalConfirmTitle")}</strong>
+                    <span>{t("shipmentFinalConfirmHint")}</span>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span className={`status-pill ${
+                        outboundStepOverview.reviewStatus === "shortage"
+                          ? "status-pill--alert"
+                          : outboundStepOverview.reviewStatus === "ready"
+                            ? "status-pill--ok"
+                            : ""
+                      }`}>
+                        {outboundStepOverview.reviewStatus === "shortage"
+                          ? t("shortageDetected")
+                          : outboundStepOverview.reviewStatus === "ready"
+                            ? t("readyToConfirm")
+                            : t("reviewIncomplete")}
+                      </span>
+                      <span className="rounded-full border border-slate-200/80 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                        {`${t("warehouses")}: ${outboundStepOverview.warehouseCount}`}
+                      </span>
+                      <span className="rounded-full border border-slate-200/80 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                        {`${t("containers")}: ${outboundStepOverview.containerCount}`}
+                      </span>
+                      <span className="rounded-full border border-slate-200/80 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                        {`${t("pallets")}: ${outboundStepOverview.palletCount}`}
+                      </span>
+                      <span className="rounded-full border border-slate-200/80 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                        {`${t("selectedQty")}: ${outboundStepOverview.totalPickedQty}`}
+                      </span>
+                    </div>
                   </div>
                   <div className="batch-allocation-preview__stats">
                     <div className="batch-allocation-preview__stat">
@@ -1078,7 +1517,7 @@ export function OutboundShipmentEditorPage({
                               `${t("requiredQty")}: ${line.quantity}`,
                               `${t("selectedQty")}: ${allocationSummary?.allocatedQty ?? 0}`,
                               `${t("remainingQty")}: ${allocationSummary?.shortageQty ?? 0}`,
-                              `${t("pallets")}: ${line.pallets}`
+                              `${t("pallets")}: ${resolveOutboundLinePalletCount(line.pickPallets, line.pallets)}`
                             ].join(" · ")}
                           </span>
                         </div>
@@ -1087,15 +1526,98 @@ export function OutboundShipmentEditorPage({
                   })}
                 </div>
 
+                {outboundShipmentReviewGroups.length > 0 ? (
+                  <div className="batch-lines" style={{ marginTop: "1rem" }}>
+                    <div className="batch-line-card inbound-compact-card">
+                      <div className="batch-line-card__header">
+                        <div className="batch-line-card__title">
+                          <strong>{t("shipmentGroupedSummaryTitle")}</strong>
+                          <span className="status-pill status-pill--ok">{t("shipmentStepPickPlan")}</span>
+                        </div>
+                      </div>
+                      <div className="batch-line-card__meta">
+                        <span className="batch-line-card__hint">{t("shipmentGroupedSummaryHint")}</span>
+                      </div>
+                    </div>
+                    {outboundShipmentReviewGroups.map((warehouseGroup) => (
+                      <div className="batch-line-card" key={warehouseGroup.key}>
+                        <div className="batch-line-card__header">
+                          <div className="batch-line-card__title">
+                            <strong>{warehouseGroup.locationName}</strong>
+                            <span className="status-pill status-pill--ok">{`${t("containers")}: ${warehouseGroup.containerCount}`}</span>
+                          </div>
+                        </div>
+                        <div className="batch-line-card__meta">
+                          <span className="batch-line-card__hint">
+                            {[
+                              `${t("containers")}: ${warehouseGroup.containerCount}`,
+                              `${t("pallets")}: ${warehouseGroup.palletCount}`,
+                              `${t("selectedQty")}: ${warehouseGroup.totalQty}`,
+                              `${t("totalLines")}: ${warehouseGroup.lineCount}`
+                            ].join(" · ")}
+                          </span>
+                        </div>
+                        <div className="mt-3 grid gap-3 md:grid-cols-2">
+                          {warehouseGroup.containers.map((containerGroup) => (
+                            <div
+                              key={containerGroup.key}
+                              className="rounded-2xl border border-slate-200/80 bg-white/95 px-4 py-4"
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="text-sm font-semibold text-slate-700">
+                                    {t("sourceContainer")}: <span className="font-mono">{containerGroup.containerNo || "-"}</span>
+                                  </div>
+                                  <div className="mt-1 text-xs text-slate-500">
+                                    {`${t("currentStorage")}: ${warehouseGroup.locationName} / ${containerGroup.storageSections.join(", ") || DEFAULT_STORAGE_SECTION}`}
+                                  </div>
+                                </div>
+                                <span className="status-pill status-pill--ok">{`${t("pallets")}: ${containerGroup.palletCount}`}</span>
+                              </div>
+                              <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">
+                                <span>{`${t("pallets")}: ${containerGroup.palletCount}`}</span>
+                                <span>{`${t("selectedQty")}: ${containerGroup.totalQty}`}</span>
+                                <span>{`${t("totalLines")}: ${containerGroup.lineCount}`}</span>
+                              </div>
+                              <div className="mt-3 space-y-2">
+                                {containerGroup.items.map((itemGroup) => (
+                                  <div
+                                    key={itemGroup.key}
+                                    className="rounded-xl border border-slate-200/70 bg-slate-50/70 px-3 py-3"
+                                  >
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div className="min-w-0">
+                                        <div className="text-sm font-semibold text-slate-700">
+                                          <span className="font-mono">{itemGroup.sku}</span>
+                                          {itemGroup.description ? ` · ${itemGroup.description}` : ""}
+                                        </div>
+                                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+                                          {itemGroup.itemNumber ? <span className="font-mono">{itemGroup.itemNumber}</span> : null}
+                                          <span>{`${t("shipmentLine")}: ${itemGroup.lineLabels.join(", ")}`}</span>
+                                        </div>
+                                      </div>
+                                      <div className="text-sm font-semibold text-[#143569]">{itemGroup.totalQty}</div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
                 {batchOutboundAllocationPreview.rows.length > 0 ? (
                   <Box sx={{ minWidth: 0, height: 260 }}>
                     <DataGrid
                       rows={batchOutboundAllocationPreview.rows}
                       columns={outboundAllocationPreviewColumns}
-                      pagination
-                      pageSizeOptions={[5, 10, 20]}
+                      pagination={batchOutboundAllocationPreview.rows.length > 10}
+                      pageSizeOptions={[10, 20, 50]}
                       disableRowSelectionOnClick
-                      initialState={{ pagination: { paginationModel: { pageSize: 5, page: 0 } } }}
+                      initialState={{ pagination: { paginationModel: { pageSize: Math.min(10, Math.max(batchOutboundAllocationPreview.rows.length, 1)), page: 0 } } }}
                       getRowHeight={() => 64}
                       sx={{ border: 0 }}
                     />
@@ -1105,10 +1627,21 @@ export function OutboundShipmentEditorPage({
                     {t("pickAllocationPreviewEmpty")}
                   </div>
                 )}
+
+                <label className="mt-4 flex items-start gap-3 rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-3 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={reviewConfirmed}
+                    onChange={(event) => setReviewConfirmed(event.target.checked)}
+                    disabled={isReadOnly}
+                    className="mt-1 h-4 w-4 rounded border-slate-300 text-[#143569] focus:ring-[#143569]"
+                  />
+                  <span>{t("shipmentFinalConfirmCheckbox")}</span>
+                </label>
               </div>
             ) : null}
 
-            <div className="sheet-form__actions" style={{ marginTop: "1rem" }}>
+            <div className="sheet-form__actions sticky bottom-3 z-20 rounded-2xl border border-slate-200/80 bg-white/95 px-4 py-3 shadow-[0_18px_40px_rgba(15,23,42,0.08)] backdrop-blur" style={{ marginTop: "1rem" }}>
               {isEditingConfirmedOutbound ? (
                 <button className="button button--ghost" type="button" disabled={batchSubmitting} onClick={() => void handleCopyCurrentShipment()}>{t("reEnterShipment")}</button>
               ) : (
@@ -1119,9 +1652,9 @@ export function OutboundShipmentEditorPage({
                   <button className="button button--ghost" type="button" onClick={() => moveOutboundWizardStep((outboundWizardStep - 1) as OutboundWizardStep)} disabled={isReadOnly}>{t("back")}</button>
                 ) : null}
                 {outboundWizardStep < 3 ? (
-                  <button className="button button--primary" type="button" onClick={() => moveOutboundWizardStep((outboundWizardStep + 1) as OutboundWizardStep)} disabled={isReadOnly}>{t("next")}</button>
+                  <button id="shipment-editor-next-action" className="button button--primary" type="button" onClick={() => moveOutboundWizardStep((outboundWizardStep + 1) as OutboundWizardStep)} disabled={isReadOnly || hasNoAvailableSources || (outboundWizardStep === 1 ? hasBlockingStep1Issues : hasBlockingStep2Issues)}>{t("next")}</button>
                 ) : !isEditingConfirmedOutbound ? (
-                  <button className="button button--primary" type="submit" disabled={batchSubmitting || isReadOnly || hasNoAvailableSources}>{batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("confirmShipment")}</button>
+                  <button className="button button--primary" type="submit" disabled={batchSubmitting || isReadOnly || hasNoAvailableSources || !reviewConfirmed || outboundStepOverview.reviewStatus !== "ready"}>{batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("confirmShipment")}</button>
                 ) : null}
               </div>
               <button className="button button--ghost" type="button" onClick={onBackToList}>{t("cancel")}</button>
@@ -1148,20 +1681,65 @@ function createEmptyBatchOutboundForm(expectedShipDate = ""): BatchOutboundFormS
   };
 }
 
-function createEmptyBatchOutboundLine(): BatchOutboundLineState {
+const OUTBOUND_HEADER_DEFAULTS_STORAGE_KEY = "sim-outbound-shipment-editor-defaults";
+
+function normalizeRememberedOutboundHeaderValue(value: string) {
+  return value.trim();
+}
+
+function loadRememberedOutboundHeaderDefaults(): RememberedOutboundHeaderDefaults | null {
+  try {
+    const raw = window.sessionStorage.getItem(OUTBOUND_HEADER_DEFAULTS_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<RememberedOutboundHeaderDefaults>;
+    const rememberedDefaults: RememberedOutboundHeaderDefaults = {
+      shipToName: normalizeRememberedOutboundHeaderValue(parsed.shipToName || ""),
+      shipToAddress: normalizeRememberedOutboundHeaderValue(parsed.shipToAddress || ""),
+      shipToContact: normalizeRememberedOutboundHeaderValue(parsed.shipToContact || ""),
+      carrierName: normalizeRememberedOutboundHeaderValue(parsed.carrierName || "")
+    };
+
+    return Object.values(rememberedDefaults).some(Boolean) ? rememberedDefaults : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveRememberedOutboundHeaderDefaults(form: BatchOutboundFormState) {
+  const rememberedDefaults: RememberedOutboundHeaderDefaults = {
+    shipToName: normalizeRememberedOutboundHeaderValue(form.shipToName),
+    shipToAddress: normalizeRememberedOutboundHeaderValue(form.shipToAddress),
+    shipToContact: normalizeRememberedOutboundHeaderValue(form.shipToContact),
+    carrierName: normalizeRememberedOutboundHeaderValue(form.carrierName)
+  };
+
+  if (!Object.values(rememberedDefaults).some(Boolean)) {
+    window.sessionStorage.removeItem(OUTBOUND_HEADER_DEFAULTS_STORAGE_KEY);
+    return;
+  }
+
+  window.sessionStorage.setItem(OUTBOUND_HEADER_DEFAULTS_STORAGE_KEY, JSON.stringify(rememberedDefaults));
+}
+
+function createEmptyBatchOutboundLine(seed?: Partial<BatchOutboundLineState>): BatchOutboundLineState {
   return {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    sourceKey: "",
-    quantity: 0,
-    pallets: 0,
-    palletsDetailCtns: "",
-    unitLabel: "PCS",
-    cartonSizeMm: "",
-    netWeightKgs: 0,
-    grossWeightKgs: 0,
-    reason: "",
-    pickPallets: [],
-    pickPalletsTouched: false
+    id: seed?.id ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    locationId: seed?.locationId ?? "",
+    sourceKey: seed?.sourceKey ?? "",
+    sourceSearch: seed?.sourceSearch ?? "",
+    quantity: seed?.quantity ?? 0,
+    pallets: seed?.pallets ?? 0,
+    palletsDetailCtns: seed?.palletsDetailCtns ?? "",
+    unitLabel: seed?.unitLabel ?? "PCS",
+    cartonSizeMm: seed?.cartonSizeMm ?? "",
+    netWeightKgs: seed?.netWeightKgs ?? 0,
+    grossWeightKgs: seed?.grossWeightKgs ?? 0,
+    reason: seed?.reason ?? "",
+    pickPallets: seed?.pickPallets ?? [],
+    pickPalletsTouched: seed?.pickPalletsTouched ?? false
   };
 }
 
@@ -1175,6 +1753,117 @@ function displayDescription(item: Pick<Item, "description" | "name">) {
 
 function numberInputValue(value: number) {
   return value === 0 ? "" : String(value);
+}
+
+function isOutboundLineEmpty(line: BatchOutboundLineState) {
+  return (
+    line.locationId.trim() === ""
+    && line.sourceKey.trim() === ""
+    && line.sourceSearch.trim() === ""
+    && line.quantity <= 0
+    && line.pallets <= 0
+    && line.reason.trim() === ""
+    && line.cartonSizeMm.trim() === ""
+    && line.netWeightKgs <= 0
+    && line.grossWeightKgs <= 0
+  );
+}
+
+function buildOutboundLineValidations(
+  lines: BatchOutboundLineState[],
+  sourceOptions: OutboundSourceOption[],
+  preview: OutboundAllocationPreviewResult,
+  t: (key: string, vars?: Record<string, string | number>) => string
+) {
+  const validations = new Map<string, OutboundLineValidationState>();
+
+  for (const line of lines) {
+    const selectedSource = findOutboundSourceOption(sourceOptions, line.sourceKey);
+    const allocationSummary = preview.summaries.get(line.id);
+    const isActive = !isOutboundLineEmpty(line);
+    const warehouseMessage = isActive && !line.locationId.trim() ? t("selectWarehouseFirst") : "";
+    const skuMessage = isActive && line.locationId.trim() && !line.sourceKey.trim()
+      ? (line.sourceSearch.trim() ? t("selectValidSkuOption") : t("selectSkuAfterWarehouse"))
+      : "";
+    let quantityMessage = "";
+    if (isActive && line.sourceKey.trim() && line.quantity <= 0) {
+      quantityMessage = t("outboundQtyRequired");
+    } else if (selectedSource && line.quantity > selectedSource.availableQty) {
+      quantityMessage = t("outboundQtyExceedsStock", {
+        sku: selectedSource.sku,
+        available: selectedSource.availableQty
+      });
+    }
+    const hasBlockingStep1 = Boolean(warehouseMessage || skuMessage || quantityMessage);
+
+    let pickMessage = "";
+    if (!hasBlockingStep1 && selectedSource && line.quantity > 0) {
+      const allocatedQty = allocationSummary?.allocatedQty ?? 0;
+      if (allocatedQty !== line.quantity) {
+        pickMessage = (allocationSummary?.shortageQty ?? 0) > 0
+          ? t("outboundQtyExceedsStock", {
+              sku: selectedSource.sku,
+              available: allocatedQty
+            })
+          : t("pickQtyMustMatchRequired");
+      }
+    }
+
+    validations.set(line.id, {
+      lineId: line.id,
+      isActive,
+      isReady: isActive && !hasBlockingStep1 && !pickMessage,
+      hasBlockingStep1,
+      hasBlockingStep2: Boolean(pickMessage),
+      warehouseMessage,
+      skuMessage,
+      quantityMessage,
+      pickMessage
+    });
+  }
+
+  return validations;
+}
+
+function buildOutboundStepOverview(
+  lines: BatchOutboundLineState[],
+  validations: Map<string, OutboundLineValidationState>,
+  preview: OutboundAllocationPreviewResult,
+  reviewGroups: OutboundShipmentReviewWarehouseGroup[]
+): OutboundStepOverview {
+  let readyLines = 0;
+  let blockedLines = 0;
+  for (const line of lines) {
+    const validation = validations.get(line.id);
+    if (!validation?.isActive) {
+      continue;
+    }
+    if (validation.hasBlockingStep1) {
+      blockedLines += 1;
+      continue;
+    }
+    readyLines += 1;
+  }
+
+  const palletCount = new Set(preview.rows.map((row) => row.palletId)).size;
+  const reviewStatus: OutboundStepOverview["reviewStatus"] = preview.shortageLineCount > 0
+    ? "shortage"
+    : readyLines === 0 || preview.totalAllocatedQty !== preview.totalRequestedQty
+      ? "incomplete"
+      : "ready";
+
+  return {
+    readyLines,
+    blockedLines,
+    totalRequestedQty: preview.totalRequestedQty,
+    totalPickedQty: preview.totalAllocatedQty,
+    shortageLines: preview.shortageLineCount,
+    shortageQty: Math.max(0, preview.totalRequestedQty - preview.totalAllocatedQty),
+    warehouseCount: reviewGroups.length,
+    containerCount: preview.totalContainerCount,
+    palletCount,
+    reviewStatus
+  };
 }
 
 function normalizeDocumentStatus(status: string) {
@@ -1191,26 +1880,6 @@ function normalizeOutboundTrackingStatusValue(trackingStatus?: string | null, do
     return normalizedTrackingStatus;
   }
   return "SCHEDULED";
-}
-
-function buildAutoPalletPlan(totalQty: number, unitsPerPallet: number) {
-  if (totalQty <= 0 || unitsPerPallet <= 0) {
-    return { pallets: 0, detail: "" };
-  }
-
-  const fullPallets = Math.floor(totalQty / unitsPerPallet);
-  const remainder = totalQty % unitsPerPallet;
-  const pallets = fullPallets + (remainder > 0 ? 1 : 0);
-
-  if (fullPallets === 0) {
-    return { pallets, detail: `1*${totalQty}` };
-  }
-
-  if (remainder === 0) {
-    return { pallets, detail: `${pallets}*${unitsPerPallet}` };
-  }
-
-  return { pallets, detail: `${fullPallets}*${unitsPerPallet}+1*${remainder}` };
 }
 
 function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceOptions: OutboundSourceOption[]): OutboundAllocationPreviewResult {
@@ -1364,6 +2033,11 @@ function countSelectedOutboundPallets(entries: OutboundLinePalletPick[]) {
   return normalizeOutboundLinePalletPicks(entries).filter((entry) => entry.quantity > 0).length;
 }
 
+function resolveOutboundLinePalletCount(entries: OutboundLinePalletPick[] | null | undefined, fallback = 0) {
+  const selectedPalletCount = countSelectedOutboundPallets(entries ?? []);
+  return selectedPalletCount > 0 ? selectedPalletCount : Math.max(0, fallback);
+}
+
 function areOutboundLinePalletPicksEqual(
   left: OutboundLinePalletPick[] | null | undefined,
   right: OutboundLinePalletPick[] | null | undefined
@@ -1401,6 +2075,167 @@ function buildAutoOutboundPalletSelections(quantity: number, candidates: Outboun
     remainingQty -= selectedQty;
   }
   return selections;
+}
+
+function buildOutboundShipmentReviewGroups(rows: OutboundAllocationPreviewRow[]): OutboundShipmentReviewWarehouseGroup[] {
+  const warehouseGroups = new Map<string, {
+    key: string;
+    locationName: string;
+    totalQty: number;
+    palletIds: Set<number>;
+    lineIds: Set<string>;
+    containers: Map<string, {
+      key: string;
+      containerNo: string;
+      storageSections: Set<string>;
+      totalQty: number;
+      palletIds: Set<number>;
+      lineIds: Set<string>;
+      items: Map<string, {
+        key: string;
+        sku: string;
+        itemNumber: string;
+        description: string;
+        totalQty: number;
+        lineLabels: Set<string>;
+      }>;
+    }>;
+  }>();
+
+  for (const row of rows) {
+    const warehouseKey = row.locationName || "-";
+    const containerKey = row.containerNo || `${row.locationName}/${row.storageSection}`;
+    const warehouseGroup = warehouseGroups.get(warehouseKey) ?? {
+      key: warehouseKey,
+      locationName: row.locationName || "-",
+      totalQty: 0,
+      palletIds: new Set<number>(),
+      lineIds: new Set<string>(),
+      containers: new Map()
+    };
+    const containerGroup = warehouseGroup.containers.get(containerKey) ?? {
+      key: `${warehouseKey}|${containerKey}`,
+      containerNo: row.containerNo || "-",
+      storageSections: new Set<string>(),
+      totalQty: 0,
+      palletIds: new Set<number>(),
+      lineIds: new Set<string>(),
+      items: new Map()
+    };
+    const itemKey = `${row.itemNumber}|${row.sku}|${row.description}`;
+    const itemGroup = containerGroup.items.get(itemKey) ?? {
+      key: itemKey,
+      sku: row.sku,
+      itemNumber: row.itemNumber,
+      description: row.description,
+      totalQty: 0,
+      lineLabels: new Set<string>()
+    };
+
+    warehouseGroup.totalQty += row.allocatedQty;
+    warehouseGroup.palletIds.add(row.palletId);
+    warehouseGroup.lineIds.add(row.lineId);
+
+    containerGroup.totalQty += row.allocatedQty;
+    containerGroup.storageSections.add(normalizeStorageSection(row.storageSection));
+    containerGroup.palletIds.add(row.palletId);
+    containerGroup.lineIds.add(row.lineId);
+
+    itemGroup.totalQty += row.allocatedQty;
+    itemGroup.lineLabels.add(row.lineLabel);
+
+    containerGroup.items.set(itemKey, itemGroup);
+    warehouseGroup.containers.set(containerKey, containerGroup);
+    warehouseGroups.set(warehouseKey, warehouseGroup);
+  }
+
+  return [...warehouseGroups.values()]
+    .map((warehouseGroup) => ({
+      key: warehouseGroup.key,
+      locationName: warehouseGroup.locationName,
+      totalQty: warehouseGroup.totalQty,
+      palletCount: warehouseGroup.palletIds.size,
+      lineCount: warehouseGroup.lineIds.size,
+      containerCount: warehouseGroup.containers.size,
+      containers: [...warehouseGroup.containers.values()]
+        .map((containerGroup) => ({
+          key: containerGroup.key,
+          containerNo: containerGroup.containerNo,
+          storageSections: [...containerGroup.storageSections].sort(),
+          totalQty: containerGroup.totalQty,
+          palletCount: containerGroup.palletIds.size,
+          lineCount: containerGroup.lineIds.size,
+          items: [...containerGroup.items.values()]
+            .map((itemGroup) => ({
+              key: itemGroup.key,
+              sku: itemGroup.sku,
+              itemNumber: itemGroup.itemNumber,
+              description: itemGroup.description,
+              totalQty: itemGroup.totalQty,
+              lineLabels: [...itemGroup.lineLabels].sort()
+            }))
+            .sort((left, right) => {
+              const skuCompare = left.sku.localeCompare(right.sku);
+              if (skuCompare !== 0) return skuCompare;
+              return left.itemNumber.localeCompare(right.itemNumber);
+            })
+        }))
+        .sort((left, right) => left.containerNo.localeCompare(right.containerNo))
+    }))
+    .sort((left, right) => left.locationName.localeCompare(right.locationName));
+}
+
+function buildWarehouseOptions(sourceOptions: OutboundSourceOption[]) {
+  const uniqueWarehouses = new Map<string, WarehouseOption>();
+  for (const source of sourceOptions) {
+    const key = String(source.locationId);
+    if (!uniqueWarehouses.has(key)) {
+      uniqueWarehouses.set(key, { id: key, name: source.locationName });
+    }
+  }
+  return [...uniqueWarehouses.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function normalizeOutboundSourceSearchValue(value: string) {
+  return value.trim().toUpperCase();
+}
+
+function formatOutboundSourceOptionLabel(sourceOption: OutboundSourceOption) {
+  return `${sourceOption.sku} | ${sourceOption.itemNumber || "-"} | ${sourceOption.customerName} | ${sourceOption.description}`;
+}
+
+function findOutboundSourceOptionBySearchValue(sourceOptions: OutboundSourceOption[], searchValue: string) {
+  const normalizedSearchValue = normalizeOutboundSourceSearchValue(searchValue);
+  if (!normalizedSearchValue) {
+    return undefined;
+  }
+
+  const exactLabelMatches = sourceOptions.filter((sourceOption) => (
+    normalizeOutboundSourceSearchValue(formatOutboundSourceOptionLabel(sourceOption)) === normalizedSearchValue
+  ));
+  if (exactLabelMatches.length === 1) {
+    return exactLabelMatches[0];
+  }
+
+  const exactIdentifierMatches = sourceOptions.filter((sourceOption) => (
+    normalizeOutboundSourceSearchValue(sourceOption.sku) === normalizedSearchValue
+    || normalizeOutboundSourceSearchValue(sourceOption.itemNumber) === normalizedSearchValue
+    || normalizeOutboundSourceSearchValue(sourceOption.customerName) === normalizedSearchValue
+    || normalizeOutboundSourceSearchValue(sourceOption.description) === normalizedSearchValue
+  ));
+  if (exactIdentifierMatches.length === 1) {
+    return exactIdentifierMatches[0];
+  }
+
+  return undefined;
+}
+
+function filterOutboundSourcesByLocation(sourceOptions: OutboundSourceOption[], locationId: string) {
+  const normalizedLocationId = locationId.trim();
+  if (!normalizedLocationId) {
+    return [] as OutboundSourceOption[];
+  }
+  return sourceOptions.filter((sourceOption) => String(sourceOption.locationId) === normalizedLocationId);
 }
 
 function buildOutboundSourceKey(customerId: number, locationId: number, skuMasterId: number) {
@@ -1586,10 +2421,12 @@ function buildOutboundSourceOptionsFromPallets(pallets: PalletTrace[], skuMaster
 
 function buildOutboundEditorSourceState({
   document,
-  launchContext
+  launchContext,
+  rememberedHeaderDefaults
 }: {
   document: OutboundDocument | null;
   launchContext: OutboundShipmentEditorLaunchContext | null;
+  rememberedHeaderDefaults: RememberedOutboundHeaderDefaults | null;
 }) {
   if (document) {
     return {
@@ -1607,9 +2444,11 @@ function buildOutboundEditorSourceState({
       lines: document.lines.length > 0
         ? document.lines.map((line) => ({
             id: String(line.id),
+            locationId: String(line.locationId),
             sourceKey: buildOutboundSourceKey(document.customerId, line.locationId, line.skuMasterId),
+            sourceSearch: "",
             quantity: line.quantity,
-            pallets: line.pallets || 0,
+            pallets: resolveOutboundLinePalletCount(line.pickPallets, line.pallets || 0),
             palletsDetailCtns: line.palletsDetailCtns || "",
             unitLabel: line.unitLabel || "PCS",
             cartonSizeMm: line.cartonSizeMm || "",
@@ -1619,12 +2458,26 @@ function buildOutboundEditorSourceState({
             pickPallets: line.pickPallets ?? [],
             pickPalletsTouched: (line.pickPallets?.length ?? 0) > 0
           }))
-        : [createEmptyBatchOutboundLine()]
+        : [createEmptyBatchOutboundLine()],
+      usedRememberedDefaults: false
     };
   }
 
+  const emptyForm = createEmptyBatchOutboundForm(launchContext?.scheduledDate || "");
+  const rememberedDefaults = rememberedHeaderDefaults ?? {
+    shipToName: "",
+    shipToAddress: "",
+    shipToContact: "",
+    carrierName: ""
+  };
+  const usedRememberedDefaults = Object.values(rememberedDefaults).some(Boolean);
+
   return {
-    form: createEmptyBatchOutboundForm(launchContext?.scheduledDate || ""),
-    lines: [createEmptyBatchOutboundLine()]
+    form: {
+      ...emptyForm,
+      ...rememberedDefaults
+    },
+    lines: [createEmptyBatchOutboundLine()],
+    usedRememberedDefaults
   };
 }
