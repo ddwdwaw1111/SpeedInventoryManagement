@@ -455,6 +455,7 @@ function createPalletTrace(overrides: Partial<PalletTrace> = {}): PalletTrace {
     currentLocationName: "NJ",
     currentStorageSection: "TEMP",
     currentContainerNo: "GCXU5817233",
+    containerType: "NORMAL",
     status: "OPEN",
     createdAt: "2026-04-01T08:30:00Z",
     updatedAt: "2026-04-01T09:30:00Z",

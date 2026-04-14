@@ -96,6 +96,7 @@ describe("OutboundShipmentEditorPage", () => {
         currentLocationName: "NJ",
         currentStorageSection: "TEMP",
         currentContainerNo: "GCXU5817233",
+        containerType: "NORMAL",
         status: "OPEN",
         createdAt: "2026-03-24T10:00:00Z",
         updatedAt: "2026-03-24T10:00:00Z",
@@ -212,6 +213,7 @@ describe("OutboundShipmentEditorPage", () => {
         currentLocationName: "NJ",
         currentStorageSection: "TEMP",
         currentContainerNo: "GCXU5817233",
+        containerType: "NORMAL",
         status: "OPEN",
         createdAt: "2026-03-24T10:00:00Z",
         updatedAt: "2026-03-24T10:00:00Z",
@@ -297,6 +299,7 @@ describe("OutboundShipmentEditorPage", () => {
         currentLocationName: "NJ",
         currentStorageSection: "TEMP",
         currentContainerNo: "GCXU5817233",
+        containerType: "NORMAL",
         status: "OPEN",
         createdAt: "2026-03-24T10:00:00Z",
         updatedAt: "2026-03-24T10:00:00Z",
@@ -427,6 +430,7 @@ describe("OutboundShipmentEditorPage", () => {
         currentLocationName: "NJ",
         currentStorageSection: "TEMP",
         currentContainerNo: "GCXU5817233",
+        containerType: "NORMAL",
         status: "OPEN",
         createdAt: "2026-03-24T10:00:00Z",
         updatedAt: "2026-03-24T10:00:00Z",
@@ -541,6 +545,7 @@ describe("OutboundShipmentEditorPage", () => {
         currentLocationName: "NJ",
         currentStorageSection: "TEMP",
         currentContainerNo: "GCXU5817233",
+        containerType: "NORMAL",
         status: "OPEN",
         createdAt: "2026-03-24T10:00:00Z",
         updatedAt: "2026-03-24T10:00:00Z",
@@ -578,6 +583,7 @@ describe("OutboundShipmentEditorPage", () => {
         currentLocationName: "NJ",
         currentStorageSection: "TEMP",
         currentContainerNo: "GCXU5817234",
+        containerType: "NORMAL",
         status: "OPEN",
         createdAt: "2026-03-25T10:00:00Z",
         updatedAt: "2026-03-25T10:00:00Z",
@@ -671,6 +677,7 @@ describe("OutboundShipmentEditorPage", () => {
         currentLocationName: "NJ",
         currentStorageSection: "TEMP",
         currentContainerNo: "GCXU5817233",
+        containerType: "NORMAL",
         status: "OPEN",
         createdAt: "2026-03-24T10:00:00Z",
         updatedAt: "2026-03-24T10:00:00Z",
@@ -708,6 +715,7 @@ describe("OutboundShipmentEditorPage", () => {
         currentLocationName: "NJ",
         currentStorageSection: "TEMP",
         currentContainerNo: "GCXU5817234",
+        containerType: "NORMAL",
         status: "OPEN",
         createdAt: "2026-03-25T10:00:00Z",
         updatedAt: "2026-03-25T10:00:00Z",
@@ -745,6 +753,7 @@ describe("OutboundShipmentEditorPage", () => {
         currentLocationName: "NJ",
         currentStorageSection: "TEMP",
         currentContainerNo: "GCXU5817235",
+        containerType: "NORMAL",
         status: "OPEN",
         createdAt: "2026-03-26T10:00:00Z",
         updatedAt: "2026-03-26T10:00:00Z",
@@ -800,8 +809,8 @@ describe("OutboundShipmentEditorPage", () => {
     fireEvent.change(screen.getByLabelText("Pick Qty: PLT-502"), { target: { value: "3" } });
 
     const pallet503Card = screen.getByText("PLT-503").closest(".rounded-2xl");
-    expect(pallet503Card).not.toBeNull();
-    if (!pallet503Card) {
+    expect(pallet503Card).toBeInstanceOf(HTMLElement);
+    if (!(pallet503Card instanceof HTMLElement)) {
       throw new Error("Expected pallet 503 card");
     }
 
@@ -973,6 +982,7 @@ describe("OutboundShipmentEditorPage", () => {
         currentLocationName: "NJ",
         currentStorageSection: "TEMP",
         currentContainerNo: "GCXU5817233",
+        containerType: "NORMAL",
         status: "OPEN",
         createdAt: "2026-03-24T10:00:00Z",
         updatedAt: "2026-03-24T10:00:00Z",
@@ -1119,3 +1129,5 @@ describe("OutboundShipmentEditorPage", () => {
     expect(onRefresh).toHaveBeenCalled();
   });
 });
+
+

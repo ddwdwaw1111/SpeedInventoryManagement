@@ -80,6 +80,7 @@ describe("InboundReceiptEditorPage", () => {
         expectedArrivalDate: "2026-03-31",
         actualArrivalDate: undefined,
         containerNo: "MSCU1234567",
+        containerType: "NORMAL",
         handlingMode: "PALLETIZED",
         storageSection: "TEMP",
         unitLabel: "CTN",

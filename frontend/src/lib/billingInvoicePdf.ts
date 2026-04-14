@@ -2,11 +2,9 @@ import * as pdfMake from "pdfmake/build/pdfmake";
 import type { Content, CustomTableLayout, Style, TableCell, TDocumentDefinitions, TFontDictionary } from "pdfmake/interfaces";
 
 import { formatDateTimeValue } from "./dates";
-import type { BillingInvoice } from "./types";
+import type { BillingExportMode, BillingInvoice, BillingInvoiceLineData, BillingInvoiceType } from "./types";
 
 const BILLING_TABLE_LAYOUT_NAME = "billingInvoiceTable";
-const SUBTOTAL_ROW_MARGIN: [number, number, number, number] = [0, 1, 0, 1];
-const GRAND_TOTAL_ROW_MARGIN: [number, number, number, number] = [0, 2, 0, 2];
 const CJK_FONT_NAME = "NotoSansCJKSC";
 const CJK_FONT_URL_BASE = "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/OTF/SimplifiedChinese";
 
@@ -92,55 +90,53 @@ const styles: Record<string, Style> = {
     color: "#102a43",
     fillColor: "#EEF2F7",
     alignment: "right"
-  },
-  tableGrandTotalLabel: {
-    fontSize: 8,
-    bold: true,
-    color: "#ffffff",
-    fillColor: "#1f4b7a",
-    alignment: "right"
-  },
-  tableGrandTotalValue: {
-    fontSize: 8,
-    bold: true,
-    color: "#ffffff",
-    fillColor: "#1f4b7a",
-    alignment: "right"
   }
 };
 
 export type BillingInvoicePdfInput = {
   invoice: BillingInvoice;
   timeZone: string;
+  exportMode?: BillingExportMode;
 };
 
-export function downloadBillingInvoicePdf({ invoice, timeZone }: BillingInvoicePdfInput) {
-  const definition = buildBillingInvoicePdfDefinition({ invoice, timeZone });
+export function downloadBillingInvoicePdf({ invoice, timeZone, exportMode = "SUMMARY" }: BillingInvoicePdfInput) {
+  const definition = buildBillingInvoicePdfDefinition({ invoice, timeZone, exportMode });
   const tableLayouts = { [BILLING_TABLE_LAYOUT_NAME]: BILLING_TABLE_LAYOUT };
-  void pdfMake.createPdf(definition, tableLayouts, PDF_FONTS).download(buildFileName(invoice.invoiceNo));
+  void pdfMake.createPdf(definition, tableLayouts, PDF_FONTS).download(buildFileName(invoice.invoiceNo, exportMode));
 }
 
-export function buildBillingInvoicePdfDefinition({ invoice, timeZone }: BillingInvoicePdfInput): TDocumentDefinitions {
+export function buildBillingInvoicePdfDefinition({ invoice, timeZone, exportMode = "SUMMARY" }: BillingInvoicePdfInput): TDocumentDefinitions {
+  const metaRows: TableCell[][] = [
+    [
+      metaBlock("Customer", invoice.customerNameSnapshot),
+      metaBlock("Invoice No.", invoice.invoiceNo),
+      metaBlock("Billing Period", `${invoice.periodStart} to ${invoice.periodEnd}`),
+      metaBlock("Invoice Type", invoiceTypeLabel(invoice.invoiceType))
+    ],
+    [
+      metaBlock("Status", invoice.status),
+      metaBlock("Created", formatDateTimeValue(invoice.createdAt, timeZone)),
+      metaBlock("Export", exportMode === "DETAILED" ? "Detailed" : "Summary"),
+      metaBlock("Grand Total", formatMoney(invoice.grandTotal))
+    ]
+  ];
+
+  if (invoice.invoiceType === "STORAGE_SETTLEMENT") {
+    metaRows.push([
+      metaBlock("Container Type", formatContainerType(invoice.containerType)),
+      metaBlock("Warehouse", invoice.warehouseNameSnapshot || "-"),
+      metaBlock("", ""),
+      metaBlock("", "")
+    ]);
+  }
+
   const content: Content[] = [
     { text: "Billing Invoice", style: "pageTitle", margin: [0, 0, 0, 2] },
-    { text: `${invoice.invoiceNo} · ${invoice.customerNameSnapshot}`, style: "pageSubtitle", margin: [0, 0, 0, 8] },
+    { text: `${invoice.invoiceNo} | ${invoice.customerNameSnapshot}`, style: "pageSubtitle", margin: [0, 0, 0, 8] },
     {
       table: {
         widths: ["*", "*", "*", "*"],
-        body: [
-          [
-            metaBlock("Customer", invoice.customerNameSnapshot),
-            metaBlock("Invoice No.", invoice.invoiceNo),
-            metaBlock("Billing Period", `${invoice.periodStart} to ${invoice.periodEnd}`),
-            metaBlock("Status", invoice.status)
-          ],
-          [
-            metaBlock("Created", formatDateTimeValue(invoice.createdAt, timeZone)),
-            metaBlock("Finalized", invoice.finalizedAt ? formatDateTimeValue(invoice.finalizedAt, timeZone) : "-"),
-            metaBlock("Paid", invoice.paidAt ? formatDateTimeValue(invoice.paidAt, timeZone) : "-"),
-            metaBlock("Grand Total", formatMoney(invoice.grandTotal))
-          ]
-        ]
+        body: metaRows
       },
       layout: "noBorders",
       margin: [0, 0, 0, 8]
@@ -152,7 +148,8 @@ export function buildBillingInvoicePdfDefinition({ invoice, timeZone }: BillingI
         body: [
           [bodyCell("Inbound Fee / Container"), bodyCell(formatMoney(invoice.rates.inboundContainerFee), "tableCellRight")],
           [bodyCell("Wrapping Fee / Pallet"), bodyCell(formatMoney(invoice.rates.wrappingFeePerPallet), "tableCellRight")],
-          [bodyCell("Storage Fee / Pallet / Week"), bodyCell(formatMoney(invoice.rates.storageFeePerPalletPerWeek), "tableCellRight")],
+          [bodyCell("Storage Fee / Pallet / Week (Normal)"), bodyCell(formatMoney(invoice.rates.storageFeePerPalletPerWeekNormal), "tableCellRight")],
+          [bodyCell("Storage Fee / Pallet / Week (West Coast Transfer)"), bodyCell(formatMoney(invoice.rates.storageFeePerPalletPerWeekWestCoastTransfer), "tableCellRight")],
           [bodyCell("Outbound Fee / Pallet"), bodyCell(formatMoney(invoice.rates.outboundFeePerPallet), "tableCellRight")]
         ]
       },
@@ -164,7 +161,7 @@ export function buildBillingInvoicePdfDefinition({ invoice, timeZone }: BillingI
       table: {
         headerRows: 1,
         dontBreakRows: true,
-        widths: [24, 52, 88, 60, 66, 52, 54, 58, "*"],
+        widths: [24, 52, 88, 60, 66, 44, 50, 54, "*"],
         body: [
           [
             headerCell("#"),
@@ -188,32 +185,66 @@ export function buildBillingInvoicePdfDefinition({ invoice, timeZone }: BillingI
             bodyCell(formatMoney(line.amount), "tableCellRight", index),
             bodyCell(line.notes || "-", "tableCell", index)
           ])),
-          // Subtotal row
           [
-            { text: "Subtotal", style: "tableTotalLabel", colSpan: 7, margin: SUBTOTAL_ROW_MARGIN },
+            { text: "Subtotal", style: "tableTotalLabel", colSpan: 7 },
             {}, {}, {}, {}, {}, {},
-            { text: formatMoney(invoice.subtotal), style: "tableTotalValue", margin: SUBTOTAL_ROW_MARGIN },
+            { text: formatMoney(invoice.subtotal), style: "tableTotalValue" },
             { text: "", style: "tableCell" }
           ],
-          // Discount row (only when non-zero)
           ...(invoice.discountTotal !== 0 ? [[
-            { text: "Discount", style: "tableTotalLabel", colSpan: 7, margin: SUBTOTAL_ROW_MARGIN },
+            { text: "Discount", style: "tableTotalLabel", colSpan: 7 },
             {}, {}, {}, {}, {}, {},
-            { text: formatMoney(invoice.discountTotal), style: "tableTotalValue", margin: SUBTOTAL_ROW_MARGIN },
+            { text: formatMoney(invoice.discountTotal), style: "tableTotalValue" },
             { text: "", style: "tableCell" }
           ]] : []),
-          // Grand total row
           [
-            { text: "Grand Total", style: "tableGrandTotalLabel", colSpan: 7, margin: GRAND_TOTAL_ROW_MARGIN },
+            { text: "Grand Total", style: "tableTotalLabel", colSpan: 7 },
             {}, {}, {}, {}, {}, {},
-            { text: formatMoney(invoice.grandTotal), style: "tableGrandTotalValue", margin: GRAND_TOTAL_ROW_MARGIN },
-            { text: "", style: "tableGrandTotalLabel" }
+            { text: formatMoney(invoice.grandTotal), style: "tableTotalValue" },
+            { text: "", style: "tableCell" }
           ]
         ]
       },
       layout: BILLING_TABLE_LAYOUT_NAME
     }
   ];
+
+  if (exportMode === "DETAILED" && invoice.invoiceType === "STORAGE_SETTLEMENT") {
+    const segmentRows = flattenStorageSettlementSegments(invoice.lines);
+    if (segmentRows.length > 0) {
+      content.push({ text: "Storage Segment Breakdown", style: "sectionTitle", margin: [0, 8, 0, 4] });
+      content.push({
+        table: {
+          headerRows: 1,
+          dontBreakRows: true,
+          widths: [56, 72, 56, 56, 42, 40, 46, 52],
+          body: [
+            [
+              headerCell("Container"),
+              headerCell("Warehouses"),
+              headerCell("Segment Start"),
+              headerCell("Segment End"),
+              headerCell("Pallets"),
+              headerCell("Days"),
+              headerCell("Pallet-Days"),
+              headerCell("Amount")
+            ],
+            ...segmentRows.map((row, index) => ([
+              bodyCell(row.containerNo, "tableCellCenter", index),
+              bodyCell(row.warehouses, "tableCell", index),
+              bodyCell(row.startDate, "tableCellCenter", index),
+              bodyCell(row.endDate, "tableCellCenter", index),
+              bodyCell(formatNumber(row.dayEndPallets), "tableCellRight", index),
+              bodyCell(formatNumber(row.billedDays), "tableCellRight", index),
+              bodyCell(formatNumber(row.palletDays), "tableCellRight", index),
+              bodyCell(formatMoney(row.amount), "tableCellRight", index)
+            ]))
+          ]
+        },
+        layout: BILLING_TABLE_LAYOUT_NAME
+      });
+    }
+  }
 
   if (invoice.notes.trim()) {
     content.push({ text: "Invoice Notes", style: "sectionTitle", margin: [0, 8, 0, 4] });
@@ -246,6 +277,24 @@ export function buildBillingInvoicePdfDefinition({ invoice, timeZone }: BillingI
   };
 }
 
+function flattenStorageSettlementSegments(lines: BillingInvoiceLineData[]) {
+  return lines.flatMap((line) => {
+    if (!line.details || line.details.kind !== "STORAGE_CONTAINER_SUMMARY") {
+      return [];
+    }
+    return line.details.segments.map((segment) => ({
+      containerNo: line.containerNo || "-",
+      warehouses: line.details?.warehousesTouched.join(", ") || line.warehouse || "-",
+      startDate: segment.startDate,
+      endDate: segment.endDate,
+      dayEndPallets: segment.dayEndPallets,
+      billedDays: segment.billedDays,
+      palletDays: segment.palletDays,
+      amount: segment.amount
+    }));
+  });
+}
+
 function headerCell(text: string): TableCell {
   return { text, style: "tableHeader", margin: [0, 1, 0, 1], noWrap: true };
 }
@@ -263,14 +312,18 @@ function metaBlock(label: string, value: string): TableCell {
   return {
     stack: [
       { text: label, style: "metaLabel" },
-      { text: value, style: "metaValue", margin: [0, 1, 0, 0] }
+      { text: value, style: "metaValue", margin: [0, 2, 0, 0] }
     ],
-    margin: [0, 0, 8, 2]
+    margin: [0, 0, 10, 0]
   };
 }
 
-function buildFileName(invoiceNo: string) {
-  return `${(`billing-invoice-${invoiceNo}`).replace(/[^a-z0-9-_]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase() || "billing-invoice"}.pdf`;
+function buildFileName(invoiceNo: string, exportMode: BillingExportMode) {
+  return `${invoiceNo}-${exportMode.toLowerCase()}.pdf`;
+}
+
+function invoiceTypeLabel(invoiceType: BillingInvoiceType) {
+  return invoiceType === "STORAGE_SETTLEMENT" ? "Storage Settlement" : "Mixed";
 }
 
 function formatMoney(value: number) {
@@ -287,4 +340,11 @@ function formatNumber(value: number) {
     minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
     maximumFractionDigits: 2
   }).format(value);
+}
+
+function formatContainerType(containerType: BillingInvoice["containerType"]) {
+  if (!containerType) {
+    return "-";
+  }
+  return containerType === "WEST_COAST_TRANSFER" ? "West Coast Transfer" : "Normal";
 }

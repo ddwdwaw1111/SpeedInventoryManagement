@@ -77,6 +77,8 @@ func resetIntegrationDatabase(t *testing.T, db *sqlx.DB) {
 		"audit_logs",
 		"ui_preferences",
 		"user_sessions",
+		"billing_invoice_lines",
+		"billing_invoices",
 		"pallet_location_events",
 		"stock_ledger",
 		"outbound_picks",
@@ -1444,6 +1446,129 @@ func TestSelectedPalletInventoryActionsIntegration(t *testing.T) {
 	destinationItem := mustFindItemByLocationAndSection(t, ctx, store, destinationLocation.ID, "B", sourceItem.SKU)
 	if destinationItem.Quantity != transferQty {
 		t.Fatalf("expected destination quantity %d after selected pallet transfer, got %d", transferQty, destinationItem.Quantity)
+	}
+}
+
+func TestConfirmedOutboundHonorsManualSelectedPalletsIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "ManualPickCustomer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "ManualPickLocation-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "MANUAL-PICK-SKU-"+suffix, 0)
+
+	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-04-10",
+		ContainerNo:         "MANUAL-PICK-CONT-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Seed inbound for manual selected pallet outbound",
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:               item.SKU,
+			Description:       item.Description,
+			ExpectedQty:       12,
+			ReceivedQty:       12,
+			Pallets:           2,
+			PalletsDetailCtns: "5+7",
+			PalletBreakdown: []InboundPalletBreakdown{
+				{Quantity: 5},
+				{Quantity: 7},
+			},
+			StorageSection: DefaultStorageSection,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create inbound for manual selected pallet outbound: %v", err)
+	}
+
+	sourceItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, inbound.ContainerNo, item.SKU)
+	pallets, err := store.ListPallets(ctx, 50, ListPalletFilters{SourceInboundDocumentID: inbound.ID})
+	if err != nil {
+		t.Fatalf("list inbound pallets for manual selected pallet outbound: %v", err)
+	}
+	if len(pallets) != 2 {
+		t.Fatalf("expected 2 inbound pallets, got %d", len(pallets))
+	}
+	sort.Slice(pallets, func(left, right int) bool {
+		return pallets[left].ID < pallets[right].ID
+	})
+
+	selectedPallet := pallets[1]
+	selectedQty := selectedPallet.Contents[0].Quantity
+	if selectedQty != 7 {
+		t.Fatalf("expected second pallet quantity 7, got %d", selectedQty)
+	}
+
+	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo:    "MANUAL-PICK-PL-" + suffix,
+		OrderRef:         "MANUAL-PICK-SO-" + suffix,
+		ExpectedShipDate: "2026-04-11",
+		Status:           DocumentStatusDraft,
+		DocumentNote:     "Manual selected pallet should be honored on confirm",
+		Lines: []CreateOutboundDocumentLineInput{{
+			CustomerID:  sourceItem.CustomerID,
+			LocationID:  sourceItem.LocationID,
+			SKUMasterID: sourceItem.SKUMasterID,
+			Quantity:    selectedQty,
+			Pallets:     1,
+			UnitLabel:   "CTN",
+			PickPallets: []OutboundLinePalletPick{
+				{PalletID: selectedPallet.ID, Quantity: selectedQty},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create outbound draft with manual selected pallet: %v", err)
+	}
+
+	outbound, err = store.ConfirmOutboundDocument(ctx, outbound.ID)
+	if err != nil {
+		t.Fatalf("confirm outbound draft with manual selected pallet: %v", err)
+	}
+
+	var pickedPalletIDs []int64
+	if err := store.db.SelectContext(ctx, &pickedPalletIDs, `
+		SELECT op.pallet_id
+		FROM outbound_picks op
+		INNER JOIN outbound_document_lines ol ON ol.id = op.outbound_line_id
+		WHERE ol.document_id = ?
+		ORDER BY op.id ASC
+	`, outbound.ID); err != nil {
+		t.Fatalf("load outbound picked pallet ids: %v", err)
+	}
+	if len(pickedPalletIDs) != 1 {
+		t.Fatalf("expected exactly 1 picked pallet row, got %d", len(pickedPalletIDs))
+	}
+	if pickedPalletIDs[0] != selectedPallet.ID {
+		t.Fatalf("expected selected pallet %d to be picked, got %d", selectedPallet.ID, pickedPalletIDs[0])
+	}
+
+	var remainingSelectedQty int
+	if err := store.db.GetContext(ctx, &remainingSelectedQty, `
+		SELECT COALESCE(SUM(quantity), 0)
+		FROM pallet_items
+		WHERE pallet_id = ?
+	`, selectedPallet.ID); err != nil {
+		t.Fatalf("load remaining selected pallet quantity: %v", err)
+	}
+	if remainingSelectedQty != 0 {
+		t.Fatalf("expected selected pallet quantity 0 after confirm, got %d", remainingSelectedQty)
+	}
+
+	var firstPalletQty int
+	if err := store.db.GetContext(ctx, &firstPalletQty, `
+		SELECT COALESCE(SUM(quantity), 0)
+		FROM pallet_items
+		WHERE pallet_id = ?
+	`, pallets[0].ID); err != nil {
+		t.Fatalf("load untouched first pallet quantity: %v", err)
+	}
+	if firstPalletQty != pallets[0].Contents[0].Quantity {
+		t.Fatalf("expected first pallet quantity %d to remain untouched, got %d", pallets[0].Contents[0].Quantity, firstPalletQty)
 	}
 }
 
@@ -2945,6 +3070,111 @@ func TestAuthSessionLifecycleIntegration(t *testing.T) {
 	}
 }
 
+func TestStorageSettlementInvoiceLifecycleIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	authPayload, _, err := store.RegisterUser(ctx, RegisterUserInput{
+		Email:    "billing-" + suffix + "@example.com",
+		FullName: "Billing " + suffix,
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("register billing user: %v", err)
+	}
+
+	customerA := mustCreateCustomer(t, ctx, store, "Billing Customer A "+suffix)
+	customerB := mustCreateCustomer(t, ctx, store, "Billing Customer B "+suffix)
+	locationA := mustCreateLocation(t, ctx, store, "Billing NJ "+suffix)
+	locationB := mustCreateLocation(t, ctx, store, "Billing LA "+suffix)
+
+	input := CreateBillingInvoiceInput{
+		InvoiceType:         BillingInvoiceTypeStorage,
+		CustomerID:          customerA.ID,
+		CustomerName:        customerA.Name,
+		WarehouseLocationID: int64Ptr(locationA.ID),
+		WarehouseName:       locationA.Name,
+		PeriodStart:         "2026-03-01",
+		PeriodEnd:           "2026-03-31",
+		Rates: BillingRatesSnapshot{
+			InboundContainerFee:     450,
+			WrappingFeePerPallet:    10,
+			StorageFeePerPalletWeek: 7,
+			OutboundFeePerPallet:    10,
+		},
+		Lines: []CreateBillingInvoiceLineInput{
+			{
+				ChargeType:  "STORAGE",
+				Description: "Storage settlement for CONT-A",
+				Reference:   "Storage | CONT-A",
+				ContainerNo: "CONT-A",
+				Warehouse:   locationA.Name,
+				OccurredOn:  "2026-03-31",
+				Quantity:    140,
+				UnitRate:    1,
+				Amount:      140,
+				Notes:       "14 days x 10 pallets",
+				SourceType:  "AUTO",
+			},
+		},
+	}
+
+	firstInvoice, err := store.CreateBillingInvoice(ctx, input, authPayload.User.ID)
+	if err != nil {
+		t.Fatalf("create first storage settlement invoice: %v", err)
+	}
+	if firstInvoice.InvoiceType != BillingInvoiceTypeStorage {
+		t.Fatalf("expected storage settlement invoice type, got %q", firstInvoice.InvoiceType)
+	}
+	if firstInvoice.WarehouseLocationID == nil || *firstInvoice.WarehouseLocationID != locationA.ID {
+		t.Fatalf("expected warehouse scope %d on first invoice, got %#v", locationA.ID, firstInvoice.WarehouseLocationID)
+	}
+	if firstInvoice.LineCount != 1 {
+		t.Fatalf("expected 1 line on storage settlement invoice, got %d", firstInvoice.LineCount)
+	}
+
+	if _, err := store.CreateBillingInvoice(ctx, input, authPayload.User.ID); err == nil || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected duplicate storage settlement invoice to fail with ErrInvalidInput, got %v", err)
+	}
+
+	inputDifferentRange := input
+	inputDifferentRange.PeriodEnd = "2026-04-30"
+	if _, err := store.CreateBillingInvoice(ctx, inputDifferentRange, authPayload.User.ID); err != nil {
+		t.Fatalf("create storage settlement invoice for different range: %v", err)
+	}
+
+	inputDifferentCustomer := input
+	inputDifferentCustomer.CustomerID = customerB.ID
+	inputDifferentCustomer.CustomerName = customerB.Name
+	if _, err := store.CreateBillingInvoice(ctx, inputDifferentCustomer, authPayload.User.ID); err != nil {
+		t.Fatalf("create storage settlement invoice for different customer: %v", err)
+	}
+
+	inputDifferentWarehouse := input
+	inputDifferentWarehouse.WarehouseLocationID = int64Ptr(locationB.ID)
+	inputDifferentWarehouse.WarehouseName = locationB.Name
+	if _, err := store.CreateBillingInvoice(ctx, inputDifferentWarehouse, authPayload.User.ID); err != nil {
+		t.Fatalf("create storage settlement invoice for different warehouse: %v", err)
+	}
+
+	voidedInvoice, err := store.VoidBillingInvoice(ctx, firstInvoice.ID)
+	if err != nil {
+		t.Fatalf("void first storage settlement invoice: %v", err)
+	}
+	if voidedInvoice.Status != BillingInvoiceStatusVoid {
+		t.Fatalf("expected voided invoice status VOID, got %q", voidedInvoice.Status)
+	}
+
+	recreated, err := store.CreateBillingInvoice(ctx, input, authPayload.User.ID)
+	if err != nil {
+		t.Fatalf("recreate storage settlement invoice after void: %v", err)
+	}
+	if recreated.Status != BillingInvoiceStatusDraft {
+		t.Fatalf("expected recreated invoice status DRAFT, got %q", recreated.Status)
+	}
+}
+
 func mustCreateCustomer(t *testing.T, ctx context.Context, store *Store, name string) Customer {
 	t.Helper()
 	customer, err := store.CreateCustomer(ctx, CreateCustomerInput{Name: name})
@@ -2966,6 +3196,10 @@ func mustCreateLocation(t *testing.T, ctx context.Context, store *Store, name st
 		t.Fatalf("create location: %v", err)
 	}
 	return location
+}
+
+func int64Ptr(value int64) *int64 {
+	return &value
 }
 
 func mustCreateItem(t *testing.T, ctx context.Context, store *Store, customerID int64, locationID int64, sku string, quantity int) Item {

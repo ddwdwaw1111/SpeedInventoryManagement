@@ -18,6 +18,7 @@ import type {
   InventoryTransferPayload,
   InboundDocument,
   InboundDocumentPayload,
+  UpdateInboundDocumentContainerTypePayload,
   UpdateInboundDocumentNotePayload,
   InboundPackingListImportPreview,
   Item,
@@ -385,6 +386,13 @@ export const api = {
     });
   },
 
+  updateInboundDocumentContainerType(documentId: number, payload: UpdateInboundDocumentContainerTypePayload) {
+    return request<InboundDocument>(`/inbound-documents/${documentId}/container-type`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    });
+  },
+
   confirmInboundDocument(documentId: number) {
     return request<InboundDocument>(`/inbound-documents/${documentId}/confirm`, {
       method: "POST"
@@ -451,10 +459,11 @@ export const api = {
 
   // --- Billing Invoices ---
 
-  getBillingInvoices(customerId?: number, status?: string) {
+  getBillingInvoices(customerId?: number, status?: string, invoiceType?: string) {
     const params = new URLSearchParams();
     if (customerId) params.set("customerId", String(customerId));
     if (status) params.set("status", status);
+    if (invoiceType) params.set("invoiceType", invoiceType);
     const qs = params.toString();
     return request<BillingInvoice[]>(`/billing/invoices${qs ? `?${qs}` : ""}`);
   },

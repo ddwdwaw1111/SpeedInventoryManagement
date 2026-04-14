@@ -1,8 +1,9 @@
 import * as pdfMake from "pdfmake/build/pdfmake";
 import type { Content, CustomTableLayout, Style, TableCell, TDocumentDefinitions, TFontDictionary } from "pdfmake/interfaces";
 
-import type { BillingPreview, BillingRates } from "./billingPreview";
+import type { BillingPreview, BillingRates, BillingStorageRow } from "./billingPreview";
 import { formatDateTimeValue } from "./dates";
+import type { BillingExportMode } from "./types";
 
 const BILLING_TABLE_LAYOUT_NAME = "billingTable";
 const CJK_FONT_NAME = "NotoSansCJKSC";
@@ -81,38 +82,31 @@ const styles: Record<string, Style> = {
   footer: {
     fontSize: 6,
     color: "#64748b"
-  },
-  tableTotalLabel: {
-    fontSize: 7,
-    bold: true,
-    color: "#ffffff",
-    fillColor: "#1f4b7a",
-    alignment: "right"
-  },
-  tableTotalValue: {
-    fontSize: 7,
-    bold: true,
-    color: "#ffffff",
-    fillColor: "#1f4b7a",
-    alignment: "right"
   }
 };
+
+type BillingWorkspaceMode = "OVERVIEW" | "STORAGE_SETTLEMENT";
 
 export type BillingPreviewPdfInput = {
   preview: BillingPreview;
   rates: BillingRates;
   timeZone: string;
+  exportMode?: BillingExportMode;
+  workspaceMode?: BillingWorkspaceMode;
+  storageRows?: BillingStorageRow[];
   generatedAt?: string;
 };
 
 type BillingPreviewPdfDocument = {
   fileName: string;
+  title: string;
+  subtitle: string;
   customerName: string;
   startDate: string;
   endDate: string;
-  generatedAt: string;
   generatedAtLabel: string;
-  grandTotal: string;
+  modeLabel: string;
+  exportModeLabel: string;
   summaryRows: Array<{ label: string; value: string }>;
   rateRows: Array<{ label: string; value: string }>;
   lineRows: Array<{
@@ -127,9 +121,23 @@ type BillingPreviewPdfDocument = {
     notes: string;
   }>;
   storageRows: Array<{
+    customerName: string;
     containerNo: string;
+    containerType: string;
     warehouses: string;
     trackedPallets: string;
+    palletDays: string;
+    amount: string;
+  }>;
+  segmentRows: Array<{
+    customerName: string;
+    containerNo: string;
+    containerType: string;
+    warehouses: string;
+    startDate: string;
+    endDate: string;
+    dayEndPallets: string;
+    billedDays: string;
     palletDays: string;
     amount: string;
   }>;
@@ -146,30 +154,48 @@ export function buildBillingPreviewPdfDocument({
   preview,
   rates,
   timeZone,
+  exportMode = "SUMMARY",
+  workspaceMode = "OVERVIEW",
+  storageRows = preview.storageRows,
   generatedAt = new Date().toISOString()
 }: BillingPreviewPdfInput): BillingPreviewPdfDocument {
+  const modeLabel = workspaceMode === "STORAGE_SETTLEMENT" ? "Storage Settlement" : "Overview";
+  const exportModeLabel = exportMode === "DETAILED" ? "Detailed" : "Summary";
+  const containerTypeSummary = summarizeContainerType(storageRows);
+
   return {
-    fileName: buildFileName(preview.customerName, preview.startDate, preview.endDate),
+    fileName: buildFileName(preview.customerName, preview.startDate, preview.endDate, workspaceMode, exportMode),
+    title: workspaceMode === "STORAGE_SETTLEMENT" ? "Storage Settlement Preview" : "Billing Preview",
+    subtitle: `${preview.customerName} | ${preview.startDate} to ${preview.endDate}`,
     customerName: preview.customerName,
     startDate: preview.startDate,
     endDate: preview.endDate,
-    generatedAt,
     generatedAtLabel: formatDateTimeValue(generatedAt, timeZone),
-    grandTotal: formatMoney(preview.summary.grandTotal),
-    summaryRows: [
-      { label: "Received Containers", value: formatNumber(preview.summary.receivedContainers) },
-      { label: "Received Pallets", value: formatNumber(preview.summary.receivedPallets) },
-      { label: "Pallet-Days", value: formatNumber(preview.summary.palletDays) },
-      { label: "Inbound Charges", value: formatMoney(preview.summary.inboundAmount) },
-      { label: "Wrapping Charges", value: formatMoney(preview.summary.wrappingAmount) },
-      { label: "Storage Charges", value: formatMoney(preview.summary.storageAmount) },
-      { label: "Outbound Charges", value: formatMoney(preview.summary.outboundAmount) },
-      { label: "Grand Total", value: formatMoney(preview.summary.grandTotal) }
-    ],
+    modeLabel,
+    exportModeLabel,
+    summaryRows: workspaceMode === "STORAGE_SETTLEMENT"
+      ? [
+          { label: "Storage Containers", value: formatNumber(storageRows.length) },
+          { label: "Container Type", value: containerTypeSummary },
+          { label: "Tracked Pallets", value: formatNumber(storageRows.reduce((sum, row) => sum + row.palletsTracked, 0)) },
+          { label: "Pallet-Days", value: formatNumber(storageRows.reduce((sum, row) => sum + row.palletDays, 0)) },
+          { label: "Storage Charges", value: formatMoney(storageRows.reduce((sum, row) => sum + row.amount, 0)) }
+        ]
+      : [
+          { label: "Received Containers", value: formatNumber(preview.summary.receivedContainers) },
+          { label: "Received Pallets", value: formatNumber(preview.summary.receivedPallets) },
+          { label: "Pallet-Days", value: formatNumber(preview.summary.palletDays) },
+          { label: "Inbound Charges", value: formatMoney(preview.summary.inboundAmount) },
+          { label: "Wrapping Charges", value: formatMoney(preview.summary.wrappingAmount) },
+          { label: "Storage Charges", value: formatMoney(preview.summary.storageAmount) },
+          { label: "Outbound Charges", value: formatMoney(preview.summary.outboundAmount) },
+          { label: "Grand Total", value: formatMoney(preview.summary.grandTotal) }
+        ],
     rateRows: [
       { label: "Inbound Fee / Container", value: formatMoney(rates.inboundContainerFee) },
       { label: "Wrapping Fee / Pallet", value: formatMoney(rates.wrappingFeePerPallet) },
-      { label: "Storage Fee / Pallet / Week", value: formatMoney(rates.storageFeePerPalletPerWeek) },
+      { label: "Storage Fee / Pallet / Week (Normal)", value: formatMoney(rates.storageFeePerPalletPerWeekNormal) },
+      { label: "Storage Fee / Pallet / Week (West Coast Transfer)", value: formatMoney(rates.storageFeePerPalletPerWeekWestCoastTransfer) },
       { label: "Outbound Fee / Pallet", value: formatMoney(rates.outboundFeePerPallet) }
     ],
     lineRows: preview.invoiceLines.map((line) => ({
@@ -183,27 +209,47 @@ export function buildBillingPreviewPdfDocument({
       occurredOn: line.occurredOn ? formatDateTimeValue(line.occurredOn, timeZone, { dateStyle: "medium" }) : "-",
       notes: line.meta || "-"
     })),
-    storageRows: preview.storageRows.map((row) => ({
+    storageRows: storageRows.map((row) => ({
+      customerName: row.customerName,
       containerNo: row.containerNo || "-",
+      containerType: formatContainerType(row.containerType),
       warehouses: row.warehousesTouched.join(", ") || "-",
       trackedPallets: formatNumber(row.palletsTracked),
       palletDays: formatNumber(row.palletDays),
       amount: formatMoney(row.amount)
-    }))
+    })),
+    segmentRows: storageRows.flatMap((row) => row.segments.map((segment) => ({
+      customerName: row.customerName,
+      containerNo: row.containerNo || "-",
+      containerType: formatContainerType(row.containerType),
+      warehouses: row.warehousesTouched.join(", ") || "-",
+      startDate: segment.startDate,
+      endDate: segment.endDate,
+      dayEndPallets: formatNumber(segment.dayEndPallets),
+      billedDays: formatNumber(segment.billedDays),
+      palletDays: formatNumber(segment.palletDays),
+      amount: formatMoney(segment.amount)
+    })))
   };
 }
 
 export function buildBillingPreviewPdfDefinition(document: BillingPreviewPdfDocument): TDocumentDefinitions {
   const content: Content[] = [
-    { text: "Billing Preview", style: "pageTitle", margin: [0, 0, 0, 2] },
-    { text: `${document.customerName} · ${document.startDate} to ${document.endDate}`, style: "pageSubtitle", margin: [0, 0, 0, 8] },
+    { text: document.title, style: "pageTitle", margin: [0, 0, 0, 2] },
+    { text: document.subtitle, style: "pageSubtitle", margin: [0, 0, 0, 8] },
     {
       table: {
-        widths: ["*", "*", "*"],
+        widths: ["*", "*", "*", "*"],
         body: [[
           metaBlock("Customer", document.customerName),
           metaBlock("Billing Period", `${document.startDate} to ${document.endDate}`),
-          metaBlock("Exported At", document.generatedAtLabel)
+          metaBlock("Mode", document.modeLabel),
+          metaBlock("Export", document.exportModeLabel)
+        ], [
+          metaBlock("Generated At", document.generatedAtLabel),
+          metaBlock("File", document.fileName),
+          metaBlock("Start", document.startDate),
+          metaBlock("End", document.endDate)
         ]]
       },
       layout: "noBorders",
@@ -218,18 +264,16 @@ export function buildBillingPreviewPdfDefinition(document: BillingPreviewPdfDocu
     buildTwoColumnTable(
       document.rateRows.map((row) => [bodyCell(row.label), bodyCell(row.value, "tableCellRight")]),
       [220, "*"]
-    ),
-    { text: "Invoice Lines", style: "sectionTitle", margin: [0, 8, 0, 4] }
+    )
   ];
 
-  if (document.lineRows.length === 0) {
-    content.push({ text: "No billable lines in the selected billing period.", style: "emptyState" });
-  } else {
+  if (document.lineRows.length > 0) {
+    content.push({ text: "Invoice Lines", style: "sectionTitle", margin: [0, 8, 0, 4] });
     content.push({
       table: {
         headerRows: 1,
         dontBreakRows: true,
-        widths: [54, 88, 72, 72, 44, 50, 54, 58, "*"],
+        widths: [52, 88, 68, 70, 42, 48, 52, 58, "*"],
         body: [
           [
             headerCell("Charge"),
@@ -252,15 +296,7 @@ export function buildBillingPreviewPdfDefinition(document: BillingPreviewPdfDocu
             bodyCell(row.amount, "tableCellRight", index),
             bodyCell(row.occurredOn, "tableCellCenter", index),
             bodyCell(row.notes, "tableCell", index)
-          ])),
-          // Grand total footer row
-          [
-            { text: "Grand Total", style: "tableTotalLabel", colSpan: 6, margin: [0, 1, 0, 1] },
-            {}, {}, {}, {}, {},
-            { text: document.grandTotal, style: "tableTotalValue", margin: [0, 1, 0, 1] },
-            { text: "", colSpan: 2, style: "tableCell" },
-            {}
-          ]
+          ]))
         ]
       },
       layout: BILLING_TABLE_LAYOUT_NAME
@@ -268,22 +304,26 @@ export function buildBillingPreviewPdfDefinition(document: BillingPreviewPdfDocu
   }
 
   if (document.storageRows.length > 0) {
-    content.push({ text: "Container Storage Summary", style: "sectionTitle", margin: [0, 8, 0, 4] });
+    content.push({ text: "Storage by Container", style: "sectionTitle", margin: [0, 8, 0, 4] });
     content.push({
       table: {
         headerRows: 1,
         dontBreakRows: true,
-        widths: [90, "*", 56, 56, 60],
+        widths: [84, 58, 58, 86, 46, 50, 56],
         body: [
           [
+            headerCell("Customer"),
             headerCell("Container"),
+            headerCell("Type"),
             headerCell("Warehouses"),
             headerCell("Pallets"),
             headerCell("Pallet-Days"),
             headerCell("Amount")
           ],
           ...document.storageRows.map((row, index) => ([
+            bodyCell(row.customerName, "tableCell", index),
             bodyCell(row.containerNo, "tableCellCenter", index),
+            bodyCell(row.containerType, "tableCellCenter", index),
             bodyCell(row.warehouses, "tableCell", index),
             bodyCell(row.trackedPallets, "tableCellRight", index),
             bodyCell(row.palletDays, "tableCellRight", index),
@@ -295,12 +335,54 @@ export function buildBillingPreviewPdfDefinition(document: BillingPreviewPdfDocu
     });
   }
 
+  if (document.segmentRows.length > 0 && document.exportModeLabel === "Detailed") {
+    content.push({ text: "Storage Segment Breakdown", style: "sectionTitle", margin: [0, 8, 0, 4] });
+    content.push({
+      table: {
+        headerRows: 1,
+        dontBreakRows: true,
+        widths: [76, 50, 54, 70, 52, 52, 38, 38, 46, 52],
+        body: [
+          [
+            headerCell("Customer"),
+            headerCell("Container"),
+            headerCell("Type"),
+            headerCell("Warehouses"),
+            headerCell("Segment Start"),
+            headerCell("Segment End"),
+            headerCell("Pallets"),
+            headerCell("Days"),
+            headerCell("Pallet-Days"),
+            headerCell("Amount")
+          ],
+          ...document.segmentRows.map((row, index) => ([
+            bodyCell(row.customerName, "tableCell", index),
+            bodyCell(row.containerNo, "tableCellCenter", index),
+            bodyCell(row.containerType, "tableCellCenter", index),
+            bodyCell(row.warehouses, "tableCell", index),
+            bodyCell(row.startDate, "tableCellCenter", index),
+            bodyCell(row.endDate, "tableCellCenter", index),
+            bodyCell(row.dayEndPallets, "tableCellRight", index),
+            bodyCell(row.billedDays, "tableCellRight", index),
+            bodyCell(row.palletDays, "tableCellRight", index),
+            bodyCell(row.amount, "tableCellRight", index)
+          ]))
+        ]
+      },
+      layout: BILLING_TABLE_LAYOUT_NAME
+    });
+  }
+
+  if (content.length === 4) {
+    content.push({ text: "No billable rows found for the selected billing period.", style: "emptyState" });
+  }
+
   return {
     pageSize: "A4",
     pageOrientation: "landscape",
     pageMargins: [18, 14, 18, 16],
     info: {
-      title: `Billing Preview ${document.customerName}`,
+      title: document.title,
       subject: "Billing Preview Export",
       author: "Speed Inventory Management"
     },
@@ -313,21 +395,11 @@ export function buildBillingPreviewPdfDefinition(document: BillingPreviewPdfDocu
     footer: (currentPage, pageCount) => ({
       margin: [18, 0, 18, 6],
       columns: [
-        { text: "Billing Preview Export", style: "footer" },
+        { text: document.title, style: "footer" },
         { text: `${currentPage} / ${pageCount}`, alignment: "right", style: "footer" }
       ]
     }),
     content
-  };
-}
-
-function buildTwoColumnTable(rows: TableCell[][], widths: [number, string]): Content {
-  return {
-    table: {
-      widths,
-      body: rows
-    },
-    layout: BILLING_TABLE_LAYOUT_NAME
   };
 }
 
@@ -348,15 +420,43 @@ function metaBlock(label: string, value: string): TableCell {
   return {
     stack: [
       { text: label, style: "metaLabel" },
-      { text: value, style: "metaValue", margin: [0, 1, 0, 0] }
+      { text: value, style: "metaValue", margin: [0, 2, 0, 0] }
     ],
-    margin: [0, 0, 8, 2]
+    margin: [0, 0, 10, 0]
   };
 }
 
-function buildFileName(customerName: string, startDate: string, endDate: string) {
-  const raw = `billing-preview-${customerName}-${startDate}-to-${endDate}`;
-  return `${raw.replace(/[^a-z0-9-_]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase() || "billing-preview"}.pdf`;
+function buildTwoColumnTable(rows: TableCell[][], widths: [number, string]): Content {
+  return {
+    table: {
+      widths,
+      body: rows
+    },
+    layout: BILLING_TABLE_LAYOUT_NAME
+  };
+}
+
+function buildFileName(customerName: string, startDate: string, endDate: string, workspaceMode: BillingWorkspaceMode, exportMode: BillingExportMode) {
+  const normalizedCustomer = sanitizeFileName(customerName || "all-customers");
+  const normalizedMode = workspaceMode === "STORAGE_SETTLEMENT" ? "storage-settlement" : "overview";
+  return `${normalizedMode}-${exportMode.toLowerCase()}-${normalizedCustomer}-${startDate}-to-${endDate}.pdf`;
+}
+
+function summarizeContainerType(rows: BillingStorageRow[]) {
+  if (rows.length === 0) {
+    return "-";
+  }
+  const first = rows[0].containerType;
+  const allSame = rows.every((row) => row.containerType === first);
+  return allSame ? formatContainerType(first) : "Mixed";
+}
+
+function formatContainerType(containerType: BillingStorageRow["containerType"]) {
+  return containerType === "WEST_COAST_TRANSFER" ? "West Coast Transfer" : "Normal";
+}
+
+function sanitizeFileName(value: string) {
+  return value.trim().replace(/[^a-zA-Z0-9-_]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "billing-preview";
 }
 
 function formatMoney(value: number) {

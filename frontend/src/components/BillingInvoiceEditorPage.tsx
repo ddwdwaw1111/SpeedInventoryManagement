@@ -18,9 +18,11 @@ import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import { formatDateTimeValue } from "../lib/dates";
 import type {
+  BillingExportMode,
   BillingInvoice,
   BillingInvoiceLineData,
   AddBillingInvoiceLinePayload,
+  ContainerType,
   UpdateBillingInvoiceLinePayload,
   UserRole
 } from "../lib/types";
@@ -84,6 +86,7 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
   const [notesValue, setNotesValue] = useState("");
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [exportMenuAnchor, setExportMenuAnchor] = useState<HTMLElement | null>(null);
+  const [pendingExportMode, setPendingExportMode] = useState<BillingExportMode>("SUMMARY");
 
   const isDraft = invoice?.status === "DRAFT";
   const isAdmin = currentUserRole === "admin";
@@ -297,38 +300,14 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
     />
   );
 
-  const exportColumns: ExcelExportColumn[] = [
-    { key: "chargeType", label: t("billingChargeType") },
-    { key: "description", label: t("description") },
-    { key: "reference", label: t("reference") },
-    { key: "containerNo", label: t("containerNo") },
-    { key: "warehouse", label: t("currentStorage") },
-    { key: "occurredOn", label: t("billingOccurredAt") },
-    { key: "quantity", label: t("quantity"), numberFormat: "number" },
-    { key: "unitRate", label: t("unitRate"), numberFormat: "currency" },
-    { key: "amount", label: t("amount"), numberFormat: "currency" },
-    { key: "sourceType", label: t("billingSourceType") },
-    { key: "notes", label: t("notes") }
-  ];
+  const exportColumns = buildBillingInvoiceExportColumns(invoice, pendingExportMode, t);
 
   function handleExportExcel({ title, columns }: { title: string; columns: ExcelExportColumn[] }) {
     if (!invoice) {
       return;
     }
 
-    const rows: Array<Record<string, ExcelExportCell>> = invoice.lines.map((line) => ({
-      chargeType: chargeTypeLabel(line.chargeType, t),
-      description: line.description || "-",
-      reference: line.reference || "-",
-      containerNo: line.containerNo || "-",
-      warehouse: line.warehouse || "-",
-      occurredOn: line.occurredOn ? formatDateTimeValue(line.occurredOn, resolvedTimeZone, { dateStyle: "medium" }) : "-",
-      quantity: line.quantity,
-      unitRate: line.unitRate,
-      amount: line.amount,
-      sourceType: line.sourceType === "AUTO" ? t("billingSourceTypeAuto") : t("billingSourceTypeManual"),
-      notes: line.notes || "-"
-    }));
+    const rows = buildBillingInvoiceExportRows(invoice, pendingExportMode, resolvedTimeZone, t);
 
     downloadExcelWorkbook({
       title,
@@ -349,14 +328,15 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
     setIsExportDialogOpen(false);
   }
 
-  function handleDownloadPdf() {
+  function handleDownloadPdf(exportMode: BillingExportMode = pendingExportMode) {
     if (!invoice) {
       return;
     }
 
     downloadBillingInvoicePdf({
       invoice,
-      timeZone: resolvedTimeZone
+      timeZone: resolvedTimeZone,
+      exportMode
     });
   }
 
@@ -386,20 +366,42 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
         <MenuItem
           onClick={() => {
             setExportMenuAnchor(null);
+            setPendingExportMode("SUMMARY");
             setIsExportDialogOpen(true);
           }}
         >
           <ListItemIcon><FileDownloadOutlinedIcon fontSize="small" /></ListItemIcon>
-          <ListItemText primary={t("exportExcel")} secondary={t("exportExcelDesc")} />
+          <ListItemText primary={t("billingExportExcelSummary")} secondary={t("billingExportSummaryDesc")} />
         </MenuItem>
         <MenuItem
           onClick={() => {
             setExportMenuAnchor(null);
-            handleDownloadPdf();
+            setPendingExportMode("DETAILED");
+            setIsExportDialogOpen(true);
+          }}
+        >
+          <ListItemIcon><FileDownloadOutlinedIcon fontSize="small" /></ListItemIcon>
+          <ListItemText primary={t("billingExportExcelDetailed")} secondary={t("billingExportDetailedDesc")} />
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            setExportMenuAnchor(null);
+            setPendingExportMode("SUMMARY");
+            handleDownloadPdf("SUMMARY");
           }}
         >
           <ListItemIcon><PictureAsPdfOutlinedIcon fontSize="small" /></ListItemIcon>
-          <ListItemText primary={t("downloadPdf")} secondary={t("downloadPdfDesc")} />
+          <ListItemText primary={t("billingDownloadPdfSummary")} secondary={t("billingExportSummaryDesc")} />
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            setExportMenuAnchor(null);
+            setPendingExportMode("DETAILED");
+            handleDownloadPdf("DETAILED");
+          }}
+        >
+          <ListItemIcon><PictureAsPdfOutlinedIcon fontSize="small" /></ListItemIcon>
+          <ListItemText primary={t("billingDownloadPdfDetailed")} secondary={t("billingExportDetailedDesc")} />
         </MenuItem>
       </Menu>
       {isDraft && (
@@ -493,6 +495,18 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
             <strong>{invoice.customerNameSnapshot}</strong>
           </article>
           <article className="metric-card">
+            <span>{t("billingInvoiceType")}</span>
+            <strong>{invoiceTypeLabel(invoice.invoiceType, t)}</strong>
+          </article>
+          <article className="metric-card">
+            <span>{t("billingWarehouseScope")}</span>
+            <strong>{invoice.warehouseNameSnapshot || t("billingAllWarehouses")}</strong>
+          </article>
+          <article className="metric-card">
+            <span>{t("billingContainerType")}</span>
+            <strong>{invoice.containerType ? containerTypeLabel(invoice.containerType as ContainerType, t) : "-"}</strong>
+          </article>
+          <article className="metric-card">
             <span>{t("billingPeriod")}</span>
             <strong>{invoice.periodStart} — {invoice.periodEnd}</strong>
           </article>
@@ -548,8 +562,12 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
                 <div className="report-bars__value">{formatMoney(invoice.rates.wrappingFeePerPallet)}</div>
               </div>
               <div className="report-bars__row">
-                <div className="report-bars__labels"><strong>{t("billingStorageRate")}</strong></div>
-                <div className="report-bars__value">{formatMoney(invoice.rates.storageFeePerPalletPerWeek)}</div>
+                <div className="report-bars__labels"><strong>{t("billingStorageRateNormal")}</strong></div>
+                <div className="report-bars__value">{formatMoney(invoice.rates.storageFeePerPalletPerWeekNormal)}</div>
+              </div>
+              <div className="report-bars__row">
+                <div className="report-bars__labels"><strong>{t("billingStorageRateWestCoast")}</strong></div>
+                <div className="report-bars__value">{formatMoney(invoice.rates.storageFeePerPalletPerWeekWestCoastTransfer)}</div>
               </div>
               <div className="report-bars__row">
                 <div className="report-bars__labels"><strong>{t("billingOutboundFee")}</strong></div>
@@ -563,7 +581,7 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
         <section className="workbook-panel" style={{ margin: "0 1rem 1rem" }}>
           <WorkspacePanelHeader
             title={t("billingInvoicePreview")}
-            description={`${invoice.lines.length} ${t("billingLineCount").toLowerCase()}`}
+            description={`${invoice.lineCount || invoice.lines.length} ${t("billingLineCount").toLowerCase()}`}
           />
           {invoice.lines.length === 0 ? (
             <WorkspaceTableEmptyState title={t("noBillingData")} description={t("billingInvoicePreviewDesc")} />
@@ -770,6 +788,111 @@ function chargeTypeLabel(chargeType: string, t: (key: string) => string) {
     case "MANUAL": return t("billingManualCharge");
     default: return chargeType;
   }
+}
+
+function invoiceTypeLabel(invoiceType: BillingInvoice["invoiceType"], t: (key: string) => string) {
+  switch (invoiceType) {
+    case "STORAGE_SETTLEMENT":
+      return t("billingInvoiceTypeStorageSettlement");
+    case "MIXED":
+    default:
+      return t("billingInvoiceTypeMixed");
+  }
+}
+
+function containerTypeLabel(containerType: ContainerType, t: (key: string) => string) {
+  return containerType === "WEST_COAST_TRANSFER"
+    ? t("billingContainerTypeWestCoastTransfer")
+    : t("billingContainerTypeNormal");
+}
+
+function buildBillingInvoiceExportColumns(
+  invoice: BillingInvoice,
+  exportMode: BillingExportMode,
+  t: (key: string) => string
+): ExcelExportColumn[] {
+  const base: ExcelExportColumn[] = [
+    { key: "rowType", label: t("billingRowType") },
+    { key: "chargeType", label: t("billingChargeType") },
+    { key: "description", label: t("description") },
+    { key: "reference", label: t("reference") },
+    { key: "containerNo", label: t("containerNo") },
+    { key: "warehouse", label: t("currentStorage") },
+    { key: "occurredOn", label: t("billingOccurredAt") },
+    { key: "quantity", label: t("quantity"), numberFormat: "number" },
+    { key: "unitRate", label: t("unitRate"), numberFormat: "currency" },
+    { key: "amount", label: t("amount"), numberFormat: "currency" },
+    { key: "sourceType", label: t("billingSourceType") },
+    { key: "notes", label: t("notes") }
+  ];
+
+  if (exportMode === "DETAILED" && invoice.invoiceType === "STORAGE_SETTLEMENT") {
+    return [
+      ...base,
+      { key: "segmentStart", label: t("billingSegmentStart") },
+      { key: "segmentEnd", label: t("billingSegmentEnd") },
+      { key: "dayEndPallets", label: t("billingDayEndPallets"), numberFormat: "number" },
+      { key: "billedDays", label: t("billingBilledDays"), numberFormat: "number" },
+      { key: "segmentPalletDays", label: t("palletDays"), numberFormat: "number" },
+      { key: "segmentAmount", label: t("billingStorageCharges"), numberFormat: "currency" }
+    ];
+  }
+
+  return base.filter((column) => column.key !== "rowType");
+}
+
+function buildBillingInvoiceExportRows(
+  invoice: BillingInvoice,
+  exportMode: BillingExportMode,
+  timeZone: string,
+  t: (key: string) => string
+): Array<Record<string, ExcelExportCell>> {
+  const rows: Array<Record<string, ExcelExportCell>> = invoice.lines.map((line) => ({
+    rowType: t("billingRowTypeInvoiceLine"),
+    chargeType: chargeTypeLabel(line.chargeType, t),
+    description: line.description || "-",
+    reference: line.reference || "-",
+    containerNo: line.containerNo || "-",
+    warehouse: line.warehouse || "-",
+    occurredOn: line.occurredOn ? formatDateTimeValue(line.occurredOn, timeZone, { dateStyle: "medium" }) : "-",
+    quantity: line.quantity,
+    unitRate: line.unitRate,
+    amount: line.amount,
+    sourceType: line.sourceType === "AUTO" ? t("billingSourceTypeAuto") : t("billingSourceTypeManual"),
+    notes: line.notes || "-"
+  }));
+
+  if (exportMode === "DETAILED" && invoice.invoiceType === "STORAGE_SETTLEMENT") {
+    for (const line of invoice.lines) {
+      if (!line.details || line.details.kind !== "STORAGE_CONTAINER_SUMMARY") {
+        continue;
+      }
+      for (const segment of line.details.segments) {
+        rows.push({
+          rowType: t("billingRowTypeStorageSegment"),
+          chargeType: chargeTypeLabel(line.chargeType, t),
+          description: line.description || "-",
+          reference: line.reference || "-",
+          containerNo: line.containerNo || "-",
+          warehouse: line.details.warehousesTouched.join(", ") || line.warehouse || "-",
+          occurredOn: segment.endDate,
+          quantity: segment.palletDays,
+          unitRate: segment.palletDays > 0 ? segment.amount / segment.palletDays : 0,
+          amount: segment.amount,
+          sourceType: line.sourceType === "AUTO" ? t("billingSourceTypeAuto") : t("billingSourceTypeManual"),
+          notes: `${segment.dayEndPallets} ${t("billingDayEndPallets").toLowerCase()}`,
+          segmentStart: segment.startDate,
+          segmentEnd: segment.endDate,
+          dayEndPallets: segment.dayEndPallets,
+          billedDays: segment.billedDays,
+          segmentPalletDays: segment.palletDays,
+          segmentAmount: segment.amount
+        });
+      }
+    }
+  }
+
+  return rows;
 }
 
 function billingStatusLabel(status: string, t: (key: string) => string) {

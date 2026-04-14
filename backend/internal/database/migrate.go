@@ -206,6 +206,7 @@ func Migrate(db *sql.DB) error {
 			expected_arrival_date DATE DEFAULT NULL,
 			actual_arrival_date DATE DEFAULT NULL,
 			container_no VARCHAR(120) DEFAULT NULL,
+			container_type VARCHAR(32) NOT NULL DEFAULT 'NORMAL',
 			handling_mode VARCHAR(32) NOT NULL DEFAULT 'PALLETIZED',
 			storage_section VARCHAR(16) NOT NULL DEFAULT 'TEMP',
 			unit_label VARCHAR(32) DEFAULT NULL,
@@ -236,6 +237,7 @@ func Migrate(db *sql.DB) error {
 		`ALTER TABLE inbound_documents DROP INDEX IF EXISTS idx_inbound_documents_delivery_date`,
 		`CREATE INDEX IF NOT EXISTS idx_inbound_documents_expected_arrival_date ON inbound_documents (expected_arrival_date)`,
 		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS actual_arrival_date DATE DEFAULT NULL AFTER expected_arrival_date`,
+		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS container_type VARCHAR(32) NOT NULL DEFAULT 'NORMAL' AFTER container_no`,
 		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS tracking_status VARCHAR(32) NOT NULL DEFAULT 'SCHEDULED' AFTER status`,
 		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMP NULL DEFAULT NULL AFTER status`,
 		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP NULL DEFAULT NULL AFTER confirmed_at`,
@@ -262,6 +264,7 @@ func Migrate(db *sql.DB) error {
 			container_no VARCHAR(120) NOT NULL,
 			arrival_date DATE DEFAULT NULL,
 			received_at TIMESTAMP NULL DEFAULT NULL,
+			container_type VARCHAR(32) NOT NULL DEFAULT 'NORMAL',
 			handling_mode VARCHAR(32) NOT NULL DEFAULT 'PALLETIZED',
 			closed_at TIMESTAMP NULL DEFAULT NULL,
 			status VARCHAR(32) NOT NULL DEFAULT 'OPEN',
@@ -287,6 +290,7 @@ func Migrate(db *sql.DB) error {
 		`ALTER TABLE container_visits ADD COLUMN IF NOT EXISTS container_no VARCHAR(120) NOT NULL AFTER location_id`,
 		`ALTER TABLE container_visits ADD COLUMN IF NOT EXISTS arrival_date DATE DEFAULT NULL AFTER container_no`,
 		`ALTER TABLE container_visits ADD COLUMN IF NOT EXISTS received_at TIMESTAMP NULL DEFAULT NULL AFTER arrival_date`,
+		`ALTER TABLE container_visits ADD COLUMN IF NOT EXISTS container_type VARCHAR(32) NOT NULL DEFAULT 'NORMAL' AFTER received_at`,
 		`ALTER TABLE container_visits ADD COLUMN IF NOT EXISTS handling_mode VARCHAR(32) NOT NULL DEFAULT 'PALLETIZED' AFTER received_at`,
 		`ALTER TABLE container_visits ADD COLUMN IF NOT EXISTS closed_at TIMESTAMP NULL DEFAULT NULL AFTER handling_mode`,
 		`ALTER TABLE container_visits ADD COLUMN IF NOT EXISTS status VARCHAR(32) NOT NULL DEFAULT 'OPEN' AFTER closed_at`,
@@ -692,8 +696,12 @@ func Migrate(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS billing_invoices (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			invoice_no VARCHAR(64) NOT NULL,
+			invoice_type VARCHAR(32) NOT NULL DEFAULT 'MIXED',
 			customer_id BIGINT NOT NULL,
 			customer_name_snapshot VARCHAR(160) NOT NULL DEFAULT '',
+			warehouse_location_id BIGINT DEFAULT NULL,
+			warehouse_name_snapshot VARCHAR(160) DEFAULT NULL,
+			container_type VARCHAR(32) DEFAULT NULL,
 			period_start DATE NOT NULL,
 			period_end DATE NOT NULL,
 			currency_code VARCHAR(8) NOT NULL DEFAULT 'USD',
@@ -715,6 +723,9 @@ func Migrate(db *sql.DB) error {
 			KEY idx_billing_invoices_customer_id (customer_id),
 			KEY idx_billing_invoices_status (status),
 			KEY idx_billing_invoices_period (period_start, period_end),
+			KEY idx_billing_invoices_warehouse_location_id (warehouse_location_id),
+			KEY idx_billing_invoices_container_type (container_type),
+			KEY idx_billing_invoices_customer_period_type_status (customer_id, period_start, period_end, invoice_type, status),
 			CONSTRAINT fk_billing_invoices_customer
 				FOREIGN KEY (customer_id) REFERENCES customers (id),
 			CONSTRAINT fk_billing_invoices_created_by
@@ -733,6 +744,7 @@ func Migrate(db *sql.DB) error {
 			unit_rate DECIMAL(12,4) NOT NULL DEFAULT 0,
 			amount DECIMAL(12,2) NOT NULL DEFAULT 0,
 			notes VARCHAR(255) DEFAULT NULL,
+			details_json JSON DEFAULT NULL,
 			source_type VARCHAR(16) NOT NULL DEFAULT 'AUTO',
 			sort_order INT NOT NULL DEFAULT 0,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -747,6 +759,104 @@ func Migrate(db *sql.DB) error {
 	for _, statement := range statements {
 		if _, err := db.Exec(statement); err != nil {
 			return fmt.Errorf("apply migration %q: %w", statement, err)
+		}
+	}
+
+	if _, err := db.Exec(`
+		UPDATE inbound_documents
+		SET container_type = 'NORMAL'
+		WHERE container_type IS NULL OR TRIM(container_type) = ''
+	`); err != nil {
+		return fmt.Errorf("backfill inbound document container types: %w", err)
+	}
+
+	if _, err := db.Exec(`
+		UPDATE container_visits cv
+		LEFT JOIN inbound_documents d ON d.id = cv.inbound_document_id
+		SET cv.container_type = COALESCE(NULLIF(d.container_type, ''), 'NORMAL')
+		WHERE cv.container_type IS NULL OR TRIM(cv.container_type) = ''
+	`); err != nil {
+		return fmt.Errorf("backfill container visit container types: %w", err)
+	}
+
+	if hasColumn, err := columnExists(db, "billing_invoices", "invoice_type"); err != nil {
+		return fmt.Errorf("check billing invoice type column: %w", err)
+	} else if !hasColumn {
+		if _, err := db.Exec(`ALTER TABLE billing_invoices ADD COLUMN invoice_type VARCHAR(32) NOT NULL DEFAULT 'MIXED' AFTER invoice_no`); err != nil {
+			return fmt.Errorf("add billing invoice type column: %w", err)
+		}
+	}
+
+	if hasColumn, err := columnExists(db, "billing_invoices", "warehouse_location_id"); err != nil {
+		return fmt.Errorf("check billing invoice warehouse location column: %w", err)
+	} else if !hasColumn {
+		if _, err := db.Exec(`ALTER TABLE billing_invoices ADD COLUMN warehouse_location_id BIGINT DEFAULT NULL AFTER customer_name_snapshot`); err != nil {
+			return fmt.Errorf("add billing invoice warehouse location column: %w", err)
+		}
+	}
+
+	if hasColumn, err := columnExists(db, "billing_invoices", "warehouse_name_snapshot"); err != nil {
+		return fmt.Errorf("check billing invoice warehouse name snapshot column: %w", err)
+	} else if !hasColumn {
+		if _, err := db.Exec(`ALTER TABLE billing_invoices ADD COLUMN warehouse_name_snapshot VARCHAR(160) DEFAULT NULL AFTER warehouse_location_id`); err != nil {
+			return fmt.Errorf("add billing invoice warehouse name snapshot column: %w", err)
+		}
+	}
+
+	if hasColumn, err := columnExists(db, "billing_invoices", "container_type"); err != nil {
+		return fmt.Errorf("check billing invoice container type column: %w", err)
+	} else if !hasColumn {
+		if _, err := db.Exec(`ALTER TABLE billing_invoices ADD COLUMN container_type VARCHAR(32) DEFAULT NULL AFTER warehouse_name_snapshot`); err != nil {
+			return fmt.Errorf("add billing invoice container type column: %w", err)
+		}
+	}
+
+	if _, err := db.Exec(`
+		UPDATE billing_invoices
+		SET invoice_type = 'MIXED'
+		WHERE invoice_type IS NULL OR invoice_type = ''
+	`); err != nil {
+		return fmt.Errorf("backfill billing invoice types: %w", err)
+	}
+
+	if _, err := db.Exec(`
+		UPDATE billing_invoices
+		SET container_type = 'NORMAL'
+		WHERE invoice_type = 'STORAGE_SETTLEMENT'
+			AND (container_type IS NULL OR TRIM(container_type) = '')
+	`); err != nil {
+		return fmt.Errorf("backfill storage settlement invoice container types: %w", err)
+	}
+
+	if hasIndex, err := indexExists(db, "billing_invoices", "idx_billing_invoices_customer_period_type_status"); err != nil {
+		return fmt.Errorf("check billing invoice duplicate lookup index: %w", err)
+	} else if !hasIndex {
+		if _, err := db.Exec(`ALTER TABLE billing_invoices ADD INDEX idx_billing_invoices_customer_period_type_status (customer_id, period_start, period_end, invoice_type, status)`); err != nil {
+			return fmt.Errorf("add billing invoice duplicate lookup index: %w", err)
+		}
+	}
+
+	if hasIndex, err := indexExists(db, "billing_invoices", "idx_billing_invoices_warehouse_location_id"); err != nil {
+		return fmt.Errorf("check billing invoice warehouse scope index: %w", err)
+	} else if !hasIndex {
+		if _, err := db.Exec(`ALTER TABLE billing_invoices ADD INDEX idx_billing_invoices_warehouse_location_id (warehouse_location_id)`); err != nil {
+			return fmt.Errorf("add billing invoice warehouse scope index: %w", err)
+		}
+	}
+
+	if hasIndex, err := indexExists(db, "billing_invoices", "idx_billing_invoices_container_type"); err != nil {
+		return fmt.Errorf("check billing invoice container type index: %w", err)
+	} else if !hasIndex {
+		if _, err := db.Exec(`ALTER TABLE billing_invoices ADD INDEX idx_billing_invoices_container_type (container_type)`); err != nil {
+			return fmt.Errorf("add billing invoice container type index: %w", err)
+		}
+	}
+
+	if hasColumn, err := columnExists(db, "billing_invoice_lines", "details_json"); err != nil {
+		return fmt.Errorf("check billing invoice line details column: %w", err)
+	} else if !hasColumn {
+		if _, err := db.Exec(`ALTER TABLE billing_invoice_lines ADD COLUMN details_json JSON DEFAULT NULL AFTER notes`); err != nil {
+			return fmt.Errorf("add billing invoice line details column: %w", err)
 		}
 	}
 

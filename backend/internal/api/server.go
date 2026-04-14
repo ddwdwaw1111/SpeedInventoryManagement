@@ -73,6 +73,7 @@ func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName s
 	operator.POST("/inbound-documents/import-preview", server.handleImportInboundDocumentPreview)
 	operator.PUT("/inbound-documents/:id", server.handleUpdateInboundDocument)
 	operator.PUT("/inbound-documents/:id/document-note", server.handleUpdateInboundDocumentNote)
+	operator.PUT("/inbound-documents/:id/container-type", server.handleUpdateInboundDocumentContainerType)
 	operator.POST("/inbound-documents/:id/confirm", server.handleConfirmInboundDocument)
 	operator.POST("/inbound-documents/:id/tracking-status", server.handleUpdateInboundDocumentTrackingStatus)
 	operator.POST("/inbound-documents/:id/cancel", server.handleCancelInboundDocument)
@@ -836,6 +837,34 @@ func (s *Server) handleUpdateInboundDocumentNote(c *gin.Context) {
 	writeJSON(c, http.StatusOK, document)
 }
 
+func (s *Server) handleUpdateInboundDocumentContainerType(c *gin.Context) {
+	documentID, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var input service.UpdateInboundDocumentContainerTypeInput
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	document, err := s.store.UpdateInboundDocumentContainerType(c.Request.Context(), documentID, input)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "CLASSIFY", "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), "Updated inbound container type", map[string]any{
+		"containerNo":   document.ContainerNo,
+		"containerType": document.ContainerType,
+		"status":        document.Status,
+	})
+
+	writeJSON(c, http.StatusOK, document)
+}
+
 func (s *Server) handleConfirmInboundDocument(c *gin.Context) {
 	documentID, err := parseIDParam(c, "id")
 	if err != nil {
@@ -1134,10 +1163,11 @@ func (s *Server) handleListBillingInvoices(c *gin.Context) {
 	}
 
 	status := strings.TrimSpace(c.Query("status"))
+	invoiceType := strings.TrimSpace(c.Query("invoiceType"))
 
-	invoices, err := s.store.ListBillingInvoices(c.Request.Context(), customerID, status)
+	invoices, err := s.store.ListBillingInvoices(c.Request.Context(), customerID, status, invoiceType)
 	if err != nil {
-		writeServerError(c, err)
+		writeDomainError(c, err)
 		return
 	}
 

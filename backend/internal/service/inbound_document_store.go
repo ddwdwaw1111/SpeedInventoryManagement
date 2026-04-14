@@ -21,6 +21,7 @@ type InboundDocument struct {
 	ExpectedArrivalDate *time.Time            `json:"expectedArrivalDate"`
 	ActualArrivalDate   *time.Time            `json:"actualArrivalDate"`
 	ContainerNo         string                `json:"containerNo"`
+	ContainerType       string                `json:"containerType"`
 	HandlingMode        string                `json:"handlingMode"`
 	StorageSection      string                `json:"storageSection"`
 	UnitLabel           string                `json:"unitLabel"`
@@ -66,6 +67,7 @@ type CreateInboundDocumentInput struct {
 	ExpectedArrivalDate string                           `json:"expectedArrivalDate"`
 	ActualArrivalDate   string                           `json:"actualArrivalDate"`
 	ContainerNo         string                           `json:"containerNo"`
+	ContainerType       string                           `json:"containerType"`
 	HandlingMode        string                           `json:"handlingMode"`
 	StorageSection      string                           `json:"storageSection"`
 	UnitLabel           string                           `json:"unitLabel"`
@@ -77,6 +79,10 @@ type CreateInboundDocumentInput struct {
 
 type UpdateInboundDocumentNoteInput struct {
 	DocumentNote string `json:"documentNote"`
+}
+
+type UpdateInboundDocumentContainerTypeInput struct {
+	ContainerType string `json:"containerType"`
 }
 
 type CreateInboundDocumentLineInput struct {
@@ -102,6 +108,7 @@ type inboundDocumentRow struct {
 	ExpectedArrivalDate *time.Time `db:"expected_arrival_date"`
 	ActualArrivalDate   *time.Time `db:"actual_arrival_date"`
 	ContainerNo         string     `db:"container_no"`
+	ContainerType       string     `db:"container_type"`
 	HandlingMode        string     `db:"handling_mode"`
 	StorageSection      string     `db:"storage_section"`
 	UnitLabel           string     `db:"unit_label"`
@@ -155,6 +162,7 @@ func (s *Store) ListInboundDocuments(ctx context.Context, limit int, archiveScop
 			d.expected_arrival_date,
 			d.actual_arrival_date,
 			COALESCE(d.container_no, '') AS container_no,
+			COALESCE(d.container_type, '') AS container_type,
 			COALESCE(d.handling_mode, '') AS handling_mode,
 			d.storage_section,
 			COALESCE(d.unit_label, '') AS unit_label,
@@ -192,6 +200,7 @@ func (s *Store) ListInboundDocuments(ctx context.Context, limit int, archiveScop
 			ExpectedArrivalDate: row.ExpectedArrivalDate,
 			ActualArrivalDate:   row.ActualArrivalDate,
 			ContainerNo:         row.ContainerNo,
+			ContainerType:       coalesceContainerType(row.ContainerType),
 			HandlingMode:        coalesceInboundHandlingMode(row.HandlingMode),
 			StorageSection:      fallbackSection(row.StorageSection),
 			UnitLabel:           row.UnitLabel,
@@ -309,6 +318,7 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 			expected_arrival_date,
 			actual_arrival_date,
 			container_no,
+			container_type,
 			handling_mode,
 			storage_section,
 			unit_label,
@@ -319,13 +329,14 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 			posted_at,
 			cancel_note,
 			cancelled_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)
 	`,
 		input.CustomerID,
 		input.LocationID,
 		nullableTime(expectedArrivalDate),
 		nullableTime(actualArrivalDate),
 		nullableString(input.ContainerNo),
+		coalesceContainerType(input.ContainerType),
 		coalesceInboundHandlingMode(input.HandlingMode),
 		fallbackSection(input.StorageSection),
 		nullableString(input.UnitLabel),
@@ -478,6 +489,56 @@ func (s *Store) UpdateInboundDocumentNote(ctx context.Context, documentID int64,
 	return s.getInboundDocument(ctx, documentID)
 }
 
+func (s *Store) UpdateInboundDocumentContainerType(ctx context.Context, documentID int64, input UpdateInboundDocumentContainerTypeInput) (InboundDocument, error) {
+	input.ContainerType = strings.TrimSpace(strings.ToUpper(input.ContainerType))
+	if err := validateContainerType(input.ContainerType); err != nil {
+		return InboundDocument{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return InboundDocument{}, fmt.Errorf("begin inbound container type update transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID); err != nil {
+		return InboundDocument{}, err
+	}
+
+	nextContainerType := coalesceContainerType(input.ContainerType)
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE inbound_documents
+		SET
+			container_type = ?,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`,
+		nextContainerType,
+		documentID,
+	); err != nil {
+		return InboundDocument{}, mapDBError(fmt.Errorf("update inbound document container type: %w", err))
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE container_visits
+		SET
+			container_type = ?,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE inbound_document_id = ?
+	`,
+		nextContainerType,
+		documentID,
+	); err != nil {
+		return InboundDocument{}, mapDBError(fmt.Errorf("sync inbound container visit container type: %w", err))
+	}
+
+	if err := tx.Commit(); err != nil {
+		return InboundDocument{}, fmt.Errorf("commit inbound container type update: %w", err)
+	}
+
+	return s.getInboundDocument(ctx, documentID)
+}
+
 func (s *Store) updateDraftInboundDocumentTx(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -510,6 +571,7 @@ func (s *Store) updateDraftInboundDocumentTx(
 			expected_arrival_date = ?,
 			actual_arrival_date = ?,
 			container_no = ?,
+			container_type = ?,
 			handling_mode = ?,
 			storage_section = ?,
 			unit_label = ?,
@@ -526,6 +588,7 @@ func (s *Store) updateDraftInboundDocumentTx(
 		nullableTime(expectedArrivalDate),
 		nullableTime(actualArrivalDate),
 		nullableString(input.ContainerNo),
+		coalesceContainerType(input.ContainerType),
 		coalesceInboundHandlingMode(input.HandlingMode),
 		fallbackSection(input.StorageSection),
 		nullableString(input.UnitLabel),
@@ -702,7 +765,9 @@ func (s *Store) updateConfirmedInboundDocumentTx(
 		UPDATE inbound_documents
 		SET
 			expected_arrival_date = ?,
+			actual_arrival_date = ?,
 			container_no = ?,
+			container_type = ?,
 			handling_mode = ?,
 			storage_section = ?,
 			unit_label = ?,
@@ -712,8 +777,10 @@ func (s *Store) updateConfirmedInboundDocumentTx(
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`,
-		nullableTime(deliveryDate),
+		nullableTime(documentRow.ExpectedArrivalDate),
+		nullableTime(documentRow.ActualArrivalDate),
 		nullableString(newContainerNo),
+		coalesceContainerType(input.ContainerType),
 		InboundHandlingModePalletized,
 		newDocumentSection,
 		nullableString(firstNonEmpty(input.UnitLabel, documentRow.UnitLabel, "CTN")),
@@ -729,8 +796,10 @@ func (s *Store) updateConfirmedInboundDocumentTx(
 			ID:                  documentID,
 			CustomerID:          documentRow.CustomerID,
 			LocationID:          documentRow.LocationID,
-			ExpectedArrivalDate: deliveryDate,
+			ExpectedArrivalDate: documentRow.ExpectedArrivalDate,
+			ActualArrivalDate:   documentRow.ActualArrivalDate,
 			ContainerNo:         firstNonEmpty(newContainerNo, oldContainerNo),
+			ContainerType:       coalesceContainerType(input.ContainerType),
 			HandlingMode:        InboundHandlingModePalletized,
 			ConfirmedAt:         documentRow.ConfirmedAt,
 		})
@@ -745,6 +814,7 @@ func (s *Store) updateConfirmedInboundDocumentTx(
 					location_id = ?,
 					container_no = ?,
 					arrival_date = ?,
+					container_type = ?,
 					handling_mode = ?,
 					updated_at = CURRENT_TIMESTAMP
 				WHERE id = ?
@@ -752,7 +822,8 @@ func (s *Store) updateConfirmedInboundDocumentTx(
 				documentRow.CustomerID,
 				documentRow.LocationID,
 				nullableString(newContainerNo),
-				nullableTime(deliveryDate),
+				nullableTime(firstNonEmptyTime(documentRow.ActualArrivalDate, documentRow.ExpectedArrivalDate)),
+				coalesceContainerType(input.ContainerType),
 				InboundHandlingModePalletized,
 				visitID,
 			); err != nil {
@@ -1769,6 +1840,7 @@ func (s *Store) CopyInboundDocument(ctx context.Context, documentID int64) (Inbo
 			expected_arrival_date,
 			actual_arrival_date,
 			container_no,
+			container_type,
 			handling_mode,
 			storage_section,
 			unit_label,
@@ -1780,13 +1852,14 @@ func (s *Store) CopyInboundDocument(ctx context.Context, documentID int64) (Inbo
 			cancel_note,
 			cancelled_at,
 			archived_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
 	`,
 		documentRow.CustomerID,
 		documentRow.LocationID,
 		nullableTime(documentRow.ExpectedArrivalDate),
 		nullableTime(documentRow.ActualArrivalDate),
 		nullableString(documentRow.ContainerNo),
+		coalesceContainerType(documentRow.ContainerType),
 		coalesceInboundHandlingMode(documentRow.HandlingMode),
 		fallbackSection(documentRow.StorageSection),
 		nullableString(documentRow.UnitLabel),
@@ -1860,6 +1933,7 @@ func (s *Store) loadInboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx, 
 			d.expected_arrival_date,
 			d.actual_arrival_date,
 			COALESCE(d.container_no, '') AS container_no,
+			COALESCE(d.container_type, '') AS container_type,
 			COALESCE(d.handling_mode, '') AS handling_mode,
 			d.storage_section,
 			COALESCE(d.unit_label, '') AS unit_label,
@@ -1885,6 +1959,7 @@ func (s *Store) loadInboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx, 
 		&documentRow.ExpectedArrivalDate,
 		&documentRow.ActualArrivalDate,
 		&documentRow.ContainerNo,
+		&documentRow.ContainerType,
 		&documentRow.HandlingMode,
 		&documentRow.StorageSection,
 		&documentRow.UnitLabel,
@@ -1995,6 +2070,7 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 			d.expected_arrival_date,
 			d.actual_arrival_date,
 			COALESCE(d.container_no, '') AS container_no,
+			COALESCE(d.container_type, '') AS container_type,
 			COALESCE(d.handling_mode, '') AS handling_mode,
 			d.storage_section,
 			COALESCE(d.unit_label, '') AS unit_label,
@@ -2037,6 +2113,7 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 			ExpectedArrivalDate: row.ExpectedArrivalDate,
 			ActualArrivalDate:   row.ActualArrivalDate,
 			ContainerNo:         row.ContainerNo,
+			ContainerType:       coalesceContainerType(row.ContainerType),
 			HandlingMode:        coalesceInboundHandlingMode(row.HandlingMode),
 			StorageSection:      fallbackSection(row.StorageSection),
 			UnitLabel:           row.UnitLabel,
@@ -2262,6 +2339,7 @@ func sanitizeInboundDocumentInput(input CreateInboundDocumentInput) CreateInboun
 	input.ExpectedArrivalDate = strings.TrimSpace(input.ExpectedArrivalDate)
 	input.ActualArrivalDate = strings.TrimSpace(input.ActualArrivalDate)
 	input.ContainerNo = strings.TrimSpace(strings.ToUpper(input.ContainerNo))
+	input.ContainerType = strings.TrimSpace(strings.ToUpper(input.ContainerType))
 	input.HandlingMode = strings.TrimSpace(strings.ToUpper(input.HandlingMode))
 	input.StorageSection = fallbackSection(strings.TrimSpace(strings.ToUpper(input.StorageSection)))
 	input.UnitLabel = strings.TrimSpace(strings.ToUpper(input.UnitLabel))
@@ -2296,6 +2374,9 @@ func sanitizeInboundDocumentInput(input CreateInboundDocumentInput) CreateInboun
 func validateInboundDocumentInput(input CreateInboundDocumentInput) error {
 	coalescedStatus := coalesceDocumentStatus(input.Status)
 	handlingMode := coalesceInboundHandlingMode(input.HandlingMode)
+	if err := validateContainerType(input.ContainerType); err != nil {
+		return err
+	}
 	if err := validateCreatableDocumentStatus(coalescedStatus); err != nil {
 		return err
 	}

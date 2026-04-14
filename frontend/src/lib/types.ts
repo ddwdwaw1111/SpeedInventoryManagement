@@ -1,4 +1,5 @@
 export type UserRole = "admin" | "operator" | "viewer";
+export type ContainerType = "NORMAL" | "WEST_COAST_TRANSFER";
 
 export type DashboardData = {
   totalItems: number;
@@ -286,6 +287,7 @@ export type PalletTrace = {
   sourceInboundDocumentId: number;
   sourceInboundLineId: number;
   actualArrivalDate: string | null;
+  containerType: ContainerType;
   customerId: number;
   customerName: string;
   skuMasterId: number;
@@ -452,6 +454,7 @@ export type InboundDocument = {
   expectedArrivalDate: string | null;
   actualArrivalDate: string | null;
   containerNo: string;
+  containerType: ContainerType;
   handlingMode: "PALLETIZED" | "SEALED_TRANSIT";
   storageSection: string;
   unitLabel: string;
@@ -489,6 +492,7 @@ export type InboundDocumentPayload = {
   expectedArrivalDate?: string;
   actualArrivalDate?: string;
   containerNo?: string;
+  containerType?: ContainerType;
   handlingMode?: string;
   storageSection?: string;
   unitLabel?: string;
@@ -500,6 +504,10 @@ export type InboundDocumentPayload = {
 
 export type UpdateInboundDocumentNotePayload = {
   documentNote?: string;
+};
+
+export type UpdateInboundDocumentContainerTypePayload = {
+  containerType: ContainerType;
 };
 
 export type DocumentTrackingStatusPayload = {
@@ -682,11 +690,34 @@ export type CycleCountPayload = {
 // --- Billing Invoice Types ---
 
 export type BillingInvoiceStatus = "DRAFT" | "FINALIZED" | "PAID" | "VOID";
+export type BillingInvoiceType = "MIXED" | "STORAGE_SETTLEMENT";
+export type BillingExportMode = "SUMMARY" | "DETAILED";
+
+export type BillingStorageSegmentDetail = {
+  startDate: string;
+  endDate: string;
+  dayEndPallets: number;
+  billedDays: number;
+  palletDays: number;
+  amount: number;
+};
+
+export type BillingInvoiceLineDetails = {
+  kind: "STORAGE_CONTAINER_SUMMARY";
+  warehouseLocationId?: number | null;
+  warehouseName?: string;
+  warehousesTouched: string[];
+  palletsTracked: number;
+  palletDays: number;
+  segments: BillingStorageSegmentDetail[];
+};
 
 export type BillingRatesSnapshot = {
   inboundContainerFee: number;
   wrappingFeePerPallet: number;
-  storageFeePerPalletPerWeek: number;
+  storageFeePerPalletPerWeek?: number;
+  storageFeePerPalletPerWeekNormal: number;
+  storageFeePerPalletPerWeekWestCoastTransfer: number;
   outboundFeePerPallet: number;
 };
 
@@ -706,13 +737,18 @@ export type BillingInvoiceLineData = {
   sourceType: "AUTO" | "MANUAL";
   sortOrder: number;
   createdAt: string;
+  details?: BillingInvoiceLineDetails | null;
 };
 
 export type BillingInvoice = {
   id: number;
   invoiceNo: string;
+  invoiceType: BillingInvoiceType;
   customerId: number;
   customerNameSnapshot: string;
+  warehouseLocationId: number | null;
+  warehouseNameSnapshot: string;
+  containerType: ContainerType | "";
   periodStart: string;
   periodEnd: string;
   currencyCode: string;
@@ -729,6 +765,7 @@ export type BillingInvoice = {
   createdByUserId: number;
   createdAt: string;
   updatedAt: string;
+  lineCount: number;
   lines: BillingInvoiceLineData[];
 };
 
@@ -744,11 +781,16 @@ export type CreateBillingInvoiceLinePayload = {
   amount: number;
   notes?: string;
   sourceType?: string;
+  details?: BillingInvoiceLineDetails;
 };
 
 export type CreateBillingInvoicePayload = {
+  invoiceType?: BillingInvoiceType;
   customerId: number;
   customerName: string;
+  warehouseLocationId?: number | null;
+  warehouseName?: string;
+  containerType?: ContainerType | null;
   periodStart: string;
   periodEnd: string;
   rates: BillingRatesSnapshot;

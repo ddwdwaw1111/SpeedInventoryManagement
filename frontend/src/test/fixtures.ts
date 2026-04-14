@@ -160,6 +160,7 @@ export function createInboundDocument(overrides: Partial<InboundDocument> = {}):
     expectedArrivalDate: ISO_DATE,
     actualArrivalDate: null,
     containerNo: "GCXU5817233",
+    containerType: "NORMAL",
     handlingMode: "PALLETIZED",
     storageSection: "TEMP",
     unitLabel: "CTN",

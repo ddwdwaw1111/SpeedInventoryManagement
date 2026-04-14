@@ -1401,6 +1401,7 @@ func (s *Store) loadOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, doc
 			net_weight_kgs,
 			gross_weight_kgs,
 			COALESCE(line_note, '') AS line_note,
+			COALESCE(pick_pallets_json, '') AS pick_pallets_json,
 			created_at
 		FROM outbound_document_lines
 		WHERE document_id = ?
@@ -1432,6 +1433,7 @@ func (s *Store) loadOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, doc
 			&lineRow.NetWeightKgs,
 			&lineRow.GrossWeightKgs,
 			&lineRow.LineNote,
+			&lineRow.PickPalletsJSON,
 			&lineRow.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan outbound document line: %w", err)

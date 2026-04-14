@@ -285,8 +285,14 @@ export default function App() {
     setCurrentPathname(window.location.pathname);
   }
 
-  function handleNavigateToBillingContainerDetail(startDate: string, endDate: string, customerId: number | "all", containerNo: string) {
-    navigateToBillingContainerDetail(setActivePage, startDate, endDate, customerId, containerNo);
+  function handleNavigateToBillingContainerDetail(
+    startDate: string,
+    endDate: string,
+    customerId: number | "all",
+    containerNo: string,
+    warehouseLocationId: number | "all" = "all"
+  ) {
+    navigateToBillingContainerDetail(setActivePage, startDate, endDate, customerId, containerNo, warehouseLocationId);
     setCurrentPathname(window.location.pathname);
   }
 
@@ -803,6 +809,7 @@ export default function App() {
             ) : null}
             {activePage === "billing" ? (
               renderWithSuspense(<BillingPage
+                locations={locations}
                 customers={customers}
                 inboundDocuments={inboundDocuments}
                 outboundDocuments={outboundDocuments}
@@ -824,7 +831,9 @@ export default function App() {
                 startDate={selectedBillingContainerDetail?.startDate ?? getCurrentLocalIsoDate()}
                 endDate={selectedBillingContainerDetail?.endDate ?? getCurrentLocalIsoDate()}
                 customerId={selectedBillingContainerDetail?.customerId ?? "all"}
+                warehouseLocationId={selectedBillingContainerDetail?.warehouseLocationId ?? "all"}
                 containerNo={selectedBillingContainerDetail?.containerNo ?? null}
+                locations={locations}
                 customers={customers}
                 inboundDocuments={inboundDocuments}
                 outboundDocuments={outboundDocuments}

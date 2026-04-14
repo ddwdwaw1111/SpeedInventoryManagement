@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Movement, PalletTrace } from "../lib/types";
 import { renderWithProviders } from "../test/renderWithProviders";
-import { createCustomer } from "../test/fixtures";
+import { createCustomer, createLocation } from "../test/fixtures";
 import { BillingContainerDetailPage } from "./BillingContainerDetailPage";
 
 const { getPallets, getPalletLocationEvents } = vi.hoisted(() => ({
@@ -30,10 +30,14 @@ describe("BillingContainerDetailPage", () => {
 			startDate: "2026-03-01",
 			endDate: "2026-03-31",
 			customerId: "all",
+			warehouseLocationId: "all",
+			containerType: "all",
 			rates: {
 				inboundContainerFee: 450,
 				wrappingFeePerPallet: 10,
 				storageFeePerPalletPerWeek: 7,
+				storageFeePerPalletPerWeekNormal: 7,
+				storageFeePerPalletPerWeekWestCoastTransfer: 7,
 				outboundFeePerPallet: 10
 			}
 		}));
@@ -139,12 +143,14 @@ describe("BillingContainerDetailPage", () => {
 
 		renderWithProviders(
 			<BillingContainerDetailPage
-				routeKey="/billing/container/2026-03-01/2026-03-31/all/GCXU5817233"
+				routeKey="/billing/container/2026-03-01/2026-03-31/all/all/GCXU5817233"
 				startDate="2026-03-01"
 				endDate="2026-03-31"
 				customerId="all"
+				warehouseLocationId="all"
 				containerNo="GCXU5817233"
 				customers={[createCustomer()]}
+				locations={[createLocation()]}
 				inboundDocuments={[]}
 				outboundDocuments={[]}
 				movements={[]}
@@ -230,12 +236,14 @@ describe("BillingContainerDetailPage", () => {
 
 		renderWithProviders(
 			<BillingContainerDetailPage
-				routeKey="/billing/container/2026-03-01/2026-03-31/all/MSCU1234567"
+				routeKey="/billing/container/2026-03-01/2026-03-31/all/all/MSCU1234567"
 				startDate="2026-03-01"
 				endDate="2026-03-31"
 				customerId="all"
+				warehouseLocationId="all"
 				containerNo="MSCU1234567"
 				customers={[createCustomer()]}
+				locations={[createLocation()]}
 				inboundDocuments={[]}
 				outboundDocuments={[]}
 				movements={fallbackMovements}
@@ -269,6 +277,7 @@ function createPalletTrace(overrides: Partial<PalletTrace> = {}): PalletTrace {
 		currentLocationName: "NJ",
 		currentStorageSection: "TEMP",
 		currentContainerNo: "GCXU5817233",
+		containerType: "NORMAL",
 		status: "OPEN",
 		createdAt: "2026-03-02T09:00:00Z",
 		updatedAt: "2026-03-20T10:00:00Z",

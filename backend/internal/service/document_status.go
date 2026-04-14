@@ -26,8 +26,11 @@ const (
 	OutboundTrackingPacked    = "PACKED"
 	OutboundTrackingShipped   = "SHIPPED"
 
-	InboundHandlingModePalletized   = "PALLETIZED"
+	InboundHandlingModePalletized    = "PALLETIZED"
 	InboundHandlingModeSealedTransit = "SEALED_TRANSIT"
+
+	ContainerTypeNormal            = "NORMAL"
+	ContainerTypeWestCoastTransfer = "WEST_COAST_TRANSFER"
 )
 
 func normalizeDocumentStatus(raw string) string {
@@ -155,6 +158,34 @@ func coalesceInboundHandlingMode(raw string) string {
 		return InboundHandlingModePalletized
 	}
 	return normalized
+}
+
+func normalizeContainerType(raw string) string {
+	switch strings.TrimSpace(strings.ToUpper(raw)) {
+	case ContainerTypeNormal:
+		return ContainerTypeNormal
+	case ContainerTypeWestCoastTransfer:
+		return ContainerTypeWestCoastTransfer
+	default:
+		return strings.TrimSpace(strings.ToUpper(raw))
+	}
+}
+
+func coalesceContainerType(raw string) string {
+	normalized := normalizeContainerType(raw)
+	if normalized == "" {
+		return ContainerTypeNormal
+	}
+	return normalized
+}
+
+func validateContainerType(raw string) error {
+	switch coalesceContainerType(raw) {
+	case ContainerTypeNormal, ContainerTypeWestCoastTransfer:
+		return nil
+	default:
+		return fmt.Errorf("%w: container type must be NORMAL or WEST_COAST_TRANSFER", ErrInvalidInput)
+	}
 }
 
 func validateInboundTrackingTransition(current string, target string) error {

@@ -134,9 +134,10 @@ func ensureContainerVisitForInboundDocumentTx(ctx context.Context, tx *sql.Tx, d
 			container_no,
 			arrival_date,
 			received_at,
+			container_type,
 			handling_mode,
 			status
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		documentRow.ID,
 		documentRow.CustomerID,
@@ -144,6 +145,7 @@ func ensureContainerVisitForInboundDocumentTx(ctx context.Context, tx *sql.Tx, d
 		normalizedContainer,
 		nullableTime(firstNonEmptyTime(documentRow.ActualArrivalDate, documentRow.ExpectedArrivalDate)),
 		nullableTime(receivedAt),
+		coalesceContainerType(documentRow.ContainerType),
 		coalesceInboundHandlingMode(documentRow.HandlingMode),
 		ContainerVisitStatusOpen,
 	)

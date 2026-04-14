@@ -24,11 +24,15 @@ import { downloadExcelWorkbook, type ExcelExportCell, type ExcelExportColumn } f
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type {
+  BillingExportMode,
   BillingInvoice,
   BillingInvoiceStatus,
+  BillingInvoiceType,
+  ContainerType,
   CreateBillingInvoicePayload,
   Customer,
   InboundDocument,
+  Location,
   OutboundDocument,
   PalletLocationEvent,
   PalletTrace,
@@ -39,10 +43,17 @@ import { WorkspacePanelHeader, WorkspaceTableEmptyState } from "./WorkspacePanel
 
 type BillingPageProps = {
   customers: Customer[];
+  locations: Location[];
   inboundDocuments: InboundDocument[];
   outboundDocuments: OutboundDocument[];
   currentUserRole: UserRole;
-  onOpenBillingContainerDetail: (startDate: string, endDate: string, customerId: number | "all", containerNo: string) => void;
+  onOpenBillingContainerDetail: (
+    startDate: string,
+    endDate: string,
+    customerId: number | "all",
+    containerNo: string,
+    warehouseLocationId?: number | "all"
+  ) => void;
   onOpenBillingInvoice: (invoiceId: number) => void;
 };
 
@@ -59,14 +70,27 @@ type BillingContainerSummaryRow = {
   totalAmount: number;
 };
 
+type BillingWorkspaceMode = "OVERVIEW" | "STORAGE_SETTLEMENT";
+
 const BILLING_EXPORT_SHEET_NAME = "Billing Preview";
 
-export function BillingPage({ customers, inboundDocuments, outboundDocuments, currentUserRole, onOpenBillingContainerDetail, onOpenBillingInvoice }: BillingPageProps) {
+export function BillingPage({
+  customers,
+  locations,
+  inboundDocuments,
+  outboundDocuments,
+  currentUserRole,
+  onOpenBillingContainerDetail,
+  onOpenBillingInvoice
+}: BillingPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const [selectedStartDate, setSelectedStartDate] = useState(() => getCurrentBillingDateRange().startDate);
   const [selectedEndDate, setSelectedEndDate] = useState(() => getCurrentBillingDateRange().endDate);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>("all");
+  const [selectedWarehouseLocationId, setSelectedWarehouseLocationId] = useState<string>("all");
+  const [selectedContainerType, setSelectedContainerType] = useState<ContainerType | "all">("all");
+  const [workspaceMode, setWorkspaceMode] = useState<BillingWorkspaceMode>("OVERVIEW");
   const [rates, setRates] = useState<BillingRates>(DEFAULT_BILLING_RATES);
   const [pallets, setPallets] = useState<PalletTrace[]>([]);
   const [palletLocationEvents, setPalletLocationEvents] = useState<PalletLocationEvent[]>([]);
@@ -79,6 +103,7 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [exportMenuAnchor, setExportMenuAnchor] = useState<HTMLElement | null>(null);
   const [containerNoFilter, setContainerNoFilter] = useState("");
+  const [pendingExportMode, setPendingExportMode] = useState<BillingExportMode>("SUMMARY");
 
   useEffect(() => {
     let active = true;
@@ -115,14 +140,23 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
   }, [t]);
 
   const customerId = selectedCustomerId === "all" ? "all" : Number(selectedCustomerId);
+  const warehouseLocationId = selectedWarehouseLocationId === "all" ? "all" : Number(selectedWarehouseLocationId);
+  const selectedWarehouse = warehouseLocationId === "all"
+    ? null
+    : locations.find((location) => location.id === warehouseLocationId) ?? null;
+  const selectedStorageRatePerWeek = selectedContainerType === "WEST_COAST_TRANSFER"
+    ? rates.storageFeePerPalletPerWeekWestCoastTransfer
+    : rates.storageFeePerPalletPerWeekNormal;
   useEffect(() => {
     setBillingWorkspaceContext({
       startDate: selectedStartDate,
       endDate: selectedEndDate,
       customerId,
+      warehouseLocationId,
+      containerType: selectedContainerType,
       rates
     });
-  }, [customerId, rates, selectedEndDate, selectedStartDate]);
+  }, [customerId, rates, selectedContainerType, selectedEndDate, selectedStartDate, warehouseLocationId]);
 
   // Load invoice history
   useEffect(() => {
@@ -141,26 +175,16 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
   }, [customerId]);
 
   async function handleCreateInvoice() {
-    if (customerId === "all" || activeInvoiceLines.length === 0) return;
+    if (customerId === "all") {
+      return;
+    }
 
     const selectedCustomer = customers.find((c) => c.id === customerId);
     const customerName = selectedCustomer?.name ?? billingPreview.customerName;
-
-    setIsCreatingInvoice(true);
-    setErrorMessage("");
-    try {
-      const payload: CreateBillingInvoicePayload = {
-        customerId,
-        customerName,
-        periodStart: selectedStartDate,
-        periodEnd: selectedEndDate,
-        rates: {
-          inboundContainerFee: rates.inboundContainerFee,
-          wrappingFeePerPallet: rates.wrappingFeePerPallet,
-          storageFeePerPalletPerWeek: rates.storageFeePerPalletPerWeek,
-          outboundFeePerPallet: rates.outboundFeePerPallet,
-        },
-        lines: activeInvoiceLines.map((line) => ({
+    const invoiceType: BillingInvoiceType = workspaceMode === "STORAGE_SETTLEMENT" ? "STORAGE_SETTLEMENT" : "MIXED";
+    const lines = invoiceType === "STORAGE_SETTLEMENT"
+      ? buildStorageSettlementInvoiceLines(storageSettlementRows)
+      : activeInvoiceLines.map((line) => ({
           chargeType: line.chargeType,
           description: line.meta || chargeTypeDescription(line.chargeType),
           reference: line.reference,
@@ -171,7 +195,38 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
           unitRate: line.unitRate,
           amount: line.amount,
           sourceType: "AUTO"
-        }))
+        }));
+
+    if (lines.length === 0) {
+      return;
+    }
+
+    if (invoiceType === "STORAGE_SETTLEMENT" && existingStorageSettlementInvoice) {
+      setErrorMessage(t("billingStorageSettlementDuplicateError"));
+      return;
+    }
+
+    setIsCreatingInvoice(true);
+    setErrorMessage("");
+    try {
+      const payload: CreateBillingInvoicePayload = {
+        invoiceType,
+        customerId,
+        customerName,
+        warehouseLocationId: invoiceType === "STORAGE_SETTLEMENT" && warehouseLocationId !== "all" ? warehouseLocationId : null,
+        warehouseName: invoiceType === "STORAGE_SETTLEMENT" ? selectedWarehouse?.name ?? "" : "",
+        containerType: invoiceType === "STORAGE_SETTLEMENT" && selectedContainerType !== "all" ? selectedContainerType : null,
+        periodStart: selectedStartDate,
+        periodEnd: selectedEndDate,
+        rates: {
+          inboundContainerFee: rates.inboundContainerFee,
+          wrappingFeePerPallet: rates.wrappingFeePerPallet,
+          storageFeePerPalletPerWeek: rates.storageFeePerPalletPerWeek,
+          storageFeePerPalletPerWeekNormal: rates.storageFeePerPalletPerWeekNormal,
+          storageFeePerPalletPerWeekWestCoastTransfer: rates.storageFeePerPalletPerWeekWestCoastTransfer,
+          outboundFeePerPallet: rates.outboundFeePerPallet,
+        },
+        lines
       };
       const created = await api.createBillingInvoice(payload);
       onOpenBillingInvoice(created.id);
@@ -191,12 +246,21 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
     palletLocationEvents,
     inboundDocuments,
     outboundDocuments,
+    locationId: warehouseLocationId,
+    containerType: selectedContainerType,
     rates
-  }), [customerId, customers, inboundDocuments, outboundDocuments, palletLocationEvents, pallets, rates, selectedEndDate, selectedStartDate]);
+  }), [customerId, customers, inboundDocuments, outboundDocuments, palletLocationEvents, pallets, rates, selectedContainerType, selectedEndDate, selectedStartDate, warehouseLocationId, workspaceMode]);
   const containerSummaryRows = useMemo(
     () => buildBillingContainerSummaryRows(billingPreview.invoiceLines, billingPreview.storageRows),
     [billingPreview.invoiceLines, billingPreview.storageRows]
   );
+  const storageSettlementRows = useMemo(() => {
+    const filter = containerNoFilter.trim().toUpperCase();
+    if (!filter) {
+      return billingPreview.storageRows;
+    }
+    return billingPreview.storageRows.filter((row) => row.containerNo.toUpperCase().includes(filter));
+  }, [billingPreview.storageRows, containerNoFilter]);
 
   const activeInvoiceLines = useMemo(() => {
     const filter = containerNoFilter.trim().toUpperCase();
@@ -213,6 +277,14 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
   const activeGrandTotal = useMemo(
     () => activeInvoiceLines.reduce((sum, line) => sum + line.amount, 0),
     [activeInvoiceLines]
+  );
+  const storageSettlementTotal = useMemo(
+    () => storageSettlementRows.reduce((sum, row) => sum + row.amount, 0),
+    [storageSettlementRows]
+  );
+  const storageSettlementTrackedPallets = useMemo(
+    () => storageSettlementRows.reduce((sum, row) => sum + row.palletsTracked, 0),
+    [storageSettlementRows]
   );
 
   const dailyBalanceDataset = useMemo(
@@ -236,36 +308,57 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
     return counts;
   }, [invoices]);
 
-  const canCreateInvoice = customerId !== "all" && activeInvoiceLines.length > 0;
-  const hasBillablePreview = activeInvoiceLines.length > 0;
-  const exportTitle = useMemo(
-    () => buildBillingExportTitle(t("billingPage"), billingPreview.customerName, billingPreview.startDate, billingPreview.endDate),
-    [billingPreview.customerName, billingPreview.endDate, billingPreview.startDate, t]
+  const existingStorageSettlementInvoice = useMemo(
+    () => customerId === "all"
+      ? null
+      : invoices.find((invoice) =>
+          invoice.invoiceType === "STORAGE_SETTLEMENT" &&
+          invoice.customerId === customerId &&
+          (invoice.warehouseLocationId ?? null) === (warehouseLocationId === "all" ? null : warehouseLocationId) &&
+          (invoice.containerType || "") === (selectedContainerType === "all" ? "" : selectedContainerType) &&
+          invoice.periodStart === selectedStartDate &&
+          invoice.periodEnd === selectedEndDate &&
+          invoice.status !== "VOID"
+        ) ?? null,
+    [customerId, invoices, selectedContainerType, selectedEndDate, selectedStartDate, warehouseLocationId]
   );
-  const exportColumns = useMemo<ExcelExportColumn[]>(() => ([
-    { key: "customerName", label: t("customer") },
-    { key: "chargeType", label: t("chargeType") },
-    { key: "reference", label: t("reference") },
-    { key: "containerNo", label: t("containerNo") },
-    { key: "warehouseSummary", label: t("currentStorage") },
-    { key: "quantity", label: t("quantity"), numberFormat: "number" },
-    { key: "unitRate", label: t("unitRate"), numberFormat: "currency" },
-    { key: "amount", label: t("amount"), numberFormat: "currency" },
-    { key: "meta", label: t("notes") },
-    { key: "occurredOn", label: t("billingOccurredAt") }
-  ]), [t]);
-  const exportRows = useMemo<Array<Record<string, ExcelExportCell>>>(() => billingPreview.invoiceLines.map((line) => ({
-    customerName: line.customerName,
-    chargeType: renderChargeTypeLabel(line.chargeType, t),
-    reference: line.reference,
-    containerNo: line.containerNo,
-    warehouseSummary: line.warehouseSummary,
-    quantity: line.quantity,
-    unitRate: line.unitRate,
-    amount: line.amount,
-    meta: line.meta,
-    occurredOn: line.occurredOn ? formatDateTimeValue(line.occurredOn, resolvedTimeZone, { dateStyle: "medium" }) : "-"
-  })), [billingPreview.invoiceLines, resolvedTimeZone, t]);
+  const canCreateMixedInvoice = customerId !== "all" && activeInvoiceLines.length > 0;
+  const canCreateStorageInvoice =
+    customerId !== "all" &&
+    selectedContainerType !== "all" &&
+    storageSettlementRows.length > 0 &&
+    existingStorageSettlementInvoice === null;
+  const canCreateInvoice = workspaceMode === "STORAGE_SETTLEMENT" ? canCreateStorageInvoice : canCreateMixedInvoice;
+  const hasBillablePreview = workspaceMode === "STORAGE_SETTLEMENT"
+    ? storageSettlementRows.length > 0
+    : activeInvoiceLines.length > 0;
+  const exportTitle = useMemo(
+    () => buildBillingExportTitle(
+      workspaceMode === "STORAGE_SETTLEMENT" ? t("billingStorageSettlementTitle") : t("billingPage"),
+      billingPreview.customerName,
+      billingPreview.startDate,
+      billingPreview.endDate,
+      pendingExportMode,
+      warehouseLocationId === "all" ? undefined : selectedWarehouse?.name ?? t("billingAllWarehouses"),
+      selectedContainerType !== "all" ? containerTypeLabel(selectedContainerType, t) : undefined
+    ),
+    [billingPreview.customerName, billingPreview.endDate, billingPreview.startDate, pendingExportMode, selectedContainerType, selectedWarehouse?.name, t, workspaceMode]
+  );
+  const exportColumns = useMemo<ExcelExportColumn[]>(
+    () => buildBillingPageExportColumns(workspaceMode, pendingExportMode, t),
+    [pendingExportMode, t, workspaceMode]
+  );
+  const exportRows = useMemo<Array<Record<string, ExcelExportCell>>>(
+    () => buildBillingPageExportRows({
+      workspaceMode,
+      exportMode: pendingExportMode,
+      invoiceLines: activeInvoiceLines,
+      storageRows: storageSettlementRows,
+      timeZone: resolvedTimeZone,
+      t
+    }),
+    [activeInvoiceLines, pendingExportMode, resolvedTimeZone, storageSettlementRows, t, workspaceMode]
+  );
 
   function handleExportExcel({ title, columns }: { title: string; columns: ExcelExportColumn[] }) {
     downloadExcelWorkbook({
@@ -274,22 +367,32 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
       fileName: title,
       columns,
       rows: exportRows,
-      summaryRows: [
-        { label: t("billingInboundCharges"), value: billingPreview.summary.inboundAmount, numberFormat: "currency" },
-        { label: t("billingWrappingCharges"), value: billingPreview.summary.wrappingAmount, numberFormat: "currency" },
-        { label: t("billingStorageCharges"), value: billingPreview.summary.storageAmount, numberFormat: "currency" },
-        { label: t("billingOutboundCharges"), value: billingPreview.summary.outboundAmount, numberFormat: "currency" },
-        { label: t("billingGrandTotal"), value: billingPreview.summary.grandTotal, numberFormat: "currency", bold: true }
-      ]
+      summaryRows: workspaceMode === "STORAGE_SETTLEMENT"
+        ? [
+            { label: t("billingStorageContainers"), value: storageSettlementRows.length, numberFormat: "number" },
+            { label: t("billingTrackedPallets"), value: storageSettlementTrackedPallets, numberFormat: "number" },
+            { label: t("palletDays"), value: billingPreview.summary.palletDays, numberFormat: "number" },
+            { label: t("billingStorageCharges"), value: billingPreview.summary.storageAmount, numberFormat: "currency", bold: true }
+          ]
+        : [
+            { label: t("billingInboundCharges"), value: billingPreview.summary.inboundAmount, numberFormat: "currency" },
+            { label: t("billingWrappingCharges"), value: billingPreview.summary.wrappingAmount, numberFormat: "currency" },
+            { label: t("billingStorageCharges"), value: billingPreview.summary.storageAmount, numberFormat: "currency" },
+            { label: t("billingOutboundCharges"), value: billingPreview.summary.outboundAmount, numberFormat: "currency" },
+            { label: t("billingGrandTotal"), value: billingPreview.summary.grandTotal, numberFormat: "currency", bold: true }
+          ]
     });
     setIsExportDialogOpen(false);
   }
 
-  function handleDownloadPdf() {
+  function handleDownloadPdf(exportMode: BillingExportMode = pendingExportMode) {
     downloadBillingPreviewPdf({
       preview: billingPreview,
       rates,
-      timeZone: resolvedTimeZone
+      timeZone: resolvedTimeZone,
+      exportMode,
+      workspaceMode,
+      storageRows: storageSettlementRows
     });
   }
 
@@ -315,20 +418,42 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
         <MenuItem
           onClick={() => {
             setExportMenuAnchor(null);
+            setPendingExportMode("SUMMARY");
             setIsExportDialogOpen(true);
           }}
         >
           <ListItemIcon><FileDownloadOutlinedIcon fontSize="small" /></ListItemIcon>
-          <ListItemText primary={t("exportExcel")} secondary={t("exportExcelDesc")} />
+          <ListItemText primary={t("billingExportExcelSummary")} secondary={t("billingExportSummaryDesc")} />
         </MenuItem>
         <MenuItem
           onClick={() => {
             setExportMenuAnchor(null);
-            handleDownloadPdf();
+            setPendingExportMode("DETAILED");
+            setIsExportDialogOpen(true);
+          }}
+        >
+          <ListItemIcon><FileDownloadOutlinedIcon fontSize="small" /></ListItemIcon>
+          <ListItemText primary={t("billingExportExcelDetailed")} secondary={t("billingExportDetailedDesc")} />
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            setExportMenuAnchor(null);
+            setPendingExportMode("SUMMARY");
+            handleDownloadPdf("SUMMARY");
           }}
         >
           <ListItemIcon><PictureAsPdfOutlinedIcon fontSize="small" /></ListItemIcon>
-          <ListItemText primary={t("downloadPdf")} secondary={t("downloadPdfDesc")} />
+          <ListItemText primary={t("billingDownloadPdfSummary")} secondary={t("billingExportSummaryDesc")} />
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            setExportMenuAnchor(null);
+            setPendingExportMode("DETAILED");
+            handleDownloadPdf("DETAILED");
+          }}
+        >
+          <ListItemIcon><PictureAsPdfOutlinedIcon fontSize="small" /></ListItemIcon>
+          <ListItemText primary={t("billingDownloadPdfDetailed")} secondary={t("billingExportDetailedDesc")} />
         </MenuItem>
       </Menu>
       <Divider orientation="vertical" flexItem />
@@ -350,14 +475,16 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
       >
         {t("refresh")}
       </Button>
-      <Button
-        size="small"
-        variant={showDetailSections ? "contained" : "outlined"}
-        startIcon={showDetailSections ? <ExpandLessOutlinedIcon fontSize="small" /> : <ExpandMoreOutlinedIcon fontSize="small" />}
-        onClick={() => setShowDetailSections((prev) => !prev)}
-      >
-        {showDetailSections ? t("billingHideDetails") : t("billingShowDetails")}
-      </Button>
+      {workspaceMode === "OVERVIEW" && (
+        <Button
+          size="small"
+          variant={showDetailSections ? "contained" : "outlined"}
+          startIcon={showDetailSections ? <ExpandLessOutlinedIcon fontSize="small" /> : <ExpandMoreOutlinedIcon fontSize="small" />}
+          onClick={() => setShowDetailSections((prev) => !prev)}
+        >
+          {showDetailSections ? t("billingHideDetails") : t("billingShowDetails")}
+        </Button>
+      )}
     </div>
   );
 
@@ -366,13 +493,32 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
       <section className="workbook-panel workbook-panel--full">
         <div className="tab-strip">
           <WorkspacePanelHeader
-            title={t("billingPage")}
-            description={t("billingPageDesc")}
+            title={workspaceMode === "STORAGE_SETTLEMENT" ? t("billingStorageSettlementTitle") : t("billingPage")}
+            description={workspaceMode === "STORAGE_SETTLEMENT" ? t("billingStorageSettlementDesc") : t("billingPageDesc")}
             errorMessage={errorMessage}
             notices={[
               <span key="assumption">{t("billingDayEndNotice")}</span>
             ]}
             actions={rateActions}
+          />
+        </div>
+
+        <div style={{ display: "flex", gap: "0.5rem", padding: "0 1rem 1rem", flexWrap: "wrap" }}>
+          <Chip
+            size="small"
+            label={t("billingModeOverview")}
+            color="primary"
+            variant={workspaceMode === "OVERVIEW" ? "filled" : "outlined"}
+            onClick={() => setWorkspaceMode("OVERVIEW")}
+            style={{ cursor: "pointer" }}
+          />
+          <Chip
+            size="small"
+            label={t("billingModeStorageSettlement")}
+            color="primary"
+            variant={workspaceMode === "STORAGE_SETTLEMENT" ? "filled" : "outlined"}
+            onClick={() => setWorkspaceMode("STORAGE_SETTLEMENT")}
+            style={{ cursor: "pointer" }}
           />
         </div>
 
@@ -396,6 +542,23 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
             </select>
           </label>
           <label>
+            {t("billingWarehouseScope")}
+            <select value={selectedWarehouseLocationId} onChange={(event) => setSelectedWarehouseLocationId(event.target.value)}>
+              <option value="all">{t("billingAllWarehouses")}</option>
+              {locations.map((location) => (
+                <option key={location.id} value={location.id}>{location.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            {t("billingContainerType")}
+            <select value={selectedContainerType} onChange={(event) => setSelectedContainerType(event.target.value as ContainerType | "all")}>
+              <option value="all">{t("billingAllContainerTypes")}</option>
+              <option value="NORMAL">{containerTypeLabel("NORMAL", t)}</option>
+              <option value="WEST_COAST_TRANSFER">{containerTypeLabel("WEST_COAST_TRANSFER", t)}</option>
+            </select>
+          </label>
+          <label>
             {t("containerNo")}
             <input
               type="search"
@@ -408,57 +571,151 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
 
         {/* ── Quick metrics ── */}
         <div className="metric-ribbon" style={{ padding: "0 1rem 1rem" }}>
-          <article className="metric-card">
-            <span>{t("billingReceivedContainers")}</span>
-            <strong>{formatNumber(billingPreview.summary.receivedContainers)}</strong>
-          </article>
-          <article className="metric-card">
-            <span>{t("billingReceivedPallets")}</span>
-            <strong>{formatNumber(billingPreview.summary.receivedPallets)}</strong>
-          </article>
-          <article className="metric-card">
-            <span>{t("palletDays")}</span>
-            <strong>{formatNumber(billingPreview.summary.palletDays)}</strong>
-          </article>
-          <article className="metric-card">
-            <span>{t("billingGrandTotal")}</span>
-            <strong>{formatMoney(billingPreview.summary.grandTotal)}</strong>
-          </article>
+          {workspaceMode === "STORAGE_SETTLEMENT" ? (
+            <>
+              <article className="metric-card">
+                <span>{t("billingStorageContainers")}</span>
+                <strong>{formatNumber(storageSettlementRows.length)}</strong>
+              </article>
+              <article className="metric-card">
+                <span>{t("billingTrackedPallets")}</span>
+                <strong>{formatNumber(storageSettlementTrackedPallets)}</strong>
+              </article>
+              <article className="metric-card">
+                <span>{t("palletDays")}</span>
+                <strong>{formatNumber(billingPreview.summary.palletDays)}</strong>
+              </article>
+              <article className="metric-card">
+                <span>{t("billingStorageCharges")}</span>
+                <strong>{formatMoney(storageSettlementTotal)}</strong>
+              </article>
+            </>
+          ) : (
+            <>
+              <article className="metric-card">
+                <span>{t("billingReceivedContainers")}</span>
+                <strong>{formatNumber(billingPreview.summary.receivedContainers)}</strong>
+              </article>
+              <article className="metric-card">
+                <span>{t("billingReceivedPallets")}</span>
+                <strong>{formatNumber(billingPreview.summary.receivedPallets)}</strong>
+              </article>
+              <article className="metric-card">
+                <span>{t("palletDays")}</span>
+                <strong>{formatNumber(billingPreview.summary.palletDays)}</strong>
+              </article>
+              <article className="metric-card">
+                <span>{t("billingGrandTotal")}</span>
+                <strong>{formatMoney(billingPreview.summary.grandTotal)}</strong>
+              </article>
+            </>
+          )}
         </div>
 
         {/* ── Charge summary bars ── */}
-        <div className="report-grid" style={{ paddingTop: 0 }}>
-          <article className="report-card">
-            <div className="report-card__header">
-              <h3>{t("billingChargeSummary")}</h3>
-              <p>{t("billingChargeSummaryDesc")}</p>
-            </div>
-            <div className="report-bars report-bars--summary">
-              {[
-                { label: t("billingInboundCharges"), value: billingPreview.summary.inboundAmount },
-                { label: t("billingWrappingCharges"), value: billingPreview.summary.wrappingAmount },
-                { label: t("billingStorageCharges"), value: billingPreview.summary.storageAmount },
-                { label: t("billingOutboundCharges"), value: billingPreview.summary.outboundAmount }
-              ].map((row) => (
-                <div className="report-bars__row" key={row.label}>
-                  <div className="report-bars__labels">
-                    <strong>{row.label}</strong>
+        {workspaceMode === "OVERVIEW" && (
+          <div className="report-grid" style={{ paddingTop: 0 }}>
+            <article className="report-card">
+              <div className="report-card__header">
+                <h3>{t("billingChargeSummary")}</h3>
+                <p>{t("billingChargeSummaryDesc")}</p>
+              </div>
+              <div className="report-bars report-bars--summary">
+                {[
+                  { label: t("billingInboundCharges"), value: billingPreview.summary.inboundAmount },
+                  { label: t("billingWrappingCharges"), value: billingPreview.summary.wrappingAmount },
+                  { label: t("billingStorageCharges"), value: billingPreview.summary.storageAmount },
+                  { label: t("billingOutboundCharges"), value: billingPreview.summary.outboundAmount }
+                ].map((row) => (
+                  <div className="report-bars__row" key={row.label}>
+                    <div className="report-bars__labels">
+                      <strong>{row.label}</strong>
+                    </div>
+                    <div className="report-bars__value">{formatMoney(row.value)}</div>
                   </div>
-                  <div className="report-bars__value">{formatMoney(row.value)}</div>
-                </div>
-              ))}
-            </div>
-          </article>
-        </div>
+                ))}
+              </div>
+            </article>
+          </div>
+        )}
 
         {/* ── Create Invoice CTA ── */}
+        {workspaceMode === "STORAGE_SETTLEMENT" && existingStorageSettlementInvoice && customerId !== "all" && (
+          <div className="billing-cta-banner" style={{ margin: "0 1rem 1rem", padding: "1rem 1.25rem", background: "rgba(211,47,47,0.06)", borderRadius: "var(--radius-md)", border: "1px solid rgba(211,47,47,0.16)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
+            <div>
+              <strong style={{ fontSize: "0.938rem" }}>{t("billingStorageSettlementDuplicateTitle")}</strong>
+              <div style={{ fontSize: "0.813rem", color: "var(--ink-soft)", marginTop: "0.25rem" }}>
+                {t("billingStorageSettlementDuplicateDesc", {
+                  invoiceNo: existingStorageSettlementInvoice.invoiceNo,
+                  startDate: selectedStartDate,
+                  endDate: selectedEndDate
+                })}
+              </div>
+            </div>
+            <Button size="small" variant="outlined" onClick={() => onOpenBillingInvoice(existingStorageSettlementInvoice.id)}>
+              {t("billingOpenExistingInvoice")}
+            </Button>
+          </div>
+        )}
+
         {customerId !== "all" && (
           <div className="billing-cta-banner" style={{ margin: "0 1rem 1rem", padding: "1rem 1.25rem", background: canCreateInvoice ? "rgba(39, 76, 119, 0.06)" : "rgba(0,0,0,0.02)", borderRadius: "var(--radius-md)", border: canCreateInvoice ? "1px solid rgba(39, 76, 119, 0.15)" : "1px dashed var(--gray-4)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
             <div>
               <strong style={{ fontSize: "0.938rem" }}>
-                {canCreateInvoice
-                  ? `${t("billingCreateInvoice")} — ${billingPreview.customerName}`
-                  : t("billingSelectCustomerHint")
+                {workspaceMode === "STORAGE_SETTLEMENT"
+                  ? (canCreateInvoice ? `${t("billingCreateStorageInvoice")} - ${billingPreview.customerName}` : t("billingStorageSettlementCustomerRequired"))
+                  : (canCreateInvoice ? `${t("billingCreateMixedInvoice")} - ${billingPreview.customerName}` : t("billingSelectCustomerHint"))}
+              </strong>
+              {canCreateInvoice && (
+                <div style={{ fontSize: "0.813rem", color: "var(--ink-soft)", marginTop: "0.25rem", display: "flex", alignItems: "center", flexWrap: "wrap", gap: "0.375rem" }}>
+                  {workspaceMode === "STORAGE_SETTLEMENT"
+                    ? `${billingPreview.storageRows.length} ${t("billingStorageContainers").toLowerCase()} · ${formatNumber(storageSettlementTrackedPallets)} ${t("billingTrackedPallets").toLowerCase()} · ${formatMoney(storageSettlementTotal)}`
+                    : `${activeInvoiceLines.length} ${t("billingLineCount").toLowerCase()} · ${formatMoney(activeGrandTotal)}`}
+                  {warehouseLocationId !== "all" && (
+                    <span style={{ background: "rgba(39,76,119,0.08)", borderRadius: "var(--radius-sm)", padding: "0 0.4rem", fontSize: "0.75rem" }}>
+                      {selectedWarehouse?.name ?? t("billingAllWarehouses")}
+                    </span>
+                  )}
+                  {selectedContainerType !== "all" && (
+                    <span style={{ background: "rgba(39,76,119,0.08)", borderRadius: "var(--radius-sm)", padding: "0 0.4rem", fontSize: "0.75rem" }}>
+                      {containerTypeLabel(selectedContainerType, t)}
+                    </span>
+                  )}
+                  {containerNoFilter.trim() && (
+                    <span style={{ background: "rgba(39,76,119,0.12)", borderRadius: "var(--radius-sm)", padding: "0 0.4rem", fontSize: "0.75rem", fontFamily: "monospace", letterSpacing: "0.03em" }}>
+                      {containerNoFilter.trim().toUpperCase()}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+            {canCreateInvoice && (
+              <Button
+                variant="contained"
+                color="primary"
+                disabled={isCreatingInvoice}
+                startIcon={<AddCircleOutlineOutlinedIcon fontSize="small" />}
+                onClick={handleCreateInvoice}
+              >
+                {isCreatingInvoice ? "..." : workspaceMode === "STORAGE_SETTLEMENT" ? t("billingCreateStorageInvoice") : t("billingCreateMixedInvoice")}
+              </Button>
+            )}
+          </div>
+        )}
+
+        {customerId === "all" && !hasBillablePreview && (
+          <div style={{ margin: "0 1rem 1rem", padding: "1rem 1.25rem", background: "rgba(0,0,0,0.02)", borderRadius: "var(--radius-md)", border: "1px dashed var(--gray-4)", textAlign: "center", color: "var(--ink-soft)", fontSize: "0.875rem" }}>
+            {workspaceMode === "STORAGE_SETTLEMENT" ? t("billingStorageSettlementCustomerRequired") : t("billingWorkflowHint")}
+          </div>
+        )}
+
+        {false && customerId !== "all" && (
+          <div className="billing-cta-banner" style={{ margin: "0 1rem 1rem", padding: "1rem 1.25rem", background: canCreateInvoice ? "rgba(39, 76, 119, 0.06)" : "rgba(0,0,0,0.02)", borderRadius: "var(--radius-md)", border: canCreateInvoice ? "1px solid rgba(39, 76, 119, 0.15)" : "1px dashed var(--gray-4)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
+            <div>
+              <strong style={{ fontSize: "0.938rem" }}>
+                {workspaceMode === "STORAGE_SETTLEMENT"
+                  ? (canCreateInvoice ? `${t("billingCreateStorageInvoice")} - ${billingPreview.customerName}` : t("billingStorageSettlementCustomerRequired"))
+                  : (canCreateInvoice ? `${t("billingCreateMixedInvoice")} - ${billingPreview.customerName}` : t("billingSelectCustomerHint"))
                 }
               </strong>
               {canCreateInvoice && (
@@ -486,7 +743,7 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
           </div>
         )}
 
-        {customerId === "all" && billingPreview.invoiceLines.length === 0 && (
+        {false && customerId === "all" && billingPreview.invoiceLines.length === 0 && (
           <div style={{ margin: "0 1rem 1rem", padding: "1rem 1.25rem", background: "rgba(0,0,0,0.02)", borderRadius: "var(--radius-md)", border: "1px dashed var(--gray-4)", textAlign: "center", color: "var(--ink-soft)", fontSize: "0.875rem" }}>
             {t("billingWorkflowHint")}
           </div>
@@ -531,7 +788,10 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
                   <tr>
                     <th>{t("billingInvoiceNo")}</th>
                     <th>{t("customer")}</th>
+                    <th>{t("billingWarehouseScope")}</th>
+                    <th>{t("billingContainerType")}</th>
                     <th>{t("billingPeriod")}</th>
+                    <th>{t("billingInvoiceType")}</th>
                     <th>{t("billingLineCount")}</th>
                     <th>{t("billingGrandTotal")}</th>
                     <th>{t("status")}</th>
@@ -544,8 +804,11 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
                     <tr key={inv.id}>
                       <td className="cell--mono">{inv.invoiceNo}</td>
                       <td>{inv.customerNameSnapshot}</td>
-                      <td>{inv.periodStart} — {inv.periodEnd}</td>
-                      <td className="cell--mono">{inv.lines.length}</td>
+                      <td>{inv.warehouseNameSnapshot || t("billingAllWarehouses")}</td>
+                      <td>{inv.containerType ? containerTypeLabel(inv.containerType as ContainerType, t) : "-"}</td>
+                      <td>{inv.periodStart} to {inv.periodEnd}</td>
+                      <td>{invoiceTypeLabel(inv.invoiceType, t)}</td>
+                      <td className="cell--mono">{formatNumber(inv.lineCount || inv.lines.length)}</td>
                       <td className="cell--mono">{formatMoney(inv.grandTotal)}</td>
                       <td>
                         <Chip
@@ -570,7 +833,124 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
         </section>
 
         {/* ── Container billing breakdown (always visible) ── */}
-        {!isLoading && (
+        <section className="workbook-panel" style={{ margin: "0 1rem 1rem" }}>
+          <WorkspacePanelHeader
+            title={workspaceMode === "STORAGE_SETTLEMENT" ? t("billingStorageSettlementTable") : t("billingContainerTrace")}
+            description={workspaceMode === "STORAGE_SETTLEMENT" ? t("billingStorageSettlementTableDesc") : t("billingContainerTraceDesc")}
+          />
+          {(workspaceMode === "STORAGE_SETTLEMENT" ? storageSettlementRows.length === 0 : activeContainerRows.length === 0) ? (
+            <WorkspaceTableEmptyState
+              title={containerNoFilter.trim() ? `${t("noBillingData")} - ${containerNoFilter.trim().toUpperCase()}` : t("noBillingData")}
+              description={workspaceMode === "STORAGE_SETTLEMENT" ? t("billingStorageSettlementTableDesc") : t("billingContainerTraceDesc")}
+            />
+          ) : (
+            <div className="sheet-table-wrap">
+              {workspaceMode === "STORAGE_SETTLEMENT" ? (
+                <table className="sheet-table" aria-label={t("billingStorageSettlementTable")}>
+                  <thead>
+                    <tr>
+                      <th>{t("containerNo")}</th>
+                      <th>{t("customer")}</th>
+                      <th>{t("billingContainerType")}</th>
+                      <th>{t("billingWarehousesTouched")}</th>
+                      <th>{t("billingTrackedPallets")}</th>
+                      <th>{t("palletDays")}</th>
+                      <th>{t("billingStorageCharges")}</th>
+                      <th>{t("actions")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {storageSettlementRows.map((row) => (
+                      <tr key={`${row.customerId}-${row.containerNo}`}>
+                        <td className="cell--mono">{row.containerNo}</td>
+                        <td>{row.customerName}</td>
+                        <td>{containerTypeLabel(row.containerType, t)}</td>
+                        <td>{row.locationName || row.warehousesTouched.join(", ") || "-"}</td>
+                        <td className="cell--mono">{formatNumber(row.palletsTracked)}</td>
+                        <td className="cell--mono">{formatNumber(row.palletDays)}</td>
+                        <td className="cell--mono">{formatMoney(row.amount)}</td>
+                        <td>
+                          {isNavigableContainerNo(row.containerNo) ? (
+                            <Button
+                              size="small"
+                              variant="text"
+                              onClick={() => {
+                                setContainerNoFilter(row.containerNo);
+                                onOpenBillingContainerDetail(
+                                  billingPreview.startDate,
+                                  billingPreview.endDate,
+                                  customerId,
+                                  row.containerNo,
+                                  warehouseLocationId
+                                );
+                              }}
+                            >
+                              {t("billingViewContainerInvoice")}
+                            </Button>
+                          ) : "-"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <table className="sheet-table" aria-label={t("billingContainerTrace")}>
+                  <thead>
+                    <tr>
+                      <th>{t("containerNo")}</th>
+                      <th>{t("customer")}</th>
+                      <th>{t("reference")}</th>
+                      <th>{t("currentStorage")}</th>
+                      <th>{t("billingInboundCharges")}</th>
+                      <th>{t("billingWrappingCharges")}</th>
+                      <th>{t("billingStorageCharges")}</th>
+                      <th>{t("billingOutboundCharges")}</th>
+                      <th>{t("amount")}</th>
+                      <th>{t("actions")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeContainerRows.map((row) => (
+                      <tr key={`${row.customerId}-${row.containerNo}`}>
+                        <td className="cell--mono">{row.containerNo}</td>
+                        <td>{row.customerName}</td>
+                        <td>{renderReferencePreview(row.references)}</td>
+                        <td>{row.warehousesTouched.join(", ") || "-"}</td>
+                        <td className="cell--mono">{formatMoney(row.inboundAmount)}</td>
+                        <td className="cell--mono">{formatMoney(row.wrappingAmount)}</td>
+                        <td className="cell--mono">{formatMoney(row.storageAmount)}</td>
+                        <td className="cell--mono">{formatMoney(row.outboundAmount)}</td>
+                        <td className="cell--mono">{formatMoney(row.totalAmount)}</td>
+                        <td>
+                          {isNavigableContainerNo(row.containerNo) ? (
+                            <Button
+                              size="small"
+                              variant="text"
+                              onClick={() => {
+                                setContainerNoFilter(row.containerNo);
+                                onOpenBillingContainerDetail(
+                                  billingPreview.startDate,
+                                  billingPreview.endDate,
+                                  customerId,
+                                  row.containerNo,
+                                  warehouseLocationId
+                                );
+                              }}
+                            >
+                              {t("billingViewContainerInvoice")}
+                            </Button>
+                          ) : "-"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+        </section>
+
+        {false && !isLoading && (
           <section className="workbook-panel" style={{ margin: "0 1rem 1rem" }}>
             <WorkspacePanelHeader
               title={t("billingContainerTrace")}
@@ -617,7 +997,7 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
                               variant="text"
                               onClick={() => {
                                 setContainerNoFilter(row.containerNo);
-                                onOpenBillingContainerDetail(billingPreview.startDate, billingPreview.endDate, customerId, row.containerNo);
+                                onOpenBillingContainerDetail(billingPreview.startDate, billingPreview.endDate, customerId, row.containerNo, warehouseLocationId);
                               }}
                             >
                               {t("billingViewContainerInvoice")}
@@ -665,13 +1045,30 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
                     />
                   </label>
                   <label>
-                    {t("billingStorageRate")}
+                    {t("billingStorageRateNormal")}
                     <input
                       type="number"
                       min="0"
                       step="0.01"
-                      value={rates.storageFeePerPalletPerWeek}
-                      onChange={(event) => setRates((current) => ({ ...current, storageFeePerPalletPerWeek: toNumber(event.target.value) }))}
+                      value={rates.storageFeePerPalletPerWeekNormal}
+                      onChange={(event) => setRates((current) => ({
+                        ...current,
+                        storageFeePerPalletPerWeek: toNumber(event.target.value),
+                        storageFeePerPalletPerWeekNormal: toNumber(event.target.value)
+                      }))}
+                    />
+                  </label>
+                  <label>
+                    {t("billingStorageRateWestCoast")}
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={rates.storageFeePerPalletPerWeekWestCoastTransfer}
+                      onChange={(event) => setRates((current) => ({
+                        ...current,
+                        storageFeePerPalletPerWeekWestCoastTransfer: toNumber(event.target.value)
+                      }))}
                     />
                   </label>
                   <label>
@@ -719,7 +1116,7 @@ export function BillingPage({ customers, inboundDocuments, outboundDocuments, cu
                   <br />
                   {t("billingStorageFormulaHint", {
                     palletDays: formatNumber(billingPreview.summary.palletDays),
-                    dailyRate: formatMoney(rates.storageFeePerPalletPerWeek / 7)
+                    dailyRate: formatMoney(selectedStorageRatePerWeek / 7)
                   })}
                 </div>
               </article>
@@ -947,6 +1344,11 @@ function normalizeContainerNo(value: string | null | undefined) {
   return (value ?? "").trim().toUpperCase();
 }
 
+function trimDateValue(value: string | null | undefined) {
+  const normalized = (value ?? "").trim();
+  return normalized ? normalized.slice(0, 10) : undefined;
+}
+
 function isNavigableContainerNo(containerNo: string) {
   return containerNo.trim() !== "" && containerNo.trim() !== "-" && containerNo.trim().toUpperCase() !== "UNASSIGNED";
 }
@@ -981,7 +1383,256 @@ function chargeTypeDescription(chargeType: string): string {
   }
 }
 
-function buildBillingExportTitle(baseTitle: string, customerName: string, startDate: string, endDate: string) {
+function invoiceTypeLabel(invoiceType: BillingInvoiceType, t: (key: string) => string) {
+  switch (invoiceType) {
+    case "STORAGE_SETTLEMENT":
+      return t("billingInvoiceTypeStorageSettlement");
+    case "MIXED":
+    default:
+      return t("billingInvoiceTypeMixed");
+  }
+}
+
+function buildStorageSettlementInvoiceLines(storageRows: BillingStorageRow[]): CreateBillingInvoicePayload["lines"] {
+  return storageRows.map((row) => ({
+    chargeType: "STORAGE",
+    description: `Storage settlement for ${row.containerNo}`,
+    reference: `Storage | ${row.containerNo}`,
+    containerNo: row.containerNo,
+    warehouse: row.locationName || row.warehousesTouched.join(", "),
+    occurredOn: trimDateValue(row.lastActivityAt ?? row.firstActivityAt),
+    quantity: row.palletDays,
+    unitRate: row.palletDays > 0 ? row.amount / row.palletDays : 0,
+    amount: row.amount,
+    notes: `${containerTypeExportLabel(row.containerType)} | ${row.palletsTracked} pallets tracked across ${row.warehousesTouched.length} warehouse(s)`,
+    sourceType: "AUTO",
+    details: {
+      kind: "STORAGE_CONTAINER_SUMMARY",
+      warehouseLocationId: row.locationId,
+      warehouseName: row.locationName || undefined,
+      warehousesTouched: row.warehousesTouched,
+      palletsTracked: row.palletsTracked,
+      palletDays: row.palletDays,
+      segments: row.segments.map((segment) => ({
+        startDate: segment.startDate,
+        endDate: segment.endDate,
+        dayEndPallets: segment.dayEndPallets,
+        billedDays: segment.billedDays,
+        palletDays: segment.palletDays,
+        amount: segment.amount
+      }))
+    }
+  }));
+}
+
+function buildBillingPageExportColumns(
+  workspaceMode: BillingWorkspaceMode,
+  exportMode: BillingExportMode,
+  t: (key: string) => string
+): ExcelExportColumn[] {
+  if (workspaceMode === "STORAGE_SETTLEMENT") {
+    const base: ExcelExportColumn[] = [
+      { key: "rowType", label: t("billingRowType") },
+      { key: "customer", label: t("customer") },
+      { key: "containerType", label: t("billingContainerType") },
+      { key: "containerNo", label: t("containerNo") },
+      { key: "warehouses", label: t("billingWarehousesTouched") },
+      { key: "palletsTracked", label: t("billingTrackedPallets"), numberFormat: "number" },
+      { key: "palletDays", label: t("palletDays"), numberFormat: "number" },
+      { key: "amount", label: t("amount"), numberFormat: "currency" }
+    ];
+    if (exportMode === "DETAILED") {
+      return [
+        ...base,
+        { key: "segmentStart", label: t("billingSegmentStart") },
+        { key: "segmentEnd", label: t("billingSegmentEnd") },
+        { key: "dayEndPallets", label: t("billingDayEndPallets"), numberFormat: "number" },
+        { key: "billedDays", label: t("billingBilledDays"), numberFormat: "number" },
+        { key: "segmentPalletDays", label: t("palletDays"), numberFormat: "number" },
+        { key: "segmentAmount", label: t("billingStorageCharges"), numberFormat: "currency" }
+      ];
+    }
+    return base.filter((column) => column.key !== "rowType");
+  }
+
+  const base: ExcelExportColumn[] = [
+    { key: "rowType", label: t("billingRowType") },
+    { key: "customer", label: t("customer") },
+    { key: "chargeType", label: t("billingChargeType") },
+    { key: "reference", label: t("reference") },
+    { key: "containerNo", label: t("containerNo") },
+    { key: "warehouse", label: t("currentStorage") },
+    { key: "occurredOn", label: t("billingOccurredAt") },
+    { key: "quantity", label: t("quantity"), numberFormat: "number" },
+    { key: "unitRate", label: t("unitRate"), numberFormat: "currency" },
+    { key: "amount", label: t("amount"), numberFormat: "currency" },
+    { key: "notes", label: t("notes") }
+  ];
+  if (exportMode === "DETAILED") {
+    return [
+      ...base,
+      { key: "segmentStart", label: t("billingSegmentStart") },
+      { key: "segmentEnd", label: t("billingSegmentEnd") },
+      { key: "dayEndPallets", label: t("billingDayEndPallets"), numberFormat: "number" },
+      { key: "billedDays", label: t("billingBilledDays"), numberFormat: "number" },
+      { key: "segmentPalletDays", label: t("palletDays"), numberFormat: "number" },
+      { key: "segmentAmount", label: t("billingStorageCharges"), numberFormat: "currency" }
+    ];
+  }
+  return base.filter((column) => column.key !== "rowType");
+}
+
+function buildBillingPageExportRows({
+  workspaceMode,
+  exportMode,
+  invoiceLines,
+  storageRows,
+  timeZone,
+  t
+}: {
+  workspaceMode: BillingWorkspaceMode;
+  exportMode: BillingExportMode;
+  invoiceLines: BillingInvoiceLine[];
+  storageRows: BillingStorageRow[];
+  timeZone: string;
+  t: (key: string) => string;
+}): Array<Record<string, ExcelExportCell>> {
+  if (workspaceMode === "STORAGE_SETTLEMENT") {
+    return flattenStorageSettlementRows(storageRows, exportMode, t);
+  }
+
+  const rows: Array<Record<string, ExcelExportCell>> = invoiceLines.map((line) => ({
+    rowType: t("billingRowTypeInvoiceLine"),
+    customer: line.customerName,
+    containerType: "-",
+    chargeType: renderChargeTypeLabel(line.chargeType, t),
+    reference: line.reference || "-",
+    containerNo: line.containerNo || "-",
+    warehouse: line.warehouseSummary || "-",
+    occurredOn: line.occurredOn ? formatDateTimeValue(line.occurredOn, timeZone, { dateStyle: "medium" }) : "-",
+    quantity: line.quantity,
+    unitRate: line.unitRate,
+    amount: line.amount,
+    notes: line.meta || "-"
+  }));
+
+  if (exportMode === "DETAILED") {
+    rows.push(...flattenOverviewStorageSegments(storageRows, t));
+  }
+
+  return rows;
+}
+
+function flattenStorageSettlementRows(
+  storageRows: BillingStorageRow[],
+  exportMode: BillingExportMode,
+  t: (key: string) => string
+): Array<Record<string, ExcelExportCell>> {
+  const rows: Array<Record<string, ExcelExportCell>> = [];
+  for (const row of storageRows) {
+      rows.push({
+        rowType: t("billingRowTypeContainerSummary"),
+        customer: row.customerName,
+        containerType: containerTypeExportLabel(row.containerType),
+        containerNo: row.containerNo,
+        warehouses: row.locationName || row.warehousesTouched.join(", ") || "-",
+        palletsTracked: row.palletsTracked,
+        palletDays: row.palletDays,
+        amount: row.amount
+    });
+    if (exportMode === "DETAILED") {
+      for (const segment of row.segments) {
+        rows.push({
+          rowType: t("billingRowTypeStorageSegment"),
+          customer: row.customerName,
+          containerType: containerTypeExportLabel(row.containerType),
+          containerNo: row.containerNo,
+          warehouses: row.locationName || row.warehousesTouched.join(", ") || "-",
+          palletsTracked: row.palletsTracked,
+          palletDays: row.palletDays,
+          amount: row.amount,
+          segmentStart: segment.startDate,
+          segmentEnd: segment.endDate,
+          dayEndPallets: segment.dayEndPallets,
+          billedDays: segment.billedDays,
+          segmentPalletDays: segment.palletDays,
+          segmentAmount: segment.amount
+        });
+      }
+    }
+  }
+  return rows;
+}
+
+function flattenOverviewStorageSegments(
+  storageRows: BillingStorageRow[],
+  t: (key: string) => string
+): Array<Record<string, ExcelExportCell>> {
+  const rows: Array<Record<string, ExcelExportCell>> = [];
+  for (const row of storageRows) {
+    rows.push({
+      rowType: t("billingRowTypeContainerSummary"),
+      customer: row.customerName,
+      chargeType: t("billingStorageCharges"),
+      reference: `Storage | ${row.containerNo}`,
+      containerNo: row.containerNo,
+      warehouse: row.warehousesTouched.join(", ") || "-",
+      occurredOn: row.lastActivityAt || row.firstActivityAt || "-",
+      quantity: row.palletDays,
+      unitRate: row.palletDays > 0 ? row.amount / row.palletDays : 0,
+      amount: row.amount,
+      notes: `${row.palletsTracked} pallets tracked`
+    });
+    for (const segment of row.segments) {
+      rows.push({
+        rowType: t("billingRowTypeStorageSegment"),
+        customer: row.customerName,
+        chargeType: t("billingStorageCharges"),
+        reference: row.containerNo,
+        containerNo: row.containerNo,
+        warehouse: row.warehousesTouched.join(", ") || "-",
+        occurredOn: segment.endDate,
+        quantity: segment.palletDays,
+        unitRate: segment.palletDays > 0 ? segment.amount / segment.palletDays : 0,
+        amount: segment.amount,
+        notes: `${segment.dayEndPallets} ${t("billingDayEndPallets").toLowerCase()}`,
+        segmentStart: segment.startDate,
+        segmentEnd: segment.endDate,
+        dayEndPallets: segment.dayEndPallets,
+        billedDays: segment.billedDays,
+        segmentPalletDays: segment.palletDays,
+        segmentAmount: segment.amount
+      });
+    }
+  }
+  return rows;
+}
+
+function buildBillingExportTitle(
+  baseTitle: string,
+  customerName: string,
+  startDate: string,
+  endDate: string,
+  exportMode: BillingExportMode,
+  warehouseName?: string,
+  containerTypeLabelValue?: string
+) {
   const normalizedCustomer = customerName.trim() || "all-customers";
-  return `${baseTitle} ${normalizedCustomer} ${startDate} to ${endDate}`;
+  const normalizedWarehouse = warehouseName?.trim();
+  const normalizedContainerType = containerTypeLabelValue?.trim();
+  return `${baseTitle} ${exportMode.toLowerCase()} ${normalizedCustomer}${normalizedWarehouse ? ` ${normalizedWarehouse}` : ""}${normalizedContainerType ? ` ${normalizedContainerType}` : ""} ${startDate} to ${endDate}`;
+}
+
+function containerTypeLabel(containerType: ContainerType, t: (key: string) => string) {
+  switch (containerType) {
+    case "WEST_COAST_TRANSFER":
+      return t("billingContainerTypeWestCoastTransfer");
+    case "NORMAL":
+    default:
+      return t("billingContainerTypeNormal");
+  }
+}
+
+function containerTypeExportLabel(containerType: ContainerType) {
+  return containerType === "WEST_COAST_TRANSFER" ? "West Coast Transfer" : "Normal";
 }

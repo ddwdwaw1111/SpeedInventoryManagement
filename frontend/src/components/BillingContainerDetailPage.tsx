@@ -15,7 +15,7 @@ import {
 import { formatDateTimeValue, parseDateLikeValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
-import type { Customer, InboundDocument, Movement, OutboundDocument, PalletLocationEvent, PalletTrace } from "../lib/types";
+import type { Customer, InboundDocument, Location, Movement, OutboundDocument, PalletLocationEvent, PalletTrace } from "../lib/types";
 import { WorkspacePanelHeader, WorkspaceTableEmptyState } from "./WorkspacePanelChrome";
 
 type BillingContainerDetailPageProps = {
@@ -23,8 +23,10 @@ type BillingContainerDetailPageProps = {
 	startDate: string;
 	endDate: string;
 	customerId: number | "all";
+	warehouseLocationId: number | "all";
 	containerNo: string | null;
 	customers: Customer[];
+	locations: Location[];
 	inboundDocuments: InboundDocument[];
 	outboundDocuments: OutboundDocument[];
 	movements: Movement[];
@@ -50,8 +52,10 @@ export function BillingContainerDetailPage({
 	startDate,
 	endDate,
 	customerId,
+	warehouseLocationId,
 	containerNo,
 	customers,
+	locations,
 	inboundDocuments,
 	outboundDocuments,
 	movements,
@@ -61,6 +65,9 @@ export function BillingContainerDetailPage({
 	const { t } = useI18n();
 	const { resolvedTimeZone } = useSettings();
 	const normalizedContainerNo = normalizeContainerNo(containerNo);
+	const selectedWarehouse = warehouseLocationId === "all"
+		? null
+		: locations.find((location) => location.id === warehouseLocationId) ?? null;
 	const [pallets, setPallets] = useState<PalletTrace[]>([]);
 	const [palletLocationEvents, setPalletLocationEvents] = useState<PalletLocationEvent[]>([]);
 	const [isLoading, setIsLoading] = useState(true);
@@ -77,8 +84,12 @@ export function BillingContainerDetailPage({
 		if (workspaceContext.customerId !== customerId) {
 			return DEFAULT_BILLING_RATES;
 		}
+		if (workspaceContext.warehouseLocationId !== warehouseLocationId) {
+			return DEFAULT_BILLING_RATES;
+		}
 		return workspaceContext.rates;
-	}, [customerId, endDate, startDate, workspaceContext]);
+	}, [customerId, endDate, startDate, warehouseLocationId, workspaceContext]);
+	const activeContainerType = workspaceContext?.containerType ?? "all";
 
 	useEffect(() => {
 		let active = true;
@@ -133,8 +144,10 @@ export function BillingContainerDetailPage({
 		palletLocationEvents,
 		inboundDocuments,
 		outboundDocuments,
+		locationId: warehouseLocationId,
+		containerType: activeContainerType,
 		rates: activeRates
-	}), [activeRates, customerId, customers, endDate, inboundDocuments, outboundDocuments, palletLocationEvents, pallets, startDate]);
+	}), [activeContainerType, activeRates, customerId, customers, endDate, inboundDocuments, outboundDocuments, palletLocationEvents, pallets, startDate, warehouseLocationId]);
 
 	const containerInvoiceLines = useMemo(
 		() => billingPreview.invoiceLines.filter((line) => normalizeContainerNo(line.containerNo) === normalizedContainerNo),
@@ -145,8 +158,16 @@ export function BillingContainerDetailPage({
 		[billingPreview.storageRows, normalizedContainerNo]
 	);
 	const timelineRows = useMemo(
-		() => buildContainerTimelineRows(palletLocationEvents, movements, normalizedContainerNo, startDate, endDate),
-		[endDate, movements, normalizedContainerNo, palletLocationEvents, startDate]
+		() => buildContainerTimelineRows(
+			palletLocationEvents,
+			movements,
+			normalizedContainerNo,
+			startDate,
+			endDate,
+			warehouseLocationId,
+			selectedWarehouse?.name ?? null
+		),
+		[endDate, movements, normalizedContainerNo, palletLocationEvents, selectedWarehouse?.name, startDate, warehouseLocationId]
 	);
 	const references = useMemo(
 		() => uniqueStrings(containerInvoiceLines.map((line) => line.reference).filter(Boolean)),
@@ -162,7 +183,11 @@ export function BillingContainerDetailPage({
 	const summary = useMemo(() => summarizeContainerBilling(containerInvoiceLines), [containerInvoiceLines]);
 	const timelineSummary = useMemo(() => summarizeTimeline(timelineRows), [timelineRows]);
 	const hasContainerData = containerInvoiceLines.length > 0 || timelineRows.length > 0 || Boolean(containerStorageRow);
-	const storageDailyRate = activeRates.storageFeePerPalletPerWeek / 7;
+	const storageDailyRate = (
+		activeContainerType === "WEST_COAST_TRANSFER"
+			? activeRates.storageFeePerPalletPerWeekWestCoastTransfer
+			: activeRates.storageFeePerPalletPerWeekNormal
+	) / 7;
 
 	const headerActions = (
 		<div className="sheet-actions">
@@ -189,7 +214,9 @@ export function BillingContainerDetailPage({
 						notices={[
 							<span key="billing-start"><strong>{t("fromDate")}:</strong> {startDate}</span>,
 							<span key="billing-end"><strong>{t("toDate")}:</strong> {endDate}</span>,
-							<span key="billing-scope"><strong>{t("billingCustomerScope")}:</strong> {billingPreview.customerName}</span>
+							<span key="billing-scope"><strong>{t("billingCustomerScope")}:</strong> {billingPreview.customerName}</span>,
+							<span key="billing-warehouse"><strong>{t("billingWarehouseScope")}:</strong> {selectedWarehouse?.name ?? t("billingAllWarehouses")}</span>,
+							<span key="billing-container-type"><strong>{t("billingContainerType")}:</strong> {activeContainerType === "all" ? t("billingAllContainerTypes") : activeContainerType === "WEST_COAST_TRANSFER" ? t("billingContainerTypeWestCoastTransfer") : t("billingContainerTypeNormal")}</span>
 						]}
 					/>
 				</div>
@@ -237,9 +264,9 @@ export function BillingContainerDetailPage({
 									{references.length > 0 ? references.join(", ") : "-"}
 								</div>
 								<div className="sheet-note sheet-note--readonly" style={{ marginTop: "1rem" }}>
-									<strong>{t("currentStorage")}</strong>
+									<strong>{t("billingWarehouseScope")}</strong>
 									<br />
-									{warehouseLabels.length > 0 ? warehouseLabels.join(", ") : "-"}
+									{selectedWarehouse?.name ?? (warehouseLabels.length > 0 ? warehouseLabels.join(", ") : t("billingAllWarehouses"))}
 								</div>
 							</article>
 
@@ -252,7 +279,12 @@ export function BillingContainerDetailPage({
 									{[
 										{ label: t("billingInboundContainerFee"), value: activeRates.inboundContainerFee },
 										{ label: t("billingWrappingFee"), value: activeRates.wrappingFeePerPallet },
-										{ label: t("billingStorageRate"), value: activeRates.storageFeePerPalletPerWeek },
+										{
+											label: activeContainerType === "WEST_COAST_TRANSFER" ? t("billingStorageRateWestCoast") : t("billingStorageRateNormal"),
+											value: activeContainerType === "WEST_COAST_TRANSFER"
+												? activeRates.storageFeePerPalletPerWeekWestCoastTransfer
+												: activeRates.storageFeePerPalletPerWeekNormal
+										},
 										{ label: t("billingOutboundFee"), value: activeRates.outboundFeePerPallet }
 									].map((row) => (
 										<div className="report-bars__row" key={row.label}>
@@ -425,9 +457,18 @@ export function BillingContainerDetailPage({
 	);
 }
 
-function buildContainerTimelineRows(events: PalletLocationEvent[], movements: Movement[], containerNo: string, startDate: string, endDate: string) {
+function buildContainerTimelineRows(
+	events: PalletLocationEvent[],
+	movements: Movement[],
+	containerNo: string,
+	startDate: string,
+	endDate: string,
+	warehouseLocationId: number | "all",
+	warehouseName: string | null
+) {
 	const filteredEvents = events
 		.filter((event) => normalizeContainerNo(event.containerNo) === containerNo)
+		.filter((event) => warehouseLocationId === "all" || event.locationId === warehouseLocationId)
 		.filter((event) => isWithinDateRange(event.eventTime, startDate, endDate))
 		.map((event) => ({
 			id: `ple-${event.id}`,
@@ -445,6 +486,7 @@ function buildContainerTimelineRows(events: PalletLocationEvent[], movements: Mo
 		? []
 		: movements
 			.filter((movement) => normalizeContainerNo(movement.containerNo) === containerNo)
+			.filter((movement) => warehouseLocationId === "all" || normalizeText(movement.locationName) === normalizeText(warehouseName))
 			.filter((movement) => movement.movementType === "OUT" || movement.movementType === "REVERSAL")
 			.filter((movement) => isWithinDateRange(movement.outDate ?? movement.createdAt, startDate, endDate))
 			.map((movement) => ({
@@ -555,6 +597,10 @@ function isWithinDateRange(value: string | null | undefined, startDate: string, 
 
 function uniqueStrings(values: string[]) {
 	return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function normalizeText(value: string | null | undefined) {
+	return (value ?? "").trim().toUpperCase();
 }
 
 function renderChargeTypeLabel(chargeType: BillingInvoiceLine["chargeType"], t: (key: string) => string) {

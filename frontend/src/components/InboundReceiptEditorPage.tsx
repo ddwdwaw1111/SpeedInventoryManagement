@@ -7,6 +7,7 @@ import type { InboundHandlingMode, InboundLaunchIntent } from "../lib/activityMa
 import { consumePendingInboundReceiptEditorLaunchContext, type InboundReceiptEditorLaunchContext } from "../lib/inboundReceiptEditorLaunchContext";
 import { useI18n } from "../lib/i18n";
 import {
+  type ContainerType,
   DEFAULT_STORAGE_SECTION,
   getLocationSectionOptions,
   normalizeStorageSection,
@@ -30,6 +31,7 @@ type BatchInboundFormState = {
   expectedArrivalDate: string;
   actualArrivalDate: string;
   containerNo: string;
+  containerType: ContainerType;
   handlingMode: InboundHandlingMode;
   customerId: string;
   locationId: string;
@@ -696,6 +698,7 @@ export function InboundReceiptEditorPage({
         expectedArrivalDate: batchForm.expectedArrivalDate || undefined,
         actualArrivalDate: batchForm.actualArrivalDate || undefined,
         containerNo: batchForm.containerNo || undefined,
+        containerType: batchForm.containerType,
         handlingMode: batchForm.handlingMode,
         storageSection: normalizeStorageSection(validBatchInboundLines[0]?.storageSection || batchForm.storageSection || batchSectionOptions[0]),
         unitLabel: batchForm.unitLabel || "CTN",
@@ -901,6 +904,7 @@ export function InboundReceiptEditorPage({
                     }));
                   }} /></label>
                   <label>{t("containerNo")}<input value={batchForm.containerNo} disabled={isReadOnly} onChange={(event) => setBatchForm((current) => ({ ...current, containerNo: event.target.value }))} placeholder="MRSU8580370" /></label>
+                  <label>{t("billingContainerType")}<select value={batchForm.containerType} onChange={(event) => setBatchForm((current) => ({ ...current, containerType: event.target.value as ContainerType }))} disabled={isReadOnly}><option value="NORMAL">{t("billingContainerTypeNormal")}</option><option value="WEST_COAST_TRANSFER">{t("billingContainerTypeWestCoastTransfer")}</option></select></label>
                   <label>{t("handlingMode")}<select value={batchForm.handlingMode} onChange={(event) => setBatchForm((current) => ({ ...current, handlingMode: event.target.value as InboundHandlingMode }))} disabled={isReadOnly || isEditingConfirmedInbound}><option value="PALLETIZED">{t("handlingModePalletized")}</option><option value="SEALED_TRANSIT">{t("handlingModeSealedTransit")}</option></select></label>
                   <label>{t("customer")}<select value={batchForm.customerId} onChange={(event) => setBatchForm((current) => ({ ...current, customerId: event.target.value }))} disabled={isReadOnly}>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
                   <label>{t("currentStorage")}<select value={batchForm.locationId} onChange={(event) => setBatchForm((current) => ({ ...current, locationId: event.target.value }))} disabled={isReadOnly}>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
@@ -1287,6 +1291,7 @@ function buildInboundEditorSourceState({
       expectedArrivalDate: document.expectedArrivalDate ? document.expectedArrivalDate.slice(0, 10) : "",
       actualArrivalDate: document.actualArrivalDate ? document.actualArrivalDate.slice(0, 10) : "",
       containerNo: document.containerNo || "",
+      containerType: document.containerType || "NORMAL",
       handlingMode: launchContext?.forceHandlingMode ?? document.handlingMode ?? "PALLETIZED",
       customerId: String(document.customerId),
       locationId: String(document.locationId),
@@ -1325,6 +1330,7 @@ function createEmptyBatchInboundForm(expectedArrivalDate = ""): BatchInboundForm
     expectedArrivalDate,
     actualArrivalDate: "",
     containerNo: "",
+    containerType: "NORMAL",
     handlingMode: "PALLETIZED",
     customerId: "",
     locationId: "",

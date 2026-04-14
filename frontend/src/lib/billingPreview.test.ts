@@ -37,6 +37,7 @@ describe("buildBillingPreview", () => {
         currentLocationName: "NJ",
         currentStorageSection: "A-01",
         currentContainerNo: "CONT-001",
+        containerType: "NORMAL",
         status: "SHIPPED",
         createdAt: "2026-04-01T09:00:00Z",
         updatedAt: "2026-04-03T10:00:00Z",
@@ -91,6 +92,7 @@ describe("buildBillingPreview", () => {
         expectedArrivalDate: "2026-04-01",
         actualArrivalDate: null,
         containerNo: "CONT-001",
+        containerType: "NORMAL",
         handlingMode: "PALLETIZED",
         storageSection: "A-01",
         unitLabel: "CTN",
@@ -227,6 +229,7 @@ describe("buildBillingPreview", () => {
         currentLocationName: "NJ",
         currentStorageSection: "A-01",
         currentContainerNo: "CONT-SEG",
+        containerType: "NORMAL",
         status: shipped ? "SHIPPED" : "STORED",
         createdAt: "2026-03-01T09:00:00Z",
         updatedAt: shipped ? "2026-03-15T09:00:00Z" : "2026-03-31T09:00:00Z",
@@ -313,6 +316,144 @@ describe("buildBillingPreview", () => {
     ]);
   });
 
+  it("supports warehouse-scoped storage settlement using location-aware pallet-day segments", () => {
+    const pallets: PalletTrace[] = [
+      {
+        id: 1,
+        parentPalletId: 0,
+        palletCode: "PLT-LOC-001",
+        containerVisitId: 1,
+        sourceInboundDocumentId: 10,
+        sourceInboundLineId: 100,
+        actualArrivalDate: "2026-03-01",
+        customerId: 1,
+        customerName: "Acme",
+        skuMasterId: 11,
+        sku: "SKU-1",
+        description: "Widget",
+        currentLocationId: 2,
+        currentLocationName: "LA",
+        currentStorageSection: "B-01",
+        currentContainerNo: "CONT-LOC",
+        containerType: "NORMAL",
+        status: "STORED",
+        createdAt: "2026-03-01T09:00:00Z",
+        updatedAt: "2026-03-31T09:00:00Z",
+        contents: []
+      }
+    ];
+
+    const events: PalletLocationEvent[] = [
+      {
+        id: 1,
+        palletId: 1,
+        palletCode: "PLT-LOC-001",
+        containerVisitId: 1,
+        customerId: 1,
+        customerName: "Acme",
+        locationId: 1,
+        locationName: "NJ",
+        storageSection: "A-01",
+        containerNo: "CONT-LOC",
+        eventType: "RECEIVED",
+        quantityDelta: 100,
+        palletDelta: 1,
+        eventTime: "2026-03-01T09:00:00Z",
+        createdAt: "2026-03-01T09:00:00Z"
+      },
+      {
+        id: 2,
+        palletId: 1,
+        palletCode: "PLT-LOC-001",
+        containerVisitId: 1,
+        customerId: 1,
+        customerName: "Acme",
+        locationId: 1,
+        locationName: "NJ",
+        storageSection: "A-01",
+        containerNo: "CONT-LOC",
+        eventType: "TRANSFER_OUT",
+        quantityDelta: 0,
+        palletDelta: 0,
+        eventTime: "2026-03-15T09:00:00Z",
+        createdAt: "2026-03-15T09:00:00Z"
+      },
+      {
+        id: 3,
+        palletId: 1,
+        palletCode: "PLT-LOC-001",
+        containerVisitId: 1,
+        customerId: 1,
+        customerName: "Acme",
+        locationId: 2,
+        locationName: "LA",
+        storageSection: "B-01",
+        containerNo: "CONT-LOC",
+        eventType: "TRANSFER_IN",
+        quantityDelta: 0,
+        palletDelta: 0,
+        eventTime: "2026-03-15T09:00:00Z",
+        createdAt: "2026-03-15T09:00:00Z"
+      }
+    ];
+
+    const njPreview = buildBillingPreview({
+      startDate: "2026-03-01",
+      endDate: "2026-03-31",
+      customerId: 1,
+      locationId: 1,
+      customers,
+      pallets,
+      palletLocationEvents: events,
+      inboundDocuments: [],
+      outboundDocuments: [],
+      rates: DEFAULT_BILLING_RATES
+    });
+
+    expect(njPreview.summary.palletDays).toBe(14);
+    expect(njPreview.storageRows).toHaveLength(1);
+    expect(njPreview.storageRows[0]?.locationId).toBe(1);
+    expect(njPreview.storageRows[0]?.locationName).toBe("NJ");
+    expect(njPreview.storageRows[0]?.segments).toEqual([
+      {
+        startDate: "2026-03-01",
+        endDate: "2026-03-14",
+        dayEndPallets: 1,
+        billedDays: 14,
+        palletDays: 14,
+        amount: 14
+      }
+    ]);
+
+    const laPreview = buildBillingPreview({
+      startDate: "2026-03-01",
+      endDate: "2026-03-31",
+      customerId: 1,
+      locationId: 2,
+      customers,
+      pallets,
+      palletLocationEvents: events,
+      inboundDocuments: [],
+      outboundDocuments: [],
+      rates: DEFAULT_BILLING_RATES
+    });
+
+    expect(laPreview.summary.palletDays).toBe(17);
+    expect(laPreview.storageRows).toHaveLength(1);
+    expect(laPreview.storageRows[0]?.locationId).toBe(2);
+    expect(laPreview.storageRows[0]?.locationName).toBe("LA");
+    expect(laPreview.storageRows[0]?.segments).toEqual([
+      {
+        startDate: "2026-03-15",
+        endDate: "2026-03-31",
+        dayEndPallets: 1,
+        billedDays: 17,
+        palletDays: 17,
+        amount: 17
+      }
+    ]);
+  });
+
   it("uses actualArrivalDate for inbound billing instead of expected arrival date", () => {
     const preview = buildBillingPreview({
       startDate: "2026-04-01",
@@ -331,6 +472,7 @@ describe("buildBillingPreview", () => {
           expectedArrivalDate: "2026-03-31",
           actualArrivalDate: "2026-04-02",
           containerNo: "CONT-030",
+          containerType: "NORMAL",
           handlingMode: "PALLETIZED",
           storageSection: "TEMP",
           unitLabel: "CTN",
@@ -1694,6 +1836,7 @@ function makeInboundDoc(
     expectedArrivalDate: "2026-03-01",
     actualArrivalDate: overrides.actualArrivalDate !== undefined ? overrides.actualArrivalDate : "2026-03-01",
     containerNo: overrides.containerNo ?? `CONT-${String(id).padStart(3, "0")}`,
+    containerType: "NORMAL",
     handlingMode: "PALLETIZED",
     storageSection: "A",
     unitLabel: "CTN",
@@ -1812,6 +1955,7 @@ function makePallet(
     currentLocationName: "NJ",
     currentStorageSection: "A",
     currentContainerNo: containerNo,
+    containerType: "NORMAL",
     status,
     createdAt: "2026-03-01T09:00:00Z",
     updatedAt: "2026-03-31T23:59:00Z",

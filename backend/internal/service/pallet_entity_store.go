@@ -82,6 +82,7 @@ type PalletTrace struct {
 	SourceInboundDocumentID int64               `json:"sourceInboundDocumentId"`
 	SourceInboundLineID     int64               `json:"sourceInboundLineId"`
 	ActualArrivalDate       *time.Time          `json:"actualArrivalDate"`
+	ContainerType           string              `json:"containerType"`
 	CustomerID              int64               `json:"customerId"`
 	CustomerName            string              `json:"customerName"`
 	SKUMasterID             int64               `json:"skuMasterId"`
@@ -105,6 +106,7 @@ type palletTraceRow struct {
 	SourceInboundDocumentID int64      `db:"source_inbound_document_id"`
 	SourceInboundLineID     int64      `db:"source_inbound_line_id"`
 	ActualArrivalDate       *time.Time `db:"actual_arrival_date"`
+	ContainerType           string     `db:"container_type"`
 	CustomerID              int64      `db:"customer_id"`
 	CustomerName            string     `db:"customer_name"`
 	SKUMasterID             int64      `db:"sku_master_id"`
@@ -372,6 +374,7 @@ func (s *Store) ListPallets(ctx context.Context, limit int, filters ListPalletFi
 			p.source_inbound_document_id,
 			p.source_inbound_line_id,
 			p.actual_arrival_date,
+			COALESCE(d.container_type, cv.container_type, 'NORMAL') AS container_type,
 			p.customer_id,
 			COALESCE(c.name, '') AS customer_name,
 			p.sku_master_id,
@@ -385,6 +388,8 @@ func (s *Store) ListPallets(ctx context.Context, limit int, filters ListPalletFi
 			p.created_at,
 			p.updated_at
 		FROM pallets p
+		LEFT JOIN container_visits cv ON cv.id = p.container_visit_id
+		LEFT JOIN inbound_documents d ON d.id = COALESCE(p.source_inbound_document_id, cv.inbound_document_id)
 		LEFT JOIN customers c ON c.id = p.customer_id
 		LEFT JOIN sku_master sm ON sm.id = p.sku_master_id
 		LEFT JOIN storage_locations l ON l.id = p.current_location_id
@@ -418,6 +423,7 @@ func (s *Store) ListPallets(ctx context.Context, limit int, filters ListPalletFi
 			SourceInboundDocumentID: row.SourceInboundDocumentID,
 			SourceInboundLineID:     row.SourceInboundLineID,
 			ActualArrivalDate:       row.ActualArrivalDate,
+			ContainerType:           coalesceContainerType(row.ContainerType),
 			CustomerID:              row.CustomerID,
 			CustomerName:            row.CustomerName,
 			SKUMasterID:             row.SKUMasterID,

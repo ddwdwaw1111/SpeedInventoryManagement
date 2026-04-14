@@ -1614,7 +1614,7 @@ export function OutboundShipmentEditorPage({
                     <DataGrid
                       rows={batchOutboundAllocationPreview.rows}
                       columns={outboundAllocationPreviewColumns}
-                      pagination={batchOutboundAllocationPreview.rows.length > 10}
+                      {...(batchOutboundAllocationPreview.rows.length > 10 ? { pagination: true as const } : {})}
                       pageSizeOptions={[10, 20, 50]}
                       disableRowSelectionOnClick
                       initialState={{ pagination: { paginationModel: { pageSize: Math.min(10, Math.max(batchOutboundAllocationPreview.rows.length, 1)), page: 0 } } }}

@@ -46,6 +46,9 @@ export function InboundDetailPage({
   const [pallets, setPallets] = useState<PalletTrace[]>([]);
   const [isPalletsLoading, setIsPalletsLoading] = useState(false);
   const [palletErrorMessage, setPalletErrorMessage] = useState("");
+  const [containerTypeValue, setContainerTypeValue] = useState<"NORMAL" | "WEST_COAST_TRANSFER">("NORMAL");
+  const [savedContainerTypeValue, setSavedContainerTypeValue] = useState<"NORMAL" | "WEST_COAST_TRANSFER">("NORMAL");
+  const [isSavingContainerType, setIsSavingContainerType] = useState(false);
   const dateFormatter = useMemo(
     () => new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }),
     []
@@ -68,6 +71,12 @@ export function InboundDetailPage({
   const quantityVariance = document ? document.totalReceivedQty - document.totalExpectedQty : 0;
   const activityLog = useMemo(() => (document ? buildActivityLog(document, t) : []), [document, t]);
   const palletCount = pallets.length;
+
+  useEffect(() => {
+    const nextValue = document?.containerType === "WEST_COAST_TRANSFER" ? "WEST_COAST_TRANSFER" : "NORMAL";
+    setContainerTypeValue(nextValue);
+    setSavedContainerTypeValue(nextValue);
+  }, [document?.containerType, document?.id]);
 
   useEffect(() => {
     let active = true;
@@ -142,6 +151,25 @@ export function InboundDetailPage({
       onOpenReceiptEditor(copiedDocument.id);
     } catch (error) {
       showError(getErrorMessage(error, t("couldNotSaveActivity")));
+    }
+  }
+
+  async function handleSaveContainerType() {
+    if (!document?.id) {
+      return;
+    }
+
+    setIsSavingContainerType(true);
+    try {
+      const updatedDocument = await api.updateInboundDocumentContainerType(document.id, { containerType: containerTypeValue });
+      const nextValue = updatedDocument.containerType === "WEST_COAST_TRANSFER" ? "WEST_COAST_TRANSFER" : "NORMAL";
+      setContainerTypeValue(nextValue);
+      setSavedContainerTypeValue(nextValue);
+      showSuccess(t("inboundContainerTypeSavedSuccess"));
+    } catch (error) {
+      showError(getErrorMessage(error, t("couldNotSaveActivity")));
+    } finally {
+      setIsSavingContainerType(false);
     }
   }
 
@@ -506,10 +534,34 @@ export function InboundDetailPage({
                 <DetailStatRow label={t("customer")} value={document?.customerName || "-"} />
                 <DetailStatRow label={t("expectedArrivalDate")} value={document ? formatDate(document.expectedArrivalDate, dateFormatter) : "-"} />
                 <DetailStatRow label={t("actualArrivalDate")} value={document ? formatDate(document.actualArrivalDate, dateFormatter) : "-"} />
+                <DetailStatRow label={t("billingContainerType")} value={savedContainerTypeValue === "WEST_COAST_TRANSFER" ? t("billingContainerTypeWestCoastTransfer") : t("billingContainerTypeNormal")} />
                 <DetailStatRow label={t("currentStorage")} value={document ? `${document.locationName || "-"} / ${sectionSummary}` : "-"} />
                 <DetailStatRow label={t("trackingStatus")} value={document ? formatInboundTrackingStatusLabel(document.trackingStatus, document.status, t) : "-"} />
                 <DetailStatRow label={t("documentNotes")} value={document?.documentNote || "-"} multiline />
               </div>
+              {canManage && document ? (
+                <div className="mt-4 rounded-[18px] border border-white/10 bg-white/10 px-3 py-3">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-100/75">{t("billingContainerType")}</div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <select
+                      value={containerTypeValue}
+                      onChange={(event) => setContainerTypeValue(event.target.value as "NORMAL" | "WEST_COAST_TRANSFER")}
+                      className="min-w-[220px] rounded-xl border border-white/20 bg-slate-950/15 px-3 py-2 text-sm text-white"
+                    >
+                      <option value="NORMAL">{t("billingContainerTypeNormal")}</option>
+                      <option value="WEST_COAST_TRANSFER">{t("billingContainerTypeWestCoastTransfer")}</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveContainerType()}
+                      disabled={isSavingContainerType || containerTypeValue === savedContainerTypeValue}
+                      className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-[#143569] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isSavingContainerType ? t("saving") : t("save")}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </section>
           </div>
         </div>

@@ -40,8 +40,12 @@ vi.mock("../lib/billingInvoicePdf", () => ({
 const invoiceFixture = {
   id: 42,
   invoiceNo: "INV-2026-0001",
+  invoiceType: "STORAGE_SETTLEMENT" as const,
   customerId: 1,
   customerNameSnapshot: "Imperial Bag & Paper",
+  warehouseLocationId: 1,
+  warehouseNameSnapshot: "NJ",
+  containerType: "NORMAL",
   periodStart: "2026-03-01",
   periodEnd: "2026-03-31",
   currencyCode: "USD",
@@ -49,6 +53,8 @@ const invoiceFixture = {
     inboundContainerFee: 450,
     wrappingFeePerPallet: 10,
     storageFeePerPalletPerWeek: 7,
+    storageFeePerPalletPerWeekNormal: 7,
+    storageFeePerPalletPerWeekWestCoastTransfer: 7,
     outboundFeePerPallet: 10
   },
   subtotal: 620,
@@ -63,40 +69,58 @@ const invoiceFixture = {
   createdByUserId: 1,
   createdAt: "2026-04-01T12:00:00Z",
   updatedAt: "2026-04-01T12:00:00Z",
+  lineCount: 2,
   lines: [
     {
       id: 1001,
       invoiceId: 42,
-      chargeType: "INBOUND",
-      description: "Inbound container fee",
-      reference: "Receipt 12 | GCXU5817233",
-      containerNo: "GCXU5817233",
-      warehouse: "NJ",
-      occurredOn: "2026-03-05",
-      quantity: 1,
-      unitRate: 450,
-      amount: 450,
-      notes: "",
-      sourceType: "AUTO" as const,
-      sortOrder: 1,
-      createdAt: "2026-04-01T12:00:00Z"
-    },
-    {
-      id: 1002,
-      invoiceId: 42,
       chargeType: "STORAGE",
-      description: "Storage charges",
+      description: "Storage settlement for GCXU5817233",
       reference: "Storage | GCXU5817233",
       containerNo: "GCXU5817233",
       warehouse: "NJ",
       occurredOn: "2026-03-31",
-      quantity: 170,
+      quantity: 140,
       unitRate: 1,
-      amount: 170,
-      notes: "5 pallets tracked",
+      amount: 140,
+      notes: "Storage settlement",
       sourceType: "AUTO" as const,
+      sortOrder: 1,
+      createdAt: "2026-04-01T12:00:00Z",
+      details: {
+        kind: "STORAGE_CONTAINER_SUMMARY" as const,
+        warehousesTouched: ["NJ"],
+        palletsTracked: 10,
+        palletDays: 140,
+        segments: [
+          {
+            startDate: "2026-03-01",
+            endDate: "2026-03-14",
+            dayEndPallets: 10,
+            billedDays: 14,
+            palletDays: 140,
+            amount: 140
+          }
+        ]
+      }
+    },
+    {
+      id: 1002,
+      invoiceId: 42,
+      chargeType: "DISCOUNT",
+      description: "Courtesy discount",
+      reference: "",
+      containerNo: "",
+      warehouse: "",
+      occurredOn: "",
+      quantity: 1,
+      unitRate: -20,
+      amount: -20,
+      notes: "",
+      sourceType: "MANUAL" as const,
       sortOrder: 2,
-      createdAt: "2026-04-01T12:00:00Z"
+      createdAt: "2026-04-01T12:00:00Z",
+      details: null
     }
   ]
 };
@@ -112,7 +136,7 @@ describe("BillingInvoiceEditorPage", () => {
     window.localStorage.setItem("sim-timezone", "UTC");
   });
 
-  it("exports the current invoice to Excel", async () => {
+  it("shows invoice type metadata", async () => {
     renderWithProviders(
       <BillingInvoiceEditorPage
         invoiceId={42}
@@ -121,7 +145,20 @@ describe("BillingInvoiceEditorPage", () => {
       />
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "Export Excel" }));
+    expect(await screen.findByText("Storage Settlement")).toBeInTheDocument();
+  });
+
+  it("exports the current invoice to Excel summary", async () => {
+    renderWithProviders(
+      <BillingInvoiceEditorPage
+        invoiceId={42}
+        currentUserRole="admin"
+        onBackToBilling={vi.fn()}
+      />
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Export" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Export Excel Summary/i }));
     fireEvent.click(await screen.findByRole("button", { name: "Download Excel" }));
 
     await waitFor(() => {
@@ -129,7 +166,7 @@ describe("BillingInvoiceEditorPage", () => {
     });
   });
 
-  it("exports the current invoice to PDF", async () => {
+  it("exports the current invoice to PDF detailed", async () => {
     renderWithProviders(
       <BillingInvoiceEditorPage
         invoiceId={42}
@@ -138,10 +175,12 @@ describe("BillingInvoiceEditorPage", () => {
       />
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "Download PDF" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Export" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Download PDF Detailed/i }));
 
     await waitFor(() => {
       expect(downloadBillingInvoicePdf).toHaveBeenCalledTimes(1);
     });
+    expect(downloadBillingInvoicePdf.mock.calls[0][0].exportMode).toBe("DETAILED");
   });
 });
