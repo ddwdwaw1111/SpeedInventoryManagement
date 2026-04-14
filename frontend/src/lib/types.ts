@@ -699,6 +699,10 @@ export type BillingStorageSegmentDetail = {
   dayEndPallets: number;
   billedDays: number;
   palletDays: number;
+  freePalletDays?: number;
+  billablePalletDays?: number;
+  grossAmount?: number;
+  discountAmount?: number;
   amount: number;
 };
 
@@ -709,6 +713,10 @@ export type BillingInvoiceLineDetails = {
   warehousesTouched: string[];
   palletsTracked: number;
   palletDays: number;
+  freePalletDays?: number;
+  billablePalletDays?: number;
+  grossAmount?: number;
+  discountAmount?: number;
   segments: BillingStorageSegmentDetail[];
 };
 

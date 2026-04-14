@@ -106,6 +106,7 @@ export function downloadBillingInvoicePdf({ invoice, timeZone, exportMode = "SUM
 }
 
 export function buildBillingInvoicePdfDefinition({ invoice, timeZone, exportMode = "SUMMARY" }: BillingInvoicePdfInput): TDocumentDefinitions {
+  const storageGraceDiscount = sumStorageGraceDiscount(invoice.lines);
   const metaRows: TableCell[][] = [
     [
       metaBlock("Customer", invoice.customerNameSnapshot),
@@ -125,8 +126,8 @@ export function buildBillingInvoicePdfDefinition({ invoice, timeZone, exportMode
     metaRows.push([
       metaBlock("Container Type", formatContainerType(invoice.containerType)),
       metaBlock("Warehouse", invoice.warehouseNameSnapshot || "-"),
+      metaBlock("Grace Discount", formatMoney(storageGraceDiscount)),
       metaBlock("", ""),
-      metaBlock("", "")
     ]);
   }
 
@@ -139,21 +140,6 @@ export function buildBillingInvoicePdfDefinition({ invoice, timeZone, exportMode
         body: metaRows
       },
       layout: "noBorders",
-      margin: [0, 0, 0, 8]
-    },
-    { text: "Rate Snapshot", style: "sectionTitle", margin: [0, 0, 0, 4] },
-    {
-      table: {
-        widths: [220, "*"],
-        body: [
-          [bodyCell("Inbound Fee / Container"), bodyCell(formatMoney(invoice.rates.inboundContainerFee), "tableCellRight")],
-          [bodyCell("Wrapping Fee / Pallet"), bodyCell(formatMoney(invoice.rates.wrappingFeePerPallet), "tableCellRight")],
-          [bodyCell("Storage Fee / Pallet / Week (Normal)"), bodyCell(formatMoney(invoice.rates.storageFeePerPalletPerWeekNormal), "tableCellRight")],
-          [bodyCell("Storage Fee / Pallet / Week (West Coast Transfer)"), bodyCell(formatMoney(invoice.rates.storageFeePerPalletPerWeekWestCoastTransfer), "tableCellRight")],
-          [bodyCell("Outbound Fee / Pallet"), bodyCell(formatMoney(invoice.rates.outboundFeePerPallet), "tableCellRight")]
-        ]
-      },
-      layout: BILLING_TABLE_LAYOUT_NAME,
       margin: [0, 0, 0, 8]
     },
     { text: "Invoice Lines", style: "sectionTitle", margin: [0, 0, 0, 4] },
@@ -217,7 +203,7 @@ export function buildBillingInvoicePdfDefinition({ invoice, timeZone, exportMode
         table: {
           headerRows: 1,
           dontBreakRows: true,
-          widths: [56, 72, 56, 56, 42, 40, 46, 52],
+          widths: [50, 62, 52, 52, 36, 34, 42, 48, 52],
           body: [
             [
               headerCell("Container"),
@@ -227,6 +213,7 @@ export function buildBillingInvoicePdfDefinition({ invoice, timeZone, exportMode
               headerCell("Pallets"),
               headerCell("Days"),
               headerCell("Pallet-Days"),
+              headerCell("Discount"),
               headerCell("Amount")
             ],
             ...segmentRows.map((row, index) => ([
@@ -237,6 +224,7 @@ export function buildBillingInvoicePdfDefinition({ invoice, timeZone, exportMode
               bodyCell(formatNumber(row.dayEndPallets), "tableCellRight", index),
               bodyCell(formatNumber(row.billedDays), "tableCellRight", index),
               bodyCell(formatNumber(row.palletDays), "tableCellRight", index),
+              bodyCell(formatMoney(row.discountAmount), "tableCellRight", index),
               bodyCell(formatMoney(row.amount), "tableCellRight", index)
             ]))
           ]
@@ -290,9 +278,14 @@ function flattenStorageSettlementSegments(lines: BillingInvoiceLineData[]) {
       dayEndPallets: segment.dayEndPallets,
       billedDays: segment.billedDays,
       palletDays: segment.palletDays,
+      discountAmount: segment.discountAmount ?? 0,
       amount: segment.amount
     }));
   });
+}
+
+function sumStorageGraceDiscount(lines: BillingInvoiceLineData[]) {
+  return lines.reduce((total, line) => total + (line.details?.discountAmount ?? 0), 0);
 }
 
 function headerCell(text: string): TableCell {

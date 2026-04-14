@@ -1401,10 +1401,10 @@ function buildStorageSettlementInvoiceLines(storageRows: BillingStorageRow[]): C
     containerNo: row.containerNo,
     warehouse: row.locationName || row.warehousesTouched.join(", "),
     occurredOn: trimDateValue(row.lastActivityAt ?? row.firstActivityAt),
-    quantity: row.palletDays,
-    unitRate: row.palletDays > 0 ? row.amount / row.palletDays : 0,
+    quantity: row.billablePalletDays,
+    unitRate: row.billablePalletDays > 0 ? row.amount / row.billablePalletDays : 0,
     amount: row.amount,
-    notes: `${containerTypeExportLabel(row.containerType)} | ${row.palletsTracked} pallets tracked across ${row.warehousesTouched.length} warehouse(s)`,
+    notes: `${containerTypeExportLabel(row.containerType)} | ${row.palletsTracked} pallets tracked across ${row.warehousesTouched.length} warehouse(s) | grace discount -${formatMoney(row.discountAmount)}`,
     sourceType: "AUTO",
     details: {
       kind: "STORAGE_CONTAINER_SUMMARY",
@@ -1413,12 +1413,20 @@ function buildStorageSettlementInvoiceLines(storageRows: BillingStorageRow[]): C
       warehousesTouched: row.warehousesTouched,
       palletsTracked: row.palletsTracked,
       palletDays: row.palletDays,
+      freePalletDays: row.freePalletDays,
+      billablePalletDays: row.billablePalletDays,
+      grossAmount: row.grossAmount,
+      discountAmount: row.discountAmount,
       segments: row.segments.map((segment) => ({
         startDate: segment.startDate,
         endDate: segment.endDate,
         dayEndPallets: segment.dayEndPallets,
         billedDays: segment.billedDays,
         palletDays: segment.palletDays,
+        freePalletDays: segment.freePalletDays,
+        billablePalletDays: segment.billablePalletDays,
+        grossAmount: segment.grossAmount,
+        discountAmount: segment.discountAmount,
         amount: segment.amount
       }))
     }

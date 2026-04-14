@@ -127,6 +127,8 @@ type BillingPreviewPdfDocument = {
     warehouses: string;
     trackedPallets: string;
     palletDays: string;
+    freePalletDays: string;
+    discountAmount: string;
     amount: string;
   }>;
   segmentRows: Array<{
@@ -139,6 +141,8 @@ type BillingPreviewPdfDocument = {
     dayEndPallets: string;
     billedDays: string;
     palletDays: string;
+    freePalletDays: string;
+    discountAmount: string;
     amount: string;
   }>;
 };
@@ -152,7 +156,7 @@ export function downloadBillingPreviewPdf(input: BillingPreviewPdfInput) {
 
 export function buildBillingPreviewPdfDocument({
   preview,
-  rates,
+  rates: _rates,
   timeZone,
   exportMode = "SUMMARY",
   workspaceMode = "OVERVIEW",
@@ -179,25 +183,21 @@ export function buildBillingPreviewPdfDocument({
           { label: "Container Type", value: containerTypeSummary },
           { label: "Tracked Pallets", value: formatNumber(storageRows.reduce((sum, row) => sum + row.palletsTracked, 0)) },
           { label: "Pallet-Days", value: formatNumber(storageRows.reduce((sum, row) => sum + row.palletDays, 0)) },
+          { label: "Grace Discount", value: formatMoney(storageRows.reduce((sum, row) => sum + row.discountAmount, 0)) },
           { label: "Storage Charges", value: formatMoney(storageRows.reduce((sum, row) => sum + row.amount, 0)) }
         ]
       : [
           { label: "Received Containers", value: formatNumber(preview.summary.receivedContainers) },
           { label: "Received Pallets", value: formatNumber(preview.summary.receivedPallets) },
           { label: "Pallet-Days", value: formatNumber(preview.summary.palletDays) },
+          { label: "Grace Discount", value: formatMoney(storageRows.reduce((sum, row) => sum + row.discountAmount, 0)) },
           { label: "Inbound Charges", value: formatMoney(preview.summary.inboundAmount) },
           { label: "Wrapping Charges", value: formatMoney(preview.summary.wrappingAmount) },
           { label: "Storage Charges", value: formatMoney(preview.summary.storageAmount) },
           { label: "Outbound Charges", value: formatMoney(preview.summary.outboundAmount) },
           { label: "Grand Total", value: formatMoney(preview.summary.grandTotal) }
         ],
-    rateRows: [
-      { label: "Inbound Fee / Container", value: formatMoney(rates.inboundContainerFee) },
-      { label: "Wrapping Fee / Pallet", value: formatMoney(rates.wrappingFeePerPallet) },
-      { label: "Storage Fee / Pallet / Week (Normal)", value: formatMoney(rates.storageFeePerPalletPerWeekNormal) },
-      { label: "Storage Fee / Pallet / Week (West Coast Transfer)", value: formatMoney(rates.storageFeePerPalletPerWeekWestCoastTransfer) },
-      { label: "Outbound Fee / Pallet", value: formatMoney(rates.outboundFeePerPallet) }
-    ],
+    rateRows: [],
     lineRows: preview.invoiceLines.map((line) => ({
       chargeType: line.chargeType,
       reference: line.reference || "-",
@@ -216,6 +216,8 @@ export function buildBillingPreviewPdfDocument({
       warehouses: row.warehousesTouched.join(", ") || "-",
       trackedPallets: formatNumber(row.palletsTracked),
       palletDays: formatNumber(row.palletDays),
+      freePalletDays: formatNumber(row.freePalletDays),
+      discountAmount: formatMoney(row.discountAmount),
       amount: formatMoney(row.amount)
     })),
     segmentRows: storageRows.flatMap((row) => row.segments.map((segment) => ({
@@ -228,6 +230,8 @@ export function buildBillingPreviewPdfDocument({
       dayEndPallets: formatNumber(segment.dayEndPallets),
       billedDays: formatNumber(segment.billedDays),
       palletDays: formatNumber(segment.palletDays),
+      freePalletDays: formatNumber(segment.freePalletDays),
+      discountAmount: formatMoney(segment.discountAmount),
       amount: formatMoney(segment.amount)
     })))
   };
@@ -260,11 +264,6 @@ export function buildBillingPreviewPdfDefinition(document: BillingPreviewPdfDocu
       document.summaryRows.map((row) => [bodyCell(row.label), bodyCell(row.value, "tableCellRight")]),
       [220, "*"]
     ),
-    { text: "Rate Card", style: "sectionTitle", margin: [0, 8, 0, 4] },
-    buildTwoColumnTable(
-      document.rateRows.map((row) => [bodyCell(row.label), bodyCell(row.value, "tableCellRight")]),
-      [220, "*"]
-    )
   ];
 
   if (document.lineRows.length > 0) {
@@ -309,7 +308,7 @@ export function buildBillingPreviewPdfDefinition(document: BillingPreviewPdfDocu
       table: {
         headerRows: 1,
         dontBreakRows: true,
-        widths: [84, 58, 58, 86, 46, 50, 56],
+        widths: [72, 52, 54, 76, 38, 42, 56, 56],
         body: [
           [
             headerCell("Customer"),
@@ -318,6 +317,7 @@ export function buildBillingPreviewPdfDefinition(document: BillingPreviewPdfDocu
             headerCell("Warehouses"),
             headerCell("Pallets"),
             headerCell("Pallet-Days"),
+            headerCell("Discount"),
             headerCell("Amount")
           ],
           ...document.storageRows.map((row, index) => ([
@@ -327,6 +327,7 @@ export function buildBillingPreviewPdfDefinition(document: BillingPreviewPdfDocu
             bodyCell(row.warehouses, "tableCell", index),
             bodyCell(row.trackedPallets, "tableCellRight", index),
             bodyCell(row.palletDays, "tableCellRight", index),
+            bodyCell(row.discountAmount, "tableCellRight", index),
             bodyCell(row.amount, "tableCellRight", index)
           ]))
         ]
@@ -341,7 +342,7 @@ export function buildBillingPreviewPdfDefinition(document: BillingPreviewPdfDocu
       table: {
         headerRows: 1,
         dontBreakRows: true,
-        widths: [76, 50, 54, 70, 52, 52, 38, 38, 46, 52],
+        widths: [62, 46, 52, 58, 48, 48, 34, 34, 40, 48, 52],
         body: [
           [
             headerCell("Customer"),
@@ -353,6 +354,7 @@ export function buildBillingPreviewPdfDefinition(document: BillingPreviewPdfDocu
             headerCell("Pallets"),
             headerCell("Days"),
             headerCell("Pallet-Days"),
+            headerCell("Discount"),
             headerCell("Amount")
           ],
           ...document.segmentRows.map((row, index) => ([
@@ -365,6 +367,7 @@ export function buildBillingPreviewPdfDefinition(document: BillingPreviewPdfDocu
             bodyCell(row.dayEndPallets, "tableCellRight", index),
             bodyCell(row.billedDays, "tableCellRight", index),
             bodyCell(row.palletDays, "tableCellRight", index),
+            bodyCell(row.discountAmount, "tableCellRight", index),
             bodyCell(row.amount, "tableCellRight", index)
           ]))
         ]
@@ -373,7 +376,7 @@ export function buildBillingPreviewPdfDefinition(document: BillingPreviewPdfDocu
     });
   }
 
-  if (content.length === 4) {
+  if (content.length === 5) {
     content.push({ text: "No billable rows found for the selected billing period.", style: "emptyState" });
   }
 

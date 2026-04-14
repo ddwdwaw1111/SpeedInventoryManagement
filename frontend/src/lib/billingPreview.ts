@@ -35,9 +35,13 @@ export type BillingStorageRow = {
   warehousesTouched: string[];
   palletsTracked: number;
   palletDays: number;
+  freePalletDays: number;
+  billablePalletDays: number;
   averageDailyPallets: number;
   firstActivityAt: string | null;
   lastActivityAt: string | null;
+  grossAmount: number;
+  discountAmount: number;
   amount: number;
   segments: BillingStorageSegment[];
 };
@@ -53,6 +57,10 @@ export type BillingStorageSegment = {
   dayEndPallets: number;
   billedDays: number;
   palletDays: number;
+  freePalletDays: number;
+  billablePalletDays: number;
+  grossAmount: number;
+  discountAmount: number;
   amount: number;
 };
 
@@ -104,9 +112,11 @@ type MutableStorageRow = BillingStorageRow & {
   warehouseSet: Set<string>;
   palletIdSet: Set<number>;
   dailyBalanceMap: Map<string, number>;
+  freeDailyBalanceMap: Map<string, number>;
 };
 
 const DEFAULT_UNASSIGNED_CONTAINER = "UNASSIGNED";
+const STORAGE_GRACE_DAYS = 7;
 
 export const DEFAULT_BILLING_RATES: BillingRates = {
   inboundContainerFee: 450,
@@ -395,14 +405,20 @@ function buildStorageCharges(
       palletIdSet: new Set<number>(),
       palletsTracked: 0,
       palletDays: 0,
+      freePalletDays: 0,
+      billablePalletDays: 0,
       averageDailyPallets: 0,
       firstActivityAt: null,
       lastActivityAt: null,
+      grossAmount: 0,
+      discountAmount: 0,
       amount: 0,
       segments: [],
-      dailyBalanceMap: new Map<string, number>()
+      dailyBalanceMap: new Map<string, number>(),
+      freeDailyBalanceMap: new Map<string, number>()
     };
 
+    let storageDaysConsumed = countStorageDaysBeforeRange(intervals, billingRange.start, STORAGE_GRACE_DAYS);
     let countedAnyDay = false;
     for (let dayCursor = new Date(billingRange.start); dayCursor < billingRange.endExclusive; dayCursor = shiftDay(dayCursor, 1)) {
       const nextDay = shiftDay(dayCursor, 1);
@@ -410,6 +426,8 @@ function buildStorageCharges(
       if (!activeInterval) {
         continue;
       }
+      storageDaysConsumed += 1;
+      const isGraceDay = storageDaysConsumed <= STORAGE_GRACE_DAYS;
       if (locationId && locationId !== "all" && activeInterval.locationId !== locationId) {
         continue;
       }
@@ -421,9 +439,17 @@ function buildStorageCharges(
       }
       addWarehouse(row, activeInterval.locationName);
       row.palletDays += 1;
+      if (isGraceDay) {
+        row.freePalletDays += 1;
+      } else {
+        row.billablePalletDays += 1;
+      }
       const dayKey = toIsoDateString(dayCursor);
       dailyBalanceMap.set(dayKey, (dailyBalanceMap.get(dayKey) ?? 0) + 1);
       row.dailyBalanceMap.set(dayKey, (row.dailyBalanceMap.get(dayKey) ?? 0) + 1);
+      if (isGraceDay) {
+        row.freeDailyBalanceMap.set(dayKey, (row.freeDailyBalanceMap.get(dayKey) ?? 0) + 1);
+      }
     }
 
     if (!countedAnyDay) {
@@ -437,9 +463,11 @@ function buildStorageCharges(
   const storageRows = [...rowMap.values()]
     .map((row) => {
       const storageRatePerDay = resolveStorageRatePerDay(row.containerType, normalizedRates);
-      const segments = buildStorageSegments(row.dailyBalanceMap, billingRange, storageRatePerDay);
+      const segments = buildStorageSegments(row.dailyBalanceMap, row.freeDailyBalanceMap, billingRange, storageRatePerDay);
       const firstActivityAt = segments[0]?.startDate ?? null;
       const lastActivityAt = segments[segments.length - 1]?.endDate ?? null;
+      const grossAmount = roundCurrency(row.palletDays * storageRatePerDay);
+      const discountAmount = roundCurrency(row.freePalletDays * storageRatePerDay);
       return {
         customerId: row.customerId,
         customerName: row.customerName,
@@ -452,10 +480,14 @@ function buildStorageCharges(
         warehousesTouched: [...row.warehouseSet].sort((left, right) => left.localeCompare(right)),
         palletsTracked: row.palletIdSet.size,
         palletDays: row.palletDays,
+        freePalletDays: row.freePalletDays,
+        billablePalletDays: row.billablePalletDays,
         averageDailyPallets: roundQuantity(row.palletDays / rangeDays),
         firstActivityAt,
         lastActivityAt,
-        amount: roundCurrency(row.palletDays * storageRatePerDay),
+        grossAmount,
+        discountAmount,
+        amount: roundCurrency(grossAmount - discountAmount),
         segments
       };
     })
@@ -479,10 +511,10 @@ function buildStorageCharges(
     containerNo: row.containerNo,
     warehouseSummary: row.warehousesTouched.join(", ") || "-",
     occurredOn: row.lastActivityAt,
-    quantity: row.palletDays,
+    quantity: row.billablePalletDays,
     unitRate: roundCurrency(resolveStorageRatePerDay(row.containerType, normalizedRates)),
     amount: row.amount,
-    meta: `${row.palletsTracked} pallets tracked | ${formatContainerTypeLabel(row.containerType)}`
+    meta: `${row.palletsTracked} pallets tracked | ${formatContainerTypeLabel(row.containerType)} | ${row.freePalletDays} free pallet-days | -${formatMoney(row.discountAmount)}`
   }));
 
   const dailyBalanceRows: BillingDailyBalanceRow[] = [];
@@ -580,6 +612,32 @@ function findActiveIntervalAtDayEnd(intervals: StorageInterval[], boundaryExclus
   )) ?? null;
 }
 
+function countStorageDaysBeforeRange(intervals: StorageInterval[], rangeStart: Date, cap: number) {
+  if (cap <= 0) {
+    return 0;
+  }
+
+  let total = 0;
+  for (const interval of intervals) {
+    const startDay = startOfLocalDay(interval.start);
+    const intervalEndDay = interval.end ? startOfLocalDay(interval.end) : null;
+    const effectiveEnd = intervalEndDay && intervalEndDay.getTime() < rangeStart.getTime()
+      ? intervalEndDay
+      : rangeStart;
+
+    if (startDay.getTime() >= effectiveEnd.getTime()) {
+      continue;
+    }
+
+    total += Math.round((effectiveEnd.getTime() - startDay.getTime()) / 86400000);
+    if (total >= cap) {
+      return cap;
+    }
+  }
+
+  return total;
+}
+
 type BillingRange = {
   startDate: string;
   endDate: string;
@@ -606,6 +664,7 @@ function getBillingRange(startDateInput: string, endDateInput: string): BillingR
 
 function buildStorageSegments(
   dailyBalanceMap: Map<string, number>,
+  freeDailyBalanceMap: Map<string, number>,
   billingRange: BillingRange,
   storageRatePerDay: number
 ) {
@@ -614,12 +673,14 @@ function buildStorageSegments(
     startDate: string;
     endDate: string;
     dayEndPallets: number;
+    dayEndFreePallets: number;
     billedDays: number;
   } | null = null;
 
   for (let dayCursor = new Date(billingRange.start); dayCursor < billingRange.endExclusive; dayCursor = shiftDay(dayCursor, 1)) {
     const dayKey = toIsoDateString(dayCursor);
     const palletCount = dailyBalanceMap.get(dayKey) ?? 0;
+    const freePalletCount = Math.min(freeDailyBalanceMap.get(dayKey) ?? 0, palletCount);
 
     if (palletCount <= 0) {
       if (activeSegment) {
@@ -634,12 +695,13 @@ function buildStorageSegments(
         startDate: dayKey,
         endDate: dayKey,
         dayEndPallets: palletCount,
+        dayEndFreePallets: freePalletCount,
         billedDays: 1
       };
       continue;
     }
 
-    if (activeSegment.dayEndPallets === palletCount) {
+    if (activeSegment.dayEndPallets === palletCount && activeSegment.dayEndFreePallets === freePalletCount) {
       activeSegment.endDate = dayKey;
       activeSegment.billedDays += 1;
       continue;
@@ -650,6 +712,7 @@ function buildStorageSegments(
       startDate: dayKey,
       endDate: dayKey,
       dayEndPallets: palletCount,
+      dayEndFreePallets: freePalletCount,
       billedDays: 1
     };
   }
@@ -666,18 +729,27 @@ function finalizeStorageSegment(
     startDate: string;
     endDate: string;
     dayEndPallets: number;
+    dayEndFreePallets: number;
     billedDays: number;
   },
   storageRatePerDay: number
 ): BillingStorageSegment {
   const palletDays = segment.dayEndPallets * segment.billedDays;
+  const freePalletDays = segment.dayEndFreePallets * segment.billedDays;
+  const billablePalletDays = palletDays - freePalletDays;
+  const grossAmount = roundCurrency(palletDays * storageRatePerDay);
+  const discountAmount = roundCurrency(freePalletDays * storageRatePerDay);
   return {
     startDate: segment.startDate,
     endDate: segment.endDate,
     dayEndPallets: segment.dayEndPallets,
     billedDays: segment.billedDays,
     palletDays,
-    amount: roundCurrency(palletDays * storageRatePerDay)
+    freePalletDays,
+    billablePalletDays,
+    grossAmount,
+    discountAmount,
+    amount: roundCurrency(grossAmount - discountAmount)
   };
 }
 
@@ -845,4 +917,13 @@ function roundCurrency(value: number) {
 
 function roundQuantity(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+function formatMoney(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(value);
 }
