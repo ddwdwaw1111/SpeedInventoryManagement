@@ -1404,7 +1404,7 @@ function buildStorageSettlementInvoiceLines(storageRows: BillingStorageRow[]): C
     quantity: row.billablePalletDays,
     unitRate: row.billablePalletDays > 0 ? row.amount / row.billablePalletDays : 0,
     amount: row.amount,
-    notes: `${containerTypeExportLabel(row.containerType)} | ${row.palletsTracked} pallets tracked across ${row.warehousesTouched.length} warehouse(s) | grace discount -${formatMoney(row.discountAmount)}`,
+    notes: buildStorageSettlementNotes(row),
     sourceType: "AUTO",
     details: {
       kind: "STORAGE_CONTAINER_SUMMARY",
@@ -1642,5 +1642,21 @@ function containerTypeLabel(containerType: ContainerType, t: (key: string) => st
 }
 
 function containerTypeExportLabel(containerType: ContainerType) {
-  return containerType === "WEST_COAST_TRANSFER" ? "West Coast Transfer" : "Normal";
+  return containerType === "WEST_COAST_TRANSFER" ? "Transfer" : "Normal";
+}
+
+function buildStorageSettlementNotes(row: BillingStorageRow) {
+  const parts = [
+    containerTypeExportLabel(row.containerType),
+    `${row.palletsTracked} pallets tracked across ${row.warehousesTouched.length} warehouse(s)`
+  ];
+
+  if (row.freePalletDays > 0) {
+    parts.push(`${row.freePalletDays} free pallet-days`);
+  }
+  if (row.discountAmount > 0) {
+    parts.push(`grace discount -${formatMoney(row.discountAmount)}`);
+  }
+
+  return parts.join(" | ");
 }

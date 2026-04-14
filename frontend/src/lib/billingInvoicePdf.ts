@@ -126,7 +126,7 @@ export function buildBillingInvoicePdfDefinition({ invoice, timeZone, exportMode
     metaRows.push([
       metaBlock("Container Type", formatContainerType(invoice.containerType)),
       metaBlock("Warehouse", invoice.warehouseNameSnapshot || "-"),
-      metaBlock("Grace Discount", formatMoney(storageGraceDiscount)),
+      metaBlock("Grace Discount", formatDiscountMoney(storageGraceDiscount)),
       metaBlock("", ""),
     ]);
   }
@@ -224,7 +224,7 @@ export function buildBillingInvoicePdfDefinition({ invoice, timeZone, exportMode
               bodyCell(formatNumber(row.dayEndPallets), "tableCellRight", index),
               bodyCell(formatNumber(row.billedDays), "tableCellRight", index),
               bodyCell(formatNumber(row.palletDays), "tableCellRight", index),
-              bodyCell(formatMoney(row.discountAmount), "tableCellRight", index),
+              bodyCell(formatDiscountMoney(row.discountAmount), "tableCellRight", index),
               bodyCell(formatMoney(row.amount), "tableCellRight", index)
             ]))
           ]
@@ -335,9 +335,13 @@ function formatNumber(value: number) {
   }).format(value);
 }
 
+function formatDiscountMoney(value: number) {
+  return `-${formatMoney(Math.abs(value))}`;
+}
+
 function formatContainerType(containerType: BillingInvoice["containerType"]) {
   if (!containerType) {
     return "-";
   }
-  return containerType === "WEST_COAST_TRANSFER" ? "West Coast Transfer" : "Normal";
+  return containerType === "WEST_COAST_TRANSFER" ? "Transfer" : "Normal";
 }

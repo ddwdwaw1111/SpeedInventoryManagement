@@ -224,7 +224,7 @@ function resolveStorageRatePerDay(containerType: ContainerType, rates: BillingRa
 }
 
 function formatContainerTypeLabel(containerType: ContainerType) {
-  return containerType === "WEST_COAST_TRANSFER" ? "West Coast Transfer" : "Normal";
+  return containerType === "WEST_COAST_TRANSFER" ? "Transfer" : "Normal";
 }
 
 function normalizeContainerTypeValue(containerType?: string | null): ContainerType {
@@ -514,7 +514,7 @@ function buildStorageCharges(
     quantity: row.billablePalletDays,
     unitRate: roundCurrency(resolveStorageRatePerDay(row.containerType, normalizedRates)),
     amount: row.amount,
-    meta: `${row.palletsTracked} pallets tracked | ${formatContainerTypeLabel(row.containerType)} | ${row.freePalletDays} free pallet-days | -${formatMoney(row.discountAmount)}`
+    meta: buildStorageLineMeta(row)
   }));
 
   const dailyBalanceRows: BillingDailyBalanceRow[] = [];
@@ -527,6 +527,22 @@ function buildStorageCharges(
   }
 
   return { storageRows, storageLines, dailyBalanceRows };
+}
+
+function buildStorageLineMeta(row: BillingStorageRow) {
+  const parts = [
+    `${row.palletsTracked} pallets tracked`,
+    formatContainerTypeLabel(row.containerType)
+  ];
+
+  if (row.freePalletDays > 0) {
+    parts.push(`${row.freePalletDays} free pallet-days`);
+  }
+  if (row.discountAmount > 0) {
+    parts.push(`-${formatMoney(row.discountAmount)}`);
+  }
+
+  return parts.join(" | ");
 }
 
 function buildStorageIntervals(pallet: PalletTrace, palletEvents: PalletLocationEvent[]) {

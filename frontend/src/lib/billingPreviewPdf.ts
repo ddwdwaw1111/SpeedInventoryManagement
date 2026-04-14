@@ -183,14 +183,14 @@ export function buildBillingPreviewPdfDocument({
           { label: "Container Type", value: containerTypeSummary },
           { label: "Tracked Pallets", value: formatNumber(storageRows.reduce((sum, row) => sum + row.palletsTracked, 0)) },
           { label: "Pallet-Days", value: formatNumber(storageRows.reduce((sum, row) => sum + row.palletDays, 0)) },
-          { label: "Grace Discount", value: formatMoney(storageRows.reduce((sum, row) => sum + row.discountAmount, 0)) },
+          { label: "Grace Discount", value: formatDiscountMoney(storageRows.reduce((sum, row) => sum + row.discountAmount, 0)) },
           { label: "Storage Charges", value: formatMoney(storageRows.reduce((sum, row) => sum + row.amount, 0)) }
         ]
       : [
           { label: "Received Containers", value: formatNumber(preview.summary.receivedContainers) },
           { label: "Received Pallets", value: formatNumber(preview.summary.receivedPallets) },
           { label: "Pallet-Days", value: formatNumber(preview.summary.palletDays) },
-          { label: "Grace Discount", value: formatMoney(storageRows.reduce((sum, row) => sum + row.discountAmount, 0)) },
+          { label: "Grace Discount", value: formatDiscountMoney(storageRows.reduce((sum, row) => sum + row.discountAmount, 0)) },
           { label: "Inbound Charges", value: formatMoney(preview.summary.inboundAmount) },
           { label: "Wrapping Charges", value: formatMoney(preview.summary.wrappingAmount) },
           { label: "Storage Charges", value: formatMoney(preview.summary.storageAmount) },
@@ -217,7 +217,7 @@ export function buildBillingPreviewPdfDocument({
       trackedPallets: formatNumber(row.palletsTracked),
       palletDays: formatNumber(row.palletDays),
       freePalletDays: formatNumber(row.freePalletDays),
-      discountAmount: formatMoney(row.discountAmount),
+      discountAmount: formatDiscountMoney(row.discountAmount),
       amount: formatMoney(row.amount)
     })),
     segmentRows: storageRows.flatMap((row) => row.segments.map((segment) => ({
@@ -231,7 +231,7 @@ export function buildBillingPreviewPdfDocument({
       billedDays: formatNumber(segment.billedDays),
       palletDays: formatNumber(segment.palletDays),
       freePalletDays: formatNumber(segment.freePalletDays),
-      discountAmount: formatMoney(segment.discountAmount),
+      discountAmount: formatDiscountMoney(segment.discountAmount),
       amount: formatMoney(segment.amount)
     })))
   };
@@ -455,7 +455,7 @@ function summarizeContainerType(rows: BillingStorageRow[]) {
 }
 
 function formatContainerType(containerType: BillingStorageRow["containerType"]) {
-  return containerType === "WEST_COAST_TRANSFER" ? "West Coast Transfer" : "Normal";
+  return containerType === "WEST_COAST_TRANSFER" ? "Transfer" : "Normal";
 }
 
 function sanitizeFileName(value: string) {
@@ -469,6 +469,10 @@ function formatMoney(value: number) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   }).format(value);
+}
+
+function formatDiscountMoney(value: number) {
+  return `-${formatMoney(Math.abs(value))}`;
 }
 
 function formatNumber(value: number) {
