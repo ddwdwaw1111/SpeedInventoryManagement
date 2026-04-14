@@ -738,6 +738,21 @@ export function OutboundShipmentEditorPage({
     }));
   }
 
+  function clearOutboundLinePickPallets(lineID: string) {
+    setBatchOutboundLines((current) => current.map((line) => {
+      if (line.id !== lineID) {
+        return line;
+      }
+      return {
+        ...line,
+        pickPallets: [],
+        pickPalletsTouched: true,
+        pallets: 0
+      };
+    }));
+    showSuccess(t("manualPickSelectionsClearedSuccess"));
+  }
+
   function validateOutboundDraft(requireAllocationReady: boolean) {
     if (outboundStepOverview.readyLines === 0) {
       return t("batchOutboundRequireLine");
@@ -1318,6 +1333,16 @@ export function OutboundShipmentEditorPage({
                         <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem", marginBottom: "0.25rem" }}>
                           {!line.pickPalletsTouched ? (
                             <button className="button button--ghost button--small" type="button" onClick={() => startManualOutboundLinePick(line.id)}>{t("switchToManualPick")}</button>
+                          ) : null}
+                          {line.pickPalletsTouched ? (
+                            <button
+                              className="button button--ghost button--small"
+                              type="button"
+                              onClick={() => clearOutboundLinePickPallets(line.id)}
+                              disabled={(outboundAllocationSummary?.allocatedQty ?? 0) === 0}
+                            >
+                              {t("clearPickSelections")}
+                            </button>
                           ) : null}
                           {line.pickPalletsTouched ? (
                             <button className="button button--ghost button--small" type="button" onClick={() => resetOutboundLinePickPallets(line.id)}>{t("resetToAutoPick")}</button>

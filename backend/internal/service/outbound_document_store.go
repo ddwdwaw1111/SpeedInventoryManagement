@@ -1622,8 +1622,15 @@ func buildOutboundSourceKey(customerID int64, locationID int64, skuMasterID int6
 	return fmt.Sprintf("%d|%d|%d", customerID, locationID, skuMasterID)
 }
 
-func outboundAllocationBucketKey(storageSection string, containerNo string) string {
-	return fmt.Sprintf("%s|%s", fallbackSection(storageSection), strings.TrimSpace(containerNo))
+func outboundAllocationBucketKey(customerID int64, locationID int64, skuMasterID int64, storageSection string, containerNo string) string {
+	return fmt.Sprintf(
+		"%d|%d|%d|%s|%s",
+		customerID,
+		locationID,
+		skuMasterID,
+		fallbackSection(storageSection),
+		strings.TrimSpace(containerNo),
+	)
 }
 
 func (s *Store) loadLockedOutboundSourceTx(ctx context.Context, tx *sql.Tx, customerID int64, locationID int64, skuMasterID int64) (lockedOutboundSource, error) {
@@ -1782,7 +1789,13 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 			deliveryTime := deliveryDate.Time
 			row.DeliveryDate = &deliveryTime
 		}
-		row.BucketKey = outboundAllocationBucketKey(row.StorageSection, row.ContainerNo)
+		row.BucketKey = outboundAllocationBucketKey(
+			row.CustomerID,
+			row.LocationID,
+			row.SKUMasterID,
+			row.StorageSection,
+			row.ContainerNo,
+		)
 
 		lockedRows = append(lockedRows, row)
 	}

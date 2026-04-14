@@ -2807,6 +2807,96 @@ func TestOutboundAutoContainerAllocationIntegration(t *testing.T) {
 	}
 }
 
+func TestOutboundConfirmedSubmissionAllowsDifferentSKUsFromSameContainerIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	itemA := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-A-"+suffix, 0)
+	itemB := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-B-"+suffix, 0)
+	containerNo := "CONT-MULTI-SKU-" + suffix
+
+	if _, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-23",
+		ContainerNo:         containerNo,
+		StorageSection:      DefaultStorageSection,
+		Status:              DocumentStatusConfirmed,
+		Lines: []CreateInboundDocumentLineInput{
+			{
+				SKU:            itemA.SKU,
+				Description:    itemA.Description,
+				ExpectedQty:    5,
+				ReceivedQty:    5,
+				Pallets:        1,
+				StorageSection: DefaultStorageSection,
+			},
+			{
+				SKU:            itemB.SKU,
+				Description:    itemB.Description,
+				ExpectedQty:    7,
+				ReceivedQty:    7,
+				Pallets:        1,
+				StorageSection: DefaultStorageSection,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("create inbound receipt for multi-sku container: %v", err)
+	}
+
+	sourceItemA := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerNo, itemA.SKU)
+	sourceItemB := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerNo, itemB.SKU)
+
+	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo:    "PL-MULTI-SKU-" + suffix,
+		OrderRef:         "SO-MULTI-SKU-" + suffix,
+		ExpectedShipDate: "2026-03-24",
+		Status:           DocumentStatusConfirmed,
+		DocumentNote:     "Ship two SKUs from the same container",
+		Lines: []CreateOutboundDocumentLineInput{
+			{
+				CustomerID:  sourceItemA.CustomerID,
+				LocationID:  sourceItemA.LocationID,
+				SKUMasterID: sourceItemA.SKUMasterID,
+				Quantity:    5,
+				Pallets:     1,
+				UnitLabel:   "CTN",
+			},
+			{
+				CustomerID:  sourceItemB.CustomerID,
+				LocationID:  sourceItemB.LocationID,
+				SKUMasterID: sourceItemB.SKUMasterID,
+				Quantity:    7,
+				Pallets:     1,
+				UnitLabel:   "CTN",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("confirm outbound shipment for multi-sku container: %v", err)
+	}
+
+	if normalizeDocumentStatus(outbound.Status) != DocumentStatusConfirmed {
+		t.Fatalf("expected outbound document to be confirmed, got %s", outbound.Status)
+	}
+	if len(outbound.Lines) != 2 {
+		t.Fatalf("expected 2 outbound lines, got %d", len(outbound.Lines))
+	}
+
+	for _, line := range outbound.Lines {
+		if len(line.PickAllocations) != 1 {
+			t.Fatalf("expected one pallet-backed pick allocation for line %d, got %+v", line.ID, line.PickAllocations)
+		}
+		allocation := line.PickAllocations[0]
+		if allocation.ContainerNo != containerNo {
+			t.Fatalf("expected allocation container %s, got %+v", containerNo, allocation)
+		}
+	}
+}
+
 func TestInventoryTransferIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
