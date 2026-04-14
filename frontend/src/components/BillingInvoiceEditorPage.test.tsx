@@ -51,11 +51,12 @@ const invoiceFixture = {
   currencyCode: "USD",
   rates: {
     inboundContainerFee: 450,
-    wrappingFeePerPallet: 10,
+    transferInboundFeePerPallet: 10,
+    wrappingFeePerPallet: 15,
     storageFeePerPalletPerWeek: 7,
     storageFeePerPalletPerWeekNormal: 7,
     storageFeePerPalletPerWeekWestCoastTransfer: 7,
-    outboundFeePerPallet: 10
+    outboundFeePerPallet: 0
   },
   subtotal: 620,
   discountTotal: 0,

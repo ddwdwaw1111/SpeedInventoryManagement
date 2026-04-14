@@ -232,6 +232,7 @@ describe("BillingPage", () => {
     fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-03-31" } });
     fireEvent.change(screen.getAllByLabelText("Customer")[0], { target: { value: "1" } });
     fireEvent.click(screen.getByRole("button", { name: "Storage Settlement" }));
+    fireEvent.change(screen.getByLabelText("Container Type"), { target: { value: "NORMAL" } });
 
     const createButton = await screen.findByRole("button", { name: "Create Storage Invoice" });
     fireEvent.click(createButton);

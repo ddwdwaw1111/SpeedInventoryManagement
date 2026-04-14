@@ -558,6 +558,10 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
                 <div className="report-bars__value">{formatMoney(invoice.rates.inboundContainerFee)}</div>
               </div>
               <div className="report-bars__row">
+                <div className="report-bars__labels"><strong>{t("billingTransferInboundFee")}</strong></div>
+                <div className="report-bars__value">{formatMoney(invoice.rates.transferInboundFeePerPallet)}</div>
+              </div>
+              <div className="report-bars__row">
                 <div className="report-bars__labels"><strong>{t("billingWrappingFee")}</strong></div>
                 <div className="report-bars__value">{formatMoney(invoice.rates.wrappingFeePerPallet)}</div>
               </div>

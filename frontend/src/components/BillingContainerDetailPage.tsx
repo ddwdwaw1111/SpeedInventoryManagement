@@ -183,8 +183,21 @@ export function BillingContainerDetailPage({
 	const summary = useMemo(() => summarizeContainerBilling(containerInvoiceLines), [containerInvoiceLines]);
 	const timelineSummary = useMemo(() => summarizeTimeline(timelineRows), [timelineRows]);
 	const hasContainerData = containerInvoiceLines.length > 0 || timelineRows.length > 0 || Boolean(containerStorageRow);
+	const effectiveContainerType = useMemo(() => {
+		if (containerStorageRow) {
+			return containerStorageRow.containerType;
+		}
+		const inboundMatch = inboundDocuments.find((document) => normalizeContainerNo(document.containerNo) === normalizedContainerNo);
+		if (inboundMatch?.containerType === "WEST_COAST_TRANSFER") {
+			return "WEST_COAST_TRANSFER" as const;
+		}
+		if (activeContainerType !== "all") {
+			return activeContainerType;
+		}
+		return "NORMAL" as const;
+	}, [activeContainerType, containerStorageRow, inboundDocuments, normalizedContainerNo]);
 	const storageDailyRate = (
-		activeContainerType === "WEST_COAST_TRANSFER"
+		effectiveContainerType === "WEST_COAST_TRANSFER"
 			? activeRates.storageFeePerPalletPerWeekWestCoastTransfer
 			: activeRates.storageFeePerPalletPerWeekNormal
 	) / 7;
@@ -277,11 +290,17 @@ export function BillingContainerDetailPage({
 								</div>
 								<div className="report-bars report-bars--summary">
 									{[
-										{ label: t("billingInboundContainerFee"), value: activeRates.inboundContainerFee },
-										{ label: t("billingWrappingFee"), value: activeRates.wrappingFeePerPallet },
 										{
-											label: activeContainerType === "WEST_COAST_TRANSFER" ? t("billingStorageRateWestCoast") : t("billingStorageRateNormal"),
-											value: activeContainerType === "WEST_COAST_TRANSFER"
+											label: effectiveContainerType === "WEST_COAST_TRANSFER" ? t("billingTransferInboundFee") : t("billingInboundContainerFee"),
+											value: effectiveContainerType === "WEST_COAST_TRANSFER" ? activeRates.transferInboundFeePerPallet : activeRates.inboundContainerFee
+										},
+										{
+											label: t("billingWrappingFee"),
+											value: effectiveContainerType === "WEST_COAST_TRANSFER" ? 0 : activeRates.wrappingFeePerPallet
+										},
+										{
+											label: effectiveContainerType === "WEST_COAST_TRANSFER" ? t("billingStorageRateWestCoast") : t("billingStorageRateNormal"),
+											value: effectiveContainerType === "WEST_COAST_TRANSFER"
 												? activeRates.storageFeePerPalletPerWeekWestCoastTransfer
 												: activeRates.storageFeePerPalletPerWeekNormal
 										},

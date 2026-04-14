@@ -73,6 +73,7 @@ type BillingInvoiceLine struct {
 
 type BillingRatesSnapshot struct {
 	InboundContainerFee                    float64 `json:"inboundContainerFee"`
+	TransferInboundFeePerPallet            float64 `json:"transferInboundFeePerPallet"`
 	WrappingFeePerPallet                   float64 `json:"wrappingFeePerPallet"`
 	StorageFeePerPalletWeek                float64 `json:"storageFeePerPalletPerWeek,omitempty"`
 	StorageFeePerPalletWeekNormal          float64 `json:"storageFeePerPalletPerWeekNormal"`
@@ -846,6 +847,9 @@ func nullableInt64Ptr(value *int64) any {
 }
 
 func normalizeBillingRatesSnapshot(rates BillingRatesSnapshot) BillingRatesSnapshot {
+	if rates.TransferInboundFeePerPallet <= 0 {
+		rates.TransferInboundFeePerPallet = 10
+	}
 	if rates.StorageFeePerPalletWeekNormal <= 0 && rates.StorageFeePerPalletWeekWestCoastTransfer <= 0 && rates.StorageFeePerPalletWeek > 0 {
 		rates.StorageFeePerPalletWeekNormal = rates.StorageFeePerPalletWeek
 		rates.StorageFeePerPalletWeekWestCoastTransfer = rates.StorageFeePerPalletWeek

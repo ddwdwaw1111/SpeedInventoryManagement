@@ -3098,10 +3098,11 @@ func TestStorageSettlementInvoiceLifecycleIntegration(t *testing.T) {
 		PeriodStart:         "2026-03-01",
 		PeriodEnd:           "2026-03-31",
 		Rates: BillingRatesSnapshot{
-			InboundContainerFee:     450,
-			WrappingFeePerPallet:    10,
-			StorageFeePerPalletWeek: 7,
-			OutboundFeePerPallet:    10,
+			InboundContainerFee:         450,
+			TransferInboundFeePerPallet: 10,
+			WrappingFeePerPallet:        15,
+			StorageFeePerPalletWeek:     7,
+			OutboundFeePerPallet:        0,
 		},
 		Lines: []CreateBillingInvoiceLineInput{
 			{

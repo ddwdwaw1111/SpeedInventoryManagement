@@ -3,6 +3,7 @@ import type { ContainerType, Customer, InboundDocument, OutboundDocument, Pallet
 
 export type BillingRates = {
   inboundContainerFee: number;
+  transferInboundFeePerPallet: number;
   wrappingFeePerPallet: number;
   storageFeePerPalletPerWeek?: number;
   storageFeePerPalletPerWeekNormal: number;
@@ -120,11 +121,12 @@ const STORAGE_GRACE_DAYS = 7;
 
 export const DEFAULT_BILLING_RATES: BillingRates = {
   inboundContainerFee: 450,
-  wrappingFeePerPallet: 10,
+  transferInboundFeePerPallet: 10,
+  wrappingFeePerPallet: 15,
   storageFeePerPalletPerWeek: 7,
   storageFeePerPalletPerWeekNormal: 7,
   storageFeePerPalletPerWeekWestCoastTransfer: 7,
-  outboundFeePerPallet: 10
+  outboundFeePerPallet: 0
 };
 
 export function buildBillingPreview(input: BuildBillingPreviewInput): BillingPreview {
@@ -212,6 +214,7 @@ function normalizeBillingRates(rates: BillingRates): BillingRates {
 
   return {
     ...rates,
+    transferInboundFeePerPallet: rates.transferInboundFeePerPallet ?? DEFAULT_BILLING_RATES.transferInboundFeePerPallet,
     storageFeePerPalletPerWeek: rates.storageFeePerPalletPerWeek ?? rates.storageFeePerPalletPerWeekNormal
   };
 }
@@ -229,6 +232,28 @@ function formatContainerTypeLabel(containerType: ContainerType) {
 
 function normalizeContainerTypeValue(containerType?: string | null): ContainerType {
   return containerType === "WEST_COAST_TRANSFER" ? "WEST_COAST_TRANSFER" : "NORMAL";
+}
+
+function resolveInboundCharge(containerType: ContainerType, rates: BillingRates, receivedPallets: number) {
+  if (containerType === "WEST_COAST_TRANSFER") {
+    return {
+      quantity: receivedPallets,
+      unitRate: rates.transferInboundFeePerPallet,
+      amount: roundCurrency(receivedPallets * rates.transferInboundFeePerPallet),
+      meta: `${receivedPallets} transfer pallets received`
+    };
+  }
+
+  return {
+    quantity: 1,
+    unitRate: rates.inboundContainerFee,
+    amount: roundCurrency(rates.inboundContainerFee),
+    meta: `${receivedPallets} pallets received`
+  };
+}
+
+function resolveStorageGraceDays(containerType: ContainerType) {
+  return containerType === "WEST_COAST_TRANSFER" ? 0 : STORAGE_GRACE_DAYS;
 }
 
 function buildInboundInvoiceLines(
@@ -261,9 +286,11 @@ function buildInboundInvoiceLines(
     }
 
     const receivedPallets = document.lines.reduce((total, line) => total + Math.max(line.pallets, 0), 0);
+    const documentContainerType = normalizeContainerTypeValue(document.containerType);
     const containerNo = normalizeContainerNo(document.containerNo);
     const warehouseSummary = document.locationName || "-";
     const reference = buildInboundReference(document, containerNo);
+    const inboundCharge = resolveInboundCharge(documentContainerType, rates, receivedPallets);
 
     lines.push({
       id: `inbound-${document.id}`,
@@ -274,13 +301,13 @@ function buildInboundInvoiceLines(
       containerNo,
       warehouseSummary,
       occurredOn,
-      quantity: 1,
-      unitRate: rates.inboundContainerFee,
-      amount: roundCurrency(rates.inboundContainerFee),
-      meta: `${receivedPallets} pallets received`
+      quantity: inboundCharge.quantity,
+      unitRate: inboundCharge.unitRate,
+      amount: inboundCharge.amount,
+      meta: inboundCharge.meta
     });
 
-    if (receivedPallets > 0) {
+    if (receivedPallets > 0 && documentContainerType !== "WEST_COAST_TRANSFER") {
       lines.push({
         id: `wrapping-${document.id}`,
         customerId: document.customerId,
@@ -418,7 +445,8 @@ function buildStorageCharges(
       freeDailyBalanceMap: new Map<string, number>()
     };
 
-    let storageDaysConsumed = countStorageDaysBeforeRange(intervals, billingRange.start, STORAGE_GRACE_DAYS);
+    const graceDays = resolveStorageGraceDays(pallet.containerType);
+    let storageDaysConsumed = countStorageDaysBeforeRange(intervals, billingRange.start, graceDays);
     let countedAnyDay = false;
     for (let dayCursor = new Date(billingRange.start); dayCursor < billingRange.endExclusive; dayCursor = shiftDay(dayCursor, 1)) {
       const nextDay = shiftDay(dayCursor, 1);
@@ -427,7 +455,7 @@ function buildStorageCharges(
         continue;
       }
       storageDaysConsumed += 1;
-      const isGraceDay = storageDaysConsumed <= STORAGE_GRACE_DAYS;
+      const isGraceDay = graceDays > 0 && storageDaysConsumed <= graceDays;
       if (locationId && locationId !== "all" && activeInterval.locationId !== locationId) {
         continue;
       }
@@ -786,21 +814,17 @@ function belongsToCustomer(targetCustomerId: number, customerId: number | "all")
 }
 
 function resolveInboundBillingDate(document: InboundDocument) {
-  return normalizeIsoCandidate(
-    document.actualArrivalDate
-      ?? document.confirmedAt
-      ?? document.createdAt
-      ?? document.expectedArrivalDate
-  );
+  return normalizeBusinessCalendarDate(document.actualArrivalDate)
+    ?? normalizeIsoCandidate(document.confirmedAt)
+    ?? normalizeIsoCandidate(document.createdAt)
+    ?? normalizeBusinessCalendarDate(document.expectedArrivalDate);
 }
 
 function resolveOutboundBillingDate(document: OutboundDocument) {
-  return normalizeIsoCandidate(
-    document.actualShipDate
-    ?? document.confirmedAt
-    ?? document.createdAt
-    ?? document.expectedShipDate
-  );
+  return normalizeBusinessCalendarDate(document.actualShipDate)
+    ?? normalizeIsoCandidate(document.confirmedAt)
+    ?? normalizeIsoCandidate(document.createdAt)
+    ?? normalizeBusinessCalendarDate(document.expectedShipDate);
 }
 
 function normalizeIsoCandidate(value: string | Date | null | undefined) {
@@ -808,6 +832,28 @@ function normalizeIsoCandidate(value: string | Date | null | undefined) {
     return null;
   }
   const parsed = parseDateLikeValue(typeof value === "string" ? value : value.toISOString());
+  return parsed ? toIsoDateString(parsed) : null;
+}
+
+function normalizeBusinessCalendarDate(value: string | Date | null | undefined) {
+  if (!value) {
+    return null;
+  }
+  if (value instanceof Date) {
+    return toIsoDateString(value);
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const directCalendarMatch = /^(\d{4}-\d{2}-\d{2})(?:$|T)/.exec(trimmed);
+  if (directCalendarMatch) {
+    return directCalendarMatch[1] ?? null;
+  }
+
+  const parsed = parseDateLikeValue(trimmed);
   return parsed ? toIsoDateString(parsed) : null;
 }
 

@@ -722,6 +722,7 @@ export type BillingInvoiceLineDetails = {
 
 export type BillingRatesSnapshot = {
   inboundContainerFee: number;
+  transferInboundFeePerPallet: number;
   wrappingFeePerPallet: number;
   storageFeePerPalletPerWeek?: number;
   storageFeePerPalletPerWeekNormal: number;

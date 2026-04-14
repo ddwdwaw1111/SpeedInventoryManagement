@@ -54,6 +54,7 @@ export function readBillingWorkspaceContext(): BillingWorkspaceContext | null {
 			containerType: parsed.containerType ?? "all",
 			rates: {
 				inboundContainerFee: normalizeRate(parsed.rates.inboundContainerFee),
+				transferInboundFeePerPallet: normalizeRate(parsed.rates.transferInboundFeePerPallet ?? 10),
 				wrappingFeePerPallet: normalizeRate(parsed.rates.wrappingFeePerPallet),
 				storageFeePerPalletPerWeek: normalizeRate(parsed.rates.storageFeePerPalletPerWeek),
 				storageFeePerPalletPerWeekNormal: normalizeRate(parsed.rates.storageFeePerPalletPerWeekNormal ?? parsed.rates.storageFeePerPalletPerWeek),

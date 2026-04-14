@@ -195,11 +195,11 @@ describe("buildBillingPreview", () => {
     });
 
     expect(preview.summary.palletDays).toBe(2);
-    expect(preview.summary.storageAmount).toBe(2);
+    expect(preview.summary.storageAmount).toBe(0);
     expect(preview.summary.inboundAmount).toBe(450);
-    expect(preview.summary.wrappingAmount).toBe(10);
-    expect(preview.summary.outboundAmount).toBe(10);
-    expect(preview.summary.grandTotal).toBe(472);
+    expect(preview.summary.wrappingAmount).toBe(15);
+    expect(preview.summary.outboundAmount).toBe(0);
+    expect(preview.summary.grandTotal).toBe(465);
     expect(preview.dailyBalanceRows.slice(0, 4)).toEqual([
       { date: "2026-04-01", palletCount: 1 },
       { date: "2026-04-02", palletCount: 1 },
@@ -294,16 +294,32 @@ describe("buildBillingPreview", () => {
     });
 
     expect(preview.summary.palletDays).toBe(225);
-    expect(preview.summary.storageAmount).toBe(225);
+    expect(preview.summary.storageAmount).toBe(155);
     expect(preview.storageRows).toHaveLength(1);
     expect(preview.storageRows[0]?.segments).toEqual([
       {
         startDate: "2026-03-01",
+        endDate: "2026-03-07",
+        dayEndPallets: 10,
+        billedDays: 7,
+        palletDays: 70,
+        freePalletDays: 70,
+        billablePalletDays: 0,
+        grossAmount: 70,
+        discountAmount: 70,
+        amount: 0
+      },
+      {
+        startDate: "2026-03-08",
         endDate: "2026-03-14",
         dayEndPallets: 10,
-        billedDays: 14,
-        palletDays: 140,
-        amount: 140
+        billedDays: 7,
+        palletDays: 70,
+        freePalletDays: 0,
+        billablePalletDays: 70,
+        grossAmount: 70,
+        discountAmount: 0,
+        amount: 70
       },
       {
         startDate: "2026-03-15",
@@ -311,6 +327,10 @@ describe("buildBillingPreview", () => {
         dayEndPallets: 5,
         billedDays: 17,
         palletDays: 85,
+        freePalletDays: 0,
+        billablePalletDays: 85,
+        grossAmount: 85,
+        discountAmount: 0,
         amount: 85
       }
     ]);
@@ -417,11 +437,27 @@ describe("buildBillingPreview", () => {
     expect(njPreview.storageRows[0]?.segments).toEqual([
       {
         startDate: "2026-03-01",
+        endDate: "2026-03-07",
+        dayEndPallets: 1,
+        billedDays: 7,
+        palletDays: 7,
+        freePalletDays: 7,
+        billablePalletDays: 0,
+        grossAmount: 7,
+        discountAmount: 7,
+        amount: 0
+      },
+      {
+        startDate: "2026-03-08",
         endDate: "2026-03-14",
         dayEndPallets: 1,
-        billedDays: 14,
-        palletDays: 14,
-        amount: 14
+        billedDays: 7,
+        palletDays: 7,
+        freePalletDays: 0,
+        billablePalletDays: 7,
+        grossAmount: 7,
+        discountAmount: 0,
+        amount: 7
       }
     ]);
 
@@ -449,6 +485,10 @@ describe("buildBillingPreview", () => {
         dayEndPallets: 1,
         billedDays: 17,
         palletDays: 17,
+        freePalletDays: 0,
+        billablePalletDays: 17,
+        grossAmount: 17,
+        discountAmount: 0,
         amount: 17
       }
     ]);
@@ -583,6 +623,137 @@ describe("buildBillingPreview", () => {
 
     expect(preview.invoiceLines).toHaveLength(1);
     expect(preview.invoiceLines[0]?.occurredOn).toBe("2026-04-01");
+  });
+
+  it("does not pull an April 1 receipt into the March billing window when the arrival date carries a timezone offset", () => {
+    const preview = buildBillingPreview({
+      startDate: "2026-03-01",
+      endDate: "2026-03-31",
+      customerId: 1,
+      customers,
+      pallets: [],
+      palletLocationEvents: [],
+      inboundDocuments: [
+        {
+          id: 45,
+          customerId: 1,
+          customerName: "Acme",
+          locationId: 1,
+          locationName: "NJ",
+          expectedArrivalDate: "2026-04-01T00:00:00+00:00",
+          actualArrivalDate: "2026-04-01T00:00:00+00:00",
+          containerNo: "CONT-045",
+          containerType: "NORMAL",
+          handlingMode: "PALLETIZED",
+          storageSection: "TEMP",
+          unitLabel: "CTN",
+          documentNote: "",
+          status: "CONFIRMED",
+          trackingStatus: "RECEIVED",
+          confirmedAt: "2026-04-01T01:00:00Z",
+          deletedAt: null,
+          archivedAt: null,
+          totalLines: 1,
+          totalExpectedQty: 100,
+          totalReceivedQty: 100,
+          createdAt: "2026-04-01T01:00:00Z",
+          updatedAt: "2026-04-01T01:00:00Z",
+          lines: [
+            {
+              id: 451,
+              documentId: 45,
+              sku: "SKU-1",
+              description: "Widget",
+              storageSection: "TEMP",
+              reorderLevel: 0,
+              expectedQty: 100,
+              receivedQty: 100,
+              pallets: 1,
+              unitsPerPallet: 100,
+              palletsDetailCtns: "100",
+              palletBreakdown: [{ quantity: 100 }],
+              unitLabel: "CTN",
+              lineNote: "",
+              createdAt: "2026-04-01T01:00:00Z"
+            }
+          ]
+        }
+      ],
+      outboundDocuments: [],
+      rates: DEFAULT_BILLING_RATES
+    });
+
+    expect(preview.invoiceLines).toHaveLength(0);
+    expect(preview.summary.inboundAmount).toBe(0);
+    expect(preview.summary.wrappingAmount).toBe(0);
+  });
+
+  it("charges transfer inbound per pallet and skips wrapping", () => {
+    const preview = buildBillingPreview({
+      startDate: "2026-04-01",
+      endDate: "2026-04-30",
+      customerId: 1,
+      customers,
+      pallets: [],
+      palletLocationEvents: [],
+      inboundDocuments: [
+        {
+          id: 50,
+          customerId: 1,
+          customerName: "Acme",
+          locationId: 1,
+          locationName: "NJ",
+          expectedArrivalDate: "2026-04-05",
+          actualArrivalDate: "2026-04-05",
+          containerNo: "CONT-050",
+          containerType: "WEST_COAST_TRANSFER",
+          handlingMode: "PALLETIZED",
+          storageSection: "TEMP",
+          unitLabel: "CTN",
+          documentNote: "",
+          status: "CONFIRMED",
+          trackingStatus: "RECEIVED",
+          confirmedAt: "2026-04-05T09:00:00Z",
+          deletedAt: null,
+          archivedAt: null,
+          totalLines: 1,
+          totalExpectedQty: 300,
+          totalReceivedQty: 300,
+          createdAt: "2026-04-05T08:00:00Z",
+          updatedAt: "2026-04-05T09:00:00Z",
+          lines: [
+            {
+              id: 501,
+              documentId: 50,
+              sku: "SKU-1",
+              description: "Widget",
+              storageSection: "TEMP",
+              reorderLevel: 0,
+              expectedQty: 300,
+              receivedQty: 300,
+              pallets: 3,
+              unitsPerPallet: 100,
+              palletsDetailCtns: "3*100",
+              palletBreakdown: [{ quantity: 100 }, { quantity: 100 }, { quantity: 100 }],
+              unitLabel: "CTN",
+              lineNote: "",
+              createdAt: "2026-04-05T08:00:00Z"
+            }
+          ]
+        }
+      ],
+      outboundDocuments: [],
+      rates: DEFAULT_BILLING_RATES
+    });
+
+    expect(preview.summary.inboundAmount).toBe(30);
+    expect(preview.summary.wrappingAmount).toBe(0);
+    expect(preview.invoiceLines.filter((line) => line.chargeType === "WRAPPING")).toHaveLength(0);
+    expect(preview.invoiceLines.find((line) => line.chargeType === "INBOUND")).toMatchObject({
+      quantity: 3,
+      unitRate: 10,
+      amount: 30
+    });
   });
 
   describe("edge cases", () => {
@@ -920,9 +1091,13 @@ describe("buildBillingPreview", () => {
     // Storage fee arithmetic
     // ──────────────────────────────────────────────────────────────
 
-    it("computes storage amount for 1 pallet over exactly 7 days equal to storageFeePerPalletPerWeek", () => {
-      const rates: BillingRates = { ...DEFAULT_BILLING_RATES, storageFeePerPalletPerWeek: 14 };
-      const pallet = makePallet(1, 1, "CONT-RATE");
+    it("charges transfer storage immediately without grace days", () => {
+      const rates: BillingRates = {
+        ...DEFAULT_BILLING_RATES,
+        storageFeePerPalletPerWeek: 14,
+        storageFeePerPalletPerWeekWestCoastTransfer: 14
+      };
+      const pallet = makePallet(1, 1, "CONT-RATE", "STORED", { containerType: "WEST_COAST_TRANSFER" });
       const preview = buildBillingPreview({
         startDate: "2026-03-01",
         endDate: "2026-03-07",
@@ -1058,13 +1233,13 @@ describe("buildBillingPreview", () => {
 
     // ── tests ──────────────────────────────────────────────────────
 
-    it("grand total is $539: $450 inbound + $30 wrapping + $39 storage + $10 + $10 outbound", () => {
+    it("grand total is $513: $450 inbound + $45 wrapping + $18 storage + $0 outbound", () => {
       const preview = buildLifecyclePreview();
       expect(preview.summary.inboundAmount).toBe(450);
-      expect(preview.summary.wrappingAmount).toBe(30);
-      expect(preview.summary.storageAmount).toBe(39);
-      expect(preview.summary.outboundAmount).toBe(20);
-      expect(preview.summary.grandTotal).toBe(539);
+      expect(preview.summary.wrappingAmount).toBe(45);
+      expect(preview.summary.storageAmount).toBe(18);
+      expect(preview.summary.outboundAmount).toBe(0);
+      expect(preview.summary.grandTotal).toBe(513);
     });
 
     it("produces exactly 5 invoice lines (INBOUND + WRAPPING + OUTBOUND×2 + STORAGE)", () => {
@@ -1194,7 +1369,7 @@ describe("buildBillingPreview", () => {
       // Only SO-002 (Mar 18) should appear; SO-001 (Feb 28) is out of range
       expect(outboundLines).toHaveLength(1);
       expect(outboundLines[0]?.reference).toContain("SO-002");
-      expect(preview.summary.outboundAmount).toBe(10);
+      expect(preview.summary.outboundAmount).toBe(0);
     });
 
     it("inbound reference includes both receipt id and container number", () => {
@@ -1551,8 +1726,8 @@ describe("buildBillingPreview", () => {
 
       const wrapping = preview.invoiceLines.find((l) => l.chargeType === "WRAPPING");
       expect(wrapping?.quantity).toBe(5);
-      expect(wrapping?.amount).toBe(50);
-      expect(preview.summary.wrappingAmount).toBe(50);
+      expect(wrapping?.amount).toBe(75);
+      expect(preview.summary.wrappingAmount).toBe(75);
     });
 
     // ── Pallet event fallback ──────────────────────────────────────
@@ -1695,7 +1870,10 @@ describe("buildBillingPreview", () => {
       // Interval 2: REVERSAL Mar 10 09:00 → open (STORED)
       //   Counted: Mar 10–31 = 22 days.
       // Total: 4 + 22 = 26 days → 2 non-contiguous segments.
-      const pallet = makePallet(1, 1, "CONT-REVERSAL", "STORED", { updatedAt: "2026-03-31T23:59:00Z" });
+      const pallet = makePallet(1, 1, "CONT-REVERSAL", "STORED", {
+        updatedAt: "2026-03-31T23:59:00Z",
+        containerType: "WEST_COAST_TRANSFER"
+      });
 
       const preview = buildBillingPreview({
         startDate: "2026-03-01",

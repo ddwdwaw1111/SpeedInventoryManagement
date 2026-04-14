@@ -220,6 +220,7 @@ export function BillingPage({
         periodEnd: selectedEndDate,
         rates: {
           inboundContainerFee: rates.inboundContainerFee,
+          transferInboundFeePerPallet: rates.transferInboundFeePerPallet,
           wrappingFeePerPallet: rates.wrappingFeePerPallet,
           storageFeePerPalletPerWeek: rates.storageFeePerPalletPerWeek,
           storageFeePerPalletPerWeekNormal: rates.storageFeePerPalletPerWeekNormal,
@@ -1032,6 +1033,16 @@ export function BillingPage({
                       step="0.01"
                       value={rates.inboundContainerFee}
                       onChange={(event) => setRates((current) => ({ ...current, inboundContainerFee: toNumber(event.target.value) }))}
+                    />
+                  </label>
+                  <label>
+                    {t("billingTransferInboundFee")}
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={rates.transferInboundFeePerPallet}
+                      onChange={(event) => setRates((current) => ({ ...current, transferInboundFeePerPallet: toNumber(event.target.value) }))}
                     />
                   </label>
                   <label>
