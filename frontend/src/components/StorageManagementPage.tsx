@@ -1,7 +1,8 @@
 import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
+import DriveFileRenameOutlineOutlinedIcon from "@mui/icons-material/DriveFileRenameOutlineOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
-import { Box, Chip } from "@mui/material";
+import { Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, TextField } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 import { useEffect, useMemo, useState } from "react";
 
@@ -10,7 +11,14 @@ import { formatDateTimeValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import { consumePageFeedback } from "../lib/pageFeedback";
 import { useSettings } from "../lib/settings";
-import type { Item, Location, UserRole } from "../lib/types";
+import {
+  DEFAULT_STORAGE_SECTION,
+  normalizeStorageSection,
+  type Item,
+  type Location,
+  type StorageLayoutBlock,
+  type UserRole
+} from "../lib/types";
 import { useConfirmDialog, useFeedbackToast } from "./Feedback";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots } from "./WorkspacePanelChrome";
@@ -45,6 +53,14 @@ export function StorageManagementPage({
   const pageDescription = t("storageManagementDesc");
   const permissionNotice = canManage ? "" : t("adminOnlyManageNotice");
   const [errorMessage, setErrorMessage] = useState("");
+  const [renameTarget, setRenameTarget] = useState<Location | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [renameError, setRenameError] = useState("");
+  const [renameSubmitting, setRenameSubmitting] = useState(false);
+  const [sectionRenameTarget, setSectionRenameTarget] = useState<Location | null>(null);
+  const [sectionRenameBlocks, setSectionRenameBlocks] = useState<StorageLayoutBlock[]>([]);
+  const [sectionRenameError, setSectionRenameError] = useState("");
+  const [sectionRenameSubmitting, setSectionRenameSubmitting] = useState(false);
 
   useEffect(() => {
     const pendingNotice = consumePageFeedback();
@@ -116,6 +132,121 @@ export function StorageManagementPage({
     }
   }
 
+  function openRenameDialog(location: Location) {
+    if (!canManage) return;
+    setRenameTarget(location);
+    setRenameValue(location.name);
+    setRenameError("");
+  }
+
+  function openSectionRenameDialog(location: Location) {
+    if (!canManage) return;
+    setSectionRenameTarget(location);
+    setSectionRenameBlocks(location.layoutBlocks.map((block) => ({ ...block })));
+    setSectionRenameError("");
+  }
+
+  function closeSectionRenameDialog(force = false) {
+    if (sectionRenameSubmitting && !force) {
+      return;
+    }
+
+    setSectionRenameTarget(null);
+    setSectionRenameBlocks([]);
+    setSectionRenameError("");
+  }
+
+  function closeRenameDialog(force = false) {
+    if (renameSubmitting && !force) {
+      return;
+    }
+
+    setRenameTarget(null);
+    setRenameValue("");
+    setRenameError("");
+  }
+
+  async function handleRenameSubmit() {
+    if (!canManage || !renameTarget) {
+      return;
+    }
+
+    const nextName = renameValue.trim();
+    if (!nextName) {
+      setRenameError(t("warehouseNameRequired"));
+      return;
+    }
+
+    setRenameSubmitting(true);
+    setRenameError("");
+
+    try {
+      await api.updateLocation(renameTarget.id, {
+        name: nextName,
+        address: renameTarget.address,
+        description: renameTarget.description,
+        capacity: renameTarget.capacity,
+        sectionNames: renameTarget.sectionNames,
+        layoutBlocks: renameTarget.layoutBlocks
+      });
+      await onRefresh();
+      showSuccess(t("locationRenamedSuccess", { name: nextName }));
+      closeRenameDialog(true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t("couldNotSaveLocation");
+      setRenameError(message);
+      showError(message);
+    } finally {
+      setRenameSubmitting(false);
+    }
+  }
+
+  async function handleSectionRenameSubmit() {
+    if (!canManage || !sectionRenameTarget) {
+      return;
+    }
+
+    if (sectionRenameBlocks.some((block) => block.type === "section" && block.name.trim().length === 0)) {
+      setSectionRenameError(t("sectionRenameRequired"));
+      return;
+    }
+
+    const sanitizedBlocks = sectionRenameBlocks.map((block) => (
+      block.type === "section"
+        ? { ...block, name: normalizeStorageSection(block.name) }
+        : block
+    ));
+    const sectionNames = deriveEditableSectionNames(sanitizedBlocks);
+
+    if (new Set(sectionNames).size !== sectionNames.length) {
+      setSectionRenameError(t("sectionRenameDuplicate"));
+      return;
+    }
+
+    setSectionRenameSubmitting(true);
+    setSectionRenameError("");
+
+    try {
+      await api.updateLocation(sectionRenameTarget.id, {
+        name: sectionRenameTarget.name,
+        address: sectionRenameTarget.address,
+        description: sectionRenameTarget.description,
+        capacity: sectionRenameTarget.capacity,
+        sectionNames,
+        layoutBlocks: sanitizedBlocks
+      });
+      await onRefresh();
+      showSuccess(t("sectionRenameSavedSuccess"));
+      closeSectionRenameDialog(true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t("couldNotSaveLocation");
+      setSectionRenameError(message);
+      showError(message);
+    } finally {
+      setSectionRenameSubmitting(false);
+    }
+  }
+
   const baseColumns = useMemo<GridColDef<Location>[]>(() => [
     { field: "name", headerName: t("storageName"), minWidth: 180, flex: 1 },
     { field: "address", headerName: t("address"), minWidth: 260, flex: 1.4, renderCell: (params) => params.value || "-" },
@@ -163,6 +294,8 @@ export function StorageManagementPage({
         <RowActionsMenu
           ariaLabel={t("actions")}
           actions={[
+            { key: "rename", label: t("renameWarehouse"), icon: <DriveFileRenameOutlineOutlinedIcon fontSize="small" />, onClick: () => openRenameDialog(params.row) },
+            { key: "rename-sections", label: t("renameSections"), icon: <EditOutlinedIcon fontSize="small" />, onClick: () => openSectionRenameDialog(params.row) },
             { key: "edit", label: t("edit"), icon: <EditOutlinedIcon fontSize="small" />, onClick: () => onEditLocation(params.row.id) },
             { key: "delete", label: t("delete"), icon: <DeleteOutlineOutlinedIcon fontSize="small" />, danger: true, onClick: () => handleDelete(params.row) }
           ]}
@@ -280,6 +413,86 @@ export function StorageManagementPage({
       {feedbackToast}
       {columnOrderDialog}
       {confirmationDialog}
+      <Dialog open={renameTarget !== null} onClose={() => closeRenameDialog()} fullWidth maxWidth="sm">
+        <DialogTitle>{t("renameWarehouse")}</DialogTitle>
+        <DialogContent dividers>
+          <div className="flex flex-col gap-4 pt-1">
+            <p className="m-0 text-sm leading-6 text-slate-600">
+              {t("renameWarehouseDesc", { name: renameTarget?.name ?? "" })}
+            </p>
+            <TextField
+              autoFocus
+              label={t("storageName")}
+              value={renameValue}
+              onChange={(event) => setRenameValue(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void handleRenameSubmit();
+                }
+              }}
+              error={Boolean(renameError)}
+              helperText={renameError || " "}
+              fullWidth
+            />
+          </div>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => closeRenameDialog()} disabled={renameSubmitting}>{t("cancel")}</Button>
+          <Button variant="contained" onClick={() => void handleRenameSubmit()} disabled={renameSubmitting}>
+            {renameSubmitting ? t("saving") : t("saveChanges")}
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog open={sectionRenameTarget !== null} onClose={() => closeSectionRenameDialog()} fullWidth maxWidth="sm">
+        <DialogTitle>{t("renameSections")}</DialogTitle>
+        <DialogContent dividers>
+          <div className="flex flex-col gap-4 pt-1">
+            <p className="m-0 text-sm leading-6 text-slate-600">
+              {t("renameSectionsDesc", { name: sectionRenameTarget?.name ?? "" })}
+            </p>
+            {sectionRenameBlocks.filter((block) => block.type === "section").map((block) => (
+              <TextField
+                key={block.id}
+                label={t("sectionName")}
+                value={block.name}
+                onChange={(event) => {
+                  const nextName = event.target.value;
+                  setSectionRenameBlocks((current) => current.map((entry) => (
+                    entry.id === block.id ? { ...entry, name: nextName } : entry
+                  )));
+                }}
+                fullWidth
+              />
+            ))}
+            {sectionRenameBlocks.every((block) => block.type !== "section") ? (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                {t("renameSectionsEmpty")}
+              </div>
+            ) : null}
+            {sectionRenameError ? <div className="tw-notice-rose">{sectionRenameError}</div> : null}
+          </div>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => closeSectionRenameDialog()} disabled={sectionRenameSubmitting}>{t("cancel")}</Button>
+          <Button
+            variant="contained"
+            onClick={() => void handleSectionRenameSubmit()}
+            disabled={sectionRenameSubmitting || sectionRenameBlocks.every((block) => block.type !== "section")}
+          >
+            {sectionRenameSubmitting ? t("saving") : t("saveChanges")}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </main>
   );
+}
+
+function deriveEditableSectionNames(layoutBlocks: StorageLayoutBlock[]) {
+  const sectionNames = layoutBlocks
+    .filter((block) => block.type === "section")
+    .map((block) => normalizeStorageSection(block.name))
+    .filter((sectionName) => sectionName.length > 0);
+
+  return [DEFAULT_STORAGE_SECTION, ...sectionNames];
 }

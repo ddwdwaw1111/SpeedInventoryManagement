@@ -19,7 +19,7 @@ import { buildInventoryActionSourceKey } from "../lib/inventoryActionSources";
 import { useI18n } from "../lib/i18n";
 import { consumePendingInventorySummaryContext } from "../lib/inventorySummaryContext";
 import type { PageKey } from "../lib/routes";
-import { DEFAULT_STORAGE_SECTION, normalizeStorageSection, type Customer, type Item, type Location, type Movement, type PalletTrace, type UserRole } from "../lib/types";
+import { DEFAULT_STORAGE_SECTION, normalizeStorageSection, type ContainerType, type Customer, type Item, type Location, type Movement, type PalletTrace, type UserRole } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
 import { buildWorkspaceGridSlots, InventoryViewSwitcher, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
@@ -77,6 +77,7 @@ type ContainerBreakdownRow = {
 };
 
 type InventorySummaryHealthFilter = "ALL" | "LOW_STOCK";
+type InventorySummaryContainerTypeFilter = "all" | ContainerType;
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
 const summaryNumberFormatter = new Intl.NumberFormat("en-US");
@@ -110,6 +111,7 @@ export function InventorySummaryPage({
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
+  const [selectedContainerType, setSelectedContainerType] = useState<InventorySummaryContainerTypeFilter>("all");
   const [healthFilter, setHealthFilter] = useState<InventorySummaryHealthFilter>("ALL");
   const [selectedSummaryId, setSelectedSummaryId] = useState<string | null>(null);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
@@ -125,6 +127,7 @@ export function InventorySummaryPage({
     setSearchTerm(context.searchTerm?.trim() || "");
     setSelectedCustomerId(context.customerId ? String(context.customerId) : "all");
     setSelectedLocationId(context.locationId ? String(context.locationId) : "all");
+    setSelectedContainerType(context.containerType ?? "all");
     setHealthFilter(context.healthFilter ?? "ALL");
     setSelectedSummaryId(null);
   }, []);
@@ -153,12 +156,29 @@ export function InventorySummaryPage({
   }, []);
 
   const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
-  const summaryRows = useMemo(() => buildInventorySummaryRows(items, movements, normalizedSearch, selectedCustomerId, selectedLocationId, healthFilter), [items, movements, normalizedSearch, selectedCustomerId, selectedLocationId, healthFilter]);
+  const containerTypeLookup = useMemo(() => buildContainerTypeLookup(pallets), [pallets]);
+  const summaryRows = useMemo(
+    () => buildInventorySummaryRows(
+      items,
+      movements,
+      normalizedSearch,
+      selectedCustomerId,
+      selectedLocationId,
+      selectedContainerType,
+      healthFilter,
+      containerTypeLookup
+    ),
+    [items, movements, normalizedSearch, selectedCustomerId, selectedLocationId, selectedContainerType, healthFilter, containerTypeLookup]
+  );
   const selectedSummary = useMemo(
     () => summaryRows.find((row) => row.id === selectedSummaryId) ?? null,
     [selectedSummaryId, summaryRows]
   );
-  const hasActiveFilters = normalizedSearch.length > 0 || selectedCustomerId !== "all" || selectedLocationId !== "all" || healthFilter !== "ALL";
+  const hasActiveFilters = normalizedSearch.length > 0
+    || selectedCustomerId !== "all"
+    || selectedLocationId !== "all"
+    || selectedContainerType !== "all"
+    || healthFilter !== "ALL";
   const mainGridSlots = buildWorkspaceGridSlots({
     emptyTitle: t("noResults"),
     emptyDescription: hasActiveFilters ? t("filteredStateHint") : t("emptyStateHint"),
@@ -274,6 +294,14 @@ export function InventorySummaryPage({
             <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("inventorySummarySearchPlaceholder")} /></label>
             <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
             <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
+            <label>
+              {t("billingContainerType")}
+              <select value={selectedContainerType} onChange={(event) => setSelectedContainerType(event.target.value as InventorySummaryContainerTypeFilter)}>
+                <option value="all">{t("allContainerTypes")}</option>
+                <option value="NORMAL">{containerTypeLabel("NORMAL", t)}</option>
+                <option value="WEST_COAST_TRANSFER">{containerTypeLabel("WEST_COAST_TRANSFER", t)}</option>
+              </select>
+            </label>
             <label>{t("stockHealth")}<select value={healthFilter} onChange={(event) => setHealthFilter(event.target.value as InventorySummaryHealthFilter)}><option value="ALL">{t("allRows")}</option><option value="LOW_STOCK">{t("lowStock")}</option></select></label>
           </div>
         </div>
@@ -495,7 +523,9 @@ function buildInventorySummaryRows(
   normalizedSearch: string,
   selectedCustomerId: string,
   selectedLocationId: string,
-  healthFilter: InventorySummaryHealthFilter
+  selectedContainerType: InventorySummaryContainerTypeFilter,
+  healthFilter: InventorySummaryHealthFilter,
+  containerTypeLookup: Map<string, ContainerType>
 ) {
   const filteredItems = items.filter((item) => {
     const matchesSearch = normalizedSearch.length === 0
@@ -507,7 +537,8 @@ function buildInventorySummaryRows(
       || item.containerNo.toLowerCase().includes(normalizedSearch);
     const matchesCustomer = selectedCustomerId === "all" || item.customerId === Number(selectedCustomerId);
     const matchesLocation = selectedLocationId === "all" || item.locationId === Number(selectedLocationId);
-    return matchesSearch && matchesCustomer && matchesLocation;
+    const matchesContainerType = matchesSelectedContainerType(item, selectedContainerType, containerTypeLookup);
+    return matchesSearch && matchesCustomer && matchesLocation && matchesContainerType;
   });
 
   const summaryMap = new Map<string, InventorySummaryRow>();
@@ -696,4 +727,52 @@ function getLatestDate(left: string | null, right: string | null) {
   if (Number.isNaN(leftTime)) return right;
   if (Number.isNaN(rightTime)) return left;
   return rightTime > leftTime ? right : left;
+}
+
+function buildContainerTypeLookup(pallets: PalletTrace[]) {
+  const lookup = new Map<string, ContainerType>();
+
+  for (const pallet of pallets) {
+    if (pallet.status === "CANCELLED") {
+      continue;
+    }
+    const key = buildContainerTypeKey(pallet.customerId, pallet.currentContainerNo || "");
+    if (!key) {
+      continue;
+    }
+    lookup.set(key, pallet.containerType === "WEST_COAST_TRANSFER" ? "WEST_COAST_TRANSFER" : "NORMAL");
+  }
+
+  return lookup;
+}
+
+function buildContainerTypeKey(customerId: number, containerNo: string) {
+  const normalizedContainerNo = containerNo.trim().toUpperCase();
+  if (!normalizedContainerNo) {
+    return "";
+  }
+  return `${customerId}:${normalizedContainerNo}`;
+}
+
+function matchesSelectedContainerType(
+  item: Pick<Item, "customerId" | "containerNo">,
+  selectedContainerType: InventorySummaryContainerTypeFilter,
+  containerTypeLookup: Map<string, ContainerType>
+) {
+  if (selectedContainerType === "all") {
+    return true;
+  }
+
+  const key = buildContainerTypeKey(item.customerId, item.containerNo || "");
+  if (!key) {
+    return false;
+  }
+
+  return containerTypeLookup.get(key) === selectedContainerType;
+}
+
+function containerTypeLabel(containerType: ContainerType, t: (key: string) => string) {
+  return containerType === "WEST_COAST_TRANSFER"
+    ? t("billingContainerTypeWestCoastTransfer")
+    : t("billingContainerTypeNormal");
 }

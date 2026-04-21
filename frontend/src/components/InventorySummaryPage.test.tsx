@@ -289,6 +289,80 @@ describe("InventorySummaryPage", () => {
     });
   });
 
+  it("filters summary rows by selected container type using pallet metadata", async () => {
+    mockedApi.getPallets.mockResolvedValue([
+      {
+        id: 701,
+        parentPalletId: 0,
+        palletCode: "PLT-701",
+        containerVisitId: 1,
+        sourceInboundDocumentId: 1,
+        sourceInboundLineId: 1,
+        actualArrivalDate: "2026-04-01",
+        customerId: 1,
+        customerName: "Imperial Bag & Paper",
+        skuMasterId: 1,
+        sku: "SKU-NORMAL",
+        description: "Normal stock",
+        currentLocationId: 1,
+        currentLocationName: "NJ",
+        currentStorageSection: "TEMP",
+        currentContainerNo: "CONT-N",
+        containerType: "NORMAL",
+        status: "OPEN",
+        createdAt: "2026-04-01T10:00:00Z",
+        updatedAt: "2026-04-01T10:00:00Z",
+        contents: []
+      },
+      {
+        id: 702,
+        parentPalletId: 0,
+        palletCode: "PLT-702",
+        containerVisitId: 2,
+        sourceInboundDocumentId: 2,
+        sourceInboundLineId: 2,
+        actualArrivalDate: "2026-04-01",
+        customerId: 1,
+        customerName: "Imperial Bag & Paper",
+        skuMasterId: 2,
+        sku: "SKU-TRANSFER",
+        description: "Transfer stock",
+        currentLocationId: 1,
+        currentLocationName: "NJ",
+        currentStorageSection: "TEMP",
+        currentContainerNo: "CONT-T",
+        containerType: "WEST_COAST_TRANSFER",
+        status: "OPEN",
+        createdAt: "2026-04-01T11:00:00Z",
+        updatedAt: "2026-04-01T11:00:00Z",
+        contents: []
+      }
+    ]);
+
+    renderWithProviders(
+      <InventorySummaryPage
+        {...defaultProps({
+          items: [
+            createItem({ id: 1, skuMasterId: 1, sku: "SKU-NORMAL", itemNumber: "ITEM-N", containerNo: "CONT-N" }),
+            createItem({ id: 2, skuMasterId: 2, sku: "SKU-TRANSFER", itemNumber: "ITEM-T", containerNo: "CONT-T" })
+          ]
+        })}
+      />
+    );
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Container Type" }), {
+      target: { value: "WEST_COAST_TRANSFER" }
+    });
+
+    await waitFor(() => {
+      const grid = screen.getByTestId("mock-data-grid");
+      const rows = within(grid).getAllByRole("row");
+      expect(rows).toHaveLength(1);
+      expect(within(grid).getByText("SKU-TRANSFER")).toBeInTheDocument();
+      expect(within(grid).queryByText("SKU-NORMAL")).not.toBeInTheDocument();
+    });
+  });
+
   // ──────────────────────────────────────────────────────────────
   // Filtering — health filter
   // ──────────────────────────────────────────────────────────────
@@ -346,6 +420,16 @@ describe("InventorySummaryPage", () => {
     await waitFor(() => {
       expect(screen.getByRole("combobox", { name: "Customer" })).toHaveValue("1");
       expect(screen.getByRole("combobox", { name: "Stock Health" })).toHaveValue("LOW_STOCK");
+    });
+  });
+
+  it("pre-fills the container type filter from session storage context", async () => {
+    setPendingInventorySummaryContext({ containerType: "WEST_COAST_TRANSFER" });
+
+    renderWithProviders(<InventorySummaryPage {...defaultProps()} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Container Type" })).toHaveValue("WEST_COAST_TRANSFER");
     });
   });
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -3263,6 +3264,63 @@ func TestStorageSettlementInvoiceLifecycleIntegration(t *testing.T) {
 	}
 	if recreated.Status != BillingInvoiceStatusDraft {
 		t.Fatalf("expected recreated invoice status DRAFT, got %q", recreated.Status)
+	}
+}
+
+func TestUpdateLocationRenamesLiveSectionReferencesIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := fmt.Sprintf("RenameSection-%d", time.Now().UnixNano())
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 6, "B")
+
+	updatedBlocks := make([]StorageLayoutBlock, len(location.LayoutBlocks))
+	copy(updatedBlocks, location.LayoutBlocks)
+	for index, block := range updatedBlocks {
+		if block.Type == StorageLayoutBlockTypeSection && strings.EqualFold(block.Name, "B") {
+			updatedBlocks[index].Name = "C"
+		}
+	}
+
+	updatedLocation, err := store.UpdateLocation(ctx, location.ID, CreateLocationInput{
+		Name:         location.Name,
+		Address:      location.Address,
+		Description:  location.Description,
+		Capacity:     location.Capacity,
+		SectionNames: []string{DefaultStorageSection, "C"},
+		LayoutBlocks: updatedBlocks,
+	})
+	if err != nil {
+		t.Fatalf("update location section rename: %v", err)
+	}
+
+	if !slices.Contains(updatedLocation.SectionNames, "C") {
+		t.Fatalf("expected updated location sections to include C, got %#v", updatedLocation.SectionNames)
+	}
+	if slices.Contains(updatedLocation.SectionNames, "B") {
+		t.Fatalf("expected updated location sections to exclude B, got %#v", updatedLocation.SectionNames)
+	}
+
+	renamedItem := mustFindItemByContainer(t, ctx, store, location.ID, "C", item.ContainerNo, item.SKU)
+	if !strings.EqualFold(renamedItem.StorageSection, "C") {
+		t.Fatalf("expected renamed item section C, got %q", renamedItem.StorageSection)
+	}
+	assertItemHiddenByContainer(t, ctx, store, location.ID, "B", item.ContainerNo, item.SKU)
+
+	var palletCount int
+	if err := store.db.GetContext(ctx, &palletCount, `
+		SELECT COUNT(*)
+		FROM pallets
+		WHERE current_location_id = ?
+		  AND COALESCE(NULLIF(current_storage_section, ''), ?) = ?
+		  AND current_container_no = ?
+	`, location.ID, DefaultStorageSection, "C", item.ContainerNo); err != nil {
+		t.Fatalf("count renamed pallets by section: %v", err)
+	}
+	if palletCount == 0 {
+		t.Fatalf("expected pallets to move into renamed section C")
 	}
 }
 

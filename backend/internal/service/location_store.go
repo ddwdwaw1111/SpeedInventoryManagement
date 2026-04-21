@@ -7,7 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
+
+	"github.com/jmoiron/sqlx"
 )
 
 const (
@@ -95,7 +98,28 @@ func (s *Store) UpdateLocation(ctx context.Context, locationID int64, input Crea
 		return Location{}, fmt.Errorf("marshal location layout blocks: %w", err)
 	}
 
-	result, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return Location{}, fmt.Errorf("begin update location tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	currentRow, err := getLocationRowTx(ctx, tx, locationID, true)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Location{}, ErrNotFound
+		}
+		return Location{}, fmt.Errorf("load location for update: %w", err)
+	}
+
+	renamePairs := buildSectionRenamePairs(currentRow.toLocation().LayoutBlocks, input.LayoutBlocks)
+	if err := applySectionRenamePairsTx(ctx, tx, locationID, renamePairs); err != nil {
+		return Location{}, err
+	}
+
+	result, err := tx.ExecContext(ctx, `
 		UPDATE storage_locations
 		SET
 			name = ?,
@@ -128,6 +152,10 @@ func (s *Store) UpdateLocation(ctx context.Context, locationID int64, input Crea
 		return Location{}, ErrNotFound
 	}
 
+	if err := tx.Commit(); err != nil {
+		return Location{}, fmt.Errorf("commit location update: %w", err)
+	}
+
 	return s.getLocation(ctx, locationID)
 }
 
@@ -149,8 +177,30 @@ func (s *Store) DeleteLocation(ctx context.Context, locationID int64) error {
 }
 
 func (s *Store) getLocation(ctx context.Context, locationID int64) (Location, error) {
+	row, err := getLocationRowTx(ctx, s.db, locationID, false)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Location{}, ErrNotFound
+		}
+		return Location{}, fmt.Errorf("load location: %w", err)
+	}
+
+	return row.toLocation(), nil
+}
+
+type locationGetter interface {
+	GetContext(ctx context.Context, dest any, query string, args ...any) error
+}
+
+type sectionRenamePair struct {
+	From string
+	To   string
+	Temp string
+}
+
+func getLocationRowTx(ctx context.Context, getter locationGetter, locationID int64, forUpdate bool) (locationRow, error) {
 	var row locationRow
-	if err := s.db.GetContext(ctx, &row, `
+	query := `
 		SELECT
 			id,
 			name,
@@ -163,14 +213,106 @@ func (s *Store) getLocation(ctx context.Context, locationID int64) (Location, er
 			created_at
 		FROM storage_locations
 		WHERE id = ?
-	`, locationID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return Location{}, ErrNotFound
+	`
+	if forUpdate {
+		query += ` FOR UPDATE`
+	}
+	if err := getter.GetContext(ctx, &row, query, locationID); err != nil {
+		return locationRow{}, err
+	}
+	return row, nil
+}
+
+func buildSectionRenamePairs(existingBlocks []StorageLayoutBlock, nextBlocks []StorageLayoutBlock) []sectionRenamePair {
+	existingSections := make(map[string]string, len(existingBlocks))
+	nextSections := make(map[string]string, len(nextBlocks))
+
+	for _, block := range existingBlocks {
+		if block.Type != StorageLayoutBlockTypeSection {
+			continue
 		}
-		return Location{}, fmt.Errorf("load location: %w", err)
+		blockID := strings.TrimSpace(block.ID)
+		if blockID == "" {
+			continue
+		}
+		existingSections[blockID] = normalizeStorageSection(block.Name)
 	}
 
-	return row.toLocation(), nil
+	for _, block := range nextBlocks {
+		if block.Type != StorageLayoutBlockTypeSection {
+			continue
+		}
+		blockID := strings.TrimSpace(block.ID)
+		if blockID == "" {
+			continue
+		}
+		nextSections[blockID] = normalizeStorageSection(block.Name)
+	}
+
+	blockIDs := make([]string, 0, len(existingSections))
+	for blockID := range existingSections {
+		blockIDs = append(blockIDs, blockID)
+	}
+	sort.Strings(blockIDs)
+
+	pairs := make([]sectionRenamePair, 0)
+	for index, blockID := range blockIDs {
+		from := existingSections[blockID]
+		to := nextSections[blockID]
+		if from == "" || to == "" || from == to {
+			continue
+		}
+
+		pairs = append(pairs, sectionRenamePair{
+			From: from,
+			To:   to,
+			Temp: fmt.Sprintf("REN%04dTMP", index+1),
+		})
+	}
+
+	return pairs
+}
+
+func applySectionRenamePairsTx(ctx context.Context, tx *sqlx.Tx, locationID int64, pairs []sectionRenamePair) error {
+	for _, pair := range pairs {
+		if err := updateLiveSectionNameTx(ctx, tx, locationID, pair.From, pair.Temp); err != nil {
+			return err
+		}
+	}
+
+	for _, pair := range pairs {
+		if err := updateLiveSectionNameTx(ctx, tx, locationID, pair.Temp, pair.To); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func updateLiveSectionNameTx(ctx context.Context, tx *sqlx.Tx, locationID int64, from string, to string) error {
+	if from == "" || to == "" || from == to {
+		return nil
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE inventory_items
+		SET storage_section = ?
+		WHERE location_id = ?
+		  AND COALESCE(NULLIF(storage_section, ''), ?) = ?
+	`, to, locationID, DefaultStorageSection, from); err != nil {
+		return mapDBError(fmt.Errorf("rename inventory section %s -> %s: %w", from, to, err))
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE pallets
+		SET current_storage_section = ?
+		WHERE current_location_id = ?
+		  AND COALESCE(NULLIF(current_storage_section, ''), ?) = ?
+	`, to, locationID, DefaultStorageSection, from); err != nil {
+		return mapDBError(fmt.Errorf("rename pallet section %s -> %s: %w", from, to, err))
+	}
+
+	return nil
 }
 
 func sanitizeLocationInput(input CreateLocationInput) CreateLocationInput {
