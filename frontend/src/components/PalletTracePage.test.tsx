@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PalletContent, PalletTrace } from "../lib/types";
@@ -80,6 +80,32 @@ describe("PalletTracePage", () => {
     const quantityCell = row.querySelector('[data-field="quantity"]');
 
     expect(quantityCell?.textContent).toContain("12");
+  });
+
+  it("launches a pallet-specific adjustment context for actionable pallets", async () => {
+    const onNavigate = vi.fn();
+    getPallets.mockResolvedValue([
+      createPalletTrace({
+        id: 11,
+        palletCode: "PLT-001",
+        currentContainerNo: "GCXU5817233",
+        contents: [createPalletContent({ palletId: 11, quantity: 6 })]
+      })
+    ]);
+
+    renderWithProviders(<PalletTracePage onNavigate={onNavigate} currentUserRole="admin" />);
+
+    const adjustButton = await screen.findByRole("button", { name: "Adjust Pallet" });
+    fireEvent.click(adjustButton);
+
+    expect(onNavigate).toHaveBeenCalledWith("adjustments");
+    expect(window.sessionStorage.getItem("sim-adjustments-context")).toBe(JSON.stringify({
+      sourceKey: "1:608333",
+      sku: "608333",
+      customerId: 1,
+      containerNo: "GCXU5817233",
+      palletId: 11
+    }));
   });
 });
 

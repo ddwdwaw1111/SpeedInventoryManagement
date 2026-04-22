@@ -1,5 +1,6 @@
 import CloseIcon from "@mui/icons-material/Close";
 import CompareArrowsOutlinedIcon from "@mui/icons-material/CompareArrowsOutlined";
+import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
 import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
@@ -365,6 +366,22 @@ export function InventorySummaryPage({
             </div>
 
             <div className="document-drawer__actions">
+              {canManageInventory ? (
+                <Button
+                  variant="contained"
+                  startIcon={<FactCheckOutlinedIcon fontSize="small" />}
+                  onClick={() => {
+                    setPendingInventoryActionContext("cycle-counts", {
+                      sourceKey: buildInventoryActionSourceKey(selectedSummary.customerId, selectedSummary.sku),
+                      sku: selectedSummary.sku,
+                      customerId: selectedSummary.customerId
+                    });
+                    onNavigate("cycle-counts");
+                  }}
+                >
+                  {t("addCycleCount")}
+                </Button>
+              ) : null}
               {canManageInventory ? (
                 <Button
                   variant="contained"

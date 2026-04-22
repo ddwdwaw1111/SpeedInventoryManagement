@@ -659,6 +659,28 @@ describe("InventorySummaryPage", () => {
     expect(onNavigate).toHaveBeenCalledWith("transfers");
   });
 
+  it("navigates to the cycle-counts page and stores SKU scope when New Count Sheet is clicked", async () => {
+    const onNavigate = vi.fn();
+
+    renderWithProviders(
+      <InventorySummaryPage
+        {...defaultProps({ items: [createItem({ id: 1, sku: "608333", customerId: 1 })], onNavigate })}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId("grid-row-1:608333"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "New Count Sheet" })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "New Count Sheet" }));
+
+    expect(onNavigate).toHaveBeenCalledWith("cycle-counts");
+    expect(JSON.parse(window.sessionStorage.getItem("sim-cycle-counts-context") ?? "{}")).toMatchObject({
+      sourceKey: "1:608333",
+      sku: "608333",
+      customerId: 1
+    });
+  });
+
   it("navigates to container-contents page when Open Container Contents is clicked", async () => {
     const onNavigate = vi.fn();
 
@@ -716,7 +738,7 @@ describe("InventorySummaryPage", () => {
   // Role-based visibility
   // ──────────────────────────────────────────────────────────────
 
-  it("hides Inventory Adjustment and Inventory Transfer buttons for viewer-role users", async () => {
+  it("hides inventory action buttons for viewer-role users", async () => {
     renderWithProviders(
       <InventorySummaryPage
         {...defaultProps({
@@ -730,13 +752,14 @@ describe("InventorySummaryPage", () => {
 
     await waitFor(() => expect(screen.getByText("Warehouse Breakdown")).toBeInTheDocument());
 
+    expect(screen.queryByRole("button", { name: "New Count Sheet" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Inventory Adjustment" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Inventory Transfer" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open Container Contents" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Inventory Ledger" })).toBeInTheDocument();
   });
 
-  it("shows Inventory Adjustment and Transfer buttons for operator-role users", async () => {
+  it("shows count, adjustment, and transfer buttons for operator-role users", async () => {
     renderWithProviders(
       <InventorySummaryPage
         {...defaultProps({
@@ -749,6 +772,7 @@ describe("InventorySummaryPage", () => {
     fireEvent.click(screen.getByTestId("grid-row-1:608333"));
 
     await waitFor(() => {
+      expect(screen.getByRole("button", { name: "New Count Sheet" })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Inventory Adjustment" })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Inventory Transfer" })).toBeInTheDocument();
     });

@@ -765,7 +765,7 @@ export default function App() {
             {activePage === "all-activity" ? renderWithSuspense(<AllActivityPage movements={movements} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "customers" ? renderWithSuspense(<CustomerManagementPage customers={customers} items={items} inboundDocuments={activeInboundDocuments} outboundDocuments={activeOutboundDocuments} movements={movements} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "audit-logs" && canViewAuditLogs ? renderWithSuspense(<AuditLogPage auditLogs={auditLogs} currentUserRole={currentUser.role} isLoading={isLoading} />) : null}
-            {activePage === "pallet-trace" && canViewPallets ? renderWithSuspense(<PalletTracePage onNavigate={handleNavigateToPage} />) : null}
+            {activePage === "pallet-trace" && canViewPallets ? renderWithSuspense(<PalletTracePage onNavigate={handleNavigateToPage} currentUserRole={currentUser.role} />) : null}
             {activePage === "user-management" && canManageUsers ? renderWithSuspense(<UserManagementPage users={users} currentUser={currentUser} isLoading={isLoading} onRefresh={() => loadAppData(false)} />) : null}
             {activePage === "sku-master" ? renderWithSuspense(<SKUMasterPage skuMasters={skuMasters} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} />) : null}
             {activePage === "storage-management" ? (

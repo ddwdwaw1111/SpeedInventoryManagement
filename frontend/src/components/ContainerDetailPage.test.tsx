@@ -99,7 +99,7 @@ describe("ContainerDetailPage", () => {
     expect(getPallets).toHaveBeenCalledWith(300, "GCXU5817233");
   });
 
-  it("opens the pallet workspace with the container prefilled as a search term", async () => {
+  it("navigates to cycle-counts and stores the container scope when New Count Sheet is clicked", async () => {
     const onNavigate = vi.fn();
     getPallets.mockResolvedValue([]);
 
@@ -120,10 +120,35 @@ describe("ContainerDetailPage", () => {
 
     await waitFor(() => expect(getPallets).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByRole("button", { name: "Open Pallet Workspace" }));
+    fireEvent.click(screen.getByRole("button", { name: "New Count Sheet" }));
 
-    expect(onNavigate).toHaveBeenCalledWith("pallet-trace");
-    expect(window.sessionStorage.getItem("sim-pallet-trace-launch")).toContain("GCXU5817233");
+    expect(onNavigate).toHaveBeenCalledWith("cycle-counts");
+    expect(JSON.parse(window.sessionStorage.getItem("sim-cycle-counts-context") ?? "{}")).toMatchObject({
+      containerNo: "GCXU5817233"
+    });
+  });
+
+  it("disables New Count Sheet when the container has historical activity but no current inventory", async () => {
+    getPallets.mockResolvedValue([]);
+
+    renderWithProviders(
+      <ContainerDetailPage
+        routeKey="/container-contents/GCXU5817233"
+        containerNo="GCXU5817233"
+        items={[]}
+        movements={[createMovement({ containerNo: "GCXU5817233", movementType: "OUT" })]}
+        locations={[createLocation()]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onNavigate={vi.fn()}
+        onBackToList={vi.fn()}
+      />
+    );
+
+    await waitFor(() => expect(getPallets).toHaveBeenCalled());
+
+    expect(screen.getByRole("button", { name: "New Count Sheet" })).toBeDisabled();
   });
 
   it("shows only historical activity tied to the current container", async () => {

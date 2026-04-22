@@ -9,7 +9,7 @@ import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 import { api } from "../lib/api";
 import { setPendingAllActivityContext } from "../lib/allActivityContext";
 import { formatDateTimeValue, toIsoDateTimeString } from "../lib/dates";
-import { consumePendingInventoryActionContext } from "../lib/inventoryActionContext";
+import { consumePendingInventoryActionContext, type InventoryActionContext } from "../lib/inventoryActionContext";
 import { buildInventoryActionSourceOptions } from "../lib/inventoryActionSources";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
@@ -20,6 +20,7 @@ import {
   toInventoryProjectionRef,
   type InventoryAdjustment,
   type Item,
+  type PalletTrace,
   type UserRole
 } from "../lib/types";
 import { InlineAlert, useFeedbackToast } from "./Feedback";
@@ -46,6 +47,7 @@ type AdjustmentFormState = {
 type AdjustmentLineFormState = {
   id: string;
   bucketKey: string;
+  palletId: number;
   adjustQty: number;
   lineNote: string;
 };
@@ -59,12 +61,16 @@ const emptyAdjustmentForm: AdjustmentFormState = {
 const summaryNumberFormatter = new Intl.NumberFormat("en-US");
 const ADJUSTMENT_COLUMN_ORDER_PREFERENCE_KEY = "adjustments.column-order";
 
-function createAdjustmentLine(): AdjustmentLineFormState {
+function createAdjustmentLine(
+  patch: Partial<Omit<AdjustmentLineFormState, "id">> = {}
+): AdjustmentLineFormState {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     bucketKey: "",
+    palletId: 0,
     adjustQty: 0,
-    lineNote: ""
+    lineNote: "",
+    ...patch
   };
 }
 
@@ -91,6 +97,9 @@ export function AdjustmentManagementPage({
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [hasProcessedLaunchContext, setHasProcessedLaunchContext] = useState(false);
+  const [pallets, setPallets] = useState<PalletTrace[]>([]);
+  const [isLoadingPallets, setIsLoadingPallets] = useState(false);
+  const [palletLoadError, setPalletLoadError] = useState("");
   const selectedAdjustment = useMemo(
     () => adjustments.find((adjustment) => adjustment.id === selectedAdjustmentId) ?? null,
     [adjustments, selectedAdjustmentId]
@@ -104,6 +113,18 @@ export function AdjustmentManagementPage({
     [adjustmentSourceOptions, selectedSourceKey]
   );
   const selectableAdjustmentItems = selectedSourceOption?.items ?? [];
+  const selectablePalletsByBucketKey = useMemo(() => {
+    const nextMap = new Map<string, PalletTrace[]>();
+
+    selectableAdjustmentItems.forEach((item) => {
+      nextMap.set(
+        buildInventoryProjectionKey(toInventoryProjectionRef(item)),
+        pallets.filter((pallet) => matchesAdjustmentPalletToItem(pallet, item))
+      );
+    });
+
+    return nextMap;
+  }, [pallets, selectableAdjustmentItems]);
 
   useEffect(() => {
     if (selectedAdjustmentId !== null && !selectedAdjustment) {
@@ -116,12 +137,58 @@ export function AdjustmentManagementPage({
       ? buildInventoryProjectionKey(toInventoryProjectionRef(selectableAdjustmentItems[0]!))
       : null;
     setLines((current) => current.map((line) => {
-      if (selectableAdjustmentItems.some((item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.bucketKey)) {
-        return line;
-      }
-      return { ...line, bucketKey: onlyBucketKey ?? "" };
+      const nextBucketKey = selectableAdjustmentItems.some((item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.bucketKey)
+        ? line.bucketKey
+        : onlyBucketKey ?? "";
+      const nextPalletOptions = selectablePalletsByBucketKey.get(nextBucketKey) ?? [];
+      const nextPalletId = line.palletId > 0 && nextPalletOptions.some((pallet) => pallet.id === line.palletId)
+        ? line.palletId
+        : line.palletId > 0 && isLoadingPallets && nextPalletOptions.length === 0
+          ? line.palletId
+        : 0;
+
+      return {
+        ...line,
+        bucketKey: nextBucketKey,
+        palletId: nextPalletId
+      };
     }));
-  }, [selectableAdjustmentItems]);
+  }, [isLoadingPallets, selectableAdjustmentItems, selectablePalletsByBucketKey]);
+
+  useEffect(() => {
+    if (!canManage || !isModalOpen) {
+      return;
+    }
+
+    let active = true;
+
+    async function loadPallets() {
+      setIsLoadingPallets(true);
+      setPalletLoadError("");
+      try {
+        const nextPallets = await api.getPallets(50000);
+        if (!active) {
+          return;
+        }
+        setPallets(nextPallets);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : t("couldNotLoadReport");
+        setPalletLoadError(message);
+      } finally {
+        if (active) {
+          setIsLoadingPallets(false);
+        }
+      }
+    }
+
+    void loadPallets();
+    return () => {
+      active = false;
+    };
+  }, [canManage, isModalOpen, t]);
 
   useEffect(() => {
     if (hasProcessedLaunchContext || !canManage || adjustmentSourceOptions.length === 0) {
@@ -134,7 +201,7 @@ export function AdjustmentManagementPage({
       return;
     }
 
-    openCreateModal(pendingContext.sourceKey ?? "");
+    openCreateModal(pendingContext);
   }, [adjustmentSourceOptions, canManage, hasProcessedLaunchContext]);
 
   const baseColumns = useMemo<GridColDef<InventoryAdjustment>[]>(() => [
@@ -250,14 +317,26 @@ export function AdjustmentManagementPage({
     showError(message);
   }
 
-  function openCreateModal(initialSourceKey = "") {
+  function openCreateModal(initialContext: InventoryActionContext | null = null) {
     if (!canManage) {
       return;
     }
+    const initialSourceKey = initialContext?.sourceKey ?? "";
+    const initialSourceOption = initialSourceKey
+      ? adjustmentSourceOptions.find((option) => option.key === initialSourceKey) ?? null
+      : null;
+    const initialBucketKey = initialSourceOption
+      ? resolveAdjustmentLaunchBucketKey(initialSourceOption.items, initialContext)
+      : "";
+
     setForm(emptyAdjustmentForm);
-    setLines([createAdjustmentLine()]);
+    setLines([createAdjustmentLine({
+      bucketKey: initialBucketKey,
+      palletId: initialBucketKey && initialContext?.palletId ? initialContext.palletId : 0
+    })]);
     setSelectedSourceKey(initialSourceKey);
     setErrorMessage("");
+    setPalletLoadError("");
     setIsModalOpen(true);
   }
 
@@ -268,6 +347,7 @@ export function AdjustmentManagementPage({
     setSelectedSourceKey("");
     setForm(emptyAdjustmentForm);
     setLines([createAdjustmentLine()]);
+    setPalletLoadError("");
   }
 
   function addLine() {
@@ -284,6 +364,10 @@ export function AdjustmentManagementPage({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (lines.some((line) => line.palletId > 0 && line.adjustQty > 0)) {
+      setErrorMessage(t("palletAdjustmentNegativeOnlyNotice"));
+      return;
+    }
     setSubmitting(true);
     setErrorMessage("");
 
@@ -301,9 +385,13 @@ export function AdjustmentManagementPage({
             if (!selectedItem || line.adjustQty === 0) {
               return null;
             }
+            if (line.palletId > 0 && line.adjustQty > 0) {
+              return null;
+            }
 
             return {
               ...toInventoryProjectionRef(selectedItem),
+              palletId: line.palletId > 0 ? line.palletId : undefined,
               adjustQty: line.adjustQty,
               lineNote: line.lineNote || undefined
             };
@@ -490,6 +578,7 @@ export function AdjustmentManagementPage({
         </DialogTitle>
         <DialogContent dividers>
           {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
+          {palletLoadError ? <InlineAlert>{palletLoadError}</InlineAlert> : null}
           <form className="sheet-form" onSubmit={handleSubmit}>
             <label>{t("adjustmentNo")}<input value={form.adjustmentNo} onChange={(event) => setForm((current) => ({ ...current, adjustmentNo: event.target.value }))} placeholder={t("autoGeneratedOptional")} /></label>
             <label>
@@ -532,6 +621,11 @@ export function AdjustmentManagementPage({
                 {t("selectSkuBeforeInventoryAction")}
               </InlineAlert>
             )}
+            {selectedSourceOption && isLoadingPallets ? (
+              <InlineAlert severity="info" className="sheet-form__wide">
+                {t("loadingRecords")}
+              </InlineAlert>
+            ) : null}
 
             <div className="sheet-form__wide">
               <div className="batch-lines__toolbar">
@@ -543,6 +637,15 @@ export function AdjustmentManagementPage({
                   const selectedItem = selectableAdjustmentItems.find(
                     (item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.bucketKey
                   );
+                  const linePalletOptions = selectedItem
+                    ? selectablePalletsByBucketKey.get(line.bucketKey) ?? []
+                    : [];
+                  const selectedPallet = line.palletId > 0
+                    ? linePalletOptions.find((pallet) => pallet.id === line.palletId) ?? null
+                    : null;
+                  const selectedPalletAvailableQty = selectedItem && selectedPallet
+                    ? getAdjustablePalletAvailableQty(selectedPallet, selectedItem.skuMasterId)
+                    : 0;
                   const afterQty = (selectedItem?.quantity ?? 0) + line.adjustQty;
 
                   return (
@@ -556,7 +659,13 @@ export function AdjustmentManagementPage({
                       <div className="batch-line-grid">
                         <label className="batch-line-grid__description">
                           {t("stockRow")}
-                          <select value={line.bucketKey} onChange={(event) => updateLine(line.id, { bucketKey: event.target.value })}>
+                          <select
+                            value={line.bucketKey}
+                            onChange={(event) => updateLine(line.id, {
+                              bucketKey: event.target.value,
+                              palletId: 0
+                            })}
+                          >
                             <option value="">{selectedSourceOption ? t("selectStockRow") : t("selectSkuForInventoryAction")}</option>
                             {selectableAdjustmentItems.map((item) => (
                               <option key={buildInventoryProjectionKey(toInventoryProjectionRef(item))} value={buildInventoryProjectionKey(toInventoryProjectionRef(item))}>
@@ -565,13 +674,64 @@ export function AdjustmentManagementPage({
                             ))}
                           </select>
                         </label>
+                        <label>
+                          {t("pallet")}
+                          <select
+                            value={line.palletId > 0 ? String(line.palletId) : ""}
+                            onChange={(event) => {
+                              const nextPalletId = Number(event.target.value || 0);
+                              const nextPallet = linePalletOptions.find((pallet) => pallet.id === nextPalletId);
+                              const nextAvailableQty = selectedItem && nextPallet
+                                ? getAdjustablePalletAvailableQty(nextPallet, selectedItem.skuMasterId)
+                                : 0;
+
+                              updateLine(line.id, {
+                                palletId: nextPalletId,
+                                adjustQty: nextPalletId > 0
+                                  ? clampPalletAdjustmentQty(line.adjustQty, nextAvailableQty)
+                                  : line.adjustQty
+                              });
+                            }}
+                            disabled={!selectedItem || isLoadingPallets}
+                          >
+                            <option value="">{selectedItem ? t("allMatchingPallets") : t("selectStockRow")}</option>
+                            {linePalletOptions.map((pallet) => {
+                              const palletAvailableQty = selectedItem
+                                ? getAdjustablePalletAvailableQty(pallet, selectedItem.skuMasterId)
+                                : 0;
+                              return (
+                                <option key={pallet.id} value={pallet.id}>
+                                  {`${pallet.palletCode} (${t("availableQty")}: ${palletAvailableQty})`}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </label>
                         <label>{t("onHand")}<input value={selectedItem ? String(selectedItem.quantity) : ""} readOnly /></label>
                         <label>
                           {t("adjustQty")}
-                          <input type="number" value={numberInputValue(line.adjustQty)} onChange={(event) => updateLine(line.id, { adjustQty: Number(event.target.value || 0) })} />
-                          {selectedItem && line.adjustQty === 0 && (
+                          <input
+                            type="number"
+                            value={numberInputValue(line.adjustQty)}
+                            onChange={(event) => {
+                              const nextAdjustQty = Number(event.target.value || 0);
+                              updateLine(line.id, {
+                                adjustQty: selectedPallet
+                                  ? clampPalletAdjustmentQty(nextAdjustQty, selectedPalletAvailableQty)
+                                  : nextAdjustQty
+                              });
+                            }}
+                          />
+                          {selectedPallet ? (
+                            <small style={{ color: "#617791", display: "block", marginTop: 2 }}>
+                              {t("adjustmentSelectedPalletHint", {
+                                palletCode: selectedPallet.palletCode,
+                                availableQty: selectedPalletAvailableQty
+                              })}
+                            </small>
+                          ) : selectedItem && line.adjustQty === 0 ? (
                             <small style={{ color: "#999", display: "block", marginTop: 2 }}>{t("zeroAdjustQtyHint")}</small>
-                          )}
+                          ) : null}
                         </label>
                         <label>
                           {t("afterQty")}
@@ -606,6 +766,42 @@ export function AdjustmentManagementPage({
 
 function displayDescription(item: Pick<Item, "description" | "name">) {
   return item.description || item.name;
+}
+
+function resolveAdjustmentLaunchBucketKey(items: Item[], context: InventoryActionContext | null) {
+  if (items.length === 1) {
+    return buildInventoryProjectionKey(toInventoryProjectionRef(items[0]!));
+  }
+
+  if (!context?.containerNo) {
+    return "";
+  }
+
+  const matchedItem = items.find((item) => normalizeContainerNumber(item.containerNo) === context.containerNo);
+  return matchedItem ? buildInventoryProjectionKey(toInventoryProjectionRef(matchedItem)) : "";
+}
+
+function matchesAdjustmentPalletToItem(pallet: PalletTrace, item: Item) {
+  return (pallet.status === "OPEN" || pallet.status === "PARTIAL")
+    && pallet.customerId === item.customerId
+    && pallet.currentLocationId === item.locationId
+    && normalizeStorageSection(pallet.currentStorageSection) === normalizeStorageSection(item.storageSection)
+    && normalizeContainerNumber(pallet.currentContainerNo) === normalizeContainerNumber(item.containerNo)
+    && getAdjustablePalletAvailableQty(pallet, item.skuMasterId) > 0;
+}
+
+function getAdjustablePalletAvailableQty(pallet: PalletTrace, skuMasterId: number) {
+  return pallet.contents
+    .filter((content) => content.skuMasterId === skuMasterId)
+    .reduce((sum, content) => sum + Math.max(0, content.quantity - (content.allocatedQty ?? 0) - (content.damagedQty ?? 0) - (content.holdQty ?? 0)), 0);
+}
+
+function clampPalletAdjustmentQty(value: number, maxRemovableQty: number) {
+  return Math.max(-maxRemovableQty, Math.min(0, value));
+}
+
+function normalizeContainerNumber(value: string) {
+  return value.trim().toUpperCase();
 }
 
 function numberInputValue(value: number) {

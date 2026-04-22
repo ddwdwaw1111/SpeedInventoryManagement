@@ -7,15 +7,23 @@ import { useDeferredValue, useEffect, useMemo, useState } from "react";
 
 import { ApiError, api } from "../lib/api";
 import { formatDateTimeValue, formatDateValue } from "../lib/dates";
+import { setPendingInventoryActionContext } from "../lib/inventoryActionContext";
+import { buildInventoryActionSourceKey } from "../lib/inventoryActionSources";
 import { useI18n } from "../lib/i18n";
 import { consumePendingPalletTraceLaunchContext } from "../lib/palletTraceLaunchContext";
 import { useSettings } from "../lib/settings";
-import type { PalletTrace } from "../lib/types";
+import type { PalletTrace, UserRole } from "../lib/types";
 import { buildWorkspaceGridSlots, InventoryViewSwitcher, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 const PALLET_TRACE_LOAD_LIMIT = 50000;
 
-export function PalletTracePage({ onNavigate }: { onNavigate?: (page: import("../lib/routes").PageKey) => void }) {
+export function PalletTracePage({
+  onNavigate,
+  currentUserRole = "viewer"
+}: {
+  onNavigate?: (page: import("../lib/routes").PageKey) => void;
+  currentUserRole?: UserRole;
+}) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const activityDateFormatter = useMemo(
@@ -30,6 +38,7 @@ export function PalletTracePage({ onNavigate }: { onNavigate?: (page: import("..
   const [selectedPallet, setSelectedPallet] = useState<PalletTrace | null>(null);
   const deferredSearchTerm = useDeferredValue(searchTerm);
   const normalizedSearch = deferredSearchTerm.trim();
+  const canManageInventory = currentUserRole === "admin" || currentUserRole === "operator";
 
   useEffect(() => {
     const pendingContext = consumePendingPalletTraceLaunchContext();
@@ -79,6 +88,21 @@ export function PalletTracePage({ onNavigate }: { onNavigate?: (page: import("..
     () => pallets.reduce((total, pallet) => total + pallet.contents.length, 0),
     [pallets]
   );
+
+  function launchAdjustmentForPallet(pallet: PalletTrace) {
+    if (!onNavigate) {
+      return;
+    }
+
+    setPendingInventoryActionContext("adjustments", {
+      sourceKey: buildInventoryActionSourceKey(pallet.customerId, pallet.sku),
+      sku: pallet.sku,
+      customerId: pallet.customerId,
+      containerNo: pallet.currentContainerNo,
+      palletId: pallet.id
+    });
+    onNavigate("adjustments");
+  }
 
   const mainGridSlots = buildWorkspaceGridSlots({
     emptyTitle: t("noPallets"),
@@ -178,21 +202,33 @@ export function PalletTracePage({ onNavigate }: { onNavigate?: (page: import("..
     {
       field: "actions",
       headerName: t("actions"),
-      minWidth: 140,
+      minWidth: canManageInventory ? 240 : 140,
       sortable: false,
       filterable: false,
       renderCell: (params) => (
-        <Button
-          size="small"
-          variant="text"
-          startIcon={<VisibilityOutlinedIcon fontSize="small" />}
-          onClick={() => setSelectedPallet(params.row)}
-        >
-          {t("viewTrace")}
-        </Button>
+        <div className="flex flex-wrap items-center gap-1">
+          <Button
+            size="small"
+            variant="text"
+            startIcon={<VisibilityOutlinedIcon fontSize="small" />}
+            onClick={() => setSelectedPallet(params.row)}
+          >
+            {t("viewTrace")}
+          </Button>
+          {canManageInventory ? (
+            <Button
+              size="small"
+              variant="text"
+              onClick={() => launchAdjustmentForPallet(params.row)}
+              disabled={!canAdjustPallet(params.row)}
+            >
+              {t("adjustPallet")}
+            </Button>
+          ) : null}
+        </div>
       )
     }
-  ], [resolvedTimeZone, t]);
+  ], [canManageInventory, resolvedTimeZone, t]);
 
   return (
     <main className="workspace-main">
@@ -319,6 +355,18 @@ export function PalletTracePage({ onNavigate }: { onNavigate?: (page: import("..
               </div>
 
               <div className="sheet-note" style={{ marginTop: "1rem" }}>
+                {canManageInventory ? (
+                  <div className="sheet-form__actions" style={{ marginBottom: "1rem" }}>
+                    <Button
+                      size="small"
+                      variant="contained"
+                      onClick={() => launchAdjustmentForPallet(selectedPallet)}
+                      disabled={!canAdjustPallet(selectedPallet)}
+                    >
+                      {t("adjustPallet")}
+                    </Button>
+                  </div>
+                ) : null}
                 <strong>{t("palletContents")}</strong>
                 {selectedPallet.contents.length === 0 ? (
                   <div style={{ marginTop: "0.75rem" }}>{t("palletNoContents")}</div>
@@ -376,6 +424,17 @@ function getPalletStatusColor(status: string): "success" | "warning" | "default"
 
 function getPalletTotalQty(pallet: PalletTrace) {
   return pallet.contents.reduce((sum, content) => sum + content.quantity, 0);
+}
+
+function getPalletAvailableQty(pallet: PalletTrace) {
+  return pallet.contents.reduce(
+    (sum, content) => sum + Math.max(0, content.quantity - (content.allocatedQty ?? 0) - (content.damagedQty ?? 0) - (content.holdQty ?? 0)),
+    0
+  );
+}
+
+function canAdjustPallet(pallet: PalletTrace | null) {
+  return Boolean(pallet && (pallet.status === "OPEN" || pallet.status === "PARTIAL") && getPalletAvailableQty(pallet) > 0);
 }
 
 function getErrorMessage(error: unknown, fallbackMessage: string) {

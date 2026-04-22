@@ -21,6 +21,7 @@ import {
   type ContainerSkuCard
 } from "../lib/containerInventory";
 import { setPendingAllActivityContext } from "../lib/allActivityContext";
+import { setPendingInventoryActionContext } from "../lib/inventoryActionContext";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type { PageKey } from "../lib/routes";
@@ -247,6 +248,7 @@ export function ContainerDetailPage({
   );
   const canOpenAdjustmentDialog = canManageInventory && actionablePallets.length > 0;
   const canOpenTransferDialog = canManageInventory && actionablePallets.length > 0;
+  const canLaunchCycleCount = canManageInventory && Boolean(container && container.rowCount > 0 && normalizedContainerNo);
 
   useEffect(() => {
     let active = true;
@@ -537,6 +539,24 @@ export function ContainerDetailPage({
 
             {canManageInventory ? (
               <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!canLaunchCycleCount || !normalizedContainerNo) {
+                      return;
+                    }
+
+                    setPendingInventoryActionContext("cycle-counts", {
+                      containerNo: normalizedContainerNo
+                    });
+                    onNavigate("cycle-counts");
+                  }}
+                  disabled={!canLaunchCycleCount}
+                  className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <FactCheckOutlinedIcon sx={{ fontSize: 15 }} />
+                  {t("addCycleCount")}
+                </button>
                 <button
                   type="button"
                   onClick={openAdjustmentDialog}
