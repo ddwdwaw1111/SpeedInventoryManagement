@@ -207,6 +207,7 @@ func (s *Store) CreateCycleCount(ctx context.Context, input CreateCycleCountInpu
 	if input.CountNo == "" {
 		input.CountNo = generateCycleCountNo()
 	}
+	countOccurredAt := time.Now().UTC()
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -299,15 +300,36 @@ func (s *Store) CreateCycleCount(ctx context.Context, input CreateCycleCountInpu
 				varianceSign = -1
 			}
 			for _, palletVariance := range palletVariances {
+				signedQuantityChange := varianceSign * palletVariance.Quantity
+				afterPalletQty, err := s.loadPalletQuantityTx(ctx, tx, palletVariance.PalletID)
+				if err != nil {
+					return CycleCount{}, err
+				}
+				beforePalletQty := afterPalletQty - signedQuantityChange
+				if err := s.createPalletLocationEventTx(ctx, tx, createPalletLocationEventInput{
+					PalletID:         palletVariance.PalletID,
+					ContainerVisitID: palletVariance.ContainerVisitID,
+					CustomerID:       palletVariance.CustomerID,
+					LocationID:       palletVariance.LocationID,
+					StorageSection:   palletVariance.StorageSection,
+					ContainerNo:      palletVariance.ContainerNo,
+					EventType:        PalletEventCount,
+					QuantityDelta:    signedQuantityChange,
+					PalletDelta:      resolvePalletCountTransition(beforePalletQty, afterPalletQty),
+					EventTime:        &countOccurredAt,
+				}); err != nil {
+					return CycleCount{}, err
+				}
 				if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
 					EventType:           StockLedgerEventCount,
+					OccurredAt:          &countOccurredAt,
 					PalletID:            palletVariance.PalletID,
 					PalletItemID:        palletVariance.PalletItemID,
 					SKUMasterID:         palletVariance.SKUMasterID,
 					CustomerID:          palletVariance.CustomerID,
 					LocationID:          palletVariance.LocationID,
 					StorageSection:      palletVariance.StorageSection,
-					QuantityChange:      varianceSign * palletVariance.Quantity,
+					QuantityChange:      signedQuantityChange,
 					SourceDocumentType:  StockLedgerSourceCycleCount,
 					SourceDocumentID:    countID,
 					SourceLineID:        lineID,
@@ -326,6 +348,34 @@ func (s *Store) CreateCycleCount(ctx context.Context, input CreateCycleCountInpu
 	}
 
 	return s.getCycleCount(ctx, countID)
+}
+
+func (s *Store) loadPalletQuantityTx(ctx context.Context, tx *sql.Tx, palletID int64) (int, error) {
+	if palletID <= 0 {
+		return 0, nil
+	}
+
+	var quantity int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(quantity), 0)
+		FROM pallet_items
+		WHERE pallet_id = ?
+	`, palletID).Scan(&quantity); err != nil {
+		return 0, fmt.Errorf("load pallet quantity: %w", err)
+	}
+
+	return quantity, nil
+}
+
+func resolvePalletCountTransition(beforeQty int, afterQty int) float64 {
+	switch {
+	case beforeQty <= 0 && afterQty > 0:
+		return 1
+	case beforeQty > 0 && afterQty <= 0:
+		return -1
+	default:
+		return 0
+	}
 }
 
 func (s *Store) getCycleCount(ctx context.Context, countID int64) (CycleCount, error) {

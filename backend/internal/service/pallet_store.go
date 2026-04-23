@@ -19,6 +19,7 @@ const (
 	PalletEventTransferOut = "TRANSFER_OUT"
 	PalletEventTransferIn  = "TRANSFER_IN"
 	PalletEventAdjust      = "ADJUST"
+	PalletEventCount       = "COUNT"
 	PalletEventCancelled   = "CANCELLED"
 )
 

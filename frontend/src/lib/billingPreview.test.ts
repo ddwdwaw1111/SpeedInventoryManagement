@@ -1035,6 +1035,40 @@ describe("buildBillingPreview", () => {
       expect(preview.storageRows).toHaveLength(0);
     });
 
+    it("uses COUNT events when a pallet is created and later deleted by cycle counts", () => {
+      const pallet = makePallet(1, 1, "CONT-COUNT", "SHIPPED", {
+        sourceInboundDocumentId: 0,
+        sourceInboundLineId: 0,
+        actualArrivalDate: "2026-03-01",
+        createdAt: "2026-03-10T09:00:00Z",
+        updatedAt: "2026-03-20T12:00:00Z"
+      });
+      const preview = buildBillingPreview({
+        startDate: "2026-03-01",
+        endDate: "2026-03-31",
+        customerId: 1,
+        customers,
+        pallets: [pallet],
+        palletLocationEvents: [
+          makeEvent(1, 1, "PLT-001", "CONT-COUNT", "COUNT", "2026-03-10T09:00:00Z", 1, 2),
+          makeEvent(2, 1, "PLT-001", "CONT-COUNT", "COUNT", "2026-03-20T12:00:00Z", -1, -2)
+        ],
+        inboundDocuments: [],
+        outboundDocuments: [],
+        rates: DEFAULT_BILLING_RATES
+      });
+
+      expect(preview.summary.palletDays).toBe(10);
+      expect(preview.storageRows).toHaveLength(1);
+      expect(preview.storageRows[0]?.palletDays).toBe(10);
+      expect(preview.storageRows[0]?.firstActivityAt).toBe("2026-03-10");
+      expect(preview.storageRows[0]?.lastActivityAt).toBe("2026-03-19");
+      expect(preview.dailyBalanceRows.find((row) => row.date === "2026-03-09")?.palletCount).toBe(0);
+      expect(preview.dailyBalanceRows.find((row) => row.date === "2026-03-10")?.palletCount).toBe(1);
+      expect(preview.dailyBalanceRows.find((row) => row.date === "2026-03-19")?.palletCount).toBe(1);
+      expect(preview.dailyBalanceRows.find((row) => row.date === "2026-03-20")?.palletCount).toBe(0);
+    });
+
     // ──────────────────────────────────────────────────────────────
     // Storage row grouping
     // ──────────────────────────────────────────────────────────────

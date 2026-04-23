@@ -588,7 +588,7 @@ function buildStorageIntervals(pallet: PalletTrace, palletEvents: PalletLocation
       continue;
     }
 
-    if (isStorageResumeEvent(event.eventType)) {
+    if (isStorageResumeEvent(event.eventType, event.palletDelta)) {
       hasStartEvent = true;
       if (!active) {
         activeStart = eventTime;
@@ -611,7 +611,7 @@ function buildStorageIntervals(pallet: PalletTrace, palletEvents: PalletLocation
       continue;
     }
 
-    if (isStorageEndEvent(event.eventType) && active && activeStart) {
+    if (isStorageEndEvent(event.eventType, event.palletDelta) && active && activeStart) {
       intervals.push({
         start: activeStart,
         end: eventTime,
@@ -923,12 +923,19 @@ function isStorageStartEvent(eventType: string) {
   return normalized === "RECEIVED" || normalized === "TRANSFER_IN" || normalized === "REVERSAL";
 }
 
-function isStorageResumeEvent(eventType: string) {
-  return isStorageStartEvent(eventType);
+function isStorageResumeEvent(eventType: string, palletDelta = 0) {
+  const normalized = eventType.trim().toUpperCase();
+  if (normalized === "COUNT") {
+    return palletDelta > 0;
+  }
+  return isStorageStartEvent(normalized);
 }
 
-function isStorageEndEvent(eventType: string) {
+function isStorageEndEvent(eventType: string, palletDelta = 0) {
   const normalized = eventType.trim().toUpperCase();
+  if (normalized === "COUNT") {
+    return palletDelta < 0;
+  }
   return normalized === "OUTBOUND" || normalized === "CANCELLED" || normalized === "TRANSFER_OUT";
 }
 

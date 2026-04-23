@@ -1744,6 +1744,144 @@ func TestCycleCountCanCreateNewPalletIntegration(t *testing.T) {
 	}
 }
 
+func TestCycleCountCreatesPalletLocationEventsForPalletTransitionsIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "CountEventCustomer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "CountEventLocation-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "COUNT-EVENT-SKU-"+suffix, 0)
+
+	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-04-10",
+		ContainerNo:         "COUNT-EVENT-CONT-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Seed inbound for count pallet events",
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:               item.SKU,
+			Description:       item.Description,
+			ExpectedQty:       12,
+			ReceivedQty:       12,
+			Pallets:           2,
+			PalletsDetailCtns: "5+7",
+			PalletBreakdown: []InboundPalletBreakdown{
+				{Quantity: 5},
+				{Quantity: 7},
+			},
+			StorageSection: DefaultStorageSection,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create inbound for cycle count pallet events: %v", err)
+	}
+
+	sourceItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, inbound.ContainerNo, item.SKU)
+	pallets, err := store.ListPallets(ctx, 50, ListPalletFilters{SourceInboundDocumentID: inbound.ID})
+	if err != nil {
+		t.Fatalf("list pallets for cycle count pallet events: %v", err)
+	}
+	if len(pallets) != 2 {
+		t.Fatalf("expected 2 seeded pallets, got %d", len(pallets))
+	}
+	sort.Slice(pallets, func(left, right int) bool {
+		return pallets[left].ID < pallets[right].ID
+	})
+
+	removedPallet := pallets[0]
+	unchangedPallet := pallets[1]
+
+	removedLine := cycleCountLineFromItem(sourceItem, 0, "Pallet removed during count")
+	removedLine.PalletID = removedPallet.ID
+	unchangedLine := cycleCountLineFromItem(sourceItem, unchangedPallet.Contents[0].Quantity, "Pallet unchanged during count")
+	unchangedLine.PalletID = unchangedPallet.ID
+	newPalletLine := cycleCountLineFromItem(sourceItem, 2, "New pallet discovered during count")
+	newPalletLine.CreatePallet = true
+
+	count, err := store.CreateCycleCount(ctx, CreateCycleCountInput{
+		CountNo: "CC-EVENT-" + suffix,
+		Notes:   "Cycle count pallet event coverage",
+		Lines: []CreateCycleCountLineInput{
+			removedLine,
+			unchangedLine,
+			newPalletLine,
+		},
+	})
+	if err != nil {
+		t.Fatalf("create cycle count with pallet transitions: %v", err)
+	}
+
+	expectedCreatedPalletCode := fmt.Sprintf("PLT-COUNT-%d-1", count.ID)
+	var createdPalletID int64
+	if err := store.db.GetContext(ctx, &createdPalletID, `
+		SELECT id
+		FROM pallets
+		WHERE pallet_code = ?
+	`, expectedCreatedPalletCode); err != nil {
+		t.Fatalf("locate created cycle count pallet: %v", err)
+	}
+
+	var removedPalletDelta float64
+	var removedQuantityDelta int
+	if err := store.db.QueryRowContext(ctx, `
+		SELECT pallet_delta, quantity_delta
+		FROM pallet_location_events
+		WHERE pallet_id = ?
+		  AND event_type = 'COUNT'
+		ORDER BY id DESC
+		LIMIT 1
+	`, removedPallet.ID).Scan(&removedPalletDelta, &removedQuantityDelta); err != nil {
+		t.Fatalf("load removed pallet count event: %v", err)
+	}
+	if removedPalletDelta != -1 {
+		t.Fatalf("expected removed pallet count event delta -1, got %v", removedPalletDelta)
+	}
+	if removedQuantityDelta != -removedPallet.Contents[0].Quantity {
+		t.Fatalf("expected removed pallet quantity delta -%d, got %d", removedPallet.Contents[0].Quantity, removedQuantityDelta)
+	}
+
+	var createdPalletDelta float64
+	var createdQuantityDelta int
+	if err := store.db.QueryRowContext(ctx, `
+		SELECT pallet_delta, quantity_delta
+		FROM pallet_location_events
+		WHERE pallet_id = ?
+		  AND event_type = 'COUNT'
+		ORDER BY id DESC
+		LIMIT 1
+	`, createdPalletID).Scan(&createdPalletDelta, &createdQuantityDelta); err != nil {
+		t.Fatalf("load created pallet count event: %v", err)
+	}
+	if createdPalletDelta != 1 {
+		t.Fatalf("expected created pallet count event delta 1, got %v", createdPalletDelta)
+	}
+	if createdQuantityDelta != 2 {
+		t.Fatalf("expected created pallet quantity delta 2, got %d", createdQuantityDelta)
+	}
+
+	var unchangedCountEventTotal int
+	if err := store.db.GetContext(ctx, &unchangedCountEventTotal, `
+		SELECT COUNT(*)
+		FROM pallet_location_events
+		WHERE pallet_id = ?
+		  AND event_type = 'COUNT'
+	`, unchangedPallet.ID); err != nil {
+		t.Fatalf("count unchanged pallet count events: %v", err)
+	}
+	if unchangedCountEventTotal != 0 {
+		t.Fatalf("expected unchanged pallet to have no count event, got %d", unchangedCountEventTotal)
+	}
+
+	itemAfterCount := mustFindItemByID(t, ctx, store, sourceItem.ID)
+	if itemAfterCount.Quantity != 9 {
+		t.Fatalf("expected total on-hand quantity 9 after cycle count pallet transitions, got %d", itemAfterCount.Quantity)
+	}
+}
+
 func TestConfirmedOutboundHonorsManualSelectedPalletsIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
