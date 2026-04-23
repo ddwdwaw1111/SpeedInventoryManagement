@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -3696,6 +3697,380 @@ func TestStorageSettlementInvoiceLifecycleIntegration(t *testing.T) {
 	}
 	if recreated.Status != BillingInvoiceStatusDraft {
 		t.Fatalf("expected recreated invoice status DRAFT, got %q", recreated.Status)
+	}
+}
+
+func TestBillingInvoiceDraftEditsRecalculateTotalsIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	authPayload, _, err := store.RegisterUser(ctx, RegisterUserInput{
+		Email:    "billing-draft-" + suffix + "@example.com",
+		FullName: "Billing Draft " + suffix,
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("register billing draft user: %v", err)
+	}
+
+	customer := mustCreateCustomer(t, ctx, store, "Billing Draft Customer "+suffix)
+	input := CreateBillingInvoiceInput{
+		InvoiceType:  BillingInvoiceTypeMixed,
+		CustomerID:   customer.ID,
+		CustomerName: customer.Name,
+		PeriodStart:  "2026-03-01",
+		PeriodEnd:    "2026-03-31",
+		Rates: BillingRatesSnapshot{
+			InboundContainerFee:     450,
+			WrappingFeePerPallet:    15,
+			StorageFeePerPalletWeek: 7,
+			OutboundFeePerPallet:    0,
+		},
+		Lines: []CreateBillingInvoiceLineInput{
+			{
+				ChargeType:  "INBOUND",
+				Description: "Inbound fee",
+				Quantity:    1,
+				UnitRate:    450,
+				Amount:      450,
+				SourceType:  "AUTO",
+			},
+			{
+				ChargeType:  "STORAGE",
+				Description: "Storage fee",
+				Quantity:    140,
+				UnitRate:    1,
+				Amount:      140,
+				SourceType:  "AUTO",
+			},
+			{
+				ChargeType:  "DISCOUNT",
+				Description: "Courtesy discount",
+				Quantity:    1,
+				UnitRate:    -20,
+				Amount:      -20,
+				SourceType:  "MANUAL",
+			},
+		},
+	}
+
+	invoice, err := store.CreateBillingInvoice(ctx, input, authPayload.User.ID)
+	if err != nil {
+		t.Fatalf("create mixed billing invoice: %v", err)
+	}
+	if invoice.Subtotal != 590 {
+		t.Fatalf("expected subtotal 590 after create, got %.2f", invoice.Subtotal)
+	}
+	if invoice.DiscountTotal != -20 {
+		t.Fatalf("expected discount total -20 after create, got %.2f", invoice.DiscountTotal)
+	}
+	if invoice.GrandTotal != 570 {
+		t.Fatalf("expected grand total 570 after create, got %.2f", invoice.GrandTotal)
+	}
+	if invoice.Rates.TransferInboundFeePerPallet != 10 {
+		t.Fatalf("expected transfer inbound default 10, got %.2f", invoice.Rates.TransferInboundFeePerPallet)
+	}
+	if invoice.Rates.StorageFeePerPalletWeekNormal != 7 || invoice.Rates.StorageFeePerPalletWeekWestCoastTransfer != 7 {
+		t.Fatalf("expected normalized storage rates of 7, got normal=%.2f west=%.2f", invoice.Rates.StorageFeePerPalletWeekNormal, invoice.Rates.StorageFeePerPalletWeekWestCoastTransfer)
+	}
+
+	findLine := func(chargeType string) BillingInvoiceLine {
+		t.Helper()
+		for _, line := range invoice.Lines {
+			if line.ChargeType == chargeType {
+				return line
+			}
+		}
+		t.Fatalf("find line %s: not found", chargeType)
+		return BillingInvoiceLine{}
+	}
+
+	inboundLine := findLine("INBOUND")
+	storageLine := findLine("STORAGE")
+	discountLine := findLine("DISCOUNT")
+
+	invoice, err = store.AddBillingInvoiceLine(ctx, invoice.ID, AddBillingInvoiceLineInput{
+		ChargeType:  "OUTBOUND",
+		Description: "Outbound fee",
+		Quantity:    1,
+		UnitRate:    30.555,
+		Amount:      30.555,
+		Notes:       "Rounded outbound charge",
+	})
+	if err != nil {
+		t.Fatalf("add outbound billing line: %v", err)
+	}
+	if invoice.Subtotal != 620.56 {
+		t.Fatalf("expected subtotal 620.56 after add, got %.2f", invoice.Subtotal)
+	}
+	if invoice.DiscountTotal != -20 {
+		t.Fatalf("expected discount total -20 after add, got %.2f", invoice.DiscountTotal)
+	}
+	if invoice.GrandTotal != 600.56 {
+		t.Fatalf("expected grand total 600.56 after add, got %.2f", invoice.GrandTotal)
+	}
+
+	var outboundLine BillingInvoiceLine
+	foundOutbound := false
+	for _, line := range invoice.Lines {
+		if line.ChargeType == "OUTBOUND" {
+			outboundLine = line
+			foundOutbound = true
+			break
+		}
+	}
+	if !foundOutbound {
+		t.Fatal("expected outbound line to be present after add")
+	}
+	if outboundLine.Amount != 30.56 {
+		t.Fatalf("expected rounded outbound line amount 30.56, got %.2f", outboundLine.Amount)
+	}
+
+	invoice, err = store.UpdateBillingInvoiceLine(ctx, invoice.ID, storageLine.ID, UpdateBillingInvoiceLineInput{
+		ChargeType:  "STORAGE",
+		Description: "Storage fee revised",
+		Quantity:    155.25,
+		UnitRate:    1,
+		Amount:      155.25,
+	})
+	if err != nil {
+		t.Fatalf("update storage billing line: %v", err)
+	}
+	if invoice.Subtotal != 635.81 {
+		t.Fatalf("expected subtotal 635.81 after storage update, got %.2f", invoice.Subtotal)
+	}
+	if invoice.DiscountTotal != -20 {
+		t.Fatalf("expected discount total -20 after storage update, got %.2f", invoice.DiscountTotal)
+	}
+	if invoice.GrandTotal != 615.81 {
+		t.Fatalf("expected grand total 615.81 after storage update, got %.2f", invoice.GrandTotal)
+	}
+
+	invoice, err = store.UpdateBillingInvoiceLine(ctx, invoice.ID, discountLine.ID, UpdateBillingInvoiceLineInput{
+		ChargeType:  "DISCOUNT",
+		Description: "Courtesy discount revised",
+		Quantity:    1,
+		UnitRate:    -35.10,
+		Amount:      -35.10,
+	})
+	if err != nil {
+		t.Fatalf("update discount billing line: %v", err)
+	}
+	if invoice.Subtotal != 635.81 {
+		t.Fatalf("expected subtotal 635.81 after discount update, got %.2f", invoice.Subtotal)
+	}
+	if invoice.DiscountTotal != -35.10 {
+		t.Fatalf("expected discount total -35.10 after discount update, got %.2f", invoice.DiscountTotal)
+	}
+	if invoice.GrandTotal != 600.71 {
+		t.Fatalf("expected grand total 600.71 after discount update, got %.2f", invoice.GrandTotal)
+	}
+
+	invoice, err = store.DeleteBillingInvoiceLine(ctx, invoice.ID, inboundLine.ID)
+	if err != nil {
+		t.Fatalf("delete inbound billing line: %v", err)
+	}
+	if invoice.LineCount != 3 {
+		t.Fatalf("expected 3 lines after delete, got %d", invoice.LineCount)
+	}
+	if invoice.Subtotal != 185.81 {
+		t.Fatalf("expected subtotal 185.81 after delete, got %.2f", invoice.Subtotal)
+	}
+	if invoice.DiscountTotal != -35.10 {
+		t.Fatalf("expected discount total -35.10 after delete, got %.2f", invoice.DiscountTotal)
+	}
+	if invoice.GrandTotal != 150.71 {
+		t.Fatalf("expected grand total 150.71 after delete, got %.2f", invoice.GrandTotal)
+	}
+
+	invoice, err = store.FinalizeBillingInvoice(ctx, invoice.ID, authPayload.User.ID)
+	if err != nil {
+		t.Fatalf("finalize billing invoice: %v", err)
+	}
+	if invoice.Status != BillingInvoiceStatusFinalized {
+		t.Fatalf("expected finalized invoice status, got %q", invoice.Status)
+	}
+
+	if _, err := store.UpdateBillingInvoice(ctx, invoice.ID, UpdateBillingInvoiceInput{Notes: "blocked"}); err == nil || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected updating finalized invoice to fail with ErrInvalidInput, got %v", err)
+	}
+	if _, err := store.AddBillingInvoiceLine(ctx, invoice.ID, AddBillingInvoiceLineInput{
+		ChargeType:  "OUTBOUND",
+		Description: "blocked",
+		Quantity:    1,
+		UnitRate:    1,
+		Amount:      1,
+	}); err == nil || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected adding line to finalized invoice to fail with ErrInvalidInput, got %v", err)
+	}
+	if _, err := store.UpdateBillingInvoiceLine(ctx, invoice.ID, storageLine.ID, UpdateBillingInvoiceLineInput{
+		ChargeType:  "STORAGE",
+		Description: "blocked",
+		Quantity:    1,
+		UnitRate:    1,
+		Amount:      1,
+	}); err == nil || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected updating line on finalized invoice to fail with ErrInvalidInput, got %v", err)
+	}
+	if _, err := store.DeleteBillingInvoiceLine(ctx, invoice.ID, storageLine.ID); err == nil || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected deleting line on finalized invoice to fail with ErrInvalidInput, got %v", err)
+	}
+	if err := store.DeleteBillingInvoice(ctx, invoice.ID); err == nil || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected deleting finalized invoice to fail with ErrInvalidInput, got %v", err)
+	}
+
+	paidInvoice, err := store.MarkBillingInvoicePaid(ctx, invoice.ID)
+	if err != nil {
+		t.Fatalf("mark billing invoice paid: %v", err)
+	}
+	if paidInvoice.Status != BillingInvoiceStatusPaid {
+		t.Fatalf("expected paid invoice status, got %q", paidInvoice.Status)
+	}
+}
+
+func TestBillingInvoicePersistsStorageDetailSnapshotsIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	authPayload, _, err := store.RegisterUser(ctx, RegisterUserInput{
+		Email:    "billing-details-" + suffix + "@example.com",
+		FullName: "Billing Details " + suffix,
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("register billing details user: %v", err)
+	}
+
+	customer := mustCreateCustomer(t, ctx, store, "Billing Details Customer "+suffix)
+	location := mustCreateLocation(t, ctx, store, "Billing Details NJ "+suffix)
+
+	details := json.RawMessage(`{
+		"kind":"STORAGE_CONTAINER_SUMMARY",
+		"warehouseLocationId":1,
+		"warehouseName":"NJ",
+		"warehousesTouched":["NJ"],
+		"palletsTracked":2,
+		"palletDays":31,
+		"freePalletDays":7,
+		"billablePalletDays":24,
+		"grossAmount":31,
+		"discountAmount":7,
+		"segments":[
+			{
+				"startDate":"2026-03-01",
+				"endDate":"2026-03-07",
+				"dayEndPallets":1,
+				"billedDays":7,
+				"palletDays":7,
+				"freePalletDays":7,
+				"billablePalletDays":0,
+				"grossAmount":7,
+				"discountAmount":7,
+				"amount":0
+			},
+			{
+				"startDate":"2026-03-08",
+				"endDate":"2026-03-31",
+				"dayEndPallets":1,
+				"billedDays":24,
+				"palletDays":24,
+				"freePalletDays":0,
+				"billablePalletDays":24,
+				"grossAmount":24,
+				"discountAmount":0,
+				"amount":24
+			}
+		]
+	}`)
+
+	invoice, err := store.CreateBillingInvoice(ctx, CreateBillingInvoiceInput{
+		InvoiceType:         BillingInvoiceTypeStorage,
+		CustomerID:          customer.ID,
+		CustomerName:        customer.Name,
+		WarehouseLocationID: int64Ptr(location.ID),
+		WarehouseName:       location.Name,
+		ContainerType:       ContainerTypeNormal,
+		PeriodStart:         "2026-03-01",
+		PeriodEnd:           "2026-03-31",
+		Rates: BillingRatesSnapshot{
+			InboundContainerFee:                      450,
+			TransferInboundFeePerPallet:              10,
+			WrappingFeePerPallet:                     15,
+			StorageFeePerPalletWeekNormal:            7,
+			StorageFeePerPalletWeekWestCoastTransfer: 7,
+			OutboundFeePerPallet:                     0,
+		},
+		Lines: []CreateBillingInvoiceLineInput{
+			{
+				ChargeType:  "STORAGE",
+				Description: "Storage settlement for CONT-DETAIL",
+				Reference:   "Storage | CONT-DETAIL",
+				ContainerNo: "CONT-DETAIL",
+				Warehouse:   location.Name,
+				OccurredOn:  "2026-03-31",
+				Quantity:    24,
+				UnitRate:    1,
+				Amount:      24,
+				SourceType:  "AUTO",
+				Details:     details,
+			},
+		},
+	}, authPayload.User.ID)
+	if err != nil {
+		t.Fatalf("create storage invoice with details: %v", err)
+	}
+
+	if len(invoice.Lines) != 1 {
+		t.Fatalf("expected 1 line on details invoice, got %d", len(invoice.Lines))
+	}
+	if len(invoice.Lines[0].Details) == 0 {
+		t.Fatal("expected storage invoice line details to be persisted")
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(invoice.Lines[0].Details, &decoded); err != nil {
+		t.Fatalf("decode persisted storage line details: %v", err)
+	}
+	if decoded["kind"] != "STORAGE_CONTAINER_SUMMARY" {
+		t.Fatalf("expected details kind STORAGE_CONTAINER_SUMMARY, got %#v", decoded["kind"])
+	}
+	if decoded["palletDays"] != float64(31) {
+		t.Fatalf("expected palletDays 31 in stored details, got %#v", decoded["palletDays"])
+	}
+	if decoded["billablePalletDays"] != float64(24) {
+		t.Fatalf("expected billablePalletDays 24 in stored details, got %#v", decoded["billablePalletDays"])
+	}
+	segments, ok := decoded["segments"].([]any)
+	if !ok || len(segments) != 2 {
+		t.Fatalf("expected 2 stored detail segments, got %#v", decoded["segments"])
+	}
+
+	invalidInput := CreateBillingInvoiceInput{
+		InvoiceType:         BillingInvoiceTypeStorage,
+		CustomerID:          customer.ID,
+		CustomerName:        customer.Name,
+		WarehouseLocationID: int64Ptr(location.ID),
+		WarehouseName:       location.Name,
+		ContainerType:       ContainerTypeNormal,
+		PeriodStart:         "2026-04-01",
+		PeriodEnd:           "2026-04-30",
+		Rates:               invoice.Rates,
+		Lines: []CreateBillingInvoiceLineInput{
+			{
+				ChargeType:  "STORAGE",
+				Description: "Invalid details",
+				Quantity:    1,
+				UnitRate:    1,
+				Amount:      1,
+				SourceType:  "AUTO",
+				Details:     json.RawMessage(`{"kind":`),
+			},
+		},
+	}
+	if _, err := store.CreateBillingInvoice(ctx, invalidInput, authPayload.User.ID); err == nil || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected invalid details JSON to fail with ErrInvalidInput, got %v", err)
 	}
 }
 

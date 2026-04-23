@@ -1306,6 +1306,41 @@ describe("buildBillingPreview", () => {
       expect(preview.storageRows[0]?.palletDays).toBe(39);
     });
 
+    it("keeps storage segments, storage invoice lines, and summary totals internally consistent", () => {
+      const preview = buildLifecyclePreview();
+      const storageRow = preview.storageRows[0];
+      const storageLine = preview.invoiceLines.find((line) => line.chargeType === "STORAGE");
+      const roundCurrency = (value: number) => Math.round(value * 100) / 100;
+
+      expect(storageRow).toBeDefined();
+      expect(storageLine).toBeDefined();
+
+      const segmentPalletDays = storageRow!.segments.reduce((total, segment) => total + segment.palletDays, 0);
+      const segmentFreePalletDays = storageRow!.segments.reduce((total, segment) => total + segment.freePalletDays, 0);
+      const segmentBillablePalletDays = storageRow!.segments.reduce((total, segment) => total + segment.billablePalletDays, 0);
+      const segmentGrossAmount = roundCurrency(storageRow!.segments.reduce((total, segment) => total + segment.grossAmount, 0));
+      const segmentDiscountAmount = roundCurrency(storageRow!.segments.reduce((total, segment) => total + segment.discountAmount, 0));
+      const segmentAmount = roundCurrency(storageRow!.segments.reduce((total, segment) => total + segment.amount, 0));
+
+      expect(storageRow!.palletDays).toBe(segmentPalletDays);
+      expect(storageRow!.freePalletDays).toBe(segmentFreePalletDays);
+      expect(storageRow!.billablePalletDays).toBe(segmentBillablePalletDays);
+      expect(storageRow!.grossAmount).toBe(segmentGrossAmount);
+      expect(storageRow!.discountAmount).toBe(segmentDiscountAmount);
+      expect(storageRow!.amount).toBe(segmentAmount);
+
+      expect(storageLine).toMatchObject({
+        chargeType: "STORAGE",
+        containerNo: storageRow!.containerNo,
+        quantity: storageRow!.billablePalletDays,
+        amount: storageRow!.amount,
+        occurredOn: storageRow!.lastActivityAt
+      });
+
+      expect(preview.summary.storageAmount).toBe(roundCurrency(preview.storageRows.reduce((total, row) => total + row.amount, 0)));
+      expect(preview.summary.grandTotal).toBe(roundCurrency(preview.invoiceLines.reduce((total, line) => total + line.amount, 0)));
+    });
+
     it("storage segments correctly reflect pallet count drops after each shipment/cancellation", () => {
       const preview = buildLifecyclePreview();
       const segments = preview.storageRows[0]?.segments ?? [];
