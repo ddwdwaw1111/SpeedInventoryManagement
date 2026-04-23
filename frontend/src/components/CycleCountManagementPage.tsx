@@ -52,8 +52,11 @@ type CycleCountLineFormState = {
 };
 
 type CycleCountPalletFormState = {
+  rowId: string;
   palletId: number;
+  palletCode: string;
   countedQty: number;
+  isNew: boolean;
 };
 
 type LaunchNotice = {
@@ -75,11 +78,13 @@ type DraftPreviewLine = {
 };
 
 type DraftPreviewPalletLine = {
+  rowId: string;
   palletId: number;
   palletCode: string;
   systemQty: number;
   countedQty: number;
   varianceQty: number;
+  isNew: boolean;
 };
 
 const emptyCycleCountForm: CycleCountFormState = {
@@ -89,15 +94,32 @@ const emptyCycleCountForm: CycleCountFormState = {
 
 const CYCLE_COUNT_COLUMN_ORDER_PREFERENCE_KEY = "cycle-counts.column-order";
 
+function createCycleCountClientId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 function createCycleCountLine(
   patch: Partial<Omit<CycleCountLineFormState, "id">> = {}
 ): CycleCountLineFormState {
   return {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    id: createCycleCountClientId(),
     bucketKey: "",
     countedQty: 0,
     lineNote: "",
     palletCounts: [],
+    ...patch
+  };
+}
+
+function createCycleCountPalletCount(
+  patch: Partial<CycleCountPalletFormState> = {}
+): CycleCountPalletFormState {
+  return {
+    rowId: createCycleCountClientId(),
+    palletId: 0,
+    palletCode: "",
+    countedQty: 0,
+    isNew: false,
     ...patch
   };
 }
@@ -167,47 +189,62 @@ export function CycleCountManagementPage({
   }, [pallets, selectableItems]);
   const draftPreviewLines = useMemo<DraftPreviewLine[]>(
     () => lines.map((line, index) => {
-      const selectedItem = itemByBucketKey.get(line.bucketKey) ?? null;
-      const systemQty = selectedItem?.quantity ?? 0;
-      const linePalletOptions = selectedItem ? selectablePalletsByBucketKey.get(line.bucketKey) ?? [] : [];
-      const palletCountMap = new Map(line.palletCounts.map((entry) => [entry.palletId, entry.countedQty]));
-      const palletPreviewLines = selectedItem
-        ? linePalletOptions
-          .map((pallet) => {
-            const palletSystemQty = getCycleCountablePalletQty(pallet, selectedItem.skuMasterId);
-            if (palletSystemQty <= 0) {
-              return null;
-            }
+        const selectedItem = itemByBucketKey.get(line.bucketKey) ?? null;
+        const systemQty = selectedItem?.quantity ?? 0;
+        const linePalletOptions = selectedItem ? selectablePalletsByBucketKey.get(line.bucketKey) ?? [] : [];
+        const palletPreviewLines = selectedItem
+          ? line.palletCounts
+            .map((entry, palletIndex) => {
+              if (entry.isNew) {
+                const countedPalletQty = Math.max(0, entry.countedQty);
+                return {
+                  rowId: entry.rowId,
+                  palletId: 0,
+                  palletCode: t("cycleCountNewPalletLabel", { index: palletIndex + 1 }),
+                  systemQty: 0,
+                  countedQty: countedPalletQty,
+                  varianceQty: countedPalletQty,
+                  isNew: true
+                };
+              }
 
-            const countedPalletQty = Math.max(0, palletCountMap.get(pallet.id) ?? palletSystemQty);
-            return {
-              palletId: pallet.id,
-              palletCode: pallet.palletCode,
-              systemQty: palletSystemQty,
-              countedQty: countedPalletQty,
-              varianceQty: countedPalletQty - palletSystemQty
-            };
-          })
-          .filter((entry): entry is DraftPreviewPalletLine => Boolean(entry))
-        : [];
-      const countedQty = selectedItem
-        ? palletPreviewLines.length > 0
-          ? palletPreviewLines.reduce((sum, palletLine) => sum + palletLine.countedQty, 0)
-          : Math.max(0, line.countedQty)
-        : 0;
+              const pallet = linePalletOptions.find((option) => option.id === entry.palletId);
+              if (!pallet) {
+                return null;
+              }
 
-      return {
-        index,
-        line,
-        selectedItem,
-        systemQty,
-        countedQty,
-        varianceQty: selectedItem ? countedQty - systemQty : 0,
-        isComplete: Boolean(selectedItem),
-        palletPreviewLines
-      };
-    }),
-    [itemByBucketKey, lines, selectablePalletsByBucketKey]
+              const palletSystemQty = getCycleCountablePalletQty(pallet, selectedItem.skuMasterId);
+              const countedPalletQty = Math.max(0, entry.countedQty);
+              return {
+                rowId: entry.rowId,
+                palletId: pallet.id,
+                palletCode: entry.palletCode || pallet.palletCode,
+                systemQty: palletSystemQty,
+                countedQty: countedPalletQty,
+                varianceQty: countedPalletQty - palletSystemQty,
+                isNew: false
+              };
+            })
+            .filter((entry): entry is DraftPreviewPalletLine => Boolean(entry))
+          : [];
+        const countedQty = selectedItem
+          ? palletPreviewLines.length > 0
+            ? palletPreviewLines.reduce((sum, palletLine) => sum + palletLine.countedQty, 0)
+            : Math.max(0, line.countedQty)
+          : 0;
+
+        return {
+          index,
+          line,
+          selectedItem,
+          systemQty,
+          countedQty,
+          varianceQty: selectedItem ? countedQty - systemQty : 0,
+          isComplete: Boolean(selectedItem),
+          palletPreviewLines
+        };
+      }),
+    [itemByBucketKey, lines, selectablePalletsByBucketKey, t]
   );
   const draftSummary = useMemo(() => {
     let selectedLineCount = 0;
@@ -538,15 +575,57 @@ export function CycleCountManagementPage({
       : line));
   }
 
-  function updateLinePalletCount(lineId: string, palletId: number, countedQty: number) {
+  function updateLinePalletCount(lineId: string, palletRowId: string, countedQty: number) {
     setLines((current) => current.map((line) => {
       if (line.id !== lineId) {
         return line;
       }
 
-      const nextPalletCounts = line.palletCounts.map((entry) => entry.palletId === palletId
+      const nextPalletCounts = line.palletCounts.map((entry) => entry.rowId === palletRowId
         ? { ...entry, countedQty: Math.max(0, countedQty) }
         : entry);
+      return {
+        ...line,
+        countedQty: sumCycleCountPalletCounts(nextPalletCounts),
+        palletCounts: nextPalletCounts
+      };
+    }));
+  }
+
+  function addLinePallet(lineId: string) {
+    setLines((current) => current.map((line) => {
+      if (line.id !== lineId) {
+        return line;
+      }
+
+      const nextPalletCounts = [
+        ...line.palletCounts,
+        createCycleCountPalletCount({ isNew: true })
+      ];
+      return {
+        ...line,
+        countedQty: sumCycleCountPalletCounts(nextPalletCounts),
+        palletCounts: nextPalletCounts
+      };
+    }));
+  }
+
+  function removeLinePallet(lineId: string, palletRowId: string) {
+    setLines((current) => current.map((line) => {
+      if (line.id !== lineId) {
+        return line;
+      }
+
+      const targetEntry = line.palletCounts.find((entry) => entry.rowId === palletRowId);
+      if (!targetEntry) {
+        return line;
+      }
+
+      const nextPalletCounts = targetEntry.isNew
+        ? line.palletCounts.filter((entry) => entry.rowId !== palletRowId)
+        : line.palletCounts.map((entry) => entry.rowId === palletRowId
+          ? { ...entry, countedQty: 0 }
+          : entry);
       return {
         ...line,
         countedQty: sumCycleCountPalletCounts(nextPalletCounts),
@@ -574,9 +653,11 @@ export function CycleCountManagementPage({
       const preparedLines = draftPreviewLines
         .filter((previewLine) => previewLine.selectedItem)
         .flatMap((previewLine) => previewLine.palletPreviewLines.length > 0
-          ? previewLine.palletPreviewLines.map((palletLine) => ({
+          ? previewLine.palletPreviewLines
+            .filter((palletLine) => !palletLine.isNew || palletLine.countedQty > 0)
+            .map((palletLine) => ({
               ...toInventoryProjectionRef(previewLine.selectedItem!),
-              palletId: palletLine.palletId,
+              ...(palletLine.isNew ? { createPallet: true } : { palletId: palletLine.palletId }),
               countedQty: palletLine.countedQty,
               lineNote: previewLine.line.lineNote || undefined
             }))
@@ -876,6 +957,7 @@ export function CycleCountManagementPage({
                       {draftPreviewLines.map((previewLine) => {
                         const { line, selectedItem, systemQty, varianceQty, palletPreviewLines } = previewLine;
                         const hasPalletBreakdown = palletPreviewLines.length > 0;
+                        const matchedPalletCount = palletPreviewLines.filter((palletLine) => !palletLine.isNew).length;
                         const lineStatusLabel = !selectedItem
                           ? t("reviewIncomplete")
                           : varianceQty === 0
@@ -978,26 +1060,38 @@ export function CycleCountManagementPage({
                                   <div>
                                     <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{t("palletBreakdown")}</div>
                                     <p className="mt-1 text-sm text-slate-600">
-                                      {hasPalletBreakdown ? t("cycleCountPalletBreakdownHint", { count: palletPreviewLines.length }) : t("cycleCountPalletFallbackHint")}
+                                      {matchedPalletCount > 0 ? t("cycleCountPalletBreakdownHint", { count: matchedPalletCount }) : t("cycleCountPalletFallbackHint")}
                                     </p>
                                   </div>
-                                  {hasPalletBreakdown ? (
-                                    <span className="rounded-full border border-sky-200/80 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
-                                      {t("cycleCountPalletCountSummary", { count: palletPreviewLines.length })}
-                                    </span>
-                                  ) : null}
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    {hasPalletBreakdown ? (
+                                      <span className="rounded-full border border-sky-200/80 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
+                                        {t("cycleCountPalletCountSummary", { count: palletPreviewLines.length })}
+                                      </span>
+                                    ) : null}
+                                    <button
+                                      type="button"
+                                      onClick={() => addLinePallet(line.id)}
+                                      className="inline-flex items-center gap-2 rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-xs font-semibold text-[#143569] transition hover:border-slate-300 hover:bg-slate-50"
+                                    >
+                                      {t("cycleCountAddPallet")}
+                                    </button>
+                                  </div>
                                 </div>
 
-                                {hasPalletBreakdown ? (
+                                {line.palletCounts.length > 0 ? (
                                   <div className="mt-4 grid gap-3">
                                     {palletPreviewLines.map((palletLine) => (
                                       <div
-                                        key={`${line.id}-${palletLine.palletId}`}
-                                        className="grid gap-3 rounded-2xl border border-slate-200/80 bg-white px-4 py-3 lg:grid-cols-[minmax(220px,1.8fr)_110px_110px_110px]"
+                                        key={`${line.id}-${palletLine.rowId}`}
+                                        className="grid gap-3 rounded-2xl border border-slate-200/80 bg-white px-4 py-3 lg:grid-cols-[minmax(220px,1.8fr)_110px_minmax(170px,1.2fr)_110px_110px]"
                                       >
                                         <div>
                                           <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{t("pallet")}</div>
                                           <div className="mt-1 text-sm font-semibold text-[#102a56]">{palletLine.palletCode}</div>
+                                          <div className="mt-1 text-xs text-slate-500">
+                                            {palletLine.isNew ? t("cycleCountNewPalletHint") : t("cycleCountExistingPalletHint")}
+                                          </div>
                                         </div>
                                         <div>
                                           <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{t("systemQty")}</div>
@@ -1005,34 +1099,27 @@ export function CycleCountManagementPage({
                                         </div>
                                         <label>
                                           <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{t("countedQty")}</span>
-                                          <div className="mt-1 flex items-center gap-1">
-                                            <button
-                                              type="button"
-                                              onClick={() => updateLinePalletCount(line.id, palletLine.palletId, Math.max(0, palletLine.countedQty - 1))}
-                                              disabled={palletLine.countedQty <= 0}
-                                              aria-label={`${t("decreaseQty")}: ${palletLine.palletCode}`}
-                                              className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200/80 bg-white text-base font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                            >
-                                              -
-                                            </button>
+                                          <div className="mt-1">
                                             <input
                                               type="number"
                                               min="0"
                                               value={String(palletLine.countedQty)}
                                               aria-label={`${t("countedQty")}: ${palletLine.palletCode}`}
-                                              onChange={(event) => updateLinePalletCount(line.id, palletLine.palletId, Number(event.target.value || 0))}
+                                              onChange={(event) => updateLinePalletCount(line.id, palletLine.rowId, Number(event.target.value || 0))}
                                               className="w-24 rounded-xl border border-slate-200/80 bg-slate-50 px-3 py-2 text-right text-sm font-semibold text-[#143569] outline-none transition focus:border-[#143569]/40 focus:bg-white"
                                             />
-                                            <button
-                                              type="button"
-                                              onClick={() => updateLinePalletCount(line.id, palletLine.palletId, palletLine.countedQty + 1)}
-                                              aria-label={`${t("increaseQty")}: ${palletLine.palletCode}`}
-                                              className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200/80 bg-white text-base font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
-                                            >
-                                              +
-                                            </button>
                                           </div>
                                         </label>
+                                        <div className="flex items-start justify-end">
+                                          <button
+                                            type="button"
+                                            onClick={() => removeLinePallet(line.id, palletLine.rowId)}
+                                            aria-label={`${t("cycleCountRemovePallet")}: ${palletLine.palletCode}`}
+                                            className="inline-flex items-center rounded-xl border border-rose-200/80 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 transition hover:border-rose-300 hover:bg-rose-100"
+                                          >
+                                            {t("cycleCountRemovePallet")}
+                                          </button>
+                                        </div>
                                         <div>
                                           <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{t("varianceQty")}</div>
                                           <div className={`mt-1 text-sm font-semibold ${palletLine.varianceQty === 0 ? "text-[#102a56]" : palletLine.varianceQty > 0 ? "text-[#2f6b5f]" : "text-[#b76857]"}`}>
@@ -1196,7 +1283,7 @@ export function CycleCountManagementPage({
                               <div className="mt-3 grid gap-3">
                                 {previewLine.palletPreviewLines.map((palletLine) => (
                                   <div
-                                    key={`review-${previewLine.line.id}-${palletLine.palletId}`}
+                                    key={`review-${previewLine.line.id}-${palletLine.rowId}`}
                                     className="grid gap-3 rounded-2xl border border-slate-200/80 bg-white px-4 py-3 lg:grid-cols-[minmax(220px,1.8fr)_110px_110px_110px]"
                                   >
                                     <div>
@@ -1468,21 +1555,31 @@ function buildCycleCountPalletCounts(
   skuMasterId: number,
   existingCounts: CycleCountPalletFormState[] = []
 ) {
-  const existingCountByPalletId = new Map(existingCounts.map((entry) => [entry.palletId, entry.countedQty]));
+  const existingCountByPalletId = new Map(existingCounts
+    .filter((entry) => !entry.isNew)
+    .map((entry) => [entry.palletId, entry] as const));
+  const newEntries = existingCounts.filter((entry) => entry.isNew);
 
-  return pallets
+  return [
+    ...pallets
     .map((pallet) => {
       const systemQty = getCycleCountablePalletQty(pallet, skuMasterId);
       if (systemQty <= 0) {
         return null;
       }
 
+      const existingEntry = existingCountByPalletId.get(pallet.id);
       return {
+        rowId: existingEntry?.rowId ?? createCycleCountClientId(),
         palletId: pallet.id,
-        countedQty: Math.max(0, existingCountByPalletId.get(pallet.id) ?? systemQty)
+        palletCode: pallet.palletCode,
+        countedQty: Math.max(0, existingEntry?.countedQty ?? systemQty),
+        isNew: false
       };
     })
-    .filter((entry): entry is CycleCountPalletFormState => Boolean(entry));
+    .filter((entry): entry is CycleCountPalletFormState => Boolean(entry)),
+    ...newEntries
+  ];
 }
 
 function sumCycleCountPalletCounts(entries: CycleCountPalletFormState[]) {
@@ -1496,7 +1593,12 @@ function areCycleCountPalletCountsEqual(left: CycleCountPalletFormState[], right
 
   return left.every((entry, index) => {
     const other = right[index];
-    return other && entry.palletId === other.palletId && entry.countedQty === other.countedQty;
+    return other
+      && entry.rowId === other.rowId
+      && entry.palletId === other.palletId
+      && entry.palletCode === other.palletCode
+      && entry.countedQty === other.countedQty
+      && entry.isNew === other.isNew;
   });
 }
 

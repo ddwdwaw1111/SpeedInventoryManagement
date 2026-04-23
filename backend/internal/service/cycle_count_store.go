@@ -51,6 +51,8 @@ type CreateCycleCountLineInput struct {
 	StorageSection string `json:"storageSection"`
 	ContainerNo    string `json:"containerNo"`
 	PalletID       int64  `json:"palletId"`
+	CreatePallet   bool   `json:"createPallet"`
+	PalletCode     string `json:"palletCode"`
 	SKUMasterID    int64  `json:"skuMasterId"`
 	CountedQty     int    `json:"countedQty"`
 	LineNote       string `json:"lineNote"`
@@ -231,7 +233,13 @@ func (s *Store) CreateCycleCount(ctx context.Context, input CreateCycleCountInpu
 		return CycleCount{}, fmt.Errorf("resolve cycle count id: %w", err)
 	}
 
+	newPalletSequence := 0
 	for index, line := range input.Lines {
+		if line.CreatePallet {
+			newPalletSequence++
+			line.PalletCode = palletCodeForCycleCount(countID, newPalletSequence)
+		}
+
 		lockedTarget, err := s.loadLockedCycleCountTarget(ctx, tx, line)
 		if err != nil {
 			return CycleCount{}, err
@@ -442,15 +450,25 @@ func sanitizeCycleCountInput(input CreateCycleCountInput) CreateCycleCountInput 
 	for _, line := range input.Lines {
 		line.StorageSection = normalizeStorageSection(line.StorageSection)
 		line.ContainerNo = strings.TrimSpace(strings.ToUpper(line.ContainerNo))
+		line.PalletCode = strings.TrimSpace(strings.ToUpper(line.PalletCode))
 		line.LineNote = strings.TrimSpace(line.LineNote)
 		if line.CustomerID <= 0 || line.LocationID <= 0 || line.SKUMasterID <= 0 {
 			continue
 		}
-		lineKey := buildCycleCountLineKey(line)
-		if _, exists := seenLines[lineKey]; exists {
+		if line.CreatePallet && line.CountedQty <= 0 {
 			continue
 		}
-		seenLines[lineKey] = struct{}{}
+		lineKey := buildCycleCountLineKey(line)
+		if lineKey != "" {
+			if _, exists := seenLines[lineKey]; exists {
+				continue
+			}
+			seenLines[lineKey] = struct{}{}
+		}
+		if lineKey == "" {
+			lines = append(lines, line)
+			continue
+		}
 		lines = append(lines, line)
 	}
 	input.Lines = lines
@@ -466,7 +484,7 @@ func validateCycleCountInput(input CreateCycleCountInput) error {
 	for _, line := range input.Lines {
 		bucketKey := buildCycleCountBucketKey(line)
 		scopeMode := "bucket"
-		if line.PalletID > 0 {
+		if line.PalletID > 0 || line.CreatePallet {
 			scopeMode = "pallet"
 		}
 		if existingScope, exists := bucketScopes[bucketKey]; exists && existingScope != scopeMode {
@@ -479,6 +497,10 @@ func validateCycleCountInput(input CreateCycleCountInput) error {
 			return fmt.Errorf("%w: customer is required", ErrInvalidInput)
 		case line.LocationID <= 0:
 			return fmt.Errorf("%w: storage is required", ErrInvalidInput)
+		case line.CreatePallet && line.PalletID > 0:
+			return fmt.Errorf("%w: new pallet count lines cannot target an existing pallet id", ErrInvalidInput)
+		case !line.CreatePallet && line.PalletCode != "":
+			return fmt.Errorf("%w: pallet code can only be set when creating a new pallet", ErrInvalidInput)
 		case line.PalletID < 0:
 			return fmt.Errorf("%w: pallet is invalid", ErrInvalidInput)
 		case line.SKUMasterID <= 0:
@@ -513,6 +535,10 @@ func (s *Store) loadLockedCycleCountTarget(ctx context.Context, tx *sql.Tx, line
 		SKU:            lockedItem.SKU,
 		Description:    lockedItem.Description,
 		Quantity:       lockedItem.Quantity,
+	}
+	if line.CreatePallet {
+		target.Quantity = 0
+		return target, nil
 	}
 	if line.PalletID <= 0 {
 		return target, nil
@@ -554,6 +580,9 @@ func (s *Store) applyCycleCountPalletDeltaTx(
 	if varianceQty == 0 {
 		return []palletContentConsumption{}, nil
 	}
+	if line.CreatePallet {
+		return s.createCycleCountPalletTx(ctx, tx, itemID, line, varianceQty)
+	}
 	if line.PalletID <= 0 {
 		return s.applyPalletDeltaForItemTx(ctx, tx, itemID, line.SKUMasterID, varianceQty)
 	}
@@ -572,12 +601,70 @@ func (s *Store) applyCycleCountPalletDeltaTx(
 	return s.addSpecificPalletContentsForBucketTx(ctx, tx, bucket, line.PalletID, line.SKUMasterID, varianceQty)
 }
 
+func (s *Store) createCycleCountPalletTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	itemID int64,
+	line CreateCycleCountLineInput,
+	quantity int,
+) ([]palletContentConsumption, error) {
+	if quantity <= 0 {
+		return []palletContentConsumption{}, nil
+	}
+
+	itemBucket, err := s.loadInventoryItemBucketTx(ctx, tx, itemID)
+	if err != nil {
+		return nil, err
+	}
+
+	pallet, err := s.createPalletTx(ctx, tx, createPalletInput{
+		PalletCode:            firstNonEmpty(strings.TrimSpace(line.PalletCode), palletCodeForOperationalSeed(itemID)),
+		ActualArrivalDate:     itemBucket.DeliveryDate,
+		CustomerID:            itemBucket.CustomerID,
+		SKUMasterID:           line.SKUMasterID,
+		CurrentLocationID:     itemBucket.LocationID,
+		CurrentStorageSection: itemBucket.StorageSection,
+		CurrentContainerNo:    itemBucket.ContainerNo,
+		Status:                PalletStatusOpen,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	palletItemID, err := s.createPalletItemTx(ctx, tx, createPalletItemInput{
+		PalletID:    pallet.ID,
+		SKUMasterID: line.SKUMasterID,
+		Quantity:    quantity,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return []palletContentConsumption{{
+		PalletID:       pallet.ID,
+		PalletItemID:   palletItemID,
+		SKUMasterID:    line.SKUMasterID,
+		Quantity:       quantity,
+		CustomerID:     itemBucket.CustomerID,
+		LocationID:     itemBucket.LocationID,
+		StorageSection: fallbackSection(itemBucket.StorageSection),
+		ContainerNo:    strings.TrimSpace(itemBucket.ContainerNo),
+	}}, nil
+}
+
 func buildCycleCountBucketKey(line CreateCycleCountLineInput) string {
 	return fmt.Sprintf("%d:%d:%s:%s:%d", line.CustomerID, line.LocationID, line.StorageSection, line.ContainerNo, line.SKUMasterID)
 }
 
 func buildCycleCountLineKey(line CreateCycleCountLineInput) string {
+	if line.CreatePallet {
+		return ""
+	}
 	return fmt.Sprintf("%s:%d", buildCycleCountBucketKey(line), line.PalletID)
+}
+
+func palletCodeForCycleCount(cycleCountID int64, sequence int) string {
+	return fmt.Sprintf("PLT-COUNT-%d-%d", max(cycleCountID, 0), max(sequence, 1))
 }
 
 func generateCycleCountNo() string {

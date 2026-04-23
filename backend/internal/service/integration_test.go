@@ -1581,6 +1581,169 @@ func TestSelectedPalletCycleCountIntegration(t *testing.T) {
 	}
 }
 
+func TestCycleCountCanCreateNewPalletIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "CreateCountPalletCustomer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "CreateCountPalletLocation-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "CREATE-COUNT-PALLET-SKU-"+suffix, 0)
+
+	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-04-10",
+		ContainerNo:         "CREATE-COUNT-PALLET-CONT-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Create pallet through cycle count",
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:               item.SKU,
+			Description:       item.Description,
+			ExpectedQty:       12,
+			ReceivedQty:       12,
+			Pallets:           2,
+			PalletsDetailCtns: "5+7",
+			PalletBreakdown: []InboundPalletBreakdown{
+				{Quantity: 5},
+				{Quantity: 7},
+			},
+			StorageSection: DefaultStorageSection,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create inbound for cycle count pallet creation: %v", err)
+	}
+
+	sourceItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, inbound.ContainerNo, item.SKU)
+	pallets, err := store.ListPallets(ctx, 50, ListPalletFilters{SourceInboundDocumentID: inbound.ID})
+	if err != nil {
+		t.Fatalf("list pallets for cycle count pallet creation: %v", err)
+	}
+	if len(pallets) != 2 {
+		t.Fatalf("expected 2 seeded pallets, got %d", len(pallets))
+	}
+	sort.Slice(pallets, func(left, right int) bool {
+		return pallets[left].ID < pallets[right].ID
+	})
+
+	firstLine := cycleCountLineFromItem(sourceItem, pallets[0].Contents[0].Quantity, "First pallet unchanged")
+	firstLine.PalletID = pallets[0].ID
+	secondLine := cycleCountLineFromItem(sourceItem, pallets[1].Contents[0].Quantity, "Second pallet unchanged")
+	secondLine.PalletID = pallets[1].ID
+	newPalletLine := cycleCountLineFromItem(sourceItem, 2, "New pallet discovered during count")
+	newPalletLine.CreatePallet = true
+	newPalletLine.PalletCode = "SHOULD-BE-IGNORED"
+
+	count, err := store.CreateCycleCount(ctx, CreateCycleCountInput{
+		CountNo: "CC-NEW-PLT-" + suffix,
+		Notes:   "Create new pallet through cycle count",
+		Lines: []CreateCycleCountLineInput{
+			firstLine,
+			secondLine,
+			newPalletLine,
+		},
+	})
+	if err != nil {
+		t.Fatalf("create cycle count with new pallet line: %v", err)
+	}
+	if len(count.Lines) != 3 {
+		t.Fatalf("expected 3 cycle count lines after adding a new pallet, got %d", len(count.Lines))
+	}
+	if count.TotalVariance != 2 {
+		t.Fatalf("expected total variance 2 after adding a new pallet, got %d", count.TotalVariance)
+	}
+
+	var countLedgerQty int
+	if err := store.db.GetContext(ctx, &countLedgerQty, `
+		SELECT COALESCE(SUM(quantity_change), 0)
+		FROM stock_ledger
+		WHERE source_document_type = 'CYCLE_COUNT'
+		  AND source_document_id = ?
+		  AND event_type = 'COUNT'
+	`, count.ID); err != nil {
+		t.Fatalf("sum cycle count ledger quantities after adding pallet: %v", err)
+	}
+	if countLedgerQty != 2 {
+		t.Fatalf("expected cycle count ledger quantity 2 for the new pallet, got %d", countLedgerQty)
+	}
+
+	var palletCountInBucket int
+	if err := store.db.GetContext(ctx, &palletCountInBucket, `
+		SELECT COUNT(*)
+		FROM pallets
+		WHERE customer_id = ?
+		  AND current_location_id = ?
+		  AND COALESCE(current_storage_section, 'TEMP') = ?
+		  AND COALESCE(current_container_no, '') = ?
+		  AND sku_master_id = ?
+	`, customer.ID, location.ID, DefaultStorageSection, inbound.ContainerNo, item.SKUMasterID); err != nil {
+		t.Fatalf("count pallets in bucket after cycle count pallet creation: %v", err)
+	}
+	if palletCountInBucket != 3 {
+		t.Fatalf("expected 3 pallets in the bucket after cycle count pallet creation, got %d", palletCountInBucket)
+	}
+
+	var createdPalletID int64
+	if err := store.db.GetContext(ctx, &createdPalletID, `
+		SELECT id
+		FROM pallets
+		WHERE customer_id = ?
+		  AND current_location_id = ?
+		  AND COALESCE(current_storage_section, 'TEMP') = ?
+		  AND COALESCE(current_container_no, '') = ?
+		  AND sku_master_id = ?
+		  AND id NOT IN (?, ?)
+		ORDER BY id DESC
+		LIMIT 1
+	`, customer.ID, location.ID, DefaultStorageSection, inbound.ContainerNo, item.SKUMasterID, pallets[0].ID, pallets[1].ID); err != nil {
+		t.Fatalf("locate newly created pallet after cycle count: %v", err)
+	}
+
+	var createdPalletQty int
+	if err := store.db.GetContext(ctx, &createdPalletQty, `
+		SELECT COALESCE(SUM(quantity), 0)
+		FROM pallet_items
+		WHERE pallet_id = ?
+	`, createdPalletID); err != nil {
+		t.Fatalf("load created pallet quantity after cycle count: %v", err)
+	}
+	if createdPalletQty != 2 {
+		t.Fatalf("expected created pallet quantity 2 after cycle count, got %d", createdPalletQty)
+	}
+
+	var createdPalletCode string
+	if err := store.db.GetContext(ctx, &createdPalletCode, `
+		SELECT pallet_code
+		FROM pallets
+		WHERE id = ?
+	`, createdPalletID); err != nil {
+		t.Fatalf("load created pallet code after cycle count: %v", err)
+	}
+	expectedCreatedPalletCode := fmt.Sprintf("PLT-COUNT-%d-1", count.ID)
+	if createdPalletCode != expectedCreatedPalletCode {
+		t.Fatalf("expected created pallet code %q after cycle count, got %q", expectedCreatedPalletCode, createdPalletCode)
+	}
+
+	listedPallets, err := store.ListPallets(ctx, 50, ListPalletFilters{Search: expectedCreatedPalletCode})
+	if err != nil {
+		t.Fatalf("list pallets after cycle count pallet creation: %v", err)
+	}
+	if len(listedPallets) != 1 {
+		t.Fatalf("expected 1 listed pallet for %q after cycle count, got %d", expectedCreatedPalletCode, len(listedPallets))
+	}
+	if listedPallets[0].PalletCode != expectedCreatedPalletCode {
+		t.Fatalf("expected listed pallet code %q after cycle count, got %q", expectedCreatedPalletCode, listedPallets[0].PalletCode)
+	}
+
+	itemAfterCount := mustFindItemByID(t, ctx, store, sourceItem.ID)
+	if itemAfterCount.Quantity != 14 {
+		t.Fatalf("expected total on-hand quantity 14 after cycle count pallet creation, got %d", itemAfterCount.Quantity)
+	}
+}
+
 func TestConfirmedOutboundHonorsManualSelectedPalletsIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()

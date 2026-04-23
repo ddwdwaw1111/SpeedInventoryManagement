@@ -234,7 +234,7 @@ describe("CycleCountManagementPage", () => {
     expect(onRefresh).toHaveBeenCalled();
   });
 
-  it("supports increasing and decreasing pallet counted quantities with stepper buttons", async () => {
+  it("adds a new pallet row and submits it as createPallet", async () => {
     createCycleCount.mockResolvedValue({ id: 1 });
     getPallets.mockResolvedValue([
       createPalletTrace({
@@ -266,8 +266,11 @@ describe("CycleCountManagementPage", () => {
 
     expect(await screen.findByText("PLT-11")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Decrease Qty: PLT-11" }));
-    fireEvent.click(screen.getByRole("button", { name: "Increase Qty: PLT-12" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Pallet" }));
+    const newPalletQtyInput = screen.getByLabelText("Counted Qty: New Pallet 3");
+    const newPalletCode = newPalletQtyInput.getAttribute("aria-label")?.replace("Counted Qty: ", "");
+    expect(newPalletCode).toBe("New Pallet 3");
+    fireEvent.change(newPalletQtyInput, { target: { value: "2" } });
     fireEvent.click(screen.getByRole("button", { name: "Review & Post" }));
     fireEvent.click(screen.getByRole("button", { name: "Post Count Sheet" }));
 
@@ -283,7 +286,7 @@ describe("CycleCountManagementPage", () => {
             containerNo: "GCXU5817233",
             palletId: 11,
             skuMasterId: 1,
-            countedQty: 5,
+            countedQty: 6,
             lineNote: undefined
           },
           {
@@ -293,7 +296,83 @@ describe("CycleCountManagementPage", () => {
             containerNo: "GCXU5817233",
             palletId: 12,
             skuMasterId: 1,
-            countedQty: 5,
+            countedQty: 4,
+            lineNote: undefined
+          },
+          {
+            customerId: 1,
+            locationId: 1,
+            storageSection: "TEMP",
+            containerNo: "GCXU5817233",
+            createPallet: true,
+            skuMasterId: 1,
+            countedQty: 2,
+            lineNote: undefined
+          }
+        ]
+      });
+    });
+  });
+
+  it("removes an existing pallet row by posting zero counted qty for that pallet", async () => {
+    createCycleCount.mockResolvedValue({ id: 1 });
+    getPallets.mockResolvedValue([
+      createPalletTrace({
+        id: 11,
+        palletCode: "PLT-11",
+        currentContainerNo: "GCXU5817233",
+        contents: [createPalletContent({ palletId: 11, skuMasterId: 1, quantity: 6 })]
+      }),
+      createPalletTrace({
+        id: 12,
+        palletCode: "PLT-12",
+        currentContainerNo: "GCXU5817233",
+        contents: [createPalletContent({ palletId: 12, skuMasterId: 1, quantity: 4 })]
+      })
+    ]);
+    setPendingInventoryActionContext("cycle-counts", {
+      sourceKey: buildInventoryActionSourceKey(1, "608333"),
+      sku: "608333",
+      customerId: 1
+    });
+
+    renderWithProviders(
+      <CycleCountManagementPage
+        {...defaultProps({
+          items: [createItem({ id: 1, skuMasterId: 1, sku: "608333", quantity: 10, availableQty: 10, customerId: 1, locationId: 1, containerNo: "GCXU5817233" })]
+        })}
+      />
+    );
+
+    expect(await screen.findByText("PLT-11")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove Pallet: PLT-12" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review & Post" }));
+    fireEvent.click(screen.getByRole("button", { name: "Post Count Sheet" }));
+
+    await waitFor(() => {
+      expect(createCycleCount).toHaveBeenCalledWith({
+        countNo: undefined,
+        notes: undefined,
+        lines: [
+          {
+            customerId: 1,
+            locationId: 1,
+            storageSection: "TEMP",
+            containerNo: "GCXU5817233",
+            palletId: 11,
+            skuMasterId: 1,
+            countedQty: 6,
+            lineNote: undefined
+          },
+          {
+            customerId: 1,
+            locationId: 1,
+            storageSection: "TEMP",
+            containerNo: "GCXU5817233",
+            palletId: 12,
+            skuMasterId: 1,
+            countedQty: 0,
             lineNote: undefined
           }
         ]

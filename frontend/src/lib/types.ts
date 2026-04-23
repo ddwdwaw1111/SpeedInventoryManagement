@@ -677,6 +677,7 @@ export type CycleCountLinePayload = {
   storageSection: string;
   containerNo: string;
   palletId?: number;
+  createPallet?: boolean;
   skuMasterId: number;
   countedQty: number;
   lineNote?: string;
