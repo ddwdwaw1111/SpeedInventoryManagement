@@ -84,8 +84,8 @@ function createOutboundDocumentFixture() {
         movementId: 1003,
         itemId: 502,
         itemNumber: "603482",
-        locationId: 1,
-        locationName: "NJ",
+        locationId: 2,
+        locationName: "PA",
         storageSection: "B",
         sku: "603482",
         description: "VBTL",
@@ -105,8 +105,8 @@ function createOutboundDocumentFixture() {
             movementId: 1003,
             itemId: 502,
             itemNumber: "603482",
-            locationId: 1,
-            locationName: "NJ",
+            locationId: 2,
+            locationName: "PA",
             storageSection: "B",
             containerNo: "CAJU5283887",
             allocatedQty: 15,
@@ -134,29 +134,57 @@ runTest("buildPickSheetDocument expands pick allocations into warehouse pick row
   assert.equal(document.fileName, "warehouse-pick-sheet-pl-1001.pdf");
   assert.equal(document.rows.length, 3);
   assert.deepEqual(
-    document.rows.map((row) => row.containerNo),
-    ["SEGU6542651", "SHYA1211-2720", "CAJU5283887"]
+    document.rows.map((row) => row.containerNo).sort(),
+    ["CAJU5283887", "SEGU6542651", "SHYA1211-2720"]
   );
-  assert.deepEqual(
-    document.rows.map((row) => row.quantity),
-    [12, 8, 15]
-  );
-  assert.equal(document.rows[0].pallets, 2);
-  assert.equal(document.rows[0].palletsDetailCtns, "2*10");
   assert.equal(document.totalQty, 35);
 });
 
-runTest("buildPickSheetDefinition keeps internal pick-sheet fields visible", () => {
+runTest("buildPickSheetDocument groups rows into separate warehouse sections", () => {
+  const document = buildPickSheetDocument(createOutboundDocumentFixture());
+
+  assert.equal(document.warehouseGroups.length, 2);
+  const warehouses = document.warehouseGroups.map((group) => group.warehouse);
+  assert.ok(warehouses.includes("NJ"));
+  assert.ok(warehouses.includes("PA"));
+
+  const njGroup = document.warehouseGroups.find((group) => group.warehouse === "NJ");
+  assert.ok(njGroup);
+  assert.equal(njGroup.rows.length, 2);
+  assert.equal(njGroup.totalQty, 20);
+  assert.deepEqual(
+    njGroup.rows.map((row) => row.containerNo),
+    ["SEGU6542651", "SHYA1211-2720"]
+  );
+
+  const paGroup = document.warehouseGroups.find((group) => group.warehouse === "PA");
+  assert.ok(paGroup);
+  assert.equal(paGroup.rows.length, 1);
+  assert.equal(paGroup.totalQty, 15);
+  assert.equal(paGroup.rows[0].containerNo, "CAJU5283887");
+});
+
+runTest("buildPickSheetDefinition renders a titled section per warehouse", () => {
   const document = buildPickSheetDocument(createOutboundDocumentFixture());
   const definition = buildPickSheetDefinition(document);
 
   assert.equal(definition.pageOrientation, "landscape");
   assert.equal(definition.info?.title, "Warehouse Pick Sheet PL-1001");
   assert.ok(Array.isArray(definition.content));
-  const tableBlock = definition.content[2];
-  assert.ok(tableBlock?.table);
-  assert.equal(tableBlock.table.body[0][6].text, "Container No.");
-  assert.equal(tableBlock.table.body[0][8].text, "Pallets");
+
+  const headerTexts = definition.content
+    .map((block) => block?.table?.body?.[0]?.[0]?.text)
+    .filter((text) => typeof text === "string");
+  assert.ok(headerTexts.some((text) => text.includes("Warehouse: NJ")));
+  assert.ok(headerTexts.some((text) => text.includes("Warehouse: PA")));
+
+  const firstRowTable = definition.content.find((block) => {
+    const first = block?.table?.body?.[0]?.[0]?.text;
+    return typeof first === "string" && first === "SN";
+  });
+  assert.ok(firstRowTable);
+  assert.equal(firstRowTable.table.body[0][5].text, "Container No.");
+  assert.equal(firstRowTable.table.body[0][7].text, "Pallets");
 });
 
 runTest("buildDeliveryNoteDocumentFromDocument keeps outward-facing shipment totals and pallet data", () => {

@@ -1,4 +1,6 @@
 import * as pdfMake from "pdfmake/build/pdfmake";
+import { getOutboundDisplayShipDate, getOutboundExpectedShipDate } from "./outboundDates";
+import { normalizeStorageSection } from "./types";
 const PICK_SHEET_LAYOUT_NAME = "pickSheetTable";
 const CJK_FONT_NAME = "NotoSansCJKSC";
 const CJK_FONT_URL_BASE = "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/OTF/SimplifiedChinese";
@@ -25,6 +27,17 @@ const styles = {
         fontSize: 14,
         bold: true,
         color: "#0f172a"
+    },
+    warehouseHeader: {
+        fontSize: 10,
+        bold: true,
+        color: "#ffffff",
+        fillColor: "#1e3a5f"
+    },
+    warehouseSubtotal: {
+        fontSize: 8,
+        italics: true,
+        color: "#475569"
     },
     metaLabel: {
         fontSize: 7,
@@ -79,7 +92,8 @@ const LABELS = {
     packingListNo: "Packing List No.",
     orderRef: "Order No.",
     customer: "Customer",
-    shipDate: "Ship Date",
+    expectedShipDate: "Expected Ship Date",
+    actualShipDate: "Actual Ship Date",
     warehouse: "Warehouse",
     remarks: "Remarks",
     sequence: "SN",
@@ -90,10 +104,11 @@ const LABELS = {
     containerNo: "Container No.",
     qty: "Pick Qty",
     pallets: "Pallets",
-    palletsDetail: "Pallet Detail",
     unit: "UOM",
     internalNotes: "Internal Notes",
     total: "TOTAL",
+    warehouseSubtotal: "Subtotal",
+    unknownWarehouse: "Unassigned",
     generatedBySystem: "System generated document",
     empty: "--",
     subject: "Warehouse Pick Sheet"
@@ -113,11 +128,10 @@ export function buildPickSheetDocument(document) {
                     sku: line.sku,
                     description: line.description,
                     warehouse: line.locationName,
-                    section: line.storageSection || "A",
+                    section: normalizeStorageSection(line.storageSection),
                     containerNo: "",
                     quantity: line.quantity,
                     pallets: line.pallets || 0,
-                    palletsDetailCtns: line.palletsDetailCtns || "",
                     unitLabel: line.unitLabel || "PCS",
                     lineNote: line.lineNote || ""
                 }];
@@ -127,60 +141,123 @@ export function buildPickSheetDocument(document) {
             itemNumber: allocation.itemNumber || line.itemNumber || "",
             sku: line.sku,
             description: line.description,
-            warehouse: allocation.locationName,
-            section: allocation.storageSection || "A",
+            warehouse: allocation.locationName || line.locationName,
+            section: normalizeStorageSection(allocation.storageSection),
             containerNo: allocation.containerNo || "",
             quantity: allocation.allocatedQty,
             pallets: line.pallets || 0,
-            palletsDetailCtns: line.palletsDetailCtns || "",
             unitLabel: line.unitLabel || "PCS",
             lineNote: line.lineNote || ""
         }));
     });
+    const warehouseGroups = groupRowsByWarehouse(rows);
     return {
         fileName: `warehouse-pick-sheet-${sanitizeFileName(document.packingListNo || `outbound-${document.id}`)}.pdf`,
         rows,
+        warehouseGroups,
         packingListNo: document.packingListNo || `OUT-${document.id}`,
         orderRef: safeValue(document.orderRef),
         customerSummary: safeValue(document.customerName),
-        shipDate: safeValue(document.outDate),
+        expectedShipDate: safeValue(getOutboundExpectedShipDate(document)),
+        actualShipDate: safeValue(getOutboundDisplayShipDate(document)),
         warehouseSummary: joinUniqueValues(rows.map((row) => row.warehouse)),
         remarks: safeValue(document.documentNote),
         totalQty: rows.reduce((sum, row) => sum + row.quantity, 0)
     };
 }
+function groupRowsByWarehouse(rows) {
+    const groups = [];
+    const indexByKey = new Map();
+    for (const row of rows) {
+        const key = (row.warehouse || "").trim() || LABELS.unknownWarehouse;
+        const existingIndex = indexByKey.get(key);
+        if (existingIndex === undefined) {
+            indexByKey.set(key, groups.length);
+            groups.push({ warehouse: key, rows: [row], totalQty: row.quantity });
+            continue;
+        }
+        const group = groups[existingIndex];
+        group.rows.push(row);
+        group.totalQty += row.quantity;
+    }
+    for (const group of groups) {
+        group.rows.sort((left, right) => {
+            const sectionCompare = left.section.localeCompare(right.section);
+            if (sectionCompare !== 0)
+                return sectionCompare;
+            const containerCompare = left.containerNo.localeCompare(right.containerNo);
+            if (containerCompare !== 0)
+                return containerCompare;
+            return left.sku.localeCompare(right.sku);
+        });
+    }
+    return groups;
+}
 export function buildPickSheetDefinition(document) {
     const printedAt = formatTimestamp(new Date().toISOString(), true);
-    const tableBody = [
-        [
-            headerCell(LABELS.sequence),
-            headerCell(LABELS.itemNumber),
-            headerCell(LABELS.sku),
-            headerCell(LABELS.description),
-            headerCell(LABELS.warehouse),
-            headerCell(LABELS.section),
-            headerCell(LABELS.containerNo),
-            headerCell(LABELS.qty),
-            headerCell(LABELS.pallets),
-            headerCell(LABELS.palletsDetail),
-            headerCell(LABELS.unit),
-            headerCell(LABELS.internalNotes)
-        ],
-        ...document.rows.map((row, index) => ([
-            bodyCell(String(index + 1), "tableCellCenter"),
-            bodyCell(row.itemNumber || LABELS.empty, "tableCellCenter"),
-            bodyCell(row.sku, "tableCellCenter"),
-            bodyCell(row.description || LABELS.empty, "tableCell"),
-            bodyCell(row.warehouse || LABELS.empty, "tableCell"),
-            bodyCell(row.section || LABELS.empty, "tableCellCenter"),
-            bodyCell(row.containerNo || LABELS.empty, "tableCellCenter"),
-            bodyCell(formatInteger(row.quantity), "tableCellRight"),
-            bodyCell(formatInteger(row.pallets), "tableCellRight"),
-            bodyCell(row.palletsDetailCtns || LABELS.empty, "tableCell"),
-            bodyCell(row.unitLabel || "PCS", "tableCellCenter"),
-            bodyCell(row.lineNote || LABELS.empty, "tableCell")
-        ]))
-    ];
+    const warehouseSections = [];
+    let runningSequence = 0;
+    for (const group of document.warehouseGroups) {
+        warehouseSections.push({
+            margin: [0, 10, 0, 0],
+            table: {
+                widths: ["*", "auto"],
+                body: [[
+                        {
+                            text: `${LABELS.warehouse}: ${group.warehouse}`,
+                            style: "warehouseHeader",
+                            margin: [6, 3, 6, 3]
+                        },
+                        {
+                            text: `${LABELS.warehouseSubtotal}: ${formatInteger(group.totalQty)}`,
+                            style: "warehouseHeader",
+                            margin: [6, 3, 6, 3],
+                            alignment: "right"
+                        }
+                    ]]
+            },
+            layout: "noBorders"
+        });
+        const tableBody = [
+            [
+                headerCell(LABELS.sequence),
+                headerCell(LABELS.itemNumber),
+                headerCell(LABELS.sku),
+                headerCell(LABELS.description),
+                headerCell(LABELS.section),
+                headerCell(LABELS.containerNo),
+                headerCell(LABELS.qty),
+                headerCell(LABELS.pallets),
+                headerCell(LABELS.unit),
+                headerCell(LABELS.internalNotes)
+            ],
+            ...group.rows.map((row) => {
+                runningSequence += 1;
+                return [
+                    bodyCell(String(runningSequence), "tableCellCenter"),
+                    bodyCell(row.itemNumber || LABELS.empty, "tableCellCenter"),
+                    bodyCell(row.sku, "tableCellCenter"),
+                    bodyCell(row.description || LABELS.empty, "tableCell"),
+                    bodyCell(row.section || LABELS.empty, "tableCellCenter"),
+                    bodyCell(row.containerNo || LABELS.empty, "tableCellCenter"),
+                    bodyCell(formatInteger(row.quantity), "tableCellRight"),
+                    bodyCell(formatInteger(row.pallets), "tableCellRight"),
+                    bodyCell(row.unitLabel || "PCS", "tableCellCenter"),
+                    bodyCell(row.lineNote || LABELS.empty, "tableCell")
+                ];
+            })
+        ];
+        warehouseSections.push({
+            margin: [0, 2, 0, 0],
+            table: {
+                headerRows: 1,
+                dontBreakRows: true,
+                widths: [20, 60, 58, "*", 52, 94, 52, 44, 44, 120],
+                body: tableBody
+            },
+            layout: PICK_SHEET_LAYOUT_NAME
+        });
+    }
     const content = [
         {
             text: LABELS.title,
@@ -196,28 +273,19 @@ export function buildPickSheetDefinition(document) {
                         metaBlock(LABELS.packingListNo, document.packingListNo),
                         metaBlock(LABELS.orderRef, document.orderRef || LABELS.empty),
                         metaBlock(LABELS.customer, document.customerSummary || LABELS.empty),
-                        metaBlock(LABELS.shipDate, formatDateLabel(document.shipDate))
+                        metaBlock(LABELS.actualShipDate, formatDateLabel(document.actualShipDate))
                     ],
                     [
                         metaSpanBlock(LABELS.warehouse, document.warehouseSummary || LABELS.empty, 2),
                         {},
-                        metaSpanBlock(LABELS.remarks, document.remarks || LABELS.empty, 2),
-                        {}
+                        metaBlock(LABELS.expectedShipDate, formatDateLabel(document.expectedShipDate)),
+                        metaBlock(LABELS.remarks, document.remarks || LABELS.empty)
                     ]
                 ]
             },
             layout: "noBorders"
         },
-        {
-            margin: [0, 4, 0, 0],
-            table: {
-                headerRows: 1,
-                dontBreakRows: true,
-                widths: [20, 54, 52, "*", 84, 38, 74, 44, 44, 86, 38, 90],
-                body: tableBody
-            },
-            layout: PICK_SHEET_LAYOUT_NAME
-        },
+        ...warehouseSections,
         {
             margin: [0, 8, 0, 0],
             alignment: "right",

@@ -1,4 +1,5 @@
 import * as pdfMake from "pdfmake/build/pdfmake";
+import { getOutboundDisplayShipDate, getOutboundExpectedShipDate } from "./outboundDates";
 const DELIVERY_NOTE_LAYOUT_NAME = "deliveryNoteTable";
 const CJK_FONT_NAME = "NotoSansCJKSC";
 const CJK_FONT_URL_BASE = "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/OTF/SimplifiedChinese";
@@ -92,7 +93,8 @@ const LABELS = {
     shipToName: "Ship-to Name",
     shipToAddress: "Ship-to Address",
     shipToContact: "Ship-to Contact",
-    outDate: "Ship Date",
+    expectedShipDate: "Expected Ship Date",
+    actualShipDate: "Actual Ship Date",
     warehouse: "Warehouse",
     carrier: "Carrier",
     remarks: "Remarks",
@@ -102,7 +104,6 @@ const LABELS = {
     description: "Item Description",
     qty: "Ship Qty",
     pallets: "Pallets",
-    palletsDetail: "Pallet Detail",
     unit: "UOM",
     cartonSize: "Carton Size (mm)",
     netWeight: "Net Wt. (kg)",
@@ -133,7 +134,8 @@ export function buildDeliveryNoteDocumentFromDocument(document) {
         shipToContact: safeValue(document.shipToContact),
         carrierName: safeValue(document.carrierName),
         storageSummary: joinUniqueValues(document.lines.map((line) => `${line.locationName}${line.storageSection ? ` / ${line.storageSection}` : ""}`)),
-        outDate: safeValue(document.outDate),
+        expectedShipDate: safeValue(getOutboundExpectedShipDate(document)),
+        actualShipDate: safeValue(getOutboundDisplayShipDate(document)),
         notes: collectNotes(document.lines.map((line) => toDeliveryNoteRowFromLine(line, document))),
         totalQty: document.totalQty,
         totalNetWeightKgs: document.totalNetWeightKgs,
@@ -151,7 +153,6 @@ export function buildDeliveryNoteDefinition(document) {
             headerCell(LABELS.description),
             headerCell(LABELS.qty),
             headerCell(LABELS.pallets),
-            headerCell(LABELS.palletsDetail),
             headerCell(LABELS.unit),
             headerCell(LABELS.cartonSize),
             headerCell(LABELS.netWeight),
@@ -164,7 +165,6 @@ export function buildDeliveryNoteDefinition(document) {
             bodyCell(displayDescription(row), "tableCell"),
             bodyCell(formatInteger(Math.abs(row.quantity)), "tableCellRight"),
             bodyCell(formatInteger(row.pallets), "tableCellRight"),
-            bodyCell(row.palletsDetailCtns || LABELS.empty, "tableCell"),
             bodyCell(row.unitLabel || "PCS", "tableCellCenter"),
             bodyCell(row.cartonSizeMm || LABELS.empty, "tableCellCenter"),
             bodyCell(formatDecimal(row.netWeightKgs), "tableCellRight"),
@@ -186,19 +186,19 @@ export function buildDeliveryNoteDefinition(document) {
                         metaBlock(LABELS.packingListNo, document.packingListNo),
                         metaBlock(LABELS.orderRef, document.orderRef || LABELS.empty),
                         metaBlock(LABELS.customer, document.customerSummary || LABELS.empty),
-                        metaBlock(LABELS.outDate, formatDateLabel(document.outDate))
+                        metaBlock(LABELS.actualShipDate, formatDateLabel(document.actualShipDate))
                     ],
                     [
                         metaBlock(LABELS.shipToName, document.shipToName || LABELS.empty),
                         metaBlock(LABELS.shipToContact, document.shipToContact || LABELS.empty),
                         metaBlock(LABELS.carrier, document.carrierName || LABELS.empty),
-                        metaBlock(LABELS.warehouse, document.storageSummary || LABELS.empty)
+                        metaBlock(LABELS.expectedShipDate, formatDateLabel(document.expectedShipDate))
                     ],
                     [
                         metaSpanBlock(LABELS.shipToAddress, document.shipToAddress || LABELS.empty, 2),
                         {},
-                        metaSpanBlock(LABELS.remarks, noteText, 2),
-                        {}
+                        metaBlock(LABELS.remarks, noteText),
+                        metaBlock(LABELS.warehouse, document.storageSummary || LABELS.empty)
                     ]
                 ]
             },
@@ -209,7 +209,7 @@ export function buildDeliveryNoteDefinition(document) {
             table: {
                 headerRows: 1,
                 dontBreakRows: true,
-                widths: [20, 52, 54, "*", 44, 42, 72, 42, 72, 48, 52],
+                widths: [20, 52, 54, "*", 48, 48, 42, 86, 52, 56],
                 body: tableBody
             },
             layout: DELIVERY_NOTE_LAYOUT_NAME
@@ -297,14 +297,14 @@ function toDeliveryNoteRowFromLine(line, document) {
         description: line.description,
         quantity: line.quantity,
         pallets: line.pallets || 0,
-        palletsDetailCtns: line.palletsDetailCtns || "",
         unitLabel: line.unitLabel || "PCS",
         cartonSizeMm: line.cartonSizeMm,
         netWeightKgs: line.netWeightKgs,
         grossWeightKgs: line.grossWeightKgs,
         documentNote: document.documentNote,
         createdAt: line.createdAt,
-        outDate: document.outDate
+        expectedShipDate: getOutboundExpectedShipDate(document),
+        actualShipDate: getOutboundDisplayShipDate(document)
     };
 }
 function formatDateLabel(value) {

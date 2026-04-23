@@ -1982,6 +1982,108 @@ func (s *Store) attachOutboundPickAllocations(ctx context.Context, linesByID map
 		attachedLineIDs[allocationRow.LineID] = struct{}{}
 	}
 
+	if err := s.attachOutboundPickPalletAllocations(ctx, linesByID, attachedLineIDs); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *Store) attachOutboundPickPalletAllocations(ctx context.Context, linesByID map[int64]*OutboundDocumentLine, attachedLineIDs map[int64]struct{}) error {
+	palletIDSet := make(map[int64]struct{})
+	for lineID, line := range linesByID {
+		if _, attached := attachedLineIDs[lineID]; attached {
+			continue
+		}
+		for _, pick := range line.PickPallets {
+			if pick.PalletID > 0 {
+				palletIDSet[pick.PalletID] = struct{}{}
+			}
+		}
+	}
+	if len(palletIDSet) == 0 {
+		return nil
+	}
+
+	palletIDs := make([]int64, 0, len(palletIDSet))
+	for palletID := range palletIDSet {
+		palletIDs = append(palletIDs, palletID)
+	}
+
+	type palletAllocationInfo struct {
+		PalletID       int64     `db:"pallet_id"`
+		LocationID     int64     `db:"location_id"`
+		LocationName   string    `db:"location_name"`
+		StorageSection string    `db:"storage_section"`
+		ContainerNo    string    `db:"container_no"`
+		ItemNumber     string    `db:"item_number"`
+		CreatedAt      time.Time `db:"created_at"`
+	}
+
+	query, args, err := sqlx.In(`
+		SELECT
+			p.id AS pallet_id,
+			p.current_location_id AS location_id,
+			COALESCE(sl.name, '') AS location_name,
+			COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP') AS storage_section,
+			COALESCE(NULLIF(p.current_container_no, ''), cv.container_no, '') AS container_no,
+			COALESCE(sm.item_number, '') AS item_number,
+			p.created_at AS created_at
+		FROM pallets p
+		LEFT JOIN storage_locations sl ON sl.id = p.current_location_id
+		LEFT JOIN sku_master sm ON sm.id = p.sku_master_id
+		LEFT JOIN container_visits cv ON cv.id = p.container_visit_id
+		WHERE p.id IN (?)
+	`, palletIDs)
+	if err != nil {
+		return fmt.Errorf("build pallet allocation fallback query: %w", err)
+	}
+
+	palletRows := make([]palletAllocationInfo, 0, len(palletIDs))
+	if err := s.db.SelectContext(ctx, &palletRows, s.db.Rebind(query), args...); err != nil {
+		return fmt.Errorf("load pallet allocation fallback: %w", err)
+	}
+	palletByID := make(map[int64]palletAllocationInfo, len(palletRows))
+	for _, row := range palletRows {
+		palletByID[row.PalletID] = row
+	}
+
+	for lineID, line := range linesByID {
+		if _, attached := attachedLineIDs[lineID]; attached {
+			continue
+		}
+		if len(line.PickPallets) == 0 {
+			continue
+		}
+		for index, pick := range line.PickPallets {
+			if pick.PalletID <= 0 || pick.Quantity <= 0 {
+				continue
+			}
+			info, ok := palletByID[pick.PalletID]
+			if !ok {
+				continue
+			}
+			itemNumber := line.ItemNumber
+			if itemNumber == "" {
+				itemNumber = info.ItemNumber
+			}
+			line.PickAllocations = append(line.PickAllocations, OutboundPickAllocation{
+				ID:             -(int64(index) + 1),
+				LineID:         lineID,
+				ItemNumber:     itemNumber,
+				LocationID:     info.LocationID,
+				LocationName:   firstNonEmpty(info.LocationName, line.LocationName),
+				StorageSection: fallbackSection(info.StorageSection),
+				ContainerNo:    strings.TrimSpace(info.ContainerNo),
+				AllocatedQty:   pick.Quantity,
+				CreatedAt:      info.CreatedAt,
+			})
+		}
+		if len(line.PickAllocations) > 0 {
+			attachedLineIDs[lineID] = struct{}{}
+		}
+	}
+
 	return nil
 }
 
@@ -1998,7 +2100,7 @@ func (s *Store) listOutboundPickRowsByLineIDs(ctx context.Context, lineIDs []int
 			p.current_location_id AS location_id,
 			COALESCE(sl.name, l.location_name_snapshot) AS location_name_snapshot,
 			COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP') AS storage_section,
-			COALESCE(p.current_container_no, '') AS container_no_snapshot,
+			COALESCE(NULLIF(p.current_container_no, ''), cv.container_no, '') AS container_no_snapshot,
 			SUM(op.picked_qty) AS allocated_qty,
 			MIN(op.created_at) AS created_at
 		FROM outbound_picks op
@@ -2006,6 +2108,7 @@ func (s *Store) listOutboundPickRowsByLineIDs(ctx context.Context, lineIDs []int
 		JOIN outbound_document_lines l ON l.id = op.outbound_line_id
 		LEFT JOIN sku_master sm ON sm.id = p.sku_master_id
 		LEFT JOIN storage_locations sl ON sl.id = p.current_location_id
+		LEFT JOIN container_visits cv ON cv.id = p.container_visit_id
 		WHERE op.outbound_line_id IN (?)
 		GROUP BY
 			op.outbound_line_id,
@@ -2013,7 +2116,7 @@ func (s *Store) listOutboundPickRowsByLineIDs(ctx context.Context, lineIDs []int
 			p.current_location_id,
 			COALESCE(sl.name, l.location_name_snapshot),
 			COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP'),
-			COALESCE(p.current_container_no, '')
+			COALESCE(NULLIF(p.current_container_no, ''), cv.container_no, '')
 		ORDER BY line_id ASC, id ASC
 	`, lineIDs)
 	if err != nil {
