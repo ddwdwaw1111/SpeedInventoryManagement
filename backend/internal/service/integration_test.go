@@ -480,12 +480,15 @@ func TestInventoryAdjustmentUsesPalletBalanceIntegration(t *testing.T) {
 	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
 	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
 	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 10, DefaultStorageSection)
+	palletID := mustLoadSinglePalletIDForItem(t, ctx, store, item)
+	adjustmentLine := adjustmentLineFromItem(item, -2, "reduce two units")
+	adjustmentLine.PalletID = palletID
 
 	adjustment, err := store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
 		ReasonCode: "CORRECTION",
 		Notes:      "Use pallet-backed quantity",
 		Lines: []CreateInventoryAdjustmentLineInput{
-			adjustmentLineFromItem(item, -2, "reduce two units"),
+			adjustmentLine,
 		},
 	})
 	if err != nil {
@@ -504,6 +507,81 @@ func TestInventoryAdjustmentUsesPalletBalanceIntegration(t *testing.T) {
 	itemAfterAdjustment := mustFindItemByID(t, ctx, store, item.ID)
 	if itemAfterAdjustment.Quantity != 8 {
 		t.Fatalf("expected pallet-backed on-hand 8 after adjustment, got %d", itemAfterAdjustment.Quantity)
+	}
+}
+
+func TestInventoryAdjustmentRequiresPalletSelectionIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "AdjustmentPalletRequiredCustomer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "AdjustmentPalletRequiredLocation-"+suffix)
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "ADJ-PALLET-REQ-"+suffix, 10, DefaultStorageSection)
+
+	if _, err := store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
+		ReasonCode: "CORRECTION",
+		Lines: []CreateInventoryAdjustmentLineInput{
+			adjustmentLineFromItem(item, -2, "missing pallet"),
+		},
+	}); err == nil || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected adjustment without pallet to fail with ErrInvalidInput, got %v", err)
+	}
+}
+
+func TestInventoryAdjustmentCanIncreaseSelectedPalletIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "AdjustmentPositiveCustomer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "AdjustmentPositiveLocation-"+suffix)
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "ADJ-POS-"+suffix, 10, DefaultStorageSection)
+	palletID := mustLoadSinglePalletIDForItem(t, ctx, store, item)
+	adjustmentLine := adjustmentLineFromItem(item, 3, "increase selected pallet")
+	adjustmentLine.PalletID = palletID
+
+	adjustment, err := store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
+		ReasonCode: "CORRECTION",
+		Lines: []CreateInventoryAdjustmentLineInput{
+			adjustmentLine,
+		},
+	})
+	if err != nil {
+		t.Fatalf("create positive selected-pallet adjustment: %v", err)
+	}
+
+	if len(adjustment.Lines) != 1 {
+		t.Fatalf("expected 1 positive selected-pallet adjustment line, got %d", len(adjustment.Lines))
+	}
+	if adjustment.Lines[0].BeforeQty != 10 || adjustment.Lines[0].AfterQty != 13 {
+		t.Fatalf("expected before/after qty 10->13, got %+v", adjustment.Lines[0])
+	}
+
+	var palletQty int
+	if err := store.db.GetContext(ctx, &palletQty, `
+		SELECT COALESCE(SUM(quantity), 0)
+		FROM pallet_items
+		WHERE pallet_id = ?
+	`, palletID); err != nil {
+		t.Fatalf("load selected pallet quantity after positive adjustment: %v", err)
+	}
+	if palletQty != 13 {
+		t.Fatalf("expected selected pallet quantity 13 after positive adjustment, got %d", palletQty)
+	}
+
+	var ledgerQty int
+	if err := store.db.GetContext(ctx, &ledgerQty, `
+		SELECT COALESCE(SUM(quantity_change), 0)
+		FROM stock_ledger
+		WHERE source_document_type = 'ADJUSTMENT'
+		  AND source_document_id = ?
+		  AND pallet_id = ?
+	`, adjustment.ID, palletID); err != nil {
+		t.Fatalf("load positive adjustment ledger quantity: %v", err)
+	}
+	if ledgerQty != 3 {
+		t.Fatalf("expected positive adjustment ledger quantity 3, got %d", ledgerQty)
 	}
 }
 
@@ -1147,13 +1225,16 @@ func TestPalletCentricOperationalLedgerIntegration(t *testing.T) {
 	}
 
 	sourceItem := mustFindItemByContainer(t, ctx, store, sourceLocation.ID, DefaultStorageSection, inbound.ContainerNo, item.SKU)
+	adjustmentPalletID := mustLoadSinglePalletIDForItem(t, ctx, store, sourceItem)
+	adjustmentLine := adjustmentLineFromItem(sourceItem, -2, "Broken cartons")
+	adjustmentLine.PalletID = adjustmentPalletID
 
 	adjustment, err := store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
 		AdjustmentNo: "ADJ-" + suffix,
 		ReasonCode:   "DAMAGE",
 		Notes:        "Reduce pallet stock",
 		Lines: []CreateInventoryAdjustmentLineInput{
-			adjustmentLineFromItem(sourceItem, -2, "Broken cartons"),
+			adjustmentLine,
 		},
 	})
 	if err != nil {
@@ -1250,11 +1331,15 @@ func TestPalletCentricOperationalLedgerIntegration(t *testing.T) {
 		t.Fatalf("expected destination pallet item quantity 4 after transfer, got %d", transferInLedgerQty)
 	}
 
+	cycleCountPalletID := mustLoadSinglePalletIDForItem(t, ctx, store, sourceItem)
+	cycleCountLine := cycleCountLineFromItem(sourceItem, 5, "One unit missing after check")
+	cycleCountLine.PalletID = cycleCountPalletID
+
 	count, err := store.CreateCycleCount(ctx, CreateCycleCountInput{
 		CountNo: "CC-" + suffix,
 		Notes:   "Cycle count after transfer",
 		Lines: []CreateCycleCountLineInput{
-			cycleCountLineFromItem(sourceItem, 5, "One unit missing after check"),
+			cycleCountLine,
 		},
 	})
 	if err != nil {
@@ -2491,15 +2576,18 @@ func TestAdjustmentAndTransferActualTimesIntegration(t *testing.T) {
 	}
 
 	sourceItem := mustFindItemByContainer(t, ctx, store, sourceLocation.ID, DefaultStorageSection, inbound.ContainerNo, item.SKU)
+	adjustmentPalletID := mustLoadSinglePalletIDForItem(t, ctx, store, sourceItem)
 
 	adjustmentActual := "2026-04-11T14:30:00Z"
+	adjustmentLine := adjustmentLineFromItem(sourceItem, -2, "actual-time adjustment")
+	adjustmentLine.PalletID = adjustmentPalletID
 	adjustment, err := store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
 		AdjustmentNo:     "ADJ-ACT-" + suffix,
 		ReasonCode:       "CORRECTION",
 		ActualAdjustedAt: adjustmentActual,
 		Notes:            "Backfilled adjustment time",
 		Lines: []CreateInventoryAdjustmentLineInput{
-			adjustmentLineFromItem(sourceItem, -2, "actual-time adjustment"),
+			adjustmentLine,
 		},
 	})
 	if err != nil {
@@ -3064,11 +3152,14 @@ func TestOutboundReservationsBlockOtherInventoryMutationsIntegration(t *testing.
 	if _, err := store.UpdateOutboundDocumentTrackingStatus(ctx, outbound.ID, OutboundTrackingPicking); err != nil {
 		t.Fatalf("start picking outbound for reservation conflict checks: %v", err)
 	}
+	palletID := mustLoadSinglePalletIDForItem(t, ctx, store, item)
 
+	adjustmentLine := adjustmentLineFromItem(item, -3, "adjust reserved stock")
+	adjustmentLine.PalletID = palletID
 	if _, err := store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
 		ReasonCode: "COUNT_DIFF",
 		Lines: []CreateInventoryAdjustmentLineInput{
-			adjustmentLineFromItem(item, -3, "adjust reserved stock"),
+			adjustmentLine,
 		},
 	}); err == nil || !errors.Is(err, ErrReservedStock) {
 		t.Fatalf("expected adjustment to fail with ErrReservedStock, got %v", err)
@@ -3082,9 +3173,11 @@ func TestOutboundReservationsBlockOtherInventoryMutationsIntegration(t *testing.
 		t.Fatalf("expected transfer to fail with ErrReservedStock, got %v", err)
 	}
 
+	cycleCountLine := cycleCountLineFromItem(item, 5, "count reserved stock down")
+	cycleCountLine.PalletID = palletID
 	if _, err := store.CreateCycleCount(ctx, CreateCycleCountInput{
 		Lines: []CreateCycleCountLineInput{
-			cycleCountLineFromItem(item, 5, "count reserved stock down"),
+			cycleCountLine,
 		},
 	}); err == nil || !errors.Is(err, ErrReservedStock) {
 		t.Fatalf("expected cycle count to fail with ErrReservedStock, got %v", err)
@@ -4206,12 +4299,15 @@ func TestCycleCountIntegration(t *testing.T) {
 	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
 	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
 	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 10)
+	palletID := mustLoadSinglePalletIDForItem(t, ctx, store, item)
+	line := cycleCountLineFromItem(item, 7, "Three units missing")
+	line.PalletID = palletID
 
 	count, err := store.CreateCycleCount(ctx, CreateCycleCountInput{
 		CountNo: "CC-" + suffix,
 		Notes:   "Cycle count integration test",
 		Lines: []CreateCycleCountLineInput{
-			cycleCountLineFromItem(item, 7, "Three units missing"),
+			line,
 		},
 	})
 	if err != nil {
@@ -4245,6 +4341,25 @@ func TestCycleCountIntegration(t *testing.T) {
 	}
 	if !countSeen {
 		t.Fatalf("expected pallet-centric cycle count activity feed entry, got %+v", movements)
+	}
+}
+
+func TestCycleCountRequiresPalletSelectionIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "CountPalletRequiredCustomer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "CountPalletRequiredLocation-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "COUNT-PALLET-REQ-"+suffix, 10)
+
+	if _, err := store.CreateCycleCount(ctx, CreateCycleCountInput{
+		CountNo: "CC-PALLET-REQ-" + suffix,
+		Lines: []CreateCycleCountLineInput{
+			cycleCountLineFromItem(item, 7, "missing pallet"),
+		},
+	}); err == nil || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected cycle count without pallet to fail with ErrInvalidInput, got %v", err)
 	}
 }
 

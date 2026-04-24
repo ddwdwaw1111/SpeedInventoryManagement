@@ -380,9 +380,7 @@ describe("CycleCountManagementPage", () => {
     });
   });
 
-  it("submits a prefilled bucket-level cycle count when no pallet breakdown exists", async () => {
-    const onRefresh = vi.fn().mockResolvedValue(undefined);
-    createCycleCount.mockResolvedValue({ id: 1 });
+  it("blocks posting when a selected count line has no pallet breakdown", async () => {
     setPendingInventoryActionContext("cycle-counts", {
       sourceKey: buildInventoryActionSourceKey(1, "608333"),
       sku: "608333",
@@ -392,36 +390,19 @@ describe("CycleCountManagementPage", () => {
     renderWithProviders(
       <CycleCountManagementPage
         {...defaultProps({
-          items: [createItem({ id: 1, skuMasterId: 1, sku: "608333", quantity: 10, availableQty: 10, customerId: 1, locationId: 1, containerNo: "GCXU5817233" })],
-          onRefresh
+          items: [createItem({ id: 1, skuMasterId: 1, sku: "608333", quantity: 10, availableQty: 10, customerId: 1, locationId: 1, containerNo: "GCXU5817233" })]
         })}
       />
     );
 
     await screen.findByText("Count Lines");
-
-    fireEvent.change(screen.getByLabelText("Counted Qty"), { target: { value: "7" } });
+    expect(screen.getByText("No active pallets match this inventory position. Cycle counts are pallet-only until pallet data is repaired.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add Pallet" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Review & Post" }));
-    fireEvent.click(screen.getByRole("button", { name: "Post Count Sheet" }));
 
-    await waitFor(() => {
-      expect(createCycleCount).toHaveBeenCalledWith({
-        countNo: undefined,
-        notes: undefined,
-        lines: [
-          {
-            customerId: 1,
-            locationId: 1,
-            storageSection: "TEMP",
-            containerNo: "GCXU5817233",
-            skuMasterId: 1,
-            countedQty: 7,
-            lineNote: undefined
-          }
-        ]
-      });
-    });
-    expect(onRefresh).toHaveBeenCalled();
+    expect(screen.getByText("Select an inventory position for every draft line, then confirm its pallet breakdown before posting.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Post Count Sheet" })).toBeDisabled();
+    expect(createCycleCount).not.toHaveBeenCalled();
   });
 });
 

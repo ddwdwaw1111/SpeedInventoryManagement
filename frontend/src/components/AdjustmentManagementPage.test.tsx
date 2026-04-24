@@ -165,6 +165,110 @@ describe("AdjustmentManagementPage", () => {
     });
     expect(onRefresh).toHaveBeenCalled();
   });
+
+  it("allows positive adjustments when a specific pallet is selected", async () => {
+    createInventoryAdjustment.mockResolvedValue({ id: 2 });
+    setPendingInventoryActionContext("adjustments", {
+      sourceKey: buildInventoryActionSourceKey(1, "608333"),
+      sku: "608333",
+      customerId: 1,
+      containerNo: "GCXU5817233",
+      palletId: 11
+    });
+    getPallets.mockResolvedValue([
+      createPalletTrace({
+        id: 11,
+        palletCode: "PLT-001",
+        currentContainerNo: "GCXU5817233",
+        contents: [createPalletContent({ palletId: 11, quantity: 6 })]
+      })
+    ]);
+
+    renderWithProviders(
+      <AdjustmentManagementPage
+        {...defaultProps({
+          items: [
+            createItem({
+              id: 1,
+              skuMasterId: 1,
+              sku: "608333",
+              quantity: 10,
+              availableQty: 10,
+              customerId: 1,
+              locationId: 1,
+              locationName: "NJ",
+              storageSection: "TEMP",
+              containerNo: "GCXU5817233"
+            })
+          ]
+        })}
+      />
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Reason Code"), { target: { value: "CORRECTION" } });
+    fireEvent.change(within(dialog).getByLabelText("Pallet"), { target: { value: "11" } });
+    fireEvent.change(within(dialog).getAllByRole("spinbutton")[0]!, { target: { value: "2" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Post Adjustment" }));
+
+    await waitFor(() => {
+      expect(createInventoryAdjustment).toHaveBeenCalledWith({
+        adjustmentNo: undefined,
+        reasonCode: "CORRECTION",
+        actualAdjustedAt: undefined,
+        notes: undefined,
+        lines: [
+          {
+            customerId: 1,
+            locationId: 1,
+            storageSection: "TEMP",
+            containerNo: "GCXU5817233",
+            palletId: 11,
+            skuMasterId: 1,
+            adjustQty: 2,
+            lineNote: undefined
+          }
+        ]
+      });
+    });
+  });
+
+  it("blocks adjustment submission when the selected stock row has no pallet match", async () => {
+    setPendingInventoryActionContext("adjustments", {
+      sourceKey: buildInventoryActionSourceKey(1, "608333"),
+      sku: "608333",
+      customerId: 1,
+      containerNo: "GCXU5817233"
+    });
+
+    renderWithProviders(
+      <AdjustmentManagementPage
+        {...defaultProps({
+          items: [
+            createItem({
+              id: 1,
+              skuMasterId: 1,
+              sku: "608333",
+              quantity: 10,
+              availableQty: 10,
+              customerId: 1,
+              locationId: 1,
+              locationName: "NJ",
+              storageSection: "TEMP",
+              containerNo: "GCXU5817233"
+            })
+          ]
+        })}
+      />
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("This stock row has no active pallet match. Adjustments are pallet-only.")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Pallet")).toBeDisabled();
+    expect(within(dialog).getAllByRole("spinbutton")[0]).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Post Adjustment" })).toBeDisabled();
+    expect(createInventoryAdjustment).not.toHaveBeenCalled();
+  });
 });
 
 function createPalletContent(overrides: Partial<PalletContent> = {}): PalletContent {

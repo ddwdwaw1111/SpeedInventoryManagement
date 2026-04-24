@@ -4,7 +4,7 @@ import ExpandLessOutlinedIcon from "@mui/icons-material/ExpandLessOutlined";
 import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
 import PictureAsPdfOutlinedIcon from "@mui/icons-material/PictureAsPdfOutlined";
 import RefreshOutlinedIcon from "@mui/icons-material/RefreshOutlined";
-import { Button, Chip, Divider, ListItemIcon, ListItemText, Menu, MenuItem } from "@mui/material";
+import { Button, Chip, Divider, ListItemIcon, ListItemText, Menu, MenuItem, Tab, Tabs } from "@mui/material";
 import { BarChart } from "@mui/x-charts";
 import { useEffect, useMemo, useState } from "react";
 
@@ -71,6 +71,7 @@ type BillingContainerSummaryRow = {
 };
 
 type BillingWorkspaceMode = "OVERVIEW" | "STORAGE_SETTLEMENT";
+type BillingPageTab = "CREATE" | "HISTORY";
 
 const BILLING_EXPORT_SHEET_NAME = "Billing Preview";
 
@@ -104,6 +105,7 @@ export function BillingPage({
   const [exportMenuAnchor, setExportMenuAnchor] = useState<HTMLElement | null>(null);
   const [containerNoFilter, setContainerNoFilter] = useState("");
   const [pendingExportMode, setPendingExportMode] = useState<BillingExportMode>("SUMMARY");
+  const [activeTab, setActiveTab] = useState<BillingPageTab>("CREATE");
 
   useEffect(() => {
     let active = true;
@@ -397,7 +399,7 @@ export function BillingPage({
     });
   }
 
-  const rateActions = (
+  const rateActions = activeTab !== "CREATE" ? null : (
     <div className="sheet-actions">
       <Button
         size="small"
@@ -489,39 +491,66 @@ export function BillingPage({
     </div>
   );
 
+  const isCreateTab = activeTab === "CREATE";
+  const isHistoryTab = activeTab === "HISTORY";
+
+  const tabTitle = isHistoryTab
+    ? t("billingTabHistory")
+    : workspaceMode === "STORAGE_SETTLEMENT"
+      ? t("billingStorageSettlementTitle")
+      : t("billingPage");
+  const tabDescription = isHistoryTab
+    ? t("billingTabHistoryDesc")
+    : workspaceMode === "STORAGE_SETTLEMENT"
+      ? t("billingStorageSettlementDesc")
+      : t("billingPageDesc");
+
   return (
     <main className="workspace-main">
       <section className="workbook-panel workbook-panel--full">
         <div className="tab-strip">
           <WorkspacePanelHeader
-            title={workspaceMode === "STORAGE_SETTLEMENT" ? t("billingStorageSettlementTitle") : t("billingPage")}
-            description={workspaceMode === "STORAGE_SETTLEMENT" ? t("billingStorageSettlementDesc") : t("billingPageDesc")}
+            title={tabTitle}
+            description={tabDescription}
             errorMessage={errorMessage}
-            notices={[
-              <span key="assumption">{t("billingDayEndNotice")}</span>
-            ]}
+            notices={isCreateTab ? [<span key="assumption">{t("billingDayEndNotice")}</span>] : []}
             actions={rateActions}
           />
         </div>
 
-        <div style={{ display: "flex", gap: "0.5rem", padding: "0 1rem 1rem", flexWrap: "wrap" }}>
-          <Chip
-            size="small"
-            label={t("billingModeOverview")}
-            color="primary"
-            variant={workspaceMode === "OVERVIEW" ? "filled" : "outlined"}
-            onClick={() => setWorkspaceMode("OVERVIEW")}
-            style={{ cursor: "pointer" }}
+        <Tabs
+          value={activeTab}
+          onChange={(_, value) => setActiveTab(value as BillingPageTab)}
+          aria-label={t("billingPage")}
+          sx={{ px: "1rem", borderBottom: 1, borderColor: "divider", mb: "0.75rem" }}
+        >
+          <Tab value="CREATE" label={t("billingTabCreate")} />
+          <Tab
+            value="HISTORY"
+            label={`${t("billingTabHistory")}${invoices.length > 0 ? ` (${invoices.length})` : ""}`}
           />
-          <Chip
-            size="small"
-            label={t("billingModeStorageSettlement")}
-            color="primary"
-            variant={workspaceMode === "STORAGE_SETTLEMENT" ? "filled" : "outlined"}
-            onClick={() => setWorkspaceMode("STORAGE_SETTLEMENT")}
-            style={{ cursor: "pointer" }}
-          />
-        </div>
+        </Tabs>
+
+        {isCreateTab && (
+          <div style={{ display: "flex", gap: "0.5rem", padding: "0 1rem 1rem", flexWrap: "wrap" }}>
+            <Chip
+              size="small"
+              label={t("billingModeOverview")}
+              color="primary"
+              variant={workspaceMode === "OVERVIEW" ? "filled" : "outlined"}
+              onClick={() => setWorkspaceMode("OVERVIEW")}
+              style={{ cursor: "pointer" }}
+            />
+            <Chip
+              size="small"
+              label={t("billingModeStorageSettlement")}
+              color="primary"
+              variant={workspaceMode === "STORAGE_SETTLEMENT" ? "filled" : "outlined"}
+              onClick={() => setWorkspaceMode("STORAGE_SETTLEMENT")}
+              style={{ cursor: "pointer" }}
+            />
+          </div>
+        )}
 
         {/* ── Filter bar ── */}
         <div className="filter-bar">
@@ -542,34 +571,39 @@ export function BillingPage({
               ))}
             </select>
           </label>
-          <label>
-            {t("billingWarehouseScope")}
-            <select value={selectedWarehouseLocationId} onChange={(event) => setSelectedWarehouseLocationId(event.target.value)}>
-              <option value="all">{t("billingAllWarehouses")}</option>
-              {locations.map((location) => (
-                <option key={location.id} value={location.id}>{location.name}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            {t("billingContainerType")}
-            <select value={selectedContainerType} onChange={(event) => setSelectedContainerType(event.target.value as ContainerType | "all")}>
-              <option value="all">{t("billingAllContainerTypes")}</option>
-              <option value="NORMAL">{containerTypeLabel("NORMAL", t)}</option>
-              <option value="WEST_COAST_TRANSFER">{containerTypeLabel("WEST_COAST_TRANSFER", t)}</option>
-            </select>
-          </label>
-          <label>
-            {t("containerNo")}
-            <input
-              type="search"
-              placeholder={t("billingContainerSearchPlaceholder")}
-              value={containerNoFilter}
-              onChange={(event) => setContainerNoFilter(event.target.value)}
-            />
-          </label>
+          {isCreateTab && (
+            <>
+              <label>
+                {t("billingWarehouseScope")}
+                <select value={selectedWarehouseLocationId} onChange={(event) => setSelectedWarehouseLocationId(event.target.value)}>
+                  <option value="all">{t("billingAllWarehouses")}</option>
+                  {locations.map((location) => (
+                    <option key={location.id} value={location.id}>{location.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                {t("billingContainerType")}
+                <select value={selectedContainerType} onChange={(event) => setSelectedContainerType(event.target.value as ContainerType | "all")}>
+                  <option value="all">{t("billingAllContainerTypes")}</option>
+                  <option value="NORMAL">{containerTypeLabel("NORMAL", t)}</option>
+                  <option value="WEST_COAST_TRANSFER">{containerTypeLabel("WEST_COAST_TRANSFER", t)}</option>
+                </select>
+              </label>
+              <label>
+                {t("containerNo")}
+                <input
+                  type="search"
+                  placeholder={t("billingContainerSearchPlaceholder")}
+                  value={containerNoFilter}
+                  onChange={(event) => setContainerNoFilter(event.target.value)}
+                />
+              </label>
+            </>
+          )}
         </div>
 
+        {isCreateTab && (<>
         {/* ── Quick metrics ── */}
         <div className="metric-ribbon" style={{ padding: "0 1rem 1rem" }}>
           {workspaceMode === "STORAGE_SETTLEMENT" ? (
@@ -710,47 +744,9 @@ export function BillingPage({
           </div>
         )}
 
-        {false && customerId !== "all" && (
-          <div className="billing-cta-banner" style={{ margin: "0 1rem 1rem", padding: "1rem 1.25rem", background: canCreateInvoice ? "rgba(39, 76, 119, 0.06)" : "rgba(0,0,0,0.02)", borderRadius: "var(--radius-md)", border: canCreateInvoice ? "1px solid rgba(39, 76, 119, 0.15)" : "1px dashed var(--gray-4)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
-            <div>
-              <strong style={{ fontSize: "0.938rem" }}>
-                {workspaceMode === "STORAGE_SETTLEMENT"
-                  ? (canCreateInvoice ? `${t("billingCreateStorageInvoice")} - ${billingPreview.customerName}` : t("billingStorageSettlementCustomerRequired"))
-                  : (canCreateInvoice ? `${t("billingCreateMixedInvoice")} - ${billingPreview.customerName}` : t("billingSelectCustomerHint"))
-                }
-              </strong>
-              {canCreateInvoice && (
-                <div style={{ fontSize: "0.813rem", color: "var(--ink-soft)", marginTop: "0.25rem", display: "flex", alignItems: "center", flexWrap: "wrap", gap: "0.375rem" }}>
-                  {activeInvoiceLines.length} {t("billingLineCount").toLowerCase()} · {formatMoney(activeGrandTotal)}
-                  {containerNoFilter.trim() && (
-                    <span style={{ background: "rgba(39,76,119,0.12)", borderRadius: "var(--radius-sm)", padding: "0 0.4rem", fontSize: "0.75rem", fontFamily: "monospace", letterSpacing: "0.03em" }}>
-                      {containerNoFilter.trim().toUpperCase()}
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-            {canCreateInvoice && (
-              <Button
-                variant="contained"
-                color="primary"
-                disabled={isCreatingInvoice}
-                startIcon={<AddCircleOutlineOutlinedIcon fontSize="small" />}
-                onClick={handleCreateInvoice}
-              >
-                {isCreatingInvoice ? "..." : t("billingCreateInvoice")}
-              </Button>
-            )}
-          </div>
-        )}
+        </>)}
 
-        {false && customerId === "all" && billingPreview.invoiceLines.length === 0 && (
-          <div style={{ margin: "0 1rem 1rem", padding: "1rem 1.25rem", background: "rgba(0,0,0,0.02)", borderRadius: "var(--radius-md)", border: "1px dashed var(--gray-4)", textAlign: "center", color: "var(--ink-soft)", fontSize: "0.875rem" }}>
-            {t("billingWorkflowHint")}
-          </div>
-        )}
-
-        {/* ── Settlement overview / Invoice history (always visible) ── */}
+        {isHistoryTab && (
         <section className="workbook-panel" style={{ margin: "0 1rem 1rem" }}>
           <WorkspacePanelHeader
             title={t("billingSettlementOverview")}
@@ -833,7 +829,10 @@ export function BillingPage({
           )}
         </section>
 
-        {/* ── Container billing breakdown (always visible) ── */}
+        )}
+
+        {isCreateTab && (<>
+        {/* ── Container billing breakdown ── */}
         <section className="workbook-panel" style={{ margin: "0 1rem 1rem" }}>
           <WorkspacePanelHeader
             title={workspaceMode === "STORAGE_SETTLEMENT" ? t("billingStorageSettlementTable") : t("billingContainerTrace")}
@@ -950,69 +949,6 @@ export function BillingPage({
             </div>
           )}
         </section>
-
-        {false && !isLoading && (
-          <section className="workbook-panel" style={{ margin: "0 1rem 1rem" }}>
-            <WorkspacePanelHeader
-              title={t("billingContainerTrace")}
-              description={t("billingContainerTraceDesc")}
-            />
-            {activeContainerRows.length === 0 ? (
-              <WorkspaceTableEmptyState
-                title={containerNoFilter.trim() ? `${t("noBillingData")} — ${containerNoFilter.trim().toUpperCase()}` : t("noBillingData")}
-                description={t("billingContainerTraceDesc")}
-              />
-            ) : (
-              <div className="sheet-table-wrap">
-                <table className="sheet-table" aria-label={t("billingContainerTrace")}>
-                  <thead>
-                    <tr>
-                      <th>{t("containerNo")}</th>
-                      <th>{t("customer")}</th>
-                      <th>{t("reference")}</th>
-                      <th>{t("currentStorage")}</th>
-                      <th>{t("billingInboundCharges")}</th>
-                      <th>{t("billingWrappingCharges")}</th>
-                      <th>{t("billingStorageCharges")}</th>
-                      <th>{t("billingOutboundCharges")}</th>
-                      <th>{t("amount")}</th>
-                      <th>{t("actions")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activeContainerRows.map((row) => (
-                      <tr key={`${row.customerId}-${row.containerNo}`}>
-                        <td className="cell--mono">{row.containerNo}</td>
-                        <td>{row.customerName}</td>
-                        <td>{renderReferencePreview(row.references)}</td>
-                        <td>{row.warehousesTouched.join(", ") || "-"}</td>
-                        <td className="cell--mono">{formatMoney(row.inboundAmount)}</td>
-                        <td className="cell--mono">{formatMoney(row.wrappingAmount)}</td>
-                        <td className="cell--mono">{formatMoney(row.storageAmount)}</td>
-                        <td className="cell--mono">{formatMoney(row.outboundAmount)}</td>
-                        <td className="cell--mono">{formatMoney(row.totalAmount)}</td>
-                        <td>
-                          {isNavigableContainerNo(row.containerNo) ? (
-                            <Button
-                              size="small"
-                              variant="text"
-                              onClick={() => {
-                                setContainerNoFilter(row.containerNo);
-                                onOpenBillingContainerDetail(billingPreview.startDate, billingPreview.endDate, customerId, row.containerNo, warehouseLocationId);
-                              }}
-                            >
-                              {t("billingViewContainerInvoice")}
-                            </Button>
-                          ) : "-"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-        )}
 
         {/* ── Collapsible detail sections ── */}
         {showDetailSections && (
@@ -1180,6 +1116,7 @@ export function BillingPage({
             </section>
           </>
         )}
+        </>)}
       </section>
       <ExportExcelDialog
         open={isExportDialogOpen}

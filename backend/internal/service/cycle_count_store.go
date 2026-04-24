@@ -533,10 +533,7 @@ func validateCycleCountInput(input CreateCycleCountInput) error {
 	bucketScopes := make(map[string]string, len(input.Lines))
 	for _, line := range input.Lines {
 		bucketKey := buildCycleCountBucketKey(line)
-		scopeMode := "bucket"
-		if line.PalletID > 0 || line.CreatePallet {
-			scopeMode = "pallet"
-		}
+		scopeMode := "pallet"
 		if existingScope, exists := bucketScopes[bucketKey]; exists && existingScope != scopeMode {
 			return fmt.Errorf("%w: cannot mix bucket-level and pallet-level count lines for the same stock position", ErrInvalidInput)
 		}
@@ -551,8 +548,8 @@ func validateCycleCountInput(input CreateCycleCountInput) error {
 			return fmt.Errorf("%w: new pallet count lines cannot target an existing pallet id", ErrInvalidInput)
 		case !line.CreatePallet && line.PalletCode != "":
 			return fmt.Errorf("%w: pallet code can only be set when creating a new pallet", ErrInvalidInput)
-		case line.PalletID < 0:
-			return fmt.Errorf("%w: pallet is invalid", ErrInvalidInput)
+		case !line.CreatePallet && line.PalletID <= 0:
+			return fmt.Errorf("%w: pallet is required unless creating a new pallet", ErrInvalidInput)
 		case line.SKUMasterID <= 0:
 			return fmt.Errorf("%w: sku is required", ErrInvalidInput)
 		case line.CountedQty < 0:
@@ -634,7 +631,7 @@ func (s *Store) applyCycleCountPalletDeltaTx(
 		return s.createCycleCountPalletTx(ctx, tx, itemID, line, varianceQty)
 	}
 	if line.PalletID <= 0 {
-		return s.applyPalletDeltaForItemTx(ctx, tx, itemID, line.SKUMasterID, varianceQty)
+		return nil, fmt.Errorf("%w: pallet is required unless creating a new pallet", ErrInvalidInput)
 	}
 
 	bucket := palletSourceBucket{

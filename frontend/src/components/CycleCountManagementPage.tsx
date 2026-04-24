@@ -126,8 +126,7 @@ function createCycleCountPalletCount(
 
 function createCycleCountLinesFromItems(items: Item[]) {
   return items.map((item) => createCycleCountLine({
-    bucketKey: buildInventoryProjectionKey(toInventoryProjectionRef(item)),
-    countedQty: item.quantity
+    bucketKey: buildInventoryProjectionKey(toInventoryProjectionRef(item))
   }));
 }
 
@@ -228,9 +227,7 @@ export function CycleCountManagementPage({
             .filter((entry): entry is DraftPreviewPalletLine => Boolean(entry))
           : [];
         const countedQty = selectedItem
-          ? palletPreviewLines.length > 0
-            ? palletPreviewLines.reduce((sum, palletLine) => sum + palletLine.countedQty, 0)
-            : Math.max(0, line.countedQty)
+          ? palletPreviewLines.reduce((sum, palletLine) => sum + palletLine.countedQty, 0)
           : 0;
 
         return {
@@ -240,7 +237,7 @@ export function CycleCountManagementPage({
           systemQty,
           countedQty,
           varianceQty: selectedItem ? countedQty - systemQty : 0,
-          isComplete: Boolean(selectedItem),
+          isComplete: Boolean(selectedItem) && palletPreviewLines.length > 0,
           palletPreviewLines
         };
       }),
@@ -259,6 +256,9 @@ export function CycleCountManagementPage({
       if (!previewLine.selectedItem) {
         incompleteLineCount += 1;
         return;
+      }
+      if (!previewLine.isComplete) {
+        incompleteLineCount += 1;
       }
 
       selectedLineCount += 1;
@@ -391,11 +391,7 @@ export function CycleCountManagementPage({
             : buildCycleCountPalletCounts(nextPalletOptions, nextSelectedItem.skuMasterId, line.palletCounts)
           : [];
         const nextCountedQty = nextSelectedItem
-          ? nextPalletCounts.length > 0
-            ? sumCycleCountPalletCounts(nextPalletCounts)
-            : nextBucketKey !== line.bucketKey
-              ? nextSelectedItem.quantity
-              : Math.max(0, line.countedQty)
+          ? sumCycleCountPalletCounts(nextPalletCounts)
           : 0;
 
         if (
@@ -559,11 +555,7 @@ export function CycleCountManagementPage({
       ? {
           ...line,
           bucketKey: nextBucketKey,
-          countedQty: nextItem
-            ? nextPalletCounts.length > 0
-              ? sumCycleCountPalletCounts(nextPalletCounts)
-              : nextItem.quantity
-            : 0,
+          countedQty: nextItem ? sumCycleCountPalletCounts(nextPalletCounts) : 0,
           palletCounts: nextPalletCounts
         }
       : line));
@@ -650,28 +642,26 @@ export function CycleCountManagementPage({
     setErrorMessage("");
 
     try {
+      if (draftPreviewLines.filter((previewLine) => previewLine.selectedItem).length !== lines.length) {
+        throw new Error(t("cycleCountCompleteLines"));
+      }
+      if (draftPreviewLines.some((previewLine) => previewLine.selectedItem && previewLine.palletPreviewLines.length === 0)) {
+        throw new Error(t("cycleCountRequirePalletBreakdown"));
+      }
+
       const preparedLines = draftPreviewLines
         .filter((previewLine) => previewLine.selectedItem)
-        .flatMap((previewLine) => previewLine.palletPreviewLines.length > 0
-          ? previewLine.palletPreviewLines
-            .filter((palletLine) => !palletLine.isNew || palletLine.countedQty > 0)
-            .map((palletLine) => ({
-              ...toInventoryProjectionRef(previewLine.selectedItem!),
-              ...(palletLine.isNew ? { createPallet: true } : { palletId: palletLine.palletId }),
-              countedQty: palletLine.countedQty,
-              lineNote: previewLine.line.lineNote || undefined
-            }))
-          : [{
-              ...toInventoryProjectionRef(previewLine.selectedItem!),
-              countedQty: previewLine.countedQty,
-              lineNote: previewLine.line.lineNote || undefined
-            }]);
+        .flatMap((previewLine) => previewLine.palletPreviewLines
+          .filter((palletLine) => !palletLine.isNew || palletLine.countedQty > 0)
+          .map((palletLine) => ({
+            ...toInventoryProjectionRef(previewLine.selectedItem!),
+            ...(palletLine.isNew ? { createPallet: true } : { palletId: palletLine.palletId }),
+            countedQty: palletLine.countedQty,
+            lineNote: previewLine.line.lineNote || undefined
+          })));
 
       if (preparedLines.length === 0) {
         throw new Error(t("cycleCountRequireLine"));
-      }
-      if (draftPreviewLines.filter((previewLine) => previewLine.selectedItem).length !== lines.length) {
-        throw new Error(t("cycleCountCompleteLines"));
       }
 
       await api.createCycleCount({
@@ -958,14 +948,19 @@ export function CycleCountManagementPage({
                         const { line, selectedItem, systemQty, varianceQty, palletPreviewLines } = previewLine;
                         const hasPalletBreakdown = palletPreviewLines.length > 0;
                         const matchedPalletCount = palletPreviewLines.filter((palletLine) => !palletLine.isNew).length;
+                        const missingPalletBreakdown = Boolean(selectedItem) && !hasPalletBreakdown;
                         const lineStatusLabel = !selectedItem
                           ? t("reviewIncomplete")
-                          : varianceQty === 0
+                          : missingPalletBreakdown
+                            ? t("needsAttention")
+                            : varianceQty === 0
                             ? t("ready")
                             : t("needsAttention");
                         const lineStatusTone = !selectedItem
                           ? "status-pill--alert"
-                          : varianceQty === 0
+                          : missingPalletBreakdown
+                            ? "status-pill--alert"
+                            : varianceQty === 0
                             ? "status-pill--ok"
                             : "status-pill--alert";
 
@@ -1016,8 +1011,7 @@ export function CycleCountManagementPage({
                                   type="number"
                                   min="0"
                                   value={selectedItem ? String(previewLine.countedQty) : numberInputValue(line.countedQty)}
-                                  readOnly={hasPalletBreakdown || isLoadingPallets}
-                                  onChange={(event) => updateLineCountedQty(line.id, Number(event.target.value || 0))}
+                                  readOnly
                                 />
                               </label>
 
@@ -1060,7 +1054,7 @@ export function CycleCountManagementPage({
                                   <div>
                                     <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{t("palletBreakdown")}</div>
                                     <p className="mt-1 text-sm text-slate-600">
-                                      {matchedPalletCount > 0 ? t("cycleCountPalletBreakdownHint", { count: matchedPalletCount }) : t("cycleCountPalletFallbackHint")}
+                                      {matchedPalletCount > 0 ? t("cycleCountPalletBreakdownHint", { count: matchedPalletCount }) : t("cycleCountPalletRequiredHint")}
                                     </p>
                                   </div>
                                   <div className="flex flex-wrap items-center gap-2">
@@ -1072,12 +1066,19 @@ export function CycleCountManagementPage({
                                     <button
                                       type="button"
                                       onClick={() => addLinePallet(line.id)}
+                                      disabled={!selectedItem || isLoadingPallets || matchedPalletCount === 0}
                                       className="inline-flex items-center gap-2 rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-xs font-semibold text-[#143569] transition hover:border-slate-300 hover:bg-slate-50"
                                     >
                                       {t("cycleCountAddPallet")}
                                     </button>
                                   </div>
                                 </div>
+
+                                {missingPalletBreakdown ? (
+                                  <InlineAlert severity="warning" className="mt-4">
+                                    {t("cycleCountRequirePalletBreakdown")}
+                                  </InlineAlert>
+                                ) : null}
 
                                 {line.palletCounts.length > 0 ? (
                                   <div className="mt-4 grid gap-3">
@@ -1233,8 +1234,8 @@ export function CycleCountManagementPage({
                           <div className="batch-line-card__header">
                             <div className="batch-line-card__title">
                               <strong>{`${t("cycleCountLine")} #${previewLine.index + 1}`}</strong>
-                              <span className={`status-pill ${!previewLine.selectedItem ? "status-pill--alert" : previewLine.varianceQty === 0 ? "status-pill--ok" : "status-pill--alert"}`}>
-                                {!previewLine.selectedItem
+                              <span className={`status-pill ${!previewLine.isComplete ? "status-pill--alert" : previewLine.varianceQty === 0 ? "status-pill--ok" : "status-pill--alert"}`}>
+                                {!previewLine.isComplete
                                   ? t("reviewIncomplete")
                                   : previewLine.varianceQty === 0
                                     ? t("ready")
