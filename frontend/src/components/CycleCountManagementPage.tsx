@@ -357,9 +357,10 @@ export function CycleCountManagementPage({
       setForm(emptyCycleCountForm);
       setLines([createCycleCountLine()]);
       setErrorMessage("");
+      setPalletLoadError("");
       setSubmitting(false);
-      setCycleCountWizardStep(2);
-      setIsEditorOpen(true);
+      setCycleCountWizardStep(1);
+      setIsEditorOpen(false);
       return;
     }
 
@@ -772,10 +773,13 @@ export function CycleCountManagementPage({
           />
 
           {!isEditorOpen ? (
-            <div className="rounded-[20px] border border-slate-200/80 bg-[linear-gradient(180deg,#f8fbff_0%,#f3f7fc_100%)] p-5">
-              <p className="max-w-3xl text-sm leading-6 text-slate-600">
-                {t("cycleCountEditorClosedDesc")}
-              </p>
+            <div className="space-y-4">
+              {launchNotice ? <InlineAlert severity={launchNotice.severity}>{launchNotice.message}</InlineAlert> : null}
+              <div className="rounded-[20px] border border-slate-200/80 bg-[linear-gradient(180deg,#f8fbff_0%,#f3f7fc_100%)] p-5">
+                <p className="max-w-3xl text-sm leading-6 text-slate-600">
+                  {t("cycleCountEditorClosedDesc")}
+                </p>
+              </div>
             </div>
           ) : (
             <>

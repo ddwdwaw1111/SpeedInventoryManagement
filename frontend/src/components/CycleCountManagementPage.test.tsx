@@ -141,7 +141,7 @@ describe("CycleCountManagementPage", () => {
     expect(screen.queryByRole("option", { name: /SKU-C/i })).not.toBeInTheDocument();
   });
 
-  it("shows a warning and falls back to a blank count sheet when launch context no longer matches inventory", async () => {
+  it("shows a warning and keeps the editor closed when launch context no longer matches inventory", async () => {
     setPendingInventoryActionContext("cycle-counts", {
       sourceKey: buildInventoryActionSourceKey(99, "MISSING"),
       sku: "MISSING",
@@ -156,11 +156,9 @@ describe("CycleCountManagementPage", () => {
       />
     );
 
-    expect(await screen.findByText("The requested inventory scope is no longer available. You can continue with a blank count sheet.")).toBeInTheDocument();
-
-    const stockRowSelect = screen.getByLabelText("Inventory Position") as HTMLSelectElement;
-    expect(stockRowSelect.value).toBe("");
-    expect(screen.getByRole("option", { name: /608333/i })).toBeInTheDocument();
+    expect(await screen.findByText("The requested inventory scope is no longer available. Start a new count manually if needed.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Inventory Position")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "New Count Sheet" }).length).toBeGreaterThan(0);
   });
 
   it("submits pallet-level counted quantities when matching pallet breakdown exists", async () => {
