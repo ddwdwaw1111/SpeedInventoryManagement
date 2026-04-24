@@ -14,7 +14,7 @@ import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 import { api } from "../lib/api";
 import { consumePendingActivityManagementLaunchContext, type ActivityManagementLaunchContext, type InboundLaunchIntent } from "../lib/activityManagementLaunchContext";
 import { RowActionsMenu } from "./RowActionsMenu";
-import { buildItemContainerBalances, formatContainerDistributionSummary as formatContainerDistributionSummaryValue, type ItemContainerBalance } from "../lib/containerBalances";
+import { formatContainerDistributionSummary as formatContainerDistributionSummaryValue } from "../lib/containerBalances";
 import { formatDateTimeValue, formatDateValue } from "../lib/dates";
 import { downloadExcelWorkbook, type ExcelExportColumn } from "../lib/excelExport";
 import type { InboundReceiptEditorLaunchContext } from "../lib/inboundReceiptEditorLaunchContext";
@@ -38,6 +38,7 @@ import {
   type OutboundDocument,
   type OutboundPickAllocation,
   type OutboundDocumentPayload,
+  type PalletTrace,
   type SKUMaster,
   type UserRole
 } from "../lib/types";
@@ -199,10 +200,31 @@ type OutboundSourceOption = {
   description: string;
   unit: string;
   availableQty: number;
+  palletCount: number;
   storageSections: string[];
   containerCount: number;
   containerSummary: string;
-  candidates: ItemContainerBalance[];
+  candidates: OutboundPalletCandidate[];
+};
+
+type OutboundPalletCandidate = {
+  id: string;
+  palletId: number;
+  palletCode: string;
+  customerId: number;
+  customerName: string;
+  locationId: number;
+  locationName: string;
+  storageSection: string;
+  containerNo: string;
+  skuMasterId: number;
+  sku: string;
+  itemNumber: string;
+  description: string;
+  unit: string;
+  availableQty: number;
+  actualArrivalDate: string | null;
+  createdAt: string;
 };
 
 type InboundContainerWarningMatch = {
@@ -536,6 +558,9 @@ export function ActivityManagementPage({
   const { resolvedTimeZone } = useSettings();
   const { confirm, confirmationDialog } = useConfirmDialog();
   const { showSuccess, showError, feedbackToast } = useFeedbackToast();
+  const [outboundPallets, setOutboundPallets] = useState<PalletTrace[]>([]);
+  const [outboundPalletsLoading, setOutboundPalletsLoading] = useState(mode === "OUT");
+  const [outboundPalletsLoadError, setOutboundPalletsLoadError] = useState("");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [selectedStatus, setSelectedStatus] = useState("all");
@@ -587,6 +612,10 @@ export function ActivityManagementPage({
     () => (editingInboundDocumentId ? liveInboundDocuments.find((document) => document.id === editingInboundDocumentId) ?? null : null),
     [editingInboundDocumentId, liveInboundDocuments]
   );
+  const editingOutboundDocument = useMemo(
+    () => (editingOutboundDocumentId ? liveOutboundDocuments.find((document) => document.id === editingOutboundDocumentId) ?? null : null),
+    [editingOutboundDocumentId, liveOutboundDocuments]
+  );
   const selectedInboundDocument = useMemo(
     () => (selectedInboundDocumentId ? liveInboundDocuments.find((document) => document.id === selectedInboundDocumentId) ?? null : null),
     [liveInboundDocuments, selectedInboundDocumentId]
@@ -602,6 +631,12 @@ export function ActivityManagementPage({
   const isEditingInboundDraft = normalizeDocumentStatus(editingInboundDocument?.status ?? "") === "DRAFT";
   const isEditingConfirmedInbound = normalizeDocumentStatus(editingInboundDocument?.status ?? "") === "CONFIRMED";
   const isEditingOutboundDraft = editingOutboundDocumentId !== null;
+  const skuMastersByID = useMemo(() => new Map(
+    skuMasters.map((skuMaster) => [skuMaster.id, skuMaster] as const)
+  ), [skuMasters]);
+  const outboundPalletSourceMessage = mode === "OUT"
+    ? (outboundPalletsLoading ? t("shipmentPalletsLoading") : outboundPalletsLoadError)
+    : "";
   const showInboundDrawerLoading = selectedInboundDocumentId !== null && (!inboundDrawerReady || isLoading || !selectedInboundDocument);
   const showOutboundDrawerLoading = selectedOutboundDocumentId !== null && (!outboundDrawerReady || isLoading || !selectedOutboundDocument);
 
@@ -618,8 +653,22 @@ export function ActivityManagementPage({
 
   async function handleDownloadPickSheet(document: OutboundDocument) {
     try {
+      const draftNeedsHydration = normalizeDocumentStatus(document.status) === "DRAFT"
+        && document.lines.some((line) => line.pickAllocations.length === 0);
+      if (draftNeedsHydration && outboundPalletSourceMessage) {
+        throw new Error(outboundPalletSourceMessage);
+      }
       const { downloadOutboundPickSheetPdfFromDocument } = await import("../lib/outboundPickSheetPdf");
-      await downloadOutboundPickSheetPdfFromDocument(buildPickSheetExportDocument(document, selectableOutboundSources));
+      const exportDocument = buildPickSheetExportDocument(document, selectableOutboundSources);
+      if (
+        draftNeedsHydration
+        && exportDocument.lines.some((line, index) => (
+          document.lines[index]?.pickAllocations.length === 0 && line.pickAllocations.length === 0
+        ))
+      ) {
+        throw new Error(t("shipmentPickSheetRequiresLivePallets"));
+      }
+      await downloadOutboundPickSheetPdfFromDocument(exportDocument);
     } catch (error) {
       showActionError(error, t("couldNotGeneratePickSheet"));
     }
@@ -651,6 +700,44 @@ export function ActivityManagementPage({
     setSelectedOutboundDocumentId(null);
     pendingLaunchContextRef.current = undefined;
   }, [mode]);
+
+  useEffect(() => {
+    if (mode !== "OUT") {
+      setOutboundPallets([]);
+      setOutboundPalletsLoading(false);
+      setOutboundPalletsLoadError("");
+      return;
+    }
+
+    let active = true;
+    async function loadOutboundPallets() {
+      setOutboundPalletsLoading(true);
+      setOutboundPalletsLoadError("");
+      try {
+        const nextPallets = await api.getPallets(50000);
+        if (!active) {
+          return;
+        }
+        setOutboundPallets(nextPallets);
+        setOutboundPalletsLoadError("");
+      } catch {
+        if (!active) {
+          return;
+        }
+        setOutboundPallets([]);
+        setOutboundPalletsLoadError(t("shipmentPalletsUnavailable"));
+      } finally {
+        if (active) {
+          setOutboundPalletsLoading(false);
+        }
+      }
+    }
+
+    void loadOutboundPallets();
+    return () => {
+      active = false;
+    };
+  }, [mode, t]);
 
   useEffect(() => {
     if (mode === "OUT" && selectedOutboundDocumentId && !selectedOutboundDocument) {
@@ -776,9 +863,13 @@ export function ActivityManagementPage({
       return;
     }
 
+    if (outboundPalletsLoading) {
+      return;
+    }
+
     openOutboundBatchModal(pendingLaunchContext.scheduledDate || "");
     pendingLaunchContextRef.current = null;
-  }, [canManage, customers, isEmbeddedComposer, liveInboundDocuments, locations, mode]);
+  }, [canManage, customers, isEmbeddedComposer, liveInboundDocuments, locations, mode, outboundPalletsLoading]);
 
   useEffect(() => {
     if (!pendingBatchLineIDRef.current) {
@@ -841,9 +932,13 @@ export function ActivityManagementPage({
       varianceLines: shortLines + overLines
     };
   }, [validBatchInboundLines]);
+  const persistedOutboundSourcesByKey = useMemo(
+    () => buildPersistedOutboundSourceOptionsFromDocument(editingOutboundDocument, skuMastersByID),
+    [editingOutboundDocument, skuMastersByID]
+  );
   const availableOutboundSources = useMemo(
-    () => buildOutboundSourceOptions(items.filter((item) => item.availableQty > 0), movements),
-    [items, movements]
+    () => buildOutboundSourceOptionsFromPallets(outboundPallets, skuMastersByID),
+    [outboundPallets, skuMastersByID]
   );
   const selectableOutboundSources = useMemo(() => {
     const selectedKeys = new Set(
@@ -852,29 +947,24 @@ export function ActivityManagementPage({
         .filter(Boolean)
     );
 
-    const merged = [...availableOutboundSources];
+    const mergedBySourceKey = new Map(
+      availableOutboundSources.map((source) => [source.sourceKey, source] as const)
+    );
     for (const selectedKey of selectedKeys) {
-      const selectedItem = items.find((item) => buildOutboundSourceKey(item.customerId, item.locationId, item.skuMasterId) === selectedKey);
-      const source = selectedItem
-        ? buildOutboundSourceOptions(items.filter((item) =>
-          item.customerId === selectedItem.customerId
-          && item.locationId === selectedItem.locationId
-          && item.skuMasterId === selectedItem.skuMasterId
-        ), movements)[0]
-        : null;
-      if (source && !merged.some((item) => item.sourceKey === source.sourceKey)) {
-        merged.push(source);
+      const persistedSource = persistedOutboundSourcesByKey.get(selectedKey);
+      if (persistedSource && !mergedBySourceKey.has(selectedKey)) {
+        mergedBySourceKey.set(selectedKey, persistedSource);
       }
     }
 
-    return merged.sort((left, right) => {
+    return [...mergedBySourceKey.values()].sort((left, right) => {
       const customerCompare = left.customerName.localeCompare(right.customerName);
       if (customerCompare !== 0) return customerCompare;
       const locationCompare = left.locationName.localeCompare(right.locationName);
       if (locationCompare !== 0) return locationCompare;
       return left.sku.localeCompare(right.sku);
     });
-  }, [availableOutboundSources, batchOutboundLines, items, movements]);
+  }, [availableOutboundSources, batchOutboundLines, persistedOutboundSourcesByKey]);
   useEffect(() => {
     if (!embeddedComposer || !canManage || isBatchModalOpen) {
       return;
@@ -886,6 +976,16 @@ export function ActivityManagementPage({
       }
 
       openBatchModal(embeddedComposer.initialDate || "");
+      return;
+    }
+
+    if (outboundPalletsLoading) {
+      return;
+    }
+
+    if (outboundPalletSourceMessage) {
+      showError(outboundPalletSourceMessage);
+      embeddedComposer.onClose();
       return;
     }
 
@@ -904,6 +1004,8 @@ export function ActivityManagementPage({
     isBatchModalOpen,
     locations.length,
     mode,
+    outboundPalletSourceMessage,
+    outboundPalletsLoading,
     showError,
     t
   ]);
@@ -1178,6 +1280,9 @@ export function ActivityManagementPage({
   );
 
   function validateOutboundDraft(requireAllocationReady: boolean) {
+    if (outboundPalletSourceMessage) {
+      return outboundPalletSourceMessage;
+    }
     if (validBatchOutboundLines.length === 0) {
       return t("batchOutboundRequireLine");
     }
@@ -1368,6 +1473,10 @@ export function ActivityManagementPage({
       return false;
     }
     setInboundEditorIntent(null);
+    if (outboundPalletSourceMessage) {
+      setErrorMessage(outboundPalletSourceMessage);
+      return false;
+    }
     if (availableOutboundSources.length === 0) {
       setErrorMessage(t("noAvailableStockRows"));
       return false;
@@ -3211,6 +3320,9 @@ export function ActivityManagementPage({
               </form>
             ) : (
               <form onSubmit={handleBatchOutboundSubmit}>
+                {outboundPalletSourceMessage ? (
+                  <InlineAlert severity={outboundPalletsLoadError ? "warning" : "info"}>{outboundPalletSourceMessage}</InlineAlert>
+                ) : null}
                 <div className="shipment-wizard__steps">
                   {([
                     [1, t("shipmentStepInfo")],
@@ -3222,6 +3334,7 @@ export function ActivityManagementPage({
                       type="button"
                       className={`shipment-wizard__step ${outboundWizardStep === step ? "shipment-wizard__step--active" : ""}`}
                       onClick={() => moveOutboundWizardStep(step)}
+                      disabled={Boolean(outboundPalletSourceMessage)}
                     >
                       <span className="shipment-wizard__step-index">{step}</span>
                       <span>{label}</span>
@@ -3257,6 +3370,7 @@ export function ActivityManagementPage({
                             max="50"
                             value={batchOutboundLineAddCount}
                             onChange={(event) => setBatchOutboundLineAddCount(getSafeLineAddCount(Number(event.target.value || 1)))}
+                            disabled={Boolean(outboundPalletSourceMessage)}
                           />
                         </label>
                         <Button
@@ -3264,6 +3378,7 @@ export function ActivityManagementPage({
                           variant="outlined"
                           startIcon={<AddCircleOutlineOutlinedIcon />}
                           onClick={() => addBatchOutboundLine()}
+                          disabled={Boolean(outboundPalletSourceMessage)}
                         >
                           {t("addOutboundLine")}
                         </Button>
@@ -3309,6 +3424,7 @@ export function ActivityManagementPage({
                                   currentLine.id === line.id ? buildOutboundLineDefaults(currentLine, nextItem) : currentLine
                                 ));
                               }}
+                              disabled={Boolean(outboundPalletSourceMessage)}
                             >
                               <option value="">{t("selectShipmentSource")}</option>
                               {selectableOutboundSources.map((item) => (
@@ -3319,8 +3435,8 @@ export function ActivityManagementPage({
                             </select>
                           </label>
                           <label>{t("availableQty")}<input value={selectedOutboundSource ? String(selectedOutboundSource.availableQty) : ""} readOnly /></label>
-                          <label>{t("outQty")}<input type="number" min="0" value={numberInputValue(line.quantity)} onChange={(event) => updateBatchOutboundLineQuantity(line.id, Math.max(0, Number(event.target.value || 0)))} /></label>
-                          <label>{t("pallets")}<input type="number" min="0" value={numberInputValue(line.pallets)} onChange={(event) => updateBatchOutboundLine(line.id, { pallets: Math.max(0, Number(event.target.value || 0)) })} /></label>
+                          <label>{t("outQty")}<input type="number" min="0" value={numberInputValue(line.quantity)} onChange={(event) => updateBatchOutboundLineQuantity(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={Boolean(outboundPalletSourceMessage)} /></label>
+                          <label>{t("pallets")}<input type="number" min="0" value={numberInputValue(line.pallets)} onChange={(event) => updateBatchOutboundLine(line.id, { pallets: Math.max(0, Number(event.target.value || 0)) })} disabled={Boolean(outboundPalletSourceMessage)} /></label>
                           <label>{t("unit")}<input value={line.unitLabel} onChange={(event) => updateBatchOutboundLine(line.id, { unitLabel: event.target.value })} placeholder="PCS" /></label>
                           <label>{t("cartonSize")}<input value={line.cartonSizeMm} onChange={(event) => updateBatchOutboundLine(line.id, { cartonSizeMm: event.target.value })} placeholder="455*330*325" /></label>
                           <label>{t("netWeight")}<input type="number" min="0" step="0.01" value={numberInputValue(line.netWeightKgs)} onChange={(event) => updateBatchOutboundLine(line.id, { netWeightKgs: Math.max(0, Number(event.target.value || 0)) })} /></label>
@@ -3437,15 +3553,15 @@ export function ActivityManagementPage({
                 ) : null}
 
                 <div className="sheet-form__actions" style={{ marginTop: "1rem" }}>
-                  <button className="button button--ghost" type="button" disabled={batchSubmitting || (!isEditingOutboundDraft && availableOutboundSources.length === 0)} onClick={() => void submitOutboundDocument("DRAFT")}>{batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("scheduleShipment")}</button>
+                  <button className="button button--ghost" type="button" disabled={batchSubmitting || Boolean(outboundPalletSourceMessage) || (!isEditingOutboundDraft && availableOutboundSources.length === 0)} onClick={() => void submitOutboundDocument("DRAFT")}>{batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("scheduleShipment")}</button>
                   <div className="shipment-wizard__actions">
                     {outboundWizardStep > 1 ? (
-                      <button className="button button--ghost" type="button" onClick={() => moveOutboundWizardStep((outboundWizardStep - 1) as OutboundWizardStep)}>{t("back")}</button>
+                      <button className="button button--ghost" type="button" onClick={() => moveOutboundWizardStep((outboundWizardStep - 1) as OutboundWizardStep)} disabled={Boolean(outboundPalletSourceMessage)}>{t("back")}</button>
                     ) : null}
                     {outboundWizardStep < 3 ? (
-                      <button className="button button--primary" type="button" onClick={() => moveOutboundWizardStep((outboundWizardStep + 1) as OutboundWizardStep)}>{t("next")}</button>
+                      <button className="button button--primary" type="button" onClick={() => moveOutboundWizardStep((outboundWizardStep + 1) as OutboundWizardStep)} disabled={Boolean(outboundPalletSourceMessage)}>{t("next")}</button>
                     ) : (
-                      <button className="button button--primary" type="submit" disabled={batchSubmitting || (!isEditingOutboundDraft && availableOutboundSources.length === 0)}>{batchSubmitting ? t("saving") : t("scheduleShipment")}</button>
+                      <button className="button button--primary" type="submit" disabled={batchSubmitting || Boolean(outboundPalletSourceMessage) || (!isEditingOutboundDraft && availableOutboundSources.length === 0)}>{batchSubmitting ? t("saving") : t("scheduleShipment")}</button>
                     )}
                   </div>
                   <button className="button button--ghost" type="button" onClick={closeBatchModal}>{t("cancel")}</button>
@@ -3795,7 +3911,7 @@ function normalizeDocumentStatus(status: string) {
   return status.trim().toUpperCase();
 }
 
-function buildPickSheetExportDocument(document: OutboundDocument, sourceOptions: OutboundSourceOption[]): OutboundDocument {
+export function buildPickSheetExportDocument(document: OutboundDocument, sourceOptions: OutboundSourceOption[]): OutboundDocument {
   if (normalizeDocumentStatus(document.status) !== "DRAFT") {
     return document;
   }
@@ -4004,18 +4120,16 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
   };
 }
 
-function compareOutboundAllocationCandidates(left: Item, right: Item) {
-  const leftDeliveryDate = left.deliveryDate || "";
-  const rightDeliveryDate = right.deliveryDate || "";
-  if (!leftDeliveryDate && rightDeliveryDate) return 1;
-  if (leftDeliveryDate && !rightDeliveryDate) return -1;
-  if (leftDeliveryDate !== rightDeliveryDate) return leftDeliveryDate.localeCompare(rightDeliveryDate);
-
-  if (left.createdAt !== right.createdAt) {
-    return left.createdAt.localeCompare(right.createdAt);
-  }
-
-  return left.id - right.id;
+function compareOutboundPalletCandidates(left: OutboundPalletCandidate, right: OutboundPalletCandidate) {
+  const leftArrival = left.actualArrivalDate || left.createdAt || "";
+  const rightArrival = right.actualArrivalDate || right.createdAt || "";
+  if (!leftArrival && rightArrival) return 1;
+  if (leftArrival && !rightArrival) return -1;
+  if (leftArrival !== rightArrival) return leftArrival.localeCompare(rightArrival);
+  if (left.locationName !== right.locationName) return left.locationName.localeCompare(right.locationName);
+  if (left.storageSection !== right.storageSection) return left.storageSection.localeCompare(right.storageSection);
+  if (left.containerNo !== right.containerNo) return left.containerNo.localeCompare(right.containerNo);
+  return left.palletCode.localeCompare(right.palletCode);
 }
 
 function buildOutboundSourceKey(customerId: number, locationId: number, skuMasterId: number) {
@@ -4050,54 +4164,150 @@ function summarizeOutboundPickAllocations(document: OutboundDocument | null) {
   };
 }
 
-function buildOutboundSourceOptions(items: Item[], movements: Movement[]): OutboundSourceOption[] {
-  const containerBalances = buildItemContainerBalances(items, movements);
-  const grouped = new Map<string, { representative: Item; items: Item[] }>();
+function buildPersistedOutboundSourceOptionsFromDocument(
+  document: OutboundDocument | null,
+  skuMastersByID: Map<number, SKUMaster>
+) {
+  const persistedSources = new Map<string, OutboundSourceOption>();
+  if (!document) {
+    return persistedSources;
+  }
 
-  for (const item of [...items].sort(compareOutboundAllocationCandidates)) {
-    const key = buildOutboundSourceKey(item.customerId, item.locationId, item.skuMasterId);
-    const existing = grouped.get(key);
-    if (!existing) {
-      grouped.set(key, { representative: item, items: [item] });
+  for (const line of document.lines) {
+    const sourceKey = buildOutboundSourceKey(document.customerId, line.locationId, line.skuMasterId);
+    if (persistedSources.has(sourceKey)) {
       continue;
     }
 
-    existing.items.push(item);
+    const uniqueContainers = new Set(
+      line.pickAllocations.map((allocation) => allocation.containerNo || `${allocation.locationName}/${normalizeStorageSection(allocation.storageSection)}`)
+    );
+    const skuMasterUnit = skuMastersByID.get(line.skuMasterId)?.unit || "PCS";
+    persistedSources.set(sourceKey, {
+      sourceKey,
+      customerId: document.customerId,
+      customerName: document.customerName,
+      locationId: line.locationId,
+      locationName: line.locationName,
+      skuMasterId: line.skuMasterId,
+      sku: line.sku,
+      itemNumber: line.itemNumber || "",
+      description: line.description || "",
+      unit: (line.unitLabel || skuMasterUnit).toUpperCase(),
+      availableQty: 0,
+      palletCount: Math.max(0, line.pallets || 0),
+      storageSections: [normalizeStorageSection(line.storageSection || DEFAULT_STORAGE_SECTION)],
+      containerCount: uniqueContainers.size,
+      containerSummary: formatContainerDistributionSummaryValue(line.pickAllocations.map((allocation) => ({
+        containerNo: allocation.containerNo,
+        availableQty: allocation.allocatedQty,
+        locationName: allocation.locationName,
+        storageSection: allocation.storageSection
+      }))),
+      candidates: []
+    });
   }
 
-  return [...grouped.entries()].map(([sourceKey, { representative, items: sourceItems }]) => {
-    const candidates = containerBalances.filter((balance) => balance.sourceKey === sourceKey);
-    const sourceItemWithNumber = sourceItems.find((item) => item.itemNumber.trim());
-    const sourceItemWithDescription = sourceItems.find((item) => displayDescription(item).trim());
-    const sourceItemNumber = sourceItemWithNumber?.itemNumber || "";
-    const sourceDescription = sourceItemWithDescription ? displayDescription(sourceItemWithDescription) : displayDescription(representative);
-    const sourceUnit = sourceItems.find((item) => item.unit.trim())?.unit || representative.unit;
-    const sections = new Set<string>();
-    let availableQty = 0;
+  return persistedSources;
+}
 
-    for (const candidate of candidates) {
-      availableQty += candidate.availableQty;
-      if (candidate.storageSection) {
-        sections.add(candidate.storageSection);
+export function buildOutboundSourceOptionsFromPallets(pallets: PalletTrace[], skuMastersByID: Map<number, SKUMaster>): OutboundSourceOption[] {
+  const candidates: OutboundPalletCandidate[] = [];
+  for (const pallet of pallets) {
+    if (pallet.status !== "OPEN" && pallet.status !== "PARTIAL") {
+      continue;
+    }
+    for (const content of pallet.contents) {
+      const availableQty = Math.max(0, content.quantity - (content.allocatedQty ?? 0) - (content.damagedQty ?? 0) - (content.holdQty ?? 0));
+      if (availableQty <= 0) {
+        continue;
+      }
+      const skuMaster = skuMastersByID.get(content.skuMasterId);
+      candidates.push({
+        id: `${pallet.id}-${content.id}`,
+        palletId: pallet.id,
+        palletCode: pallet.palletCode,
+        customerId: pallet.customerId,
+        customerName: pallet.customerName,
+        locationId: pallet.currentLocationId,
+        locationName: pallet.currentLocationName,
+        storageSection: normalizeStorageSection(pallet.currentStorageSection),
+        containerNo: pallet.currentContainerNo || "",
+        skuMasterId: content.skuMasterId,
+        sku: content.sku,
+        itemNumber: content.itemNumber || "",
+        description: content.description || pallet.description || "",
+        unit: (skuMaster?.unit || "PCS").toUpperCase(),
+        availableQty,
+        actualArrivalDate: pallet.actualArrivalDate,
+        createdAt: pallet.createdAt
+      });
+    }
+  }
+
+  const grouped = new Map<string, OutboundSourceOption>();
+  for (const candidate of candidates.sort(compareOutboundPalletCandidates)) {
+    const sourceKey = buildOutboundSourceKey(candidate.customerId, candidate.locationId, candidate.skuMasterId);
+    const existing = grouped.get(sourceKey);
+    if (!existing) {
+      grouped.set(sourceKey, {
+        sourceKey,
+        customerId: candidate.customerId,
+        customerName: candidate.customerName,
+        locationId: candidate.locationId,
+        locationName: candidate.locationName,
+        skuMasterId: candidate.skuMasterId,
+        sku: candidate.sku,
+        itemNumber: candidate.itemNumber,
+        description: candidate.description,
+        unit: candidate.unit,
+        availableQty: candidate.availableQty,
+        palletCount: 1,
+        storageSections: [candidate.storageSection],
+        containerCount: 1,
+        containerSummary: "",
+        candidates: [candidate]
+      });
+      continue;
+    }
+
+    existing.availableQty += candidate.availableQty;
+    existing.palletCount += 1;
+    if (!existing.storageSections.includes(candidate.storageSection)) {
+      existing.storageSections.push(candidate.storageSection);
+    }
+    existing.candidates.push(candidate);
+  }
+
+  return [...grouped.values()].map((source) => {
+    const candidatesByPalletID = new Map<number, OutboundPalletCandidate>();
+    for (const candidate of source.candidates) {
+      const existing = candidatesByPalletID.get(candidate.palletId);
+      if (!existing) {
+        candidatesByPalletID.set(candidate.palletId, { ...candidate });
+        continue;
+      }
+      existing.availableQty += candidate.availableQty;
+      if (!existing.actualArrivalDate || (candidate.actualArrivalDate && candidate.actualArrivalDate < existing.actualArrivalDate)) {
+        existing.actualArrivalDate = candidate.actualArrivalDate;
+      }
+      if (candidate.createdAt < existing.createdAt) {
+        existing.createdAt = candidate.createdAt;
       }
     }
 
+    const sortedCandidates = [...candidatesByPalletID.values()].sort(compareOutboundPalletCandidates);
     return {
-      sourceKey,
-      customerId: representative.customerId,
-      customerName: representative.customerName,
-      locationId: representative.locationId,
-      locationName: representative.locationName,
-      skuMasterId: representative.skuMasterId,
-      sku: representative.sku,
-      itemNumber: sourceItemNumber,
-      description: sourceDescription,
-      unit: sourceUnit,
-      availableQty,
-      storageSections: [...sections].sort(),
-      containerCount: new Set(candidates.map((candidate) => candidate.containerNo || `${candidate.locationName}/${normalizeStorageSection(candidate.storageSection)}`)).size,
-      containerSummary: formatContainerDistributionSummaryValue(candidates),
-      candidates
+      ...source,
+      storageSections: [...source.storageSections].sort(),
+      containerCount: new Set(sortedCandidates.map((candidate) => candidate.containerNo || `${candidate.locationName}/${candidate.storageSection}`)).size,
+      containerSummary: formatContainerDistributionSummaryValue(sortedCandidates.map((candidate) => ({
+        containerNo: candidate.containerNo,
+        availableQty: candidate.availableQty,
+        locationName: candidate.locationName,
+        storageSection: candidate.storageSection
+      }))),
+      candidates: sortedCandidates
     };
   }).sort((left, right) => {
     const customerCompare = left.customerName.localeCompare(right.customerName);

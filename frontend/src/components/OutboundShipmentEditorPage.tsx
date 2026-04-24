@@ -5,7 +5,7 @@ import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
-import { buildItemContainerBalances, formatContainerDistributionSummary as formatContainerDistributionSummaryValue, type ItemContainerBalance } from "../lib/containerBalances";
+import { formatContainerDistributionSummary as formatContainerDistributionSummaryValue } from "../lib/containerBalances";
 import { consumePendingOutboundShipmentEditorLaunchContext, type OutboundShipmentEditorLaunchContext } from "../lib/outboundShipmentEditorLaunchContext";
 import { useI18n } from "../lib/i18n";
 import { getOutboundExpectedShipDate } from "../lib/outboundDates";
@@ -233,6 +233,8 @@ export function OutboundShipmentEditorPage({
   const { showSuccess, showError, feedbackToast } = useFeedbackToast();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
   const [pallets, setPallets] = useState<PalletTrace[]>([]);
+  const [palletsLoading, setPalletsLoading] = useState(true);
+  const [palletsLoadError, setPalletsLoadError] = useState("");
   const [batchOutboundForm, setBatchOutboundForm] = useState<BatchOutboundFormState>(() => createEmptyBatchOutboundForm());
   const [batchOutboundLines, setBatchOutboundLines] = useState<BatchOutboundLineState[]>(() => [createEmptyBatchOutboundLine()]);
   const [errorMessage, setErrorMessage] = useState("");
@@ -252,15 +254,13 @@ export function OutboundShipmentEditorPage({
   const skuMastersByID = useMemo(() => new Map(
     skuMasters.map((skuMaster) => [skuMaster.id, skuMaster] as const)
   ), [skuMasters]);
-  const availableOutboundSources = useMemo(
-    () => pallets.length > 0
-      ? buildOutboundSourceOptionsFromPallets(pallets, skuMastersByID)
-      : buildOutboundSourceOptions(items.filter((item) => item.availableQty > 0), movements),
-    [items, movements, pallets, skuMastersByID]
+  const persistedOutboundSourcesByKey = useMemo(
+    () => buildPersistedOutboundSourceOptionsFromDocument(document, skuMastersByID),
+    [document, skuMastersByID]
   );
-  const warehouseOptions = useMemo<WarehouseOption[]>(
-    () => buildWarehouseOptions(availableOutboundSources),
-    [availableOutboundSources]
+  const availableOutboundSources = useMemo(
+    () => buildOutboundSourceOptionsFromPallets(pallets, skuMastersByID),
+    [pallets, skuMastersByID]
   );
   const selectableOutboundSources = useMemo(() => {
     const selectedKeys = new Set(
@@ -268,30 +268,29 @@ export function OutboundShipmentEditorPage({
         .map((line) => line.sourceKey.trim())
         .filter(Boolean)
     );
-
-    const merged = [...availableOutboundSources];
+    const mergedBySourceKey = new Map(
+      availableOutboundSources.map((source) => [source.sourceKey, source] as const)
+    );
     for (const selectedKey of selectedKeys) {
-      const selectedItem = items.find((item) => buildOutboundSourceKey(item.customerId, item.locationId, item.skuMasterId) === selectedKey);
-      const source = selectedItem
-        ? buildOutboundSourceOptions(items.filter((item) =>
-          item.customerId === selectedItem.customerId
-          && item.locationId === selectedItem.locationId
-          && item.skuMasterId === selectedItem.skuMasterId
-        ), movements)[0]
-        : null;
-      if (source && !merged.some((item) => item.sourceKey === source.sourceKey)) {
-        merged.push(source);
+      const persistedSource = persistedOutboundSourcesByKey.get(selectedKey);
+      if (persistedSource && !mergedBySourceKey.has(selectedKey)) {
+        mergedBySourceKey.set(selectedKey, persistedSource);
       }
     }
 
-    return merged.sort((left, right) => {
+    return [...mergedBySourceKey.values()].sort((left, right) => {
       const customerCompare = left.customerName.localeCompare(right.customerName);
       if (customerCompare !== 0) return customerCompare;
       const locationCompare = left.locationName.localeCompare(right.locationName);
       if (locationCompare !== 0) return locationCompare;
       return left.sku.localeCompare(right.sku);
     });
-  }, [availableOutboundSources, batchOutboundLines, items, movements]);
+  }, [availableOutboundSources, batchOutboundLines, persistedOutboundSourcesByKey]);
+  const isOutboundSourceBlocked = palletsLoading || palletsLoadError !== "";
+  const warehouseOptions = useMemo<WarehouseOption[]>(
+    () => buildWarehouseOptions(selectableOutboundSources),
+    [selectableOutboundSources]
+  );
   const batchOutboundAllocationPreview = useMemo(
     () => buildOutboundAllocationPreview(batchOutboundLines, selectableOutboundSources),
     [batchOutboundLines, selectableOutboundSources]
@@ -305,8 +304,14 @@ export function OutboundShipmentEditorPage({
     [batchOutboundLines, selectableOutboundSources]
   );
   const outboundLineValidations = useMemo(
-    () => buildOutboundLineValidations(batchOutboundLines, selectableOutboundSources, batchOutboundAllocationPreview, t),
-    [batchOutboundAllocationPreview, batchOutboundLines, selectableOutboundSources, t]
+    () => buildOutboundLineValidations(
+      batchOutboundLines,
+      selectableOutboundSources,
+      batchOutboundAllocationPreview,
+      t,
+      isOutboundSourceBlocked
+    ),
+    [batchOutboundAllocationPreview, batchOutboundLines, isOutboundSourceBlocked, selectableOutboundSources, t]
   );
   const outboundStepOverview = useMemo(
     () => buildOutboundStepOverview(batchOutboundLines, outboundLineValidations, batchOutboundAllocationPreview, outboundShipmentReviewGroups),
@@ -332,9 +337,11 @@ export function OutboundShipmentEditorPage({
   const isEditorMissing = Boolean(documentId) && !document && !isLoading;
   const canEditCurrentDocument = !document || (!document.archivedAt && normalizeDocumentStatus(document.status) === "DRAFT");
   const isReadOnly = !canManage || !canEditCurrentDocument;
+  const outboundPalletSourceMessage = palletsLoading ? t("shipmentPalletsLoading") : palletsLoadError;
+  const isOutboundSourceReadOnly = isReadOnly || isOutboundSourceBlocked;
   const canEditOutboundNote = canManage && Boolean(document?.id);
   const isOutboundNoteDirty = canEditOutboundNote && batchOutboundForm.documentNote.trim() !== (document?.documentNote ?? "").trim();
-  const hasNoAvailableSources = availableOutboundSources.length === 0 && !isEditingOutboundDraft && !isEditingConfirmedOutbound;
+  const hasNoAvailableSources = !isOutboundSourceBlocked && availableOutboundSources.length === 0 && !isEditingOutboundDraft && !isEditingConfirmedOutbound;
   const hasBlockingStep1Issues = outboundStepOverview.blockedLines > 0 || outboundStepOverview.readyLines === 0;
   const hasBlockingStep2Issues = outboundStepOverview.shortageLines > 0 || outboundStepOverview.readyLines === 0;
 
@@ -342,15 +349,23 @@ export function OutboundShipmentEditorPage({
     let active = true;
 
     async function loadPallets() {
+      setPalletsLoading(true);
+      setPalletsLoadError("");
       try {
         const nextPallets = await api.getPallets(50000);
         if (!active) {
           return;
         }
         setPallets(nextPallets);
+        setPalletsLoadError("");
       } catch {
         if (active) {
           setPallets([]);
+          setPalletsLoadError(t("shipmentPalletsUnavailable"));
+        }
+      } finally {
+        if (active) {
+          setPalletsLoading(false);
         }
       }
     }
@@ -359,7 +374,7 @@ export function OutboundShipmentEditorPage({
     return () => {
       active = false;
     };
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (!pendingBatchLineIDRef.current) {
@@ -754,6 +769,9 @@ export function OutboundShipmentEditorPage({
   }
 
   function validateOutboundDraft(requireAllocationReady: boolean) {
+    if (outboundPalletSourceMessage) {
+      return outboundPalletSourceMessage;
+    }
     if (outboundStepOverview.readyLines === 0) {
       return t("batchOutboundRequireLine");
     }
@@ -996,6 +1014,9 @@ export function OutboundShipmentEditorPage({
           {isReadOnly && !isEditingConfirmedOutbound ? (
             <InlineAlert severity="warning">{t("readOnlyModeNotice")}</InlineAlert>
           ) : null}
+          {outboundPalletSourceMessage ? (
+            <InlineAlert severity={palletsLoadError ? "warning" : "info"}>{outboundPalletSourceMessage}</InlineAlert>
+          ) : null}
           {hasNoAvailableSources ? (
             <InlineAlert severity="warning">{t("noAvailableStockRows")}</InlineAlert>
           ) : null}
@@ -1012,7 +1033,7 @@ export function OutboundShipmentEditorPage({
                   type="button"
                   className={`shipment-wizard__step ${outboundWizardStep === step ? "shipment-wizard__step--active" : ""}`}
                   onClick={() => moveOutboundWizardStep(step)}
-                  disabled={isReadOnly}
+                  disabled={isOutboundSourceReadOnly}
                 >
                   <span className="shipment-wizard__step-index">{step}</span>
                   <span>{label}</span>
@@ -1070,7 +1091,7 @@ export function OutboundShipmentEditorPage({
                             max="50"
                             value={batchOutboundLineAddCount}
                             onChange={(event) => setBatchOutboundLineAddCount(getSafeLineAddCount(Number(event.target.value || 1)))}
-                            disabled={isReadOnly}
+                            disabled={isOutboundSourceReadOnly}
                           />
                         </label>
                         <Button
@@ -1078,7 +1099,7 @@ export function OutboundShipmentEditorPage({
                           variant="outlined"
                           startIcon={<AddCircleOutlineOutlinedIcon />}
                           onClick={() => addBatchOutboundLine()}
-                          disabled={isReadOnly}
+                          disabled={isOutboundSourceReadOnly}
                         >
                           {t("addOutboundLine")}
                         </Button>
@@ -1191,7 +1212,7 @@ export function OutboundShipmentEditorPage({
                                     focusShipmentLineField(line.id, "sku");
                                   }}
                                   onKeyDown={(event) => handleShipmentLineFieldKeyDown(event, line.id, "warehouse")}
-                                  disabled={isReadOnly}
+                                  disabled={isOutboundSourceReadOnly}
                                   aria-invalid={lineValidation.warehouseMessage ? "true" : "false"}
                                   className={`min-h-12 rounded-2xl border bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none transition focus:border-[#143569]/40 ${lineValidation.warehouseMessage ? "border-amber-300 bg-amber-50/40" : "border-slate-200/80"}`}
                                 >
@@ -1218,7 +1239,7 @@ export function OutboundShipmentEditorPage({
                                     }
                                   }}
                                   onKeyDown={(event) => handleShipmentLineFieldKeyDown(event, line.id, "sku")}
-                                  disabled={isReadOnly || !line.locationId}
+                                  disabled={isOutboundSourceReadOnly || !line.locationId}
                                   aria-invalid={lineValidation.skuMessage ? "true" : "false"}
                                   placeholder={line.locationId ? t("typeSkuToSearch") : t("selectWarehouseFirst")}
                                   className={`min-h-12 rounded-2xl border bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none transition focus:border-[#143569]/40 ${lineValidation.skuMessage ? "border-amber-300 bg-amber-50/40" : "border-slate-200/80"}`}
@@ -1244,7 +1265,7 @@ export function OutboundShipmentEditorPage({
                                   value={numberInputValue(line.quantity)}
                                   onChange={(event) => updateBatchOutboundLineQuantity(line.id, Math.max(0, Math.min(selectedOutboundSource?.availableQty ?? Number.MAX_SAFE_INTEGER, Number(event.target.value || 0))))}
                                   onKeyDown={(event) => handleShipmentLineFieldKeyDown(event, line.id, "quantity")}
-                                  disabled={isReadOnly || !selectedOutboundSource}
+                                  disabled={isOutboundSourceReadOnly || !selectedOutboundSource}
                                   aria-invalid={lineValidation.quantityMessage ? "true" : "false"}
                                   className={`min-h-12 rounded-2xl border bg-white px-3 py-2 text-right text-lg font-bold text-[#143569] outline-none transition focus:border-[#143569]/40 ${lineValidation.quantityMessage ? "border-amber-300 bg-amber-50/40" : "border-slate-200/80"}`}
                                 />
@@ -1332,20 +1353,20 @@ export function OutboundShipmentEditorPage({
                       {selectedOutboundSource && outboundWizardStep === 2 ? (
                         <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem", marginBottom: "0.25rem" }}>
                           {!line.pickPalletsTouched ? (
-                            <button className="button button--ghost button--small" type="button" onClick={() => startManualOutboundLinePick(line.id)}>{t("switchToManualPick")}</button>
+                            <button className="button button--ghost button--small" type="button" onClick={() => startManualOutboundLinePick(line.id)} disabled={isOutboundSourceReadOnly}>{t("switchToManualPick")}</button>
                           ) : null}
                           {line.pickPalletsTouched ? (
                             <button
                               className="button button--ghost button--small"
                               type="button"
                               onClick={() => clearOutboundLinePickPallets(line.id)}
-                              disabled={(outboundAllocationSummary?.allocatedQty ?? 0) === 0}
+                              disabled={isOutboundSourceReadOnly || (outboundAllocationSummary?.allocatedQty ?? 0) === 0}
                             >
                               {t("clearPickSelections")}
                             </button>
                           ) : null}
                           {line.pickPalletsTouched ? (
-                            <button className="button button--ghost button--small" type="button" onClick={() => resetOutboundLinePickPallets(line.id)}>{t("resetToAutoPick")}</button>
+                            <button className="button button--ghost button--small" type="button" onClick={() => resetOutboundLinePickPallets(line.id)} disabled={isOutboundSourceReadOnly}>{t("resetToAutoPick")}</button>
                           ) : null}
                         </div>
                       ) : null}
@@ -1402,8 +1423,8 @@ export function OutboundShipmentEditorPage({
                             allocatedQty: row.allocatedQty,
                             itemNumber: row.itemNumber || undefined
                           }))}
-                          editable={!isReadOnly && line.pickPalletsTouched}
-                          inputDisabled={isReadOnly}
+                          editable={!isOutboundSourceReadOnly && line.pickPalletsTouched}
+                          inputDisabled={isOutboundSourceReadOnly}
                           onAllocatedQtyChange={(rowId, allocatedQty) => {
                             const palletRow = outboundPickPlanRows.find((row) => row.id === rowId);
                             if (!palletRow) {
@@ -1653,16 +1674,16 @@ export function OutboundShipmentEditorPage({
               {isEditingConfirmedOutbound ? (
                 <button className="button button--ghost" type="button" disabled={batchSubmitting} onClick={() => void handleCopyCurrentShipment()}>{t("reEnterShipment")}</button>
               ) : (
-                <button className="button button--ghost" type="button" disabled={batchSubmitting || isReadOnly || hasNoAvailableSources} onClick={() => void submitOutboundDocument("DRAFT")}>{batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("scheduleShipment")}</button>
+                <button className="button button--ghost" type="button" disabled={batchSubmitting || isOutboundSourceReadOnly || hasNoAvailableSources} onClick={() => void submitOutboundDocument("DRAFT")}>{batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("scheduleShipment")}</button>
               )}
               <div className="shipment-wizard__actions">
                 {outboundWizardStep > 1 ? (
-                  <button className="button button--ghost" type="button" onClick={() => moveOutboundWizardStep((outboundWizardStep - 1) as OutboundWizardStep)} disabled={isReadOnly}>{t("back")}</button>
+                  <button className="button button--ghost" type="button" onClick={() => moveOutboundWizardStep((outboundWizardStep - 1) as OutboundWizardStep)} disabled={isOutboundSourceReadOnly}>{t("back")}</button>
                 ) : null}
                 {outboundWizardStep < 3 ? (
-                  <button id="shipment-editor-next-action" className="button button--primary" type="button" onClick={() => moveOutboundWizardStep((outboundWizardStep + 1) as OutboundWizardStep)} disabled={isReadOnly || hasNoAvailableSources || (outboundWizardStep === 1 ? hasBlockingStep1Issues : hasBlockingStep2Issues)}>{t("next")}</button>
+                  <button id="shipment-editor-next-action" className="button button--primary" type="button" onClick={() => moveOutboundWizardStep((outboundWizardStep + 1) as OutboundWizardStep)} disabled={isOutboundSourceReadOnly || hasNoAvailableSources || (outboundWizardStep === 1 ? hasBlockingStep1Issues : hasBlockingStep2Issues)}>{t("next")}</button>
                 ) : !isEditingConfirmedOutbound ? (
-                  <button className="button button--primary" type="submit" disabled={batchSubmitting || isReadOnly || hasNoAvailableSources || !reviewConfirmed || outboundStepOverview.reviewStatus !== "ready"}>{batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("scheduleShipment")}</button>
+                  <button className="button button--primary" type="submit" disabled={batchSubmitting || isOutboundSourceReadOnly || hasNoAvailableSources || !reviewConfirmed || outboundStepOverview.reviewStatus !== "ready"}>{batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("scheduleShipment")}</button>
                 ) : null}
               </div>
               <button className="button button--ghost" type="button" onClick={onBackToList}>{t("cancel")}</button>
@@ -1781,7 +1802,8 @@ function buildOutboundLineValidations(
   lines: BatchOutboundLineState[],
   sourceOptions: OutboundSourceOption[],
   preview: OutboundAllocationPreviewResult,
-  t: (key: string, vars?: Record<string, string | number>) => string
+  t: (key: string, vars?: Record<string, string | number>) => string,
+  skipAvailabilityChecks = false
 ) {
   const validations = new Map<string, OutboundLineValidationState>();
 
@@ -1796,7 +1818,7 @@ function buildOutboundLineValidations(
     let quantityMessage = "";
     if (isActive && line.sourceKey.trim() && line.quantity <= 0) {
       quantityMessage = t("outboundQtyRequired");
-    } else if (selectedSource && line.quantity > selectedSource.availableQty) {
+    } else if (!skipAvailabilityChecks && selectedSource && line.quantity > selectedSource.availableQty) {
       quantityMessage = t("outboundQtyExceedsStock", {
         sku: selectedSource.sku,
         available: selectedSource.availableQty
@@ -1805,7 +1827,7 @@ function buildOutboundLineValidations(
     const hasBlockingStep1 = Boolean(warehouseMessage || skuMessage || quantityMessage);
 
     let pickMessage = "";
-    if (!hasBlockingStep1 && selectedSource && line.quantity > 0) {
+    if (!skipAvailabilityChecks && !hasBlockingStep1 && selectedSource && line.quantity > 0) {
       const allocatedQty = allocationSummary?.allocatedQty ?? 0;
       if (allocatedQty !== line.quantity) {
         pickMessage = (allocationSummary?.shortageQty ?? 0) > 0
@@ -1977,13 +1999,14 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
 }
 
 function buildOutboundPickPlanRows(
-  line: Pick<BatchOutboundLineState, "id" | "pickPallets">,
+  line: Pick<BatchOutboundLineState, "id" | "quantity" | "pickPallets" | "pickPalletsTouched">,
   source: Pick<OutboundSourceOption, "candidates" | "itemNumber" | "sku" | "description">,
   includeAllCandidates: boolean,
   priorReservations?: Map<number, number>
 ) {
   const selectedPalletQuantities = new Map(
-    normalizeOutboundLinePalletPicks(line.pickPallets).map((entry) => [entry.palletId, entry.quantity] as const)
+    buildEffectiveOutboundLinePalletSelections(line, source, priorReservations ?? new Map<number, number>())
+      .map((entry) => [entry.palletId, entry.quantity] as const)
   );
 
   return source.candidates.flatMap((candidate) => {
@@ -2009,20 +2032,6 @@ function buildOutboundPickPlanRows(
       allocatedQty
     }];
   });
-}
-
-function compareOutboundAllocationCandidates(left: Item, right: Item) {
-  const leftDeliveryDate = left.deliveryDate || "";
-  const rightDeliveryDate = right.deliveryDate || "";
-  if (!leftDeliveryDate && rightDeliveryDate) return 1;
-  if (leftDeliveryDate && !rightDeliveryDate) return -1;
-  if (leftDeliveryDate !== rightDeliveryDate) return leftDeliveryDate.localeCompare(rightDeliveryDate);
-
-  if (left.createdAt !== right.createdAt) {
-    return left.createdAt.localeCompare(right.createdAt);
-  }
-
-  return left.id - right.id;
 }
 
 function getOutboundSourceReservations(
@@ -2052,8 +2061,9 @@ function buildEffectiveOutboundLinePalletSelections(
   source: Pick<OutboundSourceOption, "candidates">,
   reservations: Map<number, number>
 ) {
+  const normalizedSelections = normalizeOutboundLinePalletPicks(line.pickPallets);
   if (line.pickPalletsTouched) {
-    return normalizeOutboundLinePalletPicks(line.pickPallets);
+    return normalizedSelections;
   }
   return buildAutoOutboundPalletSelectionsWithReservations(line.quantity, source.candidates, reservations);
 }
@@ -2139,7 +2149,10 @@ function compareOutboundPalletCandidates(left: OutboundPalletCandidate, right: O
 function normalizeOutboundLinePalletPicks(entries: OutboundLinePalletPick[] | null | undefined) {
   const normalized = new Map<number, number>();
   for (const entry of Array.isArray(entries) ? entries : []) {
-    if (entry.palletId <= 0 || entry.quantity <= 0) {
+    if (entry.quantity <= 0) {
+      continue;
+    }
+    if (entry.palletId <= 0) {
       continue;
     }
     normalized.set(entry.palletId, (normalized.get(entry.palletId) ?? 0) + entry.quantity);
@@ -2378,82 +2391,51 @@ function findOutboundSourceOption(sourceOptions: OutboundSourceOption[], sourceK
   return sourceOptions.find((sourceOption) => sourceOption.sourceKey === normalizedSourceKey);
 }
 
-function buildOutboundSourceOptions(items: Item[], movements: Movement[]): OutboundSourceOption[] {
-  const containerBalances = buildItemContainerBalances(items, movements);
-  const grouped = new Map<string, { representative: Item; items: Item[] }>();
+function buildPersistedOutboundSourceOptionsFromDocument(
+  document: OutboundDocument | null,
+  skuMastersByID: Map<number, SKUMaster>
+) {
+  const persistedSources = new Map<string, OutboundSourceOption>();
+  if (!document) {
+    return persistedSources;
+  }
 
-  for (const item of [...items].sort(compareOutboundAllocationCandidates)) {
-    const key = buildOutboundSourceKey(item.customerId, item.locationId, item.skuMasterId);
-    const existing = grouped.get(key);
-    if (!existing) {
-      grouped.set(key, { representative: item, items: [item] });
+  for (const line of document.lines) {
+    const sourceKey = buildOutboundSourceKey(document.customerId, line.locationId, line.skuMasterId);
+    if (persistedSources.has(sourceKey)) {
       continue;
     }
 
-    existing.items.push(item);
+    const uniqueContainers = new Set(
+      line.pickAllocations.map((allocation) => allocation.containerNo || `${allocation.locationName}/${normalizeStorageSection(allocation.storageSection)}`)
+    );
+    const skuMasterUnit = skuMastersByID.get(line.skuMasterId)?.unit || "PCS";
+    persistedSources.set(sourceKey, {
+      sourceKey,
+      customerId: document.customerId,
+      customerName: document.customerName,
+      locationId: line.locationId,
+      locationName: line.locationName,
+      skuMasterId: line.skuMasterId,
+      sku: line.sku,
+      itemNumber: line.itemNumber || "",
+      description: line.description || "",
+      unit: (line.unitLabel || skuMasterUnit).toUpperCase(),
+      availableQty: 0,
+      palletCount: Math.max(countSelectedOutboundPallets(line.pickPallets), line.pallets || 0),
+      storageSections: [normalizeStorageSection(line.storageSection || DEFAULT_STORAGE_SECTION)],
+      containerCount: uniqueContainers.size,
+      containerSummary: formatContainerDistributionSummaryValue(line.pickAllocations.map((allocation) => ({
+        containerNo: allocation.containerNo,
+        availableQty: allocation.allocatedQty,
+        locationName: allocation.locationName,
+        storageSection: allocation.storageSection
+      }))),
+      candidates: []
+    });
   }
 
-  return [...grouped.entries()].map(([sourceKey, { representative, items: sourceItems }]) => {
-    const candidates = containerBalances.filter((balance) => balance.sourceKey === sourceKey);
-    const sourceItemWithNumber = sourceItems.find((item) => item.itemNumber.trim());
-    const sourceItemWithDescription = sourceItems.find((item) => displayDescription(item).trim());
-    const sourceItemNumber = sourceItemWithNumber?.itemNumber || "";
-    const sourceDescription = sourceItemWithDescription ? displayDescription(sourceItemWithDescription) : displayDescription(representative);
-    const sourceUnit = sourceItems.find((item) => item.unit.trim())?.unit || representative.unit;
-    const normalizedCandidates: OutboundPalletCandidate[] = candidates.map((candidate, index) => ({
-      id: candidate.id,
-      palletId: -((index + 1) * 100000 + representative.id),
-      palletCode: "",
-      customerId: candidate.customerId,
-      customerName: representative.customerName,
-      locationId: candidate.locationId,
-      locationName: candidate.locationName,
-      storageSection: normalizeStorageSection(candidate.storageSection),
-      containerNo: candidate.containerNo,
-      skuMasterId: representative.skuMasterId,
-      sku: representative.sku,
-      itemNumber: sourceItemWithNumber?.itemNumber || "",
-      description: sourceItemWithDescription ? displayDescription(sourceItemWithDescription) : displayDescription(representative),
-      unit: (sourceItems.find((item) => item.unit.trim())?.unit || representative.unit || "PCS").toUpperCase(),
-      availableQty: candidate.availableQty,
-      actualArrivalDate: representative.deliveryDate || null,
-      createdAt: representative.createdAt
-    }));
-    const sections = new Set<string>();
-    let availableQty = 0;
-
-    for (const candidate of candidates) {
-      availableQty += candidate.availableQty;
-      if (candidate.storageSection) {
-        sections.add(candidate.storageSection);
-      }
-    }
-
-    return {
-      sourceKey,
-      customerId: representative.customerId,
-      customerName: representative.customerName,
-      locationId: representative.locationId,
-      locationName: representative.locationName,
-      skuMasterId: representative.skuMasterId,
-      sku: representative.sku,
-      itemNumber: sourceItemNumber,
-      description: sourceDescription,
-      unit: sourceUnit,
-      availableQty,
-      palletCount: normalizedCandidates.length,
-      storageSections: [...sections].sort(),
-      containerCount: new Set(candidates.map((candidate) => candidate.containerNo || `${candidate.locationName}/${normalizeStorageSection(candidate.storageSection)}`)).size,
-      containerSummary: formatContainerDistributionSummaryValue(candidates),
-      candidates: normalizedCandidates
-    };
-  }).sort((left, right) => {
-    const customerCompare = left.customerName.localeCompare(right.customerName);
-    if (customerCompare !== 0) return customerCompare;
-    const locationCompare = left.locationName.localeCompare(right.locationName);
-    if (locationCompare !== 0) return locationCompare;
-    return left.sku.localeCompare(right.sku);
-  });
+  return persistedSources;
 }
 
 function buildOutboundSourceOptionsFromPallets(pallets: PalletTrace[], skuMastersByID: Map<number, SKUMaster>): OutboundSourceOption[] {
@@ -2590,7 +2572,7 @@ function buildOutboundEditorSourceState({
             id: String(line.id),
             locationId: String(line.locationId),
             sourceKey: buildOutboundSourceKey(document.customerId, line.locationId, line.skuMasterId),
-            sourceSearch: "",
+            sourceSearch: line.sku || line.itemNumber || "",
             quantity: line.quantity,
             pallets: resolveOutboundLinePalletCount(line.pickPallets, line.pallets || 0),
             palletsDetailCtns: line.palletsDetailCtns || "",

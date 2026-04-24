@@ -45,7 +45,7 @@ vi.mock("../lib/api", () => ({
 
 import { api } from "../lib/api";
 import { renderWithProviders } from "../test/renderWithProviders";
-import { createItem, createMovement, createOutboundDocument, createSkuMaster } from "../test/fixtures";
+import { createItem, createMovement, createOutboundDocument, createOutboundDocumentLine, createSkuMaster } from "../test/fixtures";
 import { OutboundShipmentEditorPage } from "./OutboundShipmentEditorPage";
 
 const mockedApi = api as unknown as {
@@ -57,6 +57,89 @@ const mockedApi = api as unknown as {
 };
 
 const OUTBOUND_HEADER_DEFAULTS_STORAGE_KEY = "sim-outbound-shipment-editor-defaults";
+const LIVE_PALLET_LOADING_MESSAGE = "Live pallet inventory is still loading. Shipment allocation will unlock once pallet data is ready.";
+
+function createOutboundPalletTrace(overrides?: Partial<{
+  palletId: number;
+  contentId: number;
+  containerNo: string;
+  quantity: number;
+  skuMasterId: number;
+  sku: string;
+  itemNumber: string;
+  description: string;
+  locationId: number;
+  locationName: string;
+}>){
+  const palletId = overrides?.palletId ?? 501;
+  const contentId = overrides?.contentId ?? (palletId + 100);
+  const skuMasterId = overrides?.skuMasterId ?? 1;
+  const sku = overrides?.sku ?? "608333";
+  const itemNumber = overrides?.itemNumber ?? sku;
+  const description = overrides?.description ?? "VB22GC";
+  const quantity = overrides?.quantity ?? 10;
+  const containerNo = overrides?.containerNo ?? "GCXU5817233";
+  const locationId = overrides?.locationId ?? 1;
+  const locationName = overrides?.locationName ?? "NJ";
+
+  return {
+    id: palletId,
+    parentPalletId: 0,
+    palletCode: `PLT-${palletId}`,
+    containerVisitId: 1,
+    sourceInboundDocumentId: 1,
+    sourceInboundLineId: 1,
+    actualArrivalDate: "2026-03-24",
+    customerId: 1,
+    customerName: "Imperial Bag & Paper",
+    skuMasterId,
+    sku,
+    description,
+    currentLocationId: locationId,
+    currentLocationName: locationName,
+    currentStorageSection: "TEMP",
+    currentContainerNo: containerNo,
+    containerType: "NORMAL" as const,
+    status: "OPEN" as const,
+    createdAt: "2026-03-24T10:00:00Z",
+    updatedAt: "2026-03-24T10:00:00Z",
+    contents: [
+      {
+        id: contentId,
+        palletId,
+        skuMasterId,
+        itemNumber,
+        sku,
+        description,
+        quantity,
+        allocatedQty: 0,
+        damagedQty: 0,
+        holdQty: 0,
+        createdAt: "2026-03-24T10:00:00Z",
+        updatedAt: "2026-03-24T10:00:00Z"
+      }
+    ]
+  };
+}
+
+async function waitForOutboundPalletsToLoad() {
+  await waitFor(() => {
+    expect(mockedApi.getPallets).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(LIVE_PALLET_LOADING_MESSAGE)).not.toBeInTheDocument();
+  });
+}
+
+function getShipmentLineWarehouseInputs() {
+  return Array.from(document.querySelectorAll('select[id^="shipment-editor-warehouse-"]')) as HTMLSelectElement[];
+}
+
+function getShipmentLineSkuInputs() {
+  return Array.from(document.querySelectorAll('input[id^="shipment-editor-sku-"]')) as HTMLInputElement[];
+}
+
+function getShipmentLineQuantityInputs() {
+  return Array.from(document.querySelectorAll('input[id^="shipment-editor-quantity-"]')) as HTMLInputElement[];
+}
 
 describe("OutboundShipmentEditorPage", () => {
   beforeEach(() => {
@@ -78,46 +161,7 @@ describe("OutboundShipmentEditorPage", () => {
       status: "DRAFT",
       trackingStatus: "SCHEDULED"
     }));
-    mockedApi.getPallets.mockResolvedValue([
-      {
-        id: 501,
-        parentPalletId: 0,
-        palletCode: "PLT-501",
-        containerVisitId: 1,
-        sourceInboundDocumentId: 1,
-        sourceInboundLineId: 1,
-        actualArrivalDate: "2026-03-24",
-        customerId: 1,
-        customerName: "Imperial Bag & Paper",
-        skuMasterId: 1,
-        sku: "608333",
-        description: "VB22GC",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "TEMP",
-        currentContainerNo: "GCXU5817233",
-        containerType: "NORMAL",
-        status: "OPEN",
-        createdAt: "2026-03-24T10:00:00Z",
-        updatedAt: "2026-03-24T10:00:00Z",
-        contents: [
-          {
-            id: 601,
-            palletId: 501,
-            skuMasterId: 1,
-            itemNumber: "608333",
-            sku: "608333",
-            description: "VB22GC",
-            quantity: 10,
-            allocatedQty: 0,
-            damagedQty: 0,
-            holdQty: 0,
-            createdAt: "2026-03-24T10:00:00Z",
-            updatedAt: "2026-03-24T10:00:00Z"
-          }
-        ]
-      }
-    ]);
+    mockedApi.getPallets.mockResolvedValue([createOutboundPalletTrace()]);
 
     renderWithProviders(
       <OutboundShipmentEditorPage
@@ -136,9 +180,10 @@ describe("OutboundShipmentEditorPage", () => {
       />
     );
 
-    fireEvent.change(screen.getByLabelText("Current Storage"), { target: { value: "1" } });
-    fireEvent.change(screen.getByLabelText("SKU"), { target: { value: "608333" } });
-    fireEvent.change(screen.getByLabelText("Ship Qty"), { target: { value: "5" } });
+    await waitForOutboundPalletsToLoad();
+    fireEvent.change(getShipmentLineWarehouseInputs()[0], { target: { value: "1" } });
+    fireEvent.change(getShipmentLineSkuInputs()[0], { target: { value: "608333" } });
+    fireEvent.change(getShipmentLineQuantityInputs()[0], { target: { value: "5" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await waitFor(() => {
@@ -149,7 +194,7 @@ describe("OutboundShipmentEditorPage", () => {
       expect(screen.getByText("PLT-501")).toBeInTheDocument();
     });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    fireEvent.click(screen.getByRole("button", { name: "Schedule Shipment" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Schedule Shipment" })[0]);
 
     await waitFor(() => {
       expect(mockedApi.createOutboundDocument).toHaveBeenCalledWith({
@@ -195,46 +240,7 @@ describe("OutboundShipmentEditorPage", () => {
       status: "DRAFT",
       trackingStatus: "SCHEDULED"
     }));
-    mockedApi.getPallets.mockResolvedValue([
-      {
-        id: 501,
-        parentPalletId: 0,
-        palletCode: "PLT-501",
-        containerVisitId: 1,
-        sourceInboundDocumentId: 1,
-        sourceInboundLineId: 1,
-        actualArrivalDate: "2026-03-24",
-        customerId: 1,
-        customerName: "Imperial Bag & Paper",
-        skuMasterId: 1,
-        sku: "608333",
-        description: "VB22GC",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "TEMP",
-        currentContainerNo: "GCXU5817233",
-        containerType: "NORMAL",
-        status: "OPEN",
-        createdAt: "2026-03-24T10:00:00Z",
-        updatedAt: "2026-03-24T10:00:00Z",
-        contents: [
-          {
-            id: 601,
-            palletId: 501,
-            skuMasterId: 1,
-            itemNumber: "608333",
-            sku: "608333",
-            description: "VB22GC",
-            quantity: 10,
-            allocatedQty: 0,
-            damagedQty: 0,
-            holdQty: 0,
-            createdAt: "2026-03-24T10:00:00Z",
-            updatedAt: "2026-03-24T10:00:00Z"
-          }
-        ]
-      }
-    ]);
+    mockedApi.getPallets.mockResolvedValue([createOutboundPalletTrace()]);
 
     renderWithProviders(
       <OutboundShipmentEditorPage
@@ -253,9 +259,10 @@ describe("OutboundShipmentEditorPage", () => {
       />
     );
 
-    fireEvent.change(screen.getByLabelText("Current Storage"), { target: { value: "1" } });
-    fireEvent.change(screen.getByLabelText("SKU"), { target: { value: "608333" } });
-    fireEvent.change(screen.getByLabelText("Ship Qty"), { target: { value: "5" } });
+    await waitForOutboundPalletsToLoad();
+    fireEvent.change(getShipmentLineWarehouseInputs()[0], { target: { value: "1" } });
+    fireEvent.change(getShipmentLineSkuInputs()[0], { target: { value: "608333" } });
+    fireEvent.change(getShipmentLineQuantityInputs()[0], { target: { value: "5" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await waitFor(() => {
@@ -266,7 +273,7 @@ describe("OutboundShipmentEditorPage", () => {
       expect(screen.getByText("PLT-501")).toBeInTheDocument();
     });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    fireEvent.click(screen.getByRole("button", { name: "Schedule Shipment" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Schedule Shipment" })[0]);
 
     await waitFor(() => {
       expect(mockedApi.createOutboundDocument).toHaveBeenCalledTimes(1);
@@ -280,6 +287,44 @@ describe("OutboundShipmentEditorPage", () => {
     });
   });
 
+  it("blocks shipment allocation until live pallets finish loading", async () => {
+    mockedApi.getPallets.mockImplementation(() => new Promise(() => {}));
+
+    renderWithProviders(
+      <OutboundShipmentEditorPage
+        routeKey="/outbound-management/42"
+        documentId={42}
+        document={createOutboundDocument({
+          id: 42,
+          status: "DRAFT",
+          trackingStatus: "SCHEDULED",
+          lines: [
+            createOutboundDocumentLine({
+              id: 4201,
+              documentId: 42,
+              quantity: 5,
+              pallets: 1,
+              pickPallets: [{ palletId: 501, quantity: 5 }]
+            })
+          ]
+        })}
+        items={[createItem({ id: 1, quantity: 10, availableQty: 10, containerNo: "GCXU5817233" })]}
+        skuMasters={[createSkuMaster()]}
+        movements={[createMovement()]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onBackToList={vi.fn()}
+        onOpenOutboundDocument={vi.fn()}
+        onOpenShipmentEditor={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("Live pallet inventory is still loading. Shipment allocation will unlock once pallet data is ready.")).toBeInTheDocument();
+    expect(screen.queryByText(/Outbound quantity for SKU 608333 exceeds available stock/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+  });
+
   it("rebalances auto picks across duplicate source lines before submit", async () => {
     mockedApi.createOutboundDocument.mockResolvedValue(createOutboundDocument({
       id: 103,
@@ -287,82 +332,8 @@ describe("OutboundShipmentEditorPage", () => {
       trackingStatus: "SCHEDULED"
     }));
     mockedApi.getPallets.mockResolvedValue([
-      {
-        id: 501,
-        parentPalletId: 0,
-        palletCode: "PLT-501",
-        containerVisitId: 1,
-        sourceInboundDocumentId: 1,
-        sourceInboundLineId: 1,
-        actualArrivalDate: "2026-03-24",
-        customerId: 1,
-        customerName: "Imperial Bag & Paper",
-        skuMasterId: 1,
-        sku: "608333",
-        description: "VB22GC",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "TEMP",
-        currentContainerNo: "GCXU5817233",
-        containerType: "NORMAL",
-        status: "OPEN",
-        createdAt: "2026-03-24T10:00:00Z",
-        updatedAt: "2026-03-24T10:00:00Z",
-        contents: [
-          {
-            id: 601,
-            palletId: 501,
-            skuMasterId: 1,
-            itemNumber: "608333",
-            sku: "608333",
-            description: "VB22GC",
-            quantity: 5,
-            allocatedQty: 0,
-            damagedQty: 0,
-            holdQty: 0,
-            createdAt: "2026-03-24T10:00:00Z",
-            updatedAt: "2026-03-24T10:00:00Z"
-          }
-        ]
-      },
-      {
-        id: 502,
-        parentPalletId: 0,
-        palletCode: "PLT-502",
-        containerVisitId: 1,
-        sourceInboundDocumentId: 1,
-        sourceInboundLineId: 1,
-        actualArrivalDate: "2026-03-25",
-        customerId: 1,
-        customerName: "Imperial Bag & Paper",
-        skuMasterId: 1,
-        sku: "608333",
-        description: "VB22GC",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "TEMP",
-        currentContainerNo: "GCXU5817234",
-        containerType: "NORMAL",
-        status: "OPEN",
-        createdAt: "2026-03-25T10:00:00Z",
-        updatedAt: "2026-03-25T10:00:00Z",
-        contents: [
-          {
-            id: 602,
-            palletId: 502,
-            skuMasterId: 1,
-            itemNumber: "608333",
-            sku: "608333",
-            description: "VB22GC",
-            quantity: 5,
-            allocatedQty: 0,
-            damagedQty: 0,
-            holdQty: 0,
-            createdAt: "2026-03-25T10:00:00Z",
-            updatedAt: "2026-03-25T10:00:00Z"
-          }
-        ]
-      }
+      createOutboundPalletTrace({ quantity: 5 }),
+      createOutboundPalletTrace({ palletId: 502, contentId: 602, containerNo: "GCXU5817234", quantity: 5 })
     ]);
 
     renderWithProviders(
@@ -382,11 +353,12 @@ describe("OutboundShipmentEditorPage", () => {
       />
     );
 
+    await waitForOutboundPalletsToLoad();
     fireEvent.click(screen.getByRole("button", { name: "Add Outbound Line" }));
 
-    const storageInputs = screen.getAllByLabelText("Current Storage");
-    const skuInputs = screen.getAllByLabelText("SKU");
-    const qtyInputs = screen.getAllByLabelText("Ship Qty");
+    const storageInputs = getShipmentLineWarehouseInputs();
+    const skuInputs = getShipmentLineSkuInputs();
+    const qtyInputs = getShipmentLineQuantityInputs();
 
     fireEvent.change(storageInputs[0], { target: { value: "1" } });
     fireEvent.change(skuInputs[0], { target: { value: "608333" } });
@@ -398,11 +370,10 @@ describe("OutboundShipmentEditorPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await waitFor(() => {
-      expect(screen.getByText("PLT-501")).toBeInTheDocument();
-      expect(screen.getByText("PLT-502")).toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: "Details" })).toHaveLength(2);
     });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    fireEvent.click(screen.getByRole("button", { name: "Schedule Shipment" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Schedule Shipment" })[0]);
 
     await waitFor(() => {
       expect(mockedApi.createOutboundDocument).toHaveBeenCalledTimes(1);
@@ -415,46 +386,7 @@ describe("OutboundShipmentEditorPage", () => {
   });
 
   it("ignores browser session shipment drafts and starts from the source state", async () => {
-    mockedApi.getPallets.mockResolvedValue([
-      {
-        id: 501,
-        parentPalletId: 0,
-        palletCode: "PLT-501",
-        containerVisitId: 1,
-        sourceInboundDocumentId: 1,
-        sourceInboundLineId: 1,
-        actualArrivalDate: "2026-03-24",
-        customerId: 1,
-        customerName: "Imperial Bag & Paper",
-        skuMasterId: 1,
-        sku: "608333",
-        description: "VB22GC",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "TEMP",
-        currentContainerNo: "GCXU5817233",
-        containerType: "NORMAL",
-        status: "OPEN",
-        createdAt: "2026-03-24T10:00:00Z",
-        updatedAt: "2026-03-24T10:00:00Z",
-        contents: [
-          {
-            id: 601,
-            palletId: 501,
-            skuMasterId: 1,
-            itemNumber: "608333",
-            sku: "608333",
-            description: "VB22GC",
-            quantity: 10,
-            allocatedQty: 0,
-            damagedQty: 0,
-            holdQty: 0,
-            createdAt: "2026-03-24T10:00:00Z",
-            updatedAt: "2026-03-24T10:00:00Z"
-          }
-        ]
-      }
-    ]);
+    mockedApi.getPallets.mockResolvedValue([createOutboundPalletTrace()]);
     window.sessionStorage.setItem("sim-outbound-shipment-editor-draft:new", JSON.stringify({
       version: 1,
       form: {
@@ -502,6 +434,7 @@ describe("OutboundShipmentEditorPage", () => {
       />
     );
 
+    await waitForOutboundPalletsToLoad();
     const headerInputs = document.querySelectorAll(".sheet-form input");
     expect((headerInputs[0] as HTMLInputElement).value).toBe("");
     expect(screen.queryByDisplayValue("Draft Receiver")).not.toBeInTheDocument();
@@ -533,9 +466,10 @@ describe("OutboundShipmentEditorPage", () => {
       />
     );
 
-    expect((screen.getByLabelText("Ship To Name") as HTMLInputElement).value).toBe("Remembered Receiver");
-    expect((screen.getByLabelText("Ship To Address") as HTMLInputElement).value).toBe("900 Harbor Ave");
-    expect((screen.getByLabelText("Ship To Contact") as HTMLInputElement).value).toBe("201-555-0001");
+    await waitForOutboundPalletsToLoad();
+    expect((screen.getByLabelText("Ship-to Name") as HTMLInputElement).value).toBe("Remembered Receiver");
+    expect((screen.getByLabelText("Ship-to Address") as HTMLInputElement).value).toBe("900 Harbor Ave");
+    expect((screen.getByLabelText("Ship-to Contact") as HTMLInputElement).value).toBe("201-555-0001");
     expect((screen.getByLabelText("Carrier") as HTMLInputElement).value).toBe("Remembered Carrier");
     expect(screen.getByText("Last shipment contact and carrier details were filled for this session.")).toBeInTheDocument();
   });
@@ -546,46 +480,7 @@ describe("OutboundShipmentEditorPage", () => {
       status: "DRAFT",
       trackingStatus: "SCHEDULED"
     }));
-    mockedApi.getPallets.mockResolvedValue([
-      {
-        id: 501,
-        parentPalletId: 0,
-        palletCode: "PLT-501",
-        containerVisitId: 1,
-        sourceInboundDocumentId: 1,
-        sourceInboundLineId: 1,
-        actualArrivalDate: "2026-03-24",
-        customerId: 1,
-        customerName: "Imperial Bag & Paper",
-        skuMasterId: 1,
-        sku: "608333",
-        description: "VB22GC",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "TEMP",
-        currentContainerNo: "GCXU5817233",
-        containerType: "NORMAL",
-        status: "OPEN",
-        createdAt: "2026-03-24T10:00:00Z",
-        updatedAt: "2026-03-24T10:00:00Z",
-        contents: [
-          {
-            id: 601,
-            palletId: 501,
-            skuMasterId: 1,
-            itemNumber: "608333",
-            sku: "608333",
-            description: "VB22GC",
-            quantity: 10,
-            allocatedQty: 0,
-            damagedQty: 0,
-            holdQty: 0,
-            createdAt: "2026-03-24T10:00:00Z",
-            updatedAt: "2026-03-24T10:00:00Z"
-          }
-        ]
-      }
-    ]);
+    mockedApi.getPallets.mockResolvedValue([createOutboundPalletTrace()]);
 
     renderWithProviders(
       <OutboundShipmentEditorPage
@@ -604,20 +499,21 @@ describe("OutboundShipmentEditorPage", () => {
       />
     );
 
-    fireEvent.change(screen.getByLabelText("Ship To Name"), { target: { value: "Receiver A" } });
-    fireEvent.change(screen.getByLabelText("Ship To Address"), { target: { value: "12 Dock Road" } });
-    fireEvent.change(screen.getByLabelText("Ship To Contact"), { target: { value: "201-555-1000" } });
+    await waitForOutboundPalletsToLoad();
+    fireEvent.change(screen.getByLabelText("Ship-to Name"), { target: { value: "Receiver A" } });
+    fireEvent.change(screen.getByLabelText("Ship-to Address"), { target: { value: "12 Dock Road" } });
+    fireEvent.change(screen.getByLabelText("Ship-to Contact"), { target: { value: "201-555-1000" } });
     fireEvent.change(screen.getByLabelText("Carrier"), { target: { value: "FedEx Freight" } });
-    fireEvent.change(screen.getByLabelText("Current Storage"), { target: { value: "1" } });
-    fireEvent.change(screen.getByLabelText("SKU"), { target: { value: "608333" } });
-    fireEvent.change(screen.getByLabelText("Ship Qty"), { target: { value: "5" } });
+    fireEvent.change(getShipmentLineWarehouseInputs()[0], { target: { value: "1" } });
+    fireEvent.change(getShipmentLineSkuInputs()[0], { target: { value: "608333" } });
+    fireEvent.change(getShipmentLineQuantityInputs()[0], { target: { value: "5" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Details" })).toBeInTheDocument();
     });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    fireEvent.click(screen.getByRole("button", { name: "Schedule Shipment" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Schedule Shipment" })[0]);
 
     await waitFor(() => {
       expect(window.sessionStorage.getItem(OUTBOUND_HEADER_DEFAULTS_STORAGE_KEY)).toContain("Receiver A");
@@ -651,6 +547,7 @@ describe("OutboundShipmentEditorPage", () => {
       />
     );
 
+    await waitForOutboundPalletsToLoad();
     const expectedShipInput = screen.getByLabelText("Expected Ship Date") as HTMLInputElement;
     const actualShipInput = screen.getByLabelText("Actual Ship Date") as HTMLInputElement;
 
@@ -662,82 +559,8 @@ describe("OutboundShipmentEditorPage", () => {
 
   it("lets manual pick mode choose from all pallet and container candidates", async () => {
     mockedApi.getPallets.mockResolvedValue([
-      {
-        id: 501,
-        parentPalletId: 0,
-        palletCode: "PLT-501",
-        containerVisitId: 1,
-        sourceInboundDocumentId: 1,
-        sourceInboundLineId: 1,
-        actualArrivalDate: "2026-03-24",
-        customerId: 1,
-        customerName: "Imperial Bag & Paper",
-        skuMasterId: 1,
-        sku: "608333",
-        description: "VB22GC",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "TEMP",
-        currentContainerNo: "GCXU5817233",
-        containerType: "NORMAL",
-        status: "OPEN",
-        createdAt: "2026-03-24T10:00:00Z",
-        updatedAt: "2026-03-24T10:00:00Z",
-        contents: [
-          {
-            id: 601,
-            palletId: 501,
-            skuMasterId: 1,
-            itemNumber: "608333",
-            sku: "608333",
-            description: "VB22GC",
-            quantity: 10,
-            allocatedQty: 0,
-            damagedQty: 0,
-            holdQty: 0,
-            createdAt: "2026-03-24T10:00:00Z",
-            updatedAt: "2026-03-24T10:00:00Z"
-          }
-        ]
-      },
-      {
-        id: 502,
-        parentPalletId: 0,
-        palletCode: "PLT-502",
-        containerVisitId: 2,
-        sourceInboundDocumentId: 2,
-        sourceInboundLineId: 2,
-        actualArrivalDate: "2026-03-25",
-        customerId: 1,
-        customerName: "Imperial Bag & Paper",
-        skuMasterId: 1,
-        sku: "608333",
-        description: "VB22GC",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "TEMP",
-        currentContainerNo: "GCXU5817234",
-        containerType: "NORMAL",
-        status: "OPEN",
-        createdAt: "2026-03-25T10:00:00Z",
-        updatedAt: "2026-03-25T10:00:00Z",
-        contents: [
-          {
-            id: 602,
-            palletId: 502,
-            skuMasterId: 1,
-            itemNumber: "608333",
-            sku: "608333",
-            description: "VB22GC",
-            quantity: 10,
-            allocatedQty: 0,
-            damagedQty: 0,
-            holdQty: 0,
-            createdAt: "2026-03-25T10:00:00Z",
-            updatedAt: "2026-03-25T10:00:00Z"
-          }
-        ]
-      }
+      createOutboundPalletTrace(),
+      createOutboundPalletTrace({ palletId: 502, contentId: 602, containerNo: "GCXU5817234" })
     ]);
 
     renderWithProviders(
@@ -757,9 +580,10 @@ describe("OutboundShipmentEditorPage", () => {
       />
     );
 
-    fireEvent.change(screen.getByLabelText("Current Storage"), { target: { value: "1" } });
-    fireEvent.change(screen.getByLabelText("SKU"), { target: { value: "608333" } });
-    fireEvent.change(screen.getByLabelText("Ship Qty"), { target: { value: "5" } });
+    await waitForOutboundPalletsToLoad();
+    fireEvent.change(getShipmentLineWarehouseInputs()[0], { target: { value: "1" } });
+    fireEvent.change(getShipmentLineSkuInputs()[0], { target: { value: "608333" } });
+    fireEvent.change(getShipmentLineQuantityInputs()[0], { target: { value: "5" } });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
 
     const manualPickButton = await screen.findByRole("button", { name: "Switch to Manual Pick" });
@@ -927,9 +751,10 @@ describe("OutboundShipmentEditorPage", () => {
       />
     );
 
-    fireEvent.change(screen.getByLabelText("Current Storage"), { target: { value: "1" } });
-    fireEvent.change(screen.getByLabelText("SKU"), { target: { value: "608333" } });
-    fireEvent.change(screen.getByLabelText("Ship Qty"), { target: { value: "8" } });
+    await waitForOutboundPalletsToLoad();
+    fireEvent.change(getShipmentLineWarehouseInputs()[0], { target: { value: "1" } });
+    fireEvent.change(getShipmentLineSkuInputs()[0], { target: { value: "608333" } });
+    fireEvent.change(getShipmentLineQuantityInputs()[0], { target: { value: "8" } });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(screen.getByRole("button", { name: "Switch to Manual Pick" }));
 
@@ -961,7 +786,20 @@ describe("OutboundShipmentEditorPage", () => {
   });
 
   it("filters sku choices by warehouse before quantity entry", async () => {
-    mockedApi.getPallets.mockResolvedValue([]);
+    mockedApi.getPallets.mockResolvedValue([
+      createOutboundPalletTrace(),
+      createOutboundPalletTrace({
+        palletId: 502,
+        contentId: 602,
+        locationId: 2,
+        locationName: "LA",
+        skuMasterId: 2,
+        sku: "900001",
+        itemNumber: "900001",
+        description: "West Coast SKU",
+        containerNo: "OOLU1234567"
+      })
+    ]);
 
     renderWithProviders(
       <OutboundShipmentEditorPage
@@ -983,9 +821,10 @@ describe("OutboundShipmentEditorPage", () => {
       />
     );
 
-    const warehouseSelect = screen.getByLabelText("Current Storage") as HTMLSelectElement;
-    const skuSelect = screen.getByLabelText("SKU") as HTMLInputElement;
-    const quantityInput = screen.getByLabelText("Ship Qty") as HTMLInputElement;
+    await waitForOutboundPalletsToLoad();
+    const warehouseSelect = getShipmentLineWarehouseInputs()[0];
+    const skuSelect = getShipmentLineSkuInputs()[0];
+    const quantityInput = getShipmentLineQuantityInputs()[0];
 
     expect(skuSelect.disabled).toBe(true);
     expect(quantityInput.disabled).toBe(true);
@@ -1008,7 +847,7 @@ describe("OutboundShipmentEditorPage", () => {
   });
 
   it("disables next until line validation passes and moves focus forward", async () => {
-    mockedApi.getPallets.mockResolvedValue([]);
+    mockedApi.getPallets.mockResolvedValue([createOutboundPalletTrace()]);
 
     renderWithProviders(
       <OutboundShipmentEditorPage
@@ -1027,9 +866,10 @@ describe("OutboundShipmentEditorPage", () => {
       />
     );
 
-    const warehouseSelect = screen.getByLabelText("Current Storage") as HTMLSelectElement;
-    const skuSelect = screen.getByLabelText("SKU") as HTMLInputElement;
-    const quantityInput = screen.getByLabelText("Ship Qty") as HTMLInputElement;
+    await waitForOutboundPalletsToLoad();
+    const warehouseSelect = getShipmentLineWarehouseInputs()[0];
+    const skuSelect = getShipmentLineSkuInputs()[0];
+    const quantityInput = getShipmentLineQuantityInputs()[0];
     const nextButton = screen.getByRole("button", { name: "Next" });
 
     expect(nextButton).toBeDisabled();
@@ -1067,7 +907,7 @@ describe("OutboundShipmentEditorPage", () => {
   });
 
   it("copies the previous warehouse into a newly added outbound line", async () => {
-    mockedApi.getPallets.mockResolvedValue([]);
+    mockedApi.getPallets.mockResolvedValue([createOutboundPalletTrace()]);
 
     renderWithProviders(
       <OutboundShipmentEditorPage
@@ -1086,11 +926,12 @@ describe("OutboundShipmentEditorPage", () => {
       />
     );
 
-    fireEvent.change(screen.getByLabelText("Current Storage"), { target: { value: "1" } });
+    await waitForOutboundPalletsToLoad();
+    fireEvent.change(getShipmentLineWarehouseInputs()[0], { target: { value: "1" } });
     fireEvent.click(screen.getByRole("button", { name: "Add Outbound Line" }));
 
     await waitFor(() => {
-      const warehouseSelects = screen.getAllByLabelText("Current Storage") as HTMLSelectElement[];
+      const warehouseSelects = getShipmentLineWarehouseInputs();
       expect(warehouseSelects).toHaveLength(2);
       expect(warehouseSelects[1].value).toBe("1");
       expect(document.activeElement).toBe(warehouseSelects[1]);
@@ -1098,46 +939,7 @@ describe("OutboundShipmentEditorPage", () => {
   });
 
   it("requires a final confirmation check before posting the shipment", async () => {
-    mockedApi.getPallets.mockResolvedValue([
-      {
-        id: 501,
-        parentPalletId: 0,
-        palletCode: "PLT-501",
-        containerVisitId: 1,
-        sourceInboundDocumentId: 1,
-        sourceInboundLineId: 1,
-        actualArrivalDate: "2026-03-24",
-        customerId: 1,
-        customerName: "Imperial Bag & Paper",
-        skuMasterId: 1,
-        sku: "608333",
-        description: "VB22GC",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "TEMP",
-        currentContainerNo: "GCXU5817233",
-        containerType: "NORMAL",
-        status: "OPEN",
-        createdAt: "2026-03-24T10:00:00Z",
-        updatedAt: "2026-03-24T10:00:00Z",
-        contents: [
-          {
-            id: 601,
-            palletId: 501,
-            skuMasterId: 1,
-            itemNumber: "608333",
-            sku: "608333",
-            description: "VB22GC",
-            quantity: 10,
-            allocatedQty: 0,
-            damagedQty: 0,
-            holdQty: 0,
-            createdAt: "2026-03-24T10:00:00Z",
-            updatedAt: "2026-03-24T10:00:00Z"
-          }
-        ]
-      }
-    ]);
+    mockedApi.getPallets.mockResolvedValue([createOutboundPalletTrace()]);
 
     renderWithProviders(
       <OutboundShipmentEditorPage
@@ -1156,18 +958,25 @@ describe("OutboundShipmentEditorPage", () => {
       />
     );
 
-    fireEvent.change(screen.getByLabelText("Current Storage"), { target: { value: "1" } });
-    fireEvent.change(screen.getByLabelText("SKU"), { target: { value: "608333" } });
-    fireEvent.change(screen.getByLabelText("Ship Qty"), { target: { value: "5" } });
+    await waitForOutboundPalletsToLoad();
+    fireEvent.change(getShipmentLineWarehouseInputs()[0], { target: { value: "1" } });
+    fireEvent.change(getShipmentLineSkuInputs()[0], { target: { value: "608333" } });
+    fireEvent.change(getShipmentLineQuantityInputs()[0], { target: { value: "5" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Details" })).toBeInTheDocument();
+    });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
 
     expect(screen.getByText("Warehouse / Container Summary")).toBeInTheDocument();
-    expect(screen.getByText("Review the confirmed picks grouped by warehouse and source container before posting this shipment.")).toBeInTheDocument();
-    expect(screen.getByText("Containers: 1 · Pallets: 1 · Selected Qty: 5 · Total Lines: 1")).toBeInTheDocument();
+    expect(screen.getByText("Review the shipment header, warehouse selection, picked pallets, and quantities one last time before posting this shipment.")).toBeInTheDocument();
+    expect(screen.getAllByText("Containers: 1").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Pallets:\s*1/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Selected Qty: 5").length).toBeGreaterThan(0);
 
-    const scheduleShipmentButton = screen.getByRole("button", { name: "Schedule Shipment" });
+    const scheduleShipmentButtons = screen.getAllByRole("button", { name: "Schedule Shipment" });
+    const scheduleShipmentButton = scheduleShipmentButtons[scheduleShipmentButtons.length - 1] as HTMLButtonElement;
     expect(scheduleShipmentButton).toBeDisabled();
 
     fireEvent.click(screen.getByRole("checkbox"));
@@ -1206,6 +1015,7 @@ describe("OutboundShipmentEditorPage", () => {
       />
     );
 
+    await waitForOutboundPalletsToLoad();
     expect(screen.getByText("Confirmed shipment details are locked. You can still update the document note.")).toBeInTheDocument();
 
     fireEvent.click(screen.getAllByRole("button", { name: /Re-enter Shipment|reEnterShipment/ })[0]);
@@ -1251,6 +1061,7 @@ describe("OutboundShipmentEditorPage", () => {
       />
     );
 
+    await waitForOutboundPalletsToLoad();
     fireEvent.change(screen.getByLabelText("Document Notes"), { target: { value: "Updated confirmed note" } });
     fireEvent.click(screen.getByRole("button", { name: "Save Note" }));
 
