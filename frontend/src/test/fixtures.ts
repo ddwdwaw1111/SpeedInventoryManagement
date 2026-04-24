@@ -190,6 +190,7 @@ export function createOutboundPickAllocation(overrides: Partial<OutboundPickAllo
     storageSection: "TEMP",
     containerNo: "GCXU5817233",
     allocatedQty: 5,
+    pallets: 1,
     createdAt: ISO_TIMESTAMP,
     ...overrides
   };

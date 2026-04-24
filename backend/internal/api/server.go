@@ -1493,6 +1493,8 @@ func writeDomainError(c *gin.Context, err error) {
 		writeError(c, http.StatusNotFound, err.Error())
 	case errors.Is(err, service.ErrInvalidInput):
 		writeError(c, http.StatusBadRequest, err.Error())
+	case errors.Is(err, service.ErrReservedStock):
+		writeError(c, http.StatusConflict, err.Error())
 	case errors.Is(err, service.ErrInsufficientStock):
 		writeError(c, http.StatusConflict, err.Error())
 	default:

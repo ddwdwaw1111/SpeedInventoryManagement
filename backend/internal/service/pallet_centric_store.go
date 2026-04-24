@@ -97,6 +97,24 @@ type palletContentConsumption struct {
 	ActualArrivalDate       *time.Time
 }
 
+type lockedPalletContentState struct {
+	PalletItemID            int64
+	PalletID                int64
+	SKUMasterID             int64
+	RemainingQty            int
+	AllocatedQty            int
+	DamagedQty              int
+	HoldQty                 int
+	CustomerID              int64
+	LocationID              int64
+	StorageSection          string
+	ContainerVisitID        int64
+	SourceInboundDocumentID int64
+	SourceInboundLineID     int64
+	ContainerNo             string
+	ActualArrivalDate       *time.Time
+}
+
 type outboundPickRestore struct {
 	ID             int64  `db:"id"`
 	OutboundLineID int64  `db:"outbound_line_id"`
@@ -396,6 +414,168 @@ func (s *Store) createOutboundPickTx(ctx context.Context, tx *sql.Tx, input crea
 		return mapDBError(fmt.Errorf("create outbound pick: %w", err))
 	}
 	return nil
+}
+
+func classifyReservedStockConflict(requestedQty int, onHandQty int, allocatedQty int, damagedQty int, holdQty int) error {
+	physicalQty := onHandQty - damagedQty - holdQty
+	if allocatedQty > 0 && requestedQty <= maxInt(physicalQty, 0) {
+		return fmt.Errorf("%w: requested stock is reserved by another outbound shipment", ErrReservedStock)
+	}
+	return ErrInsufficientStock
+}
+
+func classifyBucketReservedStockConflict(requestedQty int, onHandQty int, allocatedQty int, damagedQty int, holdQty int) error {
+	physicalQty := onHandQty - damagedQty - holdQty
+	if allocatedQty > 0 && requestedQty <= maxInt(physicalQty, 0) {
+		return fmt.Errorf("%w: requested stock is reserved by another outbound shipment", ErrReservedStock)
+	}
+	return ErrInsufficientStock
+}
+
+func palletContentFromLockedState(state lockedPalletContentState, quantity int) palletContentConsumption {
+	return palletContentConsumption{
+		PalletID:                state.PalletID,
+		PalletItemID:            state.PalletItemID,
+		SKUMasterID:             state.SKUMasterID,
+		Quantity:                quantity,
+		CustomerID:              state.CustomerID,
+		LocationID:              state.LocationID,
+		StorageSection:          fallbackSection(state.StorageSection),
+		ContainerVisitID:        state.ContainerVisitID,
+		SourceInboundDocumentID: state.SourceInboundDocumentID,
+		SourceInboundLineID:     state.SourceInboundLineID,
+		ContainerNo:             strings.TrimSpace(state.ContainerNo),
+		ActualArrivalDate:       state.ActualArrivalDate,
+	}
+}
+
+func (s *Store) loadLockedPalletContentStateForBucketTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	bucket palletSourceBucket,
+	palletID int64,
+	skuMasterID int64,
+) (lockedPalletContentState, error) {
+	if bucket.SKUMasterID <= 0 || bucket.CustomerID <= 0 || bucket.LocationID <= 0 || palletID <= 0 || skuMasterID <= 0 {
+		return lockedPalletContentState{}, fmt.Errorf("%w: invalid pallet lookup input", ErrInvalidInput)
+	}
+
+	storageSection := fallbackSection(bucket.StorageSection)
+	containerNo := strings.TrimSpace(bucket.ContainerNo)
+	var content lockedPalletContentState
+	if err := tx.QueryRowContext(ctx, `
+		SELECT
+			pi.id,
+			pi.pallet_id,
+			pi.sku_master_id,
+			pi.quantity,
+			pi.allocated_qty,
+			pi.damaged_qty,
+			pi.hold_qty,
+			p.customer_id,
+			p.current_location_id,
+			COALESCE(p.current_storage_section, 'TEMP') AS current_storage_section,
+			COALESCE(p.container_visit_id, 0) AS container_visit_id,
+			COALESCE(p.source_inbound_document_id, 0) AS source_inbound_document_id,
+			COALESCE(p.source_inbound_line_id, 0) AS source_inbound_line_id,
+			COALESCE(p.current_container_no, '') AS current_container_no,
+			p.actual_arrival_date
+		FROM pallet_items pi
+		JOIN pallets p ON p.id = pi.pallet_id
+		WHERE p.id = ?
+		  AND pi.sku_master_id = ?
+		  AND p.customer_id = ?
+		  AND p.current_location_id = ?
+		  AND COALESCE(p.current_storage_section, 'TEMP') = ?
+		  AND COALESCE(p.current_container_no, '') = ?
+		FOR UPDATE
+	`, palletID, skuMasterID, bucket.CustomerID, bucket.LocationID, storageSection, containerNo).Scan(
+		&content.PalletItemID,
+		&content.PalletID,
+		&content.SKUMasterID,
+		&content.RemainingQty,
+		&content.AllocatedQty,
+		&content.DamagedQty,
+		&content.HoldQty,
+		&content.CustomerID,
+		&content.LocationID,
+		&content.StorageSection,
+		&content.ContainerVisitID,
+		&content.SourceInboundDocumentID,
+		&content.SourceInboundLineID,
+		&content.ContainerNo,
+		&content.ActualArrivalDate,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return lockedPalletContentState{}, fmt.Errorf("%w: selected pallet is not available in this stock position", ErrInvalidInput)
+		}
+		return lockedPalletContentState{}, fmt.Errorf("load selected pallet contents: %w", err)
+	}
+
+	content.StorageSection = fallbackSection(content.StorageSection)
+	content.ContainerNo = strings.TrimSpace(content.ContainerNo)
+	return content, nil
+}
+
+func (s *Store) loadLockedPalletContentStateTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	palletID int64,
+	skuMasterID int64,
+) (lockedPalletContentState, error) {
+	if palletID <= 0 || skuMasterID <= 0 {
+		return lockedPalletContentState{}, fmt.Errorf("%w: invalid pallet lookup input", ErrInvalidInput)
+	}
+
+	var content lockedPalletContentState
+	if err := tx.QueryRowContext(ctx, `
+		SELECT
+			pi.id,
+			pi.pallet_id,
+			pi.sku_master_id,
+			pi.quantity,
+			pi.allocated_qty,
+			pi.damaged_qty,
+			pi.hold_qty,
+			p.customer_id,
+			p.current_location_id,
+			COALESCE(p.current_storage_section, 'TEMP') AS current_storage_section,
+			COALESCE(p.container_visit_id, 0) AS container_visit_id,
+			COALESCE(p.source_inbound_document_id, 0) AS source_inbound_document_id,
+			COALESCE(p.source_inbound_line_id, 0) AS source_inbound_line_id,
+			COALESCE(p.current_container_no, '') AS current_container_no,
+			p.actual_arrival_date
+		FROM pallet_items pi
+		JOIN pallets p ON p.id = pi.pallet_id
+		WHERE p.id = ?
+		  AND pi.sku_master_id = ?
+		FOR UPDATE
+	`, palletID, skuMasterID).Scan(
+		&content.PalletItemID,
+		&content.PalletID,
+		&content.SKUMasterID,
+		&content.RemainingQty,
+		&content.AllocatedQty,
+		&content.DamagedQty,
+		&content.HoldQty,
+		&content.CustomerID,
+		&content.LocationID,
+		&content.StorageSection,
+		&content.ContainerVisitID,
+		&content.SourceInboundDocumentID,
+		&content.SourceInboundLineID,
+		&content.ContainerNo,
+		&content.ActualArrivalDate,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return lockedPalletContentState{}, fmt.Errorf("%w: selected pallet is not available", ErrInvalidInput)
+		}
+		return lockedPalletContentState{}, fmt.Errorf("load pallet contents: %w", err)
+	}
+
+	content.StorageSection = fallbackSection(content.StorageSection)
+	content.ContainerNo = strings.TrimSpace(content.ContainerNo)
+	return content, nil
 }
 
 func (s *Store) updatePalletStatusFromContentsTx(ctx context.Context, tx *sql.Tx, palletID int64) error {
@@ -719,66 +899,9 @@ func (s *Store) addSpecificPalletContentsForBucketTx(
 	if bucket.SKUMasterID <= 0 || bucket.CustomerID <= 0 || bucket.LocationID <= 0 || palletID <= 0 || skuMasterID <= 0 || quantity <= 0 {
 		return nil, fmt.Errorf("%w: invalid selected pallet increase input", ErrInvalidInput)
 	}
-
-	storageSection := fallbackSection(bucket.StorageSection)
-	containerNo := strings.TrimSpace(bucket.ContainerNo)
-
-	var content struct {
-		PalletItemID            int64
-		PalletID                int64
-		SKUMasterID             int64
-		RemainingQty            int
-		CustomerID              int64
-		LocationID              int64
-		StorageSection          string
-		ContainerVisitID        int64
-		SourceInboundDocumentID int64
-		SourceInboundLineID     int64
-		ContainerNo             string
-		ActualArrivalDate       *time.Time
-	}
-
-	if err := tx.QueryRowContext(ctx, `
-		SELECT
-			pi.id,
-			pi.pallet_id,
-			pi.sku_master_id,
-			pi.quantity,
-			p.customer_id,
-			p.current_location_id,
-			COALESCE(p.current_storage_section, 'TEMP') AS current_storage_section,
-			COALESCE(p.container_visit_id, 0) AS container_visit_id,
-			COALESCE(p.source_inbound_document_id, 0) AS source_inbound_document_id,
-			COALESCE(p.source_inbound_line_id, 0) AS source_inbound_line_id,
-			COALESCE(p.current_container_no, '') AS current_container_no,
-			p.actual_arrival_date
-		FROM pallet_items pi
-		JOIN pallets p ON p.id = pi.pallet_id
-		WHERE p.id = ?
-		  AND pi.sku_master_id = ?
-		  AND p.customer_id = ?
-		  AND p.current_location_id = ?
-		  AND COALESCE(p.current_storage_section, 'TEMP') = ?
-		  AND COALESCE(p.current_container_no, '') = ?
-		FOR UPDATE
-	`, palletID, skuMasterID, bucket.CustomerID, bucket.LocationID, storageSection, containerNo).Scan(
-		&content.PalletItemID,
-		&content.PalletID,
-		&content.SKUMasterID,
-		&content.RemainingQty,
-		&content.CustomerID,
-		&content.LocationID,
-		&content.StorageSection,
-		&content.ContainerVisitID,
-		&content.SourceInboundDocumentID,
-		&content.SourceInboundLineID,
-		&content.ContainerNo,
-		&content.ActualArrivalDate,
-	); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("%w: selected pallet is not available in this stock position", ErrInvalidInput)
-		}
-		return nil, fmt.Errorf("load selected pallet contents for increase: %w", err)
+	content, err := s.loadLockedPalletContentStateForBucketTx(ctx, tx, bucket, palletID, skuMasterID)
+	if err != nil {
+		return nil, err
 	}
 
 	if _, err := tx.ExecContext(ctx, `
@@ -792,20 +915,7 @@ func (s *Store) addSpecificPalletContentsForBucketTx(
 		return nil, err
 	}
 
-	return []palletContentConsumption{{
-		PalletID:                content.PalletID,
-		PalletItemID:            content.PalletItemID,
-		SKUMasterID:             content.SKUMasterID,
-		Quantity:                quantity,
-		CustomerID:              content.CustomerID,
-		LocationID:              content.LocationID,
-		StorageSection:          fallbackSection(content.StorageSection),
-		ContainerVisitID:        content.ContainerVisitID,
-		SourceInboundDocumentID: content.SourceInboundDocumentID,
-		SourceInboundLineID:     content.SourceInboundLineID,
-		ContainerNo:             strings.TrimSpace(content.ContainerNo),
-		ActualArrivalDate:       content.ActualArrivalDate,
-	}}, nil
+	return []palletContentConsumption{palletContentFromLockedState(content, quantity)}, nil
 }
 
 func (s *Store) consumeSpecificPalletContentsForBucketTx(
@@ -819,29 +929,148 @@ func (s *Store) consumeSpecificPalletContentsForBucketTx(
 	if bucket.SKUMasterID <= 0 || bucket.CustomerID <= 0 || bucket.LocationID <= 0 || palletID <= 0 || skuMasterID <= 0 || quantity <= 0 {
 		return nil, fmt.Errorf("%w: invalid selected pallet consumption input", ErrInvalidInput)
 	}
+	content, err := s.loadLockedPalletContentStateForBucketTx(ctx, tx, bucket, palletID, skuMasterID)
+	if err != nil {
+		return nil, err
+	}
+
+	availableQty := content.RemainingQty - content.AllocatedQty - content.DamagedQty - content.HoldQty
+	if quantity > availableQty {
+		return nil, classifyReservedStockConflict(quantity, content.RemainingQty, content.AllocatedQty, content.DamagedQty, content.HoldQty)
+	}
+
+	nextRemainingQty := content.RemainingQty - quantity
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE pallet_items
+		SET quantity = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, nextRemainingQty, content.PalletItemID); err != nil {
+		return nil, mapDBError(fmt.Errorf("consume selected pallet item quantity: %w", err))
+	}
+	if err := s.updatePalletStatusFromContentsTx(ctx, tx, content.PalletID); err != nil {
+		return nil, err
+	}
+
+	return []palletContentConsumption{palletContentFromLockedState(content, quantity)}, nil
+}
+
+func (s *Store) reserveSpecificPalletContentsForBucketTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	bucket palletSourceBucket,
+	palletID int64,
+	skuMasterID int64,
+	quantity int,
+) ([]palletContentConsumption, error) {
+	if bucket.SKUMasterID <= 0 || bucket.CustomerID <= 0 || bucket.LocationID <= 0 || palletID <= 0 || skuMasterID <= 0 || quantity <= 0 {
+		return nil, fmt.Errorf("%w: invalid selected pallet reservation input", ErrInvalidInput)
+	}
+
+	content, err := s.loadLockedPalletContentStateForBucketTx(ctx, tx, bucket, palletID, skuMasterID)
+	if err != nil {
+		return nil, err
+	}
+
+	availableQty := content.RemainingQty - content.AllocatedQty - content.DamagedQty - content.HoldQty
+	if quantity > availableQty {
+		return nil, classifyReservedStockConflict(quantity, content.RemainingQty, content.AllocatedQty, content.DamagedQty, content.HoldQty)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE pallet_items
+		SET allocated_qty = allocated_qty + ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, quantity, content.PalletItemID); err != nil {
+		return nil, mapDBError(fmt.Errorf("reserve selected pallet item quantity: %w", err))
+	}
+	if err := s.updatePalletStatusFromContentsTx(ctx, tx, content.PalletID); err != nil {
+		return nil, err
+	}
+
+	return []palletContentConsumption{palletContentFromLockedState(content, quantity)}, nil
+}
+
+func (s *Store) releaseReservedPalletContentsTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	palletID int64,
+	skuMasterID int64,
+	quantity int,
+) ([]palletContentConsumption, error) {
+	if palletID <= 0 || skuMasterID <= 0 || quantity <= 0 {
+		return nil, fmt.Errorf("%w: invalid pallet reservation release input", ErrInvalidInput)
+	}
+
+	content, err := s.loadLockedPalletContentStateTx(ctx, tx, palletID, skuMasterID)
+	if err != nil {
+		return nil, err
+	}
+	if quantity > content.AllocatedQty {
+		return nil, fmt.Errorf("%w: pallet reservation snapshot no longer matches allocated stock", ErrInvalidInput)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE pallet_items
+		SET allocated_qty = allocated_qty - ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, quantity, content.PalletItemID); err != nil {
+		return nil, mapDBError(fmt.Errorf("release pallet reservation quantity: %w", err))
+	}
+	if err := s.updatePalletStatusFromContentsTx(ctx, tx, content.PalletID); err != nil {
+		return nil, err
+	}
+
+	return []palletContentConsumption{palletContentFromLockedState(content, quantity)}, nil
+}
+
+func (s *Store) consumeReservedSpecificPalletContentsForBucketTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	bucket palletSourceBucket,
+	palletID int64,
+	skuMasterID int64,
+	quantity int,
+) ([]palletContentConsumption, error) {
+	if bucket.SKUMasterID <= 0 || bucket.CustomerID <= 0 || bucket.LocationID <= 0 || palletID <= 0 || skuMasterID <= 0 || quantity <= 0 {
+		return nil, fmt.Errorf("%w: invalid reserved pallet consumption input", ErrInvalidInput)
+	}
+
+	content, err := s.loadLockedPalletContentStateForBucketTx(ctx, tx, bucket, palletID, skuMasterID)
+	if err != nil {
+		return nil, err
+	}
+	if quantity > content.AllocatedQty {
+		return nil, fmt.Errorf("%w: pallet reservation snapshot no longer matches allocated stock", ErrInvalidInput)
+	}
+	if quantity > content.RemainingQty {
+		return nil, fmt.Errorf("%w: reserved pallet quantity is no longer available to ship", ErrInvalidInput)
+	}
+
+	nextRemainingQty := content.RemainingQty - quantity
+	nextAllocatedQty := content.AllocatedQty - quantity
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE pallet_items
+		SET quantity = ?, allocated_qty = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, nextRemainingQty, nextAllocatedQty, content.PalletItemID); err != nil {
+		return nil, mapDBError(fmt.Errorf("consume reserved pallet item quantity: %w", err))
+	}
+	if err := s.updatePalletStatusFromContentsTx(ctx, tx, content.PalletID); err != nil {
+		return nil, err
+	}
+
+	return []palletContentConsumption{palletContentFromLockedState(content, quantity)}, nil
+}
+
+func (s *Store) previewPalletContentsForBucketTx(ctx context.Context, tx *sql.Tx, bucket palletSourceBucket, quantity int) ([]palletContentConsumption, error) {
+	if bucket.SKUMasterID <= 0 || bucket.CustomerID <= 0 || bucket.LocationID <= 0 || quantity <= 0 {
+		return nil, fmt.Errorf("%w: invalid pallet bucket preview input", ErrInvalidInput)
+	}
 
 	storageSection := fallbackSection(bucket.StorageSection)
 	containerNo := strings.TrimSpace(bucket.ContainerNo)
 
-	var content struct {
-		PalletItemID            int64
-		PalletID                int64
-		SKUMasterID             int64
-		RemainingQty            int
-		AllocatedQty            int
-		DamagedQty              int
-		HoldQty                 int
-		CustomerID              int64
-		LocationID              int64
-		StorageSection          string
-		ContainerVisitID        int64
-		SourceInboundDocumentID int64
-		SourceInboundLineID     int64
-		ContainerNo             string
-		ActualArrivalDate       *time.Time
-	}
-
-	if err := tx.QueryRowContext(ctx, `
+	rows, err := tx.QueryContext(ctx, `
 		SELECT
 			pi.id,
 			pi.pallet_id,
@@ -860,67 +1089,114 @@ func (s *Store) consumeSpecificPalletContentsForBucketTx(
 			p.actual_arrival_date
 		FROM pallet_items pi
 		JOIN pallets p ON p.id = pi.pallet_id
-		WHERE p.id = ?
-		  AND pi.sku_master_id = ?
+		WHERE pi.sku_master_id = ?
 		  AND p.customer_id = ?
 		  AND p.current_location_id = ?
 		  AND COALESCE(p.current_storage_section, 'TEMP') = ?
 		  AND COALESCE(p.current_container_no, '') = ?
+		  AND pi.quantity > 0
+		ORDER BY COALESCE(p.actual_arrival_date, DATE(p.created_at)) ASC, p.created_at ASC, pi.pallet_id ASC, pi.id ASC
 		FOR UPDATE
-	`, palletID, skuMasterID, bucket.CustomerID, bucket.LocationID, storageSection, containerNo).Scan(
-		&content.PalletItemID,
-		&content.PalletID,
-		&content.SKUMasterID,
-		&content.RemainingQty,
-		&content.AllocatedQty,
-		&content.DamagedQty,
-		&content.HoldQty,
-		&content.CustomerID,
-		&content.LocationID,
-		&content.StorageSection,
-		&content.ContainerVisitID,
-		&content.SourceInboundDocumentID,
-		&content.SourceInboundLineID,
-		&content.ContainerNo,
-		&content.ActualArrivalDate,
-	); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("%w: selected pallet is not available in this stock position", ErrInvalidInput)
+	`, bucket.SKUMasterID, bucket.CustomerID, bucket.LocationID, storageSection, containerNo)
+	if err != nil {
+		return nil, fmt.Errorf("load pallet contents for bucket preview: %w", err)
+	}
+	defer rows.Close()
+
+	type row struct {
+		PalletItemID            int64
+		PalletID                int64
+		SKUMasterID             int64
+		RemainingQty            int
+		AllocatedQty            int
+		DamagedQty              int
+		HoldQty                 int
+		CustomerID              int64
+		LocationID              int64
+		StorageSection          string
+		ContainerVisitID        int64
+		SourceInboundDocumentID int64
+		SourceInboundLineID     int64
+		ContainerNo             string
+		ActualArrivalDate       *time.Time
+	}
+
+	contentRows := make([]row, 0)
+	for rows.Next() {
+		var content row
+		if err := rows.Scan(
+			&content.PalletItemID,
+			&content.PalletID,
+			&content.SKUMasterID,
+			&content.RemainingQty,
+			&content.AllocatedQty,
+			&content.DamagedQty,
+			&content.HoldQty,
+			&content.CustomerID,
+			&content.LocationID,
+			&content.StorageSection,
+			&content.ContainerVisitID,
+			&content.SourceInboundDocumentID,
+			&content.SourceInboundLineID,
+			&content.ContainerNo,
+			&content.ActualArrivalDate,
+		); err != nil {
+			return nil, fmt.Errorf("scan pallet contents for bucket preview: %w", err)
 		}
-		return nil, fmt.Errorf("load selected pallet contents: %w", err)
+		contentRows = append(contentRows, content)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate pallet contents for bucket preview: %w", err)
+	}
+	if len(contentRows) == 0 {
+		return []palletContentConsumption{}, nil
 	}
 
-	availableQty := content.RemainingQty - content.AllocatedQty - content.DamagedQty - content.HoldQty
-	if quantity > availableQty {
-		return nil, ErrInsufficientStock
+	remainingQuantity := quantity
+	consumptions := make([]palletContentConsumption, 0)
+	totalQty := 0
+	totalAllocatedQty := 0
+	totalDamagedQty := 0
+	totalHoldQty := 0
+	for _, content := range contentRows {
+		totalQty += content.RemainingQty
+		totalAllocatedQty += content.AllocatedQty
+		totalDamagedQty += content.DamagedQty
+		totalHoldQty += content.HoldQty
+		if remainingQuantity <= 0 {
+			break
+		}
+		availableQty := content.RemainingQty - content.AllocatedQty - content.DamagedQty - content.HoldQty
+		consumeQty := availableQty
+		if consumeQty > remainingQuantity {
+			consumeQty = remainingQuantity
+		}
+		if consumeQty <= 0 {
+			continue
+		}
+
+		consumptions = append(consumptions, palletContentConsumption{
+			PalletID:                content.PalletID,
+			PalletItemID:            content.PalletItemID,
+			SKUMasterID:             content.SKUMasterID,
+			Quantity:                consumeQty,
+			CustomerID:              content.CustomerID,
+			LocationID:              content.LocationID,
+			StorageSection:          fallbackSection(content.StorageSection),
+			ContainerVisitID:        content.ContainerVisitID,
+			SourceInboundDocumentID: content.SourceInboundDocumentID,
+			SourceInboundLineID:     content.SourceInboundLineID,
+			ContainerNo:             strings.TrimSpace(content.ContainerNo),
+			ActualArrivalDate:       content.ActualArrivalDate,
+		})
+		remainingQuantity -= consumeQty
 	}
 
-	nextRemainingQty := content.RemainingQty - quantity
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE pallet_items
-		SET quantity = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`, nextRemainingQty, content.PalletItemID); err != nil {
-		return nil, mapDBError(fmt.Errorf("consume selected pallet item quantity: %w", err))
-	}
-	if err := s.updatePalletStatusFromContentsTx(ctx, tx, content.PalletID); err != nil {
-		return nil, err
+	if remainingQuantity > 0 {
+		return nil, classifyBucketReservedStockConflict(quantity, totalQty, totalAllocatedQty, totalDamagedQty, totalHoldQty)
 	}
 
-	return []palletContentConsumption{{
-		PalletID:                content.PalletID,
-		PalletItemID:            content.PalletItemID,
-		SKUMasterID:             content.SKUMasterID,
-		Quantity:                quantity,
-		CustomerID:              content.CustomerID,
-		LocationID:              content.LocationID,
-		StorageSection:          fallbackSection(content.StorageSection),
-		ContainerVisitID:        content.ContainerVisitID,
-		SourceInboundDocumentID: content.SourceInboundDocumentID,
-		SourceInboundLineID:     content.SourceInboundLineID,
-		ContainerNo:             strings.TrimSpace(content.ContainerNo),
-		ActualArrivalDate:       content.ActualArrivalDate,
-	}}, nil
+	return consumptions, nil
 }
 
 func (s *Store) consumePalletContentsForBucketTx(ctx context.Context, tx *sql.Tx, bucket palletSourceBucket, quantity int) ([]palletContentConsumption, error) {
@@ -1015,7 +1291,15 @@ func (s *Store) consumePalletContentsForBucketTx(ctx context.Context, tx *sql.Tx
 
 	remainingQuantity := quantity
 	consumptions := make([]palletContentConsumption, 0)
+	totalQty := 0
+	totalAllocatedQty := 0
+	totalDamagedQty := 0
+	totalHoldQty := 0
 	for _, content := range contentRows {
+		totalQty += content.RemainingQty
+		totalAllocatedQty += content.AllocatedQty
+		totalDamagedQty += content.DamagedQty
+		totalHoldQty += content.HoldQty
 		if remainingQuantity <= 0 {
 			break
 		}
@@ -1058,7 +1342,7 @@ func (s *Store) consumePalletContentsForBucketTx(ctx context.Context, tx *sql.Tx
 	}
 
 	if remainingQuantity > 0 {
-		return nil, ErrInsufficientStock
+		return nil, classifyBucketReservedStockConflict(quantity, totalQty, totalAllocatedQty, totalDamagedQty, totalHoldQty)
 	}
 
 	return consumptions, nil
@@ -1155,7 +1439,15 @@ func (s *Store) consumePalletContentsForInboundLineTx(ctx context.Context, tx *s
 
 	remainingQuantity := quantity
 	consumptions := make([]palletContentConsumption, 0)
+	totalQty := 0
+	totalAllocatedQty := 0
+	totalDamagedQty := 0
+	totalHoldQty := 0
 	for _, content := range contentRows {
+		totalQty += content.RemainingQty
+		totalAllocatedQty += content.AllocatedQty
+		totalDamagedQty += content.DamagedQty
+		totalHoldQty += content.HoldQty
 		if remainingQuantity <= 0 {
 			break
 		}
@@ -1198,7 +1490,7 @@ func (s *Store) consumePalletContentsForInboundLineTx(ctx context.Context, tx *s
 	}
 
 	if remainingQuantity > 0 {
-		return nil, ErrInsufficientStock
+		return nil, classifyBucketReservedStockConflict(quantity, totalQty, totalAllocatedQty, totalDamagedQty, totalHoldQty)
 	}
 
 	return consumptions, nil

@@ -36,6 +36,7 @@ import {
   type Location,
   type Movement,
   type OutboundDocument,
+  type OutboundPickAllocation,
   type OutboundDocumentPayload,
   type SKUMaster,
   type UserRole
@@ -618,7 +619,7 @@ export function ActivityManagementPage({
   async function handleDownloadPickSheet(document: OutboundDocument) {
     try {
       const { downloadOutboundPickSheetPdfFromDocument } = await import("../lib/outboundPickSheetPdf");
-      await downloadOutboundPickSheetPdfFromDocument(document);
+      await downloadOutboundPickSheetPdfFromDocument(buildPickSheetExportDocument(document, selectableOutboundSources));
     } catch (error) {
       showActionError(error, t("couldNotGeneratePickSheet"));
     }
@@ -1984,6 +1985,7 @@ export function ActivityManagementPage({
           if (!selectedOutboundSource) {
             throw new Error(t("chooseSkuAndQty"));
           }
+          const previewRows = batchOutboundAllocationPreview.rows.filter((row) => row.lineId === line.id);
 
           return {
             customerId: selectedOutboundSource.customerId,
@@ -1996,7 +1998,8 @@ export function ActivityManagementPage({
             cartonSizeMm: line.cartonSizeMm || undefined,
             netWeightKgs: line.netWeightKgs,
             grossWeightKgs: line.grossWeightKgs,
-            lineNote: line.reason || undefined
+            lineNote: line.reason || undefined,
+            pickAllocations: buildDraftOutboundLinePickAllocationPayloads(selectedOutboundSource, previewRows)
           };
         })
       };
@@ -2019,7 +2022,7 @@ export function ActivityManagementPage({
 
   function handleBatchOutboundSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void submitOutboundDocument("CONFIRMED");
+    void submitOutboundDocument("DRAFT");
   }
 
   async function handleConfirmInboundDocument(document: InboundDocument) {
@@ -3442,7 +3445,7 @@ export function ActivityManagementPage({
                     {outboundWizardStep < 3 ? (
                       <button className="button button--primary" type="button" onClick={() => moveOutboundWizardStep((outboundWizardStep + 1) as OutboundWizardStep)}>{t("next")}</button>
                     ) : (
-                      <button className="button button--primary" type="submit" disabled={batchSubmitting || (!isEditingOutboundDraft && availableOutboundSources.length === 0)}>{batchSubmitting ? t("saving") : t("confirmShipment")}</button>
+                      <button className="button button--primary" type="submit" disabled={batchSubmitting || (!isEditingOutboundDraft && availableOutboundSources.length === 0)}>{batchSubmitting ? t("saving") : t("scheduleShipment")}</button>
                     )}
                   </div>
                   <button className="button button--ghost" type="button" onClick={closeBatchModal}>{t("cancel")}</button>
@@ -3790,6 +3793,130 @@ function getOutboundTrackingAction(document: OutboundDocument, t: (key: string) 
 
 function normalizeDocumentStatus(status: string) {
   return status.trim().toUpperCase();
+}
+
+function buildPickSheetExportDocument(document: OutboundDocument, sourceOptions: OutboundSourceOption[]): OutboundDocument {
+  if (normalizeDocumentStatus(document.status) !== "DRAFT") {
+    return document;
+  }
+  if (document.lines.every((line) => line.pickAllocations.length > 0)) {
+    return document;
+  }
+
+  const preview = buildOutboundAllocationPreview(
+    document.lines.map((line) => ({
+      id: String(line.id),
+      sourceKey: buildOutboundSourceKey(document.customerId, line.locationId, line.skuMasterId),
+      quantity: line.quantity,
+      pallets: Math.max(0, line.pallets || 0),
+      palletsDetailCtns: line.palletsDetailCtns || "",
+      unitLabel: line.unitLabel || "",
+      cartonSizeMm: line.cartonSizeMm || "",
+      netWeightKgs: line.netWeightKgs || 0,
+      grossWeightKgs: line.grossWeightKgs || 0,
+      reason: line.lineNote || ""
+    })),
+    sourceOptions
+  );
+
+  const previewRowsByLineId = new Map<string, OutboundAllocationPreviewRow[]>();
+  for (const row of preview.rows) {
+    const existing = previewRowsByLineId.get(row.lineId);
+    if (existing) {
+      existing.push(row);
+      continue;
+    }
+    previewRowsByLineId.set(row.lineId, [row]);
+  }
+
+  return {
+    ...document,
+    lines: document.lines.map((line) => {
+      if (line.pickAllocations.length > 0) {
+        return line;
+      }
+      return {
+        ...line,
+        pickAllocations: buildPreviewPickAllocations(line, previewRowsByLineId.get(String(line.id)) ?? [])
+      };
+    })
+  };
+}
+
+function buildPreviewPickAllocations(
+  line: OutboundDocument["lines"][number],
+  previewRows: OutboundAllocationPreviewRow[]
+): OutboundPickAllocation[] {
+  if (previewRows.length === 0) {
+    return [];
+  }
+
+  const palletShares = splitPreviewPalletsByQuantities(
+    Math.max(0, line.pallets || 0),
+    previewRows.map((row) => row.allocatedQty)
+  );
+
+  return previewRows.map((row, index) => ({
+    id: -(index + 1),
+    lineId: line.id,
+    itemNumber: row.itemNumber || line.itemNumber || "",
+    locationId: line.locationId,
+    locationName: row.locationName || line.locationName,
+    storageSection: row.storageSection || line.storageSection,
+    containerNo: row.containerNo || "",
+    allocatedQty: row.allocatedQty,
+    pallets: palletShares[index] ?? 0,
+    createdAt: line.createdAt
+  }));
+}
+
+function buildDraftOutboundLinePickAllocationPayloads(
+  source: Pick<OutboundSourceOption, "locationId" | "locationName" | "itemNumber">,
+  previewRows: OutboundAllocationPreviewRow[]
+) {
+  if (previewRows.length === 0) {
+    return undefined;
+  }
+
+  return previewRows.map((row) => ({
+    itemNumber: row.itemNumber || source.itemNumber || undefined,
+    locationId: source.locationId,
+    locationName: row.locationName || source.locationName || undefined,
+    storageSection: row.storageSection || undefined,
+    containerNo: row.containerNo || undefined,
+    allocatedQty: row.allocatedQty
+  }));
+}
+
+function splitPreviewPalletsByQuantities(total: number, quantities: number[]) {
+  const result = new Array<number>(quantities.length).fill(0);
+  if (quantities.length === 0 || total <= 0) {
+    return result;
+  }
+
+  const totalQty = quantities.reduce((sum, quantity) => quantity > 0 ? sum + quantity : sum, 0);
+  if (totalQty <= 0) {
+    return result;
+  }
+
+  let remainingTotal = total;
+  let remainingQty = totalQty;
+  quantities.forEach((quantity, index) => {
+    if (quantity <= 0) {
+      return;
+    }
+    if (index === quantities.length - 1 || remainingQty <= 0) {
+      result[index] = remainingTotal;
+      return;
+    }
+
+    const share = Math.min(Math.round((total * quantity / totalQty) * 10000) / 10000, remainingTotal);
+    result[index] = share;
+    remainingTotal = Math.round((remainingTotal - share) * 10000) / 10000;
+    remainingQty -= quantity;
+  });
+
+  return result;
 }
 
 function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceOptions: OutboundSourceOption[]): OutboundAllocationPreviewResult {

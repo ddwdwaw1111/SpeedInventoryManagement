@@ -30,7 +30,10 @@ func main() {
 		log.Fatalf("database migration failed: %v", err)
 	}
 
-	store := service.NewStore(db)
+	store, err := service.NewStore(db)
+	if err != nil {
+		log.Fatalf("service initialization failed: %v", err)
+	}
 	handler := api.NewHandler(store, cfg.FrontendOrigin, cfg.SessionCookie, cfg.SessionSecure)
 
 	server := &http.Server{

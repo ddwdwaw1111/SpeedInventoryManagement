@@ -62,7 +62,11 @@ func newIntegrationStore(t *testing.T) *Store {
 	}
 	resetIntegrationDatabase(t, db)
 
-	return NewStore(db)
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatalf("initialize integration store: %v", err)
+	}
+	return store
 }
 
 func resetIntegrationDatabase(t *testing.T, db *sqlx.DB) {
@@ -2006,6 +2010,351 @@ func TestConfirmedOutboundHonorsManualSelectedPalletsIntegration(t *testing.T) {
 	}
 }
 
+func TestDraftOutboundReloadPreservesSharedContainerManualPickAllocationsIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "DraftManualPickCustomer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "DraftManualPickLocation-"+suffix)
+	itemA := mustCreateItem(t, ctx, store, customer.ID, location.ID, "DRAFT-MANUAL-SKU-A-"+suffix, 0)
+	itemB := mustCreateItem(t, ctx, store, customer.ID, location.ID, "DRAFT-MANUAL-SKU-B-"+suffix, 0)
+	containerNo := "DRAFT-MANUAL-CONT-" + suffix
+
+	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-04-10",
+		ContainerNo:         containerNo,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Seed inbound for shared-container manual pick draft",
+		Lines: []CreateInboundDocumentLineInput{
+			{
+				SKU:            itemA.SKU,
+				Description:    itemA.Description,
+				ExpectedQty:    5,
+				ReceivedQty:    5,
+				Pallets:        1,
+				StorageSection: DefaultStorageSection,
+			},
+			{
+				SKU:            itemB.SKU,
+				Description:    itemB.Description,
+				ExpectedQty:    7,
+				ReceivedQty:    7,
+				Pallets:        1,
+				StorageSection: DefaultStorageSection,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create inbound for shared-container manual pick draft: %v", err)
+	}
+
+	sourceItemA := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, inbound.ContainerNo, itemA.SKU)
+	sourceItemB := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, inbound.ContainerNo, itemB.SKU)
+	pallets, err := store.ListPallets(ctx, 50, ListPalletFilters{SourceInboundDocumentID: inbound.ID})
+	if err != nil {
+		t.Fatalf("list inbound pallets for shared-container manual pick draft: %v", err)
+	}
+	if len(pallets) != 2 {
+		t.Fatalf("expected 2 inbound pallets for shared-container manual pick draft, got %d", len(pallets))
+	}
+
+	palletBySKU := make(map[string]PalletTrace, len(pallets))
+	for _, pallet := range pallets {
+		palletBySKU[pallet.SKU] = pallet
+	}
+	selectedPalletA, ok := palletBySKU[itemA.SKU]
+	if !ok {
+		t.Fatalf("expected pallet for sku %s", itemA.SKU)
+	}
+	selectedPalletB, ok := palletBySKU[itemB.SKU]
+	if !ok {
+		t.Fatalf("expected pallet for sku %s", itemB.SKU)
+	}
+
+	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo:    "DRAFT-MANUAL-PL-" + suffix,
+		OrderRef:         "DRAFT-MANUAL-SO-" + suffix,
+		ExpectedShipDate: "2026-04-11",
+		Status:           DocumentStatusDraft,
+		DocumentNote:     "Shared-container manual picks should survive draft reload",
+		Lines: []CreateOutboundDocumentLineInput{
+			{
+				CustomerID:  sourceItemA.CustomerID,
+				LocationID:  sourceItemA.LocationID,
+				SKUMasterID: sourceItemA.SKUMasterID,
+				Quantity:    selectedPalletA.Contents[0].Quantity,
+				Pallets:     1,
+				UnitLabel:   "CTN",
+				PickPallets: []OutboundLinePalletPick{
+					{PalletID: selectedPalletA.ID, Quantity: selectedPalletA.Contents[0].Quantity},
+				},
+			},
+			{
+				CustomerID:  sourceItemB.CustomerID,
+				LocationID:  sourceItemB.LocationID,
+				SKUMasterID: sourceItemB.SKUMasterID,
+				Quantity:    selectedPalletB.Contents[0].Quantity,
+				Pallets:     1,
+				UnitLabel:   "CTN",
+				PickPallets: []OutboundLinePalletPick{
+					{PalletID: selectedPalletB.ID, Quantity: selectedPalletB.Contents[0].Quantity},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create outbound draft with shared-container manual picks: %v", err)
+	}
+
+	if _, err := store.db.ExecContext(ctx, `
+		UPDATE pallets
+		SET current_container_no = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id IN (?, ?)
+	`, "DRIFTED-"+suffix, selectedPalletA.ID, selectedPalletB.ID); err != nil {
+		t.Fatalf("drift draft pallet containers after save: %v", err)
+	}
+
+	reloaded, err := store.getOutboundDocument(ctx, outbound.ID)
+	if err != nil {
+		t.Fatalf("reload outbound draft with shared-container manual picks: %v", err)
+	}
+
+	assertSharedContainerAllocations := func(doc OutboundDocument) {
+		t.Helper()
+		if len(doc.Lines) != 2 {
+			t.Fatalf("expected 2 outbound lines, got %d", len(doc.Lines))
+		}
+		for _, line := range doc.Lines {
+			if len(line.PickAllocations) != 1 {
+				t.Fatalf("expected one pick allocation for line %d, got %+v", line.ID, line.PickAllocations)
+			}
+			if line.PickAllocations[0].ContainerNo != containerNo {
+				t.Fatalf("expected shared container %s for line %d, got %+v", containerNo, line.ID, line.PickAllocations[0])
+			}
+		}
+	}
+
+	assertSharedContainerAllocations(outbound)
+	assertSharedContainerAllocations(reloaded)
+}
+
+func TestDraftOutboundPickAllocationsPersistAndConfirmAgainstStoredContainerPlanIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "DraftPlanCustomer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "DraftPlanLocation-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "DRAFT-PLAN-SKU-"+suffix, 0)
+
+	seedInbound := func(containerNo string, expectedDate string) {
+		t.Helper()
+		if _, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+			CustomerID:          customer.ID,
+			LocationID:          location.ID,
+			ExpectedArrivalDate: expectedDate,
+			ContainerNo:         containerNo,
+			StorageSection:      DefaultStorageSection,
+			Status:              DocumentStatusConfirmed,
+			Lines: []CreateInboundDocumentLineInput{{
+				SKU:            item.SKU,
+				Description:    item.Description,
+				ExpectedQty:    5,
+				ReceivedQty:    5,
+				Pallets:        1,
+				StorageSection: DefaultStorageSection,
+			}},
+		}); err != nil {
+			t.Fatalf("create inbound %s: %v", containerNo, err)
+		}
+	}
+
+	containerA := "DRAFT-PLAN-A-" + suffix
+	containerB := "DRAFT-PLAN-B-" + suffix
+	seedInbound(containerA, "2026-04-10")
+	seedInbound(containerB, "2026-04-11")
+
+	sourceItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerA, item.SKU)
+	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo:    "DRAFT-PLAN-PL-" + suffix,
+		OrderRef:         "DRAFT-PLAN-SO-" + suffix,
+		ExpectedShipDate: "2026-04-12",
+		Status:           DocumentStatusDraft,
+		DocumentNote:     "Stored draft container plan should drive confirm",
+		Lines: []CreateOutboundDocumentLineInput{{
+			CustomerID:  sourceItem.CustomerID,
+			LocationID:  sourceItem.LocationID,
+			SKUMasterID: sourceItem.SKUMasterID,
+			Quantity:    5,
+			UnitLabel:   "CTN",
+			PickAllocations: []OutboundPickAllocation{
+				{
+					ItemNumber:     item.ItemNumber,
+					LocationID:     location.ID,
+					LocationName:   location.Name,
+					StorageSection: DefaultStorageSection,
+					ContainerNo:    containerB,
+					AllocatedQty:   5,
+				},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create outbound draft with stored pick allocations: %v", err)
+	}
+
+	if outbound.TrackingStatus != OutboundTrackingPicking {
+		t.Fatalf("expected draft outbound tracking status %q, got %q", OutboundTrackingPicking, outbound.TrackingStatus)
+	}
+	if len(outbound.Lines) != 1 || len(outbound.Lines[0].PickAllocations) != 1 {
+		t.Fatalf("expected one persisted draft pick allocation, got %+v", outbound.Lines)
+	}
+	if outbound.Lines[0].PickAllocations[0].ContainerNo != containerB {
+		t.Fatalf("expected persisted draft pick allocation container %s, got %+v", containerB, outbound.Lines[0].PickAllocations[0])
+	}
+	if outbound.Lines[0].PickAllocations[0].Pallets != 1 {
+		t.Fatalf("expected persisted draft pallet count 1, got %+v", outbound.Lines[0].PickAllocations[0])
+	}
+
+	outbound, err = store.ConfirmOutboundDocument(ctx, outbound.ID)
+	if err != nil {
+		t.Fatalf("confirm outbound draft with stored pick allocations: %v", err)
+	}
+
+	if len(outbound.Lines) != 1 || len(outbound.Lines[0].PickAllocations) != 1 {
+		t.Fatalf("expected one confirmed pick allocation, got %+v", outbound.Lines)
+	}
+	if outbound.Lines[0].PickAllocations[0].ContainerNo != containerB {
+		t.Fatalf("expected confirmed pick allocation container %s, got %+v", containerB, outbound.Lines[0].PickAllocations[0])
+	}
+
+	remainingInContainerA := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerA, item.SKU)
+	if remainingInContainerA.Quantity != 5 {
+		t.Fatalf("expected container %s to remain untouched with 5 units, got %d", containerA, remainingInContainerA.Quantity)
+	}
+
+	var remainingInContainerB int
+	if err := store.db.GetContext(ctx, &remainingInContainerB, `
+		SELECT COALESCE(SUM(pi.quantity), 0)
+		FROM pallet_items pi
+		INNER JOIN pallets p ON p.id = pi.pallet_id
+		WHERE pi.sku_master_id = ?
+		  AND p.customer_id = ?
+		  AND p.current_location_id = ?
+		  AND COALESCE(p.current_storage_section, 'TEMP') = ?
+		  AND COALESCE(p.current_container_no, '') = ?
+	`, item.SKUMasterID, customer.ID, location.ID, DefaultStorageSection, containerB); err != nil {
+		t.Fatalf("load remaining quantity in stored-plan container: %v", err)
+	}
+	if remainingInContainerB != 0 {
+		t.Fatalf("expected container %s to be fully shipped, got %d", containerB, remainingInContainerB)
+	}
+}
+
+func TestConfirmedOutboundReloadUsesLedgerContainerSnapshotsIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "LedgerSnapshotCustomer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "LedgerSnapshotLocation-"+suffix)
+	itemA := mustCreateItem(t, ctx, store, customer.ID, location.ID, "LEDGER-SKU-A-"+suffix, 0)
+	itemB := mustCreateItem(t, ctx, store, customer.ID, location.ID, "LEDGER-SKU-B-"+suffix, 0)
+	containerNo := "LEDGER-CONT-" + suffix
+
+	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-04-10",
+		ContainerNo:         containerNo,
+		StorageSection:      DefaultStorageSection,
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Seed inbound for outbound ledger snapshot reload",
+		Lines: []CreateInboundDocumentLineInput{
+			{
+				SKU:            itemA.SKU,
+				Description:    itemA.Description,
+				ExpectedQty:    5,
+				ReceivedQty:    5,
+				Pallets:        1,
+				StorageSection: DefaultStorageSection,
+			},
+			{
+				SKU:            itemB.SKU,
+				Description:    itemB.Description,
+				ExpectedQty:    7,
+				ReceivedQty:    7,
+				Pallets:        1,
+				StorageSection: DefaultStorageSection,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create inbound for outbound ledger snapshot reload: %v", err)
+	}
+
+	sourceItemA := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, inbound.ContainerNo, itemA.SKU)
+	sourceItemB := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, inbound.ContainerNo, itemB.SKU)
+
+	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo:    "LEDGER-PL-" + suffix,
+		OrderRef:         "LEDGER-SO-" + suffix,
+		ExpectedShipDate: "2026-04-11",
+		Status:           DocumentStatusConfirmed,
+		DocumentNote:     "Confirmed outbound should retain original container snapshots",
+		Lines: []CreateOutboundDocumentLineInput{
+			{
+				CustomerID:  sourceItemA.CustomerID,
+				LocationID:  sourceItemA.LocationID,
+				SKUMasterID: sourceItemA.SKUMasterID,
+				Quantity:    5,
+				Pallets:     1,
+				UnitLabel:   "CTN",
+			},
+			{
+				CustomerID:  sourceItemB.CustomerID,
+				LocationID:  sourceItemB.LocationID,
+				SKUMasterID: sourceItemB.SKUMasterID,
+				Quantity:    7,
+				Pallets:     1,
+				UnitLabel:   "CTN",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create confirmed outbound for ledger snapshot reload: %v", err)
+	}
+
+	if _, err := store.db.ExecContext(ctx, `
+		UPDATE pallets
+		SET current_container_no = ?
+		WHERE source_inbound_document_id = ?
+	`, "MOVED-"+suffix, inbound.ID); err != nil {
+		t.Fatalf("mutate current pallet containers after outbound confirmation: %v", err)
+	}
+
+	reloaded, err := store.getOutboundDocument(ctx, outbound.ID)
+	if err != nil {
+		t.Fatalf("reload confirmed outbound after pallet container mutation: %v", err)
+	}
+	if len(reloaded.Lines) != 2 {
+		t.Fatalf("expected 2 confirmed outbound lines, got %d", len(reloaded.Lines))
+	}
+	for _, line := range reloaded.Lines {
+		if len(line.PickAllocations) != 1 {
+			t.Fatalf("expected one confirmed allocation for line %d, got %+v", line.ID, line.PickAllocations)
+		}
+		if line.PickAllocations[0].ContainerNo != containerNo {
+			t.Fatalf("expected ledger snapshot container %s for line %d, got %+v", containerNo, line.ID, line.PickAllocations[0])
+		}
+	}
+}
+
 func TestAdjustmentAndTransferActualTimesIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
@@ -2413,6 +2762,10 @@ func TestOutboundTrackingLifecycleIntegration(t *testing.T) {
 	if outbound.Status != DocumentStatusDraft || outbound.TrackingStatus != OutboundTrackingPicking {
 		t.Fatalf("expected outbound draft/picking, got %q/%q", outbound.Status, outbound.TrackingStatus)
 	}
+	itemAfterPicking := mustFindItemByID(t, ctx, store, item.ID)
+	if itemAfterPicking.Quantity != 10 || itemAfterPicking.AllocatedQty != 4 || itemAfterPicking.AvailableQty != 6 {
+		t.Fatalf("expected on-hand/allocated/available 10/4/6 after picking, got %d/%d/%d", itemAfterPicking.Quantity, itemAfterPicking.AllocatedQty, itemAfterPicking.AvailableQty)
+	}
 
 	outbound, err = store.UpdateOutboundDocumentTrackingStatus(ctx, outbound.ID, OutboundTrackingPacked)
 	if err != nil {
@@ -2420,6 +2773,10 @@ func TestOutboundTrackingLifecycleIntegration(t *testing.T) {
 	}
 	if outbound.Status != DocumentStatusDraft || outbound.TrackingStatus != OutboundTrackingPacked {
 		t.Fatalf("expected outbound draft/packed, got %q/%q", outbound.Status, outbound.TrackingStatus)
+	}
+	itemAfterPacked := mustFindItemByID(t, ctx, store, item.ID)
+	if itemAfterPacked.Quantity != 10 || itemAfterPacked.AllocatedQty != 4 || itemAfterPacked.AvailableQty != 6 {
+		t.Fatalf("expected on-hand/allocated/available 10/4/6 after packed, got %d/%d/%d", itemAfterPacked.Quantity, itemAfterPacked.AllocatedQty, itemAfterPacked.AvailableQty)
 	}
 
 	outbound, err = store.UpdateOutboundDocumentTrackingStatus(ctx, outbound.ID, OutboundTrackingShipped)
@@ -2431,8 +2788,273 @@ func TestOutboundTrackingLifecycleIntegration(t *testing.T) {
 	}
 
 	itemAfterShipment := mustFindItemByID(t, ctx, store, item.ID)
-	if itemAfterShipment.Quantity != 6 {
-		t.Fatalf("expected on-hand 6 after tracked outbound completion, got %d", itemAfterShipment.Quantity)
+	if itemAfterShipment.Quantity != 6 || itemAfterShipment.AllocatedQty != 0 || itemAfterShipment.AvailableQty != 6 {
+		t.Fatalf("expected on-hand/allocated/available 6/0/6 after tracked outbound completion, got %d/%d/%d", itemAfterShipment.Quantity, itemAfterShipment.AllocatedQty, itemAfterShipment.AvailableQty)
+	}
+}
+
+func TestOutboundPickingReservationConflictIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 10, DefaultStorageSection)
+
+	firstOutbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo:  "RESERVE-1-" + suffix,
+		Status:         DocumentStatusDraft,
+		TrackingStatus: OutboundTrackingScheduled,
+		Lines: []CreateOutboundDocumentLineInput{{
+			CustomerID:  item.CustomerID,
+			LocationID:  item.LocationID,
+			SKUMasterID: item.SKUMasterID,
+			Quantity:    4,
+			UnitLabel:   "CTN",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create first outbound: %v", err)
+	}
+	if _, err := store.UpdateOutboundDocumentTrackingStatus(ctx, firstOutbound.ID, OutboundTrackingPicking); err != nil {
+		t.Fatalf("start picking first outbound: %v", err)
+	}
+
+	secondOutbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo:  "RESERVE-2-" + suffix,
+		Status:         DocumentStatusDraft,
+		TrackingStatus: OutboundTrackingScheduled,
+		Lines: []CreateOutboundDocumentLineInput{{
+			CustomerID:  item.CustomerID,
+			LocationID:  item.LocationID,
+			SKUMasterID: item.SKUMasterID,
+			Quantity:    7,
+			UnitLabel:   "CTN",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create second outbound: %v", err)
+	}
+	if _, err := store.UpdateOutboundDocumentTrackingStatus(ctx, secondOutbound.ID, OutboundTrackingPicking); err == nil || !errors.Is(err, ErrReservedStock) {
+		t.Fatalf("expected second outbound picking to fail with ErrReservedStock, got %v", err)
+	}
+}
+
+func TestUpdateOutboundDocumentReplacesPickingReservationsIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 10, DefaultStorageSection)
+
+	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo:  "EDIT-RESERVE-" + suffix,
+		Status:         DocumentStatusDraft,
+		TrackingStatus: OutboundTrackingScheduled,
+		Lines: []CreateOutboundDocumentLineInput{{
+			CustomerID:  item.CustomerID,
+			LocationID:  item.LocationID,
+			SKUMasterID: item.SKUMasterID,
+			Quantity:    4,
+			UnitLabel:   "CTN",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create outbound for reservation replacement: %v", err)
+	}
+	outbound, err = store.UpdateOutboundDocumentTrackingStatus(ctx, outbound.ID, OutboundTrackingPicking)
+	if err != nil {
+		t.Fatalf("start picking outbound for reservation replacement: %v", err)
+	}
+
+	updatedOutbound, err := store.UpdateOutboundDocument(ctx, outbound.ID, CreateOutboundDocumentInput{
+		PackingListNo:  outbound.PackingListNo,
+		Status:         DocumentStatusDraft,
+		TrackingStatus: OutboundTrackingPicking,
+		Lines: []CreateOutboundDocumentLineInput{{
+			CustomerID:  item.CustomerID,
+			LocationID:  item.LocationID,
+			SKUMasterID: item.SKUMasterID,
+			Quantity:    5,
+			UnitLabel:   "CTN",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("update outbound while picking: %v", err)
+	}
+	if updatedOutbound.TrackingStatus != OutboundTrackingPicking {
+		t.Fatalf("expected updated outbound to remain picking, got %q", updatedOutbound.TrackingStatus)
+	}
+
+	itemAfterUpdate := mustFindItemByID(t, ctx, store, item.ID)
+	if itemAfterUpdate.Quantity != 10 || itemAfterUpdate.AllocatedQty != 5 || itemAfterUpdate.AvailableQty != 5 {
+		t.Fatalf("expected on-hand/allocated/available 10/5/5 after reservation replacement, got %d/%d/%d", itemAfterUpdate.Quantity, itemAfterUpdate.AllocatedQty, itemAfterUpdate.AvailableQty)
+	}
+}
+
+func TestCancelOutboundDocumentReleasesPickingReservationsIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 10, DefaultStorageSection)
+
+	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo:  "CANCEL-RESERVE-" + suffix,
+		Status:         DocumentStatusDraft,
+		TrackingStatus: OutboundTrackingScheduled,
+		Lines: []CreateOutboundDocumentLineInput{{
+			CustomerID:  item.CustomerID,
+			LocationID:  item.LocationID,
+			SKUMasterID: item.SKUMasterID,
+			Quantity:    4,
+			UnitLabel:   "CTN",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create outbound for cancellation: %v", err)
+	}
+	if _, err := store.UpdateOutboundDocumentTrackingStatus(ctx, outbound.ID, OutboundTrackingPicking); err != nil {
+		t.Fatalf("start picking outbound for cancellation: %v", err)
+	}
+
+	if _, err := store.CancelOutboundDocument(ctx, outbound.ID); err != nil {
+		t.Fatalf("cancel picking outbound: %v", err)
+	}
+
+	itemAfterCancel := mustFindItemByID(t, ctx, store, item.ID)
+	if itemAfterCancel.Quantity != 10 || itemAfterCancel.AllocatedQty != 0 || itemAfterCancel.AvailableQty != 10 {
+		t.Fatalf("expected on-hand/allocated/available 10/0/10 after cancellation, got %d/%d/%d", itemAfterCancel.Quantity, itemAfterCancel.AllocatedQty, itemAfterCancel.AvailableQty)
+	}
+}
+
+func TestOutboundReservationsBlockOtherInventoryMutationsIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	sourceLocation := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	destinationLocation := mustCreateLocation(t, ctx, store, "CA-"+suffix)
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, sourceLocation.ID, "SKU-"+suffix, 10, DefaultStorageSection)
+
+	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo:  "BLOCK-RESERVE-" + suffix,
+		Status:         DocumentStatusDraft,
+		TrackingStatus: OutboundTrackingScheduled,
+		Lines: []CreateOutboundDocumentLineInput{{
+			CustomerID:  item.CustomerID,
+			LocationID:  item.LocationID,
+			SKUMasterID: item.SKUMasterID,
+			Quantity:    8,
+			UnitLabel:   "CTN",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create outbound for reservation conflict checks: %v", err)
+	}
+	if _, err := store.UpdateOutboundDocumentTrackingStatus(ctx, outbound.ID, OutboundTrackingPicking); err != nil {
+		t.Fatalf("start picking outbound for reservation conflict checks: %v", err)
+	}
+
+	if _, err := store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
+		ReasonCode: "COUNT_DIFF",
+		Lines: []CreateInventoryAdjustmentLineInput{
+			adjustmentLineFromItem(item, -3, "adjust reserved stock"),
+		},
+	}); err == nil || !errors.Is(err, ErrReservedStock) {
+		t.Fatalf("expected adjustment to fail with ErrReservedStock, got %v", err)
+	}
+
+	if _, err := store.CreateInventoryTransfer(ctx, CreateInventoryTransferInput{
+		Lines: []CreateInventoryTransferLineInput{
+			transferLineFromItem(item, 3, destinationLocation.ID, DefaultStorageSection, "transfer reserved stock"),
+		},
+	}); err == nil || !errors.Is(err, ErrReservedStock) {
+		t.Fatalf("expected transfer to fail with ErrReservedStock, got %v", err)
+	}
+
+	if _, err := store.CreateCycleCount(ctx, CreateCycleCountInput{
+		Lines: []CreateCycleCountLineInput{
+			cycleCountLineFromItem(item, 5, "count reserved stock down"),
+		},
+	}); err == nil || !errors.Is(err, ErrReservedStock) {
+		t.Fatalf("expected cycle count to fail with ErrReservedStock, got %v", err)
+	}
+}
+
+func TestRepairOutboundDraftReservationsIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 10, DefaultStorageSection)
+	palletID := mustLoadSinglePalletIDForItem(t, ctx, store, item)
+
+	firstOutbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo:  "REPAIR-1-" + suffix,
+		Status:         DocumentStatusDraft,
+		TrackingStatus: OutboundTrackingScheduled,
+		Lines: []CreateOutboundDocumentLineInput{{
+			CustomerID:  item.CustomerID,
+			LocationID:  item.LocationID,
+			SKUMasterID: item.SKUMasterID,
+			Quantity:    4,
+			UnitLabel:   "CTN",
+			PickPallets: []OutboundLinePalletPick{{PalletID: palletID, Quantity: 4}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create first outbound for repair: %v", err)
+	}
+	secondOutbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo:  "REPAIR-2-" + suffix,
+		Status:         DocumentStatusDraft,
+		TrackingStatus: OutboundTrackingScheduled,
+		Lines: []CreateOutboundDocumentLineInput{{
+			CustomerID:  item.CustomerID,
+			LocationID:  item.LocationID,
+			SKUMasterID: item.SKUMasterID,
+			Quantity:    7,
+			UnitLabel:   "CTN",
+			PickPallets: []OutboundLinePalletPick{{PalletID: palletID, Quantity: 7}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create second outbound for repair: %v", err)
+	}
+
+	if _, err := store.db.ExecContext(ctx, `UPDATE outbound_documents SET tracking_status = ? WHERE id IN (?, ?)`, OutboundTrackingPicking, firstOutbound.ID, secondOutbound.ID); err != nil {
+		t.Fatalf("mark old outbound drafts as picking: %v", err)
+	}
+
+	if err := store.repairOutboundDraftReservations(ctx); err != nil {
+		t.Fatalf("repair outbound draft reservations: %v", err)
+	}
+
+	repairedFirst := mustGetOutboundDocument(t, ctx, store, firstOutbound.ID)
+	if repairedFirst.TrackingStatus != OutboundTrackingPicking {
+		t.Fatalf("expected first repaired outbound to remain picking, got %q", repairedFirst.TrackingStatus)
+	}
+	if len(repairedFirst.Lines) != 1 || len(repairedFirst.Lines[0].PickPallets) != 1 {
+		t.Fatalf("expected first repaired outbound to keep exact pick pallets, got %+v", repairedFirst.Lines)
+	}
+
+	repairedSecond := mustGetOutboundDocument(t, ctx, store, secondOutbound.ID)
+	if repairedSecond.TrackingStatus != OutboundTrackingScheduled {
+		t.Fatalf("expected second repaired outbound to downgrade to scheduled, got %q", repairedSecond.TrackingStatus)
+	}
+
+	itemAfterRepair := mustFindItemByID(t, ctx, store, item.ID)
+	if itemAfterRepair.Quantity != 10 || itemAfterRepair.AllocatedQty != 4 || itemAfterRepair.AvailableQty != 6 {
+		t.Fatalf("expected on-hand/allocated/available 10/4/6 after repair, got %d/%d/%d", itemAfterRepair.Quantity, itemAfterRepair.AllocatedQty, itemAfterRepair.AvailableQty)
 	}
 }
 
@@ -3193,10 +3815,10 @@ func TestOutboundAutoContainerAllocationIntegration(t *testing.T) {
 	if len(outbound.Lines) != 1 || len(outbound.Lines[0].PickAllocations) != 2 {
 		t.Fatalf("expected 2 confirmed auto pick allocations, got %+v", outbound.Lines)
 	}
-	if outbound.Lines[0].PickAllocations[0].ContainerNo != "CONT-A-"+suffix || outbound.Lines[0].PickAllocations[0].AllocatedQty != 1 {
+	if outbound.Lines[0].PickAllocations[0].ContainerNo != "CONT-A-"+suffix || outbound.Lines[0].PickAllocations[0].AllocatedQty != 1 || outbound.Lines[0].PickAllocations[0].Pallets != 1 {
 		t.Fatalf("expected confirmed first auto allocation CONT-A qty 1, got %+v", outbound.Lines[0].PickAllocations[0])
 	}
-	if outbound.Lines[0].PickAllocations[1].ContainerNo != "CONT-B-"+suffix || outbound.Lines[0].PickAllocations[1].AllocatedQty != 4 {
+	if outbound.Lines[0].PickAllocations[1].ContainerNo != "CONT-B-"+suffix || outbound.Lines[0].PickAllocations[1].AllocatedQty != 4 || outbound.Lines[0].PickAllocations[1].Pallets != 1 {
 		t.Fatalf("expected confirmed second auto allocation CONT-B qty 4, got %+v", outbound.Lines[0].PickAllocations[1])
 	}
 
@@ -3238,6 +3860,92 @@ func TestOutboundAutoContainerAllocationIntegration(t *testing.T) {
 	}
 	if !containsString(movementContainers, "CONT-A-"+suffix) || !containsString(movementContainers, "CONT-B-"+suffix) {
 		t.Fatalf("expected outbound movements to preserve auto-allocated containers, got %v", movementContainers)
+	}
+}
+
+func TestOutboundAutoContainerAllocationPreservesActualPalletCountsPerContainerIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0, DefaultStorageSection)
+
+	seedInbound := func(containerNo string, receivedQty int, pallets int) {
+		t.Helper()
+		if _, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+			CustomerID:          customer.ID,
+			LocationID:          location.ID,
+			ExpectedArrivalDate: "2026-03-23",
+			ContainerNo:         containerNo,
+			StorageSection:      DefaultStorageSection,
+			Status:              DocumentStatusConfirmed,
+			Lines: []CreateInboundDocumentLineInput{{
+				SKU:            item.SKU,
+				Description:    item.Description,
+				ExpectedQty:    receivedQty,
+				ReceivedQty:    receivedQty,
+				Pallets:        pallets,
+				StorageSection: DefaultStorageSection,
+			}},
+		}); err != nil {
+			t.Fatalf("create inbound receipt %s: %v", containerNo, err)
+		}
+	}
+
+	seedInbound("CONT-1-"+suffix, 10, 1)
+	seedInbound("CONT-2-"+suffix, 20, 2)
+	seedInbound("CONT-3-"+suffix, 30, 3)
+
+	itemA := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "CONT-1-"+suffix, item.SKU)
+
+	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo:    "PL-SPLIT-" + suffix,
+		OrderRef:         "SO-SPLIT-" + suffix,
+		ExpectedShipDate: "2026-03-23",
+		ShipToName:       "Receiver " + suffix,
+		ShipToAddress:    "123 Warehouse Ln",
+		ShipToContact:    "Dock 5",
+		CarrierName:      "Internal Fleet",
+		Status:           DocumentStatusDraft,
+		DocumentNote:     "Actual pallet counts per container test",
+		Lines: []CreateOutboundDocumentLineInput{
+			{
+				CustomerID:   itemA.CustomerID,
+				LocationID:   itemA.LocationID,
+				SKUMasterID:  itemA.SKUMasterID,
+				Quantity:     60,
+				UnitLabel:    "CTN",
+				CartonSizeMM: "400*300*200",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create split-container outbound document: %v", err)
+	}
+
+	outbound, err = store.ConfirmOutboundDocument(ctx, outbound.ID)
+	if err != nil {
+		t.Fatalf("confirm split-container outbound document: %v", err)
+	}
+	if len(outbound.Lines) != 1 || len(outbound.Lines[0].PickAllocations) != 3 {
+		t.Fatalf("expected 3 confirmed split-container pick allocations, got %+v", outbound.Lines)
+	}
+
+	palletsByContainer := make(map[string]int, len(outbound.Lines[0].PickAllocations))
+	for _, allocation := range outbound.Lines[0].PickAllocations {
+		palletsByContainer[allocation.ContainerNo] = allocation.Pallets
+	}
+
+	if palletsByContainer["CONT-1-"+suffix] != 1 {
+		t.Fatalf("expected CONT-1 pallet count 1, got %d", palletsByContainer["CONT-1-"+suffix])
+	}
+	if palletsByContainer["CONT-2-"+suffix] != 2 {
+		t.Fatalf("expected CONT-2 pallet count 2, got %d", palletsByContainer["CONT-2-"+suffix])
+	}
+	if palletsByContainer["CONT-3-"+suffix] != 3 {
+		t.Fatalf("expected CONT-3 pallet count 3, got %d", palletsByContainer["CONT-3-"+suffix])
 	}
 }
 
@@ -4236,6 +4944,37 @@ func mustFindItemByID(t *testing.T, ctx context.Context, store *Store, itemID in
 		t.Fatalf("get item %d: %v", itemID, err)
 	}
 	return item
+}
+
+func mustGetOutboundDocument(t *testing.T, ctx context.Context, store *Store, documentID int64) OutboundDocument {
+	t.Helper()
+	document, err := store.getOutboundDocument(ctx, documentID)
+	if err != nil {
+		t.Fatalf("get outbound document %d: %v", documentID, err)
+	}
+	return document
+}
+
+func mustLoadSinglePalletIDForItem(t *testing.T, ctx context.Context, store *Store, item Item) int64 {
+	t.Helper()
+
+	var palletID int64
+	if err := store.db.GetContext(ctx, &palletID, `
+		SELECT p.id
+		FROM pallets p
+		JOIN pallet_items pi ON pi.pallet_id = p.id
+		WHERE pi.sku_master_id = ?
+		  AND p.customer_id = ?
+		  AND p.current_location_id = ?
+		  AND COALESCE(p.current_storage_section, 'TEMP') = ?
+		  AND COALESCE(p.current_container_no, '') = ?
+		ORDER BY p.id ASC
+		LIMIT 1
+	`, item.SKUMasterID, item.CustomerID, item.LocationID, item.StorageSection, item.ContainerNo); err != nil {
+		t.Fatalf("load pallet id for item %s: %v", item.SKU, err)
+	}
+
+	return palletID
 }
 
 func mustFindItemByLocationAndSection(t *testing.T, ctx context.Context, store *Store, locationID int64, section string, sku string) Item {

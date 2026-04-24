@@ -334,6 +334,7 @@ func Migrate(db *sql.DB) error {
 			pallets INT NOT NULL DEFAULT 0,
 			pallets_detail_ctns VARCHAR(255) DEFAULT NULL,
 			pick_pallets_json TEXT DEFAULT NULL,
+			pick_allocations_json TEXT DEFAULT NULL,
 			unit_label VARCHAR(32) DEFAULT NULL,
 			carton_size_mm VARCHAR(120) DEFAULT NULL,
 			net_weight_kgs DECIMAL(12,2) NOT NULL DEFAULT 0,
@@ -357,6 +358,7 @@ func Migrate(db *sql.DB) error {
 		`ALTER TABLE outbound_document_lines ADD COLUMN IF NOT EXISTS pallets INT NOT NULL DEFAULT 0 AFTER quantity`,
 		`ALTER TABLE outbound_document_lines ADD COLUMN IF NOT EXISTS pallets_detail_ctns VARCHAR(255) DEFAULT NULL AFTER pallets`,
 		`ALTER TABLE outbound_document_lines ADD COLUMN IF NOT EXISTS pick_pallets_json TEXT DEFAULT NULL AFTER pallets_detail_ctns`,
+		`ALTER TABLE outbound_document_lines ADD COLUMN IF NOT EXISTS pick_allocations_json TEXT DEFAULT NULL AFTER pick_pallets_json`,
 		`CREATE TABLE IF NOT EXISTS pallets (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			parent_pallet_id BIGINT DEFAULT NULL,

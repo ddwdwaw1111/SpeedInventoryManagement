@@ -61,6 +61,7 @@ function createOutboundDocumentFixture() {
             storageSection: "A",
             containerNo: "SEGU6542651",
             allocatedQty: 12,
+            pallets: 1,
             createdAt: "2026-03-24T10:00:00Z"
           },
           {
@@ -74,6 +75,7 @@ function createOutboundDocumentFixture() {
             storageSection: "A",
             containerNo: "SHYA1211-2720",
             allocatedQty: 8,
+            pallets: 1,
             createdAt: "2026-03-24T10:00:00Z"
           }
         ]
@@ -110,6 +112,7 @@ function createOutboundDocumentFixture() {
             storageSection: "B",
             containerNo: "CAJU5283887",
             allocatedQty: 15,
+            pallets: 1,
             createdAt: "2026-03-24T10:05:00Z"
           }
         ]

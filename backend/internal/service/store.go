@@ -16,6 +16,7 @@ var (
 	ErrNotFound          = errors.New("record not found")
 	ErrInvalidInput      = errors.New("invalid input")
 	ErrInsufficientStock = errors.New("not enough stock available for this movement")
+	ErrReservedStock     = errors.New("stock is reserved by an outbound shipment")
 )
 
 var acceptedDateLayouts = []string{
@@ -303,8 +304,12 @@ type CreateMovementInput struct {
 	ReferenceCode     string  `json:"referenceCode"`
 }
 
-func NewStore(db *sqlx.DB) *Store {
-	return &Store{db: db}
+func NewStore(db *sqlx.DB) (*Store, error) {
+	store := &Store{db: db}
+	if err := store.repairOutboundDraftReservations(context.Background()); err != nil {
+		return nil, err
+	}
+	return store, nil
 }
 
 func (s *Store) GetDashboard(ctx context.Context) (DashboardData, error) {

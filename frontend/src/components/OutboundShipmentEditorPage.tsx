@@ -902,7 +902,7 @@ export function OutboundShipmentEditorPage({
       return;
     }
 
-    void submitOutboundDocument("CONFIRMED");
+    void submitOutboundDocument("DRAFT");
   }
 
   if (isEditorMissing) {
@@ -1662,7 +1662,7 @@ export function OutboundShipmentEditorPage({
                 {outboundWizardStep < 3 ? (
                   <button id="shipment-editor-next-action" className="button button--primary" type="button" onClick={() => moveOutboundWizardStep((outboundWizardStep + 1) as OutboundWizardStep)} disabled={isReadOnly || hasNoAvailableSources || (outboundWizardStep === 1 ? hasBlockingStep1Issues : hasBlockingStep2Issues)}>{t("next")}</button>
                 ) : !isEditingConfirmedOutbound ? (
-                  <button className="button button--primary" type="submit" disabled={batchSubmitting || isReadOnly || hasNoAvailableSources || !reviewConfirmed || outboundStepOverview.reviewStatus !== "ready"}>{batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("confirmShipment")}</button>
+                  <button className="button button--primary" type="submit" disabled={batchSubmitting || isReadOnly || hasNoAvailableSources || !reviewConfirmed || outboundStepOverview.reviewStatus !== "ready"}>{batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("scheduleShipment")}</button>
                 ) : null}
               </div>
               <button className="button button--ghost" type="button" onClick={onBackToList}>{t("cancel")}</button>

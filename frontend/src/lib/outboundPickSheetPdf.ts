@@ -7,6 +7,7 @@ import { normalizeStorageSection, type OutboundDocument } from "./types";
 const PICK_SHEET_LAYOUT_NAME = "pickSheetTable";
 const CJK_FONT_NAME = "NotoSansCJKSC";
 const CJK_FONT_URL_BASE = "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/OTF/SimplifiedChinese";
+const PICK_SHEET_VERSION = "1.0";
 
 const PDF_FONTS: TFontDictionary = {
   [CJK_FONT_NAME]: {
@@ -125,6 +126,7 @@ type PickSheetDocument = {
   warehouseSummary: string;
   remarks: string;
   totalQty: number;
+  totalPallets: number;
 };
 
 const LABELS = {
@@ -147,7 +149,8 @@ const LABELS = {
   pallets: "Pallets",
   unit: "UOM",
   internalNotes: "Internal Notes",
-  total: "TOTAL",
+  totalQty: "Total Item Qty",
+  totalPallets: "Total Pallets",
   warehouseSubtotal: "Subtotal",
   unknownWarehouse: "Unassigned",
   generatedBySystem: "System generated document",
@@ -163,37 +166,7 @@ export function downloadOutboundPickSheetPdfFromDocument(document: OutboundDocum
 }
 
 export function buildPickSheetDocument(document: OutboundDocument): PickSheetDocument {
-  const rows = document.lines.flatMap((line) => {
-    if (line.pickAllocations.length === 0) {
-      return [{
-        id: `${line.id}-fallback`,
-        itemNumber: line.itemNumber || "",
-        sku: line.sku,
-        description: line.description,
-        warehouse: line.locationName,
-        section: normalizeStorageSection(line.storageSection),
-        containerNo: "",
-        quantity: line.quantity,
-        pallets: line.pallets || 0,
-        unitLabel: line.unitLabel || "PCS",
-        lineNote: line.lineNote || ""
-      }];
-    }
-
-    return line.pickAllocations.map((allocation) => ({
-      id: `${line.id}-${allocation.id}`,
-      itemNumber: allocation.itemNumber || line.itemNumber || "",
-      sku: line.sku,
-      description: line.description,
-      warehouse: allocation.locationName || line.locationName,
-      section: normalizeStorageSection(allocation.storageSection),
-      containerNo: allocation.containerNo || "",
-      quantity: allocation.allocatedQty,
-      pallets: line.pallets || 0,
-      unitLabel: line.unitLabel || "PCS",
-      lineNote: line.lineNote || ""
-    }));
-  });
+  const rows = document.lines.flatMap((line) => buildPickSheetRowsForLine(line));
 
   const warehouseGroups = groupRowsByWarehouse(rows);
 
@@ -208,8 +181,71 @@ export function buildPickSheetDocument(document: OutboundDocument): PickSheetDoc
     actualShipDate: safeValue(getOutboundDisplayShipDate(document)),
     warehouseSummary: joinUniqueValues(rows.map((row) => row.warehouse)),
     remarks: safeValue(document.documentNote),
-    totalQty: rows.reduce((sum, row) => sum + row.quantity, 0)
+    totalQty: rows.reduce((sum, row) => sum + row.quantity, 0),
+    totalPallets: normalizePalletCount(document.lines.reduce((sum, line) => sum + Math.max(0, line.pallets || 0), 0))
   };
+}
+
+function buildPickSheetRowsForLine(line: OutboundDocument["lines"][number]): PickSheetRow[] {
+  if (line.pickAllocations.length === 0) {
+    return [{
+      id: `${line.id}-fallback`,
+      itemNumber: line.itemNumber || "",
+      sku: line.sku,
+      description: line.description,
+      warehouse: line.locationName,
+      section: normalizeStorageSection(line.storageSection),
+      containerNo: "",
+      quantity: line.quantity,
+      pallets: Math.max(0, line.pallets || 0),
+      unitLabel: line.unitLabel || "PCS",
+      lineNote: line.lineNote || ""
+    }];
+  }
+
+  return mergePickSheetRowsByContainer(line.pickAllocations.map((allocation) => ({
+    id: `${line.id}-${allocation.id}`,
+    itemNumber: allocation.itemNumber || line.itemNumber || "",
+    sku: line.sku,
+    description: line.description,
+    warehouse: allocation.locationName || line.locationName,
+    section: normalizeStorageSection(allocation.storageSection),
+    containerNo: allocation.containerNo || "",
+    quantity: allocation.allocatedQty,
+    pallets: Math.max(0, allocation.pallets ?? 0),
+    unitLabel: line.unitLabel || "PCS",
+    lineNote: line.lineNote || ""
+  })));
+}
+
+function mergePickSheetRowsByContainer(rows: PickSheetRow[]): PickSheetRow[] {
+  const mergedRows: PickSheetRow[] = [];
+  const indexByKey = new Map<string, number>();
+
+  for (const row of rows) {
+    const key = [
+      safeValue(row.warehouse),
+      safeValue(row.section),
+      safeValue(row.containerNo),
+      safeValue(row.itemNumber),
+      safeValue(row.sku),
+      safeValue(row.description),
+      safeValue(row.unitLabel),
+      safeValue(row.lineNote)
+    ].join("|");
+    const existingIndex = indexByKey.get(key);
+    if (existingIndex === undefined) {
+      indexByKey.set(key, mergedRows.length);
+      mergedRows.push({ ...row, pallets: normalizePalletCount(row.pallets) });
+      continue;
+    }
+
+    const existingRow = mergedRows[existingIndex];
+    existingRow.quantity += row.quantity;
+    existingRow.pallets = normalizePalletCount(existingRow.pallets + row.pallets);
+  }
+
+  return mergedRows;
 }
 
 function groupRowsByWarehouse(rows: PickSheetRow[]): PickSheetWarehouseGroup[] {
@@ -289,7 +325,7 @@ export function buildPickSheetDefinition(document: PickSheetDocument): TDocument
           bodyCell(row.section || LABELS.empty, "tableCellCenter"),
           bodyCell(row.containerNo || LABELS.empty, "tableCellCenter"),
           bodyCell(formatInteger(row.quantity), "tableCellRight"),
-          bodyCell(formatInteger(row.pallets), "tableCellRight"),
+          bodyCell(formatPalletCount(row.pallets), "tableCellRight"),
           bodyCell(row.unitLabel || "PCS", "tableCellCenter"),
           bodyCell(row.lineNote || LABELS.empty, "tableCell")
         ];
@@ -341,10 +377,16 @@ export function buildPickSheetDefinition(document: PickSheetDocument): TDocument
       alignment: "right",
       table: {
         widths: [88, 56],
-        body: [[
-          { text: LABELS.total, style: "totalsLabel", border: [false, false, false, false] },
-          { text: formatInteger(document.totalQty), style: "totalsValue", border: [false, false, false, false] }
-        ]]
+        body: [
+          [
+            { text: LABELS.totalQty, style: "totalsLabel", border: [false, false, false, false] },
+            { text: formatInteger(document.totalQty), style: "totalsValue", border: [false, false, false, false] }
+          ],
+          [
+            { text: LABELS.totalPallets, style: "totalsLabel", border: [false, false, false, false] },
+            { text: formatPalletCount(document.totalPallets), style: "totalsValue", border: [false, false, false, false] }
+          ]
+        ]
       },
       layout: "noBorders"
     }
@@ -368,7 +410,12 @@ export function buildPickSheetDefinition(document: PickSheetDocument): TDocument
     footer: (currentPage, pageCount) => ({
       margin: [20, 0, 20, 4],
       columns: [
-        { text: LABELS.generatedBySystem, style: "footer" },
+        {
+          stack: [
+            { text: LABELS.generatedBySystem, style: "footer" },
+            { text: `Version ${PICK_SHEET_VERSION}`, style: "footer" }
+          ]
+        },
         { text: `${LABELS.printedAt}: ${printedAt}`, alignment: "center", style: "footer" },
         { text: `Page ${currentPage} / ${pageCount}`, alignment: "right", style: "footer" }
       ]
@@ -426,6 +473,17 @@ function formatTimestamp(value: string, includeTime: boolean) {
 
 function formatInteger(value: number) {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
+}
+
+function formatPalletCount(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 4
+  }).format(normalizePalletCount(value));
+}
+
+function normalizePalletCount(value: number) {
+  return Math.round(value * 10000) / 10000;
 }
 
 function joinUniqueValues(values: string[]) {

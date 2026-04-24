@@ -1167,11 +1167,11 @@ describe("OutboundShipmentEditorPage", () => {
     expect(screen.getByText("Review the confirmed picks grouped by warehouse and source container before posting this shipment.")).toBeInTheDocument();
     expect(screen.getByText("Containers: 1 · Pallets: 1 · Selected Qty: 5 · Total Lines: 1")).toBeInTheDocument();
 
-    const confirmShipmentButton = screen.getByRole("button", { name: "Confirm Shipment" });
-    expect(confirmShipmentButton).toBeDisabled();
+    const scheduleShipmentButton = screen.getByRole("button", { name: "Schedule Shipment" });
+    expect(scheduleShipmentButton).toBeDisabled();
 
     fireEvent.click(screen.getByRole("checkbox"));
-    expect(confirmShipmentButton).not.toBeDisabled();
+    expect(scheduleShipmentButton).not.toBeDisabled();
   });
 
   it("re-enters confirmed shipments by copying them into a new draft", async () => {

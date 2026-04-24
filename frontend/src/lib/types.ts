@@ -358,7 +358,18 @@ export type OutboundPickAllocation = {
   storageSection: string;
   containerNo: string;
   allocatedQty: number;
+  pallets?: number;
   createdAt: string;
+};
+
+export type OutboundPickAllocationPayload = {
+  itemNumber?: string;
+  locationId: number;
+  locationName?: string;
+  storageSection?: string;
+  containerNo?: string;
+  allocatedQty: number;
+  pallets?: number;
 };
 
 export type OutboundDocument = {
@@ -402,6 +413,7 @@ export type OutboundDocumentLinePayload = {
   grossWeightKgs?: number;
   lineNote?: string;
   pickPallets?: OutboundLinePalletPick[];
+  pickAllocations?: OutboundPickAllocationPayload[];
 };
 
 export type OutboundDocumentPayload = {

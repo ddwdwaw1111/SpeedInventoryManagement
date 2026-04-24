@@ -1,6 +1,8 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const mockedDownloadOutboundPickSheetPdfFromDocument = vi.fn();
+
 vi.mock("@mui/x-data-grid", () => ({
   DataGrid: ({
     rows = [],
@@ -58,10 +60,24 @@ vi.mock("../lib/api", () => ({
   }
 }));
 
+vi.mock("../lib/outboundPickSheetPdf", () => ({
+  downloadOutboundPickSheetPdfFromDocument: mockedDownloadOutboundPickSheetPdfFromDocument
+}));
+
 import { api } from "../lib/api";
 import { ActivityManagementPage } from "./ActivityManagementPage";
 import { renderWithProviders } from "../test/renderWithProviders";
-import { createCustomer, createInboundDocument, createInboundDocumentLine, createItem, createLocation, createMovement, createSkuMaster } from "../test/fixtures";
+import {
+  createCustomer,
+  createInboundDocument,
+  createInboundDocumentLine,
+  createItem,
+  createLocation,
+  createMovement,
+  createOutboundDocument,
+  createOutboundDocumentLine,
+  createSkuMaster
+} from "../test/fixtures";
 
 const mockedApi = api as unknown as {
   createInboundDocument: ReturnType<typeof vi.fn>;
@@ -76,6 +92,7 @@ describe("ActivityManagementPage", () => {
     mockedApi.createOutboundDocument.mockReset();
     mockedApi.updateInboundDocument.mockReset();
     mockedApi.copyInboundDocument.mockReset();
+    mockedDownloadOutboundPickSheetPdfFromDocument.mockReset();
   });
 
   it("submits a new inbound receipt from the receipt form flow", async () => {
@@ -502,7 +519,7 @@ describe("ActivityManagementPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByText("Pick Allocation Preview")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Confirm Shipment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Schedule Shipment" }));
 
     await waitFor(() => {
       expect(mockedApi.createOutboundDocument).toHaveBeenCalledWith({
@@ -514,8 +531,8 @@ describe("ActivityManagementPage", () => {
         shipToAddress: undefined,
         shipToContact: undefined,
         carrierName: undefined,
-        status: "CONFIRMED",
-        trackingStatus: "SHIPPED",
+        status: "DRAFT",
+        trackingStatus: "SCHEDULED",
         documentNote: undefined,
         lines: [
           {
@@ -529,12 +546,97 @@ describe("ActivityManagementPage", () => {
             cartonSizeMm: undefined,
             netWeightKgs: 0,
             grossWeightKgs: 0,
-            lineNote: undefined
+            lineNote: undefined,
+            pickAllocations: [
+              {
+                itemNumber: "608333",
+                locationId: 1,
+                locationName: "NJ",
+                storageSection: "TEMP",
+                containerNo: "GCXU5817233",
+                allocatedQty: 5
+              }
+            ]
           }
         ]
       });
     });
 
     expect(onRefresh).toHaveBeenCalled();
+  });
+
+  it("hydrates draft pick sheet exports with container rows when the document has no stored pick allocations", async () => {
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="OUT"
+        items={[
+          createItem({
+            id: 1,
+            customerId: 1,
+            locationId: 1,
+            skuMasterId: 1,
+            sku: "011423",
+            itemNumber: "011423",
+            quantity: 10,
+            availableQty: 10,
+            storageSection: "TEMP",
+            containerNo: "CONTAINER-1"
+          }),
+          createItem({
+            id: 2,
+            customerId: 1,
+            locationId: 1,
+            skuMasterId: 1,
+            sku: "011423",
+            itemNumber: "011423",
+            quantity: 20,
+            availableQty: 20,
+            storageSection: "TEMP",
+            containerNo: "CONTAINER-2"
+          })
+        ]}
+        skuMasters={[]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        movements={[createMovement()]}
+        inboundDocuments={[]}
+        outboundDocuments={[
+          createOutboundDocument({
+            id: 101,
+            status: "DRAFT",
+            trackingStatus: "SCHEDULED",
+            lines: [
+              createOutboundDocumentLine({
+                id: 501,
+                skuMasterId: 1,
+                itemNumber: "011423",
+                sku: "011423",
+                locationId: 1,
+                locationName: "NJ",
+                quantity: 15,
+                pallets: 3,
+                pickAllocations: []
+              })
+            ]
+          })
+        ]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Warehouse Pick Sheet" }));
+
+    await waitFor(() => {
+      expect(mockedDownloadOutboundPickSheetPdfFromDocument).toHaveBeenCalledTimes(1);
+    });
+
+    const exportedDocument = mockedDownloadOutboundPickSheetPdfFromDocument.mock.calls[0][0];
+    expect(exportedDocument.lines[0].pickAllocations).toHaveLength(2);
+    expect(exportedDocument.lines[0].pickAllocations.map((allocation: { containerNo: string }) => allocation.containerNo)).toEqual([
+      "CONTAINER-1",
+      "CONTAINER-2"
+    ]);
   });
 });
