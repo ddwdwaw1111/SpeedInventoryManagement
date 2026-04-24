@@ -837,7 +837,6 @@ export default function App() {
                 customers={customers}
                 inboundDocuments={inboundDocuments}
                 outboundDocuments={outboundDocuments}
-                movements={movements}
                 onBackToBilling={() => handleNavigateToPage("billing")}
                 onOpenContainerDetail={handleNavigateToContainerDetail}
               />)

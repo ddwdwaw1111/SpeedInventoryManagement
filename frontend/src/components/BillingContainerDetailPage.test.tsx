@@ -1,7 +1,7 @@
 import { screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { Movement, PalletTrace } from "../lib/types";
+import type { PalletTrace } from "../lib/types";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { createCustomer, createLocation } from "../test/fixtures";
 import { BillingContainerDetailPage } from "./BillingContainerDetailPage";
@@ -154,7 +154,6 @@ describe("BillingContainerDetailPage", () => {
 				locations={[createLocation()]}
 				inboundDocuments={[]}
 				outboundDocuments={[]}
-				movements={[]}
 				onBackToBilling={vi.fn()}
 				onOpenContainerDetail={vi.fn()}
 			/>
@@ -170,7 +169,7 @@ describe("BillingContainerDetailPage", () => {
 		expect(within(timelineTable).getByText("-1")).toBeInTheDocument();
 	});
 
-	it("falls back to outbound movements when pallet timeline has no outbound event", async () => {
+	it("does not synthesize outbound timeline rows when only pallet receive events exist", async () => {
 		getPallets.mockResolvedValue([createPalletTrace({
 			id: 21,
 			palletCode: "PLT-021",
@@ -195,45 +194,6 @@ describe("BillingContainerDetailPage", () => {
 				createdAt: "2026-03-05T08:00:00Z"
 			}
 		]);
-		const fallbackMovements: Movement[] = [
-			{
-				id: 301,
-				itemId: 0,
-				inboundDocumentId: 0,
-				inboundDocumentLineId: 0,
-				outboundDocumentId: 88,
-				outboundDocumentLineId: 99,
-				itemName: "608333",
-				sku: "608333",
-				description: "VB22GC",
-				customerId: 1,
-				customerName: "Imperial Bag & Paper",
-				locationName: "NJ",
-				storageSection: "A",
-				movementType: "OUT",
-				quantityChange: -12,
-				deliveryDate: null,
-				containerNo: "MSCU1234567",
-				packingListNo: "PK-001",
-				orderRef: "SO-001",
-				itemNumber: "608333",
-				expectedQty: 0,
-				receivedQty: 0,
-				pallets: 1,
-				palletsDetailCtns: "12",
-				cartonSizeMm: "",
-				cartonCount: 0,
-				unitLabel: "CTN",
-				netWeightKgs: 0,
-				grossWeightKgs: 0,
-				heightIn: 0,
-				outDate: "2026-03-18T11:00:00Z",
-				documentNote: "",
-				reason: "",
-				referenceCode: "OUT-88",
-				createdAt: "2026-03-18T11:00:00Z"
-			}
-		];
 
 		renderWithProviders(
 			<BillingContainerDetailPage
@@ -247,16 +207,15 @@ describe("BillingContainerDetailPage", () => {
 				locations={[createLocation()]}
 				inboundDocuments={[]}
 				outboundDocuments={[]}
-				movements={fallbackMovements}
 				onBackToBilling={vi.fn()}
 				onOpenContainerDetail={vi.fn()}
 			/>
 		);
 
 		const timelineTable = await screen.findByRole("table", { name: "Pallet Change Timeline" });
-		expect(within(timelineTable).getByText("OUTBOUND")).toBeInTheDocument();
-		expect(within(timelineTable).getByText("OUT-88")).toBeInTheDocument();
-		expect(within(timelineTable).getByText("-12")).toBeInTheDocument();
+		expect(within(timelineTable).getByText("PLT-021")).toBeInTheDocument();
+		expect(within(timelineTable).getByText("RECEIVED")).toBeInTheDocument();
+		expect(within(timelineTable).queryByText("OUTBOUND")).not.toBeInTheDocument();
 	});
 });
 

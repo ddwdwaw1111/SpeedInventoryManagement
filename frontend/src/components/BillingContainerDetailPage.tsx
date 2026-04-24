@@ -15,7 +15,7 @@ import {
 import { formatDateTimeValue, parseDateLikeValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
-import type { Customer, InboundDocument, Location, Movement, OutboundDocument, PalletLocationEvent, PalletTrace } from "../lib/types";
+import type { Customer, InboundDocument, Location, OutboundDocument, PalletLocationEvent, PalletTrace } from "../lib/types";
 import { WorkspacePanelHeader, WorkspaceTableEmptyState } from "./WorkspacePanelChrome";
 
 type BillingContainerDetailPageProps = {
@@ -29,7 +29,6 @@ type BillingContainerDetailPageProps = {
 	locations: Location[];
 	inboundDocuments: InboundDocument[];
 	outboundDocuments: OutboundDocument[];
-	movements: Movement[];
 	onBackToBilling: () => void;
 	onOpenContainerDetail: (containerNo: string) => void;
 };
@@ -58,7 +57,6 @@ export function BillingContainerDetailPage({
 	locations,
 	inboundDocuments,
 	outboundDocuments,
-	movements,
 	onBackToBilling,
 	onOpenContainerDetail
 }: BillingContainerDetailPageProps) {
@@ -160,14 +158,12 @@ export function BillingContainerDetailPage({
 	const timelineRows = useMemo(
 		() => buildContainerTimelineRows(
 			palletLocationEvents,
-			movements,
 			normalizedContainerNo,
 			startDate,
 			endDate,
-			warehouseLocationId,
-			selectedWarehouse?.name ?? null
+			warehouseLocationId
 		),
-		[endDate, movements, normalizedContainerNo, palletLocationEvents, selectedWarehouse?.name, startDate, warehouseLocationId]
+		[endDate, normalizedContainerNo, palletLocationEvents, startDate, warehouseLocationId]
 	);
 	const references = useMemo(
 		() => uniqueStrings(containerInvoiceLines.map((line) => line.reference).filter(Boolean)),
@@ -478,12 +474,10 @@ export function BillingContainerDetailPage({
 
 function buildContainerTimelineRows(
 	events: PalletLocationEvent[],
-	movements: Movement[],
 	containerNo: string,
 	startDate: string,
 	endDate: string,
-	warehouseLocationId: number | "all",
-	warehouseName: string | null
+	warehouseLocationId: number | "all"
 ) {
 	const filteredEvents = events
 		.filter((event) => normalizeContainerNo(event.containerNo) === containerNo)
@@ -500,26 +494,7 @@ function buildContainerTimelineRows(
 			eventTime: event.eventTime
 		}));
 
-	const hasOutboundEvents = filteredEvents.some((event) => event.eventType === "OUTBOUND" || event.eventType === "REVERSAL");
-	const fallbackOutboundRows = hasOutboundEvents
-		? []
-		: movements
-			.filter((movement) => normalizeContainerNo(movement.containerNo) === containerNo)
-			.filter((movement) => warehouseLocationId === "all" || normalizeText(movement.locationName) === normalizeText(warehouseName))
-			.filter((movement) => movement.movementType === "OUT" || movement.movementType === "REVERSAL")
-			.filter((movement) => isWithinDateRange(movement.outDate ?? movement.createdAt, startDate, endDate))
-			.map((movement) => ({
-				id: `mv-${movement.id}`,
-				palletId: 0,
-				palletCode: movement.referenceCode || movement.itemNumber || movement.sku || "-",
-				eventType: movement.movementType === "OUT" ? "OUTBOUND" : "REVERSAL",
-				locationLabel: summarizeLocation(movement.locationName, movement.storageSection),
-				quantityDelta: movement.quantityChange,
-				palletDelta: movement.movementType === "OUT" ? -Math.abs(movement.pallets) : Math.abs(movement.pallets),
-				eventTime: movement.outDate || movement.createdAt
-			}));
-
-	const mergedEvents = [...filteredEvents, ...fallbackOutboundRows].sort((left, right) => {
+	const mergedEvents = [...filteredEvents].sort((left, right) => {
 		const leftTime = parseDateLikeValue(left.eventTime)?.getTime() ?? 0;
 		const rightTime = parseDateLikeValue(right.eventTime)?.getTime() ?? 0;
 		if (leftTime !== rightTime) {
@@ -616,10 +591,6 @@ function isWithinDateRange(value: string | null | undefined, startDate: string, 
 
 function uniqueStrings(values: string[]) {
 	return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
-}
-
-function normalizeText(value: string | null | undefined) {
-	return (value ?? "").trim().toUpperCase();
 }
 
 function renderChargeTypeLabel(chargeType: BillingInvoiceLine["chargeType"], t: (key: string) => string) {
