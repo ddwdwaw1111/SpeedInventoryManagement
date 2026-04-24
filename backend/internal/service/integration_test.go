@@ -2143,6 +2143,109 @@ func TestDraftOutboundReloadPreservesSharedContainerManualPickAllocationsIntegra
 	assertSharedContainerAllocations(reloaded)
 }
 
+func TestDraftOutboundReloadWithoutStoredPickAllocationsDoesNotRehydrateFromCurrentPalletsIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "DraftNoFallbackCustomer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "DraftNoFallbackLocation-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "DRAFT-NO-FALLBACK-SKU-"+suffix, 0)
+	containerNo := "DRAFT-NO-FALLBACK-CONT-" + suffix
+
+	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-04-10",
+		ContainerNo:         containerNo,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Seed inbound for legacy draft pick allocation fallback removal",
+		Lines: []CreateInboundDocumentLineInput{
+			{
+				SKU:            item.SKU,
+				Description:    item.Description,
+				ExpectedQty:    5,
+				ReceivedQty:    5,
+				Pallets:        1,
+				StorageSection: DefaultStorageSection,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create inbound for draft no-fallback reload: %v", err)
+	}
+
+	sourceItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, inbound.ContainerNo, item.SKU)
+	pallets, err := store.ListPallets(ctx, 50, ListPalletFilters{SourceInboundDocumentID: inbound.ID})
+	if err != nil {
+		t.Fatalf("list inbound pallets for draft no-fallback reload: %v", err)
+	}
+	if len(pallets) != 1 {
+		t.Fatalf("expected 1 inbound pallet for draft no-fallback reload, got %d", len(pallets))
+	}
+	selectedPallet := pallets[0]
+
+	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo:    "DRAFT-NO-FALLBACK-PL-" + suffix,
+		OrderRef:         "DRAFT-NO-FALLBACK-SO-" + suffix,
+		ExpectedShipDate: "2026-04-11",
+		Status:           DocumentStatusDraft,
+		DocumentNote:     "Legacy drafts without stored pick allocations should not be rehydrated",
+		Lines: []CreateOutboundDocumentLineInput{
+			{
+				CustomerID:  sourceItem.CustomerID,
+				LocationID:  sourceItem.LocationID,
+				SKUMasterID: sourceItem.SKUMasterID,
+				Quantity:    selectedPallet.Contents[0].Quantity,
+				Pallets:     1,
+				UnitLabel:   "CTN",
+				PickPallets: []OutboundLinePalletPick{
+					{PalletID: selectedPallet.ID, Quantity: selectedPallet.Contents[0].Quantity},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create outbound draft with selected pallet: %v", err)
+	}
+	if len(outbound.Lines) != 1 || len(outbound.Lines[0].PickAllocations) != 1 {
+		t.Fatalf("expected one stored draft pick allocation before manual clearing, got %+v", outbound.Lines)
+	}
+
+	if _, err := store.db.ExecContext(ctx, `
+		UPDATE outbound_document_lines
+		SET pick_allocations_json = NULL, updated_at = CURRENT_TIMESTAMP
+		WHERE document_id = ?
+	`, outbound.ID); err != nil {
+		t.Fatalf("clear stored draft pick allocations: %v", err)
+	}
+
+	if _, err := store.db.ExecContext(ctx, `
+		UPDATE pallets
+		SET current_container_no = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, "DRIFTED-"+suffix, selectedPallet.ID); err != nil {
+		t.Fatalf("drift pallet container after clearing stored allocations: %v", err)
+	}
+
+	reloaded, err := store.getOutboundDocument(ctx, outbound.ID)
+	if err != nil {
+		t.Fatalf("reload outbound draft without stored pick allocations: %v", err)
+	}
+
+	if len(reloaded.Lines) != 1 {
+		t.Fatalf("expected 1 outbound line after reload, got %d", len(reloaded.Lines))
+	}
+	if len(reloaded.Lines[0].PickPallets) != 1 {
+		t.Fatalf("expected selected pallet snapshot to remain stored, got %+v", reloaded.Lines[0].PickPallets)
+	}
+	if len(reloaded.Lines[0].PickAllocations) != 0 {
+		t.Fatalf("expected no pick allocations to be synthesized from current pallet state, got %+v", reloaded.Lines[0].PickAllocations)
+	}
+}
+
 func TestDraftOutboundPickAllocationsPersistAndConfirmAgainstStoredContainerPlanIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()

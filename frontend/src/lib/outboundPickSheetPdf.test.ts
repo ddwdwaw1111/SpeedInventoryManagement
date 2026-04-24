@@ -272,6 +272,16 @@ describe("buildPickSheetDocument", () => {
     expect(document.warehouseGroups[0].rows.map((row) => row.containerNo)).toEqual(["MSCU-SHARED-001", "MSCU-SHARED-001"]);
     expect(document.totalPallets).toBe(2);
   });
+
+  it("fails closed when a line has no stored pick allocations", () => {
+    const fixture = createOutboundDocumentFixture();
+    fixture.lines[0] = {
+      ...fixture.lines[0],
+      pickAllocations: []
+    };
+
+    expect(() => buildPickSheetDocument(fixture)).toThrow(/stored pick allocations/i);
+  });
 });
 
 describe("buildPickSheetDefinition", () => {

@@ -188,19 +188,7 @@ export function buildPickSheetDocument(document: OutboundDocument): PickSheetDoc
 
 function buildPickSheetRowsForLine(line: OutboundDocument["lines"][number]): PickSheetRow[] {
   if (line.pickAllocations.length === 0) {
-    return [{
-      id: `${line.id}-fallback`,
-      itemNumber: line.itemNumber || "",
-      sku: line.sku,
-      description: line.description,
-      warehouse: line.locationName,
-      section: normalizeStorageSection(line.storageSection),
-      containerNo: "",
-      quantity: line.quantity,
-      pallets: Math.max(0, line.pallets || 0),
-      unitLabel: line.unitLabel || "PCS",
-      lineNote: line.lineNote || ""
-    }];
+    throw new Error(`Warehouse pick sheet requires stored pick allocations for outbound line ${line.id}.`);
   }
 
   return mergePickSheetRowsByContainer(line.pickAllocations.map((allocation) => ({

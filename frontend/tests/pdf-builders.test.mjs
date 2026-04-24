@@ -167,6 +167,19 @@ runTest("buildPickSheetDocument groups rows into separate warehouse sections", (
   assert.equal(paGroup.rows[0].containerNo, "CAJU5283887");
 });
 
+runTest("buildPickSheetDocument fails when a line has no stored pick allocations", () => {
+  const fixture = createOutboundDocumentFixture();
+  fixture.lines[0] = {
+    ...fixture.lines[0],
+    pickAllocations: []
+  };
+
+  assert.throws(
+    () => buildPickSheetDocument(fixture),
+    /stored pick allocations/i
+  );
+});
+
 runTest("buildPickSheetDefinition renders a titled section per warehouse", () => {
   const document = buildPickSheetDocument(createOutboundDocumentFixture());
   const definition = buildPickSheetDefinition(document);
