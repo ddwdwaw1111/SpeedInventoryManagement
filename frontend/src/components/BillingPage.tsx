@@ -1,10 +1,39 @@
 import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
+import CalendarMonthOutlinedIcon from "@mui/icons-material/CalendarMonthOutlined";
+import ClearOutlinedIcon from "@mui/icons-material/ClearOutlined";
 import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
 import ExpandLessOutlinedIcon from "@mui/icons-material/ExpandLessOutlined";
 import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
+import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
+import LocalShippingOutlinedIcon from "@mui/icons-material/LocalShippingOutlined";
+import PaidOutlinedIcon from "@mui/icons-material/PaidOutlined";
 import PictureAsPdfOutlinedIcon from "@mui/icons-material/PictureAsPdfOutlined";
 import RefreshOutlinedIcon from "@mui/icons-material/RefreshOutlined";
-import { Button, Chip, Divider, ListItemIcon, ListItemText, Menu, MenuItem, Tab, Tabs } from "@mui/material";
+import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
+import TrendingDownOutlinedIcon from "@mui/icons-material/TrendingDownOutlined";
+import TrendingFlatOutlinedIcon from "@mui/icons-material/TrendingFlatOutlined";
+import TrendingUpOutlinedIcon from "@mui/icons-material/TrendingUpOutlined";
+import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
+import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
+import {
+  Autocomplete,
+  Box,
+  Button,
+  Chip,
+  Divider,
+  Drawer,
+  IconButton,
+  InputAdornment,
+  ListItemIcon,
+  ListItemText,
+  MenuItem,
+  Menu,
+  Stack,
+  Tab,
+  Tabs,
+  TextField,
+  Typography
+} from "@mui/material";
 import { BarChart } from "@mui/x-charts";
 import { useEffect, useMemo, useState } from "react";
 
@@ -106,6 +135,7 @@ export function BillingPage({
   const [containerNoFilter, setContainerNoFilter] = useState("");
   const [pendingExportMode, setPendingExportMode] = useState<BillingExportMode>("SUMMARY");
   const [activeTab, setActiveTab] = useState<BillingPageTab>("CREATE");
+  const [isRateDrawerOpen, setIsRateDrawerOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -253,6 +283,27 @@ export function BillingPage({
     containerType: selectedContainerType,
     rates
   }), [customerId, customers, inboundDocuments, outboundDocuments, palletLocationEvents, pallets, rates, selectedContainerType, selectedEndDate, selectedStartDate, warehouseLocationId, workspaceMode]);
+
+  const previousPeriodRange = useMemo(
+    () => computePreviousPeriodRange(selectedStartDate, selectedEndDate),
+    [selectedEndDate, selectedStartDate]
+  );
+  const previousPeriodPreview = useMemo(() => {
+    if (!previousPeriodRange) return null;
+    return buildBillingPreview({
+      startDate: previousPeriodRange.startDate,
+      endDate: previousPeriodRange.endDate,
+      customerId,
+      customers,
+      pallets,
+      palletLocationEvents,
+      inboundDocuments,
+      outboundDocuments,
+      locationId: warehouseLocationId,
+      containerType: selectedContainerType,
+      rates
+    });
+  }, [customerId, customers, inboundDocuments, outboundDocuments, palletLocationEvents, pallets, previousPeriodRange, rates, selectedContainerType, warehouseLocationId]);
   const containerSummaryRows = useMemo(
     () => buildBillingContainerSummaryRows(billingPreview.invoiceLines, billingPreview.storageRows),
     [billingPreview.invoiceLines, billingPreview.storageRows]
@@ -488,6 +539,14 @@ export function BillingPage({
           {showDetailSections ? t("billingHideDetails") : t("billingShowDetails")}
         </Button>
       )}
+      <Button
+        size="small"
+        variant="outlined"
+        startIcon={<TuneOutlinedIcon fontSize="small" />}
+        onClick={() => setIsRateDrawerOpen(true)}
+      >
+        {t("billingRateCard")}
+      </Button>
     </div>
   );
 
@@ -552,100 +611,220 @@ export function BillingPage({
           </div>
         )}
 
+        {/* ── Date presets ── */}
+        <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ px: "1rem", pb: "0.75rem", rowGap: 1 }}>
+          {getDateRangePresets().map((preset) => {
+            const active = selectedStartDate === preset.startDate && selectedEndDate === preset.endDate;
+            return (
+              <Chip
+                key={preset.key}
+                size="small"
+                icon={<CalendarMonthOutlinedIcon fontSize="small" />}
+                label={t(preset.labelKey)}
+                color={active ? "primary" : "default"}
+                variant={active ? "filled" : "outlined"}
+                onClick={() => {
+                  setSelectedStartDate(preset.startDate);
+                  setSelectedEndDate(preset.endDate);
+                }}
+              />
+            );
+          })}
+        </Stack>
+
         {/* ── Filter bar ── */}
-        <div className="filter-bar">
-          <label>
-            {t("fromDate")}
-            <input type="date" value={selectedStartDate} onChange={(event) => setSelectedStartDate(event.target.value)} />
-          </label>
-          <label>
-            {t("toDate")}
-            <input type="date" value={selectedEndDate} onChange={(event) => setSelectedEndDate(event.target.value)} />
-          </label>
-          <label>
-            {t("customer")}
-            <select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}>
-              <option value="all">{t("allCustomers")}</option>
-              {customers.map((customer) => (
-                <option key={customer.id} value={customer.id}>{customer.name}</option>
-              ))}
-            </select>
-          </label>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", md: "repeat(3, minmax(0, 1fr))", lg: "repeat(6, minmax(0, 1fr))" },
+            gap: 1.5,
+            px: "1rem",
+            pb: "1rem"
+          }}
+        >
+          <TextField
+            size="small"
+            type="date"
+            label={t("fromDate")}
+            value={selectedStartDate}
+            onChange={(event) => setSelectedStartDate(event.target.value)}
+            InputLabelProps={{ shrink: true }}
+            fullWidth
+          />
+          <TextField
+            size="small"
+            type="date"
+            label={t("toDate")}
+            value={selectedEndDate}
+            onChange={(event) => setSelectedEndDate(event.target.value)}
+            InputLabelProps={{ shrink: true }}
+            fullWidth
+          />
+          <Autocomplete
+            size="small"
+            options={[{ id: "all", name: t("allCustomers") } as { id: number | "all"; name: string }, ...customers.map((c) => ({ id: c.id, name: c.name }))]}
+            value={
+              selectedCustomerId === "all"
+                ? { id: "all" as const, name: t("allCustomers") }
+                : customers.find((c) => String(c.id) === selectedCustomerId)
+                  ? { id: Number(selectedCustomerId), name: customers.find((c) => String(c.id) === selectedCustomerId)!.name }
+                  : { id: "all" as const, name: t("allCustomers") }
+            }
+            getOptionLabel={(option) => option.name}
+            isOptionEqualToValue={(option, value) => String(option.id) === String(value.id)}
+            onChange={(_, value) => setSelectedCustomerId(value ? String(value.id) : "all")}
+            disableClearable
+            renderInput={(params) => <TextField {...params} label={t("customer")} />}
+          />
           {isCreateTab && (
             <>
-              <label>
-                {t("billingWarehouseScope")}
-                <select value={selectedWarehouseLocationId} onChange={(event) => setSelectedWarehouseLocationId(event.target.value)}>
-                  <option value="all">{t("billingAllWarehouses")}</option>
-                  {locations.map((location) => (
-                    <option key={location.id} value={location.id}>{location.name}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                {t("billingContainerType")}
-                <select value={selectedContainerType} onChange={(event) => setSelectedContainerType(event.target.value as ContainerType | "all")}>
-                  <option value="all">{t("billingAllContainerTypes")}</option>
-                  <option value="NORMAL">{containerTypeLabel("NORMAL", t)}</option>
-                  <option value="WEST_COAST_TRANSFER">{containerTypeLabel("WEST_COAST_TRANSFER", t)}</option>
-                </select>
-              </label>
-              <label>
-                {t("containerNo")}
-                <input
-                  type="search"
-                  placeholder={t("billingContainerSearchPlaceholder")}
-                  value={containerNoFilter}
-                  onChange={(event) => setContainerNoFilter(event.target.value)}
-                />
-              </label>
+              <Autocomplete
+                size="small"
+                options={[{ id: "all", name: t("billingAllWarehouses") } as { id: number | "all"; name: string }, ...locations.map((l) => ({ id: l.id, name: l.name }))]}
+                value={
+                  selectedWarehouseLocationId === "all"
+                    ? { id: "all" as const, name: t("billingAllWarehouses") }
+                    : locations.find((l) => String(l.id) === selectedWarehouseLocationId)
+                      ? { id: Number(selectedWarehouseLocationId), name: locations.find((l) => String(l.id) === selectedWarehouseLocationId)!.name }
+                      : { id: "all" as const, name: t("billingAllWarehouses") }
+                }
+                getOptionLabel={(option) => option.name}
+                isOptionEqualToValue={(option, value) => String(option.id) === String(value.id)}
+                onChange={(_, value) => setSelectedWarehouseLocationId(value ? String(value.id) : "all")}
+                disableClearable
+                renderInput={(params) => <TextField {...params} label={t("billingWarehouseScope")} />}
+              />
+              <TextField
+                size="small"
+                select
+                label={t("billingContainerType")}
+                value={selectedContainerType}
+                onChange={(event) => setSelectedContainerType(event.target.value as ContainerType | "all")}
+                fullWidth
+                SelectProps={{ native: false }}
+              >
+                <MenuItem value="all">{t("billingAllContainerTypes")}</MenuItem>
+                <MenuItem value="NORMAL">{containerTypeLabel("NORMAL", t)}</MenuItem>
+                <MenuItem value="WEST_COAST_TRANSFER">{containerTypeLabel("WEST_COAST_TRANSFER", t)}</MenuItem>
+              </TextField>
+              <TextField
+                size="small"
+                label={t("containerNo")}
+                placeholder={t("billingContainerSearchPlaceholder")}
+                value={containerNoFilter}
+                onChange={(event) => setContainerNoFilter(event.target.value)}
+                fullWidth
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchOutlinedIcon fontSize="small" />
+                    </InputAdornment>
+                  ),
+                  endAdornment: containerNoFilter ? (
+                    <InputAdornment position="end">
+                      <IconButton size="small" aria-label="Clear" onClick={() => setContainerNoFilter("")}>
+                        <ClearOutlinedIcon fontSize="small" />
+                      </IconButton>
+                    </InputAdornment>
+                  ) : null
+                }}
+              />
             </>
           )}
-        </div>
+        </Box>
 
         {isCreateTab && (<>
         {/* ── Quick metrics ── */}
-        <div className="metric-ribbon" style={{ padding: "0 1rem 1rem" }}>
-          {workspaceMode === "STORAGE_SETTLEMENT" ? (
-            <>
-              <article className="metric-card">
-                <span>{t("billingStorageContainers")}</span>
-                <strong>{formatNumber(storageSettlementRows.length)}</strong>
-              </article>
-              <article className="metric-card">
-                <span>{t("billingTrackedPallets")}</span>
-                <strong>{formatNumber(storageSettlementTrackedPallets)}</strong>
-              </article>
-              <article className="metric-card">
-                <span>{t("palletDays")}</span>
-                <strong>{formatNumber(billingPreview.summary.palletDays)}</strong>
-              </article>
-              <article className="metric-card">
-                <span>{t("billingStorageCharges")}</span>
-                <strong>{formatMoney(storageSettlementTotal)}</strong>
-              </article>
-            </>
-          ) : (
-            <>
-              <article className="metric-card">
-                <span>{t("billingReceivedContainers")}</span>
-                <strong>{formatNumber(billingPreview.summary.receivedContainers)}</strong>
-              </article>
-              <article className="metric-card">
-                <span>{t("billingReceivedPallets")}</span>
-                <strong>{formatNumber(billingPreview.summary.receivedPallets)}</strong>
-              </article>
-              <article className="metric-card">
-                <span>{t("palletDays")}</span>
-                <strong>{formatNumber(billingPreview.summary.palletDays)}</strong>
-              </article>
-              <article className="metric-card">
-                <span>{t("billingGrandTotal")}</span>
-                <strong>{formatMoney(billingPreview.summary.grandTotal)}</strong>
-              </article>
-            </>
-          )}
-        </div>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", lg: "repeat(4, minmax(0, 1fr))" },
+            gap: 1.5,
+            px: "1rem",
+            pb: "1rem"
+          }}
+        >
+          {(workspaceMode === "STORAGE_SETTLEMENT"
+            ? [
+                {
+                  key: "containers",
+                  label: t("billingStorageContainers"),
+                  value: storageSettlementRows.length,
+                  previousValue: previousPeriodPreview?.storageRows.length ?? null,
+                  format: "number" as const,
+                  icon: <Inventory2OutlinedIcon fontSize="small" />,
+                  accent: "#274c77"
+                },
+                {
+                  key: "pallets",
+                  label: t("billingTrackedPallets"),
+                  value: storageSettlementTrackedPallets,
+                  previousValue: previousPeriodPreview?.storageRows.reduce((sum, r) => sum + r.palletsTracked, 0) ?? null,
+                  format: "number" as const,
+                  icon: <LocalShippingOutlinedIcon fontSize="small" />,
+                  accent: "#1b998b"
+                },
+                {
+                  key: "palletDays",
+                  label: t("palletDays"),
+                  value: billingPreview.summary.palletDays,
+                  previousValue: previousPeriodPreview?.summary.palletDays ?? null,
+                  format: "number" as const,
+                  icon: <CalendarMonthOutlinedIcon fontSize="small" />,
+                  accent: "#7b5ea7"
+                },
+                {
+                  key: "total",
+                  label: t("billingStorageCharges"),
+                  value: storageSettlementTotal,
+                  previousValue: previousPeriodPreview?.storageRows.reduce((sum, r) => sum + r.amount, 0) ?? null,
+                  format: "currency" as const,
+                  icon: <PaidOutlinedIcon fontSize="small" />,
+                  accent: "#2e7d32",
+                  emphasize: true
+                }
+              ]
+            : [
+                {
+                  key: "containers",
+                  label: t("billingReceivedContainers"),
+                  value: billingPreview.summary.receivedContainers,
+                  previousValue: previousPeriodPreview?.summary.receivedContainers ?? null,
+                  format: "number" as const,
+                  icon: <Inventory2OutlinedIcon fontSize="small" />,
+                  accent: "#274c77"
+                },
+                {
+                  key: "pallets",
+                  label: t("billingReceivedPallets"),
+                  value: billingPreview.summary.receivedPallets,
+                  previousValue: previousPeriodPreview?.summary.receivedPallets ?? null,
+                  format: "number" as const,
+                  icon: <LocalShippingOutlinedIcon fontSize="small" />,
+                  accent: "#1b998b"
+                },
+                {
+                  key: "palletDays",
+                  label: t("palletDays"),
+                  value: billingPreview.summary.palletDays,
+                  previousValue: previousPeriodPreview?.summary.palletDays ?? null,
+                  format: "number" as const,
+                  icon: <CalendarMonthOutlinedIcon fontSize="small" />,
+                  accent: "#7b5ea7"
+                },
+                {
+                  key: "total",
+                  label: t("billingGrandTotal"),
+                  value: billingPreview.summary.grandTotal,
+                  previousValue: previousPeriodPreview?.summary.grandTotal ?? null,
+                  format: "currency" as const,
+                  icon: <PaidOutlinedIcon fontSize="small" />,
+                  accent: "#2e7d32",
+                  emphasize: true
+                }
+              ]
+          ).map((metric) => renderMetricCard(metric, t))}
+        </Box>
 
         {/* ── Charge summary bars ── */}
         {workspaceMode === "OVERVIEW" && (
@@ -953,89 +1132,8 @@ export function BillingPage({
         {/* ── Collapsible detail sections ── */}
         {showDetailSections && (
           <>
-            {/* Rate card + Daily pallet balance */}
+            {/* Daily pallet balance */}
             <div className="report-grid">
-              <article className="report-card">
-                <div className="report-card__header">
-                  <h3>{t("billingRateCard")}</h3>
-                  <p>{t("billingRateCardDesc")}</p>
-                </div>
-                <div className="sheet-form">
-                  <label>
-                    {t("billingInboundContainerFee")}
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={rates.inboundContainerFee}
-                      onChange={(event) => setRates((current) => ({ ...current, inboundContainerFee: toNumber(event.target.value) }))}
-                    />
-                  </label>
-                  <label>
-                    {t("billingTransferInboundFee")}
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={rates.transferInboundFeePerPallet}
-                      onChange={(event) => setRates((current) => ({ ...current, transferInboundFeePerPallet: toNumber(event.target.value) }))}
-                    />
-                  </label>
-                  <label>
-                    {t("billingWrappingFee")}
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={rates.wrappingFeePerPallet}
-                      onChange={(event) => setRates((current) => ({ ...current, wrappingFeePerPallet: toNumber(event.target.value) }))}
-                    />
-                  </label>
-                  <label>
-                    {t("billingStorageRateNormal")}
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={rates.storageFeePerPalletPerWeekNormal}
-                      onChange={(event) => setRates((current) => ({
-                        ...current,
-                        storageFeePerPalletPerWeek: toNumber(event.target.value),
-                        storageFeePerPalletPerWeekNormal: toNumber(event.target.value)
-                      }))}
-                    />
-                  </label>
-                  <label>
-                    {t("billingStorageRateWestCoast")}
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={rates.storageFeePerPalletPerWeekWestCoastTransfer}
-                      onChange={(event) => setRates((current) => ({
-                        ...current,
-                        storageFeePerPalletPerWeekWestCoastTransfer: toNumber(event.target.value)
-                      }))}
-                    />
-                  </label>
-                  <label>
-                    {t("billingOutboundFee")}
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={rates.outboundFeePerPallet}
-                      onChange={(event) => setRates((current) => ({ ...current, outboundFeePerPallet: toNumber(event.target.value) }))}
-                    />
-                  </label>
-                </div>
-                <div className="sheet-note" style={{ marginTop: "1rem" }}>
-                  <strong>{t("billingCustomerScope")}</strong>
-                  <br />
-                  {billingPreview.customerName}
-                </div>
-              </article>
-
               <article className="report-card">
                 <div className="report-card__header">
                   <h3>{t("dailyPalletBalance")}</h3>
@@ -1125,6 +1223,62 @@ export function BillingPage({
         onClose={() => setIsExportDialogOpen(false)}
         onExport={handleExportExcel}
       />
+      <Drawer
+        anchor="right"
+        open={isRateDrawerOpen}
+        onClose={() => setIsRateDrawerOpen(false)}
+        PaperProps={{ sx: { width: { xs: "100%", sm: 420 } } }}
+      >
+        <Box sx={{ p: 3, display: "flex", flexDirection: "column", gap: 2, height: "100%" }}>
+          <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 2 }}>
+            <Box>
+              <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                {t("billingRateCard")}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {t("billingRateCardDesc")}
+              </Typography>
+            </Box>
+            <IconButton size="small" aria-label={t("close") ?? "Close"} onClick={() => setIsRateDrawerOpen(false)}>
+              <ClearOutlinedIcon fontSize="small" />
+            </IconButton>
+          </Box>
+          <Divider />
+          <Stack spacing={2} sx={{ overflowY: "auto", pb: 2 }}>
+            {[
+              { key: "inboundContainerFee", label: t("billingInboundContainerFee"), value: rates.inboundContainerFee, set: (n: number) => setRates((c) => ({ ...c, inboundContainerFee: n })) },
+              { key: "transferInboundFeePerPallet", label: t("billingTransferInboundFee"), value: rates.transferInboundFeePerPallet, set: (n: number) => setRates((c) => ({ ...c, transferInboundFeePerPallet: n })) },
+              { key: "wrappingFeePerPallet", label: t("billingWrappingFee"), value: rates.wrappingFeePerPallet, set: (n: number) => setRates((c) => ({ ...c, wrappingFeePerPallet: n })) },
+              { key: "storageFeePerPalletPerWeekNormal", label: t("billingStorageRateNormal"), value: rates.storageFeePerPalletPerWeekNormal, set: (n: number) => setRates((c) => ({ ...c, storageFeePerPalletPerWeek: n, storageFeePerPalletPerWeekNormal: n })) },
+              { key: "storageFeePerPalletPerWeekWestCoastTransfer", label: t("billingStorageRateWestCoast"), value: rates.storageFeePerPalletPerWeekWestCoastTransfer, set: (n: number) => setRates((c) => ({ ...c, storageFeePerPalletPerWeekWestCoastTransfer: n })) },
+              { key: "outboundFeePerPallet", label: t("billingOutboundFee"), value: rates.outboundFeePerPallet, set: (n: number) => setRates((c) => ({ ...c, outboundFeePerPallet: n })) }
+            ].map((field) => (
+              <TextField
+                key={field.key}
+                size="small"
+                type="number"
+                label={field.label}
+                value={field.value}
+                onChange={(event) => field.set(toNumber(event.target.value))}
+                inputProps={{ min: 0, step: 0.01 }}
+                InputProps={{
+                  startAdornment: <InputAdornment position="start">$</InputAdornment>
+                }}
+                fullWidth
+              />
+            ))}
+          </Stack>
+          <Box sx={{ mt: "auto" }}>
+            <Divider sx={{ mb: 2 }} />
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1, color: "text.secondary" }}>
+              <WarehouseOutlinedIcon fontSize="small" />
+              <Typography variant="caption">
+                <strong>{t("billingCustomerScope")}:</strong> {billingPreview.customerName}
+              </Typography>
+            </Box>
+          </Box>
+        </Box>
+      </Drawer>
     </main>
   );
 }
@@ -1607,4 +1761,164 @@ function buildStorageSettlementNotes(row: BillingStorageRow) {
   }
 
   return parts.join(" | ");
+}
+
+function toLocalDate(value: string): Date | null {
+  const parts = value.split("-").map((p) => Number(p));
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return null;
+  const [year, month, day] = parts;
+  return new Date(year, month - 1, day);
+}
+
+function toIsoDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function computePreviousPeriodRange(startDate: string, endDate: string): { startDate: string; endDate: string } | null {
+  const start = toLocalDate(startDate);
+  const end = toLocalDate(endDate);
+  if (!start || !end || end < start) return null;
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const durationDays = Math.round((end.getTime() - start.getTime()) / msPerDay);
+  const prevEnd = new Date(start.getTime() - msPerDay);
+  const prevStart = new Date(prevEnd.getTime() - durationDays * msPerDay);
+  return { startDate: toIsoDate(prevStart), endDate: toIsoDate(prevEnd) };
+}
+
+type BillingDatePreset = {
+  key: string;
+  labelKey: string;
+  startDate: string;
+  endDate: string;
+};
+
+function getDateRangePresets(now = new Date()): BillingDatePreset[] {
+  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const currentMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+  const ytdStart = new Date(now.getFullYear(), 0, 1);
+  const ytdEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const last30Start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29);
+  const last30End = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return [
+    { key: "thisMonth", labelKey: "billingPresetThisMonth", startDate: toIsoDate(currentMonthStart), endDate: toIsoDate(currentMonthEnd) },
+    { key: "lastMonth", labelKey: "billingPresetLastMonth", startDate: toIsoDate(lastMonthStart), endDate: toIsoDate(lastMonthEnd) },
+    { key: "last30", labelKey: "billingPresetLast30", startDate: toIsoDate(last30Start), endDate: toIsoDate(last30End) },
+    { key: "ytd", labelKey: "billingPresetYTD", startDate: toIsoDate(ytdStart), endDate: toIsoDate(ytdEnd) }
+  ];
+}
+
+type MetricCardSpec = {
+  key: string;
+  label: string;
+  value: number;
+  previousValue: number | null;
+  format: "number" | "currency";
+  icon: React.ReactNode;
+  accent: string;
+  emphasize?: boolean;
+};
+
+function renderMetricCard(metric: MetricCardSpec, t: (key: string) => string) {
+  const formatted = metric.format === "currency" ? formatMoney(metric.value) : formatNumber(metric.value);
+  const delta = computeDelta(metric.value, metric.previousValue);
+  return (
+    <Box
+      key={metric.key}
+      sx={{
+        position: "relative",
+        p: 2,
+        borderRadius: 2,
+        border: "1px solid",
+        borderColor: "divider",
+        background: metric.emphasize
+          ? `linear-gradient(135deg, ${hexToRgba(metric.accent, 0.1)} 0%, ${hexToRgba(metric.accent, 0.02)} 100%)`
+          : "background.paper",
+        display: "flex",
+        flexDirection: "column",
+        gap: 1,
+        overflow: "hidden"
+      }}
+    >
+      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
+        <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+          {metric.label}
+        </Typography>
+        <Box
+          sx={{
+            width: 32,
+            height: 32,
+            borderRadius: "50%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: hexToRgba(metric.accent, 0.12),
+            color: metric.accent
+          }}
+        >
+          {metric.icon}
+        </Box>
+      </Box>
+      <Typography
+        variant={metric.emphasize ? "h4" : "h5"}
+        sx={{ fontWeight: 700, fontVariantNumeric: "tabular-nums", color: "text.primary" }}
+      >
+        {formatted}
+      </Typography>
+      {delta ? (
+        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, color: delta.color }}>
+          {delta.direction === "up" ? (
+            <TrendingUpOutlinedIcon sx={{ fontSize: 16 }} />
+          ) : delta.direction === "down" ? (
+            <TrendingDownOutlinedIcon sx={{ fontSize: 16 }} />
+          ) : (
+            <TrendingFlatOutlinedIcon sx={{ fontSize: 16 }} />
+          )}
+          <Typography variant="caption" sx={{ fontWeight: 600 }}>
+            {delta.text}
+          </Typography>
+          <Typography variant="caption" sx={{ color: "text.secondary", ml: 0.25 }}>
+            {t("billingVsPrevPeriod")}
+          </Typography>
+        </Box>
+      ) : (
+        <Typography variant="caption" sx={{ color: "text.disabled" }}>
+          {t("billingNoPrevComparison")}
+        </Typography>
+      )}
+    </Box>
+  );
+}
+
+function computeDelta(current: number, previous: number | null): { text: string; direction: "up" | "down" | "flat"; color: string } | null {
+  if (previous === null) return null;
+  if (previous === 0 && current === 0) {
+    return { text: "0%", direction: "flat", color: "var(--ink-soft, #64748b)" };
+  }
+  if (previous === 0) {
+    return { text: "New", direction: "up", color: "#2e7d32" };
+  }
+  const diff = current - previous;
+  const pct = (diff / Math.abs(previous)) * 100;
+  const rounded = Math.abs(pct) >= 10 ? Math.round(pct) : Math.round(pct * 10) / 10;
+  if (Math.abs(pct) < 0.5) {
+    return { text: "0%", direction: "flat", color: "#64748b" };
+  }
+  const direction: "up" | "down" = pct >= 0 ? "up" : "down";
+  const color = direction === "up" ? "#2e7d32" : "#c62828";
+  const sign = pct >= 0 ? "+" : "";
+  return { text: `${sign}${rounded}%`, direction, color };
+}
+
+function hexToRgba(hex: string, alpha: number): string {
+  const cleaned = hex.replace("#", "");
+  const bigint = parseInt(cleaned.length === 3 ? cleaned.split("").map((c) => c + c).join("") : cleaned, 16);
+  const r = (bigint >> 16) & 255;
+  const g = (bigint >> 8) & 255;
+  const b = bigint & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }

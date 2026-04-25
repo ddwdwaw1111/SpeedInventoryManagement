@@ -1,9 +1,18 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BillingPage } from "./BillingPage";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { createCustomer, createInboundDocument, createInboundDocumentLine, createLocation, createOutboundDocument, createOutboundDocumentLine } from "../test/fixtures";
+
+async function pickComboOption(labelText: string, optionText: string | RegExp) {
+  const combobox = screen.getByRole("combobox", { name: labelText });
+  combobox.focus();
+  fireEvent.mouseDown(combobox);
+  const listbox = await screen.findByRole("listbox");
+  const option = within(listbox).getByText(optionText);
+  fireEvent.click(option);
+}
 
 const {
   getPallets,
@@ -230,9 +239,9 @@ describe("BillingPage", () => {
 
     fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-03-01" } });
     fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-03-31" } });
-    fireEvent.change(screen.getAllByLabelText("Customer")[0], { target: { value: "1" } });
+    await pickComboOption("Customer", "Acme");
     fireEvent.click(screen.getByRole("button", { name: "Storage Settlement" }));
-    fireEvent.change(screen.getByLabelText("Container Type"), { target: { value: "NORMAL" } });
+    await pickComboOption("Container Type", "Normal");
 
     const createButton = await screen.findByRole("button", { name: "Create Storage Invoice" });
     fireEvent.click(createButton);
@@ -307,9 +316,9 @@ describe("BillingPage", () => {
 
     fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-03-01" } });
     fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-03-31" } });
-    fireEvent.change(screen.getAllByLabelText("Customer")[0], { target: { value: "1" } });
+    await pickComboOption("Customer", "Acme");
     fireEvent.click(screen.getByRole("button", { name: "Storage Settlement" }));
-    fireEvent.change(screen.getByLabelText("Container Type"), { target: { value: "NORMAL" } });
+    await pickComboOption("Container Type", "Normal");
 
     fireEvent.click(await screen.findByRole("button", { name: "Create Storage Invoice" }));
 
@@ -422,7 +431,7 @@ describe("BillingPage", () => {
 
     fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-03-01" } });
     fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-03-31" } });
-    fireEvent.change(screen.getAllByLabelText("Customer")[0], { target: { value: "1" } });
+    await pickComboOption("Customer", "Acme");
 
     fireEvent.click(await screen.findByRole("button", { name: "Create Mixed Invoice" }));
 
@@ -539,10 +548,10 @@ describe("BillingPage", () => {
 
     fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-03-01" } });
     fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-03-31" } });
-    fireEvent.change(screen.getAllByLabelText("Customer")[0], { target: { value: "1" } });
+    await pickComboOption("Customer", "Acme");
     fireEvent.click(screen.getByRole("button", { name: "Storage Settlement" }));
-    fireEvent.change(screen.getByLabelText("Container Type"), { target: { value: "NORMAL" } });
-    fireEvent.change(screen.getByLabelText("Warehouse Scope"), { target: { value: "2" } });
+    await pickComboOption("Container Type", "Normal");
+    await pickComboOption("Warehouse Scope", "LA");
 
     const createButton = await screen.findByRole("button", { name: "Create Storage Invoice" });
     fireEvent.click(createButton);
