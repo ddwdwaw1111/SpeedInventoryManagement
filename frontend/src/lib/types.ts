@@ -9,6 +9,67 @@ export type DashboardData = {
   recentMovements: Movement[];
 };
 
+export type OperationsReportGranularity = "day" | "month" | "year";
+
+export type OperationsReportSummary = {
+  onHandUnits: number;
+  activeContainers: number;
+  palletsIn: number;
+  palletsOut: number;
+  netPalletFlow: number;
+  activeSkuCount: number;
+  activeWarehouseCount: number;
+  lowStockCount: number;
+  endingBalance: number;
+  peakBalance: number;
+  averageBalance: number;
+};
+
+export type OperationsReportLocationRow = {
+  label: string;
+  value: number;
+  skuCount: number;
+};
+
+export type OperationsReportSkuRow = {
+  label: string;
+  value: number;
+  description: string;
+};
+
+export type OperationsReportLowStockRow = {
+  label: string;
+  value: number;
+  available: number;
+  reorder: number;
+};
+
+export type OperationsReportPalletFlowRow = {
+  dateKey: string;
+  inbound: number;
+  outbound: number;
+  adjustmentDelta: number;
+  endOfDay: number;
+};
+
+export type OperationsReportMovementTrendRow = {
+  key: string;
+  inbound: number;
+  outbound: number;
+};
+
+export type OperationsReport = {
+  startDate: string;
+  endDate: string;
+  granularity: OperationsReportGranularity;
+  summary: OperationsReportSummary;
+  locationInventoryRows: OperationsReportLocationRow[];
+  topSkuRows: OperationsReportSkuRow[];
+  lowStockRows: OperationsReportLowStockRow[];
+  palletFlowRows: OperationsReportPalletFlowRow[];
+  movementTrendRows: OperationsReportMovementTrendRow[];
+};
+
 export type UIPreference<T = unknown> = {
   id: number;
   scopeType: string;

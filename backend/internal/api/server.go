@@ -51,6 +51,7 @@ func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName s
 	protected.GET("/sku-master", server.handleListSKUMasters)
 	protected.GET("/items", server.handleListItems)
 	protected.GET("/movements", server.handleListMovements)
+	protected.GET("/reports/operations", server.handleOperationsReport)
 	protected.GET("/outbound-documents", server.handleListOutboundDocuments)
 	protected.GET("/inbound-documents", server.handleListInboundDocuments)
 	protected.GET("/adjustments", server.handleListInventoryAdjustments)
@@ -419,6 +420,35 @@ func (s *Server) handleListMovements(c *gin.Context) {
 	}
 
 	writeJSON(c, http.StatusOK, movements)
+}
+
+func (s *Server) handleOperationsReport(c *gin.Context) {
+	locationID, err := parseOptionalInt64Query(c, "locationId", "locationId must be a number")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	customerID, err := parseOptionalInt64Query(c, "customerId", "customerId must be a number")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	report, err := s.store.GetOperationsReport(c.Request.Context(), service.OperationsReportFilters{
+		StartDate:   c.Query("startDate"),
+		EndDate:     c.Query("endDate"),
+		CustomerID:  customerID,
+		LocationID:  locationID,
+		Search:      c.Query("search"),
+		Granularity: c.Query("granularity"),
+	})
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	writeJSON(c, http.StatusOK, report)
 }
 
 func (s *Server) handleListPallets(c *gin.Context) {

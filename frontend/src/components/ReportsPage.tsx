@@ -1,26 +1,24 @@
-import { type ReactNode, useDeferredValue, useMemo, useState } from "react";
+import { type ReactNode, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { BarChart } from "@mui/x-charts";
 
 import { InlineAlert } from "./Feedback";
-import { parseDateLikeValue, parseDateValue, shiftLocalDay, startOfLocalDay, toIsoDateString } from "../lib/dates";
+import { api } from "../lib/api";
+import { parseDateValue, startOfLocalDay, toIsoDateString } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
-import type { Customer, Item, Location, Movement } from "../lib/types";
+import type {
+  Customer,
+  Location,
+  OperationsReport,
+  OperationsReportGranularity,
+  OperationsReportMovementTrendRow,
+  OperationsReportPalletFlowRow
+} from "../lib/types";
 
-type ReportGranularity = "day" | "month" | "year";
+type ReportGranularity = OperationsReportGranularity;
 type ChartTone = "blue" | "green" | "amber" | "red";
 type BarRow = { label: string; value: number; meta?: string; tone?: ChartTone };
 type TrendRow = { key: string; label: string; inbound: number; outbound: number };
-type PalletFlowRow = {
-  dateKey: string;
-  label: string;
-  inbound: number;
-  outbound: number;
-  adjustmentDelta: number;
-  endOfDay: number;
-};
-
-const PALLET_INBOUND_TYPES = new Set<Movement["movementType"]>(["IN", "REVERSAL", "TRANSFER_IN"]);
-const PALLET_OUTBOUND_TYPES = new Set<Movement["movementType"]>(["OUT", "TRANSFER_OUT"]);
+type PalletFlowRow = OperationsReportPalletFlowRow & { label: string };
 
 const shortDateFormatter = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
 const mediumDateFormatter = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -30,15 +28,13 @@ const numberFormatter = new Intl.NumberFormat("en-US");
 const decimalFormatter = new Intl.NumberFormat("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 1 });
 
 type ReportsPageProps = {
-  items: Item[];
-  movements: Movement[];
   locations: Location[];
   customers: Customer[];
   isLoading: boolean;
   errorMessage: string;
 };
 
-export function ReportsPage({ items, movements, locations, customers, isLoading, errorMessage }: ReportsPageProps) {
+export function ReportsPage({ locations, customers, isLoading, errorMessage }: ReportsPageProps) {
   const { t } = useI18n();
   const currentMonth = useMemo(() => getCurrentMonthDateRange(), []);
   const [selectedLocationId, setSelectedLocationId] = useState("all");
@@ -48,8 +44,11 @@ export function ReportsPage({ items, movements, locations, customers, isLoading,
   const [searchTerm, setSearchTerm] = useState("");
   const [reportGranularity, setReportGranularity] = useState<ReportGranularity>("day");
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [report, setReport] = useState<OperationsReport | null>(null);
+  const [isReportLoading, setIsReportLoading] = useState(false);
+  const [reportErrorMessage, setReportErrorMessage] = useState("");
   const deferredSearchTerm = useDeferredValue(searchTerm);
-  const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
+  const normalizedSearch = deferredSearchTerm.trim();
 
   const normalizedDateRange = useMemo(
     () => normalizeDateRange(reportStartDate || currentMonth.start, reportEndDate || currentMonth.end),
@@ -70,68 +69,111 @@ export function ReportsPage({ items, movements, locations, customers, isLoading,
     return customers.find((customer) => customer.id === Number(selectedCustomerId))?.name ?? null;
   }, [customers, selectedCustomerId]);
 
-  const scopedItems = useMemo(
-    () => items.filter((item) => matchesItemScope(item, normalizedSearch, selectedLocationId, selectedCustomerId)),
-    [items, normalizedSearch, selectedCustomerId, selectedLocationId]
-  );
-  const scopedMovements = useMemo(
-    () => movements.filter((movement) => matchesMovementScope(
-      movement,
-      normalizedSearch,
-      selectedLocationId,
-      selectedCustomerId,
-      selectedLocationName
-    )),
-    [movements, normalizedSearch, selectedCustomerId, selectedLocationId, selectedLocationName]
-  );
-  const rangedMovements = useMemo(
-    () => scopedMovements.filter((movement) => matchesMovementDateRange(
-      movement,
-      normalizedDateRange.start,
-      normalizedDateRange.end
-    )),
-    [normalizedDateRange.end, normalizedDateRange.start, scopedMovements]
-  );
+  useEffect(() => {
+    let isActive = true;
+
+    async function loadReport() {
+      setIsReportLoading(true);
+      setReportErrorMessage("");
+      try {
+        const nextReport = await api.getOperationsReport({
+          startDate: normalizedDateRange.start,
+          endDate: normalizedDateRange.end,
+          locationId: selectedLocationId === "all" ? "all" : Number(selectedLocationId),
+          customerId: selectedCustomerId === "all" ? "all" : Number(selectedCustomerId),
+          search: normalizedSearch,
+          granularity: reportGranularity
+        });
+        if (isActive) {
+          setReport(nextReport);
+        }
+      } catch (error) {
+        if (isActive) {
+          setReport(null);
+          setReportErrorMessage(getErrorMessage(error, t("couldNotLoadReport")));
+        }
+      } finally {
+        if (isActive) {
+          setIsReportLoading(false);
+        }
+      }
+    }
+
+    void loadReport();
+
+    return () => {
+      isActive = false;
+    };
+  }, [
+    normalizedDateRange.end,
+    normalizedDateRange.start,
+    normalizedSearch,
+    reportGranularity,
+    selectedCustomerId,
+    selectedLocationId,
+    t
+  ]);
 
   const locationRows = useMemo(
-    () => buildLocationInventoryRows(scopedItems, t("reportSkuPositions")),
-    [scopedItems, t]
+    () => (report?.locationInventoryRows ?? []).map((row) => ({
+      label: row.label,
+      value: row.value,
+      meta: `${formatNumber(row.skuCount)} ${t("reportSkuPositions")}`,
+      tone: "blue" as const
+    })),
+    [report?.locationInventoryRows, t]
   );
-  const topSkuRows = useMemo(() => buildTopSkuRows(scopedItems), [scopedItems]);
+  const topSkuRows = useMemo(
+    () => (report?.topSkuRows ?? []).map((row) => ({
+      label: row.label,
+      value: row.value,
+      meta: row.description,
+      tone: "green" as const
+    })),
+    [report?.topSkuRows]
+  );
   const lowStockRows = useMemo(
-    () => buildLowStockRows(scopedItems, (onHand, reorder) => t("reportOnHandReorder", { onHand, reorder })),
-    [scopedItems, t]
-  );
-  const movementTrendRows = useMemo(
-    () => buildMovementTrendRows(rangedMovements, reportGranularity),
-    [rangedMovements, reportGranularity]
+    () => (report?.lowStockRows ?? []).map((row) => ({
+      label: row.label,
+      value: row.value,
+      meta: t("reportOnHandReorder", {
+        onHand: formatNumber(row.available),
+        reorder: formatNumber(row.reorder)
+      }),
+      tone: row.available === 0 ? "red" as const : "amber" as const
+    })),
+    [report?.lowStockRows, t]
   );
   const palletFlowRows = useMemo(
-    () => buildDailyPalletFlowRows(scopedMovements, normalizedDateRange.start, normalizedDateRange.end),
-    [normalizedDateRange.end, normalizedDateRange.start, scopedMovements]
+    () => mapPalletFlowRows(report?.palletFlowRows ?? []),
+    [report?.palletFlowRows]
+  );
+  const movementTrendRows = useMemo(
+    () => mapMovementTrendRows(report?.movementTrendRows ?? [], reportGranularity),
+    [report?.movementTrendRows, reportGranularity]
   );
 
-  const onHandUnits = useMemo(() => scopedItems.reduce((sum, item) => sum + item.quantity, 0), [scopedItems]);
-  const activeContainers = useMemo(() => countActiveContainers(scopedItems), [scopedItems]);
-  const palletsIn = useMemo(() => sumMovementPallets(rangedMovements, PALLET_INBOUND_TYPES), [rangedMovements]);
-  const palletsOut = useMemo(() => sumMovementPallets(rangedMovements, PALLET_OUTBOUND_TYPES), [rangedMovements]);
-  const netPalletFlow = palletsIn - palletsOut;
-  const activeSkuCount = useMemo(() => countActiveSkus(scopedItems), [scopedItems]);
-  const activeWarehouseCount = useMemo(() => countActiveWarehouses(scopedItems), [scopedItems]);
-  const totalLowStockCount = lowStockRows.length;
+  const summary = report?.summary;
+  const onHandUnits = summary?.onHandUnits ?? 0;
+  const activeContainers = summary?.activeContainers ?? 0;
+  const palletsIn = summary?.palletsIn ?? 0;
+  const palletsOut = summary?.palletsOut ?? 0;
+  const netPalletFlow = summary?.netPalletFlow ?? 0;
+  const activeSkuCount = summary?.activeSkuCount ?? 0;
+  const activeWarehouseCount = summary?.activeWarehouseCount ?? 0;
+  const totalLowStockCount = summary?.lowStockCount ?? lowStockRows.length;
   const topWarehouse = locationRows[0] ?? null;
-  const endingBalance = palletFlowRows[palletFlowRows.length - 1]?.endOfDay ?? 0;
-  const peakBalance = palletFlowRows.reduce((max, row) => Math.max(max, row.endOfDay), 0);
-  const averageBalance = palletFlowRows.length > 0
-    ? palletFlowRows.reduce((sum, row) => sum + row.endOfDay, 0) / palletFlowRows.length
-    : 0;
+  const endingBalance = summary?.endingBalance ?? 0;
+  const peakBalance = summary?.peakBalance ?? 0;
+  const averageBalance = summary?.averageBalance ?? 0;
   const advancedFilterCount = Number(normalizedSearch.length > 0) + Number(reportGranularity !== "day");
-  const emptyLabel = isLoading ? t("loadingRecords") : t("noResults");
+  const emptyLabel = isLoading || isReportLoading ? t("loadingRecords") : t("noResults");
   const scopeRangeLabel = formatDateRangeSummary(normalizedDateRange.start, normalizedDateRange.end);
 
   return (
     <main className="workspace-main">
       {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
+      {reportErrorMessage ? <InlineAlert>{reportErrorMessage}</InlineAlert> : null}
 
       <section className="workbook-panel workbook-panel--full reports-exec">
         <header className="reports-exec__hero">
@@ -598,354 +640,34 @@ function normalizeDateRange(startDate: string, endDate: string) {
   return startDate <= endDate ? { start: startDate, end: endDate } : { start: endDate, end: startDate };
 }
 
-function matchesItemScope(
-  item: Item,
-  normalizedSearch: string,
-  selectedLocationId: string,
-  selectedCustomerId: string
-) {
-  const matchesSearch = normalizedSearch.length === 0 || [
-    item.itemNumber,
-    item.sku,
-    item.name,
-    item.description,
-    item.customerName,
-    item.containerNo,
-    item.locationName,
-    item.storageSection
-  ].join(" ").toLowerCase().includes(normalizedSearch);
-  const matchesLocation = selectedLocationId === "all" || item.locationId === Number(selectedLocationId);
-  const matchesCustomer = selectedCustomerId === "all" || item.customerId === Number(selectedCustomerId);
-  return matchesSearch && matchesLocation && matchesCustomer;
+function mapPalletFlowRows(rows: OperationsReportPalletFlowRow[]): PalletFlowRow[] {
+  return rows.map((row) => ({
+    ...row,
+    label: shortDateFormatter.format(parseDateValue(row.dateKey))
+  }));
 }
 
-function matchesMovementScope(
-  movement: Movement,
-  normalizedSearch: string,
-  selectedLocationId: string,
-  selectedCustomerId: string,
-  selectedLocationName: string | null
-) {
-  const matchesSearch = normalizedSearch.length === 0 || [
-    movement.itemNumber,
-    movement.sku,
-    movement.itemName,
-    movement.description,
-    movement.customerName,
-    movement.containerNo,
-    movement.referenceCode,
-    movement.packingListNo,
-    movement.orderRef,
-    movement.locationName,
-    movement.storageSection
-  ].join(" ").toLowerCase().includes(normalizedSearch);
-  const matchesLocation = selectedLocationId === "all"
-    || normalizeText(movement.locationName) === normalizeText(selectedLocationName ?? "");
-  const matchesCustomer = selectedCustomerId === "all" || movement.customerId === Number(selectedCustomerId);
-  return matchesSearch && matchesLocation && matchesCustomer;
+function mapMovementTrendRows(rows: OperationsReportMovementTrendRow[], granularity: ReportGranularity): TrendRow[] {
+  return rows.map((row) => ({
+    ...row,
+    label: formatTrendLabel(row.key, granularity)
+  }));
 }
 
-function matchesMovementDateRange(movement: Movement, startDate: string, endDate: string) {
-  const dateKey = resolveMovementReportDateKey(movement);
-  if (!dateKey) {
-    return false;
-  }
-
-  if (startDate && dateKey < startDate) {
-    return false;
-  }
-
-  if (endDate && dateKey > endDate) {
-    return false;
-  }
-
-  return true;
-}
-
-function buildLocationInventoryRows(items: Item[], skuPositionsLabel: string): BarRow[] {
-  const rows = new Map<number, { label: string; value: number; skuIds: Set<number> }>();
-
-  for (const item of items) {
-    if (item.quantity <= 0) {
-      continue;
-    }
-
-    const row = rows.get(item.locationId) ?? {
-      label: item.locationName || `#${item.locationId}`,
-      value: 0,
-      skuIds: new Set<number>()
-    };
-    row.value += item.quantity;
-    row.skuIds.add(item.skuMasterId);
-    rows.set(item.locationId, row);
-  }
-
-  return Array.from(rows.values())
-    .sort((left, right) => right.value - left.value)
-    .slice(0, 8)
-    .map((row) => ({
-      label: row.label,
-      value: row.value,
-      meta: `${formatNumber(row.skuIds.size)} ${skuPositionsLabel}`,
-      tone: "blue"
-    }));
-}
-
-function buildTopSkuRows(items: Item[]): BarRow[] {
-  const rows = new Map<number, { label: string; value: number; description: string }>();
-
-  for (const item of items) {
-    if (item.quantity <= 0) {
-      continue;
-    }
-
-    const row = rows.get(item.skuMasterId) ?? {
-      label: item.sku,
-      value: 0,
-      description: displayDescription(item)
-    };
-    row.value += item.quantity;
-    rows.set(item.skuMasterId, row);
-  }
-
-  return Array.from(rows.values())
-    .sort((left, right) => right.value - left.value)
-    .slice(0, 8)
-    .map((row) => ({
-      label: row.label,
-      value: row.value,
-      meta: row.description,
-      tone: "green"
-    }));
-}
-
-function buildLowStockRows(items: Item[], formatReorderMeta: (onHand: string, reorder: string) => string): BarRow[] {
-  const rows = new Map<number, { label: string; available: number; reorder: number }>();
-
-  for (const item of items) {
-    const row = rows.get(item.skuMasterId) ?? {
-      label: item.sku,
-      available: 0,
-      reorder: 0
-    };
-    row.available += item.availableQty;
-    row.reorder = Math.max(row.reorder, item.reorderLevel);
-    rows.set(item.skuMasterId, row);
-  }
-
-  return Array.from(rows.values())
-    .filter((row) => row.reorder > 0 && row.available <= row.reorder)
-    .sort((left, right) => (right.reorder - right.available) - (left.reorder - left.available))
-    .map((row) => ({
-      label: row.label,
-      value: Math.max(row.reorder - row.available, 0),
-      meta: formatReorderMeta(formatNumber(row.available), formatNumber(row.reorder)),
-      tone: row.available === 0 ? "red" : "amber"
-    }));
-}
-
-function buildMovementTrendRows(movements: Movement[], granularity: ReportGranularity): TrendRow[] {
-  const trendMap = new Map<string, TrendRow>();
-
-  for (const movement of movements) {
-    const dateKey = resolveMovementReportDateKey(movement);
-    if (!dateKey) {
-      continue;
-    }
-
-    const bucket = resolveTrendBucket(parseDateValue(dateKey), granularity);
-    const row = trendMap.get(bucket.key) ?? { key: bucket.key, label: bucket.label, inbound: 0, outbound: 0 };
-    const quantity = Math.abs(movement.quantityChange);
-
-    if (PALLET_INBOUND_TYPES.has(movement.movementType)) {
-      row.inbound += quantity;
-    } else if (PALLET_OUTBOUND_TYPES.has(movement.movementType)) {
-      row.outbound += quantity;
-    }
-
-    trendMap.set(bucket.key, row);
-  }
-
-  return Array.from(trendMap.values()).sort((left, right) => left.key.localeCompare(right.key));
-}
-
-function buildDailyPalletFlowRows(movements: Movement[], startDate: string, endDate: string): PalletFlowRow[] {
-  if (!startDate || !endDate) {
-    return [];
-  }
-
-  const dayKeys = buildIsoDateRange(startDate, endDate);
-  const bucketMap = new Map<string, { inbound: number; outbound: number; adjustmentDelta: number }>(
-    dayKeys.map((dayKey) => [dayKey, { inbound: 0, outbound: 0, adjustmentDelta: 0 }])
-  );
-  let openingBalance = 0;
-
-  for (const movement of movements) {
-    const dateKey = resolveMovementReportDateKey(movement);
-    if (!dateKey) {
-      continue;
-    }
-
-    const delta = resolveMovementPalletDelta(movement);
-    if (delta === 0) {
-      continue;
-    }
-
-    if (dateKey < startDate) {
-      openingBalance += delta;
-      continue;
-    }
-
-    if (dateKey > endDate) {
-      continue;
-    }
-
-    const bucket = bucketMap.get(dateKey);
-    if (!bucket) {
-      continue;
-    }
-
-    if (PALLET_INBOUND_TYPES.has(movement.movementType)) {
-      bucket.inbound += Math.abs(delta);
-    } else if (PALLET_OUTBOUND_TYPES.has(movement.movementType)) {
-      bucket.outbound += Math.abs(delta);
-    } else {
-      bucket.adjustmentDelta += delta;
-    }
-  }
-
-  let runningBalance = openingBalance;
-
-  return dayKeys.map((dayKey) => {
-    const bucket = bucketMap.get(dayKey) ?? { inbound: 0, outbound: 0, adjustmentDelta: 0 };
-    runningBalance += bucket.inbound - bucket.outbound + bucket.adjustmentDelta;
-
-    return {
-      dateKey: dayKey,
-      label: shortDateFormatter.format(parseDateValue(dayKey)),
-      inbound: bucket.inbound,
-      outbound: bucket.outbound,
-      adjustmentDelta: bucket.adjustmentDelta,
-      endOfDay: runningBalance
-    };
-  });
-}
-
-function buildIsoDateRange(startDate: string, endDate: string) {
-  const result: string[] = [];
-  let cursor = startOfLocalDay(parseDateValue(startDate));
-  const end = startOfLocalDay(parseDateValue(endDate));
-
-  while (cursor.getTime() <= end.getTime()) {
-    result.push(toIsoDateString(cursor));
-    cursor = shiftLocalDay(cursor, 1);
-  }
-
-  return result;
-}
-
-function resolveMovementPalletDelta(movement: Movement) {
-  const pallets = Math.abs(movement.pallets || 0);
-  if (pallets === 0) {
-    return 0;
-  }
-
-  if (PALLET_INBOUND_TYPES.has(movement.movementType)) {
-    return pallets;
-  }
-
-  if (PALLET_OUTBOUND_TYPES.has(movement.movementType)) {
-    return -pallets;
-  }
-
-  if (movement.movementType === "ADJUST" || movement.movementType === "COUNT") {
-    if (movement.quantityChange === 0) {
-      return 0;
-    }
-
-    return movement.quantityChange > 0 ? pallets : -pallets;
-  }
-
-  return 0;
-}
-
-function sumMovementPallets(movements: Movement[], allowedTypes: Set<Movement["movementType"]>) {
-  return movements.reduce((sum, movement) => {
-    if (!allowedTypes.has(movement.movementType)) {
-      return sum;
-    }
-
-    return sum + Math.abs(movement.pallets || 0);
-  }, 0);
-}
-
-function countActiveContainers(items: Item[]) {
-  return new Set(
-    items
-      .filter((item) => item.quantity > 0 && item.containerNo.trim().length > 0)
-      .map((item) => item.containerNo.trim().toUpperCase())
-  ).size;
-}
-
-function countActiveSkus(items: Item[]) {
-  return new Set(items.filter((item) => item.quantity > 0).map((item) => item.skuMasterId)).size;
-}
-
-function countActiveWarehouses(items: Item[]) {
-  return new Set(items.filter((item) => item.quantity > 0).map((item) => item.locationId)).size;
-}
-
-function resolveMovementReportDateKey(movement: Movement) {
-  const primaryCandidates = PALLET_OUTBOUND_TYPES.has(movement.movementType)
-    ? [movement.outDate, movement.deliveryDate, movement.createdAt]
-    : [movement.deliveryDate, movement.outDate, movement.createdAt];
-
-  for (const candidate of primaryCandidates) {
-    const normalized = normalizeDateKey(candidate);
-    if (normalized) {
-      return normalized;
-    }
-  }
-
-  return null;
-}
-
-function normalizeDateKey(value: string | null | undefined) {
-  const parsed = parseDateLikeValue(value);
-  return parsed ? toIsoDateString(parsed) : null;
-}
-
-function resolveTrendBucket(date: Date, granularity: ReportGranularity) {
+function formatTrendLabel(key: string, granularity: ReportGranularity) {
   if (granularity === "year") {
-    return {
-      key: `${date.getFullYear()}`,
-      label: yearFormatter.format(date)
-    };
+    return yearFormatter.format(parseDateValue(`${key}-01-01`));
   }
 
   if (granularity === "month") {
-    return {
-      key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`,
-      label: monthFormatter.format(date)
-    };
+    return monthFormatter.format(parseDateValue(`${key}-01`));
   }
 
-  return {
-    key: toIsoDateString(date),
-    label: shortDateFormatter.format(date)
-  };
+  return shortDateFormatter.format(parseDateValue(key));
 }
 
 function formatDateRangeSummary(startDate: string, endDate: string) {
   return `${mediumDateFormatter.format(parseDateValue(startDate))} - ${mediumDateFormatter.format(parseDateValue(endDate))}`;
-}
-
-function displayDescription(item: Pick<Item, "description" | "name">) {
-  return item.description || item.name;
-}
-
-function normalizeText(value: string) {
-  return value.trim().toLowerCase();
 }
 
 function formatNumber(value: number) {
@@ -967,4 +689,8 @@ function formatSignedNumber(value: number) {
   }
 
   return absolute;
+}
+
+function getErrorMessage(error: unknown, fallbackMessage: string) {
+  return error instanceof Error && error.message ? error.message : fallbackMessage;
 }

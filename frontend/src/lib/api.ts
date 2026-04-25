@@ -26,6 +26,8 @@ import type {
   Location,
   LocationPayload,
   Movement,
+  OperationsReport,
+  OperationsReportGranularity,
   OutboundDocument,
   OutboundDocumentPayload,
   UpdateOutboundDocumentNotePayload,
@@ -65,6 +67,15 @@ type SKUMasterQuery = {
 };
 
 type DocumentArchiveScope = "active" | "archived" | "all";
+
+type OperationsReportQuery = {
+  startDate: string;
+  endDate: string;
+  locationId?: number | "all";
+  customerId?: number | "all";
+  search?: string;
+  granularity?: OperationsReportGranularity;
+};
 
 export class ApiError extends Error {
   status: number;
@@ -138,6 +149,25 @@ export const api = {
 
   getDashboard() {
     return request<DashboardData>("/dashboard");
+  },
+
+  getOperationsReport(query: OperationsReportQuery) {
+    const params = new URLSearchParams();
+    params.set("startDate", query.startDate);
+    params.set("endDate", query.endDate);
+    if (query.locationId && query.locationId !== "all") {
+      params.set("locationId", String(query.locationId));
+    }
+    if (query.customerId && query.customerId !== "all") {
+      params.set("customerId", String(query.customerId));
+    }
+    if (query.search?.trim()) {
+      params.set("search", query.search.trim());
+    }
+    if (query.granularity) {
+      params.set("granularity", query.granularity);
+    }
+    return request<OperationsReport>(`/reports/operations?${params.toString()}`);
   },
 
   getUIPreference<T = unknown>(key: string) {

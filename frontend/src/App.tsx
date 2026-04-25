@@ -858,8 +858,6 @@ export default function App() {
             ) : null}
             {activePage === "reports" ? (
               renderWithSuspense(<ReportsPage
-                items={items}
-                movements={movements}
                 locations={locations}
                 customers={customers}
                 isLoading={isLoading}
