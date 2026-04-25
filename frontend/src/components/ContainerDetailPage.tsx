@@ -238,6 +238,14 @@ export function ContainerDetailPage({
     () => actionablePallets.filter((pallet) => transferForm.selectedPalletIds.includes(pallet.id)),
     [actionablePallets, transferForm.selectedPalletIds]
   );
+  const hasAllAdjustmentPalletsSelected = useMemo(
+    () => actionablePallets.length > 0 && actionablePallets.every((pallet) => adjustmentForm.selectedPalletIds.includes(pallet.id)),
+    [actionablePallets, adjustmentForm.selectedPalletIds]
+  );
+  const hasAllTransferPalletsSelected = useMemo(
+    () => actionablePallets.length > 0 && actionablePallets.every((pallet) => transferForm.selectedPalletIds.includes(pallet.id)),
+    [actionablePallets, transferForm.selectedPalletIds]
+  );
   const transferDestinationLocation = useMemo(
     () => locations.find((location) => location.id === Number(transferForm.toLocationId)) ?? null,
     [locations, transferForm.toLocationId]
@@ -394,6 +402,32 @@ export function ContainerDetailPage({
     setInventoryDialogError("");
     setAdjustmentForm(createEmptyContainerAdjustmentForm(defaultSelectedPalletIds));
     setTransferForm(createEmptyContainerTransferForm(defaultSelectedPalletIds));
+  }
+
+  function toggleAllAdjustmentPallets() {
+    setAdjustmentForm((current) => {
+      const nextSelectedPalletIds = actionablePallets.map((pallet) => pallet.id);
+      const areAllSelected = actionablePallets.length > 0
+        && actionablePallets.every((pallet) => current.selectedPalletIds.includes(pallet.id));
+
+      return {
+        ...current,
+        selectedPalletIds: areAllSelected ? [] : nextSelectedPalletIds
+      };
+    });
+  }
+
+  function toggleAllTransferPallets() {
+    setTransferForm((current) => {
+      const nextSelectedPalletIds = actionablePallets.map((pallet) => pallet.id);
+      const areAllSelected = actionablePallets.length > 0
+        && actionablePallets.every((pallet) => current.selectedPalletIds.includes(pallet.id));
+
+      return {
+        ...current,
+        selectedPalletIds: areAllSelected ? [] : nextSelectedPalletIds
+      };
+    });
   }
 
   async function handleSubmitAdjustment(event: FormEvent<HTMLFormElement>) {
@@ -889,6 +923,16 @@ export function ContainerDetailPage({
                 ...current,
                 selectedPalletIds: toggleSelectedPalletId(current.selectedPalletIds, palletId)
               }))}
+              headerAction={actionablePallets.length > 1 ? (
+                <button
+                  type="button"
+                  onClick={toggleAllAdjustmentPallets}
+                  aria-pressed={hasAllAdjustmentPalletsSelected}
+                  className="inline-flex items-center rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-xs font-semibold text-[#143569] transition hover:border-slate-300 hover:bg-slate-50"
+                >
+                  {hasAllAdjustmentPalletsSelected ? t("clear") : t("selectAll")}
+                </button>
+              ) : null}
               t={t}
             />
             <label>
@@ -945,6 +989,16 @@ export function ContainerDetailPage({
                 ...current,
                 selectedPalletIds: toggleSelectedPalletId(current.selectedPalletIds, palletId)
               }))}
+              headerAction={actionablePallets.length > 1 ? (
+                <button
+                  type="button"
+                  onClick={toggleAllTransferPallets}
+                  aria-pressed={hasAllTransferPalletsSelected}
+                  className="inline-flex items-center rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-xs font-semibold text-[#143569] transition hover:border-slate-300 hover:bg-slate-50"
+                >
+                  {hasAllTransferPalletsSelected ? t("clear") : t("selectAll")}
+                </button>
+              ) : null}
               t={t}
             />
             <label>{t("destinationStorage")}<select value={transferForm.toLocationId} onChange={(event) => setTransferForm((current) => {
@@ -1523,11 +1577,13 @@ function PalletSelectionList({
   pallets,
   selectedPalletIds,
   onToggle,
+  headerAction,
   t
 }: {
   pallets: PalletTrace[];
   selectedPalletIds: number[];
   onToggle: (palletId: number) => void;
+  headerAction?: ReactNode;
   t: (key: string, params?: Record<string, string | number>) => string;
 }) {
   const selectedCount = selectedPalletIds.length;
@@ -1542,8 +1598,11 @@ function PalletSelectionList({
           <div className="text-sm font-semibold text-slate-900">{t("selectPallets")}</div>
           <div className="mt-1 text-xs text-slate-500">{t("containerDetailPalletActionHint")}</div>
         </div>
-        <div className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 ring-1 ring-slate-200/80">
-          {t("selected")} {selectedCount} · {t("availableQty")} {selectedAvailableQty}
+        <div className="flex flex-col items-end gap-2">
+          {headerAction}
+          <div className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 ring-1 ring-slate-200/80">
+            {t("selected")} {selectedCount} · {t("availableQty")} {selectedAvailableQty}
+          </div>
         </div>
       </div>
 

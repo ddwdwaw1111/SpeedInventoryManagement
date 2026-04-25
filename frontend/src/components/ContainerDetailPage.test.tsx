@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PalletContent, PalletTrace } from "../lib/types";
@@ -338,6 +338,83 @@ describe("ContainerDetailPage", () => {
     expect(await screen.findByText("Adjustment saved successfully.")).toBeInTheDocument();
   });
 
+  it("selects all pallets from the adjustment dialog and posts every selected pallet", async () => {
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    getPallets.mockResolvedValue([
+      createPalletTrace({
+        id: 11,
+        palletCode: "PLT-001",
+        currentContainerNo: "GCXU5817233",
+        status: "OPEN",
+        contents: [createPalletContent({ id: 21, palletId: 11, quantity: 4 })]
+      }),
+      createPalletTrace({
+        id: 12,
+        palletCode: "PLT-002",
+        currentContainerNo: "GCXU5817233",
+        status: "OPEN",
+        contents: [createPalletContent({ id: 22, palletId: 12, quantity: 3 })]
+      })
+    ]);
+    createInventoryAdjustment.mockResolvedValue({ id: 2 });
+
+    renderWithProviders(
+      <ContainerDetailPage
+        routeKey="/container-contents/GCXU5817233"
+        containerNo="GCXU5817233"
+        items={[createItem({ containerNo: "GCXU5817233", customerId: 1, customerName: "Imperial Bag & Paper", sku: "608333", itemNumber: "608333" })]}
+        movements={[createMovement({ containerNo: "GCXU5817233" })]}
+        locations={[createLocation()]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={onRefresh}
+        onNavigate={vi.fn()}
+        onBackToList={vi.fn()}
+      />
+    );
+
+    await waitFor(() => expect(getPallets).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "Inventory Adjustment" }));
+    const dialog = await screen.findByRole("dialog");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Select All" }));
+    expect(within(dialog).getByRole("button", { name: "Clear" })).toBeInTheDocument();
+
+    fireEvent.change(within(dialog).getByLabelText("Reason Code"), { target: { value: "COUNT_LOSS" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Post Adjustment" }));
+
+    await waitFor(() => {
+      expect(createInventoryAdjustment).toHaveBeenCalledWith({
+        reasonCode: "COUNT_LOSS",
+        notes: undefined,
+        lines: [
+          {
+            customerId: 1,
+            locationId: 1,
+            storageSection: "TEMP",
+            containerNo: "GCXU5817233",
+            palletId: 11,
+            skuMasterId: 1,
+            adjustQty: -4,
+            lineNote: undefined
+          },
+          {
+            customerId: 1,
+            locationId: 1,
+            storageSection: "TEMP",
+            containerNo: "GCXU5817233",
+            palletId: 12,
+            skuMasterId: 1,
+            adjustQty: -3,
+            lineNote: undefined
+          }
+        ]
+      });
+    });
+    expect(onRefresh).toHaveBeenCalled();
+  });
+
   it("posts transfer inside the current page and shows success feedback", async () => {
     const onNavigate = vi.fn();
     const onRefresh = vi.fn().mockResolvedValue(undefined);
@@ -393,6 +470,86 @@ describe("ContainerDetailPage", () => {
     expect(onRefresh).toHaveBeenCalled();
     expect(onNavigate).not.toHaveBeenCalled();
     expect(await screen.findByText("Transfer saved successfully.")).toBeInTheDocument();
+  });
+
+  it("selects all pallets from the transfer dialog and posts every selected pallet", async () => {
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    getPallets.mockResolvedValue([
+      createPalletTrace({
+        id: 11,
+        palletCode: "PLT-001",
+        currentContainerNo: "GCXU5817233",
+        status: "OPEN",
+        contents: [createPalletContent({ id: 21, palletId: 11, quantity: 4 })]
+      }),
+      createPalletTrace({
+        id: 12,
+        palletCode: "PLT-002",
+        currentContainerNo: "GCXU5817233",
+        status: "OPEN",
+        contents: [createPalletContent({ id: 22, palletId: 12, quantity: 3 })]
+      })
+    ]);
+    createInventoryTransfer.mockResolvedValue({ id: 2 });
+
+    renderWithProviders(
+      <ContainerDetailPage
+        routeKey="/container-contents/GCXU5817233"
+        containerNo="GCXU5817233"
+        items={[createItem({ containerNo: "GCXU5817233", availableQty: 8 })]}
+        movements={[createMovement({ containerNo: "GCXU5817233" })]}
+        locations={[createLocation(), createLocation({ id: 2, name: "LA", sectionNames: ["TEMP", "BULK"] })]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={onRefresh}
+        onNavigate={vi.fn()}
+        onBackToList={vi.fn()}
+      />
+    );
+
+    await waitFor(() => expect(getPallets).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "Inventory Transfer" }));
+    const dialog = await screen.findByRole("dialog");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Select All" }));
+    expect(within(dialog).getByRole("button", { name: "Clear" })).toBeInTheDocument();
+
+    fireEvent.change(within(dialog).getByLabelText("Destination Warehouse"), { target: { value: "2" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Post Transfer" }));
+
+    await waitFor(() => {
+      expect(createInventoryTransfer).toHaveBeenCalledWith({
+        notes: undefined,
+        lines: [
+          {
+            customerId: 1,
+            locationId: 1,
+            storageSection: "TEMP",
+            containerNo: "GCXU5817233",
+            palletId: 11,
+            skuMasterId: 1,
+            quantity: 4,
+            toLocationId: 2,
+            toStorageSection: "TEMP",
+            lineNote: undefined
+          },
+          {
+            customerId: 1,
+            locationId: 1,
+            storageSection: "TEMP",
+            containerNo: "GCXU5817233",
+            palletId: 12,
+            skuMasterId: 1,
+            quantity: 3,
+            toLocationId: 2,
+            toStorageSection: "TEMP",
+            lineNote: undefined
+          }
+        ]
+      });
+    });
+    expect(onRefresh).toHaveBeenCalled();
   });
 
   it("paginates pallet cards and removes pallet-level action buttons", async () => {
