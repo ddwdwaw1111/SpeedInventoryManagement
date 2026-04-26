@@ -48,6 +48,7 @@ type AdjustmentLineFormState = {
   id: string;
   bucketKey: string;
   palletId: number;
+  requestedPalletId: number;
   adjustQty: number;
   lineNote: string;
 };
@@ -68,6 +69,7 @@ function createAdjustmentLine(
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     bucketKey: "",
     palletId: 0,
+    requestedPalletId: 0,
     adjustQty: 0,
     lineNote: "",
     ...patch
@@ -99,6 +101,7 @@ export function AdjustmentManagementPage({
   const [hasProcessedLaunchContext, setHasProcessedLaunchContext] = useState(false);
   const [pallets, setPallets] = useState<PalletTrace[]>([]);
   const [isLoadingPallets, setIsLoadingPallets] = useState(false);
+  const [hasLoadedPallets, setHasLoadedPallets] = useState(false);
   const [palletLoadError, setPalletLoadError] = useState("");
   const selectedAdjustment = useMemo(
     () => adjustments.find((adjustment) => adjustment.id === selectedAdjustmentId) ?? null,
@@ -163,19 +166,30 @@ export function AdjustmentManagementPage({
         ? line.bucketKey
         : onlyBucketKey ?? "";
       const nextPalletOptions = selectablePalletsByBucketKey.get(nextBucketKey) ?? [];
-      const nextPalletId = line.palletId > 0 && nextPalletOptions.some((pallet) => pallet.id === line.palletId)
+      const desiredPalletId = line.palletId > 0
         ? line.palletId
-        : line.palletId > 0 && isLoadingPallets && nextPalletOptions.length === 0
-          ? line.palletId
+        : nextBucketKey === line.bucketKey
+          ? line.requestedPalletId
+          : 0;
+      const shouldHoldRequestedPallet = desiredPalletId > 0 && !hasLoadedPallets && nextPalletOptions.length === 0;
+      const nextPalletId = desiredPalletId > 0 && nextPalletOptions.some((pallet) => pallet.id === desiredPalletId)
+        ? desiredPalletId
+        : shouldHoldRequestedPallet
+          ? desiredPalletId
         : 0;
 
       return {
         ...line,
         bucketKey: nextBucketKey,
-        palletId: nextPalletId
+        palletId: nextPalletId,
+        requestedPalletId: nextPalletId > 0
+          ? nextPalletId
+          : shouldHoldRequestedPallet
+            ? desiredPalletId
+            : 0
       };
     }));
-  }, [isLoadingPallets, selectableAdjustmentItems, selectablePalletsByBucketKey]);
+  }, [hasLoadedPallets, selectableAdjustmentItems, selectablePalletsByBucketKey]);
 
   useEffect(() => {
     if (!canManage || !isModalOpen) {
@@ -186,6 +200,7 @@ export function AdjustmentManagementPage({
 
     async function loadPallets() {
       setIsLoadingPallets(true);
+      setHasLoadedPallets(false);
       setPalletLoadError("");
       try {
         const nextPallets = await api.getPallets(50000);
@@ -202,6 +217,7 @@ export function AdjustmentManagementPage({
       } finally {
         if (active) {
           setIsLoadingPallets(false);
+          setHasLoadedPallets(true);
         }
       }
     }
@@ -354,11 +370,13 @@ export function AdjustmentManagementPage({
     setForm(emptyAdjustmentForm);
     setLines([createAdjustmentLine({
       bucketKey: initialBucketKey,
-      palletId: initialBucketKey && initialContext?.palletId ? initialContext.palletId : 0
+      palletId: initialBucketKey && initialContext?.palletId ? initialContext.palletId : 0,
+      requestedPalletId: initialBucketKey && initialContext?.palletId ? initialContext.palletId : 0
     })]);
     setSelectedSourceKey(initialSourceKey);
     setErrorMessage("");
     setPalletLoadError("");
+    setHasLoadedPallets(false);
     setIsModalOpen(true);
   }
 
@@ -370,6 +388,7 @@ export function AdjustmentManagementPage({
     setForm(emptyAdjustmentForm);
     setLines([createAdjustmentLine()]);
     setPalletLoadError("");
+    setHasLoadedPallets(false);
   }
 
   function addLine() {
@@ -692,7 +711,8 @@ export function AdjustmentManagementPage({
                             value={line.bucketKey}
                             onChange={(event) => updateLine(line.id, {
                               bucketKey: event.target.value,
-                              palletId: 0
+                              palletId: 0,
+                              requestedPalletId: 0
                             })}
                           >
                             <option value="">{selectedSourceOption ? t("selectStockRow") : t("selectSkuForInventoryAction")}</option>
@@ -716,6 +736,7 @@ export function AdjustmentManagementPage({
 
                               updateLine(line.id, {
                                 palletId: nextPalletId,
+                                requestedPalletId: nextPalletId,
                                 adjustQty: nextPalletId > 0
                                   ? clampPalletAdjustmentQty(line.adjustQty, nextAvailableQty)
                                   : 0

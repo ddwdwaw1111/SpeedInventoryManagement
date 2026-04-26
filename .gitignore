@@ -6,6 +6,8 @@ Thumbs.db
 
 frontend/node_modules/
 frontend/dist/
+frontend/playwright-report/
+frontend/test-results/
 
 backend/.env
 backend/bin/

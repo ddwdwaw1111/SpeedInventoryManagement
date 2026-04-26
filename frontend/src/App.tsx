@@ -267,6 +267,15 @@ export default function App() {
   function handleNavigateToOutboundDocument(documentId: number) {
     setPendingActivityManagementLaunchContext("OUT", { documentId });
     navigateToPage("outbound-management", setActivePage);
+    window.history.replaceState(
+      {
+        ...(window.history.state ?? {}),
+        page: "outbound-management",
+        documentId
+      },
+      "",
+      window.location.pathname
+    );
     setCurrentPathname(window.location.pathname);
   }
 

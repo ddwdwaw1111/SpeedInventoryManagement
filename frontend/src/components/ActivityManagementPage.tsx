@@ -807,7 +807,7 @@ export function ActivityManagementPage({
     }
 
     if (pendingLaunchContextRef.current === undefined) {
-      pendingLaunchContextRef.current = consumePendingActivityManagementLaunchContext(mode);
+      pendingLaunchContextRef.current = consumePendingActivityManagementLaunchContext(mode) ?? consumeHistoryLaunchContext(mode);
     }
 
     const pendingLaunchContext = pendingLaunchContextRef.current;
@@ -4316,6 +4316,31 @@ export function buildOutboundSourceOptionsFromPallets(pallets: PalletTrace[], sk
     if (locationCompare !== 0) return locationCompare;
     return left.sku.localeCompare(right.sku);
   });
+}
+
+function consumeHistoryLaunchContext(mode: ActivityMode): ActivityManagementLaunchContext | null {
+  const state = window.history.state;
+  if (!state || typeof state !== "object") {
+    return null;
+  }
+
+  const page = typeof (state as { page?: unknown }).page === "string"
+    ? String((state as { page?: unknown }).page)
+    : "";
+  const documentId = typeof (state as { documentId?: unknown }).documentId === "number"
+    ? Number((state as { documentId?: unknown }).documentId)
+    : 0;
+  const expectedPage = mode === "IN" ? "inbound-management" : "outbound-management";
+
+  if (page !== expectedPage || documentId <= 0) {
+    return null;
+  }
+
+  const nextState = { ...(state as Record<string, unknown>) };
+  delete nextState.documentId;
+  window.history.replaceState(nextState, "", window.location.pathname);
+
+  return { documentId };
 }
 
 function formatContainerDistributionSummary(containers: Map<string, number>) {
