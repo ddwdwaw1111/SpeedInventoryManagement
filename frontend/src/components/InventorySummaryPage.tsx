@@ -365,81 +365,86 @@ export function InventorySummaryPage({
               </IconButton>
             </div>
 
-            <div className="document-drawer__actions">
-              {canManageInventory ? (
+            <div className="inventory-summary-drawer__actions">
+              <div className="inventory-summary-drawer__primary-actions">
                 <Button
                   variant="contained"
-                  startIcon={<FactCheckOutlinedIcon fontSize="small" />}
+                  fullWidth
+                  startIcon={<WarehouseOutlinedIcon fontSize="small" />}
                   onClick={() => {
-                    setPendingInventoryActionContext("cycle-counts", {
-                      sourceKey: buildInventoryActionSourceKey(selectedSummary.customerId, selectedSummary.sku),
+                    setPendingContainerContentsContext({
                       sku: selectedSummary.sku,
                       customerId: selectedSummary.customerId
                     });
-                    onNavigate("cycle-counts");
+                    onNavigate("container-contents");
                   }}
                 >
-                  {t("addCycleCount")}
+                  {t("openContainerContents")}
                 </Button>
-              ) : null}
-              {canManageInventory ? (
-                <Button
-                  variant="contained"
-                  startIcon={<TuneOutlinedIcon fontSize="small" />}
-                  onClick={() => {
-                    setPendingInventoryActionContext("adjustments", {
-                      sourceKey: buildInventoryActionSourceKey(selectedSummary.customerId, selectedSummary.sku),
-                      sku: selectedSummary.sku,
-                      customerId: selectedSummary.customerId
-                    });
-                    onNavigate("adjustments");
-                  }}
-                >
-                  {t("addAdjustment")}
-                </Button>
-              ) : null}
-              {canManageInventory ? (
                 <Button
                   variant="outlined"
-                  startIcon={<CompareArrowsOutlinedIcon fontSize="small" />}
+                  fullWidth
+                  startIcon={<HistoryOutlinedIcon fontSize="small" />}
                   onClick={() => {
-                    setPendingInventoryActionContext("transfers", {
-                      sourceKey: buildInventoryActionSourceKey(selectedSummary.customerId, selectedSummary.sku),
-                      sku: selectedSummary.sku,
-                      customerId: selectedSummary.customerId
+                    setPendingAllActivityContext({
+                      customerId: selectedSummary.customerId,
+                      searchTerm: selectedSummary.sku
                     });
-                    onNavigate("transfers");
+                    onNavigate("all-activity");
                   }}
                 >
-                  {t("addTransfer")}
+                  {t("allActivity")}
                 </Button>
+              </div>
+              {canManageInventory ? (
+                <div className="inventory-summary-drawer__management-actions">
+                  <Button
+                    className="inventory-summary-drawer__action-button"
+                    variant="outlined"
+                    startIcon={<FactCheckOutlinedIcon fontSize="small" />}
+                    onClick={() => {
+                      setPendingInventoryActionContext("cycle-counts", {
+                        sourceKey: buildInventoryActionSourceKey(selectedSummary.customerId, selectedSummary.sku),
+                        sku: selectedSummary.sku,
+                        customerId: selectedSummary.customerId
+                      });
+                      onNavigate("cycle-counts");
+                    }}
+                  >
+                    {t("addCycleCount")}
+                  </Button>
+                  <Button
+                    className="inventory-summary-drawer__action-button"
+                    variant="outlined"
+                    startIcon={<TuneOutlinedIcon fontSize="small" />}
+                    onClick={() => {
+                      setPendingInventoryActionContext("adjustments", {
+                        sourceKey: buildInventoryActionSourceKey(selectedSummary.customerId, selectedSummary.sku),
+                        sku: selectedSummary.sku,
+                        customerId: selectedSummary.customerId
+                      });
+                      onNavigate("adjustments");
+                    }}
+                  >
+                    {t("addAdjustment")}
+                  </Button>
+                  <Button
+                    className="inventory-summary-drawer__action-button"
+                    variant="outlined"
+                    startIcon={<CompareArrowsOutlinedIcon fontSize="small" />}
+                    onClick={() => {
+                      setPendingInventoryActionContext("transfers", {
+                        sourceKey: buildInventoryActionSourceKey(selectedSummary.customerId, selectedSummary.sku),
+                        sku: selectedSummary.sku,
+                        customerId: selectedSummary.customerId
+                      });
+                      onNavigate("transfers");
+                    }}
+                  >
+                    {t("addTransfer")}
+                  </Button>
+                </div>
               ) : null}
-              <Button
-                variant="contained"
-                startIcon={<WarehouseOutlinedIcon fontSize="small" />}
-                onClick={() => {
-                  setPendingContainerContentsContext({
-                    sku: selectedSummary.sku,
-                    customerId: selectedSummary.customerId
-                  });
-                  onNavigate("container-contents");
-                }}
-              >
-                {t("openContainerContents")}
-              </Button>
-              <Button
-                variant="outlined"
-                startIcon={<HistoryOutlinedIcon fontSize="small" />}
-                onClick={() => {
-                  setPendingAllActivityContext({
-                    customerId: selectedSummary.customerId,
-                    searchTerm: selectedSummary.sku
-                  });
-                  onNavigate("all-activity");
-                }}
-              >
-                {t("allActivity")}
-              </Button>
             </div>
 
             <div className="document-drawer__status-bar">
@@ -461,68 +466,72 @@ export function InventorySummaryPage({
               </div>
             </div>
 
-            <div className="document-drawer__meta">
-              <div>
+            <div className="document-drawer__meta inventory-summary-drawer__details">
+              <div className="inventory-summary-drawer__detail-card inventory-summary-drawer__detail-card--wide">
                 <strong>{t("description")}</strong>
                 <span>{selectedSummary.description}</span>
               </div>
-              <div>
+              <div className="inventory-summary-drawer__detail-card">
                 <strong>{t("customer")}</strong>
                 <span>{selectedSummary.customerName}</span>
               </div>
-              <div>
+              <div className="inventory-summary-drawer__detail-card">
                 <strong>{t("lastReceipt")}</strong>
                 <span>{formatDateValue(selectedSummary.lastReceipt, dateFormatter)}</span>
               </div>
-              <div>
+              <div className="inventory-summary-drawer__detail-card">
                 <strong>{t("currentInventoryRows")}</strong>
                 <span>{selectedSummary.items.length}</span>
               </div>
             </div>
 
             <div className="document-drawer__section-title">{t("warehouseBreakdown")}</div>
-            <div className="document-drawer__list">
+            <div className="document-drawer__list inventory-summary-drawer__breakdown-list">
               {warehouseBreakdown.map((row) => (
-                <div className="document-drawer__list-row" key={row.id}>
-                  <div>
+                <div className="document-drawer__list-row inventory-summary-drawer__breakdown-row" key={row.id}>
+                  <div className="inventory-summary-drawer__breakdown-main">
                     <strong>{row.locationName}</strong>
                     <span>{row.sections.join(", ") || "-"}</span>
                   </div>
-                  <div>
-                    <strong>{t("onHand")}</strong>
-                    <span>{row.onHand}</span>
-                  </div>
-                  <div>
-                    <strong>{t("availableQty")}</strong>
-                    <span>{row.availableQty}</span>
-                  </div>
-                  <div>
-                    <strong>{t("containerCount")}</strong>
-                    <span>{row.containerCount}</span>
+                  <div className="inventory-summary-drawer__breakdown-metrics">
+                    <div className="inventory-summary-drawer__breakdown-metric">
+                      <strong>{t("onHand")}</strong>
+                      <span>{row.onHand}</span>
+                    </div>
+                    <div className="inventory-summary-drawer__breakdown-metric">
+                      <strong>{t("availableQty")}</strong>
+                      <span>{row.availableQty}</span>
+                    </div>
+                    <div className="inventory-summary-drawer__breakdown-metric">
+                      <strong>{t("containerCount")}</strong>
+                      <span>{row.containerCount}</span>
+                    </div>
                   </div>
                 </div>
               ))}
             </div>
 
             <div className="document-drawer__section-title">{t("containerBreakdown")}</div>
-            <div className="document-drawer__list">
+            <div className="document-drawer__list inventory-summary-drawer__breakdown-list">
               {containerBreakdown.map((row) => (
-                <div className="document-drawer__list-row" key={row.id}>
-                  <div>
+                <div className="document-drawer__list-row inventory-summary-drawer__breakdown-row" key={row.id}>
+                  <div className="inventory-summary-drawer__breakdown-main">
                     <strong>{row.containerNo || "-"}</strong>
                     <span>{row.locationName} / {row.storageSections.join(", ") || DEFAULT_STORAGE_SECTION}</span>
                   </div>
-                  <div>
-                    <strong>{t("onHand")}</strong>
-                    <span>{row.onHand}</span>
-                  </div>
-                  <div>
-                    <strong>{t("availableQty")}</strong>
-                    <span>{row.availableQty}</span>
-                  </div>
-                  <div>
-                    <strong>{t("pallets")}</strong>
-                    <span>{row.palletCount}</span>
+                  <div className="inventory-summary-drawer__breakdown-metrics">
+                    <div className="inventory-summary-drawer__breakdown-metric">
+                      <strong>{t("onHand")}</strong>
+                      <span>{row.onHand}</span>
+                    </div>
+                    <div className="inventory-summary-drawer__breakdown-metric">
+                      <strong>{t("availableQty")}</strong>
+                      <span>{row.availableQty}</span>
+                    </div>
+                    <div className="inventory-summary-drawer__breakdown-metric">
+                      <strong>{t("pallets")}</strong>
+                      <span>{row.palletCount}</span>
+                    </div>
                   </div>
                 </div>
               ))}

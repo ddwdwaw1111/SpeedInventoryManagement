@@ -24,6 +24,14 @@ type OperationsReportFilters struct {
 	Granularity string
 }
 
+type SKUFlowReportFilters struct {
+	StartDate   string
+	EndDate     string
+	SKUMasterID int64
+	CustomerID  int64
+	LocationID  int64
+}
+
 type OperationsReport struct {
 	StartDate             string                   `json:"startDate"`
 	EndDate               string                   `json:"endDate"`
@@ -34,6 +42,17 @@ type OperationsReport struct {
 	LowStockRows          []ReportLowStockRow      `json:"lowStockRows"`
 	PalletFlowRows        []ReportPalletFlowRow    `json:"palletFlowRows"`
 	MovementTrendRows     []ReportMovementTrendRow `json:"movementTrendRows"`
+}
+
+type SKUFlowReport struct {
+	StartDate   string               `json:"startDate"`
+	EndDate     string               `json:"endDate"`
+	SKUMasterID int64                `json:"skuMasterId"`
+	SKU         string               `json:"sku"`
+	ItemNumber  string               `json:"itemNumber"`
+	Description string               `json:"description"`
+	Summary     SKUFlowReportSummary `json:"summary"`
+	Rows        []SKUFlowReportRow   `json:"rows"`
 }
 
 type OperationsReportSummary struct {
@@ -48,6 +67,17 @@ type OperationsReportSummary struct {
 	EndingBalance        int     `json:"endingBalance"`
 	PeakBalance          int     `json:"peakBalance"`
 	AverageBalance       float64 `json:"averageBalance"`
+}
+
+type SKUFlowReportSummary struct {
+	InboundQty       int    `json:"inboundQty"`
+	InboundPallets   int    `json:"inboundPallets"`
+	OutboundQty      int    `json:"outboundQty"`
+	OutboundPallets  int    `json:"outboundPallets"`
+	NetQty           int    `json:"netQty"`
+	CurrentQty       int    `json:"currentQty"`
+	CurrentPallets   int    `json:"currentPallets"`
+	LastOutboundDate string `json:"lastOutboundDate"`
 }
 
 type ReportLocationRow struct {
@@ -81,6 +111,23 @@ type ReportMovementTrendRow struct {
 	Key      string `json:"key"`
 	Inbound  int    `json:"inbound"`
 	Outbound int    `json:"outbound"`
+}
+
+type SKUFlowReportRow struct {
+	Direction          string `json:"direction"`
+	EventType          string `json:"eventType"`
+	Date               string `json:"date"`
+	Quantity           int    `json:"quantity"`
+	Pallets            int    `json:"pallets"`
+	CustomerName       string `json:"customerName"`
+	LocationName       string `json:"locationName"`
+	StorageSection     string `json:"storageSection"`
+	ContainerNo        string `json:"containerNo"`
+	PackingListNo      string `json:"packingListNo"`
+	OrderRef           string `json:"orderRef"`
+	SourceDocumentType string `json:"sourceDocumentType"`
+	SourceDocumentID   int64  `json:"sourceDocumentId"`
+	SourceLineID       int64  `json:"sourceLineId"`
 }
 
 type reportLocationBucket struct {
@@ -127,6 +174,49 @@ type reportLedgerEventRow struct {
 	BusinessDate   time.Time
 	EventType      string
 	QuantityChange int
+}
+
+type skuFlowReportGroupKey struct {
+	Direction          string
+	EventType          string
+	Date               string
+	CustomerName       string
+	LocationName       string
+	StorageSection     string
+	ContainerNo        string
+	PackingListNo      string
+	OrderRef           string
+	SourceDocumentType string
+	SourceDocumentID   int64
+	SourceLineID       int64
+}
+
+type skuFlowReportGroup struct {
+	row       SKUFlowReportRow
+	palletIDs map[int64]struct{}
+}
+
+type skuFlowLedgerRow struct {
+	PalletID           int64        `db:"pallet_id"`
+	SKUMasterID        int64        `db:"sku_master_id"`
+	SKU                string       `db:"sku"`
+	ItemNumber         string       `db:"item_number"`
+	Description        string       `db:"description"`
+	CustomerName       string       `db:"customer_name"`
+	LocationName       string       `db:"location_name"`
+	StorageSection     string       `db:"storage_section"`
+	ContainerNo        string       `db:"container_no_snapshot"`
+	PackingListNo      string       `db:"packing_list_no"`
+	OrderRef           string       `db:"order_ref"`
+	EventType          string       `db:"event_type"`
+	QuantityChange     int          `db:"quantity_change"`
+	SourceDocumentType string       `db:"source_document_type"`
+	SourceDocumentID   int64        `db:"source_document_id"`
+	SourceLineID       int64        `db:"source_line_id"`
+	OccurredAt         sql.NullTime `db:"occurred_at"`
+	DeliveryDate       sql.NullTime `db:"delivery_date"`
+	OutDate            sql.NullTime `db:"out_date"`
+	CreatedAt          time.Time    `db:"created_at"`
 }
 
 type reportSearchLookups struct {
@@ -214,6 +304,46 @@ func (s *Store) GetOperationsReport(ctx context.Context, filters OperationsRepor
 	return report, nil
 }
 
+func (s *Store) GetSKUFlowReport(ctx context.Context, filters SKUFlowReportFilters) (SKUFlowReport, error) {
+	normalizedFilters, start, end, err := normalizeSKUFlowReportFilters(filters)
+	if err != nil {
+		return SKUFlowReport{}, err
+	}
+
+	rows, err := s.loadSKUFlowLedgerRows(ctx, normalizedFilters, start, end)
+	if err != nil {
+		return SKUFlowReport{}, err
+	}
+
+	report := SKUFlowReport{
+		StartDate:   normalizedFilters.StartDate,
+		EndDate:     normalizedFilters.EndDate,
+		SKUMasterID: normalizedFilters.SKUMasterID,
+	}
+	if len(rows) > 0 {
+		report.SKU = rows[0].SKU
+		report.ItemNumber = rows[0].ItemNumber
+		report.Description = rows[0].Description
+	} else {
+		sku, err := s.loadSKUFlowReportSKU(ctx, normalizedFilters.SKUMasterID)
+		if err != nil {
+			return SKUFlowReport{}, err
+		}
+		report.SKU = sku.SKU
+		report.ItemNumber = sku.ItemNumber
+		report.Description = firstNonEmpty(sku.Description, sku.Name)
+	}
+
+	report.Summary, report.Rows = buildSKUFlowReportRows(rows)
+	currentQty, currentPallets, err := s.loadSKUFlowCurrentInventory(ctx, normalizedFilters)
+	if err != nil {
+		return SKUFlowReport{}, err
+	}
+	report.Summary.CurrentQty = currentQty
+	report.Summary.CurrentPallets = currentPallets
+	return report, nil
+}
+
 func normalizeOperationsReportFilters(filters OperationsReportFilters) (OperationsReportFilters, time.Time, time.Time, error) {
 	now := time.Now().UTC()
 	defaultStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
@@ -255,6 +385,28 @@ func normalizeOperationsReportFilters(filters OperationsReportFilters) (Operatio
 		LocationID:  filters.LocationID,
 		Search:      strings.TrimSpace(filters.Search),
 		Granularity: granularity,
+	}, start, end, nil
+}
+
+func normalizeSKUFlowReportFilters(filters SKUFlowReportFilters) (SKUFlowReportFilters, time.Time, time.Time, error) {
+	if filters.SKUMasterID <= 0 {
+		return SKUFlowReportFilters{}, time.Time{}, time.Time{}, fmt.Errorf("%w: skuMasterId is required", ErrInvalidInput)
+	}
+
+	normalizedDateFilters, start, end, err := normalizeOperationsReportFilters(OperationsReportFilters{
+		StartDate: filters.StartDate,
+		EndDate:   filters.EndDate,
+	})
+	if err != nil {
+		return SKUFlowReportFilters{}, time.Time{}, time.Time{}, err
+	}
+
+	return SKUFlowReportFilters{
+		StartDate:   normalizedDateFilters.StartDate,
+		EndDate:     normalizedDateFilters.EndDate,
+		SKUMasterID: filters.SKUMasterID,
+		CustomerID:  filters.CustomerID,
+		LocationID:  filters.LocationID,
 	}, start, end, nil
 }
 
@@ -449,6 +601,124 @@ func (s *Store) loadReportLedgerEntries(ctx context.Context, filters OperationsR
 	return entries, nil
 }
 
+func (s *Store) loadSKUFlowReportSKU(ctx context.Context, skuMasterID int64) (reportSKUSearchLookup, error) {
+	var sku reportSKUSearchLookup
+	err := s.db.GetContext(ctx, &sku, `
+		SELECT
+			COALESCE(item_number, '') AS item_number,
+			COALESCE(sku, '') AS sku,
+			COALESCE(name, '') AS name,
+			COALESCE(description, '') AS description
+		FROM sku_master
+		WHERE id = ?
+	`, skuMasterID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return reportSKUSearchLookup{}, ErrNotFound
+		}
+		return reportSKUSearchLookup{}, mapDBError(fmt.Errorf("load sku flow report sku: %w", err))
+	}
+	return sku, nil
+}
+
+func (s *Store) loadSKUFlowCurrentInventory(ctx context.Context, filters SKUFlowReportFilters) (int, int, error) {
+	var row struct {
+		Quantity int `db:"quantity"`
+		Pallets  int `db:"pallets"`
+	}
+	query := `
+		SELECT
+			COALESCE(SUM(pi.quantity), 0) AS quantity,
+			COUNT(DISTINCT CASE WHEN pi.quantity > 0 THEN p.id END) AS pallets
+		FROM pallet_items pi
+		JOIN pallets p ON p.id = pi.pallet_id
+		WHERE pi.sku_master_id = ?
+			AND pi.quantity > 0
+			AND p.status <> ?
+	`
+	args := []any{filters.SKUMasterID, PalletStatusCancelled}
+	if filters.CustomerID > 0 {
+		query += " AND p.customer_id = ?"
+		args = append(args, filters.CustomerID)
+	}
+	if filters.LocationID > 0 {
+		query += " AND p.current_location_id = ?"
+		args = append(args, filters.LocationID)
+	}
+
+	if err := s.db.GetContext(ctx, &row, s.db.Rebind(query), args...); err != nil {
+		return 0, 0, mapDBError(fmt.Errorf("load sku flow current inventory: %w", err))
+	}
+	return row.Quantity, row.Pallets, nil
+}
+
+func (s *Store) loadSKUFlowLedgerRows(ctx context.Context, filters SKUFlowReportFilters, start time.Time, end time.Time) ([]skuFlowLedgerRow, error) {
+	rows := make([]skuFlowLedgerRow, 0)
+	query := `
+		SELECT
+			sl.pallet_id,
+			sm.id AS sku_master_id,
+			COALESCE(sm.sku, '') AS sku,
+			COALESCE(sm.item_number, '') AS item_number,
+			COALESCE(NULLIF(sl.description_snapshot, ''), NULLIF(sm.description, ''), sm.name, '') AS description,
+			c.name AS customer_name,
+			l.name AS location_name,
+			COALESCE(NULLIF(sl.storage_section, ''), 'TEMP') AS storage_section,
+			COALESCE(sl.container_no_snapshot, '') AS container_no_snapshot,
+			COALESCE(NULLIF(sl.packing_list_no, ''), NULLIF(odoc.packing_list_no, ''), '') AS packing_list_no,
+			COALESCE(NULLIF(sl.order_ref, ''), NULLIF(odoc.order_ref, ''), '') AS order_ref,
+			sl.event_type,
+			sl.quantity_change,
+			COALESCE(sl.source_document_type, '') AS source_document_type,
+			COALESCE(sl.source_document_id, 0) AS source_document_id,
+			COALESCE(sl.source_line_id, 0) AS source_line_id,
+			sl.occurred_at,
+			sl.delivery_date,
+			sl.out_date,
+			sl.created_at
+		FROM stock_ledger sl
+		JOIN pallets p ON p.id = sl.pallet_id
+		LEFT JOIN pallet_items pi ON pi.id = sl.pallet_item_id
+		JOIN sku_master sm ON sm.id = COALESCE(sl.sku_master_id, pi.sku_master_id, p.sku_master_id)
+		JOIN customers c ON c.id = sl.customer_id
+		JOIN storage_locations l ON l.id = sl.location_id
+		LEFT JOIN outbound_documents odoc
+			ON sl.source_document_type = 'OUTBOUND' AND sl.source_document_id = odoc.id
+		WHERE p.status <> ?
+			AND sm.id = ?
+			AND sl.event_type IN ('RECEIVE', 'SHIP')
+			AND sl.quantity_change <> 0
+			AND DATE(CASE
+				WHEN sl.event_type = 'RECEIVE' THEN COALESCE(sl.delivery_date, sl.occurred_at, sl.created_at)
+				WHEN sl.event_type = 'SHIP' THEN COALESCE(sl.out_date, sl.occurred_at, sl.created_at)
+				ELSE COALESCE(sl.occurred_at, sl.created_at)
+			END) BETWEEN ? AND ?
+	`
+	args := []any{PalletStatusCancelled, filters.SKUMasterID, start.Format(time.DateOnly), end.Format(time.DateOnly)}
+	if filters.CustomerID > 0 {
+		query += " AND sl.customer_id = ?"
+		args = append(args, filters.CustomerID)
+	}
+	if filters.LocationID > 0 {
+		query += " AND sl.location_id = ?"
+		args = append(args, filters.LocationID)
+	}
+	query += `
+		ORDER BY
+			CASE
+				WHEN sl.event_type = 'RECEIVE' THEN COALESCE(sl.delivery_date, sl.occurred_at, sl.created_at)
+				WHEN sl.event_type = 'SHIP' THEN COALESCE(sl.out_date, sl.occurred_at, sl.created_at)
+				ELSE COALESCE(sl.occurred_at, sl.created_at)
+			END DESC,
+			sl.id DESC
+	`
+
+	if err := s.db.SelectContext(ctx, &rows, s.db.Rebind(query), args...); err != nil {
+		return nil, mapDBError(fmt.Errorf("load sku flow ledger rows: %w", err))
+	}
+	return rows, nil
+}
+
 func (s *Store) loadReportSearchLookups(ctx context.Context) (reportSearchLookups, error) {
 	lookups := reportSearchLookups{
 		customers:  make(map[int64]string),
@@ -536,6 +806,96 @@ func buildReportLedgerBuckets(
 	return openingBalances, events
 }
 
+func buildSKUFlowReportRows(entries []skuFlowLedgerRow) (SKUFlowReportSummary, []SKUFlowReportRow) {
+	var summary SKUFlowReportSummary
+	groups := make(map[skuFlowReportGroupKey]*skuFlowReportGroup)
+
+	for _, entry := range entries {
+		direction, quantity, ok := resolveSKUFlowDirectionAndQuantity(entry)
+		if !ok {
+			continue
+		}
+
+		dateKey := startOfUTCDate(resolveSKUFlowBusinessDate(entry)).Format(time.DateOnly)
+		key := skuFlowReportGroupKey{
+			Direction:          direction,
+			EventType:          entry.EventType,
+			Date:               dateKey,
+			CustomerName:       entry.CustomerName,
+			LocationName:       entry.LocationName,
+			StorageSection:     fallbackSection(entry.StorageSection),
+			ContainerNo:        strings.TrimSpace(entry.ContainerNo),
+			PackingListNo:      strings.TrimSpace(entry.PackingListNo),
+			OrderRef:           strings.TrimSpace(entry.OrderRef),
+			SourceDocumentType: strings.TrimSpace(entry.SourceDocumentType),
+			SourceDocumentID:   entry.SourceDocumentID,
+			SourceLineID:       entry.SourceLineID,
+		}
+
+		group := groups[key]
+		if group == nil {
+			group = &skuFlowReportGroup{
+				row: SKUFlowReportRow{
+					Direction:          key.Direction,
+					EventType:          key.EventType,
+					Date:               key.Date,
+					CustomerName:       key.CustomerName,
+					LocationName:       key.LocationName,
+					StorageSection:     key.StorageSection,
+					ContainerNo:        key.ContainerNo,
+					PackingListNo:      key.PackingListNo,
+					OrderRef:           key.OrderRef,
+					SourceDocumentType: key.SourceDocumentType,
+					SourceDocumentID:   key.SourceDocumentID,
+					SourceLineID:       key.SourceLineID,
+				},
+				palletIDs: make(map[int64]struct{}),
+			}
+			groups[key] = group
+		}
+
+		group.row.Quantity += quantity
+		group.palletIDs[entry.PalletID] = struct{}{}
+		group.row.Pallets = len(group.palletIDs)
+
+		if direction == "INBOUND" {
+			summary.InboundQty += quantity
+			continue
+		}
+
+		summary.OutboundQty += quantity
+		if dateKey > summary.LastOutboundDate {
+			summary.LastOutboundDate = dateKey
+		}
+	}
+
+	summary.NetQty = summary.InboundQty - summary.OutboundQty
+
+	rows := make([]SKUFlowReportRow, 0, len(groups))
+	for _, group := range groups {
+		if group.row.Direction == "INBOUND" {
+			summary.InboundPallets += group.row.Pallets
+		} else {
+			summary.OutboundPallets += group.row.Pallets
+		}
+		rows = append(rows, group.row)
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Date == rows[j].Date {
+			if rows[i].Direction != rows[j].Direction {
+				return rows[i].Direction == "OUTBOUND"
+			}
+			if rows[i].PackingListNo == rows[j].PackingListNo {
+				return rows[i].ContainerNo < rows[j].ContainerNo
+			}
+			return rows[i].PackingListNo < rows[j].PackingListNo
+		}
+		return rows[i].Date > rows[j].Date
+	})
+
+	return summary, rows
+}
+
 func matchesReportLedgerSearch(entry reportLedgerEntry, normalizedSearch string, lookups reportSearchLookups) bool {
 	skuLookup := lookups.skuMasters[entry.SKUMasterID]
 	haystack := strings.ToLower(strings.Join([]string{
@@ -554,6 +914,34 @@ func matchesReportLedgerSearch(entry reportLedgerEntry, normalizedSearch string,
 		entry.ReferenceCode,
 	}, " "))
 	return strings.Contains(haystack, normalizedSearch)
+}
+
+func resolveSKUFlowDirectionAndQuantity(entry skuFlowLedgerRow) (string, int, bool) {
+	switch entry.EventType {
+	case StockLedgerEventReceive:
+		if entry.QuantityChange <= 0 {
+			return "", 0, false
+		}
+		return "INBOUND", entry.QuantityChange, true
+	case StockLedgerEventShip:
+		if entry.QuantityChange >= 0 {
+			return "", 0, false
+		}
+		return "OUTBOUND", -entry.QuantityChange, true
+	default:
+		return "", 0, false
+	}
+}
+
+func resolveSKUFlowBusinessDate(entry skuFlowLedgerRow) time.Time {
+	switch entry.EventType {
+	case StockLedgerEventShip:
+		return firstNonEmptyReportTime(entry.OutDate, entry.OccurredAt, entry.CreatedAt)
+	case StockLedgerEventReceive:
+		return firstNonEmptyReportTime(entry.DeliveryDate, entry.OccurredAt, entry.CreatedAt)
+	default:
+		return firstNonEmptyReportTime(entry.OccurredAt, sql.NullTime{}, entry.CreatedAt)
+	}
 }
 
 func resolveReportLedgerBusinessDate(entry reportLedgerEntry) time.Time {

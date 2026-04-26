@@ -353,10 +353,10 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
 
   function handleDownloadPdf(exportMode: BillingExportMode = pendingExportMode) {
     if (!invoice) {
-      return;
+      return Promise.resolve();
     }
 
-    downloadBillingInvoicePdf({
+    return downloadBillingInvoicePdf({
       invoice,
       timeZone: resolvedTimeZone,
       exportMode
@@ -367,7 +367,7 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
     setExportMenuAnchor(null);
     setPendingExportMode(exportMode);
     await runBusyAction(`export-pdf-${exportMode.toLowerCase()}`, () => {
-      handleDownloadPdf(exportMode);
+      return handleDownloadPdf(exportMode);
     });
   }
 

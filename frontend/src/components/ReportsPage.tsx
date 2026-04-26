@@ -11,10 +11,14 @@ import type {
   OperationsReport,
   OperationsReportGranularity,
   OperationsReportMovementTrendRow,
-  OperationsReportPalletFlowRow
+  OperationsReportPalletFlowRow,
+  SKUMaster,
+  SKUFlowReport,
+  SKUFlowReportRow
 } from "../lib/types";
 
 type ReportGranularity = OperationsReportGranularity;
+type ReportsTab = "overview" | "sku-flow";
 type ChartTone = "blue" | "green" | "amber" | "red";
 type BarRow = { label: string; value: number; meta?: string; tone?: ChartTone };
 type TrendRow = { key: string; label: string; inbound: number; outbound: number };
@@ -30,13 +34,15 @@ const decimalFormatter = new Intl.NumberFormat("en-US", { minimumFractionDigits:
 type ReportsPageProps = {
   locations: Location[];
   customers: Customer[];
+  skuMasters: SKUMaster[];
   isLoading: boolean;
   errorMessage: string;
 };
 
-export function ReportsPage({ locations, customers, isLoading, errorMessage }: ReportsPageProps) {
+export function ReportsPage({ locations, customers, skuMasters, isLoading, errorMessage }: ReportsPageProps) {
   const { t } = useI18n();
   const currentMonth = useMemo(() => getCurrentMonthDateRange(), []);
+  const [activeReportTab, setActiveReportTab] = useState<ReportsTab>("overview");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [reportStartDate, setReportStartDate] = useState(currentMonth.start);
@@ -47,12 +53,24 @@ export function ReportsPage({ locations, customers, isLoading, errorMessage }: R
   const [report, setReport] = useState<OperationsReport | null>(null);
   const [isReportLoading, setIsReportLoading] = useState(false);
   const [reportErrorMessage, setReportErrorMessage] = useState("");
+  const [selectedSKUMasterId, setSelectedSKUMasterId] = useState("");
+  const [selectedSKUFlowCustomerId, setSelectedSKUFlowCustomerId] = useState("all");
+  const [selectedSKUFlowLocationId, setSelectedSKUFlowLocationId] = useState("all");
+  const [skuFlowStartDate, setSKUFlowStartDate] = useState(currentMonth.start);
+  const [skuFlowEndDate, setSKUFlowEndDate] = useState(currentMonth.end);
+  const [skuFlowReport, setSKUFlowReport] = useState<SKUFlowReport | null>(null);
+  const [isSKUFlowLoading, setIsSKUFlowLoading] = useState(false);
+  const [skuFlowErrorMessage, setSKUFlowErrorMessage] = useState("");
   const deferredSearchTerm = useDeferredValue(searchTerm);
   const normalizedSearch = deferredSearchTerm.trim();
 
   const normalizedDateRange = useMemo(
     () => normalizeDateRange(reportStartDate || currentMonth.start, reportEndDate || currentMonth.end),
     [currentMonth.end, currentMonth.start, reportEndDate, reportStartDate]
+  );
+  const normalizedSKUFlowDateRange = useMemo(
+    () => normalizeDateRange(skuFlowStartDate || currentMonth.start, skuFlowEndDate || currentMonth.end),
+    [currentMonth.end, currentMonth.start, skuFlowEndDate, skuFlowStartDate]
   );
   const selectedLocationName = useMemo(() => {
     if (selectedLocationId === "all") {
@@ -68,8 +86,36 @@ export function ReportsPage({ locations, customers, isLoading, errorMessage }: R
 
     return customers.find((customer) => customer.id === Number(selectedCustomerId))?.name ?? null;
   }, [customers, selectedCustomerId]);
+  const selectedSKUMaster = useMemo(
+    () => skuMasters.find((skuMaster) => skuMaster.id === Number(selectedSKUMasterId)) ?? null,
+    [selectedSKUMasterId, skuMasters]
+  );
+  const selectedSKUFlowCustomerName = useMemo(() => {
+    if (selectedSKUFlowCustomerId === "all") {
+      return null;
+    }
+
+    return customers.find((customer) => customer.id === Number(selectedSKUFlowCustomerId))?.name ?? null;
+  }, [customers, selectedSKUFlowCustomerId]);
+  const selectedSKUFlowLocationName = useMemo(() => {
+    if (selectedSKUFlowLocationId === "all") {
+      return null;
+    }
+
+    return locations.find((location) => location.id === Number(selectedSKUFlowLocationId))?.name ?? null;
+  }, [locations, selectedSKUFlowLocationId]);
 
   useEffect(() => {
+    if (!selectedSKUMasterId && skuMasters.length > 0) {
+      setSelectedSKUMasterId(String(skuMasters[0].id));
+    }
+  }, [selectedSKUMasterId, skuMasters]);
+
+  useEffect(() => {
+    if (activeReportTab !== "overview") {
+      return;
+    }
+
     let isActive = true;
 
     async function loadReport() {
@@ -111,6 +157,61 @@ export function ReportsPage({ locations, customers, isLoading, errorMessage }: R
     reportGranularity,
     selectedCustomerId,
     selectedLocationId,
+    t,
+    activeReportTab
+  ]);
+
+  useEffect(() => {
+    if (activeReportTab !== "sku-flow") {
+      return;
+    }
+
+    const skuMasterId = Number(selectedSKUMasterId);
+    if (!skuMasterId) {
+      setSKUFlowReport(null);
+      return;
+    }
+
+    let isActive = true;
+
+    async function loadSKUFlowReport() {
+      setIsSKUFlowLoading(true);
+      setSKUFlowErrorMessage("");
+      try {
+        const nextReport = await api.getSKUFlowReport({
+          skuMasterId,
+          startDate: normalizedSKUFlowDateRange.start,
+          endDate: normalizedSKUFlowDateRange.end,
+          customerId: selectedSKUFlowCustomerId === "all" ? "all" : Number(selectedSKUFlowCustomerId),
+          locationId: selectedSKUFlowLocationId === "all" ? "all" : Number(selectedSKUFlowLocationId)
+        });
+        if (isActive) {
+          setSKUFlowReport(nextReport);
+        }
+      } catch (error) {
+        if (isActive) {
+          setSKUFlowReport(null);
+          setSKUFlowErrorMessage(getErrorMessage(error, t("couldNotLoadReport")));
+        }
+      } finally {
+        if (isActive) {
+          setIsSKUFlowLoading(false);
+        }
+      }
+    }
+
+    void loadSKUFlowReport();
+
+    return () => {
+      isActive = false;
+    };
+  }, [
+    activeReportTab,
+    normalizedSKUFlowDateRange.end,
+    normalizedSKUFlowDateRange.start,
+    selectedSKUFlowCustomerId,
+    selectedSKUFlowLocationId,
+    selectedSKUMasterId,
     t
   ]);
 
@@ -169,22 +270,36 @@ export function ReportsPage({ locations, customers, isLoading, errorMessage }: R
   const advancedFilterCount = Number(normalizedSearch.length > 0) + Number(reportGranularity !== "day");
   const emptyLabel = isLoading || isReportLoading ? t("loadingRecords") : t("noResults");
   const scopeRangeLabel = formatDateRangeSummary(normalizedDateRange.start, normalizedDateRange.end);
+  const skuFlowRangeLabel = formatDateRangeSummary(normalizedSKUFlowDateRange.start, normalizedSKUFlowDateRange.end);
+  const skuFlowSummary = skuFlowReport?.summary;
+  const skuFlowRows = skuFlowReport?.rows ?? [];
+  const skuFlowEmptyLabel = skuMasters.length === 0
+    ? t("skuFlowNoSku")
+    : isSKUFlowLoading
+      ? t("loadingRecords")
+      : t("skuFlowNoData");
+  const selectedSKULabel = selectedSKUMaster
+    ? [selectedSKUMaster.sku, selectedSKUMaster.description || selectedSKUMaster.name].filter(Boolean).join(" - ")
+    : t("selectSku");
 
   return (
     <main className="workspace-main">
       {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
       {reportErrorMessage ? <InlineAlert>{reportErrorMessage}</InlineAlert> : null}
+      {skuFlowErrorMessage ? <InlineAlert>{skuFlowErrorMessage}</InlineAlert> : null}
 
       <section className="workbook-panel workbook-panel--full reports-exec">
+        <ReportTabNav activeTab={activeReportTab} onChange={setActiveReportTab} />
+
+        {activeReportTab === "overview" ? (
+          <>
         <header className="reports-exec__hero">
           <div className="reports-exec__hero-copy">
             <span className="reports-exec__eyebrow">{t("reportsExecutiveBadge")}</span>
             <h2>{t("reportOverviewTitle")}</h2>
-            <p>{t("reportOverviewSubtitle")}</p>
           </div>
           <div className="reports-exec__hero-brief">
             <strong>{t("reportsExecutiveSummaryTitle")}</strong>
-            <p>{t("reportsExecutiveSummaryDesc")}</p>
             <div className="reports-exec__hero-pills">
               <span>{t("reportsSelectedPeriod")}: {scopeRangeLabel}</span>
               <span>{t("customer")}: {selectedCustomerName ?? t("allCustomers")}</span>
@@ -266,7 +381,7 @@ export function ReportsPage({ locations, customers, isLoading, errorMessage }: R
         </div>
 
         <section className="reports-exec__summary">
-          <SectionHeading title={t("reportsExecutiveSummaryTitle")} subtitle={t("reportsExecutiveSummaryDesc")} />
+          <SectionHeading title={t("reportsExecutiveSummaryTitle")} />
 
           <div className="reports-exec__kpi-grid">
             <ExecutiveMetricCard
@@ -322,7 +437,7 @@ export function ReportsPage({ locations, customers, isLoading, errorMessage }: R
           </div>
 
           <div className="reports-exec__primary-grid">
-            <ReportCard title={t("dailyPalletFlow")} subtitle={t("dailyPalletFlowDesc")} variant="primary">
+            <ReportCard title={t("dailyPalletFlow")} variant="primary">
               <PalletFlowChart
                 rows={palletFlowRows}
                 emptyLabel={emptyLabel}
@@ -338,17 +453,17 @@ export function ReportsPage({ locations, customers, isLoading, errorMessage }: R
               />
             </ReportCard>
 
-            <ReportCard title={t("inventoryByStorage")} subtitle={t("inventoryByStorageDesc")} variant="primary">
+            <ReportCard title={t("inventoryByStorage")} variant="primary">
               <HorizontalBarList rows={locationRows} emptyLabel={emptyLabel} valueSuffix={t("units")} />
             </ReportCard>
           </div>
         </section>
 
         <section className="reports-exec__detail">
-          <SectionHeading title={t("reportsDetailedAnalysisTitle")} subtitle={t("reportsDetailedAnalysisDesc")} />
+          <SectionHeading title={t("reportsDetailedAnalysisTitle")} />
 
           <div className="reports-exec__detail-grid">
-            <ReportCard title={t("endOfDayPallets")} subtitle={t("endOfDayPalletsDesc")} variant="secondary">
+            <ReportCard title={t("endOfDayPallets")} variant="secondary">
               <PalletBalanceChart rows={palletFlowRows} emptyLabel={emptyLabel} balanceLabel={t("dailyPalletBalance")} />
               <StatStrip
                 stats={[
@@ -359,15 +474,15 @@ export function ReportsPage({ locations, customers, isLoading, errorMessage }: R
               />
             </ReportCard>
 
-            <ReportCard title={t("topSkuOnHand")} subtitle={t("topSkuOnHandDesc")} variant="secondary">
+            <ReportCard title={t("topSkuOnHand")} variant="secondary">
               <HorizontalBarList rows={topSkuRows} emptyLabel={emptyLabel} valueSuffix={t("units")} />
             </ReportCard>
 
-            <ReportCard title={t("lowStockAttention")} subtitle={t("lowStockAttentionDesc")} variant="secondary">
+            <ReportCard title={t("lowStockAttention")} variant="secondary">
               <HorizontalBarList rows={lowStockRows.slice(0, 8)} emptyLabel={emptyLabel} valueSuffix={t("unitsShort")} />
             </ReportCard>
 
-            <ReportCard title={t("movementTrend")} subtitle={t("movementTrendDesc")} variant="secondary">
+            <ReportCard title={t("movementTrend")} variant="secondary">
               <MovementTrendChart
                 rows={movementTrendRows}
                 emptyLabel={emptyLabel}
@@ -377,16 +492,131 @@ export function ReportsPage({ locations, customers, isLoading, errorMessage }: R
             </ReportCard>
           </div>
         </section>
+          </>
+        ) : (
+          <section className="sku-flow-report">
+            <header className="reports-exec__hero sku-flow-report__hero">
+              <div className="reports-exec__hero-copy">
+                <span className="reports-exec__eyebrow">{t("skuFlowBadge")}</span>
+                <h2>{t("skuFlowTitle")}</h2>
+              </div>
+              <div className="reports-exec__hero-brief">
+                <strong>{selectedSKULabel}</strong>
+                <div className="reports-exec__hero-pills">
+                  <span>{t("reportsSelectedPeriod")}: {skuFlowRangeLabel}</span>
+                  <span>{t("sku")}: {skuFlowReport?.sku || selectedSKUMaster?.sku || "-"}</span>
+                  <span>{t("customer")}: {selectedSKUFlowCustomerName ?? t("allCustomers")}</span>
+                  <span>{t("warehouseMapWarehouseFilter")}: {selectedSKUFlowLocationName ?? t("allWarehouses")}</span>
+                </div>
+              </div>
+            </header>
+
+            <section className="reports-exec__filters sku-flow-report__filters">
+              <div className="filter-bar reports-exec__filters-main">
+                <label>
+                  {t("sku")}
+                  <select
+                    value={selectedSKUMasterId}
+                    onChange={(event) => setSelectedSKUMasterId(event.target.value)}
+                    disabled={skuMasters.length === 0}
+                  >
+                    {skuMasters.length === 0 ? <option value="">{t("skuFlowNoSku")}</option> : null}
+                    {skuMasters.map((skuMaster) => (
+                      <option key={skuMaster.id} value={skuMaster.id}>
+                        {[skuMaster.sku, skuMaster.description || skuMaster.name].filter(Boolean).join(" - ")}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  {t("customer")}
+                  <select value={selectedSKUFlowCustomerId} onChange={(event) => setSelectedSKUFlowCustomerId(event.target.value)}>
+                    <option value="all">{t("allCustomers")}</option>
+                    {customers.map((customer) => (
+                      <option key={customer.id} value={customer.id}>{customer.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  {t("warehouseMapWarehouseFilter")}
+                  <select value={selectedSKUFlowLocationId} onChange={(event) => setSelectedSKUFlowLocationId(event.target.value)}>
+                    <option value="all">{t("allWarehouses")}</option>
+                    {locations.map((location) => (
+                      <option key={location.id} value={location.id}>{location.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  {t("fromDate")}
+                  <input type="date" value={skuFlowStartDate} onChange={(event) => setSKUFlowStartDate(event.target.value)} />
+                </label>
+                <label>
+                  {t("toDate")}
+                  <input type="date" value={skuFlowEndDate} onChange={(event) => setSKUFlowEndDate(event.target.value)} />
+                </label>
+              </div>
+            </section>
+
+            <div className="reports-exec__scope-strip">
+              <ScopeChip label={t("sku")} value={skuFlowReport?.sku || selectedSKUMaster?.sku || "-"} />
+              <ScopeChip label={t("reportsScopeDate")} value={skuFlowRangeLabel} />
+              <ScopeChip label={t("itemNumber")} value={skuFlowReport?.itemNumber || selectedSKUMaster?.itemNumber || "-"} />
+              <ScopeChip label={t("customer")} value={selectedSKUFlowCustomerName ?? t("allCustomers")} />
+              <ScopeChip label={t("warehouseMapWarehouseFilter")} value={selectedSKUFlowLocationName ?? t("allWarehouses")} />
+            </div>
+
+            <section className="reports-exec__summary">
+              <SectionHeading title={t("skuFlowSummaryTitle")} />
+
+              <div className="reports-exec__kpi-grid sku-flow-report__kpi-grid">
+                <ExecutiveMetricCard
+                  label={t("skuFlowCurrentInventory")}
+                  value={`${formatNumber(skuFlowSummary?.currentQty ?? 0)} ${t("units")}`}
+                  meta={`${formatNumber(skuFlowSummary?.currentPallets ?? 0)} ${t("pallets")}`}
+                  tone="blue"
+                />
+                <ExecutiveMetricCard
+                  label={t("skuFlowInboundQty")}
+                  value={`${formatNumber(skuFlowSummary?.inboundQty ?? 0)} ${t("units")}`}
+                  meta={`${formatNumber(skuFlowSummary?.inboundPallets ?? 0)} ${t("pallets")}`}
+                  tone="green"
+                />
+                <ExecutiveMetricCard
+                  label={t("skuFlowOutboundQty")}
+                  value={`${formatNumber(skuFlowSummary?.outboundQty ?? 0)} ${t("units")}`}
+                  meta={`${formatNumber(skuFlowSummary?.outboundPallets ?? 0)} ${t("pallets")}`}
+                  tone="amber"
+                />
+                <ExecutiveMetricCard
+                  label={t("skuFlowNetQty")}
+                  value={`${formatSignedNumber(skuFlowSummary?.netQty ?? 0)} ${t("units")}`}
+                  meta={t("reportsSelectedPeriod")}
+                  tone={(skuFlowSummary?.netQty ?? 0) >= 0 ? "green" : "red"}
+                />
+                <ExecutiveMetricCard
+                  label={t("skuFlowLastShipment")}
+                  value={formatOptionalReportDate(skuFlowSummary?.lastOutboundDate ?? "")}
+                  meta={t("skuFlowShipmentTiming")}
+                  tone="blue"
+                />
+              </div>
+
+              <ReportCard title={t("skuFlowMovementDetail")} variant="primary">
+                <SKUFlowReportTable rows={skuFlowRows} emptyLabel={skuFlowEmptyLabel} />
+              </ReportCard>
+            </section>
+          </section>
+        )}
       </section>
     </main>
   );
 }
 
-function SectionHeading({ title, subtitle }: { title: string; subtitle: string }) {
+function SectionHeading({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
     <div className="reports-exec__section-heading">
       <h3>{title}</h3>
-      <p>{subtitle}</p>
+      {subtitle ? <p>{subtitle}</p> : null}
     </div>
   );
 }
@@ -447,7 +677,7 @@ function ReportCard({
   children
 }: {
   title: string;
-  subtitle: string;
+  subtitle?: string;
   variant: "primary" | "secondary";
   children: ReactNode;
 }) {
@@ -455,10 +685,93 @@ function ReportCard({
     <section className={`report-card report-card--${variant}`}>
       <div className="report-card__header">
         <h3>{title}</h3>
-        <p>{subtitle}</p>
+        {subtitle ? <p>{subtitle}</p> : null}
       </div>
       {children}
     </section>
+  );
+}
+
+function ReportTabNav({ activeTab, onChange }: { activeTab: ReportsTab; onChange: (tab: ReportsTab) => void }) {
+  const { t } = useI18n();
+  const tabs: Array<{ key: ReportsTab; label: string }> = [
+    { key: "overview", label: t("reportsTabOverview") },
+    { key: "sku-flow", label: t("reportsTabSKUFlow") }
+  ];
+
+  return (
+    <div className="reports-tab-nav" role="tablist" aria-label={t("reportTabs")}>
+      {tabs.map((tab) => (
+        <button
+          key={tab.key}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === tab.key}
+          className={`reports-tab-nav__item ${activeTab === tab.key ? "reports-tab-nav__item--active" : ""}`}
+          onClick={() => onChange(tab.key)}
+        >
+          <span>{tab.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function SKUFlowReportTable({ rows, emptyLabel }: { rows: SKUFlowReportRow[]; emptyLabel: string }) {
+  const { t } = useI18n();
+
+  if (rows.length === 0) {
+    return <div className="empty-state">{emptyLabel}</div>;
+  }
+
+  return (
+    <div className="sku-flow-table-wrap">
+      <table className="sheet-table sku-flow-table">
+        <thead>
+          <tr>
+            <th>{t("skuFlowDate")}</th>
+            <th>{t("skuFlowType")}</th>
+            <th>{t("quantity")}</th>
+            <th>{t("pallets")}</th>
+            <th>{t("customer")}</th>
+            <th>{t("warehouseMapWarehouseFilter")}</th>
+            <th>{t("containerNo")}</th>
+            <th>{t("skuFlowReference")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={`${row.direction}-${row.date}-${row.sourceDocumentType}-${row.sourceDocumentId}-${row.sourceLineId}-${row.containerNo}`}>
+              <td>{formatOptionalReportDate(row.date)}</td>
+              <td><SKUFlowDirectionBadge direction={row.direction} /></td>
+              <td>{formatNumber(row.quantity)}</td>
+              <td>{formatNumber(row.pallets)}</td>
+              <td>{row.customerName || "-"}</td>
+              <td>
+                <strong>{row.locationName || "-"}</strong>
+                <span className="sheet-table__subtle">{row.storageSection || "-"}</span>
+              </td>
+              <td>{row.containerNo || "-"}</td>
+              <td>
+                <strong>{firstNonEmptyText(row.packingListNo, row.orderRef, "-")}</strong>
+                <span className="sheet-table__subtle">
+                  {row.sourceDocumentType ? `${row.sourceDocumentType} #${row.sourceDocumentId || "-"}` : "-"}
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SKUFlowDirectionBadge({ direction }: { direction: SKUFlowReportRow["direction"] }) {
+  const { t } = useI18n();
+  return (
+    <span className={`sku-flow-badge sku-flow-badge--${direction.toLowerCase()}`}>
+      {direction === "INBOUND" ? t("skuFlowInbound") : t("skuFlowOutbound")}
+    </span>
   );
 }
 
@@ -670,6 +983,10 @@ function formatDateRangeSummary(startDate: string, endDate: string) {
   return `${mediumDateFormatter.format(parseDateValue(startDate))} - ${mediumDateFormatter.format(parseDateValue(endDate))}`;
 }
 
+function formatOptionalReportDate(value: string) {
+  return value ? mediumDateFormatter.format(parseDateValue(value)) : "-";
+}
+
 function formatNumber(value: number) {
   return numberFormatter.format(value);
 }
@@ -693,4 +1010,8 @@ function formatSignedNumber(value: number) {
 
 function getErrorMessage(error: unknown, fallbackMessage: string) {
   return error instanceof Error && error.message ? error.message : fallbackMessage;
+}
+
+function firstNonEmptyText(...values: string[]) {
+  return values.find((value) => value.trim() !== "") ?? "";
 }

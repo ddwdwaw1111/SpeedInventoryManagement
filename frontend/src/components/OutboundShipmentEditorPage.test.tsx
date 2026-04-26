@@ -141,6 +141,10 @@ function getShipmentLineQuantityInputs() {
   return Array.from(document.querySelectorAll('input[id^="shipment-editor-quantity-"]')) as HTMLInputElement[];
 }
 
+function confirmShipmentReview() {
+  fireEvent.click(screen.getByRole("checkbox", { name: /I confirm the warehouse/i }));
+}
+
 describe("OutboundShipmentEditorPage", () => {
   beforeEach(() => {
     mockedApi.getPallets.mockReset();
@@ -151,8 +155,9 @@ describe("OutboundShipmentEditorPage", () => {
     window.sessionStorage.clear();
   });
 
-  it("saves a new shipment as a server draft and opens the edit route", async () => {
+  it("saves a new shipment as a server draft and returns to the shipment list", async () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
+    const onBackToList = vi.fn();
     const onOpenShipmentEditor = vi.fn();
     const onOpenOutboundDocument = vi.fn();
 
@@ -174,7 +179,7 @@ describe("OutboundShipmentEditorPage", () => {
         currentUserRole="admin"
         isLoading={false}
         onRefresh={onRefresh}
-        onBackToList={vi.fn()}
+        onBackToList={onBackToList}
         onOpenOutboundDocument={onOpenOutboundDocument}
         onOpenShipmentEditor={onOpenShipmentEditor}
       />
@@ -194,7 +199,8 @@ describe("OutboundShipmentEditorPage", () => {
       expect(screen.getByText("PLT-501")).toBeInTheDocument();
     });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    fireEvent.click(screen.getAllByRole("button", { name: "Schedule Shipment" })[0]);
+    confirmShipmentReview();
+    fireEvent.click(screen.getByRole("button", { name: "Schedule Shipment" }));
 
     await waitFor(() => {
       expect(mockedApi.createOutboundDocument).toHaveBeenCalledWith({
@@ -229,7 +235,8 @@ describe("OutboundShipmentEditorPage", () => {
     });
 
     expect(onRefresh).toHaveBeenCalled();
-    expect(onOpenShipmentEditor).toHaveBeenCalledWith(99);
+    expect(onBackToList).toHaveBeenCalledTimes(1);
+    expect(onOpenShipmentEditor).not.toHaveBeenCalled();
     expect(onOpenOutboundDocument).not.toHaveBeenCalled();
     expect(window.sessionStorage.getItem(OUTBOUND_HEADER_DEFAULTS_STORAGE_KEY)).toBeNull();
   });
@@ -273,7 +280,8 @@ describe("OutboundShipmentEditorPage", () => {
       expect(screen.getByText("PLT-501")).toBeInTheDocument();
     });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    fireEvent.click(screen.getAllByRole("button", { name: "Schedule Shipment" })[0]);
+    confirmShipmentReview();
+    fireEvent.click(screen.getByRole("button", { name: "Schedule Shipment" }));
 
     await waitFor(() => {
       expect(mockedApi.createOutboundDocument).toHaveBeenCalledTimes(1);
@@ -373,7 +381,8 @@ describe("OutboundShipmentEditorPage", () => {
       expect(screen.getAllByRole("button", { name: "Details" })).toHaveLength(2);
     });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    fireEvent.click(screen.getAllByRole("button", { name: "Schedule Shipment" })[0]);
+    confirmShipmentReview();
+    fireEvent.click(screen.getByRole("button", { name: "Schedule Shipment" }));
 
     await waitFor(() => {
       expect(mockedApi.createOutboundDocument).toHaveBeenCalledTimes(1);
@@ -513,7 +522,8 @@ describe("OutboundShipmentEditorPage", () => {
       expect(screen.getByRole("button", { name: "Details" })).toBeInTheDocument();
     });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    fireEvent.click(screen.getAllByRole("button", { name: "Schedule Shipment" })[0]);
+    confirmShipmentReview();
+    fireEvent.click(screen.getByRole("button", { name: "Schedule Shipment" }));
 
     await waitFor(() => {
       expect(window.sessionStorage.getItem(OUTBOUND_HEADER_DEFAULTS_STORAGE_KEY)).toContain("Receiver A");

@@ -3669,9 +3669,14 @@ export function ActivityManagementPage({
                 </div>
                 ) : null}
 
-                <div className="sheet-form__actions" style={{ marginTop: "1rem" }}>
-                  <button className="button button--ghost" type="button" disabled={batchSubmitting || Boolean(outboundPalletSourceMessage) || (!isEditingOutboundDraft && availableOutboundSources.length === 0)} onClick={() => void submitOutboundDocument("DRAFT")}>{batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("scheduleShipment")}</button>
-                  <div className="shipment-wizard__actions">
+                <div className="sheet-form__actions shipment-action-bar" style={{ marginTop: "1rem" }}>
+                  <div className="shipment-action-bar__secondary">
+                    <button className="button button--ghost" type="button" onClick={closeBatchModal}>{t("cancel")}</button>
+                    {outboundWizardStep < 3 ? (
+                      <button className="button button--ghost" type="button" disabled={batchSubmitting || Boolean(outboundPalletSourceMessage) || (!isEditingOutboundDraft && availableOutboundSources.length === 0)} onClick={() => void submitOutboundDocument("DRAFT")}>{batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("scheduleShipment")}</button>
+                    ) : null}
+                  </div>
+                  <div className="shipment-action-bar__primary shipment-wizard__actions">
                     {outboundWizardStep > 1 ? (
                       <button className="button button--ghost" type="button" onClick={() => moveOutboundWizardStep((outboundWizardStep - 1) as OutboundWizardStep)} disabled={Boolean(outboundPalletSourceMessage)}>{t("back")}</button>
                     ) : null}
@@ -3681,7 +3686,6 @@ export function ActivityManagementPage({
                       <button className="button button--primary" type="submit" disabled={batchSubmitting || Boolean(outboundPalletSourceMessage) || (!isEditingOutboundDraft && availableOutboundSources.length === 0)}>{batchSubmitting ? t("saving") : t("scheduleShipment")}</button>
                     )}
                   </div>
-                  <button className="button button--ghost" type="button" onClick={closeBatchModal}>{t("cancel")}</button>
                 </div>
               </form>
             )}

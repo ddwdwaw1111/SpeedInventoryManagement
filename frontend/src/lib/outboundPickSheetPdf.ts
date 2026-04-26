@@ -1,7 +1,7 @@
-import * as pdfMake from "pdfmake/build/pdfmake";
 import type { Content, CustomTableLayout, Style, TableCell, TDocumentDefinitions, TFontDictionary } from "pdfmake/interfaces";
 
 import { getOutboundDisplayShipDate, getOutboundExpectedShipDate } from "./outboundDates";
+import { downloadPdfDefinition } from "./pdfMakeRuntime";
 import { normalizeStorageSection, type OutboundDocument } from "./types";
 
 const PICK_SHEET_LAYOUT_NAME = "pickSheetTable";
@@ -158,11 +158,11 @@ const LABELS = {
   subject: "Warehouse Pick Sheet"
 } as const;
 
-export function downloadOutboundPickSheetPdfFromDocument(document: OutboundDocument) {
+export async function downloadOutboundPickSheetPdfFromDocument(document: OutboundDocument) {
   const pickSheetDocument = buildPickSheetDocument(document);
   const documentDefinition = buildPickSheetDefinition(pickSheetDocument);
   const tableLayouts = { [PICK_SHEET_LAYOUT_NAME]: PICK_SHEET_TABLE_LAYOUT };
-  void pdfMake.createPdf(documentDefinition, tableLayouts, PDF_FONTS).download(pickSheetDocument.fileName);
+  await downloadPdfDefinition(documentDefinition, tableLayouts, PDF_FONTS, pickSheetDocument.fileName);
 }
 
 export function buildPickSheetDocument(document: OutboundDocument): PickSheetDocument {

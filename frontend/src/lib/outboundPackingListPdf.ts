@@ -1,7 +1,7 @@
-import * as pdfMake from "pdfmake/build/pdfmake";
 import type { Content, CustomTableLayout, Style, TableCell, TDocumentDefinitions, TFontDictionary } from "pdfmake/interfaces";
 
 import { getOutboundDisplayShipDate, getOutboundExpectedShipDate } from "./outboundDates";
+import { downloadPdfDefinition } from "./pdfMakeRuntime";
 import type { OutboundDocument, OutboundDocumentLine } from "./types";
 
 const DELIVERY_NOTE_LAYOUT_NAME = "deliveryNoteTable";
@@ -158,15 +158,15 @@ const LABELS = {
   subject: "Shipment Delivery Note"
 } as const;
 
-export function downloadOutboundDeliveryNotePdfFromDocument(document: OutboundDocument) {
+export async function downloadOutboundDeliveryNotePdfFromDocument(document: OutboundDocument) {
   const deliveryNoteDocument = buildDeliveryNoteDocumentFromDocument(document);
   const documentDefinition = buildDeliveryNoteDefinition(deliveryNoteDocument);
   const tableLayouts = { [DELIVERY_NOTE_LAYOUT_NAME]: PACKING_LIST_TABLE_LAYOUT };
-  void pdfMake.createPdf(documentDefinition, tableLayouts, PDF_FONTS).download(deliveryNoteDocument.fileName);
+  await downloadPdfDefinition(documentDefinition, tableLayouts, PDF_FONTS, deliveryNoteDocument.fileName);
 }
 
 export function downloadOutboundPackingListPdfFromDocument(document: OutboundDocument) {
-  downloadOutboundDeliveryNotePdfFromDocument(document);
+  return downloadOutboundDeliveryNotePdfFromDocument(document);
 }
 
 export function buildDeliveryNoteDocumentFromDocument(document: OutboundDocument): DeliveryNoteDocument {

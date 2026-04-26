@@ -1,8 +1,8 @@
-import * as pdfMake from "pdfmake/build/pdfmake";
 import type { Content, CustomTableLayout, Style, TableCell, TDocumentDefinitions, TFontDictionary } from "pdfmake/interfaces";
 
 import type { BillingPreview, BillingRates, BillingStorageRow } from "./billingPreview";
 import { formatDateTimeValue } from "./dates";
+import { downloadPdfDefinition } from "./pdfMakeRuntime";
 import type { BillingExportMode } from "./types";
 
 const BILLING_TABLE_LAYOUT_NAME = "billingTable";
@@ -147,11 +147,11 @@ type BillingPreviewPdfDocument = {
   }>;
 };
 
-export function downloadBillingPreviewPdf(input: BillingPreviewPdfInput) {
+export async function downloadBillingPreviewPdf(input: BillingPreviewPdfInput) {
   const document = buildBillingPreviewPdfDocument(input);
   const definition = buildBillingPreviewPdfDefinition(document);
   const tableLayouts = { [BILLING_TABLE_LAYOUT_NAME]: BILLING_TABLE_LAYOUT };
-  void pdfMake.createPdf(definition, tableLayouts, PDF_FONTS).download(document.fileName);
+  await downloadPdfDefinition(definition, tableLayouts, PDF_FONTS, document.fileName);
 }
 
 export function buildBillingPreviewPdfDocument({

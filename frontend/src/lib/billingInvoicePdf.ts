@@ -1,7 +1,7 @@
-import * as pdfMake from "pdfmake/build/pdfmake";
 import type { Content, CustomTableLayout, Style, TableCell, TDocumentDefinitions, TFontDictionary } from "pdfmake/interfaces";
 
 import { formatDateTimeValue } from "./dates";
+import { downloadPdfDefinition } from "./pdfMakeRuntime";
 import type { BillingExportMode, BillingInvoice, BillingInvoiceLineData, BillingInvoiceType } from "./types";
 
 const BILLING_TABLE_LAYOUT_NAME = "billingInvoiceTable";
@@ -99,10 +99,10 @@ export type BillingInvoicePdfInput = {
   exportMode?: BillingExportMode;
 };
 
-export function downloadBillingInvoicePdf({ invoice, timeZone, exportMode = "SUMMARY" }: BillingInvoicePdfInput) {
+export async function downloadBillingInvoicePdf({ invoice, timeZone, exportMode = "SUMMARY" }: BillingInvoicePdfInput) {
   const definition = buildBillingInvoicePdfDefinition({ invoice, timeZone, exportMode });
   const tableLayouts = { [BILLING_TABLE_LAYOUT_NAME]: BILLING_TABLE_LAYOUT };
-  void pdfMake.createPdf(definition, tableLayouts, PDF_FONTS).download(buildFileName(invoice.invoiceNo, exportMode));
+  await downloadPdfDefinition(definition, tableLayouts, PDF_FONTS, buildFileName(invoice.invoiceNo, exportMode));
 }
 
 export function buildBillingInvoicePdfDefinition({ invoice, timeZone, exportMode = "SUMMARY" }: BillingInvoicePdfInput): TDocumentDefinitions {

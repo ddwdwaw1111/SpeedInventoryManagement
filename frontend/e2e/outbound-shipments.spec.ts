@@ -96,6 +96,7 @@ test("shipment editor schedules a draft shipment with auto-picked pallets", asyn
     ]
   });
 
-  await expect(page).toHaveURL(/\/outbound-management\/1\/edit$/);
-  await expect(page.getByRole("heading", { name: "Edit Shipment Draft" })).toBeVisible();
+  await expect(page).toHaveURL(/\/outbound-management$/);
+  await expect(page.getByRole("heading", { name: "Shipments" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "New Shipment" })).toBeVisible();
 });

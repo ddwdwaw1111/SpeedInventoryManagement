@@ -462,7 +462,7 @@ export function BillingPage({
   }
 
   function handleDownloadPdf(exportMode: BillingExportMode = pendingExportMode) {
-    downloadBillingPreviewPdf({
+    return downloadBillingPreviewPdf({
       preview: billingPreview,
       rates,
       timeZone: resolvedTimeZone,
@@ -487,7 +487,7 @@ export function BillingPage({
     setExportMenuAnchor(null);
     setPendingExportMode(exportMode);
     await runBusyAction(`preview-pdf-${exportMode.toLowerCase()}`, () => {
-      handleDownloadPdf(exportMode);
+      return handleDownloadPdf(exportMode);
     });
   }
 

@@ -132,6 +132,126 @@ func TestBuildReportLedgerBucketsUsesBusinessDateAndSearchLookups(t *testing.T) 
 	}
 }
 
+func TestBuildSKUFlowReportRowsAggregatesReceiveAndShip(t *testing.T) {
+	receiveDate := time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC)
+	shipDate := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
+	entries := []skuFlowLedgerRow{
+		{
+			PalletID:           1,
+			EventType:          StockLedgerEventReceive,
+			QuantityChange:     10,
+			DeliveryDate:       sql.NullTime{Valid: true, Time: receiveDate},
+			CustomerName:       "Acme Retail",
+			LocationName:       "North Dock",
+			StorageSection:     "A",
+			ContainerNo:        "CONT-1",
+			SourceDocumentType: StockLedgerSourceInbound,
+			SourceDocumentID:   7,
+			SourceLineID:       70,
+			CreatedAt:          receiveDate,
+		},
+		{
+			PalletID:           2,
+			EventType:          StockLedgerEventReceive,
+			QuantityChange:     15,
+			DeliveryDate:       sql.NullTime{Valid: true, Time: receiveDate},
+			CustomerName:       "Acme Retail",
+			LocationName:       "North Dock",
+			StorageSection:     "A",
+			ContainerNo:        "CONT-1",
+			SourceDocumentType: StockLedgerSourceInbound,
+			SourceDocumentID:   7,
+			SourceLineID:       70,
+			CreatedAt:          receiveDate,
+		},
+		{
+			PalletID:           1,
+			EventType:          StockLedgerEventShip,
+			QuantityChange:     -6,
+			OutDate:            sql.NullTime{Valid: true, Time: shipDate},
+			CustomerName:       "Acme Retail",
+			LocationName:       "North Dock",
+			StorageSection:     "A",
+			ContainerNo:        "CONT-1",
+			PackingListNo:      "PL-1",
+			OrderRef:           "SO-1",
+			SourceDocumentType: StockLedgerSourceOutbound,
+			SourceDocumentID:   8,
+			SourceLineID:       80,
+			CreatedAt:          shipDate,
+		},
+		{
+			PalletID:           1,
+			EventType:          StockLedgerEventShip,
+			QuantityChange:     -4,
+			OutDate:            sql.NullTime{Valid: true, Time: shipDate},
+			CustomerName:       "Acme Retail",
+			LocationName:       "North Dock",
+			StorageSection:     "A",
+			ContainerNo:        "CONT-1",
+			PackingListNo:      "PL-1",
+			OrderRef:           "SO-1",
+			SourceDocumentType: StockLedgerSourceOutbound,
+			SourceDocumentID:   8,
+			SourceLineID:       80,
+			CreatedAt:          shipDate,
+		},
+		{
+			PalletID:       3,
+			EventType:      StockLedgerEventTransferIn,
+			QuantityChange: 99,
+			CreatedAt:      shipDate,
+		},
+	}
+
+	summary, rows := buildSKUFlowReportRows(entries)
+
+	if summary.InboundQty != 25 || summary.InboundPallets != 2 {
+		t.Fatalf("unexpected inbound summary: %#v", summary)
+	}
+	if summary.OutboundQty != 10 || summary.OutboundPallets != 1 || summary.LastOutboundDate != "2026-04-12" {
+		t.Fatalf("unexpected outbound summary: %#v", summary)
+	}
+	if summary.NetQty != 15 {
+		t.Fatalf("expected net qty 15, got %d", summary.NetQty)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 grouped rows, got %d: %#v", len(rows), rows)
+	}
+	if rows[0].Direction != "OUTBOUND" || rows[0].Quantity != 10 || rows[0].Pallets != 1 || rows[0].Date != "2026-04-12" {
+		t.Fatalf("unexpected outbound row: %#v", rows[0])
+	}
+	if rows[1].Direction != "INBOUND" || rows[1].Quantity != 25 || rows[1].Pallets != 2 || rows[1].Date != "2026-04-10" {
+		t.Fatalf("unexpected inbound row: %#v", rows[1])
+	}
+}
+
+func TestNormalizeSKUFlowReportFiltersRequiresSKU(t *testing.T) {
+	_, _, _, err := normalizeSKUFlowReportFilters(SKUFlowReportFilters{
+		StartDate: "2026-04-01",
+		EndDate:   "2026-04-30",
+	})
+	if err == nil {
+		t.Fatal("expected skuMasterId validation error")
+	}
+}
+
+func TestNormalizeSKUFlowReportFiltersPreservesScope(t *testing.T) {
+	filters, _, _, err := normalizeSKUFlowReportFilters(SKUFlowReportFilters{
+		StartDate:   "2026-04-01",
+		EndDate:     "2026-04-30",
+		SKUMasterID: 42,
+		CustomerID:  7,
+		LocationID:  3,
+	})
+	if err != nil {
+		t.Fatalf("unexpected normalize error: %v", err)
+	}
+	if filters.CustomerID != 7 || filters.LocationID != 3 {
+		t.Fatalf("expected customer/location scope to be preserved, got %#v", filters)
+	}
+}
+
 func assertReportPalletFlowRow(
 	t *testing.T,
 	row ReportPalletFlowRow,

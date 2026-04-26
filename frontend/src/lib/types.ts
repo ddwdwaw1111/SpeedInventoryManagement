@@ -70,6 +70,45 @@ export type OperationsReport = {
   movementTrendRows: OperationsReportMovementTrendRow[];
 };
 
+export type SKUFlowReportSummary = {
+  inboundQty: number;
+  inboundPallets: number;
+  outboundQty: number;
+  outboundPallets: number;
+  netQty: number;
+  currentQty: number;
+  currentPallets: number;
+  lastOutboundDate: string;
+};
+
+export type SKUFlowReportRow = {
+  direction: "INBOUND" | "OUTBOUND";
+  eventType: string;
+  date: string;
+  quantity: number;
+  pallets: number;
+  customerName: string;
+  locationName: string;
+  storageSection: string;
+  containerNo: string;
+  packingListNo: string;
+  orderRef: string;
+  sourceDocumentType: string;
+  sourceDocumentId: number;
+  sourceLineId: number;
+};
+
+export type SKUFlowReport = {
+  startDate: string;
+  endDate: string;
+  skuMasterId: number;
+  sku: string;
+  itemNumber: string;
+  description: string;
+  summary: SKUFlowReportSummary;
+  rows: SKUFlowReportRow[];
+};
+
 export type UIPreference<T = unknown> = {
   id: number;
   scopeType: string;

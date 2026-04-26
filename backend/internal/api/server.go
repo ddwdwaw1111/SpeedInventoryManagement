@@ -52,6 +52,7 @@ func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName s
 	protected.GET("/items", server.handleListItems)
 	protected.GET("/movements", server.handleListMovements)
 	protected.GET("/reports/operations", server.handleOperationsReport)
+	protected.GET("/reports/sku-flow", server.handleSKUFlowReport)
 	protected.GET("/outbound-documents", server.handleListOutboundDocuments)
 	protected.GET("/inbound-documents", server.handleListInboundDocuments)
 	protected.GET("/adjustments", server.handleListInventoryAdjustments)
@@ -442,6 +443,38 @@ func (s *Server) handleOperationsReport(c *gin.Context) {
 		LocationID:  locationID,
 		Search:      c.Query("search"),
 		Granularity: c.Query("granularity"),
+	})
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	writeJSON(c, http.StatusOK, report)
+}
+
+func (s *Server) handleSKUFlowReport(c *gin.Context) {
+	skuMasterID, err := parseOptionalInt64Query(c, "skuMasterId", "skuMasterId must be a number")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	customerID, err := parseOptionalInt64Query(c, "customerId", "customerId must be a number")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	locationID, err := parseOptionalInt64Query(c, "locationId", "locationId must be a number")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	report, err := s.store.GetSKUFlowReport(c.Request.Context(), service.SKUFlowReportFilters{
+		StartDate:   c.Query("startDate"),
+		EndDate:     c.Query("endDate"),
+		SKUMasterID: skuMasterID,
+		CustomerID:  customerID,
+		LocationID:  locationID,
 	})
 	if err != nil {
 		writeDomainError(c, err)

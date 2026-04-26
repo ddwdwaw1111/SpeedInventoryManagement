@@ -641,7 +641,7 @@ describe("ActivityManagementPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByText("Pick Allocation Preview")).toBeInTheDocument();
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Schedule Shipment" })[1]);
+    fireEvent.click(screen.getByRole("button", { name: "Schedule Shipment" }));
 
     await waitFor(() => {
       expect(mockedApi.createOutboundDocument).toHaveBeenCalledWith({

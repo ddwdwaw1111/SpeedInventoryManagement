@@ -35,6 +35,7 @@ import type {
   PalletTrace,
   SKUMaster,
   SKUMasterPayload,
+  SKUFlowReport,
   UIPreference,
   SignUpPayload,
   UpdateUserAccessPayload,
@@ -75,6 +76,14 @@ type OperationsReportQuery = {
   customerId?: number | "all";
   search?: string;
   granularity?: OperationsReportGranularity;
+};
+
+type SKUFlowReportQuery = {
+  skuMasterId: number;
+  startDate: string;
+  endDate: string;
+  locationId?: number | "all";
+  customerId?: number | "all";
 };
 
 export class ApiError extends Error {
@@ -168,6 +177,20 @@ export const api = {
       params.set("granularity", query.granularity);
     }
     return request<OperationsReport>(`/reports/operations?${params.toString()}`);
+  },
+
+  getSKUFlowReport(query: SKUFlowReportQuery) {
+    const params = new URLSearchParams();
+    params.set("skuMasterId", String(query.skuMasterId));
+    params.set("startDate", query.startDate);
+    params.set("endDate", query.endDate);
+    if (query.locationId && query.locationId !== "all") {
+      params.set("locationId", String(query.locationId));
+    }
+    if (query.customerId && query.customerId !== "all") {
+      params.set("customerId", String(query.customerId));
+    }
+    return request<SKUFlowReport>(`/reports/sku-flow?${params.toString()}`);
   },
 
   getUIPreference<T = unknown>(key: string) {

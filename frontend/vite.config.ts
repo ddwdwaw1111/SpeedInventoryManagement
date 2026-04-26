@@ -4,7 +4,9 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   build: {
-    chunkSizeWarningLimit: 900,
+    // pdfmake ships as a large browser runtime. It is isolated into a lazy chunk,
+    // so keep the warning limit just above that known third-party artifact.
+    chunkSizeWarningLimit: 1300,
     rollupOptions: {
       output: {
         manualChunks(id) {

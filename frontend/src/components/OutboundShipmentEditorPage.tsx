@@ -892,9 +892,7 @@ export function OutboundShipmentEditorPage({
 
       if (status === "DRAFT") {
         showActionSuccess(t("shipmentSavedSuccess"));
-        if (!document?.id) {
-          onOpenShipmentEditor(savedDocument.id);
-        }
+        onBackToList();
         return;
       }
 
@@ -1675,23 +1673,26 @@ export function OutboundShipmentEditorPage({
               </div>
             ) : null}
 
-            <div className="sheet-form__actions sticky bottom-3 z-20 rounded-2xl border border-slate-200/80 bg-white/95 px-4 py-3 shadow-[0_18px_40px_rgba(15,23,42,0.08)] backdrop-blur" style={{ marginTop: "1rem" }}>
-              {isEditingConfirmedOutbound ? (
-                <button className="button button--ghost" type="button" disabled={batchSubmitting} onClick={() => void handleCopyCurrentShipment()} aria-busy={batchSubmitting}>
-                  {batchSubmitting ? <InlineLoadingIndicator /> : null}
-                  {t("reEnterShipment")}
-                </button>
-              ) : (
-                <button className="button button--ghost" type="button" disabled={batchSubmitting || isOutboundSourceReadOnly || hasNoAvailableSources} onClick={() => void submitOutboundDocument("DRAFT")} aria-busy={batchSubmitting}>
-                  {batchSubmitting ? <InlineLoadingIndicator /> : null}
-                  {batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("scheduleShipment")}
-                </button>
-              )}
-              <div className="shipment-wizard__actions">
-                {outboundWizardStep > 1 ? (
+            <div className="sheet-form__actions shipment-action-bar sticky bottom-3 z-20 rounded-2xl border border-slate-200/80 bg-white/95 px-4 py-3 shadow-[0_18px_40px_rgba(15,23,42,0.08)] backdrop-blur" style={{ marginTop: "1rem" }}>
+              <div className="shipment-action-bar__secondary">
+                <button className="button button--ghost" type="button" onClick={onBackToList}>{t("cancel")}</button>
+                {isEditingConfirmedOutbound ? (
+                  <button className="button button--ghost" type="button" disabled={batchSubmitting} onClick={() => void handleCopyCurrentShipment()} aria-busy={batchSubmitting}>
+                    {batchSubmitting ? <InlineLoadingIndicator /> : null}
+                    {t("reEnterShipment")}
+                  </button>
+                ) : outboundWizardStep < 3 ? (
+                  <button className="button button--ghost" type="button" disabled={batchSubmitting || isOutboundSourceReadOnly || hasNoAvailableSources} onClick={() => void submitOutboundDocument("DRAFT")} aria-busy={batchSubmitting}>
+                    {batchSubmitting ? <InlineLoadingIndicator /> : null}
+                    {batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("scheduleShipment")}
+                  </button>
+                ) : null}
+              </div>
+              <div className="shipment-action-bar__primary shipment-wizard__actions">
+                {outboundWizardStep > 1 && !isEditingConfirmedOutbound ? (
                   <button className="button button--ghost" type="button" onClick={() => moveOutboundWizardStep((outboundWizardStep - 1) as OutboundWizardStep)} disabled={isOutboundSourceReadOnly}>{t("back")}</button>
                 ) : null}
-                {outboundWizardStep < 3 ? (
+                {outboundWizardStep < 3 && !isEditingConfirmedOutbound ? (
                   <button id="shipment-editor-next-action" className="button button--primary" type="button" onClick={() => moveOutboundWizardStep((outboundWizardStep + 1) as OutboundWizardStep)} disabled={isOutboundSourceReadOnly || hasNoAvailableSources || (outboundWizardStep === 1 ? hasBlockingStep1Issues : hasBlockingStep2Issues)}>{t("next")}</button>
                 ) : !isEditingConfirmedOutbound ? (
                   <button className="button button--primary" type="submit" disabled={batchSubmitting || isOutboundSourceReadOnly || hasNoAvailableSources || !reviewConfirmed || outboundStepOverview.reviewStatus !== "ready"} aria-busy={batchSubmitting}>
@@ -1700,7 +1701,6 @@ export function OutboundShipmentEditorPage({
                   </button>
                 ) : null}
               </div>
-              <button className="button button--ghost" type="button" onClick={onBackToList}>{t("cancel")}</button>
             </div>
           </form>
         </section>

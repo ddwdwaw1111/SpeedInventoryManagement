@@ -869,6 +869,7 @@ export default function App() {
               renderWithSuspense(<ReportsPage
                 locations={locations}
                 customers={customers}
+                skuMasters={skuMasters}
                 isLoading={isLoading}
                 errorMessage={errorMessage}
               />)
