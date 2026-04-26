@@ -22,6 +22,7 @@ import {
   type UserRole
 } from "../lib/types";
 import { InlineAlert, useFeedbackToast } from "./Feedback";
+import { InlineLoadingIndicator } from "./InlineLoadingIndicator";
 import { OutboundPickPlanPanel } from "./OutboundPickPlanPanel";
 import { WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
@@ -448,7 +449,7 @@ export function OutboundShipmentEditorPage({
   }
 
   async function handleCopyCurrentShipment() {
-    if (!canManage || !document?.id) {
+    if (!canManage || !document?.id || batchSubmitting) {
       return;
     }
 
@@ -978,8 +979,11 @@ export function OutboundShipmentEditorPage({
                 <button
                   type="button"
                   onClick={() => void handleCopyCurrentShipment()}
-                  className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50"
+                  aria-busy={batchSubmitting}
+                  disabled={batchSubmitting}
+                  className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
                 >
+                  {batchSubmitting ? <InlineLoadingIndicator /> : null}
                   {t("reEnterShipment")}
                 </button>
               ) : null}
@@ -1067,7 +1071,8 @@ export function OutboundShipmentEditorPage({
                   <label className="sheet-form__wide">{t("documentNotes")}<input value={batchOutboundForm.documentNote} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, documentNote: event.target.value }))} placeholder={t("outboundDocumentNotePlaceholder")} disabled={!canManage} /></label>
                   {document?.id && canManage ? (
                     <div className="sheet-form__actions" style={{ marginTop: "0.5rem" }}>
-                      <button className="button button--ghost" type="button" onClick={() => void handleSaveDocumentNote()} disabled={noteSubmitting || !isOutboundNoteDirty}>
+                      <button className="button button--ghost" type="button" onClick={() => void handleSaveDocumentNote()} disabled={noteSubmitting || !isOutboundNoteDirty} aria-busy={noteSubmitting}>
+                        {noteSubmitting ? <InlineLoadingIndicator /> : null}
                         {noteSubmitting ? t("saving") : t("saveNote")}
                       </button>
                     </div>
@@ -1672,9 +1677,15 @@ export function OutboundShipmentEditorPage({
 
             <div className="sheet-form__actions sticky bottom-3 z-20 rounded-2xl border border-slate-200/80 bg-white/95 px-4 py-3 shadow-[0_18px_40px_rgba(15,23,42,0.08)] backdrop-blur" style={{ marginTop: "1rem" }}>
               {isEditingConfirmedOutbound ? (
-                <button className="button button--ghost" type="button" disabled={batchSubmitting} onClick={() => void handleCopyCurrentShipment()}>{t("reEnterShipment")}</button>
+                <button className="button button--ghost" type="button" disabled={batchSubmitting} onClick={() => void handleCopyCurrentShipment()} aria-busy={batchSubmitting}>
+                  {batchSubmitting ? <InlineLoadingIndicator /> : null}
+                  {t("reEnterShipment")}
+                </button>
               ) : (
-                <button className="button button--ghost" type="button" disabled={batchSubmitting || isOutboundSourceReadOnly || hasNoAvailableSources} onClick={() => void submitOutboundDocument("DRAFT")}>{batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("scheduleShipment")}</button>
+                <button className="button button--ghost" type="button" disabled={batchSubmitting || isOutboundSourceReadOnly || hasNoAvailableSources} onClick={() => void submitOutboundDocument("DRAFT")} aria-busy={batchSubmitting}>
+                  {batchSubmitting ? <InlineLoadingIndicator /> : null}
+                  {batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("scheduleShipment")}
+                </button>
               )}
               <div className="shipment-wizard__actions">
                 {outboundWizardStep > 1 ? (
@@ -1683,7 +1694,10 @@ export function OutboundShipmentEditorPage({
                 {outboundWizardStep < 3 ? (
                   <button id="shipment-editor-next-action" className="button button--primary" type="button" onClick={() => moveOutboundWizardStep((outboundWizardStep + 1) as OutboundWizardStep)} disabled={isOutboundSourceReadOnly || hasNoAvailableSources || (outboundWizardStep === 1 ? hasBlockingStep1Issues : hasBlockingStep2Issues)}>{t("next")}</button>
                 ) : !isEditingConfirmedOutbound ? (
-                  <button className="button button--primary" type="submit" disabled={batchSubmitting || isOutboundSourceReadOnly || hasNoAvailableSources || !reviewConfirmed || outboundStepOverview.reviewStatus !== "ready"}>{batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("scheduleShipment")}</button>
+                  <button className="button button--primary" type="submit" disabled={batchSubmitting || isOutboundSourceReadOnly || hasNoAvailableSources || !reviewConfirmed || outboundStepOverview.reviewStatus !== "ready"} aria-busy={batchSubmitting}>
+                    {batchSubmitting ? <InlineLoadingIndicator /> : null}
+                    {batchSubmitting ? t("saving") : isEditingOutboundDraft ? t("saveChanges") : t("scheduleShipment")}
+                  </button>
                 ) : null}
               </div>
               <button className="button button--ghost" type="button" onClick={onBackToList}>{t("cancel")}</button>

@@ -534,6 +534,59 @@ describe("ActivityManagementPage", () => {
     expect(onRefresh).toHaveBeenCalled();
   });
 
+  it("locks drawer actions while a receipt copy is in progress", async () => {
+    mockedApi.copyInboundDocument.mockImplementation(() => new Promise(() => {}));
+
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="IN"
+        items={[]}
+        skuMasters={[]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        movements={[]}
+        inboundDocuments={[
+          createInboundDocument({
+            id: 14,
+            status: "CONFIRMED",
+            trackingStatus: "RECEIVED",
+            expectedArrivalDate: "2026-03-24",
+            containerNo: "GCXU5817233",
+            lines: [
+              createInboundDocumentLine({
+                id: 141,
+                documentId: 14,
+                sku: "608333",
+                description: "VB22GC",
+                storageSection: "TEMP",
+                reorderLevel: 5,
+                expectedQty: 10,
+                receivedQty: 10,
+                pallets: 1,
+                palletsDetailCtns: "1*10"
+              })
+            ]
+          })
+        ]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+
+    const reEnterButton = await screen.findByRole("button", { name: /Re-enter Receipt|reEnterReceipt/ });
+
+    fireEvent.click(reEnterButton);
+
+    expect(reEnterButton).toBeDisabled();
+    expect(reEnterButton).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("button", { name: "Cancel Receipt" })).toBeDisabled();
+    expect(mockedApi.copyInboundDocument).toHaveBeenCalledWith(14);
+  });
+
   it("walks through the outbound shipment wizard and submits the shipment", async () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
 

@@ -5,7 +5,8 @@ vi.mock("../lib/api", () => ({
   api: {
     createInboundDocument: vi.fn(),
     updateInboundDocument: vi.fn(),
-    updateInboundDocumentNote: vi.fn()
+    updateInboundDocumentNote: vi.fn(),
+    copyInboundDocument: vi.fn()
   }
 }));
 
@@ -18,6 +19,7 @@ const mockedApi = api as unknown as {
   createInboundDocument: ReturnType<typeof vi.fn>;
   updateInboundDocument: ReturnType<typeof vi.fn>;
   updateInboundDocumentNote: ReturnType<typeof vi.fn>;
+  copyInboundDocument: ReturnType<typeof vi.fn>;
 };
 
 describe("InboundReceiptEditorPage", () => {
@@ -25,6 +27,7 @@ describe("InboundReceiptEditorPage", () => {
     mockedApi.createInboundDocument.mockReset();
     mockedApi.updateInboundDocument.mockReset();
     mockedApi.updateInboundDocumentNote.mockReset();
+    mockedApi.copyInboundDocument.mockReset();
     window.sessionStorage.clear();
   });
 
@@ -240,5 +243,40 @@ describe("InboundReceiptEditorPage", () => {
     });
 
     expect(onRefresh).toHaveBeenCalled();
+  });
+
+  it("locks the re-enter action while copying a confirmed receipt", async () => {
+    mockedApi.copyInboundDocument.mockImplementation(() => new Promise(() => {}));
+
+    renderWithProviders(
+      <InboundReceiptEditorPage
+        routeKey="/inbound-management/12"
+        documentId={12}
+        document={createInboundDocument({
+          id: 12,
+          status: "CONFIRMED",
+          trackingStatus: "RECEIVED"
+        })}
+        items={[]}
+        skuMasters={[]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        inboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onBackToList={vi.fn()}
+        onOpenInboundDetail={vi.fn()}
+        onOpenReceiptEditor={vi.fn()}
+      />
+    );
+
+    const reEnterButton = screen.getByRole("button", { name: /Re-enter Receipt|reEnterReceipt/ });
+
+    fireEvent.click(reEnterButton);
+
+    expect(reEnterButton).toBeDisabled();
+    expect(reEnterButton).toHaveAttribute("aria-busy", "true");
+    expect(mockedApi.copyInboundDocument).toHaveBeenCalledWith(12);
   });
 });

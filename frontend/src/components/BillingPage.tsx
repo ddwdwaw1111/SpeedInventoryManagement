@@ -38,6 +38,7 @@ import { BarChart } from "@mui/x-charts";
 import { useEffect, useMemo, useState } from "react";
 
 import { ApiError, api } from "../lib/api";
+import { waitForNextPaint } from "../lib/asyncUi";
 import { setBillingWorkspaceContext } from "../lib/billingWorkspaceContext";
 import {
   buildBillingPreview,
@@ -68,6 +69,7 @@ import type {
   UserRole
 } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
+import { InlineLoadingIndicator } from "./InlineLoadingIndicator";
 import { WorkspacePanelHeader, WorkspaceTableEmptyState } from "./WorkspacePanelChrome";
 
 type BillingPageProps = {
@@ -136,6 +138,7 @@ export function BillingPage({
   const [pendingExportMode, setPendingExportMode] = useState<BillingExportMode>("SUMMARY");
   const [activeTab, setActiveTab] = useState<BillingPageTab>("CREATE");
   const [isRateDrawerOpen, setIsRateDrawerOpen] = useState(false);
+  const [busyActionKey, setBusyActionKey] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -206,6 +209,24 @@ export function BillingPage({
     return () => { active = false; };
   }, [customerId]);
 
+  const isRefreshing = busyActionKey === "refresh";
+  const isPreviewPdfBusy = busyActionKey?.startsWith("preview-pdf-") ?? false;
+  const disableHeaderActions = isCreatingInvoice || busyActionKey !== null;
+
+  async function runBusyAction<T>(actionKey: string, action: () => Promise<T> | T) {
+    if (busyActionKey || isCreatingInvoice) {
+      return null;
+    }
+
+    setBusyActionKey(actionKey);
+    try {
+      await waitForNextPaint();
+      return await action();
+    } finally {
+      setBusyActionKey((current) => current === actionKey ? null : current);
+    }
+  }
+
   async function handleCreateInvoice() {
     if (customerId === "all") {
       return;
@@ -241,6 +262,7 @@ export function BillingPage({
     setIsCreatingInvoice(true);
     setErrorMessage("");
     try {
+      await waitForNextPaint();
       const payload: CreateBillingInvoicePayload = {
         invoiceType,
         customerId,
@@ -450,15 +472,35 @@ export function BillingPage({
     });
   }
 
+  async function handleRefreshBillingData() {
+    await runBusyAction("refresh", async () => {
+      const [nextPallets, nextEvents] = await Promise.all([api.getPallets(50000), api.getPalletLocationEvents(50000)]);
+      setPallets(nextPallets);
+      setPalletLocationEvents(nextEvents);
+      setErrorMessage("");
+    }).catch((error) => {
+      setErrorMessage(getErrorMessage(error, t("couldNotLoadReport")));
+    });
+  }
+
+  async function handleDownloadPdfWithFeedback(exportMode: BillingExportMode) {
+    setExportMenuAnchor(null);
+    setPendingExportMode(exportMode);
+    await runBusyAction(`preview-pdf-${exportMode.toLowerCase()}`, () => {
+      handleDownloadPdf(exportMode);
+    });
+  }
+
   const rateActions = activeTab !== "CREATE" ? null : (
     <div className="sheet-actions">
       <Button
         size="small"
         variant="outlined"
-        startIcon={<FileDownloadOutlinedIcon fontSize="small" />}
+        startIcon={isPreviewPdfBusy ? <InlineLoadingIndicator /> : <FileDownloadOutlinedIcon fontSize="small" />}
         endIcon={<ExpandMoreOutlinedIcon fontSize="small" />}
         onClick={(event) => setExportMenuAnchor(event.currentTarget)}
-        disabled={!hasBillablePreview}
+        disabled={!hasBillablePreview || disableHeaderActions}
+        aria-busy={isPreviewPdfBusy}
       >
         {t("export")}
       </Button>
@@ -470,6 +512,7 @@ export function BillingPage({
         transformOrigin={{ vertical: "top", horizontal: "right" }}
       >
         <MenuItem
+          disabled={disableHeaderActions}
           onClick={() => {
             setExportMenuAnchor(null);
             setPendingExportMode("SUMMARY");
@@ -480,6 +523,7 @@ export function BillingPage({
           <ListItemText primary={t("billingExportExcelSummary")} secondary={t("billingExportSummaryDesc")} />
         </MenuItem>
         <MenuItem
+          disabled={disableHeaderActions}
           onClick={() => {
             setExportMenuAnchor(null);
             setPendingExportMode("DETAILED");
@@ -490,21 +534,15 @@ export function BillingPage({
           <ListItemText primary={t("billingExportExcelDetailed")} secondary={t("billingExportDetailedDesc")} />
         </MenuItem>
         <MenuItem
-          onClick={() => {
-            setExportMenuAnchor(null);
-            setPendingExportMode("SUMMARY");
-            handleDownloadPdf("SUMMARY");
-          }}
+          disabled={disableHeaderActions}
+          onClick={() => void handleDownloadPdfWithFeedback("SUMMARY")}
         >
           <ListItemIcon><PictureAsPdfOutlinedIcon fontSize="small" /></ListItemIcon>
           <ListItemText primary={t("billingDownloadPdfSummary")} secondary={t("billingExportSummaryDesc")} />
         </MenuItem>
         <MenuItem
-          onClick={() => {
-            setExportMenuAnchor(null);
-            setPendingExportMode("DETAILED");
-            handleDownloadPdf("DETAILED");
-          }}
+          disabled={disableHeaderActions}
+          onClick={() => void handleDownloadPdfWithFeedback("DETAILED")}
         >
           <ListItemIcon><PictureAsPdfOutlinedIcon fontSize="small" /></ListItemIcon>
           <ListItemText primary={t("billingDownloadPdfDetailed")} secondary={t("billingExportDetailedDesc")} />
@@ -514,18 +552,10 @@ export function BillingPage({
       <Button
         size="small"
         variant="outlined"
-        startIcon={<RefreshOutlinedIcon fontSize="small" />}
-        onClick={() => {
-          setIsLoading(true);
-          void Promise.all([api.getPallets(50000), api.getPalletLocationEvents(50000)])
-            .then(([nextPallets, nextEvents]) => {
-              setPallets(nextPallets);
-              setPalletLocationEvents(nextEvents);
-              setErrorMessage("");
-            })
-            .catch((error) => setErrorMessage(getErrorMessage(error, t("couldNotLoadReport"))))
-            .finally(() => setIsLoading(false));
-        }}
+        startIcon={isRefreshing ? <InlineLoadingIndicator /> : <RefreshOutlinedIcon fontSize="small" />}
+        onClick={() => void handleRefreshBillingData()}
+        disabled={disableHeaderActions}
+        aria-busy={isRefreshing}
       >
         {t("refresh")}
       </Button>
@@ -544,6 +574,7 @@ export function BillingPage({
         variant="outlined"
         startIcon={<TuneOutlinedIcon fontSize="small" />}
         onClick={() => setIsRateDrawerOpen(true)}
+        disabled={disableHeaderActions}
       >
         {t("billingRateCard")}
       </Button>
@@ -907,11 +938,12 @@ export function BillingPage({
               <Button
                 variant="contained"
                 color="primary"
-                disabled={isCreatingInvoice}
-                startIcon={<AddCircleOutlineOutlinedIcon fontSize="small" />}
+                disabled={isCreatingInvoice || busyActionKey !== null}
+                startIcon={isCreatingInvoice ? <InlineLoadingIndicator /> : <AddCircleOutlineOutlinedIcon fontSize="small" />}
+                aria-busy={isCreatingInvoice}
                 onClick={handleCreateInvoice}
               >
-                {isCreatingInvoice ? "..." : workspaceMode === "STORAGE_SETTLEMENT" ? t("billingCreateStorageInvoice") : t("billingCreateMixedInvoice")}
+                {workspaceMode === "STORAGE_SETTLEMENT" ? t("billingCreateStorageInvoice") : t("billingCreateMixedInvoice")}
               </Button>
             )}
           </div>

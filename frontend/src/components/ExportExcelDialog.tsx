@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { Button, Dialog, DialogActions, DialogContent, DialogTitle } from "@mui/material";
 
+import { waitForNextPaint } from "../lib/asyncUi";
 import type { ExcelExportColumn } from "../lib/excelExport";
 import { useI18n } from "../lib/i18n";
+import { InlineLoadingIndicator } from "./InlineLoadingIndicator";
 
 type ExportExcelDialogColumn = ExcelExportColumn & {
   enabled: boolean;
@@ -13,7 +15,7 @@ type ExportExcelDialogProps = {
   defaultTitle: string;
   defaultColumns: ExcelExportColumn[];
   onClose: () => void;
-  onExport: (payload: { title: string; columns: ExcelExportColumn[] }) => void;
+  onExport: (payload: { title: string; columns: ExcelExportColumn[] }) => void | Promise<void>;
 };
 
 export function ExportExcelDialog({
@@ -26,18 +28,37 @@ export function ExportExcelDialog({
   const { t } = useI18n();
   const [title, setTitle] = useState(defaultTitle);
   const [columns, setColumns] = useState<ExportExcelDialogColumn[]>([]);
+  const [isExporting, setIsExporting] = useState(false);
 
   useEffect(() => {
     if (open) {
       setTitle(defaultTitle);
       setColumns(defaultColumns.map((column) => ({ ...column, enabled: true })));
+      setIsExporting(false);
     }
   }, [defaultColumns, defaultTitle, open]);
 
   const enabledColumns = columns.filter((column) => column.enabled).map(({ key, label }) => ({ key, label }));
 
+  async function handleExport() {
+    if (isExporting || enabledColumns.length === 0) {
+      return;
+    }
+
+    setIsExporting(true);
+    try {
+      await waitForNextPaint();
+      await onExport({
+        title: title.trim() || defaultTitle,
+        columns: enabledColumns
+      });
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
+    <Dialog open={open} onClose={isExporting ? undefined : onClose} fullWidth maxWidth="md">
       <DialogTitle>{t("exportExcel")}</DialogTitle>
       <DialogContent>
         <div className="export-dialog__form">
@@ -48,6 +69,7 @@ export function ExportExcelDialog({
               onChange={(event) => setTitle(event.target.value)}
               placeholder={t("exportTitlePlaceholder")}
               autoFocus
+              disabled={isExporting}
             />
           </label>
 
@@ -60,6 +82,7 @@ export function ExportExcelDialog({
                     <input
                       type="checkbox"
                       checked={column.enabled}
+                      disabled={isExporting}
                       onChange={(event) => setColumns((current) => current.map((candidate) => (
                         candidate.key === column.key
                           ? { ...candidate, enabled: event.target.checked }
@@ -70,6 +93,7 @@ export function ExportExcelDialog({
                   </label>
                   <input
                     value={column.label}
+                    disabled={isExporting}
                     onChange={(event) => setColumns((current) => current.map((candidate) => (
                       candidate.key === column.key
                         ? { ...candidate, label: event.target.value }
@@ -84,23 +108,23 @@ export function ExportExcelDialog({
         </div>
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button variant="text" onClick={onClose}>
+        <Button variant="text" onClick={onClose} disabled={isExporting}>
           {t("cancel")}
         </Button>
         <Button
           variant="text"
+          disabled={isExporting}
           onClick={() => setColumns(defaultColumns.map((column) => ({ ...column, enabled: true })))}
         >
           {t("resetDefault")}
         </Button>
         <Button
           variant="contained"
-          disabled={enabledColumns.length === 0}
-          onClick={() => onExport({
-            title: title.trim() || defaultTitle,
-            columns: enabledColumns
-          })}
+          disabled={enabledColumns.length === 0 || isExporting}
+          aria-busy={isExporting}
+          onClick={() => void handleExport()}
         >
+          {isExporting ? <InlineLoadingIndicator className="mr-1" /> : null}
           {t("downloadExcel")}
         </Button>
       </DialogActions>

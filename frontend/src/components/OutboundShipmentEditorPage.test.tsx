@@ -1028,6 +1028,42 @@ describe("OutboundShipmentEditorPage", () => {
     expect(onOpenShipmentEditor).toHaveBeenCalledWith(77);
   });
 
+  it("locks the re-enter action while copying a confirmed shipment", async () => {
+    mockedApi.copyOutboundDocument.mockImplementation(() => new Promise(() => {}));
+    mockedApi.getPallets.mockResolvedValue([]);
+
+    renderWithProviders(
+      <OutboundShipmentEditorPage
+        routeKey="/outbound-management/12"
+        documentId={12}
+        document={createOutboundDocument({
+          id: 12,
+          status: "CONFIRMED",
+          trackingStatus: "SHIPPED"
+        })}
+        items={[createItem({ id: 1, availableQty: 10, quantity: 10, containerNo: "GCXU5817233" })]}
+        skuMasters={[createSkuMaster()]}
+        movements={[createMovement()]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onBackToList={vi.fn()}
+        onOpenOutboundDocument={vi.fn()}
+        onOpenShipmentEditor={vi.fn()}
+      />
+    );
+
+    await waitForOutboundPalletsToLoad();
+
+    const reEnterButton = screen.getAllByRole("button", { name: /Re-enter Shipment|reEnterShipment/ })[0] as HTMLButtonElement;
+
+    fireEvent.click(reEnterButton);
+
+    expect(reEnterButton).toBeDisabled();
+    expect(reEnterButton).toHaveAttribute("aria-busy", "true");
+    expect(mockedApi.copyOutboundDocument).toHaveBeenCalledWith(12);
+  });
+
   it("allows confirmed shipments to save document notes independently", async () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
 

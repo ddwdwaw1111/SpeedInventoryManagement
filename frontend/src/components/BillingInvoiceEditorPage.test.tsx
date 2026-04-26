@@ -6,10 +6,12 @@ import { renderWithProviders } from "../test/renderWithProviders";
 
 const {
   getBillingInvoice,
+  finalizeBillingInvoice,
   downloadExcelWorkbook,
   downloadBillingInvoicePdf
 } = vi.hoisted(() => ({
   getBillingInvoice: vi.fn(),
+  finalizeBillingInvoice: vi.fn(),
   downloadExcelWorkbook: vi.fn(),
   downloadBillingInvoicePdf: vi.fn()
 }));
@@ -22,7 +24,7 @@ vi.mock("../lib/api", () => ({
     addBillingInvoiceLine: vi.fn(),
     updateBillingInvoiceLine: vi.fn(),
     deleteBillingInvoiceLine: vi.fn(),
-    finalizeBillingInvoice: vi.fn(),
+    finalizeBillingInvoice,
     markBillingInvoicePaid: vi.fn(),
     voidBillingInvoice: vi.fn(),
     deleteBillingInvoice: vi.fn()
@@ -129,9 +131,14 @@ const invoiceFixture = {
 describe("BillingInvoiceEditorPage", () => {
   beforeEach(() => {
     getBillingInvoice.mockReset();
+    finalizeBillingInvoice.mockReset();
     downloadExcelWorkbook.mockReset();
     downloadBillingInvoicePdf.mockReset();
     getBillingInvoice.mockResolvedValue(invoiceFixture);
+    finalizeBillingInvoice.mockResolvedValue({
+      ...invoiceFixture,
+      status: "FINALIZED"
+    });
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem("sim-timezone", "UTC");
@@ -183,5 +190,30 @@ describe("BillingInvoiceEditorPage", () => {
       expect(downloadBillingInvoicePdf).toHaveBeenCalledTimes(1);
     });
     expect(downloadBillingInvoicePdf.mock.calls[0][0].exportMode).toBe("DETAILED");
+  });
+
+  it("locks the confirm action while finalizing an invoice", async () => {
+    finalizeBillingInvoice.mockImplementation(() => new Promise(() => {}));
+
+    renderWithProviders(
+      <BillingInvoiceEditorPage
+        invoiceId={42}
+        currentUserRole="admin"
+        onBackToBilling={vi.fn()}
+      />
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Finalize Invoice" }));
+
+    const confirmButton = await screen.findByRole("button", { name: /^confirm$/i });
+    fireEvent.click(confirmButton);
+
+    await waitFor(() => {
+      expect(finalizeBillingInvoice).toHaveBeenCalledWith(42);
+    });
+    await waitFor(() => {
+      expect(confirmButton).toBeDisabled();
+      expect(confirmButton).toHaveAttribute("aria-busy", "true");
+    });
   });
 });

@@ -45,6 +45,7 @@ import {
 import { ExportExcelDialog } from "./ExportExcelDialog";
 import { InlineAlert, useConfirmDialog, useFeedbackToast } from "./Feedback";
 import { InboundPalletBreakdownPanel } from "./InboundPalletBreakdownPanel";
+import { InlineLoadingIndicator } from "./InlineLoadingIndicator";
 import { OutboundPickPlanPanel } from "./OutboundPickPlanPanel";
 import { buildWorkspaceGridSlots, WorkspaceDrawerLoadingState, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
@@ -578,6 +579,7 @@ export function ActivityManagementPage({
   const [selectedInboundDocumentNoteSaving, setSelectedInboundDocumentNoteSaving] = useState(false);
   const [selectedOutboundDocumentNoteDraft, setSelectedOutboundDocumentNoteDraft] = useState("");
   const [selectedOutboundDocumentNoteSaving, setSelectedOutboundDocumentNoteSaving] = useState(false);
+  const [documentActionKey, setDocumentActionKey] = useState<string | null>(null);
   const [inboundDrawerReady, setInboundDrawerReady] = useState(false);
   const [outboundDrawerReady, setOutboundDrawerReady] = useState(false);
   const [batchSubmitting, setBatchSubmitting] = useState(false);
@@ -628,6 +630,46 @@ export function ActivityManagementPage({
   );
   const isSelectedOutboundNoteDirty = Boolean(selectedOutboundDocument)
     && selectedOutboundDocumentNoteDraft.trim() !== (selectedOutboundDocument?.documentNote ?? "").trim();
+  const selectedInboundTrackingAction = selectedInboundDocument ? getInboundTrackingAction(selectedInboundDocument, t) : null;
+  const selectedOutboundTrackingAction = selectedOutboundDocument ? getOutboundTrackingAction(selectedOutboundDocument, t) : null;
+  const selectedInboundDrawerBusy = Boolean(
+    selectedInboundDocument && documentActionKey?.startsWith(`inbound-${selectedInboundDocument.id}-`)
+  );
+  const selectedOutboundDrawerBusy = Boolean(
+    selectedOutboundDocument && documentActionKey?.startsWith(`outbound-${selectedOutboundDocument.id}-`)
+  );
+  const isSelectedInboundCopyBusy = Boolean(
+    selectedInboundDocument && documentActionKey === getInboundDocumentActionKey(selectedInboundDocument.id, "copy")
+  );
+  const isSelectedInboundTrackingBusy = Boolean(
+    selectedInboundDocument && documentActionKey === getInboundDocumentActionKey(selectedInboundDocument.id, "tracking")
+  );
+  const isSelectedInboundCancelBusy = Boolean(
+    selectedInboundDocument && documentActionKey === getInboundDocumentActionKey(selectedInboundDocument.id, "cancel")
+  );
+  const isSelectedInboundArchiveBusy = Boolean(
+    selectedInboundDocument && documentActionKey === getInboundDocumentActionKey(selectedInboundDocument.id, "archive")
+  );
+  const isSelectedOutboundCopyBusy = Boolean(
+    selectedOutboundDocument && documentActionKey === getOutboundDocumentActionKey(selectedOutboundDocument.id, "copy")
+  );
+  const isSelectedOutboundTrackingBusy = Boolean(
+    selectedOutboundDocument && documentActionKey === getOutboundDocumentActionKey(selectedOutboundDocument.id, "tracking")
+  );
+  const isSelectedOutboundPickSheetBusy = Boolean(
+    selectedOutboundDocument && documentActionKey === getOutboundDocumentActionKey(selectedOutboundDocument.id, "download-pick-sheet")
+  );
+  const isSelectedOutboundDeliveryNoteBusy = Boolean(
+    selectedOutboundDocument && documentActionKey === getOutboundDocumentActionKey(selectedOutboundDocument.id, "download-delivery-note")
+  );
+  const isSelectedOutboundCancelBusy = Boolean(
+    selectedOutboundDocument && documentActionKey === getOutboundDocumentActionKey(selectedOutboundDocument.id, "cancel")
+  );
+  const isSelectedOutboundArchiveBusy = Boolean(
+    selectedOutboundDocument && documentActionKey === getOutboundDocumentActionKey(selectedOutboundDocument.id, "archive")
+  );
+  const disableSelectedInboundActions = selectedInboundDrawerBusy || selectedInboundDocumentNoteSaving;
+  const disableSelectedOutboundActions = selectedOutboundDrawerBusy || selectedOutboundDocumentNoteSaving;
   const isEditingInboundDraft = normalizeDocumentStatus(editingInboundDocument?.status ?? "") === "DRAFT";
   const isEditingConfirmedInbound = normalizeDocumentStatus(editingInboundDocument?.status ?? "") === "CONFIRMED";
   const isEditingOutboundDraft = editingOutboundDocumentId !== null;
@@ -651,36 +693,53 @@ export function ActivityManagementPage({
     showSuccess(message);
   }
 
-  async function handleDownloadPickSheet(document: OutboundDocument) {
+  async function runDocumentAction<T>(actionKey: string, action: () => Promise<T>) {
+    if (documentActionKey) {
+      return null;
+    }
+
+    setDocumentActionKey(actionKey);
     try {
-      const draftNeedsHydration = normalizeDocumentStatus(document.status) === "DRAFT"
-        && document.lines.some((line) => line.pickAllocations.length === 0);
-      if (draftNeedsHydration && outboundPalletSourceMessage) {
-        throw new Error(outboundPalletSourceMessage);
-      }
-      const { downloadOutboundPickSheetPdfFromDocument } = await import("../lib/outboundPickSheetPdf");
-      const exportDocument = buildPickSheetExportDocument(document, selectableOutboundSources);
-      if (
-        draftNeedsHydration
-        && exportDocument.lines.some((line, index) => (
-          document.lines[index]?.pickAllocations.length === 0 && line.pickAllocations.length === 0
-        ))
-      ) {
-        throw new Error(t("shipmentPickSheetRequiresLivePallets"));
-      }
-      await downloadOutboundPickSheetPdfFromDocument(exportDocument);
-    } catch (error) {
-      showActionError(error, t("couldNotGeneratePickSheet"));
+      return await action();
+    } finally {
+      setDocumentActionKey((current) => current === actionKey ? null : current);
     }
   }
 
+  async function handleDownloadPickSheet(document: OutboundDocument) {
+    await runDocumentAction(getOutboundDocumentActionKey(document.id, "download-pick-sheet"), async () => {
+      try {
+        const draftNeedsHydration = normalizeDocumentStatus(document.status) === "DRAFT"
+          && document.lines.some((line) => line.pickAllocations.length === 0);
+        if (draftNeedsHydration && outboundPalletSourceMessage) {
+          throw new Error(outboundPalletSourceMessage);
+        }
+        const { downloadOutboundPickSheetPdfFromDocument } = await import("../lib/outboundPickSheetPdf");
+        const exportDocument = buildPickSheetExportDocument(document, selectableOutboundSources);
+        if (
+          draftNeedsHydration
+          && exportDocument.lines.some((line, index) => (
+            document.lines[index]?.pickAllocations.length === 0 && line.pickAllocations.length === 0
+          ))
+        ) {
+          throw new Error(t("shipmentPickSheetRequiresLivePallets"));
+        }
+        await downloadOutboundPickSheetPdfFromDocument(exportDocument);
+      } catch (error) {
+        showActionError(error, t("couldNotGeneratePickSheet"));
+      }
+    });
+  }
+
   async function handleDownloadDeliveryNote(document: OutboundDocument) {
-    try {
-      const { downloadOutboundDeliveryNotePdfFromDocument } = await import("../lib/outboundPackingListPdf");
-      await downloadOutboundDeliveryNotePdfFromDocument(document);
-    } catch (error) {
-      showActionError(error, t("couldNotGenerateDeliveryNote"));
-    }
+    await runDocumentAction(getOutboundDocumentActionKey(document.id, "download-delivery-note"), async () => {
+      try {
+        const { downloadOutboundDeliveryNotePdfFromDocument } = await import("../lib/outboundPackingListPdf");
+        await downloadOutboundDeliveryNotePdfFromDocument(document);
+      } catch (error) {
+        showActionError(error, t("couldNotGenerateDeliveryNote"));
+      }
+    });
   }
 
   useEffect(() => {
@@ -2139,15 +2198,17 @@ export function ActivityManagementPage({
       return;
     }
 
-    setErrorMessage("");
-    try {
-      const updatedDocument = await api.confirmInboundDocument(document.id);
-      setSelectedInboundDocumentId(updatedDocument.id);
-      await onRefresh();
-      showActionSuccess(t("receiptConfirmedSuccess"));
-    } catch (error) {
-      showActionError(error, t("couldNotSaveActivity"));
-    }
+    await runDocumentAction(getInboundDocumentActionKey(document.id, "confirm"), async () => {
+      setErrorMessage("");
+      try {
+        const updatedDocument = await api.confirmInboundDocument(document.id);
+        setSelectedInboundDocumentId(updatedDocument.id);
+        await onRefresh();
+        showActionSuccess(t("receiptConfirmedSuccess"));
+      } catch (error) {
+        showActionError(error, t("couldNotSaveActivity"));
+      }
+    });
   }
 
   async function handleUpdateInboundTrackingStatus(document: InboundDocument, trackingStatus: string) {
@@ -2155,15 +2216,17 @@ export function ActivityManagementPage({
       return;
     }
 
-    setErrorMessage("");
-    try {
-      const updatedDocument = await api.updateInboundDocumentTrackingStatus(document.id, { trackingStatus });
-      setSelectedInboundDocumentId(updatedDocument.id);
-      await onRefresh();
-      showActionSuccess(t("receiptTrackingUpdatedSuccess"));
-    } catch (error) {
-      showActionError(error, t("couldNotSaveActivity"));
-    }
+    await runDocumentAction(getInboundDocumentActionKey(document.id, "tracking"), async () => {
+      setErrorMessage("");
+      try {
+        const updatedDocument = await api.updateInboundDocumentTrackingStatus(document.id, { trackingStatus });
+        setSelectedInboundDocumentId(updatedDocument.id);
+        await onRefresh();
+        showActionSuccess(t("receiptTrackingUpdatedSuccess"));
+      } catch (error) {
+        showActionError(error, t("couldNotSaveActivity"));
+      }
+    });
   }
 
   async function handleCancelInboundDocument(document: InboundDocument) {
@@ -2183,15 +2246,17 @@ export function ActivityManagementPage({
       return;
     }
 
-    setErrorMessage("");
-    try {
-      await api.cancelInboundDocument(document.id);
-      setSelectedInboundDocumentId(null);
-      await onRefresh();
-      showActionSuccess(t("receiptDeletedSuccess"));
-    } catch (error) {
-      showActionError(error, t("couldNotSaveActivity"));
-    }
+    await runDocumentAction(getInboundDocumentActionKey(document.id, "cancel"), async () => {
+      setErrorMessage("");
+      try {
+        await api.cancelInboundDocument(document.id);
+        setSelectedInboundDocumentId(null);
+        await onRefresh();
+        showActionSuccess(t("receiptDeletedSuccess"));
+      } catch (error) {
+        showActionError(error, t("couldNotSaveActivity"));
+      }
+    });
   }
 
   async function handleArchiveInboundDocument(document: InboundDocument) {
@@ -2211,15 +2276,17 @@ export function ActivityManagementPage({
       return;
     }
 
-    setErrorMessage("");
-    try {
-      await api.archiveInboundDocument(document.id);
-      setSelectedInboundDocumentId(null);
-      await onRefresh();
-      showActionSuccess(t("receiptArchivedSuccess"));
-    } catch (error) {
-      showActionError(error, t("couldNotArchiveDocument"));
-    }
+    await runDocumentAction(getInboundDocumentActionKey(document.id, "archive"), async () => {
+      setErrorMessage("");
+      try {
+        await api.archiveInboundDocument(document.id);
+        setSelectedInboundDocumentId(null);
+        await onRefresh();
+        showActionSuccess(t("receiptArchivedSuccess"));
+      } catch (error) {
+        showActionError(error, t("couldNotArchiveDocument"));
+      }
+    });
   }
 
   async function handleCopyInboundDocument(document: InboundDocument) {
@@ -2227,22 +2294,24 @@ export function ActivityManagementPage({
       return;
     }
 
-    setErrorMessage("");
-    try {
-      const copiedDocument = await api.copyInboundDocument(document.id);
-      setOptimisticInboundDocuments((current) => [copiedDocument, ...current.filter((entry) => entry.id !== copiedDocument.id)]);
-      setSelectedStatus("all");
-      setSelectedInboundDocumentId(copiedDocument.id);
-      if (!isEmbeddedComposer && onOpenInboundReceiptEditor) {
-        onOpenInboundReceiptEditor(copiedDocument.id);
-      } else {
-        openEditInboundDocument(copiedDocument);
+    await runDocumentAction(getInboundDocumentActionKey(document.id, "copy"), async () => {
+      setErrorMessage("");
+      try {
+        const copiedDocument = await api.copyInboundDocument(document.id);
+        setOptimisticInboundDocuments((current) => [copiedDocument, ...current.filter((entry) => entry.id !== copiedDocument.id)]);
+        setSelectedStatus("all");
+        setSelectedInboundDocumentId(copiedDocument.id);
+        if (!isEmbeddedComposer && onOpenInboundReceiptEditor) {
+          onOpenInboundReceiptEditor(copiedDocument.id);
+        } else {
+          openEditInboundDocument(copiedDocument);
+        }
+        await onRefresh();
+        showActionSuccess(t("receiptCopiedSuccess"));
+      } catch (error) {
+        showActionError(error, t("couldNotCopyDocument"));
       }
-      await onRefresh();
-      showActionSuccess(t("receiptCopiedSuccess"));
-    } catch (error) {
-      showActionError(error, t("couldNotCopyDocument"));
-    }
+    });
   }
 
   async function handleConfirmOutboundDocument(document: OutboundDocument) {
@@ -2250,15 +2319,17 @@ export function ActivityManagementPage({
       return;
     }
 
-    setErrorMessage("");
-    try {
-      const updatedDocument = await api.confirmOutboundDocument(document.id);
-      setSelectedOutboundDocumentId(updatedDocument.id);
-      await onRefresh();
-      showActionSuccess(t("shipmentConfirmedSuccess"));
-    } catch (error) {
-      showActionError(error, t("couldNotSaveActivity"));
-    }
+    await runDocumentAction(getOutboundDocumentActionKey(document.id, "confirm"), async () => {
+      setErrorMessage("");
+      try {
+        const updatedDocument = await api.confirmOutboundDocument(document.id);
+        setSelectedOutboundDocumentId(updatedDocument.id);
+        await onRefresh();
+        showActionSuccess(t("shipmentConfirmedSuccess"));
+      } catch (error) {
+        showActionError(error, t("couldNotSaveActivity"));
+      }
+    });
   }
 
   async function handleUpdateOutboundTrackingStatus(document: OutboundDocument, trackingStatus: string) {
@@ -2266,15 +2337,17 @@ export function ActivityManagementPage({
       return;
     }
 
-    setErrorMessage("");
-    try {
-      const updatedDocument = await api.updateOutboundDocumentTrackingStatus(document.id, { trackingStatus });
-      setSelectedOutboundDocumentId(updatedDocument.id);
-      await onRefresh();
-      showActionSuccess(t("shipmentTrackingUpdatedSuccess"));
-    } catch (error) {
-      showActionError(error, t("couldNotSaveActivity"));
-    }
+    await runDocumentAction(getOutboundDocumentActionKey(document.id, "tracking"), async () => {
+      setErrorMessage("");
+      try {
+        const updatedDocument = await api.updateOutboundDocumentTrackingStatus(document.id, { trackingStatus });
+        setSelectedOutboundDocumentId(updatedDocument.id);
+        await onRefresh();
+        showActionSuccess(t("shipmentTrackingUpdatedSuccess"));
+      } catch (error) {
+        showActionError(error, t("couldNotSaveActivity"));
+      }
+    });
   }
 
   async function handleCancelOutboundDocument(document: OutboundDocument) {
@@ -2293,15 +2366,17 @@ export function ActivityManagementPage({
       return;
     }
 
-    setErrorMessage("");
-    try {
-      await api.cancelOutboundDocument(document.id);
-      setSelectedOutboundDocumentId(null);
-      await onRefresh();
-      showActionSuccess(t("shipmentDeletedSuccess"));
-    } catch (error) {
-      showActionError(error, t("couldNotSaveActivity"));
-    }
+    await runDocumentAction(getOutboundDocumentActionKey(document.id, "cancel"), async () => {
+      setErrorMessage("");
+      try {
+        await api.cancelOutboundDocument(document.id);
+        setSelectedOutboundDocumentId(null);
+        await onRefresh();
+        showActionSuccess(t("shipmentDeletedSuccess"));
+      } catch (error) {
+        showActionError(error, t("couldNotSaveActivity"));
+      }
+    });
   }
 
   async function handleArchiveOutboundDocument(document: OutboundDocument) {
@@ -2320,15 +2395,17 @@ export function ActivityManagementPage({
       return;
     }
 
-    setErrorMessage("");
-    try {
-      await api.archiveOutboundDocument(document.id);
-      setSelectedOutboundDocumentId(null);
-      await onRefresh();
-      showActionSuccess(t("shipmentArchivedSuccess"));
-    } catch (error) {
-      showActionError(error, t("couldNotArchiveDocument"));
-    }
+    await runDocumentAction(getOutboundDocumentActionKey(document.id, "archive"), async () => {
+      setErrorMessage("");
+      try {
+        await api.archiveOutboundDocument(document.id);
+        setSelectedOutboundDocumentId(null);
+        await onRefresh();
+        showActionSuccess(t("shipmentArchivedSuccess"));
+      } catch (error) {
+        showActionError(error, t("couldNotArchiveDocument"));
+      }
+    });
   }
 
   async function handleCopyOutboundDocument(document: OutboundDocument) {
@@ -2336,22 +2413,24 @@ export function ActivityManagementPage({
       return;
     }
 
-    setErrorMessage("");
-    try {
-      const copiedDocument = await api.copyOutboundDocument(document.id);
-      setOptimisticOutboundDocuments((current) => [copiedDocument, ...current.filter((entry) => entry.id !== copiedDocument.id)]);
-      setSelectedStatus("all");
-      setSelectedOutboundDocumentId(copiedDocument.id);
-      if (!isEmbeddedComposer && onOpenOutboundShipmentEditor) {
-        onOpenOutboundShipmentEditor(copiedDocument.id);
-      } else {
-        openEditOutboundDraft(copiedDocument);
+    await runDocumentAction(getOutboundDocumentActionKey(document.id, "copy"), async () => {
+      setErrorMessage("");
+      try {
+        const copiedDocument = await api.copyOutboundDocument(document.id);
+        setOptimisticOutboundDocuments((current) => [copiedDocument, ...current.filter((entry) => entry.id !== copiedDocument.id)]);
+        setSelectedStatus("all");
+        setSelectedOutboundDocumentId(copiedDocument.id);
+        if (!isEmbeddedComposer && onOpenOutboundShipmentEditor) {
+          onOpenOutboundShipmentEditor(copiedDocument.id);
+        } else {
+          openEditOutboundDraft(copiedDocument);
+        }
+        await onRefresh();
+        showActionSuccess(t("shipmentCopiedSuccess"));
+      } catch (error) {
+        showActionError(error, t("couldNotCopyDocument"));
       }
-      await onRefresh();
-      showActionSuccess(t("shipmentCopiedSuccess"));
-    } catch (error) {
-      showActionError(error, t("couldNotCopyDocument"));
-    }
+    });
   }
 
   async function handleSaveSelectedInboundDocumentNote(document: InboundDocument) {
@@ -2570,17 +2649,17 @@ export function ActivityManagementPage({
 
               <div className="document-drawer__actions">
                 {onOpenInboundDetail ? (
-                  <Button variant="outlined" onClick={() => onOpenInboundDetail(selectedInboundDocument.id)}>
+                  <Button variant="outlined" onClick={() => onOpenInboundDetail(selectedInboundDocument.id)} disabled={disableSelectedInboundActions}>
                     {t("inboundDetailOpenPage")}
                   </Button>
                 ) : null}
                 {onOpenPalletTrace ? (
-                  <Button variant="outlined" onClick={() => handleOpenInboundPalletTrace(selectedInboundDocument)}>
+                  <Button variant="outlined" onClick={() => handleOpenInboundPalletTrace(selectedInboundDocument)} disabled={disableSelectedInboundActions}>
                     {t("openPalletWorkspace")}
                   </Button>
                 ) : null}
                 {canManage && !selectedInboundDocument.archivedAt && normalizeDocumentStatus(selectedInboundDocument.status) === "DRAFT" ? (
-                  <Button variant="outlined" onClick={() => openEditInboundDocument(selectedInboundDocument)}>
+                  <Button variant="outlined" onClick={() => openEditInboundDocument(selectedInboundDocument)} disabled={disableSelectedInboundActions}>
                     {t("editDraft")}
                   </Button>
                 ) : null}
@@ -2594,35 +2673,55 @@ export function ActivityManagementPage({
                       forceHandlingMode: "PALLETIZED",
                       intent: "convert-sealed-transit"
                     })}
+                    disabled={disableSelectedInboundActions}
                   >
                     {t("convertToPalletized")}
                   </Button>
                   ) : null}
                 {canManage ? (
-                  <Button variant="outlined" startIcon={<ContentCopyOutlinedIcon />} onClick={() => void handleCopyInboundDocument(selectedInboundDocument)}>
+                  <Button
+                    variant="outlined"
+                    startIcon={isSelectedInboundCopyBusy ? <InlineLoadingIndicator /> : <ContentCopyOutlinedIcon />}
+                    onClick={() => void handleCopyInboundDocument(selectedInboundDocument)}
+                    disabled={disableSelectedInboundActions}
+                    aria-busy={isSelectedInboundCopyBusy}
+                  >
                     {normalizeDocumentStatus(selectedInboundDocument.status) === "CONFIRMED" ? t("reEnterReceipt") : t("copyReceipt")}
                   </Button>
                 ) : null}
-                {canManage && !selectedInboundDocument.archivedAt && getInboundTrackingAction(selectedInboundDocument, t) ? (
+                {canManage && !selectedInboundDocument.archivedAt && selectedInboundTrackingAction ? (
                   <Button
-                    variant={getInboundTrackingAction(selectedInboundDocument, t)?.trackingStatus === "RECEIVED" ? "contained" : "outlined"}
+                    variant={selectedInboundTrackingAction.trackingStatus === "RECEIVED" ? "contained" : "outlined"}
+                    startIcon={isSelectedInboundTrackingBusy ? <InlineLoadingIndicator /> : undefined}
+                    disabled={disableSelectedInboundActions}
+                    aria-busy={isSelectedInboundTrackingBusy}
                     onClick={() => {
-                      const nextAction = getInboundTrackingAction(selectedInboundDocument, t);
-                      if (nextAction) {
-                        void handleUpdateInboundTrackingStatus(selectedInboundDocument, nextAction.trackingStatus);
-                      }
+                      void handleUpdateInboundTrackingStatus(selectedInboundDocument, selectedInboundTrackingAction.trackingStatus);
                     }}
                   >
-                    {getInboundTrackingAction(selectedInboundDocument, t)?.label}
+                    {selectedInboundTrackingAction.label}
                   </Button>
                 ) : null}
                 {canManage && !selectedInboundDocument.archivedAt && normalizeDocumentStatus(selectedInboundDocument.status) !== "DELETED" ? (
-                  <Button variant="outlined" color="error" startIcon={<DeleteOutlineOutlinedIcon />} onClick={() => void handleCancelInboundDocument(selectedInboundDocument)}>
+                  <Button
+                    variant="outlined"
+                    color="error"
+                    startIcon={isSelectedInboundCancelBusy ? <InlineLoadingIndicator /> : <DeleteOutlineOutlinedIcon />}
+                    onClick={() => void handleCancelInboundDocument(selectedInboundDocument)}
+                    disabled={disableSelectedInboundActions}
+                    aria-busy={isSelectedInboundCancelBusy}
+                  >
                     {t("cancelReceipt")}
                   </Button>
                 ) : null}
                 {canManage && canArchiveInboundDocument(selectedInboundDocument) ? (
-                  <Button variant="outlined" startIcon={<ArchiveOutlinedIcon />} onClick={() => void handleArchiveInboundDocument(selectedInboundDocument)}>
+                  <Button
+                    variant="outlined"
+                    startIcon={isSelectedInboundArchiveBusy ? <InlineLoadingIndicator /> : <ArchiveOutlinedIcon />}
+                    onClick={() => void handleArchiveInboundDocument(selectedInboundDocument)}
+                    disabled={disableSelectedInboundActions}
+                    aria-busy={isSelectedInboundArchiveBusy}
+                  >
                     {t("archiveReceipt")}
                   </Button>
                 ) : null}
@@ -2693,7 +2792,9 @@ export function ActivityManagementPage({
                           size="small"
                           onClick={() => void handleSaveSelectedInboundDocumentNote(selectedInboundDocument)}
                           disabled={selectedInboundDocumentNoteSaving || !isSelectedInboundNoteDirty}
+                          aria-busy={selectedInboundDocumentNoteSaving}
                         >
+                          {selectedInboundDocumentNoteSaving ? <InlineLoadingIndicator className="mr-1" /> : null}
                           {selectedInboundDocumentNoteSaving ? t("saving") : t("saveNote")}
                         </Button>
                       </div>
@@ -2750,39 +2851,49 @@ export function ActivityManagementPage({
 
               <div className="document-drawer__actions">
                 {canManage && !selectedOutboundDocument.archivedAt && normalizeDocumentStatus(selectedOutboundDocument.status) === "DRAFT" ? (
-                  <Button variant="outlined" onClick={() => openEditOutboundDraft(selectedOutboundDocument)}>
+                  <Button variant="outlined" onClick={() => openEditOutboundDraft(selectedOutboundDocument)} disabled={disableSelectedOutboundActions}>
                     {t("editDraft")}
                   </Button>
                 ) : null}
                 {canManage ? (
-                  <Button variant="outlined" startIcon={<ContentCopyOutlinedIcon />} onClick={() => void handleCopyOutboundDocument(selectedOutboundDocument)}>
+                  <Button
+                    variant="outlined"
+                    startIcon={isSelectedOutboundCopyBusy ? <InlineLoadingIndicator /> : <ContentCopyOutlinedIcon />}
+                    onClick={() => void handleCopyOutboundDocument(selectedOutboundDocument)}
+                    disabled={disableSelectedOutboundActions}
+                    aria-busy={isSelectedOutboundCopyBusy}
+                  >
                     {normalizeDocumentStatus(selectedOutboundDocument.status) === "CONFIRMED" ? t("reEnterShipment") : t("copyShipment")}
                   </Button>
                 ) : null}
-                {canManage && !selectedOutboundDocument.archivedAt && getOutboundTrackingAction(selectedOutboundDocument, t) ? (
+                {canManage && !selectedOutboundDocument.archivedAt && selectedOutboundTrackingAction ? (
                   <Button
-                    variant={getOutboundTrackingAction(selectedOutboundDocument, t)?.trackingStatus === "SHIPPED" ? "contained" : "outlined"}
+                    variant={selectedOutboundTrackingAction.trackingStatus === "SHIPPED" ? "contained" : "outlined"}
+                    startIcon={isSelectedOutboundTrackingBusy ? <InlineLoadingIndicator /> : undefined}
+                    disabled={disableSelectedOutboundActions}
+                    aria-busy={isSelectedOutboundTrackingBusy}
                     onClick={() => {
-                      const nextAction = getOutboundTrackingAction(selectedOutboundDocument, t);
-                      if (nextAction) {
-                        void handleUpdateOutboundTrackingStatus(selectedOutboundDocument, nextAction.trackingStatus);
-                      }
+                      void handleUpdateOutboundTrackingStatus(selectedOutboundDocument, selectedOutboundTrackingAction.trackingStatus);
                     }}
                   >
-                    {getOutboundTrackingAction(selectedOutboundDocument, t)?.label}
+                    {selectedOutboundTrackingAction.label}
                   </Button>
                 ) : null}
                 <Button
                   variant="contained"
-                  startIcon={<PictureAsPdfOutlinedIcon />}
+                  startIcon={isSelectedOutboundPickSheetBusy ? <InlineLoadingIndicator /> : <PictureAsPdfOutlinedIcon />}
                   onClick={() => void handleDownloadPickSheet(selectedOutboundDocument)}
+                  disabled={disableSelectedOutboundActions}
+                  aria-busy={isSelectedOutboundPickSheetBusy}
                 >
                   {t("downloadPickSheet")}
                 </Button>
                 <Button
                   variant="outlined"
-                  startIcon={<PictureAsPdfOutlinedIcon />}
+                  startIcon={isSelectedOutboundDeliveryNoteBusy ? <InlineLoadingIndicator /> : <PictureAsPdfOutlinedIcon />}
                   onClick={() => void handleDownloadDeliveryNote(selectedOutboundDocument)}
+                  disabled={disableSelectedOutboundActions}
+                  aria-busy={isSelectedOutboundDeliveryNoteBusy}
                 >
                   {t("downloadDeliveryNote")}
                 </Button>
@@ -2790,8 +2901,10 @@ export function ActivityManagementPage({
                   <Button
                     variant="outlined"
                     color="error"
-                    startIcon={<DeleteOutlineOutlinedIcon />}
+                    startIcon={isSelectedOutboundCancelBusy ? <InlineLoadingIndicator /> : <DeleteOutlineOutlinedIcon />}
                     onClick={() => void handleCancelOutboundDocument(selectedOutboundDocument)}
+                    disabled={disableSelectedOutboundActions}
+                    aria-busy={isSelectedOutboundCancelBusy}
                   >
                     {t("cancelShipment")}
                   </Button>
@@ -2799,8 +2912,10 @@ export function ActivityManagementPage({
                 {canManage && !selectedOutboundDocument.archivedAt ? (
                   <Button
                     variant="outlined"
-                    startIcon={<ArchiveOutlinedIcon />}
+                    startIcon={isSelectedOutboundArchiveBusy ? <InlineLoadingIndicator /> : <ArchiveOutlinedIcon />}
                     onClick={() => void handleArchiveOutboundDocument(selectedOutboundDocument)}
+                    disabled={disableSelectedOutboundActions}
+                    aria-busy={isSelectedOutboundArchiveBusy}
                   >
                     {t("archiveShipment")}
                   </Button>
@@ -2891,7 +3006,9 @@ export function ActivityManagementPage({
                           size="small"
                           onClick={() => void handleSaveSelectedOutboundDocumentNote(selectedOutboundDocument)}
                           disabled={selectedOutboundDocumentNoteSaving || !isSelectedOutboundNoteDirty}
+                          aria-busy={selectedOutboundDocumentNoteSaving}
                         >
+                          {selectedOutboundDocumentNoteSaving ? <InlineLoadingIndicator className="mr-1" /> : null}
                           {selectedOutboundDocumentNoteSaving ? t("saving") : t("saveNote")}
                         </Button>
                       </div>
@@ -3909,6 +4026,14 @@ function getOutboundTrackingAction(document: OutboundDocument, t: (key: string) 
 
 function normalizeDocumentStatus(status: string) {
   return status.trim().toUpperCase();
+}
+
+function getInboundDocumentActionKey(documentId: number, action: string) {
+  return `inbound-${documentId}-${action}`;
+}
+
+function getOutboundDocumentActionKey(documentId: number, action: string) {
+  return `outbound-${documentId}-${action}`;
 }
 
 export function buildPickSheetExportDocument(document: OutboundDocument, sourceOptions: OutboundSourceOption[]): OutboundDocument {

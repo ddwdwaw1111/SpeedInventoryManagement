@@ -254,6 +254,85 @@ describe("BillingPage", () => {
     expect(onOpenBillingInvoice).toHaveBeenCalledWith(91);
   });
 
+  it("locks invoice creation while the create request is pending", async () => {
+    const customer = createCustomer({ id: 1, name: "Acme" });
+
+    createBillingInvoice.mockImplementation(() => new Promise(() => {}));
+    getPallets.mockResolvedValue([
+      {
+        id: 1,
+        parentPalletId: 0,
+        palletCode: "PLT-001",
+        containerVisitId: 1,
+        sourceInboundDocumentId: 10,
+        sourceInboundLineId: 100,
+        actualArrivalDate: "2026-03-01",
+        customerId: 1,
+        customerName: "Acme",
+        skuMasterId: 11,
+        sku: "SKU-1",
+        description: "Widget",
+        currentLocationId: 1,
+        currentLocationName: "NJ",
+        currentStorageSection: "A-01",
+        currentContainerNo: "CONT-001",
+        containerType: "NORMAL",
+        status: "STORED",
+        createdAt: "2026-03-01T09:00:00Z",
+        updatedAt: "2026-03-31T09:00:00Z",
+        contents: []
+      }
+    ]);
+    getPalletLocationEvents.mockResolvedValue([
+      {
+        id: 1,
+        palletId: 1,
+        palletCode: "PLT-001",
+        containerVisitId: 1,
+        customerId: 1,
+        customerName: "Acme",
+        locationId: 1,
+        locationName: "NJ",
+        storageSection: "A-01",
+        containerNo: "CONT-001",
+        eventType: "RECEIVED",
+        quantityDelta: 100,
+        palletDelta: 1,
+        eventTime: "2026-03-01T09:00:00Z",
+        createdAt: "2026-03-01T09:00:00Z"
+      }
+    ]);
+
+    renderWithProviders(
+      <BillingPage
+        customers={[customer]}
+        locations={[createLocation()]}
+        inboundDocuments={[]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        onOpenBillingContainerDetail={vi.fn()}
+        onOpenBillingInvoice={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-03-01" } });
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-03-31" } });
+    await pickComboOption("Customer", "Acme");
+    fireEvent.click(screen.getByRole("button", { name: "Storage Settlement" }));
+    await pickComboOption("Container Type", "Normal");
+
+    const createButton = await screen.findByRole("button", { name: "Create Storage Invoice" });
+    fireEvent.click(createButton);
+
+    await waitFor(() => {
+      expect(createBillingInvoice).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(createButton).toBeDisabled();
+      expect(createButton).toHaveAttribute("aria-busy", "true");
+    });
+  });
+
   it("includes storage detail snapshots in storage settlement invoice payloads", async () => {
     const customer = createCustomer({ id: 1, name: "Acme" });
 

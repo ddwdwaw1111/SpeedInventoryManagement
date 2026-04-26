@@ -12,6 +12,7 @@ import { useState, useEffect, useCallback, type FormEvent } from "react";
 import { Button, Chip, Dialog, DialogTitle, DialogContent, DialogActions, Divider, ListItemIcon, ListItemText, Menu, MenuItem } from "@mui/material";
 
 import { ApiError, api } from "../lib/api";
+import { waitForNextPaint } from "../lib/asyncUi";
 import { downloadExcelWorkbook, type ExcelExportCell, type ExcelExportColumn } from "../lib/excelExport";
 import { downloadBillingInvoicePdf } from "../lib/billingInvoicePdf";
 import { useI18n } from "../lib/i18n";
@@ -27,6 +28,7 @@ import type {
   UserRole
 } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
+import { InlineLoadingIndicator } from "./InlineLoadingIndicator";
 import { WorkspacePanelHeader, WorkspaceTableEmptyState } from "./WorkspacePanelChrome";
 
 type BillingInvoiceEditorPageProps = {
@@ -69,7 +71,7 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
   const [invoice, setInvoice] = useState<BillingInvoice | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
-  const [isBusy, setIsBusy] = useState(false);
+  const [busyActionKey, setBusyActionKey] = useState<string | null>(null);
 
   // Line editor state
   const [lineDialogOpen, setLineDialogOpen] = useState(false);
@@ -90,6 +92,15 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
 
   const isDraft = invoice?.status === "DRAFT";
   const isAdmin = currentUserRole === "admin";
+  const isBusy = busyActionKey !== null;
+  const isPdfExportBusy = busyActionKey?.startsWith("export-pdf-") ?? false;
+  const isSaveLineBusy = busyActionKey === "save-line";
+  const isSaveNotesBusy = busyActionKey === "save-notes";
+  const isFinalizeBusy = busyActionKey === "finalize";
+  const isMarkPaidBusy = busyActionKey === "mark-paid";
+  const isVoidBusy = busyActionKey === "void";
+  const isDeleteInvoiceBusy = busyActionKey === "delete";
+  const isDeleteLineBusy = busyActionKey === "delete-line";
 
   const loadInvoice = useCallback(async () => {
     setIsLoading(true);
@@ -107,6 +118,20 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
   useEffect(() => {
     void loadInvoice();
   }, [loadInvoice]);
+
+  async function runBusyAction<T>(actionKey: string, action: () => Promise<T> | T) {
+    if (busyActionKey) {
+      return null;
+    }
+
+    setBusyActionKey(actionKey);
+    try {
+      await waitForNextPaint();
+      return await action();
+    } finally {
+      setBusyActionKey((current) => current === actionKey ? null : current);
+    }
+  }
 
   // --- Line add/edit ---
   function handleOpenAddLine(chargeType?: string) {
@@ -140,120 +165,118 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
   async function handleSaveLine(event: FormEvent) {
     event.preventDefault();
     if (!invoice) return;
-    setIsBusy(true);
-    try {
-      const payload: AddBillingInvoiceLinePayload & UpdateBillingInvoiceLinePayload = {
-        chargeType: lineForm.chargeType,
-        description: lineForm.description,
-        reference: lineForm.reference,
-        containerNo: lineForm.containerNo,
-        warehouse: lineForm.warehouse,
-        occurredOn: lineForm.occurredOn,
-        quantity: toNumber(lineForm.quantity),
-        unitRate: toNumber(lineForm.unitRate),
-        amount: toNumber(lineForm.amount),
-        notes: lineForm.notes
-      };
+    await runBusyAction("save-line", async () => {
+      try {
+        const payload: AddBillingInvoiceLinePayload & UpdateBillingInvoiceLinePayload = {
+          chargeType: lineForm.chargeType,
+          description: lineForm.description,
+          reference: lineForm.reference,
+          containerNo: lineForm.containerNo,
+          warehouse: lineForm.warehouse,
+          occurredOn: lineForm.occurredOn,
+          quantity: toNumber(lineForm.quantity),
+          unitRate: toNumber(lineForm.unitRate),
+          amount: toNumber(lineForm.amount),
+          notes: lineForm.notes
+        };
 
-      let updated: BillingInvoice;
-      if (lineDialogMode === "edit" && editingLineId !== null) {
-        updated = await api.updateBillingInvoiceLine(invoice.id, editingLineId, payload);
-      } else {
-        updated = await api.addBillingInvoiceLine(invoice.id, payload);
+        let updated: BillingInvoice;
+        if (lineDialogMode === "edit" && editingLineId !== null) {
+          updated = await api.updateBillingInvoiceLine(invoice.id, editingLineId, payload);
+        } else {
+          updated = await api.addBillingInvoiceLine(invoice.id, payload);
+        }
+        setInvoice(updated);
+        setLineDialogOpen(false);
+      } catch (error) {
+        setErrorMessage(getErrorMessage(error, "Could not save line."));
       }
-      setInvoice(updated);
-      setLineDialogOpen(false);
-    } catch (error) {
-      setErrorMessage(getErrorMessage(error, "Could not save line."));
-    } finally {
-      setIsBusy(false);
-    }
+    });
   }
 
   async function handleDeleteLine() {
     if (!invoice || deletingLineId === null) return;
-    setIsBusy(true);
-    try {
-      const updated = await api.deleteBillingInvoiceLine(invoice.id, deletingLineId);
-      setInvoice(updated);
-    } catch (error) {
-      setErrorMessage(getErrorMessage(error, "Could not delete line."));
-    } finally {
-      setIsBusy(false);
-      setConfirmAction(null);
-      setDeletingLineId(null);
-    }
+    await runBusyAction("delete-line", async () => {
+      try {
+        const updated = await api.deleteBillingInvoiceLine(invoice.id, deletingLineId);
+        setInvoice(updated);
+      } catch (error) {
+        setErrorMessage(getErrorMessage(error, "Could not delete line."));
+      } finally {
+        setConfirmAction(null);
+        setDeletingLineId(null);
+      }
+    });
   }
 
   // --- Status actions ---
   async function handleFinalize() {
     if (!invoice) return;
-    setIsBusy(true);
-    try {
-      const updated = await api.finalizeBillingInvoice(invoice.id);
-      setInvoice(updated);
-    } catch (error) {
-      setErrorMessage(getErrorMessage(error, "Could not finalize invoice."));
-    } finally {
-      setIsBusy(false);
-      setConfirmAction(null);
-    }
+    await runBusyAction("finalize", async () => {
+      try {
+        const updated = await api.finalizeBillingInvoice(invoice.id);
+        setInvoice(updated);
+      } catch (error) {
+        setErrorMessage(getErrorMessage(error, "Could not finalize invoice."));
+      } finally {
+        setConfirmAction(null);
+      }
+    });
   }
 
   async function handleMarkPaid() {
     if (!invoice) return;
-    setIsBusy(true);
-    try {
-      const updated = await api.markBillingInvoicePaid(invoice.id);
-      setInvoice(updated);
-    } catch (error) {
-      setErrorMessage(getErrorMessage(error, "Could not mark invoice paid."));
-    } finally {
-      setIsBusy(false);
-      setConfirmAction(null);
-    }
+    await runBusyAction("mark-paid", async () => {
+      try {
+        const updated = await api.markBillingInvoicePaid(invoice.id);
+        setInvoice(updated);
+      } catch (error) {
+        setErrorMessage(getErrorMessage(error, "Could not mark invoice paid."));
+      } finally {
+        setConfirmAction(null);
+      }
+    });
   }
 
   async function handleVoid() {
     if (!invoice) return;
-    setIsBusy(true);
-    try {
-      const updated = await api.voidBillingInvoice(invoice.id);
-      setInvoice(updated);
-    } catch (error) {
-      setErrorMessage(getErrorMessage(error, "Could not void invoice."));
-    } finally {
-      setIsBusy(false);
-      setConfirmAction(null);
-    }
+    await runBusyAction("void", async () => {
+      try {
+        const updated = await api.voidBillingInvoice(invoice.id);
+        setInvoice(updated);
+      } catch (error) {
+        setErrorMessage(getErrorMessage(error, "Could not void invoice."));
+      } finally {
+        setConfirmAction(null);
+      }
+    });
   }
 
   async function handleDelete() {
     if (!invoice) return;
-    setIsBusy(true);
-    try {
-      await api.deleteBillingInvoice(invoice.id);
-      onBackToBilling();
-    } catch (error) {
-      setErrorMessage(getErrorMessage(error, "Could not delete invoice."));
-    } finally {
-      setIsBusy(false);
-      setConfirmAction(null);
-    }
+    await runBusyAction("delete", async () => {
+      try {
+        await api.deleteBillingInvoice(invoice.id);
+        onBackToBilling();
+      } catch (error) {
+        setErrorMessage(getErrorMessage(error, "Could not delete invoice."));
+      } finally {
+        setConfirmAction(null);
+      }
+    });
   }
 
   async function handleSaveNotes() {
     if (!invoice) return;
-    setIsBusy(true);
-    try {
-      const updated = await api.updateBillingInvoice(invoice.id, { notes: notesValue });
-      setInvoice(updated);
-      setIsEditingNotes(false);
-    } catch (error) {
-      setErrorMessage(getErrorMessage(error, "Could not save notes."));
-    } finally {
-      setIsBusy(false);
-    }
+    await runBusyAction("save-notes", async () => {
+      try {
+        const updated = await api.updateBillingInvoice(invoice.id, { notes: notesValue });
+        setInvoice(updated);
+        setIsEditingNotes(false);
+      } catch (error) {
+        setErrorMessage(getErrorMessage(error, "Could not save notes."));
+      }
+    });
   }
 
   // --- Render ---
@@ -340,6 +363,14 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
     });
   }
 
+  async function handleDownloadPdfWithFeedback(exportMode: BillingExportMode) {
+    setExportMenuAnchor(null);
+    setPendingExportMode(exportMode);
+    await runBusyAction(`export-pdf-${exportMode.toLowerCase()}`, () => {
+      handleDownloadPdf(exportMode);
+    });
+  }
+
   const headerActions = (
     <div className="sheet-actions">
       <Button size="small" variant="outlined" startIcon={<ArrowBackOutlinedIcon fontSize="small" />} onClick={onBackToBilling}>
@@ -349,10 +380,11 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
       <Button
         size="small"
         variant="outlined"
-        startIcon={<FileDownloadOutlinedIcon fontSize="small" />}
+        startIcon={isPdfExportBusy ? <InlineLoadingIndicator /> : <FileDownloadOutlinedIcon fontSize="small" />}
         endIcon={<ExpandMoreOutlinedIcon fontSize="small" />}
         onClick={(event) => setExportMenuAnchor(event.currentTarget)}
-        disabled={invoice.lines.length === 0}
+        disabled={invoice.lines.length === 0 || isBusy}
+        aria-busy={isPdfExportBusy}
       >
         {t("export")}
       </Button>
@@ -364,6 +396,7 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
         transformOrigin={{ vertical: "top", horizontal: "right" }}
       >
         <MenuItem
+          disabled={isBusy}
           onClick={() => {
             setExportMenuAnchor(null);
             setPendingExportMode("SUMMARY");
@@ -374,6 +407,7 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
           <ListItemText primary={t("billingExportExcelSummary")} secondary={t("billingExportSummaryDesc")} />
         </MenuItem>
         <MenuItem
+          disabled={isBusy}
           onClick={() => {
             setExportMenuAnchor(null);
             setPendingExportMode("DETAILED");
@@ -384,21 +418,15 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
           <ListItemText primary={t("billingExportExcelDetailed")} secondary={t("billingExportDetailedDesc")} />
         </MenuItem>
         <MenuItem
-          onClick={() => {
-            setExportMenuAnchor(null);
-            setPendingExportMode("SUMMARY");
-            handleDownloadPdf("SUMMARY");
-          }}
+          disabled={isBusy}
+          onClick={() => void handleDownloadPdfWithFeedback("SUMMARY")}
         >
           <ListItemIcon><PictureAsPdfOutlinedIcon fontSize="small" /></ListItemIcon>
           <ListItemText primary={t("billingDownloadPdfSummary")} secondary={t("billingExportSummaryDesc")} />
         </MenuItem>
         <MenuItem
-          onClick={() => {
-            setExportMenuAnchor(null);
-            setPendingExportMode("DETAILED");
-            handleDownloadPdf("DETAILED");
-          }}
+          disabled={isBusy}
+          onClick={() => void handleDownloadPdfWithFeedback("DETAILED")}
         >
           <ListItemIcon><PictureAsPdfOutlinedIcon fontSize="small" /></ListItemIcon>
           <ListItemText primary={t("billingDownloadPdfDetailed")} secondary={t("billingExportDetailedDesc")} />
@@ -407,10 +435,10 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
       {isDraft && (
         <>
           <Divider orientation="vertical" flexItem />
-          <Button size="small" variant="outlined" startIcon={<AddCircleOutlineOutlinedIcon fontSize="small" />} onClick={() => handleOpenAddLine("MANUAL")}>
+          <Button size="small" variant="outlined" startIcon={<AddCircleOutlineOutlinedIcon fontSize="small" />} onClick={() => handleOpenAddLine("MANUAL")} disabled={isBusy}>
             {t("billingAddLine")}
           </Button>
-          <Button size="small" variant="outlined" color="secondary" startIcon={<AddCircleOutlineOutlinedIcon fontSize="small" />} onClick={() => handleOpenAddLine("DISCOUNT")}>
+          <Button size="small" variant="outlined" color="secondary" startIcon={<AddCircleOutlineOutlinedIcon fontSize="small" />} onClick={() => handleOpenAddLine("DISCOUNT")} disabled={isBusy}>
             {t("billingAddDiscount")}
           </Button>
         </>
@@ -421,22 +449,22 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
   const statusActions = (
     <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
       {isDraft && isAdmin && (
-        <Button size="small" variant="contained" color="primary" startIcon={<CheckCircleOutlineOutlinedIcon fontSize="small" />} onClick={() => setConfirmAction("finalize")}>
+        <Button size="small" variant="contained" color="primary" startIcon={isFinalizeBusy ? <InlineLoadingIndicator /> : <CheckCircleOutlineOutlinedIcon fontSize="small" />} onClick={() => setConfirmAction("finalize")} disabled={isBusy} aria-busy={isFinalizeBusy}>
           {t("billingFinalizeInvoice")}
         </Button>
       )}
       {invoice.status === "FINALIZED" && isAdmin && (
-        <Button size="small" variant="contained" color="success" startIcon={<PaidOutlinedIcon fontSize="small" />} onClick={() => setConfirmAction("mark-paid")}>
+        <Button size="small" variant="contained" color="success" startIcon={isMarkPaidBusy ? <InlineLoadingIndicator /> : <PaidOutlinedIcon fontSize="small" />} onClick={() => setConfirmAction("mark-paid")} disabled={isBusy} aria-busy={isMarkPaidBusy}>
           {t("billingMarkPaid")}
         </Button>
       )}
       {invoice.status !== "VOID" && isAdmin && (
-        <Button size="small" variant="outlined" color="error" startIcon={<BlockOutlinedIcon fontSize="small" />} onClick={() => setConfirmAction("void")}>
+        <Button size="small" variant="outlined" color="error" startIcon={isVoidBusy ? <InlineLoadingIndicator /> : <BlockOutlinedIcon fontSize="small" />} onClick={() => setConfirmAction("void")} disabled={isBusy} aria-busy={isVoidBusy}>
           {t("billingVoidInvoice")}
         </Button>
       )}
       {isDraft && isAdmin && (
-        <Button size="small" variant="outlined" color="error" startIcon={<DeleteOutlineOutlinedIcon fontSize="small" />} onClick={() => setConfirmAction("delete")}>
+        <Button size="small" variant="outlined" color="error" startIcon={isDeleteInvoiceBusy ? <InlineLoadingIndicator /> : <DeleteOutlineOutlinedIcon fontSize="small" />} onClick={() => setConfirmAction("delete")} disabled={isBusy} aria-busy={isDeleteInvoiceBusy}>
           {t("billingDeleteInvoice")}
         </Button>
       )}
@@ -535,8 +563,11 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
                 value={notesValue}
                 onChange={(event) => setNotesValue(event.target.value)}
               />
-              <Button size="small" variant="contained" disabled={isBusy} onClick={handleSaveNotes}>{t("save")}</Button>
-              <Button size="small" variant="outlined" onClick={() => setIsEditingNotes(false)}>{t("cancel")}</Button>
+              <Button size="small" variant="contained" disabled={isBusy} onClick={handleSaveNotes} aria-busy={isSaveNotesBusy}>
+                {isSaveNotesBusy ? <InlineLoadingIndicator className="mr-1" /> : null}
+                {t("save")}
+              </Button>
+              <Button size="small" variant="outlined" onClick={() => setIsEditingNotes(false)} disabled={isBusy}>{t("cancel")}</Button>
             </div>
           ) : (
             <div className="sheet-note sheet-note--readonly" style={{ cursor: isDraft ? "pointer" : undefined }} onClick={isDraft ? () => { setNotesValue(invoice.notes); setIsEditingNotes(true); } : undefined}>
@@ -642,10 +673,10 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
                       <td>{line.notes || "-"}</td>
                       {isDraft && (
                         <td>
-                          <Button size="small" variant="text" onClick={() => handleOpenEditLine(line)} startIcon={<EditOutlinedIcon fontSize="small" />}>
+                          <Button size="small" variant="text" onClick={() => handleOpenEditLine(line)} startIcon={<EditOutlinedIcon fontSize="small" />} disabled={isBusy}>
                             {t("edit")}
                           </Button>
-                          <Button size="small" variant="text" color="error" onClick={() => { setDeletingLineId(line.id); setConfirmAction("delete-line"); }} startIcon={<DeleteOutlineOutlinedIcon fontSize="small" />}>
+                          <Button size="small" variant="text" color="error" onClick={() => { setDeletingLineId(line.id); setConfirmAction("delete-line"); }} startIcon={<DeleteOutlineOutlinedIcon fontSize="small" />} disabled={isBusy}>
                             {t("delete")}
                           </Button>
                         </td>
@@ -679,7 +710,7 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
       </section>
 
       {/* Line add/edit dialog */}
-      <Dialog open={lineDialogOpen} onClose={() => setLineDialogOpen(false)} fullWidth maxWidth="sm">
+      <Dialog open={lineDialogOpen} onClose={isBusy ? undefined : () => setLineDialogOpen(false)} fullWidth maxWidth="sm">
         <form onSubmit={handleSaveLine}>
           <DialogTitle>{lineDialogMode === "add" ? t("billingAddLine") : t("billingEditLine")}</DialogTitle>
           <DialogContent>
@@ -739,22 +770,26 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
             </div>
           </DialogContent>
           <DialogActions>
-            <Button onClick={() => setLineDialogOpen(false)}>{t("cancel")}</Button>
-            <Button type="submit" variant="contained" disabled={isBusy}>{t("save")}</Button>
+            <Button onClick={() => setLineDialogOpen(false)} disabled={isBusy}>{t("cancel")}</Button>
+            <Button type="submit" variant="contained" disabled={isBusy} aria-busy={isSaveLineBusy}>
+              {isSaveLineBusy ? <InlineLoadingIndicator className="mr-1" /> : null}
+              {t("save")}
+            </Button>
           </DialogActions>
         </form>
       </Dialog>
 
       {/* Confirm dialog */}
-      <Dialog open={confirmAction !== null} onClose={() => { setConfirmAction(null); setDeletingLineId(null); }}>
+      <Dialog open={confirmAction !== null} onClose={isBusy ? undefined : () => { setConfirmAction(null); setDeletingLineId(null); }}>
         <DialogTitle>{confirmDialogTitle(confirmAction, t)}</DialogTitle>
         <DialogContent>{confirmDialogMessage(confirmAction, t)}</DialogContent>
         <DialogActions>
-          <Button onClick={() => { setConfirmAction(null); setDeletingLineId(null); }}>{t("cancel")}</Button>
+          <Button onClick={() => { setConfirmAction(null); setDeletingLineId(null); }} disabled={isBusy}>{t("cancel")}</Button>
           <Button
             variant="contained"
             color={confirmAction === "mark-paid" ? "success" : confirmAction === "finalize" ? "primary" : "error"}
             disabled={isBusy}
+            aria-busy={isBusy}
             onClick={() => {
               switch (confirmAction) {
                 case "finalize": void handleFinalize(); break;
@@ -765,6 +800,7 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
               }
             }}
           >
+            {isBusy ? <InlineLoadingIndicator className="mr-1" /> : null}
             {t("confirm")}
           </Button>
         </DialogActions>

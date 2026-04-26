@@ -22,6 +22,7 @@ import {
 } from "../lib/types";
 import { InlineAlert, useFeedbackToast } from "./Feedback";
 import { InboundPalletBreakdownPanel } from "./InboundPalletBreakdownPanel";
+import { InlineLoadingIndicator } from "./InlineLoadingIndicator";
 import { WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type InboundWizardStep = 1 | 2 | 3;
@@ -102,6 +103,7 @@ export function InboundReceiptEditorPage({
   const [batchLines, setBatchLines] = useState<BatchInboundLineState[]>(() => [createEmptyBatchInboundLine()]);
   const [errorMessage, setErrorMessage] = useState("");
   const [batchSubmitting, setBatchSubmitting] = useState(false);
+  const [copySubmitting, setCopySubmitting] = useState(false);
   const [noteSubmitting, setNoteSubmitting] = useState(false);
   const [inboundWizardStep, setInboundWizardStep] = useState<InboundWizardStep>(1);
   const [batchInboundLineAddCount, setBatchInboundLineAddCount] = useState(1);
@@ -250,10 +252,12 @@ export function InboundReceiptEditorPage({
   }
 
   async function handleCopyCurrentReceipt() {
-    if (!document?.id) {
+    if (!document?.id || copySubmitting) {
       return;
     }
 
+    setCopySubmitting(true);
+    setErrorMessage("");
     try {
       const copiedDocument = await api.copyInboundDocument(document.id);
       showActionSuccess(t("receiptCopiedSuccess"));
@@ -261,6 +265,8 @@ export function InboundReceiptEditorPage({
       onOpenReceiptEditor(copiedDocument.id);
     } catch (error) {
       showActionError(error, t("couldNotSaveActivity"));
+    } finally {
+      setCopySubmitting(false);
     }
   }
 
@@ -838,8 +844,11 @@ export function InboundReceiptEditorPage({
                 <button
                   type="button"
                   onClick={() => void handleCopyCurrentReceipt()}
-                  className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50"
+                  aria-busy={copySubmitting}
+                  disabled={copySubmitting}
+                  className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
                 >
+                  {copySubmitting ? <InlineLoadingIndicator /> : null}
                   {t("reEnterReceipt")}
                 </button>
               ) : null}
@@ -913,7 +922,8 @@ export function InboundReceiptEditorPage({
                     <label className="sheet-form__wide">{t("documentNotes")}<input value={batchForm.documentNote} disabled={!canManage} onChange={(event) => setBatchForm((current) => ({ ...current, documentNote: event.target.value }))} placeholder={t("inboundNotePlaceholder")} /></label>
                     {document?.id && canManage ? (
                       <div className="sheet-form__actions" style={{ marginTop: "0.5rem" }}>
-                        <button className="button button--ghost" type="button" onClick={() => void handleSaveDocumentNote()} disabled={noteSubmitting || !isInboundNoteDirty}>
+                        <button className="button button--ghost" type="button" onClick={() => void handleSaveDocumentNote()} disabled={noteSubmitting || !isInboundNoteDirty} aria-busy={noteSubmitting}>
+                          {noteSubmitting ? <InlineLoadingIndicator /> : null}
                           {noteSubmitting ? t("saving") : t("saveNote")}
                         </button>
                       </div>
@@ -1234,10 +1244,16 @@ export function InboundReceiptEditorPage({
 
             <div className="sheet-form__actions" style={{ marginTop: "1rem" }}>
               {inboundWizardStep === 3 && !isEditingConfirmedInbound ? (
-                <button className="button button--ghost" type="button" disabled={batchSubmitting || isReadOnly} onClick={() => void submitInboundDocument("DRAFT")}>{batchSubmitting ? t("saving") : isEditingInboundDraft ? t("saveChanges") : t("saveDraft")}</button>
+                <button className="button button--ghost" type="button" disabled={batchSubmitting || isReadOnly} onClick={() => void submitInboundDocument("DRAFT")} aria-busy={batchSubmitting}>
+                  {batchSubmitting ? <InlineLoadingIndicator /> : null}
+                  {batchSubmitting ? t("saving") : isEditingInboundDraft ? t("saveChanges") : t("saveDraft")}
+                </button>
               ) : null}
               {inboundWizardStep === 3 && isEditingConfirmedInbound && document?.id && canManage ? (
-                <button className="button button--ghost" type="button" disabled={batchSubmitting} onClick={() => void handleCopyCurrentReceipt()}>{t("reEnterReceipt")}</button>
+                <button className="button button--ghost" type="button" disabled={copySubmitting} onClick={() => void handleCopyCurrentReceipt()} aria-busy={copySubmitting}>
+                  {copySubmitting ? <InlineLoadingIndicator /> : null}
+                  {t("reEnterReceipt")}
+                </button>
               ) : null}
               <div className="shipment-wizard__actions">
                 {inboundWizardStep > 1 ? (
@@ -1246,7 +1262,10 @@ export function InboundReceiptEditorPage({
                 {inboundWizardStep < 3 ? (
                   <button className="button button--primary" type="button" onClick={() => moveInboundWizardStep((inboundWizardStep + 1) as InboundWizardStep)} disabled={isReadOnly}>{t("next")}</button>
                 ) : !isEditingConfirmedInbound ? (
-                  <button className="button button--primary" type="submit" disabled={batchSubmitting || isReadOnly}>{batchSubmitting ? t("saving") : isEditingConfirmedInbound ? t("saveChanges") : batchForm.handlingMode === "SEALED_TRANSIT" ? t("saveSealedTransit") : inboundEditorIntent === "convert-sealed-transit" ? t("convertToPalletized") : t("confirmReceipt")}</button>
+                  <button className="button button--primary" type="submit" disabled={batchSubmitting || isReadOnly} aria-busy={batchSubmitting}>
+                    {batchSubmitting ? <InlineLoadingIndicator /> : null}
+                    {batchSubmitting ? t("saving") : isEditingConfirmedInbound ? t("saveChanges") : batchForm.handlingMode === "SEALED_TRANSIT" ? t("saveSealedTransit") : inboundEditorIntent === "convert-sealed-transit" ? t("convertToPalletized") : t("confirmReceipt")}
+                  </button>
                 ) : null}
               </div>
               <button className="button button--ghost" type="button" onClick={onBackToList}>{t("cancel")}</button>
