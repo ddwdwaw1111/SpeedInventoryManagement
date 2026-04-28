@@ -29,6 +29,7 @@ import { setPendingInboundReceiptEditorLaunchContext, type InboundReceiptEditorL
 import { setPendingOutboundShipmentEditorLaunchContext, type OutboundShipmentEditorLaunchContext } from "./lib/outboundShipmentEditorLaunchContext";
 import { useI18n } from "./lib/i18n";
 import { setPendingPalletTraceLaunchContext } from "./lib/palletTraceLaunchContext";
+import { useSettings } from "./lib/settings";
 import {
   getBillingContainerDetailFromPath,
   getBillingInvoiceIdFromPath,
@@ -163,6 +164,7 @@ const WarehouseMapPage = lazy(async () => {
 
 export default function App() {
   const { t } = useI18n();
+  const { refreshBillingInvoiceHeaderDefaults } = useSettings();
   const navLabels = {
     inventory: t("navInventory"),
     finance: t("navFinance"),
@@ -351,7 +353,8 @@ export default function App() {
         api.getInventoryTransfers(300),
         api.getCycleCounts(300),
         currentRole === "admin" ? api.getAuditLogs(500) : Promise.resolve([]),
-        currentRole === "admin" ? api.getUsers() : Promise.resolve([])
+        currentRole === "admin" ? api.getUsers() : Promise.resolve([]),
+        refreshBillingInvoiceHeaderDefaults()
       ]);
 
       const [
@@ -366,10 +369,13 @@ export default function App() {
         transfersResult,
         cycleCountsResult,
         auditLogsResult,
-        usersResult
+        usersResult,
+        billingInvoiceSettingsResult
       ] = results;
 
-      const firstRejectedResult = results.find((result) => result.status === "rejected");
+      const firstRejectedResult = results
+        .slice(0, -1)
+        .find((result) => result.status === "rejected");
       if (locationsResult.status === "fulfilled") setLocations(locationsResult.value);
       if (customersResult.status === "fulfilled") setCustomers(customersResult.value);
       if (usersResult.status === "fulfilled") setUsers(usersResult.value);
@@ -382,6 +388,9 @@ export default function App() {
       if (adjustmentsResult.status === "fulfilled") setAdjustments(adjustmentsResult.value);
       if (transfersResult.status === "fulfilled") setTransfers(transfersResult.value);
       if (cycleCountsResult.status === "fulfilled") setCycleCounts(cycleCountsResult.value);
+      if (billingInvoiceSettingsResult.status === "rejected") {
+        console.warn("Could not load billing invoice settings", billingInvoiceSettingsResult.reason);
+      }
 
       if (firstRejectedResult?.status === "rejected") {
         setErrorMessage(getErrorMessage(firstRejectedResult.reason, t("couldNotLoadReport")));
@@ -798,7 +807,7 @@ export default function App() {
                 onBack={() => handleNavigateToPage("storage-management")}
               />)
             ) : null}
-            {activePage === "settings" ? renderWithSuspense(<SettingsPage />) : null}
+            {activePage === "settings" ? renderWithSuspense(<SettingsPage currentUserRole={currentUser.role} />) : null}
             {activePage === "daily-operations" ? (
               renderWithSuspense(<DailyOperationsPage
                 selectedDate={selectedDailyOperationsDate ?? getCurrentLocalIsoDate()}

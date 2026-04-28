@@ -2,6 +2,7 @@ import type {
   AuditLog,
   AuthResponse,
   BillingInvoice,
+  BillingInvoiceSettings,
   CreateBillingInvoicePayload,
   AddBillingInvoiceLinePayload,
   UpdateBillingInvoiceLinePayload,
@@ -38,6 +39,7 @@ import type {
   SKUFlowReport,
   UIPreference,
   SignUpPayload,
+  UpdateBillingInvoiceSettingsPayload,
   UpdateUserAccessPayload,
   User
 } from "./types";
@@ -201,6 +203,17 @@ export const api = {
     return request<UIPreference<T>>(`/ui-preferences/${encodeURIComponent(key)}`, {
       method: "PUT",
       body: JSON.stringify({ value })
+    });
+  },
+
+  getBillingInvoiceSettings() {
+    return request<BillingInvoiceSettings>("/billing/settings");
+  },
+
+  updateBillingInvoiceSettings(payload: UpdateBillingInvoiceSettingsPayload) {
+    return request<BillingInvoiceSettings>("/billing/settings", {
+      method: "PUT",
+      body: JSON.stringify(payload)
     });
   },
 

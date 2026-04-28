@@ -2,25 +2,42 @@ import { useEffect, useMemo, useState } from "react";
 
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
-import type { BillingInvoiceHeader } from "../lib/types";
+import type { BillingInvoiceHeader, UserRole } from "../lib/types";
+import { useFeedbackToast } from "./Feedback";
 
 type BillingHeaderFormState = Omit<BillingInvoiceHeader, "paymentDueDays"> & {
   paymentDueDays: string;
 };
 
-export function SettingsPage() {
+type SettingsPageProps = {
+  currentUserRole?: UserRole;
+};
+
+export function SettingsPage({ currentUserRole = "viewer" }: SettingsPageProps) {
   const { language, setLanguage, t } = useI18n();
+  const { showSuccess, showError, feedbackToast } = useFeedbackToast();
   const {
     timeZone,
     setTimeZone,
     timeZoneOptions,
     billingInvoiceHeaderDefaults,
     setBillingInvoiceHeaderDefaults,
+    refreshBillingInvoiceHeaderDefaults,
+    isBillingInvoiceHeaderDefaultsLoading,
     billingTermOptions
   } = useSettings();
+  const canManageBillingDefaults = currentUserRole === "admin";
   const [draftLanguage, setDraftLanguage] = useState(language);
   const [draftTimeZone, setDraftTimeZone] = useState(timeZone);
   const [draftBillingHeader, setDraftBillingHeader] = useState<BillingHeaderFormState>(() => headerToForm(billingInvoiceHeaderDefaults));
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveErrorMessage, setSaveErrorMessage] = useState("");
+
+  useEffect(() => {
+    void refreshBillingInvoiceHeaderDefaults().catch(() => {
+      setSaveErrorMessage("Could not load invoice defaults.");
+    });
+  }, [refreshBillingInvoiceHeaderDefaults]);
 
   useEffect(() => {
     setDraftLanguage(language);
@@ -40,9 +57,10 @@ export function SettingsPage() {
   }, [draftTimeZone]);
 
   const normalizedDraftBillingHeader = useMemo(() => formToHeader(draftBillingHeader), [draftBillingHeader]);
+  const billingHeaderHasChanges = !headersEqual(normalizedDraftBillingHeader, billingInvoiceHeaderDefaults);
   const hasChanges = draftLanguage !== language
     || draftTimeZone !== timeZone
-    || !headersEqual(normalizedDraftBillingHeader, billingInvoiceHeaderDefaults);
+    || (canManageBillingDefaults && billingHeaderHasChanges);
 
   const displayPreview = useMemo(
     () => new Intl.DateTimeFormat(draftLanguage === "zh" ? "zh-CN" : "en-US", {
@@ -53,11 +71,24 @@ export function SettingsPage() {
     [draftLanguage, resolvedDraftTimeZone]
   );
 
-  function handleSave() {
+  async function handleSave() {
     if (!hasChanges) return;
-    setLanguage(draftLanguage);
-    setTimeZone(draftTimeZone);
-    setBillingInvoiceHeaderDefaults(normalizedDraftBillingHeader);
+    setIsSaving(true);
+    setSaveErrorMessage("");
+    try {
+      setLanguage(draftLanguage);
+      setTimeZone(draftTimeZone);
+      if (canManageBillingDefaults && billingHeaderHasChanges) {
+        await setBillingInvoiceHeaderDefaults(normalizedDraftBillingHeader);
+      }
+      showSuccess(t("settingsSavedSuccess"));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not save settings.";
+      setSaveErrorMessage(message);
+      showError(message);
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   function handleCancel() {
@@ -113,6 +144,7 @@ export function SettingsPage() {
               <p className="sheet-kicker">{t("billingInvoiceHeaderDefaults")}</p>
               <h3>{t("billingInvoiceHeaderDefaults")}</h3>
               <p>{t("billingInvoiceHeaderDefaultsDesc")}</p>
+              {!canManageBillingDefaults && <p>{t("billingInvoiceHeaderDefaultsAdminOnly")}</p>}
             </div>
           </div>
 
@@ -120,6 +152,7 @@ export function SettingsPage() {
             <label>
               {t("billingInvoiceSellerName")}
               <input
+                disabled={!canManageBillingDefaults || isBillingInvoiceHeaderDefaultsLoading}
                 value={draftBillingHeader.sellerName}
                 onChange={(event) => setDraftBillingHeader((current) => ({ ...current, sellerName: event.target.value }))}
               />
@@ -127,6 +160,7 @@ export function SettingsPage() {
             <label>
               {t("billingInvoiceSubtitle")}
               <input
+                disabled={!canManageBillingDefaults || isBillingInvoiceHeaderDefaultsLoading}
                 value={draftBillingHeader.subtitle}
                 onChange={(event) => setDraftBillingHeader((current) => ({ ...current, subtitle: event.target.value }))}
               />
@@ -134,13 +168,18 @@ export function SettingsPage() {
             <label>
               {t("billingInvoiceRemitTo")}
               <input
+                disabled={!canManageBillingDefaults || isBillingInvoiceHeaderDefaultsLoading}
                 value={draftBillingHeader.remitTo}
                 onChange={(event) => setDraftBillingHeader((current) => ({ ...current, remitTo: event.target.value }))}
               />
             </label>
             <label>
               {t("billingInvoiceTerms")}
-              <select value={draftBillingHeader.terms} onChange={(event) => handleTermsChange(event.target.value)}>
+              <select
+                disabled={!canManageBillingDefaults || isBillingInvoiceHeaderDefaultsLoading}
+                value={draftBillingHeader.terms}
+                onChange={(event) => handleTermsChange(event.target.value)}
+              >
                 {billingTermOptions.map((option) => (
                   <option key={option.label} value={option.terms}>{option.label}</option>
                 ))}
@@ -152,6 +191,7 @@ export function SettingsPage() {
                 type="number"
                 min={0}
                 step={1}
+                disabled={!canManageBillingDefaults || isBillingInvoiceHeaderDefaultsLoading}
                 value={draftBillingHeader.paymentDueDays}
                 onChange={(event) => setDraftBillingHeader((current) => ({ ...current, paymentDueDays: event.target.value }))}
               />
@@ -160,6 +200,7 @@ export function SettingsPage() {
               {t("billingInvoicePaymentInstructions")}
               <textarea
                 rows={3}
+                disabled={!canManageBillingDefaults || isBillingInvoiceHeaderDefaultsLoading}
                 value={draftBillingHeader.paymentInstructions}
                 onChange={(event) => setDraftBillingHeader((current) => ({ ...current, paymentInstructions: event.target.value }))}
               />
@@ -176,18 +217,24 @@ export function SettingsPage() {
             <div className="sheet-note">
               {hasChanges ? t("unsavedChanges") : t("noChanges")}
             </div>
+            {saveErrorMessage && (
+              <div className="sheet-note" role="alert">
+                {saveErrorMessage}
+              </div>
+            )}
           </div>
 
           <div className="sheet-form__actions" style={{ marginTop: "1rem" }}>
-            <button className="button button--primary" type="button" onClick={handleSave} disabled={!hasChanges}>
+            <button className="button button--primary" type="button" onClick={handleSave} disabled={!hasChanges || isSaving}>
               {t("saveChanges")}
             </button>
-            <button className="button button--ghost" type="button" onClick={handleCancel} disabled={!hasChanges}>
+            <button className="button button--ghost" type="button" onClick={handleCancel} disabled={!hasChanges || isSaving}>
               {t("cancel")}
             </button>
           </div>
         </article>
       </section>
+      {feedbackToast}
     </main>
   );
 }

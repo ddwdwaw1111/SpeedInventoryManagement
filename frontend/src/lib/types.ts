@@ -852,6 +852,18 @@ export type BillingInvoiceHeader = {
   paymentInstructions: string;
 };
 
+export type BillingInvoiceSettings = {
+  id: number;
+  header: BillingInvoiceHeader;
+  updatedByUserId: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type UpdateBillingInvoiceSettingsPayload = {
+  header: BillingInvoiceHeader;
+};
+
 export type BillingInvoiceLineData = {
   id: number;
   invoiceId: number;

@@ -82,6 +82,7 @@ func resetIntegrationDatabase(t *testing.T, db *sqlx.DB) {
 	tables := []string{
 		"audit_logs",
 		"ui_preferences",
+		"billing_invoice_settings",
 		"user_sessions",
 		"billing_invoice_lines",
 		"billing_invoices",
@@ -3283,6 +3284,47 @@ func TestGlobalUIPreferenceIntegration(t *testing.T) {
 	}
 	if loaded.ValueJSON != `["sku","itemNumber","description"]` {
 		t.Fatalf("expected stored column order, got %q", loaded.ValueJSON)
+	}
+}
+
+func TestBillingInvoiceSettingsIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+
+	settings, err := store.GetBillingInvoiceSettings(ctx)
+	if err != nil {
+		t.Fatalf("get default billing invoice settings: %v", err)
+	}
+	if settings.Header.SellerName != "Speed Inventory Management" || settings.Header.Terms != "Net 30" || settings.Header.PaymentDueDays != 30 {
+		t.Fatalf("expected default billing invoice settings, got %#v", settings.Header)
+	}
+
+	settings, err = store.UpdateBillingInvoiceSettings(ctx, UpdateBillingInvoiceSettingsInput{
+		Header: BillingInvoiceHeader{
+			SellerName:          "",
+			Subtitle:            "",
+			RemitTo:             "ACH Lockbox",
+			Terms:               "",
+			PaymentDueDays:      0,
+			PaymentInstructions: "",
+		},
+	}, 42)
+	if err != nil {
+		t.Fatalf("update billing invoice settings: %v", err)
+	}
+	if settings.UpdatedByUserID != 42 {
+		t.Fatalf("expected updated by user 42, got %d", settings.UpdatedByUserID)
+	}
+	if settings.Header.SellerName != "" || settings.Header.Subtitle != "" || settings.Header.RemitTo != "ACH Lockbox" || settings.Header.Terms != "" || settings.Header.PaymentDueDays != 0 || settings.Header.PaymentInstructions != "" {
+		t.Fatalf("expected blank billing invoice settings to persist, got %#v", settings.Header)
+	}
+
+	loaded, err := store.GetBillingInvoiceSettings(ctx)
+	if err != nil {
+		t.Fatalf("reload billing invoice settings: %v", err)
+	}
+	if loaded.Header.RemitTo != "ACH Lockbox" || loaded.Header.PaymentDueDays != 0 {
+		t.Fatalf("expected stored billing invoice settings, got %#v", loaded.Header)
 	}
 }
 

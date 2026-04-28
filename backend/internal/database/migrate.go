@@ -99,6 +99,19 @@ func Migrate(db *sql.DB) error {
 			UNIQUE KEY uq_ui_preferences_scope_key (scope_type, scope_id, preference_key)
 		)`,
 		`ALTER TABLE ui_preferences ADD COLUMN IF NOT EXISTS updated_by_user_id BIGINT DEFAULT NULL AFTER value_json`,
+		`CREATE TABLE IF NOT EXISTS billing_invoice_settings (
+			id TINYINT NOT NULL DEFAULT 1,
+			seller_name VARCHAR(160) NOT NULL DEFAULT '',
+			subtitle VARCHAR(160) NOT NULL DEFAULT '',
+			remit_to TEXT NOT NULL,
+			terms VARCHAR(64) NOT NULL DEFAULT '',
+			payment_due_days INT NOT NULL DEFAULT 0,
+			payment_instructions TEXT NOT NULL,
+			updated_by_user_id BIGINT DEFAULT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			PRIMARY KEY (id)
+		)`,
 		`CREATE TABLE IF NOT EXISTS inventory_items (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			sku_master_id BIGINT NOT NULL,

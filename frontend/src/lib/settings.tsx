@@ -1,4 +1,5 @@
-import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { api } from "./api";
 import type { BillingInvoiceHeader } from "./types";
 
 export type TimeZoneSetting = "local" | string;
@@ -20,7 +21,9 @@ type SettingsContextValue = {
   setTimeZone: (timeZone: TimeZoneSetting) => void;
   timeZoneOptions: TimeZoneOption[];
   billingInvoiceHeaderDefaults: BillingInvoiceHeader;
-  setBillingInvoiceHeaderDefaults: (header: BillingInvoiceHeader) => void;
+  setBillingInvoiceHeaderDefaults: (header: BillingInvoiceHeader) => Promise<void>;
+  refreshBillingInvoiceHeaderDefaults: () => Promise<void>;
+  isBillingInvoiceHeaderDefaultsLoading: boolean;
   billingTermOptions: BillingTermOption[];
 };
 
@@ -56,23 +59,33 @@ export const BILLING_TERM_OPTIONS: BillingTermOption[] = [
   { label: "Net 60", terms: "Net 60", paymentDueDays: 60 }
 ];
 
-const BILLING_INVOICE_HEADER_STORAGE_KEY = "sim-billing-invoice-header-defaults";
-
 const SettingsContext = createContext<SettingsContextValue | null>(null);
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [timeZone, setTimeZone] = useState<TimeZoneSetting>(() => window.localStorage.getItem("sim-timezone") || "local");
-  const [billingInvoiceHeaderDefaults, setBillingInvoiceHeaderDefaults] = useState<BillingInvoiceHeader>(() => {
-    return parseBillingInvoiceHeaderDefaults(window.localStorage.getItem(BILLING_INVOICE_HEADER_STORAGE_KEY));
-  });
+  const [billingInvoiceHeaderDefaults, setBillingInvoiceHeaderDefaultsState] = useState<BillingInvoiceHeader>(DEFAULT_BILLING_INVOICE_HEADER);
+  const [isBillingInvoiceHeaderDefaultsLoading, setIsBillingInvoiceHeaderDefaultsLoading] = useState(false);
 
   useEffect(() => {
     window.localStorage.setItem("sim-timezone", timeZone);
   }, [timeZone]);
 
-  useEffect(() => {
-    window.localStorage.setItem(BILLING_INVOICE_HEADER_STORAGE_KEY, JSON.stringify(billingInvoiceHeaderDefaults));
-  }, [billingInvoiceHeaderDefaults]);
+  const refreshBillingInvoiceHeaderDefaults = useCallback(async () => {
+    setIsBillingInvoiceHeaderDefaultsLoading(true);
+    try {
+      const settings = await api.getBillingInvoiceSettings();
+      setBillingInvoiceHeaderDefaultsState(normalizeBillingInvoiceHeaderDefaults(settings.header));
+    } finally {
+      setIsBillingInvoiceHeaderDefaultsLoading(false);
+    }
+  }, []);
+
+  const setBillingInvoiceHeaderDefaults = useCallback(async (header: BillingInvoiceHeader) => {
+    const settings = await api.updateBillingInvoiceSettings({
+      header: normalizeBillingInvoiceHeaderDefaults(header)
+    });
+    setBillingInvoiceHeaderDefaultsState(normalizeBillingInvoiceHeaderDefaults(settings.header));
+  }, []);
 
   const value = useMemo<SettingsContextValue>(() => {
     const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
@@ -82,10 +95,18 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setTimeZone,
       timeZoneOptions: DEFAULT_OPTIONS,
       billingInvoiceHeaderDefaults,
-      setBillingInvoiceHeaderDefaults: (header) => setBillingInvoiceHeaderDefaults(normalizeBillingInvoiceHeaderDefaults(header)),
+      setBillingInvoiceHeaderDefaults,
+      refreshBillingInvoiceHeaderDefaults,
+      isBillingInvoiceHeaderDefaultsLoading,
       billingTermOptions: BILLING_TERM_OPTIONS
     };
-  }, [billingInvoiceHeaderDefaults, timeZone]);
+  }, [
+    billingInvoiceHeaderDefaults,
+    isBillingInvoiceHeaderDefaultsLoading,
+    refreshBillingInvoiceHeaderDefaults,
+    setBillingInvoiceHeaderDefaults,
+    timeZone
+  ]);
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
 }
@@ -96,17 +117,6 @@ export function useSettings() {
     throw new Error("useSettings must be used within SettingsProvider");
   }
   return context;
-}
-
-function parseBillingInvoiceHeaderDefaults(value: string | null): BillingInvoiceHeader {
-  if (!value) {
-    return DEFAULT_BILLING_INVOICE_HEADER;
-  }
-  try {
-    return normalizeBillingInvoiceHeaderDefaults(JSON.parse(value) as Partial<BillingInvoiceHeader>);
-  } catch {
-    return DEFAULT_BILLING_INVOICE_HEADER;
-  }
 }
 
 function normalizeBillingInvoiceHeaderDefaults(header: Partial<BillingInvoiceHeader> | null | undefined): BillingInvoiceHeader {
