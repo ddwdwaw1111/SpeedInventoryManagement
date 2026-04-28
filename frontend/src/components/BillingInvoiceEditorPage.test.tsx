@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BillingInvoiceEditorPage } from "./BillingInvoiceEditorPage";
@@ -6,11 +6,13 @@ import { renderWithProviders } from "../test/renderWithProviders";
 
 const {
   getBillingInvoice,
+  updateBillingInvoice,
   finalizeBillingInvoice,
   downloadExcelWorkbook,
   downloadBillingInvoicePdf
 } = vi.hoisted(() => ({
   getBillingInvoice: vi.fn(),
+  updateBillingInvoice: vi.fn(),
   finalizeBillingInvoice: vi.fn(),
   downloadExcelWorkbook: vi.fn(),
   downloadBillingInvoicePdf: vi.fn()
@@ -20,7 +22,7 @@ vi.mock("../lib/api", () => ({
   ApiError: class ApiError extends Error {},
   api: {
     getBillingInvoice,
-    updateBillingInvoice: vi.fn(),
+    updateBillingInvoice,
     addBillingInvoiceLine: vi.fn(),
     updateBillingInvoiceLine: vi.fn(),
     deleteBillingInvoiceLine: vi.fn(),
@@ -59,6 +61,14 @@ const invoiceFixture = {
     storageFeePerPalletPerWeekNormal: 7,
     storageFeePerPalletPerWeekWestCoastTransfer: 7,
     outboundFeePerPallet: 0
+  },
+  header: {
+    sellerName: "Speed Inventory Management",
+    subtitle: "Business services invoice",
+    remitTo: "Speed Inventory Management",
+    terms: "Net 30",
+    paymentDueDays: 30,
+    paymentInstructions: "Payment due within 30 days of invoice date. Please reference the invoice number with payment. Amounts are in USD."
   },
   subtotal: 620,
   discountTotal: 0,
@@ -131,10 +141,12 @@ const invoiceFixture = {
 describe("BillingInvoiceEditorPage", () => {
   beforeEach(() => {
     getBillingInvoice.mockReset();
+    updateBillingInvoice.mockReset();
     finalizeBillingInvoice.mockReset();
     downloadExcelWorkbook.mockReset();
     downloadBillingInvoicePdf.mockReset();
     getBillingInvoice.mockResolvedValue(invoiceFixture);
+    updateBillingInvoice.mockResolvedValue(invoiceFixture);
     finalizeBillingInvoice.mockResolvedValue({
       ...invoiceFixture,
       status: "FINALIZED"
@@ -156,7 +168,59 @@ describe("BillingInvoiceEditorPage", () => {
     expect(await screen.findByText("Storage Settlement")).toBeInTheDocument();
   });
 
-  it("exports the current invoice to Excel summary", async () => {
+  it("shows storage grace discounts in the discount column and totals", async () => {
+    getBillingInvoice.mockResolvedValue({
+      ...invoiceFixture,
+      subtotal: 133,
+      discountTotal: 0,
+      grandTotal: 133,
+      lineCount: 1,
+      lines: [
+        {
+          ...invoiceFixture.lines[0],
+          quantity: 133,
+          amount: 133,
+          details: {
+            kind: "STORAGE_CONTAINER_SUMMARY" as const,
+            warehousesTouched: ["NJ"],
+            palletsTracked: 10,
+            palletDays: 140,
+            freePalletDays: 7,
+            billablePalletDays: 133,
+            grossAmount: 140,
+            discountAmount: 7,
+            segments: [
+              {
+                startDate: "2026-03-01",
+                endDate: "2026-03-14",
+                dayEndPallets: 10,
+                billedDays: 14,
+                palletDays: 140,
+                freePalletDays: 7,
+                billablePalletDays: 133,
+                grossAmount: 140,
+                discountAmount: 7,
+                amount: 133
+              }
+            ]
+          }
+        }
+      ]
+    });
+
+    renderWithProviders(
+      <BillingInvoiceEditorPage
+        invoiceId={42}
+        currentUserRole="admin"
+        onBackToBilling={vi.fn()}
+      />
+    );
+
+    expect(await screen.findAllByText("-$7.00")).not.toHaveLength(0);
+    expect(await screen.findAllByText("$140.00")).not.toHaveLength(0);
+  });
+
+  it("exports the current invoice to Excel", async () => {
     renderWithProviders(
       <BillingInvoiceEditorPage
         invoiceId={42}
@@ -166,7 +230,7 @@ describe("BillingInvoiceEditorPage", () => {
     );
 
     fireEvent.click(await screen.findByRole("button", { name: "Export" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: /Export Excel Summary/i }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Export Excel/i }));
     fireEvent.click(await screen.findByRole("button", { name: "Download Excel" }));
 
     await waitFor(() => {
@@ -174,7 +238,7 @@ describe("BillingInvoiceEditorPage", () => {
     });
   });
 
-  it("exports the current invoice to PDF detailed", async () => {
+  it("exports the current invoice to PDF", async () => {
     renderWithProviders(
       <BillingInvoiceEditorPage
         invoiceId={42}
@@ -184,12 +248,49 @@ describe("BillingInvoiceEditorPage", () => {
     );
 
     fireEvent.click(await screen.findByRole("button", { name: "Export" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: /Download PDF Detailed/i }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Download PDF/i }));
 
     await waitFor(() => {
       expect(downloadBillingInvoicePdf).toHaveBeenCalledTimes(1);
     });
-    expect(downloadBillingInvoicePdf.mock.calls[0][0].exportMode).toBe("DETAILED");
+    expect(downloadBillingInvoicePdf.mock.calls[0][0]).not.toHaveProperty("exportMode");
+  });
+
+  it("edits the draft invoice header before finalization", async () => {
+    updateBillingInvoice.mockResolvedValue({
+      ...invoiceFixture,
+      header: {
+        ...invoiceFixture.header,
+        terms: "Net 15",
+        paymentDueDays: 15
+      }
+    });
+
+    renderWithProviders(
+      <BillingInvoiceEditorPage
+        invoiceId={42}
+        currentUserRole="admin"
+        onBackToBilling={vi.fn()}
+      />
+    );
+
+    const headerPanel = (await screen.findByText("Invoice Header")).closest("section");
+    expect(headerPanel).not.toBeNull();
+    const headerScope = within(headerPanel as HTMLElement);
+
+    fireEvent.click(headerScope.getByRole("button", { name: "Edit" }));
+    fireEvent.change(headerScope.getByLabelText("Terms"), { target: { value: "Net 15" } });
+    fireEvent.change(headerScope.getByLabelText("Payment Due Days"), { target: { value: "15" } });
+    fireEvent.click(headerScope.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(updateBillingInvoice).toHaveBeenCalledWith(42, {
+        header: expect.objectContaining({
+          terms: "Net 15",
+          paymentDueDays: 15
+        })
+      });
+    });
   });
 
   it("locks the confirm action while finalizing an invoice", async () => {

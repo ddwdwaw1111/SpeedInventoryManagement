@@ -134,7 +134,7 @@ describe("BillingPage", () => {
     fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-03-01" } });
     fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-03-31" } });
     fireEvent.click(await screen.findByRole("button", { name: "Export" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: /Export Excel Summary/i }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Export Excel/i }));
     fireEvent.click(await screen.findByRole("button", { name: "Download Excel" }));
 
     await waitFor(() => {
@@ -143,7 +143,7 @@ describe("BillingPage", () => {
     expect(downloadExcelWorkbook.mock.calls[0][0].rows).toHaveLength(2);
   });
 
-  it("exports the current billing preview to PDF summary", async () => {
+  it("exports the current billing preview to PDF", async () => {
     renderWithProviders(
       <BillingPage
         customers={[createCustomer()]}
@@ -168,12 +168,12 @@ describe("BillingPage", () => {
     fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-03-01" } });
     fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-03-31" } });
     fireEvent.click(await screen.findByRole("button", { name: "Export" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: /Download PDF Summary/i }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Download PDF/i }));
 
     await waitFor(() => {
       expect(downloadBillingPreviewPdf).toHaveBeenCalledTimes(1);
     });
-    expect(downloadBillingPreviewPdf.mock.calls[0][0].exportMode).toBe("SUMMARY");
+    expect(downloadBillingPreviewPdf.mock.calls[0][0]).not.toHaveProperty("exportMode");
   });
 
   it("creates a storage settlement invoice per customer and period", async () => {
@@ -398,6 +398,8 @@ describe("BillingPage", () => {
     await pickComboOption("Customer", "Acme");
     fireEvent.click(screen.getByRole("button", { name: "Storage Settlement" }));
     await pickComboOption("Container Type", "Normal");
+
+    expect(await screen.findAllByText("-$7.00")).not.toHaveLength(0);
 
     fireEvent.click(await screen.findByRole("button", { name: "Create Storage Invoice" }));
 

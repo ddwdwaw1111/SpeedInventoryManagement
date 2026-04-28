@@ -15,7 +15,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const sessionTTL = 7 * 24 * time.Hour
+const sessionTTL = 30 * 24 * time.Hour
 
 const (
 	RoleAdmin    = "admin"

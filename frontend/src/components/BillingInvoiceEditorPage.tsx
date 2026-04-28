@@ -19,8 +19,8 @@ import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import { formatDateTimeValue } from "../lib/dates";
 import type {
-  BillingExportMode,
   BillingInvoice,
+  BillingInvoiceHeader,
   BillingInvoiceLineData,
   AddBillingInvoiceLinePayload,
   ContainerType,
@@ -50,6 +50,15 @@ type LineFormState = {
   notes: string;
 };
 
+type HeaderFormState = {
+  sellerName: string;
+  subtitle: string;
+  remitTo: string;
+  terms: string;
+  paymentDueDays: string;
+  paymentInstructions: string;
+};
+
 const emptyLineForm: LineFormState = {
   chargeType: "MANUAL",
   description: "",
@@ -61,6 +70,15 @@ const emptyLineForm: LineFormState = {
   unitRate: "0",
   amount: "0",
   notes: ""
+};
+
+const DEFAULT_BILLING_INVOICE_HEADER: BillingInvoiceHeader = {
+  sellerName: "Speed Inventory Management",
+  subtitle: "Business services invoice",
+  remitTo: "Speed Inventory Management",
+  terms: "Net 30",
+  paymentDueDays: 30,
+  paymentInstructions: "Payment due within 30 days of invoice date. Please reference the invoice number with payment. Amounts are in USD."
 };
 
 const CHARGE_TYPE_OPTIONS = ["INBOUND", "WRAPPING", "STORAGE", "OUTBOUND", "DISCOUNT", "MANUAL"];
@@ -83,17 +101,19 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
   const [confirmAction, setConfirmAction] = useState<"finalize" | "mark-paid" | "void" | "delete" | "delete-line" | null>(null);
   const [deletingLineId, setDeletingLineId] = useState<number | null>(null);
 
-  // Notes editing
+  // Header and notes editing
+  const [isEditingHeader, setIsEditingHeader] = useState(false);
+  const [headerForm, setHeaderForm] = useState<HeaderFormState>(() => headerToForm(DEFAULT_BILLING_INVOICE_HEADER));
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [notesValue, setNotesValue] = useState("");
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [exportMenuAnchor, setExportMenuAnchor] = useState<HTMLElement | null>(null);
-  const [pendingExportMode, setPendingExportMode] = useState<BillingExportMode>("SUMMARY");
 
   const isDraft = invoice?.status === "DRAFT";
   const isAdmin = currentUserRole === "admin";
   const isBusy = busyActionKey !== null;
   const isPdfExportBusy = busyActionKey?.startsWith("export-pdf-") ?? false;
+  const isSaveHeaderBusy = busyActionKey === "save-header";
   const isSaveLineBusy = busyActionKey === "save-line";
   const isSaveNotesBusy = busyActionKey === "save-notes";
   const isFinalizeBusy = busyActionKey === "finalize";
@@ -108,6 +128,7 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
     try {
       const data = await api.getBillingInvoice(invoiceId);
       setInvoice(data);
+      setHeaderForm(headerToForm(getEditableInvoiceHeader(data)));
     } catch (error) {
       setErrorMessage(getErrorMessage(error, "Could not load invoice."));
     } finally {
@@ -216,6 +237,8 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
       try {
         const updated = await api.finalizeBillingInvoice(invoice.id);
         setInvoice(updated);
+        setIsEditingHeader(false);
+        setIsEditingNotes(false);
       } catch (error) {
         setErrorMessage(getErrorMessage(error, "Could not finalize invoice."));
       } finally {
@@ -279,6 +302,27 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
     });
   }
 
+  function handleStartEditHeader() {
+    if (!invoice) return;
+    setHeaderForm(headerToForm(getEditableInvoiceHeader(invoice)));
+    setIsEditingHeader(true);
+  }
+
+  async function handleSaveHeader(event: FormEvent) {
+    event.preventDefault();
+    if (!invoice) return;
+    await runBusyAction("save-header", async () => {
+      try {
+        const updated = await api.updateBillingInvoice(invoice.id, { header: formToHeader(headerForm) });
+        setInvoice(updated);
+        setHeaderForm(headerToForm(getEditableInvoiceHeader(updated)));
+        setIsEditingHeader(false);
+      } catch (error) {
+        setErrorMessage(getErrorMessage(error, "Could not save invoice header."));
+      }
+    });
+  }
+
   // --- Render ---
   if (isLoading) {
     return (
@@ -323,14 +367,18 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
     />
   );
 
-  const exportColumns = buildBillingInvoiceExportColumns(invoice, pendingExportMode, t);
+  const invoiceDisplayTotals = getBillingInvoiceDisplayTotals(invoice);
+  const editableHeader = getEditableInvoiceHeader(invoice);
+  const showStorageDiscountColumn = invoice.invoiceType === "STORAGE_SETTLEMENT";
+  const totalsLabelColSpan = showStorageDiscountColumn ? 10 : 9;
+  const exportColumns = buildBillingInvoiceExportColumns(invoice, t);
 
   function handleExportExcel({ title, columns }: { title: string; columns: ExcelExportColumn[] }) {
     if (!invoice) {
       return;
     }
 
-    const rows = buildBillingInvoiceExportRows(invoice, pendingExportMode, resolvedTimeZone, t);
+    const rows = buildBillingInvoiceExportRows(invoice, resolvedTimeZone, t);
 
     downloadExcelWorkbook({
       title,
@@ -339,35 +387,33 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
       columns,
       rows,
       summaryRows: [
-        ...(invoice.subtotal !== invoice.grandTotal
-          ? [{ label: t("billingInvoiceSubtotal"), value: invoice.subtotal, numberFormat: "currency" as const }]
+        ...(invoiceDisplayTotals.subtotal !== invoiceDisplayTotals.grandTotal
+          ? [{ label: t("billingInvoiceSubtotal"), value: invoiceDisplayTotals.subtotal, numberFormat: "currency" as const }]
           : []),
-        ...(invoice.discountTotal !== 0
-          ? [{ label: t("billingDiscount"), value: invoice.discountTotal, numberFormat: "currency" as const }]
+        ...(invoiceDisplayTotals.discountTotal !== 0
+          ? [{ label: t("billingDiscount"), value: invoiceDisplayTotals.discountTotal, numberFormat: "currency" as const }]
           : []),
-        { label: t("billingGrandTotal"), value: invoice.grandTotal, numberFormat: "currency", bold: true }
+        { label: t("billingGrandTotal"), value: invoiceDisplayTotals.grandTotal, numberFormat: "currency", bold: true }
       ]
     });
     setIsExportDialogOpen(false);
   }
 
-  function handleDownloadPdf(exportMode: BillingExportMode = pendingExportMode) {
+  function handleDownloadPdf() {
     if (!invoice) {
       return Promise.resolve();
     }
 
     return downloadBillingInvoicePdf({
       invoice,
-      timeZone: resolvedTimeZone,
-      exportMode
+      timeZone: resolvedTimeZone
     });
   }
 
-  async function handleDownloadPdfWithFeedback(exportMode: BillingExportMode) {
+  async function handleDownloadPdfWithFeedback() {
     setExportMenuAnchor(null);
-    setPendingExportMode(exportMode);
-    await runBusyAction(`export-pdf-${exportMode.toLowerCase()}`, () => {
-      return handleDownloadPdf(exportMode);
+    await runBusyAction("export-pdf", () => {
+      return handleDownloadPdf();
     });
   }
 
@@ -399,37 +445,18 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
           disabled={isBusy}
           onClick={() => {
             setExportMenuAnchor(null);
-            setPendingExportMode("SUMMARY");
             setIsExportDialogOpen(true);
           }}
         >
           <ListItemIcon><FileDownloadOutlinedIcon fontSize="small" /></ListItemIcon>
-          <ListItemText primary={t("billingExportExcelSummary")} secondary={t("billingExportSummaryDesc")} />
+          <ListItemText primary={t("exportExcel")} secondary={t("exportExcelDesc")} />
         </MenuItem>
         <MenuItem
           disabled={isBusy}
-          onClick={() => {
-            setExportMenuAnchor(null);
-            setPendingExportMode("DETAILED");
-            setIsExportDialogOpen(true);
-          }}
-        >
-          <ListItemIcon><FileDownloadOutlinedIcon fontSize="small" /></ListItemIcon>
-          <ListItemText primary={t("billingExportExcelDetailed")} secondary={t("billingExportDetailedDesc")} />
-        </MenuItem>
-        <MenuItem
-          disabled={isBusy}
-          onClick={() => void handleDownloadPdfWithFeedback("SUMMARY")}
+          onClick={() => void handleDownloadPdfWithFeedback()}
         >
           <ListItemIcon><PictureAsPdfOutlinedIcon fontSize="small" /></ListItemIcon>
-          <ListItemText primary={t("billingDownloadPdfSummary")} secondary={t("billingExportSummaryDesc")} />
-        </MenuItem>
-        <MenuItem
-          disabled={isBusy}
-          onClick={() => void handleDownloadPdfWithFeedback("DETAILED")}
-        >
-          <ListItemIcon><PictureAsPdfOutlinedIcon fontSize="small" /></ListItemIcon>
-          <ListItemText primary={t("billingDownloadPdfDetailed")} secondary={t("billingExportDetailedDesc")} />
+          <ListItemText primary={t("downloadPdf")} secondary={t("downloadPdfDesc")} />
         </MenuItem>
       </Menu>
       {isDraft && (
@@ -476,7 +503,7 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
       <section className="workbook-panel workbook-panel--full">
         <div className="tab-strip">
           <WorkspacePanelHeader
-            title={`${t("billingInvoiceEditor")} — ${invoice.invoiceNo}`}
+            title={`${t("billingInvoiceEditor")} - ${invoice.invoiceNo}`}
             description={t("billingInvoiceEditorDesc")}
             errorMessage={errorMessage}
             actions={headerActions}
@@ -536,21 +563,78 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
           </article>
           <article className="metric-card">
             <span>{t("billingPeriod")}</span>
-            <strong>{invoice.periodStart} — {invoice.periodEnd}</strong>
+            <strong>{invoice.periodStart} - {invoice.periodEnd}</strong>
           </article>
           <article className="metric-card">
             <span>{t("billingInvoiceSubtotal")}</span>
-            <strong>{formatMoney(invoice.subtotal)}</strong>
+            <strong>{formatMoney(invoiceDisplayTotals.subtotal)}</strong>
           </article>
           <article className="metric-card">
             <span>{t("billingDiscount")}</span>
-            <strong style={{ color: invoice.discountTotal < 0 ? "#d32f2f" : undefined }}>{formatMoney(invoice.discountTotal)}</strong>
+            <strong style={{ color: invoiceDisplayTotals.discountTotal < 0 ? "#d32f2f" : undefined }}>{formatMoney(invoiceDisplayTotals.discountTotal)}</strong>
           </article>
           <article className="metric-card">
             <span>{t("billingGrandTotal")}</span>
-            <strong style={{ fontSize: "1.125rem" }}>{formatMoney(invoice.grandTotal)}</strong>
+            <strong style={{ fontSize: "1.125rem" }}>{formatMoney(invoiceDisplayTotals.grandTotal)}</strong>
           </article>
         </div>
+
+        {/* Invoice header */}
+        <section className="workbook-panel" style={{ margin: "0 1rem 1rem" }}>
+          <WorkspacePanelHeader
+            title={t("billingInvoiceHeader")}
+            description={t("billingInvoiceHeaderDesc")}
+            actions={isDraft && !isEditingHeader ? (
+              <Button size="small" variant="outlined" startIcon={<EditOutlinedIcon fontSize="small" />} onClick={handleStartEditHeader} disabled={isBusy}>
+                {t("edit")}
+              </Button>
+            ) : undefined}
+          />
+          {isEditingHeader ? (
+            <form className="sheet-form sheet-form--compact" style={{ padding: "0 1rem 1rem", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }} onSubmit={handleSaveHeader}>
+              <label>
+                {t("billingInvoiceSellerName")}
+                <input type="text" value={headerForm.sellerName} onChange={(event) => setHeaderForm((form) => ({ ...form, sellerName: event.target.value }))} />
+              </label>
+              <label>
+                {t("billingInvoiceSubtitle")}
+                <input type="text" value={headerForm.subtitle} onChange={(event) => setHeaderForm((form) => ({ ...form, subtitle: event.target.value }))} />
+              </label>
+              <label>
+                {t("billingInvoiceRemitTo")}
+                <input type="text" value={headerForm.remitTo} onChange={(event) => setHeaderForm((form) => ({ ...form, remitTo: event.target.value }))} />
+              </label>
+              <label>
+                {t("billingInvoiceTerms")}
+                <input type="text" value={headerForm.terms} onChange={(event) => setHeaderForm((form) => ({ ...form, terms: event.target.value }))} />
+              </label>
+              <label>
+                {t("billingInvoicePaymentDueDays")}
+                <input type="number" min={1} step={1} value={headerForm.paymentDueDays} onChange={(event) => setHeaderForm((form) => ({ ...form, paymentDueDays: event.target.value }))} />
+              </label>
+              <label className="sheet-form__wide">
+                {t("billingInvoicePaymentInstructions")}
+                <textarea rows={3} value={headerForm.paymentInstructions} onChange={(event) => setHeaderForm((form) => ({ ...form, paymentInstructions: event.target.value }))} />
+              </label>
+              <div className="sheet-form__actions sheet-form__wide">
+                <Button type="submit" size="small" variant="contained" disabled={isBusy} aria-busy={isSaveHeaderBusy}>
+                  {isSaveHeaderBusy ? <InlineLoadingIndicator className="mr-1" /> : null}
+                  {t("save")}
+                </Button>
+                <Button size="small" variant="outlined" onClick={() => setIsEditingHeader(false)} disabled={isBusy}>{t("cancel")}</Button>
+              </div>
+            </form>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "0.75rem", padding: "0 1rem 1rem" }}>
+              <InvoiceHeaderValue label={t("billingInvoiceSellerName")} value={editableHeader.sellerName} />
+              <InvoiceHeaderValue label={t("billingInvoiceSubtitle")} value={editableHeader.subtitle} />
+              <InvoiceHeaderValue label={t("billingInvoiceRemitTo")} value={editableHeader.remitTo} />
+              <InvoiceHeaderValue label={t("billingInvoiceTerms")} value={editableHeader.terms} />
+              <InvoiceHeaderValue label={t("billingInvoicePaymentDueDays")} value={String(editableHeader.paymentDueDays)} />
+              <InvoiceHeaderValue label={t("billingInvoicePaymentInstructions")} value={editableHeader.paymentInstructions} wide />
+            </div>
+          )}
+        </section>
 
         {/* Invoice notes */}
         <div style={{ padding: "0 1rem 1rem" }}>
@@ -634,6 +718,7 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
                     <th>{t("billingOccurredAt")}</th>
                     <th>{t("quantity")}</th>
                     <th>{t("unitRate")}</th>
+                    {showStorageDiscountColumn && <th>{t("billingDiscount")}</th>}
                     <th>{t("amount")}</th>
                     <th>{t("billingSourceType")}</th>
                     <th>{t("notes")}</th>
@@ -659,6 +744,11 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
                       <td>{line.occurredOn || "-"}</td>
                       <td className="cell--mono">{formatNumber(line.quantity)}</td>
                       <td className="cell--mono">{formatMoney(line.unitRate)}</td>
+                      {showStorageDiscountColumn && (
+                        <td className="cell--mono" style={getInvoiceLineStorageDiscount(line) > 0 ? { color: "#d32f2f" } : undefined}>
+                          {formatDiscountMoney(getInvoiceLineStorageDiscount(line))}
+                        </td>
+                      )}
                       <td className="cell--mono" style={line.chargeType === "DISCOUNT" ? { color: "#d32f2f" } : undefined}>
                         {formatMoney(line.amount)}
                       </td>
@@ -686,20 +776,20 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
                 </tbody>
                 <tfoot>
                   <tr style={{ fontWeight: 600 }}>
-                    <td colSpan={9} style={{ textAlign: "right" }}>{t("billingInvoiceSubtotal")}</td>
-                    <td className="cell--mono">{formatMoney(invoice.subtotal)}</td>
+                    <td colSpan={totalsLabelColSpan} style={{ textAlign: "right" }}>{t("billingInvoiceSubtotal")}</td>
+                    <td className="cell--mono">{formatMoney(invoiceDisplayTotals.subtotal)}</td>
                     <td colSpan={isDraft ? 3 : 2} />
                   </tr>
-                  {invoice.discountTotal !== 0 && (
+                  {invoiceDisplayTotals.discountTotal !== 0 && (
                     <tr style={{ fontWeight: 600, color: "#d32f2f" }}>
-                      <td colSpan={9} style={{ textAlign: "right" }}>{t("billingDiscount")}</td>
-                      <td className="cell--mono">{formatMoney(invoice.discountTotal)}</td>
+                      <td colSpan={totalsLabelColSpan} style={{ textAlign: "right" }}>{t("billingDiscount")}</td>
+                      <td className="cell--mono">{formatMoney(invoiceDisplayTotals.discountTotal)}</td>
                       <td colSpan={isDraft ? 3 : 2} />
                     </tr>
                   )}
                   <tr style={{ fontWeight: 700 }}>
-                    <td colSpan={9} style={{ textAlign: "right" }}>{t("billingGrandTotal")}</td>
-                    <td className="cell--mono">{formatMoney(invoice.grandTotal)}</td>
+                    <td colSpan={totalsLabelColSpan} style={{ textAlign: "right" }}>{t("billingGrandTotal")}</td>
+                    <td className="cell--mono">{formatMoney(invoiceDisplayTotals.grandTotal)}</td>
                     <td colSpan={isDraft ? 3 : 2} />
                   </tr>
                 </tfoot>
@@ -818,6 +908,50 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
 
 // --- helpers ---
 
+function InvoiceHeaderValue({ label, value, wide = false }: { label: string; value: string; wide?: boolean }) {
+  return (
+    <div className="sheet-note sheet-note--readonly" style={{ minHeight: "4rem", gridColumn: wide ? "1 / -1" : undefined }}>
+      <strong>{label}</strong>
+      <div style={{ marginTop: "0.25rem", whiteSpace: "pre-wrap" }}>{value || "-"}</div>
+    </div>
+  );
+}
+
+function getEditableInvoiceHeader(invoice: BillingInvoice): BillingInvoiceHeader {
+  return normalizeInvoiceHeader(invoice.header);
+}
+
+function headerToForm(header: BillingInvoiceHeader): HeaderFormState {
+  return {
+    sellerName: header.sellerName,
+    subtitle: header.subtitle,
+    remitTo: header.remitTo,
+    terms: header.terms,
+    paymentDueDays: String(header.paymentDueDays),
+    paymentInstructions: header.paymentInstructions
+  };
+}
+
+function formToHeader(form: HeaderFormState): BillingInvoiceHeader {
+  return normalizeInvoiceHeader({
+    ...form,
+    paymentDueDays: Math.max(1, Math.round(toNumber(form.paymentDueDays)))
+  });
+}
+
+function normalizeInvoiceHeader(header?: Partial<BillingInvoiceHeader> | null): BillingInvoiceHeader {
+  return {
+    sellerName: header?.sellerName?.trim() || DEFAULT_BILLING_INVOICE_HEADER.sellerName,
+    subtitle: header?.subtitle?.trim() || DEFAULT_BILLING_INVOICE_HEADER.subtitle,
+    remitTo: header?.remitTo?.trim() || DEFAULT_BILLING_INVOICE_HEADER.remitTo,
+    terms: header?.terms?.trim() || DEFAULT_BILLING_INVOICE_HEADER.terms,
+    paymentDueDays: typeof header?.paymentDueDays === "number" && header.paymentDueDays > 0
+      ? Math.round(header.paymentDueDays)
+      : DEFAULT_BILLING_INVOICE_HEADER.paymentDueDays,
+    paymentInstructions: header?.paymentInstructions?.trim() || DEFAULT_BILLING_INVOICE_HEADER.paymentInstructions
+  };
+}
+
 function chargeTypeLabel(chargeType: string, t: (key: string) => string) {
   switch (chargeType) {
     case "INBOUND": return t("billingInboundCharges");
@@ -848,7 +982,6 @@ function containerTypeLabel(containerType: ContainerType, t: (key: string) => st
 
 function buildBillingInvoiceExportColumns(
   invoice: BillingInvoice,
-  exportMode: BillingExportMode,
   t: (key: string) => string
 ): ExcelExportColumn[] {
   const base: ExcelExportColumn[] = [
@@ -861,12 +994,15 @@ function buildBillingInvoiceExportColumns(
     { key: "occurredOn", label: t("billingOccurredAt") },
     { key: "quantity", label: t("quantity"), numberFormat: "number" },
     { key: "unitRate", label: t("unitRate"), numberFormat: "currency" },
+    ...(invoice.invoiceType === "STORAGE_SETTLEMENT"
+      ? [{ key: "discountAmount", label: t("billingDiscount"), numberFormat: "currency" as const }]
+      : []),
     { key: "amount", label: t("amount"), numberFormat: "currency" },
     { key: "sourceType", label: t("billingSourceType") },
     { key: "notes", label: t("notes") }
   ];
 
-  if (exportMode === "DETAILED" && invoice.invoiceType === "STORAGE_SETTLEMENT") {
+  if (invoice.invoiceType === "STORAGE_SETTLEMENT") {
     return [
       ...base,
       { key: "segmentStart", label: t("billingSegmentStart") },
@@ -874,16 +1010,16 @@ function buildBillingInvoiceExportColumns(
       { key: "dayEndPallets", label: t("billingDayEndPallets"), numberFormat: "number" },
       { key: "billedDays", label: t("billingBilledDays"), numberFormat: "number" },
       { key: "segmentPalletDays", label: t("palletDays"), numberFormat: "number" },
+      { key: "segmentDiscountAmount", label: t("billingDiscount"), numberFormat: "currency" },
       { key: "segmentAmount", label: t("billingStorageCharges"), numberFormat: "currency" }
     ];
   }
 
-  return base.filter((column) => column.key !== "rowType");
+  return base;
 }
 
 function buildBillingInvoiceExportRows(
   invoice: BillingInvoice,
-  exportMode: BillingExportMode,
   timeZone: string,
   t: (key: string) => string
 ): Array<Record<string, ExcelExportCell>> {
@@ -898,11 +1034,12 @@ function buildBillingInvoiceExportRows(
     quantity: line.quantity,
     unitRate: line.unitRate,
     amount: line.amount,
+    discountAmount: line.details?.kind === "STORAGE_CONTAINER_SUMMARY" ? -Math.abs(line.details.discountAmount ?? 0) : undefined,
     sourceType: line.sourceType === "AUTO" ? t("billingSourceTypeAuto") : t("billingSourceTypeManual"),
     notes: line.notes || "-"
   }));
 
-  if (exportMode === "DETAILED" && invoice.invoiceType === "STORAGE_SETTLEMENT") {
+  if (invoice.invoiceType === "STORAGE_SETTLEMENT") {
     for (const line of invoice.lines) {
       if (!line.details || line.details.kind !== "STORAGE_CONTAINER_SUMMARY") {
         continue;
@@ -926,6 +1063,7 @@ function buildBillingInvoiceExportRows(
           dayEndPallets: segment.dayEndPallets,
           billedDays: segment.billedDays,
           segmentPalletDays: segment.palletDays,
+          segmentDiscountAmount: -Math.abs(segment.discountAmount ?? 0),
           segmentAmount: segment.amount
         });
       }
@@ -982,8 +1120,29 @@ function toNumber(value: string) {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
+function getBillingInvoiceDisplayTotals(invoice: BillingInvoice) {
+  const storageGraceDiscount = sumStorageGraceDiscount(invoice.lines);
+  return {
+    subtotal: roundCurrency(invoice.subtotal + storageGraceDiscount),
+    discountTotal: roundCurrency(invoice.discountTotal - storageGraceDiscount),
+    grandTotal: roundCurrency(invoice.grandTotal)
+  };
+}
+
+function sumStorageGraceDiscount(lines: BillingInvoiceLineData[]) {
+  return roundCurrency(lines.reduce((total, line) => total + (line.details?.discountAmount ?? 0), 0));
+}
+
+function getInvoiceLineStorageDiscount(line: BillingInvoiceLineData) {
+  return roundCurrency(line.details?.discountAmount ?? 0);
+}
+
 function roundCurrency(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+function formatDiscountMoney(value: number) {
+  return value === 0 ? formatMoney(0) : formatMoney(-Math.abs(value));
 }
 
 function formatMoney(value: number) {

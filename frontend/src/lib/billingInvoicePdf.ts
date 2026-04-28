@@ -2,11 +2,15 @@ import type { Content, CustomTableLayout, Style, TableCell, TDocumentDefinitions
 
 import { formatDateTimeValue } from "./dates";
 import { downloadPdfDefinition } from "./pdfMakeRuntime";
-import type { BillingExportMode, BillingInvoice, BillingInvoiceLineData, BillingInvoiceType } from "./types";
+import type { BillingInvoice, BillingInvoiceLineData, BillingInvoiceType } from "./types";
 
 const BILLING_TABLE_LAYOUT_NAME = "billingInvoiceTable";
 const CJK_FONT_NAME = "NotoSansCJKSC";
 const CJK_FONT_URL_BASE = "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/OTF/SimplifiedChinese";
+const SELLER_NAME = "Speed Inventory Management";
+const PAYMENT_DUE_DAYS = 30;
+const PAYMENT_TERMS_LABEL = "Net 30";
+const PAYMENT_INSTRUCTIONS = "Payment due within 30 days of invoice date. Please reference the invoice number with payment. Amounts are in USD.";
 
 const PDF_FONTS: TFontDictionary = {
   [CJK_FONT_NAME]: {
@@ -30,7 +34,12 @@ const BILLING_TABLE_LAYOUT: CustomTableLayout = {
 
 const styles: Record<string, Style> = {
   pageTitle: {
-    fontSize: 15,
+    fontSize: 22,
+    bold: true,
+    color: "#102a43"
+  },
+  sellerName: {
+    fontSize: 12,
     bold: true,
     color: "#102a43"
   },
@@ -90,163 +99,96 @@ const styles: Record<string, Style> = {
     color: "#102a43",
     fillColor: "#EEF2F7",
     alignment: "right"
+  },
+  amountDueLabel: {
+    fontSize: 9,
+    bold: true,
+    color: "#102a43",
+    fillColor: "#dbeafe",
+    alignment: "right"
+  },
+  amountDueValue: {
+    fontSize: 11,
+    bold: true,
+    color: "#0f172a",
+    fillColor: "#dbeafe",
+    alignment: "right"
+  },
+  headerAmountDue: {
+    fontSize: 16,
+    bold: true,
+    color: "#0f172a",
+    alignment: "right"
   }
 };
 
 export type BillingInvoicePdfInput = {
   invoice: BillingInvoice;
   timeZone: string;
-  exportMode?: BillingExportMode;
 };
 
-export async function downloadBillingInvoicePdf({ invoice, timeZone, exportMode = "SUMMARY" }: BillingInvoicePdfInput) {
-  const definition = buildBillingInvoicePdfDefinition({ invoice, timeZone, exportMode });
+export async function downloadBillingInvoicePdf({ invoice, timeZone }: BillingInvoicePdfInput) {
+  const definition = buildBillingInvoicePdfDefinition({ invoice, timeZone });
   const tableLayouts = { [BILLING_TABLE_LAYOUT_NAME]: BILLING_TABLE_LAYOUT };
-  await downloadPdfDefinition(definition, tableLayouts, PDF_FONTS, buildFileName(invoice.invoiceNo, exportMode));
+  await downloadPdfDefinition(definition, tableLayouts, PDF_FONTS, buildFileName(invoice.invoiceNo));
 }
 
-export function buildBillingInvoicePdfDefinition({ invoice, timeZone, exportMode = "SUMMARY" }: BillingInvoicePdfInput): TDocumentDefinitions {
-  const storageGraceDiscount = sumStorageGraceDiscount(invoice.lines);
-  const metaRows: TableCell[][] = [
-    [
-      metaBlock("Customer", invoice.customerNameSnapshot),
-      metaBlock("Invoice No.", invoice.invoiceNo),
-      metaBlock("Billing Period", `${invoice.periodStart} to ${invoice.periodEnd}`),
-      metaBlock("Invoice Type", invoiceTypeLabel(invoice.invoiceType))
-    ],
-    [
-      metaBlock("Status", invoice.status),
-      metaBlock("Created", formatDateTimeValue(invoice.createdAt, timeZone)),
-      metaBlock("Export", exportMode === "DETAILED" ? "Detailed" : "Summary"),
-      metaBlock("Grand Total", formatMoney(invoice.grandTotal))
-    ]
-  ];
-
-  if (invoice.invoiceType === "STORAGE_SETTLEMENT") {
-    metaRows.push([
-      metaBlock("Container Type", formatContainerType(invoice.containerType)),
-      metaBlock("Warehouse", invoice.warehouseNameSnapshot || "-"),
-      metaBlock("Grace Discount", formatDiscountMoney(storageGraceDiscount)),
-      metaBlock("", ""),
-    ]);
-  }
+export function buildBillingInvoicePdfDefinition({ invoice, timeZone }: BillingInvoicePdfInput): TDocumentDefinitions {
+  const header = getInvoiceHeader(invoice);
+  const totals = getBillingInvoiceDisplayTotals(invoice);
+  const chargeSummaryRows = buildChargeSummaryRows(invoice.lines);
+  const discountSourceRows = buildDiscountSourceRows(invoice.lines);
+  const invoiceDate = getInvoiceDate(invoice);
+  const dueDate = getDueDate(invoiceDate, header.paymentDueDays);
 
   const content: Content[] = [
-    { text: "Billing Invoice", style: "pageTitle", margin: [0, 0, 0, 2] },
-    { text: `${invoice.invoiceNo} | ${invoice.customerNameSnapshot}`, style: "pageSubtitle", margin: [0, 0, 0, 8] },
+    buildInvoiceHeader(invoice, totals, invoiceDate, dueDate, timeZone, header),
     {
       table: {
-        widths: ["*", "*", "*", "*"],
-        body: metaRows
-      },
-      layout: "noBorders",
-      margin: [0, 0, 0, 8]
-    },
-    { text: "Invoice Lines", style: "sectionTitle", margin: [0, 0, 0, 4] },
-    {
-      table: {
-        headerRows: 1,
-        dontBreakRows: true,
-        widths: [24, 52, 88, 60, 66, 44, 50, 54, "*"],
+        widths: ["*", "*"],
         body: [
           [
-            headerCell("#"),
-            headerCell("Charge"),
-            headerCell("Reference"),
-            headerCell("Container"),
-            headerCell("Warehouse"),
-            headerCell("Qty"),
-            headerCell("Rate"),
-            headerCell("Amount"),
-            headerCell("Notes")
+            businessBlock("Bill To", [invoice.customerNameSnapshot]),
+            businessBlock("Remit To", [header.remitTo])
           ],
-          ...invoice.lines.map((line, index) => ([
-            bodyCell(String(index + 1), "tableCellCenter", index),
-            bodyCell(line.chargeType, "tableCellCenter", index),
-            bodyCell(line.reference || "-", "tableCell", index),
-            bodyCell(line.containerNo || "-", "tableCellCenter", index),
-            bodyCell(line.warehouse || "-", "tableCell", index),
-            bodyCell(formatNumber(line.quantity), "tableCellRight", index),
-            bodyCell(formatMoney(line.unitRate), "tableCellRight", index),
-            bodyCell(formatMoney(line.amount), "tableCellRight", index),
-            bodyCell(line.notes || "-", "tableCell", index)
-          ])),
           [
-            { text: "Subtotal", style: "tableTotalLabel", colSpan: 7 },
-            {}, {}, {}, {}, {}, {},
-            { text: formatMoney(invoice.subtotal), style: "tableTotalValue" },
-            { text: "", style: "tableCell" }
-          ],
-          ...(invoice.discountTotal !== 0 ? [[
-            { text: "Discount", style: "tableTotalLabel", colSpan: 7 },
-            {}, {}, {}, {}, {}, {},
-            { text: formatMoney(invoice.discountTotal), style: "tableTotalValue" },
-            { text: "", style: "tableCell" }
-          ]] : []),
-          [
-            { text: "Grand Total", style: "tableTotalLabel", colSpan: 7 },
-            {}, {}, {}, {}, {}, {},
-            { text: formatMoney(invoice.grandTotal), style: "tableTotalValue" },
-            { text: "", style: "tableCell" }
+            businessBlock("Billing Period", [`${invoice.periodStart} to ${invoice.periodEnd}`]),
+            businessBlock("Service Type", [invoiceTypeLabel(invoice.invoiceType)])
           ]
         ]
       },
-      layout: BILLING_TABLE_LAYOUT_NAME
-    }
+      layout: "noBorders",
+      margin: [0, 0, 0, 10]
+    },
+    { text: "Amount Summary", style: "sectionTitle", margin: [0, 0, 0, 4] },
+    buildAmountSummaryTable(totals, chargeSummaryRows, discountSourceRows)
   ];
 
-  if (exportMode === "DETAILED" && invoice.invoiceType === "STORAGE_SETTLEMENT") {
-    const segmentRows = flattenStorageSettlementSegments(invoice.lines);
-    if (segmentRows.length > 0) {
-      content.push({ text: "Storage Segment Breakdown", style: "sectionTitle", margin: [0, 8, 0, 4] });
-      content.push({
-        table: {
-          headerRows: 1,
-          dontBreakRows: true,
-          widths: [50, 62, 52, 52, 36, 34, 42, 48, 52],
-          body: [
-            [
-              headerCell("Container"),
-              headerCell("Warehouses"),
-              headerCell("Segment Start"),
-              headerCell("Segment End"),
-              headerCell("Pallets"),
-              headerCell("Days"),
-              headerCell("Pallet-Days"),
-              headerCell("Discount"),
-              headerCell("Amount")
-            ],
-            ...segmentRows.map((row, index) => ([
-              bodyCell(row.containerNo, "tableCellCenter", index),
-              bodyCell(row.warehouses, "tableCell", index),
-              bodyCell(row.startDate, "tableCellCenter", index),
-              bodyCell(row.endDate, "tableCellCenter", index),
-              bodyCell(formatNumber(row.dayEndPallets), "tableCellRight", index),
-              bodyCell(formatNumber(row.billedDays), "tableCellRight", index),
-              bodyCell(formatNumber(row.palletDays), "tableCellRight", index),
-              bodyCell(formatDiscountMoney(row.discountAmount), "tableCellRight", index),
-              bodyCell(formatMoney(row.amount), "tableCellRight", index)
-            ]))
-          ]
-        },
-        layout: BILLING_TABLE_LAYOUT_NAME
-      });
-    }
+  if (header.paymentInstructions) {
+    content.push({ text: header.paymentInstructions, style: "pageSubtitle", margin: [0, 6, 0, 0] });
   }
 
-  if (invoice.notes.trim()) {
-    content.push({ text: "Invoice Notes", style: "sectionTitle", margin: [0, 8, 0, 4] });
-    content.push({ text: invoice.notes, style: "tableCell" });
+  if (invoice.lines.length > 0) {
+    content.push({ text: "Line Item Detail", style: "sectionTitle", margin: [0, 0, 0, 4], pageBreak: "before" });
+    content.push(buildLineDetailTable(invoice.lines));
+  }
+
+  if (invoice.invoiceType === "STORAGE_SETTLEMENT") {
+    const segmentRows = flattenStorageSettlementSegments(invoice.lines);
+    if (segmentRows.length > 0) {
+      content.push({ text: "Storage Segment Detail", style: "sectionTitle", margin: [0, 0, 0, 4], pageBreak: "before" });
+      content.push(buildStorageSegmentTable(segmentRows));
+    }
   }
 
   return {
-    pageSize: "A4",
-    pageOrientation: "landscape",
-    pageMargins: [18, 14, 18, 16],
+    pageSize: "LETTER",
+    pageOrientation: "portrait",
+    pageMargins: [36, 28, 36, 28],
     info: {
       title: `Billing Invoice ${invoice.invoiceNo}`,
       subject: "Billing Invoice Export",
-      author: "Speed Inventory Management"
+      author: header.sellerName
     },
     defaultStyle: {
       font: CJK_FONT_NAME,
@@ -255,7 +197,7 @@ export function buildBillingInvoicePdfDefinition({ invoice, timeZone, exportMode
     },
     styles,
     footer: (currentPage, pageCount) => ({
-      margin: [18, 0, 18, 6],
+      margin: [36, 0, 36, 10],
       columns: [
         { text: `Billing Invoice ${invoice.invoiceNo}`, style: "footer" },
         { text: `${currentPage} / ${pageCount}`, alignment: "right", style: "footer" }
@@ -265,19 +207,244 @@ export function buildBillingInvoicePdfDefinition({ invoice, timeZone, exportMode
   };
 }
 
+function buildInvoiceHeader(invoice: BillingInvoice, totals: InvoiceDisplayTotals, invoiceDate: string, dueDate: string | null, timeZone: string, header: BillingInvoice["header"]): Content {
+  return {
+    columns: [
+      {
+        width: "*",
+        stack: [
+          { text: header.sellerName, style: "sellerName", margin: [0, 0, 0, 4] },
+          { text: header.subtitle, style: "pageSubtitle" }
+        ]
+      },
+      {
+        width: 210,
+        stack: [
+          { text: "INVOICE", style: "pageTitle", alignment: "right", margin: [0, 0, 0, 6] },
+          {
+            table: {
+              widths: [86, "*"],
+              body: [
+                invoiceHeaderRow("Invoice No.", invoice.invoiceNo),
+                invoiceHeaderRow("Invoice Date", formatInvoiceDate(invoiceDate, timeZone)),
+                invoiceHeaderRow("Due Date", dueDate ? formatInvoiceDate(dueDate, timeZone) : "-"),
+                invoiceHeaderRow("Terms", header.terms)
+              ]
+            },
+            layout: "noBorders",
+            margin: [0, 0, 0, 6]
+          },
+          { text: "Amount Due", style: "metaLabel", alignment: "right" },
+          { text: formatMoney(totals.grandTotal), style: "headerAmountDue", margin: [0, 1, 0, 0] }
+        ]
+      }
+    ],
+    columnGap: 24,
+    margin: [0, 0, 0, 14]
+  };
+}
+
+function buildAmountSummaryTable(
+  totals: InvoiceDisplayTotals,
+  chargeRows: ChargeSummaryRow[],
+  discountRows: DiscountSourceRow[]
+): Content {
+  const body: TableCell[][] = [
+    [
+      headerCell("Summary Item"),
+      headerCell("Basis / Source"),
+      headerCell("Gross Charges"),
+      headerCell("Discounts"),
+      headerCell("Net Amount")
+    ],
+    ...chargeRows.map((row, index): TableCell[] => ([
+      bodyCell(row.chargeType, "tableCell", index),
+      bodyCell("Charge summary", "tableCell", index),
+      bodyCell(formatMoney(row.grossAmount), "tableCellRight", index),
+      bodyCell(formatDiscountAmount(row.discountAmount), "tableCellRight", index),
+      bodyCell(formatMoney(row.netAmount), "tableCellRight", index)
+    ])),
+    ...discountRows.map((row, index): TableCell[] => ([
+      bodyCell("Discount source", "tableCell", index + chargeRows.length),
+      bodyCell(`${row.source} | ${row.reference} | ${row.basis}`, "tableCell", index + chargeRows.length),
+      bodyCell("-", "tableCellRight", index + chargeRows.length),
+      bodyCell(formatDiscountAmount(row.amount), "tableCellRight", index + chargeRows.length),
+      bodyCell("-", "tableCellRight", index + chargeRows.length)
+    ])),
+    [
+      { text: "Subtotal before discounts", style: "tableTotalLabel" },
+      { text: "", style: "tableTotalValue" },
+      { text: formatMoney(totals.subtotal), style: "tableTotalValue" },
+      { text: "", style: "tableTotalValue" },
+      { text: "", style: "tableTotalValue" }
+    ],
+    [
+      { text: "Discounts", style: "tableTotalLabel" },
+      { text: "", style: "tableTotalValue" },
+      { text: "", style: "tableTotalValue" },
+      { text: formatDiscountAmount(totals.discountTotal), style: "tableTotalValue" },
+      { text: "", style: "tableTotalValue" }
+    ],
+    [
+      { text: "Amount Due", style: "amountDueLabel" },
+      { text: "", style: "amountDueValue" },
+      { text: "", style: "amountDueValue" },
+      { text: "", style: "amountDueValue" },
+      { text: formatMoney(totals.grandTotal), style: "amountDueValue" }
+    ]
+  ];
+
+  return {
+    table: {
+      headerRows: 1,
+      dontBreakRows: true,
+      widths: [118, "*", 82, 82, 82],
+      body
+    },
+    layout: BILLING_TABLE_LAYOUT_NAME
+  };
+}
+
+function buildLineDetailTable(lines: BillingInvoiceLineData[]): Content {
+  const rows = buildLineDetailRows(lines);
+
+  return {
+    table: {
+      headerRows: 1,
+      dontBreakRows: true,
+      widths: [18, 45, "*", 55, 42, 58, 44, 52, 76],
+      body: [
+        [
+          headerCell("#"),
+          headerCell("Charge"),
+          headerCell("Description"),
+          headerCell("Reference"),
+          headerCell("Service Date"),
+          headerCell("Qty / Basis"),
+          headerCell("Unit Rate"),
+          headerCell("Amount"),
+          headerCell("Discount Source")
+        ],
+        ...rows.map((row, index) => ([
+          bodyCell(row.lineNo, "tableCellCenter", index),
+          bodyCell(row.charge, "tableCellCenter", index),
+          bodyCell(row.description, "tableCell", index),
+          bodyCell(row.reference, "tableCell", index),
+          bodyCell(row.date, "tableCellCenter", index),
+          bodyCell(row.quantity, "tableCellRight", index),
+          bodyCell(row.rate, "tableCellRight", index),
+          bodyCell(formatMoney(row.amount), "tableCellRight", index),
+          bodyCell(row.discountSource, "tableCell", index)
+        ]))
+      ]
+    },
+    layout: BILLING_TABLE_LAYOUT_NAME
+  };
+}
+
+function buildStorageSegmentTable(segmentRows: StorageSegmentRow[]): Content {
+  const rows = buildStorageSegmentDetailRows(segmentRows);
+
+  return {
+    table: {
+      headerRows: 1,
+      dontBreakRows: true,
+      widths: [20, 58, 58, 42, 36, "*", 55, 78],
+      body: [
+        [
+          headerCell("#"),
+          headerCell("Start"),
+          headerCell("End"),
+          headerCell("Pallets"),
+          headerCell("Days"),
+          headerCell("Basis"),
+          headerCell("Amount"),
+          headerCell("Discount Source")
+        ],
+        ...rows.map((row, index) => ([
+          bodyCell(row.lineNo, "tableCellCenter", index),
+          bodyCell(row.startDate, "tableCellCenter", index),
+          bodyCell(row.endDate, "tableCellCenter", index),
+          bodyCell(row.pallets, "tableCellRight", index),
+          bodyCell(row.days, "tableCellRight", index),
+          bodyCell(row.basis, "tableCellRight", index),
+          bodyCell(formatMoney(row.amount), "tableCellRight", index),
+          bodyCell(row.discountSource, "tableCell", index)
+        ]))
+      ]
+    },
+    layout: BILLING_TABLE_LAYOUT_NAME
+  };
+}
+
+type InvoiceDisplayTotals = {
+  subtotal: number;
+  discountTotal: number;
+  grandTotal: number;
+};
+
+type ChargeSummaryRow = {
+  chargeType: string;
+  grossAmount: number;
+  discountAmount: number;
+  netAmount: number;
+};
+
+type DiscountSourceRow = {
+  source: string;
+  reference: string;
+  basis: string;
+  amount: number;
+};
+
+type LineDetailRow = {
+  lineNo: string;
+  charge: string;
+  description: string;
+  reference: string;
+  date: string;
+  quantity: string;
+  rate: string;
+  amount: number;
+  discountSource: string;
+};
+
+type StorageSegmentRow = {
+  startDate: string;
+  endDate: string;
+  dayEndPallets: number;
+  billedDays: number;
+  palletDays: number;
+  freePalletDays: number;
+  grossAmount: number;
+  discountAmount: number;
+  amount: number;
+};
+
+type StorageSegmentDetailRow = {
+  lineNo: string;
+  startDate: string;
+  endDate: string;
+  pallets: string;
+  days: string;
+  basis: string;
+  amount: number;
+  discountSource: string;
+};
+
 function flattenStorageSettlementSegments(lines: BillingInvoiceLineData[]) {
   return lines.flatMap((line) => {
     if (!line.details || line.details.kind !== "STORAGE_CONTAINER_SUMMARY") {
       return [];
     }
     return line.details.segments.map((segment) => ({
-      containerNo: line.containerNo || "-",
-      warehouses: line.details?.warehousesTouched.join(", ") || line.warehouse || "-",
       startDate: segment.startDate,
       endDate: segment.endDate,
       dayEndPallets: segment.dayEndPallets,
       billedDays: segment.billedDays,
       palletDays: segment.palletDays,
+      freePalletDays: segment.freePalletDays ?? 0,
+      grossAmount: segment.grossAmount ?? roundCurrency(segment.amount + (segment.discountAmount ?? 0)),
       discountAmount: segment.discountAmount ?? 0,
       amount: segment.amount
     }));
@@ -286,6 +453,403 @@ function flattenStorageSettlementSegments(lines: BillingInvoiceLineData[]) {
 
 function sumStorageGraceDiscount(lines: BillingInvoiceLineData[]) {
   return lines.reduce((total, line) => total + (line.details?.discountAmount ?? 0), 0);
+}
+
+function getBillingInvoiceDisplayTotals(invoice: BillingInvoice): InvoiceDisplayTotals {
+  if (invoice.lines.length === 0) {
+    const discountTotal = invoice.discountTotal === 0 ? 0 : -Math.abs(invoice.discountTotal);
+    return {
+      subtotal: roundCurrency(invoice.subtotal),
+      discountTotal: roundCurrency(discountTotal),
+      grandTotal: roundCurrency(invoice.subtotal + discountTotal)
+    };
+  }
+
+  const storageGraceDiscount = roundCurrency(sumStorageGraceDiscount(invoice.lines));
+  const lineDiscountTotal = roundCurrency(invoice.lines
+    .filter((line) => line.chargeType === "DISCOUNT")
+    .reduce((total, line) => total + Math.abs(line.amount), 0));
+  const subtotal = roundCurrency(invoice.lines
+    .filter((line) => line.chargeType !== "DISCOUNT")
+    .reduce((total, line) => total + line.amount + (line.details?.discountAmount ?? 0), 0));
+  const discountTotal = roundCurrency(-Math.abs(storageGraceDiscount + lineDiscountTotal));
+
+  return {
+    subtotal,
+    discountTotal,
+    grandTotal: roundCurrency(subtotal + discountTotal)
+  };
+}
+
+function buildChargeSummaryRows(lines: BillingInvoiceLineData[]): ChargeSummaryRow[] {
+  const rows = new Map<string, ChargeSummaryRow>();
+  for (const line of lines) {
+    if (line.chargeType === "DISCOUNT") {
+      continue;
+    }
+    const chargeType = chargeTypeLabel(line.chargeType);
+    const existing = rows.get(chargeType) ?? {
+      chargeType,
+      grossAmount: 0,
+      discountAmount: 0,
+      netAmount: 0
+    };
+    const discountAmount = line.details?.discountAmount ?? 0;
+    existing.grossAmount = roundCurrency(existing.grossAmount + line.amount + discountAmount);
+    existing.discountAmount = roundCurrency(existing.discountAmount + discountAmount);
+    existing.netAmount = roundCurrency(existing.netAmount + line.amount);
+    rows.set(chargeType, existing);
+  }
+
+  return [...rows.values()];
+}
+
+function buildDiscountSourceRows(lines: BillingInvoiceLineData[]): DiscountSourceRow[] {
+  return lines.flatMap((line, index) => {
+    const rows: DiscountSourceRow[] = [];
+    if (line.details?.kind === "STORAGE_CONTAINER_SUMMARY" && (line.details.discountAmount ?? 0) > 0) {
+      rows.push({
+        source: "Storage grace period",
+        reference: line.reference || "-",
+        basis: `${formatNumber(line.details.freePalletDays ?? 0)} free pallet-days`,
+        amount: -Math.abs(line.details.discountAmount ?? 0)
+      });
+    }
+
+    if (line.chargeType === "DISCOUNT" && line.amount !== 0) {
+      rows.push({
+        source: line.sourceType === "AUTO" ? "Automatic discount line" : "Manual discount line",
+        reference: line.reference || `Line ${index + 1}`,
+        basis: line.description || "Invoice discount",
+        amount: -Math.abs(line.amount)
+      });
+    }
+
+    return rows;
+  });
+}
+
+function buildLineDetailRows(lines: BillingInvoiceLineData[]) {
+  const rows: LineDetailRow[] = [];
+
+  lines.forEach((line, index) => {
+    if (line.chargeType === "DISCOUNT") {
+      rows.push({
+        lineNo: String(index + 1),
+        charge: "Discount",
+        description: line.description || "Invoice discount",
+        reference: line.reference || "-",
+        date: line.occurredOn || "-",
+        quantity: formatQuantityWithUnit(line.quantity, "discount"),
+        rate: formatMoney(line.unitRate),
+        amount: roundCurrency(line.amount),
+        discountSource: discountLineSourceLabel(line)
+      });
+      return;
+    }
+
+    const embeddedDiscount = getEmbeddedDiscountAmount(line);
+    rows.push({
+      lineNo: String(index + 1),
+      charge: chargeTypeDetailLabel(line.chargeType),
+      description: line.description || "-",
+      reference: line.reference || "-",
+      date: line.occurredOn || "-",
+      quantity: getLineQuantity(line),
+      rate: formatMoney(line.unitRate),
+      amount: roundCurrency(line.amount + embeddedDiscount),
+      discountSource: "-"
+    });
+
+    if (embeddedDiscount > 0) {
+      rows.push({
+        lineNo: "",
+        charge: "Discount",
+        description: embeddedDiscountDescription(line),
+        reference: line.reference || "-",
+        date: line.occurredOn || "-",
+        quantity: embeddedDiscountQuantity(line),
+        rate: "-",
+        amount: -Math.abs(embeddedDiscount),
+        discountSource: embeddedDiscountSource(line)
+      });
+    }
+  });
+
+  return rows;
+}
+
+function buildStorageSegmentDetailRows(segmentRows: StorageSegmentRow[]) {
+  const rows: StorageSegmentDetailRow[] = [];
+
+  aggregateStorageSegmentRows(segmentRows).forEach((segment, index) => {
+    rows.push({
+      lineNo: String(index + 1),
+      startDate: segment.startDate,
+      endDate: segment.endDate,
+      pallets: formatNumber(segment.dayEndPallets),
+      days: formatNumber(segment.billedDays),
+      basis: `${formatNumber(segment.palletDays)} pallet-days`,
+      amount: roundCurrency(segment.grossAmount),
+      discountSource: "-"
+    });
+
+    if (segment.discountAmount > 0) {
+      rows.push({
+        lineNo: "",
+        startDate: segment.startDate,
+        endDate: segment.endDate,
+        pallets: "-",
+        days: "-",
+        basis: `${formatNumber(segment.freePalletDays)} free pallet-days`,
+        amount: -Math.abs(segment.discountAmount),
+        discountSource: "Storage grace period"
+      });
+    }
+  });
+
+  return rows;
+}
+
+type DailyStorageSegmentBucket = {
+  date: string;
+  dayEndPallets: number;
+  dayEndFreePallets: number;
+  grossAmount: number;
+  discountAmount: number;
+};
+
+type ActiveStorageSegmentBucket = DailyStorageSegmentBucket & {
+  startDate: string;
+  endDate: string;
+  billedDays: number;
+};
+
+function aggregateStorageSegmentRows(segmentRows: StorageSegmentRow[]): StorageSegmentRow[] {
+  const dailyBuckets = new Map<string, DailyStorageSegmentBucket>();
+
+  for (const segment of segmentRows) {
+    const segmentDays = enumerateIsoDays(segment.startDate, segment.endDate);
+    if (segmentDays.length === 0) {
+      continue;
+    }
+
+    const grossAmountPerDay = segment.grossAmount / segmentDays.length;
+    const discountAmountPerDay = segment.discountAmount / segmentDays.length;
+    const freePalletsPerDay = segment.freePalletDays / segmentDays.length;
+
+    for (const day of segmentDays) {
+      const bucket = dailyBuckets.get(day) ?? {
+        date: day,
+        dayEndPallets: 0,
+        dayEndFreePallets: 0,
+        grossAmount: 0,
+        discountAmount: 0
+      };
+      bucket.dayEndPallets += segment.dayEndPallets;
+      bucket.dayEndFreePallets += freePalletsPerDay;
+      bucket.grossAmount += grossAmountPerDay;
+      bucket.discountAmount += discountAmountPerDay;
+      dailyBuckets.set(day, bucket);
+    }
+  }
+
+  const aggregatedRows: StorageSegmentRow[] = [];
+  let activeBucket: ActiveStorageSegmentBucket | null = null;
+
+  for (const day of [...dailyBuckets.keys()].sort()) {
+    const bucket = dailyBuckets.get(day)!;
+    if (!activeBucket) {
+      activeBucket = startAggregatedStorageSegment(bucket);
+      continue;
+    }
+
+    if (isNextIsoDay(activeBucket.endDate, day) && isSameDailyStorageSegmentBucket(activeBucket, bucket)) {
+      activeBucket.endDate = day;
+      activeBucket.billedDays += 1;
+      continue;
+    }
+
+    aggregatedRows.push(finalizeAggregatedStorageSegment(activeBucket));
+    activeBucket = startAggregatedStorageSegment(bucket);
+  }
+
+  if (activeBucket) {
+    aggregatedRows.push(finalizeAggregatedStorageSegment(activeBucket));
+  }
+
+  return aggregatedRows;
+}
+
+function startAggregatedStorageSegment(bucket: DailyStorageSegmentBucket): ActiveStorageSegmentBucket {
+  return {
+    ...bucket,
+    startDate: bucket.date,
+    endDate: bucket.date,
+    billedDays: 1
+  };
+}
+
+function finalizeAggregatedStorageSegment(bucket: ActiveStorageSegmentBucket): StorageSegmentRow {
+  const palletDays = bucket.dayEndPallets * bucket.billedDays;
+  const freePalletDays = bucket.dayEndFreePallets * bucket.billedDays;
+  const grossAmount = roundCurrency(bucket.grossAmount * bucket.billedDays);
+  const discountAmount = roundCurrency(bucket.discountAmount * bucket.billedDays);
+  return {
+    startDate: bucket.startDate,
+    endDate: bucket.endDate,
+    dayEndPallets: bucket.dayEndPallets,
+    billedDays: bucket.billedDays,
+    palletDays,
+    freePalletDays,
+    grossAmount,
+    discountAmount,
+    amount: roundCurrency(grossAmount - discountAmount)
+  };
+}
+
+function isSameDailyStorageSegmentBucket(left: DailyStorageSegmentBucket, right: DailyStorageSegmentBucket) {
+  return numbersClose(left.dayEndPallets, right.dayEndPallets)
+    && numbersClose(left.dayEndFreePallets, right.dayEndFreePallets)
+    && numbersClose(left.grossAmount, right.grossAmount)
+    && numbersClose(left.discountAmount, right.discountAmount);
+}
+
+function enumerateIsoDays(startDate: string, endDate: string) {
+  const start = parseIsoDate(startDate);
+  const end = parseIsoDate(endDate);
+  if (!start || !end || start.getTime() > end.getTime()) {
+    return [];
+  }
+
+  const days: string[] = [];
+  for (let day = start; day.getTime() <= end.getTime(); day = shiftUtcDay(day, 1)) {
+    days.push(formatIsoDate(day));
+  }
+  return days;
+}
+
+function parseIsoDate(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) {
+    return null;
+  }
+  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+}
+
+function shiftUtcDay(value: Date, days: number) {
+  const next = new Date(value.getTime());
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function isNextIsoDay(currentDate: string, nextDate: string) {
+  const current = parseIsoDate(currentDate);
+  return current ? formatIsoDate(shiftUtcDay(current, 1)) === nextDate : false;
+}
+
+function formatIsoDate(value: Date) {
+  return value.toISOString().slice(0, 10);
+}
+
+function numbersClose(left: number, right: number) {
+  return Math.abs(left - right) < 0.0001;
+}
+
+function getEmbeddedDiscountAmount(line: BillingInvoiceLineData) {
+  return Math.max(0, roundCurrency(line.details?.discountAmount ?? 0));
+}
+
+function getLineQuantity(line: BillingInvoiceLineData) {
+  if (line.details?.kind === "STORAGE_CONTAINER_SUMMARY") {
+    return formatQuantityWithUnit(line.details.palletDays, "pallet-days");
+  }
+  return formatQuantityWithUnit(line.quantity, quantityUnitForChargeType(line.chargeType));
+}
+
+function embeddedDiscountDescription(line: BillingInvoiceLineData) {
+  if (line.details?.kind === "STORAGE_CONTAINER_SUMMARY") {
+    return "Storage grace period";
+  }
+  return "Line discount";
+}
+
+function embeddedDiscountQuantity(line: BillingInvoiceLineData) {
+  if (line.details?.kind === "STORAGE_CONTAINER_SUMMARY" && (line.details.discountAmount ?? 0) > 0) {
+    return `${formatNumber(line.details.freePalletDays ?? 0)} free pallet-days`;
+  }
+  return "Discount";
+}
+
+function embeddedDiscountSource(line: BillingInvoiceLineData) {
+  if (line.details?.kind === "STORAGE_CONTAINER_SUMMARY") {
+    return "Storage grace period";
+  }
+  return "Line-level discount";
+}
+
+function discountLineSourceLabel(line: BillingInvoiceLineData) {
+  return line.sourceType === "AUTO" ? "Automatic discount line" : "Manual discount line";
+}
+
+function quantityUnitForChargeType(chargeType: string) {
+  switch (chargeType) {
+    case "INBOUND":
+      return "container";
+    case "WRAPPING":
+    case "OUTBOUND":
+      return "pallets";
+    case "STORAGE":
+      return "pallet-days";
+    default:
+      return "units";
+  }
+}
+
+function formatQuantityWithUnit(value: number, unit: string) {
+  const formatted = formatNumber(value);
+  if (unit === "discount") {
+    return value === 1 ? "1 discount" : `${formatted} discounts`;
+  }
+  if (unit === "pallet-days") {
+    return `${formatted} pallet-days`;
+  }
+  const singular = Math.abs(value) === 1;
+  return `${formatted} ${singular ? unit.replace(/s$/, "") : unit}`;
+}
+
+function chargeTypeLabel(chargeType: string) {
+  switch (chargeType) {
+    case "INBOUND":
+      return "Inbound Charges";
+    case "WRAPPING":
+      return "Wrapping Charges";
+    case "STORAGE":
+      return "Storage Charges";
+    case "OUTBOUND":
+      return "Outbound Charges";
+    case "MANUAL":
+      return "Manual Charges";
+    default:
+      return chargeType;
+  }
+}
+
+function chargeTypeDetailLabel(chargeType: string) {
+  switch (chargeType) {
+    case "INBOUND":
+      return "Inbound";
+    case "WRAPPING":
+      return "Wrapping";
+    case "STORAGE":
+      return "Storage";
+    case "OUTBOUND":
+      return "Outbound";
+    case "MANUAL":
+      return "Manual";
+    default:
+      return chargeType;
+  }
 }
 
 function headerCell(text: string): TableCell {
@@ -301,22 +865,70 @@ function bodyCell(text: string, styleName: keyof typeof styles = "tableCell", ro
   };
 }
 
-function metaBlock(label: string, value: string): TableCell {
-  return {
+function businessBlock(label: string, lines: string[]): TableCell {
+  const stack: Content[] = [
+    { text: label, style: "metaLabel" },
+    ...lines.map((line, index): Content => ({
+      text: line || "-",
+      style: "metaValue",
+      margin: [0, index === 0 ? 2 : 1, 0, 0] as [number, number, number, number]
+    }))
+  ];
+  const cell: Content = {
     stack: [
-      { text: label, style: "metaLabel" },
-      { text: value, style: "metaValue", margin: [0, 2, 0, 0] }
+      ...stack
     ],
-    margin: [0, 0, 10, 0]
+    margin: [0, 0, 14, 6]
   };
+  return cell as TableCell;
 }
 
-function buildFileName(invoiceNo: string, exportMode: BillingExportMode) {
-  return `${invoiceNo}-${exportMode.toLowerCase()}.pdf`;
+function invoiceHeaderRow(label: string, value: string): TableCell[] {
+  return [
+    { text: label, style: "metaLabel", alignment: "right", margin: [0, 0, 8, 2] },
+    { text: value, style: "metaValue", alignment: "right", margin: [0, 0, 0, 2] }
+  ];
+}
+
+function buildFileName(invoiceNo: string) {
+  return `${invoiceNo}.pdf`;
 }
 
 function invoiceTypeLabel(invoiceType: BillingInvoiceType) {
   return invoiceType === "STORAGE_SETTLEMENT" ? "Storage Settlement" : "Mixed";
+}
+
+function roundCurrency(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function getInvoiceDate(invoice: BillingInvoice) {
+  return invoice.finalizedAt || invoice.createdAt;
+}
+
+function getDueDate(invoiceDate: string, paymentDueDays: number) {
+  const parsed = new Date(invoiceDate);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  parsed.setDate(parsed.getDate() + paymentDueDays);
+  return parsed.toISOString();
+}
+
+function getInvoiceHeader(invoice: BillingInvoice): BillingInvoice["header"] {
+  const header = invoice.header as Partial<BillingInvoice["header"]> | undefined;
+  return {
+    sellerName: header?.sellerName?.trim() || SELLER_NAME,
+    subtitle: header?.subtitle?.trim() || "Business services invoice",
+    remitTo: header?.remitTo?.trim() || SELLER_NAME,
+    terms: header?.terms?.trim() || PAYMENT_TERMS_LABEL,
+    paymentDueDays: typeof header?.paymentDueDays === "number" && header.paymentDueDays > 0 ? header.paymentDueDays : PAYMENT_DUE_DAYS,
+    paymentInstructions: header?.paymentInstructions?.trim() || PAYMENT_INSTRUCTIONS
+  };
+}
+
+function formatInvoiceDate(value: string, timeZone: string) {
+  return formatDateTimeValue(value, timeZone, { dateStyle: "medium" });
 }
 
 function formatMoney(value: number) {
@@ -328,20 +940,13 @@ function formatMoney(value: number) {
   }).format(value);
 }
 
+function formatDiscountAmount(value: number) {
+  return value === 0 ? formatMoney(0) : formatMoney(-Math.abs(value));
+}
+
 function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US", {
     minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
     maximumFractionDigits: 2
   }).format(value);
-}
-
-function formatDiscountMoney(value: number) {
-  return `-${formatMoney(Math.abs(value))}`;
-}
-
-function formatContainerType(containerType: BillingInvoice["containerType"]) {
-  if (!containerType) {
-    return "-";
-  }
-  return containerType === "WEST_COAST_TRANSFER" ? "Transfer" : "Normal";
 }

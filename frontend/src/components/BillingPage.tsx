@@ -54,7 +54,6 @@ import { downloadExcelWorkbook, type ExcelExportCell, type ExcelExportColumn } f
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type {
-  BillingExportMode,
   BillingInvoice,
   BillingInvoiceStatus,
   BillingInvoiceType,
@@ -135,7 +134,6 @@ export function BillingPage({
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [exportMenuAnchor, setExportMenuAnchor] = useState<HTMLElement | null>(null);
   const [containerNoFilter, setContainerNoFilter] = useState("");
-  const [pendingExportMode, setPendingExportMode] = useState<BillingExportMode>("SUMMARY");
   const [activeTab, setActiveTab] = useState<BillingPageTab>("CREATE");
   const [isRateDrawerOpen, setIsRateDrawerOpen] = useState(false);
   const [busyActionKey, setBusyActionKey] = useState<string | null>(null);
@@ -358,6 +356,14 @@ export function BillingPage({
     () => storageSettlementRows.reduce((sum, row) => sum + row.amount, 0),
     [storageSettlementRows]
   );
+  const storageSettlementDiscountTotal = useMemo(
+    () => storageSettlementRows.reduce((sum, row) => sum + row.discountAmount, 0),
+    [storageSettlementRows]
+  );
+  const storageSettlementPalletDays = useMemo(
+    () => storageSettlementRows.reduce((sum, row) => sum + row.palletDays, 0),
+    [storageSettlementRows]
+  );
   const storageSettlementTrackedPallets = useMemo(
     () => storageSettlementRows.reduce((sum, row) => sum + row.palletsTracked, 0),
     [storageSettlementRows]
@@ -414,26 +420,24 @@ export function BillingPage({
       billingPreview.customerName,
       billingPreview.startDate,
       billingPreview.endDate,
-      pendingExportMode,
       warehouseLocationId === "all" ? undefined : selectedWarehouse?.name ?? t("billingAllWarehouses"),
       selectedContainerType !== "all" ? containerTypeLabel(selectedContainerType, t) : undefined
     ),
-    [billingPreview.customerName, billingPreview.endDate, billingPreview.startDate, pendingExportMode, selectedContainerType, selectedWarehouse?.name, t, workspaceMode]
+    [billingPreview.customerName, billingPreview.endDate, billingPreview.startDate, selectedContainerType, selectedWarehouse?.name, t, workspaceMode]
   );
   const exportColumns = useMemo<ExcelExportColumn[]>(
-    () => buildBillingPageExportColumns(workspaceMode, pendingExportMode, t),
-    [pendingExportMode, t, workspaceMode]
+    () => buildBillingPageExportColumns(workspaceMode, t),
+    [t, workspaceMode]
   );
   const exportRows = useMemo<Array<Record<string, ExcelExportCell>>>(
     () => buildBillingPageExportRows({
       workspaceMode,
-      exportMode: pendingExportMode,
       invoiceLines: activeInvoiceLines,
       storageRows: storageSettlementRows,
       timeZone: resolvedTimeZone,
       t
     }),
-    [activeInvoiceLines, pendingExportMode, resolvedTimeZone, storageSettlementRows, t, workspaceMode]
+    [activeInvoiceLines, resolvedTimeZone, storageSettlementRows, t, workspaceMode]
   );
 
   function handleExportExcel({ title, columns }: { title: string; columns: ExcelExportColumn[] }) {
@@ -447,12 +451,18 @@ export function BillingPage({
         ? [
             { label: t("billingStorageContainers"), value: storageSettlementRows.length, numberFormat: "number" },
             { label: t("billingTrackedPallets"), value: storageSettlementTrackedPallets, numberFormat: "number" },
-            { label: t("palletDays"), value: billingPreview.summary.palletDays, numberFormat: "number" },
-            { label: t("billingStorageCharges"), value: billingPreview.summary.storageAmount, numberFormat: "currency", bold: true }
+            { label: t("palletDays"), value: storageSettlementPalletDays, numberFormat: "number" },
+            ...(storageSettlementDiscountTotal > 0
+              ? [{ label: t("billingDiscount"), value: -storageSettlementDiscountTotal, numberFormat: "currency" as const }]
+              : []),
+            { label: t("billingStorageCharges"), value: storageSettlementTotal, numberFormat: "currency", bold: true }
           ]
         : [
             { label: t("billingInboundCharges"), value: billingPreview.summary.inboundAmount, numberFormat: "currency" },
             { label: t("billingWrappingCharges"), value: billingPreview.summary.wrappingAmount, numberFormat: "currency" },
+            ...(billingPreview.summary.storageDiscountAmount > 0
+              ? [{ label: t("billingDiscount"), value: -billingPreview.summary.storageDiscountAmount, numberFormat: "currency" as const }]
+              : []),
             { label: t("billingStorageCharges"), value: billingPreview.summary.storageAmount, numberFormat: "currency" },
             { label: t("billingOutboundCharges"), value: billingPreview.summary.outboundAmount, numberFormat: "currency" },
             { label: t("billingGrandTotal"), value: billingPreview.summary.grandTotal, numberFormat: "currency", bold: true }
@@ -461,12 +471,11 @@ export function BillingPage({
     setIsExportDialogOpen(false);
   }
 
-  function handleDownloadPdf(exportMode: BillingExportMode = pendingExportMode) {
+  function handleDownloadPdf() {
     return downloadBillingPreviewPdf({
       preview: billingPreview,
       rates,
       timeZone: resolvedTimeZone,
-      exportMode,
       workspaceMode,
       storageRows: storageSettlementRows
     });
@@ -483,11 +492,10 @@ export function BillingPage({
     });
   }
 
-  async function handleDownloadPdfWithFeedback(exportMode: BillingExportMode) {
+  async function handleDownloadPdfWithFeedback() {
     setExportMenuAnchor(null);
-    setPendingExportMode(exportMode);
-    await runBusyAction(`preview-pdf-${exportMode.toLowerCase()}`, () => {
-      return handleDownloadPdf(exportMode);
+    await runBusyAction("preview-pdf", () => {
+      return handleDownloadPdf();
     });
   }
 
@@ -515,37 +523,18 @@ export function BillingPage({
           disabled={disableHeaderActions}
           onClick={() => {
             setExportMenuAnchor(null);
-            setPendingExportMode("SUMMARY");
             setIsExportDialogOpen(true);
           }}
         >
           <ListItemIcon><FileDownloadOutlinedIcon fontSize="small" /></ListItemIcon>
-          <ListItemText primary={t("billingExportExcelSummary")} secondary={t("billingExportSummaryDesc")} />
+          <ListItemText primary={t("exportExcel")} secondary={t("exportExcelDesc")} />
         </MenuItem>
         <MenuItem
           disabled={disableHeaderActions}
-          onClick={() => {
-            setExportMenuAnchor(null);
-            setPendingExportMode("DETAILED");
-            setIsExportDialogOpen(true);
-          }}
-        >
-          <ListItemIcon><FileDownloadOutlinedIcon fontSize="small" /></ListItemIcon>
-          <ListItemText primary={t("billingExportExcelDetailed")} secondary={t("billingExportDetailedDesc")} />
-        </MenuItem>
-        <MenuItem
-          disabled={disableHeaderActions}
-          onClick={() => void handleDownloadPdfWithFeedback("SUMMARY")}
+          onClick={() => void handleDownloadPdfWithFeedback()}
         >
           <ListItemIcon><PictureAsPdfOutlinedIcon fontSize="small" /></ListItemIcon>
-          <ListItemText primary={t("billingDownloadPdfSummary")} secondary={t("billingExportSummaryDesc")} />
-        </MenuItem>
-        <MenuItem
-          disabled={disableHeaderActions}
-          onClick={() => void handleDownloadPdfWithFeedback("DETAILED")}
-        >
-          <ListItemIcon><PictureAsPdfOutlinedIcon fontSize="small" /></ListItemIcon>
-          <ListItemText primary={t("billingDownloadPdfDetailed")} secondary={t("billingExportDetailedDesc")} />
+          <ListItemText primary={t("downloadPdf")} secondary={t("downloadPdfDesc")} />
         </MenuItem>
       </Menu>
       <Divider orientation="vertical" flexItem />
@@ -798,7 +787,7 @@ export function BillingPage({
                 {
                   key: "palletDays",
                   label: t("palletDays"),
-                  value: billingPreview.summary.palletDays,
+                  value: storageSettlementPalletDays,
                   previousValue: previousPeriodPreview?.summary.palletDays ?? null,
                   format: "number" as const,
                   icon: <CalendarMonthOutlinedIcon fontSize="small" />,
@@ -869,6 +858,9 @@ export function BillingPage({
                 {[
                   { label: t("billingInboundCharges"), value: billingPreview.summary.inboundAmount },
                   { label: t("billingWrappingCharges"), value: billingPreview.summary.wrappingAmount },
+                  ...(billingPreview.summary.storageDiscountAmount > 0
+                    ? [{ label: t("billingDiscount"), value: -billingPreview.summary.storageDiscountAmount }]
+                    : []),
                   { label: t("billingStorageCharges"), value: billingPreview.summary.storageAmount },
                   { label: t("billingOutboundCharges"), value: billingPreview.summary.outboundAmount }
                 ].map((row) => (
@@ -1066,6 +1058,7 @@ export function BillingPage({
                       <th>{t("billingWarehousesTouched")}</th>
                       <th>{t("billingTrackedPallets")}</th>
                       <th>{t("palletDays")}</th>
+                      <th>{t("billingDiscount")}</th>
                       <th>{t("billingStorageCharges")}</th>
                       <th>{t("actions")}</th>
                     </tr>
@@ -1079,6 +1072,7 @@ export function BillingPage({
                         <td>{row.locationName || row.warehousesTouched.join(", ") || "-"}</td>
                         <td className="cell--mono">{formatNumber(row.palletsTracked)}</td>
                         <td className="cell--mono">{formatNumber(row.palletDays)}</td>
+                        <td className="cell--mono">{formatDiscountMoney(row.discountAmount)}</td>
                         <td className="cell--mono">{formatMoney(row.amount)}</td>
                         <td>
                           {isNavigableContainerNo(row.containerNo) ? (
@@ -1347,6 +1341,10 @@ function formatMoney(value: number) {
   }).format(value);
 }
 
+function formatDiscountMoney(value: number) {
+  return value === 0 ? formatMoney(0) : formatMoney(-Math.abs(value));
+}
+
 function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US", {
     minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
@@ -1569,7 +1567,6 @@ function buildStorageSettlementInvoiceLines(storageRows: BillingStorageRow[]): C
 
 function buildBillingPageExportColumns(
   workspaceMode: BillingWorkspaceMode,
-  exportMode: BillingExportMode,
   t: (key: string) => string
 ): ExcelExportColumn[] {
   if (workspaceMode === "STORAGE_SETTLEMENT") {
@@ -1581,20 +1578,19 @@ function buildBillingPageExportColumns(
       { key: "warehouses", label: t("billingWarehousesTouched") },
       { key: "palletsTracked", label: t("billingTrackedPallets"), numberFormat: "number" },
       { key: "palletDays", label: t("palletDays"), numberFormat: "number" },
+      { key: "discountAmount", label: t("billingDiscount"), numberFormat: "currency" },
       { key: "amount", label: t("amount"), numberFormat: "currency" }
     ];
-    if (exportMode === "DETAILED") {
-      return [
-        ...base,
-        { key: "segmentStart", label: t("billingSegmentStart") },
-        { key: "segmentEnd", label: t("billingSegmentEnd") },
-        { key: "dayEndPallets", label: t("billingDayEndPallets"), numberFormat: "number" },
-        { key: "billedDays", label: t("billingBilledDays"), numberFormat: "number" },
-        { key: "segmentPalletDays", label: t("palletDays"), numberFormat: "number" },
-        { key: "segmentAmount", label: t("billingStorageCharges"), numberFormat: "currency" }
-      ];
-    }
-    return base.filter((column) => column.key !== "rowType");
+    return [
+      ...base,
+      { key: "segmentStart", label: t("billingSegmentStart") },
+      { key: "segmentEnd", label: t("billingSegmentEnd") },
+      { key: "dayEndPallets", label: t("billingDayEndPallets"), numberFormat: "number" },
+      { key: "billedDays", label: t("billingBilledDays"), numberFormat: "number" },
+      { key: "segmentPalletDays", label: t("palletDays"), numberFormat: "number" },
+      { key: "segmentDiscountAmount", label: t("billingDiscount"), numberFormat: "currency" },
+      { key: "segmentAmount", label: t("billingStorageCharges"), numberFormat: "currency" }
+    ];
   }
 
   const base: ExcelExportColumn[] = [
@@ -1610,37 +1606,33 @@ function buildBillingPageExportColumns(
     { key: "amount", label: t("amount"), numberFormat: "currency" },
     { key: "notes", label: t("notes") }
   ];
-  if (exportMode === "DETAILED") {
-    return [
-      ...base,
-      { key: "segmentStart", label: t("billingSegmentStart") },
-      { key: "segmentEnd", label: t("billingSegmentEnd") },
-      { key: "dayEndPallets", label: t("billingDayEndPallets"), numberFormat: "number" },
-      { key: "billedDays", label: t("billingBilledDays"), numberFormat: "number" },
-      { key: "segmentPalletDays", label: t("palletDays"), numberFormat: "number" },
-      { key: "segmentAmount", label: t("billingStorageCharges"), numberFormat: "currency" }
-    ];
-  }
-  return base.filter((column) => column.key !== "rowType");
+  return [
+    ...base,
+    { key: "segmentStart", label: t("billingSegmentStart") },
+    { key: "segmentEnd", label: t("billingSegmentEnd") },
+    { key: "dayEndPallets", label: t("billingDayEndPallets"), numberFormat: "number" },
+    { key: "billedDays", label: t("billingBilledDays"), numberFormat: "number" },
+    { key: "segmentPalletDays", label: t("palletDays"), numberFormat: "number" },
+    { key: "segmentDiscountAmount", label: t("billingDiscount"), numberFormat: "currency" },
+    { key: "segmentAmount", label: t("billingStorageCharges"), numberFormat: "currency" }
+  ];
 }
 
 function buildBillingPageExportRows({
   workspaceMode,
-  exportMode,
   invoiceLines,
   storageRows,
   timeZone,
   t
 }: {
   workspaceMode: BillingWorkspaceMode;
-  exportMode: BillingExportMode;
   invoiceLines: BillingInvoiceLine[];
   storageRows: BillingStorageRow[];
   timeZone: string;
   t: (key: string) => string;
 }): Array<Record<string, ExcelExportCell>> {
   if (workspaceMode === "STORAGE_SETTLEMENT") {
-    return flattenStorageSettlementRows(storageRows, exportMode, t);
+    return flattenStorageSettlementRows(storageRows, t);
   }
 
   const rows: Array<Record<string, ExcelExportCell>> = invoiceLines.map((line) => ({
@@ -1658,16 +1650,13 @@ function buildBillingPageExportRows({
     notes: line.meta || "-"
   }));
 
-  if (exportMode === "DETAILED") {
-    rows.push(...flattenOverviewStorageSegments(storageRows, t));
-  }
+  rows.push(...flattenOverviewStorageSegments(storageRows, t));
 
   return rows;
 }
 
 function flattenStorageSettlementRows(
   storageRows: BillingStorageRow[],
-  exportMode: BillingExportMode,
   t: (key: string) => string
 ): Array<Record<string, ExcelExportCell>> {
   const rows: Array<Record<string, ExcelExportCell>> = [];
@@ -1680,27 +1669,27 @@ function flattenStorageSettlementRows(
         warehouses: row.locationName || row.warehousesTouched.join(", ") || "-",
         palletsTracked: row.palletsTracked,
         palletDays: row.palletDays,
+        discountAmount: -row.discountAmount,
         amount: row.amount
     });
-    if (exportMode === "DETAILED") {
-      for (const segment of row.segments) {
-        rows.push({
-          rowType: t("billingRowTypeStorageSegment"),
-          customer: row.customerName,
-          containerType: containerTypeExportLabel(row.containerType),
-          containerNo: row.containerNo,
-          warehouses: row.locationName || row.warehousesTouched.join(", ") || "-",
-          palletsTracked: row.palletsTracked,
-          palletDays: row.palletDays,
-          amount: row.amount,
-          segmentStart: segment.startDate,
-          segmentEnd: segment.endDate,
-          dayEndPallets: segment.dayEndPallets,
-          billedDays: segment.billedDays,
-          segmentPalletDays: segment.palletDays,
-          segmentAmount: segment.amount
-        });
-      }
+    for (const segment of row.segments) {
+      rows.push({
+        rowType: t("billingRowTypeStorageSegment"),
+        customer: row.customerName,
+        containerType: containerTypeExportLabel(row.containerType),
+        containerNo: row.containerNo,
+        warehouses: row.locationName || row.warehousesTouched.join(", ") || "-",
+        palletsTracked: row.palletsTracked,
+        palletDays: row.palletDays,
+        amount: row.amount,
+        segmentStart: segment.startDate,
+        segmentEnd: segment.endDate,
+        dayEndPallets: segment.dayEndPallets,
+        billedDays: segment.billedDays,
+        segmentPalletDays: segment.palletDays,
+        segmentDiscountAmount: -segment.discountAmount,
+        segmentAmount: segment.amount
+      });
     }
   }
   return rows;
@@ -1743,6 +1732,7 @@ function flattenOverviewStorageSegments(
         dayEndPallets: segment.dayEndPallets,
         billedDays: segment.billedDays,
         segmentPalletDays: segment.palletDays,
+        segmentDiscountAmount: -segment.discountAmount,
         segmentAmount: segment.amount
       });
     }
@@ -1755,14 +1745,13 @@ function buildBillingExportTitle(
   customerName: string,
   startDate: string,
   endDate: string,
-  exportMode: BillingExportMode,
   warehouseName?: string,
   containerTypeLabelValue?: string
 ) {
   const normalizedCustomer = customerName.trim() || "all-customers";
   const normalizedWarehouse = warehouseName?.trim();
   const normalizedContainerType = containerTypeLabelValue?.trim();
-  return `${baseTitle} ${exportMode.toLowerCase()} ${normalizedCustomer}${normalizedWarehouse ? ` ${normalizedWarehouse}` : ""}${normalizedContainerType ? ` ${normalizedContainerType}` : ""} ${startDate} to ${endDate}`;
+  return `${baseTitle} ${normalizedCustomer}${normalizedWarehouse ? ` ${normalizedWarehouse}` : ""}${normalizedContainerType ? ` ${normalizedContainerType}` : ""} ${startDate} to ${endDate}`;
 }
 
 function containerTypeLabel(containerType: ContainerType, t: (key: string) => string) {

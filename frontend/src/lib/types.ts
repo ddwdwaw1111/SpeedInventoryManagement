@@ -805,7 +805,6 @@ export type CycleCountPayload = {
 
 export type BillingInvoiceStatus = "DRAFT" | "FINALIZED" | "PAID" | "VOID";
 export type BillingInvoiceType = "MIXED" | "STORAGE_SETTLEMENT";
-export type BillingExportMode = "SUMMARY" | "DETAILED";
 
 export type BillingStorageSegmentDetail = {
   startDate: string;
@@ -844,6 +843,15 @@ export type BillingRatesSnapshot = {
   outboundFeePerPallet: number;
 };
 
+export type BillingInvoiceHeader = {
+  sellerName: string;
+  subtitle: string;
+  remitTo: string;
+  terms: string;
+  paymentDueDays: number;
+  paymentInstructions: string;
+};
+
 export type BillingInvoiceLineData = {
   id: number;
   invoiceId: number;
@@ -876,6 +884,7 @@ export type BillingInvoice = {
   periodEnd: string;
   currencyCode: string;
   rates: BillingRatesSnapshot;
+  header: BillingInvoiceHeader;
   subtotal: number;
   discountTotal: number;
   grandTotal: number;
@@ -917,6 +926,7 @@ export type CreateBillingInvoicePayload = {
   periodStart: string;
   periodEnd: string;
   rates: BillingRatesSnapshot;
+  header?: BillingInvoiceHeader;
   notes?: string;
   lines: CreateBillingInvoiceLinePayload[];
 };

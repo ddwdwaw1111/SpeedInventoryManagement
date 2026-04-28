@@ -24,32 +24,42 @@ const (
 // --- public types ---
 
 type BillingInvoice struct {
-	ID                   int64                `json:"id"`
-	InvoiceNo            string               `json:"invoiceNo"`
-	InvoiceType          string               `json:"invoiceType"`
-	CustomerID           int64                `json:"customerId"`
-	CustomerNameSnapshot string               `json:"customerNameSnapshot"`
-	WarehouseLocationID  *int64               `json:"warehouseLocationId"`
-	WarehouseNameSnapshot string              `json:"warehouseNameSnapshot"`
-	ContainerType        string               `json:"containerType"`
-	PeriodStart          string               `json:"periodStart"`
-	PeriodEnd            string               `json:"periodEnd"`
-	CurrencyCode         string               `json:"currencyCode"`
-	Rates                BillingRatesSnapshot `json:"rates"`
-	Subtotal             float64              `json:"subtotal"`
-	DiscountTotal        float64              `json:"discountTotal"`
-	GrandTotal           float64              `json:"grandTotal"`
-	Status               string               `json:"status"`
-	Notes                string               `json:"notes"`
-	FinalizedAt          *time.Time           `json:"finalizedAt"`
-	FinalizedByUserID    *int64               `json:"finalizedByUserId"`
-	PaidAt               *time.Time           `json:"paidAt"`
-	VoidedAt             *time.Time           `json:"voidedAt"`
-	CreatedByUserID      int64                `json:"createdByUserId"`
-	CreatedAt            time.Time            `json:"createdAt"`
-	UpdatedAt            time.Time            `json:"updatedAt"`
-	LineCount            int                  `json:"lineCount"`
-	Lines                []BillingInvoiceLine `json:"lines"`
+	ID                    int64                `json:"id"`
+	InvoiceNo             string               `json:"invoiceNo"`
+	InvoiceType           string               `json:"invoiceType"`
+	CustomerID            int64                `json:"customerId"`
+	CustomerNameSnapshot  string               `json:"customerNameSnapshot"`
+	WarehouseLocationID   *int64               `json:"warehouseLocationId"`
+	WarehouseNameSnapshot string               `json:"warehouseNameSnapshot"`
+	ContainerType         string               `json:"containerType"`
+	PeriodStart           string               `json:"periodStart"`
+	PeriodEnd             string               `json:"periodEnd"`
+	CurrencyCode          string               `json:"currencyCode"`
+	Rates                 BillingRatesSnapshot `json:"rates"`
+	Header                BillingInvoiceHeader `json:"header"`
+	Subtotal              float64              `json:"subtotal"`
+	DiscountTotal         float64              `json:"discountTotal"`
+	GrandTotal            float64              `json:"grandTotal"`
+	Status                string               `json:"status"`
+	Notes                 string               `json:"notes"`
+	FinalizedAt           *time.Time           `json:"finalizedAt"`
+	FinalizedByUserID     *int64               `json:"finalizedByUserId"`
+	PaidAt                *time.Time           `json:"paidAt"`
+	VoidedAt              *time.Time           `json:"voidedAt"`
+	CreatedByUserID       int64                `json:"createdByUserId"`
+	CreatedAt             time.Time            `json:"createdAt"`
+	UpdatedAt             time.Time            `json:"updatedAt"`
+	LineCount             int                  `json:"lineCount"`
+	Lines                 []BillingInvoiceLine `json:"lines"`
+}
+
+type BillingInvoiceHeader struct {
+	SellerName          string `json:"sellerName"`
+	Subtitle            string `json:"subtitle"`
+	RemitTo             string `json:"remitTo"`
+	Terms               string `json:"terms"`
+	PaymentDueDays      int    `json:"paymentDueDays"`
+	PaymentInstructions string `json:"paymentInstructions"`
 }
 
 type BillingInvoiceLine struct {
@@ -72,29 +82,30 @@ type BillingInvoiceLine struct {
 }
 
 type BillingRatesSnapshot struct {
-	InboundContainerFee                    float64 `json:"inboundContainerFee"`
-	TransferInboundFeePerPallet            float64 `json:"transferInboundFeePerPallet"`
-	WrappingFeePerPallet                   float64 `json:"wrappingFeePerPallet"`
-	StorageFeePerPalletWeek                float64 `json:"storageFeePerPalletPerWeek,omitempty"`
-	StorageFeePerPalletWeekNormal          float64 `json:"storageFeePerPalletPerWeekNormal"`
+	InboundContainerFee                      float64 `json:"inboundContainerFee"`
+	TransferInboundFeePerPallet              float64 `json:"transferInboundFeePerPallet"`
+	WrappingFeePerPallet                     float64 `json:"wrappingFeePerPallet"`
+	StorageFeePerPalletWeek                  float64 `json:"storageFeePerPalletPerWeek,omitempty"`
+	StorageFeePerPalletWeekNormal            float64 `json:"storageFeePerPalletPerWeekNormal"`
 	StorageFeePerPalletWeekWestCoastTransfer float64 `json:"storageFeePerPalletPerWeekWestCoastTransfer"`
-	OutboundFeePerPallet                   float64 `json:"outboundFeePerPallet"`
+	OutboundFeePerPallet                     float64 `json:"outboundFeePerPallet"`
 }
 
 // --- input types ---
 
 type CreateBillingInvoiceInput struct {
-	InvoiceType  string                         `json:"invoiceType"`
-	CustomerID   int64                          `json:"customerId"`
-	CustomerName string                         `json:"customerName"`
-	WarehouseLocationID *int64                  `json:"warehouseLocationId"`
-	WarehouseName string                        `json:"warehouseName"`
-	ContainerType string                        `json:"containerType"`
-	PeriodStart  string                         `json:"periodStart"`
-	PeriodEnd    string                         `json:"periodEnd"`
-	Rates        BillingRatesSnapshot           `json:"rates"`
-	Notes        string                         `json:"notes"`
-	Lines        []CreateBillingInvoiceLineInput `json:"lines"`
+	InvoiceType         string                          `json:"invoiceType"`
+	CustomerID          int64                           `json:"customerId"`
+	CustomerName        string                          `json:"customerName"`
+	WarehouseLocationID *int64                          `json:"warehouseLocationId"`
+	WarehouseName       string                          `json:"warehouseName"`
+	ContainerType       string                          `json:"containerType"`
+	PeriodStart         string                          `json:"periodStart"`
+	PeriodEnd           string                          `json:"periodEnd"`
+	Rates               BillingRatesSnapshot            `json:"rates"`
+	Header              BillingInvoiceHeader            `json:"header"`
+	Notes               string                          `json:"notes"`
+	Lines               []CreateBillingInvoiceLineInput `json:"lines"`
 }
 
 type CreateBillingInvoiceLineInput struct {
@@ -113,7 +124,8 @@ type CreateBillingInvoiceLineInput struct {
 }
 
 type UpdateBillingInvoiceInput struct {
-	Notes string `json:"notes"`
+	Notes  *string               `json:"notes,omitempty"`
+	Header *BillingInvoiceHeader `json:"header,omitempty"`
 }
 
 type AddBillingInvoiceLineInput struct {
@@ -145,31 +157,32 @@ type UpdateBillingInvoiceLineInput struct {
 // --- row types ---
 
 type billingInvoiceRow struct {
-	ID                   int64          `db:"id"`
-	InvoiceNo            string         `db:"invoice_no"`
-	InvoiceType          string         `db:"invoice_type"`
-	CustomerID           int64          `db:"customer_id"`
-	CustomerNameSnapshot string         `db:"customer_name_snapshot"`
-	WarehouseLocationID  sql.NullInt64  `db:"warehouse_location_id"`
+	ID                    int64          `db:"id"`
+	InvoiceNo             string         `db:"invoice_no"`
+	InvoiceType           string         `db:"invoice_type"`
+	CustomerID            int64          `db:"customer_id"`
+	CustomerNameSnapshot  string         `db:"customer_name_snapshot"`
+	WarehouseLocationID   sql.NullInt64  `db:"warehouse_location_id"`
 	WarehouseNameSnapshot sql.NullString `db:"warehouse_name_snapshot"`
-	ContainerType        sql.NullString `db:"container_type"`
-	PeriodStart          time.Time      `db:"period_start"`
-	PeriodEnd            time.Time      `db:"period_end"`
-	CurrencyCode         string         `db:"currency_code"`
-	RatesJSON            string         `db:"rates_json"`
-	Subtotal             float64        `db:"subtotal"`
-	DiscountTotal        float64        `db:"discount_total"`
-	GrandTotal           float64        `db:"grand_total"`
-	Status               string         `db:"status"`
-	Notes                sql.NullString `db:"notes"`
-	FinalizedAt          sql.NullTime   `db:"finalized_at"`
-	FinalizedByUserID    sql.NullInt64  `db:"finalized_by_user_id"`
-	PaidAt               sql.NullTime   `db:"paid_at"`
-	VoidedAt             sql.NullTime   `db:"voided_at"`
-	CreatedByUserID      int64          `db:"created_by_user_id"`
-	CreatedAt            time.Time      `db:"created_at"`
-	UpdatedAt            time.Time      `db:"updated_at"`
-	LineCount            int            `db:"line_count"`
+	ContainerType         sql.NullString `db:"container_type"`
+	PeriodStart           time.Time      `db:"period_start"`
+	PeriodEnd             time.Time      `db:"period_end"`
+	CurrencyCode          string         `db:"currency_code"`
+	RatesJSON             string         `db:"rates_json"`
+	HeaderJSON            sql.NullString `db:"header_json"`
+	Subtotal              float64        `db:"subtotal"`
+	DiscountTotal         float64        `db:"discount_total"`
+	GrandTotal            float64        `db:"grand_total"`
+	Status                string         `db:"status"`
+	Notes                 sql.NullString `db:"notes"`
+	FinalizedAt           sql.NullTime   `db:"finalized_at"`
+	FinalizedByUserID     sql.NullInt64  `db:"finalized_by_user_id"`
+	PaidAt                sql.NullTime   `db:"paid_at"`
+	VoidedAt              sql.NullTime   `db:"voided_at"`
+	CreatedByUserID       int64          `db:"created_by_user_id"`
+	CreatedAt             time.Time      `db:"created_at"`
+	UpdatedAt             time.Time      `db:"updated_at"`
+	LineCount             int            `db:"line_count"`
 }
 
 type billingInvoiceLineRow struct {
@@ -203,7 +216,7 @@ func (s *Store) ListBillingInvoices(ctx context.Context, customerID int64, statu
 		SELECT
 			id, invoice_no, invoice_type, customer_id, customer_name_snapshot,
 			warehouse_location_id, warehouse_name_snapshot, container_type,
-			period_start, period_end, currency_code, rates_json,
+			period_start, period_end, currency_code, rates_json, header_json,
 			subtotal, discount_total, grand_total, status, notes,
 			finalized_at, finalized_by_user_id, paid_at, voided_at,
 			created_by_user_id, created_at, updated_at,
@@ -246,7 +259,7 @@ func (s *Store) GetBillingInvoice(ctx context.Context, invoiceID int64) (Billing
 		SELECT
 			id, invoice_no, invoice_type, customer_id, customer_name_snapshot,
 			warehouse_location_id, warehouse_name_snapshot, container_type,
-			period_start, period_end, currency_code, rates_json,
+			period_start, period_end, currency_code, rates_json, header_json,
 			subtotal, discount_total, grand_total, status, notes,
 			finalized_at, finalized_by_user_id, paid_at, voided_at,
 			created_by_user_id, created_at, updated_at,
@@ -327,6 +340,11 @@ func (s *Store) CreateBillingInvoice(ctx context.Context, input CreateBillingInv
 	if err != nil {
 		return BillingInvoice{}, fmt.Errorf("marshal rates: %w", err)
 	}
+	normalizedHeader := normalizeBillingInvoiceHeader(input.Header)
+	headerJSON, err := json.Marshal(normalizedHeader)
+	if err != nil {
+		return BillingInvoice{}, fmt.Errorf("marshal invoice header: %w", err)
+	}
 
 	invoiceNo := generateBillingInvoiceNo(periodStart, input.CustomerID)
 	customerName := strings.TrimSpace(input.CustomerName)
@@ -367,14 +385,14 @@ func (s *Store) CreateBillingInvoice(ctx context.Context, input CreateBillingInv
 		INSERT INTO billing_invoices (
 			invoice_no, invoice_type, customer_id, customer_name_snapshot,
 			warehouse_location_id, warehouse_name_snapshot, container_type,
-			period_start, period_end, currency_code, rates_json,
+			period_start, period_end, currency_code, rates_json, header_json,
 			subtotal, discount_total, grand_total,
 			status, notes, created_by_user_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, 0, 0, 0, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, 0, 0, 0, ?, ?, ?)
 	`, invoiceNo, invoiceType, input.CustomerID, customerName,
 		nullableInt64Ptr(input.WarehouseLocationID), nullableString(strings.TrimSpace(input.WarehouseName)),
 		nullableString(normalizedContainerType),
-		periodStart, periodEnd, string(ratesJSON),
+		periodStart, periodEnd, string(ratesJSON), string(headerJSON),
 		BillingInvoiceStatusDraft, nullableString(strings.TrimSpace(input.Notes)), createdByUserID)
 	if err != nil {
 		return BillingInvoice{}, mapDBError(fmt.Errorf("create billing invoice: %w", err))
@@ -441,11 +459,32 @@ func (s *Store) UpdateBillingInvoice(ctx context.Context, invoiceID int64, input
 		return BillingInvoice{}, fmt.Errorf("%w: only draft invoices can be edited", ErrInvalidInput)
 	}
 
-	if _, err := s.db.ExecContext(ctx, `
+	updates := make([]string, 0, 3)
+	args := make([]any, 0, 3)
+	if input.Notes != nil {
+		updates = append(updates, "notes = ?")
+		args = append(args, nullableString(strings.TrimSpace(*input.Notes)))
+	}
+	if input.Header != nil {
+		normalizedHeader := normalizeBillingInvoiceHeader(*input.Header)
+		headerJSON, err := json.Marshal(normalizedHeader)
+		if err != nil {
+			return BillingInvoice{}, fmt.Errorf("marshal invoice header: %w", err)
+		}
+		updates = append(updates, "header_json = ?")
+		args = append(args, string(headerJSON))
+	}
+	if len(updates) == 0 {
+		return invoice, nil
+	}
+	updates = append(updates, "updated_at = CURRENT_TIMESTAMP")
+	args = append(args, invoiceID)
+
+	if _, err := s.db.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE billing_invoices
-		SET notes = ?, updated_at = CURRENT_TIMESTAMP
+		SET %s
 		WHERE id = ?
-	`, nullableString(strings.TrimSpace(input.Notes)), invoiceID); err != nil {
+	`, strings.Join(updates, ", ")), args...); err != nil {
 		return BillingInvoice{}, mapDBError(fmt.Errorf("update billing invoice: %w", err))
 	}
 
@@ -750,26 +789,27 @@ func toBillingInvoice(row billingInvoiceRow) BillingInvoice {
 	}
 
 	invoice := BillingInvoice{
-		ID:                   row.ID,
-		InvoiceNo:            row.InvoiceNo,
-		InvoiceType:          row.InvoiceType,
-		CustomerID:           row.CustomerID,
-		CustomerNameSnapshot: row.CustomerNameSnapshot,
+		ID:                    row.ID,
+		InvoiceNo:             row.InvoiceNo,
+		InvoiceType:           row.InvoiceType,
+		CustomerID:            row.CustomerID,
+		CustomerNameSnapshot:  row.CustomerNameSnapshot,
 		WarehouseNameSnapshot: coalesceNullString(row.WarehouseNameSnapshot),
-		ContainerType:        containerType,
-		PeriodStart:          row.PeriodStart.Format(time.DateOnly),
-		PeriodEnd:            row.PeriodEnd.Format(time.DateOnly),
-		CurrencyCode:         row.CurrencyCode,
-		Rates:                rates,
-		Subtotal:             row.Subtotal,
-		DiscountTotal:        row.DiscountTotal,
-		GrandTotal:           row.GrandTotal,
-		Status:               row.Status,
-		Notes:                coalesceNullString(row.Notes),
-		CreatedByUserID:      row.CreatedByUserID,
-		CreatedAt:            row.CreatedAt,
-		UpdatedAt:            row.UpdatedAt,
-		LineCount:            row.LineCount,
+		ContainerType:         containerType,
+		PeriodStart:           row.PeriodStart.Format(time.DateOnly),
+		PeriodEnd:             row.PeriodEnd.Format(time.DateOnly),
+		CurrencyCode:          row.CurrencyCode,
+		Rates:                 rates,
+		Header:                parseBillingInvoiceHeader(row.HeaderJSON),
+		Subtotal:              row.Subtotal,
+		DiscountTotal:         row.DiscountTotal,
+		GrandTotal:            row.GrandTotal,
+		Status:                row.Status,
+		Notes:                 coalesceNullString(row.Notes),
+		CreatedByUserID:       row.CreatedByUserID,
+		CreatedAt:             row.CreatedAt,
+		UpdatedAt:             row.UpdatedAt,
+		LineCount:             row.LineCount,
 	}
 	if row.WarehouseLocationID.Valid {
 		invoice.WarehouseLocationID = &row.WarehouseLocationID.Int64
@@ -858,6 +898,59 @@ func normalizeBillingRatesSnapshot(rates BillingRatesSnapshot) BillingRatesSnaps
 		rates.StorageFeePerPalletWeek = rates.StorageFeePerPalletWeekNormal
 	}
 	return rates
+}
+
+func defaultBillingInvoiceHeader() BillingInvoiceHeader {
+	return BillingInvoiceHeader{
+		SellerName:          "Speed Inventory Management",
+		Subtitle:            "Business services invoice",
+		RemitTo:             "Speed Inventory Management",
+		Terms:               "Net 30",
+		PaymentDueDays:      30,
+		PaymentInstructions: "Payment due within 30 days of invoice date. Please reference the invoice number with payment. Amounts are in USD.",
+	}
+}
+
+func normalizeBillingInvoiceHeader(header BillingInvoiceHeader) BillingInvoiceHeader {
+	defaults := defaultBillingInvoiceHeader()
+	normalized := BillingInvoiceHeader{
+		SellerName:          strings.TrimSpace(header.SellerName),
+		Subtitle:            strings.TrimSpace(header.Subtitle),
+		RemitTo:             strings.TrimSpace(header.RemitTo),
+		Terms:               strings.TrimSpace(header.Terms),
+		PaymentDueDays:      header.PaymentDueDays,
+		PaymentInstructions: strings.TrimSpace(header.PaymentInstructions),
+	}
+	if normalized.SellerName == "" {
+		normalized.SellerName = defaults.SellerName
+	}
+	if normalized.Subtitle == "" {
+		normalized.Subtitle = defaults.Subtitle
+	}
+	if normalized.RemitTo == "" {
+		normalized.RemitTo = defaults.RemitTo
+	}
+	if normalized.Terms == "" {
+		normalized.Terms = defaults.Terms
+	}
+	if normalized.PaymentDueDays <= 0 {
+		normalized.PaymentDueDays = defaults.PaymentDueDays
+	}
+	if normalized.PaymentInstructions == "" {
+		normalized.PaymentInstructions = defaults.PaymentInstructions
+	}
+	return normalized
+}
+
+func parseBillingInvoiceHeader(value sql.NullString) BillingInvoiceHeader {
+	if !value.Valid || strings.TrimSpace(value.String) == "" {
+		return defaultBillingInvoiceHeader()
+	}
+	var header BillingInvoiceHeader
+	if err := json.Unmarshal([]byte(value.String), &header); err != nil {
+		return defaultBillingInvoiceHeader()
+	}
+	return normalizeBillingInvoiceHeader(header)
 }
 
 func normalizeBillingInvoiceType(value string, allowEmpty bool) (string, error) {

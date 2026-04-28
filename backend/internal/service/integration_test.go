@@ -4701,6 +4701,22 @@ func TestBillingInvoiceDraftEditsRecalculateTotalsIntegration(t *testing.T) {
 		t.Fatalf("expected normalized storage rates of 7, got normal=%.2f west=%.2f", invoice.Rates.StorageFeePerPalletWeekNormal, invoice.Rates.StorageFeePerPalletWeekWestCoastTransfer)
 	}
 
+	updatedHeader := BillingInvoiceHeader{
+		SellerName:          "SIM Logistics LLC",
+		Subtitle:            "Warehouse services invoice",
+		RemitTo:             "SIM Logistics LLC - ACH 1234",
+		Terms:               "Net 15",
+		PaymentDueDays:      15,
+		PaymentInstructions: "Send ACH payment and reference the invoice number.",
+	}
+	invoice, err = store.UpdateBillingInvoice(ctx, invoice.ID, UpdateBillingInvoiceInput{Header: &updatedHeader})
+	if err != nil {
+		t.Fatalf("update invoice header: %v", err)
+	}
+	if invoice.Header.SellerName != "SIM Logistics LLC" || invoice.Header.Terms != "Net 15" || invoice.Header.PaymentDueDays != 15 {
+		t.Fatalf("expected persisted invoice header update, got %#v", invoice.Header)
+	}
+
 	findLine := func(chargeType string) BillingInvoiceLine {
 		t.Helper()
 		for _, line := range invoice.Lines {
@@ -4818,8 +4834,13 @@ func TestBillingInvoiceDraftEditsRecalculateTotalsIntegration(t *testing.T) {
 		t.Fatalf("expected finalized invoice status, got %q", invoice.Status)
 	}
 
-	if _, err := store.UpdateBillingInvoice(ctx, invoice.ID, UpdateBillingInvoiceInput{Notes: "blocked"}); err == nil || !errors.Is(err, ErrInvalidInput) {
+	blockedNotes := "blocked"
+	if _, err := store.UpdateBillingInvoice(ctx, invoice.ID, UpdateBillingInvoiceInput{Notes: &blockedNotes}); err == nil || !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("expected updating finalized invoice to fail with ErrInvalidInput, got %v", err)
+	}
+	blockedHeader := BillingInvoiceHeader{Terms: "Due on receipt", PaymentDueDays: 1}
+	if _, err := store.UpdateBillingInvoice(ctx, invoice.ID, UpdateBillingInvoiceInput{Header: &blockedHeader}); err == nil || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected updating finalized invoice header to fail with ErrInvalidInput, got %v", err)
 	}
 	if _, err := store.AddBillingInvoiceLine(ctx, invoice.ID, AddBillingInvoiceLineInput{
 		ChargeType:  "OUTBOUND",

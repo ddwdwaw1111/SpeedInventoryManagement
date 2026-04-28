@@ -72,6 +72,8 @@ export type BillingPreviewSummary = {
   palletDays: number;
   inboundAmount: number;
   wrappingAmount: number;
+  storageGrossAmount: number;
+  storageDiscountAmount: number;
   storageAmount: number;
   outboundAmount: number;
   grandTotal: number;
@@ -172,6 +174,8 @@ export function buildBillingPreview(input: BuildBillingPreviewInput): BillingPre
     palletDays: storageRows.reduce((total, row) => total + row.palletDays, 0),
     inboundAmount: roundCurrency(inboundLines.filter((line) => line.chargeType === "INBOUND").reduce((total, line) => total + line.amount, 0)),
     wrappingAmount: roundCurrency(inboundLines.filter((line) => line.chargeType === "WRAPPING").reduce((total, line) => total + line.amount, 0)),
+    storageGrossAmount: roundCurrency(storageRows.reduce((total, row) => total + row.grossAmount, 0)),
+    storageDiscountAmount: roundCurrency(storageRows.reduce((total, row) => total + row.discountAmount, 0)),
     storageAmount: roundCurrency(storageRows.reduce((total, row) => total + row.amount, 0)),
     outboundAmount: roundCurrency(outboundLines.reduce((total, line) => total + line.amount, 0)),
     grandTotal: 0

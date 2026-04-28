@@ -294,6 +294,8 @@ describe("buildBillingPreview", () => {
     });
 
     expect(preview.summary.palletDays).toBe(225);
+    expect(preview.summary.storageGrossAmount).toBe(225);
+    expect(preview.summary.storageDiscountAmount).toBe(70);
     expect(preview.summary.storageAmount).toBe(155);
     expect(preview.storageRows).toHaveLength(1);
     expect(preview.storageRows[0]?.segments).toEqual([

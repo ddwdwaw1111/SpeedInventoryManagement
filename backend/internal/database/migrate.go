@@ -708,6 +708,7 @@ func Migrate(db *sql.DB) error {
 			period_end DATE NOT NULL,
 			currency_code VARCHAR(8) NOT NULL DEFAULT 'USD',
 			rates_json JSON NOT NULL,
+			header_json JSON DEFAULT NULL,
 			subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
 			discount_total DECIMAL(12,2) NOT NULL DEFAULT 0,
 			grand_total DECIMAL(12,2) NOT NULL DEFAULT 0,
@@ -810,6 +811,14 @@ func Migrate(db *sql.DB) error {
 	} else if !hasColumn {
 		if _, err := db.Exec(`ALTER TABLE billing_invoices ADD COLUMN container_type VARCHAR(32) DEFAULT NULL AFTER warehouse_name_snapshot`); err != nil {
 			return fmt.Errorf("add billing invoice container type column: %w", err)
+		}
+	}
+
+	if hasColumn, err := columnExists(db, "billing_invoices", "header_json"); err != nil {
+		return fmt.Errorf("check billing invoice header column: %w", err)
+	} else if !hasColumn {
+		if _, err := db.Exec(`ALTER TABLE billing_invoices ADD COLUMN header_json JSON DEFAULT NULL AFTER rates_json`); err != nil {
+			return fmt.Errorf("add billing invoice header column: %w", err)
 		}
 	}
 
