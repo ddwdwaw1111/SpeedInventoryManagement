@@ -103,7 +103,7 @@ type CreateBillingInvoiceInput struct {
 	PeriodStart         string                          `json:"periodStart"`
 	PeriodEnd           string                          `json:"periodEnd"`
 	Rates               BillingRatesSnapshot            `json:"rates"`
-	Header              BillingInvoiceHeader            `json:"header"`
+	Header              *BillingInvoiceHeader           `json:"header"`
 	Notes               string                          `json:"notes"`
 	Lines               []CreateBillingInvoiceLineInput `json:"lines"`
 }
@@ -340,7 +340,10 @@ func (s *Store) CreateBillingInvoice(ctx context.Context, input CreateBillingInv
 	if err != nil {
 		return BillingInvoice{}, fmt.Errorf("marshal rates: %w", err)
 	}
-	normalizedHeader := normalizeBillingInvoiceHeader(input.Header)
+	normalizedHeader := defaultBillingInvoiceHeader()
+	if input.Header != nil {
+		normalizedHeader = normalizeBillingInvoiceHeader(*input.Header)
+	}
 	headerJSON, err := json.Marshal(normalizedHeader)
 	if err != nil {
 		return BillingInvoice{}, fmt.Errorf("marshal invoice header: %w", err)
@@ -912,7 +915,6 @@ func defaultBillingInvoiceHeader() BillingInvoiceHeader {
 }
 
 func normalizeBillingInvoiceHeader(header BillingInvoiceHeader) BillingInvoiceHeader {
-	defaults := defaultBillingInvoiceHeader()
 	normalized := BillingInvoiceHeader{
 		SellerName:          strings.TrimSpace(header.SellerName),
 		Subtitle:            strings.TrimSpace(header.Subtitle),
@@ -921,23 +923,8 @@ func normalizeBillingInvoiceHeader(header BillingInvoiceHeader) BillingInvoiceHe
 		PaymentDueDays:      header.PaymentDueDays,
 		PaymentInstructions: strings.TrimSpace(header.PaymentInstructions),
 	}
-	if normalized.SellerName == "" {
-		normalized.SellerName = defaults.SellerName
-	}
-	if normalized.Subtitle == "" {
-		normalized.Subtitle = defaults.Subtitle
-	}
-	if normalized.RemitTo == "" {
-		normalized.RemitTo = defaults.RemitTo
-	}
-	if normalized.Terms == "" {
-		normalized.Terms = defaults.Terms
-	}
-	if normalized.PaymentDueDays <= 0 {
-		normalized.PaymentDueDays = defaults.PaymentDueDays
-	}
-	if normalized.PaymentInstructions == "" {
-		normalized.PaymentInstructions = defaults.PaymentInstructions
+	if normalized.PaymentDueDays < 0 {
+		normalized.PaymentDueDays = 0
 	}
 	return normalized
 }

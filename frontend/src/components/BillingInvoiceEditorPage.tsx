@@ -16,7 +16,7 @@ import { waitForNextPaint } from "../lib/asyncUi";
 import { downloadExcelWorkbook, type ExcelExportCell, type ExcelExportColumn } from "../lib/excelExport";
 import { downloadBillingInvoicePdf } from "../lib/billingInvoicePdf";
 import { useI18n } from "../lib/i18n";
-import { useSettings } from "../lib/settings";
+import { DEFAULT_BILLING_INVOICE_HEADER, useSettings } from "../lib/settings";
 import { formatDateTimeValue } from "../lib/dates";
 import type {
   BillingInvoice,
@@ -72,20 +72,11 @@ const emptyLineForm: LineFormState = {
   notes: ""
 };
 
-const DEFAULT_BILLING_INVOICE_HEADER: BillingInvoiceHeader = {
-  sellerName: "Speed Inventory Management",
-  subtitle: "Business services invoice",
-  remitTo: "Speed Inventory Management",
-  terms: "Net 30",
-  paymentDueDays: 30,
-  paymentInstructions: "Payment due within 30 days of invoice date. Please reference the invoice number with payment. Amounts are in USD."
-};
-
 const CHARGE_TYPE_OPTIONS = ["INBOUND", "WRAPPING", "STORAGE", "OUTBOUND", "DISCOUNT", "MANUAL"];
 
 export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToBilling }: BillingInvoiceEditorPageProps) {
   const { t } = useI18n();
-  const { resolvedTimeZone } = useSettings();
+  const { resolvedTimeZone, billingTermOptions } = useSettings();
   const [invoice, setInvoice] = useState<BillingInvoice | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
@@ -371,29 +362,29 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
   const editableHeader = getEditableInvoiceHeader(invoice);
   const showStorageDiscountColumn = invoice.invoiceType === "STORAGE_SETTLEMENT";
   const totalsLabelColSpan = showStorageDiscountColumn ? 10 : 9;
-  const exportColumns = buildBillingInvoiceExportColumns(invoice, t);
+  const exportColumns = buildBillingInvoiceExportColumns(invoice);
 
   function handleExportExcel({ title, columns }: { title: string; columns: ExcelExportColumn[] }) {
     if (!invoice) {
       return;
     }
 
-    const rows = buildBillingInvoiceExportRows(invoice, resolvedTimeZone, t);
+    const rows = buildBillingInvoiceExportRows(invoice, resolvedTimeZone);
 
     downloadExcelWorkbook({
       title,
       sheetName: "Billing Invoice",
       fileName: title,
       columns,
-      rows,
-      summaryRows: [
-        ...(invoiceDisplayTotals.subtotal !== invoiceDisplayTotals.grandTotal
-          ? [{ label: t("billingInvoiceSubtotal"), value: invoiceDisplayTotals.subtotal, numberFormat: "currency" as const }]
+        rows,
+        summaryRows: [
+          ...(invoiceDisplayTotals.subtotal !== invoiceDisplayTotals.grandTotal
+          ? [{ label: "Subtotal", value: invoiceDisplayTotals.subtotal, numberFormat: "currency" as const }]
           : []),
         ...(invoiceDisplayTotals.discountTotal !== 0
-          ? [{ label: t("billingDiscount"), value: invoiceDisplayTotals.discountTotal, numberFormat: "currency" as const }]
+          ? [{ label: "Discount", value: invoiceDisplayTotals.discountTotal, numberFormat: "currency" as const }]
           : []),
-        { label: t("billingGrandTotal"), value: invoiceDisplayTotals.grandTotal, numberFormat: "currency", bold: true }
+        { label: "Grand Total", value: invoiceDisplayTotals.grandTotal, numberFormat: "currency", bold: true }
       ]
     });
     setIsExportDialogOpen(false);
@@ -606,11 +597,23 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
               </label>
               <label>
                 {t("billingInvoiceTerms")}
-                <input type="text" value={headerForm.terms} onChange={(event) => setHeaderForm((form) => ({ ...form, terms: event.target.value }))} />
+                <select value={headerForm.terms} onChange={(event) => {
+                  const terms = event.target.value;
+                  const option = billingTermOptions.find((candidate) => candidate.terms === terms);
+                  setHeaderForm((form) => ({
+                    ...form,
+                    terms,
+                    paymentDueDays: option ? String(option.paymentDueDays) : form.paymentDueDays
+                  }));
+                }}>
+                  {billingTermOptions.map((option) => (
+                    <option key={option.label} value={option.terms}>{option.label}</option>
+                  ))}
+                </select>
               </label>
               <label>
                 {t("billingInvoicePaymentDueDays")}
-                <input type="number" min={1} step={1} value={headerForm.paymentDueDays} onChange={(event) => setHeaderForm((form) => ({ ...form, paymentDueDays: event.target.value }))} />
+                <input type="number" min={0} step={1} value={headerForm.paymentDueDays} onChange={(event) => setHeaderForm((form) => ({ ...form, paymentDueDays: event.target.value }))} />
               </label>
               <label className="sheet-form__wide">
                 {t("billingInvoicePaymentInstructions")}
@@ -935,20 +938,25 @@ function headerToForm(header: BillingInvoiceHeader): HeaderFormState {
 function formToHeader(form: HeaderFormState): BillingInvoiceHeader {
   return normalizeInvoiceHeader({
     ...form,
-    paymentDueDays: Math.max(1, Math.round(toNumber(form.paymentDueDays)))
+    paymentDueDays: Math.max(0, Math.round(toNumber(form.paymentDueDays)))
   });
 }
 
 function normalizeInvoiceHeader(header?: Partial<BillingInvoiceHeader> | null): BillingInvoiceHeader {
+  if (!header) {
+    return DEFAULT_BILLING_INVOICE_HEADER;
+  }
   return {
-    sellerName: header?.sellerName?.trim() || DEFAULT_BILLING_INVOICE_HEADER.sellerName,
-    subtitle: header?.subtitle?.trim() || DEFAULT_BILLING_INVOICE_HEADER.subtitle,
-    remitTo: header?.remitTo?.trim() || DEFAULT_BILLING_INVOICE_HEADER.remitTo,
-    terms: header?.terms?.trim() || DEFAULT_BILLING_INVOICE_HEADER.terms,
-    paymentDueDays: typeof header?.paymentDueDays === "number" && header.paymentDueDays > 0
+    sellerName: typeof header.sellerName === "string" ? header.sellerName.trim() : DEFAULT_BILLING_INVOICE_HEADER.sellerName,
+    subtitle: typeof header.subtitle === "string" ? header.subtitle.trim() : DEFAULT_BILLING_INVOICE_HEADER.subtitle,
+    remitTo: typeof header.remitTo === "string" ? header.remitTo.trim() : DEFAULT_BILLING_INVOICE_HEADER.remitTo,
+    terms: typeof header.terms === "string" ? header.terms.trim() : DEFAULT_BILLING_INVOICE_HEADER.terms,
+    paymentDueDays: typeof header.paymentDueDays === "number" && Number.isFinite(header.paymentDueDays) && header.paymentDueDays >= 0
       ? Math.round(header.paymentDueDays)
       : DEFAULT_BILLING_INVOICE_HEADER.paymentDueDays,
-    paymentInstructions: header?.paymentInstructions?.trim() || DEFAULT_BILLING_INVOICE_HEADER.paymentInstructions
+    paymentInstructions: typeof header.paymentInstructions === "string"
+      ? header.paymentInstructions.trim()
+      : DEFAULT_BILLING_INVOICE_HEADER.paymentInstructions
   };
 }
 
@@ -960,6 +968,18 @@ function chargeTypeLabel(chargeType: string, t: (key: string) => string) {
     case "OUTBOUND": return t("billingOutboundCharges");
     case "DISCOUNT": return t("billingDiscount");
     case "MANUAL": return t("billingManualCharge");
+    default: return chargeType;
+  }
+}
+
+function chargeTypeExportLabel(chargeType: string) {
+  switch (chargeType) {
+    case "INBOUND": return "Inbound Charges";
+    case "WRAPPING": return "Wrapping Charges";
+    case "STORAGE": return "Storage Charges";
+    case "OUTBOUND": return "Outbound Charges";
+    case "DISCOUNT": return "Discount";
+    case "MANUAL": return "Manual Charge";
     default: return chargeType;
   }
 }
@@ -980,38 +1000,35 @@ function containerTypeLabel(containerType: ContainerType, t: (key: string) => st
     : t("billingContainerTypeNormal");
 }
 
-function buildBillingInvoiceExportColumns(
-  invoice: BillingInvoice,
-  t: (key: string) => string
-): ExcelExportColumn[] {
+function buildBillingInvoiceExportColumns(invoice: BillingInvoice): ExcelExportColumn[] {
   const base: ExcelExportColumn[] = [
-    { key: "rowType", label: t("billingRowType") },
-    { key: "chargeType", label: t("billingChargeType") },
-    { key: "description", label: t("description") },
-    { key: "reference", label: t("reference") },
-    { key: "containerNo", label: t("containerNo") },
-    { key: "warehouse", label: t("currentStorage") },
-    { key: "occurredOn", label: t("billingOccurredAt") },
-    { key: "quantity", label: t("quantity"), numberFormat: "number" },
-    { key: "unitRate", label: t("unitRate"), numberFormat: "currency" },
+    { key: "rowType", label: "Row Type" },
+    { key: "chargeType", label: "Charge Type" },
+    { key: "description", label: "Description" },
+    { key: "reference", label: "Reference" },
+    { key: "containerNo", label: "Container No." },
+    { key: "warehouse", label: "Warehouse" },
+    { key: "occurredOn", label: "Occurred On" },
+    { key: "quantity", label: "Quantity", numberFormat: "number" },
+    { key: "unitRate", label: "Unit Rate", numberFormat: "currency" },
     ...(invoice.invoiceType === "STORAGE_SETTLEMENT"
-      ? [{ key: "discountAmount", label: t("billingDiscount"), numberFormat: "currency" as const }]
+      ? [{ key: "discountAmount", label: "Discount", numberFormat: "currency" as const }]
       : []),
-    { key: "amount", label: t("amount"), numberFormat: "currency" },
-    { key: "sourceType", label: t("billingSourceType") },
-    { key: "notes", label: t("notes") }
+    { key: "amount", label: "Amount", numberFormat: "currency" },
+    { key: "sourceType", label: "Source Type" },
+    { key: "notes", label: "Notes" }
   ];
 
   if (invoice.invoiceType === "STORAGE_SETTLEMENT") {
     return [
       ...base,
-      { key: "segmentStart", label: t("billingSegmentStart") },
-      { key: "segmentEnd", label: t("billingSegmentEnd") },
-      { key: "dayEndPallets", label: t("billingDayEndPallets"), numberFormat: "number" },
-      { key: "billedDays", label: t("billingBilledDays"), numberFormat: "number" },
-      { key: "segmentPalletDays", label: t("palletDays"), numberFormat: "number" },
-      { key: "segmentDiscountAmount", label: t("billingDiscount"), numberFormat: "currency" },
-      { key: "segmentAmount", label: t("billingStorageCharges"), numberFormat: "currency" }
+      { key: "segmentStart", label: "Segment Start" },
+      { key: "segmentEnd", label: "Segment End" },
+      { key: "dayEndPallets", label: "Day-End Pallets", numberFormat: "number" },
+      { key: "billedDays", label: "Billed Days", numberFormat: "number" },
+      { key: "segmentPalletDays", label: "Pallet-Days", numberFormat: "number" },
+      { key: "segmentDiscountAmount", label: "Discount", numberFormat: "currency" },
+      { key: "segmentAmount", label: "Storage Charges", numberFormat: "currency" }
     ];
   }
 
@@ -1020,12 +1037,11 @@ function buildBillingInvoiceExportColumns(
 
 function buildBillingInvoiceExportRows(
   invoice: BillingInvoice,
-  timeZone: string,
-  t: (key: string) => string
+  timeZone: string
 ): Array<Record<string, ExcelExportCell>> {
   const rows: Array<Record<string, ExcelExportCell>> = invoice.lines.map((line) => ({
-    rowType: t("billingRowTypeInvoiceLine"),
-    chargeType: chargeTypeLabel(line.chargeType, t),
+    rowType: "Invoice Line",
+    chargeType: chargeTypeExportLabel(line.chargeType),
     description: line.description || "-",
     reference: line.reference || "-",
     containerNo: line.containerNo || "-",
@@ -1035,7 +1051,7 @@ function buildBillingInvoiceExportRows(
     unitRate: line.unitRate,
     amount: line.amount,
     discountAmount: line.details?.kind === "STORAGE_CONTAINER_SUMMARY" ? -Math.abs(line.details.discountAmount ?? 0) : undefined,
-    sourceType: line.sourceType === "AUTO" ? t("billingSourceTypeAuto") : t("billingSourceTypeManual"),
+    sourceType: line.sourceType === "AUTO" ? "Auto" : "Manual",
     notes: line.notes || "-"
   }));
 
@@ -1046,8 +1062,8 @@ function buildBillingInvoiceExportRows(
       }
       for (const segment of line.details.segments) {
         rows.push({
-          rowType: t("billingRowTypeStorageSegment"),
-          chargeType: chargeTypeLabel(line.chargeType, t),
+          rowType: "Storage Segment",
+          chargeType: chargeTypeExportLabel(line.chargeType),
           description: line.description || "-",
           reference: line.reference || "-",
           containerNo: line.containerNo || "-",
@@ -1056,8 +1072,8 @@ function buildBillingInvoiceExportRows(
           quantity: segment.palletDays,
           unitRate: segment.palletDays > 0 ? segment.amount / segment.palletDays : 0,
           amount: segment.amount,
-          sourceType: line.sourceType === "AUTO" ? t("billingSourceTypeAuto") : t("billingSourceTypeManual"),
-          notes: `${segment.dayEndPallets} ${t("billingDayEndPallets").toLowerCase()}`,
+          sourceType: line.sourceType === "AUTO" ? "Auto" : "Manual",
+          notes: `${segment.dayEndPallets} day-end pallets`,
           segmentStart: segment.startDate,
           segmentEnd: segment.endDate,
           dayEndPallets: segment.dayEndPallets,

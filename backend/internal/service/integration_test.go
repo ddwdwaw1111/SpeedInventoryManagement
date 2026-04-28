@@ -4717,6 +4717,15 @@ func TestBillingInvoiceDraftEditsRecalculateTotalsIntegration(t *testing.T) {
 		t.Fatalf("expected persisted invoice header update, got %#v", invoice.Header)
 	}
 
+	blankHeader := BillingInvoiceHeader{}
+	invoice, err = store.UpdateBillingInvoice(ctx, invoice.ID, UpdateBillingInvoiceInput{Header: &blankHeader})
+	if err != nil {
+		t.Fatalf("update invoice header with blank values: %v", err)
+	}
+	if invoice.Header.SellerName != "" || invoice.Header.Terms != "" || invoice.Header.PaymentDueDays != 0 || invoice.Header.PaymentInstructions != "" {
+		t.Fatalf("expected blank invoice header fields to persist, got %#v", invoice.Header)
+	}
+
 	findLine := func(chargeType string) BillingInvoiceLine {
 		t.Helper()
 		for _, line := range invoice.Lines {

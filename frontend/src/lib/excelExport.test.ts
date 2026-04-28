@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { strFromU8, unzipSync } from "fflate";
 
 import { downloadExcelWorkbook } from "./excelExport";
 
@@ -16,16 +17,12 @@ describe("downloadExcelWorkbook", () => {
 
   it("builds an excel xml workbook with sanitized names and serialized values", async () => {
     class BlobMock {
-      parts: string[];
+      parts: unknown[];
       type: string;
 
       constructor(parts: unknown[], options?: { type?: string }) {
-        this.parts = parts.map((part) => String(part));
+        this.parts = parts;
         this.type = options?.type ?? "";
-      }
-
-      text() {
-        return Promise.resolve(this.parts.join(""));
       }
     }
 
@@ -62,6 +59,7 @@ describe("downloadExcelWorkbook", () => {
         { key: "sku", label: "SKU" },
         { key: "active", label: "Active" },
         { key: "receivedAt", label: "Received At" },
+        { key: "amount", label: "Amount", numberFormat: "currency" },
         { key: "notes", label: "Notes" }
       ],
       rows: [
@@ -69,8 +67,12 @@ describe("downloadExcelWorkbook", () => {
           sku: "Container <A>",
           active: true,
           receivedAt: new Date("2026-03-30T12:34:00Z"),
+          amount: 123.45,
           notes: null
         }
+      ],
+      summaryRows: [
+        { label: "Total", value: 123.45, numberFormat: "currency", bold: true }
       ]
     });
 
@@ -81,17 +83,34 @@ describe("downloadExcelWorkbook", () => {
       throw new Error("Expected download anchor to be created");
     }
     const anchor = createdAnchor as unknown as { download: string };
-    expect(anchor.download).toBe("Inventory March 2026.xls");
+    expect(anchor.download).toBe("Inventory March 2026.xlsx");
     expect(exportedBlob).not.toBeNull();
+    expect(exportedBlob!.type).toBe("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 
-    const workbookXml = await exportedBlob!.text();
+    const workbookBytes = new Uint8Array(exportedBlob!.parts[0] as ArrayBuffer);
+    expect(strFromU8(workbookBytes.slice(0, 2))).toBe("PK");
+    const workbookFiles = unzipSync(workbookBytes);
+    const workbookXml = readZipText(workbookFiles, "xl/workbook.xml");
+    const worksheetXml = readZipText(workbookFiles, "xl/worksheets/sheet1.xml");
+    const stylesXml = readZipText(workbookFiles, "xl/styles.xml");
 
-    expect(workbookXml).toContain('Worksheet ss:Name="Inventory Receipts"');
-    expect(workbookXml).toContain("Inventory &amp; Receipts");
-    expect(workbookXml).toContain("<Data ss:Type=\"String\">SKU</Data>");
-    expect(workbookXml).toContain("<Data ss:Type=\"String\">Container &lt;A&gt;</Data>");
-    expect(workbookXml).toContain("<Data ss:Type=\"String\">Yes</Data>");
-    expect(workbookXml).toContain("<Data ss:Type=\"String\">2026-03-30T12:34:00.000Z</Data>");
-    expect(workbookXml).toContain("<Data ss:Type=\"String\"></Data>");
+    expect(workbookXml).toContain('sheet name="Inventory Receipts"');
+    expect(worksheetXml).toContain("Inventory &amp; Receipts");
+    expect(worksheetXml).toContain("<t>SKU</t>");
+    expect(worksheetXml).toContain("<t>Container &lt;A&gt;</t>");
+    expect(worksheetXml).toContain("<t>Yes</t>");
+    expect(worksheetXml).toContain("<t>2026-03-30T12:34:00.000Z</t>");
+    expect(worksheetXml).toContain("<v>123.45</v>");
+    expect(worksheetXml).toContain("<t></t>");
+    expect(worksheetXml).toContain("<mergeCells");
+    expect(stylesXml).toContain('formatCode="&quot;$&quot;#,##0.00"');
   });
 });
+
+function readZipText(files: Record<string, Uint8Array>, path: string) {
+  const entry = files[path];
+  if (!entry) {
+    throw new Error(`Missing zip entry ${path}. Found: ${Object.keys(files).join(", ")}`);
+  }
+  return strFromU8(entry);
+}

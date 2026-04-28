@@ -38,7 +38,9 @@ export function ExportExcelDialog({
     }
   }, [defaultColumns, defaultTitle, open]);
 
-  const enabledColumns = columns.filter((column) => column.enabled).map(({ key, label }) => ({ key, label }));
+  const enabledColumns = columns.filter((column) => column.enabled).map(({ key, label, numberFormat }) => (
+    numberFormat ? { key, label, numberFormat } : { key, label }
+  ));
 
   async function handleExport() {
     if (isExporting || enabledColumns.length === 0) {

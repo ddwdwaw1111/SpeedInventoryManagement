@@ -2,16 +2,12 @@ import type { Content, CustomTableLayout, Style, TableCell, TDocumentDefinitions
 
 import { formatDateTimeValue } from "./dates";
 import { downloadPdfDefinition } from "./pdfMakeRuntime";
+import { DEFAULT_BILLING_INVOICE_HEADER } from "./settings";
 import type { BillingInvoice, BillingInvoiceLineData, BillingInvoiceType } from "./types";
 
 const BILLING_TABLE_LAYOUT_NAME = "billingInvoiceTable";
 const CJK_FONT_NAME = "NotoSansCJKSC";
 const CJK_FONT_URL_BASE = "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/OTF/SimplifiedChinese";
-const SELLER_NAME = "Speed Inventory Management";
-const PAYMENT_DUE_DAYS = 30;
-const PAYMENT_TERMS_LABEL = "Net 30";
-const PAYMENT_INSTRUCTIONS = "Payment due within 30 days of invoice date. Please reference the invoice number with payment. Amounts are in USD.";
-
 const PDF_FONTS: TFontDictionary = {
   [CJK_FONT_NAME]: {
     normal: `${CJK_FONT_URL_BASE}/NotoSansCJKsc-Regular.otf`,
@@ -917,13 +913,20 @@ function getDueDate(invoiceDate: string, paymentDueDays: number) {
 
 function getInvoiceHeader(invoice: BillingInvoice): BillingInvoice["header"] {
   const header = invoice.header as Partial<BillingInvoice["header"]> | undefined;
+  if (!header) {
+    return DEFAULT_BILLING_INVOICE_HEADER;
+  }
   return {
-    sellerName: header?.sellerName?.trim() || SELLER_NAME,
-    subtitle: header?.subtitle?.trim() || "Business services invoice",
-    remitTo: header?.remitTo?.trim() || SELLER_NAME,
-    terms: header?.terms?.trim() || PAYMENT_TERMS_LABEL,
-    paymentDueDays: typeof header?.paymentDueDays === "number" && header.paymentDueDays > 0 ? header.paymentDueDays : PAYMENT_DUE_DAYS,
-    paymentInstructions: header?.paymentInstructions?.trim() || PAYMENT_INSTRUCTIONS
+    sellerName: typeof header.sellerName === "string" ? header.sellerName.trim() : DEFAULT_BILLING_INVOICE_HEADER.sellerName,
+    subtitle: typeof header.subtitle === "string" ? header.subtitle.trim() : DEFAULT_BILLING_INVOICE_HEADER.subtitle,
+    remitTo: typeof header.remitTo === "string" ? header.remitTo.trim() : DEFAULT_BILLING_INVOICE_HEADER.remitTo,
+    terms: typeof header.terms === "string" ? header.terms.trim() : DEFAULT_BILLING_INVOICE_HEADER.terms,
+    paymentDueDays: typeof header.paymentDueDays === "number" && Number.isFinite(header.paymentDueDays) && header.paymentDueDays >= 0
+      ? Math.round(header.paymentDueDays)
+      : DEFAULT_BILLING_INVOICE_HEADER.paymentDueDays,
+    paymentInstructions: typeof header.paymentInstructions === "string"
+      ? header.paymentInstructions.trim()
+      : DEFAULT_BILLING_INVOICE_HEADER.paymentInstructions
   };
 }
 

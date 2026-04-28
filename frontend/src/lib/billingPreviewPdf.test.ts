@@ -240,4 +240,31 @@ describe("buildBillingPreviewPdfDefinition", () => {
       ["2026-04-05", "2026-04-06", "5", "2", "10 pallet-days", "$10.00"]
     ]);
   });
+
+  it("uses configurable preview header defaults and preserves blank fields", () => {
+    const document = buildBillingPreviewPdfDocument({
+      preview: createPreviewFixture(),
+      rates: DEFAULT_BILLING_RATES,
+      header: {
+        sellerName: "",
+        subtitle: "",
+        remitTo: "",
+        terms: "",
+        paymentDueDays: 0,
+        paymentInstructions: ""
+      },
+      timeZone: "UTC",
+      workspaceMode: "STORAGE_SETTLEMENT",
+      generatedAt: "2026-04-01T12:00:00Z"
+    });
+    const definition = buildBillingPreviewPdfDefinition(document);
+
+    const content = definition.content as any[];
+    expect(content[0].columns[0].stack[0].text).toBe("");
+    expect(content[0].columns[0].stack[1].text).toBe("");
+    const headerRows = content[0].columns[1].stack[1].table.body;
+    expect(headerRows[1][1].text).toBe("Apr 1, 2026");
+    expect(headerRows[2][1].text).toBe("");
+    expect(content[1].table.body[0][1].stack[1].text).toBe("-");
+  });
 });

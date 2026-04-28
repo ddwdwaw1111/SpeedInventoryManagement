@@ -236,6 +236,10 @@ describe("BillingInvoiceEditorPage", () => {
     await waitFor(() => {
       expect(downloadExcelWorkbook).toHaveBeenCalledTimes(1);
     });
+    const exportPayload = downloadExcelWorkbook.mock.calls[0][0];
+    expect(exportPayload.columns.map((column: { label: string }) => column.label)).toContain("Charge Type");
+    expect(exportPayload.rows.map((row: { rowType: string }) => row.rowType)).toContain("Invoice Line");
+    expect(exportPayload.summaryRows.map((row: { label: string }) => row.label)).toContain("Grand Total");
   });
 
   it("exports the current invoice to PDF", async () => {

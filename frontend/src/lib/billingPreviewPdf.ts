@@ -3,13 +3,12 @@ import type { Content, CustomTableLayout, Style, TableCell, TDocumentDefinitions
 import type { BillingInvoiceLine, BillingPreview, BillingRates, BillingStorageRow } from "./billingPreview";
 import { formatDateTimeValue } from "./dates";
 import { downloadPdfDefinition } from "./pdfMakeRuntime";
+import { DEFAULT_BILLING_INVOICE_HEADER } from "./settings";
+import type { BillingInvoiceHeader } from "./types";
 
 const BILLING_TABLE_LAYOUT_NAME = "billingTable";
 const CJK_FONT_NAME = "NotoSansCJKSC";
 const CJK_FONT_URL_BASE = "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/OTF/SimplifiedChinese";
-const SELLER_NAME = "Speed Inventory Management";
-const PAYMENT_TERMS_DAYS = 30;
-const PAYMENT_TERMS_LABEL = "Net 30";
 
 const PDF_FONTS: TFontDictionary = {
   [CJK_FONT_NAME]: {
@@ -131,6 +130,7 @@ type BillingWorkspaceMode = "OVERVIEW" | "STORAGE_SETTLEMENT";
 export type BillingPreviewPdfInput = {
   preview: BillingPreview;
   rates: BillingRates;
+  header?: BillingInvoiceHeader;
   timeZone: string;
   workspaceMode?: BillingWorkspaceMode;
   storageRows?: BillingStorageRow[];
@@ -143,6 +143,7 @@ type BillingPreviewPdfDocument = {
   customerName: string;
   startDate: string;
   endDate: string;
+  header: BillingInvoiceHeader;
   generatedAt: string;
   generatedAtLabel: string;
   modeLabel: string;
@@ -274,6 +275,7 @@ export async function downloadBillingPreviewPdf(input: BillingPreviewPdfInput) {
 export function buildBillingPreviewPdfDocument({
   preview,
   rates: _rates,
+  header,
   timeZone,
   workspaceMode = "OVERVIEW",
   storageRows = preview.storageRows,
@@ -294,6 +296,7 @@ export function buildBillingPreviewPdfDocument({
     customerName: preview.customerName,
     startDate: preview.startDate,
     endDate: preview.endDate,
+    header: normalizePreviewHeader(header),
     generatedAt,
     generatedAtLabel: formatDateTimeValue(generatedAt, timeZone),
     modeLabel,
@@ -314,7 +317,7 @@ export function buildBillingPreviewPdfDefinition(document: BillingPreviewPdfDocu
         body: [
           [
             businessBlock("Bill To", [document.customerName]),
-            businessBlock("Remit To", [SELLER_NAME])
+            businessBlock("Remit To", [document.header.remitTo])
           ],
           [
             businessBlock("Billing Period", [`${document.startDate} to ${document.endDate}`]),
@@ -350,7 +353,7 @@ export function buildBillingPreviewPdfDefinition(document: BillingPreviewPdfDocu
     info: {
       title: document.title,
       subject: "Billing Preview Export",
-      author: SELLER_NAME
+      author: document.header.sellerName
     },
     defaultStyle: {
       font: CJK_FONT_NAME,
@@ -370,14 +373,14 @@ export function buildBillingPreviewPdfDefinition(document: BillingPreviewPdfDocu
 }
 
 function buildPreviewHeader(document: BillingPreviewPdfDocument): Content {
-  const dueDate = getDueDate(document.generatedAt);
+  const dueDate = getDueDate(document.generatedAt, document.header.paymentDueDays);
   return {
     columns: [
       {
         width: "*",
         stack: [
-          { text: SELLER_NAME, style: "sellerName", margin: [0, 0, 0, 4] },
-          { text: "Business services billing preview", style: "pageSubtitle" }
+          { text: document.header.sellerName, style: "sellerName", margin: [0, 0, 0, 4] },
+          { text: document.header.subtitle, style: "pageSubtitle" }
         ]
       },
       {
@@ -390,7 +393,7 @@ function buildPreviewHeader(document: BillingPreviewPdfDocument): Content {
               body: [
                 previewHeaderRow("Preview Date", document.generatedAtLabel),
                 previewHeaderRow("Due Date", dueDate ? formatPreviewDate(dueDate) : "-"),
-                previewHeaderRow("Terms", PAYMENT_TERMS_LABEL)
+                previewHeaderRow("Terms", document.header.terms)
               ]
             },
             layout: "noBorders",
@@ -964,12 +967,30 @@ function roundCurrency(value: number) {
   return Math.round(value * 100) / 100;
 }
 
-function getDueDate(previewDate: string) {
+function normalizePreviewHeader(header?: Partial<BillingInvoiceHeader> | null): BillingInvoiceHeader {
+  if (!header) {
+    return DEFAULT_BILLING_INVOICE_HEADER;
+  }
+  return {
+    sellerName: typeof header.sellerName === "string" ? header.sellerName.trim() : DEFAULT_BILLING_INVOICE_HEADER.sellerName,
+    subtitle: typeof header.subtitle === "string" ? header.subtitle.trim() : DEFAULT_BILLING_INVOICE_HEADER.subtitle,
+    remitTo: typeof header.remitTo === "string" ? header.remitTo.trim() : DEFAULT_BILLING_INVOICE_HEADER.remitTo,
+    terms: typeof header.terms === "string" ? header.terms.trim() : DEFAULT_BILLING_INVOICE_HEADER.terms,
+    paymentDueDays: typeof header.paymentDueDays === "number" && Number.isFinite(header.paymentDueDays) && header.paymentDueDays >= 0
+      ? Math.round(header.paymentDueDays)
+      : DEFAULT_BILLING_INVOICE_HEADER.paymentDueDays,
+    paymentInstructions: typeof header.paymentInstructions === "string"
+      ? header.paymentInstructions.trim()
+      : DEFAULT_BILLING_INVOICE_HEADER.paymentInstructions
+  };
+}
+
+function getDueDate(previewDate: string, paymentDueDays: number) {
   const parsed = new Date(previewDate);
   if (Number.isNaN(parsed.getTime())) {
     return null;
   }
-  parsed.setDate(parsed.getDate() + PAYMENT_TERMS_DAYS);
+  parsed.setDate(parsed.getDate() + paymentDueDays);
   return parsed.toISOString();
 }
 

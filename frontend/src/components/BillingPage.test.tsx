@@ -141,9 +141,22 @@ describe("BillingPage", () => {
       expect(downloadExcelWorkbook).toHaveBeenCalledTimes(1);
     });
     expect(downloadExcelWorkbook.mock.calls[0][0].rows).toHaveLength(2);
+    expect(downloadExcelWorkbook.mock.calls[0][0].columns.map((column: { label: string }) => column.label)).toContain("Charge Type");
+    expect(downloadExcelWorkbook.mock.calls[0][0].rows.map((row: { rowType: string }) => row.rowType)).toContain("Invoice Line");
+    expect(downloadExcelWorkbook.mock.calls[0][0].summaryRows.map((row: { label: string }) => row.label)).toContain("Grand Total");
   });
 
   it("exports the current billing preview to PDF", async () => {
+    const headerDefaults = {
+      sellerName: "",
+      subtitle: "",
+      remitTo: "SIM ACH Lockbox",
+      terms: "Net 15",
+      paymentDueDays: 15,
+      paymentInstructions: ""
+    };
+    window.localStorage.setItem("sim-billing-invoice-header-defaults", JSON.stringify(headerDefaults));
+
     renderWithProviders(
       <BillingPage
         customers={[createCustomer()]}
@@ -174,11 +187,21 @@ describe("BillingPage", () => {
       expect(downloadBillingPreviewPdf).toHaveBeenCalledTimes(1);
     });
     expect(downloadBillingPreviewPdf.mock.calls[0][0]).not.toHaveProperty("exportMode");
+    expect(downloadBillingPreviewPdf.mock.calls[0][0].header).toEqual(headerDefaults);
   });
 
   it("creates a storage settlement invoice per customer and period", async () => {
     const onOpenBillingInvoice = vi.fn();
     const customer = createCustomer({ id: 1, name: "Acme" });
+    const headerDefaults = {
+      sellerName: "",
+      subtitle: "",
+      remitTo: "SIM ACH Lockbox",
+      terms: "",
+      paymentDueDays: 0,
+      paymentInstructions: ""
+    };
+    window.localStorage.setItem("sim-billing-invoice-header-defaults", JSON.stringify(headerDefaults));
 
     getPallets.mockResolvedValue([
       {
@@ -250,6 +273,7 @@ describe("BillingPage", () => {
       expect(createBillingInvoice).toHaveBeenCalledTimes(1);
     });
     expect(createBillingInvoice.mock.calls[0][0].invoiceType).toBe("STORAGE_SETTLEMENT");
+    expect(createBillingInvoice.mock.calls[0][0].header).toEqual(headerDefaults);
     expect(createBillingInvoice.mock.calls[0][0].lines).toHaveLength(1);
     expect(onOpenBillingInvoice).toHaveBeenCalledWith(91);
   });
