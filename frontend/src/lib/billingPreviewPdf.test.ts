@@ -148,6 +148,60 @@ function createOverlappingSegmentPreviewFixture(): BillingPreview {
   };
 }
 
+function createInboundPreviewFixture(): BillingPreview {
+  const base = createPreviewFixture();
+  return {
+    ...base,
+    startDate: "2026-04-01",
+    endDate: "2026-04-30",
+    invoiceLines: [
+      {
+        id: "inbound-regular",
+        customerId: 1,
+        customerName: "Imperial Bag & Paper",
+        chargeType: "INBOUND",
+        reference: "Receipt 157 | REGULAR-001",
+        containerNo: "REGULAR-001",
+        warehouseSummary: "NJ",
+        occurredOn: "2026-04-16",
+        quantity: 1,
+        unitRate: 450,
+        amount: 450,
+        meta: "22 pallets received"
+      },
+      {
+        id: "inbound-transfer",
+        customerId: 1,
+        customerName: "Imperial Bag & Paper",
+        chargeType: "INBOUND",
+        reference: "Receipt 158 | EGHU9604405-SHYA127-4410",
+        containerNo: "EGHU9604405-SHYA127-4410",
+        warehouseSummary: "NJ",
+        occurredOn: "2026-04-17",
+        quantity: 22,
+        unitRate: 10,
+        amount: 220,
+        meta: "22 transfer pallets received"
+      }
+    ],
+    storageRows: [],
+    dailyBalanceRows: [],
+    summary: {
+      receivedContainers: 2,
+      receivedPallets: 44,
+      shippedPallets: 0,
+      palletDays: 0,
+      inboundAmount: 670,
+      wrappingAmount: 0,
+      storageGrossAmount: 0,
+      storageDiscountAmount: 0,
+      storageAmount: 0,
+      outboundAmount: 0,
+      grandTotal: 670
+    }
+  };
+}
+
 describe("buildBillingPreviewPdfDefinition", () => {
   it("uses the US invoice-style layout and separate discount detail rows", () => {
     const document = buildBillingPreviewPdfDocument({
@@ -239,6 +293,26 @@ describe("buildBillingPreviewPdfDefinition", () => {
       ["2026-04-03", "2026-04-04", "15", "2", "30 pallet-days", "$30.00"],
       ["2026-04-05", "2026-04-06", "5", "2", "10 pallet-days", "$10.00"]
     ]);
+  });
+
+  it("shows transfer inbound quantity as pallets instead of containers", () => {
+    const document = buildBillingPreviewPdfDocument({
+      preview: createInboundPreviewFixture(),
+      rates: DEFAULT_BILLING_RATES,
+      timeZone: "UTC",
+      workspaceMode: "OVERVIEW",
+      generatedAt: "2026-05-01T12:00:00Z"
+    });
+    const definition = buildBillingPreviewPdfDefinition(document);
+
+    const content = definition.content as any[];
+    const lineDetailTitleIndex = content.findIndex((block) => block.text === "Line Item Detail");
+    const lineDetailTable = content[lineDetailTitleIndex + 1].table.body;
+
+    expect(lineDetailTable[1][2].text).toBe("22 pallets received");
+    expect(lineDetailTable[1][5].text).toBe("1 container");
+    expect(lineDetailTable[2][2].text).toBe("22 transfer pallets received");
+    expect(lineDetailTable[2][5].text).toBe("22 pallets");
   });
 
   it("uses configurable preview header defaults and preserves blank fields", () => {

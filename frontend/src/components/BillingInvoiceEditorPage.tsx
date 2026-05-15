@@ -95,6 +95,7 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
   // Header and notes editing
   const [isEditingHeader, setIsEditingHeader] = useState(false);
   const [headerForm, setHeaderForm] = useState<HeaderFormState>(() => headerToForm(DEFAULT_BILLING_INVOICE_HEADER));
+  const [customerNameValue, setCustomerNameValue] = useState("");
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [notesValue, setNotesValue] = useState("");
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
@@ -120,6 +121,7 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
       const data = await api.getBillingInvoice(invoiceId);
       setInvoice(data);
       setHeaderForm(headerToForm(getEditableInvoiceHeader(data)));
+      setCustomerNameValue(data.customerNameSnapshot);
     } catch (error) {
       setErrorMessage(getErrorMessage(error, "Could not load invoice."));
     } finally {
@@ -296,6 +298,7 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
   function handleStartEditHeader() {
     if (!invoice) return;
     setHeaderForm(headerToForm(getEditableInvoiceHeader(invoice)));
+    setCustomerNameValue(invoice.customerNameSnapshot);
     setIsEditingHeader(true);
   }
 
@@ -304,9 +307,13 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
     if (!invoice) return;
     await runBusyAction("save-header", async () => {
       try {
-        const updated = await api.updateBillingInvoice(invoice.id, { header: formToHeader(headerForm) });
+        const updated = await api.updateBillingInvoice(invoice.id, {
+          customerName: customerNameValue,
+          header: formToHeader(headerForm)
+        });
         setInvoice(updated);
         setHeaderForm(headerToForm(getEditableInvoiceHeader(updated)));
+        setCustomerNameValue(updated.customerNameSnapshot);
         setIsEditingHeader(false);
       } catch (error) {
         setErrorMessage(getErrorMessage(error, "Could not save invoice header."));
@@ -584,6 +591,10 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
           {isEditingHeader ? (
             <form className="sheet-form sheet-form--compact" style={{ padding: "0 1rem 1rem", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }} onSubmit={handleSaveHeader}>
               <label>
+                {t("customer")}
+                <input type="text" required value={customerNameValue} onChange={(event) => setCustomerNameValue(event.target.value)} />
+              </label>
+              <label>
                 {t("billingInvoiceSellerName")}
                 <input type="text" value={headerForm.sellerName} onChange={(event) => setHeaderForm((form) => ({ ...form, sellerName: event.target.value }))} />
               </label>
@@ -629,6 +640,7 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
             </form>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "0.75rem", padding: "0 1rem 1rem" }}>
+              <InvoiceHeaderValue label={t("customer")} value={invoice.customerNameSnapshot} />
               <InvoiceHeaderValue label={t("billingInvoiceSellerName")} value={editableHeader.sellerName} />
               <InvoiceHeaderValue label={t("billingInvoiceSubtitle")} value={editableHeader.subtitle} />
               <InvoiceHeaderValue label={t("billingInvoiceRemitTo")} value={editableHeader.remitTo} />

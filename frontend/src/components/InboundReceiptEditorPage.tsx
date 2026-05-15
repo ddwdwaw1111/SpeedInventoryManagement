@@ -1,6 +1,6 @@
 import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
 import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
 import type { InboundHandlingMode, InboundLaunchIntent } from "../lib/activityManagementLaunchContext";
@@ -102,11 +102,11 @@ export function InboundReceiptEditorPage({
   const [batchForm, setBatchForm] = useState<BatchInboundFormState>(() => createEmptyBatchInboundForm());
   const [batchLines, setBatchLines] = useState<BatchInboundLineState[]>(() => [createEmptyBatchInboundLine()]);
   const [errorMessage, setErrorMessage] = useState("");
+  const [showValidationErrors, setShowValidationErrors] = useState(false);
   const [batchSubmitting, setBatchSubmitting] = useState(false);
   const [copySubmitting, setCopySubmitting] = useState(false);
   const [noteSubmitting, setNoteSubmitting] = useState(false);
-  const [inboundWizardStep, setInboundWizardStep] = useState<InboundWizardStep>(1);
-  const [batchInboundLineAddCount, setBatchInboundLineAddCount] = useState(1);
+  const [inboundWizardStep, setInboundWizardStep] = useState<InboundWizardStep>(2);
   const [inboundEditorIntent, setInboundEditorIntent] = useState<InboundLaunchIntent | null>(null);
   const [expandedPalletBreakdowns, setExpandedPalletBreakdowns] = useState<Record<string, boolean>>({});
   const [isEditorReady, setIsEditorReady] = useState(false);
@@ -230,11 +230,11 @@ export function InboundReceiptEditorPage({
 
     setBatchForm(sourceState.form);
     setBatchLines(sourceState.lines);
-    setInboundWizardStep(1);
+    setInboundWizardStep(2);
     setInboundEditorIntent(sourceState.inboundEditorIntent);
     setErrorMessage("");
+    setShowValidationErrors(false);
     setBatchSubmitting(false);
-    setBatchInboundLineAddCount(1);
     setExpandedPalletBreakdowns({});
     setIsEditorReady(true);
     lastInitializedRouteRef.current = routeKey;
@@ -297,17 +297,10 @@ export function InboundReceiptEditorPage({
     }));
   }
 
-  function getSafeLineAddCount(value: number) {
-    return Math.min(50, Math.max(1, Math.floor(value) || 1));
-  }
-
-  function addBatchLine(count = batchInboundLineAddCount) {
-    const safeCount = getSafeLineAddCount(count);
-    const nextLines = Array.from({ length: safeCount }, () =>
-      createEmptyBatchInboundLine(normalizeStorageSection(batchForm.storageSection || batchSectionOptions[0]))
-    );
-    pendingBatchLineIDRef.current = nextLines[0]?.id ?? null;
-    setBatchLines((current) => [...current, ...nextLines]);
+  function addBatchLine() {
+    const nextLine = createEmptyBatchInboundLine(normalizeStorageSection(batchForm.storageSection || batchSectionOptions[0]));
+    pendingBatchLineIDRef.current = nextLine.id;
+    setBatchLines((current) => [...current, nextLine]);
   }
 
   function removeBatchLine(lineID: string) {
@@ -471,40 +464,6 @@ export function InboundReceiptEditorPage({
     }));
   }
 
-  function autofillAllReceivedQty() {
-    setBatchLines((current) => current.map((line) => {
-      if (line.receivedQty > 0 || line.expectedQty <= 0) {
-        return line;
-      }
-      const skuMaster = skuMastersBySku.get(normalizeSkuLookupValue(line.sku));
-      const unitsPerPallet = getEffectiveInboundUnitsPerPallet(line, skuMaster);
-      const nextReceivedQty = line.expectedQty;
-      const previousSuggested = calculateSuggestedReorderLevel(line.expectedQty, line.receivedQty);
-      const nextSuggested = calculateSuggestedReorderLevel(line.expectedQty, nextReceivedQty);
-      const shouldKeepAutoReorder = line.reorderLevel <= 0 || line.reorderLevel === previousSuggested;
-      const previousAutoPalletPlan = buildAutoPalletPlan(line.receivedQty, unitsPerPallet);
-      const nextAutoPalletPlan = buildAutoPalletPlan(nextReceivedQty, unitsPerPallet);
-      const shouldKeepAutoPallets = line.pallets <= 0 || line.pallets === previousAutoPalletPlan.pallets;
-      const nextPallets = shouldKeepAutoPallets ? nextAutoPalletPlan.pallets : line.pallets;
-      const shouldPreserveExplicitBreakdown = line.palletBreakdownExplicit || line.palletBreakdownTouched;
-      const nextPalletBreakdown = shouldPreserveExplicitBreakdown
-        ? line.palletBreakdown
-        : buildInboundPalletBreakdown(nextReceivedQty, nextPallets, unitsPerPallet);
-      const nextPalletDetail = shouldPreserveExplicitBreakdown
-        ? line.palletsDetailCtns
-        : formatInboundPalletBreakdownDetail(nextPalletBreakdown);
-      return {
-        ...line,
-        receivedQty: nextReceivedQty,
-        reorderLevel: shouldKeepAutoReorder ? nextSuggested : line.reorderLevel,
-        pallets: nextPallets,
-        palletBreakdown: nextPalletBreakdown,
-        palletBreakdownExplicit: line.palletBreakdownExplicit,
-        palletsDetailCtns: nextPalletDetail
-      };
-    }));
-  }
-
   function updateBatchLinePallets(lineID: string, nextPallets: number) {
     setBatchLines((current) => current.map((line) => {
       if (line.id !== lineID) {
@@ -597,11 +556,17 @@ export function InboundReceiptEditorPage({
   function validateInboundHeader() {
     const batchLocationId = Number(batchForm.locationId);
     const batchCustomerId = Number(batchForm.customerId);
+    if (!batchLocationId) {
+      return t("chooseStorageBeforeSave");
+    }
     if (!batchCustomerId) {
       return t("chooseCustomerBeforeSave");
     }
-    if (!batchLocationId) {
-      return t("chooseStorageBeforeSave");
+    if (!batchForm.actualArrivalDate) {
+      return t("chooseActualArrivalDateBeforeSave");
+    }
+    if (!batchForm.containerNo.trim()) {
+      return t("chooseContainerBeforeSave");
     }
 
     return "";
@@ -655,6 +620,7 @@ export function InboundReceiptEditorPage({
     if (nextStep === 2) {
       const validationError = validateInboundHeader();
       if (validationError) {
+        setShowValidationErrors(true);
         setErrorMessage(validationError);
         return;
       }
@@ -662,11 +628,13 @@ export function InboundReceiptEditorPage({
     if (nextStep === 3) {
       const validationError = validateInboundDraft(batchForm.handlingMode !== "SEALED_TRANSIT");
       if (validationError) {
+        setShowValidationErrors(true);
         setErrorMessage(validationError);
         return;
       }
     }
 
+    setShowValidationErrors(false);
     setErrorMessage("");
     setInboundWizardStep(nextStep);
   }
@@ -678,6 +646,7 @@ export function InboundReceiptEditorPage({
 
     setBatchSubmitting(true);
     setErrorMessage("");
+    setShowValidationErrors(true);
 
     if (isEditingConfirmedInbound) {
       setErrorMessage(t("confirmedReceiptImmutableNotice"));
@@ -691,6 +660,7 @@ export function InboundReceiptEditorPage({
       setBatchSubmitting(false);
       return;
     }
+    setShowValidationErrors(false);
 
     const batchLocationId = Number(batchForm.locationId);
     const batchCustomerId = Number(batchForm.customerId);
@@ -698,11 +668,12 @@ export function InboundReceiptEditorPage({
     try {
       const isSealedTransitMode = batchForm.handlingMode === "SEALED_TRANSIT" && !isEditingConfirmedInbound;
       const effectiveStatus = isSealedTransitMode ? "DRAFT" : status;
+      const arrivalDate = batchForm.actualArrivalDate || batchForm.expectedArrivalDate;
       const payload: InboundDocumentPayload = {
         customerId: batchCustomerId,
         locationId: batchLocationId,
-        expectedArrivalDate: batchForm.expectedArrivalDate || undefined,
-        actualArrivalDate: batchForm.actualArrivalDate || undefined,
+        expectedArrivalDate: arrivalDate || undefined,
+        actualArrivalDate: arrivalDate || undefined,
         containerNo: batchForm.containerNo || undefined,
         containerType: batchForm.containerType,
         handlingMode: batchForm.handlingMode,
@@ -772,9 +743,6 @@ export function InboundReceiptEditorPage({
     if (document?.id && !canEditCurrentDocument) {
       return;
     }
-    if (inboundWizardStep < 3) {
-      return;
-    }
 
     void submitInboundDocument(batchForm.handlingMode === "SEALED_TRANSIT" && !isEditingConfirmedInbound ? "DRAFT" : "CONFIRMED");
   }
@@ -808,29 +776,30 @@ export function InboundReceiptEditorPage({
     );
   }
 
+  const shouldShowFieldErrors = showValidationErrors && !isReadOnly;
+  const isMissingWarehouse = shouldShowFieldErrors && !Number(batchForm.locationId);
+  const isMissingCustomer = shouldShowFieldErrors && !Number(batchForm.customerId);
+  const isMissingActualArrivalDate = shouldShowFieldErrors && !batchForm.actualArrivalDate;
+  const isMissingContainerNo = shouldShowFieldErrors && !batchForm.containerNo.trim();
+  const hasMissingSkuLine = shouldShowFieldErrors && validBatchInboundLines.length === 0;
+  const getInvalidInputClassName = (isInvalid: boolean) => isInvalid ? "inbound-entry-input--invalid" : undefined;
+
+  const renderFieldLabel = (label: string, isRequired = false) => (
+    <span className="inbound-entry-field-label">
+      <span>
+        {label}
+        {isRequired ? <span className="inbound-entry-field-label__required-mark" aria-hidden="true">*</span> : null}
+      </span>
+    </span>
+  );
+
   return (
     <main className="workspace-main">
-      <div className="space-y-6 pb-6">
-        <section className="rounded-[24px] border border-slate-200/80 bg-[linear-gradient(180deg,#f4f8ff_0%,#eef4fb_100%)] px-5 py-5 shadow-[0_18px_48px_rgba(10,31,68,0.06)]">
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-            <div className="space-y-2">
-              <div className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500 ring-1 ring-slate-200/70">
-                <span>{t("receiptEditorPage")}</span>
-              </div>
-              <div>
-                <h1 className="font-headline text-3xl font-extrabold tracking-tight text-[#0d2d63]">
-                  {document
-                    ? (isEditingConfirmedInbound ? t("receiptEditorConfirmedTitle") : t("receiptEditorDraftTitle"))
-                    : t("receiptEditorNewTitle")}
-                </h1>
-                <p className="mt-1.5 max-w-3xl text-sm text-slate-600">
-                  {t("receiptEditorPageDesc")}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              {document?.id ? (
+      <div className="space-y-3 pb-6">
+        <section className="rounded-[18px] border border-slate-200/80 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.04)]">
+          {document?.id ? (
+            <div className="inbound-entry-topbar">
+              <div className="inbound-entry-topbar__actions">
                 <button
                   type="button"
                   onClick={() => onOpenInboundDetail(document.id)}
@@ -839,32 +808,21 @@ export function InboundReceiptEditorPage({
                   <OpenInNewRoundedIcon sx={{ fontSize: 18 }} />
                   {t("details")}
                 </button>
-              ) : null}
-              {document?.id && isEditingConfirmedInbound && canManage ? (
-                <button
-                  type="button"
-                  onClick={() => void handleCopyCurrentReceipt()}
-                  aria-busy={copySubmitting}
-                  disabled={copySubmitting}
-                  className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {copySubmitting ? <InlineLoadingIndicator /> : null}
-                  {t("reEnterReceipt")}
-                </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={onBackToList}
-                className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-[#143569] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(20,53,105,0.18)] transition hover:bg-[#102f5f]"
-              >
-                {t("back")}
-              </button>
+                {isEditingConfirmedInbound && canManage ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleCopyCurrentReceipt()}
+                    aria-busy={copySubmitting}
+                    disabled={copySubmitting}
+                    className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {copySubmitting ? <InlineLoadingIndicator /> : null}
+                    {t("reEnterReceipt")}
+                  </button>
+                ) : null}
+              </div>
             </div>
-          </div>
-        </section>
-
-        <section className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_16px_34px_rgba(15,23,42,0.05)]">
-          <WorkspacePanelHeader title={t("receiptEditorPage")} description={t("receiptEditorStepHint")} />
+          ) : null}
 
           {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
           {isReadOnly && !isEditingConfirmedInbound ? (
@@ -880,25 +838,64 @@ export function InboundReceiptEditorPage({
             <InlineAlert severity="info">{t("sealedTransitDraftNotice")}</InlineAlert>
           ) : null}
 
-          <form onSubmit={handleSubmit}>
-            <div className="shipment-wizard__steps">
-              {([
-                [1, t("receiptStepInfo")],
-                [2, t("receiptStepLines")],
-                [3, t("receiptStepReview")]
-              ] as const).map(([step, label]) => (
-                <button
-                  key={step}
-                  type="button"
-                  className={`shipment-wizard__step ${inboundWizardStep === step ? "shipment-wizard__step--active" : ""}`}
-                  onClick={() => moveInboundWizardStep(step)}
-                  disabled={isReadOnly}
-                >
-                  <span className="shipment-wizard__step-index">{step}</span>
-                  <span>{label}</span>
-                </button>
-              ))}
+          <form onSubmit={handleSubmit} noValidate>
+            <div className="inbound-entry-form sheet-form sheet-form--compact">
+              <label>{renderFieldLabel(t("currentStorage"), true)}<select aria-label={t("currentStorage")} value={batchForm.locationId} className={getInvalidInputClassName(isMissingWarehouse)} aria-invalid={isMissingWarehouse ? "true" : undefined} onChange={(event) => setBatchForm((current) => ({ ...current, locationId: event.target.value }))} disabled={isReadOnly} required><option value="">{t("selectWarehouseFirst")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
+              <label>{renderFieldLabel(t("customer"), true)}<select aria-label={t("customer")} value={batchForm.customerId} className={getInvalidInputClassName(isMissingCustomer)} aria-invalid={isMissingCustomer ? "true" : undefined} onChange={(event) => setBatchForm((current) => ({ ...current, customerId: event.target.value }))} disabled={isReadOnly} required><option value="">{t("selectCustomerFirst")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
+              <label>{renderFieldLabel(t("actualArrivalDate"), true)}<input aria-label={t("actualArrivalDate")} type="date" value={batchForm.actualArrivalDate} className={getInvalidInputClassName(isMissingActualArrivalDate)} aria-invalid={isMissingActualArrivalDate ? "true" : undefined} disabled={isReadOnly} required onChange={(event) => {
+                const nextValue = event.target.value;
+                setBatchForm((current) => ({
+                  ...current,
+                  actualArrivalDate: nextValue,
+                  expectedArrivalDate: nextValue
+                }));
+              }} /></label>
+              <label>{renderFieldLabel(t("containerNo"), true)}<input aria-label={t("containerNo")} value={batchForm.containerNo} className={getInvalidInputClassName(isMissingContainerNo)} aria-invalid={isMissingContainerNo ? "true" : undefined} disabled={isReadOnly} required onChange={(event) => setBatchForm((current) => ({ ...current, containerNo: event.target.value }))} placeholder="MRSU8580370" /></label>
+              <label>{renderFieldLabel(t("handlingMode"), true)}<select aria-label={t("handlingMode")} value={batchForm.handlingMode} onChange={(event) => setBatchForm((current) => ({ ...current, handlingMode: event.target.value as InboundHandlingMode }))} disabled={isReadOnly || isEditingConfirmedInbound} required><option value="PALLETIZED">{t("handlingModePalletized")}</option><option value="SEALED_TRANSIT">{t("handlingModeSealedTransit")}</option></select></label>
+              <label>{renderFieldLabel(t("billingContainerType"))}<select aria-label={t("billingContainerType")} value={batchForm.containerType} onChange={(event) => setBatchForm((current) => ({ ...current, containerType: event.target.value as ContainerType }))} disabled={isReadOnly}><option value="NORMAL">{t("billingContainerTypeNormal")}</option><option value="WEST_COAST_TRANSFER">{t("billingContainerTypeWestCoastTransfer")}</option></select></label>
+              <label>{renderFieldLabel(t("inboundUnit"))}<select aria-label={t("inboundUnit")} value={batchForm.unitLabel} onChange={(event) => setBatchForm((current) => ({ ...current, unitLabel: event.target.value }))} disabled={isReadOnly}><option value="CTN">CTN</option><option value="PCS">PCS</option><option value="PALLET">PALLET</option></select></label>
+              <div className="inbound-entry-form__note">
+                <label>{renderFieldLabel(t("documentNotes"))}<input aria-label={t("documentNotes")} value={batchForm.documentNote} disabled={!canManage} onChange={(event) => setBatchForm((current) => ({ ...current, documentNote: event.target.value }))} placeholder={t("inboundNotePlaceholder")} /></label>
+                {document?.id && canManage ? (
+                  <div className="sheet-form__actions" style={{ marginTop: "0.5rem" }}>
+                    <button className="button button--ghost" type="button" onClick={() => void handleSaveDocumentNote()} disabled={noteSubmitting || !isInboundNoteDirty} aria-busy={noteSubmitting}>
+                      {noteSubmitting ? <InlineLoadingIndicator /> : null}
+                      {noteSubmitting ? t("saving") : t("saveNote")}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             </div>
+
+            {inboundContainerWarnings.exact.length > 0 ? (
+              <InlineAlert severity="warning">
+                <strong>{t("duplicateInboundContainerWarning", { containerNo: batchForm.containerNo.trim().toUpperCase() })}</strong>
+                <div className="sheet-warning-list">
+                  {inboundContainerWarnings.exact.map((match) => (
+                    <div key={`exact-${match.documentId}`} className="sheet-warning-list__item">
+                      <span className="cell--mono">{match.containerNo}</span>
+                      <span className="sheet-warning-list__meta">{[match.customerName || "-", match.dateLabel || "-"].join(" | ")}</span>
+                    </div>
+                  ))}
+                </div>
+              </InlineAlert>
+            ) : null}
+
+            {inboundContainerWarnings.exact.length === 0 && inboundContainerWarnings.similar.length > 0 ? (
+              <InlineAlert severity="info">
+                <strong>{t("similarInboundContainerWarning", { containerNo: batchForm.containerNo.trim().toUpperCase() })}</strong>
+                <div className="sheet-warning-list">
+                  {inboundContainerWarnings.similar.map((match) => (
+                    <div key={`similar-${match.documentId}`} className="sheet-warning-list__item">
+                      <span className="cell--mono">{match.containerNo}</span>
+                      <span className="sheet-warning-list__meta">
+                        {[`${Math.round(match.similarity * 100)}%`, match.customerName || "-", match.dateLabel || "-"].join(" | ")}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </InlineAlert>
+            ) : null}
 
             {inboundWizardStep === 1 ? (
               <>
@@ -965,29 +962,23 @@ export function InboundReceiptEditorPage({
 
             {inboundWizardStep === 2 ? (
               <>
-                <div className="batch-allocation-preview">
-                  <div className="batch-allocation-preview__header">
-                    <div>
-                      <strong>{t("skuLines")}</strong>
-                      <span>{t("receiptLinesStepHint")}</span>
+                <div className="batch-allocation-preview batch-allocation-preview--compact">
+                  <div className="batch-allocation-preview__stats">
+                    <div className="batch-allocation-preview__stat">
+                      <strong>{inboundWizardSummary.lineCount}</strong>
+                      <span>{t("totalLines")}</span>
                     </div>
-                    <div className="batch-allocation-preview__stats">
-                      <div className="batch-allocation-preview__stat">
-                        <strong>{inboundWizardSummary.lineCount}</strong>
-                        <span>{t("totalLines")}</span>
-                      </div>
-                      <div className="batch-allocation-preview__stat">
-                        <strong>{inboundWizardSummary.totalReceivedQty}</strong>
-                        <span>{t("received")}</span>
-                      </div>
-                      <div className="batch-allocation-preview__stat">
-                        <strong>{inboundWizardSummary.totalPallets}</strong>
-                        <span>{t("pallets")}</span>
-                      </div>
-                      <div className="batch-allocation-preview__stat">
-                        <strong>{inboundWizardSummary.varianceLines}</strong>
-                        <span>{t("receiptVariance")}</span>
-                      </div>
+                    <div className="batch-allocation-preview__stat">
+                      <strong>{inboundWizardSummary.totalReceivedQty}</strong>
+                      <span>{t("received")}</span>
+                    </div>
+                    <div className="batch-allocation-preview__stat">
+                      <strong>{inboundWizardSummary.totalPallets}</strong>
+                      <span>{t("pallets")}</span>
+                    </div>
+                    <div className="batch-allocation-preview__stat">
+                      <strong>{inboundWizardSummary.varianceLines}</strong>
+                      <span>{t("receiptVariance")}</span>
                     </div>
                   </div>
 
@@ -998,151 +989,175 @@ export function InboundReceiptEditorPage({
                   ) : null}
                 </div>
 
-                <div className="batch-lines">
-                  <div className="batch-lines__toolbar batch-lines__toolbar--sticky">
-                    <strong>{t("skuLines")}</strong>
-                    <div className="batch-lines__adder">
-                      <label className="batch-lines__adder-label">
-                        {t("rowsToAdd")}
-                        <input
-                          type="number"
-                          min="1"
-                          max="50"
-                          value={batchInboundLineAddCount}
-                          onChange={(event) => setBatchInboundLineAddCount(getSafeLineAddCount(Number(event.target.value || 1)))}
-                          disabled={isReadOnly}
-                        />
-                      </label>
-                      <button
-                        className="button button--ghost"
-                        type="button"
-                        onClick={() => addBatchLine()}
-                        disabled={isReadOnly}
-                      >
-                        <AddCircleOutlineOutlinedIcon fontSize="small" />
-                        {t("addSkuLine")}
-                      </button>
-                      <button
-                        className="button button--ghost"
-                        type="button"
-                        onClick={() => autofillAllReceivedQty()}
-                        disabled={isReadOnly}
-                      >
-                        {t("fillAllReceivedQty")}
-                      </button>
-                    </div>
-                  </div>
+                <div className="inbound-entry-lines">
                   <datalist id="inbound-sku-list">
                     {Array.from(new Set([...items.map((item) => item.sku.trim().toUpperCase()), ...Array.from(skuMastersBySku.keys())])).filter(Boolean).map((sku) => (
                       <option key={sku} value={sku} />
                     ))}
                   </datalist>
 
-                  {batchLines.map((line, index) => {
-                    const normalizedBatchLineSku = normalizeSkuLookupValue(line.sku);
-                    const selectedBatchItem = items.find((item) =>
-                      item.sku.trim().toUpperCase() === normalizedBatchLineSku
-                      && item.locationId === Number(batchForm.locationId)
-                      && item.customerId === Number(batchForm.customerId)
-                    );
-                    const batchSkuTemplate = items.find((item) => item.sku.trim().toUpperCase() === normalizedBatchLineSku);
-                    const batchSkuMaster = skuMastersBySku.get(normalizedBatchLineSku);
-                    const suggestedReorderLevel = calculateSuggestedReorderLevel(line.expectedQty, line.receivedQty);
-                    const displayedReorderLevel = selectedBatchItem?.reorderLevel ?? batchSkuMaster?.reorderLevel ?? batchSkuTemplate?.reorderLevel ?? line.reorderLevel;
-                    const effectiveUnitsPerPallet = getEffectiveInboundUnitsPerPallet(line, batchSkuMaster);
-                    const palletUnitLabel = (batchSkuMaster?.unit || batchForm.unitLabel || "CTN").toUpperCase();
-                    const lineSkuDisplay = line.sku.trim().toUpperCase() || "-";
-                    const lineStorageSectionDisplay = normalizeStorageSection(line.storageSection || batchSectionOptions[0]);
-                    const palletBreakdownTotal = getInboundPalletBreakdownTotal(line.palletBreakdown);
-                    const canExpandPalletBreakdown = batchForm.handlingMode !== "SEALED_TRANSIT" && line.pallets > 0;
-                    const isPalletBreakdownExpanded = Boolean(expandedPalletBreakdowns[line.id]);
-                    const hasPalletBreakdownMismatch = batchForm.handlingMode !== "SEALED_TRANSIT" && line.receivedQty > 0 && palletBreakdownTotal !== line.receivedQty;
+                  <div className="inbound-entry-table-wrap">
+                    <table className="inbound-entry-table batch-line-grid--inbound">
+                      <thead>
+                        <tr>
+                          <th>{t("sku")}</th>
+                          <th>{t("description")}</th>
+                          <th>{t("storageSection")}</th>
+                          <th>{t("expectedQty")}</th>
+                          <th>{t("received")}</th>
+                          <th>{t("pallets")}</th>
+                          <th>{t("unitsPerPallet")}</th>
+                          <th>{t("palletsDetail")}</th>
+                          <th>{t("reorderLevel")}</th>
+                          <th>{t("internalNotes")}</th>
+                          <th>{t("status")}</th>
+                          <th>{t("actions")}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {batchLines.map((line, index) => {
+                          const normalizedBatchLineSku = normalizeSkuLookupValue(line.sku);
+                          const selectedBatchItem = items.find((item) =>
+                            item.sku.trim().toUpperCase() === normalizedBatchLineSku
+                            && item.locationId === Number(batchForm.locationId)
+                            && item.customerId === Number(batchForm.customerId)
+                          );
+                          const batchSkuTemplate = items.find((item) => item.sku.trim().toUpperCase() === normalizedBatchLineSku);
+                          const batchSkuMaster = skuMastersBySku.get(normalizedBatchLineSku);
+                          const suggestedReorderLevel = calculateSuggestedReorderLevel(line.expectedQty, line.receivedQty);
+                          const displayedReorderLevel = selectedBatchItem?.reorderLevel ?? batchSkuMaster?.reorderLevel ?? batchSkuTemplate?.reorderLevel ?? line.reorderLevel;
+                          const effectiveUnitsPerPallet = getEffectiveInboundUnitsPerPallet(line, batchSkuMaster);
+                          const palletUnitLabel = (batchSkuMaster?.unit || batchForm.unitLabel || "CTN").toUpperCase();
+                          const lineSkuDisplay = line.sku.trim().toUpperCase() || "-";
+                          const lineStorageSectionDisplay = normalizeStorageSection(line.storageSection || batchSectionOptions[0]);
+                          const palletBreakdownTotal = getInboundPalletBreakdownTotal(line.palletBreakdown);
+                          const canExpandPalletBreakdown = batchForm.handlingMode !== "SEALED_TRANSIT" && line.pallets > 0;
+                          const isPalletBreakdownExpanded = Boolean(expandedPalletBreakdowns[line.id]);
+                          const hasPalletBreakdownMismatch = batchForm.handlingMode !== "SEALED_TRANSIT" && line.receivedQty > 0 && palletBreakdownTotal !== line.receivedQty;
+                          const lineVariance = getInboundReceiptVariance(line.expectedQty, line.receivedQty);
+                          const descriptionValue = selectedBatchItem
+                            ? displayDescription(selectedBatchItem)
+                            : (line.description || (batchSkuMaster ? getSKUMasterDescription(batchSkuMaster) : "") || displayDescription(batchSkuTemplate ?? { description: "", name: "" }));
 
-                    return (
-                      <div className="batch-line-card" key={line.id} id={`receipt-editor-line-${line.id}`}>
-                        <div className="batch-line-card__header">
-                          <div className="batch-line-card__title">
-                            <strong>{t("sku")} #{index + 1}</strong>
-                            <span className={`status-pill ${selectedBatchItem ? "status-pill--ok" : "status-pill--alert"}`}>
-                              {selectedBatchItem ? t("useExistingSku") : t("createNewSku")}
-                            </span>
-                            {line.receivedQty > 0 ? (() => {
-                              const lineVariance = getInboundReceiptVariance(line.expectedQty, line.receivedQty);
-                              return (
-                                <span className={`status-pill ${getInboundReceiptVarianceClassName(lineVariance)}`}>
-                                  {t(getInboundReceiptVarianceLabelKey(lineVariance))}
-                                </span>
-                              );
-                            })() : null}
-                          </div>
-                          <button className="button button--danger button--small" type="button" onClick={() => removeBatchLine(line.id)} disabled={isReadOnly || batchLines.length === 1}>{t("removeLine")}</button>
-                        </div>
-                        <div className="batch-line-grid batch-line-grid--inbound">
-                          <label>{t("sku")}<input value={line.sku} onChange={(event) => updateBatchLineSku(line.id, event.target.value)} placeholder="ABC123" disabled={isReadOnly} list="inbound-sku-list" /></label>
-                          <label className="batch-line-grid__description">{t("description")}<input value={selectedBatchItem ? displayDescription(selectedBatchItem) : (line.description || (batchSkuMaster ? getSKUMasterDescription(batchSkuMaster) : "") || displayDescription(batchSkuTemplate ?? { description: "", name: "" }))} onChange={(event) => updateBatchLine(line.id, { description: event.target.value })} placeholder={t("descriptionPlaceholder")} disabled={isReadOnly || Boolean(selectedBatchItem)} /></label>
-                          <label>{t("expectedQty")}<input type="number" min="0" value={numberInputValue(line.expectedQty)} onChange={(event) => updateBatchLineExpectedQty(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={isReadOnly} /></label>
-                          <label>{t("received")}<input type="number" min="0" value={numberInputValue(line.receivedQty)} onChange={(event) => updateBatchLineReceivedQty(line.id, Math.max(0, Number(event.target.value || 0)))} onBlur={() => autofillBatchLineReceivedQty(line.id)} placeholder={line.expectedQty > 0 ? String(line.expectedQty) : ""} disabled={isReadOnly} /></label>
-                          <label>{t("pallets")}<input type="number" min="0" value={numberInputValue(line.pallets)} onChange={(event) => updateBatchLinePallets(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={isReadOnly || batchForm.handlingMode === "SEALED_TRANSIT"} /></label>
-                          <label>{t("unitsPerPallet")}<input type="number" min="0" value={numberInputValue(line.unitsPerPallet > 0 ? line.unitsPerPallet : effectiveUnitsPerPallet)} onChange={(event) => updateBatchLineUnitsPerPallet(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={isReadOnly || batchForm.handlingMode === "SEALED_TRANSIT"} placeholder={batchSkuMaster?.defaultUnitsPerPallet ? String(batchSkuMaster.defaultUnitsPerPallet) : ""} /></label>
-                          <label>{t("storageSection")}<select value={normalizeStorageSection(line.storageSection || batchSectionOptions[0])} onChange={(event) => updateBatchLine(line.id, { storageSection: event.target.value })} disabled={isReadOnly}>{batchSectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}</select></label>
-                          <InboundPalletBreakdownPanel
-                            title={t("palletBreakdown")}
-                            helperText={batchSkuMaster?.defaultUnitsPerPallet ? t("palletUnitsHint", { units: batchSkuMaster.defaultUnitsPerPallet, unit: palletUnitLabel }) : undefined}
-                            skuLabel={t("sku")}
-                            skuValue={lineSkuDisplay}
-                            storageSectionLabel={t("storageSection")}
-                            storageSectionValue={lineStorageSectionDisplay}
-                            palletsLabel={t("pallets")}
-                            palletCount={line.pallets}
-                            palletsDetailLabel={t("palletsDetail")}
-                            palletsDetailValue={line.palletsDetailCtns || "-"}
-                            unitLabel={palletUnitLabel}
-                            detailTone={hasPalletBreakdownMismatch ? "danger" : "default"}
-                            resetLabel={t("resetPalletBreakdown")}
-                            detailsLabel={t("details")}
-                            emptyHint={t("palletBreakdownEmptyHint")}
-                            sealedHint={t("sealedTransitDraftNotice")}
-                            resetDisabled={isReadOnly || batchForm.handlingMode === "SEALED_TRANSIT" || line.pallets <= 0 || line.receivedQty <= 0}
-                            canExpand={canExpandPalletBreakdown}
-                            expanded={isPalletBreakdownExpanded}
-                            onToggle={() => togglePalletBreakdown(line.id)}
-                            onReset={() => resetBatchLinePalletBreakdown(line.id)}
-                            state={batchForm.handlingMode === "SEALED_TRANSIT" ? "sealed" : line.pallets <= 0 ? "empty" : "ready"}
-                            rows={line.palletBreakdown.map((entry, palletIndex) => ({
-                              id: entry.id,
-                              label: `${t("pallet")} #${palletIndex + 1}`,
-                              quantity: entry.quantity
-                            }))}
-                            onQuantityChange={(entryId, quantity) => updateBatchLinePalletBreakdownQuantity(line.id, entryId, quantity)}
-                            inputDisabled={isReadOnly}
-                            mismatchMessage={hasPalletBreakdownMismatch ? t("palletBreakdownTotalMismatch", {
-                              assigned: palletBreakdownTotal,
-                              received: line.receivedQty
-                            }) : null}
-                          />
-                          <label>{t("reorderLevel")}<input type="number" min="0" value={numberInputValue(displayedReorderLevel)} onChange={(event) => updateBatchLine(line.id, { reorderLevel: Math.max(0, Number(event.target.value || 0)) })} placeholder={suggestedReorderLevel > 0 ? String(suggestedReorderLevel) : ""} disabled={isReadOnly || Boolean(selectedBatchItem)} /></label>
-                        </div>
-                        <div className="batch-line-card__meta">
-                          <span className="batch-line-card__hint">
-                            {selectedBatchItem
-                              ? `${selectedBatchItem.customerName} | ${selectedBatchItem.sku} | ${selectedBatchItem.locationName}`
-                              : (line.sku.trim() ? line.sku.trim().toUpperCase() : t("noSkuSelected"))}
-                          </span>
-                        </div>
-                        <div style={{ marginTop: "0.75rem" }}>
-                          <label style={{ display: "grid", gap: "0.25rem", fontSize: "0.82rem" }}>
-                            {t("internalNotes")}
-                            <input
-                              value={line.lineNote}
-                              onChange={(event) => updateBatchLine(line.id, { lineNote: event.target.value })}
-                              placeholder={t("inboundLineNotePlaceholder")}
+                          return (
+                            <Fragment key={line.id}>
+                              <tr id={`receipt-editor-line-${line.id}`}>
+                                <td className="inbound-entry-table__sku">
+                                  <input value={line.sku} className={getInvalidInputClassName(hasMissingSkuLine && !line.sku.trim())} aria-invalid={hasMissingSkuLine && !line.sku.trim() ? "true" : undefined} onChange={(event) => updateBatchLineSku(line.id, event.target.value)} placeholder="ABC123" disabled={isReadOnly} list="inbound-sku-list" aria-label={`${t("sku")} #${index + 1}`} />
+                                  <span className="inbound-entry-table__hint">
+                                    {selectedBatchItem
+                                      ? `${selectedBatchItem.customerName} | ${selectedBatchItem.locationName}`
+                                      : (line.sku.trim() ? t("createNewSku") : t("noSkuSelected"))}
+                                  </span>
+                                </td>
+                                <td className="inbound-entry-table__description">
+                                  <input value={descriptionValue} onChange={(event) => updateBatchLine(line.id, { description: event.target.value })} placeholder={t("descriptionPlaceholder")} disabled={isReadOnly || Boolean(selectedBatchItem)} aria-label={`${t("description")} #${index + 1}`} />
+                                </td>
+                                <td>
+                                  <select value={normalizeStorageSection(line.storageSection || batchSectionOptions[0])} onChange={(event) => updateBatchLine(line.id, { storageSection: event.target.value })} disabled={isReadOnly} aria-label={`${t("storageSection")} #${index + 1}`}>
+                                    {batchSectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}
+                                  </select>
+                                </td>
+                                <td><input type="number" min="0" value={numberInputValue(line.expectedQty)} className={getInvalidInputClassName(hasMissingSkuLine && line.expectedQty <= 0 && line.receivedQty <= 0)} aria-invalid={hasMissingSkuLine && line.expectedQty <= 0 && line.receivedQty <= 0 ? "true" : undefined} onChange={(event) => updateBatchLineExpectedQty(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={isReadOnly} aria-label={`${t("expectedQty")} #${index + 1}`} /></td>
+                                <td><input type="number" min="0" value={numberInputValue(line.receivedQty)} className={getInvalidInputClassName(hasMissingSkuLine && line.expectedQty <= 0 && line.receivedQty <= 0)} aria-invalid={hasMissingSkuLine && line.expectedQty <= 0 && line.receivedQty <= 0 ? "true" : undefined} onChange={(event) => updateBatchLineReceivedQty(line.id, Math.max(0, Number(event.target.value || 0)))} onBlur={() => autofillBatchLineReceivedQty(line.id)} placeholder={line.expectedQty > 0 ? String(line.expectedQty) : ""} disabled={isReadOnly} aria-label={`${t("received")} #${index + 1}`} /></td>
+                                <td><input type="number" min="0" value={numberInputValue(line.pallets)} onChange={(event) => updateBatchLinePallets(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={isReadOnly || batchForm.handlingMode === "SEALED_TRANSIT"} aria-label={`${t("pallets")} #${index + 1}`} /></td>
+                                <td><input type="number" min="0" value={numberInputValue(line.unitsPerPallet > 0 ? line.unitsPerPallet : effectiveUnitsPerPallet)} onChange={(event) => updateBatchLineUnitsPerPallet(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={isReadOnly || batchForm.handlingMode === "SEALED_TRANSIT"} placeholder={batchSkuMaster?.defaultUnitsPerPallet ? String(batchSkuMaster.defaultUnitsPerPallet) : ""} aria-label={`${t("unitsPerPallet")} #${index + 1}`} /></td>
+                                <td className="inbound-entry-table__detail">
+                                  <span>{line.palletsDetailCtns || "-"}</span>
+                                  {hasPalletBreakdownMismatch ? <span className="inbound-entry-table__warning">{t("receiptVariance")}</span> : null}
+                                  <button className="button button--ghost button--small" type="button" onClick={() => togglePalletBreakdown(line.id)} disabled={!canExpandPalletBreakdown}>
+                                    {t("details")}
+                                  </button>
+                                </td>
+                                <td><input type="number" min="0" value={numberInputValue(displayedReorderLevel)} onChange={(event) => updateBatchLine(line.id, { reorderLevel: Math.max(0, Number(event.target.value || 0)) })} placeholder={suggestedReorderLevel > 0 ? String(suggestedReorderLevel) : ""} disabled={isReadOnly || Boolean(selectedBatchItem)} aria-label={`${t("reorderLevel")} #${index + 1}`} /></td>
+                                <td className="inbound-entry-table__note">
+                                  <input value={line.lineNote} onChange={(event) => updateBatchLine(line.id, { lineNote: event.target.value })} placeholder={t("inboundLineNotePlaceholder")} disabled={isReadOnly} aria-label={`${t("internalNotes")} #${index + 1}`} />
+                                </td>
+                                <td>
+                                  <div className="inbound-entry-table__status">
+                                    <span className={`status-pill ${selectedBatchItem ? "status-pill--ok" : "status-pill--alert"}`}>
+                                      {selectedBatchItem ? t("useExistingSku") : t("createNewSku")}
+                                    </span>
+                                    {line.receivedQty > 0 ? (
+                                      <span className={`status-pill ${getInboundReceiptVarianceClassName(lineVariance)}`}>
+                                        {t(getInboundReceiptVarianceLabelKey(lineVariance))}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                </td>
+                                <td>
+                                  <button className="button button--danger button--small" type="button" onClick={() => removeBatchLine(line.id)} disabled={isReadOnly || batchLines.length === 1}>{t("removeLine")}</button>
+                                </td>
+                              </tr>
+                              {isPalletBreakdownExpanded || hasPalletBreakdownMismatch ? (
+                                <tr className="inbound-entry-table__detail-row">
+                                  <td colSpan={12}>
+                                    <InboundPalletBreakdownPanel
+                                      title={t("palletBreakdown")}
+                                      helperText={batchSkuMaster?.defaultUnitsPerPallet ? t("palletUnitsHint", { units: batchSkuMaster.defaultUnitsPerPallet, unit: palletUnitLabel }) : undefined}
+                                      skuLabel={t("sku")}
+                                      skuValue={lineSkuDisplay}
+                                      storageSectionLabel={t("storageSection")}
+                                      storageSectionValue={lineStorageSectionDisplay}
+                                      palletsLabel={t("pallets")}
+                                      palletCount={line.pallets}
+                                      palletsDetailLabel={t("palletsDetail")}
+                                      palletsDetailValue={line.palletsDetailCtns || "-"}
+                                      unitLabel={palletUnitLabel}
+                                      detailTone={hasPalletBreakdownMismatch ? "danger" : "default"}
+                                      resetLabel={t("resetPalletBreakdown")}
+                                      detailsLabel={t("details")}
+                                      emptyHint={t("palletBreakdownEmptyHint")}
+                                      sealedHint={t("sealedTransitDraftNotice")}
+                                      resetDisabled={isReadOnly || batchForm.handlingMode === "SEALED_TRANSIT" || line.pallets <= 0 || line.receivedQty <= 0}
+                                      canExpand={canExpandPalletBreakdown}
+                                      expanded={isPalletBreakdownExpanded || hasPalletBreakdownMismatch}
+                                      onToggle={() => togglePalletBreakdown(line.id)}
+                                      onReset={() => resetBatchLinePalletBreakdown(line.id)}
+                                      state={batchForm.handlingMode === "SEALED_TRANSIT" ? "sealed" : line.pallets <= 0 ? "empty" : "ready"}
+                                      rows={line.palletBreakdown.map((entry, palletIndex) => ({
+                                        id: entry.id,
+                                        label: `${t("pallet")} #${palletIndex + 1}`,
+                                        quantity: entry.quantity
+                                      }))}
+                                      onQuantityChange={(entryId, quantity) => updateBatchLinePalletBreakdownQuantity(line.id, entryId, quantity)}
+                                      inputDisabled={isReadOnly}
+                                      mismatchMessage={hasPalletBreakdownMismatch ? t("palletBreakdownTotalMismatch", {
+                                        assigned: palletBreakdownTotal,
+                                        received: line.receivedQty
+                                      }) : null}
+                                    />
+                                  </td>
+                                </tr>
+                              ) : null}
+                            </Fragment>
+                          );
+                        })}
+                        <tr className="inbound-entry-table__add-row">
+                          <td colSpan={12}>
+                            <button
+                              className="inbound-entry-table__add-button"
+                              type="button"
+                              onClick={() => addBatchLine()}
                               disabled={isReadOnly}
-                            />
-                          </label>
-                        </div>
-                      </div>
-                    );
-                  })}
+                              aria-label={t("addSkuLine")}
+                            >
+                              <AddCircleOutlineOutlinedIcon fontSize="small" />
+                            </button>
+                          </td>
+                        </tr>
+                      </tbody>
+                      <tfoot>
+                        <tr>
+                          <td colSpan={3}>{t("summary")}</td>
+                          <td>{inboundWizardSummary.totalExpectedQty}</td>
+                          <td>{inboundWizardSummary.totalReceivedQty}</td>
+                          <td>{inboundWizardSummary.totalPallets}</td>
+                          <td colSpan={6}></td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
                 </div>
               </>
             ) : null}
@@ -1195,7 +1210,7 @@ export function InboundReceiptEditorPage({
                         {[
                           batchLocation?.name || "-",
                           batchForm.containerNo.trim() ? batchForm.containerNo.trim().toUpperCase() : "-",
-                          batchForm.expectedArrivalDate || "-"
+                          batchForm.actualArrivalDate || "-"
                         ].join(" · ")}
                       </span>
                       <span className="batch-line-card__hint">
@@ -1242,33 +1257,24 @@ export function InboundReceiptEditorPage({
               </div>
             ) : null}
 
-            <div className="sheet-form__actions" style={{ marginTop: "1rem" }}>
-              {inboundWizardStep === 3 && !isEditingConfirmedInbound ? (
-                <button className="button button--ghost" type="button" disabled={batchSubmitting || isReadOnly} onClick={() => void submitInboundDocument("DRAFT")} aria-busy={batchSubmitting}>
-                  {batchSubmitting ? <InlineLoadingIndicator /> : null}
-                  {batchSubmitting ? t("saving") : isEditingInboundDraft ? t("saveChanges") : t("saveDraft")}
-                </button>
-              ) : null}
-              {inboundWizardStep === 3 && isEditingConfirmedInbound && document?.id && canManage ? (
-                <button className="button button--ghost" type="button" disabled={copySubmitting} onClick={() => void handleCopyCurrentReceipt()} aria-busy={copySubmitting}>
-                  {copySubmitting ? <InlineLoadingIndicator /> : null}
-                  {t("reEnterReceipt")}
-                </button>
-              ) : null}
-              <div className="shipment-wizard__actions">
-                {inboundWizardStep > 1 ? (
-                  <button className="button button--ghost" type="button" onClick={() => moveInboundWizardStep((inboundWizardStep - 1) as InboundWizardStep)} disabled={isReadOnly}>{t("back")}</button>
+            <div className="sheet-form__actions shipment-action-bar inbound-entry-actions">
+              <div className="shipment-action-bar__secondary">
+                <button className="button button--ghost" type="button" onClick={onBackToList}>{t("cancel")}</button>
+              </div>
+              <div className="shipment-action-bar__primary">
+                {!isEditingConfirmedInbound ? (
+                  <button className="button button--ghost" type="button" disabled={batchSubmitting || isReadOnly} onClick={() => void submitInboundDocument("DRAFT")} aria-busy={batchSubmitting}>
+                    {batchSubmitting ? <InlineLoadingIndicator /> : null}
+                    {batchSubmitting ? t("saving") : isEditingInboundDraft ? t("saveChanges") : t("saveDraft")}
+                  </button>
                 ) : null}
-                {inboundWizardStep < 3 ? (
-                  <button className="button button--primary" type="button" onClick={() => moveInboundWizardStep((inboundWizardStep + 1) as InboundWizardStep)} disabled={isReadOnly}>{t("next")}</button>
-                ) : !isEditingConfirmedInbound ? (
+                {!isEditingConfirmedInbound ? (
                   <button className="button button--primary" type="submit" disabled={batchSubmitting || isReadOnly} aria-busy={batchSubmitting}>
                     {batchSubmitting ? <InlineLoadingIndicator /> : null}
-                    {batchSubmitting ? t("saving") : isEditingConfirmedInbound ? t("saveChanges") : batchForm.handlingMode === "SEALED_TRANSIT" ? t("saveSealedTransit") : inboundEditorIntent === "convert-sealed-transit" ? t("convertToPalletized") : t("confirmReceipt")}
+                    {batchSubmitting ? t("saving") : batchForm.handlingMode === "SEALED_TRANSIT" ? t("saveSealedTransit") : inboundEditorIntent === "convert-sealed-transit" ? t("convertToPalletized") : t("confirmReceipt")}
                   </button>
                 ) : null}
               </div>
-              <button className="button button--ghost" type="button" onClick={onBackToList}>{t("cancel")}</button>
             </div>
           </form>
         </section>
@@ -1296,8 +1302,8 @@ function buildInboundEditorSourceState({
       form: {
         ...createEmptyBatchInboundForm(launchContext?.scheduledDate || ""),
         handlingMode: launchContext?.forceHandlingMode ?? "PALLETIZED",
-        customerId: customers[0] ? String(customers[0].id) : "",
-        locationId: locations[0] ? String(locations[0].id) : ""
+        customerId: "",
+        locationId: ""
       },
       lines: [createEmptyBatchInboundLine()],
       inboundEditorIntent: launchContext?.inboundIntent ?? null
@@ -1305,10 +1311,13 @@ function buildInboundEditorSourceState({
   }
 
   const normalizedStatus = normalizeDocumentStatus(document.status);
+  const arrivalDate = document.actualArrivalDate
+    ? document.actualArrivalDate.slice(0, 10)
+    : (document.expectedArrivalDate ? document.expectedArrivalDate.slice(0, 10) : "");
   return {
     form: {
-      expectedArrivalDate: document.expectedArrivalDate ? document.expectedArrivalDate.slice(0, 10) : "",
-      actualArrivalDate: document.actualArrivalDate ? document.actualArrivalDate.slice(0, 10) : "",
+      expectedArrivalDate: arrivalDate,
+      actualArrivalDate: arrivalDate,
       containerNo: document.containerNo || "",
       containerType: document.containerType || "NORMAL",
       handlingMode: launchContext?.forceHandlingMode ?? document.handlingMode ?? "PALLETIZED",
@@ -1344,10 +1353,10 @@ function buildInboundEditorSourceState({
   };
 }
 
-function createEmptyBatchInboundForm(expectedArrivalDate = ""): BatchInboundFormState {
+function createEmptyBatchInboundForm(arrivalDate = ""): BatchInboundFormState {
   return {
-    expectedArrivalDate,
-    actualArrivalDate: "",
+    expectedArrivalDate: arrivalDate,
+    actualArrivalDate: arrivalDate,
     containerNo: "",
     containerType: "NORMAL",
     handlingMode: "PALLETIZED",

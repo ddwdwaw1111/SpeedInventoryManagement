@@ -191,6 +191,53 @@ function createOverlappingSegmentInvoiceFixture(): BillingInvoice {
   };
 }
 
+function createInboundInvoiceFixture(): BillingInvoice {
+  const base = createInvoiceFixture();
+  return {
+    ...base,
+    invoiceType: "MIXED",
+    periodStart: "2026-04-01",
+    periodEnd: "2026-04-30",
+    subtotal: 670,
+    discountTotal: 0,
+    grandTotal: 670,
+    lineCount: 2,
+    lines: [
+      {
+        ...base.lines[0],
+        id: 3001,
+        invoiceId: base.id,
+        chargeType: "INBOUND",
+        description: "22 pallets received",
+        reference: "Receipt 157 | REGULAR-001",
+        containerNo: "REGULAR-001",
+        occurredOn: "2026-04-16",
+        quantity: 1,
+        unitRate: 450,
+        amount: 450,
+        notes: "",
+        details: null
+      },
+      {
+        ...base.lines[0],
+        id: 3002,
+        invoiceId: base.id,
+        chargeType: "INBOUND",
+        description: "22 transfer pallets received",
+        reference: "Receipt 158 | EGHU9604405-SHYA127-4410",
+        containerNo: "EGHU9604405-SHYA127-4410",
+        occurredOn: "2026-04-17",
+        quantity: 22,
+        unitRate: 10,
+        amount: 220,
+        notes: "",
+        sortOrder: 2,
+        details: null
+      }
+    ]
+  };
+}
+
 describe("buildBillingInvoicePdfDefinition", () => {
   it("places amount summary first and moves line details onto later pages", () => {
     const definition = buildBillingInvoicePdfDefinition({
@@ -328,5 +375,21 @@ describe("buildBillingInvoicePdfDefinition", () => {
       ["2026-04-03", "2026-04-04", "15", "2", "30 pallet-days", "$30.00"],
       ["2026-04-05", "2026-04-06", "5", "2", "10 pallet-days", "$10.00"]
     ]);
+  });
+
+  it("shows transfer inbound quantity as pallets instead of containers", () => {
+    const definition = buildBillingInvoicePdfDefinition({
+      invoice: createInboundInvoiceFixture(),
+      timeZone: "UTC"
+    });
+
+    const content = definition.content as any[];
+    const lineDetailTitleIndex = content.findIndex((block) => block.text === "Line Item Detail");
+    const lineDetailTable = content[lineDetailTitleIndex + 1].table.body;
+
+    expect(lineDetailTable[1][2].text).toBe("22 pallets received");
+    expect(lineDetailTable[1][5].text).toBe("1 container");
+    expect(lineDetailTable[2][2].text).toBe("22 transfer pallets received");
+    expect(lineDetailTable[2][5].text).toBe("22 pallets");
   });
 });

@@ -6,8 +6,14 @@ Thumbs.db
 
 frontend/node_modules/
 frontend/dist/
-frontend/playwright-report/
-frontend/test-results/
+
+# Playwright artifacts
+.playwright-mcp/
+playwright-report/
+test-results/
+
+# Local Vite dev server logs
+frontend/vite-*.log
 
 backend/.env
 backend/bin/

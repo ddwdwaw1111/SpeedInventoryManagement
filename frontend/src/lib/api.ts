@@ -545,7 +545,7 @@ export const api = {
     });
   },
 
-  updateBillingInvoice(invoiceId: number, payload: { notes?: string; header?: BillingInvoice["header"] }) {
+  updateBillingInvoice(invoiceId: number, payload: { customerName?: string; notes?: string; header?: BillingInvoice["header"] }) {
     return request<BillingInvoice>(`/billing/invoices/${invoiceId}`, {
       method: "PUT",
       body: JSON.stringify(payload)

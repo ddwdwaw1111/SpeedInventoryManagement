@@ -141,6 +141,11 @@ function getShipmentLineQuantityInputs() {
   return Array.from(document.querySelectorAll('input[id^="shipment-editor-quantity-"]')) as HTMLInputElement[];
 }
 
+function selectShipmentLineSource(lineIndex = 0, sku = "608333", warehouseId = "1") {
+  fireEvent.change(getShipmentLineSkuInputs()[lineIndex], { target: { value: sku } });
+  fireEvent.change(getShipmentLineWarehouseInputs()[lineIndex], { target: { value: warehouseId } });
+}
+
 function confirmShipmentReview() {
   fireEvent.click(screen.getByRole("checkbox", { name: /I confirm the warehouse/i }));
 }
@@ -186,8 +191,7 @@ describe("OutboundShipmentEditorPage", () => {
     );
 
     await waitForOutboundPalletsToLoad();
-    fireEvent.change(getShipmentLineWarehouseInputs()[0], { target: { value: "1" } });
-    fireEvent.change(getShipmentLineSkuInputs()[0], { target: { value: "608333" } });
+    selectShipmentLineSource();
     fireEvent.change(getShipmentLineQuantityInputs()[0], { target: { value: "5" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
@@ -267,8 +271,7 @@ describe("OutboundShipmentEditorPage", () => {
     );
 
     await waitForOutboundPalletsToLoad();
-    fireEvent.change(getShipmentLineWarehouseInputs()[0], { target: { value: "1" } });
-    fireEvent.change(getShipmentLineSkuInputs()[0], { target: { value: "608333" } });
+    selectShipmentLineSource();
     fireEvent.change(getShipmentLineQuantityInputs()[0], { target: { value: "5" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
@@ -364,16 +367,12 @@ describe("OutboundShipmentEditorPage", () => {
     await waitForOutboundPalletsToLoad();
     fireEvent.click(screen.getByRole("button", { name: "Add Outbound Line" }));
 
-    const storageInputs = getShipmentLineWarehouseInputs();
-    const skuInputs = getShipmentLineSkuInputs();
     const qtyInputs = getShipmentLineQuantityInputs();
 
-    fireEvent.change(storageInputs[0], { target: { value: "1" } });
-    fireEvent.change(skuInputs[0], { target: { value: "608333" } });
+    selectShipmentLineSource(0);
     fireEvent.change(qtyInputs[0], { target: { value: "5" } });
 
-    fireEvent.change(storageInputs[1], { target: { value: "1" } });
-    fireEvent.change(skuInputs[1], { target: { value: "608333" } });
+    selectShipmentLineSource(1);
     fireEvent.change(qtyInputs[1], { target: { value: "5" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
@@ -513,8 +512,7 @@ describe("OutboundShipmentEditorPage", () => {
     fireEvent.change(screen.getByLabelText("Ship-to Address"), { target: { value: "12 Dock Road" } });
     fireEvent.change(screen.getByLabelText("Ship-to Contact"), { target: { value: "201-555-1000" } });
     fireEvent.change(screen.getByLabelText("Carrier"), { target: { value: "FedEx Freight" } });
-    fireEvent.change(getShipmentLineWarehouseInputs()[0], { target: { value: "1" } });
-    fireEvent.change(getShipmentLineSkuInputs()[0], { target: { value: "608333" } });
+    selectShipmentLineSource();
     fireEvent.change(getShipmentLineQuantityInputs()[0], { target: { value: "5" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
@@ -591,8 +589,7 @@ describe("OutboundShipmentEditorPage", () => {
     );
 
     await waitForOutboundPalletsToLoad();
-    fireEvent.change(getShipmentLineWarehouseInputs()[0], { target: { value: "1" } });
-    fireEvent.change(getShipmentLineSkuInputs()[0], { target: { value: "608333" } });
+    selectShipmentLineSource();
     fireEvent.change(getShipmentLineQuantityInputs()[0], { target: { value: "5" } });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
 
@@ -762,8 +759,7 @@ describe("OutboundShipmentEditorPage", () => {
     );
 
     await waitForOutboundPalletsToLoad();
-    fireEvent.change(getShipmentLineWarehouseInputs()[0], { target: { value: "1" } });
-    fireEvent.change(getShipmentLineSkuInputs()[0], { target: { value: "608333" } });
+    selectShipmentLineSource();
     fireEvent.change(getShipmentLineQuantityInputs()[0], { target: { value: "8" } });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(screen.getByRole("button", { name: "Switch to Manual Pick" }));
@@ -795,7 +791,7 @@ describe("OutboundShipmentEditorPage", () => {
     });
   });
 
-  it("filters sku choices by warehouse before quantity entry", async () => {
+  it("filters warehouse choices by sku before quantity entry", async () => {
     mockedApi.getPallets.mockResolvedValue([
       createOutboundPalletTrace(),
       createOutboundPalletTrace({
@@ -836,22 +832,27 @@ describe("OutboundShipmentEditorPage", () => {
     const skuSelect = getShipmentLineSkuInputs()[0];
     const quantityInput = getShipmentLineQuantityInputs()[0];
 
-    expect(skuSelect.disabled).toBe(true);
-    expect(quantityInput.disabled).toBe(true);
-
-    fireEvent.change(warehouseSelect, { target: { value: "2" } });
-
     expect(skuSelect.disabled).toBe(false);
-    const skuOptions = Array.from(document.querySelectorAll("datalist option")).map((option) => option.getAttribute("value") || "");
-    expect(skuOptions.some((option) => option.includes("West Coast SKU"))).toBe(true);
-    expect(skuOptions.some((option) => option.includes("VB22GC"))).toBe(false);
-
-    fireEvent.change(skuSelect, { target: { value: "NOT-A-SKU" } });
-
+    expect(warehouseSelect.disabled).toBe(true);
     expect(quantityInput.disabled).toBe(true);
-    expect(screen.getByText("Choose a valid SKU from the list.")).toBeInTheDocument();
+
+    const initialSkuOptions = Array.from(document.querySelectorAll("datalist option")).map((option) => option.getAttribute("value") || "");
+    expect(initialSkuOptions.some((option) => option.includes("West Coast SKU"))).toBe(true);
+    expect(initialSkuOptions.some((option) => option.includes("VB22GC"))).toBe(true);
 
     fireEvent.change(skuSelect, { target: { value: "900001" } });
+
+    expect(warehouseSelect.disabled).toBe(false);
+    const warehouseOptions = Array.from(warehouseSelect.options).map((option) => option.textContent || "");
+    expect(warehouseOptions.some((option) => option.includes("LA"))).toBe(true);
+    expect(warehouseOptions.some((option) => option.includes("NJ"))).toBe(false);
+
+    fireEvent.change(skuSelect, { target: { value: "NOT-A-SKU" } });
+    expect(warehouseSelect.disabled).toBe(false);
+    expect(quantityInput.disabled).toBe(true);
+
+    fireEvent.change(skuSelect, { target: { value: "900001" } });
+    fireEvent.change(warehouseSelect, { target: { value: "2" } });
 
     expect(quantityInput.disabled).toBe(false);
   });
@@ -883,14 +884,15 @@ describe("OutboundShipmentEditorPage", () => {
     const nextButton = screen.getByRole("button", { name: "Next" });
 
     expect(nextButton).toBeDisabled();
-
-    fireEvent.change(warehouseSelect, { target: { value: "1" } });
-
-    await waitFor(() => {
-      expect(document.activeElement).toBe(skuSelect);
-    });
+    expect(warehouseSelect).toBeDisabled();
 
     fireEvent.change(skuSelect, { target: { value: "608333" } });
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(warehouseSelect);
+    });
+
+    fireEvent.change(warehouseSelect, { target: { value: "1" } });
 
     await waitFor(() => {
       expect(document.activeElement).toBe(quantityInput);
@@ -916,7 +918,7 @@ describe("OutboundShipmentEditorPage", () => {
     });
   });
 
-  it("copies the previous warehouse into a newly added outbound line", async () => {
+  it("starts a newly added outbound line at sku entry", async () => {
     mockedApi.getPallets.mockResolvedValue([createOutboundPalletTrace()]);
 
     renderWithProviders(
@@ -937,14 +939,16 @@ describe("OutboundShipmentEditorPage", () => {
     );
 
     await waitForOutboundPalletsToLoad();
-    fireEvent.change(getShipmentLineWarehouseInputs()[0], { target: { value: "1" } });
+    selectShipmentLineSource();
     fireEvent.click(screen.getByRole("button", { name: "Add Outbound Line" }));
 
     await waitFor(() => {
       const warehouseSelects = getShipmentLineWarehouseInputs();
+      const skuInputs = getShipmentLineSkuInputs();
       expect(warehouseSelects).toHaveLength(2);
-      expect(warehouseSelects[1].value).toBe("1");
-      expect(document.activeElement).toBe(warehouseSelects[1]);
+      expect(warehouseSelects[1].value).toBe("");
+      expect(warehouseSelects[1]).toBeDisabled();
+      expect(document.activeElement).toBe(skuInputs[1]);
     });
   });
 
@@ -969,8 +973,7 @@ describe("OutboundShipmentEditorPage", () => {
     );
 
     await waitForOutboundPalletsToLoad();
-    fireEvent.change(getShipmentLineWarehouseInputs()[0], { target: { value: "1" } });
-    fireEvent.change(getShipmentLineSkuInputs()[0], { target: { value: "608333" } });
+    selectShipmentLineSource();
     fireEvent.change(getShipmentLineQuantityInputs()[0], { target: { value: "5" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));

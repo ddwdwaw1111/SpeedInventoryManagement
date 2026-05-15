@@ -134,6 +134,8 @@ describe("buildPickSheetDocument", () => {
     expect(nj!.totalQty).toBe(20);
     expect(pa!.totalQty).toBe(15);
     expect(nj!.rows.map((row) => row.containerNo).sort()).toEqual(["SEGU6542651", "SHYA1211-2720"]);
+    expect(nj!.rows.every((row) => row.demandLabel === "Line #1\nNeed: 20 CTN")).toBe(true);
+    expect(pa!.rows[0].demandLabel).toBe("Line #2\nNeed: 15 CTN");
     expect(pa!.rows[0].containerNo).toBe("CAJU5283887");
     expect(document.totalQty).toBe(35);
     expect(document.totalPallets).toBe(3);
@@ -273,6 +275,61 @@ describe("buildPickSheetDocument", () => {
     expect(document.totalPallets).toBe(2);
   });
 
+  it("keeps separate rows for the same container and sku when they satisfy different demand lines", () => {
+    const fixture = createOutboundDocumentFixture();
+    fixture.lines = [
+      {
+        ...fixture.lines[0],
+        id: 401,
+        quantity: 5,
+        pallets: 1,
+        lineNote: "",
+        pickAllocations: [
+          {
+            id: 41,
+            lineId: 401,
+            itemNumber: "608333",
+            locationId: 1,
+            locationName: "NJ",
+            storageSection: "A",
+            containerNo: "SAME-CONTAINER",
+            allocatedQty: 5,
+            pallets: 1,
+            createdAt: "2026-03-24T10:00:00Z"
+          }
+        ]
+      },
+      {
+        ...fixture.lines[0],
+        id: 402,
+        quantity: 7,
+        pallets: 1,
+        lineNote: "",
+        pickAllocations: [
+          {
+            id: 42,
+            lineId: 402,
+            itemNumber: "608333",
+            locationId: 1,
+            locationName: "NJ",
+            storageSection: "A",
+            containerNo: "SAME-CONTAINER",
+            allocatedQty: 7,
+            pallets: 1,
+            createdAt: "2026-03-24T10:05:00Z"
+          }
+        ]
+      }
+    ];
+
+    const document = buildPickSheetDocument(fixture);
+    const sameSkuRows = document.rows.filter((row) => row.containerNo === "SAME-CONTAINER" && row.sku === "608333");
+
+    expect(sameSkuRows).toHaveLength(2);
+    expect(sameSkuRows.map((row) => row.demandLabel)).toEqual(["Line #1\nNeed: 5 CTN", "Line #2\nNeed: 7 CTN"]);
+    expect(sameSkuRows.map((row) => row.quantity)).toEqual([5, 7]);
+  });
+
   it("fails closed when a line has no stored pick allocations", () => {
     const fixture = createOutboundDocumentFixture();
     fixture.lines[0] = {
@@ -308,8 +365,10 @@ describe("buildPickSheetDefinition", () => {
     });
     expect(firstRowTable).toBeDefined();
     const body = (firstRowTable!.table as { body: Array<Array<{ text: string }>> }).body;
-    expect(body[0][5].text).toBe("Container No.");
-    expect(body[0][7].text).toBe("Pallets");
+    expect(body[0][1].text).toBe("Demand");
+    expect(body[1][1].text).toBe("Line #1\nNeed: 20 CTN");
+    expect(body[0][6].text).toBe("Container No.");
+    expect(body[0][8].text).toBe("Pallets");
 
     const totalsTable = content[content.length - 1]?.table as { body: Array<Array<{ text: string }>> } | undefined;
     expect(totalsTable?.body[0][0].text).toBe("Total Item Qty");

@@ -263,6 +263,7 @@ type PreviewDocumentRowsInput = {
 type PreviewBuildContext = {
   storageDiscountsByLineKey: Map<string, StorageDiscountContext>;
   storageDiscounts: StorageDiscountContext[];
+  transferInboundFeePerPallet: number;
 };
 
 export async function downloadBillingPreviewPdf(input: BillingPreviewPdfInput) {
@@ -274,7 +275,7 @@ export async function downloadBillingPreviewPdf(input: BillingPreviewPdfInput) {
 
 export function buildBillingPreviewPdfDocument({
   preview,
-  rates: _rates,
+  rates,
   header,
   timeZone,
   workspaceMode = "OVERVIEW",
@@ -282,7 +283,7 @@ export function buildBillingPreviewPdfDocument({
   generatedAt = new Date().toISOString()
 }: BillingPreviewPdfInput): BillingPreviewPdfDocument {
   const modeLabel = workspaceMode === "STORAGE_SETTLEMENT" ? "Storage Settlement" : "Overview";
-  const context = buildPreviewContext(storageRows);
+  const context = buildPreviewContext(storageRows, rates);
   const totals = workspaceMode === "STORAGE_SETTLEMENT"
     ? buildStorageSettlementTotals(storageRows)
     : buildOverviewTotals(preview.summary);
@@ -553,7 +554,7 @@ function buildStorageSettlementTotals(storageRows: BillingStorageRow[]): Preview
   return { subtotal, discountTotal, grandTotal };
 }
 
-function buildPreviewContext(storageRows: BillingStorageRow[]): PreviewBuildContext {
+function buildPreviewContext(storageRows: BillingStorageRow[], rates: BillingRates): PreviewBuildContext {
   const storageDiscounts = storageRows
     .filter((row) => row.discountAmount > 0)
     .map((row) => buildStorageDiscountContext(row));
@@ -561,7 +562,11 @@ function buildPreviewContext(storageRows: BillingStorageRow[]): PreviewBuildCont
   for (const row of storageRows) {
     storageDiscountsByLineKey.set(storageLineKey(row.customerId, row.containerNo), buildStorageDiscountContext(row));
   }
-  return { storageDiscountsByLineKey, storageDiscounts };
+  return {
+    storageDiscountsByLineKey,
+    storageDiscounts,
+    transferInboundFeePerPallet: rates.transferInboundFeePerPallet
+  };
 }
 
 function buildStorageDiscountContext(row: BillingStorageRow): StorageDiscountContext {
@@ -634,7 +639,7 @@ function buildLineDetailRows({ invoiceLines, timeZone }: PreviewDocumentRowsInpu
       serviceDate,
       quantity: storageDiscount
         ? formatQuantityWithUnit(storageDiscount.palletDays, "pallet-days")
-        : formatQuantityWithUnit(line.quantity, quantityUnitForChargeType(line.chargeType)),
+        : formatQuantityWithUnit(line.quantity, quantityUnitForLine(line, context)),
       unitRate: formatMoney(line.unitRate),
       amount: roundCurrency(storageDiscount?.grossAmount ?? line.amount),
       discountSource: "-"
@@ -908,6 +913,22 @@ function getLineDescription(line: PreviewChargeSource, storageDiscount: StorageD
     return "Storage charges";
   }
   return line.meta || `${chargeTypeDetailLabel(line.chargeType)} charges`;
+}
+
+function quantityUnitForLine(line: PreviewChargeSource, context: PreviewBuildContext) {
+  if (line.chargeType === "INBOUND" && isTransferInboundLine(line, context.transferInboundFeePerPallet)) {
+    return "pallets";
+  }
+  return quantityUnitForChargeType(line.chargeType);
+}
+
+function isTransferInboundLine(line: PreviewChargeSource, transferInboundFeePerPallet: number) {
+  if (/\btransfer pallets?\b/i.test(`${line.meta} ${line.reference}`)) {
+    return true;
+  }
+  return transferInboundFeePerPallet > 0
+    && numbersClose(line.unitRate, transferInboundFeePerPallet)
+    && !numbersClose(line.quantity, 1);
 }
 
 function chargeTypeLabel(chargeType: BillingInvoiceLine["chargeType"]) {

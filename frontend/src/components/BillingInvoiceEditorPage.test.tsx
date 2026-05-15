@@ -263,6 +263,7 @@ describe("BillingInvoiceEditorPage", () => {
   it("edits the draft invoice header before finalization", async () => {
     updateBillingInvoice.mockResolvedValue({
       ...invoiceFixture,
+      customerNameSnapshot: "Imperial Bag & Paper - Billing",
       header: {
         ...invoiceFixture.header,
         terms: "Net 15",
@@ -283,12 +284,14 @@ describe("BillingInvoiceEditorPage", () => {
     const headerScope = within(headerPanel as HTMLElement);
 
     fireEvent.click(headerScope.getByRole("button", { name: "Edit" }));
+    fireEvent.change(headerScope.getByLabelText("Customer"), { target: { value: "Imperial Bag & Paper - Billing" } });
     fireEvent.change(headerScope.getByLabelText("Terms"), { target: { value: "Net 15" } });
     fireEvent.change(headerScope.getByLabelText("Payment Due Days"), { target: { value: "15" } });
     fireEvent.click(headerScope.getByRole("button", { name: /^save$/i }));
 
     await waitFor(() => {
       expect(updateBillingInvoice).toHaveBeenCalledWith(42, {
+        customerName: "Imperial Bag & Paper - Billing",
         header: expect.objectContaining({
           terms: "Net 15",
           paymentDueDays: 15

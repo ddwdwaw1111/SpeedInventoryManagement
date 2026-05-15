@@ -166,7 +166,7 @@ export function buildBillingInvoicePdfDefinition({ invoice, timeZone }: BillingI
 
   if (invoice.lines.length > 0) {
     content.push({ text: "Line Item Detail", style: "sectionTitle", margin: [0, 0, 0, 4], pageBreak: "before" });
-    content.push(buildLineDetailTable(invoice.lines));
+    content.push(buildLineDetailTable(invoice.lines, invoice.rates.transferInboundFeePerPallet));
   }
 
   if (invoice.invoiceType === "STORAGE_SETTLEMENT") {
@@ -301,8 +301,8 @@ function buildAmountSummaryTable(
   };
 }
 
-function buildLineDetailTable(lines: BillingInvoiceLineData[]): Content {
-  const rows = buildLineDetailRows(lines);
+function buildLineDetailTable(lines: BillingInvoiceLineData[], transferInboundFeePerPallet?: number): Content {
+  const rows = buildLineDetailRows(lines, transferInboundFeePerPallet);
 
   return {
     table: {
@@ -525,7 +525,7 @@ function buildDiscountSourceRows(lines: BillingInvoiceLineData[]): DiscountSourc
   });
 }
 
-function buildLineDetailRows(lines: BillingInvoiceLineData[]) {
+function buildLineDetailRows(lines: BillingInvoiceLineData[], transferInboundFeePerPallet?: number) {
   const rows: LineDetailRow[] = [];
 
   lines.forEach((line, index) => {
@@ -551,7 +551,7 @@ function buildLineDetailRows(lines: BillingInvoiceLineData[]) {
       description: line.description || "-",
       reference: line.reference || "-",
       date: line.occurredOn || "-",
-      quantity: getLineQuantity(line),
+      quantity: getLineQuantity(line, transferInboundFeePerPallet),
       rate: formatMoney(line.unitRate),
       amount: roundCurrency(line.amount + embeddedDiscount),
       discountSource: "-"
@@ -756,11 +756,11 @@ function getEmbeddedDiscountAmount(line: BillingInvoiceLineData) {
   return Math.max(0, roundCurrency(line.details?.discountAmount ?? 0));
 }
 
-function getLineQuantity(line: BillingInvoiceLineData) {
+function getLineQuantity(line: BillingInvoiceLineData, transferInboundFeePerPallet?: number) {
   if (line.details?.kind === "STORAGE_CONTAINER_SUMMARY") {
     return formatQuantityWithUnit(line.details.palletDays, "pallet-days");
   }
-  return formatQuantityWithUnit(line.quantity, quantityUnitForChargeType(line.chargeType));
+  return formatQuantityWithUnit(line.quantity, quantityUnitForLine(line, transferInboundFeePerPallet));
 }
 
 function embeddedDiscountDescription(line: BillingInvoiceLineData) {
@@ -786,6 +786,23 @@ function embeddedDiscountSource(line: BillingInvoiceLineData) {
 
 function discountLineSourceLabel(line: BillingInvoiceLineData) {
   return line.sourceType === "AUTO" ? "Automatic discount line" : "Manual discount line";
+}
+
+function quantityUnitForLine(line: BillingInvoiceLineData, transferInboundFeePerPallet?: number) {
+  if (line.chargeType === "INBOUND" && isTransferInboundLine(line, transferInboundFeePerPallet)) {
+    return "pallets";
+  }
+  return quantityUnitForChargeType(line.chargeType);
+}
+
+function isTransferInboundLine(line: BillingInvoiceLineData, transferInboundFeePerPallet?: number) {
+  if (/\btransfer pallets?\b/i.test(`${line.description} ${line.reference} ${line.notes}`)) {
+    return true;
+  }
+  return typeof transferInboundFeePerPallet === "number"
+    && transferInboundFeePerPallet > 0
+    && numbersClose(line.unitRate, transferInboundFeePerPallet)
+    && !numbersClose(line.quantity, 1);
 }
 
 function quantityUnitForChargeType(chargeType: string) {

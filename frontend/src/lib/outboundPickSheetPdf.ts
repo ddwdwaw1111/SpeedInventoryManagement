@@ -96,6 +96,9 @@ const styles: Record<string, Style> = {
 
 type PickSheetRow = {
   id: string;
+  demandKey: string;
+  demandSequence: number;
+  demandLabel: string;
   itemNumber: string;
   sku: string;
   description: string;
@@ -140,6 +143,8 @@ const LABELS = {
   warehouse: "Warehouse",
   remarks: "Remarks",
   sequence: "SN",
+  demand: "Demand",
+  demandRequiredQty: "Need",
   itemNumber: "Item #",
   sku: "SKU",
   description: "Item Description",
@@ -166,7 +171,7 @@ export async function downloadOutboundPickSheetPdfFromDocument(document: Outboun
 }
 
 export function buildPickSheetDocument(document: OutboundDocument): PickSheetDocument {
-  const rows = document.lines.flatMap((line) => buildPickSheetRowsForLine(line));
+  const rows = document.lines.flatMap((line, lineIndex) => buildPickSheetRowsForLine(line, lineIndex));
 
   const warehouseGroups = groupRowsByWarehouse(rows);
 
@@ -186,13 +191,20 @@ export function buildPickSheetDocument(document: OutboundDocument): PickSheetDoc
   };
 }
 
-function buildPickSheetRowsForLine(line: OutboundDocument["lines"][number]): PickSheetRow[] {
+function buildPickSheetRowsForLine(line: OutboundDocument["lines"][number], lineIndex: number): PickSheetRow[] {
   if (line.pickAllocations.length === 0) {
     throw new Error(`Warehouse pick sheet requires stored pick allocations for outbound line ${line.id}.`);
   }
 
+  const demandSequence = lineIndex + 1;
+  const demandKey = String(line.id || demandSequence);
+  const demandLabel = formatDemandLabel(line, demandSequence);
+
   return mergePickSheetRowsByContainer(line.pickAllocations.map((allocation) => ({
     id: `${line.id}-${allocation.id}`,
+    demandKey,
+    demandSequence,
+    demandLabel,
     itemNumber: allocation.itemNumber || line.itemNumber || "",
     sku: line.sku,
     description: line.description,
@@ -219,7 +231,8 @@ function mergePickSheetRowsByContainer(rows: PickSheetRow[]): PickSheetRow[] {
       safeValue(row.sku),
       safeValue(row.description),
       safeValue(row.unitLabel),
-      safeValue(row.lineNote)
+      safeValue(row.lineNote),
+      safeValue(row.demandKey)
     ].join("|");
     const existingIndex = indexByKey.get(key);
     if (existingIndex === undefined) {
@@ -257,7 +270,9 @@ function groupRowsByWarehouse(rows: PickSheetRow[]): PickSheetWarehouseGroup[] {
       if (sectionCompare !== 0) return sectionCompare;
       const containerCompare = left.containerNo.localeCompare(right.containerNo);
       if (containerCompare !== 0) return containerCompare;
-      return left.sku.localeCompare(right.sku);
+      const skuCompare = left.sku.localeCompare(right.sku);
+      if (skuCompare !== 0) return skuCompare;
+      return left.demandSequence - right.demandSequence;
     });
   }
   return groups;
@@ -293,6 +308,7 @@ export function buildPickSheetDefinition(document: PickSheetDocument): TDocument
     const tableBody: TableCell[][] = [
       [
         headerCell(LABELS.sequence),
+        headerCell(LABELS.demand),
         headerCell(LABELS.itemNumber),
         headerCell(LABELS.sku),
         headerCell(LABELS.description),
@@ -307,6 +323,7 @@ export function buildPickSheetDefinition(document: PickSheetDocument): TDocument
         runningSequence += 1;
         return [
           bodyCell(String(runningSequence), "tableCellCenter"),
+          bodyCell(row.demandLabel, "tableCellCenter"),
           bodyCell(row.itemNumber || LABELS.empty, "tableCellCenter"),
           bodyCell(row.sku, "tableCellCenter"),
           bodyCell(row.description || LABELS.empty, "tableCell"),
@@ -325,7 +342,7 @@ export function buildPickSheetDefinition(document: PickSheetDocument): TDocument
       table: {
         headerRows: 1,
         dontBreakRows: true,
-        widths: [20, 60, 58, "*", 52, 94, 52, 44, 44, 120],
+        widths: [20, 72, 54, 54, "*", 46, 86, 48, 38, 36, 92],
         body: tableBody
       },
       layout: PICK_SHEET_LAYOUT_NAME
@@ -472,6 +489,11 @@ function formatPalletCount(value: number) {
 
 function normalizePalletCount(value: number) {
   return Math.round(value * 10000) / 10000;
+}
+
+function formatDemandLabel(line: OutboundDocument["lines"][number], demandSequence: number) {
+  const unitLabel = line.unitLabel || "PCS";
+  return `Line #${demandSequence}\n${LABELS.demandRequiredQty}: ${formatInteger(line.quantity)} ${unitLabel}`;
 }
 
 function joinUniqueValues(values: string[]) {

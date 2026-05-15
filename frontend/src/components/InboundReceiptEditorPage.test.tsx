@@ -62,10 +62,10 @@ describe("InboundReceiptEditorPage", () => {
       />
     );
 
-    const headerInputs = document.querySelectorAll(".sheet-form input");
-    fireEvent.change(headerInputs[0] as HTMLInputElement, { target: { value: "2026-03-31" } });
-    fireEvent.change(headerInputs[2] as HTMLInputElement, { target: { value: "MSCU1234567" } });
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.change(screen.getByLabelText("Warehouse"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("Customer"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("Actual Arrival Date"), { target: { value: "2026-03-31" } });
+    fireEvent.change(screen.getByLabelText("Container No."), { target: { value: "MSCU1234567" } });
 
     const inboundLineInputs = document.querySelectorAll(".batch-line-grid--inbound input");
     fireEvent.change(inboundLineInputs[0] as HTMLInputElement, { target: { value: "ABC123" } });
@@ -73,7 +73,6 @@ describe("InboundReceiptEditorPage", () => {
     fireEvent.change(inboundLineInputs[2] as HTMLInputElement, { target: { value: "8" } });
     fireEvent.change(inboundLineInputs[3] as HTMLInputElement, { target: { value: "8" } });
 
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(screen.getByRole("button", { name: "Save Draft" }));
 
     await waitFor(() => {
@@ -81,7 +80,7 @@ describe("InboundReceiptEditorPage", () => {
         customerId: 1,
         locationId: 1,
         expectedArrivalDate: "2026-03-31",
-        actualArrivalDate: undefined,
+        actualArrivalDate: "2026-03-31",
         containerNo: "MSCU1234567",
         containerType: "NORMAL",
         handlingMode: "PALLETIZED",
@@ -166,11 +165,13 @@ describe("InboundReceiptEditorPage", () => {
     );
 
     expect(screen.queryByDisplayValue("Local draft SKU")).not.toBeInTheDocument();
-    const headerInputs = document.querySelectorAll(".sheet-form input");
-    expect((headerInputs[2] as HTMLInputElement).value).toBe("");
+    expect(screen.queryByDisplayValue("2026-04-01")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Warehouse")).toHaveValue("");
+    expect(screen.getByLabelText("Customer")).toHaveValue("");
+    expect(screen.getByLabelText("Container No.")).toHaveValue("");
   });
 
-  it("auto-fills expected arrival date when actual arrival date is entered first", () => {
+  it("adds SKU rows from the dashed table row", () => {
     renderWithProviders(
       <InboundReceiptEditorPage
         routeKey="/inbound-management/new"
@@ -190,13 +191,78 @@ describe("InboundReceiptEditorPage", () => {
       />
     );
 
-    const expectedArrivalInput = screen.getByLabelText("Expected Arrival Date") as HTMLInputElement;
-    const actualArrivalInput = screen.getByLabelText("Actual Arrival Date") as HTMLInputElement;
+    expect(screen.queryByRole("button", { name: "Fill All Received" })).not.toBeInTheDocument();
+    expect(document.querySelectorAll("[id^='receipt-editor-line-']")).toHaveLength(1);
 
-    fireEvent.change(actualArrivalInput, { target: { value: "2026-04-02" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add SKU Line" }));
 
-    expect(actualArrivalInput.value).toBe("2026-04-02");
-    expect(expectedArrivalInput.value).toBe("2026-04-02");
+    expect(document.querySelectorAll("[id^='receipt-editor-line-']")).toHaveLength(2);
+  });
+
+  it("requires warehouse, actual arrival date, and container number before saving", async () => {
+    renderWithProviders(
+      <InboundReceiptEditorPage
+        routeKey="/inbound-management/new"
+        documentId={null}
+        document={null}
+        items={[]}
+        skuMasters={[]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        inboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onBackToList={vi.fn()}
+        onOpenInboundDetail={vi.fn()}
+        onOpenReceiptEditor={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByLabelText("Expected Arrival Date")).not.toBeInTheDocument();
+    expect(screen.queryByText("Required")).not.toBeInTheDocument();
+    expect(screen.queryByText("Optional")).not.toBeInTheDocument();
+    expect(document.querySelectorAll(".inbound-entry-field-label__required-mark")).toHaveLength(5);
+    expect(screen.getByLabelText("Warehouse")).toHaveValue("");
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Draft" }));
+
+    expect(await screen.findByText("Choose a storage location before saving.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Warehouse")).toHaveClass("inbound-entry-input--invalid");
+    expect(screen.getByLabelText("Customer")).toHaveClass("inbound-entry-input--invalid");
+    expect(screen.getByLabelText("Actual Arrival Date")).toHaveClass("inbound-entry-input--invalid");
+    expect(screen.getByLabelText("Container No.")).toHaveClass("inbound-entry-input--invalid");
+    expect(mockedApi.createInboundDocument).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("Warehouse"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("Customer"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Draft" }));
+
+    expect(await screen.findByText("Choose an actual arrival date before saving.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Warehouse")).not.toHaveClass("inbound-entry-input--invalid");
+    expect(screen.getByLabelText("Customer")).not.toHaveClass("inbound-entry-input--invalid");
+    expect(screen.getByLabelText("Actual Arrival Date")).toHaveClass("inbound-entry-input--invalid");
+    expect(screen.getByLabelText("Container No.")).toHaveClass("inbound-entry-input--invalid");
+    expect(mockedApi.createInboundDocument).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("Actual Arrival Date"), { target: { value: "2026-03-31" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Draft" }));
+
+    expect(await screen.findByText("Enter a container number before saving.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Actual Arrival Date")).not.toHaveClass("inbound-entry-input--invalid");
+    expect(screen.getByLabelText("Container No.")).toHaveClass("inbound-entry-input--invalid");
+    expect(mockedApi.createInboundDocument).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("Container No."), { target: { value: "MSCU1234567" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Draft" }));
+
+    expect(await screen.findByText("Add at least one SKU line with an expected or received quantity.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Actual Arrival Date")).not.toHaveClass("inbound-entry-input--invalid");
+    expect(screen.getByLabelText("Container No.")).not.toHaveClass("inbound-entry-input--invalid");
+    expect(screen.getByLabelText(/SKU.*#1/)).toHaveClass("inbound-entry-input--invalid");
+    expect(screen.getByLabelText(/Expected QTY #1/)).toHaveClass("inbound-entry-input--invalid");
+    expect(screen.getByLabelText("Received #1")).toHaveClass("inbound-entry-input--invalid");
+    expect(mockedApi.createInboundDocument).not.toHaveBeenCalled();
   });
 
   it("allows confirmed receipts to save document notes independently", async () => {

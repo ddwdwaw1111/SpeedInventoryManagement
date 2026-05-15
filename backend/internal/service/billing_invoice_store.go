@@ -124,8 +124,9 @@ type CreateBillingInvoiceLineInput struct {
 }
 
 type UpdateBillingInvoiceInput struct {
-	Notes  *string               `json:"notes,omitempty"`
-	Header *BillingInvoiceHeader `json:"header,omitempty"`
+	CustomerName *string               `json:"customerName,omitempty"`
+	Notes        *string               `json:"notes,omitempty"`
+	Header       *BillingInvoiceHeader `json:"header,omitempty"`
 }
 
 type AddBillingInvoiceLineInput struct {
@@ -462,8 +463,16 @@ func (s *Store) UpdateBillingInvoice(ctx context.Context, invoiceID int64, input
 		return BillingInvoice{}, fmt.Errorf("%w: only draft invoices can be edited", ErrInvalidInput)
 	}
 
-	updates := make([]string, 0, 3)
-	args := make([]any, 0, 3)
+	updates := make([]string, 0, 4)
+	args := make([]any, 0, 4)
+	if input.CustomerName != nil {
+		customerName := strings.TrimSpace(*input.CustomerName)
+		if customerName == "" {
+			return BillingInvoice{}, fmt.Errorf("%w: customer name is required", ErrInvalidInput)
+		}
+		updates = append(updates, "customer_name_snapshot = ?")
+		args = append(args, customerName)
+	}
 	if input.Notes != nil {
 		updates = append(updates, "notes = ?")
 		args = append(args, nullableString(strings.TrimSpace(*input.Notes)))

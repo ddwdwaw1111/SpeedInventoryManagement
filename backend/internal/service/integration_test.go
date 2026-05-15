@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"reflect"
 	"slices"
@@ -4759,6 +4760,15 @@ func TestBillingInvoiceDraftEditsRecalculateTotalsIntegration(t *testing.T) {
 		t.Fatalf("expected persisted invoice header update, got %#v", invoice.Header)
 	}
 
+	updatedCustomerName := "Imperial Bag & Paper - Billing"
+	invoice, err = store.UpdateBillingInvoice(ctx, invoice.ID, UpdateBillingInvoiceInput{CustomerName: &updatedCustomerName})
+	if err != nil {
+		t.Fatalf("update invoice customer name: %v", err)
+	}
+	if invoice.CustomerNameSnapshot != updatedCustomerName {
+		t.Fatalf("expected persisted invoice customer name %q, got %q", updatedCustomerName, invoice.CustomerNameSnapshot)
+	}
+
 	blankHeader := BillingInvoiceHeader{}
 	invoice, err = store.UpdateBillingInvoice(ctx, invoice.ID, UpdateBillingInvoiceInput{Header: &blankHeader})
 	if err != nil {
@@ -4925,6 +4935,169 @@ func TestBillingInvoiceDraftEditsRecalculateTotalsIntegration(t *testing.T) {
 	if paidInvoice.Status != BillingInvoiceStatusPaid {
 		t.Fatalf("expected paid invoice status, got %q", paidInvoice.Status)
 	}
+}
+
+func TestBillingInvoiceTotalsRemainLineDerivedAcrossMutationsIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	authPayload, _, err := store.RegisterUser(ctx, RegisterUserInput{
+		Email:    "billing-totals-" + suffix + "@example.com",
+		FullName: "Billing Totals " + suffix,
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("register billing totals user: %v", err)
+	}
+
+	customer := mustCreateCustomer(t, ctx, store, "Billing Totals Customer "+suffix)
+	invoice, err := store.CreateBillingInvoice(ctx, CreateBillingInvoiceInput{
+		InvoiceType:  BillingInvoiceTypeMixed,
+		CustomerID:   customer.ID,
+		CustomerName: customer.Name,
+		PeriodStart:  "2026-03-01",
+		PeriodEnd:    "2026-03-31",
+		Rates: BillingRatesSnapshot{
+			InboundContainerFee:                      450,
+			TransferInboundFeePerPallet:              10,
+			WrappingFeePerPallet:                     15,
+			StorageFeePerPalletWeekNormal:            7,
+			StorageFeePerPalletWeekWestCoastTransfer: 7,
+			OutboundFeePerPallet:                     0,
+		},
+		Lines: []CreateBillingInvoiceLineInput{
+			{
+				ChargeType:  "INBOUND",
+				Description: "Inbound charge",
+				Quantity:    1,
+				UnitRate:    450,
+				Amount:      450,
+				SourceType:  "AUTO",
+			},
+			{
+				ChargeType:  "MANUAL",
+				Description: "Handling charge",
+				Quantity:    2,
+				UnitRate:    10,
+				Amount:      20.005,
+				SourceType:  "MANUAL",
+			},
+			{
+				ChargeType:  "DISCOUNT",
+				Description: "Opening discount",
+				Quantity:    1,
+				UnitRate:    -5.555,
+				Amount:      -5.555,
+				SourceType:  "MANUAL",
+			},
+		},
+	}, authPayload.User.ID)
+	if err != nil {
+		t.Fatalf("create billing totals invoice: %v", err)
+	}
+	assertBillingInvoiceTotalsConsistent(t, invoice)
+
+	mustFindLine := func(description string) BillingInvoiceLine {
+		t.Helper()
+		for _, line := range invoice.Lines {
+			if line.Description == description {
+				return line
+			}
+		}
+		t.Fatalf("billing invoice line %q not found", description)
+		return BillingInvoiceLine{}
+	}
+
+	if _, err := store.db.ExecContext(ctx, `
+		UPDATE billing_invoices
+		SET subtotal = 999.99, discount_total = 888.88, grand_total = 777.77
+		WHERE id = ?
+	`, invoice.ID); err != nil {
+		t.Fatalf("corrupt billing invoice totals before mutation: %v", err)
+	}
+
+	handlingLine := mustFindLine("Handling charge")
+	invoice, err = store.UpdateBillingInvoiceLine(ctx, invoice.ID, handlingLine.ID, UpdateBillingInvoiceLineInput{
+		ChargeType:  "MANUAL",
+		Description: "Handling charge adjusted",
+		Quantity:    3,
+		UnitRate:    10.004,
+		Amount:      30.012,
+	})
+	if err != nil {
+		t.Fatalf("update handling charge after corrupt totals: %v", err)
+	}
+	assertBillingInvoiceTotalsConsistent(t, invoice)
+	if invoice.Subtotal == 999.99 || invoice.DiscountTotal == 888.88 || invoice.GrandTotal == 777.77 {
+		t.Fatalf("expected line update to recalculate corrupted invoice totals, got subtotal=%.2f discount=%.2f grand=%.2f", invoice.Subtotal, invoice.DiscountTotal, invoice.GrandTotal)
+	}
+
+	handlingLine = mustFindLine("Handling charge adjusted")
+	invoice, err = store.UpdateBillingInvoiceLine(ctx, invoice.ID, handlingLine.ID, UpdateBillingInvoiceLineInput{
+		ChargeType:  "DISCOUNT",
+		Description: "Handling charge converted to discount",
+		Quantity:    1,
+		UnitRate:    -12.345,
+		Amount:      -12.345,
+	})
+	if err != nil {
+		t.Fatalf("convert handling charge to discount: %v", err)
+	}
+	assertBillingInvoiceTotalsConsistent(t, invoice)
+
+	invoice, err = store.AddBillingInvoiceLine(ctx, invoice.ID, AddBillingInvoiceLineInput{
+		ChargeType:  "MANUAL",
+		Description: "Negative manual adjustment",
+		Quantity:    1,
+		UnitRate:    -1.235,
+		Amount:      -1.235,
+	})
+	if err != nil {
+		t.Fatalf("add negative manual adjustment: %v", err)
+	}
+	assertBillingInvoiceTotalsConsistent(t, invoice)
+
+	openingDiscountLine := mustFindLine("Opening discount")
+	invoice, err = store.DeleteBillingInvoiceLine(ctx, invoice.ID, openingDiscountLine.ID)
+	if err != nil {
+		t.Fatalf("delete opening discount: %v", err)
+	}
+	assertBillingInvoiceTotalsConsistent(t, invoice)
+
+	notes := "Totals invariant metadata update"
+	customerName := "Billing Totals Customer Override"
+	header := BillingInvoiceHeader{
+		SellerName:          "SIM Billing",
+		Subtitle:            "",
+		RemitTo:             "SIM ACH",
+		Terms:               "Due on receipt",
+		PaymentDueDays:      0,
+		PaymentInstructions: "",
+	}
+	invoice, err = store.UpdateBillingInvoice(ctx, invoice.ID, UpdateBillingInvoiceInput{
+		CustomerName: &customerName,
+		Notes:        &notes,
+		Header:       &header,
+	})
+	if err != nil {
+		t.Fatalf("update invoice metadata without changing totals: %v", err)
+	}
+	assertBillingInvoiceTotalsConsistent(t, invoice)
+
+	for _, line := range append([]BillingInvoiceLine(nil), invoice.Lines...) {
+		invoice, err = store.DeleteBillingInvoiceLine(ctx, invoice.ID, line.ID)
+		if err != nil {
+			t.Fatalf("delete line %d while clearing invoice: %v", line.ID, err)
+		}
+		assertBillingInvoiceTotalsConsistent(t, invoice)
+	}
+	if invoice.LineCount != 0 {
+		t.Fatalf("expected cleared invoice line count 0, got %d", invoice.LineCount)
+	}
+	assertMoneyEqual(t, "cleared invoice subtotal", invoice.Subtotal, 0)
+	assertMoneyEqual(t, "cleared invoice discount total", invoice.DiscountTotal, 0)
+	assertMoneyEqual(t, "cleared invoice grand total", invoice.GrandTotal, 0)
 }
 
 func TestBillingInvoicePersistsStorageDetailSnapshotsIntegration(t *testing.T) {
@@ -5337,6 +5510,36 @@ func assertMovementPresent(t *testing.T, movements []Movement, movementID int64,
 		}
 	}
 	t.Fatalf("movement %d not found", movementID)
+}
+
+func assertBillingInvoiceTotalsConsistent(t *testing.T, invoice BillingInvoice) {
+	t.Helper()
+
+	var subtotal, discountTotal float64
+	for _, line := range invoice.Lines {
+		if strings.EqualFold(line.ChargeType, "DISCOUNT") {
+			discountTotal += line.Amount
+		} else {
+			subtotal += line.Amount
+		}
+	}
+	subtotal = roundCurrencyGo(subtotal)
+	discountTotal = roundCurrencyGo(discountTotal)
+	grandTotal := roundCurrencyGo(subtotal + discountTotal)
+
+	if invoice.LineCount != len(invoice.Lines) {
+		t.Fatalf("invoice %s line count mismatch: stored=%d loaded=%d", invoice.InvoiceNo, invoice.LineCount, len(invoice.Lines))
+	}
+	assertMoneyEqual(t, "invoice "+invoice.InvoiceNo+" subtotal", invoice.Subtotal, subtotal)
+	assertMoneyEqual(t, "invoice "+invoice.InvoiceNo+" discount total", invoice.DiscountTotal, discountTotal)
+	assertMoneyEqual(t, "invoice "+invoice.InvoiceNo+" grand total", invoice.GrandTotal, grandTotal)
+}
+
+func assertMoneyEqual(t *testing.T, label string, got float64, want float64) {
+	t.Helper()
+	if math.Abs(got-want) > 0.001 {
+		t.Fatalf("%s mismatch: got %.4f want %.4f", label, got, want)
+	}
 }
 
 func integrationSuffix() string {

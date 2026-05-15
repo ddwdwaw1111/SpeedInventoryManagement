@@ -288,10 +288,6 @@ export function OutboundShipmentEditorPage({
     });
   }, [availableOutboundSources, batchOutboundLines, persistedOutboundSourcesByKey]);
   const isOutboundSourceBlocked = palletsLoading || palletsLoadError !== "";
-  const warehouseOptions = useMemo<WarehouseOption[]>(
-    () => buildWarehouseOptions(selectableOutboundSources),
-    [selectableOutboundSources]
-  );
   const batchOutboundAllocationPreview = useMemo(
     () => buildOutboundAllocationPreview(batchOutboundLines, selectableOutboundSources),
     [batchOutboundLines, selectableOutboundSources]
@@ -511,7 +507,7 @@ export function OutboundShipmentEditorPage({
     const lineIndex = batchOutboundLines.findIndex((line) => line.id === lineID);
     const nextLine = lineIndex >= 0 ? batchOutboundLines[lineIndex + 1] : null;
     if (nextLine) {
-      focusShipmentLineField(nextLine.id, "warehouse");
+      focusShipmentLineField(nextLine.id, "sku");
       return;
     }
     focusShipmentEditorField("shipment-editor-next-action");
@@ -528,20 +524,20 @@ export function OutboundShipmentEditorPage({
     event.preventDefault();
     if (event.shiftKey) {
       if (field === "quantity") {
-        focusShipmentLineField(lineID, "sku");
+        focusShipmentLineField(lineID, "warehouse");
         return;
       }
-      if (field === "sku") {
-        focusShipmentLineField(lineID, "warehouse");
+      if (field === "warehouse") {
+        focusShipmentLineField(lineID, "sku");
       }
       return;
     }
 
-    if (field === "warehouse") {
-      focusShipmentLineField(lineID, "sku");
+    if (field === "sku") {
+      focusShipmentLineField(lineID, "warehouse");
       return;
     }
-    if (field === "sku") {
+    if (field === "warehouse") {
       focusShipmentLineField(lineID, "quantity");
       return;
     }
@@ -550,10 +546,7 @@ export function OutboundShipmentEditorPage({
 
   function addBatchOutboundLine(count = batchOutboundLineAddCount) {
     const safeCount = getSafeLineAddCount(count);
-    const lastUsedLocationId = [...batchOutboundLines]
-      .reverse()
-      .find((line) => line.locationId.trim())?.locationId ?? "";
-    const nextLines = Array.from({ length: safeCount }, () => createEmptyBatchOutboundLine({ locationId: lastUsedLocationId }));
+    const nextLines = Array.from({ length: safeCount }, () => createEmptyBatchOutboundLine());
     pendingBatchLineIDRef.current = nextLines[0]?.id ?? null;
     setBatchOutboundLines((current) => [...current, ...nextLines]);
   }
@@ -610,11 +603,21 @@ export function OutboundShipmentEditorPage({
         };
       }
 
+      const resolvedSource = findOutboundSourceOptionBySearchValue(
+        filterOutboundSourcesByLocation(selectableOutboundSources, normalizedLocationId),
+        line.sourceSearch
+      );
+      if (resolvedSource) {
+        return buildOutboundLineDefaults({
+          ...line,
+          locationId: normalizedLocationId
+        }, resolvedSource);
+      }
+
       return {
         ...line,
         locationId: normalizedLocationId,
         sourceKey: "",
-        sourceSearch: "",
         quantity: 0,
         pallets: 0,
         palletsDetailCtns: "",
@@ -629,7 +632,6 @@ export function OutboundShipmentEditorPage({
     nextSearchValue: string,
     sourceOptions: OutboundSourceOption[]
   ) {
-    const resolvedSource = findOutboundSourceOptionBySearchValue(sourceOptions, nextSearchValue);
     setBatchOutboundLines((current) => current.map((line) => {
       if (line.id !== lineID) {
         return line;
@@ -640,6 +642,7 @@ export function OutboundShipmentEditorPage({
           ...line,
           sourceKey: "",
           sourceSearch: "",
+          locationId: "",
           quantity: 0,
           pallets: 0,
           palletsDetailCtns: "",
@@ -648,6 +651,11 @@ export function OutboundShipmentEditorPage({
         };
       }
 
+      const matchingSources = filterOutboundSourcesBySkuSearch(sourceOptions, nextSearchValue);
+      const locationSources = line.locationId.trim()
+        ? filterOutboundSourcesByLocation(matchingSources, line.locationId)
+        : [];
+      const resolvedSource = findOutboundSourceOptionBySearchValue(locationSources, nextSearchValue);
       if (resolvedSource) {
         return buildOutboundLineDefaults({
           ...line,
@@ -655,10 +663,14 @@ export function OutboundShipmentEditorPage({
         }, resolvedSource);
       }
 
+      const shouldKeepLocation = line.locationId.trim() !== ""
+        && matchingSources.some((source) => String(source.locationId) === line.locationId.trim());
       return {
         ...line,
+        locationId: shouldKeepLocation ? line.locationId : "",
         sourceKey: "",
         sourceSearch: nextSearchValue,
+        quantity: 0,
         pallets: 0,
         palletsDetailCtns: "",
         pickPallets: [],
@@ -1144,8 +1156,10 @@ export function OutboundShipmentEditorPage({
                 </datalist>
 
                 {batchOutboundLines.map((line, index) => {
-                  const lineWarehouseSources = filterOutboundSourcesByLocation(selectableOutboundSources, line.locationId);
                   const selectedOutboundSource = findOutboundSourceOption(selectableOutboundSources, line.sourceKey);
+                  const lineSourceInputValue = line.sourceSearch || (selectedOutboundSource ? formatOutboundSourceOptionLabel(selectedOutboundSource) : "");
+                  const lineSkuSources = filterOutboundSourcesBySkuSearch(selectableOutboundSources, lineSourceInputValue);
+                  const lineWarehouseOptions = buildWarehouseOptions(lineSkuSources);
                   const outboundAllocationSummary = batchOutboundAllocationPreview.summaries.get(line.id);
                   const outboundPickPlanRows = selectedOutboundSource
                     ? buildOutboundPickPlanRows(
@@ -1176,8 +1190,11 @@ export function OutboundShipmentEditorPage({
                   };
                   const lineUnitLabel = line.unitLabel || selectedOutboundSource?.unit.toUpperCase() || "PCS";
                   const linePalletCount = resolveOutboundLinePalletCount(line.pickPallets, line.pallets);
-                  const lineSourceInputValue = line.sourceSearch || (selectedOutboundSource ? formatOutboundSourceOptionLabel(selectedOutboundSource) : "");
                   const skuInputListID = `shipment-editor-sku-options-${line.id}`;
+                  const warehouseInputHint = lineValidation.warehouseMessage
+                    || (lineSourceInputValue.trim()
+                      ? `${lineWarehouseOptions.length} ${t("warehouses")}`
+                      : t("selectSkuFirst"));
                   const lineStatusLabel = lineValidation.hasBlockingStep1 || lineValidation.hasBlockingStep2
                     ? t("needsAttention")
                     : lineValidation.isReady
@@ -1204,30 +1221,7 @@ export function OutboundShipmentEditorPage({
                       {outboundWizardStep === 1 ? (
                         <div className="space-y-4">
                           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(17rem,0.9fr)]">
-                            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(12rem,0.8fr)_minmax(0,1.5fr)_minmax(9rem,0.7fr)_minmax(9rem,0.7fr)]">
-                              <label className="grid gap-1.5 text-sm font-semibold text-slate-700">
-                                {t("currentStorage")}
-                                <select
-                                  id={`shipment-editor-warehouse-${line.id}`}
-                                  value={line.locationId}
-                                  onChange={(event) => {
-                                    updateBatchOutboundLineWarehouse(line.id, event.target.value);
-                                    focusShipmentLineField(line.id, "sku");
-                                  }}
-                                  onKeyDown={(event) => handleShipmentLineFieldKeyDown(event, line.id, "warehouse")}
-                                  disabled={isOutboundSourceReadOnly}
-                                  aria-invalid={lineValidation.warehouseMessage ? "true" : "false"}
-                                  className={`min-h-12 rounded-2xl border bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none transition focus:border-[#143569]/40 ${lineValidation.warehouseMessage ? "border-amber-300 bg-amber-50/40" : "border-slate-200/80"}`}
-                                >
-                                  <option value="">{t("selectWarehouseFirst")}</option>
-                                  {warehouseOptions.map((warehouse) => (
-                                    <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>
-                                  ))}
-                                </select>
-                                <span className={`text-xs ${lineValidation.warehouseMessage ? "font-semibold text-amber-700" : "text-slate-500"}`}>
-                                  {lineValidation.warehouseMessage || t("copyPreviousWarehouse")}
-                                </span>
-                              </label>
+                            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1.5fr)_minmax(12rem,0.85fr)_minmax(9rem,0.7fr)_minmax(9rem,0.7fr)]">
                               <label className="grid gap-1.5 text-sm font-semibold text-slate-700">
                                 {t("sku")}
                                 <input
@@ -1236,26 +1230,55 @@ export function OutboundShipmentEditorPage({
                                   list={skuInputListID}
                                   value={lineSourceInputValue}
                                   onChange={(event) => {
-                                    updateBatchOutboundLineSourceInput(line.id, event.target.value, lineWarehouseSources);
-                                    if (findOutboundSourceOptionBySearchValue(lineWarehouseSources, event.target.value)) {
-                                      focusShipmentLineField(line.id, "quantity");
+                                    updateBatchOutboundLineSourceInput(line.id, event.target.value, selectableOutboundSources);
+                                    if (hasExactOutboundSourceSearchMatch(selectableOutboundSources, event.target.value)) {
+                                      focusShipmentLineField(line.id, "warehouse");
                                     }
                                   }}
                                   onKeyDown={(event) => handleShipmentLineFieldKeyDown(event, line.id, "sku")}
-                                  disabled={isOutboundSourceReadOnly || !line.locationId}
+                                  disabled={isOutboundSourceReadOnly}
                                   aria-invalid={lineValidation.skuMessage ? "true" : "false"}
-                                  placeholder={line.locationId ? t("typeSkuToSearch") : t("selectWarehouseFirst")}
+                                  placeholder={t("typeSkuToSearch")}
                                   className={`min-h-12 rounded-2xl border bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none transition focus:border-[#143569]/40 ${lineValidation.skuMessage ? "border-amber-300 bg-amber-50/40" : "border-slate-200/80"}`}
                                 />
                                 <datalist id={skuInputListID}>
-                                  {lineWarehouseSources.map((item) => (
-                                    <option key={item.sourceKey} value={formatOutboundSourceOptionLabel(item)} />
+                                  {buildOutboundSkuSearchOptions(selectableOutboundSources).map((option) => (
+                                    <option key={option} value={option} />
                                   ))}
                                 </datalist>
                                 <span className={`text-xs ${lineValidation.skuMessage ? "font-semibold text-amber-700" : "text-slate-500"}`}>
                                   {lineValidation.skuMessage || (selectedOutboundSource
                                     ? `${selectedOutboundSource.customerName} · ${t("itemNumber")}: ${selectedOutboundSource.itemNumber || "-"} · ${selectedOutboundSource.sku}`
                                     : t("selectShipmentSource"))}
+                                </span>
+                              </label>
+                              <label className="grid gap-1.5 text-sm font-semibold text-slate-700">
+                                {t("currentStorage")}
+                                <select
+                                  id={`shipment-editor-warehouse-${line.id}`}
+                                  value={line.locationId}
+                                  onChange={(event) => {
+                                    const nextLocationId = event.target.value;
+                                    updateBatchOutboundLineWarehouse(line.id, nextLocationId);
+                                    const nextWarehouseSources = filterOutboundSourcesByLocation(lineSkuSources, nextLocationId);
+                                    if (findOutboundSourceOptionBySearchValue(nextWarehouseSources, lineSourceInputValue)) {
+                                      focusShipmentLineField(line.id, "quantity");
+                                      return;
+                                    }
+                                    focusShipmentLineField(line.id, "sku");
+                                  }}
+                                  onKeyDown={(event) => handleShipmentLineFieldKeyDown(event, line.id, "warehouse")}
+                                  disabled={isOutboundSourceReadOnly || !lineSourceInputValue.trim()}
+                                  aria-invalid={lineValidation.warehouseMessage ? "true" : "false"}
+                                  className={`min-h-12 rounded-2xl border bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none transition focus:border-[#143569]/40 ${lineValidation.warehouseMessage ? "border-amber-300 bg-amber-50/40" : "border-slate-200/80"}`}
+                                >
+                                  <option value="">{lineSourceInputValue.trim() ? t("selectWarehouseAfterSku") : t("selectSkuFirst")}</option>
+                                  {lineWarehouseOptions.map((warehouse) => (
+                                    <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>
+                                  ))}
+                                </select>
+                                <span className={`text-xs ${lineValidation.warehouseMessage ? "font-semibold text-amber-700" : "text-slate-500"}`}>
+                                  {warehouseInputHint}
                                 </span>
                               </label>
                               <label className="grid gap-1.5 text-sm font-semibold text-slate-700">
@@ -1280,7 +1303,7 @@ export function OutboundShipmentEditorPage({
                                       pallets: linePalletCount,
                                       containers: outboundAllocationSummary?.containerCount ?? 0
                                     })}`
-                                    : t("selectSkuAfterWarehouse"))}
+                                    : (lineSourceInputValue.trim() ? t("selectWarehouseAfterSku") : t("selectSkuFirst")))}
                                 </span>
                               </label>
                               <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-3">
@@ -1825,9 +1848,18 @@ function buildOutboundLineValidations(
     const selectedSource = findOutboundSourceOption(sourceOptions, line.sourceKey);
     const allocationSummary = preview.summaries.get(line.id);
     const isActive = !isOutboundLineEmpty(line);
-    const warehouseMessage = isActive && !line.locationId.trim() ? t("selectWarehouseFirst") : "";
-    const skuMessage = isActive && line.locationId.trim() && !line.sourceKey.trim()
-      ? (line.sourceSearch.trim() ? t("selectValidSkuOption") : t("selectSkuAfterWarehouse"))
+    const sourceSearchValue = line.sourceSearch || (selectedSource ? formatOutboundSourceOptionLabel(selectedSource) : "");
+    const hasSkuInput = sourceSearchValue.trim() !== "" || line.sourceKey.trim() !== "";
+    const matchingSkuSources = hasSkuInput ? filterOutboundSourcesBySkuSearch(sourceOptions, sourceSearchValue) : [];
+    const skuMessage = isActive && !hasSkuInput
+      ? t("selectSkuFirst")
+      : isActive && matchingSkuSources.length === 0
+        ? t("selectValidSkuOption")
+        : isActive && line.locationId.trim() && !line.sourceKey.trim()
+        ? t("selectValidSkuOption")
+        : "";
+    const warehouseMessage = isActive && hasSkuInput && matchingSkuSources.length > 0 && !line.locationId.trim()
+      ? t("selectWarehouseAfterSku")
       : "";
     let quantityMessage = "";
     if (isActive && line.sourceKey.trim() && line.quantity <= 0) {
@@ -2359,30 +2391,61 @@ function formatOutboundSourceOptionLabel(sourceOption: OutboundSourceOption) {
   return `${sourceOption.sku} | ${sourceOption.itemNumber || "-"} | ${sourceOption.customerName} | ${sourceOption.description}`;
 }
 
-function findOutboundSourceOptionBySearchValue(sourceOptions: OutboundSourceOption[], searchValue: string) {
+function buildOutboundSkuSearchOptions(sourceOptions: OutboundSourceOption[]) {
+  const options = new Set<string>();
+  for (const sourceOption of sourceOptions) {
+    options.add(formatOutboundSourceOptionLabel(sourceOption));
+  }
+  return [...options].sort((left, right) => left.localeCompare(right));
+}
+
+function getExactOutboundSourceSearchMatches(sourceOptions: OutboundSourceOption[], searchValue: string) {
   const normalizedSearchValue = normalizeOutboundSourceSearchValue(searchValue);
   if (!normalizedSearchValue) {
-    return undefined;
+    return [] as OutboundSourceOption[];
   }
 
   const exactLabelMatches = sourceOptions.filter((sourceOption) => (
     normalizeOutboundSourceSearchValue(formatOutboundSourceOptionLabel(sourceOption)) === normalizedSearchValue
   ));
-  if (exactLabelMatches.length === 1) {
-    return exactLabelMatches[0];
+  if (exactLabelMatches.length > 0) {
+    return exactLabelMatches;
   }
 
-  const exactIdentifierMatches = sourceOptions.filter((sourceOption) => (
+  return sourceOptions.filter((sourceOption) => (
     normalizeOutboundSourceSearchValue(sourceOption.sku) === normalizedSearchValue
     || normalizeOutboundSourceSearchValue(sourceOption.itemNumber) === normalizedSearchValue
     || normalizeOutboundSourceSearchValue(sourceOption.customerName) === normalizedSearchValue
     || normalizeOutboundSourceSearchValue(sourceOption.description) === normalizedSearchValue
   ));
-  if (exactIdentifierMatches.length === 1) {
-    return exactIdentifierMatches[0];
+}
+
+function hasExactOutboundSourceSearchMatch(sourceOptions: OutboundSourceOption[], searchValue: string) {
+  return getExactOutboundSourceSearchMatches(sourceOptions, searchValue).length > 0;
+}
+
+function findOutboundSourceOptionBySearchValue(sourceOptions: OutboundSourceOption[], searchValue: string) {
+  const exactMatches = getExactOutboundSourceSearchMatches(sourceOptions, searchValue);
+  if (exactMatches.length === 1) {
+    return exactMatches[0];
   }
 
   return undefined;
+}
+
+function filterOutboundSourcesBySkuSearch(sourceOptions: OutboundSourceOption[], searchValue: string) {
+  const normalizedSearchValue = normalizeOutboundSourceSearchValue(searchValue);
+  if (!normalizedSearchValue) {
+    return [] as OutboundSourceOption[];
+  }
+
+  return sourceOptions.filter((sourceOption) => {
+    const normalizedLabel = normalizeOutboundSourceSearchValue(formatOutboundSourceOptionLabel(sourceOption));
+    return normalizedLabel === normalizedSearchValue
+      || normalizedLabel.includes(normalizedSearchValue)
+      || normalizeOutboundSourceSearchValue(sourceOption.sku) === normalizedSearchValue
+      || normalizeOutboundSourceSearchValue(sourceOption.itemNumber) === normalizedSearchValue;
+  });
 }
 
 function filterOutboundSourcesByLocation(sourceOptions: OutboundSourceOption[], locationId: string) {
