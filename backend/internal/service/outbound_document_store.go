@@ -240,6 +240,7 @@ type selectedOutboundPalletTarget struct {
 
 type OutboundDocumentFilters struct {
 	ArchiveScope string
+	Search       string
 	CustomerID   int64
 	LocationID   int64
 	Status       string
@@ -259,7 +260,7 @@ func (s *Store) ListOutboundDocumentsFiltered(ctx context.Context, limit int, fi
 	}
 
 	whereClauses := []string{buildDocumentArchiveFilterClause("d", filters.ArchiveScope)}
-	args := make([]any, 0, 5)
+	args := make([]any, 0, 20)
 	if filters.CustomerID > 0 {
 		whereClauses = append(whereClauses, "d.customer_id = ?")
 		args = append(args, filters.CustomerID)
@@ -271,6 +272,40 @@ func (s *Store) ListOutboundDocumentsFiltered(ctx context.Context, limit int, fi
 	if statusFilterClause, statusArgs := buildDocumentStatusFilterClause("d", filters.Status); statusFilterClause != "" {
 		whereClauses = append(whereClauses, statusFilterClause)
 		args = append(args, statusArgs...)
+	}
+	if search := strings.TrimSpace(strings.ToLower(filters.Search)); search != "" {
+		searchPattern := "%" + search + "%"
+		whereClauses = append(whereClauses, `(
+			LOWER(COALESCE(d.packing_list_no, '')) LIKE ?
+			OR LOWER(COALESCE(d.order_ref, '')) LIKE ?
+			OR LOWER(COALESCE(d.ship_to_name, '')) LIKE ?
+			OR LOWER(COALESCE(d.ship_to_address, '')) LIKE ?
+			OR LOWER(COALESCE(d.ship_to_contact, '')) LIKE ?
+			OR LOWER(COALESCE(d.carrier_name, '')) LIKE ?
+			OR LOWER(COALESCE(d.document_note, '')) LIKE ?
+			OR LOWER(COALESCE(d.tracking_status, '')) LIKE ?
+			OR LOWER(COALESCE(c.name, '')) LIKE ?
+			OR EXISTS (
+				SELECT 1
+				FROM outbound_document_lines ol
+				WHERE ol.document_id = d.id
+					AND (
+						LOWER(COALESCE(ol.item_number_snapshot, '')) LIKE ?
+						OR LOWER(COALESCE(ol.location_name_snapshot, '')) LIKE ?
+						OR LOWER(COALESCE(ol.storage_section, '')) LIKE ?
+						OR LOWER(COALESCE(ol.sku_snapshot, '')) LIKE ?
+						OR LOWER(COALESCE(ol.description_snapshot, '')) LIKE ?
+						OR LOWER(COALESCE(ol.pallets_detail_ctns, '')) LIKE ?
+						OR LOWER(COALESCE(ol.unit_label, '')) LIKE ?
+						OR LOWER(COALESCE(ol.carton_size_mm, '')) LIKE ?
+						OR LOWER(COALESCE(ol.line_note, '')) LIKE ?
+						OR LOWER(COALESCE(ol.pick_allocations_json, '')) LIKE ?
+					)
+			)
+		)`)
+		for range 19 {
+			args = append(args, searchPattern)
+		}
 	}
 	args = append(args, limit)
 

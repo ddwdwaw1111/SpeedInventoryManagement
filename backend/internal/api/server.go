@@ -610,6 +610,7 @@ func (s *Server) handleListOutboundDocuments(c *gin.Context) {
 
 	documents, err := s.store.ListOutboundDocumentsFiltered(c.Request.Context(), limit, service.OutboundDocumentFilters{
 		ArchiveScope: strings.TrimSpace(c.Query("archiveScope")),
+		Search:       strings.TrimSpace(c.Query("search")),
 		CustomerID:   customerID,
 		LocationID:   locationID,
 		Status:       strings.TrimSpace(c.Query("status")),
@@ -852,6 +853,7 @@ func (s *Server) handleListInboundDocuments(c *gin.Context) {
 
 	documents, err := s.store.ListInboundDocumentsFiltered(c.Request.Context(), limit, service.InboundDocumentFilters{
 		ArchiveScope: strings.TrimSpace(c.Query("archiveScope")),
+		Search:       strings.TrimSpace(c.Query("search")),
 		CustomerID:   customerID,
 		LocationID:   locationID,
 		Status:       strings.TrimSpace(c.Query("status")),

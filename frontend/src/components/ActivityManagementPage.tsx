@@ -47,6 +47,7 @@ import { InlineAlert, useConfirmDialog, useFeedbackToast } from "./Feedback";
 import { InboundPalletBreakdownPanel } from "./InboundPalletBreakdownPanel";
 import { InlineLoadingIndicator } from "./InlineLoadingIndicator";
 import { OutboundPickPlanPanel } from "./OutboundPickPlanPanel";
+import { SearchSubmitField } from "./SearchSubmitField";
 import { buildWorkspaceGridSlots, WorkspaceDrawerLoadingState, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type ActivityMode = "IN" | "OUT";
@@ -567,6 +568,8 @@ export function ActivityManagementPage({
   const [selectedLocationId, setSelectedLocationId] = useState("all");
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [selectedStatus, setSelectedStatus] = useState("all");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [submittedSearchTerm, setSubmittedSearchTerm] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
   const [batchForm, setBatchForm] = useState<BatchInboundFormState>(() => createEmptyBatchInboundForm());
@@ -605,13 +608,22 @@ export function ActivityManagementPage({
   const isEmbeddedComposer = Boolean(embeddedComposer);
   const pageDescription = mode === "IN" ? t("inboundDesc") : t("outboundDesc");
   const permissionNotice = canManage ? "" : t("readOnlyModeNotice");
-  const hasActiveFilters = selectedCustomerId !== "all" || selectedLocationId !== "all" || selectedStatus !== "all";
-  const documentFilterQuery = useMemo(() => ({
-    archiveScope: selectedStatus === "ARCHIVED" ? "archived" as const : "active" as const,
-    customerId: selectedCustomerId === "all" ? undefined : Number(selectedCustomerId),
-    locationId: selectedLocationId === "all" ? undefined : Number(selectedLocationId),
-    status: selectedStatus === "all" || selectedStatus === "ARCHIVED" ? undefined : selectedStatus
-  }), [selectedCustomerId, selectedLocationId, selectedStatus]);
+  const normalizedDocumentSearch = submittedSearchTerm.trim().toLowerCase();
+  const hasActiveFilters = normalizedDocumentSearch.length > 0 || selectedCustomerId !== "all" || selectedLocationId !== "all" || selectedStatus !== "all";
+  const documentFilterQuery = useMemo(() => {
+    const query = {
+      archiveScope: selectedStatus === "ARCHIVED" ? "archived" as const : "active" as const,
+      customerId: selectedCustomerId === "all" ? undefined : Number(selectedCustomerId),
+      locationId: selectedLocationId === "all" ? undefined : Number(selectedLocationId),
+      status: selectedStatus === "all" || selectedStatus === "ARCHIVED" ? undefined : selectedStatus
+    };
+
+    if (normalizedDocumentSearch.length > 0) {
+      return { ...query, search: normalizedDocumentSearch };
+    }
+
+    return query;
+  }, [normalizedDocumentSearch, selectedCustomerId, selectedLocationId, selectedStatus]);
   const inboundDocumentSource = useMemo(
     () => hasActiveFilters
       ? mergeDocumentsById(filteredInboundDocuments, inboundDocuments)
@@ -780,6 +792,8 @@ export function ActivityManagementPage({
     setExpandedPalletBreakdowns({});
     setExpandedOutboundPickPlans({});
     setSelectedStatus("all");
+    setSearchTerm("");
+    setSubmittedSearchTerm("");
     setSelectedInboundDocumentId(null);
     setSelectedOutboundDocumentId(null);
     pendingLaunchContextRef.current = undefined;
@@ -866,6 +880,12 @@ export function ActivityManagementPage({
       active = false;
     };
   }, [documentFilterQuery, hasActiveFilters, mode, showError, t]);
+
+  function submitDocumentSearch() {
+    const nextSearchTerm = searchTerm.trim();
+    setSearchTerm(nextSearchTerm);
+    setSubmittedSearchTerm(nextSearchTerm);
+  }
 
   useEffect(() => {
     if (mode === "OUT" && selectedOutboundDocumentId && !selectedOutboundDocument) {
@@ -1161,6 +1181,7 @@ export function ActivityManagementPage({
     if (mode !== "IN") return [];
 
     return liveInboundDocuments.filter((document) => {
+      const matchesSearch = inboundDocumentMatchesSearch(document, normalizedDocumentSearch);
       const matchesCustomer = selectedCustomerId === "all" || document.customerId === Number(selectedCustomerId);
       const matchesLocation = selectedLocationId === "all" || document.locationId === Number(selectedLocationId);
       const isArchived = Boolean(document.archivedAt);
@@ -1169,17 +1190,18 @@ export function ActivityManagementPage({
         : selectedStatus === "all"
           ? !isArchived
           : !isArchived && normalizeDocumentStatus(document.status) === selectedStatus;
-      return matchesCustomer && matchesLocation && matchesStatus;
+      return matchesSearch && matchesCustomer && matchesLocation && matchesStatus;
     }).sort((left, right) => {
       const leftDate = left.expectedArrivalDate ?? left.createdAt ?? "";
       const rightDate = right.expectedArrivalDate ?? right.createdAt ?? "";
       return rightDate.localeCompare(leftDate);
     });
-  }, [liveInboundDocuments, mode, selectedCustomerId, selectedLocationId, selectedStatus]);
+  }, [liveInboundDocuments, mode, normalizedDocumentSearch, selectedCustomerId, selectedLocationId, selectedStatus]);
   const outboundDocumentRows = useMemo(() => {
     if (mode !== "OUT") return [];
 
     return liveOutboundDocuments.filter((document) => {
+      const matchesSearch = outboundDocumentMatchesSearch(document, normalizedDocumentSearch);
       const matchesCustomer = selectedCustomerId === "all" || document.customerId === Number(selectedCustomerId);
       const matchesLocation = selectedLocationId === "all"
         || document.lines.some((line) =>
@@ -1192,13 +1214,13 @@ export function ActivityManagementPage({
         : selectedStatus === "all"
           ? !isArchived
           : !isArchived && normalizeDocumentStatus(document.status) === selectedStatus;
-      return matchesCustomer && matchesLocation && matchesStatus;
+      return matchesSearch && matchesCustomer && matchesLocation && matchesStatus;
     }).sort((left, right) => {
       const leftDate = getOutboundDisplayShipDate(left) ?? "";
       const rightDate = getOutboundDisplayShipDate(right) ?? "";
       return rightDate.localeCompare(leftDate);
     });
-  }, [liveOutboundDocuments, locations, mode, selectedCustomerId, selectedLocationId, selectedStatus]);
+  }, [liveOutboundDocuments, locations, mode, normalizedDocumentSearch, selectedCustomerId, selectedLocationId, selectedStatus]);
   const mainGridSlots = buildWorkspaceGridSlots({
     emptyTitle: t("noResults"),
     emptyDescription: hasActiveFilters ? t("filteredStateHint") : t("emptyStateHint"),
@@ -2628,6 +2650,14 @@ export function ActivityManagementPage({
               errorMessage={(errorMessage || documentFilterErrorMessage) && !isBatchModalOpen ? errorMessage || documentFilterErrorMessage : ""}
             />
             <div className="filter-bar">
+              <SearchSubmitField
+                label={t("search")}
+                value={searchTerm}
+                onChange={setSearchTerm}
+                onSubmit={submitDocumentSearch}
+                placeholder={mode === "IN" ? t("searchInboundPlaceholder") : t("searchOutboundPlaceholder")}
+                submitTitle={`${t("search")} (Enter)`}
+              />
               <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
               <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
               <label>{t("status")}<select value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value)}><option value="all">{t("allStatuses")}</option><option value="DRAFT">{t("draft")}</option><option value="CONFIRMED">{t("confirmed")}</option><option value="DELETED">{t("deleted")}</option><option value="ARCHIVED">{t("archived")}</option></select></label>
@@ -3891,6 +3921,72 @@ function mergeDocumentsById<T extends { id: number }>(primary: T[], extra: T[]) 
     }
   }
   return Array.from(merged.values());
+}
+
+function inboundDocumentMatchesSearch(document: InboundDocument, normalizedSearch: string) {
+  if (normalizedSearch.length === 0) {
+    return true;
+  }
+
+  const searchableFields = [
+    document.containerNo,
+    document.customerName,
+    document.locationName,
+    document.storageSection,
+    document.unitLabel,
+    document.documentNote,
+    document.status,
+    document.trackingStatus,
+    ...document.lines.flatMap((line) => [
+      line.sku,
+      line.description,
+      line.storageSection,
+      line.unitLabel,
+      line.palletsDetailCtns,
+      line.lineNote
+    ])
+  ];
+
+  return searchableFields.some((value) => String(value ?? "").toLowerCase().includes(normalizedSearch));
+}
+
+function outboundDocumentMatchesSearch(document: OutboundDocument, normalizedSearch: string) {
+  if (normalizedSearch.length === 0) {
+    return true;
+  }
+
+  const searchableFields = [
+    document.packingListNo,
+    document.orderRef,
+    document.customerName,
+    document.shipToName,
+    document.shipToAddress,
+    document.shipToContact,
+    document.carrierName,
+    document.documentNote,
+    document.status,
+    document.trackingStatus,
+    document.storages,
+    ...document.lines.flatMap((line) => [
+      line.itemNumber,
+      line.locationName,
+      line.storageSection,
+      line.sku,
+      line.description,
+      line.palletsDetailCtns,
+      line.unitLabel,
+      line.cartonSizeMm,
+      line.lineNote,
+      ...line.pickAllocations.flatMap((allocation) => [
+        allocation.itemNumber,
+        allocation.locationName,
+        allocation.storageSection,
+        allocation.containerNo
+      ])
+    ])
+  ];
+
+  return searchableFields.some((value) => String(value ?? "").toLowerCase().includes(normalizedSearch));
 }
 
 function calculateSuggestedReorderLevel(expectedQty: number, receivedQty: number) {

@@ -22,6 +22,7 @@ describe("api document list queries", () => {
   it("serializes inbound document filter query parameters", async () => {
     await api.getInboundDocuments(25, {
       archiveScope: "archived",
+      search: " GCXU5817233 ",
       customerId: 12,
       locationId: 34,
       status: "CONFIRMED"
@@ -34,6 +35,7 @@ describe("api document list queries", () => {
     expect(requestUrl.searchParams.get("customerId")).toBe("12");
     expect(requestUrl.searchParams.get("locationId")).toBe("34");
     expect(requestUrl.searchParams.get("status")).toBe("CONFIRMED");
+    expect(requestUrl.searchParams.get("search")).toBe("GCXU5817233");
   });
 
   it("keeps the legacy outbound archive scope argument", async () => {
@@ -51,6 +53,7 @@ describe("api document list queries", () => {
   it("omits all-valued optional document filters", async () => {
     await api.getInboundDocuments(100, {
       archiveScope: "active",
+      search: "   ",
       customerId: "all",
       locationId: "all",
       status: "all"
@@ -61,5 +64,6 @@ describe("api document list queries", () => {
     expect(requestUrl.searchParams.has("customerId")).toBe(false);
     expect(requestUrl.searchParams.has("locationId")).toBe(false);
     expect(requestUrl.searchParams.has("status")).toBe(false);
+    expect(requestUrl.searchParams.has("search")).toBe(false);
   });
 });

@@ -92,6 +92,7 @@ type DocumentArchiveScope = "active" | "archived" | "all";
 
 type DocumentListQuery = {
   archiveScope?: DocumentArchiveScope;
+  search?: string;
   customerId?: number | "all";
   locationId?: number | "all";
   status?: string;
@@ -176,6 +177,9 @@ function buildDocumentListQueryParams(limit: number, archiveScopeOrQuery: Docume
   }
   if (query.status?.trim() && query.status.trim() !== "all") {
     params.set("status", query.status.trim());
+  }
+  if (query.search?.trim()) {
+    params.set("search", query.search.trim());
   }
 
   return params;

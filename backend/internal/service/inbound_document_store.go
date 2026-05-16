@@ -142,6 +142,7 @@ type inboundDocumentLineRow struct {
 
 type InboundDocumentFilters struct {
 	ArchiveScope string
+	Search       string
 	CustomerID   int64
 	LocationID   int64
 	Status       string
@@ -161,7 +162,7 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 	}
 
 	whereClauses := []string{buildDocumentArchiveFilterClause("d", filters.ArchiveScope)}
-	args := make([]any, 0, 4)
+	args := make([]any, 0, 16)
 	if filters.CustomerID > 0 {
 		whereClauses = append(whereClauses, "d.customer_id = ?")
 		args = append(args, filters.CustomerID)
@@ -173,6 +174,35 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 	if statusFilterClause, statusArgs := buildDocumentStatusFilterClause("d", filters.Status); statusFilterClause != "" {
 		whereClauses = append(whereClauses, statusFilterClause)
 		args = append(args, statusArgs...)
+	}
+	if search := strings.TrimSpace(strings.ToLower(filters.Search)); search != "" {
+		searchPattern := "%" + search + "%"
+		whereClauses = append(whereClauses, `(
+			LOWER(COALESCE(d.container_no, '')) LIKE ?
+			OR LOWER(COALESCE(d.document_note, '')) LIKE ?
+			OR LOWER(COALESCE(d.unit_label, '')) LIKE ?
+			OR LOWER(COALESCE(d.storage_section, '')) LIKE ?
+			OR LOWER(COALESCE(d.tracking_status, '')) LIKE ?
+			OR LOWER(COALESCE(c.name, '')) LIKE ?
+			OR LOWER(COALESCE(l.name, '')) LIKE ?
+			OR EXISTS (
+				SELECT 1
+				FROM inbound_document_lines il
+				WHERE il.document_id = d.id
+					AND (
+						LOWER(COALESCE(il.sku_snapshot, '')) LIKE ?
+						OR LOWER(COALESCE(il.description_snapshot, '')) LIKE ?
+						OR LOWER(COALESCE(il.storage_section, '')) LIKE ?
+						OR LOWER(COALESCE(il.unit_label, '')) LIKE ?
+						OR LOWER(COALESCE(il.pallets_detail_ctns, '')) LIKE ?
+						OR LOWER(COALESCE(il.pallet_breakdown_json, '')) LIKE ?
+						OR LOWER(COALESCE(il.line_note, '')) LIKE ?
+					)
+			)
+		)`)
+		for range 14 {
+			args = append(args, searchPattern)
+		}
 	}
 	args = append(args, limit)
 

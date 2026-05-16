@@ -260,6 +260,89 @@ describe("ActivityManagementPage", () => {
     expect(await screen.findByText("PL-FILTER-84")).toBeInTheDocument();
   });
 
+  it("loads inbound documents from the backend only after the search is submitted", async () => {
+    const fetchedDocument = createInboundDocument({
+      id: 43,
+      containerNo: "GCXU-SEARCH-43",
+      lines: [createInboundDocumentLine({ documentId: 43, sku: "FIND-IN-43" })]
+    });
+    mockedApi.getInboundDocuments.mockResolvedValue([fetchedDocument]);
+
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="IN"
+        items={[]}
+        skuMasters={[]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        movements={[]}
+        inboundDocuments={[]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    const searchInput = screen.getByRole("searchbox", { name: "Search" });
+    fireEvent.change(searchInput, { target: { value: " GCXU-SEARCH " } });
+    expect(mockedApi.getInboundDocuments).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(searchInput, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(mockedApi.getInboundDocuments).toHaveBeenLastCalledWith(50000, {
+        archiveScope: "active",
+        customerId: undefined,
+        locationId: undefined,
+        status: undefined,
+        search: "gcxu-search"
+      });
+    });
+    expect(await screen.findByText("GCXU-SEARCH-43")).toBeInTheDocument();
+  });
+
+  it("loads outbound documents from the backend when the search icon is clicked", async () => {
+    const fetchedDocument = createOutboundDocument({
+      id: 85,
+      packingListNo: "PL-SEARCH-85",
+      lines: [createOutboundDocumentLine({ documentId: 85, sku: "FIND-OUT-85" })]
+    });
+    mockedApi.getOutboundDocuments.mockResolvedValue([fetchedDocument]);
+
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="OUT"
+        items={[]}
+        skuMasters={[createSkuMaster()]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        movements={[]}
+        inboundDocuments={[]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search" }), { target: { value: " PL-SEARCH " } });
+    expect(mockedApi.getOutboundDocuments).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Search (Enter)" }));
+
+    await waitFor(() => {
+      expect(mockedApi.getOutboundDocuments).toHaveBeenLastCalledWith(50000, {
+        archiveScope: "active",
+        customerId: undefined,
+        locationId: undefined,
+        status: undefined,
+        search: "pl-search"
+      });
+    });
+    expect(await screen.findByText("PL-SEARCH-85")).toBeInTheDocument();
+  });
+
   it("uses the backend-filtered inbound document over a stale preloaded copy", async () => {
     const staleDocument = createInboundDocument({
       id: 55,
