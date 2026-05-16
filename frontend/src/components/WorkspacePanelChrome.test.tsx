@@ -1,7 +1,7 @@
 import { screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { WorkspacePanelHeader, buildWorkspaceGridSlots } from "./WorkspacePanelChrome";
+import { InventoryViewSwitcher, WorkspacePanelHeader, buildWorkspaceGridSlots } from "./WorkspacePanelChrome";
 import { renderWithProviders } from "../test/renderWithProviders";
 
 describe("WorkspacePanelChrome", () => {
@@ -45,5 +45,15 @@ describe("WorkspacePanelChrome", () => {
     expect(screen.getByText("Try changing filters.")).toBeInTheDocument();
     expect(screen.getByText("Loading rows")).toBeInTheDocument();
     expect(screen.getByText("Refreshing the grid.")).toBeInTheDocument();
+  });
+
+  it("keeps pallet trace available in the inventory view switcher", () => {
+    renderWithProviders(<InventoryViewSwitcher activeView="inventory-summary" onNavigate={() => undefined} />);
+
+    expect(screen.getByRole("button", { name: "Summary" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Containers" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Map" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Activity" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pallets" })).toBeInTheDocument();
   });
 });

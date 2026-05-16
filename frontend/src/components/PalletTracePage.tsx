@@ -84,10 +84,6 @@ export function PalletTracePage({
     () => pallets.filter((pallet) => pallet.status === "SHIPPED").length,
     [pallets]
   );
-  const contentRows = useMemo(
-    () => pallets.reduce((total, pallet) => total + pallet.contents.length, 0),
-    [pallets]
-  );
 
   function launchAdjustmentForPallet(pallet: PalletTrace) {
     if (!onNavigate) {
@@ -273,22 +269,18 @@ export function PalletTracePage({
 
         {onNavigate ? <InventoryViewSwitcher activeView="pallet-trace" onNavigate={onNavigate} /> : null}
 
-        <div className="report-card-grid" style={{ marginBottom: "1rem" }}>
-          <article className="metric-card">
-            <span>{t("recordCount")}</span>
+        <div className="pallet-trace-summary-strip">
+          <article className="pallet-trace-summary-card">
             <strong>{pallets.length}</strong>
+            <span>{t("recordCount")}</span>
           </article>
-          <article className="metric-card">
-            <span>{t("palletOpenCount")}</span>
+          <article className="pallet-trace-summary-card">
             <strong>{openPallets}</strong>
+            <span>{t("palletOpenCount")}</span>
           </article>
-          <article className="metric-card">
-            <span>{t("palletShippedCount")}</span>
+          <article className="pallet-trace-summary-card">
             <strong>{shippedPallets}</strong>
-          </article>
-          <article className="metric-card">
-            <span>{t("palletContentRows")}</span>
-            <strong>{contentRows}</strong>
+            <span>{t("palletShippedCount")}</span>
           </article>
         </div>
 

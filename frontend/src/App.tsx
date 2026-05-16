@@ -504,7 +504,7 @@ export default function App() {
     .map((pageKey) => pageItemMap.get(pageKey))
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
   const navSections = [
-    { key: "inventory", label: navLabels.inventory, items: ["inventory-summary", "pallet-trace"] as PageKey[] },
+    { key: "inventory", label: navLabels.inventory, items: ["inventory-summary"] as PageKey[] },
     { key: "finance", label: navLabels.finance, items: ["billing"] as PageKey[] },
     { key: "master-data", label: navLabels.masterData, items: ["customers", "sku-master", "storage-management"] as PageKey[] },
     { key: "reports", label: navLabels.reports, items: ["reports", "export-center"] as PageKey[] },

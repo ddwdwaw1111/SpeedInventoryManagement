@@ -82,6 +82,31 @@ describe("PalletTracePage", () => {
     expect(quantityCell?.textContent).toContain("12");
   });
 
+  it("renders a compact top summary without duplicate content-row count", async () => {
+    getPallets.mockResolvedValue([
+      createPalletTrace({ id: 11, status: "OPEN" }),
+      createPalletTrace({ id: 12, status: "PARTIAL" }),
+      createPalletTrace({ id: 13, status: "SHIPPED" })
+    ]);
+
+    renderWithProviders(<PalletTracePage />);
+
+    await waitFor(() => {
+      expect(getPallets).toHaveBeenCalledWith(50000, "", undefined);
+    });
+
+    const summaryStrip = document.querySelector(".pallet-trace-summary-strip");
+    expect(summaryStrip).toBeInstanceOf(HTMLElement);
+    if (!(summaryStrip instanceof HTMLElement)) {
+      throw new Error("Expected pallet trace summary strip");
+    }
+
+    expect(within(summaryStrip).getByText("Records")).toBeInTheDocument();
+    expect(within(summaryStrip).getByText("Unshipped Pallets")).toBeInTheDocument();
+    expect(within(summaryStrip).getByText("Shipped")).toBeInTheDocument();
+    expect(within(summaryStrip).queryByText("Pallet Contents")).not.toBeInTheDocument();
+  });
+
   it("launches a pallet-specific adjustment context for actionable pallets", async () => {
     const onNavigate = vi.fn();
     getPallets.mockResolvedValue([
