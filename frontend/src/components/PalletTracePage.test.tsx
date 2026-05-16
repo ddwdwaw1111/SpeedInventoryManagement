@@ -6,7 +6,9 @@ import type { PalletContent, PalletTrace } from "../lib/types";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { PalletTracePage } from "./PalletTracePage";
 
-const { getPallets } = vi.hoisted(() => ({
+const { getCustomers, getLocations, getPallets } = vi.hoisted(() => ({
+  getCustomers: vi.fn(),
+  getLocations: vi.fn(),
   getPallets: vi.fn()
 }));
 
@@ -44,13 +46,25 @@ vi.mock("@mui/x-data-grid", () => ({
 vi.mock("../lib/api", () => ({
   ApiError: class ApiError extends Error {},
   api: {
+    getCustomers,
+    getLocations,
     getPallets
   }
 }));
 
 describe("PalletTracePage", () => {
   beforeEach(() => {
+    getCustomers.mockReset();
+    getLocations.mockReset();
     getPallets.mockReset();
+    getCustomers.mockResolvedValue([
+      { id: 1, name: "Alpha Foods" },
+      { id: 2, name: "Beta Goods" }
+    ]);
+    getLocations.mockResolvedValue([
+      { id: 1, name: "NJ" },
+      { id: 2, name: "LA" }
+    ]);
     getPallets.mockResolvedValue([]);
     window.localStorage.clear();
     window.sessionStorage.clear();
@@ -72,7 +86,13 @@ describe("PalletTracePage", () => {
     renderWithProviders(<PalletTracePage />);
 
     await waitFor(() => {
-      expect(getPallets).toHaveBeenCalledWith(50000, "", undefined);
+      expect(getPallets).toHaveBeenCalledWith(50000, {
+        search: "",
+        sourceInboundDocumentId: undefined,
+        customerId: undefined,
+        locationId: undefined,
+        status: undefined
+      });
     });
 
     const grid = await screen.findByTestId("mock-data-grid");
@@ -92,7 +112,13 @@ describe("PalletTracePage", () => {
     renderWithProviders(<PalletTracePage />);
 
     await waitFor(() => {
-      expect(getPallets).toHaveBeenCalledWith(50000, "", undefined);
+      expect(getPallets).toHaveBeenCalledWith(50000, {
+        search: "",
+        sourceInboundDocumentId: undefined,
+        customerId: undefined,
+        locationId: undefined,
+        status: undefined
+      });
     });
 
     const summaryStrip = document.querySelector(".pallet-trace-summary-strip");
@@ -105,6 +131,90 @@ describe("PalletTracePage", () => {
     expect(within(summaryStrip).getByText("Unshipped Pallets")).toBeInTheDocument();
     expect(within(summaryStrip).getByText("Shipped")).toBeInTheDocument();
     expect(within(summaryStrip).queryByText("Pallet Contents")).not.toBeInTheDocument();
+  });
+
+  it("filters pallet rows by search, customer, warehouse, and status", async () => {
+    getPallets.mockResolvedValue([
+      createPalletTrace({
+        id: 11,
+        palletCode: "PLT-A",
+        customerId: 1,
+        customerName: "Alpha Foods",
+        currentLocationId: 1,
+        currentLocationName: "NJ",
+        currentContainerNo: "CONT-A",
+        status: "OPEN"
+      }),
+      createPalletTrace({
+        id: 12,
+        palletCode: "PLT-B",
+        customerId: 2,
+        customerName: "Beta Goods",
+        currentLocationId: 2,
+        currentLocationName: "LA",
+        currentContainerNo: "CONT-B",
+        status: "SHIPPED"
+      }),
+      createPalletTrace({
+        id: 13,
+        palletCode: "PLT-C",
+        customerId: 2,
+        customerName: "Beta Goods",
+        currentLocationId: 1,
+        currentLocationName: "NJ",
+        currentContainerNo: "CONT-C",
+        status: "PARTIAL"
+      })
+    ]);
+
+    renderWithProviders(<PalletTracePage />);
+
+    await waitFor(() => {
+      expect(within(screen.getByTestId("mock-data-grid")).getByText("PLT-A")).toBeInTheDocument();
+      expect(within(screen.getByTestId("mock-data-grid")).getByText("PLT-B")).toBeInTheDocument();
+      expect(within(screen.getByTestId("mock-data-grid")).getByText("PLT-C")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Search" }), { target: { value: "CONT-C" } });
+
+    await waitFor(() => {
+      expect(getPallets).toHaveBeenLastCalledWith(50000, expect.objectContaining({ search: "cont-c" }));
+    });
+
+    await waitFor(() => {
+      const grid = screen.getByTestId("mock-data-grid");
+      expect(within(grid).queryByText("PLT-A")).not.toBeInTheDocument();
+      expect(within(grid).queryByText("PLT-B")).not.toBeInTheDocument();
+      expect(within(grid).getByText("PLT-C")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Search" }), { target: { value: "" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Customer" }), { target: { value: "2" } });
+
+    await waitFor(() => {
+      const grid = screen.getByTestId("mock-data-grid");
+      expect(within(grid).queryByText("PLT-A")).not.toBeInTheDocument();
+      expect(within(grid).getByText("PLT-B")).toBeInTheDocument();
+      expect(within(grid).getByText("PLT-C")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Warehouse" }), { target: { value: "2" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Status" }), { target: { value: "SHIPPED" } });
+
+    await waitFor(() => {
+      expect(getPallets).toHaveBeenLastCalledWith(50000, expect.objectContaining({
+        customerId: 2,
+        locationId: 2,
+        status: "SHIPPED"
+      }));
+    });
+
+    await waitFor(() => {
+      const grid = screen.getByTestId("mock-data-grid");
+      expect(within(grid).queryByText("PLT-A")).not.toBeInTheDocument();
+      expect(within(grid).getByText("PLT-B")).toBeInTheDocument();
+      expect(within(grid).queryByText("PLT-C")).not.toBeInTheDocument();
+    });
   });
 
   it("launches a pallet-specific adjustment context for actionable pallets", async () => {

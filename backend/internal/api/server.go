@@ -507,9 +507,32 @@ func (s *Server) handleListPallets(c *gin.Context) {
 		sourceInboundDocumentID = parsed
 	}
 
+	var customerID int64
+	if value := strings.TrimSpace(c.Query("customerId")); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, "customerId must be a number")
+			return
+		}
+		customerID = parsed
+	}
+
+	var locationID int64
+	if value := strings.TrimSpace(c.Query("locationId")); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, "locationId must be a number")
+			return
+		}
+		locationID = parsed
+	}
+
 	pallets, err := s.store.ListPallets(c.Request.Context(), limit, service.ListPalletFilters{
 		Search:                  c.Query("search"),
 		SourceInboundDocumentID: sourceInboundDocumentID,
+		CustomerID:              customerID,
+		LocationID:              locationID,
+		Status:                  c.Query("status"),
 	})
 	if err != nil {
 		writeServerError(c, err)

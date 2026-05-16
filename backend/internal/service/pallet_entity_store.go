@@ -139,6 +139,9 @@ type palletContentRow struct {
 type ListPalletFilters struct {
 	Search                  string
 	SourceInboundDocumentID int64
+	CustomerID              int64
+	LocationID              int64
+	Status                  string
 }
 
 func splitQuantityEvenly(total int, bucketCount int) []int {
@@ -340,29 +343,53 @@ func (s *Store) ListPallets(ctx context.Context, limit int, filters ListPalletFi
 
 	normalizedSearch := strings.TrimSpace(strings.ToLower(filters.Search))
 	searchPattern := "%" + normalizedSearch + "%"
-	searchClause := ""
-	searchArgs := make([]any, 0)
+	whereClauses := []string{"1 = 1"}
+	args := make([]any, 0)
 	if normalizedSearch != "" {
-		searchClause = `
-			AND (
+		whereClauses = append(whereClauses, `
+			(
 				LOWER(COALESCE(p.pallet_code, '')) LIKE ?
 				OR LOWER(COALESCE(p.current_container_no, '')) LIKE ?
 				OR LOWER(COALESCE(c.name, '')) LIKE ?
+				OR LOWER(COALESCE(sm.item_number, '')) LIKE ?
 				OR LOWER(COALESCE(sm.sku, '')) LIKE ?
+				OR LOWER(COALESCE(sm.description, sm.name, '')) LIKE ?
+				OR LOWER(COALESCE(l.name, '')) LIKE ?
+				OR LOWER(COALESCE(p.current_storage_section, '')) LIKE ?
 				OR CAST(p.source_inbound_document_id AS CHAR) LIKE ?
 				OR CAST(p.source_inbound_line_id AS CHAR) LIKE ?
+				OR EXISTS (
+					SELECT 1
+					FROM pallet_items search_pi
+					LEFT JOIN sku_master search_sm ON search_sm.id = search_pi.sku_master_id
+					WHERE search_pi.pallet_id = p.id
+						AND (
+							LOWER(COALESCE(search_sm.item_number, '')) LIKE ?
+							OR LOWER(COALESCE(search_sm.sku, '')) LIKE ?
+							OR LOWER(COALESCE(search_sm.description, search_sm.name, '')) LIKE ?
+						)
+				)
 			)
-		`
-		for range 6 {
-			searchArgs = append(searchArgs, searchPattern)
+		`)
+		for range 13 {
+			args = append(args, searchPattern)
 		}
 	}
-	sourceClause := ""
 	if filters.SourceInboundDocumentID > 0 {
-		sourceClause = `
-			AND p.source_inbound_document_id = ?
-		`
-		searchArgs = append(searchArgs, filters.SourceInboundDocumentID)
+		whereClauses = append(whereClauses, "p.source_inbound_document_id = ?")
+		args = append(args, filters.SourceInboundDocumentID)
+	}
+	if filters.CustomerID > 0 {
+		whereClauses = append(whereClauses, "p.customer_id = ?")
+		args = append(args, filters.CustomerID)
+	}
+	if filters.LocationID > 0 {
+		whereClauses = append(whereClauses, "p.current_location_id = ?")
+		args = append(args, filters.LocationID)
+	}
+	if status := strings.TrimSpace(strings.ToUpper(filters.Status)); status != "" {
+		whereClauses = append(whereClauses, "p.status = ?")
+		args = append(args, status)
 	}
 
 	query := fmt.Sprintf(`
@@ -393,14 +420,12 @@ func (s *Store) ListPallets(ctx context.Context, limit int, filters ListPalletFi
 		LEFT JOIN customers c ON c.id = p.customer_id
 		LEFT JOIN sku_master sm ON sm.id = p.sku_master_id
 		LEFT JOIN storage_locations l ON l.id = p.current_location_id
-		WHERE 1 = 1
-		%s
-		%s
+		WHERE %s
 		ORDER BY p.updated_at DESC, p.id DESC
 		LIMIT ?
-	`, searchClause, sourceClause)
+	`, strings.Join(whereClauses, "\n\t\tAND "))
 
-	args := append(searchArgs, limit)
+	args = append(args, limit)
 	rows := make([]palletTraceRow, 0)
 	if err := s.db.SelectContext(ctx, &rows, query, args...); err != nil {
 		return nil, fmt.Errorf("load pallets: %w", err)

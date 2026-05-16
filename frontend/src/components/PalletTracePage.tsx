@@ -12,10 +12,11 @@ import { buildInventoryActionSourceKey } from "../lib/inventoryActionSources";
 import { useI18n } from "../lib/i18n";
 import { consumePendingPalletTraceLaunchContext } from "../lib/palletTraceLaunchContext";
 import { useSettings } from "../lib/settings";
-import type { PalletTrace, UserRole } from "../lib/types";
+import type { Customer, Location, PalletTrace, UserRole } from "../lib/types";
 import { buildWorkspaceGridSlots, InventoryViewSwitcher, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 const PALLET_TRACE_LOAD_LIMIT = 50000;
+type PalletStatusFilter = "ALL" | "OPEN" | "PARTIAL" | "SHIPPED" | "CANCELLED";
 
 export function PalletTracePage({
   onNavigate,
@@ -34,10 +35,15 @@ export function PalletTracePage({
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const [selectedCustomerId, setSelectedCustomerId] = useState("all");
+  const [selectedLocationId, setSelectedLocationId] = useState("all");
+  const [selectedStatus, setSelectedStatus] = useState<PalletStatusFilter>("ALL");
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [locations, setLocations] = useState<Location[]>([]);
   const [sourceInboundDocumentIdFilter, setSourceInboundDocumentIdFilter] = useState<number | null>(null);
   const [selectedPallet, setSelectedPallet] = useState<PalletTrace | null>(null);
   const deferredSearchTerm = useDeferredValue(searchTerm);
-  const normalizedSearch = deferredSearchTerm.trim();
+  const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
   const canManageInventory = currentUserRole === "admin" || currentUserRole === "operator";
 
   useEffect(() => {
@@ -53,11 +59,44 @@ export function PalletTracePage({
   useEffect(() => {
     let active = true;
 
+    async function loadFilterOptions() {
+      try {
+        const [nextCustomers, nextLocations] = await Promise.all([
+          api.getCustomers(),
+          api.getLocations()
+        ]);
+        if (!active) return;
+        setCustomers(nextCustomers);
+        setLocations(nextLocations);
+      } catch {
+        if (!active) return;
+        setCustomers([]);
+        setLocations([]);
+      }
+    }
+
+    void loadFilterOptions();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const palletQuery = useMemo(() => ({
+    search: normalizedSearch,
+    sourceInboundDocumentId: sourceInboundDocumentIdFilter ?? undefined,
+    customerId: selectedCustomerId === "all" ? undefined : Number(selectedCustomerId),
+    locationId: selectedLocationId === "all" ? undefined : Number(selectedLocationId),
+    status: selectedStatus === "ALL" ? undefined : selectedStatus
+  }), [normalizedSearch, selectedCustomerId, selectedLocationId, selectedStatus, sourceInboundDocumentIdFilter]);
+
+  useEffect(() => {
+    let active = true;
+
     async function loadPallets() {
       setIsLoading(true);
       setErrorMessage("");
       try {
-        const nextPallets = await api.getPallets(PALLET_TRACE_LOAD_LIMIT, normalizedSearch, sourceInboundDocumentIdFilter ?? undefined);
+        const nextPallets = await api.getPallets(PALLET_TRACE_LOAD_LIMIT, palletQuery);
         if (!active) return;
         setPallets(nextPallets);
       } catch (error) {
@@ -74,15 +113,54 @@ export function PalletTracePage({
     return () => {
       active = false;
     };
-  }, [normalizedSearch, sourceInboundDocumentIdFilter, t]);
+  }, [palletQuery, t]);
+
+  const customerOptions = useMemo(() => {
+    if (customers.length > 0) {
+      return customers
+        .map((customer) => ({ id: customer.id, name: customer.name || String(customer.id) }))
+        .sort((left, right) => left.name.localeCompare(right.name));
+    }
+
+    const options = new Map<number, string>();
+    for (const pallet of pallets) {
+      options.set(pallet.customerId, pallet.customerName || String(pallet.customerId));
+    }
+    return [...options.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }, [customers, pallets]);
+
+  const locationOptions = useMemo(() => {
+    if (locations.length > 0) {
+      return locations
+        .map((location) => ({ id: location.id, name: location.name || String(location.id) }))
+        .sort((left, right) => left.name.localeCompare(right.name));
+    }
+
+    const options = new Map<number, string>();
+    for (const pallet of pallets) {
+      options.set(pallet.currentLocationId, pallet.currentLocationName || String(pallet.currentLocationId));
+    }
+    return [...options.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }, [locations, pallets]);
+
+  const filteredPallets = useMemo(() => pallets.filter((pallet) => (
+    palletMatchesSearch(pallet, normalizedSearch)
+    && (selectedCustomerId === "all" || pallet.customerId === Number(selectedCustomerId))
+    && (selectedLocationId === "all" || pallet.currentLocationId === Number(selectedLocationId))
+    && (selectedStatus === "ALL" || pallet.status === selectedStatus)
+  )), [normalizedSearch, pallets, selectedCustomerId, selectedLocationId, selectedStatus]);
 
   const openPallets = useMemo(
-    () => pallets.filter((pallet) => pallet.status === "OPEN" || pallet.status === "PARTIAL").length,
-    [pallets]
+    () => filteredPallets.filter((pallet) => pallet.status === "OPEN" || pallet.status === "PARTIAL").length,
+    [filteredPallets]
   );
   const shippedPallets = useMemo(
-    () => pallets.filter((pallet) => pallet.status === "SHIPPED").length,
-    [pallets]
+    () => filteredPallets.filter((pallet) => pallet.status === "SHIPPED").length,
+    [filteredPallets]
   );
 
   function launchAdjustmentForPallet(pallet: PalletTrace) {
@@ -100,9 +178,15 @@ export function PalletTracePage({
     onNavigate("adjustments");
   }
 
+  const hasActiveFilters = normalizedSearch.length > 0
+    || selectedCustomerId !== "all"
+    || selectedLocationId !== "all"
+    || selectedStatus !== "ALL"
+    || Boolean(sourceInboundDocumentIdFilter);
+
   const mainGridSlots = buildWorkspaceGridSlots({
     emptyTitle: t("noPallets"),
-    emptyDescription: normalizedSearch || sourceInboundDocumentIdFilter ? t("filteredStateHint") : t("palletTraceDesc"),
+    emptyDescription: hasActiveFilters ? t("filteredStateHint") : t("palletTraceDesc"),
     loadingTitle: t("loadingRecords"),
     loadingDescription: t("palletTraceDesc")
   });
@@ -253,7 +337,7 @@ export function PalletTracePage({
                 onClick={() => {
                   setSearchTerm((current) => current.trim());
                   setIsLoading(true);
-                  void api.getPallets(PALLET_TRACE_LOAD_LIMIT, normalizedSearch, sourceInboundDocumentIdFilter ?? undefined).then((nextPallets) => {
+                  void api.getPallets(PALLET_TRACE_LOAD_LIMIT, palletQuery).then((nextPallets) => {
                     setPallets(nextPallets);
                     setErrorMessage("");
                   }).catch((error) => {
@@ -271,7 +355,7 @@ export function PalletTracePage({
 
         <div className="pallet-trace-summary-strip">
           <article className="pallet-trace-summary-card">
-            <strong>{pallets.length}</strong>
+            <strong>{filteredPallets.length}</strong>
             <span>{t("recordCount")}</span>
           </article>
           <article className="pallet-trace-summary-card">
@@ -293,12 +377,40 @@ export function PalletTracePage({
               placeholder={t("palletSearchPlaceholder")}
             />
           </label>
+          <label>
+            {t("customer")}
+            <select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}>
+              <option value="all">{t("allCustomers")}</option>
+              {customerOptions.map((customer) => (
+                <option key={customer.id} value={customer.id}>{customer.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            {t("currentStorage")}
+            <select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}>
+              <option value="all">{t("allStorage")}</option>
+              {locationOptions.map((location) => (
+                <option key={location.id} value={location.id}>{location.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            {t("status")}
+            <select value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value as PalletStatusFilter)}>
+              <option value="ALL">{t("allRows")}</option>
+              <option value="OPEN">{t("palletOpen")}</option>
+              <option value="PARTIAL">{t("palletPartial")}</option>
+              <option value="SHIPPED">{t("palletShipped")}</option>
+              <option value="CANCELLED">{t("palletCancelled")}</option>
+            </select>
+          </label>
         </div>
 
         <div className="sheet-table-wrap">
           <Box sx={{ minWidth: 0 }}>
             <DataGrid
-              rows={pallets}
+              rows={filteredPallets}
               columns={columns}
               loading={isLoading}
               pagination
@@ -401,6 +513,31 @@ function getPalletStatusLabel(t: (key: string) => string, status: string) {
     default:
       return status || t("pending");
   }
+}
+
+function palletMatchesSearch(pallet: PalletTrace, normalizedSearch: string) {
+  if (!normalizedSearch) {
+    return true;
+  }
+
+  const searchableText = [
+    pallet.palletCode,
+    pallet.customerName,
+    pallet.sku,
+    pallet.description,
+    pallet.currentLocationName,
+    pallet.currentStorageSection,
+    pallet.currentContainerNo,
+    String(pallet.sourceInboundDocumentId),
+    String(pallet.sourceInboundLineId),
+    ...pallet.contents.flatMap((content) => [
+      content.itemNumber,
+      content.sku,
+      content.description
+    ])
+  ].join(" ").toLowerCase();
+
+  return searchableText.includes(normalizedSearch);
 }
 
 function getPalletStatusColor(status: string): "success" | "warning" | "default" {

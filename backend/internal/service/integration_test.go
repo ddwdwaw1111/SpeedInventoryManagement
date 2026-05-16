@@ -962,6 +962,91 @@ func TestConfirmedInboundCreatesPalletEntities(t *testing.T) {
 	}
 }
 
+func TestListPalletsFiltersByCustomerLocationAndStatus(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customerA := mustCreateCustomer(t, ctx, store, "PalletFilterCustomerA-"+suffix)
+	customerB := mustCreateCustomer(t, ctx, store, "PalletFilterCustomerB-"+suffix)
+	locationA := mustCreateLocation(t, ctx, store, "PalletFilterLocA-"+suffix)
+	locationB := mustCreateLocation(t, ctx, store, "PalletFilterLocB-"+suffix)
+	itemA := mustCreateItem(t, ctx, store, customerA.ID, locationA.ID, "PF-A-"+suffix, 0)
+	itemB := mustCreateItem(t, ctx, store, customerB.ID, locationA.ID, "PF-B-"+suffix, 0)
+	itemC := mustCreateItem(t, ctx, store, customerA.ID, locationB.ID, "PF-C-"+suffix, 0)
+
+	createReceiptPallet := func(customer Customer, location Location, item Item, containerNo string) PalletTrace {
+		t.Helper()
+
+		receipt, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+			CustomerID:          customer.ID,
+			LocationID:          location.ID,
+			ExpectedArrivalDate: "2026-04-03",
+			ContainerNo:         containerNo,
+			StorageSection:      DefaultStorageSection,
+			UnitLabel:           "CTN",
+			Status:              DocumentStatusConfirmed,
+			DocumentNote:        "Pallet filter test",
+			Lines: []CreateInboundDocumentLineInput{{
+				SKU:            item.SKU,
+				Description:    item.Description,
+				ExpectedQty:    6,
+				ReceivedQty:    6,
+				Pallets:        1,
+				StorageSection: DefaultStorageSection,
+			}},
+		})
+		if err != nil {
+			t.Fatalf("create confirmed receipt for %s: %v", containerNo, err)
+		}
+
+		pallets, err := store.ListPallets(ctx, 10, ListPalletFilters{SourceInboundDocumentID: receipt.ID})
+		if err != nil {
+			t.Fatalf("list pallets for receipt %d: %v", receipt.ID, err)
+		}
+		if len(pallets) != 1 {
+			t.Fatalf("expected one pallet for receipt %d, got %d", receipt.ID, len(pallets))
+		}
+		return pallets[0]
+	}
+
+	palletA := createReceiptPallet(customerA, locationA, itemA, "PF-A-CONT-"+suffix)
+	palletB := createReceiptPallet(customerB, locationA, itemB, "PF-B-CONT-"+suffix)
+	palletC := createReceiptPallet(customerA, locationB, itemC, "PF-C-CONT-"+suffix)
+
+	if _, err := store.db.ExecContext(ctx, `UPDATE pallets SET status = ? WHERE id = ?`, PalletStatusShipped, palletC.ID); err != nil {
+		t.Fatalf("mark pallet shipped: %v", err)
+	}
+
+	customerFiltered, err := store.ListPallets(ctx, 50, ListPalletFilters{CustomerID: customerA.ID})
+	if err != nil {
+		t.Fatalf("list pallets by customer: %v", err)
+	}
+	assertPalletIDs(t, "customer filter", customerFiltered, palletA.ID, palletC.ID)
+
+	locationFiltered, err := store.ListPallets(ctx, 50, ListPalletFilters{LocationID: locationA.ID})
+	if err != nil {
+		t.Fatalf("list pallets by location: %v", err)
+	}
+	assertPalletIDs(t, "location filter", locationFiltered, palletA.ID, palletB.ID)
+
+	statusFiltered, err := store.ListPallets(ctx, 50, ListPalletFilters{Status: PalletStatusShipped})
+	if err != nil {
+		t.Fatalf("list pallets by status: %v", err)
+	}
+	assertPalletIDs(t, "status filter", statusFiltered, palletC.ID)
+
+	combinedFiltered, err := store.ListPallets(ctx, 50, ListPalletFilters{
+		CustomerID: customerA.ID,
+		LocationID: locationB.ID,
+		Status:     strings.ToLower(PalletStatusShipped),
+	})
+	if err != nil {
+		t.Fatalf("list pallets by combined filters: %v", err)
+	}
+	assertPalletIDs(t, "combined filter", combinedFiltered, palletC.ID)
+}
+
 func TestPalletCentricDualWriteLifecycleIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
@@ -5493,6 +5578,24 @@ func assertMovementTypeCount(t *testing.T, movements []Movement, itemID int64, m
 	}
 	if count != wantCount {
 		t.Fatalf("expected %d %s movements for item %d, got %d", wantCount, movementType, itemID, count)
+	}
+}
+
+func assertPalletIDs(t *testing.T, label string, pallets []PalletTrace, wantIDs ...int64) {
+	t.Helper()
+
+	gotIDs := make([]int64, 0, len(pallets))
+	for _, pallet := range pallets {
+		gotIDs = append(gotIDs, pallet.ID)
+	}
+	sort.Slice(gotIDs, func(left, right int) bool {
+		return gotIDs[left] < gotIDs[right]
+	})
+	sort.Slice(wantIDs, func(left, right int) bool {
+		return wantIDs[left] < wantIDs[right]
+	})
+	if !reflect.DeepEqual(gotIDs, wantIDs) {
+		t.Fatalf("%s pallet IDs mismatch: got %v want %v", label, gotIDs, wantIDs)
 	}
 }
 

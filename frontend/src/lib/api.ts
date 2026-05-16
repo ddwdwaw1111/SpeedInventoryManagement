@@ -69,6 +69,14 @@ type SKUMasterQuery = {
   search?: string;
 };
 
+type PalletQuery = {
+  search?: string;
+  sourceInboundDocumentId?: number;
+  customerId?: number;
+  locationId?: number;
+  status?: string;
+};
+
 type DocumentArchiveScope = "active" | "archived" | "all";
 
 type OperationsReportQuery = {
@@ -342,13 +350,27 @@ export const api = {
     return request<Movement[]>(`/movements?limit=${limit}`);
   },
 
-  getPallets(limit = 500, search = "", sourceInboundDocumentId?: number) {
+  getPallets(limit = 500, queryOrSearch: PalletQuery | string = "", sourceInboundDocumentId?: number) {
     const params = new URLSearchParams({ limit: String(limit) });
+    const query = typeof queryOrSearch === "string"
+      ? { search: queryOrSearch, sourceInboundDocumentId }
+      : queryOrSearch;
+
+    const search = query.search ?? "";
     if (search.trim()) {
       params.set("search", search.trim());
     }
-    if (sourceInboundDocumentId && sourceInboundDocumentId > 0) {
-      params.set("sourceInboundDocumentId", String(sourceInboundDocumentId));
+    if (query.sourceInboundDocumentId && query.sourceInboundDocumentId > 0) {
+      params.set("sourceInboundDocumentId", String(query.sourceInboundDocumentId));
+    }
+    if (query.customerId && query.customerId > 0) {
+      params.set("customerId", String(query.customerId));
+    }
+    if (query.locationId && query.locationId > 0) {
+      params.set("locationId", String(query.locationId));
+    }
+    if (query.status?.trim()) {
+      params.set("status", query.status.trim());
     }
     return request<PalletTrace[]>(`/pallets?${params.toString()}`);
   },
