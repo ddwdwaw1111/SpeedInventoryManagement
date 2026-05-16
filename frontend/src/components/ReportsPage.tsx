@@ -1,7 +1,8 @@
-import { type ReactNode, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { BarChart } from "@mui/x-charts";
 
 import { InlineAlert } from "./Feedback";
+import { SearchSubmitField } from "./SearchSubmitField";
 import { api } from "../lib/api";
 import { parseDateValue, startOfLocalDay, toIsoDateString } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
@@ -48,6 +49,7 @@ export function ReportsPage({ locations, customers, skuMasters, isLoading, error
   const [reportStartDate, setReportStartDate] = useState(currentMonth.start);
   const [reportEndDate, setReportEndDate] = useState(currentMonth.end);
   const [searchTerm, setSearchTerm] = useState("");
+  const [submittedSearchTerm, setSubmittedSearchTerm] = useState("");
   const [reportGranularity, setReportGranularity] = useState<ReportGranularity>("day");
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [report, setReport] = useState<OperationsReport | null>(null);
@@ -61,8 +63,7 @@ export function ReportsPage({ locations, customers, skuMasters, isLoading, error
   const [skuFlowReport, setSKUFlowReport] = useState<SKUFlowReport | null>(null);
   const [isSKUFlowLoading, setIsSKUFlowLoading] = useState(false);
   const [skuFlowErrorMessage, setSKUFlowErrorMessage] = useState("");
-  const deferredSearchTerm = useDeferredValue(searchTerm);
-  const normalizedSearch = deferredSearchTerm.trim();
+  const normalizedSearch = submittedSearchTerm.trim();
 
   const normalizedDateRange = useMemo(
     () => normalizeDateRange(reportStartDate || currentMonth.start, reportEndDate || currentMonth.end),
@@ -282,6 +283,12 @@ export function ReportsPage({ locations, customers, skuMasters, isLoading, error
     ? [selectedSKUMaster.sku, selectedSKUMaster.description || selectedSKUMaster.name].filter(Boolean).join(" - ")
     : t("selectSku");
 
+  function submitSearchTerm() {
+    const nextSearchTerm = searchTerm.trim();
+    setSearchTerm(nextSearchTerm);
+    setSubmittedSearchTerm(nextSearchTerm);
+  }
+
   return (
     <main className="workspace-main">
       {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
@@ -351,14 +358,14 @@ export function ReportsPage({ locations, customers, skuMasters, isLoading, error
 
           {showAdvancedFilters ? (
             <div className="filter-bar reports-exec__filters-advanced">
-              <label>
-                {t("search")}
-                <input
-                  value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
-                  placeholder={t("searchSkuPlaceholder")}
-                />
-              </label>
+              <SearchSubmitField
+                label={t("search")}
+                value={searchTerm}
+                onChange={setSearchTerm}
+                onSubmit={submitSearchTerm}
+                placeholder={t("searchSkuPlaceholder")}
+                submitTitle={`${t("search")} (Enter)`}
+              />
               <label>
                 {t("groupBy")}
                 <select

@@ -5,7 +5,7 @@ import OutboxOutlinedIcon from "@mui/icons-material/OutboxOutlined";
 import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
 import CompareArrowsOutlinedIcon from "@mui/icons-material/CompareArrowsOutlined";
 import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Box, Button, Chip, Drawer, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
@@ -16,6 +16,7 @@ import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
 import { useSettings } from "../lib/settings";
 import { normalizeStorageSection, type Customer, type Location, type Movement, type UserRole } from "../lib/types";
+import { SearchSubmitField } from "./SearchSubmitField";
 import { buildWorkspaceGridSlots, InventoryViewSwitcher, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
 
@@ -42,18 +43,18 @@ export function AllActivityPage({ movements, customers, locations, currentUserRo
   const [isActivityLoading, setIsActivityLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const [submittedSearchTerm, setSubmittedSearchTerm] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
   const [movementTypeFilter, setMovementTypeFilter] = useState<MovementTypeFilter>("ALL");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [selectedMovementId, setSelectedMovementId] = useState<number | null>(null);
-  const deferredSearchTerm = useDeferredValue(searchTerm);
   const selectedLocationName = selectedLocationId === "all"
     ? null
     : (locations.find((location) => location.id === Number(selectedLocationId))?.name ?? null);
 
-  const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
+  const normalizedSearch = submittedSearchTerm.trim().toLowerCase();
   const movementDateBounds = useMemo(
     () => getZonedDateRangeUtcBounds(startDate, endDate, resolvedTimeZone),
     [endDate, resolvedTimeZone, startDate]
@@ -135,7 +136,6 @@ export function AllActivityPage({ movements, customers, locations, currentUserRo
     })
     .sort((left, right) => getMovementSortTimestamp(right) - getMovementSortTimestamp(left)), [
     activityRows,
-    deferredSearchTerm,
     endDate,
     movementTypeFilter,
     normalizedSearch,
@@ -162,7 +162,9 @@ export function AllActivityPage({ movements, customers, locations, currentUserRo
       return;
     }
 
-    setSearchTerm(context.searchTerm ?? "");
+    const nextSearchTerm = context.searchTerm?.trim() ?? "";
+    setSearchTerm(nextSearchTerm);
+    setSubmittedSearchTerm(nextSearchTerm);
     setSelectedCustomerId(context.customerId ? String(context.customerId) : "all");
     setSelectedLocationId(context.locationId ? String(context.locationId) : "all");
     setMovementTypeFilter(context.movementType ?? "ALL");
@@ -174,6 +176,12 @@ export function AllActivityPage({ movements, customers, locations, currentUserRo
       setSelectedMovementId(null);
     }
   }, [selectedMovement, selectedMovementId]);
+
+  function submitSearchTerm() {
+    const nextSearchTerm = searchTerm.trim();
+    setSearchTerm(nextSearchTerm);
+    setSubmittedSearchTerm(nextSearchTerm);
+  }
 
   const baseColumns = useMemo<GridColDef<Movement>[]>(() => [
     {
@@ -241,7 +249,14 @@ export function AllActivityPage({ movements, customers, locations, currentUserRo
           <div className="tab-strip">
             <WorkspacePanelHeader title={t("allActivity")} actions={columnOrderAction} errorMessage={errorMessage} />
             <div className="filter-bar">
-              <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("allActivitySearchPlaceholder")} /></label>
+              <SearchSubmitField
+                label={t("search")}
+                value={searchTerm}
+                onChange={setSearchTerm}
+                onSubmit={submitSearchTerm}
+                placeholder={t("allActivitySearchPlaceholder")}
+                submitTitle={`${t("search")} (Enter)`}
+              />
             <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
             <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
             <label>{t("movementType")}<select value={movementTypeFilter} onChange={(event) => setMovementTypeFilter(event.target.value as MovementTypeFilter)}><option value="ALL">{t("allRows")}</option><option value="IN">{t("inbound")}</option><option value="OUT">{t("outbound")}</option><option value="ADJUST">{t("adjustment")}</option><option value="COUNT">{t("cycleCount")}</option><option value="REVERSAL">{t("reversal")}</option><option value="TRANSFER_IN">{t("transferIn")}</option><option value="TRANSFER_OUT">{t("transferOut")}</option></select></label>

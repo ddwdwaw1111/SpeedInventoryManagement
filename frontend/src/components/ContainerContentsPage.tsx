@@ -1,6 +1,6 @@
 import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
 import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Box, Button } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
@@ -17,6 +17,7 @@ import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import { normalizeStorageSection, type Customer, type Item, type Location, type Movement, type UserRole } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
+import { SearchSubmitField } from "./SearchSubmitField";
 import { buildWorkspaceGridSlots, InventoryViewSwitcher, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
 
@@ -68,10 +69,10 @@ export function ContainerContentsPage({
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const [submittedSearchTerm, setSubmittedSearchTerm] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
-  const deferredSearchTerm = useDeferredValue(searchTerm);
 
   useEffect(() => {
     const context = consumePendingContainerContentsContext();
@@ -81,11 +82,12 @@ export function ContainerContentsPage({
 
     const nextSearchTerm = context.containerNo?.trim() || context.sku?.trim() || "";
     setSearchTerm(nextSearchTerm);
+    setSubmittedSearchTerm(nextSearchTerm);
     setSelectedCustomerId(context.customerId ? String(context.customerId) : "all");
     setSelectedLocationId(context.locationId ? String(context.locationId) : "all");
   }, []);
 
-  const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
+  const normalizedSearch = submittedSearchTerm.trim().toLowerCase();
   const hasActiveFilters = normalizedSearch.length > 0 || selectedCustomerId !== "all" || selectedLocationId !== "all";
   const movementQuery = useMemo(() => ({
     search: normalizedSearch,
@@ -249,6 +251,12 @@ export function ContainerContentsPage({
     setIsExportDialogOpen(false);
   }
 
+  function submitSearchTerm() {
+    const nextSearchTerm = searchTerm.trim();
+    setSearchTerm(nextSearchTerm);
+    setSubmittedSearchTerm(nextSearchTerm);
+  }
+
   return (
     <main className="workspace-main">
       <section className="workbook-panel workbook-panel--full">
@@ -271,7 +279,14 @@ export function ContainerContentsPage({
             )}
           />
           <div className="filter-bar">
-            <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("containerContentsSearchPlaceholder")} /></label>
+            <SearchSubmitField
+              label={t("search")}
+              value={searchTerm}
+              onChange={setSearchTerm}
+              onSubmit={submitSearchTerm}
+              placeholder={t("containerContentsSearchPlaceholder")}
+              submitTitle={`${t("search")} (Enter)`}
+            />
             <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
             <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
           </div>

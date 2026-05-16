@@ -199,7 +199,9 @@ describe("ContainerContentsPage", () => {
 
     fireEvent.change(screen.getByRole("combobox", { name: "Customer" }), { target: { value: "1" } });
     fireEvent.change(screen.getByRole("combobox", { name: "Warehouse" }), { target: { value: "1" } });
-    fireEvent.change(screen.getByRole("textbox", { name: "Search" }), { target: { value: "OLDU1234567" } });
+    const searchInput = screen.getByRole("searchbox", { name: "Search" });
+    fireEvent.change(searchInput, { target: { value: "OLDU1234567" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search (Enter)" }));
 
     await waitFor(() => {
       expect(getMovements).toHaveBeenCalledWith(20000, {

@@ -3,7 +3,7 @@ import RefreshOutlinedIcon from "@mui/icons-material/RefreshOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { ApiError, api } from "../lib/api";
 import { formatDateTimeValue, formatDateValue } from "../lib/dates";
@@ -13,6 +13,7 @@ import { useI18n } from "../lib/i18n";
 import { consumePendingPalletTraceLaunchContext } from "../lib/palletTraceLaunchContext";
 import { useSettings } from "../lib/settings";
 import type { Customer, Location, PalletTrace, UserRole } from "../lib/types";
+import { SearchSubmitField } from "./SearchSubmitField";
 import { buildWorkspaceGridSlots, InventoryViewSwitcher, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 const PALLET_TRACE_LOAD_LIMIT = 50000;
@@ -35,6 +36,7 @@ export function PalletTracePage({
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const [submittedSearchTerm, setSubmittedSearchTerm] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
   const [selectedStatus, setSelectedStatus] = useState<PalletStatusFilter>("ALL");
@@ -42,8 +44,8 @@ export function PalletTracePage({
   const [locations, setLocations] = useState<Location[]>([]);
   const [sourceInboundDocumentIdFilter, setSourceInboundDocumentIdFilter] = useState<number | null>(null);
   const [selectedPallet, setSelectedPallet] = useState<PalletTrace | null>(null);
-  const deferredSearchTerm = useDeferredValue(searchTerm);
-  const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
+  const [reloadToken, setReloadToken] = useState(0);
+  const normalizedSearch = submittedSearchTerm.trim().toLowerCase();
   const canManageInventory = currentUserRole === "admin" || currentUserRole === "operator";
 
   useEffect(() => {
@@ -52,7 +54,9 @@ export function PalletTracePage({
       setSourceInboundDocumentIdFilter(pendingContext.sourceInboundDocumentId);
     }
     if (pendingContext?.searchTerm?.trim()) {
-      setSearchTerm(pendingContext.searchTerm.trim());
+      const nextSearchTerm = pendingContext.searchTerm.trim();
+      setSearchTerm(nextSearchTerm);
+      setSubmittedSearchTerm(nextSearchTerm);
     }
   }, []);
 
@@ -113,7 +117,7 @@ export function PalletTracePage({
     return () => {
       active = false;
     };
-  }, [palletQuery, t]);
+  }, [palletQuery, reloadToken, t]);
 
   const customerOptions = useMemo(() => {
     if (customers.length > 0) {
@@ -176,6 +180,17 @@ export function PalletTracePage({
       palletId: pallet.id
     });
     onNavigate("adjustments");
+  }
+
+  function submitSearchTerm() {
+    const nextSearchTerm = searchTerm.trim();
+    setSearchTerm(nextSearchTerm);
+    setSubmittedSearchTerm(nextSearchTerm);
+  }
+
+  function refreshPallets() {
+    submitSearchTerm();
+    setReloadToken((current) => current + 1);
   }
 
   const hasActiveFilters = normalizedSearch.length > 0
@@ -334,16 +349,7 @@ export function PalletTracePage({
                 size="small"
                 variant="outlined"
                 startIcon={<RefreshOutlinedIcon fontSize="small" />}
-                onClick={() => {
-                  setSearchTerm((current) => current.trim());
-                  setIsLoading(true);
-                  void api.getPallets(PALLET_TRACE_LOAD_LIMIT, palletQuery).then((nextPallets) => {
-                    setPallets(nextPallets);
-                    setErrorMessage("");
-                  }).catch((error) => {
-                    setErrorMessage(getErrorMessage(error, t("couldNotLoadReport")));
-                  }).finally(() => setIsLoading(false));
-                }}
+                onClick={refreshPallets}
               >
                 {t("refresh")}
               </Button>
@@ -369,14 +375,14 @@ export function PalletTracePage({
         </div>
 
         <div className="filter-bar">
-          <label>
-            {t("search")}
-            <input
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder={t("palletSearchPlaceholder")}
-            />
-          </label>
+          <SearchSubmitField
+            label={t("search")}
+            value={searchTerm}
+            onChange={setSearchTerm}
+            onSubmit={submitSearchTerm}
+            placeholder={t("palletSearchPlaceholder")}
+            submitTitle={`${t("search")} (Enter)`}
+          />
           <label>
             {t("customer")}
             <select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}>

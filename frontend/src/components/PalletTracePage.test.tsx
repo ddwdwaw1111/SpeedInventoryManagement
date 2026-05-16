@@ -175,7 +175,11 @@ describe("PalletTracePage", () => {
       expect(within(screen.getByTestId("mock-data-grid")).getByText("PLT-C")).toBeInTheDocument();
     });
 
-    fireEvent.change(screen.getByRole("textbox", { name: "Search" }), { target: { value: "CONT-C" } });
+    const searchInput = screen.getByRole("searchbox", { name: "Search" });
+    const callsBeforeTyping = getPallets.mock.calls.length;
+    fireEvent.change(searchInput, { target: { value: "CONT-C" } });
+    expect(getPallets).toHaveBeenCalledTimes(callsBeforeTyping);
+    fireEvent.keyDown(searchInput, { key: "Enter" });
 
     await waitFor(() => {
       expect(getPallets).toHaveBeenLastCalledWith(50000, expect.objectContaining({ search: "cont-c" }));
@@ -188,7 +192,8 @@ describe("PalletTracePage", () => {
       expect(within(grid).getByText("PLT-C")).toBeInTheDocument();
     });
 
-    fireEvent.change(screen.getByRole("textbox", { name: "Search" }), { target: { value: "" } });
+    fireEvent.change(searchInput, { target: { value: "" } });
+    fireEvent.keyDown(searchInput, { key: "Enter" });
     fireEvent.change(screen.getByRole("combobox", { name: "Customer" }), { target: { value: "2" } });
 
     await waitFor(() => {

@@ -2677,6 +2677,29 @@ textarea:focus {
   color: var(--gray-8);
 }
 
+.search-submit-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.filter-bar label .search-submit-field input {
+  min-width: 0;
+}
+
+.search-submit-field__button {
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid rgba(39, 76, 119, 0.18) !important;
+  background: rgba(255, 255, 255, 0.86) !important;
+  color: var(--sheet-blue) !important;
+}
+
+.search-submit-field__button:hover {
+  background: rgba(232, 239, 247, 0.95) !important;
+}
+
 .workspace-summary-strip {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));

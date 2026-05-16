@@ -90,7 +90,10 @@ describe("AllActivityPage", () => {
 
     expect(getMovements).not.toHaveBeenCalled();
 
-    fireEvent.change(screen.getByRole("textbox", { name: "Search" }), { target: { value: "CONT-B" } });
+    const searchInput = screen.getByRole("searchbox", { name: "Search" });
+    fireEvent.change(searchInput, { target: { value: "CONT-B" } });
+    expect(getMovements).not.toHaveBeenCalled();
+    fireEvent.keyDown(searchInput, { key: "Enter" });
     fireEvent.change(screen.getByRole("combobox", { name: "Customer" }), { target: { value: "2" } });
     fireEvent.change(screen.getByRole("combobox", { name: "Warehouse" }), { target: { value: "2" } });
     fireEvent.change(screen.getByRole("combobox", { name: "Movement Type" }), { target: { value: "OUT" } });
