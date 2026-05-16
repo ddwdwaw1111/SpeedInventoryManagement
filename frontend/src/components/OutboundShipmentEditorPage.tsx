@@ -1,7 +1,4 @@
 import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
-import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
-import { Box, Button } from "@mui/material";
-import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
@@ -105,6 +102,12 @@ type OutboundShipmentReviewItemGroup = {
   description: string;
   totalQty: number;
   lineLabels: string[];
+  palletPicks: {
+    key: string;
+    palletCode: string;
+    totalQty: number;
+    lineLabels: string[];
+  }[];
 };
 
 type OutboundShipmentReviewContainerGroup = {
@@ -240,11 +243,9 @@ export function OutboundShipmentEditorPage({
   const [batchOutboundLines, setBatchOutboundLines] = useState<BatchOutboundLineState[]>(() => [createEmptyBatchOutboundLine()]);
   const [errorMessage, setErrorMessage] = useState("");
   const [batchSubmitting, setBatchSubmitting] = useState(false);
-  const [noteSubmitting, setNoteSubmitting] = useState(false);
   const [outboundWizardStep, setOutboundWizardStep] = useState<OutboundWizardStep>(1);
   const [reviewConfirmed, setReviewConfirmed] = useState(false);
   const [usedRememberedOutboundDefaults, setUsedRememberedOutboundDefaults] = useState(false);
-  const [batchOutboundLineAddCount, setBatchOutboundLineAddCount] = useState(1);
   const [expandedOutboundPickPlans, setExpandedOutboundPickPlans] = useState<Record<string, boolean>>({});
   const [isEditorReady, setIsEditorReady] = useState(false);
   const pendingBatchLineIDRef = useRef<string | null>(null);
@@ -318,16 +319,6 @@ export function OutboundShipmentEditorPage({
     () => batchOutboundLines.filter((line) => line.sourceKey.trim() !== "" && line.quantity > 0),
     [batchOutboundLines]
   );
-  const outboundAllocationPreviewColumns = useMemo<GridColDef<OutboundAllocationPreviewRow>[]>(() => [
-    { field: "lineLabel", headerName: t("shipmentLine"), minWidth: 120, renderCell: (params) => params.row.lineLabel },
-    { field: "locationName", headerName: t("currentStorage"), minWidth: 150, flex: 1, renderCell: (params) => `${params.row.locationName} / ${normalizeStorageSection(params.row.storageSection)}` },
-    { field: "containerNo", headerName: t("sourceContainer"), minWidth: 170, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.containerNo || "-"}</span> },
-    { field: "palletCode", headerName: t("palletCode"), minWidth: 150, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.palletCode || "-"}</span> },
-    { field: "allocatedQty", headerName: t("pickQty"), minWidth: 100, type: "number" },
-    { field: "itemNumber", headerName: t("itemNumber"), minWidth: 120, renderCell: (params) => <span className="cell--mono">{params.row.itemNumber || "-"}</span> },
-    { field: "sku", headerName: t("sku"), minWidth: 110, renderCell: (params) => <span className="cell--mono">{params.row.sku}</span> },
-    { field: "description", headerName: t("description"), minWidth: 220, flex: 1.2, renderCell: (params) => params.row.description || "-" }
-  ], [t]);
   const isEditingOutboundDraft = normalizeDocumentStatus(document?.status ?? "") === "DRAFT";
   const isEditingConfirmedOutbound = normalizeDocumentStatus(document?.status ?? "") === "CONFIRMED";
   const isEditingExistingDocument = Boolean(documentId && document);
@@ -336,8 +327,6 @@ export function OutboundShipmentEditorPage({
   const isReadOnly = !canManage || !canEditCurrentDocument;
   const outboundPalletSourceMessage = palletsLoading ? t("shipmentPalletsLoading") : palletsLoadError;
   const isOutboundSourceReadOnly = isReadOnly || isOutboundSourceBlocked;
-  const canEditOutboundNote = canManage && Boolean(document?.id);
-  const isOutboundNoteDirty = canEditOutboundNote && batchOutboundForm.documentNote.trim() !== (document?.documentNote ?? "").trim();
   const hasNoAvailableSources = !isOutboundSourceBlocked && availableOutboundSources.length === 0 && !isEditingOutboundDraft && !isEditingConfirmedOutbound;
   const hasBlockingStep1Issues = outboundStepOverview.blockedLines > 0 || outboundStepOverview.readyLines === 0;
   const hasBlockingStep2Issues = outboundStepOverview.shortageLines > 0 || outboundStepOverview.readyLines === 0;
@@ -419,7 +408,6 @@ export function OutboundShipmentEditorPage({
     setErrorMessage("");
     setBatchSubmitting(false);
     setReviewConfirmed(false);
-    setBatchOutboundLineAddCount(1);
     setExpandedOutboundPickPlans({});
     setIsEditorReady(true);
     lastInitializedRouteRef.current = routeKey;
@@ -461,30 +449,6 @@ export function OutboundShipmentEditorPage({
     } finally {
       setBatchSubmitting(false);
     }
-  }
-
-  async function handleSaveDocumentNote() {
-    if (!document?.id || !canEditOutboundNote) {
-      return;
-    }
-
-    setNoteSubmitting(true);
-    setErrorMessage("");
-    try {
-      await api.updateOutboundDocumentNote(document.id, {
-        documentNote: batchOutboundForm.documentNote || undefined
-      });
-      await onRefresh();
-      showActionSuccess(t("shipmentNoteSavedSuccess"));
-    } catch (error) {
-      showActionError(error, t("couldNotSaveActivity"));
-    } finally {
-      setNoteSubmitting(false);
-    }
-  }
-
-  function getSafeLineAddCount(value: number) {
-    return Math.min(50, Math.max(1, Math.floor(value) || 1));
   }
 
   function focusShipmentEditorField(fieldID: string) {
@@ -544,11 +508,10 @@ export function OutboundShipmentEditorPage({
     focusNextShipmentLine(lineID);
   }
 
-  function addBatchOutboundLine(count = batchOutboundLineAddCount) {
-    const safeCount = getSafeLineAddCount(count);
-    const nextLines = Array.from({ length: safeCount }, () => createEmptyBatchOutboundLine());
-    pendingBatchLineIDRef.current = nextLines[0]?.id ?? null;
-    setBatchOutboundLines((current) => [...current, ...nextLines]);
+  function addBatchOutboundLine() {
+    const nextLine = createEmptyBatchOutboundLine();
+    pendingBatchLineIDRef.current = nextLine.id;
+    setBatchOutboundLines((current) => [...current, nextLine]);
   }
 
   function removeBatchOutboundLine(lineID: string) {
@@ -965,27 +928,11 @@ export function OutboundShipmentEditorPage({
 
   return (
     <main className="workspace-main">
-      <div className="space-y-6 pb-6">
-        <section className="rounded-[24px] border border-slate-200/80 bg-[linear-gradient(180deg,#f4f8ff_0%,#eef4fb_100%)] px-5 py-5 shadow-[0_18px_48px_rgba(10,31,68,0.06)]">
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-            <div className="space-y-2">
-              <div className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500 ring-1 ring-slate-200/70">
-                <span>{t("shipmentEditorPage")}</span>
-              </div>
-              <div>
-                <h1 className="font-headline text-3xl font-extrabold tracking-tight text-[#0d2d63]">
-                  {document
-                    ? (isEditingConfirmedOutbound ? t("shipmentEditorConfirmedTitle") : t("shipmentEditorDraftTitle"))
-                    : t("shipmentEditorNewTitle")}
-                </h1>
-                <p className="mt-1.5 max-w-3xl text-sm text-slate-600">
-                  {t("shipmentEditorPageDesc")}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              {canManage && isEditingConfirmedOutbound && document?.id ? (
+      <div className="space-y-3 pb-6">
+        <section className="rounded-[18px] border border-slate-200/80 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.04)]">
+          {canManage && isEditingConfirmedOutbound && document?.id ? (
+            <div className="inbound-entry-topbar">
+              <div className="inbound-entry-topbar__actions">
                 <button
                   type="button"
                   onClick={() => void handleCopyCurrentShipment()}
@@ -996,30 +943,9 @@ export function OutboundShipmentEditorPage({
                   {batchSubmitting ? <InlineLoadingIndicator /> : null}
                   {t("reEnterShipment")}
                 </button>
-              ) : null}
-              {document?.id ? (
-                <button
-                  type="button"
-                  onClick={() => onOpenOutboundDocument(document.id)}
-                  className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50"
-                >
-                  <OpenInNewRoundedIcon sx={{ fontSize: 18 }} />
-                  {t("details")}
-                </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={onBackToList}
-                className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-[#143569] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(20,53,105,0.18)] transition hover:bg-[#102f5f]"
-              >
-                {t("back")}
-              </button>
+              </div>
             </div>
-          </div>
-        </section>
-
-        <section className="rounded-[24px] border border-slate-200/80 bg-white p-5 shadow-[0_16px_34px_rgba(15,23,42,0.05)]">
-          <WorkspacePanelHeader title={t("shipmentEditorPage")} description={t("shipmentEditorStepHint")} />
+          ) : null}
 
           {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
           {isEditingConfirmedOutbound ? (
@@ -1036,7 +962,7 @@ export function OutboundShipmentEditorPage({
           ) : null}
 
           <form onSubmit={handleSubmit}>
-            <div className="shipment-wizard__steps">
+            <div className="shipment-wizard__steps shipment-wizard__steps--compact">
               {([
                 [1, t("shipmentStepInfo")],
                 [2, t("shipmentStepPickPlan")],
@@ -1078,15 +1004,7 @@ export function OutboundShipmentEditorPage({
                   </div>
                 ) : null}
                 <div className="sheet-form__wide">
-                  <label className="sheet-form__wide">{t("documentNotes")}<input value={batchOutboundForm.documentNote} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, documentNote: event.target.value }))} placeholder={t("outboundDocumentNotePlaceholder")} disabled={!canManage} /></label>
-                  {document?.id && canManage ? (
-                    <div className="sheet-form__actions" style={{ marginTop: "0.5rem" }}>
-                      <button className="button button--ghost" type="button" onClick={() => void handleSaveDocumentNote()} disabled={noteSubmitting || !isOutboundNoteDirty} aria-busy={noteSubmitting}>
-                        {noteSubmitting ? <InlineLoadingIndicator /> : null}
-                        {noteSubmitting ? t("saving") : t("saveNote")}
-                      </button>
-                    </div>
-                  ) : null}
+                  <label className="sheet-form__wide">{t("documentNotes")}<input value={batchOutboundForm.documentNote} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, documentNote: event.target.value }))} placeholder={t("outboundDocumentNotePlaceholder")} disabled={isReadOnly || !canManage} /></label>
                 </div>
               </div>
             ) : null}
@@ -1096,32 +1014,6 @@ export function OutboundShipmentEditorPage({
                 <div className="batch-lines__toolbar batch-lines__toolbar--sticky !flex-col !items-stretch !gap-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <strong>{outboundWizardStep === 2 ? t("pickAllocations") : t("outboundLines")}</strong>
-                    {outboundWizardStep === 1 ? (
-                      <div className="batch-lines__adder">
-                        <label className="batch-lines__adder-label">
-                          {t("rowsToAdd")}
-                          <input
-                            type="number"
-                            min="1"
-                            max="50"
-                            value={batchOutboundLineAddCount}
-                            onChange={(event) => setBatchOutboundLineAddCount(getSafeLineAddCount(Number(event.target.value || 1)))}
-                            disabled={isOutboundSourceReadOnly}
-                          />
-                        </label>
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          startIcon={<AddCircleOutlineOutlinedIcon />}
-                          onClick={() => addBatchOutboundLine()}
-                          disabled={isOutboundSourceReadOnly}
-                        >
-                          {t("addOutboundLine")}
-                        </Button>
-                      </div>
-                    ) : (
-                      <span className="batch-line-card__hint">{t("pickPlanStepHint")}</span>
-                    )}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {outboundWizardStep === 1 ? (
@@ -1219,10 +1111,10 @@ export function OutboundShipmentEditorPage({
                         <button className="button button--danger button--small" type="button" onClick={() => removeBatchOutboundLine(line.id)} disabled={isReadOnly || batchOutboundLines.length === 1}>{t("removeLine")}</button>
                       </div>
                       {outboundWizardStep === 1 ? (
-                        <div className="space-y-4">
-                          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(17rem,0.9fr)]">
-                            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(0,1.5fr)_minmax(12rem,0.85fr)_minmax(9rem,0.7fr)_minmax(9rem,0.7fr)]">
-                              <label className="grid gap-1.5 text-sm font-semibold text-slate-700">
+                        <div className="space-y-2.5">
+                          <div className="grid gap-2.5">
+                            <div className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-[minmax(0,1.7fr)_minmax(12rem,0.8fr)_minmax(8.5rem,0.45fr)_minmax(9.5rem,0.4fr)]">
+                              <label className="grid content-start gap-1 text-xs font-semibold text-slate-700">
                                 {t("sku")}
                                 <input
                                   id={`shipment-editor-sku-${line.id}`}
@@ -1239,20 +1131,20 @@ export function OutboundShipmentEditorPage({
                                   disabled={isOutboundSourceReadOnly}
                                   aria-invalid={lineValidation.skuMessage ? "true" : "false"}
                                   placeholder={t("typeSkuToSearch")}
-                                  className={`min-h-12 rounded-2xl border bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none transition focus:border-[#143569]/40 ${lineValidation.skuMessage ? "border-amber-300 bg-amber-50/40" : "border-slate-200/80"}`}
+                                  className={`min-h-10 rounded-xl border bg-white px-3 py-1.5 text-sm font-medium text-slate-700 outline-none transition focus:border-[#143569]/60 focus:ring-2 focus:ring-[#143569]/10 ${lineValidation.skuMessage ? "border-amber-400 bg-amber-50/40" : "border-slate-300/90"}`}
                                 />
                                 <datalist id={skuInputListID}>
                                   {buildOutboundSkuSearchOptions(selectableOutboundSources).map((option) => (
                                     <option key={option} value={option} />
                                   ))}
                                 </datalist>
-                                <span className={`text-xs ${lineValidation.skuMessage ? "font-semibold text-amber-700" : "text-slate-500"}`}>
-                                  {lineValidation.skuMessage || (selectedOutboundSource
-                                    ? `${selectedOutboundSource.customerName} · ${t("itemNumber")}: ${selectedOutboundSource.itemNumber || "-"} · ${selectedOutboundSource.sku}`
-                                    : t("selectShipmentSource"))}
-                                </span>
+                                {lineValidation.skuMessage || !selectedOutboundSource ? (
+                                  <span className={`text-xs ${lineValidation.skuMessage ? "font-semibold text-amber-700" : "text-slate-500"}`}>
+                                    {lineValidation.skuMessage || t("selectShipmentSource")}
+                                  </span>
+                                ) : null}
                               </label>
-                              <label className="grid gap-1.5 text-sm font-semibold text-slate-700">
+                              <label className="grid content-start gap-1 text-xs font-semibold text-slate-700">
                                 {t("currentStorage")}
                                 <select
                                   id={`shipment-editor-warehouse-${line.id}`}
@@ -1270,18 +1162,20 @@ export function OutboundShipmentEditorPage({
                                   onKeyDown={(event) => handleShipmentLineFieldKeyDown(event, line.id, "warehouse")}
                                   disabled={isOutboundSourceReadOnly || !lineSourceInputValue.trim()}
                                   aria-invalid={lineValidation.warehouseMessage ? "true" : "false"}
-                                  className={`min-h-12 rounded-2xl border bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none transition focus:border-[#143569]/40 ${lineValidation.warehouseMessage ? "border-amber-300 bg-amber-50/40" : "border-slate-200/80"}`}
+                                  className={`min-h-10 rounded-xl border bg-white px-3 py-1.5 text-sm font-medium text-slate-700 outline-none transition focus:border-[#143569]/60 focus:ring-2 focus:ring-[#143569]/10 ${lineValidation.warehouseMessage ? "border-amber-400 bg-amber-50/40" : "border-slate-300/90"}`}
                                 >
                                   <option value="">{lineSourceInputValue.trim() ? t("selectWarehouseAfterSku") : t("selectSkuFirst")}</option>
                                   {lineWarehouseOptions.map((warehouse) => (
                                     <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>
                                   ))}
                                 </select>
-                                <span className={`text-xs ${lineValidation.warehouseMessage ? "font-semibold text-amber-700" : "text-slate-500"}`}>
-                                  {warehouseInputHint}
-                                </span>
+                                {lineValidation.warehouseMessage || !selectedOutboundSource ? (
+                                  <span className={`text-xs ${lineValidation.warehouseMessage ? "font-semibold text-amber-700" : "text-slate-500"}`}>
+                                    {warehouseInputHint}
+                                  </span>
+                                ) : null}
                               </label>
-                              <label className="grid gap-1.5 text-sm font-semibold text-slate-700">
+                              <label className="grid content-start gap-1 text-xs font-semibold text-slate-700">
                                 {t("outQty")}
                                 <input
                                   id={`shipment-editor-quantity-${line.id}`}
@@ -1293,91 +1187,56 @@ export function OutboundShipmentEditorPage({
                                   onKeyDown={(event) => handleShipmentLineFieldKeyDown(event, line.id, "quantity")}
                                   disabled={isOutboundSourceReadOnly || !selectedOutboundSource}
                                   aria-invalid={lineValidation.quantityMessage ? "true" : "false"}
-                                  className={`min-h-12 rounded-2xl border bg-white px-3 py-2 text-right text-lg font-bold text-[#143569] outline-none transition focus:border-[#143569]/40 ${lineValidation.quantityMessage ? "border-amber-300 bg-amber-50/40" : "border-slate-200/80"}`}
+                                  className={`min-h-10 rounded-xl border bg-white px-3 py-1.5 text-right text-base font-bold text-[#143569] outline-none transition focus:border-[#143569]/60 focus:ring-2 focus:ring-[#143569]/10 ${lineValidation.quantityMessage ? "border-amber-400 bg-amber-50/40" : "border-slate-300/90"}`}
                                 />
-                                <span className={`text-xs ${lineValidation.quantityMessage ? "font-semibold text-amber-700" : "text-slate-500"}`}>
-                                  {lineValidation.quantityMessage || (selectedOutboundSource
-                                    ? `${t("maxLabel")} ${selectedOutboundSource.availableQty} ${lineUnitLabel} · ${t("lineAutoPickSummary", {
-                                      selected: outboundAllocationSummary?.allocatedQty ?? 0,
-                                      unit: lineUnitLabel,
-                                      pallets: linePalletCount,
-                                      containers: outboundAllocationSummary?.containerCount ?? 0
-                                    })}`
-                                    : (lineSourceInputValue.trim() ? t("selectWarehouseAfterSku") : t("selectSkuFirst")))}
-                                </span>
+                                {lineValidation.quantityMessage || !selectedOutboundSource || line.quantity <= 0 ? (
+                                  <span className={`text-xs ${lineValidation.quantityMessage ? "font-semibold text-amber-700" : "text-slate-500"}`}>
+                                    {lineValidation.quantityMessage || (selectedOutboundSource
+                                      ? `${t("maxLabel")} ${selectedOutboundSource.availableQty} ${lineUnitLabel}`
+                                      : (lineSourceInputValue.trim() ? t("selectWarehouseAfterSku") : t("selectSkuFirst")))}
+                                  </span>
+                                ) : null}
                               </label>
-                              <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-3">
+                              <div className="rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-2">
                                 <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">{t("pallets")}</div>
-                                <div className="mt-1 text-3xl font-extrabold text-[#143569]">{linePalletCount}</div>
-                                <div className="mt-2 space-y-1 text-xs text-slate-500">
-                                  <div>{`${t("availableQty")}: ${selectedOutboundSource?.availableQty ?? 0}`}</div>
-                                  <div>{`${t("containers")}: ${outboundAllocationSummary?.containerCount ?? 0}`}</div>
-                                  <div>{`${t("selectedQty")}: ${outboundAllocationSummary?.allocatedQty ?? 0} ${lineUnitLabel}`}</div>
+                                <div className="mt-0.5 text-xl font-extrabold text-[#143569]">{linePalletCount}</div>
+                                <div className="mt-1 space-y-0.5 text-xs text-slate-500">
+                                  <div className="whitespace-nowrap">{`${t("availableQty")}: ${selectedOutboundSource?.availableQty ?? 0}`}</div>
+                                  <div className="whitespace-nowrap">{`${t("selectedQty")}: ${outboundAllocationSummary?.allocatedQty ?? 0} ${lineUnitLabel}`}</div>
+                                  <div className="whitespace-nowrap">{`${t("remainingQty")}: ${outboundAllocationSummary?.shortageQty ?? 0}`}</div>
                                 </div>
-                              </div>
-                            </div>
-                            <div className="rounded-2xl border border-slate-200/80 bg-white/90 px-4 py-4">
-                              <div className="flex items-center justify-between gap-3">
-                                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">{t("shipmentReviewStatus")}</div>
-                                <span className={`status-pill ${lineStatusTone}`}>{lineStatusLabel}</span>
-                              </div>
-                              <div className="mt-3 space-y-2 text-sm text-slate-600">
-                                <div className="flex items-center justify-between gap-3">
-                                  <span>{t("requiredQty")}</span>
-                                  <strong className="font-mono text-slate-700">{line.quantity || 0}</strong>
-                                </div>
-                                <div className="flex items-center justify-between gap-3">
-                                  <span>{t("selectedQty")}</span>
-                                  <strong className="font-mono text-slate-700">{outboundAllocationSummary?.allocatedQty ?? 0}</strong>
-                                </div>
-                                <div className="flex items-center justify-between gap-3">
-                                  <span>{t("remainingQty")}</span>
-                                  <strong className={`font-mono ${(outboundAllocationSummary?.shortageQty ?? 0) > 0 ? "text-amber-700" : "text-slate-700"}`}>{outboundAllocationSummary?.shortageQty ?? 0}</strong>
-                                </div>
-                              </div>
-                              <div className="mt-3 text-xs text-slate-500">
-                                {selectedOutboundSource
-                                  ? `${selectedOutboundSource.description || selectedOutboundSource.sku} · ${t("containerDistribution")}: ${selectedOutboundSource.containerSummary || "-"}`
-                                  : t("selectShipmentSource")}
                               </div>
                             </div>
                           </div>
-                          <div className="rounded-2xl border border-dashed border-slate-200/80 bg-slate-50/60 px-4 py-4">
-                            <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">{t("optionalDetails")}</div>
-                            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                              <label className="grid gap-1.5 text-sm font-medium text-slate-700">
+                          <details className="rounded-xl border border-dashed border-slate-200/80 bg-slate-50/50 px-3 py-2">
+                            <summary className="cursor-pointer select-none text-xs font-semibold text-slate-500">{t("optionalDetails")}</summary>
+                            <div className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                              <label className="grid gap-1 text-xs font-medium text-slate-700">
                                 {t("unit")}
-                                <input value={line.unitLabel} onChange={(event) => updateBatchOutboundLine(line.id, { unitLabel: event.target.value })} placeholder="PCS" disabled={isReadOnly} list="outbound-unit-presets" className="min-h-11 rounded-2xl border border-slate-200/80 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-[#143569]/40" />
+                                <input value={line.unitLabel} onChange={(event) => updateBatchOutboundLine(line.id, { unitLabel: event.target.value })} placeholder="PCS" disabled={isReadOnly} list="outbound-unit-presets" className="min-h-9 rounded-xl border border-slate-300/90 bg-white px-3 py-1.5 text-sm text-slate-700 outline-none transition focus:border-[#143569]/60 focus:ring-2 focus:ring-[#143569]/10" />
                               </label>
-                              <label className="grid gap-1.5 text-sm font-medium text-slate-700">
+                              <label className="grid gap-1 text-xs font-medium text-slate-700">
                                 {t("cartonSize")}
-                                <input value={line.cartonSizeMm} onChange={(event) => updateBatchOutboundLine(line.id, { cartonSizeMm: event.target.value })} placeholder="455*330*325" disabled={isReadOnly} className="min-h-11 rounded-2xl border border-slate-200/80 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-[#143569]/40" />
+                                <input value={line.cartonSizeMm} onChange={(event) => updateBatchOutboundLine(line.id, { cartonSizeMm: event.target.value })} placeholder="455*330*325" disabled={isReadOnly} className="min-h-9 rounded-xl border border-slate-300/90 bg-white px-3 py-1.5 text-sm text-slate-700 outline-none transition focus:border-[#143569]/60 focus:ring-2 focus:ring-[#143569]/10" />
                               </label>
-                              <label className="grid gap-1.5 text-sm font-medium text-slate-700">
+                              <label className="grid gap-1 text-xs font-medium text-slate-700">
                                 {t("netWeight")}
-                                <input type="number" min="0" step="0.01" value={numberInputValue(line.netWeightKgs)} onChange={(event) => updateBatchOutboundLine(line.id, { netWeightKgs: Math.max(0, Number(event.target.value || 0)) })} disabled={isReadOnly} className="min-h-11 rounded-2xl border border-slate-200/80 bg-white px-3 py-2 text-right text-sm text-slate-700 outline-none transition focus:border-[#143569]/40" />
+                                <input type="number" min="0" step="0.01" value={numberInputValue(line.netWeightKgs)} onChange={(event) => updateBatchOutboundLine(line.id, { netWeightKgs: Math.max(0, Number(event.target.value || 0)) })} disabled={isReadOnly} className="min-h-9 rounded-xl border border-slate-300/90 bg-white px-3 py-1.5 text-right text-sm text-slate-700 outline-none transition focus:border-[#143569]/60 focus:ring-2 focus:ring-[#143569]/10" />
                               </label>
-                              <label className="grid gap-1.5 text-sm font-medium text-slate-700">
+                              <label className="grid gap-1 text-xs font-medium text-slate-700">
                                 {t("grossWeight")}
-                                <input type="number" min="0" step="0.01" value={numberInputValue(line.grossWeightKgs)} onChange={(event) => updateBatchOutboundLine(line.id, { grossWeightKgs: Math.max(0, Number(event.target.value || 0)) })} disabled={isReadOnly} className="min-h-11 rounded-2xl border border-slate-200/80 bg-white px-3 py-2 text-right text-sm text-slate-700 outline-none transition focus:border-[#143569]/40" />
+                                <input type="number" min="0" step="0.01" value={numberInputValue(line.grossWeightKgs)} onChange={(event) => updateBatchOutboundLine(line.id, { grossWeightKgs: Math.max(0, Number(event.target.value || 0)) })} disabled={isReadOnly} className="min-h-9 rounded-xl border border-slate-300/90 bg-white px-3 py-1.5 text-right text-sm text-slate-700 outline-none transition focus:border-[#143569]/60 focus:ring-2 focus:ring-[#143569]/10" />
                               </label>
-                              <label className="grid gap-1.5 text-sm font-medium text-slate-700 md:col-span-2 xl:col-span-4">
+                              <label className="grid gap-1 text-xs font-medium text-slate-700 md:col-span-2 xl:col-span-4">
                                 {t("internalNotes")}
-                                <input value={line.reason} onChange={(event) => updateBatchOutboundLine(line.id, { reason: event.target.value })} placeholder={t("outboundInternalNotePlaceholder")} disabled={isReadOnly} className="min-h-11 rounded-2xl border border-slate-200/80 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-[#143569]/40" />
+                                <input value={line.reason} onChange={(event) => updateBatchOutboundLine(line.id, { reason: event.target.value })} placeholder={t("outboundInternalNotePlaceholder")} disabled={isReadOnly} className="min-h-9 rounded-xl border border-slate-300/90 bg-white px-3 py-1.5 text-sm text-slate-700 outline-none transition focus:border-[#143569]/60 focus:ring-2 focus:ring-[#143569]/10" />
                               </label>
                             </div>
-                          </div>
+                          </details>
                         </div>
                       ) : null}
-                      <div className="batch-line-card__meta">
-                        <span className="batch-line-card__hint">
-                          {selectedOutboundSource
-                            ? `${selectedOutboundSource.customerName} | ${t("itemNumber")}: ${selectedOutboundSource.itemNumber || "-"} | ${selectedOutboundSource.sku} | ${selectedOutboundSource.description} | ${outboundLocationDisplay} | ${t("containerDistribution")}: ${selectedOutboundSource.containerSummary || "-"} | ${t("availableQty")}: ${selectedOutboundSource.availableQty}`
-                            : t("selectShipmentSource")}
-                        </span>
-                      </div>
                       {selectedOutboundSource && outboundWizardStep === 2 ? (
-                        <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem", marginBottom: "0.25rem" }}>
+                        <div className="shipment-pick-action-row">
                           {!line.pickPalletsTouched ? (
                             <button className="button button--ghost button--small" type="button" onClick={() => startManualOutboundLinePick(line.id)} disabled={isOutboundSourceReadOnly}>{t("switchToManualPick")}</button>
                           ) : null}
@@ -1399,8 +1258,8 @@ export function OutboundShipmentEditorPage({
                       {selectedOutboundSource && outboundWizardStep === 2 ? (
                         <OutboundPickPlanPanel
                           title={t("containerPickPlan")}
-                          helperText={line.pickPalletsTouched ? t("pickPlanManualModeHint") : t("pickPlanAutoModeHint")}
                           autoPickLabel={line.pickPalletsTouched ? t("manualPick") : t("autoPick")}
+                          selectContainerLabel={t("selectContainer")}
                           selectPalletLabel={t("selectPallet")}
                           searchLabel={t("search")}
                           searchPlaceholder={t("pickPlanSearchPlaceholder")}
@@ -1427,13 +1286,6 @@ export function OutboundShipmentEditorPage({
                           pickQtyLabel={t("pickQty")}
                           unitLabel={line.unitLabel || selectedOutboundSource.unit.toUpperCase() || "PCS"}
                           palletLabel={t("pallet")}
-                          fillRemainingLabel={t("fillRemaining")}
-                          fullPalletLabel={t("useFullPallet")}
-                          clearLabel={t("clear")}
-                          repeatLastPickQtyLabel={t("repeatLastPickQty")}
-                          increaseQtyLabel={t("increaseQty")}
-                          decreaseQtyLabel={t("decreaseQty")}
-                          maxHintLabel={t("maxLabel")}
                           searchShortcutHint={t("pickPlanSearchShortcutHint")}
                           canExpand={outboundPickPlanRows.length > 0}
                           expanded={isOutboundPickPlanExpanded}
@@ -1467,61 +1319,38 @@ export function OutboundShipmentEditorPage({
                     </div>
                   );
                 })}
+                {outboundWizardStep === 1 ? (
+                  <button
+                    className="outbound-line-add-box"
+                    type="button"
+                    onClick={() => addBatchOutboundLine()}
+                    disabled={isOutboundSourceReadOnly}
+                    aria-label={t("addOutboundLine")}
+                  >
+                    <AddCircleOutlineOutlinedIcon fontSize="small" />
+                  </button>
+                ) : null}
               </div>
             ) : null}
 
             {outboundWizardStep === 3 ? (
-              <div className="batch-allocation-preview">
-                <div className="batch-allocation-preview__header">
-                  <div>
-                    <strong>{t("shipmentFinalConfirmTitle")}</strong>
-                    <span>{t("shipmentFinalConfirmHint")}</span>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <span className={`status-pill ${
-                        outboundStepOverview.reviewStatus === "shortage"
-                          ? "status-pill--alert"
-                          : outboundStepOverview.reviewStatus === "ready"
-                            ? "status-pill--ok"
-                            : ""
-                      }`}>
-                        {outboundStepOverview.reviewStatus === "shortage"
-                          ? t("shortageDetected")
-                          : outboundStepOverview.reviewStatus === "ready"
-                            ? t("readyToConfirm")
-                            : t("reviewIncomplete")}
-                      </span>
-                      <span className="rounded-full border border-slate-200/80 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
-                        {`${t("warehouses")}: ${outboundStepOverview.warehouseCount}`}
-                      </span>
-                      <span className="rounded-full border border-slate-200/80 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
-                        {`${t("containers")}: ${outboundStepOverview.containerCount}`}
-                      </span>
-                      <span className="rounded-full border border-slate-200/80 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
-                        {`${t("pallets")}: ${outboundStepOverview.palletCount}`}
-                      </span>
-                      <span className="rounded-full border border-slate-200/80 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
-                        {`${t("selectedQty")}: ${outboundStepOverview.totalPickedQty}`}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="batch-allocation-preview__stats">
-                    <div className="batch-allocation-preview__stat">
-                      <strong>{batchOutboundAllocationPreview.totalContainerCount}</strong>
-                      <span>{t("containers")}</span>
-                    </div>
-                    <div className="batch-allocation-preview__stat">
-                      <strong>{batchOutboundAllocationPreview.rows.length}</strong>
-                      <span>{t("pickRows")}</span>
-                    </div>
-                    <div className="batch-allocation-preview__stat">
-                      <strong>{batchOutboundAllocationPreview.splitLineCount}</strong>
-                      <span>{t("splitLines")}</span>
-                    </div>
-                    <div className="batch-allocation-preview__stat">
-                      <strong>{validBatchOutboundLines.length}</strong>
-                      <span>{t("totalLines")}</span>
-                    </div>
-                  </div>
+              <div className="batch-allocation-preview batch-allocation-preview--compact">
+                <div
+                  data-testid="shipment-final-summary"
+                  className="flex flex-wrap gap-2 rounded-xl border border-slate-200/80 bg-white/95 px-3 py-2"
+                >
+                  <span className="rounded-full border border-slate-200/80 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
+                    {`${t("warehouses")}: ${outboundStepOverview.warehouseCount}`}
+                  </span>
+                  <span className="rounded-full border border-slate-200/80 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
+                    {`${t("containers")}: ${outboundStepOverview.containerCount}`}
+                  </span>
+                  <span className="rounded-full border border-slate-200/80 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
+                    {`${t("pallets")}: ${outboundStepOverview.palletCount}`}
+                  </span>
+                  <span className="rounded-full border border-slate-200/80 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
+                    {`${t("selectedQty")}: ${outboundStepOverview.totalPickedQty}`}
+                  </span>
                 </div>
 
                 {batchOutboundAllocationPreview.shortageLineCount > 0 ? (
@@ -1530,95 +1359,22 @@ export function OutboundShipmentEditorPage({
                   </InlineAlert>
                 ) : null}
 
-                <div className="batch-lines">
-                  <div className="batch-line-card inbound-compact-card">
-                    <div className="batch-line-card__header">
-                      <div className="batch-line-card__title">
-                        <strong>{batchOutboundForm.packingListNo.trim() || t("packingListNo")}</strong>
-                        <span className="status-pill status-pill--ok">{t("shipmentStepReview")}</span>
-                      </div>
-                    </div>
-                    <div className="batch-line-card__meta">
-                      <span className="batch-line-card__hint">
-                        {[
-                          batchOutboundForm.actualShipDate || batchOutboundForm.expectedShipDate || "-",
-                          batchOutboundForm.shipToName.trim() || "-",
-                          batchOutboundForm.carrierName.trim() || "-"
-                        ].join(" | ")}
-                      </span>
-                      <span className="batch-line-card__hint">
-                        {batchOutboundForm.shipToAddress.trim() || t("shipToAddress")}
-                      </span>
-                    </div>
-                  </div>
-                  {validBatchOutboundLines.map((line, index) => {
-                    const selectedOutboundSource = findOutboundSourceOption(selectableOutboundSources, line.sourceKey);
-                    const allocationSummary = batchOutboundAllocationPreview.summaries.get(line.id);
-                    return (
-                      <div className="batch-line-card" key={line.id}>
-                        <div className="batch-line-card__header">
-                          <div className="batch-line-card__title">
-                            <strong>{t("shipmentLine")} #{index + 1}</strong>
-                            <span className={`status-pill ${(allocationSummary?.shortageQty ?? 0) > 0 ? "status-pill--alert" : "status-pill--ok"}`}>
-                              {(allocationSummary?.shortageQty ?? 0) > 0 ? t("remainingQty") : t("selected")}
-                            </span>
-                          </div>
-                          <span className="cell--mono">{selectedOutboundSource?.sku || "-"}</span>
-                        </div>
-                        <div className="batch-line-card__meta">
-                          <span className="batch-line-card__hint">{selectedOutboundSource?.description || t("selectShipmentSource")}</span>
-                          <span className="batch-line-card__hint">
-                            {[
-                              `${t("requiredQty")}: ${line.quantity}`,
-                              `${t("selectedQty")}: ${allocationSummary?.allocatedQty ?? 0}`,
-                              `${t("remainingQty")}: ${allocationSummary?.shortageQty ?? 0}`,
-                              `${t("pallets")}: ${resolveOutboundLinePalletCount(line.pickPallets, line.pallets)}`
-                            ].join(" · ")}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
                 {outboundShipmentReviewGroups.length > 0 ? (
-                  <div className="batch-lines" style={{ marginTop: "1rem" }}>
-                    <div className="batch-line-card inbound-compact-card">
-                      <div className="batch-line-card__header">
-                        <div className="batch-line-card__title">
-                          <strong>{t("shipmentGroupedSummaryTitle")}</strong>
-                          <span className="status-pill status-pill--ok">{t("shipmentStepPickPlan")}</span>
-                        </div>
-                      </div>
-                      <div className="batch-line-card__meta">
-                        <span className="batch-line-card__hint">{t("shipmentGroupedSummaryHint")}</span>
-                      </div>
-                    </div>
+                  <div className="batch-lines">
                     {outboundShipmentReviewGroups.map((warehouseGroup) => (
                       <div className="batch-line-card" key={warehouseGroup.key}>
                         <div className="batch-line-card__header">
-                          <div className="batch-line-card__title">
+                          <div className="batch-line-card__title flex-wrap">
                             <strong>{warehouseGroup.locationName}</strong>
-                            <span className="status-pill status-pill--ok">{`${t("containers")}: ${warehouseGroup.containerCount}`}</span>
                           </div>
                         </div>
-                        <div className="batch-line-card__meta">
-                          <span className="batch-line-card__hint">
-                            {[
-                              `${t("containers")}: ${warehouseGroup.containerCount}`,
-                              `${t("pallets")}: ${warehouseGroup.palletCount}`,
-                              `${t("selectedQty")}: ${warehouseGroup.totalQty}`,
-                              `${t("totalLines")}: ${warehouseGroup.lineCount}`
-                            ].join(" · ")}
-                          </span>
-                        </div>
-                        <div className="mt-3 grid gap-3 md:grid-cols-2">
+                        <div className="mt-2 grid gap-2 md:grid-cols-2">
                           {warehouseGroup.containers.map((containerGroup) => (
                             <div
                               key={containerGroup.key}
-                              className="rounded-2xl border border-slate-200/80 bg-white/95 px-4 py-4"
+                              className="rounded-xl border border-slate-200/80 bg-white/95 px-3 py-2.5"
                             >
-                              <div className="flex items-start justify-between gap-3">
+                              <div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0">
                                   <div className="text-sm font-semibold text-slate-700">
                                     {t("sourceContainer")}: <span className="font-mono">{containerGroup.containerNo || "-"}</span>
@@ -1627,20 +1383,14 @@ export function OutboundShipmentEditorPage({
                                     {`${t("currentStorage")}: ${warehouseGroup.locationName} / ${containerGroup.storageSections.join(", ") || DEFAULT_STORAGE_SECTION}`}
                                   </div>
                                 </div>
-                                <span className="status-pill status-pill--ok">{`${t("pallets")}: ${containerGroup.palletCount}`}</span>
                               </div>
-                              <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">
-                                <span>{`${t("pallets")}: ${containerGroup.palletCount}`}</span>
-                                <span>{`${t("selectedQty")}: ${containerGroup.totalQty}`}</span>
-                                <span>{`${t("totalLines")}: ${containerGroup.lineCount}`}</span>
-                              </div>
-                              <div className="mt-3 space-y-2">
+                              <div className="mt-2 space-y-1.5">
                                 {containerGroup.items.map((itemGroup) => (
                                   <div
                                     key={itemGroup.key}
-                                    className="rounded-xl border border-slate-200/70 bg-slate-50/70 px-3 py-3"
+                                    className="rounded-lg border border-slate-200/70 bg-slate-50/70 px-2.5 py-2"
                                   >
-                                    <div className="flex items-start justify-between gap-3">
+                                    <div className="flex items-start justify-between gap-2">
                                       <div className="min-w-0">
                                         <div className="text-sm font-semibold text-slate-700">
                                           <span className="font-mono">{itemGroup.sku}</span>
@@ -1649,6 +1399,17 @@ export function OutboundShipmentEditorPage({
                                         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
                                           {itemGroup.itemNumber ? <span className="font-mono">{itemGroup.itemNumber}</span> : null}
                                           <span>{`${t("shipmentLine")}: ${itemGroup.lineLabels.join(", ")}`}</span>
+                                        </div>
+                                        <div className="mt-1 flex flex-wrap gap-1.5 text-[11px] font-semibold text-slate-500">
+                                          {itemGroup.palletPicks.map((palletPick) => (
+                                            <span
+                                              key={palletPick.key}
+                                              className="rounded-md border border-slate-200/80 bg-white px-1.5 py-0.5 font-mono"
+                                              title={`${palletPick.lineLabels.join(", ")} · ${palletPick.totalQty}`}
+                                            >
+                                              {`${palletPick.palletCode || "-"}: ${palletPick.totalQty}`}
+                                            </span>
+                                          ))}
                                         </div>
                                       </div>
                                       <div className="text-sm font-semibold text-[#143569]">{itemGroup.totalQty}</div>
@@ -1662,21 +1423,6 @@ export function OutboundShipmentEditorPage({
                       </div>
                     ))}
                   </div>
-                ) : null}
-
-                {batchOutboundAllocationPreview.rows.length > 0 ? (
-                  <Box sx={{ minWidth: 0, height: 260 }}>
-                    <DataGrid
-                      rows={batchOutboundAllocationPreview.rows}
-                      columns={outboundAllocationPreviewColumns}
-                      {...(batchOutboundAllocationPreview.rows.length > 10 ? { pagination: true as const } : {})}
-                      pageSizeOptions={[10, 20, 50]}
-                      disableRowSelectionOnClick
-                      initialState={{ pagination: { paginationModel: { pageSize: Math.min(10, Math.max(batchOutboundAllocationPreview.rows.length, 1)), page: 0 } } }}
-                      getRowHeight={() => 64}
-                      sx={{ border: 0 }}
-                    />
-                  </Box>
                 ) : (
                   <div className="sheet-note sheet-note--readonly">
                     {t("pickAllocationPreviewEmpty")}
@@ -2285,6 +2031,12 @@ function buildOutboundShipmentReviewGroups(rows: OutboundAllocationPreviewRow[])
         description: string;
         totalQty: number;
         lineLabels: Set<string>;
+        palletPicks: Map<string, {
+          key: string;
+          palletCode: string;
+          totalQty: number;
+          lineLabels: Set<string>;
+        }>;
       }>;
     }>;
   }>();
@@ -2316,6 +2068,14 @@ function buildOutboundShipmentReviewGroups(rows: OutboundAllocationPreviewRow[])
       itemNumber: row.itemNumber,
       description: row.description,
       totalQty: 0,
+      lineLabels: new Set<string>(),
+      palletPicks: new Map()
+    };
+    const palletPickKey = row.palletCode || String(row.palletId);
+    const palletPickGroup = itemGroup.palletPicks.get(palletPickKey) ?? {
+      key: palletPickKey,
+      palletCode: row.palletCode || "-",
+      totalQty: 0,
       lineLabels: new Set<string>()
     };
 
@@ -2330,6 +2090,9 @@ function buildOutboundShipmentReviewGroups(rows: OutboundAllocationPreviewRow[])
 
     itemGroup.totalQty += row.allocatedQty;
     itemGroup.lineLabels.add(row.lineLabel);
+    palletPickGroup.totalQty += row.allocatedQty;
+    palletPickGroup.lineLabels.add(row.lineLabel);
+    itemGroup.palletPicks.set(palletPickKey, palletPickGroup);
 
     containerGroup.items.set(itemKey, itemGroup);
     warehouseGroup.containers.set(containerKey, containerGroup);
@@ -2359,7 +2122,15 @@ function buildOutboundShipmentReviewGroups(rows: OutboundAllocationPreviewRow[])
               itemNumber: itemGroup.itemNumber,
               description: itemGroup.description,
               totalQty: itemGroup.totalQty,
-              lineLabels: [...itemGroup.lineLabels].sort()
+              lineLabels: [...itemGroup.lineLabels].sort(),
+              palletPicks: [...itemGroup.palletPicks.values()]
+                .map((palletPick) => ({
+                  key: palletPick.key,
+                  palletCode: palletPick.palletCode,
+                  totalQty: palletPick.totalQty,
+                  lineLabels: [...palletPick.lineLabels].sort()
+                }))
+                .sort((left, right) => left.palletCode.localeCompare(right.palletCode))
             }))
             .sort((left, right) => {
               const skuCompare = left.sku.localeCompare(right.sku);

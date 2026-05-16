@@ -563,7 +563,7 @@ export default function App() {
   const activeNavSection = navSections.find((section) => section.key === sectionKeyByPage[activePage]);
   const pageContextLeadLabel = activeNavSection?.label ?? parentPage?.label ?? null;
   const showPageContext = activePage !== "dashboard";
-  const showParentBackButton = Boolean(parentPage) && activePage !== "receipt-editor";
+  const showParentBackButton = Boolean(parentPage) && activePage !== "receipt-editor" && activePage !== "shipment-editor";
   const editingStorageLocationId = getStorageLocationEditorIdFromPath(currentPathname);
   const selectedInboundDetailId = getInboundDetailIdFromPath(currentPathname);
   const selectedReceiptEditorId = getReceiptEditorIdFromPath(currentPathname);

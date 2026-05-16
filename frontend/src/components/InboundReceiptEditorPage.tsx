@@ -105,7 +105,6 @@ export function InboundReceiptEditorPage({
   const [showValidationErrors, setShowValidationErrors] = useState(false);
   const [batchSubmitting, setBatchSubmitting] = useState(false);
   const [copySubmitting, setCopySubmitting] = useState(false);
-  const [noteSubmitting, setNoteSubmitting] = useState(false);
   const [inboundWizardStep, setInboundWizardStep] = useState<InboundWizardStep>(2);
   const [inboundEditorIntent, setInboundEditorIntent] = useState<InboundLaunchIntent | null>(null);
   const [expandedPalletBreakdowns, setExpandedPalletBreakdowns] = useState<Record<string, boolean>>({});
@@ -162,8 +161,6 @@ export function InboundReceiptEditorPage({
   const isEditorMissing = Boolean(documentId) && !document && !isLoading;
   const canEditCurrentDocument = !document || (!document.archivedAt && normalizeDocumentStatus(document.status) === "DRAFT");
   const isReadOnly = !canManage || !canEditCurrentDocument;
-  const canEditInboundNote = canManage && Boolean(document?.id);
-  const isInboundNoteDirty = canEditInboundNote && batchForm.documentNote.trim() !== (document?.documentNote ?? "").trim();
 
   useEffect(() => {
     if (!pendingBatchLineIDRef.current) {
@@ -267,26 +264,6 @@ export function InboundReceiptEditorPage({
       showActionError(error, t("couldNotSaveActivity"));
     } finally {
       setCopySubmitting(false);
-    }
-  }
-
-  async function handleSaveDocumentNote() {
-    if (!document?.id || !canEditInboundNote) {
-      return;
-    }
-
-    setNoteSubmitting(true);
-    setErrorMessage("");
-    try {
-      await api.updateInboundDocumentNote(document.id, {
-        documentNote: batchForm.documentNote || undefined
-      });
-      await onRefresh();
-      showActionSuccess(t("receiptNoteSavedSuccess"));
-    } catch (error) {
-      showActionError(error, t("couldNotSaveActivity"));
-    } finally {
-      setNoteSubmitting(false);
     }
   }
 
@@ -855,15 +832,7 @@ export function InboundReceiptEditorPage({
               <label>{renderFieldLabel(t("billingContainerType"))}<select aria-label={t("billingContainerType")} value={batchForm.containerType} onChange={(event) => setBatchForm((current) => ({ ...current, containerType: event.target.value as ContainerType }))} disabled={isReadOnly}><option value="NORMAL">{t("billingContainerTypeNormal")}</option><option value="WEST_COAST_TRANSFER">{t("billingContainerTypeWestCoastTransfer")}</option></select></label>
               <label>{renderFieldLabel(t("inboundUnit"))}<select aria-label={t("inboundUnit")} value={batchForm.unitLabel} onChange={(event) => setBatchForm((current) => ({ ...current, unitLabel: event.target.value }))} disabled={isReadOnly}><option value="CTN">CTN</option><option value="PCS">PCS</option><option value="PALLET">PALLET</option></select></label>
               <div className="inbound-entry-form__note">
-                <label>{renderFieldLabel(t("documentNotes"))}<input aria-label={t("documentNotes")} value={batchForm.documentNote} disabled={!canManage} onChange={(event) => setBatchForm((current) => ({ ...current, documentNote: event.target.value }))} placeholder={t("inboundNotePlaceholder")} /></label>
-                {document?.id && canManage ? (
-                  <div className="sheet-form__actions" style={{ marginTop: "0.5rem" }}>
-                    <button className="button button--ghost" type="button" onClick={() => void handleSaveDocumentNote()} disabled={noteSubmitting || !isInboundNoteDirty} aria-busy={noteSubmitting}>
-                      {noteSubmitting ? <InlineLoadingIndicator /> : null}
-                      {noteSubmitting ? t("saving") : t("saveNote")}
-                    </button>
-                  </div>
-                ) : null}
+                <label>{renderFieldLabel(t("documentNotes"))}<input aria-label={t("documentNotes")} value={batchForm.documentNote} disabled={isReadOnly || !canManage} onChange={(event) => setBatchForm((current) => ({ ...current, documentNote: event.target.value }))} placeholder={t("inboundNotePlaceholder")} /></label>
               </div>
             </div>
 
@@ -916,15 +885,7 @@ export function InboundReceiptEditorPage({
                   <label>{t("currentStorage")}<select value={batchForm.locationId} onChange={(event) => setBatchForm((current) => ({ ...current, locationId: event.target.value }))} disabled={isReadOnly}>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
                   <label>{t("inboundUnit")}<select value={batchForm.unitLabel} onChange={(event) => setBatchForm((current) => ({ ...current, unitLabel: event.target.value }))} disabled={isReadOnly}><option value="CTN">CTN</option><option value="PCS">PCS</option><option value="PALLET">PALLET</option></select></label>
                   <div className="sheet-form__wide">
-                    <label className="sheet-form__wide">{t("documentNotes")}<input value={batchForm.documentNote} disabled={!canManage} onChange={(event) => setBatchForm((current) => ({ ...current, documentNote: event.target.value }))} placeholder={t("inboundNotePlaceholder")} /></label>
-                    {document?.id && canManage ? (
-                      <div className="sheet-form__actions" style={{ marginTop: "0.5rem" }}>
-                        <button className="button button--ghost" type="button" onClick={() => void handleSaveDocumentNote()} disabled={noteSubmitting || !isInboundNoteDirty} aria-busy={noteSubmitting}>
-                          {noteSubmitting ? <InlineLoadingIndicator /> : null}
-                          {noteSubmitting ? t("saving") : t("saveNote")}
-                        </button>
-                      </div>
-                    ) : null}
+                    <label className="sheet-form__wide">{t("documentNotes")}<input value={batchForm.documentNote} disabled={isReadOnly || !canManage} onChange={(event) => setBatchForm((current) => ({ ...current, documentNote: event.target.value }))} placeholder={t("inboundNotePlaceholder")} /></label>
                   </div>
                 </div>
 

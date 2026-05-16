@@ -161,6 +161,7 @@ type OutboundAllocationPreviewRow = {
   locationName: string;
   storageSection: string;
   containerNo: string;
+  palletCode: string;
   allocatedQty: number;
 };
 
@@ -3571,8 +3572,8 @@ export function ActivityManagementPage({
                         {selectedOutboundSource && outboundWizardStep === 2 ? (
                           <OutboundPickPlanPanel
                           title={t("containerPickPlan")}
-                          helperText={t("pickPlanAutoModeHint")}
                           autoPickLabel={t("autoPick")}
+                          selectContainerLabel={t("selectContainer")}
                           searchLabel={t("search")}
                           searchPlaceholder={t("pickPlanSearchPlaceholder")}
                           detailsLabel={t("details")}
@@ -3595,12 +3596,14 @@ export function ActivityManagementPage({
                             sourceContainerLabel={t("sourceContainer")}
                             pickQtyLabel={t("pickQty")}
                             unitLabel={line.unitLabel || selectedOutboundSource.unit.toUpperCase() || "PCS"}
+                            palletLabel={t("pallet")}
                             canExpand={outboundAllocationRows.length > 0}
                             expanded={isOutboundPickPlanExpanded}
                             onToggle={() => toggleOutboundPickPlan(line.id)}
                             emptyHint={t("pickAllocationPreviewEmpty")}
                             rows={outboundAllocationRows.map((row) => ({
                               id: row.id,
+                              palletCode: row.palletCode,
                               containerNo: row.containerNo,
                               locationLabel: `${row.locationName} / ${normalizeStorageSection(row.storageSection)}`,
                               allocatedQty: row.allocatedQty,
@@ -3619,11 +3622,10 @@ export function ActivityManagementPage({
                 ) : null}
 
                 {outboundWizardStep === 3 ? (
-                <div className="batch-allocation-preview">
+                <div className="batch-allocation-preview batch-allocation-preview--compact">
                   <div className="batch-allocation-preview__header">
                     <div>
                       <strong>{t("pickAllocationPreview")}</strong>
-                      <span>{t("reviewStepHint")}</span>
                     </div>
                     <div className="batch-allocation-preview__stats">
                       <div className="batch-allocation-preview__stat">
@@ -4217,6 +4219,7 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
         locationName: candidate.locationName,
         storageSection: normalizeStorageSection(candidate.storageSection),
         containerNo: candidate.containerNo || "",
+        palletCode: candidate.palletCode,
         allocatedQty
       });
       reservedBySourceId.set(sourceId, (reservedBySourceId.get(sourceId) ?? 0) + allocatedQty);
