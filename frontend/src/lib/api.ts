@@ -77,6 +77,17 @@ type PalletQuery = {
   status?: string;
 };
 
+type MovementQuery = {
+  search?: string;
+  customerId?: number;
+  locationId?: number;
+  movementType?: string;
+  startDate?: string;
+  endDate?: string;
+  startAt?: string;
+  endBefore?: string;
+};
+
 type DocumentArchiveScope = "active" | "archived" | "all";
 
 type OperationsReportQuery = {
@@ -346,8 +357,33 @@ export const api = {
     return request<Item[]>(`/items${suffix}`);
   },
 
-  getMovements(limit = 12) {
-    return request<Movement[]>(`/movements?limit=${limit}`);
+  getMovements(limit = 12, query?: MovementQuery) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (query?.search?.trim()) {
+      params.set("search", query.search.trim());
+    }
+    if (query?.customerId && query.customerId > 0) {
+      params.set("customerId", String(query.customerId));
+    }
+    if (query?.locationId && query.locationId > 0) {
+      params.set("locationId", String(query.locationId));
+    }
+    if (query?.movementType?.trim()) {
+      params.set("movementType", query.movementType.trim());
+    }
+    if (query?.startDate?.trim()) {
+      params.set("startDate", query.startDate.trim());
+    }
+    if (query?.endDate?.trim()) {
+      params.set("endDate", query.endDate.trim());
+    }
+    if (query?.startAt?.trim()) {
+      params.set("startAt", query.startAt.trim());
+    }
+    if (query?.endBefore?.trim()) {
+      params.set("endBefore", query.endBefore.trim());
+    }
+    return request<Movement[]>(`/movements?${params.toString()}`);
   },
 
   getPallets(limit = 500, queryOrSearch: PalletQuery | string = "", sourceInboundDocumentId?: number) {

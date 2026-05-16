@@ -1,6 +1,10 @@
 import type { ReactNode } from "react";
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { getMovements } = vi.hoisted(() => ({
+  getMovements: vi.fn()
+}));
 
 vi.mock("@mui/x-data-grid", () => ({
   DataGrid: ({
@@ -34,6 +38,13 @@ vi.mock("@mui/x-data-grid", () => ({
   )
 }));
 
+vi.mock("../lib/api", () => ({
+  ApiError: class ApiError extends Error {},
+  api: {
+    getMovements
+  }
+}));
+
 import { formatDateTimeValue } from "../lib/dates";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { createCustomer, createItem, createLocation, createMovement } from "../test/fixtures";
@@ -41,6 +52,8 @@ import { ContainerContentsPage } from "./ContainerContentsPage";
 
 describe("ContainerContentsPage", () => {
   beforeEach(() => {
+    getMovements.mockReset();
+    getMovements.mockResolvedValue([]);
     window.localStorage.clear();
     window.localStorage.setItem("sim-timezone", "UTC");
   });
@@ -154,6 +167,51 @@ describe("ContainerContentsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "View Detail MRSU6884820" }));
 
     expect(onOpenContainerDetail).toHaveBeenCalledWith("MRSU6884820");
+  });
+
+  it("loads filtered movement history from the backend when searching historical containers", async () => {
+    const onOpenContainerDetail = vi.fn();
+    getMovements.mockResolvedValue([
+      createMovement({
+        id: 21,
+        containerNo: "OLDU1234567",
+        movementType: "OUT",
+        quantityChange: -12,
+        outDate: "2026-02-15",
+        createdAt: "2026-02-15T15:00:00Z",
+        sku: "SKU-HISTORY-2",
+        itemNumber: "SKU-HISTORY-2"
+      })
+    ]);
+
+    renderWithProviders(
+      <ContainerContentsPage
+        items={[]}
+        movements={[]}
+        customers={[createCustomer()]}
+        locations={[createLocation()]}
+        currentUserRole="admin"
+        isLoading={false}
+        onOpenContainerDetail={onOpenContainerDetail}
+        onNavigate={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Customer" }), { target: { value: "1" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Warehouse" }), { target: { value: "1" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Search" }), { target: { value: "OLDU1234567" } });
+
+    await waitFor(() => {
+      expect(getMovements).toHaveBeenCalledWith(20000, {
+        search: "oldu1234567",
+        customerId: 1,
+        locationId: 1
+      });
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "View Detail OLDU1234567" }));
+
+    expect(onOpenContainerDetail).toHaveBeenCalledWith("OLDU1234567");
   });
 
   it("uses actual restock time instead of business receipt date for backfilled containers", () => {

@@ -416,9 +416,30 @@ func (s *Server) handleListMovements(c *gin.Context) {
 		limit = parsed
 	}
 
-	movements, err := s.store.ListMovements(c.Request.Context(), limit)
+	customerID, err := parseOptionalInt64Query(c, "customerId", "customerId must be a number")
 	if err != nil {
-		writeServerError(c, err)
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	locationID, err := parseOptionalInt64Query(c, "locationId", "locationId must be a number")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	movements, err := s.store.ListMovements(c.Request.Context(), limit, service.MovementFilters{
+		Search:       c.Query("search"),
+		CustomerID:   customerID,
+		LocationID:   locationID,
+		MovementType: c.Query("movementType"),
+		StartDate:    c.Query("startDate"),
+		EndDate:      c.Query("endDate"),
+		StartAt:      c.Query("startAt"),
+		EndBefore:    c.Query("endBefore"),
+	})
+	if err != nil {
+		writeDomainError(c, err)
 		return
 	}
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   formatDateTimeValue,
+  getZonedDateRangeUtcBounds,
   getLocalDayBucketKey,
   normalizeCalendarDate,
   shiftIsoDate,
@@ -31,5 +32,16 @@ describe("date helpers", () => {
   it("formats business date values without shifting them into the previous day", () => {
     expect(formatDateTimeValue("2026-03-01", "America/New_York", { dateStyle: "medium", timeStyle: "short" })).toBe("Mar 1, 2026");
     expect(formatDateTimeValue("2026-03-01T00:00:00Z", "America/New_York", { dateStyle: "medium", timeStyle: "short" })).toBe("Mar 1, 2026");
+  });
+
+  it("converts selected local date ranges to UTC bounds for the configured timezone", () => {
+    expect(getZonedDateRangeUtcBounds("2026-04-10", "2026-04-10", "America/New_York")).toEqual({
+      startAt: "2026-04-10T04:00:00.000Z",
+      endBefore: "2026-04-11T04:00:00.000Z"
+    });
+    expect(getZonedDateRangeUtcBounds("2026-03-08", "2026-03-08", "America/New_York")).toEqual({
+      startAt: "2026-03-08T05:00:00.000Z",
+      endBefore: "2026-03-09T04:00:00.000Z"
+    });
   });
 });

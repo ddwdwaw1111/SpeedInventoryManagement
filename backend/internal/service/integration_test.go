@@ -274,6 +274,118 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 	assertMovementTypeCount(t, movements, itemAfterInbound.ID, "REVERSAL", 0)
 }
 
+func TestListMovementsFiltersBySearchCustomerLocationTypeAndDate(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customerA := mustCreateCustomer(t, ctx, store, "MovementFilterCustomerA-"+suffix)
+	customerB := mustCreateCustomer(t, ctx, store, "MovementFilterCustomerB-"+suffix)
+	locationA := mustCreateLocation(t, ctx, store, "MovementFilterLocA-"+suffix)
+	locationB := mustCreateLocation(t, ctx, store, "MovementFilterLocB-"+suffix)
+	itemA := mustCreateItem(t, ctx, store, customerA.ID, locationA.ID, "MF-A-"+suffix, 0)
+	itemB := mustCreateItem(t, ctx, store, customerB.ID, locationB.ID, "MF-B-"+suffix, 0)
+
+	createReceipt := func(customer Customer, location Location, item Item, containerNo string, actualArrivalDate string) {
+		t.Helper()
+		_, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+			CustomerID:          customer.ID,
+			LocationID:          location.ID,
+			ExpectedArrivalDate: actualArrivalDate,
+			ActualArrivalDate:   actualArrivalDate,
+			ContainerNo:         containerNo,
+			StorageSection:      DefaultStorageSection,
+			UnitLabel:           "CTN",
+			Status:              DocumentStatusConfirmed,
+			DocumentNote:        "Movement filter test",
+			Lines: []CreateInboundDocumentLineInput{{
+				SKU:            item.SKU,
+				Description:    item.Description,
+				ExpectedQty:    8,
+				ReceivedQty:    8,
+				Pallets:        1,
+				StorageSection: DefaultStorageSection,
+			}},
+		})
+		if err != nil {
+			t.Fatalf("create confirmed movement filter receipt: %v", err)
+		}
+	}
+
+	containerA := "MF-A-CONT-" + suffix
+	containerB := "MF-B-CONT-" + suffix
+	createReceipt(customerA, locationA, itemA, containerA, "2026-04-04")
+	createReceipt(customerB, locationB, itemB, containerB, "2026-04-20")
+
+	searchFiltered, err := store.ListMovements(ctx, 50, MovementFilters{Search: containerA})
+	if err != nil {
+		t.Fatalf("list movements by search: %v", err)
+	}
+	assertMovementContainers(t, "search filter", searchFiltered, containerA)
+
+	customerFiltered, err := store.ListMovements(ctx, 50, MovementFilters{CustomerID: customerA.ID})
+	if err != nil {
+		t.Fatalf("list movements by customer: %v", err)
+	}
+	assertMovementContainers(t, "customer filter", customerFiltered, containerA)
+
+	locationFiltered, err := store.ListMovements(ctx, 50, MovementFilters{LocationID: locationB.ID})
+	if err != nil {
+		t.Fatalf("list movements by location: %v", err)
+	}
+	assertMovementContainers(t, "location filter", locationFiltered, containerB)
+
+	typeFiltered, err := store.ListMovements(ctx, 50, MovementFilters{MovementType: "IN"})
+	if err != nil {
+		t.Fatalf("list movements by type: %v", err)
+	}
+	assertMovementContainers(t, "type filter", typeFiltered, containerA, containerB)
+
+	dateFiltered, err := store.ListMovements(ctx, 50, MovementFilters{StartDate: "2026-04-10", EndDate: "2026-04-30"})
+	if err != nil {
+		t.Fatalf("list movements by date range: %v", err)
+	}
+	assertMovementContainers(t, "date filter", dateFiltered, containerB)
+
+	combinedFiltered, err := store.ListMovements(ctx, 50, MovementFilters{
+		Search:       "mf-a-cont",
+		CustomerID:   customerA.ID,
+		LocationID:   locationA.ID,
+		MovementType: "in",
+		StartDate:    "2026-04-01",
+		EndDate:      "2026-04-10",
+	})
+	if err != nil {
+		t.Fatalf("list movements by combined filters: %v", err)
+	}
+	assertMovementContainers(t, "combined filter", combinedFiltered, containerA)
+
+	itemC := mustCreateItem(t, ctx, store, customerA.ID, locationA.ID, "MF-C-"+suffix, 5)
+	palletID := mustLoadSinglePalletIDForItem(t, ctx, store, itemC)
+	adjustmentLine := adjustmentLineFromItem(itemC, 1, "Timezone boundary adjustment")
+	adjustmentLine.PalletID = palletID
+	_, err = store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
+		ReasonCode:       "COUNT_DIFF",
+		ActualAdjustedAt: "2026-04-11T02:00:00Z",
+		Lines:            []CreateInventoryAdjustmentLineInput{adjustmentLine},
+	})
+	if err != nil {
+		t.Fatalf("create timezone boundary adjustment: %v", err)
+	}
+
+	timestampFiltered, err := store.ListMovements(ctx, 50, MovementFilters{
+		MovementType: "ADJUST",
+		StartDate:    "2026-04-10",
+		EndDate:      "2026-04-10",
+		StartAt:      "2026-04-10T04:00:00Z",
+		EndBefore:    "2026-04-11T04:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("list timestamp movements by local day bounds: %v", err)
+	}
+	assertMovementContainers(t, "timestamp local day filter", timestampFiltered, itemC.ContainerNo)
+}
+
 func TestBackfilledInboundUsesActualReceivedTimestampIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
@@ -5578,6 +5690,20 @@ func assertMovementTypeCount(t *testing.T, movements []Movement, itemID int64, m
 	}
 	if count != wantCount {
 		t.Fatalf("expected %d %s movements for item %d, got %d", wantCount, movementType, itemID, count)
+	}
+}
+
+func assertMovementContainers(t *testing.T, label string, movements []Movement, wantContainers ...string) {
+	t.Helper()
+
+	gotContainers := make([]string, 0, len(movements))
+	for _, movement := range movements {
+		gotContainers = append(gotContainers, movement.ContainerNo)
+	}
+	sort.Strings(gotContainers)
+	sort.Strings(wantContainers)
+	if !reflect.DeepEqual(gotContainers, wantContainers) {
+		t.Fatalf("%s movement containers mismatch: got %v want %v", label, gotContainers, wantContainers)
 	}
 }
 

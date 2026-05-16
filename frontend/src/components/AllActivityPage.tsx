@@ -9,8 +9,9 @@ import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Box, Button, Chip, Drawer, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
+import { ApiError, api } from "../lib/api";
 import { consumePendingAllActivityContext } from "../lib/allActivityContext";
-import { formatDateTimeValue, formatDateValue, parseDateValue } from "../lib/dates";
+import { formatDateTimeValue, formatDateValue, getZonedDateRangeUtcBounds, isCalendarDateValue, normalizeCalendarDate, parseDateValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
 import { useSettings } from "../lib/settings";
@@ -31,11 +32,15 @@ type MovementTypeFilter = "ALL" | Movement["movementType"];
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
 const ALL_ACTIVITY_COLUMN_ORDER_PREFERENCE_KEY = "all-activity.column-order";
+const ALL_ACTIVITY_LOAD_LIMIT = 20000;
 
 export function AllActivityPage({ movements, customers, locations, currentUserRole, isLoading, onNavigate }: AllActivityPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const canConfigureColumns = currentUserRole === "admin";
+  const [activityRows, setActivityRows] = useState<Movement[]>(movements);
+  const [isActivityLoading, setIsActivityLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
@@ -49,7 +54,61 @@ export function AllActivityPage({ movements, customers, locations, currentUserRo
     : (locations.find((location) => location.id === Number(selectedLocationId))?.name ?? null);
 
   const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
-  const filteredRows = useMemo(() => movements
+  const movementDateBounds = useMemo(
+    () => getZonedDateRangeUtcBounds(startDate, endDate, resolvedTimeZone),
+    [endDate, resolvedTimeZone, startDate]
+  );
+  const movementQuery = useMemo(() => ({
+    search: normalizedSearch,
+    customerId: selectedCustomerId === "all" ? undefined : Number(selectedCustomerId),
+    locationId: selectedLocationId === "all" ? undefined : Number(selectedLocationId),
+    movementType: movementTypeFilter === "ALL" ? undefined : movementTypeFilter,
+    startDate: startDate || undefined,
+    endDate: endDate || undefined,
+    startAt: movementDateBounds.startAt,
+    endBefore: movementDateBounds.endBefore
+  }), [endDate, movementDateBounds.endBefore, movementDateBounds.startAt, movementTypeFilter, normalizedSearch, selectedCustomerId, selectedLocationId, startDate]);
+  const hasActiveFilters = normalizedSearch.length > 0 || selectedCustomerId !== "all" || selectedLocationId !== "all" || movementTypeFilter !== "ALL" || startDate.length > 0 || endDate.length > 0;
+
+  useEffect(() => {
+    if (!hasActiveFilters) {
+      setActivityRows(movements);
+    }
+  }, [hasActiveFilters, movements]);
+
+  useEffect(() => {
+    if (!hasActiveFilters) {
+      setErrorMessage("");
+      setIsActivityLoading(false);
+      return;
+    }
+
+    let active = true;
+
+    async function loadMovements() {
+      setIsActivityLoading(true);
+      setErrorMessage("");
+      try {
+        const nextMovements = await api.getMovements(ALL_ACTIVITY_LOAD_LIMIT, movementQuery);
+        if (!active) return;
+        setActivityRows(nextMovements);
+      } catch (error) {
+        if (!active) return;
+        setErrorMessage(getErrorMessage(error, t("couldNotLoadReport")));
+      } finally {
+        if (active) {
+          setIsActivityLoading(false);
+        }
+      }
+    }
+
+    void loadMovements();
+    return () => {
+      active = false;
+    };
+  }, [hasActiveFilters, movementQuery, t]);
+
+  const filteredRows = useMemo(() => activityRows
     .filter((movement) => {
       const searchBlob = [
         movement.sku,
@@ -70,26 +129,26 @@ export function AllActivityPage({ movements, customers, locations, currentUserRo
       const matchesCustomer = selectedCustomerId === "all" || movement.customerId === Number(selectedCustomerId);
       const matchesLocation = selectedLocationName === null || movement.locationName === selectedLocationName;
       const matchesType = movementTypeFilter === "ALL" || movement.movementType === movementTypeFilter;
-      const matchesDate = isWithinDateRange(getMovementActivityDateValue(movement), startDate, endDate);
+      const matchesDate = isWithinDateRange(getMovementActivityDateValue(movement), startDate, endDate, movementDateBounds);
 
       return matchesSearch && matchesCustomer && matchesLocation && matchesType && matchesDate;
     })
     .sort((left, right) => getMovementSortTimestamp(right) - getMovementSortTimestamp(left)), [
+    activityRows,
     deferredSearchTerm,
     endDate,
     movementTypeFilter,
-    movements,
     normalizedSearch,
     selectedCustomerId,
     selectedLocationId,
     selectedLocationName,
-    startDate
+    startDate,
+    movementDateBounds
   ]);
   const selectedMovement = useMemo(
     () => filteredRows.find((movement) => movement.id === selectedMovementId) ?? null,
     [filteredRows, selectedMovementId]
   );
-  const hasActiveFilters = normalizedSearch.length > 0 || selectedCustomerId !== "all" || selectedLocationId !== "all" || movementTypeFilter !== "ALL" || startDate.length > 0 || endDate.length > 0;
   const mainGridSlots = buildWorkspaceGridSlots({
     emptyTitle: t("noResults"),
     emptyDescription: hasActiveFilters ? t("filteredStateHint") : t("emptyStateHint"),
@@ -180,7 +239,7 @@ export function AllActivityPage({ movements, customers, locations, currentUserRo
       <main className="workspace-main">
         <section className="workbook-panel workbook-panel--full">
           <div className="tab-strip">
-            <WorkspacePanelHeader title={t("allActivity")} actions={columnOrderAction} />
+            <WorkspacePanelHeader title={t("allActivity")} actions={columnOrderAction} errorMessage={errorMessage} />
             <div className="filter-bar">
               <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("allActivitySearchPlaceholder")} /></label>
             <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
@@ -197,7 +256,7 @@ export function AllActivityPage({ movements, customers, locations, currentUserRo
             <DataGrid
               rows={filteredRows}
               columns={columns}
-              loading={isLoading}
+              loading={isLoading || isActivityLoading}
               pagination
               pageSizeOptions={[10, 25, 50, 100]}
               disableRowSelectionOnClick
@@ -412,36 +471,56 @@ function formatMovementActivityDate(movement: Movement, resolvedTimeZone: string
   return formatDateTimeValue(movement.createdAt, resolvedTimeZone);
 }
 
-function isWithinDateRange(value: string | null | undefined, startDate: string, endDate: string) {
+function isWithinDateRange(
+  value: string | null | undefined,
+  startDate: string,
+  endDate: string,
+  dateBounds: { startAt?: string; endBefore?: string }
+) {
   if (!value) {
     return false;
   }
 
-  const timestamp = parseDateValue(value).getTime();
+  if (isCalendarDateValue(value)) {
+    const dateValue = normalizeCalendarDate(value);
+    if (!dateValue) {
+      return false;
+    }
+    if (startDate && dateValue < startDate) {
+      return false;
+    }
+    if (endDate && dateValue > endDate) {
+      return false;
+    }
+    return true;
+  }
+
+  const timestamp = new Date(value).getTime();
   if (Number.isNaN(timestamp)) {
     return false;
   }
 
-  const start = startDate ? parseDateValue(startDate).getTime() : null;
-  const end = endDate ? endOfDay(parseDateValue(endDate)).getTime() : null;
+  const start = dateBounds.startAt ? new Date(dateBounds.startAt).getTime() : null;
+  const end = dateBounds.endBefore ? new Date(dateBounds.endBefore).getTime() : null;
 
   if (start !== null && timestamp < start) {
     return false;
   }
 
-  if (end !== null && timestamp > end) {
+  if (end !== null && timestamp >= end) {
     return false;
   }
 
   return true;
 }
 
-function endOfDay(date: Date) {
-  const next = new Date(date);
-  next.setHours(23, 59, 59, 999);
-  return next;
-}
-
 function formatSignedNumber(value: number) {
   return `${value >= 0 ? "+" : ""}${new Intl.NumberFormat("en-US").format(value)}`;
+}
+
+function getErrorMessage(error: unknown, fallbackMessage: string) {
+  if (error instanceof ApiError || error instanceof Error) {
+    return error.message || fallbackMessage;
+  }
+  return fallbackMessage;
 }

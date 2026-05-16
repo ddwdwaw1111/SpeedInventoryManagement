@@ -4,6 +4,7 @@ import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Box, Button } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
+import { ApiError, api } from "../lib/api";
 import { consumePendingContainerContentsContext } from "../lib/containerContentsContext";
 import {
   buildContainerContentsRows,
@@ -30,6 +31,7 @@ type ContainerContentsPageProps = {
   onNavigate: (page: import("../lib/routes").PageKey) => void;
 };
 const CONTAINER_CONTENTS_COLUMN_ORDER_PREFERENCE_KEY = "container-contents.column-order";
+const CONTAINER_CONTENTS_MOVEMENT_LOAD_LIMIT = 20000;
 const CONTAINER_CONTENTS_EXPORT_TITLE = "Container Contents";
 const CONTAINER_CONTENTS_EXPORT_COLUMNS = [
   { key: "containerNo", label: "Container No." },
@@ -62,6 +64,9 @@ export function ContainerContentsPage({
   const { resolvedTimeZone } = useSettings();
   const canConfigureColumns = currentUserRole === "admin";
   const pageDescription = t("containerContentsDesc");
+  const [historyMovements, setHistoryMovements] = useState<Movement[]>(movements);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
@@ -81,11 +86,55 @@ export function ContainerContentsPage({
   }, []);
 
   const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
-  const rows = useMemo(
-    () => buildContainerContentsRows(items, movements, locations, normalizedSearch, selectedCustomerId, selectedLocationId),
-    [items, locations, movements, normalizedSearch, selectedCustomerId, selectedLocationId]
-  );
   const hasActiveFilters = normalizedSearch.length > 0 || selectedCustomerId !== "all" || selectedLocationId !== "all";
+  const movementQuery = useMemo(() => ({
+    search: normalizedSearch,
+    customerId: selectedCustomerId === "all" ? undefined : Number(selectedCustomerId),
+    locationId: selectedLocationId === "all" ? undefined : Number(selectedLocationId)
+  }), [normalizedSearch, selectedCustomerId, selectedLocationId]);
+
+  useEffect(() => {
+    if (!hasActiveFilters) {
+      setHistoryMovements(movements);
+    }
+  }, [hasActiveFilters, movements]);
+
+  useEffect(() => {
+    if (!hasActiveFilters) {
+      setErrorMessage("");
+      setIsHistoryLoading(false);
+      return;
+    }
+
+    let active = true;
+
+    async function loadFilteredMovementHistory() {
+      setIsHistoryLoading(true);
+      setErrorMessage("");
+      try {
+        const nextMovements = await api.getMovements(CONTAINER_CONTENTS_MOVEMENT_LOAD_LIMIT, movementQuery);
+        if (!active) return;
+        setHistoryMovements(nextMovements);
+      } catch (error) {
+        if (!active) return;
+        setErrorMessage(getErrorMessage(error, t("couldNotLoadReport")));
+      } finally {
+        if (active) {
+          setIsHistoryLoading(false);
+        }
+      }
+    }
+
+    void loadFilteredMovementHistory();
+    return () => {
+      active = false;
+    };
+  }, [hasActiveFilters, movementQuery, t]);
+
+  const rows = useMemo(
+    () => buildContainerContentsRows(items, historyMovements, locations, normalizedSearch, selectedCustomerId, selectedLocationId),
+    [historyMovements, items, locations, normalizedSearch, selectedCustomerId, selectedLocationId]
+  );
   const mainGridSlots = buildWorkspaceGridSlots({
     emptyTitle: t("noResults"),
     emptyDescription: hasActiveFilters ? t("filteredStateHint") : t("emptyStateHint"),
@@ -206,6 +255,7 @@ export function ContainerContentsPage({
         <div className="tab-strip">
           <WorkspacePanelHeader
             title={t("containerContents")}
+            errorMessage={errorMessage}
             actions={(
               <div className="sheet-actions">
                 <Button
@@ -233,7 +283,7 @@ export function ContainerContentsPage({
             <DataGrid
               rows={rows}
               columns={columns}
-              loading={isLoading}
+              loading={isLoading || isHistoryLoading}
               pagination
               pageSizeOptions={[10, 25, 50, 100]}
               disableRowSelectionOnClick
@@ -255,4 +305,11 @@ export function ContainerContentsPage({
       />
     </main>
   );
+}
+
+function getErrorMessage(error: unknown, fallbackMessage: string) {
+  if (error instanceof ApiError || error instanceof Error) {
+    return error.message || fallbackMessage;
+  }
+  return fallbackMessage;
 }

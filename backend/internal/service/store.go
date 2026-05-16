@@ -259,6 +259,17 @@ type ItemFilters struct {
 	LowStockOnly bool
 }
 
+type MovementFilters struct {
+	Search       string
+	CustomerID   int64
+	LocationID   int64
+	MovementType string
+	StartDate    string
+	EndDate      string
+	StartAt      string
+	EndBefore    string
+}
+
 type CreateItemInput struct {
 	ItemNumber     string `json:"itemNumber"`
 	SKU            string `json:"sku"`
@@ -676,16 +687,113 @@ func (s *Store) DeleteItem(ctx context.Context, itemID int64) error {
 	return nil
 }
 
-func (s *Store) ListMovements(ctx context.Context, limit int) ([]Movement, error) {
+func (s *Store) ListMovements(ctx context.Context, limit int, filters ...MovementFilters) ([]Movement, error) {
 	if limit <= 0 {
 		limit = 10
 	}
 
-	return s.listStockLedgerMovements(ctx, limit)
+	var filter MovementFilters
+	if len(filters) > 0 {
+		filter = filters[0]
+	}
+
+	return s.listStockLedgerMovements(ctx, limit, filter)
 }
 
-func (s *Store) listStockLedgerMovements(ctx context.Context, limit int) ([]Movement, error) {
-	rows, err := s.db.QueryContext(ctx, `
+func (s *Store) listStockLedgerMovements(ctx context.Context, limit int, filters MovementFilters) ([]Movement, error) {
+	receiveDateExpression := "COALESCE(sl.delivery_date, idoc.actual_arrival_date, idoc.expected_arrival_date)"
+	shipDateExpression := "COALESCE(sl.out_date, odoc.actual_ship_date, odoc.expected_ship_date)"
+	timestampExpression := "COALESCE(sl.occurred_at, sl.created_at)"
+	whereClauses := []string{"1 = 1"}
+	args := make([]any, 0)
+
+	if search := strings.TrimSpace(strings.ToLower(filters.Search)); search != "" {
+		searchPattern := "%" + search + "%"
+		whereClauses = append(whereClauses, `
+			(
+				LOWER(COALESCE(sm.sku, '')) LIKE ?
+				OR LOWER(COALESCE(sm.name, '')) LIKE ?
+				OR LOWER(COALESCE(sm.description, '')) LIKE ?
+				OR LOWER(COALESCE(sl.description_snapshot, '')) LIKE ?
+				OR LOWER(COALESCE(iline.description_snapshot, '')) LIKE ?
+				OR LOWER(COALESCE(oline.description_snapshot, '')) LIKE ?
+				OR LOWER(COALESCE(adjl.description_snapshot, '')) LIKE ?
+				OR LOWER(COALESCE(trl.description_snapshot, '')) LIKE ?
+				OR LOWER(COALESCE(ccl.description_snapshot, '')) LIKE ?
+				OR LOWER(COALESCE(c.name, '')) LIKE ?
+				OR LOWER(COALESCE(l.name, '')) LIKE ?
+				OR LOWER(COALESCE(NULLIF(sl.storage_section, ''), 'TEMP')) LIKE ?
+				OR LOWER(COALESCE(NULLIF(sl.container_no_snapshot, ''), idoc.container_no, '')) LIKE ?
+				OR LOWER(COALESCE(NULLIF(sl.packing_list_no, ''), odoc.packing_list_no, '')) LIKE ?
+				OR LOWER(COALESCE(NULLIF(sl.order_ref, ''), odoc.order_ref, '')) LIKE ?
+				OR LOWER(COALESCE(NULLIF(sl.item_number_snapshot, ''), sm.item_number, '')) LIKE ?
+				OR LOWER(COALESCE(sl.reference_code, '')) LIKE ?
+				OR LOWER(COALESCE(NULLIF(sl.document_note, ''), idoc.document_note, odoc.document_note, adj.notes, tr.notes, cc.notes, '')) LIKE ?
+				OR LOWER(COALESCE(NULLIF(sl.reason, ''), adj.reason_code, '')) LIKE ?
+			)
+		`)
+		for range 19 {
+			args = append(args, searchPattern)
+		}
+	}
+	if filters.CustomerID > 0 {
+		whereClauses = append(whereClauses, "sl.customer_id = ?")
+		args = append(args, filters.CustomerID)
+	}
+	if filters.LocationID > 0 {
+		whereClauses = append(whereClauses, "sl.location_id = ?")
+		args = append(args, filters.LocationID)
+	}
+	if movementType := normalizeMovementTypeFilter(filters.MovementType); movementType != "" {
+		whereClauses = append(whereClauses, "sl.event_type = ?")
+		args = append(args, movementType)
+	}
+	startDate, err := parseOptionalDate(filters.StartDate)
+	if err != nil {
+		return nil, err
+	}
+	startAt, err := parseOptionalDateTime(filters.StartAt)
+	if err != nil {
+		return nil, err
+	}
+	if startAt == nil {
+		startAt = startDate
+	}
+	if startDate != nil && startAt != nil {
+		whereClauses = append(whereClauses, fmt.Sprintf(`
+			CASE
+				WHEN sl.event_type = 'RECEIVE' AND %s IS NOT NULL THEN %s >= ?
+				WHEN sl.event_type IN ('SHIP', 'REVERSAL') AND %s IS NOT NULL THEN %s >= ?
+				ELSE %s >= ?
+			END
+		`, receiveDateExpression, receiveDateExpression, shipDateExpression, shipDateExpression, timestampExpression))
+		args = append(args, *startDate, *startDate, *startAt)
+	}
+	endDate, err := parseOptionalDate(filters.EndDate)
+	if err != nil {
+		return nil, err
+	}
+	endBefore, err := parseOptionalDateTime(filters.EndBefore)
+	if err != nil {
+		return nil, err
+	}
+	if endBefore == nil && endDate != nil {
+		endBeforeValue := endDate.AddDate(0, 0, 1)
+		endBefore = &endBeforeValue
+	}
+	if endDate != nil && endBefore != nil {
+		endDateExclusive := endDate.AddDate(0, 0, 1)
+		whereClauses = append(whereClauses, fmt.Sprintf(`
+			CASE
+				WHEN sl.event_type = 'RECEIVE' AND %s IS NOT NULL THEN %s < ?
+				WHEN sl.event_type IN ('SHIP', 'REVERSAL') AND %s IS NOT NULL THEN %s < ?
+				ELSE %s < ?
+			END
+		`, receiveDateExpression, receiveDateExpression, shipDateExpression, shipDateExpression, timestampExpression))
+		args = append(args, endDateExclusive, endDateExclusive, *endBefore)
+	}
+
+	query := fmt.Sprintf(`
 		SELECT
 			MAX(sl.id) AS id,
 			COALESCE(MAX(ii.id), 0) AS item_id,
@@ -810,6 +918,7 @@ func (s *Store) listStockLedgerMovements(ctx context.Context, limit int) ([]Move
 			AND ii.location_id = sl.location_id
 			AND ii.storage_section = COALESCE(NULLIF(sl.storage_section, ''), 'TEMP')
 			AND COALESCE(ii.container_no, '') = COALESCE(NULLIF(sl.container_no_snapshot, ''), COALESCE(idoc.container_no, ''), '')
+		WHERE %s
 		GROUP BY
 			sl.source_document_type,
 			COALESCE(sl.source_document_id, 0),
@@ -833,7 +942,10 @@ func (s *Store) listStockLedgerMovements(ctx context.Context, limit int) ([]Move
 			ELSE NULL
 		END), MAX(COALESCE(sl.occurred_at, sl.created_at))) DESC, MAX(sl.id) DESC
 		LIMIT ?
-	`, limit)
+	`, strings.Join(whereClauses, "\n\t\tAND "))
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("load stock ledger movements: %w", err)
 	}
@@ -1193,6 +1305,19 @@ func resolveMovementDelta(movementType string, quantity int) (int, error) {
 		return quantity, nil
 	default:
 		return 0, fmt.Errorf("%w: movement type must be IN, OUT, ADJUST, REVERSAL, TRANSFER_IN, TRANSFER_OUT, or COUNT", ErrInvalidInput)
+	}
+}
+
+func normalizeMovementTypeFilter(value string) string {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "":
+		return ""
+	case "IN":
+		return "RECEIVE"
+	case "OUT":
+		return "SHIP"
+	default:
+		return strings.ToUpper(strings.TrimSpace(value))
 	}
 }
 
