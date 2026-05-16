@@ -239,6 +239,7 @@ type InboundContainerWarningMatch = {
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
 const summaryNumberFormatter = new Intl.NumberFormat("en-US");
+const ACTIVITY_DOCUMENT_FILTER_LIMIT = 50000;
 const RECEIPTS_EXPORT_TITLE = "Receipts";
 const SHIPMENTS_EXPORT_TITLE = "Shipments";
 const RECEIPTS_EXPORT_COLUMNS = [
@@ -594,19 +595,42 @@ export function ActivityManagementPage({
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [optimisticInboundDocuments, setOptimisticInboundDocuments] = useState<InboundDocument[]>([]);
   const [optimisticOutboundDocuments, setOptimisticOutboundDocuments] = useState<OutboundDocument[]>([]);
+  const [filteredInboundDocuments, setFilteredInboundDocuments] = useState<InboundDocument[]>([]);
+  const [filteredOutboundDocuments, setFilteredOutboundDocuments] = useState<OutboundDocument[]>([]);
+  const [isDocumentFilterLoading, setIsDocumentFilterLoading] = useState(false);
+  const [documentFilterErrorMessage, setDocumentFilterErrorMessage] = useState("");
   const pendingBatchLineIDRef = useRef<string | null>(null);
   const pendingLaunchContextRef = useRef<ActivityManagementLaunchContext | null | undefined>(undefined);
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
   const isEmbeddedComposer = Boolean(embeddedComposer);
   const pageDescription = mode === "IN" ? t("inboundDesc") : t("outboundDesc");
   const permissionNotice = canManage ? "" : t("readOnlyModeNotice");
+  const hasActiveFilters = selectedCustomerId !== "all" || selectedLocationId !== "all" || selectedStatus !== "all";
+  const documentFilterQuery = useMemo(() => ({
+    archiveScope: selectedStatus === "ARCHIVED" ? "archived" as const : "active" as const,
+    customerId: selectedCustomerId === "all" ? undefined : Number(selectedCustomerId),
+    locationId: selectedLocationId === "all" ? undefined : Number(selectedLocationId),
+    status: selectedStatus === "all" || selectedStatus === "ARCHIVED" ? undefined : selectedStatus
+  }), [selectedCustomerId, selectedLocationId, selectedStatus]);
+  const inboundDocumentSource = useMemo(
+    () => hasActiveFilters
+      ? mergeDocumentsById(filteredInboundDocuments, inboundDocuments)
+      : mergeDocumentsById(inboundDocuments, filteredInboundDocuments),
+    [filteredInboundDocuments, hasActiveFilters, inboundDocuments]
+  );
+  const outboundDocumentSource = useMemo(
+    () => hasActiveFilters
+      ? mergeDocumentsById(filteredOutboundDocuments, outboundDocuments)
+      : mergeDocumentsById(outboundDocuments, filteredOutboundDocuments),
+    [filteredOutboundDocuments, hasActiveFilters, outboundDocuments]
+  );
   const liveInboundDocuments = useMemo(
-    () => mergeDocumentsById(inboundDocuments, optimisticInboundDocuments),
-    [inboundDocuments, optimisticInboundDocuments]
+    () => mergeDocumentsById(inboundDocumentSource, optimisticInboundDocuments),
+    [inboundDocumentSource, optimisticInboundDocuments]
   );
   const liveOutboundDocuments = useMemo(
-    () => mergeDocumentsById(outboundDocuments, optimisticOutboundDocuments),
-    [optimisticOutboundDocuments, outboundDocuments]
+    () => mergeDocumentsById(outboundDocumentSource, optimisticOutboundDocuments),
+    [optimisticOutboundDocuments, outboundDocumentSource]
   );
   const skuMastersBySku = useMemo(() => new Map(
     skuMasters.map((skuMaster) => [normalizeSkuLookupValue(skuMaster.sku), skuMaster] as const)
@@ -798,6 +822,50 @@ export function ActivityManagementPage({
       active = false;
     };
   }, [mode, t]);
+
+  useEffect(() => {
+    if (!hasActiveFilters) {
+      setFilteredInboundDocuments([]);
+      setFilteredOutboundDocuments([]);
+      setDocumentFilterErrorMessage("");
+      setIsDocumentFilterLoading(false);
+      return;
+    }
+
+    let active = true;
+    setDocumentFilterErrorMessage("");
+    setIsDocumentFilterLoading(true);
+    setFilteredInboundDocuments([]);
+    setFilteredOutboundDocuments([]);
+
+    async function loadFilteredDocuments() {
+      try {
+        if (mode === "IN") {
+          const documents = await api.getInboundDocuments(ACTIVITY_DOCUMENT_FILTER_LIMIT, documentFilterQuery);
+          if (!active) return;
+          setFilteredInboundDocuments(documents);
+        } else {
+          const documents = await api.getOutboundDocuments(ACTIVITY_DOCUMENT_FILTER_LIMIT, documentFilterQuery);
+          if (!active) return;
+          setFilteredOutboundDocuments(documents);
+        }
+      } catch (error) {
+        if (!active) return;
+        const message = error instanceof Error ? error.message : t("couldNotLoadReport");
+        setDocumentFilterErrorMessage(message);
+        showError(message);
+      } finally {
+        if (active) {
+          setIsDocumentFilterLoading(false);
+        }
+      }
+    }
+
+    void loadFilteredDocuments();
+    return () => {
+      active = false;
+    };
+  }, [documentFilterQuery, hasActiveFilters, mode, showError, t]);
 
   useEffect(() => {
     if (mode === "OUT" && selectedOutboundDocumentId && !selectedOutboundDocument) {
@@ -1131,7 +1199,6 @@ export function ActivityManagementPage({
       return rightDate.localeCompare(leftDate);
     });
   }, [liveOutboundDocuments, locations, mode, selectedCustomerId, selectedLocationId, selectedStatus]);
-  const hasActiveFilters = selectedCustomerId !== "all" || selectedLocationId !== "all" || selectedStatus !== "all";
   const mainGridSlots = buildWorkspaceGridSlots({
     emptyTitle: t("noResults"),
     emptyDescription: hasActiveFilters ? t("filteredStateHint") : t("emptyStateHint"),
@@ -2558,7 +2625,7 @@ export function ActivityManagementPage({
                 </>
               )}
               notices={[permissionNotice]}
-              errorMessage={errorMessage && !isBatchModalOpen ? errorMessage : ""}
+              errorMessage={(errorMessage || documentFilterErrorMessage) && !isBatchModalOpen ? errorMessage || documentFilterErrorMessage : ""}
             />
             <div className="filter-bar">
               <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
@@ -2581,7 +2648,7 @@ export function ActivityManagementPage({
                 <DataGrid
                   rows={inboundDocumentRows}
                   columns={inboundDocumentColumns}
-                  loading={isLoading}
+                  loading={isLoading || isDocumentFilterLoading}
                   pagination
                   pageSizeOptions={[10, 20, 50]}
                   disableRowSelectionOnClick
@@ -2596,7 +2663,7 @@ export function ActivityManagementPage({
                 <DataGrid
                   rows={outboundDocumentRows}
                   columns={outboundDocumentColumns}
-                  loading={isLoading}
+                  loading={isLoading || isDocumentFilterLoading}
                   pagination
                   pageSizeOptions={[10, 20, 50]}
                   disableRowSelectionOnClick

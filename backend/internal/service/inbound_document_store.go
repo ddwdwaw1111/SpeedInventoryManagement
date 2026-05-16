@@ -140,16 +140,41 @@ type inboundDocumentLineRow struct {
 	CreatedAt           time.Time `db:"created_at"`
 }
 
+type InboundDocumentFilters struct {
+	ArchiveScope string
+	CustomerID   int64
+	LocationID   int64
+	Status       string
+}
+
 func (s *Store) ListInboundDocuments(ctx context.Context, limit int, archiveScope ...string) ([]InboundDocument, error) {
+	filters := InboundDocumentFilters{ArchiveScope: DocumentArchiveScopeActive}
+	if len(archiveScope) > 0 {
+		filters.ArchiveScope = archiveScope[0]
+	}
+	return s.ListInboundDocumentsFiltered(ctx, limit, filters)
+}
+
+func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, filters InboundDocumentFilters) ([]InboundDocument, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 
-	normalizedArchiveScope := DocumentArchiveScopeActive
-	if len(archiveScope) > 0 {
-		normalizedArchiveScope = normalizeDocumentArchiveScope(archiveScope[0])
+	whereClauses := []string{buildDocumentArchiveFilterClause("d", filters.ArchiveScope)}
+	args := make([]any, 0, 4)
+	if filters.CustomerID > 0 {
+		whereClauses = append(whereClauses, "d.customer_id = ?")
+		args = append(args, filters.CustomerID)
 	}
-	archiveFilterClause := buildDocumentArchiveFilterClause("d", normalizedArchiveScope)
+	if filters.LocationID > 0 {
+		whereClauses = append(whereClauses, "d.location_id = ?")
+		args = append(args, filters.LocationID)
+	}
+	if statusFilterClause, statusArgs := buildDocumentStatusFilterClause("d", filters.Status); statusFilterClause != "" {
+		whereClauses = append(whereClauses, statusFilterClause)
+		args = append(args, statusArgs...)
+	}
+	args = append(args, limit)
 
 	documentRows := make([]inboundDocumentRow, 0)
 	if err := s.db.SelectContext(ctx, &documentRows, fmt.Sprintf(`
@@ -180,7 +205,7 @@ func (s *Store) ListInboundDocuments(ctx context.Context, limit int, archiveScop
 		WHERE %s
 		ORDER BY COALESCE(d.expected_arrival_date, d.created_at) DESC, d.id DESC
 		LIMIT ?
-	`, archiveFilterClause), limit); err != nil {
+	`, strings.Join(whereClauses, " AND ")), args...); err != nil {
 		return nil, fmt.Errorf("load inbound documents: %w", err)
 	}
 	if len(documentRows) == 0 {

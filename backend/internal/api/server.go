@@ -596,8 +596,24 @@ func (s *Server) handleListOutboundDocuments(c *gin.Context) {
 		limit = parsed
 	}
 
-	archiveScope := strings.TrimSpace(c.Query("archiveScope"))
-	documents, err := s.store.ListOutboundDocuments(c.Request.Context(), limit, archiveScope)
+	customerID, err := parseOptionalInt64Query(c, "customerId", "customerId must be a number")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	locationID, err := parseOptionalInt64Query(c, "locationId", "locationId must be a number")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	documents, err := s.store.ListOutboundDocumentsFiltered(c.Request.Context(), limit, service.OutboundDocumentFilters{
+		ArchiveScope: strings.TrimSpace(c.Query("archiveScope")),
+		CustomerID:   customerID,
+		LocationID:   locationID,
+		Status:       strings.TrimSpace(c.Query("status")),
+	})
 	if err != nil {
 		writeServerError(c, err)
 		return
@@ -822,8 +838,24 @@ func (s *Server) handleListInboundDocuments(c *gin.Context) {
 		limit = parsed
 	}
 
-	archiveScope := strings.TrimSpace(c.Query("archiveScope"))
-	documents, err := s.store.ListInboundDocuments(c.Request.Context(), limit, archiveScope)
+	customerID, err := parseOptionalInt64Query(c, "customerId", "customerId must be a number")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	locationID, err := parseOptionalInt64Query(c, "locationId", "locationId must be a number")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	documents, err := s.store.ListInboundDocumentsFiltered(c.Request.Context(), limit, service.InboundDocumentFilters{
+		ArchiveScope: strings.TrimSpace(c.Query("archiveScope")),
+		CustomerID:   customerID,
+		LocationID:   locationID,
+		Status:       strings.TrimSpace(c.Query("status")),
+	})
 	if err != nil {
 		writeServerError(c, err)
 		return

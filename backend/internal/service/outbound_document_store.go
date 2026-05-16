@@ -238,16 +238,41 @@ type selectedOutboundPalletTarget struct {
 	ContainerNo    string
 }
 
+type OutboundDocumentFilters struct {
+	ArchiveScope string
+	CustomerID   int64
+	LocationID   int64
+	Status       string
+}
+
 func (s *Store) ListOutboundDocuments(ctx context.Context, limit int, archiveScope ...string) ([]OutboundDocument, error) {
+	filters := OutboundDocumentFilters{ArchiveScope: DocumentArchiveScopeActive}
+	if len(archiveScope) > 0 {
+		filters.ArchiveScope = archiveScope[0]
+	}
+	return s.ListOutboundDocumentsFiltered(ctx, limit, filters)
+}
+
+func (s *Store) ListOutboundDocumentsFiltered(ctx context.Context, limit int, filters OutboundDocumentFilters) ([]OutboundDocument, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 
-	normalizedArchiveScope := DocumentArchiveScopeActive
-	if len(archiveScope) > 0 {
-		normalizedArchiveScope = normalizeDocumentArchiveScope(archiveScope[0])
+	whereClauses := []string{buildDocumentArchiveFilterClause("d", filters.ArchiveScope)}
+	args := make([]any, 0, 5)
+	if filters.CustomerID > 0 {
+		whereClauses = append(whereClauses, "d.customer_id = ?")
+		args = append(args, filters.CustomerID)
 	}
-	archiveFilterClause := buildDocumentArchiveFilterClause("d", normalizedArchiveScope)
+	if filters.LocationID > 0 {
+		whereClauses = append(whereClauses, "EXISTS (SELECT 1 FROM outbound_document_lines dl WHERE dl.document_id = d.id AND dl.location_id = ?)")
+		args = append(args, filters.LocationID)
+	}
+	if statusFilterClause, statusArgs := buildDocumentStatusFilterClause("d", filters.Status); statusFilterClause != "" {
+		whereClauses = append(whereClauses, statusFilterClause)
+		args = append(args, statusArgs...)
+	}
+	args = append(args, limit)
 
 	documentRows := make([]outboundDocumentRow, 0)
 	if err := s.db.SelectContext(ctx, &documentRows, fmt.Sprintf(`
@@ -276,7 +301,7 @@ func (s *Store) ListOutboundDocuments(ctx context.Context, limit int, archiveSco
 		WHERE %s
 		ORDER BY COALESCE(d.actual_ship_date, d.expected_ship_date, d.created_at) DESC, d.id DESC
 		LIMIT ?
-	`, archiveFilterClause), limit); err != nil {
+	`, strings.Join(whereClauses, " AND ")), args...); err != nil {
 		return nil, fmt.Errorf("load outbound documents: %w", err)
 	}
 

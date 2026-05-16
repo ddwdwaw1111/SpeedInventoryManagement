@@ -90,6 +90,13 @@ type MovementQuery = {
 
 type DocumentArchiveScope = "active" | "archived" | "all";
 
+type DocumentListQuery = {
+  archiveScope?: DocumentArchiveScope;
+  customerId?: number | "all";
+  locationId?: number | "all";
+  status?: string;
+};
+
 type OperationsReportQuery = {
   startDate: string;
   endDate: string;
@@ -150,6 +157,28 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return (await response.json()) as T;
+}
+
+function buildDocumentListQueryParams(limit: number, archiveScopeOrQuery: DocumentArchiveScope | DocumentListQuery) {
+  const query = typeof archiveScopeOrQuery === "string"
+    ? { archiveScope: archiveScopeOrQuery }
+    : archiveScopeOrQuery;
+  const params = new URLSearchParams({
+    limit: String(limit),
+    archiveScope: query.archiveScope ?? "active"
+  });
+
+  if (query.customerId && query.customerId !== "all") {
+    params.set("customerId", String(query.customerId));
+  }
+  if (query.locationId && query.locationId !== "all") {
+    params.set("locationId", String(query.locationId));
+  }
+  if (query.status?.trim() && query.status.trim() !== "all") {
+    params.set("status", query.status.trim());
+  }
+
+  return params;
 }
 
 export const api = {
@@ -419,8 +448,9 @@ export const api = {
     return request<PalletLocationEvent[]>(`/pallet-location-events?${params.toString()}`);
   },
 
-  getOutboundDocuments(limit = 100, archiveScope: DocumentArchiveScope = "active") {
-    return request<OutboundDocument[]>(`/outbound-documents?limit=${limit}&archiveScope=${archiveScope}`);
+  getOutboundDocuments(limit = 100, archiveScopeOrQuery: DocumentArchiveScope | DocumentListQuery = "active") {
+    const params = buildDocumentListQueryParams(limit, archiveScopeOrQuery);
+    return request<OutboundDocument[]>(`/outbound-documents?${params.toString()}`);
   },
 
   createOutboundDocument(payload: OutboundDocumentPayload) {
@@ -475,8 +505,9 @@ export const api = {
     });
   },
 
-  getInboundDocuments(limit = 100, archiveScope: DocumentArchiveScope = "active") {
-    return request<InboundDocument[]>(`/inbound-documents?limit=${limit}&archiveScope=${archiveScope}`);
+  getInboundDocuments(limit = 100, archiveScopeOrQuery: DocumentArchiveScope | DocumentListQuery = "active") {
+    const params = buildDocumentListQueryParams(limit, archiveScopeOrQuery);
+    return request<InboundDocument[]>(`/inbound-documents?${params.toString()}`);
   },
 
   createInboundDocument(payload: InboundDocumentPayload) {

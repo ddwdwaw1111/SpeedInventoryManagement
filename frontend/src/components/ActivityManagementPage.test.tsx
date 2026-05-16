@@ -54,6 +54,8 @@ vi.mock("./RowActionsMenu", () => ({
 vi.mock("../lib/api", () => ({
   api: {
     getPallets: vi.fn(),
+    getInboundDocuments: vi.fn(),
+    getOutboundDocuments: vi.fn(),
     createInboundDocument: vi.fn(),
     createOutboundDocument: vi.fn(),
     updateInboundDocument: vi.fn(),
@@ -82,6 +84,8 @@ import {
 
 const mockedApi = api as unknown as {
   getPallets: ReturnType<typeof vi.fn>;
+  getInboundDocuments: ReturnType<typeof vi.fn>;
+  getOutboundDocuments: ReturnType<typeof vi.fn>;
   createInboundDocument: ReturnType<typeof vi.fn>;
   createOutboundDocument: ReturnType<typeof vi.fn>;
   updateInboundDocument: ReturnType<typeof vi.fn>;
@@ -148,11 +152,195 @@ function createOutboundPalletTrace(overrides?: Partial<{
 describe("ActivityManagementPage", () => {
   beforeEach(() => {
     mockedApi.getPallets.mockReset();
+    mockedApi.getInboundDocuments.mockReset();
+    mockedApi.getOutboundDocuments.mockReset();
     mockedApi.createInboundDocument.mockReset();
     mockedApi.createOutboundDocument.mockReset();
     mockedApi.updateInboundDocument.mockReset();
     mockedApi.copyInboundDocument.mockReset();
     mockedDownloadOutboundPickSheetPdfFromDocument.mockReset();
+    mockedApi.getPallets.mockResolvedValue([]);
+    mockedApi.getInboundDocuments.mockResolvedValue([]);
+    mockedApi.getOutboundDocuments.mockResolvedValue([]);
+  });
+
+  it("loads inbound documents from the backend when customer, warehouse, or status filters change", async () => {
+    const customer = createCustomer({ id: 2, name: "Beta Foods" });
+    const location = createLocation({ id: 2, name: "LA" });
+    const fetchedDocument = createInboundDocument({
+      id: 42,
+      customerId: customer.id,
+      customerName: customer.name,
+      locationId: location.id,
+      locationName: location.name,
+      containerNo: "FILT-IN-42",
+      status: "CONFIRMED",
+      trackingStatus: "RECEIVED",
+      lines: [createInboundDocumentLine({ documentId: 42 })]
+    });
+    mockedApi.getInboundDocuments.mockResolvedValue([fetchedDocument]);
+
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="IN"
+        items={[]}
+        skuMasters={[]}
+        locations={[createLocation(), location]}
+        customers={[createCustomer(), customer]}
+        movements={[]}
+        inboundDocuments={[]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText("Customer"), { target: { value: String(customer.id) } });
+    fireEvent.change(screen.getByLabelText("Warehouse"), { target: { value: String(location.id) } });
+    fireEvent.change(screen.getByLabelText("Status"), { target: { value: "CONFIRMED" } });
+
+    await waitFor(() => {
+      expect(mockedApi.getInboundDocuments).toHaveBeenLastCalledWith(50000, {
+        archiveScope: "active",
+        customerId: customer.id,
+        locationId: location.id,
+        status: "CONFIRMED"
+      });
+    });
+    expect(await screen.findByText("FILT-IN-42")).toBeInTheDocument();
+  });
+
+  it("loads outbound documents from the backend when customer, warehouse, or status filters change", async () => {
+    const customer = createCustomer({ id: 2, name: "Beta Foods" });
+    const location = createLocation({ id: 2, name: "LA" });
+    const fetchedDocument = createOutboundDocument({
+      id: 84,
+      packingListNo: "PL-FILTER-84",
+      customerId: customer.id,
+      customerName: customer.name,
+      status: "CONFIRMED",
+      trackingStatus: "SHIPPED",
+      lines: [createOutboundDocumentLine({
+        documentId: 84,
+        locationId: location.id,
+        locationName: location.name
+      })]
+    });
+    mockedApi.getOutboundDocuments.mockResolvedValue([fetchedDocument]);
+
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="OUT"
+        items={[]}
+        skuMasters={[createSkuMaster()]}
+        locations={[createLocation(), location]}
+        customers={[createCustomer(), customer]}
+        movements={[]}
+        inboundDocuments={[]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText("Customer"), { target: { value: String(customer.id) } });
+    fireEvent.change(screen.getByLabelText("Warehouse"), { target: { value: String(location.id) } });
+    fireEvent.change(screen.getByLabelText("Status"), { target: { value: "CONFIRMED" } });
+
+    await waitFor(() => {
+      expect(mockedApi.getOutboundDocuments).toHaveBeenLastCalledWith(50000, {
+        archiveScope: "active",
+        customerId: customer.id,
+        locationId: location.id,
+        status: "CONFIRMED"
+      });
+    });
+    expect(await screen.findByText("PL-FILTER-84")).toBeInTheDocument();
+  });
+
+  it("uses the backend-filtered inbound document over a stale preloaded copy", async () => {
+    const staleDocument = createInboundDocument({
+      id: 55,
+      containerNo: "STALE-IN-55",
+      status: "DRAFT",
+      trackingStatus: "SCHEDULED"
+    });
+    const freshDocument = createInboundDocument({
+      id: 55,
+      containerNo: "FRESH-IN-55",
+      status: "CONFIRMED",
+      trackingStatus: "RECEIVED"
+    });
+    mockedApi.getInboundDocuments.mockResolvedValue([freshDocument]);
+
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="IN"
+        items={[]}
+        skuMasters={[]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        movements={[]}
+        inboundDocuments={[staleDocument]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText("Status"), { target: { value: "CONFIRMED" } });
+
+    await waitFor(() => {
+      expect(mockedApi.getInboundDocuments).toHaveBeenLastCalledWith(50000, {
+        archiveScope: "active",
+        customerId: undefined,
+        locationId: undefined,
+        status: "CONFIRMED"
+      });
+    });
+    expect(await screen.findByText("FRESH-IN-55")).toBeInTheDocument();
+    expect(screen.queryByText("STALE-IN-55")).not.toBeInTheDocument();
+  });
+
+  it("requests archived documents by archive scope instead of status", async () => {
+    const archivedDocument = createInboundDocument({
+      id: 64,
+      containerNo: "ARCHIVED-IN-64",
+      archivedAt: "2026-03-25T10:00:00Z",
+      status: "CONFIRMED"
+    });
+    mockedApi.getInboundDocuments.mockResolvedValue([archivedDocument]);
+
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="IN"
+        items={[]}
+        skuMasters={[]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        movements={[]}
+        inboundDocuments={[]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText("Status"), { target: { value: "ARCHIVED" } });
+
+    await waitFor(() => {
+      expect(mockedApi.getInboundDocuments).toHaveBeenLastCalledWith(50000, {
+        archiveScope: "archived",
+        customerId: undefined,
+        locationId: undefined,
+        status: undefined
+      });
+    });
+    expect(await screen.findByText("ARCHIVED-IN-64")).toBeInTheDocument();
   });
 
   it("submits a new inbound receipt from the receipt form flow", async () => {

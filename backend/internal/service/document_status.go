@@ -97,6 +97,23 @@ func buildDocumentArchiveFilterClause(alias string, scope string) string {
 	}
 }
 
+func buildDocumentStatusFilterClause(alias string, status string) (string, []any) {
+	normalized := normalizeDocumentStatus(status)
+	statusColumn := fmt.Sprintf("UPPER(TRIM(%s.status))", alias)
+	switch normalized {
+	case "":
+		return "", nil
+	case DocumentStatusArchived:
+		return "", nil
+	case DocumentStatusConfirmed:
+		return fmt.Sprintf("%s IN (?, ?)", statusColumn), []any{DocumentStatusConfirmed, DocumentStatusPosted}
+	case DocumentStatusDeleted:
+		return fmt.Sprintf("%s IN (?, ?)", statusColumn), []any{DocumentStatusDeleted, "CANCELLED"}
+	default:
+		return fmt.Sprintf("%s = ?", statusColumn), []any{normalized}
+	}
+}
+
 func normalizeInboundTrackingStatus(raw string, documentStatus string) string {
 	switch strings.TrimSpace(strings.ToUpper(raw)) {
 	case InboundTrackingScheduled:
