@@ -121,24 +121,143 @@ function createOutboundDocumentFixture(): OutboundDocument {
 }
 
 describe("buildPickSheetDocument", () => {
-  it("groups rows into separate warehouse sections with subtotals", () => {
+  it("groups rows into sku, warehouse, and container sections with subtotals", () => {
     const document = buildPickSheetDocument(createOutboundDocumentFixture());
 
-    expect(document.warehouseGroups).toHaveLength(2);
+    expect(document.skuGroups).toHaveLength(2);
 
-    const nj = document.warehouseGroups.find((group) => group.warehouse === "NJ");
-    const pa = document.warehouseGroups.find((group) => group.warehouse === "PA");
+    const sku608333 = document.skuGroups.find((group) => group.sku === "608333");
+    const sku603482 = document.skuGroups.find((group) => group.sku === "603482");
+    const nj = sku608333?.warehouseGroups.find((group) => group.warehouse === "NJ");
+    const pa = sku603482?.warehouseGroups.find((group) => group.warehouse === "PA");
 
+    expect(sku608333).toBeDefined();
+    expect(sku603482).toBeDefined();
     expect(nj).toBeDefined();
     expect(pa).toBeDefined();
+    expect(sku608333!.totalQty).toBe(20);
+    expect(sku608333!.totalPallets).toBe(2);
+    expect(sku608333!.warehouseGroups).toHaveLength(1);
     expect(nj!.totalQty).toBe(20);
+    expect(nj!.totalPallets).toBe(2);
+    expect(nj!.containerGroups).toHaveLength(2);
     expect(pa!.totalQty).toBe(15);
     expect(nj!.rows.map((row) => row.containerNo).sort()).toEqual(["SEGU6542651", "SHYA1211-2720"]);
-    expect(nj!.rows.every((row) => row.demandLabel === "Line #1\nNeed: 20 CTN")).toBe(true);
-    expect(pa!.rows[0].demandLabel).toBe("Line #2\nNeed: 15 CTN");
     expect(pa!.rows[0].containerNo).toBe("CAJU5283887");
+    expect(document.skuGroups.flatMap((group) => group.warehouseGroups.flatMap((warehouseGroup) => warehouseGroup.containerGroups.map((containerGroup) => containerGroup.containerNo))).sort()).toEqual(["CAJU5283887", "SEGU6542651", "SHYA1211-2720"]);
     expect(document.totalQty).toBe(35);
     expect(document.totalPallets).toBe(3);
+    expect(document.totalContainers).toBe(3);
+    expect(document.totalDemandLines).toBe(2);
+  });
+
+  it("shows how many warehouses a sku must be picked from", () => {
+    const fixture = createOutboundDocumentFixture();
+    fixture.lines = [{
+      ...fixture.lines[0],
+      quantity: 30,
+      pallets: 3,
+      pickAllocations: [
+        {
+          id: 11,
+          lineId: 101,
+          itemNumber: "608333",
+          locationId: 1,
+          locationName: "NJ",
+          storageSection: "A",
+          containerNo: "NJ-CONTAINER-1",
+          allocatedQty: 12,
+          pallets: 1,
+          createdAt: "2026-03-24T10:00:00Z"
+        },
+        {
+          id: 12,
+          lineId: 101,
+          itemNumber: "608333",
+          locationId: 2,
+          locationName: "PA",
+          storageSection: "B",
+          containerNo: "PA-CONTAINER-1",
+          allocatedQty: 18,
+          pallets: 2,
+          createdAt: "2026-03-24T10:00:00Z"
+        }
+      ]
+    }];
+
+    const document = buildPickSheetDocument(fixture);
+    const skuGroup = document.skuGroups[0];
+
+    expect(skuGroup.totalQty).toBe(30);
+    expect(skuGroup.totalPallets).toBe(3);
+    expect(skuGroup.warehouseGroups).toHaveLength(2);
+    expect(skuGroup.warehouseGroups.map((group) => `${group.warehouse}:${group.totalQty}:${group.totalPallets}`)).toEqual([
+      "NJ:12:1",
+      "PA:18:2"
+    ]);
+  });
+
+  it("groups by sku even when item metadata differs", () => {
+    const fixture = createOutboundDocumentFixture();
+    fixture.lines = [
+      {
+        ...fixture.lines[0],
+        id: 401,
+        quantity: 5,
+        pallets: 1,
+        itemNumber: "ITEM-A",
+        description: "Old description",
+        unitLabel: "CTN",
+        lineNote: "",
+        pickAllocations: [
+          {
+            id: 41,
+            lineId: 401,
+            itemNumber: "ALLOC-ITEM-A",
+            locationId: 1,
+            locationName: "NJ",
+            storageSection: "A",
+            containerNo: "SAME-CONTAINER",
+            allocatedQty: 5,
+            pallets: 1,
+            createdAt: "2026-03-24T10:00:00Z"
+          }
+        ]
+      },
+      {
+        ...fixture.lines[0],
+        id: 402,
+        quantity: 7,
+        pallets: 1,
+        itemNumber: "ITEM-B",
+        description: "New description",
+        unitLabel: "EA",
+        lineNote: "",
+        pickAllocations: [
+          {
+            id: 42,
+            lineId: 402,
+            itemNumber: "ALLOC-ITEM-B",
+            locationId: 1,
+            locationName: "NJ",
+            storageSection: "A",
+            containerNo: "SAME-CONTAINER",
+            allocatedQty: 7,
+            pallets: 1,
+            createdAt: "2026-03-24T10:05:00Z"
+          }
+        ]
+      }
+    ];
+
+    const document = buildPickSheetDocument(fixture);
+    const skuGroup = document.skuGroups[0];
+
+    expect(document.skuGroups).toHaveLength(1);
+    expect(skuGroup.sku).toBe("608333");
+    expect(skuGroup.totalQty).toBe(12);
+    expect(skuGroup.totalPallets).toBe(2);
+    expect(skuGroup.warehouseGroups[0]?.containerGroups[0]?.rows).toHaveLength(2);
   });
 
   it("preserves allocation container numbers on rows for picker reference", () => {
@@ -270,8 +389,9 @@ describe("buildPickSheetDocument", () => {
 
     expect(sharedRows).toHaveLength(2);
     expect(sharedRows.map((row) => row.sku).sort()).toEqual(["SKU-SHARED-A", "SKU-SHARED-B"]);
-    expect(document.warehouseGroups).toHaveLength(1);
-    expect(document.warehouseGroups[0].rows.map((row) => row.containerNo)).toEqual(["MSCU-SHARED-001", "MSCU-SHARED-001"]);
+    expect(document.skuGroups).toHaveLength(2);
+    expect(document.skuGroups.every((group) => group.warehouseGroups[0]?.containerGroups[0]?.containerNo === "MSCU-SHARED-001")).toBe(true);
+    expect(document.totalContainers).toBe(1);
     expect(document.totalPallets).toBe(2);
   });
 
@@ -326,8 +446,63 @@ describe("buildPickSheetDocument", () => {
     const sameSkuRows = document.rows.filter((row) => row.containerNo === "SAME-CONTAINER" && row.sku === "608333");
 
     expect(sameSkuRows).toHaveLength(2);
-    expect(sameSkuRows.map((row) => row.demandLabel)).toEqual(["Line #1\nNeed: 5 CTN", "Line #2\nNeed: 7 CTN"]);
     expect(sameSkuRows.map((row) => row.quantity)).toEqual([5, 7]);
+  });
+
+  it("normalizes warehouse names before grouping containers", () => {
+    const fixture = createOutboundDocumentFixture();
+    fixture.lines = [
+      {
+        ...fixture.lines[0],
+        id: 501,
+        quantity: 5,
+        pallets: 1,
+        lineNote: "",
+        pickAllocations: [
+          {
+            id: 51,
+            lineId: 501,
+            itemNumber: "608333",
+            locationId: 1,
+            locationName: "NJ",
+            storageSection: "A",
+            containerNo: "SAME-CONTAINER",
+            allocatedQty: 5,
+            pallets: 1,
+            createdAt: "2026-03-24T10:00:00Z"
+          }
+        ]
+      },
+      {
+        ...fixture.lines[0],
+        id: 502,
+        quantity: 7,
+        pallets: 1,
+        lineNote: "",
+        pickAllocations: [
+          {
+            id: 52,
+            lineId: 502,
+            itemNumber: "608333",
+            locationId: 1,
+            locationName: "NJ ",
+            storageSection: "A",
+            containerNo: "SAME-CONTAINER",
+            allocatedQty: 7,
+            pallets: 1,
+            createdAt: "2026-03-24T10:05:00Z"
+          }
+        ]
+      }
+    ];
+
+    const document = buildPickSheetDocument(fixture);
+    const warehouseGroup = document.skuGroups[0]?.warehouseGroups[0];
+
+    expect(document.totalContainers).toBe(1);
+    expect(warehouseGroup?.warehouse).toBe("NJ");
+    expect(warehouseGroup?.containerGroups).toHaveLength(1);
+    expect(warehouseGroup?.containerGroups[0]?.rows).toHaveLength(2);
   });
 
   it("fails closed when a line has no stored pick allocations", () => {
@@ -342,42 +517,156 @@ describe("buildPickSheetDocument", () => {
 });
 
 describe("buildPickSheetDefinition", () => {
-  it("renders a titled header per warehouse and a per-section table", () => {
+  it("renders one sku section with separate warehouse rows when the same sku is split across warehouses", () => {
+    const fixture = createOutboundDocumentFixture();
+    fixture.lines = [{
+      ...fixture.lines[0],
+      quantity: 30,
+      pallets: 3,
+      pickAllocations: [
+        {
+          id: 11,
+          lineId: 101,
+          itemNumber: "608333",
+          locationId: 1,
+          locationName: "NJ",
+          storageSection: "A",
+          containerNo: "NJ-CONTAINER-1",
+          allocatedQty: 12,
+          pallets: 1,
+          createdAt: "2026-03-24T10:00:00Z"
+        },
+        {
+          id: 12,
+          lineId: 101,
+          itemNumber: "608333",
+          locationId: 2,
+          locationName: "PA",
+          storageSection: "B",
+          containerNo: "PA-CONTAINER-1",
+          allocatedQty: 18,
+          pallets: 2,
+          createdAt: "2026-03-24T10:00:00Z"
+        }
+      ]
+    }];
+
+    const definition = buildPickSheetDefinition(buildPickSheetDocument(fixture));
+    const content = definition.content as unknown as Array<Record<string, unknown>>;
+    const skuHeaderTables = content.filter((block) => {
+      const body = (block?.table as { body?: Array<Array<{ text?: string }>> } | undefined)?.body;
+      return body?.[0]?.[0]?.text?.startsWith("SKU: ");
+    });
+
+    expect(skuHeaderTables).toHaveLength(1);
+    const skuHeaderBody = (skuHeaderTables[0].table as { body: Array<Array<{ text: string }>> }).body;
+    expect(skuHeaderBody[0][0].text).toBe("SKU: 608333");
+    expect(skuHeaderBody[0][1].text).toBe("Total Qty: 30");
+    expect(skuHeaderBody[0][2].text).toBe("Total Pallet: 3");
+    expect(skuHeaderBody[0][3].text).toBe("Warehouses: 2");
+    expect(skuHeaderBody[0][4].text).toBe("Containers: 2");
+
+    const pickTable = content.find((block) => {
+      const body = (block?.table as { body?: Array<Array<{ text?: string }>> } | undefined)?.body;
+      return body?.[0]?.[0]?.text === "Container No.";
+    });
+    expect(pickTable).toBeDefined();
+    const pickBody = (pickTable!.table as { body: Array<Array<{ text: string }>> }).body;
+    expect(pickBody[1][0].text).toBe("Warehouse: NJ | Containers: 1");
+    expect(pickBody[1][2].text).toBe("12");
+    expect(pickBody[1][3].text).toBe("1");
+    expect(pickBody[2][0].text).toBe("NJ-CONTAINER-1");
+    expect(pickBody[2][1].text).toBe("A");
+    expect(pickBody[2][2].text).toBe("12");
+    expect(pickBody[2][3].text).toBe("1");
+    expect(pickBody[3][0].text).toBe("Warehouse: PA | Containers: 1");
+    expect(pickBody[3][2].text).toBe("18");
+    expect(pickBody[3][3].text).toBe("2");
+    expect(pickBody[4][0].text).toBe("PA-CONTAINER-1");
+    expect(pickBody[4][1].text).toBe("B");
+    expect(pickBody[4][2].text).toBe("18");
+    expect(pickBody[4][3].text).toBe("2");
+  });
+
+  it("renders sku, warehouse, and container-grouped pick tables", () => {
     const document = buildPickSheetDocument(createOutboundDocumentFixture());
     const definition = buildPickSheetDefinition(document);
 
-    expect(definition.pageOrientation).toBe("landscape");
+    expect(definition.pageOrientation).toBe("portrait");
     const content = definition.content as unknown as Array<Record<string, unknown>>;
 
-    const headerTexts = content
-      .map((block) => {
-        const body = (block?.table as { body?: Array<Array<{ text?: string }>> } | undefined)?.body;
-        return body?.[0]?.[0]?.text;
-      })
-      .filter((text): text is string => typeof text === "string");
+    const titleBody = (content[0]?.table as { body: Array<Array<{ stack?: Array<{ text: string }> }>> } | undefined)?.body;
+    expect(titleBody?.[0]).toHaveLength(1);
 
-    expect(headerTexts.some((text) => text.includes("Warehouse: NJ"))).toBe(true);
-    expect(headerTexts.some((text) => text.includes("Warehouse: PA"))).toBe(true);
+    const metadataBody = (content[1]?.table as { body: Array<Array<{ stack?: Array<{ text: string }> }>> } | undefined)?.body;
+    expect(metadataBody?.[0]?.[0]?.stack?.[0]?.text).toBe("Pick Date");
+    expect(metadataBody?.[0]?.[0]?.stack?.[1]?.text).toBe("03/24/2026");
+    expect(metadataBody?.[0]?.[1]?.stack?.[0]?.text).toBe("Remarks");
+    expect(metadataBody?.[0]?.[1]?.stack?.[1]?.text).toBe("Handle with care");
 
-    const firstRowTable = content.find((block) => {
+    const serializedContent = JSON.stringify(content);
+    expect(serializedContent).toContain("SKU: 608333");
+    expect(serializedContent).not.toContain("SKU Pick Plan");
+    expect(serializedContent).not.toContain("SKU Total:");
+    expect(serializedContent).not.toContain("Total Item Qty");
+    expect(serializedContent).not.toContain("Total Pallets");
+    expect(serializedContent).not.toContain("Demand Lines");
+    expect(serializedContent).not.toContain("Customer");
+    expect(serializedContent).not.toContain("Expected Ship Date");
+    expect(serializedContent).not.toContain("Actual Ship Date");
+    expect(serializedContent).not.toContain("VB22GC");
+    expect(serializedContent).not.toContain("VBTL");
+    expect(serializedContent).not.toContain("Need CTN");
+    expect(serializedContent).not.toContain("Need PLT");
+    expect(serializedContent).not.toContain("Pick CTN");
+    expect(serializedContent).not.toContain("Pick PLT");
+    expect(serializedContent).not.toContain("PLT:");
+    expect(serializedContent).not.toContain("WH:");
+    expect(serializedContent).not.toContain("Cont.:");
+    expect(serializedContent).not.toContain("Picked");
+    expect(serializedContent).not.toContain("Demand");
+    expect(serializedContent).not.toContain("Container No.:");
+    expect(serializedContent).not.toContain("Item / SKU");
+    expect(serializedContent).not.toContain("Item Description");
+
+    const skuHeaderTable = content.find((block) => {
       const body = (block?.table as { body?: Array<Array<{ text?: string }>> } | undefined)?.body;
-      return body?.[0]?.[0]?.text === "SN";
+      return body?.[0]?.[0]?.text?.includes("SKU: 608333");
     });
-    expect(firstRowTable).toBeDefined();
-    const body = (firstRowTable!.table as { body: Array<Array<{ text: string }>> }).body;
-    expect(body[0][1].text).toBe("Demand");
-    expect(body[1][1].text).toBe("Line #1\nNeed: 20 CTN");
-    expect(body[0][6].text).toBe("Container No.");
-    expect(body[0][8].text).toBe("Pallets");
+    expect(skuHeaderTable).toBeDefined();
+    const skuHeaderBody = (skuHeaderTable!.table as { body: Array<Array<{ text: string }>> }).body;
+    expect(skuHeaderBody[0][1].text).toBe("Total Qty: 20");
+    expect(skuHeaderBody[0][2].text).toBe("Total Pallet: 2");
+    expect(skuHeaderBody[0][3].text).toBe("Warehouses: 1");
+    expect(skuHeaderBody[0][4].text).toBe("Containers: 2");
 
-    const totalsTable = content[content.length - 1]?.table as { body: Array<Array<{ text: string }>> } | undefined;
-    expect(totalsTable?.body[0][0].text).toBe("Total Item Qty");
-    expect(totalsTable?.body[0][1].text).toBe("35");
-    expect(totalsTable?.body[1][0].text).toBe("Total Pallets");
-    expect(totalsTable?.body[1][1].text).toBe("3");
+    const pickTable = content.find((block) => {
+      const body = (block?.table as { body?: Array<Array<{ text?: string }>> } | undefined)?.body;
+      return body?.[0]?.[0]?.text === "Container No.";
+    });
+    expect(pickTable).toBeDefined();
+    const pickBody = (pickTable!.table as { body: Array<Array<{ text: string }>> }).body;
+    expect(pickBody[0][0].text).toBe("Container No.");
+    expect(pickBody[0][1].text).toBe("Section");
+    expect(pickBody[0][2].text).toBe("Qty");
+    expect(pickBody[0][3].text).toBe("Pallet Qty");
+    expect(pickBody[1][0].text).toBe("Warehouse: NJ | Containers: 2");
+    expect(pickBody[1][2].text).toBe("20");
+    expect(pickBody[1][3].text).toBe("2");
+    expect(pickBody[2][0].text).toBe("SEGU6542651");
+    expect(pickBody[2][1].text).toBe("A");
+    expect(pickBody[2][2].text).toBe("12");
+    expect(pickBody[2][3].text).toBe("1");
+    expect(pickBody[3][0].text).toBe("SHYA1211-2720");
+    expect(pickBody[3][1].text).toBe("A");
+    expect(pickBody[3][2].text).toBe("8");
+    expect(pickBody[3][3].text).toBe("1");
+    expect(serializedContent).not.toContain("Picked By");
+    expect(serializedContent).not.toContain("Checked By");
+    expect(serializedContent).not.toContain("Packed By");
 
     const footer = typeof definition.footer === "function"
-      ? definition.footer(1, 1, { width: 842, height: 595, orientation: "landscape" }) as { columns: Array<{ text?: string; stack?: Array<{ text: string }> }> }
+      ? definition.footer(1, 1, { width: 595, height: 842, orientation: "portrait" }) as { columns: Array<{ text?: string; stack?: Array<{ text: string }> }> }
       : undefined;
     expect(footer?.columns[0].stack?.[1].text).toBe("Version 1.0");
   });

@@ -1,7 +1,21 @@
 import assert from "node:assert/strict";
+import { createServer } from "vite";
 
-import { buildPickSheetDocument, buildPickSheetDefinition } from "../.test-dist/lib/outboundPickSheetPdf.js";
-import { buildDeliveryNoteDefinition, buildDeliveryNoteDocumentFromDocument } from "../.test-dist/lib/outboundPackingListPdf.js";
+const vite = await createServer({
+  appType: "custom",
+  configFile: false,
+  logLevel: "error",
+  server: { hmr: false, middlewareMode: true }
+});
+
+const {
+  buildPickSheetDocument,
+  buildPickSheetDefinition
+} = await vite.ssrLoadModule("/src/lib/outboundPickSheetPdf.ts");
+const {
+  buildDeliveryNoteDefinition,
+  buildDeliveryNoteDocumentFromDocument
+} = await vite.ssrLoadModule("/src/lib/outboundPackingListPdf.ts");
 
 function createOutboundDocumentFixture() {
   return {
@@ -121,13 +135,15 @@ function createOutboundDocumentFixture() {
   };
 }
 
+let firstFailure = null;
+
 function runTest(name, fn) {
   try {
     fn();
     console.log(`ok - ${name}`);
   } catch (error) {
     console.error(`not ok - ${name}`);
-    throw error;
+    firstFailure ??= error;
   }
 }
 
@@ -143,28 +159,37 @@ runTest("buildPickSheetDocument expands pick allocations into warehouse pick row
   assert.equal(document.totalQty, 35);
 });
 
-runTest("buildPickSheetDocument groups rows into separate warehouse sections", () => {
+runTest("buildPickSheetDocument groups rows into sku, warehouse, and container sections", () => {
   const document = buildPickSheetDocument(createOutboundDocumentFixture());
 
-  assert.equal(document.warehouseGroups.length, 2);
-  const warehouses = document.warehouseGroups.map((group) => group.warehouse);
-  assert.ok(warehouses.includes("NJ"));
-  assert.ok(warehouses.includes("PA"));
+  assert.equal(document.skuGroups.length, 2);
+  const sku608333 = document.skuGroups.find((group) => group.sku === "608333");
+  const sku603482 = document.skuGroups.find((group) => group.sku === "603482");
+  assert.ok(sku608333);
+  assert.ok(sku603482);
+  assert.equal(sku608333.totalQty, 20);
+  assert.equal(sku608333.totalPallets, 2);
+  assert.equal(sku608333.warehouseGroups.length, 1);
 
-  const njGroup = document.warehouseGroups.find((group) => group.warehouse === "NJ");
+  const njGroup = sku608333.warehouseGroups.find((group) => group.warehouse === "NJ");
   assert.ok(njGroup);
   assert.equal(njGroup.rows.length, 2);
   assert.equal(njGroup.totalQty, 20);
+  assert.equal(njGroup.totalPallets, 2);
+  assert.equal(njGroup.containerGroups.length, 2);
   assert.deepEqual(
-    njGroup.rows.map((row) => row.containerNo),
+    njGroup.containerGroups.map((group) => group.containerNo),
     ["SEGU6542651", "SHYA1211-2720"]
   );
 
-  const paGroup = document.warehouseGroups.find((group) => group.warehouse === "PA");
+  const paGroup = sku603482.warehouseGroups.find((group) => group.warehouse === "PA");
   assert.ok(paGroup);
   assert.equal(paGroup.rows.length, 1);
   assert.equal(paGroup.totalQty, 15);
-  assert.equal(paGroup.rows[0].containerNo, "CAJU5283887");
+  assert.equal(paGroup.totalPallets, 1);
+  assert.equal(paGroup.containerGroups[0].containerNo, "CAJU5283887");
+  assert.equal(document.totalContainers, 3);
+  assert.equal(document.totalDemandLines, 2);
 });
 
 runTest("buildPickSheetDocument fails when a line has no stored pick allocations", () => {
@@ -180,27 +205,48 @@ runTest("buildPickSheetDocument fails when a line has no stored pick allocations
   );
 });
 
-runTest("buildPickSheetDefinition renders a titled section per warehouse", () => {
+runTest("buildPickSheetDefinition renders sku, warehouse, and container grouped sections", () => {
   const document = buildPickSheetDocument(createOutboundDocumentFixture());
   const definition = buildPickSheetDefinition(document);
 
-  assert.equal(definition.pageOrientation, "landscape");
+  assert.equal(definition.pageOrientation, "portrait");
   assert.equal(definition.info?.title, "Warehouse Pick Sheet PL-1001");
   assert.ok(Array.isArray(definition.content));
 
-  const headerTexts = definition.content
-    .map((block) => block?.table?.body?.[0]?.[0]?.text)
-    .filter((text) => typeof text === "string");
-  assert.ok(headerTexts.some((text) => text.includes("Warehouse: NJ")));
-  assert.ok(headerTexts.some((text) => text.includes("Warehouse: PA")));
+  const serializedContent = JSON.stringify(definition.content);
+  assert.ok(serializedContent.includes("SKU: 608333"));
+  assert.ok(serializedContent.includes("Total Qty: 20"));
+  assert.ok(serializedContent.includes("Total Pallet: 2"));
+  assert.ok(serializedContent.includes("Warehouses: 1"));
+  assert.ok(serializedContent.includes("Containers: 2"));
+  assert.ok(serializedContent.includes("Pick Date"));
+  assert.ok(serializedContent.includes("Remarks"));
+  assert.doesNotMatch(serializedContent, /SKU Pick Plan|SKU Total:|Total Item Qty|Total Pallets|Demand Lines|Customer|Expected Ship Date|Actual Ship Date/);
+  assert.doesNotMatch(serializedContent, /PLT:|WH:|Cont\.:/);
+  assert.doesNotMatch(serializedContent, /Need CTN|Need PLT|Pick CTN|Pick PLT|Picked|Demand|Container No\.:/);
+  assert.doesNotMatch(serializedContent, /VB22GC|VBTL|Item \/ SKU|Item Description/);
 
   const firstRowTable = definition.content.find((block) => {
     const first = block?.table?.body?.[0]?.[0]?.text;
-    return typeof first === "string" && first === "SN";
+    return typeof first === "string" && first === "Container No.";
   });
   assert.ok(firstRowTable);
-  assert.equal(firstRowTable.table.body[0][5].text, "Container No.");
-  assert.equal(firstRowTable.table.body[0][7].text, "Pallets");
+  assert.equal(firstRowTable.table.body[0][0].text, "Container No.");
+  assert.equal(firstRowTable.table.body[0][1].text, "Section");
+  assert.equal(firstRowTable.table.body[0][2].text, "Qty");
+  assert.equal(firstRowTable.table.body[0][3].text, "Pallet Qty");
+  assert.equal(firstRowTable.table.body[1][0].text, "Warehouse: NJ | Containers: 2");
+  assert.equal(firstRowTable.table.body[1][2].text, "20");
+  assert.equal(firstRowTable.table.body[1][3].text, "2");
+  assert.equal(firstRowTable.table.body[2][0].text, "SEGU6542651");
+  assert.equal(firstRowTable.table.body[2][1].text, "A");
+  assert.equal(firstRowTable.table.body[2][2].text, "12");
+  assert.equal(firstRowTable.table.body[2][3].text, "1");
+  assert.equal(firstRowTable.table.body[3][0].text, "SHYA1211-2720");
+  assert.equal(firstRowTable.table.body[3][1].text, "A");
+  assert.equal(firstRowTable.table.body[3][2].text, "8");
+  assert.equal(firstRowTable.table.body[3][3].text, "1");
+  assert.doesNotMatch(serializedContent, /Picked By|Checked By|Packed By/);
 });
 
 runTest("buildDeliveryNoteDocumentFromDocument keeps outward-facing shipment totals and pallet data", () => {
@@ -210,7 +256,7 @@ runTest("buildDeliveryNoteDocumentFromDocument keeps outward-facing shipment tot
   assert.equal(document.rows.length, 2);
   assert.equal(document.rows[0].itemNumber, "608333");
   assert.equal(document.rows[0].pallets, 2);
-  assert.equal(document.rows[1].palletsDetailCtns, "1*15");
+  assert.equal(document.rows[1].pallets, 1);
   assert.equal(document.totalQty, 35);
   assert.equal(document.totalGrossWeightKgs, 130.75);
 });
@@ -231,3 +277,9 @@ runTest("buildDeliveryNoteDefinition keeps delivery-note metadata in English and
   assert.ok(footer?.columns);
   assert.match(footer.columns[1].text, /Printed At:/);
 });
+
+await vite.close();
+
+if (firstFailure) {
+  throw firstFailure;
+}
