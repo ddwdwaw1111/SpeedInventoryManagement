@@ -7,6 +7,7 @@
     "moduleResolution": "Node"
   },
   "include": [
+    "src/lib/inboundReceivingCountSheetPdf.ts",
     "src/lib/outboundPickSheetPdf.ts",
     "src/lib/outboundPackingListPdf.ts",
     "src/lib/types.ts"

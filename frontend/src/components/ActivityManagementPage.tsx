@@ -681,6 +681,9 @@ export function ActivityManagementPage({
   const isSelectedInboundTrackingBusy = Boolean(
     selectedInboundDocument && documentActionKey === getInboundDocumentActionKey(selectedInboundDocument.id, "tracking")
   );
+  const isSelectedInboundReceivingCountSheetBusy = Boolean(
+    selectedInboundDocument && documentActionKey === getInboundDocumentActionKey(selectedInboundDocument.id, "download-receiving-count-sheet")
+  );
   const isSelectedInboundCancelBusy = Boolean(
     selectedInboundDocument && documentActionKey === getInboundDocumentActionKey(selectedInboundDocument.id, "cancel")
   );
@@ -775,6 +778,17 @@ export function ActivityManagementPage({
         await downloadOutboundDeliveryNotePdfFromDocument(document);
       } catch (error) {
         showActionError(error, t("couldNotGenerateDeliveryNote"));
+      }
+    });
+  }
+
+  async function handleDownloadReceivingCountSheet(document: InboundDocument) {
+    await runDocumentAction(getInboundDocumentActionKey(document.id, "download-receiving-count-sheet"), async () => {
+      try {
+        const { downloadInboundReceivingCountSheetPdfFromDocument } = await import("../lib/inboundReceivingCountSheetPdf");
+        await downloadInboundReceivingCountSheetPdfFromDocument(document);
+      } catch (error) {
+        showActionError(error, t("couldNotGenerateReceivingCountSheet"));
       }
     });
   }
@@ -1300,7 +1314,8 @@ export function ActivityManagementPage({
               : []),
             ...(canManage && canArchiveInboundDocument(params.row)
               ? [{ key: "archive", label: t("archiveReceipt"), icon: <ArchiveOutlinedIcon fontSize="small" />, onClick: () => void handleArchiveInboundDocument(params.row) }]
-              : [])
+              : []),
+            { key: "download-receiving-count-sheet", label: t("downloadReceivingCountSheet"), icon: <PictureAsPdfOutlinedIcon fontSize="small" />, onClick: () => void handleDownloadReceivingCountSheet(params.row) }
           ]}
         />
       )
@@ -2800,6 +2815,15 @@ export function ActivityManagementPage({
                     {selectedInboundTrackingAction.label}
                   </Button>
                 ) : null}
+                <Button
+                  variant="contained"
+                  startIcon={isSelectedInboundReceivingCountSheetBusy ? <InlineLoadingIndicator /> : <PictureAsPdfOutlinedIcon />}
+                  onClick={() => void handleDownloadReceivingCountSheet(selectedInboundDocument)}
+                  disabled={disableSelectedInboundActions}
+                  aria-busy={isSelectedInboundReceivingCountSheetBusy}
+                >
+                  {t("downloadReceivingCountSheet")}
+                </Button>
                 {canManage && !selectedInboundDocument.archivedAt && normalizeDocumentStatus(selectedInboundDocument.status) !== "DELETED" ? (
                   <Button
                     variant="outlined"

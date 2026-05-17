@@ -9,6 +9,10 @@ const vite = await createServer({
 });
 
 const {
+  buildInboundReceivingCountSheetDefinition,
+  buildInboundReceivingCountSheetDocument
+} = await vite.ssrLoadModule("/src/lib/inboundReceivingCountSheetPdf.ts");
+const {
   buildPickSheetDocument,
   buildPickSheetDefinition
 } = await vite.ssrLoadModule("/src/lib/outboundPickSheetPdf.ts");
@@ -147,6 +151,52 @@ function runTest(name, fn) {
   }
 }
 
+function createInboundPackingListPreviewFixture() {
+  return {
+    sourceFileName: "CHEN208-3220 PL.pdf",
+    title: "Packing List",
+    containerNo: "CHEN208-3220",
+    referenceCode: "PO-7788",
+    customerName: "Imperial Bag & Paper",
+    warehouseName: "2801 Route",
+    scheduledArrivalDate: "2026-04-25",
+    receivingDate: "2026-04-26",
+    unloadingDock: "Dock 3",
+    remarks: "Count pallets after unloading.",
+    unitLabel: "CTN",
+    totalQty: 150,
+    totalCartons: 150,
+    totalNetWeightKgs: 1200,
+    totalGrossWeightKgs: 1320,
+    lines: [
+      {
+        sequence: 1,
+        itemNumber: "ITM-100",
+        sku: "608333",
+        description: "Black nitrile gloves",
+        quantity: 100,
+        unitLabel: "CTN",
+        cartonSizeMm: "400*300*200",
+        cartonCount: 100,
+        netWeightKgs: 800,
+        grossWeightKgs: 880
+      },
+      {
+        sequence: 2,
+        itemNumber: "ITM-200",
+        sku: "603482",
+        description: "Clear liner",
+        quantity: 50,
+        unitLabel: "CTN",
+        cartonSizeMm: "450*320*210",
+        cartonCount: 50,
+        netWeightKgs: 400,
+        grossWeightKgs: 440
+      }
+    ]
+  };
+}
+
 runTest("buildPickSheetDocument expands pick allocations into warehouse pick rows", () => {
   const document = buildPickSheetDocument(createOutboundDocumentFixture());
 
@@ -247,6 +297,42 @@ runTest("buildPickSheetDefinition renders sku, warehouse, and container grouped 
   assert.equal(firstRowTable.table.body[3][2].text, "8");
   assert.equal(firstRowTable.table.body[3][3].text, "1");
   assert.doesNotMatch(serializedContent, /Picked By|Checked By|Packed By/);
+});
+
+runTest("buildInboundReceivingCountSheetDefinition renders a dock count template", () => {
+  const document = buildInboundReceivingCountSheetDocument(createInboundPackingListPreviewFixture());
+  const definition = buildInboundReceivingCountSheetDefinition(document);
+
+  assert.equal(document.fileName, "receiving-tally-sheet-chen208-3220.pdf");
+  assert.equal(document.containerNo, "CHEN208-3220");
+  assert.equal(document.totalPallets, null);
+  assert.equal(definition.pageSize, "LETTER");
+  assert.equal(definition.pageOrientation, "portrait");
+
+  const serializedContent = JSON.stringify(definition.content);
+  assert.match(serializedContent, /RECEIVING TALLY SHEET/);
+  assert.doesNotMatch(serializedContent, /Customer|Inbound Date|Imperial Bag & Paper/);
+  assert.match(serializedContent, /Container Type/);
+  assert.match(serializedContent, /Expected\\nQty \(CTN\)/);
+  assert.match(serializedContent, /Actual\\nQty \(CTN\)/);
+  assert.match(serializedContent, /Expected\\nPallet Qty/);
+  assert.match(serializedContent, /Actual\\nPallet Qty/);
+  assert.match(serializedContent, /Pallet Details/);
+  assert.match(serializedContent, /Recived At/);
+  assert.doesNotMatch(serializedContent, /Exception Log|Counted Qty|Variance/);
+
+  const countTable = definition.content.find((block) => {
+    const body = block?.table?.body;
+    return body?.[0]?.[0]?.text === "SKU" && body?.[0]?.[1]?.text === "Expected\nQty (CTN)";
+  });
+  assert.ok(countTable);
+  assert.equal(countTable.table.body[1][0].stack[0].text, "608333");
+  assert.match(countTable.table.body[1][0].stack[1].text, /Black nitrile gloves/);
+  assert.equal(countTable.table.body[1][1].text, "100");
+  assert.equal(countTable.table.body[1][2].text, "");
+  assert.equal(countTable.table.body[1][3].text, "");
+  assert.equal(countTable.table.body[1][4].text, "");
+  assert.equal(countTable.table.body[1][5].text, "");
 });
 
 runTest("buildDeliveryNoteDocumentFromDocument keeps outward-facing shipment totals and pallet data", () => {
