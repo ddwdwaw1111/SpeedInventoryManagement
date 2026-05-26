@@ -260,6 +260,29 @@ CREATE TABLE IF NOT EXISTS outbound_document_lines (
     FOREIGN KEY (location_id) REFERENCES storage_locations (id)
 );
 
+CREATE TABLE IF NOT EXISTS document_attachments (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  document_type VARCHAR(16) NOT NULL,
+  document_id BIGINT NOT NULL,
+  display_name VARCHAR(190) NOT NULL,
+  original_file_name VARCHAR(255) DEFAULT NULL,
+  storage_provider VARCHAR(32) NOT NULL DEFAULT 'r2',
+  storage_bucket VARCHAR(255) NOT NULL,
+  storage_key VARCHAR(512) NOT NULL,
+  content_type VARCHAR(120) NOT NULL,
+  size_bytes BIGINT NOT NULL DEFAULT 0,
+  uploaded_by_user_id BIGINT DEFAULT NULL,
+  deleted_at TIMESTAMP NULL DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_document_attachments_storage_key (storage_provider, storage_bucket, storage_key),
+  KEY idx_document_attachments_document (document_type, document_id),
+  KEY idx_document_attachments_uploaded_by (uploaded_by_user_id),
+  CONSTRAINT fk_document_attachments_user
+    FOREIGN KEY (uploaded_by_user_id) REFERENCES users (id)
+    ON DELETE SET NULL
+);
+
 CREATE TABLE IF NOT EXISTS pallets (
   id BIGINT NOT NULL AUTO_INCREMENT,
   parent_pallet_id BIGINT DEFAULT NULL,

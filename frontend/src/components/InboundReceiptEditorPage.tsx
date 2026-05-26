@@ -12,6 +12,7 @@ import {
   getLocationSectionOptions,
   normalizeStorageSection,
   type Customer,
+  type DocumentAttachment,
   type InboundDocument,
   type InboundDocumentPayload,
   type InboundPalletBreakdown,
@@ -20,6 +21,7 @@ import {
   type SKUMaster,
   type UserRole
 } from "../lib/types";
+import { DocumentAttachmentsPanel, type PendingDocumentAttachment } from "./DocumentAttachmentsPanel";
 import { InlineAlert, useFeedbackToast } from "./Feedback";
 import { InboundPalletBreakdownPanel } from "./InboundPalletBreakdownPanel";
 import { InlineLoadingIndicator } from "./InlineLoadingIndicator";
@@ -108,6 +110,7 @@ export function InboundReceiptEditorPage({
   const [inboundWizardStep, setInboundWizardStep] = useState<InboundWizardStep>(2);
   const [inboundEditorIntent, setInboundEditorIntent] = useState<InboundLaunchIntent | null>(null);
   const [expandedPalletBreakdowns, setExpandedPalletBreakdowns] = useState<Record<string, boolean>>({});
+  const [pendingAttachments, setPendingAttachments] = useState<PendingDocumentAttachment[]>([]);
   const [isEditorReady, setIsEditorReady] = useState(false);
   const pendingBatchLineIDRef = useRef<string | null>(null);
   const lastInitializedRouteRef = useRef<string | null>(null);
@@ -232,6 +235,7 @@ export function InboundReceiptEditorPage({
     setErrorMessage("");
     setShowValidationErrors(false);
     setBatchSubmitting(false);
+    setPendingAttachments([]);
     setExpandedPalletBreakdowns({});
     setIsEditorReady(true);
     lastInitializedRouteRef.current = routeKey;
@@ -265,6 +269,42 @@ export function InboundReceiptEditorPage({
     } finally {
       setCopySubmitting(false);
     }
+  }
+
+  async function uploadPendingInboundAttachments(documentID: number) {
+    if (pendingAttachments.length === 0) {
+      return;
+    }
+    let remainingAttachments = [...pendingAttachments];
+    for (const pendingAttachment of pendingAttachments) {
+      await api.uploadInboundDocumentAttachment(
+        documentID,
+        pendingAttachment.file,
+        pendingAttachment.displayName.trim() || pendingAttachment.file.name
+      );
+      remainingAttachments = remainingAttachments.filter((entry) => entry.id !== pendingAttachment.id);
+      setPendingAttachments(remainingAttachments);
+    }
+  }
+
+  async function handleUploadInboundAttachment(file: File, displayName: string) {
+    if (!document?.id) {
+      throw new Error(t("saveDocumentBeforeUploadingAttachments"));
+    }
+    await api.uploadInboundDocumentAttachment(document.id, file, displayName);
+    showActionSuccess(t("attachmentsSavedSuccess"));
+    await onRefresh();
+  }
+
+  async function getInboundAttachmentDownloadUrl(attachment: DocumentAttachment) {
+    const result = await api.getInboundDocumentAttachmentDownloadUrl(attachment.documentId, attachment.id);
+    return result.url;
+  }
+
+  async function handleDeleteInboundAttachment(attachment: DocumentAttachment) {
+    await api.deleteInboundDocumentAttachment(attachment.documentId, attachment.id);
+    showActionSuccess(t("attachmentDeletedSuccess"));
+    await onRefresh();
   }
 
   function togglePalletBreakdown(lineId: string) {
@@ -696,6 +736,20 @@ export function InboundReceiptEditorPage({
         ? await api.updateInboundDocument(document.id, payload)
         : await api.createInboundDocument(payload);
 
+      try {
+        await uploadPendingInboundAttachments(savedDocument.id);
+      } catch (attachmentError) {
+        await onRefresh();
+        if (!document?.id) {
+          if (effectiveStatus === "DRAFT") {
+            onOpenReceiptEditor(savedDocument.id);
+          } else {
+            onOpenInboundDetail(savedDocument.id);
+          }
+        }
+        showActionError(attachmentError, t("attachmentUploadFailed"));
+        return;
+      }
       await onRefresh();
 
       if (effectiveStatus === "DRAFT") {
@@ -865,6 +919,17 @@ export function InboundReceiptEditorPage({
                 </div>
               </InlineAlert>
             ) : null}
+
+            <DocumentAttachmentsPanel
+              attachments={document?.attachments ?? []}
+              pendingAttachments={pendingAttachments}
+              disabled={!canManage || Boolean(document?.archivedAt)}
+              canUploadNow={Boolean(document?.id)}
+              onPendingAttachmentsChange={setPendingAttachments}
+              onUpload={handleUploadInboundAttachment}
+              onGetDownloadUrl={getInboundAttachmentDownloadUrl}
+              onDelete={canManage ? handleDeleteInboundAttachment : undefined}
+            />
 
             {inboundWizardStep === 1 ? (
               <>

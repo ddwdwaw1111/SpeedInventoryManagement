@@ -10,6 +10,7 @@ import (
 	"speed-inventory-management/backend/internal/api"
 	"speed-inventory-management/backend/internal/config"
 	"speed-inventory-management/backend/internal/database"
+	"speed-inventory-management/backend/internal/objectstorage"
 	"speed-inventory-management/backend/internal/service"
 )
 
@@ -34,14 +35,22 @@ func main() {
 	if err != nil {
 		log.Fatalf("service initialization failed: %v", err)
 	}
-	handler := api.NewHandler(store, cfg.FrontendOrigin, cfg.SessionCookie, cfg.SessionSecure)
+
+	var attachmentStorage api.AttachmentStorage
+	if cfg.R2.AccountID != "" || cfg.R2.AccessKeyID != "" || cfg.R2.SecretAccessKey != "" || cfg.R2.Bucket != "" {
+		attachmentStorage, err = objectstorage.NewR2Client(cfg.R2)
+		if err != nil {
+			log.Fatalf("attachment storage configuration failed: %v", err)
+		}
+	}
+	handler := api.NewHandlerWithAttachmentStorage(store, cfg.FrontendOrigin, cfg.SessionCookie, cfg.SessionSecure, attachmentStorage, cfg.Attachments.MaxUploadBytes)
 
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      15 * time.Second,
+		ReadTimeout:       2 * time.Minute,
+		WriteTimeout:      2 * time.Minute,
 		IdleTimeout:       60 * time.Second,
 	}
 

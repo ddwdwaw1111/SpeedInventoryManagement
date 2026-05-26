@@ -38,6 +38,7 @@ type OutboundDocument struct {
 	TotalGrossWeightKgs float64                `json:"totalGrossWeightKgs"`
 	Storages            string                 `json:"storages"`
 	Lines               []OutboundDocumentLine `json:"lines"`
+	Attachments         []DocumentAttachment   `json:"attachments"`
 	CreatedAt           time.Time              `json:"createdAt"`
 	UpdatedAt           time.Time              `json:"updatedAt"`
 }
@@ -368,6 +369,7 @@ func (s *Store) ListOutboundDocumentsFiltered(ctx context.Context, limit int, fi
 			DeletedAt:        row.DeletedAt,
 			ArchivedAt:       row.ArchivedAt,
 			Lines:            make([]OutboundDocumentLine, 0),
+			Attachments:      make([]DocumentAttachment, 0),
 			CreatedAt:        row.CreatedAt,
 			UpdatedAt:        row.UpdatedAt,
 		}
@@ -451,6 +453,14 @@ func (s *Store) ListOutboundDocumentsFiltered(ctx context.Context, limit int, fi
 		return nil, err
 	}
 	recalculateOutboundDocumentStorages(documents)
+
+	if err := s.attachDocumentAttachments(ctx, DocumentAttachmentOutbound, documentIDs, func(documentID int64, attachments []DocumentAttachment) {
+		if document := documentsByID[documentID]; document != nil {
+			document.Attachments = attachments
+		}
+	}); err != nil {
+		return nil, err
+	}
 
 	return documents, nil
 }
@@ -1148,6 +1158,10 @@ func (s *Store) CancelOutboundDocument(ctx context.Context, documentID int64) (O
 		if err := s.releaseOutboundDocumentReservationsTx(ctx, tx, lineRows); err != nil {
 			return OutboundDocument{}, err
 		}
+	}
+
+	if err := markDocumentAttachmentsDeletedForDocument(ctx, tx, DocumentAttachmentOutbound, documentID); err != nil {
+		return OutboundDocument{}, err
 	}
 
 	// Delete outbound document (cascades to outbound_document_lines → outbound_picks)
@@ -1852,6 +1866,7 @@ func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []in
 			DeletedAt:        row.DeletedAt,
 			ArchivedAt:       row.ArchivedAt,
 			Lines:            make([]OutboundDocumentLine, 0),
+			Attachments:      make([]DocumentAttachment, 0),
 			CreatedAt:        row.CreatedAt,
 			UpdatedAt:        row.UpdatedAt,
 		}
@@ -1933,6 +1948,14 @@ func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []in
 		return nil, err
 	}
 	recalculateOutboundDocumentStorages(documents)
+
+	if err := s.attachDocumentAttachments(ctx, DocumentAttachmentOutbound, documentIDs, func(documentID int64, attachments []DocumentAttachment) {
+		if document := documentsByID[documentID]; document != nil {
+			document.Attachments = attachments
+		}
+	}); err != nil {
+		return nil, err
+	}
 
 	return documents, nil
 }

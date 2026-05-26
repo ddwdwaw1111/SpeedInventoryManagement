@@ -1,3 +1,4 @@
+import AttachFileRoundedIcon from "@mui/icons-material/AttachFileRounded";
 import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
@@ -11,7 +12,8 @@ import type { InboundReceiptEditorLaunchContext } from "../lib/inboundReceiptEdi
 import { useI18n } from "../lib/i18n";
 import { setPendingPalletTraceLaunchContext } from "../lib/palletTraceLaunchContext";
 import type { PageKey } from "../lib/routes";
-import type { InboundDocument, InboundDocumentLine, PalletTrace, UserRole } from "../lib/types";
+import type { DocumentAttachment, InboundDocument, InboundDocumentLine, PalletTrace, UserRole } from "../lib/types";
+import { DocumentAttachmentsPanel } from "./DocumentAttachmentsPanel";
 import { useFeedbackToast } from "./Feedback";
 import { WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
@@ -32,6 +34,7 @@ type ActivityEvent = {
 };
 
 type Translate = (key: string, params?: Record<string, string | number>) => string;
+type InboundDetailTab = "details" | "attachments";
 
 export function InboundDetailPage({
   document,
@@ -49,6 +52,7 @@ export function InboundDetailPage({
   const [containerTypeValue, setContainerTypeValue] = useState<"NORMAL" | "WEST_COAST_TRANSFER">("NORMAL");
   const [savedContainerTypeValue, setSavedContainerTypeValue] = useState<"NORMAL" | "WEST_COAST_TRANSFER">("NORMAL");
   const [isSavingContainerType, setIsSavingContainerType] = useState(false);
+  const [activeDetailTab, setActiveDetailTab] = useState<InboundDetailTab>("details");
   const dateFormatter = useMemo(
     () => new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }),
     []
@@ -71,6 +75,7 @@ export function InboundDetailPage({
   const quantityVariance = document ? document.totalReceivedQty - document.totalExpectedQty : 0;
   const activityLog = useMemo(() => (document ? buildActivityLog(document, t) : []), [document, t]);
   const palletCount = pallets.length;
+  const attachmentCount = document?.attachments?.length ?? 0;
 
   useEffect(() => {
     const nextValue = document?.containerType === "WEST_COAST_TRANSFER" ? "WEST_COAST_TRANSFER" : "NORMAL";
@@ -171,6 +176,11 @@ export function InboundDetailPage({
     } finally {
       setIsSavingContainerType(false);
     }
+  }
+
+  async function getInboundAttachmentDownloadUrl(attachment: DocumentAttachment) {
+    const result = await api.getInboundDocumentAttachmentDownloadUrl(attachment.documentId, attachment.id);
+    return result.url;
   }
 
   const canConvertSealedTransit =
@@ -355,7 +365,37 @@ export function InboundDetailPage({
           </div>
         </section>
 
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.85fr)]">
+        <div className="inline-flex w-full flex-wrap gap-1 rounded-2xl border border-slate-200/80 bg-slate-100/80 p-1 sm:w-auto" role="tablist" aria-label={t("details")}>
+          {([
+            ["details", t("details"), <HistoryOutlinedIcon key="details" sx={{ fontSize: 17 }} />],
+            ["attachments", t("attachments"), <AttachFileRoundedIcon key="attachments" sx={{ fontSize: 17 }} />]
+          ] as const).map(([tabKey, label, icon]) => {
+            const isActive = activeDetailTab === tabKey;
+            return (
+              <button
+                key={tabKey}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                className={`inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-extrabold transition sm:flex-none ${
+                  isActive
+                    ? "bg-white text-[#143569] shadow-[0_10px_22px_rgba(15,23,42,0.06)] ring-1 ring-slate-200/80"
+                    : "text-slate-500 hover:bg-white/70 hover:text-[#143569]"
+                }`}
+                onClick={() => setActiveDetailTab(tabKey)}
+              >
+                {icon}
+                <span>{label}</span>
+                {tabKey === "attachments" && attachmentCount > 0 ? (
+                  <span className="rounded-full bg-[#143569]/10 px-2 py-0.5 text-[11px] font-bold text-[#143569]">{attachmentCount}</span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+
+        {activeDetailTab === "details" ? (
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.85fr)]">
           <div className="space-y-5">
             <section className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-[0_16px_34px_rgba(15,23,42,0.05)]">
               <WorkspacePanelHeader
@@ -564,7 +604,13 @@ export function InboundDetailPage({
               ) : null}
             </section>
           </div>
-        </div>
+          </div>
+        ) : (
+          <DocumentAttachmentsPanel
+            attachments={document?.attachments ?? []}
+            onGetDownloadUrl={getInboundAttachmentDownloadUrl}
+          />
+        )}
       </div>
       {feedbackToast}
     </main>

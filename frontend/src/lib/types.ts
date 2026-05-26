@@ -462,6 +462,18 @@ export type OutboundPickAllocation = {
   createdAt: string;
 };
 
+export type DocumentAttachment = {
+  id: number;
+  documentType: "INBOUND" | "OUTBOUND";
+  documentId: number;
+  displayName: string;
+  originalFileName: string;
+  contentType: string;
+  sizeBytes: number;
+  uploadedByUserId: number;
+  createdAt: string;
+};
+
 export type OutboundPickAllocationPayload = {
   itemNumber?: string;
   locationId: number;
@@ -498,6 +510,7 @@ export type OutboundDocument = {
   createdAt: string;
   updatedAt: string;
   lines: OutboundDocumentLine[];
+  attachments?: DocumentAttachment[];
 };
 
 export type OutboundDocumentLinePayload = {
@@ -582,6 +595,7 @@ export type InboundDocument = {
   createdAt: string;
   updatedAt: string;
   lines: InboundDocumentLine[];
+  attachments?: DocumentAttachment[];
 };
 
 export type InboundDocumentLinePayload = {

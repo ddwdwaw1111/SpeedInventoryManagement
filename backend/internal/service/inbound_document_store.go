@@ -37,6 +37,7 @@ type InboundDocument struct {
 	CreatedAt           time.Time             `json:"createdAt"`
 	UpdatedAt           time.Time             `json:"updatedAt"`
 	Lines               []InboundDocumentLine `json:"lines"`
+	Attachments         []DocumentAttachment  `json:"attachments"`
 }
 
 type InboundDocumentLine struct {
@@ -268,6 +269,7 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 			CreatedAt:           row.CreatedAt,
 			UpdatedAt:           row.UpdatedAt,
 			Lines:               make([]InboundDocumentLine, 0),
+			Attachments:         make([]DocumentAttachment, 0),
 		}
 		documents = append(documents, document)
 		documentIDs = append(documentIDs, row.ID)
@@ -329,6 +331,14 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 		document.TotalLines++
 		document.TotalExpectedQty += lineRow.ExpectedQty
 		document.TotalReceivedQty += lineRow.ReceivedQty
+	}
+
+	if err := s.attachDocumentAttachments(ctx, DocumentAttachmentInbound, documentIDs, func(documentID int64, attachments []DocumentAttachment) {
+		if document := documentsByID[documentID]; document != nil {
+			document.Attachments = attachments
+		}
+	}); err != nil {
+		return nil, err
 	}
 
 	return documents, nil
@@ -1815,6 +1825,10 @@ func (s *Store) CancelInboundDocument(ctx context.Context, documentID int64) (In
 		}
 	}
 
+	if err := markDocumentAttachmentsDeletedForDocument(ctx, tx, DocumentAttachmentInbound, documentID); err != nil {
+		return InboundDocument{}, err
+	}
+
 	// Delete inbound document (cascades to inbound_document_lines, container_visits)
 	if _, err := tx.ExecContext(ctx, `DELETE FROM inbound_documents WHERE id = ?`, documentID); err != nil {
 		return InboundDocument{}, mapDBError(fmt.Errorf("delete inbound document: %w", err))
@@ -2181,6 +2195,7 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 			CreatedAt:           row.CreatedAt,
 			UpdatedAt:           row.UpdatedAt,
 			Lines:               make([]InboundDocumentLine, 0),
+			Attachments:         make([]DocumentAttachment, 0),
 		}
 		documents = append(documents, document)
 		documentsByID[row.ID] = &documents[len(documents)-1]
@@ -2242,6 +2257,14 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 		document.TotalLines++
 		document.TotalExpectedQty += lineRow.ExpectedQty
 		document.TotalReceivedQty += lineRow.ReceivedQty
+	}
+
+	if err := s.attachDocumentAttachments(ctx, DocumentAttachmentInbound, documentIDs, func(documentID int64, attachments []DocumentAttachment) {
+		if document := documentsByID[documentID]; document != nil {
+			document.Attachments = attachments
+		}
+	}); err != nil {
+		return nil, err
 	}
 
 	return documents, nil

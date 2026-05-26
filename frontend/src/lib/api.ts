@@ -12,6 +12,7 @@ import type {
   Customer,
   CustomerPayload,
   DashboardData,
+  DocumentAttachment,
   DocumentTrackingStatusPayload,
   InventoryAdjustment,
   InventoryAdjustmentPayload,
@@ -113,6 +114,11 @@ type SKUFlowReportQuery = {
   endDate: string;
   locationId?: number | "all";
   customerId?: number | "all";
+};
+
+export type DocumentAttachmentDownloadUrl = {
+  url: string;
+  expiresAt: string;
 };
 
 export class ApiError extends Error {
@@ -509,6 +515,27 @@ export const api = {
     });
   },
 
+  uploadOutboundDocumentAttachment(documentId: number, file: File, displayName: string) {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("displayName", displayName);
+
+    return request<DocumentAttachment>(`/outbound-documents/${documentId}/attachments`, {
+      method: "POST",
+      body: formData
+    });
+  },
+
+  getOutboundDocumentAttachmentDownloadUrl(documentId: number, attachmentId: number) {
+    return request<DocumentAttachmentDownloadUrl>(`/outbound-documents/${documentId}/attachments/${attachmentId}/download-url`);
+  },
+
+  deleteOutboundDocumentAttachment(documentId: number, attachmentId: number) {
+    return request<void>(`/outbound-documents/${documentId}/attachments/${attachmentId}`, {
+      method: "DELETE"
+    });
+  },
+
   getInboundDocuments(limit = 100, archiveScopeOrQuery: DocumentArchiveScope | DocumentListQuery = "active") {
     const params = buildDocumentListQueryParams(limit, archiveScopeOrQuery);
     return request<InboundDocument[]>(`/inbound-documents?${params.toString()}`);
@@ -580,6 +607,27 @@ export const api = {
   copyInboundDocument(documentId: number) {
     return request<InboundDocument>(`/inbound-documents/${documentId}/copy`, {
       method: "POST"
+    });
+  },
+
+  uploadInboundDocumentAttachment(documentId: number, file: File, displayName: string) {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("displayName", displayName);
+
+    return request<DocumentAttachment>(`/inbound-documents/${documentId}/attachments`, {
+      method: "POST",
+      body: formData
+    });
+  },
+
+  getInboundDocumentAttachmentDownloadUrl(documentId: number, attachmentId: number) {
+    return request<DocumentAttachmentDownloadUrl>(`/inbound-documents/${documentId}/attachments/${attachmentId}/download-url`);
+  },
+
+  deleteInboundDocumentAttachment(documentId: number, attachmentId: number) {
+    return request<void>(`/inbound-documents/${documentId}/attachments/${attachmentId}`, {
+      method: "DELETE"
     });
   },
 

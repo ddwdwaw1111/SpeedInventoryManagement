@@ -9,6 +9,7 @@ import { getOutboundExpectedShipDate } from "../lib/outboundDates";
 import {
   DEFAULT_STORAGE_SECTION,
   normalizeStorageSection,
+  type DocumentAttachment,
   type Item,
   type Movement,
   type OutboundDocument,
@@ -18,6 +19,7 @@ import {
   type SKUMaster,
   type UserRole
 } from "../lib/types";
+import { DocumentAttachmentsPanel, type PendingDocumentAttachment } from "./DocumentAttachmentsPanel";
 import { InlineAlert, useFeedbackToast } from "./Feedback";
 import { InlineLoadingIndicator } from "./InlineLoadingIndicator";
 import { OutboundPickPlanPanel } from "./OutboundPickPlanPanel";
@@ -247,6 +249,7 @@ export function OutboundShipmentEditorPage({
   const [reviewConfirmed, setReviewConfirmed] = useState(false);
   const [usedRememberedOutboundDefaults, setUsedRememberedOutboundDefaults] = useState(false);
   const [expandedOutboundPickPlans, setExpandedOutboundPickPlans] = useState<Record<string, boolean>>({});
+  const [pendingAttachments, setPendingAttachments] = useState<PendingDocumentAttachment[]>([]);
   const [isEditorReady, setIsEditorReady] = useState(false);
   const pendingBatchLineIDRef = useRef<string | null>(null);
   const lastInitializedRouteRef = useRef<string | null>(null);
@@ -408,6 +411,7 @@ export function OutboundShipmentEditorPage({
     setErrorMessage("");
     setBatchSubmitting(false);
     setReviewConfirmed(false);
+    setPendingAttachments([]);
     setExpandedOutboundPickPlans({});
     setIsEditorReady(true);
     lastInitializedRouteRef.current = routeKey;
@@ -449,6 +453,42 @@ export function OutboundShipmentEditorPage({
     } finally {
       setBatchSubmitting(false);
     }
+  }
+
+  async function uploadPendingOutboundAttachments(documentID: number) {
+    if (pendingAttachments.length === 0) {
+      return;
+    }
+    let remainingAttachments = [...pendingAttachments];
+    for (const pendingAttachment of pendingAttachments) {
+      await api.uploadOutboundDocumentAttachment(
+        documentID,
+        pendingAttachment.file,
+        pendingAttachment.displayName.trim() || pendingAttachment.file.name
+      );
+      remainingAttachments = remainingAttachments.filter((entry) => entry.id !== pendingAttachment.id);
+      setPendingAttachments(remainingAttachments);
+    }
+  }
+
+  async function handleUploadOutboundAttachment(file: File, displayName: string) {
+    if (!document?.id) {
+      throw new Error(t("saveDocumentBeforeUploadingAttachments"));
+    }
+    await api.uploadOutboundDocumentAttachment(document.id, file, displayName);
+    showActionSuccess(t("attachmentsSavedSuccess"));
+    await onRefresh();
+  }
+
+  async function getOutboundAttachmentDownloadUrl(attachment: DocumentAttachment) {
+    const result = await api.getOutboundDocumentAttachmentDownloadUrl(attachment.documentId, attachment.id);
+    return result.url;
+  }
+
+  async function handleDeleteOutboundAttachment(attachment: DocumentAttachment) {
+    await api.deleteOutboundDocumentAttachment(attachment.documentId, attachment.id);
+    showActionSuccess(t("attachmentDeletedSuccess"));
+    await onRefresh();
   }
 
   function focusShipmentEditorField(fieldID: string) {
@@ -863,6 +903,16 @@ export function OutboundShipmentEditorPage({
         : await api.createOutboundDocument(payload);
 
       saveRememberedOutboundHeaderDefaults(batchOutboundForm);
+      try {
+        await uploadPendingOutboundAttachments(savedDocument.id);
+      } catch (attachmentError) {
+        await onRefresh();
+        if (!document?.id) {
+          onOpenOutboundDocument(savedDocument.id);
+        }
+        showActionError(attachmentError, t("attachmentUploadFailed"));
+        return;
+      }
       await onRefresh();
 
       if (status === "DRAFT") {
@@ -980,6 +1030,17 @@ export function OutboundShipmentEditorPage({
                 </button>
               ))}
             </div>
+
+            <DocumentAttachmentsPanel
+              attachments={document?.attachments ?? []}
+              pendingAttachments={pendingAttachments}
+              disabled={!canManage || Boolean(document?.archivedAt)}
+              canUploadNow={Boolean(document?.id)}
+              onPendingAttachmentsChange={setPendingAttachments}
+              onUpload={handleUploadOutboundAttachment}
+              onGetDownloadUrl={getOutboundAttachmentDownloadUrl}
+              onDelete={canManage ? handleDeleteOutboundAttachment : undefined}
+            />
 
             {outboundWizardStep === 1 ? (
               <div className="sheet-form sheet-form--compact">

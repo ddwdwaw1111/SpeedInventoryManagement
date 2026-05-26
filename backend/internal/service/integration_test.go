@@ -87,6 +87,7 @@ func resetIntegrationDatabase(t *testing.T, db *sqlx.DB) {
 		"user_sessions",
 		"billing_invoice_lines",
 		"billing_invoices",
+		"document_attachments",
 		"pallet_location_events",
 		"stock_ledger",
 		"outbound_picks",
@@ -3046,6 +3047,94 @@ func TestOutboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 	}
 }
 
+func TestCancelDocumentsSoftDeletesAttachmentsIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "AttachmentCancelCustomer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "AttachmentCancelLoc-"+suffix)
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "ATTACH-CANCEL-"+suffix, 10, DefaultStorageSection)
+
+	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-26",
+		ContainerNo:         "ATTACH-IN-" + suffix,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusDraft,
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:            item.SKU,
+			Description:    item.Description,
+			ExpectedQty:    3,
+			ReceivedQty:    3,
+			StorageSection: DefaultStorageSection,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create inbound document: %v", err)
+	}
+	inboundAttachment, err := store.CreateDocumentAttachment(ctx, CreateDocumentAttachmentInput{
+		DocumentType:     DocumentAttachmentInbound,
+		DocumentID:       inbound.ID,
+		DisplayName:      "Inbound attachment",
+		OriginalFileName: "inbound.pdf",
+		StorageProvider:  "r2",
+		StorageBucket:    "speedwin-uploads",
+		StorageKey:       "documents/inbound/test.pdf",
+		ContentType:      "application/pdf",
+		SizeBytes:        10,
+	})
+	if err != nil {
+		t.Fatalf("create inbound attachment: %v", err)
+	}
+	if _, err := store.CancelInboundDocument(ctx, inbound.ID); err != nil {
+		t.Fatalf("cancel inbound document: %v", err)
+	}
+	assertDocumentAttachmentSoftDeleted(t, ctx, store, inboundAttachment.ID, DocumentAttachmentInbound, inbound.ID)
+
+	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo:    "ATTACH-OUT-" + suffix,
+		OrderRef:         "SO-" + suffix,
+		ExpectedShipDate: "2026-03-26",
+		ShipToName:       "Receiver " + suffix,
+		ShipToAddress:    "200 Export Rd",
+		ShipToContact:    "Dock 8",
+		CarrierName:      "Local Carrier",
+		Status:           DocumentStatusDraft,
+		Lines: []CreateOutboundDocumentLineInput{{
+			CustomerID:  item.CustomerID,
+			LocationID:  item.LocationID,
+			SKUMasterID: item.SKUMasterID,
+			Quantity:    2,
+			Pallets:     1,
+			UnitLabel:   "CTN",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create outbound document: %v", err)
+	}
+	outboundAttachment, err := store.CreateDocumentAttachment(ctx, CreateDocumentAttachmentInput{
+		DocumentType:     DocumentAttachmentOutbound,
+		DocumentID:       outbound.ID,
+		DisplayName:      "Outbound attachment",
+		OriginalFileName: "outbound.pdf",
+		StorageProvider:  "r2",
+		StorageBucket:    "speedwin-uploads",
+		StorageKey:       "documents/outbound/test.pdf",
+		ContentType:      "application/pdf",
+		SizeBytes:        10,
+	})
+	if err != nil {
+		t.Fatalf("create outbound attachment: %v", err)
+	}
+	if _, err := store.CancelOutboundDocument(ctx, outbound.ID); err != nil {
+		t.Fatalf("cancel outbound document: %v", err)
+	}
+	assertDocumentAttachmentSoftDeleted(t, ctx, store, outboundAttachment.ID, DocumentAttachmentOutbound, outbound.ID)
+}
+
 func TestInboundTrackingLifecycleIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
@@ -5496,6 +5585,30 @@ func TestUpdateLocationRenamesLiveSectionReferencesIntegration(t *testing.T) {
 	}
 	if palletCount == 0 {
 		t.Fatalf("expected pallets to move into renamed section C")
+	}
+}
+
+func assertDocumentAttachmentSoftDeleted(t *testing.T, ctx context.Context, store *Store, attachmentID int64, documentType string, documentID int64) {
+	t.Helper()
+
+	attachments, err := store.ListDocumentAttachments(ctx, documentType, documentID)
+	if err != nil {
+		t.Fatalf("list document attachments after cancel: %v", err)
+	}
+	if len(attachments) != 0 {
+		t.Fatalf("expected cancelled document attachments to be hidden, got %d", len(attachments))
+	}
+
+	var deletedAt sql.NullTime
+	if err := store.db.QueryRowxContext(ctx, `
+		SELECT deleted_at
+		FROM document_attachments
+		WHERE id = ?
+	`, attachmentID).Scan(&deletedAt); err != nil {
+		t.Fatalf("load cancelled document attachment %d: %v", attachmentID, err)
+	}
+	if !deletedAt.Valid {
+		t.Fatalf("expected attachment %d to be soft deleted", attachmentID)
 	}
 }
 

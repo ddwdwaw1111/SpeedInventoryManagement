@@ -12,6 +12,8 @@ type Config struct {
 	SessionCookie  string
 	SessionSecure  bool
 	Database       DatabaseConfig
+	R2             R2Config
+	Attachments    AttachmentConfig
 }
 
 type DatabaseConfig struct {
@@ -22,6 +24,18 @@ type DatabaseConfig struct {
 	Password string
 }
 
+type R2Config struct {
+	AccountID       string
+	AccessKeyID     string
+	SecretAccessKey string
+	Bucket          string
+	Endpoint        string
+}
+
+type AttachmentConfig struct {
+	MaxUploadBytes int64
+}
+
 func Load() Config {
 	return Config{
 		Env:            getEnv("APP_ENV", "development"),
@@ -29,6 +43,16 @@ func Load() Config {
 		FrontendOrigin: getEnv("FRONTEND_ORIGIN", "http://localhost:5173"),
 		SessionCookie:  getEnv("SESSION_COOKIE_NAME", "sim_session"),
 		SessionSecure:  getEnvBool("SESSION_COOKIE_SECURE", false),
+		R2: R2Config{
+			AccountID:       getEnv("R2_ACCOUNT_ID", ""),
+			AccessKeyID:     getEnv("R2_ACCESS_KEY_ID", ""),
+			SecretAccessKey: getEnv("R2_SECRET_ACCESS_KEY", ""),
+			Bucket:          getEnv("R2_BUCKET", ""),
+			Endpoint:        getEnv("R2_ENDPOINT", ""),
+		},
+		Attachments: AttachmentConfig{
+			MaxUploadBytes: getEnvInt64("ATTACHMENT_MAX_UPLOAD_BYTES", 25*1024*1024),
+		},
 		Database: DatabaseConfig{
 			Host:     getEnv("DB_HOST", "127.0.0.1"),
 			Port:     getEnv("DB_PORT", "3306"),
@@ -55,6 +79,20 @@ func getEnvBool(key string, fallback bool) bool {
 
 	parsed, err := strconv.ParseBool(value)
 	if err != nil {
+		return fallback
+	}
+
+	return parsed
+}
+
+func getEnvInt64(key string, fallback int64) int64 {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed <= 0 {
 		return fallback
 	}
 

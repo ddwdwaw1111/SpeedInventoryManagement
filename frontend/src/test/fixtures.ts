@@ -176,6 +176,7 @@ export function createInboundDocument(overrides: Partial<InboundDocument> = {}):
     createdAt: ISO_TIMESTAMP,
     updatedAt: ISO_TIMESTAMP,
     lines: [createInboundDocumentLine()],
+    attachments: [],
     ...overrides
   };
 }
@@ -249,6 +250,7 @@ export function createOutboundDocument(overrides: Partial<OutboundDocument> = {}
     createdAt: ISO_TIMESTAMP,
     updatedAt: ISO_TIMESTAMP,
     lines: [createOutboundDocumentLine()],
+    attachments: [],
     ...overrides
   };
 }

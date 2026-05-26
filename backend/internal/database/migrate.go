@@ -372,6 +372,30 @@ func Migrate(db *sql.DB) error {
 		`ALTER TABLE outbound_document_lines ADD COLUMN IF NOT EXISTS pallets_detail_ctns VARCHAR(255) DEFAULT NULL AFTER pallets`,
 		`ALTER TABLE outbound_document_lines ADD COLUMN IF NOT EXISTS pick_pallets_json TEXT DEFAULT NULL AFTER pallets_detail_ctns`,
 		`ALTER TABLE outbound_document_lines ADD COLUMN IF NOT EXISTS pick_allocations_json TEXT DEFAULT NULL AFTER pick_pallets_json`,
+		`CREATE TABLE IF NOT EXISTS document_attachments (
+			id BIGINT NOT NULL AUTO_INCREMENT,
+			document_type VARCHAR(16) NOT NULL,
+			document_id BIGINT NOT NULL,
+			display_name VARCHAR(190) NOT NULL,
+			original_file_name VARCHAR(255) DEFAULT NULL,
+			storage_provider VARCHAR(32) NOT NULL DEFAULT 'r2',
+			storage_bucket VARCHAR(255) NOT NULL,
+			storage_key VARCHAR(512) NOT NULL,
+			content_type VARCHAR(120) NOT NULL,
+			size_bytes BIGINT NOT NULL DEFAULT 0,
+			uploaded_by_user_id BIGINT DEFAULT NULL,
+			deleted_at TIMESTAMP NULL DEFAULT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			UNIQUE KEY uq_document_attachments_storage_key (storage_provider, storage_bucket, storage_key),
+			KEY idx_document_attachments_document (document_type, document_id),
+			KEY idx_document_attachments_uploaded_by (uploaded_by_user_id),
+			CONSTRAINT fk_document_attachments_user
+				FOREIGN KEY (uploaded_by_user_id) REFERENCES users (id)
+				ON DELETE SET NULL
+		)`,
+		`ALTER TABLE document_attachments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL DEFAULT NULL AFTER uploaded_by_user_id`,
+		`CREATE INDEX IF NOT EXISTS idx_document_attachments_document ON document_attachments (document_type, document_id)`,
 		`CREATE TABLE IF NOT EXISTS pallets (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			parent_pallet_id BIGINT DEFAULT NULL,

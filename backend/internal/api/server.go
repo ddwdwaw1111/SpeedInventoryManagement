@@ -19,6 +19,8 @@ type Server struct {
 	store               *service.Store
 	sessionCookieName   string
 	sessionCookieSecure bool
+	attachmentStorage   AttachmentStorage
+	maxAttachmentBytes  int64
 }
 
 type documentTrackingStatusInput struct {
@@ -26,10 +28,26 @@ type documentTrackingStatusInput struct {
 }
 
 func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName string, sessionCookieSecure bool) http.Handler {
+	return NewHandlerWithAttachmentStorage(store, frontendOrigin, sessionCookieName, sessionCookieSecure, nil, 25*1024*1024)
+}
+
+func NewHandlerWithAttachmentStorage(
+	store *service.Store,
+	frontendOrigin string,
+	sessionCookieName string,
+	sessionCookieSecure bool,
+	attachmentStorage AttachmentStorage,
+	maxAttachmentBytes int64,
+) http.Handler {
+	if maxAttachmentBytes <= 0 {
+		maxAttachmentBytes = 25 * 1024 * 1024
+	}
 	server := &Server{
 		store:               store,
 		sessionCookieName:   sessionCookieName,
 		sessionCookieSecure: sessionCookieSecure,
+		attachmentStorage:   attachmentStorage,
+		maxAttachmentBytes:  maxAttachmentBytes,
 	}
 
 	router := gin.New()
@@ -56,6 +74,8 @@ func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName s
 	protected.GET("/reports/sku-flow", server.handleSKUFlowReport)
 	protected.GET("/outbound-documents", server.handleListOutboundDocuments)
 	protected.GET("/inbound-documents", server.handleListInboundDocuments)
+	protected.GET("/outbound-documents/:id/attachments/:attachmentId/download-url", server.handleGetOutboundDocumentAttachmentDownloadURL)
+	protected.GET("/inbound-documents/:id/attachments/:attachmentId/download-url", server.handleGetInboundDocumentAttachmentDownloadURL)
 	protected.GET("/adjustments", server.handleListInventoryAdjustments)
 	protected.GET("/transfers", server.handleListInventoryTransfers)
 	protected.GET("/cycle-counts", server.handleListCycleCounts)
@@ -72,6 +92,8 @@ func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName s
 	operator.POST("/outbound-documents/:id/cancel", server.handleCancelOutboundDocument)
 	operator.POST("/outbound-documents/:id/archive", server.handleArchiveOutboundDocument)
 	operator.POST("/outbound-documents/:id/copy", server.handleCopyOutboundDocument)
+	operator.POST("/outbound-documents/:id/attachments", server.handleUploadOutboundDocumentAttachment)
+	operator.DELETE("/outbound-documents/:id/attachments/:attachmentId", server.handleDeleteOutboundDocumentAttachment)
 	operator.POST("/inbound-documents", server.handleCreateInboundDocument)
 	operator.POST("/inbound-documents/import-preview", server.handleImportInboundDocumentPreview)
 	operator.PUT("/inbound-documents/:id", server.handleUpdateInboundDocument)
@@ -82,6 +104,8 @@ func NewHandler(store *service.Store, frontendOrigin string, sessionCookieName s
 	operator.POST("/inbound-documents/:id/cancel", server.handleCancelInboundDocument)
 	operator.POST("/inbound-documents/:id/archive", server.handleArchiveInboundDocument)
 	operator.POST("/inbound-documents/:id/copy", server.handleCopyInboundDocument)
+	operator.POST("/inbound-documents/:id/attachments", server.handleUploadInboundDocumentAttachment)
+	operator.DELETE("/inbound-documents/:id/attachments/:attachmentId", server.handleDeleteInboundDocumentAttachment)
 	operator.POST("/adjustments", server.handleCreateInventoryAdjustment)
 	operator.POST("/transfers", server.handleCreateInventoryTransfer)
 	operator.POST("/cycle-counts", server.handleCreateCycleCount)
@@ -768,11 +792,18 @@ func (s *Server) handleCancelOutboundDocument(c *gin.Context) {
 		return
 	}
 
+	attachments, err := s.store.ListDocumentAttachments(c.Request.Context(), service.DocumentAttachmentOutbound, documentID)
+	if err != nil {
+		writeServerError(c, err)
+		return
+	}
+
 	document, err := s.store.CancelOutboundDocument(c.Request.Context(), documentID)
 	if err != nil {
 		writeDomainError(c, err)
 		return
 	}
+	s.deleteDocumentAttachmentObjectsAfterCancel(service.DocumentAttachmentOutbound, documentID, attachments)
 
 	s.writeAuditLog(c, "DELETE", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Deleted outbound document and all related records", map[string]any{
 		"packingListNo": document.PackingListNo,
@@ -1039,11 +1070,18 @@ func (s *Server) handleCancelInboundDocument(c *gin.Context) {
 		return
 	}
 
+	attachments, err := s.store.ListDocumentAttachments(c.Request.Context(), service.DocumentAttachmentInbound, documentID)
+	if err != nil {
+		writeServerError(c, err)
+		return
+	}
+
 	document, err := s.store.CancelInboundDocument(c.Request.Context(), documentID)
 	if err != nil {
 		writeDomainError(c, err)
 		return
 	}
+	s.deleteDocumentAttachmentObjectsAfterCancel(service.DocumentAttachmentInbound, documentID, attachments)
 
 	s.writeAuditLog(c, "DELETE", "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), "Deleted inbound document and all related records", map[string]any{
 		"containerNo": document.ContainerNo,
