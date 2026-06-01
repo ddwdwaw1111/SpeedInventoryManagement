@@ -8,8 +8,11 @@
   },
   "scripts": {
     "dev": "vite",
+    "dev:portal": "vite --config vite.portal.config.ts",
     "build": "tsc && vite build",
+    "build:portal": "tsc && vite build --config vite.portal.config.ts",
     "preview": "vite preview",
+    "preview:portal": "vite preview --config vite.portal.config.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:pdf": "tsc -p tsconfig.test.json && node ./tests/pdf-builders.test.mjs",

@@ -4777,6 +4777,34 @@ func TestUserManagementIntegration(t *testing.T) {
 	}); err == nil || !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("expected self-deactivation to fail with ErrInvalidInput, got %v", err)
 	}
+
+	portalCustomer := mustCreateCustomer(t, ctx, store, "PortalUserCustomer-"+suffix)
+	portalUser, err := store.CreateManagedUser(ctx, CreateManagedUserInput{
+		Email:      "portal-" + suffix + "@example.com",
+		FullName:   "Portal " + suffix,
+		Password:   "password123",
+		Role:       RoleCustomer,
+		IsActive:   true,
+		CustomerID: portalCustomer.ID,
+	})
+	if err != nil {
+		t.Fatalf("create portal user: %v", err)
+	}
+
+	if err := store.DeleteCustomer(ctx, portalCustomer.ID); err == nil || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected deleting customer with portal users to fail with ErrInvalidInput, got %v", err)
+	}
+
+	if _, err := store.UpdateUserAccess(ctx, authPayload.User.ID, portalUser.ID, UpdateUserAccessInput{
+		Role:     RoleViewer,
+		IsActive: true,
+	}); err != nil {
+		t.Fatalf("unbind portal user from customer: %v", err)
+	}
+
+	if err := store.DeleteCustomer(ctx, portalCustomer.ID); err != nil {
+		t.Fatalf("delete customer after unbinding portal user: %v", err)
+	}
 }
 
 func TestAuthSessionLifecycleIntegration(t *testing.T) {

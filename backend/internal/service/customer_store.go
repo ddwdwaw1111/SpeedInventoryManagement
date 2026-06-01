@@ -29,6 +29,10 @@ func (s *Store) ListCustomers(ctx context.Context) ([]Customer, error) {
 	return customers, nil
 }
 
+func (s *Store) GetCustomer(ctx context.Context, customerID int64) (Customer, error) {
+	return s.getCustomer(ctx, customerID)
+}
+
 func (s *Store) CreateCustomer(ctx context.Context, input CreateCustomerInput) (Customer, error) {
 	input = sanitizeCustomerInput(input)
 	if err := validateCustomerInput(input); err != nil {
@@ -97,6 +101,14 @@ func (s *Store) UpdateCustomer(ctx context.Context, customerID int64, input Crea
 }
 
 func (s *Store) DeleteCustomer(ctx context.Context, customerID int64) error {
+	hasAssignedUsers, err := s.customerHasAssignedUsers(ctx, customerID)
+	if err != nil {
+		return err
+	}
+	if hasAssignedUsers {
+		return fmt.Errorf("%w: customer has assigned portal users", ErrInvalidInput)
+	}
+
 	result, err := s.db.ExecContext(ctx, `DELETE FROM customers WHERE id = ?`, customerID)
 	if err != nil {
 		return mapDBError(fmt.Errorf("delete customer: %w", err))
@@ -111,6 +123,19 @@ func (s *Store) DeleteCustomer(ctx context.Context, customerID int64) error {
 	}
 
 	return nil
+}
+
+func (s *Store) customerHasAssignedUsers(ctx context.Context, customerID int64) (bool, error) {
+	var userCount int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM users
+		WHERE customer_id = ?
+	`, customerID).Scan(&userCount); err != nil {
+		return false, fmt.Errorf("count customer portal users: %w", err)
+	}
+
+	return userCount > 0, nil
 }
 
 func (s *Store) getCustomer(ctx context.Context, customerID int64) (Customer, error) {

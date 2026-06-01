@@ -614,12 +614,12 @@ function normalizeInboundTrackingStatus(trackingStatus: string, documentStatus: 
 }
 
 function normalizeOutboundTrackingStatus(trackingStatus: string, documentStatus: string) {
+  const normalizedTrackingStatus = (trackingStatus || "").trim().toUpperCase();
+  if (normalizedTrackingStatus === "PICKING" || normalizedTrackingStatus === "PACKED" || normalizedTrackingStatus === "SHIPPED" || normalizedTrackingStatus === "BO_RECEIVED") {
+    return normalizedTrackingStatus;
+  }
   if (normalizeDocumentStatus(documentStatus) === "CONFIRMED") {
     return "SHIPPED";
-  }
-  const normalizedTrackingStatus = (trackingStatus || "").trim().toUpperCase();
-  if (normalizedTrackingStatus === "PICKING" || normalizedTrackingStatus === "PACKED" || normalizedTrackingStatus === "SHIPPED") {
-    return normalizedTrackingStatus;
   }
   return "SCHEDULED";
 }
@@ -639,6 +639,8 @@ function formatInboundTrackingStatusLabel(trackingStatus: string, documentStatus
 
 function formatOutboundTrackingStatusLabel(trackingStatus: string, documentStatus: string, t: (key: string) => string) {
   switch (normalizeOutboundTrackingStatus(trackingStatus, documentStatus)) {
+    case "BO_RECEIVED":
+      return t("boReceivedTracking");
     case "PICKING":
       return t("picking");
     case "PACKED":
@@ -664,6 +666,8 @@ function toneFromInboundTracking(trackingStatus: string, documentStatus: string)
 
 function toneFromOutboundTracking(trackingStatus: string, documentStatus: string) {
   switch (normalizeOutboundTrackingStatus(trackingStatus, documentStatus)) {
+    case "BO_RECEIVED":
+      return "emerald" as const;
     case "PICKING":
     case "PACKED":
       return "amber" as const;
@@ -734,6 +738,8 @@ function getOutboundTrackingAction(document: Pick<OutboundDocument, "trackingSta
       return { trackingStatus: "PACKED", label: t("markPacked") };
     case "PACKED":
       return { trackingStatus: "SHIPPED", label: t("shipOut") };
+    case "SHIPPED":
+      return { trackingStatus: "BO_RECEIVED", label: t("markBoReceived") };
     default:
       return null;
   }
@@ -760,13 +766,15 @@ function getInboundWorkflowState(document: Pick<InboundDocument, "trackingStatus
 
 function getOutboundWorkflowState(document: Pick<OutboundDocument, "trackingStatus" | "status">, t: (key: string) => string) {
   const normalizedTracking = normalizeOutboundTrackingStatus(document.trackingStatus, document.status);
-  const workflowSteps = [t("scheduled"), t("picking"), t("packed"), t("shipped")];
+  const workflowSteps = [t("scheduled"), t("picking"), t("packed"), t("shipped"), t("boReceivedTracking")];
   const workflowStepIndex = normalizedTracking === "PICKING"
     ? 1
     : normalizedTracking === "PACKED"
       ? 2
       : normalizedTracking === "SHIPPED"
         ? 3
+        : normalizedTracking === "BO_RECEIVED"
+          ? 4
         : 0;
 
   return {

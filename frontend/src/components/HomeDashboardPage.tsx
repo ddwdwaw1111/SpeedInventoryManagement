@@ -1074,12 +1074,12 @@ function normalizeInboundTrackingStatus(trackingStatus: string, documentStatus: 
 }
 
 function normalizeOutboundTrackingStatus(trackingStatus: string, documentStatus: string) {
+  const normalizedTrackingStatus = (trackingStatus || "").trim().toUpperCase();
+  if (normalizedTrackingStatus === "PICKING" || normalizedTrackingStatus === "PACKED" || normalizedTrackingStatus === "SHIPPED" || normalizedTrackingStatus === "BO_RECEIVED") {
+    return normalizedTrackingStatus;
+  }
   if (normalizeDocumentStatus(documentStatus) === "CONFIRMED") {
     return "SHIPPED";
-  }
-  const normalizedTrackingStatus = (trackingStatus || "").trim().toUpperCase();
-  if (normalizedTrackingStatus === "PICKING" || normalizedTrackingStatus === "PACKED" || normalizedTrackingStatus === "SHIPPED") {
-    return normalizedTrackingStatus;
   }
   return "SCHEDULED";
 }
@@ -1099,6 +1099,8 @@ function inboundTrackingProgress(trackingStatus: string, documentStatus: string)
 
 function outboundTrackingProgress(trackingStatus: string, documentStatus: string) {
   switch (normalizeOutboundTrackingStatus(trackingStatus, documentStatus)) {
+    case "BO_RECEIVED":
+      return 100;
     case "PICKING":
       return 55;
     case "PACKED":
@@ -1125,6 +1127,8 @@ function formatInboundTrackingStatusLabel(trackingStatus: string, documentStatus
 
 function formatOutboundTrackingStatusLabel(trackingStatus: string, documentStatus: string, t: (key: string) => string) {
   switch (normalizeOutboundTrackingStatus(trackingStatus, documentStatus)) {
+    case "BO_RECEIVED":
+      return t("boReceivedTracking");
     case "PICKING":
       return t("picking");
     case "PACKED":

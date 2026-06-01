@@ -40,6 +40,7 @@ services:
       R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
       R2_BUCKET: ${R2_BUCKET:-}
       R2_ENDPOINT: ${R2_ENDPOINT:-}
+      R2_S3_API_URL: ${R2_S3_API_URL:-}
       ATTACHMENT_MAX_UPLOAD_BYTES: ${ATTACHMENT_MAX_UPLOAD_BYTES:-26214400}
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/api/health || exit 1"]

@@ -85,6 +85,7 @@ func TestNormalizeUserRole(t *testing.T) {
 			" ADMIN ":   RoleAdmin,
 			"operator":  RoleOperator,
 			"Viewer  ":  RoleViewer,
+			"Customer ": RoleCustomer,
 		}
 
 		for input, want := range testCases {
@@ -110,30 +111,66 @@ func TestNormalizeUserRole(t *testing.T) {
 }
 
 func TestSanitizeManagedUserInput(t *testing.T) {
-	input, err := sanitizeManagedUserInput(CreateManagedUserInput{
-		Email:    "  USER@Example.com ",
-		FullName: "  Jane Doe  ",
-		Password: "  password123  ",
-		Role:     " Viewer ",
-		IsActive: true,
-	})
-	if err != nil {
-		t.Fatalf("sanitizeManagedUserInput returned error: %v", err)
-	}
+	t.Run("sanitizes staff users without customer access", func(t *testing.T) {
+		input, err := sanitizeManagedUserInput(CreateManagedUserInput{
+			Email:      "  USER@Example.com ",
+			FullName:   "  Jane Doe  ",
+			Password:   "  password123  ",
+			Role:       " Viewer ",
+			IsActive:   true,
+			CustomerID: 42,
+		})
+		if err != nil {
+			t.Fatalf("sanitizeManagedUserInput returned error: %v", err)
+		}
 
-	if input.Email != "user@example.com" {
-		t.Fatalf("expected normalized email, got %q", input.Email)
-	}
-	if input.FullName != "Jane Doe" {
-		t.Fatalf("expected trimmed full name, got %q", input.FullName)
-	}
-	if input.Password != "password123" {
-		t.Fatalf("expected trimmed password, got %q", input.Password)
-	}
-	if input.Role != RoleViewer {
-		t.Fatalf("expected normalized role %q, got %q", RoleViewer, input.Role)
-	}
-	if !input.IsActive {
-		t.Fatal("expected active flag to be preserved")
-	}
+		if input.Email != "user@example.com" {
+			t.Fatalf("expected normalized email, got %q", input.Email)
+		}
+		if input.FullName != "Jane Doe" {
+			t.Fatalf("expected trimmed full name, got %q", input.FullName)
+		}
+		if input.Password != "password123" {
+			t.Fatalf("expected trimmed password, got %q", input.Password)
+		}
+		if input.Role != RoleViewer {
+			t.Fatalf("expected normalized role %q, got %q", RoleViewer, input.Role)
+		}
+		if input.CustomerID != 0 {
+			t.Fatalf("expected non-customer role to clear customer id, got %d", input.CustomerID)
+		}
+		if !input.IsActive {
+			t.Fatal("expected active flag to be preserved")
+		}
+	})
+
+	t.Run("requires customer assignment for customer users", func(t *testing.T) {
+		_, err := sanitizeManagedUserInput(CreateManagedUserInput{
+			Email:    "customer@example.com",
+			FullName: "Customer User",
+			Password: "password123",
+			Role:     RoleCustomer,
+			IsActive: true,
+		})
+		if err == nil || !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("expected ErrInvalidInput for missing customer assignment, got %v", err)
+		}
+	})
+
+	t.Run("keeps customer assignment for customer users", func(t *testing.T) {
+		input, err := sanitizeManagedUserInput(CreateManagedUserInput{
+			Email:      "customer@example.com",
+			FullName:   "Customer User",
+			Password:   "password123",
+			Role:       RoleCustomer,
+			IsActive:   true,
+			CustomerID: 7,
+		})
+		if err != nil {
+			t.Fatalf("sanitizeManagedUserInput returned error: %v", err)
+		}
+		if input.Role != RoleCustomer || input.CustomerID != 7 {
+			t.Fatalf("expected customer role/customer id to be preserved, got %#v", input)
+		}
+	})
 }

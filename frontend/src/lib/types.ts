@@ -1,4 +1,4 @@
-export type UserRole = "admin" | "operator" | "viewer";
+export type UserRole = "admin" | "operator" | "viewer" | "customer";
 export type ContainerType = "NORMAL" | "WEST_COAST_TRANSFER";
 
 export type DashboardData = {
@@ -143,6 +143,8 @@ export type User = {
   fullName: string;
   role: UserRole;
   isActive: boolean;
+  customerId: number;
+  customerName: string;
   createdAt: string;
 };
 
@@ -152,11 +154,13 @@ export type CreateUserPayload = {
   password: string;
   role: UserRole;
   isActive: boolean;
+  customerId?: number;
 };
 
 export type UpdateUserAccessPayload = {
   role: UserRole;
   isActive: boolean;
+  customerId?: number;
 };
 
 export type AuthResponse = {

@@ -23,6 +23,8 @@ import {
 import { Suspense, lazy, type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { AppHeaderUser, AuthPage } from "./components/AuthPage";
+import { CustomerPortalApp } from "./customerPortal/CustomerPortalApp";
+import { getCustomerPortalPath, isCustomerPortalPath } from "./customerPortal/routes";
 import { ApiError, api } from "./lib/api";
 import { setPendingActivityManagementLaunchContext } from "./lib/activityManagementLaunchContext";
 import { setPendingInboundReceiptEditorLaunchContext, type InboundReceiptEditorLaunchContext } from "./lib/inboundReceiptEditorLaunchContext";
@@ -163,6 +165,37 @@ const WarehouseMapPage = lazy(async () => {
 });
 
 export default function App() {
+  const [routingPathname, setRoutingPathname] = useState(() => window.location.pathname);
+
+  useEffect(() => {
+    const handlePopState = () => setRoutingPathname(window.location.pathname);
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  function openCustomerPortal(customerId?: number) {
+    const path = getCustomerPortalPath(customerId);
+    if (window.location.pathname !== path) {
+      window.history.pushState({ page: "customer-portal", customerId: customerId ?? null }, "", path);
+    }
+    setRoutingPathname(window.location.pathname);
+  }
+
+  function openAdminWorkspace(path = "/admin") {
+    if (window.location.pathname !== path) {
+      window.history.pushState({ page: "dashboard" }, "", path);
+    }
+    setRoutingPathname(window.location.pathname);
+  }
+
+  if (isCustomerPortalPath(routingPathname)) {
+    return <CustomerPortalApp onExitToAdmin={() => openAdminWorkspace("/admin")} />;
+  }
+
+  return <StaffWorkspaceApp onOpenCustomerPortal={openCustomerPortal} />;
+}
+
+function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (customerId?: number) => void }) {
   const { t } = useI18n();
   const { refreshBillingInvoiceHeaderDefaults } = useSettings();
   const navLabels = {
@@ -233,6 +266,16 @@ export default function App() {
   function handleNavigateToPage(page: PageKey) {
     navigateToPage(page, setActivePage);
     setCurrentPathname(window.location.pathname);
+  }
+
+  function handleNavigateToCustomerPortal(customerId?: number) {
+    onOpenCustomerPortal(customerId);
+  }
+
+  function routeAuthenticatedUser(user: User) {
+    if (user.role === "customer") {
+      onOpenCustomerPortal();
+    }
   }
 
   function handleNavigateToDailyOperations(date?: string) {
@@ -324,6 +367,7 @@ export default function App() {
     try {
       const session = await api.getCurrentSession();
       setCurrentUser(session.user);
+      routeAuthenticatedUser(session.user);
       await loadAppData(false, session.user.role);
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
@@ -340,6 +384,22 @@ export default function App() {
   async function loadAppData(showSpinner: boolean, currentRole = currentUser?.role) {
     if (showSpinner) setIsLoading(true);
     setErrorMessage("");
+    if (currentRole === "customer") {
+      setCustomers([]);
+      setUsers([]);
+      setAuditLogs([]);
+      setLocations([]);
+      setSkuMasters([]);
+      setItems([]);
+      setMovements([]);
+      setInboundDocuments([]);
+      setOutboundDocuments([]);
+      setAdjustments([]);
+      setTransfers([]);
+      setCycleCounts([]);
+      if (showSpinner) setIsLoading(false);
+      return;
+    }
     try {
       const results = await Promise.allSettled([
         api.getLocations(),
@@ -408,6 +468,7 @@ export default function App() {
     try {
       const session = await api.login(payload);
       setCurrentUser(session.user);
+      routeAuthenticatedUser(session.user);
       await loadAppData(true, session.user.role);
     } catch (error) {
       setAuthErrorMessage(getErrorMessage(error, "Could not sign in."));
@@ -423,6 +484,7 @@ export default function App() {
     try {
       const session = await api.signUp(payload);
       setCurrentUser(session.user);
+      routeAuthenticatedUser(session.user);
       await loadAppData(true, session.user.role);
     } catch (error) {
       setAuthErrorMessage(getErrorMessage(error, "Could not create your account."));
@@ -456,11 +518,19 @@ export default function App() {
     }
   }
 
+  const isCustomerPortalUser = currentUser?.role === "customer";
   const canViewAuditLogs = currentUser?.role === "admin";
-  const canViewPallets = Boolean(currentUser);
+  const canViewPallets = Boolean(currentUser) && !isCustomerPortalUser;
   const canManageUsers = currentUser?.role === "admin";
 
   useEffect(() => {
+    if (!currentUser) {
+      return;
+    }
+    if (isCustomerPortalUser) {
+      handleNavigateToCustomerPortal();
+      return;
+    }
     if (
       (activePage === "audit-logs" && !canViewAuditLogs) ||
       (activePage === "pallet-trace" && !canViewPallets) ||
@@ -468,7 +538,7 @@ export default function App() {
     ) {
       handleNavigateToPage("dashboard");
     }
-  }, [activePage, canManageUsers, canViewAuditLogs, canViewPallets]);
+  }, [activePage, canManageUsers, canViewAuditLogs, canViewPallets, currentUser, isCustomerPortalUser]);
 
   const pageItems: Array<{ key: PageKey; label: string; description: string; icon: ReactNode }> = [
     { key: "dashboard", label: t("navDashboard"), description: t("dashboardDesc"), icon: <HomeOutlined fontSize="small" /> },
@@ -500,16 +570,17 @@ export default function App() {
     { key: "settings", label: t("settings"), description: t("settingsDesc"), icon: <SettingsOutlined fontSize="small" /> }
   ];
   const pageItemMap = new Map(pageItems.map((item) => [item.key, item] as const));
-  const primaryNavItems = (["dashboard", "inbound-management", "outbound-management"] as PageKey[])
+  const primaryNavKeys: PageKey[] = ["dashboard", "inbound-management", "outbound-management"];
+  const primaryNavItems = primaryNavKeys
     .map((pageKey) => pageItemMap.get(pageKey))
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
-  const navSections = [
+  const navSections = ([
     { key: "inventory", label: navLabels.inventory, items: ["inventory-summary"] as PageKey[] },
     { key: "finance", label: navLabels.finance, items: ["billing"] as PageKey[] },
     { key: "master-data", label: navLabels.masterData, items: ["customers", "sku-master", "storage-management"] as PageKey[] },
     { key: "reports", label: navLabels.reports, items: ["reports", "export-center"] as PageKey[] },
     { key: "administration", label: navLabels.administration, items: ["audit-logs", "user-management", "settings"] as PageKey[] }
-  ].map((section) => ({
+  ]).map((section) => ({
     ...section,
     items: section.items
       .map((pageKey) => pageItemMap.get(pageKey))
@@ -782,10 +853,10 @@ export default function App() {
             {activePage === "container-contents" ? renderWithSuspense(<ContainerContentsPage items={items} movements={movements} customers={customers} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onOpenContainerDetail={handleNavigateToContainerDetail} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "container-detail" ? renderWithSuspense(<ContainerDetailPage routeKey={currentPathname} containerNo={selectedContainerDetailNo} items={items} movements={movements} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} onBackToList={() => handleNavigateToPage("container-contents")} />) : null}
             {activePage === "all-activity" ? renderWithSuspense(<AllActivityPage movements={movements} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={handleNavigateToPage} />) : null}
-            {activePage === "customers" ? renderWithSuspense(<CustomerManagementPage customers={customers} items={items} inboundDocuments={activeInboundDocuments} outboundDocuments={activeOutboundDocuments} movements={movements} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
+            {activePage === "customers" ? renderWithSuspense(<CustomerManagementPage customers={customers} items={items} inboundDocuments={activeInboundDocuments} outboundDocuments={activeOutboundDocuments} movements={movements} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} onOpenCustomerPortal={handleNavigateToCustomerPortal} />) : null}
             {activePage === "audit-logs" && canViewAuditLogs ? renderWithSuspense(<AuditLogPage auditLogs={auditLogs} currentUserRole={currentUser.role} isLoading={isLoading} />) : null}
             {activePage === "pallet-trace" && canViewPallets ? renderWithSuspense(<PalletTracePage onNavigate={handleNavigateToPage} currentUserRole={currentUser.role} />) : null}
-            {activePage === "user-management" && canManageUsers ? renderWithSuspense(<UserManagementPage users={users} currentUser={currentUser} isLoading={isLoading} onRefresh={() => loadAppData(false)} />) : null}
+            {activePage === "user-management" && canManageUsers ? renderWithSuspense(<UserManagementPage users={users} customers={customers} currentUser={currentUser} isLoading={isLoading} onRefresh={() => loadAppData(false)} />) : null}
             {activePage === "sku-master" ? renderWithSuspense(<SKUMasterPage skuMasters={skuMasters} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} />) : null}
             {activePage === "storage-management" ? (
               renderWithSuspense(<StorageManagementPage

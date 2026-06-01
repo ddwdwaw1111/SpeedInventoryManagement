@@ -97,6 +97,7 @@ type DocumentListQuery = {
   customerId?: number | "all";
   locationId?: number | "all";
   status?: string;
+  trackingStatus?: string;
 };
 
 type OperationsReportQuery = {
@@ -184,11 +185,21 @@ function buildDocumentListQueryParams(limit: number, archiveScopeOrQuery: Docume
   if (query.status?.trim() && query.status.trim() !== "all") {
     params.set("status", query.status.trim());
   }
+  if (query.trackingStatus?.trim() && query.trackingStatus.trim() !== "all") {
+    params.set("trackingStatus", query.trackingStatus.trim());
+  }
   if (query.search?.trim()) {
     params.set("search", query.search.trim());
   }
 
   return params;
+}
+
+function customerPortalBasePath(customerId?: number) {
+  if (customerId && customerId > 0) {
+    return `/admin/customer-portal/customers/${customerId}`;
+  }
+  return "/customer-portal";
 }
 
 export const api = {
@@ -214,6 +225,10 @@ export const api = {
     return request<void>("/auth/logout", {
       method: "POST"
     });
+  },
+
+  getCustomerPortalProfile(customerId?: number) {
+    return request<Customer>(`${customerPortalBasePath(customerId)}/profile`);
   },
 
   getDashboard() {
@@ -396,6 +411,36 @@ export const api = {
     return request<Item[]>(`/items${suffix}`);
   },
 
+  getCustomerPortalInventory(search = "", customerId?: number) {
+    const params = new URLSearchParams();
+    if (search.trim()) {
+      params.set("search", search.trim());
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    return request<Item[]>(`${customerPortalBasePath(customerId)}/inventory${suffix}`);
+  },
+
+  getCustomerPortalPackingLists(limit = 100, query?: { search?: string; status?: string; trackingStatus?: string }, customerId?: number) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (query?.search?.trim()) {
+      params.set("search", query.search.trim());
+    }
+    if (query?.status?.trim() && query.status.trim() !== "all") {
+      params.set("status", query.status.trim());
+    }
+    if (query?.trackingStatus?.trim() && query.trackingStatus.trim() !== "all") {
+      params.set("trackingStatus", query.trackingStatus.trim());
+    }
+    return request<OutboundDocument[]>(`${customerPortalBasePath(customerId)}/packing-lists?${params.toString()}`);
+  },
+
+  createCustomerPortalPackingList(payload: OutboundDocumentPayload, customerId?: number) {
+    return request<OutboundDocument>(`${customerPortalBasePath(customerId)}/packing-lists`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
   getMovements(limit = 12, query?: MovementQuery) {
     const params = new URLSearchParams({ limit: String(limit) });
     if (query?.search?.trim()) {
@@ -532,6 +577,27 @@ export const api = {
 
   deleteOutboundDocumentAttachment(documentId: number, attachmentId: number) {
     return request<void>(`/outbound-documents/${documentId}/attachments/${attachmentId}`, {
+      method: "DELETE"
+    });
+  },
+
+  uploadCustomerPortalPackingListAttachment(documentId: number, file: File, displayName: string, customerId?: number) {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("displayName", displayName);
+
+    return request<DocumentAttachment>(`${customerPortalBasePath(customerId)}/packing-lists/${documentId}/attachments`, {
+      method: "POST",
+      body: formData
+    });
+  },
+
+  getCustomerPortalPackingListAttachmentDownloadUrl(documentId: number, attachmentId: number, customerId?: number) {
+    return request<DocumentAttachmentDownloadUrl>(`${customerPortalBasePath(customerId)}/packing-lists/${documentId}/attachments/${attachmentId}/download-url`);
+  },
+
+  deleteCustomerPortalPackingListAttachment(documentId: number, attachmentId: number, customerId?: number) {
+    return request<void>(`${customerPortalBasePath(customerId)}/packing-lists/${documentId}/attachments/${attachmentId}`, {
       method: "DELETE"
     });
   },

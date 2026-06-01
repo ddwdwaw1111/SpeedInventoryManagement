@@ -7,6 +7,7 @@ Thumbs.db
 
 frontend/node_modules/
 frontend/dist/
+frontend/dist-portal/
 
 # Playwright artifacts
 .playwright-mcp/
@@ -20,3 +21,8 @@ backend/.env
 backend/bin/
 
 coverage/
+
+# Local/generated export artifacts
+exports/
+pickup-container-rows.json
+warehouse-pallet-counts.json

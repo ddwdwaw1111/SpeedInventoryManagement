@@ -21,15 +21,18 @@ const (
 	RoleAdmin    = "admin"
 	RoleOperator = "operator"
 	RoleViewer   = "viewer"
+	RoleCustomer = "customer"
 )
 
 type User struct {
-	ID        int64     `db:"id" json:"id"`
-	Email     string    `db:"email" json:"email"`
-	FullName  string    `db:"full_name" json:"fullName"`
-	Role      string    `db:"role" json:"role"`
-	IsActive  bool      `db:"is_active" json:"isActive"`
-	CreatedAt time.Time `db:"created_at" json:"createdAt"`
+	ID           int64     `db:"id" json:"id"`
+	Email        string    `db:"email" json:"email"`
+	FullName     string    `db:"full_name" json:"fullName"`
+	Role         string    `db:"role" json:"role"`
+	IsActive     bool      `db:"is_active" json:"isActive"`
+	CustomerID   int64     `db:"customer_id" json:"customerId"`
+	CustomerName string    `db:"customer_name" json:"customerName"`
+	CreatedAt    time.Time `db:"created_at" json:"createdAt"`
 }
 
 type userCredentialRow struct {
@@ -38,6 +41,8 @@ type userCredentialRow struct {
 	FullName     string    `db:"full_name"`
 	Role         string    `db:"role"`
 	IsActive     bool      `db:"is_active"`
+	CustomerID   int64     `db:"customer_id"`
+	CustomerName string    `db:"customer_name"`
 	PasswordSalt string    `db:"password_salt"`
 	PasswordHash string    `db:"password_hash"`
 	CreatedAt    time.Time `db:"created_at"`
@@ -45,23 +50,27 @@ type userCredentialRow struct {
 
 func (row userCredentialRow) toUser() User {
 	return User{
-		ID:        row.ID,
-		Email:     row.Email,
-		FullName:  row.FullName,
-		Role:      row.Role,
-		IsActive:  row.IsActive,
-		CreatedAt: row.CreatedAt,
+		ID:           row.ID,
+		Email:        row.Email,
+		FullName:     row.FullName,
+		Role:         row.Role,
+		IsActive:     row.IsActive,
+		CustomerID:   row.CustomerID,
+		CustomerName: row.CustomerName,
+		CreatedAt:    row.CreatedAt,
 	}
 }
 
 type sessionUserRow struct {
-	ID        int64     `db:"id"`
-	Email     string    `db:"email"`
-	FullName  string    `db:"full_name"`
-	Role      string    `db:"role"`
-	IsActive  bool      `db:"is_active"`
-	CreatedAt time.Time `db:"created_at"`
-	ExpiresAt time.Time `db:"expires_at"`
+	ID           int64     `db:"id"`
+	Email        string    `db:"email"`
+	FullName     string    `db:"full_name"`
+	Role         string    `db:"role"`
+	IsActive     bool      `db:"is_active"`
+	CustomerID   int64     `db:"customer_id"`
+	CustomerName string    `db:"customer_name"`
+	CreatedAt    time.Time `db:"created_at"`
+	ExpiresAt    time.Time `db:"expires_at"`
 }
 
 type AuthPayload struct {
@@ -95,7 +104,7 @@ func (s *Store) RegisterUser(ctx context.Context, input RegisterUserInput) (Auth
 		return AuthPayload{}, "", err
 	}
 
-	user, err := s.createUserRecord(ctx, input.Email, input.FullName, passwordHash, "", role, true)
+	user, err := s.createUserRecord(ctx, input.Email, input.FullName, passwordHash, "", role, true, 0)
 	if err != nil {
 		return AuthPayload{}, "", err
 	}
@@ -112,9 +121,20 @@ func (s *Store) Login(ctx context.Context, input LoginInput) (AuthPayload, strin
 
 	var row userCredentialRow
 	err := s.db.GetContext(ctx, &row, `
-		SELECT id, email, full_name, role, is_active, password_salt, password_hash, created_at
-		FROM users
-		WHERE email = ?
+		SELECT
+			u.id,
+			u.email,
+			u.full_name,
+			u.role,
+			u.is_active,
+			COALESCE(u.customer_id, 0) AS customer_id,
+			COALESCE(c.name, '') AS customer_name,
+			u.password_salt,
+			u.password_hash,
+			u.created_at
+		FROM users u
+		LEFT JOIN customers c ON c.id = u.customer_id
+		WHERE u.email = ?
 	`, email)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -146,9 +166,19 @@ func (s *Store) GetUserBySessionToken(ctx context.Context, token string) (AuthPa
 
 	var row sessionUserRow
 	err := s.db.GetContext(ctx, &row, `
-		SELECT u.id, u.email, u.full_name, u.role, u.is_active, u.created_at, us.expires_at
+		SELECT
+			u.id,
+			u.email,
+			u.full_name,
+			u.role,
+			u.is_active,
+			COALESCE(u.customer_id, 0) AS customer_id,
+			COALESCE(c.name, '') AS customer_name,
+			u.created_at,
+			us.expires_at
 		FROM user_sessions us
 		JOIN users u ON u.id = us.user_id
+		LEFT JOIN customers c ON c.id = u.customer_id
 		WHERE us.token_hash = ? AND us.expires_at > CURRENT_TIMESTAMP AND u.is_active = TRUE
 	`, tokenHash)
 	if err != nil {
@@ -160,12 +190,14 @@ func (s *Store) GetUserBySessionToken(ctx context.Context, token string) (AuthPa
 
 	return AuthPayload{
 		User: User{
-			ID:        row.ID,
-			Email:     row.Email,
-			FullName:  row.FullName,
-			Role:      row.Role,
-			IsActive:  row.IsActive,
-			CreatedAt: row.CreatedAt,
+			ID:           row.ID,
+			Email:        row.Email,
+			FullName:     row.FullName,
+			Role:         row.Role,
+			IsActive:     row.IsActive,
+			CustomerID:   row.CustomerID,
+			CustomerName: row.CustomerName,
+			CreatedAt:    row.CreatedAt,
 		},
 		ExpiresAt: row.ExpiresAt,
 	}, nil
@@ -207,9 +239,18 @@ func (s *Store) createSession(ctx context.Context, user User) (AuthPayload, stri
 func (s *Store) getUser(ctx context.Context, userID int64) (User, error) {
 	var user User
 	err := s.db.GetContext(ctx, &user, `
-		SELECT id, email, full_name, role, is_active, created_at
-		FROM users
-		WHERE id = ?
+		SELECT
+			u.id,
+			u.email,
+			u.full_name,
+			u.role,
+			u.is_active,
+			COALESCE(u.customer_id, 0) AS customer_id,
+			COALESCE(c.name, '') AS customer_name,
+			u.created_at
+		FROM users u
+		LEFT JOIN customers c ON c.id = u.customer_id
+		WHERE u.id = ?
 	`, userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -221,11 +262,11 @@ func (s *Store) getUser(ctx context.Context, userID int64) (User, error) {
 	return user, nil
 }
 
-func (s *Store) createUserRecord(ctx context.Context, email string, fullName string, passwordHash string, salt string, role string, isActive bool) (User, error) {
+func (s *Store) createUserRecord(ctx context.Context, email string, fullName string, passwordHash string, salt string, role string, isActive bool, customerID int64) (User, error) {
 	result, err := s.db.ExecContext(ctx, `
-		INSERT INTO users (email, full_name, role, is_active, password_salt, password_hash)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, email, fullName, role, isActive, salt, passwordHash)
+		INSERT INTO users (email, full_name, role, is_active, customer_id, password_salt, password_hash)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, email, fullName, role, isActive, nullableInt64(customerID), salt, passwordHash)
 	if err != nil {
 		return User{}, mapDBError(fmt.Errorf("create user: %w", err))
 	}

@@ -11,16 +11,18 @@ import (
 )
 
 type CreateManagedUserInput struct {
-	Email    string `json:"email"`
-	FullName string `json:"fullName"`
-	Password string `json:"password"`
-	Role     string `json:"role"`
-	IsActive bool   `json:"isActive"`
+	Email      string `json:"email"`
+	FullName   string `json:"fullName"`
+	Password   string `json:"password"`
+	Role       string `json:"role"`
+	IsActive   bool   `json:"isActive"`
+	CustomerID int64  `json:"customerId"`
 }
 
 type UpdateUserAccessInput struct {
-	Role     string `json:"role"`
-	IsActive bool   `json:"isActive"`
+	Role       string `json:"role"`
+	IsActive   bool   `json:"isActive"`
+	CustomerID int64  `json:"customerId"`
 }
 
 func (s *Store) CanSelfRegister(ctx context.Context) (bool, error) {
@@ -35,9 +37,18 @@ func (s *Store) CanSelfRegister(ctx context.Context) (bool, error) {
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	users := []User{}
 	if err := s.db.SelectContext(ctx, &users, `
-		SELECT id, email, full_name, role, is_active, created_at
-		FROM users
-		ORDER BY created_at DESC, id DESC
+		SELECT
+			u.id,
+			u.email,
+			u.full_name,
+			u.role,
+			u.is_active,
+			COALESCE(u.customer_id, 0) AS customer_id,
+			COALESCE(c.name, '') AS customer_name,
+			u.created_at
+		FROM users u
+		LEFT JOIN customers c ON c.id = u.customer_id
+		ORDER BY u.created_at DESC, u.id DESC
 	`); err != nil {
 		return nil, fmt.Errorf("list users: %w", err)
 	}
@@ -55,8 +66,13 @@ func (s *Store) CreateManagedUser(ctx context.Context, input CreateManagedUserIn
 	if err != nil {
 		return User{}, fmt.Errorf("hash password: %w", err)
 	}
+	if input.CustomerID > 0 {
+		if _, err := s.getCustomer(ctx, input.CustomerID); err != nil {
+			return User{}, err
+		}
+	}
 
-	return s.createUserRecord(ctx, input.Email, input.FullName, passwordHash, "", input.Role, input.IsActive)
+	return s.createUserRecord(ctx, input.Email, input.FullName, passwordHash, "", input.Role, input.IsActive, input.CustomerID)
 }
 
 func (s *Store) UpdateUserAccess(ctx context.Context, actorUserID int64, userID int64, input UpdateUserAccessInput) (User, error) {
@@ -70,6 +86,12 @@ func (s *Store) UpdateUserAccess(ctx context.Context, actorUserID int64, userID 
 		return User{}, fmt.Errorf("begin user access update: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	if input.CustomerID > 0 {
+		if err := ensureCustomerExistsForUserAccess(ctx, tx, input.CustomerID); err != nil {
+			return User{}, err
+		}
+	}
 
 	targetUser, err := getUserForAccessUpdate(ctx, tx, userID)
 	if err != nil {
@@ -97,9 +119,9 @@ func (s *Store) UpdateUserAccess(ctx context.Context, actorUserID int64, userID 
 
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE users
-		SET role = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+		SET role = ?, is_active = ?, customer_id = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, input.Role, input.IsActive, userID); err != nil {
+	`, input.Role, input.IsActive, nullableInt64(input.CustomerID), userID); err != nil {
 		return User{}, mapDBError(fmt.Errorf("update user access: %w", err))
 	}
 
@@ -126,13 +148,17 @@ func sanitizeManagedUserInput(input CreateManagedUserInput) (CreateManagedUserIn
 	if err != nil {
 		return CreateManagedUserInput{}, err
 	}
+	if role == RoleCustomer && input.CustomerID <= 0 {
+		return CreateManagedUserInput{}, fmt.Errorf("%w: customer users must be assigned to a customer", ErrInvalidInput)
+	}
 
 	return CreateManagedUserInput{
-		Email:    registerInput.Email,
-		FullName: registerInput.FullName,
-		Password: registerInput.Password,
-		Role:     role,
-		IsActive: input.IsActive,
+		Email:      registerInput.Email,
+		FullName:   registerInput.FullName,
+		Password:   registerInput.Password,
+		Role:       role,
+		IsActive:   input.IsActive,
+		CustomerID: normalizeUserCustomerID(role, input.CustomerID),
 	}, nil
 }
 
@@ -141,10 +167,14 @@ func sanitizeUserAccessInput(input UpdateUserAccessInput) (UpdateUserAccessInput
 	if err != nil {
 		return UpdateUserAccessInput{}, err
 	}
+	if role == RoleCustomer && input.CustomerID <= 0 {
+		return UpdateUserAccessInput{}, fmt.Errorf("%w: customer users must be assigned to a customer", ErrInvalidInput)
+	}
 
 	return UpdateUserAccessInput{
-		Role:     role,
-		IsActive: input.IsActive,
+		Role:       role,
+		IsActive:   input.IsActive,
+		CustomerID: normalizeUserCustomerID(role, input.CustomerID),
 	}, nil
 }
 
@@ -156,19 +186,37 @@ func normalizeUserRole(role string) (string, error) {
 		return RoleOperator, nil
 	case RoleViewer:
 		return RoleViewer, nil
+	case RoleCustomer:
+		return RoleCustomer, nil
 	default:
-		return "", fmt.Errorf("%w: role must be admin, operator, or viewer", ErrInvalidInput)
+		return "", fmt.Errorf("%w: role must be admin, operator, viewer, or customer", ErrInvalidInput)
 	}
+}
+
+func normalizeUserCustomerID(role string, customerID int64) int64 {
+	if role != RoleCustomer {
+		return 0
+	}
+	return customerID
 }
 
 func getUserForAccessUpdate(ctx context.Context, tx *sqlx.Tx, userID int64) (User, error) {
 	var user User
 	if err := tx.QueryRowContext(ctx, `
-		SELECT id, email, full_name, role, is_active, created_at
-		FROM users
-		WHERE id = ?
+		SELECT
+			u.id,
+			u.email,
+			u.full_name,
+			u.role,
+			u.is_active,
+			COALESCE(u.customer_id, 0) AS customer_id,
+			COALESCE(c.name, '') AS customer_name,
+			u.created_at
+		FROM users u
+		LEFT JOIN customers c ON c.id = u.customer_id
+		WHERE u.id = ?
 		FOR UPDATE
-	`, userID).Scan(&user.ID, &user.Email, &user.FullName, &user.Role, &user.IsActive, &user.CreatedAt); err != nil {
+	`, userID).Scan(&user.ID, &user.Email, &user.FullName, &user.Role, &user.IsActive, &user.CustomerID, &user.CustomerName, &user.CreatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return User{}, ErrNotFound
 		}
@@ -176,6 +224,17 @@ func getUserForAccessUpdate(ctx context.Context, tx *sqlx.Tx, userID int64) (Use
 	}
 
 	return user, nil
+}
+
+func ensureCustomerExistsForUserAccess(ctx context.Context, tx *sqlx.Tx, customerID int64) error {
+	var id int64
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM customers WHERE id = ?`, customerID).Scan(&id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("load customer for user access: %w", err)
+	}
+	return nil
 }
 
 func countActiveAdmins(ctx context.Context, tx *sqlx.Tx) (int, error) {

@@ -50,13 +50,70 @@ describe("api document list queries", () => {
     expect(requestUrl.searchParams.has("status")).toBe(false);
   });
 
+  it("serializes outbound tracking status filters", async () => {
+    await api.getOutboundDocuments(50, {
+      archiveScope: "all",
+      status: "CONFIRMED",
+      trackingStatus: "BO_RECEIVED"
+    });
+
+    const requestUrl = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(requestUrl.pathname).toBe("/api/outbound-documents");
+    expect(requestUrl.searchParams.get("trackingStatus")).toBe("BO_RECEIVED");
+  });
+
+  it("serializes customer portal packing list tracking status filters", async () => {
+    await api.getCustomerPortalPackingLists(25, {
+      search: " PO-100 ",
+      status: "CONFIRMED",
+      trackingStatus: "SHIPPED"
+    });
+
+    const requestUrl = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(requestUrl.pathname).toBe("/api/customer-portal/packing-lists");
+    expect(requestUrl.searchParams.get("limit")).toBe("25");
+    expect(requestUrl.searchParams.get("search")).toBe("PO-100");
+    expect(requestUrl.searchParams.get("status")).toBe("CONFIRMED");
+    expect(requestUrl.searchParams.get("trackingStatus")).toBe("SHIPPED");
+  });
+
+  it("serializes admin-scoped customer portal packing list filters", async () => {
+    await api.getCustomerPortalPackingLists(25, {
+      search: " PO-100 ",
+      status: "CONFIRMED",
+      trackingStatus: "SHIPPED"
+    }, 42);
+
+    const requestUrl = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(requestUrl.pathname).toBe("/api/admin/customer-portal/customers/42/packing-lists");
+    expect(requestUrl.searchParams.get("limit")).toBe("25");
+    expect(requestUrl.searchParams.get("search")).toBe("PO-100");
+    expect(requestUrl.searchParams.get("status")).toBe("CONFIRMED");
+    expect(requestUrl.searchParams.get("trackingStatus")).toBe("SHIPPED");
+  });
+
+  it("loads customer portal profile through the portal API", async () => {
+    await api.getCustomerPortalProfile();
+
+    const requestUrl = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(requestUrl.pathname).toBe("/api/customer-portal/profile");
+  });
+
+  it("loads admin-scoped customer portal profile without the staff customer list API", async () => {
+    await api.getCustomerPortalProfile(42);
+
+    const requestUrl = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(requestUrl.pathname).toBe("/api/admin/customer-portal/customers/42/profile");
+  });
+
   it("omits all-valued optional document filters", async () => {
     await api.getInboundDocuments(100, {
       archiveScope: "active",
       search: "   ",
       customerId: "all",
       locationId: "all",
-      status: "all"
+      status: "all",
+      trackingStatus: "all"
     });
 
     const requestUrl = new URL(String(fetchMock.mock.calls[0][0]));
@@ -64,6 +121,7 @@ describe("api document list queries", () => {
     expect(requestUrl.searchParams.has("customerId")).toBe(false);
     expect(requestUrl.searchParams.has("locationId")).toBe(false);
     expect(requestUrl.searchParams.has("status")).toBe(false);
+    expect(requestUrl.searchParams.has("trackingStatus")).toBe(false);
     expect(requestUrl.searchParams.has("search")).toBe(false);
   });
 });

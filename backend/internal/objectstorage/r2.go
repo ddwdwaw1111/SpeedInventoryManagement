@@ -37,17 +37,30 @@ func NewR2Client(cfg config.R2Config) (*R2Client, error) {
 	accessKeyID := strings.TrimSpace(cfg.AccessKeyID)
 	secretAccessKey := strings.TrimSpace(cfg.SecretAccessKey)
 	bucket := strings.TrimSpace(cfg.Bucket)
-	if accountID == "" || accessKeyID == "" || secretAccessKey == "" || bucket == "" {
-		return nil, errors.New("R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and R2_BUCKET are required")
-	}
 
 	endpointValue := strings.TrimSpace(cfg.Endpoint)
 	if endpointValue == "" {
+		if accountID == "" {
+			return nil, errors.New("R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and R2_BUCKET are required")
+		}
 		endpointValue = fmt.Sprintf("https://%s.r2.cloudflarestorage.com", accountID)
 	}
 	endpoint, err := url.Parse(endpointValue)
 	if err != nil || endpoint.Scheme == "" || endpoint.Host == "" {
 		return nil, fmt.Errorf("invalid R2 endpoint %q", endpointValue)
+	}
+	if accountID == "" {
+		accountID = accountIDFromR2Host(endpoint.Host)
+	}
+	if bucketFromEndpoint := bucketFromR2EndpointPath(endpoint.Path); bucketFromEndpoint != "" {
+		if bucket != "" && bucket != bucketFromEndpoint {
+			return nil, fmt.Errorf("R2 endpoint bucket %q does not match R2_BUCKET %q", bucketFromEndpoint, bucket)
+		}
+		bucket = bucketFromEndpoint
+		endpoint.Path = ""
+	}
+	if accountID == "" || accessKeyID == "" || secretAccessKey == "" || bucket == "" {
+		return nil, errors.New("R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and R2_BUCKET are required")
 	}
 
 	return &R2Client{
@@ -60,6 +73,23 @@ func NewR2Client(cfg config.R2Config) (*R2Client, error) {
 			Timeout: 90 * time.Second,
 		},
 	}, nil
+}
+
+func accountIDFromR2Host(host string) string {
+	host = strings.ToLower(strings.TrimSpace(host))
+	const suffix = ".r2.cloudflarestorage.com"
+	if !strings.HasSuffix(host, suffix) {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimSuffix(host, suffix))
+}
+
+func bucketFromR2EndpointPath(endpointPath string) string {
+	segments := strings.Split(strings.Trim(endpointPath, "/"), "/")
+	if len(segments) != 1 {
+		return ""
+	}
+	return strings.TrimSpace(segments[0])
 }
 
 func (c *R2Client) Bucket() string {

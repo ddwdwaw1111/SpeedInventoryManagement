@@ -89,10 +89,17 @@ MARIADB_USER=inventory_user
 MARIADB_PASSWORD=change-this-db-password
 FRONTEND_ORIGIN=http://YOUR_PUBLIC_IP
 VITE_API_BASE_URL=/api
+
+# Cloudflare R2 attachments. Use the S3 API URL shown by Cloudflare.
+R2_S3_API_URL=https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com/speedwin-uploads
+R2_ACCESS_KEY_ID=your-r2-access-key-id
+R2_SECRET_ACCESS_KEY=your-r2-secret-access-key
+ATTACHMENT_MAX_UPLOAD_BYTES=26214400
 EOF
 ```
 
 Replace `YOUR_PUBLIC_IP` with your VM public IP or domain.
+Replace the R2 values with the S3 API credentials from Cloudflare R2. The app accepts either `R2_S3_API_URL` in the bucket-scoped form above, or the split form `R2_ACCOUNT_ID`, `R2_BUCKET`, and optional `R2_ENDPOINT`.
 
 ### 4. Start the production stack
 

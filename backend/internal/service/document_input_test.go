@@ -150,6 +150,77 @@ func TestValidateOutboundDocumentInput(t *testing.T) {
 	}
 }
 
+func TestOutboundTrackingBOReceivedIsTerminal(t *testing.T) {
+	if got := normalizeOutboundTrackingStatus(" bo_received ", DocumentStatusConfirmed); got != OutboundTrackingBOReceived {
+		t.Fatalf("expected BO received tracking status, got %q", got)
+	}
+	if err := validateOutboundTrackingTransition(OutboundTrackingShipped, OutboundTrackingBOReceived); err != nil {
+		t.Fatalf("expected shipped to BO received transition to be valid, got %v", err)
+	}
+	if err := validateOutboundTrackingTransition(OutboundTrackingBOReceived, OutboundTrackingShipped); err == nil || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected BO received to shipped transition to be invalid, got %v", err)
+	}
+
+	input := CreateOutboundDocumentInput{
+		Status:         DocumentStatusConfirmed,
+		TrackingStatus: OutboundTrackingBOReceived,
+		Lines: []CreateOutboundDocumentLineInput{
+			{CustomerID: 1, LocationID: 2, SKUMasterID: 3, Quantity: 3},
+		},
+	}
+	if err := validateOutboundDocumentInput(input); err != nil {
+		t.Fatalf("expected confirmed BO received outbound document to be valid, got %v", err)
+	}
+}
+
+func TestResolveConfirmedOutboundTrackingStatus(t *testing.T) {
+	testCases := []struct {
+		name     string
+		existing string
+		override string
+		want     string
+	}{
+		{name: "defaults to shipped", existing: OutboundTrackingScheduled, want: OutboundTrackingShipped},
+		{name: "keeps existing bo received", existing: OutboundTrackingBOReceived, want: OutboundTrackingBOReceived},
+		{name: "uses requested bo received", existing: OutboundTrackingScheduled, override: OutboundTrackingBOReceived, want: OutboundTrackingBOReceived},
+		{name: "coerces non-terminal override to shipped", existing: OutboundTrackingScheduled, override: OutboundTrackingPacked, want: OutboundTrackingShipped},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got string
+			if tc.override == "" {
+				got = resolveConfirmedOutboundTrackingStatus(tc.existing)
+			} else {
+				got = resolveConfirmedOutboundTrackingStatus(tc.existing, tc.override)
+			}
+			if got != tc.want {
+				t.Fatalf("expected %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
+
+func TestBuildOutboundTrackingStatusFilterClause(t *testing.T) {
+	clause, args := buildOutboundTrackingStatusFilterClause("d", " bo_received ")
+	if clause == "" {
+		t.Fatal("expected BO received tracking filter clause")
+	}
+	if len(args) != 1 || args[0] != OutboundTrackingBOReceived {
+		t.Fatalf("expected BO received tracking filter arg, got %#v", args)
+	}
+
+	clause, args = buildOutboundTrackingStatusFilterClause("d", "all")
+	if clause != "" || len(args) != 0 {
+		t.Fatalf("expected all tracking status to skip filter, got clause=%q args=%#v", clause, args)
+	}
+
+	clause, args = buildOutboundTrackingStatusFilterClause("d", "not-a-status")
+	if clause != "1 = 0" || len(args) != 0 {
+		t.Fatalf("expected unknown tracking status to match no rows, got clause=%q args=%#v", clause, args)
+	}
+}
+
 func TestParseSectionNames(t *testing.T) {
 	got := parseSectionNames(`[" A ", "", "B"]`, 0)
 	want := []string{DefaultStorageSection, "A", "B"}

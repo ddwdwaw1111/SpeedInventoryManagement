@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -177,6 +178,18 @@ func TestRequireRolesMatrix(t *testing.T) {
 			payload:      service.AuthPayload{User: service.User{ID: 4, Role: service.RoleAdmin}},
 			wantStatus:   http.StatusNoContent,
 		},
+		{
+			name:         "customer portal route allows customer",
+			allowedRoles: []string{service.RoleCustomer},
+			payload:      service.AuthPayload{User: service.User{ID: 5, Role: service.RoleCustomer, CustomerID: 12}},
+			wantStatus:   http.StatusNoContent,
+		},
+		{
+			name:         "customer portal route forbids staff viewer",
+			allowedRoles: []string{service.RoleCustomer},
+			payload:      service.AuthPayload{User: service.User{ID: 6, Role: service.RoleViewer}},
+			wantStatus:   http.StatusForbidden,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -191,6 +204,158 @@ func TestRequireRolesMatrix(t *testing.T) {
 				t.Fatalf("expected status %d, got %d", tc.wantStatus, recorder.Code)
 			}
 		})
+	}
+}
+
+func TestCustomerIDFromContext(t *testing.T) {
+	testCases := []struct {
+		name       string
+		payload    *service.AuthPayload
+		wantID     int64
+		wantOK     bool
+		wantStatus int
+	}{
+		{name: "missing auth", wantStatus: http.StatusUnauthorized},
+		{
+			name:       "staff user forbidden",
+			payload:    &service.AuthPayload{User: service.User{ID: 1, Role: service.RoleOperator}},
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "customer without binding forbidden",
+			payload:    &service.AuthPayload{User: service.User{ID: 2, Role: service.RoleCustomer}},
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "bound customer accepted",
+			payload:    &service.AuthPayload{User: service.User{ID: 3, Role: service.RoleCustomer, CustomerID: 42}},
+			wantID:     42,
+			wantOK:     true,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "admin scoped customer accepted",
+			payload:    &service.AuthPayload{User: service.User{ID: 4, Role: service.RoleAdmin}},
+			wantID:     77,
+			wantOK:     true,
+			wantStatus: http.StatusOK,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(recorder)
+			context.Request = httptest.NewRequest(http.MethodGet, "/api/customer-portal/inventory", nil)
+			if tc.payload != nil {
+				context.Set(string(userContextKey), *tc.payload)
+			}
+			if tc.name == "admin scoped customer accepted" {
+				context.Params = gin.Params{{Key: "customerId", Value: "77"}}
+			}
+
+			gotID, gotOK := customerIDFromContext(context)
+
+			if gotID != tc.wantID || gotOK != tc.wantOK {
+				t.Fatalf("expected id=%d ok=%t, got id=%d ok=%t", tc.wantID, tc.wantOK, gotID, gotOK)
+			}
+			if recorder.Code != tc.wantStatus {
+				t.Fatalf("expected status %d, got %d", tc.wantStatus, recorder.Code)
+			}
+		})
+	}
+}
+
+func TestPrepareCustomerPortalPackingListInputForcesCustomerBoundary(t *testing.T) {
+	input := service.CreateOutboundDocumentInput{
+		Status:         service.DocumentStatusConfirmed,
+		TrackingStatus: service.OutboundTrackingBOReceived,
+		ActualShipDate: "2026-03-24",
+		Lines: []service.CreateOutboundDocumentLineInput{
+			{
+				CustomerID:  7,
+				LocationID:  2,
+				SKUMasterID: 3,
+				Quantity:    4,
+				PickPallets: []service.OutboundLinePalletPick{
+					{PalletID: 44, Quantity: 4},
+				},
+				PickAllocations: []service.OutboundPickAllocation{
+					{LocationID: 2, StorageSection: "A", ContainerNo: "CONT-A", AllocatedQty: 4},
+				},
+			},
+		},
+	}
+
+	got := prepareCustomerPortalPackingListInput(input, 42)
+
+	if got.Status != service.DocumentStatusDraft {
+		t.Fatalf("expected customer portal status to be forced to draft, got %q", got.Status)
+	}
+	if got.TrackingStatus != service.OutboundTrackingScheduled {
+		t.Fatalf("expected customer portal tracking to be scheduled, got %q", got.TrackingStatus)
+	}
+	if got.ActualShipDate != "" {
+		t.Fatalf("expected customer portal actual ship date to be cleared, got %q", got.ActualShipDate)
+	}
+	if len(got.Lines) != 1 {
+		t.Fatalf("expected one line, got %d", len(got.Lines))
+	}
+	if got.Lines[0].CustomerID != 42 {
+		t.Fatalf("expected line customer id to be forced to 42, got %d", got.Lines[0].CustomerID)
+	}
+	if len(got.Lines[0].PickPallets) != 0 {
+		t.Fatalf("expected customer portal pick pallets to be ignored, got %#v", got.Lines[0].PickPallets)
+	}
+	if len(got.Lines[0].PickAllocations) != 0 {
+		t.Fatalf("expected customer portal pick allocations to be ignored, got %#v", got.Lines[0].PickAllocations)
+	}
+}
+
+func TestValidateCustomerPortalPackingListInventory(t *testing.T) {
+	items := []service.Item{
+		{CustomerID: 42, SKUMasterID: 3, LocationID: 2, AvailableQty: 4},
+		{CustomerID: 42, SKUMasterID: 3, LocationID: 2, AvailableQty: 6},
+		{CustomerID: 42, SKUMasterID: 4, LocationID: 2, AvailableQty: 1},
+		{CustomerID: 7, SKUMasterID: 3, LocationID: 2, AvailableQty: 99},
+	}
+
+	input := service.CreateOutboundDocumentInput{
+		Lines: []service.CreateOutboundDocumentLineInput{
+			{CustomerID: 42, SKUMasterID: 3, LocationID: 2, Quantity: 4},
+			{CustomerID: 42, SKUMasterID: 3, LocationID: 2, Quantity: 5},
+			{CustomerID: 42, SKUMasterID: 4, LocationID: 2, Quantity: 1},
+		},
+	}
+	if err := validateCustomerPortalPackingListInventory(input, 42, items); err != nil {
+		t.Fatalf("expected customer request within available inventory to pass, got %v", err)
+	}
+
+	overAvailable := service.CreateOutboundDocumentInput{
+		Lines: []service.CreateOutboundDocumentLineInput{
+			{CustomerID: 42, SKUMasterID: 3, LocationID: 2, Quantity: 11},
+		},
+	}
+	if err := validateCustomerPortalPackingListInventory(overAvailable, 42, items); err == nil || !errors.Is(err, service.ErrInsufficientStock) {
+		t.Fatalf("expected ErrInsufficientStock for over-requested inventory, got %v", err)
+	}
+
+	otherCustomerStock := service.CreateOutboundDocumentInput{
+		Lines: []service.CreateOutboundDocumentLineInput{
+			{CustomerID: 42, SKUMasterID: 5, LocationID: 2, Quantity: 1},
+		},
+	}
+	if err := validateCustomerPortalPackingListInventory(otherCustomerStock, 42, items); err == nil || !errors.Is(err, service.ErrInsufficientStock) {
+		t.Fatalf("expected ErrInsufficientStock for inventory outside the customer boundary, got %v", err)
+	}
+
+	wrongCustomerLine := service.CreateOutboundDocumentInput{
+		Lines: []service.CreateOutboundDocumentLineInput{
+			{CustomerID: 7, SKUMasterID: 3, LocationID: 2, Quantity: 1},
+		},
+	}
+	if err := validateCustomerPortalPackingListInventory(wrongCustomerLine, 42, items); err == nil || !errors.Is(err, service.ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput for a mismatched customer line, got %v", err)
 	}
 }
 

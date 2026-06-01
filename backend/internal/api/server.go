@@ -62,86 +62,11 @@ func NewHandlerWithAttachmentStorage(
 	protected := api.Group("")
 	protected.Use(server.requireAuth())
 	protected.GET("/auth/me", server.handleMe)
-	protected.GET("/dashboard", server.handleDashboard)
 	protected.GET("/ui-preferences/:key", server.handleGetUIPreference)
-	protected.GET("/billing/settings", server.handleGetBillingInvoiceSettings)
-	protected.GET("/customers", server.handleListCustomers)
-	protected.GET("/locations", server.handleListLocations)
-	protected.GET("/sku-master", server.handleListSKUMasters)
-	protected.GET("/items", server.handleListItems)
-	protected.GET("/movements", server.handleListMovements)
-	protected.GET("/reports/operations", server.handleOperationsReport)
-	protected.GET("/reports/sku-flow", server.handleSKUFlowReport)
-	protected.GET("/outbound-documents", server.handleListOutboundDocuments)
-	protected.GET("/inbound-documents", server.handleListInboundDocuments)
-	protected.GET("/outbound-documents/:id/attachments/:attachmentId/download-url", server.handleGetOutboundDocumentAttachmentDownloadURL)
-	protected.GET("/inbound-documents/:id/attachments/:attachmentId/download-url", server.handleGetInboundDocumentAttachmentDownloadURL)
-	protected.GET("/adjustments", server.handleListInventoryAdjustments)
-	protected.GET("/transfers", server.handleListInventoryTransfers)
-	protected.GET("/cycle-counts", server.handleListCycleCounts)
-	protected.GET("/pallets", server.handleListPallets)
-	protected.GET("/pallet-location-events", server.handleListPalletLocationEvents)
 
-	operator := protected.Group("")
-	operator.Use(server.requireRoles(service.RoleAdmin, service.RoleOperator))
-	operator.POST("/outbound-documents", server.handleCreateOutboundDocument)
-	operator.PUT("/outbound-documents/:id", server.handleUpdateOutboundDocument)
-	operator.PUT("/outbound-documents/:id/document-note", server.handleUpdateOutboundDocumentNote)
-	operator.POST("/outbound-documents/:id/confirm", server.handleConfirmOutboundDocument)
-	operator.POST("/outbound-documents/:id/tracking-status", server.handleUpdateOutboundDocumentTrackingStatus)
-	operator.POST("/outbound-documents/:id/cancel", server.handleCancelOutboundDocument)
-	operator.POST("/outbound-documents/:id/archive", server.handleArchiveOutboundDocument)
-	operator.POST("/outbound-documents/:id/copy", server.handleCopyOutboundDocument)
-	operator.POST("/outbound-documents/:id/attachments", server.handleUploadOutboundDocumentAttachment)
-	operator.DELETE("/outbound-documents/:id/attachments/:attachmentId", server.handleDeleteOutboundDocumentAttachment)
-	operator.POST("/inbound-documents", server.handleCreateInboundDocument)
-	operator.POST("/inbound-documents/import-preview", server.handleImportInboundDocumentPreview)
-	operator.PUT("/inbound-documents/:id", server.handleUpdateInboundDocument)
-	operator.PUT("/inbound-documents/:id/document-note", server.handleUpdateInboundDocumentNote)
-	operator.PUT("/inbound-documents/:id/container-type", server.handleUpdateInboundDocumentContainerType)
-	operator.POST("/inbound-documents/:id/confirm", server.handleConfirmInboundDocument)
-	operator.POST("/inbound-documents/:id/tracking-status", server.handleUpdateInboundDocumentTrackingStatus)
-	operator.POST("/inbound-documents/:id/cancel", server.handleCancelInboundDocument)
-	operator.POST("/inbound-documents/:id/archive", server.handleArchiveInboundDocument)
-	operator.POST("/inbound-documents/:id/copy", server.handleCopyInboundDocument)
-	operator.POST("/inbound-documents/:id/attachments", server.handleUploadInboundDocumentAttachment)
-	operator.DELETE("/inbound-documents/:id/attachments/:attachmentId", server.handleDeleteInboundDocumentAttachment)
-	operator.POST("/adjustments", server.handleCreateInventoryAdjustment)
-	operator.POST("/transfers", server.handleCreateInventoryTransfer)
-	operator.POST("/cycle-counts", server.handleCreateCycleCount)
+	server.registerStaffRoutes(protected)
 
-	admin := protected.Group("")
-	admin.Use(server.requireRoles(service.RoleAdmin))
-	admin.POST("/customers", server.handleCreateCustomer)
-	admin.PUT("/customers/:id", server.handleUpdateCustomer)
-	admin.DELETE("/customers/:id", server.handleDeleteCustomer)
-	admin.GET("/audit-logs", server.handleListAuditLogs)
-	admin.GET("/users", server.handleListUsers)
-	admin.POST("/users", server.handleCreateUser)
-	admin.PUT("/users/:id/access", server.handleUpdateUserAccess)
-	admin.PUT("/ui-preferences/:key", server.handleUpdateUIPreference)
-	admin.PUT("/billing/settings", server.handleUpdateBillingInvoiceSettings)
-	admin.POST("/locations", server.handleCreateLocation)
-	admin.PUT("/locations/:id", server.handleUpdateLocation)
-	admin.DELETE("/locations/:id", server.handleDeleteLocation)
-	admin.POST("/sku-master", server.handleCreateSKUMaster)
-	admin.PUT("/sku-master/:id", server.handleUpdateSKUMaster)
-	admin.DELETE("/sku-master/:id", server.handleDeleteSKUMaster)
-
-	// Billing invoices — read for all authenticated users
-	protected.GET("/billing/invoices", server.handleListBillingInvoices)
-	protected.GET("/billing/invoices/:id", server.handleGetBillingInvoice)
-	// Billing invoices — create/edit for operators+
-	operator.POST("/billing/invoices", server.handleCreateBillingInvoice)
-	operator.PUT("/billing/invoices/:id", server.handleUpdateBillingInvoice)
-	operator.POST("/billing/invoices/:id/lines", server.handleAddBillingInvoiceLine)
-	operator.PUT("/billing/invoices/:id/lines/:lineId", server.handleUpdateBillingInvoiceLine)
-	operator.DELETE("/billing/invoices/:id/lines/:lineId", server.handleDeleteBillingInvoiceLine)
-	// Billing invoices — finalize/settle/void/delete for admins
-	admin.POST("/billing/invoices/:id/finalize", server.handleFinalizeBillingInvoice)
-	admin.POST("/billing/invoices/:id/mark-paid", server.handleMarkBillingInvoicePaid)
-	admin.POST("/billing/invoices/:id/void", server.handleVoidBillingInvoice)
-	admin.DELETE("/billing/invoices/:id", server.handleDeleteBillingInvoice)
+	server.registerCustomerPortalRoutes(protected)
 
 	return router
 }
@@ -633,11 +558,12 @@ func (s *Server) handleListOutboundDocuments(c *gin.Context) {
 	}
 
 	documents, err := s.store.ListOutboundDocumentsFiltered(c.Request.Context(), limit, service.OutboundDocumentFilters{
-		ArchiveScope: strings.TrimSpace(c.Query("archiveScope")),
-		Search:       strings.TrimSpace(c.Query("search")),
-		CustomerID:   customerID,
-		LocationID:   locationID,
-		Status:       strings.TrimSpace(c.Query("status")),
+		ArchiveScope:   strings.TrimSpace(c.Query("archiveScope")),
+		Search:         strings.TrimSpace(c.Query("search")),
+		CustomerID:     customerID,
+		LocationID:     locationID,
+		Status:         strings.TrimSpace(c.Query("status")),
+		TrackingStatus: strings.TrimSpace(c.Query("trackingStatus")),
 	})
 	if err != nil {
 		writeServerError(c, err)

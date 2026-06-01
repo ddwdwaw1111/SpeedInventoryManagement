@@ -48,7 +48,7 @@ func Load() Config {
 			AccessKeyID:     getEnv("R2_ACCESS_KEY_ID", ""),
 			SecretAccessKey: getEnv("R2_SECRET_ACCESS_KEY", ""),
 			Bucket:          getEnv("R2_BUCKET", ""),
-			Endpoint:        getEnv("R2_ENDPOINT", ""),
+			Endpoint:        getFirstEnv("R2_ENDPOINT", "R2_S3_API_URL", "CLOUDFLARE_R2_S3_API_URL"),
 		},
 		Attachments: AttachmentConfig{
 			MaxUploadBytes: getEnvInt64("ATTACHMENT_MAX_UPLOAD_BYTES", 25*1024*1024),
@@ -69,6 +69,15 @@ func getEnv(key, fallback string) string {
 	}
 
 	return fallback
+}
+
+func getFirstEnv(keys ...string) string {
+	for _, key := range keys {
+		if value := os.Getenv(key); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func getEnvBool(key string, fallback bool) bool {

@@ -33,6 +33,7 @@ type CustomerManagementPageProps = {
   isLoading: boolean;
   onRefresh: () => Promise<void>;
   onNavigate: (page: PageKey) => void;
+  onOpenCustomerPortal?: (customerId: number) => void;
 };
 
 type CustomerFormState = {
@@ -65,7 +66,8 @@ export function CustomerManagementPage({
   currentUserRole,
   isLoading,
   onRefresh,
-  onNavigate
+  onNavigate,
+  onOpenCustomerPortal
 }: CustomerManagementPageProps) {
   const { t } = useI18n();
   const { confirm, confirmationDialog } = useConfirmDialog();
@@ -389,6 +391,11 @@ export function CustomerManagementPage({
               {canManage ? (
                 <Button variant="contained" startIcon={<EditOutlinedIcon fontSize="small" />} onClick={() => openEditModal(selectedCustomer)}>
                   {t("editCustomer")}
+                </Button>
+              ) : null}
+              {canManage && onOpenCustomerPortal ? (
+                <Button variant="outlined" startIcon={<OutboxOutlinedIcon fontSize="small" />} onClick={() => onOpenCustomerPortal(selectedCustomer.id)}>
+                  {t("customerPortal")}
                 </Button>
               ) : null}
               <Button variant="outlined" startIcon={<WarehouseOutlinedIcon fontSize="small" />} onClick={() => openWorkspace("inventory-summary")}>

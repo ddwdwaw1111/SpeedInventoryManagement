@@ -240,11 +240,12 @@ type selectedOutboundPalletTarget struct {
 }
 
 type OutboundDocumentFilters struct {
-	ArchiveScope string
-	Search       string
-	CustomerID   int64
-	LocationID   int64
-	Status       string
+	ArchiveScope   string
+	Search         string
+	CustomerID     int64
+	LocationID     int64
+	Status         string
+	TrackingStatus string
 }
 
 func (s *Store) ListOutboundDocuments(ctx context.Context, limit int, archiveScope ...string) ([]OutboundDocument, error) {
@@ -273,6 +274,10 @@ func (s *Store) ListOutboundDocumentsFiltered(ctx context.Context, limit int, fi
 	if statusFilterClause, statusArgs := buildDocumentStatusFilterClause("d", filters.Status); statusFilterClause != "" {
 		whereClauses = append(whereClauses, statusFilterClause)
 		args = append(args, statusArgs...)
+	}
+	if trackingFilterClause, trackingArgs := buildOutboundTrackingStatusFilterClause("d", filters.TrackingStatus); trackingFilterClause != "" {
+		whereClauses = append(whereClauses, trackingFilterClause)
+		args = append(args, trackingArgs...)
 	}
 	if search := strings.TrimSpace(strings.ToLower(filters.Search)); search != "" {
 		searchPattern := "%" + search + "%"
@@ -465,6 +470,20 @@ func (s *Store) ListOutboundDocumentsFiltered(ctx context.Context, limit int, fi
 	return documents, nil
 }
 
+func (s *Store) GetOutboundDocumentForCustomer(ctx context.Context, documentID int64, customerID int64) (OutboundDocument, error) {
+	if documentID <= 0 || customerID <= 0 {
+		return OutboundDocument{}, ErrNotFound
+	}
+	document, err := s.getOutboundDocument(ctx, documentID)
+	if err != nil {
+		return OutboundDocument{}, err
+	}
+	if document.CustomerID != customerID {
+		return OutboundDocument{}, ErrNotFound
+	}
+	return document, nil
+}
+
 func (s *Store) CreateOutboundDocument(ctx context.Context, input CreateOutboundDocumentInput) (OutboundDocument, error) {
 	input = sanitizeOutboundDocumentInput(input)
 	if err := validateOutboundDocumentInput(input); err != nil {
@@ -573,7 +592,7 @@ func (s *Store) CreateOutboundDocument(ctx context.Context, input CreateOutbound
 
 	switch requestedStatus {
 	case DocumentStatusConfirmed:
-		if err := s.confirmOutboundDocumentTx(ctx, tx, documentID); err != nil {
+		if err := s.confirmOutboundDocumentTx(ctx, tx, documentID, requestedTrackingStatus); err != nil {
 			return OutboundDocument{}, err
 		}
 	case DocumentStatusDraft:
@@ -722,7 +741,7 @@ func (s *Store) UpdateOutboundDocument(ctx context.Context, documentID int64, in
 	}
 
 	if requestedStatus == DocumentStatusConfirmed {
-		if err := s.confirmOutboundDocumentTx(ctx, tx, documentID); err != nil {
+		if err := s.confirmOutboundDocumentTx(ctx, tx, documentID, requestedTrackingStatus); err != nil {
 			return OutboundDocument{}, err
 		}
 	} else if outboundTrackingRequiresActiveReservation(requestedTrackingStatus) {
@@ -919,16 +938,17 @@ func (s *Store) UpdateOutboundDocumentTrackingStatus(ctx context.Context, docume
 		return OutboundDocument{}, err
 	}
 
-	if targetTrackingStatus == OutboundTrackingShipped {
+	if targetTrackingStatus == OutboundTrackingShipped || targetTrackingStatus == OutboundTrackingBOReceived {
 		if documentStatus != DocumentStatusConfirmed {
-			if err := s.confirmOutboundDocumentTx(ctx, tx, documentID); err != nil {
+			if err := s.confirmOutboundDocumentTx(ctx, tx, documentID, targetTrackingStatus); err != nil {
 				return OutboundDocument{}, err
 			}
-		} else if _, err := tx.ExecContext(ctx, `
+		}
+		if _, err := tx.ExecContext(ctx, `
 			UPDATE outbound_documents
 			SET tracking_status = ?, updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?
-		`, OutboundTrackingShipped, documentID); err != nil {
+		`, targetTrackingStatus, documentID); err != nil {
 			return OutboundDocument{}, mapDBError(fmt.Errorf("update outbound tracking status: %w", err))
 		}
 	} else {
@@ -960,7 +980,7 @@ func (s *Store) UpdateOutboundDocumentTrackingStatus(ctx context.Context, docume
 	return s.getOutboundDocument(ctx, documentID)
 }
 
-func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, documentID int64) error {
+func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, documentID int64, finalTrackingStatus ...string) error {
 	documentRow, err := s.loadOutboundDocumentForUpdateTx(ctx, tx, documentID)
 	if err != nil {
 		return err
@@ -974,6 +994,7 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 		return fmt.Errorf("%w: outbound document is already confirmed", ErrInvalidInput)
 	}
 	currentTrackingStatus := normalizeOutboundTrackingStatus(documentRow.TrackingStatus, documentRow.Status)
+	confirmedTrackingStatus := resolveConfirmedOutboundTrackingStatus(currentTrackingStatus, finalTrackingStatus...)
 
 	lineRows, err := s.loadOutboundDocumentLinesTx(ctx, tx, documentID)
 	if err != nil {
@@ -1105,7 +1126,7 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 			confirmed_at = COALESCE(confirmed_at, ?),
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, DocumentStatusConfirmed, OutboundTrackingShipped, confirmedAt, documentID); err != nil {
+	`, DocumentStatusConfirmed, confirmedTrackingStatus, confirmedAt, documentID); err != nil {
 		return mapDBError(fmt.Errorf("mark outbound document confirmed: %w", err))
 	}
 
@@ -1191,6 +1212,17 @@ func outboundTrackingRequiresActiveReservation(status string) bool {
 	default:
 		return false
 	}
+}
+
+func resolveConfirmedOutboundTrackingStatus(existingTrackingStatus string, finalTrackingStatus ...string) string {
+	trackingStatus := existingTrackingStatus
+	if len(finalTrackingStatus) > 0 && strings.TrimSpace(finalTrackingStatus[0]) != "" {
+		trackingStatus = finalTrackingStatus[0]
+	}
+	if normalizeOutboundTrackingStatus(trackingStatus, DocumentStatusConfirmed) == OutboundTrackingBOReceived {
+		return OutboundTrackingBOReceived
+	}
+	return OutboundTrackingShipped
 }
 
 func outboundLineInputFromRow(customerID int64, lineRow outboundDocumentLineRow) CreateOutboundDocumentLineInput {
@@ -2765,8 +2797,11 @@ func validateOutboundDocumentInput(input CreateOutboundDocumentInput) error {
 	if normalizedTracking := normalizeOutboundTrackingStatus(input.TrackingStatus, coalescedStatus); normalizedTracking == "" {
 		return fmt.Errorf("%w: invalid outbound tracking status", ErrInvalidInput)
 	}
-	if coalescedStatus == DocumentStatusConfirmed && normalizeOutboundTrackingStatus(input.TrackingStatus, coalescedStatus) != OutboundTrackingShipped {
-		return fmt.Errorf("%w: confirmed shipments must use the shipped tracking status", ErrInvalidInput)
+	if coalescedStatus == DocumentStatusConfirmed {
+		normalizedTracking := normalizeOutboundTrackingStatus(input.TrackingStatus, coalescedStatus)
+		if normalizedTracking != OutboundTrackingShipped && normalizedTracking != OutboundTrackingBOReceived {
+			return fmt.Errorf("%w: confirmed shipments must use the shipped or BO received tracking status", ErrInvalidInput)
+		}
 	}
 	if err := validateOutboundTrackingTransition(OutboundTrackingScheduled, normalizeOutboundTrackingStatus(input.TrackingStatus, coalescedStatus)); err != nil {
 		return err

@@ -9,7 +9,7 @@ import { api } from "../lib/api";
 import { formatDateTimeValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
-import type { CreateUserPayload, UpdateUserAccessPayload, User, UserRole } from "../lib/types";
+import type { CreateUserPayload, Customer, UpdateUserAccessPayload, User, UserRole } from "../lib/types";
 import { InlineAlert, useFeedbackToast } from "./Feedback";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots, WorkspacePanelHeader } from "./WorkspacePanelChrome";
@@ -17,6 +17,7 @@ import { useSharedColumnOrder } from "./useSharedColumnOrder";
 
 type UserManagementPageProps = {
   users: User[];
+  customers: Customer[];
   currentUser: User;
   isLoading: boolean;
   onRefresh: () => Promise<void>;
@@ -27,21 +28,23 @@ type UserFormState = {
   fullName: string;
   password: string;
   role: UserRole;
+  customerId: string;
   isActive: boolean;
 };
 
-const roleOptions: UserRole[] = ["admin", "operator", "viewer"];
+const roleOptions: UserRole[] = ["admin", "operator", "viewer", "customer"];
 
 const emptyUserForm: UserFormState = {
   email: "",
   fullName: "",
   password: "",
   role: "operator",
+  customerId: "",
   isActive: true
 };
 const USER_MANAGEMENT_COLUMN_ORDER_PREFERENCE_KEY = "user-management.column-order";
 
-export function UserManagementPage({ users, currentUser, isLoading, onRefresh }: UserManagementPageProps) {
+export function UserManagementPage({ users, customers, currentUser, isLoading, onRefresh }: UserManagementPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const { showSuccess, showError, feedbackToast } = useFeedbackToast();
@@ -57,7 +60,7 @@ export function UserManagementPage({ users, currentUser, isLoading, onRefresh }:
 
   const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
   const filteredRows = useMemo(() => users.filter((user) => {
-    const searchBlob = [user.fullName, user.email, user.role, user.isActive ? t("active") : t("inactive")].join(" ").toLowerCase();
+    const searchBlob = [user.fullName, user.email, user.role, user.customerName, user.isActive ? t("active") : t("inactive")].join(" ").toLowerCase();
     return normalizedSearch.length === 0 || searchBlob.includes(normalizedSearch);
   }), [normalizedSearch, t, users]);
   const hasActiveFilters = normalizedSearch.length > 0;
@@ -77,6 +80,7 @@ export function UserManagementPage({ users, currentUser, isLoading, onRefresh }:
       minWidth: 130,
       renderCell: (params) => <Chip size="small" label={t(params.row.role)} color={roleChipColor(params.row.role)} />
     },
+    { field: "customerName", headerName: t("customer"), minWidth: 180, flex: 1, renderCell: (params) => params.row.customerName || "-" },
     {
       field: "isActive",
       headerName: t("status"),
@@ -125,6 +129,7 @@ export function UserManagementPage({ users, currentUser, isLoading, onRefresh }:
       fullName: user.fullName,
       password: "",
       role: user.role,
+      customerId: user.customerId > 0 ? String(user.customerId) : "",
       isActive: user.isActive
     });
     setErrorMessage("");
@@ -153,7 +158,8 @@ export function UserManagementPage({ users, currentUser, isLoading, onRefresh }:
       if (editingUser) {
         const payload: UpdateUserAccessPayload = {
           role: form.role,
-          isActive: form.isActive
+          isActive: form.isActive,
+          customerId: form.role === "customer" ? Number(form.customerId) : undefined
         };
         await api.updateUserAccess(editingUser.id, payload);
       } else {
@@ -162,7 +168,8 @@ export function UserManagementPage({ users, currentUser, isLoading, onRefresh }:
           fullName: form.fullName,
           password: form.password,
           role: form.role,
-          isActive: form.isActive
+          isActive: form.isActive,
+          customerId: form.role === "customer" ? Number(form.customerId) : undefined
         };
         await api.createUser(payload);
       }
@@ -273,6 +280,15 @@ export function UserManagementPage({ users, currentUser, isLoading, onRefresh }:
                 {roleOptions.map((role) => <option key={role} value={role}>{t(role)}</option>)}
               </select>
             </label>
+            {form.role === "customer" ? (
+              <label>
+                {t("customerAccount")}
+                <select value={form.customerId} onChange={(event) => setForm((current) => ({ ...current, customerId: event.target.value }))} required>
+                  <option value="">{t("selectCustomerFirst")}</option>
+                  {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}
+                </select>
+              </label>
+            ) : null}
             <label>
               {t("status")}
               <select value={form.isActive ? "active" : "inactive"} onChange={(event) => setForm((current) => ({ ...current, isActive: event.target.value === "active" }))}>
@@ -296,8 +312,9 @@ export function UserManagementPage({ users, currentUser, isLoading, onRefresh }:
   );
 }
 
-function roleChipColor(role: UserRole): "default" | "primary" | "info" | "warning" {
+function roleChipColor(role: UserRole): "default" | "primary" | "info" | "warning" | "secondary" {
   if (role === "admin") return "primary";
   if (role === "operator") return "info";
-  return "warning";
+  if (role === "customer") return "warning";
+  return "default";
 }

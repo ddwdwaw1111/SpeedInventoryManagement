@@ -2990,7 +2990,7 @@ export function ActivityManagementPage({
                 ) : null}
                 {canManage && !selectedOutboundDocument.archivedAt && selectedOutboundTrackingAction ? (
                   <Button
-                    variant={selectedOutboundTrackingAction.trackingStatus === "SHIPPED" ? "contained" : "outlined"}
+                    variant={selectedOutboundTrackingAction.trackingStatus === "SHIPPED" || selectedOutboundTrackingAction.trackingStatus === "BO_RECEIVED" ? "contained" : "outlined"}
                     startIcon={isSelectedOutboundTrackingBusy ? <InlineLoadingIndicator /> : undefined}
                     disabled={disableSelectedOutboundActions}
                     aria-busy={isSelectedOutboundTrackingBusy}
@@ -4118,13 +4118,13 @@ function normalizeInboundTrackingStatusValue(trackingStatus?: string | null, doc
 }
 
 function normalizeOutboundTrackingStatusValue(trackingStatus?: string | null, documentStatus?: string | null) {
+  const normalizedTrackingStatus = (trackingStatus || "").trim().toUpperCase();
+  if (normalizedTrackingStatus === "PICKING" || normalizedTrackingStatus === "PACKED" || normalizedTrackingStatus === "SHIPPED" || normalizedTrackingStatus === "BO_RECEIVED") {
+    return normalizedTrackingStatus;
+  }
   const normalizedStatus = normalizeDocumentStatus(documentStatus || "");
   if (normalizedStatus === "CONFIRMED") {
     return "SHIPPED";
-  }
-  const normalizedTrackingStatus = (trackingStatus || "").trim().toUpperCase();
-  if (normalizedTrackingStatus === "PICKING" || normalizedTrackingStatus === "PACKED" || normalizedTrackingStatus === "SHIPPED") {
-    return normalizedTrackingStatus;
   }
   return "SCHEDULED";
 }
@@ -4144,6 +4144,8 @@ function formatInboundTrackingStatusLabel(trackingStatus: string, documentStatus
 
 function formatOutboundTrackingStatusLabel(trackingStatus: string, documentStatus: string, t: (key: string) => string) {
   switch (normalizeOutboundTrackingStatusValue(trackingStatus, documentStatus)) {
+    case "BO_RECEIVED":
+      return t("boReceivedTracking");
     case "PICKING":
       return t("picking");
     case "PACKED":
@@ -4171,6 +4173,9 @@ function renderInboundTrackingStatus(trackingStatus: string, documentStatus: str
 
 function renderOutboundTrackingStatus(trackingStatus: string, documentStatus: string, t: (key: string) => string) {
   const normalizedTrackingStatus = normalizeOutboundTrackingStatusValue(trackingStatus, documentStatus);
+  if (normalizedTrackingStatus === "BO_RECEIVED") {
+    return <Chip label={t("boReceivedTracking")} color="success" size="small" variant="filled" />;
+  }
   if (normalizedTrackingStatus === "SHIPPED") {
     return <Chip label={t("shipped")} color="success" size="small" variant="outlined" />;
   }
@@ -4201,17 +4206,21 @@ function getInboundTrackingAction(document: InboundDocument, t: (key: string) =>
 }
 
 function getOutboundTrackingAction(document: OutboundDocument, t: (key: string) => string) {
-  if (normalizeDocumentStatus(document.status) !== "DRAFT") {
+  const normalizedStatus = normalizeDocumentStatus(document.status);
+  const normalizedTracking = normalizeOutboundTrackingStatusValue(document.trackingStatus, document.status);
+  if (normalizedStatus !== "DRAFT" && normalizedTracking !== "SHIPPED") {
     return null;
   }
 
-  switch (normalizeOutboundTrackingStatusValue(document.trackingStatus, document.status)) {
+  switch (normalizedTracking) {
     case "SCHEDULED":
       return { trackingStatus: "PICKING", label: t("startPicking") };
     case "PICKING":
       return { trackingStatus: "PACKED", label: t("markPacked") };
     case "PACKED":
       return { trackingStatus: "SHIPPED", label: t("shipOut") };
+    case "SHIPPED":
+      return { trackingStatus: "BO_RECEIVED", label: t("markBoReceived") };
     default:
       return null;
   }

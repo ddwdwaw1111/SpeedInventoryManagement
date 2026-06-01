@@ -74,6 +74,7 @@ export function getPageFromPath(pathname: string): PageKey {
   const normalized = normalizePagePath(pathname);
 
   if (normalized === "/daily-operations" || /^\/daily-operations\/\d{4}-\d{2}-\d{2}$/.test(normalized)) return "daily-operations";
+  if (normalized === "/admin") return "dashboard";
   if (/^\/billing\/container\/\d{4}-\d{2}-\d{2}\/\d{4}-\d{2}-\d{2}\/(?:all|\d+)\/(?:all|\d+)\/[^/]+$/.test(normalized)) return "billing-container-detail";
   if (/^\/billing\/invoices\/\d+$/.test(normalized)) return "billing-invoice-editor";
   if (normalized === "/billing") return "billing";

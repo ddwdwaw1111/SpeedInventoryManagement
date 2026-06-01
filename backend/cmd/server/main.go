@@ -37,11 +37,14 @@ func main() {
 	}
 
 	var attachmentStorage api.AttachmentStorage
-	if cfg.R2.AccountID != "" || cfg.R2.AccessKeyID != "" || cfg.R2.SecretAccessKey != "" || cfg.R2.Bucket != "" {
+	if cfg.R2.AccountID != "" || cfg.R2.AccessKeyID != "" || cfg.R2.SecretAccessKey != "" || cfg.R2.Bucket != "" || cfg.R2.Endpoint != "" {
 		attachmentStorage, err = objectstorage.NewR2Client(cfg.R2)
 		if err != nil {
 			log.Fatalf("attachment storage configuration failed: %v", err)
 		}
+		log.Printf("attachment storage enabled: provider=%s bucket=%s", attachmentStorage.Provider(), attachmentStorage.Bucket())
+	} else {
+		log.Printf("attachment storage disabled: set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and R2_BUCKET or R2_S3_API_URL")
 	}
 	handler := api.NewHandlerWithAttachmentStorage(store, cfg.FrontendOrigin, cfg.SessionCookie, cfg.SessionSecure, attachmentStorage, cfg.Attachments.MaxUploadBytes)
 

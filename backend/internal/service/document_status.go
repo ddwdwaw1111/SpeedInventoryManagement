@@ -21,10 +21,11 @@ const (
 	InboundTrackingReceiving = "RECEIVING"
 	InboundTrackingReceived  = "RECEIVED"
 
-	OutboundTrackingScheduled = "SCHEDULED"
-	OutboundTrackingPicking   = "PICKING"
-	OutboundTrackingPacked    = "PACKED"
-	OutboundTrackingShipped   = "SHIPPED"
+	OutboundTrackingScheduled  = "SCHEDULED"
+	OutboundTrackingPicking    = "PICKING"
+	OutboundTrackingPacked     = "PACKED"
+	OutboundTrackingShipped    = "SHIPPED"
+	OutboundTrackingBOReceived = "BO_RECEIVED"
 
 	InboundHandlingModePalletized    = "PALLETIZED"
 	InboundHandlingModeSealedTransit = "SEALED_TRANSIT"
@@ -114,6 +115,20 @@ func buildDocumentStatusFilterClause(alias string, status string) (string, []any
 	}
 }
 
+func buildOutboundTrackingStatusFilterClause(alias string, status string) (string, []any) {
+	normalized := strings.TrimSpace(strings.ToUpper(status))
+	if normalized == "" || normalized == "ALL" {
+		return "", nil
+	}
+	statusColumn := fmt.Sprintf("UPPER(TRIM(COALESCE(%s.tracking_status, '')))", alias)
+	switch normalized {
+	case OutboundTrackingScheduled, OutboundTrackingPicking, OutboundTrackingPacked, OutboundTrackingShipped, OutboundTrackingBOReceived:
+		return fmt.Sprintf("%s = ?", statusColumn), []any{normalized}
+	default:
+		return "1 = 0", nil
+	}
+}
+
 func normalizeInboundTrackingStatus(raw string, documentStatus string) string {
 	switch strings.TrimSpace(strings.ToUpper(raw)) {
 	case InboundTrackingScheduled:
@@ -142,6 +157,8 @@ func normalizeOutboundTrackingStatus(raw string, documentStatus string) string {
 		return OutboundTrackingPacked
 	case OutboundTrackingShipped:
 		return OutboundTrackingShipped
+	case OutboundTrackingBOReceived:
+		return OutboundTrackingBOReceived
 	default:
 		if normalizeDocumentStatus(documentStatus) == DocumentStatusConfirmed {
 			return OutboundTrackingShipped
@@ -248,6 +265,8 @@ func outboundTrackingRank(status string) int {
 		return 3
 	case OutboundTrackingShipped:
 		return 4
+	case OutboundTrackingBOReceived:
+		return 5
 	default:
 		return 1
 	}

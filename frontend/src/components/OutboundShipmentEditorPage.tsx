@@ -1754,13 +1754,13 @@ function normalizeDocumentStatus(status: string) {
 }
 
 function normalizeOutboundTrackingStatusValue(trackingStatus?: string | null, documentStatus?: string | null) {
+  const normalizedTrackingStatus = (trackingStatus || "").trim().toUpperCase();
+  if (normalizedTrackingStatus === "PICKING" || normalizedTrackingStatus === "PACKED" || normalizedTrackingStatus === "SHIPPED" || normalizedTrackingStatus === "BO_RECEIVED") {
+    return normalizedTrackingStatus;
+  }
   const normalizedStatus = normalizeDocumentStatus(documentStatus || "");
   if (normalizedStatus === "CONFIRMED") {
     return "SHIPPED";
-  }
-  const normalizedTrackingStatus = (trackingStatus || "").trim().toUpperCase();
-  if (normalizedTrackingStatus === "PICKING" || normalizedTrackingStatus === "PACKED" || normalizedTrackingStatus === "SHIPPED") {
-    return normalizedTrackingStatus;
   }
   return "SCHEDULED";
 }

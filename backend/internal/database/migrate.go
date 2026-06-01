@@ -14,12 +14,14 @@ func Migrate(db *sql.DB) error {
 			full_name VARCHAR(160) NOT NULL,
 			role VARCHAR(32) NOT NULL DEFAULT 'admin',
 			is_active BOOLEAN NOT NULL DEFAULT TRUE,
+			customer_id BIGINT DEFAULT NULL,
 			password_salt CHAR(32) NOT NULL,
 			password_hash CHAR(64) NOT NULL,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			PRIMARY KEY (id),
-			UNIQUE KEY uq_users_email (email)
+			UNIQUE KEY uq_users_email (email),
+			KEY idx_users_customer_id (customer_id)
 		)`,
 		`CREATE TABLE IF NOT EXISTS user_sessions (
 			id BIGINT NOT NULL AUTO_INCREMENT,
@@ -67,6 +69,8 @@ func Migrate(db *sql.DB) error {
 		)`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(32) NOT NULL DEFAULT 'admin' AFTER full_name`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE AFTER role`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS customer_id BIGINT DEFAULT NULL AFTER is_active`,
+		`CREATE INDEX IF NOT EXISTS idx_users_customer_id ON users (customer_id)`,
 		`ALTER TABLE users MODIFY COLUMN password_salt VARCHAR(32) NOT NULL DEFAULT ''`,
 		`ALTER TABLE users MODIFY COLUMN password_hash VARCHAR(255) NOT NULL`,
 		`CREATE TABLE IF NOT EXISTS sku_master (
@@ -799,6 +803,28 @@ func Migrate(db *sql.DB) error {
 	for _, statement := range statements {
 		if _, err := db.Exec(statement); err != nil {
 			return fmt.Errorf("apply migration %q: %w", statement, err)
+		}
+	}
+
+	if _, err := db.Exec(`
+		UPDATE users u
+		LEFT JOIN customers c ON c.id = u.customer_id
+		SET u.customer_id = NULL
+		WHERE u.customer_id IS NOT NULL
+			AND c.id IS NULL
+	`); err != nil {
+		return fmt.Errorf("clear orphaned user customer assignments: %w", err)
+	}
+
+	if hasFK, err := foreignKeyExists(db, "users", "fk_users_customer"); err != nil {
+		return fmt.Errorf("check users customer foreign key: %w", err)
+	} else if !hasFK {
+		if _, err := db.Exec(`
+			ALTER TABLE users
+			ADD CONSTRAINT fk_users_customer
+				FOREIGN KEY (customer_id) REFERENCES customers (id)
+		`); err != nil {
+			return fmt.Errorf("add users customer foreign key: %w", err)
 		}
 	}
 

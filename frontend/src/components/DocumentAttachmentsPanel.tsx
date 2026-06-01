@@ -4,7 +4,7 @@ import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
 import UploadFileRoundedIcon from "@mui/icons-material/UploadFileRounded";
 import VisibilityRoundedIcon from "@mui/icons-material/VisibilityRounded";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useI18n } from "../lib/i18n";
 import type { DocumentAttachment } from "../lib/types";
@@ -21,6 +21,7 @@ type DocumentAttachmentsPanelProps = {
   pendingAttachments?: PendingDocumentAttachment[];
   disabled?: boolean;
   canUploadNow?: boolean;
+  showUploadButton?: boolean;
   onPendingAttachmentsChange?: (attachments: PendingDocumentAttachment[]) => void;
   onUpload?: (file: File, displayName: string) => Promise<void>;
   onGetDownloadUrl: (attachment: DocumentAttachment) => Promise<string>;
@@ -28,8 +29,12 @@ type DocumentAttachmentsPanelProps = {
 };
 
 type AttachmentPreviewState = {
-  attachment: DocumentAttachment;
+  name: string;
+  contentType: string;
+  sizeBytes: number;
   url: string;
+  pendingId?: string;
+  isObjectUrl?: boolean;
 };
 
 export function DocumentAttachmentsPanel({
@@ -37,6 +42,7 @@ export function DocumentAttachmentsPanel({
   pendingAttachments = [],
   disabled = false,
   canUploadNow = true,
+  showUploadButton = true,
   onPendingAttachmentsChange,
   onUpload,
   onGetDownloadUrl,
@@ -49,8 +55,18 @@ export function DocumentAttachmentsPanel({
   const [preview, setPreview] = useState<AttachmentPreviewState | null>(null);
 
   const isUploading = busyKey === "upload";
-  const hasUploadControls = Boolean(onUpload && onPendingAttachmentsChange);
-  const canUpload = hasUploadControls && canUploadNow && !disabled && pendingAttachments.length > 0 && !busyKey;
+  const hasPendingControls = Boolean(onPendingAttachmentsChange);
+  const hasUploadAction = Boolean(onUpload && showUploadButton);
+  const canUpload = hasUploadAction && canUploadNow && !disabled && pendingAttachments.length > 0 && !busyKey;
+  const attachmentSummaryCount = attachments.length + pendingAttachments.length;
+
+  useEffect(() => {
+    return () => {
+      if (preview?.isObjectUrl) {
+        URL.revokeObjectURL(preview.url);
+      }
+    };
+  }, [preview]);
 
   function handleFilesSelected(files: FileList | null) {
     if (!files || disabled || !onPendingAttachmentsChange) {
@@ -80,6 +96,9 @@ export function DocumentAttachmentsPanel({
   function removePendingAttachment(id: string) {
     if (!onPendingAttachmentsChange) {
       return;
+    }
+    if (preview?.pendingId === id) {
+      closePreview();
     }
     onPendingAttachmentsChange(pendingAttachments.filter((entry) => entry.id !== id));
   }
@@ -113,7 +132,12 @@ export function DocumentAttachmentsPanel({
     setPanelError("");
     try {
       const url = await onGetDownloadUrl(attachment);
-      setPreview({ attachment, url });
+      setPreview({
+        name: attachment.displayName || attachment.originalFileName,
+        contentType: attachment.contentType,
+        sizeBytes: attachment.sizeBytes,
+        url
+      });
     } catch (error) {
       setPanelError(error instanceof Error ? error.message : t("attachmentDownloadFailed"));
     } finally {
@@ -154,14 +178,34 @@ export function DocumentAttachmentsPanel({
     }
   }
 
+  function previewPendingAttachment(attachment: PendingDocumentAttachment) {
+    if (busyKey) {
+      return;
+    }
+    setPanelError("");
+    const url = URL.createObjectURL(attachment.file);
+    setPreview({
+      pendingId: attachment.id,
+      name: attachment.displayName.trim() || attachment.file.name,
+      contentType: attachment.file.type || "application/octet-stream",
+      sizeBytes: attachment.file.size,
+      url,
+      isObjectUrl: true
+    });
+  }
+
+  function closePreview() {
+    setPreview(null);
+  }
+
   return (
     <div className="document-attachments">
       <div className="document-attachments__header">
         <div>
           <strong>{t("attachments")}</strong>
-          <span>{attachments.length > 0 ? `${attachments.length} ${t("files")}` : t("noAttachments")}</span>
+          <span>{attachmentSummaryCount > 0 ? `${attachmentSummaryCount} ${t("files")}` : t("noAttachments")}</span>
         </div>
-        {hasUploadControls ? (
+        {hasPendingControls ? (
           <div className="document-attachments__actions">
             <input
               ref={fileInputRef}
@@ -181,23 +225,25 @@ export function DocumentAttachmentsPanel({
               <AttachFileRoundedIcon fontSize="small" />
               {t("addFiles")}
             </button>
-            <button
-              className="button button--primary button--small"
-              type="button"
-              onClick={() => void uploadPendingAttachments()}
-              disabled={!canUpload}
-              aria-busy={isUploading}
-            >
-              {isUploading ? <InlineLoadingIndicator /> : <UploadFileRoundedIcon fontSize="small" />}
-              {t("uploadFiles")}
-            </button>
+            {hasUploadAction ? (
+              <button
+                className="button button--primary button--small"
+                type="button"
+                onClick={() => void uploadPendingAttachments()}
+                disabled={!canUpload}
+                aria-busy={isUploading}
+              >
+                {isUploading ? <InlineLoadingIndicator /> : <UploadFileRoundedIcon fontSize="small" />}
+                {t("uploadFiles")}
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>
 
       {panelError ? <div className="document-attachments__error">{panelError}</div> : null}
 
-      {hasUploadControls && pendingAttachments.length > 0 ? (
+      {hasPendingControls && pendingAttachments.length > 0 ? (
         <div className="document-attachments__pending">
           {pendingAttachments.map((entry) => (
             <div className="document-attachments__pending-row" key={entry.id}>
@@ -213,14 +259,25 @@ export function DocumentAttachmentsPanel({
                   disabled={disabled || Boolean(busyKey)}
                 />
               </label>
-              <button
-                className="button button--ghost button--small"
-                type="button"
-                onClick={() => removePendingAttachment(entry.id)}
-                disabled={disabled || Boolean(busyKey)}
-              >
-                {t("remove")}
-              </button>
+              <div className="document-attachments__row-actions">
+                <button
+                  className="button button--ghost button--small"
+                  type="button"
+                  onClick={() => previewPendingAttachment(entry)}
+                  disabled={Boolean(busyKey)}
+                  aria-label={t("previewFile")}
+                >
+                  <VisibilityRoundedIcon fontSize="small" />
+                </button>
+                <button
+                  className="button button--ghost button--small"
+                  type="button"
+                  onClick={() => removePendingAttachment(entry.id)}
+                  disabled={disabled || Boolean(busyKey)}
+                >
+                  {t("remove")}
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -275,8 +332,8 @@ export function DocumentAttachmentsPanel({
           <div className="attachment-preview__panel">
             <div className="attachment-preview__header">
               <div>
-                <strong>{preview.attachment.displayName || preview.attachment.originalFileName}</strong>
-                <span>{[formatAttachmentType(preview.attachment.contentType), formatFileSize(preview.attachment.sizeBytes)].filter(Boolean).join(" | ")}</span>
+                <strong>{preview.name}</strong>
+                <span>{[formatAttachmentType(preview.contentType), formatFileSize(preview.sizeBytes)].filter(Boolean).join(" | ")}</span>
               </div>
               <div className="attachment-preview__actions">
                 <button
@@ -290,7 +347,7 @@ export function DocumentAttachmentsPanel({
                 <button
                   className="button button--ghost button--small"
                   type="button"
-                  onClick={() => setPreview(null)}
+                  onClick={closePreview}
                   aria-label={t("close")}
                 >
                   <CloseRoundedIcon fontSize="small" />
@@ -298,10 +355,10 @@ export function DocumentAttachmentsPanel({
               </div>
             </div>
             <div className="attachment-preview__body">
-              {isPreviewImage(preview.attachment.contentType) ? (
-                <img src={preview.url} alt={preview.attachment.displayName || preview.attachment.originalFileName} />
+              {isPreviewImage(preview.contentType) ? (
+                <img src={preview.url} alt={preview.name} />
               ) : (
-                <iframe title={preview.attachment.displayName || preview.attachment.originalFileName} src={preview.url} />
+                <iframe title={preview.name} src={preview.url} />
               )}
             </div>
           </div>

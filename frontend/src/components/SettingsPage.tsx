@@ -34,10 +34,13 @@ export function SettingsPage({ currentUserRole = "viewer" }: SettingsPageProps) 
   const [saveErrorMessage, setSaveErrorMessage] = useState("");
 
   useEffect(() => {
+    if (!canManageBillingDefaults) {
+      return;
+    }
     void refreshBillingInvoiceHeaderDefaults().catch(() => {
       setSaveErrorMessage("Could not load invoice defaults.");
     });
-  }, [refreshBillingInvoiceHeaderDefaults]);
+  }, [canManageBillingDefaults, refreshBillingInvoiceHeaderDefaults]);
 
   useEffect(() => {
     setDraftLanguage(language);

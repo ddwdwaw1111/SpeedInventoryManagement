@@ -1,4 +1,5 @@
 import { type FormEvent, useState } from "react";
+import { AdminPanelSettingsOutlined } from "@mui/icons-material";
 import { Alert } from "@mui/material";
 
 import { useI18n } from "../lib/i18n";
@@ -30,10 +31,7 @@ export function AuthPage({
       <section className="auth-hero">
         <p className="eyebrow">{t("inventorySystem")}</p>
         <h1>{t("speedInventory")}</h1>
-        <p>
-          Manage receiving, shipping, inventory control, and audit activity from a
-          single secure workspace for your warehouse team.
-        </p>
+        <p>Manage receiving, shipping, inventory control, and audit activity from a single secure workspace for your warehouse team.</p>
         <div className="auth-feature-list">
           <article>
             <strong>Operational visibility</strong>
@@ -74,6 +72,14 @@ export function AuthPage({
           <button className="button button--primary auth-submit" type="submit" disabled={isSubmitting}>
             {isSubmitting ? "Signing in..." : "Sign in"}
           </button>
+
+          <div className="auth-admin-entry">
+            <a className="button button--ghost auth-admin-entry__link" href="/admin">
+              <AdminPanelSettingsOutlined fontSize="small" />
+              <span>{t("adminEntrance")}</span>
+            </a>
+            <span>{t("adminEntranceHint")}</span>
+          </div>
         </form>
       </section>
     </main>

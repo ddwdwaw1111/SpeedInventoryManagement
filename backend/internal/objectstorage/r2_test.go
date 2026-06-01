@@ -61,6 +61,39 @@ func TestR2ClientBuildsPathStyleObjectURL(t *testing.T) {
 	}
 }
 
+func TestR2ClientAcceptsBucketScopedS3APIURL(t *testing.T) {
+	client := newTestR2Client(t, config.R2Config{
+		AccessKeyID:     "access-key",
+		SecretAccessKey: "secret-key",
+		Endpoint:        "https://account-id.r2.cloudflarestorage.com/speedwin-uploads",
+	})
+
+	objectURL := client.objectURL("documents/outbound/42/bo.pdf")
+
+	if client.accountID != "account-id" {
+		t.Fatalf("expected account id from R2 host, got %q", client.accountID)
+	}
+	if client.bucket != "speedwin-uploads" {
+		t.Fatalf("expected bucket from R2 endpoint path, got %q", client.bucket)
+	}
+	if objectURL.Path != "/speedwin-uploads/documents/outbound/42/bo.pdf" {
+		t.Fatalf("unexpected R2 object path %q", objectURL.Path)
+	}
+}
+
+func TestR2ClientRejectsConflictingEndpointBucket(t *testing.T) {
+	_, err := NewR2Client(config.R2Config{
+		AccountID:       "account-id",
+		AccessKeyID:     "access-key",
+		SecretAccessKey: "secret-key",
+		Bucket:          "configured-bucket",
+		Endpoint:        "https://account-id.r2.cloudflarestorage.com/url-bucket",
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not match R2_BUCKET") {
+		t.Fatalf("expected conflicting bucket error, got %v", err)
+	}
+}
+
 func TestSignedGetURLUsesR2CredentialScopeAndClampsExpiry(t *testing.T) {
 	client := newTestR2Client(t, config.R2Config{
 		AccountID:       "account-id",

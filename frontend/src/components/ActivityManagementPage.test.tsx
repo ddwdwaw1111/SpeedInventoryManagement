@@ -260,6 +260,59 @@ describe("ActivityManagementPage", () => {
     expect(await screen.findByText("PL-FILTER-84")).toBeInTheDocument();
   });
 
+  it("shows customer-created draft packing lists in the outbound queue and opens them for warehouse processing", async () => {
+    const onOpenOutboundShipmentEditor = vi.fn();
+    const customer = createCustomer({ id: 9, name: "Customer Portal Co" });
+    const location = createLocation({ id: 4, name: "NJ Dock" });
+    const customerPortalDocument = createOutboundDocument({
+      id: 210,
+      packingListNo: "PL-CUSTOMER-210",
+      orderRef: "SO-CUSTOMER-210",
+      customerId: customer.id,
+      customerName: customer.name,
+      status: "DRAFT",
+      trackingStatus: "SCHEDULED",
+      totalQty: 7,
+      storages: "NJ Dock / TEMP",
+      lines: [
+        createOutboundDocumentLine({
+          id: 211,
+          documentId: 210,
+          locationId: location.id,
+          locationName: location.name,
+          quantity: 7,
+          pickAllocations: []
+        })
+      ]
+    });
+
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="OUT"
+        items={[]}
+        skuMasters={[createSkuMaster()]}
+        locations={[location]}
+        customers={[customer]}
+        movements={[]}
+        inboundDocuments={[]}
+        outboundDocuments={[customerPortalDocument]}
+        currentUserRole="operator"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onOpenOutboundShipmentEditor={onOpenOutboundShipmentEditor}
+      />
+    );
+
+    expect(await screen.findByText("PL-CUSTOMER-210")).toBeInTheDocument();
+    expect(screen.getByText("SO-CUSTOMER-210")).toBeInTheDocument();
+    expect(screen.getAllByText("Customer Portal Co").length).toBeGreaterThan(0);
+    expect(screen.getByText("NJ Dock / TEMP")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit Draft" }));
+
+    expect(onOpenOutboundShipmentEditor).toHaveBeenCalledWith(210);
+  });
+
   it("loads inbound documents from the backend only after the search is submitted", async () => {
     const fetchedDocument = createInboundDocument({
       id: 43,
