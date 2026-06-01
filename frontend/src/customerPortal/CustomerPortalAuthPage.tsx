@@ -33,19 +33,19 @@ export function CustomerPortalAuthPage({
       <section className="auth-hero">
         <p className="eyebrow">{t("customerPortal")}</p>
         <h1>{t("customerPortal")}</h1>
-        <p>Create packing list requests, track warehouse progress, and manage supporting documents in a dedicated customer workspace.</p>
+        <p>{t("customerPortalAuthDesc")}</p>
         <div className="auth-feature-list">
           <article>
-            <strong>Inventory visibility</strong>
-            <span>Review available stock and warehouse locations scoped to your account.</span>
+            <strong>{t("customerPortalAuthInventoryTitle")}</strong>
+            <span>{t("customerPortalAuthInventoryDesc")}</span>
           </article>
           <article>
-            <strong>Packing list requests</strong>
-            <span>Submit outbound requests with line items and named evidence files.</span>
+            <strong>{t("customerPortalAuthPackingListTitle")}</strong>
+            <span>{t("customerPortalAuthPackingListDesc")}</span>
           </article>
           <article>
-            <strong>Document tracking</strong>
-            <span>Follow progress from scheduled work through BO receipt.</span>
+            <strong>{t("customerPortalAuthDocumentTitle")}</strong>
+            <span>{t("customerPortalAuthDocumentDesc")}</span>
           </article>
         </div>
       </section>
@@ -53,26 +53,26 @@ export function CustomerPortalAuthPage({
       <section className="auth-card">
         <div className="auth-card__header">
           <div>
-            <p className="eyebrow">Customer access</p>
-            <h2>Sign in to continue</h2>
+            <p className="eyebrow">{t("customerPortalCustomerAccess")}</p>
+            <h2>{t("customerPortalSignInTitle")}</h2>
           </div>
         </div>
 
         <form className="auth-form" onSubmit={(event) => { void handleSubmit(event); }}>
           <label>
-            Email
-            <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@company.com" autoComplete="email" />
+            {t("email")}
+            <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder={t("emailPlaceholder")} autoComplete="email" />
           </label>
 
           <label>
-            Password
-            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" autoComplete="current-password" />
+            {t("password")}
+            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={t("userPasswordPlaceholder")} autoComplete="current-password" />
           </label>
 
           {errorMessage ? <Alert severity="error" variant="outlined" sx={{ mb: 2, borderRadius: 2 }}>{errorMessage}</Alert> : null}
 
           <button className="button button--primary auth-submit" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Signing in..." : "Sign in"}
+            {isSubmitting ? t("signingIn") : t("signIn")}
           </button>
 
           <div className="auth-admin-entry">

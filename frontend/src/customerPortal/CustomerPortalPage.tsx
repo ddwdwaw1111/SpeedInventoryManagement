@@ -234,7 +234,6 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
       setPackingListStatus("all");
       setPackingListTrackingStatus("all");
       setSelectedPackingListId(createdDocument.id);
-      onSectionChange?.("packing-lists");
       const documentRows = await customerPortalApi.getPackingLists(100, {
         search: "",
         status: "all",
@@ -243,9 +242,13 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
       setPackingLists(documentRows);
       if (failedAttachments.length > 0) {
         const message = t("customerPortalAttachmentUploadPartial");
+        setActiveDetailTab("documents");
+        onSectionChange?.("attachments");
         setErrorMessage(message);
         showError(message);
       } else {
+        setActiveDetailTab("details");
+        onSectionChange?.("packing-lists");
         showSuccess(t("customerPortalPackingListCreated"));
       }
     } catch (error) {
@@ -291,6 +294,12 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
     await customerPortalApi.deletePackingListAttachment(attachment.documentId, attachment.id, adminPortalCustomerId);
     await refreshPackingLists();
     showSuccess(t("attachmentDeletedSuccess"));
+  }
+
+  function selectPackingList(document: OutboundDocument) {
+    setSelectedPackingListId(document.id);
+    setPendingAttachments([]);
+    setActiveDetailTab(activeSection === "attachments" ? "documents" : "details");
   }
 
   const visibleInventory = inventory.filter((item) => item.availableQty > 0 || item.quantity > 0);
@@ -378,12 +387,12 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
             <tbody>
               {visibleInventory.map((item) => (
                 <tr key={item.id}>
-                  <td>{item.sku || item.itemNumber}</td>
-                  <td>{item.description || item.name}</td>
-                  <td>{item.locationName}</td>
-                  <td>{item.availableQty}</td>
-                  <td>{item.quantity}</td>
-                  <td>
+                  <td data-label={t("sku")}>{item.sku || item.itemNumber}</td>
+                  <td data-label={t("description")}>{item.description || item.name}</td>
+                  <td data-label={t("storageName")}>{item.locationName}</td>
+                  <td data-label={t("availableQty")}>{item.availableQty}</td>
+                  <td data-label={t("onHand")}>{item.quantity}</td>
+                  <td data-label={t("actions")}>
                     <button className="button button--ghost button--small" type="button" onClick={() => addInventoryLine(item)} disabled={item.availableQty <= 0}>
                       <AddCircleOutlineOutlinedIcon fontSize="small" />
                       {t("addToPackingList")}
@@ -435,12 +444,12 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
               <tbody>
                 {lineDrafts.map((line) => (
                   <tr key={line.id}>
-                    <td>{line.sku || line.itemNumber}<br /><span className="sheet-note">{line.description}</span></td>
-                    <td>{line.locationName}</td>
-                    <td>{line.availableQty}</td>
-                    <td><input type="number" min="1" max={line.availableQty} value={line.quantity} onChange={(event) => updateLineDraft(line.id, { quantity: event.target.value })} /></td>
-                    <td><input value={line.lineNote} onChange={(event) => updateLineDraft(line.id, { lineNote: event.target.value })} /></td>
-                    <td><button className="button button--ghost button--small" type="button" onClick={() => removeLineDraft(line.id)}>{t("remove")}</button></td>
+                    <td data-label={t("sku")}>{line.sku || line.itemNumber}<br /><span className="sheet-note">{line.description}</span></td>
+                    <td data-label={t("storageName")}>{line.locationName}</td>
+                    <td data-label={t("availableQty")}>{line.availableQty}</td>
+                    <td data-label={t("quantity")}><input type="number" min="1" max={line.availableQty} value={line.quantity} onChange={(event) => updateLineDraft(line.id, { quantity: event.target.value })} /></td>
+                    <td data-label={t("notes")}><input value={line.lineNote} onChange={(event) => updateLineDraft(line.id, { lineNote: event.target.value })} /></td>
+                    <td data-label={t("actions")}><button className="button button--ghost button--small" type="button" onClick={() => removeLineDraft(line.id)}>{t("remove")}</button></td>
                   </tr>
                 ))}
                 {lineDrafts.length === 0 ? (
@@ -497,6 +506,7 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
                 <th>{t("totalQty")}</th>
                 <th>{t("expectedShipDate")}</th>
                 <th>{t("attachments")}</th>
+                <th>{t("actions")}</th>
               </tr>
             </thead>
             <tbody>
@@ -504,24 +514,29 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
                 <tr
                   key={document.id}
                   className={selectedPackingList?.id === document.id ? "sheet-table__row--selected" : undefined}
-                  onClick={() => {
-                    setSelectedPackingListId(document.id);
-                    setPendingAttachments([]);
-                    setActiveDetailTab(activeSection === "attachments" ? "documents" : "details");
-                  }}
                 >
-                  <td>{document.packingListNo || `#${document.id}`}</td>
-                  <td>{document.orderRef || "-"}</td>
-                  <td><span className={`status-pill ${getTrackingStatusPillClass(document)}`}>{formatOutboundTrackingStatus(document.trackingStatus, document.status, t)}</span></td>
-                  <td><span className={`status-pill ${isCompletedPackingList(document) ? "status-pill--ok" : "status-pill--alert"}`}>{formatPackingListCompletionStatus(document, t)}</span></td>
-                  <td><span className={`status-pill ${getDocumentStatusPillClass(document.status)}`}>{t(document.status.toLowerCase())}</span></td>
-                  <td>{document.totalQty}</td>
-                  <td>{document.expectedShipDate || "-"}</td>
-                  <td><span className="customer-portal-attachment-count"><AttachFileOutlinedIcon fontSize="small" />{document.attachments?.length ?? 0}</span></td>
+                  <td data-label={t("packingListNo")}>{document.packingListNo || `#${document.id}`}</td>
+                  <td data-label={t("orderRef")}>{document.orderRef || "-"}</td>
+                  <td data-label={t("trackingStatus")}><span className={`status-pill ${getTrackingStatusPillClass(document)}`}>{formatOutboundTrackingStatus(document.trackingStatus, document.status, t)}</span></td>
+                  <td data-label={t("customerPortalCompletionStatus")}><span className={`status-pill ${isCompletedPackingList(document) ? "status-pill--ok" : "status-pill--alert"}`}>{formatPackingListCompletionStatus(document, t)}</span></td>
+                  <td data-label={t("status")}><span className={`status-pill ${getDocumentStatusPillClass(document.status)}`}>{t(document.status.toLowerCase())}</span></td>
+                  <td data-label={t("totalQty")}>{document.totalQty}</td>
+                  <td data-label={t("expectedShipDate")}>{document.expectedShipDate || "-"}</td>
+                  <td data-label={t("attachments")}><span className="customer-portal-attachment-count"><AttachFileOutlinedIcon fontSize="small" />{document.attachments?.length ?? 0}</span></td>
+                  <td data-label={t("actions")}>
+                    <button
+                      className="button button--ghost button--small customer-portal-row-action"
+                      type="button"
+                      onClick={() => selectPackingList(document)}
+                      aria-label={`${activeSection === "attachments" ? t("attachments") : t("details")} ${document.packingListNo || `#${document.id}`}`}
+                    >
+                      {activeSection === "attachments" ? t("attachments") : t("details")}
+                    </button>
+                  </td>
                 </tr>
               ))}
               {packingLists.length === 0 ? (
-                <tr><td colSpan={8}><div className="empty-state">{isLoading ? t("loadingRecords") : t("noPackingLists")}</div></td></tr>
+                <tr><td colSpan={9}><div className="empty-state">{isLoading ? t("loadingRecords") : t("noPackingLists")}</div></td></tr>
               ) : null}
             </tbody>
           </table>
@@ -627,13 +642,13 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
                     <tbody>
                       {selectedPackingList.lines.map((line) => (
                         <tr key={line.id}>
-                          <td>{line.itemNumber || "-"}</td>
-                          <td>{line.sku || "-"}</td>
-                          <td>{line.description || "-"}</td>
-                          <td>{[line.locationName, line.storageSection].filter(Boolean).join(" / ") || "-"}</td>
-                          <td>{line.quantity} {line.unitLabel || ""}</td>
-                          <td>{line.pallets || "-"}</td>
-                          <td>{line.lineNote || "-"}</td>
+                          <td data-label={t("itemNumber")}>{line.itemNumber || "-"}</td>
+                          <td data-label={t("sku")}>{line.sku || "-"}</td>
+                          <td data-label={t("description")}>{line.description || "-"}</td>
+                          <td data-label={t("storageName")}>{[line.locationName, line.storageSection].filter(Boolean).join(" / ") || "-"}</td>
+                          <td data-label={t("quantity")}>{line.quantity} {line.unitLabel || ""}</td>
+                          <td data-label={t("pallets")}>{line.pallets || "-"}</td>
+                          <td data-label={t("notes")}>{line.lineNote || "-"}</td>
                         </tr>
                       ))}
                       {selectedPackingList.lines.length === 0 ? (

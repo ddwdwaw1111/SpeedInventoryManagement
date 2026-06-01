@@ -1622,6 +1622,10 @@ button {
   font-weight: 800;
 }
 
+.customer-portal-row-action {
+  white-space: nowrap;
+}
+
 .sidebar {
   display: grid;
   grid-template-columns: minmax(220px, 0.85fr) minmax(0, 1.7fr) minmax(220px, 0.95fr);
@@ -5638,6 +5642,9 @@ textarea:focus {
   .customer-portal-sidebar {
     position: static;
     height: auto;
+    min-height: auto;
+    max-height: none;
+    grid-template-rows: auto;
     border-right: 0;
     border-bottom: 1px solid rgba(121, 137, 158, 0.22);
     box-shadow: 0 8px 24px rgba(23, 32, 51, 0.04);
@@ -5646,6 +5653,10 @@ textarea:focus {
   .customer-portal-sidebar__nav {
     grid-template-columns: repeat(5, minmax(0, 1fr));
     overflow-x: auto;
+    overflow-y: hidden;
+    max-height: none;
+    padding-right: 0;
+    margin-right: 0;
   }
 
   .app-workspace,
@@ -5836,6 +5847,57 @@ textarea:focus {
   .customer-portal-panel-header__actions {
     justify-content: flex-start;
     width: 100%;
+  }
+
+  .customer-portal-panel .sheet-table,
+  .customer-portal-panel .sheet-table thead,
+  .customer-portal-panel .sheet-table tbody,
+  .customer-portal-panel .sheet-table tr,
+  .customer-portal-panel .sheet-table td {
+    display: block;
+  }
+
+  .customer-portal-panel .sheet-table thead {
+    display: none;
+  }
+
+  .customer-portal-panel .sheet-table tbody {
+    display: grid;
+    gap: 0.65rem;
+  }
+
+  .customer-portal-panel .sheet-table tr {
+    padding: 0.7rem;
+    border: 1px solid rgba(121, 137, 158, 0.18);
+    border-radius: 8px;
+    background: #fff;
+  }
+
+  .customer-portal-panel .sheet-table td {
+    display: grid;
+    grid-template-columns: minmax(7rem, 0.38fr) minmax(0, 1fr);
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.35rem 0;
+    border: 0;
+    white-space: normal;
+  }
+
+  .customer-portal-panel .sheet-table td::before {
+    content: attr(data-label);
+    color: #667589;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .customer-portal-panel .sheet-table td[colspan] {
+    display: block;
+  }
+
+  .customer-portal-panel .sheet-table td[colspan]::before {
+    display: none;
   }
 
   .auth-shell {

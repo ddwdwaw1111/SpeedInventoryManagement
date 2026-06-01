@@ -276,7 +276,7 @@ function CustomerPortalSidebar({
     { key: "inventory", label: t("customerPortalInventory"), icon: <Inventory2OutlinedIcon fontSize="small" /> },
     { key: "new-packing-list", label: t("newPackingList"), icon: <AddCircleOutlineOutlinedIcon fontSize="small" /> },
     { key: "packing-lists", label: t("customerPortalPackingLists"), icon: <AssignmentTurnedInOutlinedIcon fontSize="small" /> },
-    { key: "attachments", label: t("attachments"), icon: <AttachFileOutlinedIcon fontSize="small" /> }
+    { key: "attachments", label: t("packingListDocuments"), icon: <AttachFileOutlinedIcon fontSize="small" /> }
   ];
 
   return (
