@@ -5,6 +5,7 @@ import { InlineAlert } from "./Feedback";
 import { SearchSubmitField } from "./SearchSubmitField";
 import { api } from "../lib/api";
 import { parseDateValue, startOfLocalDay, toIsoDateString } from "../lib/dates";
+import { getErrorMessage } from "../lib/errors";
 import { useI18n } from "../lib/i18n";
 import type {
   Customer,
@@ -1015,9 +1016,6 @@ function formatSignedNumber(value: number) {
   return absolute;
 }
 
-function getErrorMessage(error: unknown, fallbackMessage: string) {
-  return error instanceof Error && error.message ? error.message : fallbackMessage;
-}
 
 function firstNonEmptyText(...values: string[]) {
   return values.find((value) => value.trim() !== "") ?? "";

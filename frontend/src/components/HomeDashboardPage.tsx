@@ -19,6 +19,15 @@ import {
   startOfLocalWeek,
   toIsoDateString
 } from "../lib/dates";
+import {
+  formatInboundTrackingStatusLabel,
+  formatOutboundTrackingStatusLabel,
+  getInboundTrackingProgress as inboundTrackingProgress,
+  getOutboundTrackingProgress as outboundTrackingProgress,
+  normalizeDocumentStatus,
+  normalizeInboundTrackingStatus,
+  normalizeOutboundTrackingStatus
+} from "../lib/documentTracking";
 import { setPendingInventorySummaryContext } from "../lib/inventorySummaryContext";
 import { getOutboundDisplayShipDate, getOutboundScheduledShipDate } from "../lib/outboundDates";
 import { InlineAlert } from "./Feedback";
@@ -1056,88 +1065,6 @@ function buildRecentActivityEntries(
     .sort((left, right) => right.timestamp - left.timestamp)
     .slice(0, 5)
     .map(({ timestamp: _timestamp, ...entry }) => entry);
-}
-
-function normalizeDocumentStatus(status: string) {
-  return (status || "").trim().toUpperCase();
-}
-
-function normalizeInboundTrackingStatus(trackingStatus: string, documentStatus: string) {
-  if (normalizeDocumentStatus(documentStatus) === "CONFIRMED") {
-    return "RECEIVED";
-  }
-  const normalizedTrackingStatus = (trackingStatus || "").trim().toUpperCase();
-  if (normalizedTrackingStatus === "ARRIVED" || normalizedTrackingStatus === "RECEIVING" || normalizedTrackingStatus === "RECEIVED") {
-    return normalizedTrackingStatus;
-  }
-  return "SCHEDULED";
-}
-
-function normalizeOutboundTrackingStatus(trackingStatus: string, documentStatus: string) {
-  const normalizedTrackingStatus = (trackingStatus || "").trim().toUpperCase();
-  if (normalizedTrackingStatus === "PICKING" || normalizedTrackingStatus === "PACKED" || normalizedTrackingStatus === "SHIPPED" || normalizedTrackingStatus === "BO_RECEIVED") {
-    return normalizedTrackingStatus;
-  }
-  if (normalizeDocumentStatus(documentStatus) === "CONFIRMED") {
-    return "SHIPPED";
-  }
-  return "SCHEDULED";
-}
-
-function inboundTrackingProgress(trackingStatus: string, documentStatus: string) {
-  switch (normalizeInboundTrackingStatus(trackingStatus, documentStatus)) {
-    case "ARRIVED":
-      return 50;
-    case "RECEIVING":
-      return 75;
-    case "RECEIVED":
-      return 100;
-    default:
-      return 25;
-  }
-}
-
-function outboundTrackingProgress(trackingStatus: string, documentStatus: string) {
-  switch (normalizeOutboundTrackingStatus(trackingStatus, documentStatus)) {
-    case "BO_RECEIVED":
-      return 100;
-    case "PICKING":
-      return 55;
-    case "PACKED":
-      return 80;
-    case "SHIPPED":
-      return 100;
-    default:
-      return 25;
-  }
-}
-
-function formatInboundTrackingStatusLabel(trackingStatus: string, documentStatus: string, t: (key: string) => string) {
-  switch (normalizeInboundTrackingStatus(trackingStatus, documentStatus)) {
-    case "ARRIVED":
-      return t("arrived");
-    case "RECEIVING":
-      return t("receiving");
-    case "RECEIVED":
-      return t("receivedTracking");
-    default:
-      return t("scheduled");
-  }
-}
-
-function formatOutboundTrackingStatusLabel(trackingStatus: string, documentStatus: string, t: (key: string) => string) {
-  switch (normalizeOutboundTrackingStatus(trackingStatus, documentStatus)) {
-    case "BO_RECEIVED":
-      return t("boReceivedTracking");
-    case "PICKING":
-      return t("picking");
-    case "PACKED":
-      return t("packed");
-    case "SHIPPED":
-      return t("shipped");
-    default:
-      return t("scheduled");
-  }
 }
 
 function getDocumentTime(value: string) {

@@ -1,6 +1,7 @@
 import type { Content, CustomTableLayout, Style, TableCell, TDocumentDefinitions, TFontDictionary } from "pdfmake/interfaces";
 
 import { formatDateTimeValue } from "./dates";
+import { formatDiscountMoney as formatDiscountAmount, formatMoney, formatNumber } from "./formatters";
 import { downloadPdfDefinition } from "./pdfMakeRuntime";
 import { DEFAULT_BILLING_INVOICE_HEADER } from "./settings";
 import type { BillingInvoice, BillingInvoiceLineData, BillingInvoiceType } from "./types";
@@ -949,24 +950,4 @@ function getInvoiceHeader(invoice: BillingInvoice): BillingInvoice["header"] {
 
 function formatInvoiceDate(value: string, timeZone: string) {
   return formatDateTimeValue(value, timeZone, { dateStyle: "medium" });
-}
-
-function formatMoney(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(value);
-}
-
-function formatDiscountAmount(value: number) {
-  return value === 0 ? formatMoney(0) : formatMoney(-Math.abs(value));
-}
-
-function formatNumber(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
-    maximumFractionDigits: 2
-  }).format(value);
 }

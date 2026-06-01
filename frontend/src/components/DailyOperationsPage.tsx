@@ -11,6 +11,15 @@ import { type ChangeEvent, type ReactNode, useMemo, useRef, useState } from "rea
 import { api } from "../lib/api";
 import { setPendingActivityManagementLaunchContext } from "../lib/activityManagementLaunchContext";
 import { formatDateValue, normalizeCalendarDate, shiftIsoDate, toIsoDateString } from "../lib/dates";
+import {
+  formatInboundTrackingStatusLabel,
+  formatOutboundTrackingStatusLabel,
+  getInboundTrackingTone as toneFromInboundTracking,
+  getInboundWorkflowState,
+  getOutboundTrackingTone as toneFromOutboundTracking,
+  getOutboundWorkflowState,
+  normalizeDocumentStatus
+} from "../lib/documentTracking";
 import type { OutboundShipmentEditorLaunchContext } from "../lib/outboundShipmentEditorLaunchContext";
 import { useI18n } from "../lib/i18n";
 import { getOutboundScheduledShipDate } from "../lib/outboundDates";
@@ -593,89 +602,9 @@ function MinimalWorkflowStepper({
   );
 }
 
-function normalizeDocumentStatus(status: string) {
-  return (status || "").trim().toUpperCase();
-}
-
 function isPendingDocument(status: string) {
   const normalizedStatus = normalizeDocumentStatus(status);
   return normalizedStatus !== "CONFIRMED" && normalizedStatus !== "DELETED" && normalizedStatus !== "ARCHIVED";
-}
-
-function normalizeInboundTrackingStatus(trackingStatus: string, documentStatus: string) {
-  if (normalizeDocumentStatus(documentStatus) === "CONFIRMED") {
-    return "RECEIVED";
-  }
-  const normalizedTrackingStatus = (trackingStatus || "").trim().toUpperCase();
-  if (normalizedTrackingStatus === "ARRIVED" || normalizedTrackingStatus === "RECEIVING" || normalizedTrackingStatus === "RECEIVED") {
-    return normalizedTrackingStatus;
-  }
-  return "SCHEDULED";
-}
-
-function normalizeOutboundTrackingStatus(trackingStatus: string, documentStatus: string) {
-  const normalizedTrackingStatus = (trackingStatus || "").trim().toUpperCase();
-  if (normalizedTrackingStatus === "PICKING" || normalizedTrackingStatus === "PACKED" || normalizedTrackingStatus === "SHIPPED" || normalizedTrackingStatus === "BO_RECEIVED") {
-    return normalizedTrackingStatus;
-  }
-  if (normalizeDocumentStatus(documentStatus) === "CONFIRMED") {
-    return "SHIPPED";
-  }
-  return "SCHEDULED";
-}
-
-function formatInboundTrackingStatusLabel(trackingStatus: string, documentStatus: string, t: (key: string) => string) {
-  switch (normalizeInboundTrackingStatus(trackingStatus, documentStatus)) {
-    case "ARRIVED":
-      return t("arrived");
-    case "RECEIVING":
-      return t("receiving");
-    case "RECEIVED":
-      return t("receivedTracking");
-    default:
-      return t("scheduled");
-  }
-}
-
-function formatOutboundTrackingStatusLabel(trackingStatus: string, documentStatus: string, t: (key: string) => string) {
-  switch (normalizeOutboundTrackingStatus(trackingStatus, documentStatus)) {
-    case "BO_RECEIVED":
-      return t("boReceivedTracking");
-    case "PICKING":
-      return t("picking");
-    case "PACKED":
-      return t("packed");
-    case "SHIPPED":
-      return t("shipped");
-    default:
-      return t("scheduled");
-  }
-}
-
-function toneFromInboundTracking(trackingStatus: string, documentStatus: string) {
-  switch (normalizeInboundTrackingStatus(trackingStatus, documentStatus)) {
-    case "ARRIVED":
-    case "RECEIVING":
-      return "amber" as const;
-    case "RECEIVED":
-      return "emerald" as const;
-    default:
-      return "blue" as const;
-  }
-}
-
-function toneFromOutboundTracking(trackingStatus: string, documentStatus: string) {
-  switch (normalizeOutboundTrackingStatus(trackingStatus, documentStatus)) {
-    case "BO_RECEIVED":
-      return "emerald" as const;
-    case "PICKING":
-    case "PACKED":
-      return "amber" as const;
-    case "SHIPPED":
-      return "emerald" as const;
-    default:
-      return "slate" as const;
-  }
 }
 
 function summaryToneIconClass(tone: "emerald" | "blue" | "amber" | "slate") {
@@ -715,74 +644,6 @@ function toneBadgeClass(tone: "emerald" | "blue" | "amber" | "slate") {
     default:
       return "bg-blue-50 text-[#143569] ring-1 ring-blue-100";
   }
-}
-
-function getInboundTrackingAction(document: Pick<InboundDocument, "trackingStatus" | "status">, t: (key: string) => string) {
-  switch (normalizeInboundTrackingStatus(document.trackingStatus, document.status)) {
-    case "SCHEDULED":
-      return { trackingStatus: "ARRIVED", label: t("markArrived") };
-    case "ARRIVED":
-      return { trackingStatus: "RECEIVING", label: t("startReceiving") };
-    case "RECEIVING":
-      return { trackingStatus: "RECEIVED", label: t("completeReceipt") };
-    default:
-      return null;
-  }
-}
-
-function getOutboundTrackingAction(document: Pick<OutboundDocument, "trackingStatus" | "status">, t: (key: string) => string) {
-  switch (normalizeOutboundTrackingStatus(document.trackingStatus, document.status)) {
-    case "SCHEDULED":
-      return { trackingStatus: "PICKING", label: t("startPicking") };
-    case "PICKING":
-      return { trackingStatus: "PACKED", label: t("markPacked") };
-    case "PACKED":
-      return { trackingStatus: "SHIPPED", label: t("shipOut") };
-    case "SHIPPED":
-      return { trackingStatus: "BO_RECEIVED", label: t("markBoReceived") };
-    default:
-      return null;
-  }
-}
-
-function getInboundWorkflowState(document: Pick<InboundDocument, "trackingStatus" | "status">, t: (key: string) => string) {
-  const normalizedTracking = normalizeInboundTrackingStatus(document.trackingStatus, document.status);
-  const workflowSteps = [t("scheduled"), t("arrived"), t("receiving"), t("receivedTracking")];
-  const workflowStepIndex = normalizedTracking === "ARRIVED"
-    ? 1
-    : normalizedTracking === "RECEIVING"
-      ? 2
-      : normalizedTracking === "RECEIVED"
-        ? 3
-        : 0;
-
-  return {
-    nextActionLabel: getInboundTrackingAction(document, t)?.label ?? null,
-    nextTrackingStatus: getInboundTrackingAction(document, t)?.trackingStatus ?? null,
-    workflowSteps,
-    workflowStepIndex
-  };
-}
-
-function getOutboundWorkflowState(document: Pick<OutboundDocument, "trackingStatus" | "status">, t: (key: string) => string) {
-  const normalizedTracking = normalizeOutboundTrackingStatus(document.trackingStatus, document.status);
-  const workflowSteps = [t("scheduled"), t("picking"), t("packed"), t("shipped"), t("boReceivedTracking")];
-  const workflowStepIndex = normalizedTracking === "PICKING"
-    ? 1
-    : normalizedTracking === "PACKED"
-      ? 2
-      : normalizedTracking === "SHIPPED"
-        ? 3
-        : normalizedTracking === "BO_RECEIVED"
-          ? 4
-        : 0;
-
-  return {
-    nextActionLabel: getOutboundTrackingAction(document, t)?.label ?? null,
-    nextTrackingStatus: getOutboundTrackingAction(document, t)?.trackingStatus ?? null,
-    workflowSteps,
-    workflowStepIndex
-  };
 }
 
 function compareDocumentsByUpdatedAt<

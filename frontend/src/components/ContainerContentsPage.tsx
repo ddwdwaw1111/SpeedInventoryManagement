@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Box, Button } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
-import { ApiError, api } from "../lib/api";
+import { api } from "../lib/api";
 import { consumePendingContainerContentsContext } from "../lib/containerContentsContext";
 import {
   buildContainerContentsRows,
@@ -12,6 +12,7 @@ import {
   displayContainerItemDescription,
   type ContainerContentsRow
 } from "../lib/containerInventory";
+import { getErrorMessage } from "../lib/errors";
 import { downloadExcelWorkbook, type ExcelExportCell, type ExcelExportColumn } from "../lib/excelExport";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
@@ -320,11 +321,4 @@ export function ContainerContentsPage({
       />
     </main>
   );
-}
-
-function getErrorMessage(error: unknown, fallbackMessage: string) {
-  if (error instanceof ApiError || error instanceof Error) {
-    return error.message || fallbackMessage;
-  }
-  return fallbackMessage;
 }

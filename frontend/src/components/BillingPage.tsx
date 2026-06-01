@@ -37,7 +37,7 @@ import {
 import { BarChart } from "@mui/x-charts";
 import { useEffect, useMemo, useState } from "react";
 
-import { ApiError, api } from "../lib/api";
+import { api } from "../lib/api";
 import { waitForNextPaint } from "../lib/asyncUi";
 import { setBillingWorkspaceContext } from "../lib/billingWorkspaceContext";
 import {
@@ -50,7 +50,9 @@ import {
 } from "../lib/billingPreview";
 import { downloadBillingPreviewPdf } from "../lib/billingPreviewPdf";
 import { formatDateTimeValue } from "../lib/dates";
+import { getErrorMessage } from "../lib/errors";
 import { downloadExcelWorkbook, type ExcelExportCell, type ExcelExportColumn } from "../lib/excelExport";
+import { formatDiscountMoney, formatMoney, formatNumber } from "../lib/formatters";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type {
@@ -1331,33 +1333,6 @@ function toNumber(value: string) {
     return 0;
   }
   return parsed;
-}
-
-function formatMoney(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(value);
-}
-
-function formatDiscountMoney(value: number) {
-  return value === 0 ? formatMoney(0) : formatMoney(-Math.abs(value));
-}
-
-function formatNumber(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
-    maximumFractionDigits: 2
-  }).format(value);
-}
-
-function getErrorMessage(error: unknown, fallbackMessage: string) {
-  if (error instanceof ApiError || error instanceof Error) {
-    return error.message || fallbackMessage;
-  }
-  return fallbackMessage;
 }
 
 function buildBillingContainerSummaryRows(invoiceLines: BillingInvoiceLine[], storageRows: BillingStorageRow[]) {

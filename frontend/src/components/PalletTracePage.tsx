@@ -5,8 +5,9 @@ import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, IconButton } fro
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 import { useEffect, useMemo, useState } from "react";
 
-import { ApiError, api } from "../lib/api";
+import { api } from "../lib/api";
 import { formatDateTimeValue, formatDateValue } from "../lib/dates";
+import { getErrorMessage } from "../lib/errors";
 import { setPendingInventoryActionContext } from "../lib/inventoryActionContext";
 import { buildInventoryActionSourceKey } from "../lib/inventoryActionSources";
 import { useI18n } from "../lib/i18n";
@@ -570,11 +571,4 @@ function getPalletAvailableQty(pallet: PalletTrace) {
 
 function canAdjustPallet(pallet: PalletTrace | null) {
   return Boolean(pallet && (pallet.status === "OPEN" || pallet.status === "PARTIAL") && getPalletAvailableQty(pallet) > 0);
-}
-
-function getErrorMessage(error: unknown, fallbackMessage: string) {
-  if (error instanceof ApiError || error instanceof Error) {
-    return error.message || fallbackMessage;
-  }
-  return fallbackMessage;
 }

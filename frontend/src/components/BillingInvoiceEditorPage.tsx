@@ -11,10 +11,12 @@ import BlockOutlinedIcon from "@mui/icons-material/BlockOutlined";
 import { useState, useEffect, useCallback, type FormEvent } from "react";
 import { Button, Chip, Dialog, DialogTitle, DialogContent, DialogActions, Divider, ListItemIcon, ListItemText, Menu, MenuItem } from "@mui/material";
 
-import { ApiError, api } from "../lib/api";
+import { api } from "../lib/api";
 import { waitForNextPaint } from "../lib/asyncUi";
 import { downloadExcelWorkbook, type ExcelExportCell, type ExcelExportColumn } from "../lib/excelExport";
 import { downloadBillingInvoicePdf } from "../lib/billingInvoicePdf";
+import { getErrorMessage } from "../lib/errors";
+import { formatDiscountMoney, formatMoney, formatNumber } from "../lib/formatters";
 import { useI18n } from "../lib/i18n";
 import { DEFAULT_BILLING_INVOICE_HEADER, useSettings } from "../lib/settings";
 import { formatDateTimeValue } from "../lib/dates";
@@ -1167,31 +1169,4 @@ function getInvoiceLineStorageDiscount(line: BillingInvoiceLineData) {
 
 function roundCurrency(value: number) {
   return Math.round(value * 100) / 100;
-}
-
-function formatDiscountMoney(value: number) {
-  return value === 0 ? formatMoney(0) : formatMoney(-Math.abs(value));
-}
-
-function formatMoney(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(value);
-}
-
-function formatNumber(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
-    maximumFractionDigits: 2
-  }).format(value);
-}
-
-function getErrorMessage(error: unknown, fallback: string) {
-  if (error instanceof ApiError || error instanceof Error) {
-    return error.message || fallback;
-  }
-  return fallback;
 }

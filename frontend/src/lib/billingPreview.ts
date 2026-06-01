@@ -1,4 +1,5 @@
 import { parseDateLikeValue, startOfLocalDay, toIsoDateString } from "./dates";
+import { formatMoney } from "./formatters";
 import type { ContainerType, Customer, InboundDocument, OutboundDocument, PalletLocationEvent, PalletTrace } from "./types";
 
 export type BillingRates = {
@@ -990,13 +991,4 @@ function roundCurrency(value: number) {
 
 function roundQuantity(value: number) {
   return Math.round(value * 100) / 100;
-}
-
-function formatMoney(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(value);
 }

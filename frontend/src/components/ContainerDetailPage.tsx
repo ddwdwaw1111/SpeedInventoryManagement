@@ -11,8 +11,9 @@ import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
 import { Chip, Dialog, DialogContent, DialogTitle, IconButton } from "@mui/material";
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 
-import { ApiError, api } from "../lib/api";
+import { api } from "../lib/api";
 import { formatDateTimeValue, formatDateValue, parseDateValue } from "../lib/dates";
+import { getErrorMessage } from "../lib/errors";
 import {
   buildAllContainerContentsRows,
   buildContainerSkuCards,
@@ -1547,12 +1548,6 @@ function getPalletStatusColor(status: string): "success" | "warning" | "default"
   }
 }
 
-function getErrorMessage(error: unknown, fallbackMessage: string) {
-  if (error instanceof ApiError || error instanceof Error) {
-    return error.message || fallbackMessage;
-  }
-  return fallbackMessage;
-}
 
 function createEmptyContainerAdjustmentForm(selectedPalletIds: number[] = []): ContainerAdjustmentFormState {
   return {

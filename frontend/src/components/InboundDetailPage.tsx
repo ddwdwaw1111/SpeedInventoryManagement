@@ -6,8 +6,15 @@ import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
 import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 
-import { ApiError, api } from "../lib/api";
+import { api } from "../lib/api";
 import { setPendingActivityManagementLaunchContext } from "../lib/activityManagementLaunchContext";
+import {
+  formatInboundTrackingStatusLabel,
+  getInboundWorkflowStepIndex,
+  normalizeDocumentStatus,
+  normalizeInboundTrackingStatus
+} from "../lib/documentTracking";
+import { getErrorMessage } from "../lib/errors";
 import type { InboundReceiptEditorLaunchContext } from "../lib/inboundReceiptEditorLaunchContext";
 import { useI18n } from "../lib/i18n";
 import { setPendingPalletTraceLaunchContext } from "../lib/palletTraceLaunchContext";
@@ -654,44 +661,6 @@ function DetailStatRow({ label, value, multiline = false }: { label: string; val
   );
 }
 
-function getInboundWorkflowStepIndex(document: Pick<InboundDocument, "trackingStatus" | "status">) {
-  const normalizedTracking = normalizeInboundTrackingStatus(document.trackingStatus, document.status);
-  if (normalizedTracking === "ARRIVED") return 1;
-  if (normalizedTracking === "RECEIVING") return 2;
-  if (normalizedTracking === "RECEIVED") return 3;
-  return 0;
-}
-
-function normalizeInboundTrackingStatus(trackingStatus: string, documentStatus: string) {
-  if (normalizeDocumentStatus(documentStatus) === "CONFIRMED") {
-    return "RECEIVED";
-  }
-
-  const normalizedTrackingStatus = (trackingStatus || "").trim().toUpperCase();
-  if (normalizedTrackingStatus === "ARRIVED" || normalizedTrackingStatus === "RECEIVING" || normalizedTrackingStatus === "RECEIVED") {
-    return normalizedTrackingStatus;
-  }
-
-  return "SCHEDULED";
-}
-
-function normalizeDocumentStatus(status: string) {
-  return (status || "").trim().toUpperCase();
-}
-
-function formatInboundTrackingStatusLabel(trackingStatus: string, documentStatus: string, t: Translate) {
-  switch (normalizeInboundTrackingStatus(trackingStatus, documentStatus)) {
-    case "ARRIVED":
-      return t("arrived");
-    case "RECEIVING":
-      return t("receiving");
-    case "RECEIVED":
-      return t("receivedTracking");
-    default:
-      return t("scheduled");
-  }
-}
-
 function summarizeSections(document: InboundDocument) {
   const sectionSet = new Set(
     [document.storageSection, ...document.lines.map((line) => line.storageSection)]
@@ -847,12 +816,6 @@ function getPalletStatusToneClass(status: string) {
   }
 }
 
-function getErrorMessage(error: unknown, fallbackMessage: string) {
-  if (error instanceof ApiError || error instanceof Error) {
-    return error.message || fallbackMessage;
-  }
-  return fallbackMessage;
-}
 
 function getEventToneClass(tone: ActivityEvent["tone"]) {
   switch (tone) {

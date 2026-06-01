@@ -2,6 +2,7 @@ import type { Content, CustomTableLayout, Style, TableCell, TDocumentDefinitions
 
 import type { BillingInvoiceLine, BillingPreview, BillingRates, BillingStorageRow } from "./billingPreview";
 import { formatDateTimeValue } from "./dates";
+import { formatDiscountMoney as formatDiscountAmount, formatMoney, formatNumber } from "./formatters";
 import { downloadPdfDefinition } from "./pdfMakeRuntime";
 import { DEFAULT_BILLING_INVOICE_HEADER } from "./settings";
 import type { BillingInvoiceHeader } from "./types";
@@ -1025,24 +1026,4 @@ function formatPreviewDate(value: string) {
 
 function sanitizeFileName(value: string) {
   return value.trim().replace(/[^a-zA-Z0-9-_]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "billing-preview";
-}
-
-function formatMoney(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(value);
-}
-
-function formatDiscountAmount(value: number) {
-  return value === 0 ? formatMoney(0) : formatMoney(-Math.abs(value));
-}
-
-function formatNumber(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
-    maximumFractionDigits: 2
-  }).format(value);
 }

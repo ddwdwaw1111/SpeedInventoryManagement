@@ -16,6 +16,15 @@ import { consumePendingActivityManagementLaunchContext, type ActivityManagementL
 import { RowActionsMenu } from "./RowActionsMenu";
 import { formatContainerDistributionSummary as formatContainerDistributionSummaryValue } from "../lib/containerBalances";
 import { formatDateTimeValue, formatDateValue } from "../lib/dates";
+import {
+  formatInboundTrackingStatusLabel,
+  formatOutboundTrackingStatusLabel,
+  getInboundTrackingAction,
+  getOutboundTrackingAction,
+  normalizeDocumentStatus,
+  normalizeInboundTrackingStatus as normalizeInboundTrackingStatusValue,
+  normalizeOutboundTrackingStatus as normalizeOutboundTrackingStatusValue
+} from "../lib/documentTracking";
 import { downloadExcelWorkbook, type ExcelExportColumn } from "../lib/excelExport";
 import type { InboundReceiptEditorLaunchContext } from "../lib/inboundReceiptEditorLaunchContext";
 import type { OutboundShipmentEditorLaunchContext } from "../lib/outboundShipmentEditorLaunchContext";
@@ -667,8 +676,8 @@ export function ActivityManagementPage({
   );
   const isSelectedOutboundNoteDirty = Boolean(selectedOutboundDocument)
     && selectedOutboundDocumentNoteDraft.trim() !== (selectedOutboundDocument?.documentNote ?? "").trim();
-  const selectedInboundTrackingAction = selectedInboundDocument ? getInboundTrackingAction(selectedInboundDocument, t) : null;
-  const selectedOutboundTrackingAction = selectedOutboundDocument ? getOutboundTrackingAction(selectedOutboundDocument, t) : null;
+  const selectedInboundTrackingAction = selectedInboundDocument ? getInboundTrackingAction(selectedInboundDocument, t, { draftOnly: true }) : null;
+  const selectedOutboundTrackingAction = selectedOutboundDocument ? getOutboundTrackingAction(selectedOutboundDocument, t, { draftOrShippedOnly: true }) : null;
   const selectedInboundDrawerBusy = Boolean(
     selectedInboundDocument && documentActionKey?.startsWith(`inbound-${selectedInboundDocument.id}-`)
   );
@@ -4105,58 +4114,6 @@ function formatDocumentStatusAuditValue(
   return status;
 }
 
-function normalizeInboundTrackingStatusValue(trackingStatus?: string | null, documentStatus?: string | null) {
-  const normalizedStatus = normalizeDocumentStatus(documentStatus || "");
-  if (normalizedStatus === "CONFIRMED") {
-    return "RECEIVED";
-  }
-  const normalizedTrackingStatus = (trackingStatus || "").trim().toUpperCase();
-  if (normalizedTrackingStatus === "ARRIVED" || normalizedTrackingStatus === "RECEIVING" || normalizedTrackingStatus === "RECEIVED") {
-    return normalizedTrackingStatus;
-  }
-  return "SCHEDULED";
-}
-
-function normalizeOutboundTrackingStatusValue(trackingStatus?: string | null, documentStatus?: string | null) {
-  const normalizedTrackingStatus = (trackingStatus || "").trim().toUpperCase();
-  if (normalizedTrackingStatus === "PICKING" || normalizedTrackingStatus === "PACKED" || normalizedTrackingStatus === "SHIPPED" || normalizedTrackingStatus === "BO_RECEIVED") {
-    return normalizedTrackingStatus;
-  }
-  const normalizedStatus = normalizeDocumentStatus(documentStatus || "");
-  if (normalizedStatus === "CONFIRMED") {
-    return "SHIPPED";
-  }
-  return "SCHEDULED";
-}
-
-function formatInboundTrackingStatusLabel(trackingStatus: string, documentStatus: string, t: (key: string) => string) {
-  switch (normalizeInboundTrackingStatusValue(trackingStatus, documentStatus)) {
-    case "ARRIVED":
-      return t("arrived");
-    case "RECEIVING":
-      return t("receiving");
-    case "RECEIVED":
-      return t("receivedTracking");
-    default:
-      return t("scheduled");
-  }
-}
-
-function formatOutboundTrackingStatusLabel(trackingStatus: string, documentStatus: string, t: (key: string) => string) {
-  switch (normalizeOutboundTrackingStatusValue(trackingStatus, documentStatus)) {
-    case "BO_RECEIVED":
-      return t("boReceivedTracking");
-    case "PICKING":
-      return t("picking");
-    case "PACKED":
-      return t("packed");
-    case "SHIPPED":
-      return t("shipped");
-    default:
-      return t("scheduled");
-  }
-}
-
 function renderInboundTrackingStatus(trackingStatus: string, documentStatus: string, t: (key: string) => string) {
   const normalizedTrackingStatus = normalizeInboundTrackingStatusValue(trackingStatus, documentStatus);
   if (normalizedTrackingStatus === "RECEIVED") {
@@ -4186,48 +4143,6 @@ function renderOutboundTrackingStatus(trackingStatus: string, documentStatus: st
     return <Chip label={t("picking")} color="info" size="small" variant="outlined" />;
   }
   return <Chip label={t("scheduled")} color="default" size="small" variant="outlined" />;
-}
-
-function getInboundTrackingAction(document: InboundDocument, t: (key: string) => string) {
-  if (normalizeDocumentStatus(document.status) !== "DRAFT") {
-    return null;
-  }
-
-  switch (normalizeInboundTrackingStatusValue(document.trackingStatus, document.status)) {
-    case "SCHEDULED":
-      return { trackingStatus: "ARRIVED", label: t("markArrived") };
-    case "ARRIVED":
-      return { trackingStatus: "RECEIVING", label: t("startReceiving") };
-    case "RECEIVING":
-      return { trackingStatus: "RECEIVED", label: t("completeReceipt") };
-    default:
-      return null;
-  }
-}
-
-function getOutboundTrackingAction(document: OutboundDocument, t: (key: string) => string) {
-  const normalizedStatus = normalizeDocumentStatus(document.status);
-  const normalizedTracking = normalizeOutboundTrackingStatusValue(document.trackingStatus, document.status);
-  if (normalizedStatus !== "DRAFT" && normalizedTracking !== "SHIPPED") {
-    return null;
-  }
-
-  switch (normalizedTracking) {
-    case "SCHEDULED":
-      return { trackingStatus: "PICKING", label: t("startPicking") };
-    case "PICKING":
-      return { trackingStatus: "PACKED", label: t("markPacked") };
-    case "PACKED":
-      return { trackingStatus: "SHIPPED", label: t("shipOut") };
-    case "SHIPPED":
-      return { trackingStatus: "BO_RECEIVED", label: t("markBoReceived") };
-    default:
-      return null;
-  }
-}
-
-function normalizeDocumentStatus(status: string) {
-  return status.trim().toUpperCase();
 }
 
 function getInboundDocumentActionKey(documentId: number, action: string) {

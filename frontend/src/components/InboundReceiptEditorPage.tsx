@@ -4,6 +4,7 @@ import { Fragment, type FormEvent, useEffect, useMemo, useRef, useState } from "
 
 import { api } from "../lib/api";
 import type { InboundHandlingMode, InboundLaunchIntent } from "../lib/activityManagementLaunchContext";
+import { normalizeDocumentStatus, normalizeInboundTrackingStatus as normalizeInboundTrackingStatusValue } from "../lib/documentTracking";
 import { consumePendingInboundReceiptEditorLaunchContext, type InboundReceiptEditorLaunchContext } from "../lib/inboundReceiptEditorLaunchContext";
 import { useI18n } from "../lib/i18n";
 import {
@@ -1782,21 +1783,5 @@ function getInboundReceiptVarianceClassName(variance: InboundReceiptVariance) {
     default:
       return "status-pill--ok";
   }
-}
-
-function normalizeDocumentStatus(status: string) {
-  return status.trim().toUpperCase();
-}
-
-function normalizeInboundTrackingStatusValue(trackingStatus?: string | null, documentStatus?: string | null) {
-  const normalizedStatus = normalizeDocumentStatus(documentStatus || "");
-  if (normalizedStatus === "CONFIRMED") {
-    return "RECEIVED";
-  }
-  const normalizedTrackingStatus = (trackingStatus || "").trim().toUpperCase();
-  if (normalizedTrackingStatus === "ARRIVED" || normalizedTrackingStatus === "RECEIVING" || normalizedTrackingStatus === "RECEIVED") {
-    return normalizedTrackingStatus;
-  }
-  return "SCHEDULED";
 }
 

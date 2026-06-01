@@ -7,6 +7,11 @@ import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 
+import {
+  formatOutboundTrackingStatusLabel as formatOutboundTrackingStatusValue,
+  getOutboundWorkflowState,
+  normalizeDocumentStatus
+} from "../lib/documentTracking";
 import { useI18n } from "../lib/i18n";
 import { customerPortalApi } from "./api";
 import type { CustomerPortalSection } from "./navigation";
@@ -90,7 +95,7 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
     [packingLists, selectedPackingListId]
   );
   const selectedPackingListWorkflow = selectedPackingList
-    ? getOutboundWorkflowState(selectedPackingList.trackingStatus, selectedPackingList.status, t)
+    ? getOutboundWorkflowState(selectedPackingList, t, { workflowLabels: true, cancelledStops: true })
     : null;
   const selectedPackingListAttachmentCount = selectedPackingList?.attachments?.length ?? 0;
   const openPackingListCount = packingLists.filter(isOpenPackingList).length;
@@ -705,29 +710,6 @@ function PortalPanelHeader({
   );
 }
 
-function getOutboundWorkflowState(trackingStatus: string, documentStatus: string, t: (key: string) => string) {
-  const steps = [t("scheduledTracking"), t("pickingTracking"), t("packedTracking"), t("shippedTracking"), t("boReceivedTracking")];
-  const normalizedStatus = documentStatus.trim().toUpperCase();
-  if (normalizedStatus === "DELETED" || normalizedStatus === "CANCELLED") {
-    return { steps, activeIndex: -1, progress: 0 };
-  }
-  const normalizedTrackingStatus = trackingStatus.trim().toUpperCase();
-  const activeIndex = normalizedTrackingStatus === "PICKING"
-    ? 1
-    : normalizedTrackingStatus === "PACKED"
-      ? 2
-      : normalizedTrackingStatus === "SHIPPED"
-        ? 3
-        : normalizedTrackingStatus === "BO_RECEIVED"
-          ? 4
-          : 0;
-  return {
-    steps,
-    activeIndex,
-    progress: Math.round(((activeIndex + 1) / steps.length) * 100)
-  };
-}
-
 function formatNullableDate(value: string | null) {
   if (!value) {
     return "-";
@@ -744,22 +726,7 @@ function formatOutboundTrackingStatusFilterLabel(status: string, t: (key: string
 }
 
 function formatOutboundTrackingStatus(trackingStatus: string, documentStatus: string, t: (key: string) => string) {
-  const normalizedStatus = documentStatus.trim().toUpperCase();
-  if (normalizedStatus === "DELETED" || normalizedStatus === "CANCELLED") {
-    return t("cancelled");
-  }
-  switch (trackingStatus.trim().toUpperCase()) {
-    case "BO_RECEIVED":
-      return t("boReceivedTracking");
-    case "SHIPPED":
-      return t("shippedTracking");
-    case "PACKED":
-      return t("packedTracking");
-    case "PICKING":
-      return t("pickingTracking");
-    default:
-      return t("scheduledTracking");
-  }
+  return formatOutboundTrackingStatusValue(trackingStatus, documentStatus, t, { workflowLabels: true, cancelledAsCancelled: true });
 }
 
 function getTrackingStatusPillClass(document: Pick<OutboundDocument, "status" | "trackingStatus">) {
@@ -805,6 +772,6 @@ function formatPackingListCompletionStatus(document: Pick<OutboundDocument, "sta
 }
 
 function normalizeDocumentStatusForPortal(status: string) {
-  const normalized = status.trim().toUpperCase();
+  const normalized = normalizeDocumentStatus(status);
   return normalized === "CANCELLED" ? "DELETED" : normalized;
 }

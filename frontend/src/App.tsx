@@ -26,6 +26,7 @@ import { AppHeaderUser, AuthPage } from "./components/AuthPage";
 import { CustomerPortalApp } from "./customerPortal/CustomerPortalApp";
 import { getCustomerPortalPath, isCustomerPortalPath } from "./customerPortal/routes";
 import { ApiError, api } from "./lib/api";
+import { getErrorMessage } from "./lib/errors";
 import { setPendingActivityManagementLaunchContext } from "./lib/activityManagementLaunchContext";
 import { setPendingInboundReceiptEditorLaunchContext, type InboundReceiptEditorLaunchContext } from "./lib/inboundReceiptEditorLaunchContext";
 import { setPendingOutboundShipmentEditorLaunchContext, type OutboundShipmentEditorLaunchContext } from "./lib/outboundShipmentEditorLaunchContext";
@@ -986,5 +987,3 @@ function getCurrentLocalIsoDate() {
   const day = `${now.getDate()}`.padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
-
-function getErrorMessage(error: unknown, fallbackMessage: string) { return error instanceof Error && error.message ? error.message : fallbackMessage; }

@@ -5,6 +5,7 @@ import DashboardOutlinedIcon from "@mui/icons-material/DashboardOutlined";
 import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
 import { Suspense, lazy, useEffect, useState } from "react";
 
+import { getErrorMessage } from "../lib/errors";
 import { useI18n } from "../lib/i18n";
 import { NavigationSidebar, type NavigationSidebarItem } from "../shared/NavigationSidebar";
 import { ApiError, customerPortalApi } from "./api";
@@ -217,9 +218,6 @@ export function CustomerPortalApp({ onExitToAdmin }: CustomerPortalAppProps) {
   );
 }
 
-function getErrorMessage(error: unknown, fallbackMessage: string) {
-  return error instanceof Error && error.message ? error.message : fallbackMessage;
-}
 
 function CustomerPortalUserMenu({
   user,

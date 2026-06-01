@@ -3,7 +3,7 @@ import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
 import { Button } from "@mui/material";
 import { useEffect, useMemo, useState } from "react";
 
-import { ApiError, api } from "../lib/api";
+import { api } from "../lib/api";
 import { readBillingWorkspaceContext } from "../lib/billingWorkspaceContext";
 import {
 	buildBillingPreview,
@@ -13,6 +13,8 @@ import {
 	type BillingStorageRow
 } from "../lib/billingPreview";
 import { formatDateTimeValue, parseDateLikeValue } from "../lib/dates";
+import { getErrorMessage } from "../lib/errors";
+import { formatMoney, formatNumber, formatSignedNumber } from "../lib/formatters";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type { Customer, InboundDocument, Location, OutboundDocument, PalletLocationEvent, PalletTrace } from "../lib/types";
@@ -608,36 +610,6 @@ function renderChargeTypeLabel(chargeType: BillingInvoiceLine["chargeType"], t: 
 	}
 }
 
-function formatMoney(value: number) {
-	return new Intl.NumberFormat("en-US", {
-		style: "currency",
-		currency: "USD",
-		minimumFractionDigits: 2,
-		maximumFractionDigits: 2
-	}).format(value);
-}
-
-function formatNumber(value: number) {
-	return new Intl.NumberFormat("en-US", {
-		minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
-		maximumFractionDigits: 2
-	}).format(value);
-}
-
-function formatSignedNumber(value: number) {
-	if (value > 0) {
-		return `+${formatNumber(value)}`;
-	}
-	return formatNumber(value);
-}
-
 function isNavigableContainerNo(containerNo: string) {
 	return containerNo.trim() !== "" && containerNo.trim() !== "-" && containerNo.trim().toUpperCase() !== "UNASSIGNED";
-}
-
-function getErrorMessage(error: unknown, fallbackMessage: string) {
-	if (error instanceof ApiError || error instanceof Error) {
-		return error.message || fallbackMessage;
-	}
-	return fallbackMessage;
 }

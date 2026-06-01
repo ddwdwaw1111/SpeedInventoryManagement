@@ -9,9 +9,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Box, Button, Chip, Drawer, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
-import { ApiError, api } from "../lib/api";
+import { api } from "../lib/api";
 import { consumePendingAllActivityContext } from "../lib/allActivityContext";
 import { formatDateTimeValue, formatDateValue, getZonedDateRangeUtcBounds, isCalendarDateValue, normalizeCalendarDate, parseDateValue } from "../lib/dates";
+import { getErrorMessage } from "../lib/errors";
 import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
 import { useSettings } from "../lib/settings";
@@ -531,11 +532,4 @@ function isWithinDateRange(
 
 function formatSignedNumber(value: number) {
   return `${value >= 0 ? "+" : ""}${new Intl.NumberFormat("en-US").format(value)}`;
-}
-
-function getErrorMessage(error: unknown, fallbackMessage: string) {
-  if (error instanceof ApiError || error instanceof Error) {
-    return error.message || fallbackMessage;
-  }
-  return fallbackMessage;
 }

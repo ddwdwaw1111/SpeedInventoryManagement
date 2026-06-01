@@ -3,6 +3,7 @@ import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useStat
 
 import { api } from "../lib/api";
 import { formatContainerDistributionSummary as formatContainerDistributionSummaryValue } from "../lib/containerBalances";
+import { normalizeDocumentStatus, normalizeOutboundTrackingStatus as normalizeOutboundTrackingStatusValue } from "../lib/documentTracking";
 import { consumePendingOutboundShipmentEditorLaunchContext, type OutboundShipmentEditorLaunchContext } from "../lib/outboundShipmentEditorLaunchContext";
 import { useI18n } from "../lib/i18n";
 import { getOutboundExpectedShipDate } from "../lib/outboundDates";
@@ -1747,22 +1748,6 @@ function buildOutboundStepOverview(
     palletCount,
     reviewStatus
   };
-}
-
-function normalizeDocumentStatus(status: string) {
-  return status.trim().toUpperCase();
-}
-
-function normalizeOutboundTrackingStatusValue(trackingStatus?: string | null, documentStatus?: string | null) {
-  const normalizedTrackingStatus = (trackingStatus || "").trim().toUpperCase();
-  if (normalizedTrackingStatus === "PICKING" || normalizedTrackingStatus === "PACKED" || normalizedTrackingStatus === "SHIPPED" || normalizedTrackingStatus === "BO_RECEIVED") {
-    return normalizedTrackingStatus;
-  }
-  const normalizedStatus = normalizeDocumentStatus(documentStatus || "");
-  if (normalizedStatus === "CONFIRMED") {
-    return "SHIPPED";
-  }
-  return "SCHEDULED";
 }
 
 function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceOptions: OutboundSourceOption[]): OutboundAllocationPreviewResult {
