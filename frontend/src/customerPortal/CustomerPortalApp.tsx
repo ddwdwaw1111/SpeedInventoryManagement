@@ -1,8 +1,15 @@
+import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
+import AssignmentTurnedInOutlinedIcon from "@mui/icons-material/AssignmentTurnedInOutlined";
+import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
+import DashboardOutlinedIcon from "@mui/icons-material/DashboardOutlined";
+import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
 import { Suspense, lazy, useEffect, useState } from "react";
 
 import { useI18n } from "../lib/i18n";
+import { NavigationSidebar, type NavigationSidebarItem } from "../shared/NavigationSidebar";
 import { ApiError, customerPortalApi } from "./api";
 import { CustomerPortalAuthPage } from "./CustomerPortalAuthPage";
+import type { CustomerPortalSection } from "./navigation";
 import { getCustomerPortalCustomerIdFromPath, getCustomerPortalPath } from "./routes";
 import { InlineAlert } from "./sharedUi";
 import type { LoginPayload, SignUpPayload, User } from "./types";
@@ -30,6 +37,7 @@ export function CustomerPortalApp({ onExitToAdmin }: CustomerPortalAppProps) {
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
   const [authErrorMessage, setAuthErrorMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [activeSection, setActiveSection] = useState<CustomerPortalSection>("overview");
 
   useEffect(() => { void bootstrapPortal(); }, []);
 
@@ -178,21 +186,33 @@ export function CustomerPortalApp({ onExitToAdmin }: CustomerPortalAppProps) {
         </div>
       </header>
 
-      {errorMessage ? (
-        <main className="customer-portal-main">
-          <InlineAlert>{errorMessage}</InlineAlert>
-        </main>
-      ) : null}
+      <div className="customer-portal-layout">
+        <CustomerPortalSidebar
+          activeSection={activeSection}
+          portalAccess={portalAccess}
+          onChangeSection={setActiveSection}
+        />
 
-      {!errorMessage && portalAccess ? (
-        <Suspense fallback={<main className="customer-portal-main"><div className="empty-state">{t("loadingRecords")}</div></main>}>
-          <CustomerPortalPage
-            currentUser={currentUser}
-            portalCustomerId={portalAccess.customerId}
-            portalCustomerName={portalAccess.customerName}
-          />
-        </Suspense>
-      ) : null}
+        <div className="customer-portal-content">
+          {errorMessage ? (
+            <main className="customer-portal-main">
+              <InlineAlert>{errorMessage}</InlineAlert>
+            </main>
+          ) : null}
+
+          {!errorMessage && portalAccess ? (
+            <Suspense fallback={<main className="customer-portal-main"><div className="empty-state">{t("loadingRecords")}</div></main>}>
+              <CustomerPortalPage
+                activeSection={activeSection}
+                currentUser={currentUser}
+                portalCustomerId={portalAccess.customerId}
+                portalCustomerName={portalAccess.customerName}
+                onSectionChange={setActiveSection}
+              />
+            </Suspense>
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }
@@ -238,5 +258,50 @@ function CustomerPortalUserMenu({
         </button>
       </div>
     </div>
+  );
+}
+
+function CustomerPortalSidebar({
+  activeSection,
+  portalAccess,
+  onChangeSection
+}: {
+  activeSection: CustomerPortalSection;
+  portalAccess: PortalAccess | null;
+  onChangeSection: (section: CustomerPortalSection) => void;
+}) {
+  const { t } = useI18n();
+  const navItems: NavigationSidebarItem<CustomerPortalSection>[] = [
+    { key: "overview", label: t("customerPortalOverview"), icon: <DashboardOutlinedIcon fontSize="small" /> },
+    { key: "inventory", label: t("customerPortalInventory"), icon: <Inventory2OutlinedIcon fontSize="small" /> },
+    { key: "new-packing-list", label: t("newPackingList"), icon: <AddCircleOutlineOutlinedIcon fontSize="small" /> },
+    { key: "packing-lists", label: t("customerPortalPackingLists"), icon: <AssignmentTurnedInOutlinedIcon fontSize="small" /> },
+    { key: "attachments", label: t("attachments"), icon: <AttachFileOutlinedIcon fontSize="small" /> }
+  ];
+
+  return (
+    <NavigationSidebar
+      activeKey={activeSection}
+      ariaLabel={t("customerPortal")}
+      classNames={{
+        root: "customer-portal-sidebar",
+        header: "customer-portal-sidebar__account",
+        nav: "customer-portal-sidebar__nav",
+        item: "customer-portal-sidebar__item",
+        itemActive: "customer-portal-sidebar__item--active",
+        itemIcon: "customer-portal-sidebar__item-icon",
+        itemLabel: "customer-portal-sidebar__item-label"
+      }}
+      header={(
+        <>
+          <span className="customer-portal-sidebar__eyebrow">{t("customerPortal")}</span>
+          <strong className="customer-portal-sidebar__account-name">{portalAccess?.customerName || t("customerPortal")}</strong>
+        </>
+      )}
+      items={navItems}
+      navLabel={t("customerPortal")}
+      onSelect={onChangeSection}
+      useAriaCurrent
+    />
   );
 }

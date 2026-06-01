@@ -9,12 +9,15 @@ import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "re
 
 import { useI18n } from "../lib/i18n";
 import { customerPortalApi } from "./api";
+import type { CustomerPortalSection } from "./navigation";
 import { DocumentAttachmentsPanel, InlineAlert, InlineLoadingIndicator, useFeedbackToast } from "./sharedUi";
 import type { PendingDocumentAttachment } from "./sharedUi";
 import type { DocumentAttachment, Item, OutboundDocument, OutboundDocumentPayload, User } from "./types";
 
 type CustomerPortalPageProps = {
+  activeSection?: CustomerPortalSection;
   currentUser: User;
+  onSectionChange?: (section: CustomerPortalSection) => void;
   portalCustomerId?: number;
   portalCustomerName?: string;
 };
@@ -60,7 +63,7 @@ const emptyPackingListForm: PackingListFormState = {
 const packingListStatusOptions = ["all", "DRAFT", "CONFIRMED", "DELETED"];
 const packingListTrackingStatusOptions = ["all", "SCHEDULED", "PICKING", "PACKED", "SHIPPED", "BO_RECEIVED"];
 
-export function CustomerPortalPage({ currentUser, portalCustomerId, portalCustomerName = "" }: CustomerPortalPageProps) {
+export function CustomerPortalPage({ activeSection, currentUser, onSectionChange, portalCustomerId, portalCustomerName = "" }: CustomerPortalPageProps) {
   const { t } = useI18n();
   const { showSuccess, showError, feedbackToast } = useFeedbackToast();
   const [inventorySearch, setInventorySearch] = useState("");
@@ -105,6 +108,15 @@ export function CustomerPortalPage({ currentUser, portalCustomerId, portalCustom
       setSelectedPackingListId(packingLists[0].id);
     }
   }, [packingLists, selectedPackingListId]);
+
+  useEffect(() => {
+    if (activeSection === "attachments") {
+      setActiveDetailTab("documents");
+    }
+    if (activeSection === "packing-lists") {
+      setActiveDetailTab("details");
+    }
+  }, [activeSection]);
 
   async function loadPortalData() {
     setIsLoading(true);
@@ -160,6 +172,7 @@ export function CustomerPortalPage({ currentUser, portalCustomerId, portalCustom
         }
       ];
     });
+    onSectionChange?.("new-packing-list");
   }
 
   function updateLineDraft(id: string, updates: Partial<PackingListLineDraft>) {
@@ -221,6 +234,7 @@ export function CustomerPortalPage({ currentUser, portalCustomerId, portalCustom
       setPackingListStatus("all");
       setPackingListTrackingStatus("all");
       setSelectedPackingListId(createdDocument.id);
+      onSectionChange?.("packing-lists");
       const documentRows = await customerPortalApi.getPackingLists(100, {
         search: "",
         status: "all",
@@ -280,56 +294,67 @@ export function CustomerPortalPage({ currentUser, portalCustomerId, portalCustom
   }
 
   const visibleInventory = inventory.filter((item) => item.availableQty > 0 || item.quantity > 0);
+  const showAllSections = !activeSection;
+  const showOverviewSection = showAllSections || activeSection === "overview";
+  const showInventorySection = showAllSections || activeSection === "inventory";
+  const showComposerSection = showAllSections || activeSection === "new-packing-list";
+  const showPackingListSection = showAllSections || activeSection === "packing-lists" || activeSection === "attachments";
 
   return (
     <main className="customer-portal-main">
-      <section className="customer-portal-overview">
-        <div className="customer-portal-overview__copy">
-          <span className="customer-portal-overview__eyebrow">{t("customerPortal")}</span>
-          <h1>{activeCustomerName || t("customerPortal")}</h1>
-          <p>{t("customerPortalDesc")}</p>
-          {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
-        </div>
-        <div className="customer-portal-overview__actions">
-          <button className="button button--primary" type="button" onClick={() => void loadPortalData()} disabled={isLoading}>
-            {isLoading ? <InlineLoadingIndicator /> : <RefreshRoundedIcon fontSize="small" />}
-            {t("refresh")}
-          </button>
-        </div>
-      </section>
+      {showOverviewSection ? (
+        <>
+          <section className="customer-portal-overview">
+            <div className="customer-portal-overview__copy">
+              <span className="customer-portal-overview__eyebrow">{t("customerPortal")}</span>
+              <h1>{activeCustomerName || t("customerPortal")}</h1>
+              <p>{t("customerPortalDesc")}</p>
+              {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
+            </div>
+            <div className="customer-portal-overview__actions">
+              <button className="button button--primary" type="button" onClick={() => void loadPortalData()} disabled={isLoading}>
+                {isLoading ? <InlineLoadingIndicator /> : <RefreshRoundedIcon fontSize="small" />}
+                {t("refresh")}
+              </button>
+            </div>
+          </section>
 
-      <section className="customer-portal-metrics" aria-label={t("customerPortal")}>
-        <article className="customer-portal-kpi">
-          <span className="customer-portal-kpi__icon"><AttachFileOutlinedIcon fontSize="small" /></span>
-          <div>
-            <span>{t("attachments")}</span>
-            <strong>{attachmentCount}</strong>
-          </div>
-        </article>
-        <article className="customer-portal-kpi">
-          <span className="customer-portal-kpi__icon"><Inventory2OutlinedIcon fontSize="small" /></span>
-          <div>
-            <span>{t("inventory")}</span>
-            <strong>{visibleInventory.length}</strong>
-          </div>
-        </article>
-        <article className="customer-portal-kpi">
-          <span className="customer-portal-kpi__icon"><LocalShippingOutlinedIcon fontSize="small" /></span>
-          <div>
-            <span>{t("customerPortalOpenPackingLists")}</span>
-            <strong>{openPackingListCount}</strong>
-          </div>
-        </article>
-        <article className="customer-portal-kpi">
-          <span className="customer-portal-kpi__icon"><AssignmentTurnedInOutlinedIcon fontSize="small" /></span>
-          <div>
-            <span>{t("customerPortalCompletedPackingLists")}</span>
-            <strong>{completedPackingListCount}</strong>
-          </div>
-        </article>
-      </section>
+          <section className="customer-portal-metrics" aria-label={t("customerPortal")}>
+            <article className="customer-portal-kpi">
+              <span className="customer-portal-kpi__icon"><AttachFileOutlinedIcon fontSize="small" /></span>
+              <div>
+                <span>{t("attachments")}</span>
+                <strong>{attachmentCount}</strong>
+              </div>
+            </article>
+            <article className="customer-portal-kpi">
+              <span className="customer-portal-kpi__icon"><Inventory2OutlinedIcon fontSize="small" /></span>
+              <div>
+                <span>{t("inventory")}</span>
+                <strong>{visibleInventory.length}</strong>
+              </div>
+            </article>
+            <article className="customer-portal-kpi">
+              <span className="customer-portal-kpi__icon"><LocalShippingOutlinedIcon fontSize="small" /></span>
+              <div>
+                <span>{t("customerPortalOpenPackingLists")}</span>
+                <strong>{openPackingListCount}</strong>
+              </div>
+            </article>
+            <article className="customer-portal-kpi">
+              <span className="customer-portal-kpi__icon"><AssignmentTurnedInOutlinedIcon fontSize="small" /></span>
+              <div>
+                <span>{t("customerPortalCompletedPackingLists")}</span>
+                <strong>{completedPackingListCount}</strong>
+              </div>
+            </article>
+          </section>
+        </>
+      ) : null}
 
-      <div className="customer-portal-operations-grid">
+      {showInventorySection || showComposerSection ? (
+        <div className={`customer-portal-operations-grid ${!showInventorySection || !showComposerSection ? "customer-portal-operations-grid--single" : ""}`}>
+      {showInventorySection ? (
       <section className="customer-portal-panel customer-portal-panel--inventory">
         <div className="tab-strip">
           <PortalPanelHeader title={t("customerPortalInventory")} icon={<Inventory2OutlinedIcon fontSize="small" />} />
@@ -373,7 +398,9 @@ export function CustomerPortalPage({ currentUser, portalCustomerId, portalCustom
           </table>
         </div>
       </section>
+      ) : null}
 
+      {showComposerSection ? (
       <section className="customer-portal-panel customer-portal-panel--composer">
         <div className="tab-strip">
           <PortalPanelHeader title={t("newPackingList")} icon={<LocalShippingOutlinedIcon fontSize="small" />} />
@@ -442,8 +469,11 @@ export function CustomerPortalPage({ currentUser, portalCustomerId, portalCustom
           </div>
         </form>
       </section>
+      ) : null}
       </div>
+      ) : null}
 
+      {showPackingListSection ? (
       <div className="customer-portal-record-grid">
       <section className="customer-portal-panel customer-portal-panel--list">
         <div className="tab-strip">
@@ -477,7 +507,7 @@ export function CustomerPortalPage({ currentUser, portalCustomerId, portalCustom
                   onClick={() => {
                     setSelectedPackingListId(document.id);
                     setPendingAttachments([]);
-                    setActiveDetailTab("details");
+                    setActiveDetailTab(activeSection === "attachments" ? "documents" : "details");
                   }}
                 >
                   <td>{document.packingListNo || `#${document.id}`}</td>
@@ -629,6 +659,7 @@ export function CustomerPortalPage({ currentUser, portalCustomerId, portalCustom
         )}
       </section>
       </div>
+      ) : null}
       {feedbackToast}
     </main>
   );

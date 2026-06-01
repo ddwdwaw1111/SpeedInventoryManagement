@@ -32,6 +32,7 @@ import { setPendingOutboundShipmentEditorLaunchContext, type OutboundShipmentEdi
 import { useI18n } from "./lib/i18n";
 import { setPendingPalletTraceLaunchContext } from "./lib/palletTraceLaunchContext";
 import { useSettings } from "./lib/settings";
+import { NavigationSidebar } from "./shared/NavigationSidebar";
 import {
   getBillingContainerDetailFromPath,
   getBillingInvoiceIdFromPath,
@@ -712,65 +713,51 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
       </header>
 
       <div className={`app-workspace ${sidebarCollapsed ? "app-workspace--sidebar-collapsed" : ""}`}>
-        <aside className={`app-sidebar ${sidebarCollapsed ? "app-sidebar--collapsed" : ""}`}>
-        <div className="app-sidebar__home">
-          {primaryNavItems.map((item) => (
-            <button
-              key={item.key}
-              className={`app-sidebar__link app-sidebar__link--home ${activePage === item.key ? "app-sidebar__link--active" : ""}`}
-              type="button"
-              onClick={() => handleNavigateToPage(item.key)}
-              title={sidebarCollapsed ? item.label : undefined}
-            >
-              <span className="app-sidebar__link-icon" aria-hidden="true">{item.icon}</span>
-              {!sidebarCollapsed ? <span className="app-sidebar__link-label">{item.label}</span> : null}
-            </button>
-          ))}
-        </div>
-        <nav className="app-sidebar__nav" aria-label={t("pages")}>
-          {navSections.map((section) => (
-            <section className="app-sidebar__section" key={section.key}>
-              {!sidebarCollapsed ? (
-                <button
-                  className={`app-sidebar__section-toggle ${activeNavSection?.key === section.key ? "app-sidebar__section-toggle--active" : ""}`}
-                  type="button"
-                  onClick={() => setCollapsedSections((current) => ({ ...current, [section.key]: !current[section.key] }))}
-                  aria-expanded={!collapsedSections[section.key]}
-                >
-                  <span className="app-sidebar__section-label">{section.label}</span>
-                  <ExpandMoreOutlined
-                    fontSize="small"
-                    className={`app-sidebar__section-chevron ${collapsedSections[section.key] ? "app-sidebar__section-chevron--collapsed" : ""}`}
-                  />
-                </button>
-              ) : null}
-              <div className={`app-sidebar__section-items ${!sidebarCollapsed && collapsedSections[section.key] ? "app-sidebar__section-items--collapsed" : ""}`}>
-                {section.items.map((item) => (
-                  <button
-                    key={item.key}
-                    className={`app-sidebar__link ${activePage === item.key ? "app-sidebar__link--active" : ""}`}
-                    type="button"
-                    onClick={() => handleNavigateToPage(item.key)}
-                    title={sidebarCollapsed ? item.label : undefined}
-                  >
-                    <span className="app-sidebar__link-icon" aria-hidden="true">{item.icon}</span>
-                    {!sidebarCollapsed ? <span className="app-sidebar__link-label">{item.label}</span> : null}
-                  </button>
-                ))}
-              </div>
-            </section>
-          ))}
-        </nav>
-        <button
-          className="app-sidebar__rail-toggle"
-          type="button"
-          onClick={() => setSidebarCollapsed((value) => !value)}
-          aria-label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"}
-          title={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"}
-        >
-          {sidebarCollapsed ? <ChevronRightOutlined fontSize="small" /> : <ChevronLeftOutlined fontSize="small" />}
-        </button>
-        </aside>
+        <NavigationSidebar
+          activeKey={activePage}
+          activeSectionKey={activeNavSection?.key}
+          ariaLabel={t("pages")}
+          classNames={{
+            root: "app-sidebar",
+            rootCollapsed: "app-sidebar--collapsed",
+            primary: "app-sidebar__home",
+            primaryItem: "app-sidebar__link--home",
+            nav: "app-sidebar__nav",
+            section: "app-sidebar__section",
+            sectionToggle: "app-sidebar__section-toggle",
+            sectionToggleActive: "app-sidebar__section-toggle--active",
+            sectionLabel: "app-sidebar__section-label",
+            sectionChevron: "app-sidebar__section-chevron",
+            sectionChevronCollapsed: "app-sidebar__section-chevron--collapsed",
+            sectionItems: "app-sidebar__section-items",
+            sectionItemsCollapsed: "app-sidebar__section-items--collapsed",
+            item: "app-sidebar__link",
+            itemActive: "app-sidebar__link--active",
+            itemIcon: "app-sidebar__link-icon",
+            itemLabel: "app-sidebar__link-label",
+            collapseToggle: "app-sidebar__rail-toggle"
+          }}
+          collapsed={sidebarCollapsed}
+          collapsedSections={collapsedSections}
+          collapseToggle={{
+            label: sidebarCollapsed ? "Expand navigation" : "Collapse navigation",
+            icon: sidebarCollapsed ? <ChevronRightOutlined fontSize="small" /> : <ChevronLeftOutlined fontSize="small" />,
+            onClick: () => setSidebarCollapsed((value) => !value)
+          }}
+          hideItemLabelsWhenCollapsed
+          hideSectionHeadersWhenCollapsed
+          navLabel={t("pages")}
+          onSelect={handleNavigateToPage}
+          onToggleSection={(sectionKey) => setCollapsedSections((current) => ({ ...current, [sectionKey]: !current[sectionKey] }))}
+          primaryItems={primaryNavItems}
+          renderSectionChevron={(_section, isCollapsed) => (
+            <ExpandMoreOutlined
+              fontSize="small"
+              className={`app-sidebar__section-chevron ${isCollapsed ? "app-sidebar__section-chevron--collapsed" : ""}`}
+            />
+          )}
+          sections={navSections}
+        />
 
         <div className="app-main">
         <div className="workspace-shell">
