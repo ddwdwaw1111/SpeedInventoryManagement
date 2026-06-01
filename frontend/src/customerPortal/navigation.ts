@@ -1,1 +1,1 @@
-export type CustomerPortalSection = "overview" | "inventory" | "new-packing-list" | "packing-lists" | "attachments";
+export type CustomerPortalSection = "overview" | "inventory" | "packing-lists" | "picking-orders";

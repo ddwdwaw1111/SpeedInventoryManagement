@@ -1,8 +1,7 @@
-import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
 import AssignmentTurnedInOutlinedIcon from "@mui/icons-material/AssignmentTurnedInOutlined";
-import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
 import DashboardOutlinedIcon from "@mui/icons-material/DashboardOutlined";
 import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
+import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
 import { Suspense, lazy, useEffect, useState } from "react";
 
 import { getErrorMessage } from "../lib/errors";
@@ -272,9 +271,8 @@ function CustomerPortalSidebar({
   const navItems: NavigationSidebarItem<CustomerPortalSection>[] = [
     { key: "overview", label: t("customerPortalOverview"), icon: <DashboardOutlinedIcon fontSize="small" /> },
     { key: "inventory", label: t("customerPortalInventory"), icon: <Inventory2OutlinedIcon fontSize="small" /> },
-    { key: "new-packing-list", label: t("newPackingList"), icon: <AddCircleOutlineOutlinedIcon fontSize="small" /> },
-    { key: "packing-lists", label: t("customerPortalPackingLists"), icon: <AssignmentTurnedInOutlinedIcon fontSize="small" /> },
-    { key: "attachments", label: t("packingListDocuments"), icon: <AttachFileOutlinedIcon fontSize="small" /> }
+    { key: "packing-lists", label: t("customerPortalPackingLists"), icon: <MoveToInboxOutlinedIcon fontSize="small" /> },
+    { key: "picking-orders", label: t("customerPortalPickingOrders"), icon: <AssignmentTurnedInOutlinedIcon fontSize="small" /> }
   ];
 
   return (

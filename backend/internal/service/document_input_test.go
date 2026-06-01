@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -216,6 +217,34 @@ func TestBuildOutboundTrackingStatusFilterClause(t *testing.T) {
 	}
 
 	clause, args = buildOutboundTrackingStatusFilterClause("d", "not-a-status")
+	if clause != "1 = 0" || len(args) != 0 {
+		t.Fatalf("expected unknown tracking status to match no rows, got clause=%q args=%#v", clause, args)
+	}
+}
+
+func TestBuildInboundTrackingStatusFilterClause(t *testing.T) {
+	clause, args := buildInboundTrackingStatusFilterClause("d", " receiving ")
+	if clause == "" {
+		t.Fatal("expected receiving tracking filter clause")
+	}
+	if len(args) != 1 || args[0] != InboundTrackingReceiving {
+		t.Fatalf("expected receiving tracking filter arg, got %#v", args)
+	}
+
+	clause, args = buildInboundTrackingStatusFilterClause("d", InboundTrackingReceivingReceived)
+	if clause == "" || !strings.Contains(clause, "IN") {
+		t.Fatalf("expected combined receiving/received tracking filter clause, got %q", clause)
+	}
+	if len(args) != 2 || args[0] != InboundTrackingReceiving || args[1] != InboundTrackingReceived {
+		t.Fatalf("expected combined receiving/received tracking filter args, got %#v", args)
+	}
+
+	clause, args = buildInboundTrackingStatusFilterClause("d", "all")
+	if clause != "" || len(args) != 0 {
+		t.Fatalf("expected all tracking status to skip filter, got clause=%q args=%#v", clause, args)
+	}
+
+	clause, args = buildInboundTrackingStatusFilterClause("d", "not-a-status")
 	if clause != "1 = 0" || len(args) != 0 {
 		t.Fatalf("expected unknown tracking status to match no rows, got clause=%q args=%#v", clause, args)
 	}

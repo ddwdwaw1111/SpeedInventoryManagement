@@ -2,6 +2,7 @@ export type {
   AuthResponse,
   Customer,
   DocumentAttachment,
+  InboundDocument,
   Item,
   LoginPayload,
   OutboundDocument,

@@ -16,10 +16,11 @@ const (
 	DocumentArchiveScopeArchived = "ARCHIVED"
 	DocumentArchiveScopeAll      = "ALL"
 
-	InboundTrackingScheduled = "SCHEDULED"
-	InboundTrackingArrived   = "ARRIVED"
-	InboundTrackingReceiving = "RECEIVING"
-	InboundTrackingReceived  = "RECEIVED"
+	InboundTrackingScheduled         = "SCHEDULED"
+	InboundTrackingArrived           = "ARRIVED"
+	InboundTrackingReceiving         = "RECEIVING"
+	InboundTrackingReceived          = "RECEIVED"
+	InboundTrackingReceivingReceived = "RECEIVING_RECEIVED"
 
 	OutboundTrackingScheduled  = "SCHEDULED"
 	OutboundTrackingPicking    = "PICKING"
@@ -123,6 +124,22 @@ func buildOutboundTrackingStatusFilterClause(alias string, status string) (strin
 	statusColumn := fmt.Sprintf("UPPER(TRIM(COALESCE(%s.tracking_status, '')))", alias)
 	switch normalized {
 	case OutboundTrackingScheduled, OutboundTrackingPicking, OutboundTrackingPacked, OutboundTrackingShipped, OutboundTrackingBOReceived:
+		return fmt.Sprintf("%s = ?", statusColumn), []any{normalized}
+	default:
+		return "1 = 0", nil
+	}
+}
+
+func buildInboundTrackingStatusFilterClause(alias string, status string) (string, []any) {
+	normalized := strings.TrimSpace(strings.ToUpper(status))
+	if normalized == "" || normalized == "ALL" {
+		return "", nil
+	}
+	statusColumn := fmt.Sprintf("UPPER(TRIM(COALESCE(%s.tracking_status, '')))", alias)
+	switch normalized {
+	case InboundTrackingReceivingReceived:
+		return fmt.Sprintf("%s IN (?, ?)", statusColumn), []any{InboundTrackingReceiving, InboundTrackingReceived}
+	case InboundTrackingScheduled, InboundTrackingArrived, InboundTrackingReceiving, InboundTrackingReceived:
 		return fmt.Sprintf("%s = ?", statusColumn), []any{normalized}
 	default:
 		return "1 = 0", nil

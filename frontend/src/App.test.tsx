@@ -42,7 +42,8 @@ const { ApiError, apiMocks, portalApiMocks } = vi.hoisted(() => {
       logout: vi.fn(),
       getProfile: vi.fn(),
       getInventory: vi.fn(),
-      getPackingLists: vi.fn()
+      getPackingLists: vi.fn(),
+      getPickingOrders: vi.fn()
     }
   };
 });
@@ -108,8 +109,9 @@ describe("App role routing", () => {
     vi.clearAllMocks();
     window.history.pushState({}, "", "/dashboard");
     portalApiMocks.getInventory.mockResolvedValue([]);
-    portalApiMocks.getProfile.mockResolvedValue(createCustomer({ id: 99, name: "Customer Portal Co" }));
     portalApiMocks.getPackingLists.mockResolvedValue([]);
+    portalApiMocks.getProfile.mockResolvedValue(createCustomer({ id: 99, name: "Customer Portal Co" }));
+    portalApiMocks.getPickingOrders.mockResolvedValue([]);
     apiMocks.getBillingInvoiceSettings.mockResolvedValue({
       header: {
         sellerName: "Speed Inventory Management",
@@ -146,11 +148,18 @@ describe("App role routing", () => {
     expect(screen.getAllByText("Customer Portal").length).toBeGreaterThan(0);
     expect(container.querySelector(".customer-portal-sidebar")).not.toBeNull();
     expect(container.querySelector(".app-sidebar")).toBeNull();
+    expect(screen.getByRole("button", { name: /Overview/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Customer Inventory/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Packing Lists/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Picking Orders/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /New Picking Order/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Picking Order Documents/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Home$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Shipments$/i })).not.toBeInTheDocument();
     await waitFor(() => {
       expect(portalApiMocks.getInventory).toHaveBeenCalled();
       expect(portalApiMocks.getPackingLists).toHaveBeenCalled();
+      expect(portalApiMocks.getPickingOrders).toHaveBeenCalled();
     });
     for (const name of staffDataApiNames) {
       expect(apiMocks[name]).not.toHaveBeenCalled();
@@ -182,6 +191,7 @@ describe("App role routing", () => {
     }
     expect(portalApiMocks.getInventory).not.toHaveBeenCalled();
     expect(portalApiMocks.getPackingLists).not.toHaveBeenCalled();
+    expect(portalApiMocks.getPickingOrders).not.toHaveBeenCalled();
   });
 
   it("lets admin users open a scoped customer portal", async () => {
@@ -200,6 +210,11 @@ describe("App role routing", () => {
       expect(portalApiMocks.getInventory).toHaveBeenCalledWith("", 7);
     });
     expect(portalApiMocks.getPackingLists).toHaveBeenCalledWith(100, {
+      search: "",
+      status: "all",
+      trackingStatus: "all"
+    }, 7);
+    expect(portalApiMocks.getPickingOrders).toHaveBeenCalledWith(100, {
       search: "",
       status: "all",
       trackingStatus: "all"
@@ -227,6 +242,7 @@ describe("App role routing", () => {
     expect(apiMocks.getUsers).toHaveBeenCalled();
     expect(portalApiMocks.getInventory).not.toHaveBeenCalled();
     expect(portalApiMocks.getPackingLists).not.toHaveBeenCalled();
+    expect(portalApiMocks.getPickingOrders).not.toHaveBeenCalled();
   });
 
   it("shows an admin entrance on the sign-in page", async () => {

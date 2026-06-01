@@ -809,11 +809,12 @@ func (s *Server) handleListInboundDocuments(c *gin.Context) {
 	}
 
 	documents, err := s.store.ListInboundDocumentsFiltered(c.Request.Context(), limit, service.InboundDocumentFilters{
-		ArchiveScope: strings.TrimSpace(c.Query("archiveScope")),
-		Search:       strings.TrimSpace(c.Query("search")),
-		CustomerID:   customerID,
-		LocationID:   locationID,
-		Status:       strings.TrimSpace(c.Query("status")),
+		ArchiveScope:   strings.TrimSpace(c.Query("archiveScope")),
+		Search:         strings.TrimSpace(c.Query("search")),
+		CustomerID:     customerID,
+		LocationID:     locationID,
+		Status:         strings.TrimSpace(c.Query("status")),
+		TrackingStatus: strings.TrimSpace(c.Query("trackingStatus")),
 	})
 	if err != nil {
 		writeServerError(c, err)

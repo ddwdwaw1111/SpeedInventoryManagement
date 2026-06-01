@@ -131,7 +131,7 @@ type DeliveryNoteRow = {
 const LABELS = {
   title: "Delivery Note",
   printedAt: "Printed At",
-  packingListNo: "Packing List No.",
+  packingListNo: "Picking Order No.",
   orderRef: "Order No.",
   customer: "Customer",
   shipToName: "Ship-to Name",

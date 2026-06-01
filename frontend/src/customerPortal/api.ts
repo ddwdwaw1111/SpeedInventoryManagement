@@ -3,11 +3,13 @@ import type { LoginPayload, OutboundDocumentPayload, SignUpPayload } from "./typ
 
 export { ApiError };
 
-export type CustomerPortalPackingListQuery = {
+export type CustomerPortalPickingOrderQuery = {
   search?: string;
   status?: string;
   trackingStatus?: string;
 };
+
+export type CustomerPortalPackingListQuery = CustomerPortalPickingOrderQuery;
 
 export const customerPortalApi = {
   getCurrentSession: () => api.getCurrentSession(),
@@ -18,12 +20,16 @@ export const customerPortalApi = {
   getInventory: (search = "", customerId?: number) => api.getCustomerPortalInventory(search, customerId),
   getPackingLists: (limit = 100, query?: CustomerPortalPackingListQuery, customerId?: number) =>
     api.getCustomerPortalPackingLists(limit, query, customerId),
-  createPackingList: (payload: OutboundDocumentPayload, customerId?: number) =>
-    api.createCustomerPortalPackingList(payload, customerId),
-  uploadPackingListAttachment: (documentId: number, file: File, displayName: string, customerId?: number) =>
-    api.uploadCustomerPortalPackingListAttachment(documentId, file, displayName, customerId),
+  getPickingOrders: (limit = 100, query?: CustomerPortalPickingOrderQuery, customerId?: number) =>
+    api.getCustomerPortalPickingOrders(limit, query, customerId),
+  createPickingOrder: (payload: OutboundDocumentPayload, customerId?: number) =>
+    api.createCustomerPortalPickingOrder(payload, customerId),
+  uploadPickingOrderAttachment: (documentId: number, file: File, displayName: string, customerId?: number) =>
+    api.uploadCustomerPortalPickingOrderAttachment(documentId, file, displayName, customerId),
+  getPickingOrderAttachmentDownloadUrl: (documentId: number, attachmentId: number, customerId?: number) =>
+    api.getCustomerPortalPickingOrderAttachmentDownloadUrl(documentId, attachmentId, customerId),
   getPackingListAttachmentDownloadUrl: (documentId: number, attachmentId: number, customerId?: number) =>
     api.getCustomerPortalPackingListAttachmentDownloadUrl(documentId, attachmentId, customerId),
-  deletePackingListAttachment: (documentId: number, attachmentId: number, customerId?: number) =>
-    api.deleteCustomerPortalPackingListAttachment(documentId, attachmentId, customerId)
+  deletePickingOrderAttachment: (documentId: number, attachmentId: number, customerId?: number) =>
+    api.deleteCustomerPortalPickingOrderAttachment(documentId, attachmentId, customerId)
 };

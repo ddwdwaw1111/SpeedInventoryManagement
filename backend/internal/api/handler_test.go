@@ -266,7 +266,7 @@ func TestCustomerIDFromContext(t *testing.T) {
 	}
 }
 
-func TestPrepareCustomerPortalPackingListInputForcesCustomerBoundary(t *testing.T) {
+func TestPrepareCustomerPortalPickingOrderInputForcesCustomerBoundary(t *testing.T) {
 	input := service.CreateOutboundDocumentInput{
 		Status:         service.DocumentStatusConfirmed,
 		TrackingStatus: service.OutboundTrackingBOReceived,
@@ -287,7 +287,7 @@ func TestPrepareCustomerPortalPackingListInputForcesCustomerBoundary(t *testing.
 		},
 	}
 
-	got := prepareCustomerPortalPackingListInput(input, 42)
+	got := prepareCustomerPortalPickingOrderInput(input, 42)
 
 	if got.Status != service.DocumentStatusDraft {
 		t.Fatalf("expected customer portal status to be forced to draft, got %q", got.Status)
@@ -312,7 +312,7 @@ func TestPrepareCustomerPortalPackingListInputForcesCustomerBoundary(t *testing.
 	}
 }
 
-func TestValidateCustomerPortalPackingListInventory(t *testing.T) {
+func TestValidateCustomerPortalPickingOrderInventory(t *testing.T) {
 	items := []service.Item{
 		{CustomerID: 42, SKUMasterID: 3, LocationID: 2, AvailableQty: 4},
 		{CustomerID: 42, SKUMasterID: 3, LocationID: 2, AvailableQty: 6},
@@ -327,7 +327,7 @@ func TestValidateCustomerPortalPackingListInventory(t *testing.T) {
 			{CustomerID: 42, SKUMasterID: 4, LocationID: 2, Quantity: 1},
 		},
 	}
-	if err := validateCustomerPortalPackingListInventory(input, 42, items); err != nil {
+	if err := validateCustomerPortalPickingOrderInventory(input, 42, items); err != nil {
 		t.Fatalf("expected customer request within available inventory to pass, got %v", err)
 	}
 
@@ -336,7 +336,7 @@ func TestValidateCustomerPortalPackingListInventory(t *testing.T) {
 			{CustomerID: 42, SKUMasterID: 3, LocationID: 2, Quantity: 11},
 		},
 	}
-	if err := validateCustomerPortalPackingListInventory(overAvailable, 42, items); err == nil || !errors.Is(err, service.ErrInsufficientStock) {
+	if err := validateCustomerPortalPickingOrderInventory(overAvailable, 42, items); err == nil || !errors.Is(err, service.ErrInsufficientStock) {
 		t.Fatalf("expected ErrInsufficientStock for over-requested inventory, got %v", err)
 	}
 
@@ -345,7 +345,7 @@ func TestValidateCustomerPortalPackingListInventory(t *testing.T) {
 			{CustomerID: 42, SKUMasterID: 5, LocationID: 2, Quantity: 1},
 		},
 	}
-	if err := validateCustomerPortalPackingListInventory(otherCustomerStock, 42, items); err == nil || !errors.Is(err, service.ErrInsufficientStock) {
+	if err := validateCustomerPortalPickingOrderInventory(otherCustomerStock, 42, items); err == nil || !errors.Is(err, service.ErrInsufficientStock) {
 		t.Fatalf("expected ErrInsufficientStock for inventory outside the customer boundary, got %v", err)
 	}
 
@@ -354,7 +354,7 @@ func TestValidateCustomerPortalPackingListInventory(t *testing.T) {
 			{CustomerID: 7, SKUMasterID: 3, LocationID: 2, Quantity: 1},
 		},
 	}
-	if err := validateCustomerPortalPackingListInventory(wrongCustomerLine, 42, items); err == nil || !errors.Is(err, service.ErrInvalidInput) {
+	if err := validateCustomerPortalPickingOrderInventory(wrongCustomerLine, 42, items); err == nil || !errors.Is(err, service.ErrInvalidInput) {
 		t.Fatalf("expected ErrInvalidInput for a mismatched customer line, got %v", err)
 	}
 }

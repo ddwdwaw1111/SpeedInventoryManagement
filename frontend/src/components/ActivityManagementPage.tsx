@@ -264,7 +264,7 @@ const RECEIPTS_EXPORT_COLUMNS = [
   { key: "status", label: "Status" }
 ] as const;
 const SHIPMENTS_EXPORT_COLUMNS = [
-  { key: "packingListNo", label: "Packing List No." },
+  { key: "packingListNo", label: "Picking Order No." },
   { key: "orderRef", label: "Order Ref." },
   { key: "customerName", label: "Customer" },
   { key: "storages", label: "Warehouse" },

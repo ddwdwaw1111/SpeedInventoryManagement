@@ -62,15 +62,45 @@ describe("api document list queries", () => {
     expect(requestUrl.searchParams.get("trackingStatus")).toBe("BO_RECEIVED");
   });
 
-  it("serializes customer portal packing list tracking status filters", async () => {
-    await api.getCustomerPortalPackingLists(25, {
+  it("serializes customer portal picking order tracking status filters", async () => {
+    await api.getCustomerPortalPickingOrders(25, {
       search: " PO-100 ",
       status: "CONFIRMED",
       trackingStatus: "SHIPPED"
     });
 
     const requestUrl = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(requestUrl.pathname).toBe("/api/customer-portal/picking-orders");
+    expect(requestUrl.searchParams.get("limit")).toBe("25");
+    expect(requestUrl.searchParams.get("search")).toBe("PO-100");
+    expect(requestUrl.searchParams.get("status")).toBe("CONFIRMED");
+    expect(requestUrl.searchParams.get("trackingStatus")).toBe("SHIPPED");
+  });
+
+  it("serializes customer portal packing list tracking status filters", async () => {
+    await api.getCustomerPortalPackingLists(25, {
+      search: " CNT-100 ",
+      status: "DRAFT",
+      trackingStatus: "RECEIVING_RECEIVED"
+    });
+
+    const requestUrl = new URL(String(fetchMock.mock.calls[0][0]));
     expect(requestUrl.pathname).toBe("/api/customer-portal/packing-lists");
+    expect(requestUrl.searchParams.get("limit")).toBe("25");
+    expect(requestUrl.searchParams.get("search")).toBe("CNT-100");
+    expect(requestUrl.searchParams.get("status")).toBe("DRAFT");
+    expect(requestUrl.searchParams.get("trackingStatus")).toBe("RECEIVING_RECEIVED");
+  });
+
+  it("serializes admin-scoped customer portal picking order filters", async () => {
+    await api.getCustomerPortalPickingOrders(25, {
+      search: " PO-100 ",
+      status: "CONFIRMED",
+      trackingStatus: "SHIPPED"
+    }, 42);
+
+    const requestUrl = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(requestUrl.pathname).toBe("/api/admin/customer-portal/customers/42/picking-orders");
     expect(requestUrl.searchParams.get("limit")).toBe("25");
     expect(requestUrl.searchParams.get("search")).toBe("PO-100");
     expect(requestUrl.searchParams.get("status")).toBe("CONFIRMED");
@@ -79,17 +109,17 @@ describe("api document list queries", () => {
 
   it("serializes admin-scoped customer portal packing list filters", async () => {
     await api.getCustomerPortalPackingLists(25, {
-      search: " PO-100 ",
-      status: "CONFIRMED",
-      trackingStatus: "SHIPPED"
+      search: " CNT-100 ",
+      status: "DRAFT",
+      trackingStatus: "RECEIVING_RECEIVED"
     }, 42);
 
     const requestUrl = new URL(String(fetchMock.mock.calls[0][0]));
     expect(requestUrl.pathname).toBe("/api/admin/customer-portal/customers/42/packing-lists");
     expect(requestUrl.searchParams.get("limit")).toBe("25");
-    expect(requestUrl.searchParams.get("search")).toBe("PO-100");
-    expect(requestUrl.searchParams.get("status")).toBe("CONFIRMED");
-    expect(requestUrl.searchParams.get("trackingStatus")).toBe("SHIPPED");
+    expect(requestUrl.searchParams.get("search")).toBe("CNT-100");
+    expect(requestUrl.searchParams.get("status")).toBe("DRAFT");
+    expect(requestUrl.searchParams.get("trackingStatus")).toBe("RECEIVING_RECEIVED");
   });
 
   it("loads customer portal profile through the portal API", async () => {

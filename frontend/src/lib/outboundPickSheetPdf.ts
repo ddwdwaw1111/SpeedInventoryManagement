@@ -154,7 +154,7 @@ type PickSheetDocument = {
 const LABELS = {
   title: "Warehouse Pick Sheet",
   printedAt: "Printed At",
-  packingListNo: "Packing List No.",
+  packingListNo: "Picking Order No.",
   orderRef: "Order No.",
   pickDate: "Pick Date",
   warehouse: "Warehouse",

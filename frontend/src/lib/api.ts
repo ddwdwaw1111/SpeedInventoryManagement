@@ -420,6 +420,20 @@ export const api = {
     return request<Item[]>(`${customerPortalBasePath(customerId)}/inventory${suffix}`);
   },
 
+  getCustomerPortalPickingOrders(limit = 100, query?: { search?: string; status?: string; trackingStatus?: string }, customerId?: number) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (query?.search?.trim()) {
+      params.set("search", query.search.trim());
+    }
+    if (query?.status?.trim() && query.status.trim() !== "all") {
+      params.set("status", query.status.trim());
+    }
+    if (query?.trackingStatus?.trim() && query.trackingStatus.trim() !== "all") {
+      params.set("trackingStatus", query.trackingStatus.trim());
+    }
+    return request<OutboundDocument[]>(`${customerPortalBasePath(customerId)}/picking-orders?${params.toString()}`);
+  },
+
   getCustomerPortalPackingLists(limit = 100, query?: { search?: string; status?: string; trackingStatus?: string }, customerId?: number) {
     const params = new URLSearchParams({ limit: String(limit) });
     if (query?.search?.trim()) {
@@ -431,11 +445,11 @@ export const api = {
     if (query?.trackingStatus?.trim() && query.trackingStatus.trim() !== "all") {
       params.set("trackingStatus", query.trackingStatus.trim());
     }
-    return request<OutboundDocument[]>(`${customerPortalBasePath(customerId)}/packing-lists?${params.toString()}`);
+    return request<InboundDocument[]>(`${customerPortalBasePath(customerId)}/packing-lists?${params.toString()}`);
   },
 
-  createCustomerPortalPackingList(payload: OutboundDocumentPayload, customerId?: number) {
-    return request<OutboundDocument>(`${customerPortalBasePath(customerId)}/packing-lists`, {
+  createCustomerPortalPickingOrder(payload: OutboundDocumentPayload, customerId?: number) {
+    return request<OutboundDocument>(`${customerPortalBasePath(customerId)}/picking-orders`, {
       method: "POST",
       body: JSON.stringify(payload)
     });
@@ -581,23 +595,27 @@ export const api = {
     });
   },
 
-  uploadCustomerPortalPackingListAttachment(documentId: number, file: File, displayName: string, customerId?: number) {
+  uploadCustomerPortalPickingOrderAttachment(documentId: number, file: File, displayName: string, customerId?: number) {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("displayName", displayName);
 
-    return request<DocumentAttachment>(`${customerPortalBasePath(customerId)}/packing-lists/${documentId}/attachments`, {
+    return request<DocumentAttachment>(`${customerPortalBasePath(customerId)}/picking-orders/${documentId}/attachments`, {
       method: "POST",
       body: formData
     });
+  },
+
+  getCustomerPortalPickingOrderAttachmentDownloadUrl(documentId: number, attachmentId: number, customerId?: number) {
+    return request<DocumentAttachmentDownloadUrl>(`${customerPortalBasePath(customerId)}/picking-orders/${documentId}/attachments/${attachmentId}/download-url`);
   },
 
   getCustomerPortalPackingListAttachmentDownloadUrl(documentId: number, attachmentId: number, customerId?: number) {
     return request<DocumentAttachmentDownloadUrl>(`${customerPortalBasePath(customerId)}/packing-lists/${documentId}/attachments/${attachmentId}/download-url`);
   },
 
-  deleteCustomerPortalPackingListAttachment(documentId: number, attachmentId: number, customerId?: number) {
-    return request<void>(`${customerPortalBasePath(customerId)}/packing-lists/${documentId}/attachments/${attachmentId}`, {
+  deleteCustomerPortalPickingOrderAttachment(documentId: number, attachmentId: number, customerId?: number) {
+    return request<void>(`${customerPortalBasePath(customerId)}/picking-orders/${documentId}/attachments/${attachmentId}`, {
       method: "DELETE"
     });
   },

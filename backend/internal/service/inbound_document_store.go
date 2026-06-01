@@ -142,11 +142,12 @@ type inboundDocumentLineRow struct {
 }
 
 type InboundDocumentFilters struct {
-	ArchiveScope string
-	Search       string
-	CustomerID   int64
-	LocationID   int64
-	Status       string
+	ArchiveScope   string
+	Search         string
+	CustomerID     int64
+	LocationID     int64
+	Status         string
+	TrackingStatus string
 }
 
 func (s *Store) ListInboundDocuments(ctx context.Context, limit int, archiveScope ...string) ([]InboundDocument, error) {
@@ -175,6 +176,10 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 	if statusFilterClause, statusArgs := buildDocumentStatusFilterClause("d", filters.Status); statusFilterClause != "" {
 		whereClauses = append(whereClauses, statusFilterClause)
 		args = append(args, statusArgs...)
+	}
+	if trackingFilterClause, trackingArgs := buildInboundTrackingStatusFilterClause("d", filters.TrackingStatus); trackingFilterClause != "" {
+		whereClauses = append(whereClauses, trackingFilterClause)
+		args = append(args, trackingArgs...)
 	}
 	if search := strings.TrimSpace(strings.ToLower(filters.Search)); search != "" {
 		searchPattern := "%" + search + "%"
@@ -2117,6 +2122,20 @@ func (s *Store) getInboundDocument(ctx context.Context, documentID int64) (Inbou
 		return InboundDocument{}, ErrNotFound
 	}
 	return documents[0], nil
+}
+
+func (s *Store) GetInboundDocumentForCustomer(ctx context.Context, documentID int64, customerID int64) (InboundDocument, error) {
+	if documentID <= 0 || customerID <= 0 {
+		return InboundDocument{}, ErrNotFound
+	}
+	document, err := s.getInboundDocument(ctx, documentID)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+	if document.CustomerID != customerID {
+		return InboundDocument{}, ErrNotFound
+	}
+	return document, nil
 }
 
 func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int64, includeArchived bool) ([]InboundDocument, error) {

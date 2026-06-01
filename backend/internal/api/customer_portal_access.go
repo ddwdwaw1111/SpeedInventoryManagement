@@ -11,7 +11,7 @@ import (
 	"speed-inventory-management/backend/internal/service"
 )
 
-func (s *Server) ensureCustomerPortalPackingList(c *gin.Context) bool {
+func (s *Server) ensureCustomerPortalPickingOrder(c *gin.Context) bool {
 	customerID, ok := customerIDFromContext(c)
 	if !ok {
 		return false
@@ -23,6 +23,24 @@ func (s *Server) ensureCustomerPortalPackingList(c *gin.Context) bool {
 		return false
 	}
 	if _, err := s.store.GetOutboundDocumentForCustomer(c.Request.Context(), documentID, customerID); err != nil {
+		writeDomainError(c, err)
+		return false
+	}
+	return true
+}
+
+func (s *Server) ensureCustomerPortalPackingList(c *gin.Context) bool {
+	customerID, ok := customerIDFromContext(c)
+	if !ok {
+		return false
+	}
+
+	documentID, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return false
+	}
+	if _, err := s.store.GetInboundDocumentForCustomer(c.Request.Context(), documentID, customerID); err != nil {
 		writeDomainError(c, err)
 		return false
 	}
@@ -56,7 +74,7 @@ func customerIDFromContext(c *gin.Context) (int64, bool) {
 	}
 }
 
-func prepareCustomerPortalPackingListInput(input service.CreateOutboundDocumentInput, customerID int64) service.CreateOutboundDocumentInput {
+func prepareCustomerPortalPickingOrderInput(input service.CreateOutboundDocumentInput, customerID int64) service.CreateOutboundDocumentInput {
 	input.Status = service.DocumentStatusDraft
 	input.TrackingStatus = service.OutboundTrackingScheduled
 	input.ActualShipDate = ""
@@ -73,7 +91,7 @@ type customerPortalInventoryKey struct {
 	locationID  int64
 }
 
-func validateCustomerPortalPackingListInventory(input service.CreateOutboundDocumentInput, customerID int64, items []service.Item) error {
+func validateCustomerPortalPickingOrderInventory(input service.CreateOutboundDocumentInput, customerID int64, items []service.Item) error {
 	availableByKey := make(map[customerPortalInventoryKey]int, len(items))
 	for _, item := range items {
 		if item.CustomerID != customerID {

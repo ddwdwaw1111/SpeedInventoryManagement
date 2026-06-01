@@ -1,35 +1,43 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CustomerPortalPage } from "./CustomerPortalPage";
-import { createCustomer, createItem, createOutboundDocument } from "../test/fixtures";
+import type { CustomerPortalSection } from "./navigation";
+import { createCustomer, createInboundDocument, createInboundDocumentLine, createItem, createOutboundDocument } from "../test/fixtures";
 import { renderWithProviders } from "../test/renderWithProviders";
 
 const {
   getInventory,
   getPackingLists,
-  uploadPackingListAttachment,
+  getPickingOrders,
+  uploadPickingOrderAttachment,
+  getPickingOrderAttachmentDownloadUrl,
   getPackingListAttachmentDownloadUrl,
-  deletePackingListAttachment,
-  createPackingList
+  deletePickingOrderAttachment,
+  createPickingOrder
 } = vi.hoisted(() => ({
   getInventory: vi.fn(),
   getPackingLists: vi.fn(),
-  uploadPackingListAttachment: vi.fn(),
+  getPickingOrders: vi.fn(),
+  uploadPickingOrderAttachment: vi.fn(),
+  getPickingOrderAttachmentDownloadUrl: vi.fn(),
   getPackingListAttachmentDownloadUrl: vi.fn(),
-  deletePackingListAttachment: vi.fn(),
-  createPackingList: vi.fn()
+  deletePickingOrderAttachment: vi.fn(),
+  createPickingOrder: vi.fn()
 }));
 
 vi.mock("./api", () => ({
   customerPortalApi: {
     getInventory,
     getPackingLists,
-    uploadPackingListAttachment,
+    getPickingOrders,
+    uploadPickingOrderAttachment,
+    getPickingOrderAttachmentDownloadUrl,
     getPackingListAttachmentDownloadUrl,
-    deletePackingListAttachment,
-    createPackingList
+    deletePickingOrderAttachment,
+    createPickingOrder
   }
 }));
 
@@ -37,13 +45,52 @@ describe("CustomerPortalPage", () => {
   beforeEach(() => {
     getInventory.mockReset();
     getPackingLists.mockReset();
-    uploadPackingListAttachment.mockReset();
+    getPickingOrders.mockReset();
+    uploadPickingOrderAttachment.mockReset();
+    getPickingOrderAttachmentDownloadUrl.mockReset();
     getPackingListAttachmentDownloadUrl.mockReset();
-    deletePackingListAttachment.mockReset();
-    createPackingList.mockReset();
+    deletePickingOrderAttachment.mockReset();
+    createPickingOrder.mockReset();
 
     getInventory.mockResolvedValue([]);
     getPackingLists.mockResolvedValue([
+      createInboundDocument({
+        id: 11,
+        containerNo: "CNT-CUST-11",
+        trackingStatus: "RECEIVING",
+        totalExpectedQty: 24,
+        totalReceivedQty: 12,
+        lines: [
+          createInboundDocumentLine({
+            id: 111,
+            documentId: 11,
+            sku: "INBOUND-SKU-11",
+            expectedQty: 24,
+            receivedQty: 12
+          })
+        ],
+        attachments: [
+          {
+            id: 8,
+            documentType: "INBOUND",
+            documentId: 11,
+            displayName: "Customer Packing List.pdf",
+            originalFileName: "packing-list.pdf",
+            contentType: "application/pdf",
+            sizeBytes: 1024,
+            uploadedByUserId: 5,
+            createdAt: "2026-03-24T10:00:00Z"
+          }
+        ]
+      }),
+      createInboundDocument({
+        id: 12,
+        containerNo: "CNT-CUST-12",
+        status: "CONFIRMED",
+        trackingStatus: "RECEIVED"
+      })
+    ]);
+    getPickingOrders.mockResolvedValue([
       createOutboundDocument({
         id: 42,
         packingListNo: "PL-CUST-42",
@@ -69,11 +116,12 @@ describe("CustomerPortalPage", () => {
     ]);
   });
 
-  it("shows packing list attachments from the detail Documents tab", async () => {
+  it("shows picking order attachments from the detail Documents tab", async () => {
     const user = userEvent.setup();
 
     renderWithProviders(
       <CustomerPortalPage
+        activeSection="picking-orders"
         currentUser={{
           id: 5,
           email: "customer@example.com",
@@ -88,8 +136,6 @@ describe("CustomerPortalPage", () => {
     );
 
     expect(await screen.findByText("PL-CUST-42")).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Details" })).toHaveAttribute("aria-selected", "true");
-
     await user.click(screen.getByRole("tab", { name: /Attachments/i }));
 
     await waitFor(() => {
@@ -99,7 +145,7 @@ describe("CustomerPortalPage", () => {
     expect(screen.getAllByRole("button", { name: /Add Files/i }).length).toBeGreaterThan(0);
   });
 
-  it("summarizes open and BO-completed packing lists for the customer", async () => {
+  it("summarizes open and BO-completed picking orders for the customer", async () => {
     renderWithProviders(
       <CustomerPortalPage
         currentUser={{
@@ -118,10 +164,40 @@ describe("CustomerPortalPage", () => {
     expect(await screen.findByText("PL-CUST-42")).toBeInTheDocument();
     expect(screen.getByText("PL-CUST-43")).toBeInTheDocument();
 
-    expect(within(screen.getByText("Open PLs").closest("article") as HTMLElement).getByText("1")).toBeInTheDocument();
-    expect(within(screen.getByText("Completed PLs").closest("article") as HTMLElement).getByText("1")).toBeInTheDocument();
+    expect(within(screen.getByText("Open Picking Orders").closest("article") as HTMLElement).getByText("1")).toBeInTheDocument();
+    expect(within(screen.getByText("Completed Picking Orders").closest("article") as HTMLElement).getByText("1")).toBeInTheDocument();
     expect(screen.getAllByText("Awaiting BO").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Completed").length).toBeGreaterThan(0);
+  });
+
+  it("shows packing list receiving progress and read-only inbound documents", async () => {
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <CustomerPortalPage
+        activeSection="packing-lists"
+        currentUser={{
+          id: 5,
+          email: "customer@example.com",
+          fullName: "Customer User",
+          role: "customer",
+          isActive: true,
+          customerId: 1,
+          customerName: "Imperial Bag & Paper",
+          createdAt: "2026-03-24T10:00:00Z"
+        }}
+      />
+    );
+
+    expect((await screen.findAllByText("CNT-CUST-11")).length).toBeGreaterThan(0);
+    expect(screen.getByText("INBOUND-SKU-11")).toBeInTheDocument();
+    expect(screen.getAllByText("Receiving / Received").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("12 CTN").length).toBeGreaterThan(0);
+
+    await user.click(screen.getByRole("tab", { name: /Attachments/i }));
+
+    expect(await screen.findByText("Customer Packing List.pdf")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Add Files/i })).not.toBeInTheDocument();
   });
 
   it("loads admin-scoped portal data for a selected customer", async () => {
@@ -152,9 +228,14 @@ describe("CustomerPortalPage", () => {
       status: "all",
       trackingStatus: "all"
     }, 77);
+    expect(getPickingOrders).toHaveBeenCalledWith(100, {
+      search: "",
+      status: "all",
+      trackingStatus: "all"
+    }, 77);
   });
 
-  it("creates a packing list from customer inventory and uploads custom-named evidence files", async () => {
+  it("creates a picking order from customer inventory and uploads custom-named evidence files", async () => {
     const user = userEvent.setup();
     const inventoryItem = createItem({
       id: 88,
@@ -174,11 +255,11 @@ describe("CustomerPortalPage", () => {
     });
 
     getInventory.mockResolvedValue([inventoryItem]);
-    getPackingLists
+    getPickingOrders
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([createdDocument]);
-    createPackingList.mockResolvedValue(createdDocument);
-    uploadPackingListAttachment.mockResolvedValue({
+    createPickingOrder.mockResolvedValue(createdDocument);
+    uploadPickingOrderAttachment.mockResolvedValue({
       id: 1,
       documentType: "OUTBOUND",
       documentId: 77,
@@ -206,9 +287,9 @@ describe("CustomerPortalPage", () => {
     );
 
     expect(await screen.findByText("CUST-SKU-321")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Add to PL/i }));
+    await user.click(screen.getByRole("button", { name: /Add to Picking Order/i }));
 
-    await user.type(screen.getByLabelText("Packing List No."), "PL-PORTAL-77");
+    await user.type(screen.getByLabelText("Picking Order No."), "PL-PORTAL-77");
     await user.type(screen.getByLabelText("Order Ref."), "SO-PORTAL-77");
     await user.type(screen.getByLabelText("Ship-to Name"), "Receiver Dock");
 
@@ -220,14 +301,14 @@ describe("CustomerPortalPage", () => {
 
     const displayNameInputs = screen.getAllByLabelText("Display Name");
     await user.clear(displayNameInputs[0]);
-    await user.type(displayNameInputs[0], "Customer Packing List");
+    await user.type(displayNameInputs[0], "Customer Picking Order");
     await user.clear(displayNameInputs[1]);
     await user.type(displayNameInputs[1], "Signed BO Proof");
 
-    await user.click(screen.getByRole("button", { name: /Submit Packing List/i }));
+    await user.click(screen.getByRole("button", { name: /Submit Picking Order/i }));
 
     await waitFor(() => {
-      expect(createPackingList).toHaveBeenCalledWith(expect.objectContaining({
+      expect(createPickingOrder).toHaveBeenCalledWith(expect.objectContaining({
         packingListNo: "PL-PORTAL-77",
         orderRef: "SO-PORTAL-77",
         shipToName: "Receiver Dock",
@@ -241,12 +322,78 @@ describe("CustomerPortalPage", () => {
         ]
       }), undefined);
     });
-    expect(uploadPackingListAttachment).toHaveBeenNthCalledWith(1, 77, packingListPdf, "Customer Packing List", undefined);
-    expect(uploadPackingListAttachment).toHaveBeenNthCalledWith(2, 77, boImage, "Signed BO Proof", undefined);
+    expect(uploadPickingOrderAttachment).toHaveBeenNthCalledWith(1, 77, packingListPdf, "Customer Picking Order", undefined);
+    expect(uploadPickingOrderAttachment).toHaveBeenNthCalledWith(2, 77, boImage, "Signed BO Proof", undefined);
     expect(await screen.findByText("PL-PORTAL-77")).toBeInTheDocument();
   });
 
-  it("blocks packing list quantities above available customer inventory before submit", async () => {
+  it("keeps failed picking order attachments visible on the documents tab after submit", async () => {
+    const user = userEvent.setup();
+    const inventoryItem = createItem({
+      id: 89,
+      skuMasterId: 322,
+      itemNumber: "RETRY-SKU-322",
+      sku: "RETRY-SKU-322",
+      locationId: 11,
+      locationName: "NJ",
+      availableQty: 6,
+      quantity: 6
+    });
+    const createdDocument = createOutboundDocument({
+      id: 78,
+      packingListNo: "PL-RETRY-78",
+      orderRef: "SO-RETRY-78"
+    });
+
+    getInventory.mockResolvedValue([inventoryItem]);
+    getPickingOrders
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([createdDocument]);
+    createPickingOrder.mockResolvedValue(createdDocument);
+    uploadPickingOrderAttachment.mockRejectedValue(new Error("upload failed"));
+
+    function PortalHarness() {
+      const [section, setSection] = useState<CustomerPortalSection>("inventory");
+      return (
+        <CustomerPortalPage
+          activeSection={section}
+          onSectionChange={setSection}
+          currentUser={{
+            id: 5,
+            email: "customer@example.com",
+            fullName: "Customer User",
+            role: "customer",
+            isActive: true,
+            customerId: 99,
+            customerName: "Customer Portal Co",
+            createdAt: "2026-03-24T10:00:00Z"
+          }}
+        />
+      );
+    }
+
+    renderWithProviders(<PortalHarness />);
+
+    expect(await screen.findByText("RETRY-SKU-322")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Add to Picking Order/i }));
+    await user.type(screen.getByLabelText("Picking Order No."), "PL-RETRY-78");
+
+    const fileInput = document.querySelector<HTMLInputElement>("input[type='file']");
+    expect(fileInput).not.toBeNull();
+    const proofFile = new File(["retry"], "retry-proof.pdf", { type: "application/pdf" });
+    await user.upload(fileInput as HTMLInputElement, proofFile);
+
+    await user.click(screen.getByRole("button", { name: /Submit Picking Order/i }));
+
+    expect(await screen.findByText(/some files could not upload/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /Attachments/i })).toHaveAttribute("aria-selected", "true");
+    });
+    expect(screen.getByText("retry-proof.pdf")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Upload$/i })).toBeInTheDocument();
+  });
+
+  it("blocks picking order quantities above available customer inventory before submit", async () => {
     const user = userEvent.setup();
     getInventory.mockResolvedValue([
       createItem({
@@ -258,7 +405,7 @@ describe("CustomerPortalPage", () => {
         quantity: 2
       })
     ]);
-    getPackingLists.mockResolvedValue([]);
+    getPickingOrders.mockResolvedValue([]);
 
     renderWithProviders(
       <CustomerPortalPage
@@ -276,14 +423,14 @@ describe("CustomerPortalPage", () => {
     );
 
     expect(await screen.findByText("LIMITED-SKU")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Add to PL/i }));
+    await user.click(screen.getByRole("button", { name: /Add to Picking Order/i }));
 
     const quantityInput = screen.getByRole("spinbutton");
     await user.clear(quantityInput);
     await user.type(quantityInput, "3");
-    await user.click(screen.getByRole("button", { name: /Submit Packing List/i }));
+    await user.click(screen.getByRole("button", { name: /Submit Picking Order/i }));
 
     expect((await screen.findAllByText("Requested quantity cannot exceed available inventory.")).length).toBeGreaterThan(0);
-    expect(createPackingList).not.toHaveBeenCalled();
+    expect(createPickingOrder).not.toHaveBeenCalled();
   });
 });
