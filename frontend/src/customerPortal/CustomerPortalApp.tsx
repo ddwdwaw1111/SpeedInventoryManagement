@@ -268,6 +268,11 @@ function CustomerPortalSidebar({
   onChangeSection: (section: CustomerPortalSection) => void;
 }) {
   const { t } = useI18n();
+  const sidebarActiveSection = activeSection === "packing-list-detail"
+    ? "packing-lists"
+    : activeSection === "picking-order-detail" || activeSection === "new-picking-order"
+      ? "picking-orders"
+      : activeSection;
   const navItems: NavigationSidebarItem<CustomerPortalSection>[] = [
     { key: "overview", label: t("customerPortalOverview"), icon: <DashboardOutlinedIcon fontSize="small" /> },
     { key: "inventory", label: t("customerPortalInventory"), icon: <Inventory2OutlinedIcon fontSize="small" /> },
@@ -277,7 +282,7 @@ function CustomerPortalSidebar({
 
   return (
     <NavigationSidebar
-      activeKey={activeSection}
+      activeKey={sidebarActiveSection}
       ariaLabel={t("customerPortal")}
       classNames={{
         root: "customer-portal-sidebar",

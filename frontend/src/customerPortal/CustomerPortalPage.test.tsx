@@ -119,9 +119,58 @@ describe("CustomerPortalPage", () => {
   it("shows picking order attachments from the detail Documents tab", async () => {
     const user = userEvent.setup();
 
+    function PortalHarness() {
+      const [section, setSection] = useState<CustomerPortalSection>("picking-orders");
+      return (
+        <CustomerPortalPage
+          activeSection={section}
+          onSectionChange={setSection}
+          currentUser={{
+            id: 5,
+            email: "customer@example.com",
+            fullName: "Customer User",
+            role: "customer",
+            isActive: true,
+            customerId: 1,
+            customerName: "Imperial Bag & Paper",
+            createdAt: "2026-03-24T10:00:00Z"
+          }}
+        />
+      );
+    }
+
+    renderWithProviders(<PortalHarness />);
+
+    expect(await screen.findByText("PL-CUST-42")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Details PL-CUST-42/i }));
+    expect(await screen.findByRole("button", { name: /Back to Picking Orders/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: /Attachments/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /Attachments/i })).toHaveAttribute("aria-selected", "true");
+    });
+    expect(screen.getByText("Customer BO.pdf")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Add Files/i }).length).toBeGreaterThan(0);
+  });
+
+  it("keeps inventory as a single-purpose stock view", async () => {
+    getInventory.mockResolvedValue([
+      createItem({
+        id: 88,
+        skuMasterId: 321,
+        itemNumber: "CUST-SKU-321",
+        sku: "CUST-SKU-321",
+        description: "Customer owned cartons",
+        locationId: 11,
+        locationName: "NJ",
+        availableQty: 12,
+        quantity: 12
+      })
+    ]);
+
     renderWithProviders(
       <CustomerPortalPage
-        activeSection="picking-orders"
+        activeSection="inventory"
         currentUser={{
           id: 5,
           email: "customer@example.com",
@@ -135,17 +184,45 @@ describe("CustomerPortalPage", () => {
       />
     );
 
-    expect(await screen.findByText("PL-CUST-42")).toBeInTheDocument();
-    await user.click(screen.getByRole("tab", { name: /Attachments/i }));
-
-    await waitFor(() => {
-      expect(screen.getByRole("tab", { name: /Attachments/i })).toHaveAttribute("aria-selected", "true");
-    });
-    expect(screen.getByText("Customer BO.pdf")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: /Add Files/i }).length).toBeGreaterThan(0);
+    expect(await screen.findByText("CUST-SKU-321")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Start Picking Order/i })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Picking Order No.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Submit Picking Order/i })).not.toBeInTheDocument();
   });
 
-  it("summarizes open and BO-completed picking orders for the customer", async () => {
+  it("opens the standalone picking order flow from the Picking Orders page", async () => {
+    const user = userEvent.setup();
+
+    function PortalHarness() {
+      const [section, setSection] = useState<CustomerPortalSection>("picking-orders");
+      return (
+        <CustomerPortalPage
+          activeSection={section}
+          onSectionChange={setSection}
+          currentUser={{
+            id: 5,
+            email: "customer@example.com",
+            fullName: "Customer User",
+            role: "customer",
+            isActive: true,
+            customerId: 1,
+            customerName: "Imperial Bag & Paper",
+            createdAt: "2026-03-24T10:00:00Z"
+          }}
+        />
+      );
+    }
+
+    renderWithProviders(<PortalHarness />);
+
+    expect(await screen.findByText("PL-CUST-42")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /New Picking Order/i }));
+
+    expect(await screen.findByText("Select inventory before creating a picking order.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Back to Inventory/i })).toBeInTheDocument();
+  });
+
+  it("summarizes customer work into clear overview action cards", async () => {
     renderWithProviders(
       <CustomerPortalPage
         currentUser={{
@@ -164,8 +241,10 @@ describe("CustomerPortalPage", () => {
     expect(await screen.findByText("PL-CUST-42")).toBeInTheDocument();
     expect(screen.getByText("PL-CUST-43")).toBeInTheDocument();
 
-    expect(within(screen.getByText("Open Picking Orders").closest("article") as HTMLElement).getByText("1")).toBeInTheDocument();
-    expect(within(screen.getByText("Completed Picking Orders").closest("article") as HTMLElement).getByText("1")).toBeInTheDocument();
+    expect(within(screen.getByText("Packing List Inbound").closest("article") as HTMLElement).getByText("1")).toBeInTheDocument();
+    expect(within(screen.getByText("Picking Order Status").closest("article") as HTMLElement).getByText("1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Open inbound status/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Open outbound status/i })).toBeInTheDocument();
     expect(screen.getAllByText("Awaiting BO").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Completed").length).toBeGreaterThan(0);
   });
@@ -173,23 +252,31 @@ describe("CustomerPortalPage", () => {
   it("shows packing list receiving progress and read-only inbound documents", async () => {
     const user = userEvent.setup();
 
-    renderWithProviders(
-      <CustomerPortalPage
-        activeSection="packing-lists"
-        currentUser={{
-          id: 5,
-          email: "customer@example.com",
-          fullName: "Customer User",
-          role: "customer",
-          isActive: true,
-          customerId: 1,
-          customerName: "Imperial Bag & Paper",
-          createdAt: "2026-03-24T10:00:00Z"
-        }}
-      />
-    );
+    function PortalHarness() {
+      const [section, setSection] = useState<CustomerPortalSection>("packing-lists");
+      return (
+        <CustomerPortalPage
+          activeSection={section}
+          onSectionChange={setSection}
+          currentUser={{
+            id: 5,
+            email: "customer@example.com",
+            fullName: "Customer User",
+            role: "customer",
+            isActive: true,
+            customerId: 1,
+            customerName: "Imperial Bag & Paper",
+            createdAt: "2026-03-24T10:00:00Z"
+          }}
+        />
+      );
+    }
+
+    renderWithProviders(<PortalHarness />);
 
     expect((await screen.findAllByText("CNT-CUST-11")).length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: /Details CNT-CUST-11/i }));
+    expect(await screen.findByRole("button", { name: /Back to Packing Lists/i })).toBeInTheDocument();
     expect(screen.getByText("INBOUND-SKU-11")).toBeInTheDocument();
     expect(screen.getAllByText("Receiving / Received").length).toBeGreaterThan(0);
     expect(screen.getAllByText("12 CTN").length).toBeGreaterThan(0);
@@ -271,23 +358,31 @@ describe("CustomerPortalPage", () => {
       createdAt: "2026-03-24T10:00:00Z"
     });
 
-    renderWithProviders(
-      <CustomerPortalPage
-        currentUser={{
-          id: 5,
-          email: "customer@example.com",
-          fullName: "Customer User",
-          role: "customer",
-          isActive: true,
-          customerId: 99,
-          customerName: "Customer Portal Co",
-          createdAt: "2026-03-24T10:00:00Z"
-        }}
-      />
-    );
+    function PortalHarness() {
+      const [section, setSection] = useState<CustomerPortalSection>("inventory");
+      return (
+        <CustomerPortalPage
+          activeSection={section}
+          onSectionChange={setSection}
+          currentUser={{
+            id: 5,
+            email: "customer@example.com",
+            fullName: "Customer User",
+            role: "customer",
+            isActive: true,
+            customerId: 99,
+            customerName: "Customer Portal Co",
+            createdAt: "2026-03-24T10:00:00Z"
+          }}
+        />
+      );
+    }
+
+    renderWithProviders(<PortalHarness />);
 
     expect(await screen.findByText("CUST-SKU-321")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Add to Picking Order/i }));
+    await user.click(screen.getByRole("button", { name: /Start Picking Order/i }));
+    expect(await screen.findByText("Selected Inventory")).toBeInTheDocument();
 
     await user.type(screen.getByLabelText("Picking Order No."), "PL-PORTAL-77");
     await user.type(screen.getByLabelText("Order Ref."), "SO-PORTAL-77");
@@ -324,7 +419,7 @@ describe("CustomerPortalPage", () => {
     });
     expect(uploadPickingOrderAttachment).toHaveBeenNthCalledWith(1, 77, packingListPdf, "Customer Picking Order", undefined);
     expect(uploadPickingOrderAttachment).toHaveBeenNthCalledWith(2, 77, boImage, "Signed BO Proof", undefined);
-    expect(await screen.findByText("PL-PORTAL-77")).toBeInTheDocument();
+    expect(await screen.findByText(/PL-PORTAL-77/)).toBeInTheDocument();
   });
 
   it("keeps failed picking order attachments visible on the documents tab after submit", async () => {
@@ -375,7 +470,7 @@ describe("CustomerPortalPage", () => {
     renderWithProviders(<PortalHarness />);
 
     expect(await screen.findByText("RETRY-SKU-322")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Add to Picking Order/i }));
+    await user.click(screen.getByRole("button", { name: /Start Picking Order/i }));
     await user.type(screen.getByLabelText("Picking Order No."), "PL-RETRY-78");
 
     const fileInput = document.querySelector<HTMLInputElement>("input[type='file']");
@@ -407,23 +502,30 @@ describe("CustomerPortalPage", () => {
     ]);
     getPickingOrders.mockResolvedValue([]);
 
-    renderWithProviders(
-      <CustomerPortalPage
-        currentUser={{
-          id: 5,
-          email: "customer@example.com",
-          fullName: "Customer User",
-          role: "customer",
-          isActive: true,
-          customerId: 99,
-          customerName: "Customer Portal Co",
-          createdAt: "2026-03-24T10:00:00Z"
-        }}
-      />
-    );
+    function PortalHarness() {
+      const [section, setSection] = useState<CustomerPortalSection>("inventory");
+      return (
+        <CustomerPortalPage
+          activeSection={section}
+          onSectionChange={setSection}
+          currentUser={{
+            id: 5,
+            email: "customer@example.com",
+            fullName: "Customer User",
+            role: "customer",
+            isActive: true,
+            customerId: 99,
+            customerName: "Customer Portal Co",
+            createdAt: "2026-03-24T10:00:00Z"
+          }}
+        />
+      );
+    }
+
+    renderWithProviders(<PortalHarness />);
 
     expect(await screen.findByText("LIMITED-SKU")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Add to Picking Order/i }));
+    await user.click(screen.getByRole("button", { name: /Start Picking Order/i }));
 
     const quantityInput = screen.getByRole("spinbutton");
     await user.clear(quantityInput);

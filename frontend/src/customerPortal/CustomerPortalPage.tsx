@@ -1,27 +1,30 @@
-import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
-import AssignmentTurnedInOutlinedIcon from "@mui/icons-material/AssignmentTurnedInOutlined";
 import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
 import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
 import LocalShippingOutlinedIcon from "@mui/icons-material/LocalShippingOutlined";
 import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
-import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 import { type FormEvent, useEffect, useState } from "react";
 
 import { useI18n } from "../lib/i18n";
 import { customerPortalApi } from "./api";
+import { CustomerPortalInventoryPage } from "./CustomerPortalInventoryPage";
+import {
+  CustomerPortalNewPickingOrderPage,
+  emptyPickingOrderForm,
+  type PickingOrderFormState,
+  type PickingOrderLineDraft
+} from "./CustomerPortalNewPickingOrderPage";
+import { CustomerPortalPackingListDetailPage } from "./CustomerPortalPackingListDetailPage";
 import { CustomerPortalPackingListsPage } from "./CustomerPortalPackingListsPage";
+import { CustomerPortalPickingOrderDetailPage } from "./CustomerPortalPickingOrderDetailPage";
 import { CustomerPortalPickingOrdersPage } from "./CustomerPortalPickingOrdersPage";
 import {
-  isCompletedPackingList,
-  isCompletedPickingOrder,
   isOpenPackingList,
   isOpenPickingOrder,
-  PortalPanelHeader,
   type CustomerPortalDetailTabRequest
 } from "./CustomerPortalTrackingShared";
 import type { CustomerPortalSection } from "./navigation";
-import { DocumentAttachmentsPanel, InlineAlert, InlineLoadingIndicator, useFeedbackToast } from "./sharedUi";
+import { InlineAlert, InlineLoadingIndicator, useFeedbackToast } from "./sharedUi";
 import type { PendingDocumentAttachment } from "./sharedUi";
 import type { InboundDocument, Item, OutboundDocument, OutboundDocumentPayload, User } from "./types";
 
@@ -33,42 +36,6 @@ type CustomerPortalPageProps = {
   portalCustomerName?: string;
 };
 
-type PickingOrderLineDraft = {
-  id: string;
-  skuMasterId: number;
-  itemNumber: string;
-  sku: string;
-  description: string;
-  locationId: number;
-  locationName: string;
-  unitLabel: string;
-  availableQty: number;
-  quantity: string;
-  lineNote: string;
-};
-
-type PickingOrderFormState = {
-  packingListNo: string;
-  orderRef: string;
-  expectedShipDate: string;
-  shipToName: string;
-  shipToAddress: string;
-  shipToContact: string;
-  carrierName: string;
-  documentNote: string;
-};
-
-const emptyPickingOrderForm: PickingOrderFormState = {
-  packingListNo: "",
-  orderRef: "",
-  expectedShipDate: "",
-  shipToName: "",
-  shipToAddress: "",
-  shipToContact: "",
-  carrierName: "",
-  documentNote: ""
-};
-
 export function CustomerPortalPage({ activeSection, currentUser, onSectionChange, portalCustomerId, portalCustomerName = "" }: CustomerPortalPageProps) {
   const { t } = useI18n();
   const { showSuccess, showError, feedbackToast } = useFeedbackToast();
@@ -76,6 +43,7 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
   const [inventory, setInventory] = useState<Item[]>([]);
   const [packingLists, setPackingLists] = useState<InboundDocument[]>([]);
   const [pickingOrders, setPickingOrders] = useState<OutboundDocument[]>([]);
+  const [selectedPackingListId, setSelectedPackingListId] = useState<number | null>(null);
   const [selectedPickingOrderId, setSelectedPickingOrderId] = useState<number | null>(null);
   const [pickingOrderDetailTabRequest, setPickingOrderDetailTabRequest] = useState<CustomerPortalDetailTabRequest | null>(null);
   const [form, setForm] = useState<PickingOrderFormState>(emptyPickingOrderForm);
@@ -90,19 +58,17 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
   const activeCustomerName = currentUser.role === "admin" ? portalCustomerName : currentUser.customerName;
 
   const openPackingListCount = packingLists.filter(isOpenPackingList).length;
-  const completedPackingListCount = packingLists.filter(isCompletedPackingList).length;
   const openPickingOrderCount = pickingOrders.filter(isOpenPickingOrder).length;
-  const completedPickingOrderCount = pickingOrders.filter(isCompletedPickingOrder).length;
-  const attachmentCount = [...packingLists, ...pickingOrders].reduce((total, document) => total + (document.attachments?.length ?? 0), 0);
-  const draftLineCount = lineDrafts.length;
-  const draftTotalQty = lineDrafts.reduce((total, line) => total + Math.max(0, Number(line.quantity) || 0), 0);
+  const pickingOrderAttachmentCount = pickingOrders.reduce((total, document) => total + (document.attachments?.length ?? 0), 0);
   const visibleInventory = inventory.filter((item) => item.availableQty > 0 || item.quantity > 0);
   const showAllSections = !activeSection;
   const showOverviewSection = showAllSections || activeSection === "overview";
   const showInventorySection = showAllSections || activeSection === "inventory";
-  const showComposerSection = showAllSections || activeSection === "inventory";
+  const showNewPickingOrderSection = activeSection === "new-picking-order";
   const showPackingListSection = showAllSections || activeSection === "packing-lists";
+  const showPackingListDetailSection = activeSection === "packing-list-detail";
   const showPickingOrderSection = showAllSections || activeSection === "picking-orders";
+  const showPickingOrderDetailSection = activeSection === "picking-order-detail";
 
   useEffect(() => {
     void loadPortalData();
@@ -129,7 +95,7 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
     }
   }
 
-  function addInventoryLine(item: Item) {
+  function startPickingOrderFromInventory(item: Item) {
     setLineDrafts((current) => {
       const existing = current.find((line) => line.skuMasterId === item.skuMasterId && line.locationId === item.locationId);
       if (existing) {
@@ -155,7 +121,7 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
         }
       ];
     });
-    onSectionChange?.("inventory");
+    onSectionChange?.("new-picking-order");
   }
 
   function updateLineDraft(id: string, updates: Partial<PickingOrderLineDraft>) {
@@ -164,6 +130,37 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
 
   function removeLineDraft(id: string) {
     setLineDrafts((current) => current.filter((line) => line.id !== id));
+  }
+
+  function updatePickingOrderForm(updates: Partial<PickingOrderFormState>) {
+    setForm((current) => ({ ...current, ...updates }));
+  }
+
+  function openNewPickingOrder() {
+    setErrorMessage("");
+    onSectionChange?.("new-picking-order");
+  }
+
+  function openPackingListDetail(documentId: number) {
+    setSelectedPackingListId(documentId);
+    setErrorMessage("");
+    onSectionChange?.("packing-list-detail");
+  }
+
+  function openPickingOrderDetail(documentId: number, tab: CustomerPortalDetailTabRequest["tab"] = "details") {
+    setSelectedPickingOrderId(documentId);
+    setPendingPickingOrderAttachments(tab === "details" ? [] : pendingPickingOrderAttachments);
+    requestPickingOrderDetailTab(tab);
+    setErrorMessage("");
+    onSectionChange?.("picking-order-detail");
+  }
+
+  function cancelPickingOrderDraft() {
+    setForm(emptyPickingOrderForm);
+    setLineDrafts([]);
+    setDraftPickingOrderAttachments([]);
+    setErrorMessage("");
+    onSectionChange?.("picking-orders");
   }
 
   async function handleSubmitPickingOrder(event: FormEvent<HTMLFormElement>) {
@@ -224,12 +221,12 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
       if (failedAttachments.length > 0) {
         const message = t("customerPortalAttachmentUploadPartial");
         requestPickingOrderDetailTab("documents");
-        onSectionChange?.("picking-orders");
+        onSectionChange?.("picking-order-detail");
         setErrorMessage(message);
         showError(message);
       } else {
         requestPickingOrderDetailTab("details");
-        onSectionChange?.("picking-orders");
+        onSectionChange?.("picking-order-detail");
         showSuccess(t("customerPortalPickingOrderCreated"));
       }
     } catch (error) {
@@ -293,168 +290,77 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
             <article className="customer-portal-kpi">
               <span className="customer-portal-kpi__icon"><AttachFileOutlinedIcon fontSize="small" /></span>
               <div>
-                <span>{t("attachments")}</span>
-                <strong>{attachmentCount}</strong>
+                <span>{t("customerPortalOverviewFilesTitle")}</span>
+                <strong>{pickingOrderAttachmentCount}</strong>
+                <small>{t("customerPortalFilesTracked")}</small>
+                <button className="button button--ghost button--small customer-portal-kpi__action" type="button" onClick={() => onSectionChange?.("picking-orders")}>
+                  {t("customerPortalOpenFilesAction")}
+                </button>
               </div>
             </article>
             <article className="customer-portal-kpi">
               <span className="customer-portal-kpi__icon"><Inventory2OutlinedIcon fontSize="small" /></span>
               <div>
-                <span>{t("inventory")}</span>
+                <span>{t("customerPortalOverviewInventoryTitle")}</span>
                 <strong>{visibleInventory.length}</strong>
+                <small>{t("customerPortalAvailableLocations")}</small>
+                <button className="button button--ghost button--small customer-portal-kpi__action" type="button" onClick={() => onSectionChange?.("inventory")}>
+                  {t("customerPortalOpenInventoryAction")}
+                </button>
               </div>
             </article>
             <article className="customer-portal-kpi">
               <span className="customer-portal-kpi__icon"><MoveToInboxOutlinedIcon fontSize="small" /></span>
               <div>
-                <span>{t("customerPortalOpenPackingLists")}</span>
+                <span>{t("customerPortalOverviewPackingTitle")}</span>
                 <strong>{openPackingListCount}</strong>
-              </div>
-            </article>
-            <article className="customer-portal-kpi">
-              <span className="customer-portal-kpi__icon"><AssignmentTurnedInOutlinedIcon fontSize="small" /></span>
-              <div>
-                <span>{t("customerPortalCompletedPackingLists")}</span>
-                <strong>{completedPackingListCount}</strong>
+                <small>{t("customerPortalInboundInProgress")}</small>
+                <button className="button button--ghost button--small customer-portal-kpi__action" type="button" onClick={() => onSectionChange?.("packing-lists")}>
+                  {t("customerPortalOpenInboundAction")}
+                </button>
               </div>
             </article>
             <article className="customer-portal-kpi">
               <span className="customer-portal-kpi__icon"><LocalShippingOutlinedIcon fontSize="small" /></span>
               <div>
-                <span>{t("customerPortalOpenPickingOrders")}</span>
+                <span>{t("customerPortalOverviewPickingTitle")}</span>
                 <strong>{openPickingOrderCount}</strong>
-              </div>
-            </article>
-            <article className="customer-portal-kpi">
-              <span className="customer-portal-kpi__icon"><AssignmentTurnedInOutlinedIcon fontSize="small" /></span>
-              <div>
-                <span>{t("customerPortalCompletedPickingOrders")}</span>
-                <strong>{completedPickingOrderCount}</strong>
+                <small>{t("customerPortalOutboundInProgress")}</small>
+                <button className="button button--ghost button--small customer-portal-kpi__action" type="button" onClick={() => onSectionChange?.("picking-orders")}>
+                  {t("customerPortalOpenOutboundAction")}
+                </button>
               </div>
             </article>
           </section>
         </>
       ) : null}
 
-      {showInventorySection || showComposerSection ? (
-        <div className={`customer-portal-operations-grid ${!showInventorySection || !showComposerSection ? "customer-portal-operations-grid--single" : ""}`}>
-          {showInventorySection ? (
-            <section className="customer-portal-panel customer-portal-panel--inventory">
-              <div className="tab-strip">
-                <PortalPanelHeader title={t("customerPortalInventory")} icon={<Inventory2OutlinedIcon fontSize="small" />} />
-                <div className="filter-bar">
-                  <label>{t("search")}<span className="customer-portal-search-field"><SearchOutlinedIcon fontSize="small" /><input value={inventorySearch} onChange={(event) => setInventorySearch(event.target.value)} placeholder={t("customerPortalInventorySearch")} /></span></label>
-                  <button className="button button--ghost" type="button" onClick={() => void loadPortalData()} disabled={isLoading}>{t("apply")}</button>
-                </div>
-              </div>
-              <div className="sheet-table-wrap">
-                <table className="sheet-table">
-                  <thead>
-                    <tr>
-                      <th>{t("sku")}</th>
-                      <th>{t("description")}</th>
-                      <th>{t("storageName")}</th>
-                      <th>{t("availableQty")}</th>
-                      <th>{t("onHand")}</th>
-                      <th>{t("actions")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visibleInventory.map((item) => (
-                      <tr key={item.id}>
-                        <td data-label={t("sku")}>{item.sku || item.itemNumber}</td>
-                        <td data-label={t("description")}>{item.description || item.name}</td>
-                        <td data-label={t("storageName")}>{item.locationName}</td>
-                        <td data-label={t("availableQty")}>{item.availableQty}</td>
-                        <td data-label={t("onHand")}>{item.quantity}</td>
-                        <td data-label={t("actions")}>
-                          <button className="button button--ghost button--small" type="button" onClick={() => addInventoryLine(item)} disabled={item.availableQty <= 0}>
-                            <AddCircleOutlineOutlinedIcon fontSize="small" />
-                            {t("addToPackingList")}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                    {visibleInventory.length === 0 ? (
-                      <tr><td colSpan={6}><div className="empty-state">{isLoading ? t("loadingRecords") : t("noInventoryAvailable")}</div></td></tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          ) : null}
+      {showInventorySection ? (
+        <CustomerPortalInventoryPage
+          inventory={inventory}
+          isLoading={isLoading}
+          search={inventorySearch}
+          onSearchChange={setInventorySearch}
+          onApplySearch={() => void loadPortalData()}
+          onStartPickingOrder={startPickingOrderFromInventory}
+        />
+      ) : null}
 
-          {showComposerSection ? (
-            <section className="customer-portal-panel customer-portal-panel--composer">
-              <div className="tab-strip">
-                <PortalPanelHeader title={t("newPickingOrder")} icon={<LocalShippingOutlinedIcon fontSize="small" />} />
-                <div className="customer-portal-composer-summary">
-                  <span>{draftLineCount} {t("totalLines")}</span>
-                  <span>{draftTotalQty} {t("totalQty")}</span>
-                </div>
-              </div>
-              {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
-              <form className="sheet-form" onSubmit={handleSubmitPickingOrder} noValidate>
-                <label>{t("packingListNo")}<input value={form.packingListNo} onChange={(event) => setForm((current) => ({ ...current, packingListNo: event.target.value }))} placeholder={t("autoIfBlank")} /></label>
-                <label>{t("orderRef")}<input value={form.orderRef} onChange={(event) => setForm((current) => ({ ...current, orderRef: event.target.value }))} /></label>
-                <label>{t("expectedShipDate")}<input type="date" value={form.expectedShipDate} onChange={(event) => setForm((current) => ({ ...current, expectedShipDate: event.target.value }))} /></label>
-                <label>{t("shipToName")}<input value={form.shipToName} onChange={(event) => setForm((current) => ({ ...current, shipToName: event.target.value }))} /></label>
-                <label>{t("shipToAddress")}<input value={form.shipToAddress} onChange={(event) => setForm((current) => ({ ...current, shipToAddress: event.target.value }))} /></label>
-                <label>{t("shipToContact")}<input value={form.shipToContact} onChange={(event) => setForm((current) => ({ ...current, shipToContact: event.target.value }))} /></label>
-                <label>{t("carrierName")}<input value={form.carrierName} onChange={(event) => setForm((current) => ({ ...current, carrierName: event.target.value }))} /></label>
-                <label className="sheet-form__wide">{t("documentNotes")}<textarea value={form.documentNote} onChange={(event) => setForm((current) => ({ ...current, documentNote: event.target.value }))} rows={3} /></label>
-
-                <div className="sheet-form__wide sheet-table-wrap">
-                  <table className="sheet-table">
-                    <thead>
-                      <tr>
-                        <th>{t("sku")}</th>
-                        <th>{t("storageName")}</th>
-                        <th>{t("availableQty")}</th>
-                        <th>{t("quantity")}</th>
-                        <th>{t("notes")}</th>
-                        <th>{t("actions")}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {lineDrafts.map((line) => (
-                        <tr key={line.id}>
-                          <td data-label={t("sku")}>{line.sku || line.itemNumber}<br /><span className="sheet-note">{line.description}</span></td>
-                          <td data-label={t("storageName")}>{line.locationName}</td>
-                          <td data-label={t("availableQty")}>{line.availableQty}</td>
-                          <td data-label={t("quantity")}><input type="number" min="1" max={line.availableQty} value={line.quantity} onChange={(event) => updateLineDraft(line.id, { quantity: event.target.value })} /></td>
-                          <td data-label={t("notes")}><input value={line.lineNote} onChange={(event) => updateLineDraft(line.id, { lineNote: event.target.value })} /></td>
-                          <td data-label={t("actions")}><button className="button button--ghost button--small" type="button" onClick={() => removeLineDraft(line.id)}>{t("remove")}</button></td>
-                        </tr>
-                      ))}
-                      {lineDrafts.length === 0 ? (
-                        <tr><td colSpan={6}><div className="empty-state">{t("customerPortalAddInventoryHint")}</div></td></tr>
-                      ) : null}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="sheet-form__wide">
-                  <DocumentAttachmentsPanel
-                    attachments={[]}
-                    pendingAttachments={draftPickingOrderAttachments}
-                    disabled={isSubmitting}
-                    showUploadButton={false}
-                    onPendingAttachmentsChange={setDraftPickingOrderAttachments}
-                    onGetDownloadUrl={async () => ""}
-                  />
-                </div>
-
-                <div className="sheet-form__actions sheet-form__wide">
-                  <button className="button button--primary" type="submit" disabled={isSubmitting || lineDrafts.length === 0}>
-                    {isSubmitting ? <InlineLoadingIndicator /> : null}
-                    {t("submitPickingOrder")}
-                  </button>
-                </div>
-              </form>
-            </section>
-          ) : null}
-        </div>
+      {showNewPickingOrderSection ? (
+        <CustomerPortalNewPickingOrderPage
+          form={form}
+          lineDrafts={lineDrafts}
+          pendingAttachments={draftPickingOrderAttachments}
+          isSubmitting={isSubmitting}
+          errorMessage={errorMessage}
+          onFormChange={updatePickingOrderForm}
+          onLineChange={updateLineDraft}
+          onRemoveLine={removeLineDraft}
+          onPendingAttachmentsChange={setDraftPickingOrderAttachments}
+          onSubmit={handleSubmitPickingOrder}
+          onCancel={cancelPickingOrderDraft}
+          onBackToInventory={() => onSectionChange?.("inventory")}
+        />
       ) : null}
 
       {showPackingListSection ? (
@@ -462,8 +368,19 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
           packingLists={packingLists}
           isLoading={isLoading}
           adminPortalCustomerId={adminPortalCustomerId}
+          selectedPackingListId={selectedPackingListId}
           onPackingListsChange={setPackingLists}
+          onOpenDetail={openPackingListDetail}
           onError={showPortalError}
+        />
+      ) : null}
+
+      {showPackingListDetailSection ? (
+        <CustomerPortalPackingListDetailPage
+          packingLists={packingLists}
+          selectedPackingListId={selectedPackingListId}
+          adminPortalCustomerId={adminPortalCustomerId}
+          onBack={() => onSectionChange?.("packing-lists")}
         />
       ) : null}
 
@@ -473,11 +390,23 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
           isLoading={isLoading}
           adminPortalCustomerId={adminPortalCustomerId}
           selectedPickingOrderId={selectedPickingOrderId}
+          onPickingOrdersChange={setPickingOrders}
+          onOpenDetail={openPickingOrderDetail}
+          onCreateNewOrder={openNewPickingOrder}
+          onError={showPortalError}
+        />
+      ) : null}
+
+      {showPickingOrderDetailSection ? (
+        <CustomerPortalPickingOrderDetailPage
+          pickingOrders={pickingOrders}
+          selectedPickingOrderId={selectedPickingOrderId}
           pendingAttachments={pendingPickingOrderAttachments}
           detailTabRequest={pickingOrderDetailTabRequest}
+          adminPortalCustomerId={adminPortalCustomerId}
           onPickingOrdersChange={setPickingOrders}
-          onSelectedPickingOrderIdChange={setSelectedPickingOrderId}
           onPendingAttachmentsChange={setPendingPickingOrderAttachments}
+          onBack={() => onSectionChange?.("picking-orders")}
           onSuccess={showSuccess}
           onError={showPortalError}
         />
