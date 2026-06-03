@@ -4,6 +4,7 @@ import LocalShippingOutlinedIcon from "@mui/icons-material/LocalShippingOutlined
 import type { FormEvent } from "react";
 
 import { useI18n } from "../lib/i18n";
+import { SheetTable, SheetTableCell, type SheetTableColumn } from "../shared/SheetTable";
 import { PortalPanelHeader } from "./CustomerPortalTrackingShared";
 import { DocumentAttachmentsPanel, InlineAlert, InlineLoadingIndicator } from "./sharedUi";
 import type { PendingDocumentAttachment } from "./sharedUi";
@@ -103,6 +104,14 @@ export function CustomerPortalNewPickingOrderPage({
       isComplete: pendingAttachments.length > 0
     }
   ];
+  const selectedInventoryColumns: SheetTableColumn[] = [
+    { key: "sku", header: t("sku") },
+    { key: "storageName", header: t("storageName") },
+    { key: "availableQty", header: t("availableQty") },
+    { key: "quantity", header: t("quantity") },
+    { key: "notes", header: t("notes") },
+    { key: "actions", header: t("actions") }
+  ];
 
   return (
     <section className="customer-portal-panel customer-portal-create-flow">
@@ -143,45 +152,29 @@ export function CustomerPortalNewPickingOrderPage({
             description={t("customerPortalSelectedInventoryDesc")}
             icon={<Inventory2OutlinedIcon fontSize="small" />}
           />
-          <div className="sheet-table-wrap">
-            <table className="sheet-table">
-              <thead>
-                <tr>
-                  <th>{t("sku")}</th>
-                  <th>{t("storageName")}</th>
-                  <th>{t("availableQty")}</th>
-                  <th>{t("quantity")}</th>
-                  <th>{t("notes")}</th>
-                  <th>{t("actions")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lineDrafts.map((line) => (
-                  <tr key={line.id}>
-                    <td data-label={t("sku")}>{line.sku || line.itemNumber}<br /><span className="sheet-note">{line.description}</span></td>
-                    <td data-label={t("storageName")}>{line.locationName}</td>
-                    <td data-label={t("availableQty")}>{line.availableQty}</td>
-                    <td data-label={t("quantity")}><input type="number" min="1" max={line.availableQty} value={line.quantity} onChange={(event) => onLineChange(line.id, { quantity: event.target.value })} /></td>
-                    <td data-label={t("notes")}><input value={line.lineNote} onChange={(event) => onLineChange(line.id, { lineNote: event.target.value })} /></td>
-                    <td data-label={t("actions")}><button className="button button--ghost button--small" type="button" onClick={() => onRemoveLine(line.id)} disabled={isSubmitting}>{t("remove")}</button></td>
-                  </tr>
-                ))}
-                {lineDrafts.length === 0 ? (
-                  <tr>
-                    <td colSpan={6}>
-                      <div className="empty-state customer-portal-create-empty">
-                        <span>{t("chooseInventoryForPickingOrder")}</span>
-                        <button className="button button--ghost button--small" type="button" onClick={onBackToInventory}>
-                          <ArrowBackOutlinedIcon fontSize="small" />
-                          {t("backToInventory")}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
+          <SheetTable
+            columns={selectedInventoryColumns}
+            emptyState={lineDrafts.length === 0 ? (
+              <div className="empty-state customer-portal-create-empty">
+                <span>{t("chooseInventoryForPickingOrder")}</span>
+                <button className="button button--ghost button--small" type="button" onClick={onBackToInventory}>
+                  <ArrowBackOutlinedIcon fontSize="small" />
+                  {t("backToInventory")}
+                </button>
+              </div>
+            ) : null}
+          >
+            {lineDrafts.map((line) => (
+              <tr key={line.id}>
+                <SheetTableCell label={t("sku")}>{line.sku || line.itemNumber}<br /><span className="sheet-note">{line.description}</span></SheetTableCell>
+                <SheetTableCell label={t("storageName")}>{line.locationName}</SheetTableCell>
+                <SheetTableCell label={t("availableQty")}>{line.availableQty}</SheetTableCell>
+                <SheetTableCell label={t("quantity")}><input type="number" min="1" max={line.availableQty} value={line.quantity} onChange={(event) => onLineChange(line.id, { quantity: event.target.value })} /></SheetTableCell>
+                <SheetTableCell label={t("notes")}><input value={line.lineNote} onChange={(event) => onLineChange(line.id, { lineNote: event.target.value })} /></SheetTableCell>
+                <SheetTableCell label={t("actions")}><button className="button button--ghost button--small" type="button" onClick={() => onRemoveLine(line.id)} disabled={isSubmitting}>{t("remove")}</button></SheetTableCell>
+              </tr>
+            ))}
+          </SheetTable>
         </div>
 
         <div className="customer-portal-create-section">

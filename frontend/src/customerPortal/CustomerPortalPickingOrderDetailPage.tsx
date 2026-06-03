@@ -3,6 +3,7 @@ import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
 import { useEffect, useMemo, useState } from "react";
 
 import { useI18n } from "../lib/i18n";
+import { SheetTable, SheetTableCell, type SheetTableColumn } from "../shared/SheetTable";
 import { customerPortalApi } from "./api";
 import {
   formatNullableDate,
@@ -52,6 +53,14 @@ export function CustomerPortalPickingOrderDetailPage({
   );
   const selectedWorkflow = selectedDocument ? getPickingOrderPortalWorkflow(selectedDocument, t) : null;
   const selectedAttachmentCount = selectedDocument?.attachments?.length ?? 0;
+  const lineColumns: SheetTableColumn[] = [
+    { key: "itemNumber", header: t("itemNumber") },
+    { key: "sku", header: t("sku") },
+    { key: "description", header: t("description") },
+    { key: "storageName", header: t("storageName") },
+    { key: "quantity", header: t("quantity") },
+    { key: "notes", header: t("notes") }
+  ];
 
   useEffect(() => {
     if (detailTabRequest) {
@@ -182,35 +191,22 @@ export function CustomerPortalPickingOrderDetailPage({
                 <div className="sheet-note sheet-note--readonly customer-portal-detail-grid__wide"><strong>{t("documentNotes")}</strong><br />{selectedDocument.documentNote || "-"}</div>
               </div>
 
-              <div className="sheet-table-wrap">
-                <table className="sheet-table" aria-label={t("lineItemsView")}>
-                  <thead>
-                    <tr>
-                      <th>{t("itemNumber")}</th>
-                      <th>{t("sku")}</th>
-                      <th>{t("description")}</th>
-                      <th>{t("storageName")}</th>
-                      <th>{t("quantity")}</th>
-                      <th>{t("notes")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedDocument.lines.map((line) => (
-                      <tr key={line.id}>
-                        <td data-label={t("itemNumber")}>{line.itemNumber || "-"}</td>
-                        <td data-label={t("sku")}>{line.sku || "-"}</td>
-                        <td data-label={t("description")}>{line.description || "-"}</td>
-                        <td data-label={t("storageName")}>{[line.locationName, line.storageSection].filter(Boolean).join(" / ") || "-"}</td>
-                        <td data-label={t("quantity")}>{line.quantity} {line.unitLabel || ""}</td>
-                        <td data-label={t("notes")}>{line.lineNote || "-"}</td>
-                      </tr>
-                    ))}
-                    {selectedDocument.lines.length === 0 ? (
-                      <tr><td colSpan={6}><div className="empty-state">{t("customerPortalNoPickingOrderLineItems")}</div></td></tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
+              <SheetTable
+                columns={lineColumns}
+                ariaLabel={t("lineItemsView")}
+                emptyState={selectedDocument.lines.length === 0 ? <div className="empty-state">{t("customerPortalNoPickingOrderLineItems")}</div> : null}
+              >
+                {selectedDocument.lines.map((line) => (
+                  <tr key={line.id}>
+                    <SheetTableCell label={t("itemNumber")}>{line.itemNumber || "-"}</SheetTableCell>
+                    <SheetTableCell label={t("sku")}>{line.sku || "-"}</SheetTableCell>
+                    <SheetTableCell label={t("description")}>{line.description || "-"}</SheetTableCell>
+                    <SheetTableCell label={t("storageName")}>{[line.locationName, line.storageSection].filter(Boolean).join(" / ") || "-"}</SheetTableCell>
+                    <SheetTableCell label={t("quantity")}>{line.quantity} {line.unitLabel || ""}</SheetTableCell>
+                    <SheetTableCell label={t("notes")}>{line.lineNote || "-"}</SheetTableCell>
+                  </tr>
+                ))}
+              </SheetTable>
             </>
           ) : (
             <DocumentAttachmentsPanel

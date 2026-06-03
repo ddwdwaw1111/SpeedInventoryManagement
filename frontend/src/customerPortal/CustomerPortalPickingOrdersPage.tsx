@@ -1,10 +1,11 @@
 import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
 import AssignmentTurnedInOutlinedIcon from "@mui/icons-material/AssignmentTurnedInOutlined";
 import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
-import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 import { useState } from "react";
 
 import { useI18n } from "../lib/i18n";
+import { SearchSubmitField } from "../shared/SearchSubmitField";
+import { SheetTable, SheetTableCell, type SheetTableColumn } from "../shared/SheetTable";
 import { customerPortalApi } from "./api";
 import {
   documentStatusOptions,
@@ -68,6 +69,17 @@ export function CustomerPortalPickingOrdersPage({
   }
 
   const loading = isLoading || isRefreshing;
+  const pickingOrderColumns: SheetTableColumn[] = [
+    { key: "packingListNo", header: t("packingListNo") },
+    { key: "orderRef", header: t("orderRef") },
+    { key: "trackingStatus", header: t("trackingStatus") },
+    { key: "completionStatus", header: t("customerPortalCompletionStatus") },
+    { key: "status", header: t("status") },
+    { key: "totalQty", header: t("totalQty") },
+    { key: "expectedShipDate", header: t("expectedShipDate") },
+    { key: "attachments", header: t("attachments") },
+    { key: "actions", header: t("actions") }
+  ];
 
   return (
     <section className="customer-portal-panel customer-portal-tracking-page">
@@ -85,59 +97,50 @@ export function CustomerPortalPickingOrdersPage({
             )}
           />
           <div className="filter-bar">
-            <label>{t("search")}<span className="customer-portal-search-field"><SearchOutlinedIcon fontSize="small" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("customerPortalPickingOrderSearch")} /></span></label>
+            <SearchSubmitField
+              label={t("search")}
+              placeholder={t("customerPortalPickingOrderSearch")}
+              value={search}
+              disabled={loading}
+              submitTitle={t("apply")}
+              onChange={setSearch}
+              onSubmit={() => void refreshPickingOrders()}
+            />
             <label>{t("status")}<select value={status} onChange={(event) => setStatus(event.target.value)}>{documentStatusOptions.map((option) => <option key={option} value={option}>{option === "all" ? t("all") : t(option.toLowerCase())}</option>)}</select></label>
             <label>{t("trackingStatus")}<select value={trackingStatus} onChange={(event) => setTrackingStatus(event.target.value)}>{pickingOrderTrackingStatusOptions.map((option) => <option key={option} value={option}>{formatPickingOrderTrackingStatusFilterLabel(option, t)}</option>)}</select></label>
             <button className="button button--ghost" type="button" onClick={() => void refreshPickingOrders()} disabled={loading}>{loading ? <InlineLoadingIndicator /> : null}{t("apply")}</button>
           </div>
         </div>
-        <div className="sheet-table-wrap">
-          <table className="sheet-table">
-            <thead>
-              <tr>
-                <th>{t("packingListNo")}</th>
-                <th>{t("orderRef")}</th>
-                <th>{t("trackingStatus")}</th>
-                <th>{t("customerPortalCompletionStatus")}</th>
-                <th>{t("status")}</th>
-                <th>{t("totalQty")}</th>
-                <th>{t("expectedShipDate")}</th>
-                <th>{t("attachments")}</th>
-                <th>{t("actions")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pickingOrders.map((document) => (
-                <tr
-                  key={document.id}
-                  className={selectedPickingOrderId === document.id ? "sheet-table__row--selected" : undefined}
+        <SheetTable
+          columns={pickingOrderColumns}
+          emptyState={pickingOrders.length === 0 ? <div className="empty-state">{loading ? t("loadingRecords") : t("noPickingOrders")}</div> : null}
+        >
+          {pickingOrders.map((document) => (
+            <tr
+              key={document.id}
+              className={selectedPickingOrderId === document.id ? "sheet-table__row--selected" : undefined}
+            >
+              <SheetTableCell label={t("packingListNo")}>{document.packingListNo || `#${document.id}`}</SheetTableCell>
+              <SheetTableCell label={t("orderRef")}>{document.orderRef || "-"}</SheetTableCell>
+              <SheetTableCell label={t("trackingStatus")}><span className={`status-pill ${getPickingOrderTrackingStatusPillClass(document)}`}>{formatPickingOrderTrackingStatus(document.trackingStatus, document.status, t)}</span></SheetTableCell>
+              <SheetTableCell label={t("customerPortalCompletionStatus")}><span className={`status-pill ${isCompletedPickingOrder(document) ? "status-pill--ok" : "status-pill--alert"}`}>{formatPickingOrderCompletionStatus(document, t)}</span></SheetTableCell>
+              <SheetTableCell label={t("status")}><span className={`status-pill ${getDocumentStatusPillClass(document.status)}`}>{t(document.status.toLowerCase())}</span></SheetTableCell>
+              <SheetTableCell label={t("totalQty")}>{document.totalQty}</SheetTableCell>
+              <SheetTableCell label={t("expectedShipDate")}>{document.expectedShipDate || "-"}</SheetTableCell>
+              <SheetTableCell label={t("attachments")}><span className="customer-portal-attachment-count"><AttachFileOutlinedIcon fontSize="small" />{document.attachments?.length ?? 0}</span></SheetTableCell>
+              <SheetTableCell label={t("actions")}>
+                <button
+                  className="button button--ghost button--small customer-portal-row-action"
+                  type="button"
+                  onClick={() => onOpenDetail(document.id)}
+                  aria-label={`${t("details")} ${document.packingListNo || `#${document.id}`}`}
                 >
-                  <td data-label={t("packingListNo")}>{document.packingListNo || `#${document.id}`}</td>
-                  <td data-label={t("orderRef")}>{document.orderRef || "-"}</td>
-                  <td data-label={t("trackingStatus")}><span className={`status-pill ${getPickingOrderTrackingStatusPillClass(document)}`}>{formatPickingOrderTrackingStatus(document.trackingStatus, document.status, t)}</span></td>
-                  <td data-label={t("customerPortalCompletionStatus")}><span className={`status-pill ${isCompletedPickingOrder(document) ? "status-pill--ok" : "status-pill--alert"}`}>{formatPickingOrderCompletionStatus(document, t)}</span></td>
-                  <td data-label={t("status")}><span className={`status-pill ${getDocumentStatusPillClass(document.status)}`}>{t(document.status.toLowerCase())}</span></td>
-                  <td data-label={t("totalQty")}>{document.totalQty}</td>
-                  <td data-label={t("expectedShipDate")}>{document.expectedShipDate || "-"}</td>
-                  <td data-label={t("attachments")}><span className="customer-portal-attachment-count"><AttachFileOutlinedIcon fontSize="small" />{document.attachments?.length ?? 0}</span></td>
-                  <td data-label={t("actions")}>
-                    <button
-                      className="button button--ghost button--small customer-portal-row-action"
-                      type="button"
-                      onClick={() => onOpenDetail(document.id)}
-                      aria-label={`${t("details")} ${document.packingListNo || `#${document.id}`}`}
-                    >
-                      {t("details")}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {pickingOrders.length === 0 ? (
-                <tr><td colSpan={9}><div className="empty-state">{loading ? t("loadingRecords") : t("noPickingOrders")}</div></td></tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
+                  {t("details")}
+                </button>
+              </SheetTableCell>
+            </tr>
+          ))}
+        </SheetTable>
       </div>
     </section>
   );

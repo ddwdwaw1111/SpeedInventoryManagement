@@ -1,10 +1,10 @@
 import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
 import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
-import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 
 import { useI18n } from "../lib/i18n";
+import { SearchSubmitField } from "../shared/SearchSubmitField";
+import { SheetTable, SheetTableCell, type SheetTableColumn } from "../shared/SheetTable";
 import { PortalPanelHeader } from "./CustomerPortalTrackingShared";
-import { InlineLoadingIndicator } from "./sharedUi";
 import type { Item } from "./types";
 
 type CustomerPortalInventoryPageProps = {
@@ -26,6 +26,14 @@ export function CustomerPortalInventoryPage({
 }: CustomerPortalInventoryPageProps) {
   const { t } = useI18n();
   const visibleInventory = inventory.filter((item) => item.availableQty > 0 || item.quantity > 0);
+  const inventoryColumns: SheetTableColumn[] = [
+    { key: "sku", header: t("sku") },
+    { key: "description", header: t("description") },
+    { key: "storageName", header: t("storageName") },
+    { key: "availableQty", header: t("availableQty") },
+    { key: "onHand", header: t("onHand") },
+    { key: "actions", header: t("actions") }
+  ];
 
   return (
     <section className="customer-portal-panel customer-portal-panel--inventory">
@@ -36,63 +44,43 @@ export function CustomerPortalInventoryPage({
           icon={<Inventory2OutlinedIcon fontSize="small" />}
         />
         <div className="filter-bar">
-          <label>
-            {t("search")}
-            <span className="customer-portal-search-field">
-              <SearchOutlinedIcon fontSize="small" />
-              <input
-                value={search}
-                onChange={(event) => onSearchChange(event.target.value)}
-                placeholder={t("customerPortalInventorySearch")}
-              />
-            </span>
-          </label>
-          <button className="button button--ghost" type="button" onClick={onApplySearch} disabled={isLoading}>
-            {isLoading ? <InlineLoadingIndicator /> : null}
-            {t("apply")}
-          </button>
+          <SearchSubmitField
+            label={t("search")}
+            placeholder={t("customerPortalInventorySearch")}
+            value={search}
+            disabled={isLoading}
+            submitTitle={t("apply")}
+            onChange={onSearchChange}
+            onSubmit={onApplySearch}
+          />
         </div>
       </div>
 
-      <div className="sheet-table-wrap">
-        <table className="sheet-table">
-          <thead>
-            <tr>
-              <th>{t("sku")}</th>
-              <th>{t("description")}</th>
-              <th>{t("storageName")}</th>
-              <th>{t("availableQty")}</th>
-              <th>{t("onHand")}</th>
-              <th>{t("actions")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {visibleInventory.map((item) => (
-              <tr key={item.id}>
-                <td data-label={t("sku")}>{item.sku || item.itemNumber}</td>
-                <td data-label={t("description")}>{item.description || item.name}</td>
-                <td data-label={t("storageName")}>{item.locationName}</td>
-                <td data-label={t("availableQty")}>{item.availableQty}</td>
-                <td data-label={t("onHand")}>{item.quantity}</td>
-                <td data-label={t("actions")}>
-                  <button
-                    className="button button--ghost button--small"
-                    type="button"
-                    onClick={() => onStartPickingOrder(item)}
-                    disabled={item.availableQty <= 0}
-                  >
-                    <AddCircleOutlineOutlinedIcon fontSize="small" />
-                    {t("startPickingOrder")}
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {visibleInventory.length === 0 ? (
-              <tr><td colSpan={6}><div className="empty-state">{isLoading ? t("loadingRecords") : t("noInventoryAvailable")}</div></td></tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
+      <SheetTable
+        columns={inventoryColumns}
+        emptyState={visibleInventory.length === 0 ? <div className="empty-state">{isLoading ? t("loadingRecords") : t("noInventoryAvailable")}</div> : null}
+      >
+        {visibleInventory.map((item) => (
+          <tr key={item.id}>
+            <SheetTableCell label={t("sku")}>{item.sku || item.itemNumber}</SheetTableCell>
+            <SheetTableCell label={t("description")}>{item.description || item.name}</SheetTableCell>
+            <SheetTableCell label={t("storageName")}>{item.locationName}</SheetTableCell>
+            <SheetTableCell label={t("availableQty")}>{item.availableQty}</SheetTableCell>
+            <SheetTableCell label={t("onHand")}>{item.quantity}</SheetTableCell>
+            <SheetTableCell label={t("actions")}>
+              <button
+                className="button button--ghost button--small"
+                type="button"
+                onClick={() => onStartPickingOrder(item)}
+                disabled={item.availableQty <= 0}
+              >
+                <AddCircleOutlineOutlinedIcon fontSize="small" />
+                {t("startPickingOrder")}
+              </button>
+            </SheetTableCell>
+          </tr>
+        ))}
+      </SheetTable>
     </section>
   );
 }
