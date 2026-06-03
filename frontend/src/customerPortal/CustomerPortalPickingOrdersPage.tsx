@@ -1,11 +1,12 @@
-import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
-import AssignmentTurnedInOutlinedIcon from "@mui/icons-material/AssignmentTurnedInOutlined";
-import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
-import { useState } from "react";
+import { FileText, Plus, Search, SendToBack } from "lucide-react";
+import { useState, type KeyboardEvent } from "react";
 
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { Card, CardContent, CardHeader } from "../components/ui/card";
+import { Input, NativeSelect } from "../components/ui/input";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { useI18n } from "../lib/i18n";
-import { SearchSubmitField } from "../shared/SearchSubmitField";
-import { SheetTable, SheetTableCell, type SheetTableColumn } from "../shared/SheetTable";
 import { customerPortalApi } from "./api";
 import {
   documentStatusOptions,
@@ -14,6 +15,7 @@ import {
   formatPickingOrderTrackingStatusFilterLabel,
   getDocumentStatusPillClass,
   getPickingOrderTrackingStatusPillClass,
+  getStatusBadgeVariant,
   isCompletedPickingOrder,
   pickingOrderTrackingStatusOptions,
   PortalPanelHeader
@@ -68,80 +70,129 @@ export function CustomerPortalPickingOrdersPage({
     }
   }
 
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    void refreshPickingOrders();
+  }
+
   const loading = isLoading || isRefreshing;
-  const pickingOrderColumns: SheetTableColumn[] = [
-    { key: "packingListNo", header: t("packingListNo") },
-    { key: "orderRef", header: t("orderRef") },
-    { key: "trackingStatus", header: t("trackingStatus") },
-    { key: "completionStatus", header: t("customerPortalCompletionStatus") },
-    { key: "status", header: t("status") },
-    { key: "totalQty", header: t("totalQty") },
-    { key: "expectedShipDate", header: t("expectedShipDate") },
-    { key: "attachments", header: t("attachments") },
-    { key: "actions", header: t("actions") }
-  ];
+  const openCount = pickingOrders.filter((document) => !isCompletedPickingOrder(document)).length;
+  const completedCount = pickingOrders.length - openCount;
 
   return (
-    <section className="customer-portal-panel customer-portal-tracking-page">
-      <div className="customer-portal-tracking-list">
-        <div className="tab-strip">
-          <PortalPanelHeader
-            title={t("customerPortalPickingOrders")}
-            icon={<AssignmentTurnedInOutlinedIcon fontSize="small" />}
-            errorMessage={errorMessage}
-            actions={(
-              <button className="button button--primary" type="button" onClick={onCreateNewOrder}>
-                <AddCircleOutlineOutlinedIcon fontSize="small" />
+    <Card>
+      <CardHeader>
+        <PortalPanelHeader
+          title={t("customerPortalPickingOrders")}
+          description={t("customerPortalPickingOrdersDesc")}
+          infoTooltip={t("customerPortalOutboundTooltip")}
+          icon={<SendToBack className="h-4 w-4" />}
+          errorMessage={errorMessage}
+          actions={(
+            <>
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="warning">{openCount} {t("open")}</Badge>
+                <Badge variant="success">{completedCount} {t("completed")}</Badge>
+              </div>
+              <Button type="button" onClick={onCreateNewOrder}>
+                <Plus className="h-4 w-4" />
                 {t("newPickingOrder")}
-              </button>
-            )}
+              </Button>
+            </>
+          )}
+        />
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 lg:grid-cols-[minmax(240px,1fr)_180px_220px_auto]">
+          <label className="sr-only" htmlFor="customer-portal-outbound-search">{t("search")}</label>
+          <Input
+            id="customer-portal-outbound-search"
+            type="search"
+            placeholder={t("customerPortalPickingOrderSearch")}
+            value={search}
+            disabled={loading}
+            onChange={(event) => setSearch(event.target.value)}
+            onKeyDown={handleKeyDown}
           />
-          <div className="filter-bar">
-            <SearchSubmitField
-              label={t("search")}
-              placeholder={t("customerPortalPickingOrderSearch")}
-              value={search}
-              disabled={loading}
-              submitTitle={t("apply")}
-              onChange={setSearch}
-              onSubmit={() => void refreshPickingOrders()}
-            />
-            <label>{t("status")}<select value={status} onChange={(event) => setStatus(event.target.value)}>{documentStatusOptions.map((option) => <option key={option} value={option}>{option === "all" ? t("all") : t(option.toLowerCase())}</option>)}</select></label>
-            <label>{t("trackingStatus")}<select value={trackingStatus} onChange={(event) => setTrackingStatus(event.target.value)}>{pickingOrderTrackingStatusOptions.map((option) => <option key={option} value={option}>{formatPickingOrderTrackingStatusFilterLabel(option, t)}</option>)}</select></label>
-            <button className="button button--ghost" type="button" onClick={() => void refreshPickingOrders()} disabled={loading}>{loading ? <InlineLoadingIndicator /> : null}{t("apply")}</button>
-          </div>
+          <NativeSelect value={status} onChange={(event) => setStatus(event.target.value)} disabled={loading} aria-label={t("status")}>
+            {documentStatusOptions.map((option) => (
+              <option key={option} value={option}>{option === "all" ? t("all") : t(option.toLowerCase())}</option>
+            ))}
+          </NativeSelect>
+          <NativeSelect value={trackingStatus} onChange={(event) => setTrackingStatus(event.target.value)} disabled={loading} aria-label={t("trackingStatus")}>
+            {pickingOrderTrackingStatusOptions.map((option) => (
+              <option key={option} value={option}>{formatPickingOrderTrackingStatusFilterLabel(option, t)}</option>
+            ))}
+          </NativeSelect>
+          <Button type="button" onClick={() => void refreshPickingOrders()} disabled={loading}>
+            {loading ? <InlineLoadingIndicator /> : <Search className="h-4 w-4" />}
+            {t("apply")}
+          </Button>
         </div>
-        <SheetTable
-          columns={pickingOrderColumns}
-          emptyState={pickingOrders.length === 0 ? <div className="empty-state">{loading ? t("loadingRecords") : t("noPickingOrders")}</div> : null}
-        >
-          {pickingOrders.map((document) => (
-            <tr
-              key={document.id}
-              className={selectedPickingOrderId === document.id ? "sheet-table__row--selected" : undefined}
-            >
-              <SheetTableCell label={t("packingListNo")}>{document.packingListNo || `#${document.id}`}</SheetTableCell>
-              <SheetTableCell label={t("orderRef")}>{document.orderRef || "-"}</SheetTableCell>
-              <SheetTableCell label={t("trackingStatus")}><span className={`status-pill ${getPickingOrderTrackingStatusPillClass(document)}`}>{formatPickingOrderTrackingStatus(document.trackingStatus, document.status, t)}</span></SheetTableCell>
-              <SheetTableCell label={t("customerPortalCompletionStatus")}><span className={`status-pill ${isCompletedPickingOrder(document) ? "status-pill--ok" : "status-pill--alert"}`}>{formatPickingOrderCompletionStatus(document, t)}</span></SheetTableCell>
-              <SheetTableCell label={t("status")}><span className={`status-pill ${getDocumentStatusPillClass(document.status)}`}>{t(document.status.toLowerCase())}</span></SheetTableCell>
-              <SheetTableCell label={t("totalQty")}>{document.totalQty}</SheetTableCell>
-              <SheetTableCell label={t("expectedShipDate")}>{document.expectedShipDate || "-"}</SheetTableCell>
-              <SheetTableCell label={t("attachments")}><span className="customer-portal-attachment-count"><AttachFileOutlinedIcon fontSize="small" />{document.attachments?.length ?? 0}</span></SheetTableCell>
-              <SheetTableCell label={t("actions")}>
-                <button
-                  className="button button--ghost button--small customer-portal-row-action"
-                  type="button"
-                  onClick={() => onOpenDetail(document.id)}
-                  aria-label={`${t("details")} ${document.packingListNo || `#${document.id}`}`}
-                >
-                  {t("details")}
-                </button>
-              </SheetTableCell>
-            </tr>
-          ))}
-        </SheetTable>
-      </div>
-    </section>
+
+        <Table aria-label={t("customerPortalPickingOrders")}>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t("packingListNo")}</TableHead>
+              <TableHead>{t("orderRef")}</TableHead>
+              <TableHead>{t("trackingStatus")}</TableHead>
+              <TableHead>{t("customerPortalCompletionStatus")}</TableHead>
+              <TableHead>{t("status")}</TableHead>
+              <TableHead>{t("totalQty")}</TableHead>
+              <TableHead>{t("expectedShipDate")}</TableHead>
+              <TableHead>{t("attachments")}</TableHead>
+              <TableHead className="text-right">{t("actions")}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {pickingOrders.map((document) => {
+              const trackingClass = getPickingOrderTrackingStatusPillClass(document);
+              const completionClass = isCompletedPickingOrder(document) ? "status-pill--ok" : "status-pill--alert";
+              return (
+                <TableRow key={document.id} className={selectedPickingOrderId === document.id ? "bg-slate-50" : undefined}>
+                  <TableCell>
+                    <span className="font-semibold text-slate-950">{document.packingListNo || `#${document.id}`}</span>
+                    <span className="mt-1 block text-xs text-slate-500">Customer Picking Order</span>
+                  </TableCell>
+                  <TableCell>{document.orderRef || "-"}</TableCell>
+                  <TableCell><Badge variant={getStatusBadgeVariant(trackingClass)}>{formatPickingOrderTrackingStatus(document.trackingStatus, document.status, t)}</Badge></TableCell>
+                  <TableCell><Badge variant={getStatusBadgeVariant(completionClass)}>{formatPickingOrderCompletionStatus(document, t)}</Badge></TableCell>
+                  <TableCell><Badge variant={getStatusBadgeVariant(getDocumentStatusPillClass(document.status))}>{t(document.status.toLowerCase())}</Badge></TableCell>
+                  <TableCell>{document.totalQty}</TableCell>
+                  <TableCell>{document.expectedShipDate || "-"}</TableCell>
+                  <TableCell>
+                    <span className="inline-flex items-center gap-1 text-sm text-slate-600">
+                      <FileText className="h-4 w-4" />
+                      {document.attachments?.length ?? 0}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      type="button"
+                      onClick={() => onOpenDetail(document.id)}
+                      aria-label={`${t("details")} ${document.packingListNo || `#${document.id}`}`}
+                    >
+                      {t("details")}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+            {pickingOrders.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={9} className="py-10 text-center text-slate-500">
+                  {loading ? t("loadingRecords") : t("noPickingOrders")}
+                </TableCell>
+              </TableRow>
+            ) : null}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
   );
 }

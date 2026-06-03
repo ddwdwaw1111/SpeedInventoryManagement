@@ -1,10 +1,12 @@
-import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
-import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
-import { useState } from "react";
+import { Building2, FileText, Search } from "lucide-react";
+import { useState, type KeyboardEvent } from "react";
 
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { Card, CardContent, CardHeader } from "../components/ui/card";
+import { Input, NativeSelect } from "../components/ui/input";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { useI18n } from "../lib/i18n";
-import { SearchSubmitField } from "../shared/SearchSubmitField";
-import { SheetTable, SheetTableCell, type SheetTableColumn } from "../shared/SheetTable";
 import { customerPortalApi } from "./api";
 import {
   documentStatusOptions,
@@ -13,6 +15,7 @@ import {
   formatPackingListTrackingStatusFilterLabel,
   getDocumentStatusPillClass,
   getPackingListTrackingStatusPillClass,
+  getStatusBadgeVariant,
   isCompletedPackingList,
   packingListTrackingStatusOptions,
   PortalPanelHeader
@@ -65,70 +68,123 @@ export function CustomerPortalPackingListsPage({
     }
   }
 
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    void refreshPackingLists();
+  }
+
   const loading = isLoading || isRefreshing;
-  const packingListColumns: SheetTableColumn[] = [
-    { key: "containerNo", header: t("containerNo") },
-    { key: "trackingStatus", header: t("trackingStatus") },
-    { key: "completionStatus", header: t("customerPortalCompletionStatus") },
-    { key: "status", header: t("status") },
-    { key: "expectedQty", header: t("expectedQty") },
-    { key: "received", header: t("received") },
-    { key: "expectedArrivalDate", header: t("expectedArrivalDate") },
-    { key: "attachments", header: t("attachments") },
-    { key: "actions", header: t("actions") }
-  ];
+  const openCount = packingLists.filter((document) => !isCompletedPackingList(document)).length;
+  const receivedCount = packingLists.length - openCount;
 
   return (
-    <section className="customer-portal-panel customer-portal-tracking-page">
-      <div className="customer-portal-tracking-list">
-        <div className="tab-strip">
-          <PortalPanelHeader title={t("customerPortalPackingLists")} icon={<MoveToInboxOutlinedIcon fontSize="small" />} errorMessage={errorMessage} />
-          <div className="filter-bar">
-            <SearchSubmitField
-              label={t("search")}
-              placeholder={t("customerPortalPackingListSearch")}
-              value={search}
-              disabled={loading}
-              submitTitle={t("apply")}
-              onChange={setSearch}
-              onSubmit={() => void refreshPackingLists()}
-            />
-            <label>{t("status")}<select value={status} onChange={(event) => setStatus(event.target.value)}>{documentStatusOptions.map((option) => <option key={option} value={option}>{option === "all" ? t("all") : t(option.toLowerCase())}</option>)}</select></label>
-            <label>{t("trackingStatus")}<select value={trackingStatus} onChange={(event) => setTrackingStatus(event.target.value)}>{packingListTrackingStatusOptions.map((option) => <option key={option} value={option}>{formatPackingListTrackingStatusFilterLabel(option, t)}</option>)}</select></label>
-            <button className="button button--ghost" type="button" onClick={() => void refreshPackingLists()} disabled={loading}>{loading ? <InlineLoadingIndicator /> : null}{t("apply")}</button>
-          </div>
+    <Card>
+      <CardHeader>
+        <PortalPanelHeader
+          title={t("customerPortalPackingLists")}
+          description={t("customerPortalPackingListsDesc")}
+          infoTooltip={t("customerPortalInboundTooltip")}
+          icon={<Building2 className="h-4 w-4" />}
+          errorMessage={errorMessage}
+          actions={(
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="warning">{openCount} {t("open")}</Badge>
+              <Badge variant="success">{receivedCount} {t("received")}</Badge>
+            </div>
+          )}
+        />
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 lg:grid-cols-[minmax(240px,1fr)_180px_220px_auto]">
+          <label className="sr-only" htmlFor="customer-portal-inbound-search">{t("search")}</label>
+          <Input
+            id="customer-portal-inbound-search"
+            type="search"
+            placeholder={t("customerPortalPackingListSearch")}
+            value={search}
+            disabled={loading}
+            onChange={(event) => setSearch(event.target.value)}
+            onKeyDown={handleKeyDown}
+          />
+          <NativeSelect value={status} onChange={(event) => setStatus(event.target.value)} disabled={loading} aria-label={t("status")}>
+            {documentStatusOptions.map((option) => (
+              <option key={option} value={option}>{option === "all" ? t("all") : t(option.toLowerCase())}</option>
+            ))}
+          </NativeSelect>
+          <NativeSelect value={trackingStatus} onChange={(event) => setTrackingStatus(event.target.value)} disabled={loading} aria-label={t("trackingStatus")}>
+            {packingListTrackingStatusOptions.map((option) => (
+              <option key={option} value={option}>{formatPackingListTrackingStatusFilterLabel(option, t)}</option>
+            ))}
+          </NativeSelect>
+          <Button type="button" onClick={() => void refreshPackingLists()} disabled={loading}>
+            {loading ? <InlineLoadingIndicator /> : <Search className="h-4 w-4" />}
+            {t("apply")}
+          </Button>
         </div>
-        <SheetTable
-          columns={packingListColumns}
-          emptyState={packingLists.length === 0 ? <div className="empty-state">{loading ? t("loadingRecords") : t("noPackingLists")}</div> : null}
-        >
-          {packingLists.map((document) => (
-            <tr
-              key={document.id}
-              className={selectedPackingListId === document.id ? "sheet-table__row--selected" : undefined}
-            >
-              <SheetTableCell label={t("containerNo")}>{document.containerNo || `#${document.id}`}</SheetTableCell>
-              <SheetTableCell label={t("trackingStatus")}><span className={`status-pill ${getPackingListTrackingStatusPillClass(document)}`}>{formatPackingListTrackingStatus(document.trackingStatus, document.status, t)}</span></SheetTableCell>
-              <SheetTableCell label={t("customerPortalCompletionStatus")}><span className={`status-pill ${isCompletedPackingList(document) ? "status-pill--ok" : "status-pill--alert"}`}>{formatPackingListCompletionStatus(document, t)}</span></SheetTableCell>
-              <SheetTableCell label={t("status")}><span className={`status-pill ${getDocumentStatusPillClass(document.status)}`}>{t(document.status.toLowerCase())}</span></SheetTableCell>
-              <SheetTableCell label={t("expectedQty")}>{document.totalExpectedQty}</SheetTableCell>
-              <SheetTableCell label={t("received")}>{document.totalReceivedQty}</SheetTableCell>
-              <SheetTableCell label={t("expectedArrivalDate")}>{document.expectedArrivalDate || "-"}</SheetTableCell>
-              <SheetTableCell label={t("attachments")}><span className="customer-portal-attachment-count"><AttachFileOutlinedIcon fontSize="small" />{document.attachments?.length ?? 0}</span></SheetTableCell>
-              <SheetTableCell label={t("actions")}>
-                <button
-                  className="button button--ghost button--small customer-portal-row-action"
-                  type="button"
-                  onClick={() => onOpenDetail(document.id)}
-                  aria-label={`${t("details")} ${document.containerNo || `#${document.id}`}`}
-                >
-                  {t("details")}
-                </button>
-              </SheetTableCell>
-            </tr>
-          ))}
-        </SheetTable>
-      </div>
-    </section>
+
+        <Table aria-label={t("customerPortalPackingLists")}>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t("containerNo")}</TableHead>
+              <TableHead>{t("trackingStatus")}</TableHead>
+              <TableHead>{t("customerPortalCompletionStatus")}</TableHead>
+              <TableHead>{t("status")}</TableHead>
+              <TableHead>{t("expectedQty")}</TableHead>
+              <TableHead>{t("received")}</TableHead>
+              <TableHead>{t("expectedArrivalDate")}</TableHead>
+              <TableHead>{t("attachments")}</TableHead>
+              <TableHead className="text-right">{t("actions")}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {packingLists.map((document) => {
+              const trackingClass = getPackingListTrackingStatusPillClass(document);
+              const completionClass = isCompletedPackingList(document) ? "status-pill--ok" : "status-pill--alert";
+              return (
+                <TableRow key={document.id} className={selectedPackingListId === document.id ? "bg-slate-50" : undefined}>
+                  <TableCell>
+                    <span className="font-semibold text-slate-950">{document.containerNo || `#${document.id}`}</span>
+                    <span className="mt-1 block text-xs text-slate-500">Customer Packing List</span>
+                  </TableCell>
+                  <TableCell><Badge variant={getStatusBadgeVariant(trackingClass)}>{formatPackingListTrackingStatus(document.trackingStatus, document.status, t)}</Badge></TableCell>
+                  <TableCell><Badge variant={getStatusBadgeVariant(completionClass)}>{formatPackingListCompletionStatus(document, t)}</Badge></TableCell>
+                  <TableCell><Badge variant={getStatusBadgeVariant(getDocumentStatusPillClass(document.status))}>{t(document.status.toLowerCase())}</Badge></TableCell>
+                  <TableCell>{document.totalExpectedQty}</TableCell>
+                  <TableCell>{document.totalReceivedQty}</TableCell>
+                  <TableCell>{document.expectedArrivalDate || "-"}</TableCell>
+                  <TableCell>
+                    <span className="inline-flex items-center gap-1 text-sm text-slate-600">
+                      <FileText className="h-4 w-4" />
+                      {document.attachments?.length ?? 0}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      type="button"
+                      onClick={() => onOpenDetail(document.id)}
+                      aria-label={`${t("details")} ${document.containerNo || `#${document.id}`}`}
+                    >
+                      {t("details")}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+            {packingLists.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={9} className="py-10 text-center text-slate-500">
+                  {loading ? t("loadingRecords") : t("noPackingLists")}
+                </TableCell>
+              </TableRow>
+            ) : null}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
   );
 }

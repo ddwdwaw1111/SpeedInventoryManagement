@@ -1,10 +1,11 @@
-import ArrowBackOutlinedIcon from "@mui/icons-material/ArrowBackOutlined";
-import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
-import LocalShippingOutlinedIcon from "@mui/icons-material/LocalShippingOutlined";
-import type { FormEvent } from "react";
+import { ArrowLeft, ClipboardList, PackageSearch, SendToBack, Trash2, Truck } from "lucide-react";
+import type { FormEvent, ReactNode } from "react";
 
+import { Button } from "../components/ui/button";
+import { Card, CardContent, CardHeader } from "../components/ui/card";
+import { Input, Textarea } from "../components/ui/input";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { useI18n } from "../lib/i18n";
-import { SheetTable, SheetTableCell, type SheetTableColumn } from "../shared/SheetTable";
 import { PortalPanelHeader } from "./CustomerPortalTrackingShared";
 import { DocumentAttachmentsPanel, InlineAlert, InlineLoadingIndicator } from "./sharedUi";
 import type { PendingDocumentAttachment } from "./sharedUi";
@@ -104,118 +105,203 @@ export function CustomerPortalNewPickingOrderPage({
       isComplete: pendingAttachments.length > 0
     }
   ];
-  const selectedInventoryColumns: SheetTableColumn[] = [
-    { key: "sku", header: t("sku") },
-    { key: "storageName", header: t("storageName") },
-    { key: "availableQty", header: t("availableQty") },
-    { key: "quantity", header: t("quantity") },
-    { key: "notes", header: t("notes") },
-    { key: "actions", header: t("actions") }
-  ];
 
   return (
-    <section className="customer-portal-panel customer-portal-create-flow">
-      <PortalPanelHeader
-        title={t("newPickingOrder")}
-        description={t("customerPortalNewPickingOrderDesc")}
-        icon={<LocalShippingOutlinedIcon fontSize="small" />}
-        actions={(
-          <button className="button button--ghost" type="button" onClick={onCancel} disabled={isSubmitting}>
-            {t("cancelPickingOrder")}
-          </button>
-        )}
-      />
-
-      <div className="customer-portal-composer-summary" aria-label={t("newPickingOrder")}>
-        <span>{draftLineCount} {t("totalLines")}</span>
-        <span>{draftTotalQty} {t("totalQty")}</span>
+    <section className="grid gap-4">
+      <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <PortalPanelHeader
+          title={t("newPickingOrder")}
+          description={t("customerPortalNewPickingOrderDesc")}
+          infoTooltip={t("customerPortalOutboundTooltip")}
+          icon={<SendToBack className="h-4 w-4" />}
+          actions={(
+            <Button variant="ghost" type="button" onClick={onCancel} disabled={isSubmitting}>
+              {t("cancelPickingOrder")}
+            </Button>
+          )}
+        />
       </div>
 
-      <ol className="customer-portal-create-steps" aria-label={t("customerPortalCreateProgress")}>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {createSteps.map((step, index) => (
-          <li className={step.isComplete ? "customer-portal-create-steps__item customer-portal-create-steps__item--complete" : "customer-portal-create-steps__item"} key={step.label}>
-            <span>{index + 1}</span>
-            <div>
-              <strong>{step.label}</strong>
-              <small>{step.detail}</small>
+          <div
+            className={`rounded-lg border p-4 ${step.isComplete ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white"}`}
+            key={step.label}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <span className={`grid h-8 w-8 place-items-center rounded-full text-xs font-semibold ${step.isComplete ? "bg-emerald-700 text-white" : "bg-slate-100 text-slate-600"}`}>
+                {index + 1}
+              </span>
+              <span className={`text-xs font-semibold uppercase ${step.isComplete ? "text-emerald-700" : "text-slate-500"}`}>
+                {step.isComplete ? t("completed") : t("open")}
+              </span>
             </div>
-          </li>
+            <strong className="mt-3 block text-sm font-semibold text-slate-950">{step.label}</strong>
+            <span className="mt-1 block text-sm text-slate-500">{step.detail}</span>
+          </div>
         ))}
-      </ol>
+      </div>
 
       {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
 
-      <form className="customer-portal-create-form" onSubmit={onSubmit} noValidate>
-        <div className="customer-portal-create-section">
-          <PortalPanelHeader
-            title={t("selectedInventory")}
-            description={t("customerPortalSelectedInventoryDesc")}
-            icon={<Inventory2OutlinedIcon fontSize="small" />}
-          />
-          <SheetTable
-            columns={selectedInventoryColumns}
-            emptyState={lineDrafts.length === 0 ? (
-              <div className="empty-state customer-portal-create-empty">
-                <span>{t("chooseInventoryForPickingOrder")}</span>
-                <button className="button button--ghost button--small" type="button" onClick={onBackToInventory}>
-                  <ArrowBackOutlinedIcon fontSize="small" />
+      <form className="grid gap-4" onSubmit={onSubmit} noValidate>
+        <Card>
+          <CardHeader>
+            <PortalPanelHeader
+              title={t("selectedInventory")}
+              description={t("customerPortalSelectedInventoryDesc")}
+              icon={<PackageSearch className="h-4 w-4" />}
+            />
+          </CardHeader>
+          <CardContent>
+            {lineDrafts.length === 0 ? (
+              <div className="grid place-items-center gap-4 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
+                <div>
+                  <strong className="block text-sm font-semibold text-slate-950">{t("chooseInventoryForPickingOrder")}</strong>
+                  <span className="mt-1 block text-sm text-slate-500">{t("customerPortalAddInventoryHint")}</span>
+                </div>
+                <Button variant="outline" type="button" onClick={onBackToInventory}>
+                  <ArrowLeft className="h-4 w-4" />
                   {t("backToInventory")}
-                </button>
+                </Button>
               </div>
-            ) : null}
-          >
-            {lineDrafts.map((line) => (
-              <tr key={line.id}>
-                <SheetTableCell label={t("sku")}>{line.sku || line.itemNumber}<br /><span className="sheet-note">{line.description}</span></SheetTableCell>
-                <SheetTableCell label={t("storageName")}>{line.locationName}</SheetTableCell>
-                <SheetTableCell label={t("availableQty")}>{line.availableQty}</SheetTableCell>
-                <SheetTableCell label={t("quantity")}><input type="number" min="1" max={line.availableQty} value={line.quantity} onChange={(event) => onLineChange(line.id, { quantity: event.target.value })} /></SheetTableCell>
-                <SheetTableCell label={t("notes")}><input value={line.lineNote} onChange={(event) => onLineChange(line.id, { lineNote: event.target.value })} /></SheetTableCell>
-                <SheetTableCell label={t("actions")}><button className="button button--ghost button--small" type="button" onClick={() => onRemoveLine(line.id)} disabled={isSubmitting}>{t("remove")}</button></SheetTableCell>
-              </tr>
-            ))}
-          </SheetTable>
-        </div>
+            ) : (
+              <Table aria-label={t("selectedInventory")}>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t("sku")}</TableHead>
+                    <TableHead>{t("storageName")}</TableHead>
+                    <TableHead>{t("availableQty")}</TableHead>
+                    <TableHead>{t("quantity")}</TableHead>
+                    <TableHead>{t("notes")}</TableHead>
+                    <TableHead>{t("actions")}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {lineDrafts.map((line) => (
+                    <TableRow key={line.id}>
+                      <TableCell>
+                        <span className="font-semibold text-slate-950">{line.sku || line.itemNumber}</span>
+                        <span className="mt-1 block text-xs text-slate-500">{line.description}</span>
+                      </TableCell>
+                      <TableCell>{line.locationName}</TableCell>
+                      <TableCell>{line.availableQty} {line.unitLabel}</TableCell>
+                      <TableCell className="min-w-28">
+                        <Input
+                          type="number"
+                          min="1"
+                          max={line.availableQty}
+                          value={line.quantity}
+                          onChange={(event) => onLineChange(line.id, { quantity: event.target.value })}
+                          disabled={isSubmitting}
+                        />
+                      </TableCell>
+                      <TableCell className="min-w-44">
+                        <Input
+                          value={line.lineNote}
+                          onChange={(event) => onLineChange(line.id, { lineNote: event.target.value })}
+                          disabled={isSubmitting}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Button variant="ghost" size="sm" type="button" onClick={() => onRemoveLine(line.id)} disabled={isSubmitting}>
+                          <Trash2 className="h-4 w-4" />
+                          {t("remove")}
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
 
-        <div className="customer-portal-create-section">
-          <PortalPanelHeader
-            title={t("shippingDetails")}
-            description={t("customerPortalShippingDetailsDesc")}
-            icon={<LocalShippingOutlinedIcon fontSize="small" />}
-          />
-          <div className="sheet-form">
-            <label>{t("packingListNo")}<input value={form.packingListNo} onChange={(event) => onFormChange({ packingListNo: event.target.value })} placeholder={t("autoIfBlank")} disabled={isSubmitting} /></label>
-            <label>{t("orderRef")}<input value={form.orderRef} onChange={(event) => onFormChange({ orderRef: event.target.value })} disabled={isSubmitting} /></label>
-            <label>{t("expectedShipDate")}<input type="date" value={form.expectedShipDate} onChange={(event) => onFormChange({ expectedShipDate: event.target.value })} disabled={isSubmitting} /></label>
-            <label>{t("shipToName")}<input value={form.shipToName} onChange={(event) => onFormChange({ shipToName: event.target.value })} disabled={isSubmitting} /></label>
-            <label>{t("shipToAddress")}<input value={form.shipToAddress} onChange={(event) => onFormChange({ shipToAddress: event.target.value })} disabled={isSubmitting} /></label>
-            <label>{t("shipToContact")}<input value={form.shipToContact} onChange={(event) => onFormChange({ shipToContact: event.target.value })} disabled={isSubmitting} /></label>
-            <label>{t("carrierName")}<input value={form.carrierName} onChange={(event) => onFormChange({ carrierName: event.target.value })} disabled={isSubmitting} /></label>
-            <label className="sheet-form__wide">{t("documentNotes")}<textarea value={form.documentNote} onChange={(event) => onFormChange({ documentNote: event.target.value })} rows={3} disabled={isSubmitting} /></label>
-          </div>
-        </div>
+        <Card>
+          <CardHeader>
+            <PortalPanelHeader
+              title={t("shippingDetails")}
+              description={t("customerPortalShippingDetailsDesc")}
+              icon={<Truck className="h-4 w-4" />}
+            />
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 md:grid-cols-3">
+              <Field label={t("packingListNo")}>
+                <Input value={form.packingListNo} onChange={(event) => onFormChange({ packingListNo: event.target.value })} placeholder={t("autoIfBlank")} disabled={isSubmitting} />
+              </Field>
+              <Field label={t("orderRef")}>
+                <Input value={form.orderRef} onChange={(event) => onFormChange({ orderRef: event.target.value })} disabled={isSubmitting} />
+              </Field>
+              <Field label={t("expectedShipDate")}>
+                <Input type="date" value={form.expectedShipDate} onChange={(event) => onFormChange({ expectedShipDate: event.target.value })} disabled={isSubmitting} />
+              </Field>
+              <Field label={t("shipToName")}>
+                <Input value={form.shipToName} onChange={(event) => onFormChange({ shipToName: event.target.value })} disabled={isSubmitting} />
+              </Field>
+              <Field label={t("shipToAddress")}>
+                <Input value={form.shipToAddress} onChange={(event) => onFormChange({ shipToAddress: event.target.value })} disabled={isSubmitting} />
+              </Field>
+              <Field label={t("shipToContact")}>
+                <Input value={form.shipToContact} onChange={(event) => onFormChange({ shipToContact: event.target.value })} disabled={isSubmitting} />
+              </Field>
+              <Field label={t("carrierName")}>
+                <Input value={form.carrierName} onChange={(event) => onFormChange({ carrierName: event.target.value })} disabled={isSubmitting} />
+              </Field>
+              <Field className="md:col-span-2" label={t("documentNotes")}>
+                <Textarea value={form.documentNote} onChange={(event) => onFormChange({ documentNote: event.target.value })} rows={3} disabled={isSubmitting} />
+              </Field>
+            </div>
+          </CardContent>
+        </Card>
 
-        <div className="customer-portal-create-section">
-          <DocumentAttachmentsPanel
-            attachments={[]}
-            pendingAttachments={pendingAttachments}
-            disabled={isSubmitting}
-            showUploadButton={false}
-            onPendingAttachmentsChange={onPendingAttachmentsChange}
-            onGetDownloadUrl={async () => ""}
-          />
-        </div>
+        <Card>
+          <CardHeader>
+            <PortalPanelHeader
+              title={t("pickingOrderDocuments")}
+              description={t("customerPortalAuthDocumentDesc")}
+              icon={<ClipboardList className="h-4 w-4" />}
+            />
+          </CardHeader>
+          <CardContent>
+            <DocumentAttachmentsPanel
+              attachments={[]}
+              pendingAttachments={pendingAttachments}
+              disabled={isSubmitting}
+              showUploadButton={false}
+              onPendingAttachmentsChange={onPendingAttachmentsChange}
+              onGetDownloadUrl={async () => ""}
+            />
+          </CardContent>
+        </Card>
 
-        <div className="customer-portal-create-actions">
-          <button className="button button--ghost" type="button" onClick={onCancel} disabled={isSubmitting}>
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
+          <Button variant="ghost" type="button" onClick={onCancel} disabled={isSubmitting}>
             {t("cancelPickingOrder")}
-          </button>
-          <button className="button button--primary" type="submit" disabled={isSubmitting || lineDrafts.length === 0}>
+          </Button>
+          <Button type="submit" disabled={isSubmitting || lineDrafts.length === 0}>
             {isSubmitting ? <InlineLoadingIndicator /> : null}
             {t("submitPickingOrder")}
-          </button>
+          </Button>
         </div>
       </form>
     </section>
+  );
+}
+
+function Field({
+  label,
+  className = "",
+  children
+}: {
+  label: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <label className={`grid gap-1.5 text-sm font-medium text-slate-700 ${className}`.trim()}>
+      {label}
+      {children}
+    </label>
   );
 }

@@ -5,6 +5,7 @@ import {
   normalizeOutboundTrackingStatus as normalizeOutboundTrackingStatusValue,
   normalizeDocumentStatus
 } from "../lib/documentTracking";
+import { InfoTooltip } from "../components/ui/tooltip";
 import { InlineAlert } from "./sharedUi";
 import type { InboundDocument, OutboundDocument } from "./types";
 
@@ -29,26 +30,45 @@ export const pickingOrderTrackingStatusOptions = ["all", "SCHEDULED", "PICKING",
 export function PortalPanelHeader({
   title,
   description,
+  infoTooltip,
   icon,
   actions,
   errorMessage
 }: {
   title: string;
   description?: string;
+  infoTooltip?: ReactNode;
   icon?: ReactNode;
   actions?: ReactNode;
   errorMessage?: string;
 }) {
   return (
-    <div className="customer-portal-panel-header">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div>
-        <h2>{icon ? <span className="customer-portal-panel-header__icon">{icon}</span> : null}{title}</h2>
-        {description ? <p>{description}</p> : null}
+        <h2 className="flex items-center gap-2 text-xl font-semibold tracking-tight text-slate-950">
+          {icon ? <span className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-slate-100 text-slate-700">{icon}</span> : null}
+          <span>{title}</span>
+          {infoTooltip ? <InfoTooltip content={infoTooltip} /> : null}
+        </h2>
+        {description ? <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">{description}</p> : null}
         {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
       </div>
-      {actions ? <div className="customer-portal-panel-header__actions">{actions}</div> : null}
+      {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
     </div>
   );
+}
+
+export function getStatusBadgeVariant(className: string) {
+  if (className.includes("danger")) {
+    return "destructive" as const;
+  }
+  if (className.includes("ok")) {
+    return "success" as const;
+  }
+  if (className.includes("alert")) {
+    return "warning" as const;
+  }
+  return "secondary" as const;
 }
 
 export function formatNullableDate(value?: string | null) {

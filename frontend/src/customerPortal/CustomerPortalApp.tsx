@@ -1,12 +1,11 @@
-import AssignmentTurnedInOutlinedIcon from "@mui/icons-material/AssignmentTurnedInOutlined";
-import DashboardOutlinedIcon from "@mui/icons-material/DashboardOutlined";
-import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
-import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
-import { Suspense, lazy, useEffect, useState } from "react";
+import { Building2, ChevronDown, LogOut, PackageSearch, RefreshCw, SendToBack } from "lucide-react";
+import { Suspense, lazy, type ReactNode, useEffect, useState } from "react";
 
+import { Button } from "../components/ui/button";
+import { InfoTooltip } from "../components/ui/tooltip";
+import { cn } from "../lib/utils";
 import { getErrorMessage } from "../lib/errors";
 import { useI18n } from "../lib/i18n";
-import { NavigationSidebar, type NavigationSidebarItem } from "../shared/NavigationSidebar";
 import { ApiError, customerPortalApi } from "./api";
 import { CustomerPortalAuthPage } from "./CustomerPortalAuthPage";
 import type { CustomerPortalSection } from "./navigation";
@@ -28,6 +27,15 @@ type PortalAccess = {
   customerName: string;
 };
 
+const sidebarParents: Record<CustomerPortalSection, CustomerPortalSection> = {
+  inventory: "inventory",
+  "inbound-shipments": "inbound-shipments",
+  "inbound-shipment-detail": "inbound-shipments",
+  "outbound-orders": "outbound-orders",
+  "outbound-order-detail": "outbound-orders",
+  "new-outbound-order": "outbound-orders"
+};
+
 export function CustomerPortalApp({ onExitToAdmin }: CustomerPortalAppProps) {
   const { t } = useI18n();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -37,7 +45,7 @@ export function CustomerPortalApp({ onExitToAdmin }: CustomerPortalAppProps) {
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
   const [authErrorMessage, setAuthErrorMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
-  const [activeSection, setActiveSection] = useState<CustomerPortalSection>("overview");
+  const [activeSection, setActiveSection] = useState<CustomerPortalSection>("inventory");
 
   useEffect(() => { void bootstrapPortal(); }, []);
 
@@ -145,10 +153,10 @@ export function CustomerPortalApp({ onExitToAdmin }: CustomerPortalAppProps) {
 
   if (!isAuthResolved || (isLoading && !currentUser)) {
     return (
-      <main className="customer-portal-auth-shell customer-portal-auth-shell--loading">
-        <section className="auth-card">
-          <p className="eyebrow">Loading</p>
-          <h2>Checking your session...</h2>
+      <main className="grid min-h-screen place-items-center bg-slate-50 p-6">
+        <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Loading</p>
+          <h2 className="mt-2 text-xl font-semibold text-slate-950">Checking your session...</h2>
         </section>
       </main>
     );
@@ -166,42 +174,46 @@ export function CustomerPortalApp({ onExitToAdmin }: CustomerPortalAppProps) {
   }
 
   return (
-    <div className="customer-portal-app">
-      <header className="customer-portal-topbar">
-        <div className="customer-portal-brand">
-          <div className="app-toolbar__brand-mark" aria-hidden="true">SI</div>
-          <div className="app-toolbar__brand-copy">
-            <span>{t("inventorySystem")}</span>
-            <strong>{t("customerPortal")}</strong>
+    <div className="min-h-screen bg-slate-50 text-slate-950">
+      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
+        <div className="flex min-h-16 items-center justify-between gap-4 px-4 lg:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-slate-950 text-xs font-black tracking-wider text-white">
+              SI
+            </div>
+            <div className="min-w-0">
+              <span className="block text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{t("customerPortal")}</span>
+              <strong className="block truncate text-sm font-semibold text-slate-950">{portalAccess?.customerName || t("customerPortal")}</strong>
+            </div>
           </div>
-        </div>
 
-        <div className="customer-portal-topbar__controls">
-          {currentUser.role === "admin" ? (
-            <button className="button button--ghost" type="button" onClick={onExitToAdmin}>
-              {t("adminEntrance")}
-            </button>
-          ) : null}
-          <CustomerPortalUserMenu user={currentUser} onLogout={handleLogout} isSubmitting={isAuthSubmitting} />
+          <div className="flex items-center justify-end gap-2">
+            {currentUser.role === "admin" ? (
+              <Button variant="outline" type="button" onClick={onExitToAdmin}>
+                {t("adminEntrance")}
+              </Button>
+            ) : null}
+            <CustomerPortalUserMenu user={currentUser} onLogout={handleLogout} isSubmitting={isAuthSubmitting} />
+          </div>
         </div>
       </header>
 
-      <div className="customer-portal-layout">
+      <div className="grid min-h-[calc(100vh-4rem)] grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)]">
         <CustomerPortalSidebar
           activeSection={activeSection}
           portalAccess={portalAccess}
           onChangeSection={setActiveSection}
         />
 
-        <div className="customer-portal-content">
+        <div className="min-w-0">
           {errorMessage ? (
-            <main className="customer-portal-main">
+            <main className="mx-auto max-w-7xl p-4 lg:p-6">
               <InlineAlert>{errorMessage}</InlineAlert>
             </main>
           ) : null}
 
           {!errorMessage && portalAccess ? (
-            <Suspense fallback={<main className="customer-portal-main"><div className="empty-state">{t("loadingRecords")}</div></main>}>
+            <Suspense fallback={<main className="mx-auto max-w-7xl p-4 lg:p-6"><div className="rounded-lg border border-slate-200 bg-white p-8 text-center text-slate-500">{t("loadingRecords")}</div></main>}>
               <CustomerPortalPage
                 activeSection={activeSection}
                 currentUser={currentUser}
@@ -216,7 +228,6 @@ export function CustomerPortalApp({ onExitToAdmin }: CustomerPortalAppProps) {
     </div>
   );
 }
-
 
 function CustomerPortalUserMenu({
   user,
@@ -236,23 +247,22 @@ function CustomerPortalUserMenu({
     .join("") || "U";
 
   return (
-    <div className="app-user customer-portal-user">
-      <button className="app-user__trigger" type="button" aria-haspopup="menu">
-        <div className="app-user__avatar" aria-hidden="true">{initials}</div>
-        <span className="app-user__trigger-name">{user.fullName}</span>
-        <span className="app-user__trigger-caret" aria-hidden="true" />
+    <div className="group relative">
+      <button className="inline-flex h-10 items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50" type="button" aria-haspopup="menu">
+        <span className="grid h-7 w-7 place-items-center rounded-full bg-slate-100 text-xs font-semibold text-slate-700" aria-hidden="true">{initials}</span>
+        <span className="hidden max-w-40 truncate sm:inline">{user.fullName}</span>
+        <ChevronDown className="h-4 w-4 text-slate-400" aria-hidden="true" />
       </button>
-      <div className="app-user__menu" role="menu">
-        <div className="app-user__menu-header">
-          <strong>{user.fullName}</strong>
-          <span className="app-user__menu-role">{t(user.role)}</span>
+      <div className="pointer-events-none absolute right-0 top-[calc(100%+0.5rem)] z-40 grid min-w-64 gap-3 rounded-lg border border-slate-200 bg-white p-3 opacity-0 shadow-lg transition group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100" role="menu">
+        <div className="border-b border-slate-100 pb-3">
+          <strong className="block text-sm text-slate-950">{user.fullName}</strong>
+          <span className="mt-1 block text-xs text-slate-500">{user.email}</span>
+          <span className="mt-2 inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-slate-600">{t(user.role)}</span>
         </div>
-        <div className="app-user__menu-details">
-          <span>{user.email}</span>
-        </div>
-        <button className="app-user__menu-action" type="button" onClick={() => { void onLogout(); }} disabled={isSubmitting}>
+        <Button variant="ghost" type="button" onClick={() => { void onLogout(); }} disabled={isSubmitting}>
+          <LogOut className="h-4 w-4" />
           {isSubmitting ? "Signing out..." : "Sign out"}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -268,41 +278,48 @@ function CustomerPortalSidebar({
   onChangeSection: (section: CustomerPortalSection) => void;
 }) {
   const { t } = useI18n();
-  const sidebarActiveSection = activeSection === "packing-list-detail"
-    ? "packing-lists"
-    : activeSection === "picking-order-detail" || activeSection === "new-picking-order"
-      ? "picking-orders"
-      : activeSection;
-  const navItems: NavigationSidebarItem<CustomerPortalSection>[] = [
-    { key: "overview", label: t("customerPortalOverview"), icon: <DashboardOutlinedIcon fontSize="small" /> },
-    { key: "inventory", label: t("customerPortalInventory"), icon: <Inventory2OutlinedIcon fontSize="small" /> },
-    { key: "packing-lists", label: t("customerPortalPackingLists"), icon: <MoveToInboxOutlinedIcon fontSize="small" /> },
-    { key: "picking-orders", label: t("customerPortalPickingOrders"), icon: <AssignmentTurnedInOutlinedIcon fontSize="small" /> }
+  const sidebarActiveSection = sidebarParents[activeSection];
+  const navItems: Array<{ key: CustomerPortalSection; label: string; description: string; icon: ReactNode; tooltip?: string }> = [
+    { key: "inventory", label: t("customerPortalInventory"), description: t("customerPortalInventoryNavDesc"), icon: <PackageSearch className="h-5 w-5" /> },
+    { key: "inbound-shipments", label: t("customerPortalPackingLists"), description: t("customerPortalInboundNavDesc"), icon: <Building2 className="h-5 w-5" />, tooltip: t("customerPortalInboundTooltip") },
+    { key: "outbound-orders", label: t("customerPortalPickingOrders"), description: t("customerPortalOutboundNavDesc"), icon: <SendToBack className="h-5 w-5" />, tooltip: t("customerPortalOutboundTooltip") }
   ];
 
   return (
-    <NavigationSidebar
-      activeKey={sidebarActiveSection}
-      ariaLabel={t("customerPortal")}
-      classNames={{
-        root: "customer-portal-sidebar",
-        header: "customer-portal-sidebar__account",
-        nav: "customer-portal-sidebar__nav",
-        item: "customer-portal-sidebar__item",
-        itemActive: "customer-portal-sidebar__item--active",
-        itemIcon: "customer-portal-sidebar__item-icon",
-        itemLabel: "customer-portal-sidebar__item-label"
-      }}
-      header={(
-        <>
-          <span className="customer-portal-sidebar__eyebrow">{t("customerPortal")}</span>
-          <strong className="customer-portal-sidebar__account-name">{portalAccess?.customerName || t("customerPortal")}</strong>
-        </>
-      )}
-      items={navItems}
-      navLabel={t("customerPortal")}
-      onSelect={onChangeSection}
-      useAriaCurrent
-    />
+    <aside className="border-b border-slate-200 bg-white p-4 lg:sticky lg:top-16 lg:h-[calc(100vh-4rem)] lg:border-b-0 lg:border-r">
+      <div className="mb-5 rounded-lg border border-slate-200 bg-slate-50 p-3">
+        <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{t("customerPortal")}</span>
+        <strong className="mt-1 block truncate text-sm text-slate-950">{portalAccess?.customerName || t("customerPortal")}</strong>
+      </div>
+      <nav className="grid gap-2" aria-label={t("customerPortal")}>
+        {navItems.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            className={cn(
+              "flex min-h-16 w-full items-start gap-3 rounded-lg px-3 py-3 text-left transition",
+              sidebarActiveSection === item.key
+                ? "bg-slate-950 text-white shadow-sm"
+                : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
+            )}
+            aria-current={sidebarActiveSection === item.key ? "page" : undefined}
+            onClick={() => onChangeSection(item.key)}
+          >
+            <span className={cn("mt-0.5", sidebarActiveSection === item.key ? "text-white" : "text-slate-500")}>{item.icon}</span>
+            <span className="min-w-0">
+              <span className="flex items-center gap-1.5 text-sm font-semibold">
+                {item.label}
+                {item.tooltip ? <InfoTooltip content={item.tooltip} focusable={false} /> : null}
+              </span>
+              <span className={cn("mt-0.5 block text-xs leading-5", sidebarActiveSection === item.key ? "text-slate-300" : "text-slate-500")}>{item.description}</span>
+            </span>
+          </button>
+        ))}
+      </nav>
+      <div className="mt-6 hidden rounded-lg border border-slate-200 bg-white p-3 text-xs leading-5 text-slate-500 lg:block">
+        <RefreshCw className="mb-2 h-4 w-4 text-slate-400" />
+        {t("customerPortalDesc")}
+      </div>
+    </aside>
   );
 }

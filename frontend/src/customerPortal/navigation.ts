@@ -1,8 +1,7 @@
 export type CustomerPortalSection =
-  | "overview"
   | "inventory"
-  | "packing-lists"
-  | "packing-list-detail"
-  | "picking-orders"
-  | "picking-order-detail"
-  | "new-picking-order";
+  | "inbound-shipments"
+  | "inbound-shipment-detail"
+  | "outbound-orders"
+  | "outbound-order-detail"
+  | "new-outbound-order";

@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -120,7 +120,7 @@ describe("CustomerPortalPage", () => {
     const user = userEvent.setup();
 
     function PortalHarness() {
-      const [section, setSection] = useState<CustomerPortalSection>("picking-orders");
+      const [section, setSection] = useState<CustomerPortalSection>("outbound-orders");
       return (
         <CustomerPortalPage
           activeSection={section}
@@ -143,7 +143,7 @@ describe("CustomerPortalPage", () => {
 
     expect(await screen.findByText("PL-CUST-42")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Details PL-CUST-42/i }));
-    expect(await screen.findByRole("button", { name: /Back to Picking Orders/i })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Back to Outbound Orders/i })).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: /Attachments/i }));
 
     await waitFor(() => {
@@ -185,16 +185,16 @@ describe("CustomerPortalPage", () => {
     );
 
     expect(await screen.findByText("CUST-SKU-321")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Start Picking Order/i })).toBeInTheDocument();
-    expect(screen.queryByLabelText("Picking Order No.")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Submit Picking Order/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Start Outbound Order/i })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Picking Order #")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Submit Outbound Order/i })).not.toBeInTheDocument();
   });
 
-  it("opens the standalone picking order flow from the Picking Orders page", async () => {
+  it("opens the standalone outbound order flow from the Outbound Orders page", async () => {
     const user = userEvent.setup();
 
     function PortalHarness() {
-      const [section, setSection] = useState<CustomerPortalSection>("picking-orders");
+      const [section, setSection] = useState<CustomerPortalSection>("outbound-orders");
       return (
         <CustomerPortalPage
           activeSection={section}
@@ -216,13 +216,25 @@ describe("CustomerPortalPage", () => {
     renderWithProviders(<PortalHarness />);
 
     expect(await screen.findByText("PL-CUST-42")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /New Picking Order/i }));
+    await user.click(screen.getByRole("button", { name: /New Outbound Order/i }));
 
-    expect(await screen.findByText("Select inventory before creating a picking order.")).toBeInTheDocument();
+    expect(await screen.findByText("Select inventory before creating an outbound order.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Back to Inventory/i })).toBeInTheDocument();
   });
 
-  it("summarizes customer work into clear overview action cards", async () => {
+  it("defaults to the inventory lookup as the first customer portal feature", async () => {
+    getInventory.mockResolvedValue([
+      createItem({
+        id: 90,
+        skuMasterId: 323,
+        itemNumber: "DEFAULT-SKU-323",
+        sku: "DEFAULT-SKU-323",
+        locationName: "NJ",
+        availableQty: 4,
+        quantity: 4
+      })
+    ]);
+
     renderWithProviders(
       <CustomerPortalPage
         currentUser={{
@@ -238,22 +250,16 @@ describe("CustomerPortalPage", () => {
       />
     );
 
-    expect(await screen.findByText("PL-CUST-42")).toBeInTheDocument();
-    expect(screen.getByText("PL-CUST-43")).toBeInTheDocument();
-
-    expect(within(screen.getByText("Packing List Inbound").closest("article") as HTMLElement).getByText("1")).toBeInTheDocument();
-    expect(within(screen.getByText("Picking Order Status").closest("article") as HTMLElement).getByText("1")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Open inbound status/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Open outbound status/i })).toBeInTheDocument();
-    expect(screen.getAllByText("Awaiting BO").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Completed").length).toBeGreaterThan(0);
+    expect(await screen.findByText("DEFAULT-SKU-323")).toBeInTheDocument();
+    expect(screen.getByRole("table", { name: /Inventory/i })).toBeInTheDocument();
+    expect(screen.queryByText("PL-CUST-42")).not.toBeInTheDocument();
   });
 
-  it("shows packing list receiving progress and read-only inbound documents", async () => {
+  it("shows inbound shipment receiving progress and read-only inbound documents", async () => {
     const user = userEvent.setup();
 
     function PortalHarness() {
-      const [section, setSection] = useState<CustomerPortalSection>("packing-lists");
+      const [section, setSection] = useState<CustomerPortalSection>("inbound-shipments");
       return (
         <CustomerPortalPage
           activeSection={section}
@@ -276,7 +282,7 @@ describe("CustomerPortalPage", () => {
 
     expect((await screen.findAllByText("CNT-CUST-11")).length).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: /Details CNT-CUST-11/i }));
-    expect(await screen.findByRole("button", { name: /Back to Packing Lists/i })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Back to Inbound Shipments/i })).toBeInTheDocument();
     expect(screen.getByText("INBOUND-SKU-11")).toBeInTheDocument();
     expect(screen.getAllByText("Receiving / Received").length).toBeGreaterThan(0);
     expect(screen.getAllByText("12 CTN").length).toBeGreaterThan(0);
@@ -307,9 +313,9 @@ describe("CustomerPortalPage", () => {
       />
     );
 
-    expect(await screen.findByText("PL-CUST-42")).toBeInTheDocument();
-    expect(screen.getByText("Admin Portal Co")).toBeInTheDocument();
-    expect(getInventory).toHaveBeenCalledWith("", 77);
+    await waitFor(() => {
+      expect(getInventory).toHaveBeenCalledWith("", 77);
+    });
     expect(getPackingLists).toHaveBeenCalledWith(100, {
       search: "",
       status: "all",
@@ -322,7 +328,7 @@ describe("CustomerPortalPage", () => {
     }, 77);
   });
 
-  it("creates a picking order from customer inventory and uploads custom-named evidence files", async () => {
+  it("creates an outbound order from customer inventory and uploads custom-named evidence files", async () => {
     const user = userEvent.setup();
     const inventoryItem = createItem({
       id: 88,
@@ -381,10 +387,10 @@ describe("CustomerPortalPage", () => {
     renderWithProviders(<PortalHarness />);
 
     expect(await screen.findByText("CUST-SKU-321")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Start Picking Order/i }));
+    await user.click(screen.getByRole("button", { name: /Start Outbound Order/i }));
     expect(await screen.findByText("Selected Inventory")).toBeInTheDocument();
 
-    await user.type(screen.getByLabelText("Picking Order No."), "PL-PORTAL-77");
+    await user.type(screen.getByLabelText("Picking Order #"), "PL-PORTAL-77");
     await user.type(screen.getByLabelText("Order Ref."), "SO-PORTAL-77");
     await user.type(screen.getByLabelText("Ship-to Name"), "Receiver Dock");
 
@@ -400,7 +406,7 @@ describe("CustomerPortalPage", () => {
     await user.clear(displayNameInputs[1]);
     await user.type(displayNameInputs[1], "Signed BO Proof");
 
-    await user.click(screen.getByRole("button", { name: /Submit Picking Order/i }));
+    await user.click(screen.getByRole("button", { name: /Submit Outbound Order/i }));
 
     await waitFor(() => {
       expect(createPickingOrder).toHaveBeenCalledWith(expect.objectContaining({
@@ -422,7 +428,7 @@ describe("CustomerPortalPage", () => {
     expect(await screen.findByText(/PL-PORTAL-77/)).toBeInTheDocument();
   });
 
-  it("keeps failed picking order attachments visible on the documents tab after submit", async () => {
+  it("keeps failed outbound order attachments visible on the documents tab after submit", async () => {
     const user = userEvent.setup();
     const inventoryItem = createItem({
       id: 89,
@@ -470,17 +476,17 @@ describe("CustomerPortalPage", () => {
     renderWithProviders(<PortalHarness />);
 
     expect(await screen.findByText("RETRY-SKU-322")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Start Picking Order/i }));
-    await user.type(screen.getByLabelText("Picking Order No."), "PL-RETRY-78");
+    await user.click(screen.getByRole("button", { name: /Start Outbound Order/i }));
+    await user.type(screen.getByLabelText("Picking Order #"), "PL-RETRY-78");
 
     const fileInput = document.querySelector<HTMLInputElement>("input[type='file']");
     expect(fileInput).not.toBeNull();
     const proofFile = new File(["retry"], "retry-proof.pdf", { type: "application/pdf" });
     await user.upload(fileInput as HTMLInputElement, proofFile);
 
-    await user.click(screen.getByRole("button", { name: /Submit Picking Order/i }));
+    await user.click(screen.getByRole("button", { name: /Submit Outbound Order/i }));
 
-    expect(await screen.findByText(/some files could not upload/i)).toBeInTheDocument();
+    expect((await screen.findAllByText(/some files could not upload/i)).length).toBeGreaterThan(0);
     await waitFor(() => {
       expect(screen.getByRole("tab", { name: /Attachments/i })).toHaveAttribute("aria-selected", "true");
     });
@@ -488,7 +494,7 @@ describe("CustomerPortalPage", () => {
     expect(screen.getByRole("button", { name: /^Upload$/i })).toBeInTheDocument();
   });
 
-  it("blocks picking order quantities above available customer inventory before submit", async () => {
+  it("blocks outbound order quantities above available customer inventory before submit", async () => {
     const user = userEvent.setup();
     getInventory.mockResolvedValue([
       createItem({
@@ -525,12 +531,12 @@ describe("CustomerPortalPage", () => {
     renderWithProviders(<PortalHarness />);
 
     expect(await screen.findByText("LIMITED-SKU")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Start Picking Order/i }));
+    await user.click(screen.getByRole("button", { name: /Start Outbound Order/i }));
 
     const quantityInput = screen.getByRole("spinbutton");
     await user.clear(quantityInput);
     await user.type(quantityInput, "3");
-    await user.click(screen.getByRole("button", { name: /Submit Picking Order/i }));
+    await user.click(screen.getByRole("button", { name: /Submit Outbound Order/i }));
 
     expect((await screen.findAllByText("Requested quantity cannot exceed available inventory.")).length).toBeGreaterThan(0);
     expect(createPickingOrder).not.toHaveBeenCalled();

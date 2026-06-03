@@ -1,8 +1,3 @@
-import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
-import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
-import LocalShippingOutlinedIcon from "@mui/icons-material/LocalShippingOutlined";
-import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
-import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import { type FormEvent, useEffect, useState } from "react";
 
 import { useI18n } from "../lib/i18n";
@@ -18,13 +13,9 @@ import { CustomerPortalPackingListDetailPage } from "./CustomerPortalPackingList
 import { CustomerPortalPackingListsPage } from "./CustomerPortalPackingListsPage";
 import { CustomerPortalPickingOrderDetailPage } from "./CustomerPortalPickingOrderDetailPage";
 import { CustomerPortalPickingOrdersPage } from "./CustomerPortalPickingOrdersPage";
-import {
-  isOpenPackingList,
-  isOpenPickingOrder,
-  type CustomerPortalDetailTabRequest
-} from "./CustomerPortalTrackingShared";
+import type { CustomerPortalDetailTabRequest } from "./CustomerPortalTrackingShared";
 import type { CustomerPortalSection } from "./navigation";
-import { InlineAlert, InlineLoadingIndicator, useFeedbackToast } from "./sharedUi";
+import { InlineAlert, useFeedbackToast } from "./sharedUi";
 import type { PendingDocumentAttachment } from "./sharedUi";
 import type { InboundDocument, Item, OutboundDocument, OutboundDocumentPayload, User } from "./types";
 
@@ -36,7 +27,7 @@ type CustomerPortalPageProps = {
   portalCustomerName?: string;
 };
 
-export function CustomerPortalPage({ activeSection, currentUser, onSectionChange, portalCustomerId, portalCustomerName = "" }: CustomerPortalPageProps) {
+export function CustomerPortalPage({ activeSection, currentUser, onSectionChange, portalCustomerId }: CustomerPortalPageProps) {
   const { t } = useI18n();
   const { showSuccess, showError, feedbackToast } = useFeedbackToast();
   const [inventorySearch, setInventorySearch] = useState("");
@@ -55,20 +46,14 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
   const [errorMessage, setErrorMessage] = useState("");
   const adminPortalCustomerId = currentUser.role === "admin" && portalCustomerId ? portalCustomerId : undefined;
   const activeCustomerId = adminPortalCustomerId ?? currentUser.customerId;
-  const activeCustomerName = currentUser.role === "admin" ? portalCustomerName : currentUser.customerName;
+  const currentSection = activeSection ?? "inventory";
 
-  const openPackingListCount = packingLists.filter(isOpenPackingList).length;
-  const openPickingOrderCount = pickingOrders.filter(isOpenPickingOrder).length;
-  const pickingOrderAttachmentCount = pickingOrders.reduce((total, document) => total + (document.attachments?.length ?? 0), 0);
-  const visibleInventory = inventory.filter((item) => item.availableQty > 0 || item.quantity > 0);
-  const showAllSections = !activeSection;
-  const showOverviewSection = showAllSections || activeSection === "overview";
-  const showInventorySection = showAllSections || activeSection === "inventory";
-  const showNewPickingOrderSection = activeSection === "new-picking-order";
-  const showPackingListSection = showAllSections || activeSection === "packing-lists";
-  const showPackingListDetailSection = activeSection === "packing-list-detail";
-  const showPickingOrderSection = showAllSections || activeSection === "picking-orders";
-  const showPickingOrderDetailSection = activeSection === "picking-order-detail";
+  const showInventorySection = currentSection === "inventory";
+  const showNewPickingOrderSection = currentSection === "new-outbound-order";
+  const showPackingListSection = currentSection === "inbound-shipments";
+  const showPackingListDetailSection = currentSection === "inbound-shipment-detail";
+  const showPickingOrderSection = currentSection === "outbound-orders";
+  const showPickingOrderDetailSection = currentSection === "outbound-order-detail";
 
   useEffect(() => {
     void loadPortalData();
@@ -121,7 +106,7 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
         }
       ];
     });
-    onSectionChange?.("new-picking-order");
+    onSectionChange?.("new-outbound-order");
   }
 
   function updateLineDraft(id: string, updates: Partial<PickingOrderLineDraft>) {
@@ -138,13 +123,13 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
 
   function openNewPickingOrder() {
     setErrorMessage("");
-    onSectionChange?.("new-picking-order");
+    onSectionChange?.("new-outbound-order");
   }
 
   function openPackingListDetail(documentId: number) {
     setSelectedPackingListId(documentId);
     setErrorMessage("");
-    onSectionChange?.("packing-list-detail");
+    onSectionChange?.("inbound-shipment-detail");
   }
 
   function openPickingOrderDetail(documentId: number, tab: CustomerPortalDetailTabRequest["tab"] = "details") {
@@ -152,7 +137,7 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
     setPendingPickingOrderAttachments(tab === "details" ? [] : pendingPickingOrderAttachments);
     requestPickingOrderDetailTab(tab);
     setErrorMessage("");
-    onSectionChange?.("picking-order-detail");
+    onSectionChange?.("outbound-order-detail");
   }
 
   function cancelPickingOrderDraft() {
@@ -160,7 +145,7 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
     setLineDrafts([]);
     setDraftPickingOrderAttachments([]);
     setErrorMessage("");
-    onSectionChange?.("picking-orders");
+    onSectionChange?.("outbound-orders");
   }
 
   async function handleSubmitPickingOrder(event: FormEvent<HTMLFormElement>) {
@@ -221,12 +206,12 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
       if (failedAttachments.length > 0) {
         const message = t("customerPortalAttachmentUploadPartial");
         requestPickingOrderDetailTab("documents");
-        onSectionChange?.("picking-order-detail");
+        onSectionChange?.("outbound-order-detail");
         setErrorMessage(message);
         showError(message);
       } else {
         requestPickingOrderDetailTab("details");
-        onSectionChange?.("picking-order-detail");
+        onSectionChange?.("outbound-order-detail");
         showSuccess(t("customerPortalPickingOrderCreated"));
       }
     } catch (error) {
@@ -268,72 +253,8 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
   }
 
   return (
-    <main className="customer-portal-main">
-      {showOverviewSection ? (
-        <>
-          <section className="customer-portal-overview">
-            <div className="customer-portal-overview__copy">
-              <span className="customer-portal-overview__eyebrow">{t("customerPortal")}</span>
-              <h1>{activeCustomerName || t("customerPortal")}</h1>
-              <p>{t("customerPortalDesc")}</p>
-              {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
-            </div>
-            <div className="customer-portal-overview__actions">
-              <button className="button button--primary" type="button" onClick={() => void loadPortalData()} disabled={isLoading}>
-                {isLoading ? <InlineLoadingIndicator /> : <RefreshRoundedIcon fontSize="small" />}
-                {t("refresh")}
-              </button>
-            </div>
-          </section>
-
-          <section className="customer-portal-metrics" aria-label={t("customerPortal")}>
-            <article className="customer-portal-kpi">
-              <span className="customer-portal-kpi__icon"><AttachFileOutlinedIcon fontSize="small" /></span>
-              <div>
-                <span>{t("customerPortalOverviewFilesTitle")}</span>
-                <strong>{pickingOrderAttachmentCount}</strong>
-                <small>{t("customerPortalFilesTracked")}</small>
-                <button className="button button--ghost button--small customer-portal-kpi__action" type="button" onClick={() => onSectionChange?.("picking-orders")}>
-                  {t("customerPortalOpenFilesAction")}
-                </button>
-              </div>
-            </article>
-            <article className="customer-portal-kpi">
-              <span className="customer-portal-kpi__icon"><Inventory2OutlinedIcon fontSize="small" /></span>
-              <div>
-                <span>{t("customerPortalOverviewInventoryTitle")}</span>
-                <strong>{visibleInventory.length}</strong>
-                <small>{t("customerPortalAvailableLocations")}</small>
-                <button className="button button--ghost button--small customer-portal-kpi__action" type="button" onClick={() => onSectionChange?.("inventory")}>
-                  {t("customerPortalOpenInventoryAction")}
-                </button>
-              </div>
-            </article>
-            <article className="customer-portal-kpi">
-              <span className="customer-portal-kpi__icon"><MoveToInboxOutlinedIcon fontSize="small" /></span>
-              <div>
-                <span>{t("customerPortalOverviewPackingTitle")}</span>
-                <strong>{openPackingListCount}</strong>
-                <small>{t("customerPortalInboundInProgress")}</small>
-                <button className="button button--ghost button--small customer-portal-kpi__action" type="button" onClick={() => onSectionChange?.("packing-lists")}>
-                  {t("customerPortalOpenInboundAction")}
-                </button>
-              </div>
-            </article>
-            <article className="customer-portal-kpi">
-              <span className="customer-portal-kpi__icon"><LocalShippingOutlinedIcon fontSize="small" /></span>
-              <div>
-                <span>{t("customerPortalOverviewPickingTitle")}</span>
-                <strong>{openPickingOrderCount}</strong>
-                <small>{t("customerPortalOutboundInProgress")}</small>
-                <button className="button button--ghost button--small customer-portal-kpi__action" type="button" onClick={() => onSectionChange?.("picking-orders")}>
-                  {t("customerPortalOpenOutboundAction")}
-                </button>
-              </div>
-            </article>
-          </section>
-        </>
-      ) : null}
+    <main className="mx-auto grid max-w-7xl gap-4 p-4 lg:p-6">
+      {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
 
       {showInventorySection ? (
         <CustomerPortalInventoryPage
@@ -380,7 +301,7 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
           packingLists={packingLists}
           selectedPackingListId={selectedPackingListId}
           adminPortalCustomerId={adminPortalCustomerId}
-          onBack={() => onSectionChange?.("packing-lists")}
+          onBack={() => onSectionChange?.("inbound-shipments")}
         />
       ) : null}
 
@@ -406,7 +327,7 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
           adminPortalCustomerId={adminPortalCustomerId}
           onPickingOrdersChange={setPickingOrders}
           onPendingAttachmentsChange={setPendingPickingOrderAttachments}
-          onBack={() => onSectionChange?.("picking-orders")}
+          onBack={() => onSectionChange?.("outbound-orders")}
           onSuccess={showSuccess}
           onError={showPortalError}
         />
