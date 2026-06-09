@@ -57,5 +57,23 @@ services:
     ports:
       - "5173:5173"
 
+  portal:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.portal.prod
+      args:
+        VITE_API_BASE_URL: /api
+    container_name: speed-inventory-portal
+    depends_on:
+      - backend
+    ports:
+      - "5174:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/portal.html || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
 volumes:
   mariadb_data:

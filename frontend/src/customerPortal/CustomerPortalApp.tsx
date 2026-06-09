@@ -1,8 +1,7 @@
-import { Building2, ChevronDown, LogOut, PackageSearch, RefreshCw, SendToBack } from "lucide-react";
+import { ChevronDown, LogOut, PackageSearch, RefreshCw } from "lucide-react";
 import { Suspense, lazy, type ReactNode, useEffect, useState } from "react";
 
 import { Button } from "../components/ui/button";
-import { InfoTooltip } from "../components/ui/tooltip";
 import { cn } from "../lib/utils";
 import { getErrorMessage } from "../lib/errors";
 import { useI18n } from "../lib/i18n";
@@ -279,10 +278,8 @@ function CustomerPortalSidebar({
 }) {
   const { t } = useI18n();
   const sidebarActiveSection = sidebarParents[activeSection];
-  const navItems: Array<{ key: CustomerPortalSection; label: string; description: string; icon: ReactNode; tooltip?: string }> = [
-    { key: "inventory", label: t("customerPortalInventory"), description: t("customerPortalInventoryNavDesc"), icon: <PackageSearch className="h-5 w-5" /> },
-    { key: "inbound-shipments", label: t("customerPortalPackingLists"), description: t("customerPortalInboundNavDesc"), icon: <Building2 className="h-5 w-5" />, tooltip: t("customerPortalInboundTooltip") },
-    { key: "outbound-orders", label: t("customerPortalPickingOrders"), description: t("customerPortalOutboundNavDesc"), icon: <SendToBack className="h-5 w-5" />, tooltip: t("customerPortalOutboundTooltip") }
+  const navItems: Array<{ key: CustomerPortalSection; label: string; description: string; icon: ReactNode }> = [
+    { key: "inventory", label: t("customerPortalInventory"), description: t("customerPortalInventoryNavDesc"), icon: <PackageSearch className="h-5 w-5" /> }
   ];
 
   return (
@@ -309,7 +306,6 @@ function CustomerPortalSidebar({
             <span className="min-w-0">
               <span className="flex items-center gap-1.5 text-sm font-semibold">
                 {item.label}
-                {item.tooltip ? <InfoTooltip content={item.tooltip} focusable={false} /> : null}
               </span>
               <span className={cn("mt-0.5 block text-xs leading-5", sidebarActiveSection === item.key ? "text-slate-300" : "text-slate-500")}>{item.description}</span>
             </span>

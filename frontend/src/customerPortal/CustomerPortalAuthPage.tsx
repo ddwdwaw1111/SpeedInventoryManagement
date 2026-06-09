@@ -1,10 +1,9 @@
 import { type FormEvent, type ReactNode, useState } from "react";
-import { ArrowRight, Building2, ClipboardCheck, FileText, PackageSearch, ShieldCheck } from "lucide-react";
+import { ArrowRight, FileText, PackageSearch, ShieldCheck } from "lucide-react";
 
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
-import { InfoTooltip } from "../components/ui/tooltip";
 import { useI18n } from "../lib/i18n";
 import { InlineAlert } from "./sharedUi";
 import type { LoginPayload, SignUpPayload } from "./types";
@@ -51,10 +50,8 @@ export function CustomerPortalAuthPage({
             <p className="mt-4 text-base leading-7 text-slate-600">{t("customerPortalAuthDesc")}</p>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid max-w-sm gap-3">
             <AuthFeature icon={<PackageSearch className="h-5 w-5" />} title={t("customerPortalAuthInventoryTitle")} description={t("customerPortalAuthInventoryDesc")} />
-            <AuthFeature icon={<Building2 className="h-5 w-5" />} title={t("customerPortalAuthPackingListTitle")} description={t("customerPortalAuthPackingListDesc")} tooltip={t("customerPortalInboundTooltip")} />
-            <AuthFeature icon={<ClipboardCheck className="h-5 w-5" />} title={t("customerPortalAuthDocumentTitle")} description={t("customerPortalAuthDocumentDesc")} tooltip={t("customerPortalOutboundTooltip")} />
           </div>
         </section>
 
@@ -102,7 +99,7 @@ export function CustomerPortalAuthPage({
   );
 }
 
-function AuthFeature({ icon, title, description, tooltip }: { icon: ReactNode; title: string; description: string; tooltip?: string }) {
+function AuthFeature({ icon, title, description }: { icon: ReactNode; title: string; description: string }) {
   return (
     <article className="rounded-lg border border-slate-200 bg-slate-50 p-4">
       <div className="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-md bg-white text-slate-700 shadow-sm">
@@ -110,7 +107,6 @@ function AuthFeature({ icon, title, description, tooltip }: { icon: ReactNode; t
       </div>
       <strong className="flex items-center gap-1.5 text-sm font-semibold text-slate-950">
         {title}
-        {tooltip ? <InfoTooltip content={tooltip} /> : null}
       </strong>
       <span className="mt-1 block text-sm leading-6 text-slate-500">{description}</span>
     </article>

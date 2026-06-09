@@ -23,6 +23,7 @@ backend/bin/
 coverage/
 
 # Local/generated export artifacts
+.codex-excel-tools/
 exports/
 pickup-container-rows.json
 warehouse-pallet-counts.json
