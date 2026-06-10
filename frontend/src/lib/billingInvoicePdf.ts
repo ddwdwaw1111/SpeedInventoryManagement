@@ -137,6 +137,7 @@ export function buildBillingInvoicePdfDefinition({ invoice, timeZone }: BillingI
   const discountSourceRows = buildDiscountSourceRows(invoice.lines);
   const invoiceDate = getInvoiceDate(invoice);
   const dueDate = getDueDate(invoiceDate, header.paymentDueDays);
+  const storageSegmentRows = flattenStorageSettlementSegments(invoice.lines);
 
   const content: Content[] = [
     buildInvoiceHeader(invoice, totals, invoiceDate, dueDate, timeZone, header),
@@ -165,18 +166,28 @@ export function buildBillingInvoicePdfDefinition({ invoice, timeZone }: BillingI
     content.push({ text: header.paymentInstructions, style: "pageSubtitle", margin: [0, 6, 0, 0] });
   }
 
-  if (invoice.lines.length > 0) {
-    content.push({ text: "Line Item Detail", style: "sectionTitle", margin: [0, 0, 0, 4], pageBreak: "before" });
-    content.push(buildLineDetailTable(invoice.lines, invoice.rates.transferInboundFeePerPallet));
-  }
-
-  if (invoice.invoiceType === "STORAGE_SETTLEMENT") {
-    const segmentRows = flattenStorageSettlementSegments(invoice.lines);
-    if (segmentRows.length > 0) {
-      content.push({ text: "Storage Segment Detail", style: "sectionTitle", margin: [0, 0, 0, 4], pageBreak: "before" });
-      content.push(buildStorageSegmentTable(segmentRows));
-    }
-  }
+  const lineDetailSources = storageSegmentRows.length > 0
+    ? invoice.lines.filter((line) => line.chargeType !== "STORAGE")
+    : invoice.lines;
+  appendPdfLineDetailSection(
+    content,
+    "Inbound Charges Detail",
+    lineDetailSources.filter((line) => line.chargeType === "INBOUND"),
+    invoice.rates.transferInboundFeePerPallet
+  );
+  appendPdfLineDetailSection(
+    content,
+    "Palletizing Charges Detail",
+    lineDetailSources.filter((line) => line.chargeType === "WRAPPING"),
+    invoice.rates.transferInboundFeePerPallet
+  );
+  appendPdfStorageDetailSection(content, "Storage Daily Detail", storageSegmentRows);
+  appendPdfLineDetailSection(
+    content,
+    "Storage Daily Detail",
+    storageSegmentRows.length === 0 ? lineDetailSources.filter((line) => line.chargeType === "STORAGE") : [],
+    invoice.rates.transferInboundFeePerPallet
+  );
 
   return {
     pageSize: "LETTER",
@@ -202,6 +213,27 @@ export function buildBillingInvoicePdfDefinition({ invoice, timeZone }: BillingI
     }),
     content
   };
+}
+
+function appendPdfLineDetailSection(
+  content: Content[],
+  title: string,
+  lines: BillingInvoiceLineData[],
+  transferInboundFeePerPallet?: number
+) {
+  if (lines.length === 0) {
+    return;
+  }
+  content.push({ text: title, style: "sectionTitle", margin: [0, 0, 0, 4], pageBreak: "before" });
+  content.push(buildLineDetailTable(lines, transferInboundFeePerPallet));
+}
+
+function appendPdfStorageDetailSection(content: Content[], title: string, segmentRows: StorageSegmentRow[]) {
+  if (segmentRows.length === 0) {
+    return;
+  }
+  content.push({ text: title, style: "sectionTitle", margin: [0, 0, 0, 4], pageBreak: "before" });
+  content.push(buildStorageSegmentTable(segmentRows));
 }
 
 function buildInvoiceHeader(invoice: BillingInvoice, totals: InvoiceDisplayTotals, invoiceDate: string, dueDate: string | null, timeZone: string, header: BillingInvoice["header"]): Content {
@@ -431,7 +463,23 @@ type StorageSegmentDetailRow = {
 
 function flattenStorageSettlementSegments(lines: BillingInvoiceLineData[]) {
   return lines.flatMap((line) => {
-    if (!line.details || line.details.kind !== "STORAGE_CONTAINER_SUMMARY") {
+    if (!line.details) {
+      return [];
+    }
+    if (line.details.kind === "STORAGE_DAILY_SUMMARY") {
+      return [{
+        startDate: line.details.date,
+        endDate: line.details.date,
+        dayEndPallets: line.details.palletDays,
+        billedDays: 1,
+        palletDays: line.details.palletDays,
+        freePalletDays: line.details.freePalletDays ?? 0,
+        grossAmount: line.details.grossAmount ?? roundCurrency(line.details.amount + (line.details.discountAmount ?? 0)),
+        discountAmount: line.details.discountAmount ?? 0,
+        amount: line.details.amount
+      }];
+    }
+    if (line.details.kind !== "STORAGE_CONTAINER_SUMMARY") {
       return [];
     }
     return line.details.segments.map((segment) => ({
@@ -504,7 +552,7 @@ function buildChargeSummaryRows(lines: BillingInvoiceLineData[]): ChargeSummaryR
 function buildDiscountSourceRows(lines: BillingInvoiceLineData[]): DiscountSourceRow[] {
   return lines.flatMap((line, index) => {
     const rows: DiscountSourceRow[] = [];
-    if (line.details?.kind === "STORAGE_CONTAINER_SUMMARY" && (line.details.discountAmount ?? 0) > 0) {
+    if ((line.details?.kind === "STORAGE_CONTAINER_SUMMARY" || line.details?.kind === "STORAGE_DAILY_SUMMARY") && (line.details.discountAmount ?? 0) > 0) {
       rows.push({
         source: "Storage grace period",
         reference: line.reference || "-",
@@ -651,31 +699,9 @@ function aggregateStorageSegmentRows(segmentRows: StorageSegmentRow[]): StorageS
     }
   }
 
-  const aggregatedRows: StorageSegmentRow[] = [];
-  let activeBucket: ActiveStorageSegmentBucket | null = null;
-
-  for (const day of [...dailyBuckets.keys()].sort()) {
-    const bucket = dailyBuckets.get(day)!;
-    if (!activeBucket) {
-      activeBucket = startAggregatedStorageSegment(bucket);
-      continue;
-    }
-
-    if (isNextIsoDay(activeBucket.endDate, day) && isSameDailyStorageSegmentBucket(activeBucket, bucket)) {
-      activeBucket.endDate = day;
-      activeBucket.billedDays += 1;
-      continue;
-    }
-
-    aggregatedRows.push(finalizeAggregatedStorageSegment(activeBucket));
-    activeBucket = startAggregatedStorageSegment(bucket);
-  }
-
-  if (activeBucket) {
-    aggregatedRows.push(finalizeAggregatedStorageSegment(activeBucket));
-  }
-
-  return aggregatedRows;
+  return [...dailyBuckets.keys()]
+    .sort()
+    .map((day) => finalizeAggregatedStorageSegment(startAggregatedStorageSegment(dailyBuckets.get(day)!)));
 }
 
 function startAggregatedStorageSegment(bucket: DailyStorageSegmentBucket): ActiveStorageSegmentBucket {
@@ -837,7 +863,7 @@ function chargeTypeLabel(chargeType: string) {
     case "INBOUND":
       return "Inbound Charges";
     case "WRAPPING":
-      return "Wrapping Charges";
+      return "Palletizing Charges";
     case "STORAGE":
       return "Storage Charges";
     case "OUTBOUND":
@@ -854,7 +880,7 @@ function chargeTypeDetailLabel(chargeType: string) {
     case "INBOUND":
       return "Inbound";
     case "WRAPPING":
-      return "Wrapping";
+      return "Palletizing";
     case "STORAGE":
       return "Storage";
     case "OUTBOUND":

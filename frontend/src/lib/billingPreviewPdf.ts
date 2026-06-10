@@ -151,8 +151,10 @@ type BillingPreviewPdfDocument = {
   totals: PreviewDisplayTotals;
   chargeSummaryRows: ChargeSummaryRow[];
   discountSourceRows: DiscountSourceRow[];
-  lineRows: LineDetailRow[];
-  segmentRows: StorageSegmentDetailRow[];
+  inboundDetailRows: LineDetailRow[];
+  palletizingDetailRows: LineDetailRow[];
+  storageLineDetailRows: LineDetailRow[];
+  storageDetailRows: StorageSegmentDetailRow[];
 };
 
 type PreviewDisplayTotals = {
@@ -291,6 +293,15 @@ export function buildBillingPreviewPdfDocument({
   const chargeSources = workspaceMode === "STORAGE_SETTLEMENT"
     ? buildStorageSettlementChargeSources(storageRows)
     : preview.invoiceLines;
+  const storageDetailRows = buildStorageSegmentDetailRows(storageRows);
+  const lineSources = storageDetailRows.length > 0
+    ? chargeSources.filter((line) => line.chargeType !== "STORAGE")
+    : chargeSources;
+  const inboundLineSources = lineSources.filter((line) => line.chargeType === "INBOUND");
+  const palletizingLineSources = lineSources.filter((line) => line.chargeType === "WRAPPING");
+  const storageLineSources = storageDetailRows.length === 0
+    ? lineSources.filter((line) => line.chargeType === "STORAGE")
+    : [];
 
   return {
     fileName: buildFileName(preview.customerName, preview.startDate, preview.endDate, workspaceMode),
@@ -305,8 +316,10 @@ export function buildBillingPreviewPdfDocument({
     totals,
     chargeSummaryRows: buildChargeSummaryRows(chargeSources, context),
     discountSourceRows: buildDiscountSourceRows(context.storageDiscounts),
-    lineRows: buildLineDetailRows({ invoiceLines: chargeSources, storageRows, timeZone }, context),
-    segmentRows: buildStorageSegmentDetailRows(storageRows)
+    inboundDetailRows: buildLineDetailRows({ invoiceLines: inboundLineSources, storageRows, timeZone }, context),
+    palletizingDetailRows: buildLineDetailRows({ invoiceLines: palletizingLineSources, storageRows, timeZone }, context),
+    storageLineDetailRows: buildLineDetailRows({ invoiceLines: storageLineSources, storageRows, timeZone }, context),
+    storageDetailRows
   };
 }
 
@@ -334,17 +347,17 @@ export function buildBillingPreviewPdfDefinition(document: BillingPreviewPdfDocu
     buildAmountSummaryTable(document.totals, document.chargeSummaryRows, document.discountSourceRows)
   ];
 
-  if (document.lineRows.length > 0) {
-    content.push({ text: "Line Item Detail", style: "sectionTitle", margin: [0, 0, 0, 4], pageBreak: "before" });
-    content.push(buildLineDetailTable(document.lineRows));
-  }
+  appendPdfDetailSection(content, "Inbound Charges Detail", document.inboundDetailRows, buildLineDetailTable);
+  appendPdfDetailSection(content, "Palletizing Charges Detail", document.palletizingDetailRows, buildLineDetailTable);
+  appendPdfDetailSection(content, "Storage Daily Detail", document.storageDetailRows, buildStorageSegmentTable);
+  appendPdfDetailSection(content, "Storage Daily Detail", document.storageLineDetailRows, buildLineDetailTable);
 
-  if (document.segmentRows.length > 0) {
-    content.push({ text: "Storage Segment Detail", style: "sectionTitle", margin: [0, 0, 0, 4], pageBreak: "before" });
-    content.push(buildStorageSegmentTable(document.segmentRows));
-  }
-
-  if (document.lineRows.length === 0 && document.segmentRows.length === 0) {
+  if (
+    document.inboundDetailRows.length === 0
+    && document.palletizingDetailRows.length === 0
+    && document.storageDetailRows.length === 0
+    && document.storageLineDetailRows.length === 0
+  ) {
     content.push({ text: "No billable rows found for the selected billing period.", style: "emptyState" });
   }
 
@@ -372,6 +385,19 @@ export function buildBillingPreviewPdfDefinition(document: BillingPreviewPdfDocu
     }),
     content
   };
+}
+
+function appendPdfDetailSection<T>(
+  content: Content[],
+  title: string,
+  rows: T[],
+  buildTable: (rows: T[]) => Content
+) {
+  if (rows.length === 0) {
+    return;
+  }
+  content.push({ text: title, style: "sectionTitle", margin: [0, 0, 0, 4], pageBreak: "before" });
+  content.push(buildTable(rows));
 }
 
 function buildPreviewHeader(document: BillingPreviewPdfDocument): Content {
@@ -752,31 +778,9 @@ function aggregateStorageSegmentRows(segmentRows: StorageSegmentRow[]): StorageS
     }
   }
 
-  const aggregatedRows: StorageSegmentRow[] = [];
-  let activeBucket: ActiveStorageSegmentBucket | null = null;
-
-  for (const day of [...dailyBuckets.keys()].sort()) {
-    const bucket = dailyBuckets.get(day)!;
-    if (!activeBucket) {
-      activeBucket = startAggregatedStorageSegment(bucket);
-      continue;
-    }
-
-    if (isNextIsoDay(activeBucket.endDate, day) && isSameDailyStorageSegmentBucket(activeBucket, bucket)) {
-      activeBucket.endDate = day;
-      activeBucket.billedDays += 1;
-      continue;
-    }
-
-    aggregatedRows.push(finalizeAggregatedStorageSegment(activeBucket));
-    activeBucket = startAggregatedStorageSegment(bucket);
-  }
-
-  if (activeBucket) {
-    aggregatedRows.push(finalizeAggregatedStorageSegment(activeBucket));
-  }
-
-  return aggregatedRows;
+  return [...dailyBuckets.keys()]
+    .sort()
+    .map((day) => finalizeAggregatedStorageSegment(startAggregatedStorageSegment(dailyBuckets.get(day)!)));
 }
 
 function startAggregatedStorageSegment(bucket: DailyStorageSegmentBucket): ActiveStorageSegmentBucket {
@@ -937,7 +941,7 @@ function chargeTypeLabel(chargeType: BillingInvoiceLine["chargeType"]) {
     case "INBOUND":
       return "Inbound Charges";
     case "WRAPPING":
-      return "Wrapping Charges";
+      return "Palletizing Charges";
     case "STORAGE":
       return "Storage Charges";
     case "OUTBOUND":
@@ -952,7 +956,7 @@ function chargeTypeDetailLabel(chargeType: BillingInvoiceLine["chargeType"]) {
     case "INBOUND":
       return "Inbound";
     case "WRAPPING":
-      return "Wrapping";
+      return "Palletizing";
     case "STORAGE":
       return "Storage";
     case "OUTBOUND":

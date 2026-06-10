@@ -98,8 +98,10 @@ describe("BillingPage", () => {
     fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-03-31" } });
     fireEvent.click(screen.getByRole("button", { name: "Show Details" }));
 
-    const openButton = await screen.findByRole("button", { name: "Billing Detail" });
-    expect(screen.getByRole("table", { name: "Container Billing Trace" })).toBeInTheDocument();
+    const inboundTable = await screen.findByRole("table", { name: "Inbound Charges" });
+    expect(screen.getByRole("table", { name: "Palletizing Charges" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Storage Charges" })).toBeInTheDocument();
+    const openButton = within(inboundTable).getByRole("button", { name: "Billing Detail" });
 
     fireEvent.click(openButton);
 
@@ -256,7 +258,21 @@ describe("BillingPage", () => {
     });
     expect(createBillingInvoice.mock.calls[0][0].invoiceType).toBe("STORAGE_SETTLEMENT");
     expect(createBillingInvoice.mock.calls[0][0].header).toEqual(DEFAULT_BILLING_INVOICE_HEADER);
-    expect(createBillingInvoice.mock.calls[0][0].lines).toHaveLength(1);
+    expect(createBillingInvoice.mock.calls[0][0].lines).toHaveLength(31);
+    expect(createBillingInvoice.mock.calls[0][0].lines[0]).toMatchObject({
+      chargeType: "STORAGE",
+      containerNo: "",
+      occurredOn: "2026-03-01",
+      quantity: 0,
+      amount: 0,
+      details: {
+        kind: "STORAGE_DAILY_SUMMARY",
+        date: "2026-03-01",
+        palletDays: 1,
+        freePalletDays: 1,
+        billablePalletDays: 0
+      }
+    });
     expect(onOpenBillingInvoice).toHaveBeenCalledWith(91);
   });
 
@@ -405,7 +421,7 @@ describe("BillingPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Storage Settlement" }));
     await pickComboOption("Container Type", "Normal");
 
-    expect(await screen.findAllByText("-$7.00")).not.toHaveLength(0);
+    expect(await screen.findAllByText("-$1.00")).not.toHaveLength(0);
 
     fireEvent.click(await screen.findByRole("button", { name: "Create Storage Invoice" }));
 
@@ -414,25 +430,43 @@ describe("BillingPage", () => {
     });
 
     const payload = createBillingInvoice.mock.calls[0][0];
-    expect(payload.lines).toHaveLength(1);
+    expect(payload.lines).toHaveLength(31);
     expect(payload.lines[0]).toMatchObject({
       chargeType: "STORAGE",
-      containerNo: "CONT-DETAIL",
-      quantity: 24,
-      unitRate: 1,
-      amount: 24,
+      containerNo: "",
+      occurredOn: "2026-03-01",
+      quantity: 0,
+      unitRate: 0,
+      amount: 0,
       details: {
-        kind: "STORAGE_CONTAINER_SUMMARY",
-        warehousesTouched: ["NJ"],
-        palletsTracked: 1,
-        palletDays: 31,
-        freePalletDays: 7,
-        billablePalletDays: 24,
-        grossAmount: 31,
-        discountAmount: 7
+        kind: "STORAGE_DAILY_SUMMARY",
+        date: "2026-03-01",
+        warehouseName: "NJ",
+        palletDays: 1,
+        freePalletDays: 1,
+        billablePalletDays: 0,
+        grossAmount: 1,
+        discountAmount: 1,
+        amount: 0
       }
     });
-    expect(payload.lines[0].details?.segments).toHaveLength(2);
+    expect(payload.lines[7]).toMatchObject({
+      chargeType: "STORAGE",
+      containerNo: "",
+      occurredOn: "2026-03-08",
+      quantity: 1,
+      unitRate: 1,
+      amount: 1,
+      details: {
+        kind: "STORAGE_DAILY_SUMMARY",
+        date: "2026-03-08",
+        palletDays: 1,
+        freePalletDays: 0,
+        billablePalletDays: 1,
+        discountAmount: 0,
+        amount: 1
+      }
+    });
   });
 
   it("creates mixed invoices from the exact preview line set", async () => {
@@ -528,13 +562,31 @@ describe("BillingPage", () => {
 
     const payload = createBillingInvoice.mock.calls[0][0];
     expect(payload.invoiceType).toBe("MIXED");
-    expect(payload.lines.map((line: { chargeType: string }) => line.chargeType)).toEqual(["INBOUND", "WRAPPING", "OUTBOUND", "STORAGE"]);
-    expect(payload.lines).toMatchObject([
+    expect(payload.lines.slice(0, 3).map((line: { chargeType: string }) => line.chargeType)).toEqual(["INBOUND", "WRAPPING", "OUTBOUND"]);
+    expect(payload.lines.slice(0, 3)).toMatchObject([
       { chargeType: "INBOUND", quantity: 1, amount: 450, sourceType: "AUTO" },
       { chargeType: "WRAPPING", quantity: 2, amount: 30, sourceType: "AUTO" },
-      { chargeType: "OUTBOUND", quantity: 1, amount: 0, sourceType: "AUTO" },
-      { chargeType: "STORAGE", quantity: 20, amount: 20, sourceType: "AUTO" }
+      { chargeType: "OUTBOUND", quantity: 1, amount: 0, sourceType: "AUTO" }
     ]);
+    const storageLines = payload.lines.filter((line: { chargeType: string }) => line.chargeType === "STORAGE");
+    expect(storageLines).toHaveLength(27);
+    expect(storageLines[0]).toMatchObject({
+      chargeType: "STORAGE",
+      containerNo: "",
+      occurredOn: "2026-03-05",
+      quantity: 0,
+      amount: 0,
+      sourceType: "AUTO",
+      details: {
+        kind: "STORAGE_DAILY_SUMMARY",
+        date: "2026-03-05",
+        palletDays: 1,
+        freePalletDays: 1,
+        billablePalletDays: 0
+      }
+    });
+    expect(storageLines.filter((line: { amount: number }) => line.amount === 0)).toHaveLength(7);
+    expect(storageLines.filter((line: { amount: number }) => line.amount === 1)).toHaveLength(20);
   });
 
   it("passes the selected warehouse scope into storage settlement invoice creation", async () => {

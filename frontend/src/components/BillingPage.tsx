@@ -48,6 +48,10 @@ import {
   type BillingRates,
   type BillingStorageRow
 } from "../lib/billingPreview";
+import {
+  buildDailyStorageChargeRowsFromStorageRows,
+  type BillingDailyStorageChargeRow
+} from "../lib/billingStorageDetail";
 import { downloadBillingPreviewPdf } from "../lib/billingPreviewPdf";
 import { formatDateTimeValue } from "../lib/dates";
 import { getErrorMessage } from "../lib/errors";
@@ -235,9 +239,16 @@ export function BillingPage({
     const selectedCustomer = customers.find((c) => c.id === customerId);
     const customerName = selectedCustomer?.name ?? billingPreview.customerName;
     const invoiceType: BillingInvoiceType = workspaceMode === "STORAGE_SETTLEMENT" ? "STORAGE_SETTLEMENT" : "MIXED";
+    const storageLineContext = {
+      warehouseLocationId: warehouseLocationId === "all" ? null : warehouseLocationId,
+      warehouseName: selectedWarehouse?.name ?? "",
+      containerType: selectedContainerType === "all" ? null : selectedContainerType
+    };
+    const storageInvoiceLines = buildStorageSettlementInvoiceLines(activeStorageDailyRows, storageLineContext);
     const lines = invoiceType === "STORAGE_SETTLEMENT"
-      ? buildStorageSettlementInvoiceLines(storageSettlementRows)
-      : activeInvoiceLines.map((line) => ({
+      ? storageInvoiceLines
+      : [
+          ...activeInvoiceLines.filter((line) => line.chargeType !== "STORAGE").map((line) => ({
           chargeType: line.chargeType,
           description: line.meta || chargeTypeDescription(line.chargeType),
           reference: line.reference,
@@ -248,7 +259,9 @@ export function BillingPage({
           unitRate: line.unitRate,
           amount: line.amount,
           sourceType: "AUTO"
-        }));
+        })),
+          ...storageInvoiceLines
+        ];
 
     if (lines.length === 0) {
       return;
@@ -342,8 +355,29 @@ export function BillingPage({
   const activeInvoiceLines = useMemo(() => {
     const filter = containerNoFilter.trim().toUpperCase();
     if (!filter) return billingPreview.invoiceLines;
-    return billingPreview.invoiceLines.filter((line) => line.containerNo.toUpperCase().includes(filter));
+    return billingPreview.invoiceLines.filter((line) => (
+      line.containerNo.toUpperCase().includes(filter)
+      || line.reference.toUpperCase().includes(filter)
+      || line.warehouseSummary.toUpperCase().includes(filter)
+    ));
   }, [billingPreview.invoiceLines, containerNoFilter]);
+
+  const activeInboundLines = useMemo(
+    () => activeInvoiceLines.filter((line) => line.chargeType === "INBOUND"),
+    [activeInvoiceLines]
+  );
+  const activeWrappingLines = useMemo(
+    () => activeInvoiceLines.filter((line) => line.chargeType === "WRAPPING"),
+    [activeInvoiceLines]
+  );
+  const activeStorageDailyRows = useMemo(
+    () => buildDailyStorageChargeRowsFromStorageRows(storageSettlementRows),
+    [storageSettlementRows]
+  );
+  const previousStorageDailyRows = useMemo(
+    () => previousPeriodPreview ? buildDailyStorageChargeRowsFromStorageRows(previousPeriodPreview.storageRows) : [],
+    [previousPeriodPreview]
+  );
 
   const activeContainerRows = useMemo(() => {
     const filter = containerNoFilter.trim().toUpperCase();
@@ -364,8 +398,8 @@ export function BillingPage({
     [storageSettlementRows]
   );
   const storageSettlementPalletDays = useMemo(
-    () => storageSettlementRows.reduce((sum, row) => sum + row.palletDays, 0),
-    [storageSettlementRows]
+    () => activeStorageDailyRows.reduce((sum, row) => sum + row.palletDays, 0),
+    [activeStorageDailyRows]
   );
   const storageSettlementTrackedPallets = useMemo(
     () => storageSettlementRows.reduce((sum, row) => sum + row.palletsTracked, 0),
@@ -411,11 +445,11 @@ export function BillingPage({
   const canCreateStorageInvoice =
     customerId !== "all" &&
     selectedContainerType !== "all" &&
-    storageSettlementRows.length > 0 &&
+    activeStorageDailyRows.length > 0 &&
     existingStorageSettlementInvoice === null;
   const canCreateInvoice = workspaceMode === "STORAGE_SETTLEMENT" ? canCreateStorageInvoice : canCreateMixedInvoice;
   const hasBillablePreview = workspaceMode === "STORAGE_SETTLEMENT"
-    ? storageSettlementRows.length > 0
+    ? activeStorageDailyRows.length > 0
     : activeInvoiceLines.length > 0;
   const exportTitle = useMemo(
     () => buildBillingExportTitle(
@@ -436,10 +470,10 @@ export function BillingPage({
     () => buildBillingPageExportRows({
       workspaceMode,
       invoiceLines: activeInvoiceLines,
-      storageRows: storageSettlementRows,
+      dailyStorageRows: activeStorageDailyRows,
       timeZone: resolvedTimeZone
     }),
-    [activeInvoiceLines, resolvedTimeZone, storageSettlementRows, workspaceMode]
+    [activeInvoiceLines, activeStorageDailyRows, resolvedTimeZone, storageSettlementRows, workspaceMode]
   );
 
   function handleExportExcel({ title, columns }: { title: string; columns: ExcelExportColumn[] }) {
@@ -451,7 +485,7 @@ export function BillingPage({
       rows: exportRows,
       summaryRows: workspaceMode === "STORAGE_SETTLEMENT"
         ? [
-            { label: "Storage Containers", value: storageSettlementRows.length, numberFormat: "number" },
+            { label: "Storage Days", value: activeStorageDailyRows.length, numberFormat: "number" },
             { label: "Tracked Pallets", value: storageSettlementTrackedPallets, numberFormat: "number" },
             { label: "Pallet-Days", value: storageSettlementPalletDays, numberFormat: "number" },
             ...(storageSettlementDiscountTotal > 0
@@ -770,10 +804,10 @@ export function BillingPage({
           {(workspaceMode === "STORAGE_SETTLEMENT"
             ? [
                 {
-                  key: "containers",
-                  label: t("billingStorageContainers"),
-                  value: storageSettlementRows.length,
-                  previousValue: previousPeriodPreview?.storageRows.length ?? null,
+                  key: "storageDays",
+                  label: t("billingStorageDays"),
+                  value: activeStorageDailyRows.length,
+                  previousValue: previousStorageDailyRows.length,
                   format: "number" as const,
                   icon: <Inventory2OutlinedIcon fontSize="small" />,
                   accent: "#274c77"
@@ -909,7 +943,7 @@ export function BillingPage({
               {canCreateInvoice && (
                 <div style={{ fontSize: "0.813rem", color: "var(--ink-soft)", marginTop: "0.25rem", display: "flex", alignItems: "center", flexWrap: "wrap", gap: "0.375rem" }}>
                   {workspaceMode === "STORAGE_SETTLEMENT"
-                    ? `${billingPreview.storageRows.length} ${t("billingStorageContainers").toLowerCase()} · ${formatNumber(storageSettlementTrackedPallets)} ${t("billingTrackedPallets").toLowerCase()} · ${formatMoney(storageSettlementTotal)}`
+                    ? `${activeStorageDailyRows.length} ${t("billingStorageDays").toLowerCase()} · ${formatNumber(storageSettlementPalletDays)} ${t("palletDays").toLowerCase()} · ${formatMoney(storageSettlementTotal)}`
                     : `${activeInvoiceLines.length} ${t("billingLineCount").toLowerCase()} · ${formatMoney(activeGrandTotal)}`}
                   {warehouseLocationId !== "all" && (
                     <span style={{ background: "rgba(39,76,119,0.08)", borderRadius: "var(--radius-sm)", padding: "0 0.4rem", fontSize: "0.75rem" }}>
@@ -1038,8 +1072,39 @@ export function BillingPage({
         )}
 
         {isCreateTab && (<>
+        {workspaceMode === "STORAGE_SETTLEMENT" ? (
+          <DailyStorageChargeTable
+            title={t("billingStorageSettlementTable")}
+            description={t("billingStorageSettlementTableDesc")}
+            rows={activeStorageDailyRows}
+            timeZone={resolvedTimeZone}
+            t={t}
+          />
+        ) : (
+          <BillingDetailTables
+            inboundLines={activeInboundLines}
+            wrappingLines={activeWrappingLines}
+            storageRows={activeStorageDailyRows}
+            timeZone={resolvedTimeZone}
+            emptyTitle={containerNoFilter.trim() ? `${t("noBillingData")} - ${containerNoFilter.trim().toUpperCase()}` : t("noBillingData")}
+            t={t}
+            onOpenLineContainer={(line) => {
+              if (!isNavigableContainerNo(line.containerNo)) {
+                return;
+              }
+              setContainerNoFilter(line.containerNo);
+              onOpenBillingContainerDetail(
+                billingPreview.startDate,
+                billingPreview.endDate,
+                customerId,
+                line.containerNo,
+                warehouseLocationId
+              );
+            }}
+          />
+        )}
         {/* ── Container billing breakdown ── */}
-        <section className="workbook-panel" style={{ margin: "0 1rem 1rem" }}>
+        <section className="workbook-panel" style={{ display: "none", margin: "0 1rem 1rem" }}>
           <WorkspacePanelHeader
             title={workspaceMode === "STORAGE_SETTLEMENT" ? t("billingStorageSettlementTable") : t("billingContainerTrace")}
             description={workspaceMode === "STORAGE_SETTLEMENT" ? t("billingStorageSettlementTableDesc") : t("billingContainerTraceDesc")}
@@ -1197,7 +1262,7 @@ export function BillingPage({
             </div>
 
             {/* Invoice preview lines */}
-            <section className="workbook-panel" style={{ margin: "0 1rem 1rem" }}>
+            <section className="workbook-panel" style={{ display: "none", margin: "0 1rem 1rem" }}>
               <WorkspacePanelHeader
                 title={t("billingInvoicePreview")}
                 description={t("billingInvoicePreviewDesc")}
@@ -1511,68 +1576,54 @@ function invoiceTypeLabel(invoiceType: BillingInvoiceType, t: (key: string) => s
   }
 }
 
-function buildStorageSettlementInvoiceLines(storageRows: BillingStorageRow[]): CreateBillingInvoicePayload["lines"] {
+function buildStorageSettlementInvoiceLines(
+  storageRows: BillingDailyStorageChargeRow[],
+  context: {
+    warehouseLocationId: number | null;
+    warehouseName: string;
+    containerType: ContainerType | null;
+  }
+): CreateBillingInvoicePayload["lines"] {
   return storageRows.map((row) => ({
     chargeType: "STORAGE",
-    description: `Storage settlement for ${row.containerNo}`,
-    reference: `Storage | ${row.containerNo}`,
-    containerNo: row.containerNo,
-    warehouse: row.locationName || row.warehousesTouched.join(", "),
-    occurredOn: trimDateValue(row.lastActivityAt ?? row.firstActivityAt),
+    description: `Storage settlement for ${row.date}`,
+    reference: `Storage | ${row.date}`,
+    containerNo: "",
+    warehouse: context.warehouseName || row.warehouse,
+    occurredOn: row.date,
     quantity: row.billablePalletDays,
     unitRate: row.billablePalletDays > 0 ? row.amount / row.billablePalletDays : 0,
     amount: row.amount,
     notes: buildStorageSettlementNotes(row),
     sourceType: "AUTO",
     details: {
-      kind: "STORAGE_CONTAINER_SUMMARY",
-      warehouseLocationId: row.locationId,
-      warehouseName: row.locationName || undefined,
-      warehousesTouched: row.warehousesTouched,
-      palletsTracked: row.palletsTracked,
+      kind: "STORAGE_DAILY_SUMMARY",
+      date: row.date,
+      warehouseLocationId: context.warehouseLocationId,
+      warehouseName: context.warehouseName || row.warehouse || undefined,
+      containerType: context.containerType ?? undefined,
       palletDays: row.palletDays,
       freePalletDays: row.freePalletDays,
       billablePalletDays: row.billablePalletDays,
       grossAmount: row.grossAmount,
       discountAmount: row.discountAmount,
-      segments: row.segments.map((segment) => ({
-        startDate: segment.startDate,
-        endDate: segment.endDate,
-        dayEndPallets: segment.dayEndPallets,
-        billedDays: segment.billedDays,
-        palletDays: segment.palletDays,
-        freePalletDays: segment.freePalletDays,
-        billablePalletDays: segment.billablePalletDays,
-        grossAmount: segment.grossAmount,
-        discountAmount: segment.discountAmount,
-        amount: segment.amount
-      }))
+      amount: row.amount
     }
   }));
 }
 
 function buildBillingPageExportColumns(workspaceMode: BillingWorkspaceMode): ExcelExportColumn[] {
   if (workspaceMode === "STORAGE_SETTLEMENT") {
-    const base: ExcelExportColumn[] = [
+    return [
       { key: "rowType", label: "Row Type" },
       { key: "customer", label: "Customer" },
-      { key: "containerType", label: "Container Type" },
-      { key: "containerNo", label: "Container No." },
-      { key: "warehouses", label: "Warehouses Touched" },
-      { key: "palletsTracked", label: "Tracked Pallets", numberFormat: "number" },
+      { key: "date", label: "Date" },
+      { key: "warehouse", label: "Warehouse" },
       { key: "palletDays", label: "Pallet-Days", numberFormat: "number" },
+      { key: "freePalletDays", label: "Free Pallet-Days", numberFormat: "number" },
+      { key: "billablePalletDays", label: "Billable Pallet-Days", numberFormat: "number" },
       { key: "discountAmount", label: "Discount", numberFormat: "currency" },
       { key: "amount", label: "Amount", numberFormat: "currency" }
-    ];
-    return [
-      ...base,
-      { key: "segmentStart", label: "Segment Start" },
-      { key: "segmentEnd", label: "Segment End" },
-      { key: "dayEndPallets", label: "Day-End Pallets", numberFormat: "number" },
-      { key: "billedDays", label: "Billed Days", numberFormat: "number" },
-      { key: "segmentPalletDays", label: "Pallet-Days", numberFormat: "number" },
-      { key: "segmentDiscountAmount", label: "Discount", numberFormat: "currency" },
-      { key: "segmentAmount", label: "Storage Charges", numberFormat: "currency" }
     ];
   }
 
@@ -1589,34 +1640,27 @@ function buildBillingPageExportColumns(workspaceMode: BillingWorkspaceMode): Exc
     { key: "amount", label: "Amount", numberFormat: "currency" },
     { key: "notes", label: "Notes" }
   ];
-  return [
-    ...base,
-    { key: "segmentStart", label: "Segment Start" },
-    { key: "segmentEnd", label: "Segment End" },
-    { key: "dayEndPallets", label: "Day-End Pallets", numberFormat: "number" },
-    { key: "billedDays", label: "Billed Days", numberFormat: "number" },
-    { key: "segmentPalletDays", label: "Pallet-Days", numberFormat: "number" },
-    { key: "segmentDiscountAmount", label: "Discount", numberFormat: "currency" },
-    { key: "segmentAmount", label: "Storage Charges", numberFormat: "currency" }
-  ];
+  return base;
 }
 
 function buildBillingPageExportRows({
   workspaceMode,
   invoiceLines,
-  storageRows,
+  dailyStorageRows,
   timeZone
 }: {
   workspaceMode: BillingWorkspaceMode;
   invoiceLines: BillingInvoiceLine[];
-  storageRows: BillingStorageRow[];
+  dailyStorageRows: BillingDailyStorageChargeRow[];
   timeZone: string;
 }): Array<Record<string, ExcelExportCell>> {
   if (workspaceMode === "STORAGE_SETTLEMENT") {
-    return flattenStorageSettlementRows(storageRows);
+    return flattenDailyStorageRows(dailyStorageRows);
   }
 
-  const rows: Array<Record<string, ExcelExportCell>> = invoiceLines.map((line) => ({
+  const rows: Array<Record<string, ExcelExportCell>> = invoiceLines
+    .filter((line) => line.chargeType !== "STORAGE")
+    .map((line) => ({
     rowType: "Invoice Line",
     customer: line.customerName,
     containerType: "-",
@@ -1631,88 +1675,39 @@ function buildBillingPageExportRows({
     notes: line.meta || "-"
   }));
 
-  rows.push(...flattenOverviewStorageSegments(storageRows));
+  rows.push(...flattenOverviewDailyStorageRows(dailyStorageRows));
 
   return rows;
 }
 
-function flattenStorageSettlementRows(storageRows: BillingStorageRow[]): Array<Record<string, ExcelExportCell>> {
-  const rows: Array<Record<string, ExcelExportCell>> = [];
-  for (const row of storageRows) {
-    rows.push({
-      rowType: "Container Summary",
-      customer: row.customerName,
-      containerType: containerTypeExportLabel(row.containerType),
-      containerNo: row.containerNo,
-      warehouses: row.locationName || row.warehousesTouched.join(", ") || "-",
-      palletsTracked: row.palletsTracked,
-      palletDays: row.palletDays,
-      discountAmount: -row.discountAmount,
-      amount: row.amount
-    });
-    for (const segment of row.segments) {
-      rows.push({
-        rowType: "Storage Segment",
-        customer: row.customerName,
-        containerType: containerTypeExportLabel(row.containerType),
-        containerNo: row.containerNo,
-        warehouses: row.locationName || row.warehousesTouched.join(", ") || "-",
-        palletsTracked: row.palletsTracked,
-        palletDays: row.palletDays,
-        amount: row.amount,
-        segmentStart: segment.startDate,
-        segmentEnd: segment.endDate,
-        dayEndPallets: segment.dayEndPallets,
-        billedDays: segment.billedDays,
-        segmentPalletDays: segment.palletDays,
-        segmentDiscountAmount: -segment.discountAmount,
-        segmentAmount: segment.amount
-      });
-    }
-  }
-  return rows;
+function flattenDailyStorageRows(storageRows: BillingDailyStorageChargeRow[]): Array<Record<string, ExcelExportCell>> {
+  return storageRows.map((row) => ({
+    rowType: "Daily Storage",
+    customer: row.customerName,
+    date: row.date,
+    warehouse: row.warehouse,
+    palletDays: row.palletDays,
+    freePalletDays: row.freePalletDays,
+    billablePalletDays: row.billablePalletDays,
+    discountAmount: -row.discountAmount,
+    amount: row.amount
+  }));
 }
 
-function flattenOverviewStorageSegments(storageRows: BillingStorageRow[]): Array<Record<string, ExcelExportCell>> {
-  const rows: Array<Record<string, ExcelExportCell>> = [];
-  for (const row of storageRows) {
-    rows.push({
-      rowType: "Container Summary",
+function flattenOverviewDailyStorageRows(storageRows: BillingDailyStorageChargeRow[]): Array<Record<string, ExcelExportCell>> {
+  return storageRows.map((row) => ({
+      rowType: "Daily Storage",
       customer: row.customerName,
       chargeType: "Storage Charges",
-      reference: `Storage | ${row.containerNo}`,
-      containerNo: row.containerNo,
-      warehouse: row.warehousesTouched.join(", ") || "-",
-      occurredOn: row.lastActivityAt || row.firstActivityAt || "-",
+      reference: `Storage | ${row.date}`,
+      containerNo: "-",
+      warehouse: row.warehouse || "-",
+      occurredOn: row.date,
       quantity: row.palletDays,
       unitRate: row.palletDays > 0 ? row.amount / row.palletDays : 0,
       amount: row.amount,
-      notes: `${row.palletsTracked} pallets tracked`
-    });
-    for (const segment of row.segments) {
-      rows.push({
-        rowType: "Storage Segment",
-        customer: row.customerName,
-        chargeType: "Storage Charges",
-        reference: row.containerNo,
-        containerNo: row.containerNo,
-        warehouse: row.warehousesTouched.join(", ") || "-",
-        occurredOn: segment.endDate,
-        quantity: segment.palletDays,
-        unitRate: segment.palletDays > 0 ? segment.amount / segment.palletDays : 0,
-        amount: segment.amount,
-        notes: `${segment.dayEndPallets} day-end pallets`,
-        segmentStart: segment.startDate,
-        segmentEnd: segment.endDate,
-        dayEndPallets: segment.dayEndPallets,
-        billedDays: segment.billedDays,
-        segmentPalletDays: segment.palletDays,
-        segmentDiscountAmount: -segment.discountAmount,
-        segmentAmount: segment.amount
-      });
-    }
-  }
-  return rows;
+      notes: `${row.palletDays} pallet-days`
+    }));
 }
 
 function buildBillingExportTitle(
@@ -1743,10 +1738,10 @@ function containerTypeExportLabel(containerType: ContainerType) {
   return containerType === "WEST_COAST_TRANSFER" ? "Transfer" : "Normal";
 }
 
-function buildStorageSettlementNotes(row: BillingStorageRow) {
+function buildStorageSettlementNotes(row: BillingDailyStorageChargeRow) {
   const parts = [
-    containerTypeExportLabel(row.containerType),
-    `${row.palletsTracked} pallets tracked across ${row.warehousesTouched.length} warehouse(s)`
+    `${formatNumber(row.palletDays)} pallet-days`,
+    row.warehouse
   ];
 
   if (row.freePalletDays > 0) {
@@ -1887,6 +1882,255 @@ function renderMetricCard(metric: MetricCardSpec, t: (key: string) => string) {
         </Typography>
       )}
     </Box>
+  );
+}
+
+type BillingTranslate = (key: string, params?: Record<string, string | number>) => string;
+
+const BILLING_DETAIL_PAGE_SIZE = 10;
+
+function BillingDetailTables({
+  inboundLines,
+  wrappingLines,
+  storageRows,
+  timeZone,
+  emptyTitle,
+  t,
+  onOpenLineContainer
+}: {
+  inboundLines: BillingInvoiceLine[];
+  wrappingLines: BillingInvoiceLine[];
+  storageRows: BillingDailyStorageChargeRow[];
+  timeZone: string;
+  emptyTitle: string;
+  t: BillingTranslate;
+  onOpenLineContainer: (line: BillingInvoiceLine) => void;
+}) {
+  const hasRows = inboundLines.length > 0 || wrappingLines.length > 0 || storageRows.length > 0;
+  if (!hasRows) {
+    return (
+      <section className="workbook-panel" style={{ margin: "0 1rem 1rem" }}>
+        <WorkspacePanelHeader title={t("billingInvoiceDetailTables")} description={t("billingInvoiceDetailTablesDesc")} />
+        <WorkspaceTableEmptyState title={emptyTitle} description={t("billingInvoiceDetailTablesDesc")} />
+      </section>
+    );
+  }
+
+  return (
+    <>
+      <BillingLineChargeTable
+        title={t("billingInboundCharges")}
+        description={t("billingInboundChargesDesc")}
+        rows={inboundLines}
+        timeZone={timeZone}
+        t={t}
+        onOpenLineContainer={onOpenLineContainer}
+      />
+      <BillingLineChargeTable
+        title={t("billingPalletizingCharges")}
+        description={t("billingPalletizingChargesDesc")}
+        rows={wrappingLines}
+        timeZone={timeZone}
+        t={t}
+        onOpenLineContainer={onOpenLineContainer}
+      />
+      <DailyStorageChargeTable
+        title={t("billingStorageCharges")}
+        description={t("billingDailyStorageTableDesc")}
+        rows={storageRows}
+        timeZone={timeZone}
+        t={t}
+      />
+    </>
+  );
+}
+
+function BillingLineChargeTable({
+  title,
+  description,
+  rows,
+  timeZone,
+  t,
+  onOpenLineContainer
+}: {
+  title: string;
+  description: string;
+  rows: BillingInvoiceLine[];
+  timeZone: string;
+  t: BillingTranslate;
+  onOpenLineContainer: (line: BillingInvoiceLine) => void;
+}) {
+  return (
+    <PaginatedTableSection
+      title={title}
+      description={`${description} · ${formatNumber(rows.length)} ${t("billingLineCount").toLowerCase()}`}
+      rows={rows}
+      pageSize={BILLING_DETAIL_PAGE_SIZE}
+      getRowKey={(line) => line.id}
+      emptyTitle={t("noBillingData")}
+      emptyDescription={description}
+      t={t}
+      renderTable={(pageRows) => (
+        <table className="sheet-table" aria-label={title}>
+          <thead>
+            <tr>
+              <th>{t("customer")}</th>
+              <th>{t("reference")}</th>
+              <th>{t("containerNo")}</th>
+              <th>{t("currentStorage")}</th>
+              <th>{t("billingOccurredAt")}</th>
+              <th>{t("quantity")}</th>
+              <th>{t("unitRate")}</th>
+              <th>{t("amount")}</th>
+              <th>{t("notes")}</th>
+              <th>{t("actions")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pageRows.map((line) => (
+              <tr key={line.id}>
+                <td>{line.customerName}</td>
+                <td className="cell--mono">{line.reference || "-"}</td>
+                <td className="cell--mono">{line.containerNo || "-"}</td>
+                <td>{line.warehouseSummary || "-"}</td>
+                <td>{line.occurredOn ? formatDateTimeValue(line.occurredOn, timeZone, { dateStyle: "medium" }) : "-"}</td>
+                <td className="cell--mono">{formatNumber(line.quantity)}</td>
+                <td className="cell--mono">{formatMoney(line.unitRate)}</td>
+                <td className="cell--mono">{formatMoney(line.amount)}</td>
+                <td>{line.meta || "-"}</td>
+                <td>
+                  {isNavigableContainerNo(line.containerNo) ? (
+                    <Button size="small" variant="text" onClick={() => onOpenLineContainer(line)}>
+                      {t("billingViewContainerInvoice")}
+                    </Button>
+                  ) : "-"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    />
+  );
+}
+
+function DailyStorageChargeTable({
+  title,
+  description,
+  rows,
+  timeZone,
+  t
+}: {
+  title: string;
+  description: string;
+  rows: BillingDailyStorageChargeRow[];
+  timeZone: string;
+  t: BillingTranslate;
+}) {
+  return (
+    <PaginatedTableSection
+      title={title}
+      description={`${description} · ${formatNumber(rows.length)} ${t("billingStorageDays").toLowerCase()}`}
+      rows={rows}
+      pageSize={BILLING_DETAIL_PAGE_SIZE}
+      getRowKey={(row) => row.id}
+      emptyTitle={t("noBillingData")}
+      emptyDescription={description}
+      t={t}
+      renderTable={(pageRows) => (
+        <table className="sheet-table" aria-label={title}>
+          <thead>
+            <tr>
+              <th>{t("billingStorageDate")}</th>
+              <th>{t("customer")}</th>
+              <th>{t("billingWarehouseScope")}</th>
+              <th>{t("palletDays")}</th>
+              <th>{t("billingFreePalletDays")}</th>
+              <th>{t("billingBillablePalletDays")}</th>
+              <th>{t("billingDiscount")}</th>
+              <th>{t("billingStorageCharges")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pageRows.map((row) => (
+              <tr key={row.id}>
+                <td className="cell--mono">{formatDateTimeValue(row.date, timeZone, { dateStyle: "medium" })}</td>
+                <td>{row.customerName}</td>
+                <td>{row.warehouse}</td>
+                <td className="cell--mono">{formatNumber(row.palletDays)}</td>
+                <td className="cell--mono">{formatNumber(row.freePalletDays)}</td>
+                <td className="cell--mono">{formatNumber(row.billablePalletDays)}</td>
+                <td className="cell--mono">{formatDiscountMoney(row.discountAmount)}</td>
+                <td className="cell--mono">{formatMoney(row.amount)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    />
+  );
+}
+
+function PaginatedTableSection<T>({
+  title,
+  description,
+  rows,
+  pageSize,
+  getRowKey,
+  renderTable,
+  emptyTitle,
+  emptyDescription,
+  t
+}: {
+  title: string;
+  description: string;
+  rows: T[];
+  pageSize: number;
+  getRowKey: (row: T) => string | number;
+  renderTable: (pageRows: T[]) => React.ReactNode;
+  emptyTitle: string;
+  emptyDescription: string;
+  t: BillingTranslate;
+}) {
+  const [page, setPage] = useState(0);
+  const pageCount = Math.max(Math.ceil(rows.length / pageSize), 1);
+  const safePage = Math.min(page, pageCount - 1);
+  const startIndex = safePage * pageSize;
+  const pageRows = rows.slice(startIndex, startIndex + pageSize);
+
+  useEffect(() => {
+    setPage(0);
+  }, [rows]);
+
+  return (
+    <section className="workbook-panel" style={{ margin: "0 1rem 1rem" }}>
+      <WorkspacePanelHeader title={title} description={description} />
+      {rows.length === 0 ? (
+        <WorkspaceTableEmptyState title={emptyTitle} description={emptyDescription} />
+      ) : (
+        <>
+          <div className="sheet-table-wrap">
+            {renderTable(pageRows)}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "0.5rem", padding: "0.75rem 1rem 1rem", color: "var(--ink-soft)", fontSize: "0.8125rem" }}>
+            <span>
+              {t("billingPaginationSummary", {
+                start: startIndex + 1,
+                end: Math.min(startIndex + pageRows.length, rows.length),
+                total: rows.length
+              })}
+            </span>
+            <Button size="small" variant="outlined" disabled={safePage <= 0} onClick={() => setPage((current) => Math.max(current - 1, 0))}>
+              {t("previousPage")}
+            </Button>
+            <Button size="small" variant="outlined" disabled={safePage >= pageCount - 1} onClick={() => setPage((current) => Math.min(current + 1, pageCount - 1))}>
+              {t("nextPage")}
+            </Button>
+          </div>
+        </>
+      )}
+      <span style={{ display: "none" }}>{rows.map(getRowKey).join("|")}</span>
+    </section>
   );
 }
 

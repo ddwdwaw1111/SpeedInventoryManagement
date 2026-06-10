@@ -837,7 +837,7 @@ export type BillingStorageSegmentDetail = {
   amount: number;
 };
 
-export type BillingInvoiceLineDetails = {
+export type BillingStorageContainerSummaryDetails = {
   kind: "STORAGE_CONTAINER_SUMMARY";
   warehouseLocationId?: number | null;
   warehouseName?: string;
@@ -850,6 +850,22 @@ export type BillingInvoiceLineDetails = {
   discountAmount?: number;
   segments: BillingStorageSegmentDetail[];
 };
+
+export type BillingStorageDailySummaryDetails = {
+  kind: "STORAGE_DAILY_SUMMARY";
+  date: string;
+  warehouseLocationId?: number | null;
+  warehouseName?: string;
+  containerType?: ContainerType;
+  palletDays: number;
+  freePalletDays?: number;
+  billablePalletDays?: number;
+  grossAmount?: number;
+  discountAmount?: number;
+  amount: number;
+};
+
+export type BillingInvoiceLineDetails = BillingStorageContainerSummaryDetails | BillingStorageDailySummaryDetails;
 
 export type BillingRatesSnapshot = {
   inboundContainerFee: number;
