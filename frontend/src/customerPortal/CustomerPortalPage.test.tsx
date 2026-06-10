@@ -41,6 +41,16 @@ vi.mock("./api", () => ({
   }
 }));
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("CustomerPortalPage", () => {
   beforeEach(() => {
     getInventory.mockReset();
@@ -185,41 +195,85 @@ describe("CustomerPortalPage", () => {
     );
 
     expect(await screen.findByText("CUST-SKU-321")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Start Outbound Order/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Search$/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Start Outbound Order/i })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Picking Order #")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Submit Outbound Order/i })).not.toBeInTheDocument();
   });
 
-  it("opens the standalone outbound order flow from the Outbound Orders page", async () => {
+  it("disables inventory search and shows a table loading indicator while refreshing", async () => {
     const user = userEvent.setup();
+    const refreshInventory = createDeferred<ReturnType<typeof createItem>[]>();
+    getInventory
+      .mockResolvedValueOnce([
+        createItem({
+          id: 88,
+          skuMasterId: 321,
+          itemNumber: "CUST-SKU-321",
+          sku: "CUST-SKU-321",
+          description: "Customer owned cartons",
+          locationId: 11,
+          locationName: "NJ",
+          availableQty: 12,
+          quantity: 12
+        })
+      ])
+      .mockReturnValueOnce(refreshInventory.promise);
 
-    function PortalHarness() {
-      const [section, setSection] = useState<CustomerPortalSection>("outbound-orders");
-      return (
-        <CustomerPortalPage
-          activeSection={section}
-          onSectionChange={setSection}
-          currentUser={{
-            id: 5,
-            email: "customer@example.com",
-            fullName: "Customer User",
-            role: "customer",
-            isActive: true,
-            customerId: 1,
-            customerName: "Imperial Bag & Paper",
-            createdAt: "2026-03-24T10:00:00Z"
-          }}
-        />
-      );
-    }
+    renderWithProviders(
+      <CustomerPortalPage
+        activeSection="inventory"
+        currentUser={{
+          id: 5,
+          email: "customer@example.com",
+          fullName: "Customer User",
+          role: "customer",
+          isActive: true,
+          customerId: 1,
+          customerName: "Imperial Bag & Paper",
+          createdAt: "2026-03-24T10:00:00Z"
+        }}
+      />
+    );
 
-    renderWithProviders(<PortalHarness />);
+    expect(await screen.findByText("CUST-SKU-321")).toBeInTheDocument();
+
+    const searchButton = screen.getByRole("button", { name: /^Search$/i });
+    await user.click(searchButton);
+
+    expect(searchButton).toBeDisabled();
+    expect(searchButton).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("table", { name: /Inventory/i })).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByText("Loading records")).toBeInTheDocument();
+    expect(screen.queryByText("CUST-SKU-321")).not.toBeInTheDocument();
+
+    refreshInventory.resolve([]);
+
+    await waitFor(() => {
+      expect(searchButton).not.toBeDisabled();
+    });
+  });
+
+  it("hides standalone outbound order creation from the Outbound Orders page", async () => {
+    renderWithProviders(
+      <CustomerPortalPage
+        activeSection="outbound-orders"
+        currentUser={{
+          id: 5,
+          email: "customer@example.com",
+          fullName: "Customer User",
+          role: "customer",
+          isActive: true,
+          customerId: 1,
+          customerName: "Imperial Bag & Paper",
+          createdAt: "2026-03-24T10:00:00Z"
+        }}
+      />
+    );
 
     expect(await screen.findByText("PL-CUST-42")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /New Outbound Order/i }));
-
-    expect(await screen.findByText("Select inventory before creating an outbound order.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Back to Inventory/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Search$/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /New Outbound Order/i })).not.toBeInTheDocument();
   });
 
   it("defaults to the inventory lookup as the first customer portal feature", async () => {
@@ -253,6 +307,68 @@ describe("CustomerPortalPage", () => {
     expect(await screen.findByText("DEFAULT-SKU-323")).toBeInTheDocument();
     expect(screen.getByRole("table", { name: /Inventory/i })).toBeInTheDocument();
     expect(screen.queryByText("PL-CUST-42")).not.toBeInTheDocument();
+  });
+
+  it("filters and paginates inventory, then resets search when the input is cleared", async () => {
+    const user = userEvent.setup();
+    const inventoryRows = Array.from({ length: 12 }, (_, index) => {
+      const itemNo = index + 1;
+      const isCalifornia = itemNo > 10;
+      return createItem({
+        id: 200 + itemNo,
+        skuMasterId: 900 + itemNo,
+        itemNumber: `SKU-PAGE-${String(itemNo).padStart(2, "0")}`,
+        sku: `SKU-PAGE-${String(itemNo).padStart(2, "0")}`,
+        description: `Paged inventory ${itemNo}`,
+        locationId: isCalifornia ? 22 : 11,
+        locationName: isCalifornia ? "CA" : "NJ",
+        availableQty: isCalifornia ? 0 : itemNo,
+        quantity: itemNo
+      });
+    });
+    getInventory.mockResolvedValue(inventoryRows);
+
+    renderWithProviders(
+      <CustomerPortalPage
+        activeSection="inventory"
+        currentUser={{
+          id: 5,
+          email: "customer@example.com",
+          fullName: "Customer User",
+          role: "customer",
+          isActive: true,
+          customerId: 1,
+          customerName: "Imperial Bag & Paper",
+          createdAt: "2026-03-24T10:00:00Z"
+        }}
+      />
+    );
+
+    expect(await screen.findByText("SKU-PAGE-01")).toBeInTheDocument();
+    expect(screen.queryByText("SKU-PAGE-11")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Next Page/i }));
+    expect(screen.getByText("SKU-PAGE-11")).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Warehouse"), "22");
+    expect(screen.getByText("SKU-PAGE-12")).toBeInTheDocument();
+    expect(screen.queryByText("SKU-PAGE-01")).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Inventory status"), "available");
+    expect(screen.getByText("No inventory rows match the current filters.")).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Inventory status"), "all");
+    const searchInput = screen.getByLabelText("Search");
+    await user.type(searchInput, "cartons");
+    await user.click(screen.getByRole("button", { name: /^Search$/i }));
+    await waitFor(() => {
+      expect(getInventory).toHaveBeenLastCalledWith("cartons", undefined);
+    });
+
+    await user.clear(searchInput);
+    await waitFor(() => {
+      expect(getInventory).toHaveBeenLastCalledWith("", undefined);
+    });
   });
 
   it("shows inbound shipment receiving progress and read-only inbound documents", async () => {
@@ -328,217 +444,4 @@ describe("CustomerPortalPage", () => {
     }, 77);
   });
 
-  it("creates an outbound order from customer inventory and uploads custom-named evidence files", async () => {
-    const user = userEvent.setup();
-    const inventoryItem = createItem({
-      id: 88,
-      skuMasterId: 321,
-      itemNumber: "CUST-SKU-321",
-      sku: "CUST-SKU-321",
-      description: "Customer owned cartons",
-      locationId: 11,
-      locationName: "NJ",
-      availableQty: 12,
-      quantity: 12
-    });
-    const createdDocument = createOutboundDocument({
-      id: 77,
-      packingListNo: "PL-PORTAL-77",
-      orderRef: "SO-PORTAL-77"
-    });
-
-    getInventory.mockResolvedValue([inventoryItem]);
-    getPickingOrders
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([createdDocument]);
-    createPickingOrder.mockResolvedValue(createdDocument);
-    uploadPickingOrderAttachment.mockResolvedValue({
-      id: 1,
-      documentType: "OUTBOUND",
-      documentId: 77,
-      displayName: "placeholder",
-      originalFileName: "placeholder.pdf",
-      contentType: "application/pdf",
-      sizeBytes: 12,
-      uploadedByUserId: 5,
-      createdAt: "2026-03-24T10:00:00Z"
-    });
-
-    function PortalHarness() {
-      const [section, setSection] = useState<CustomerPortalSection>("inventory");
-      return (
-        <CustomerPortalPage
-          activeSection={section}
-          onSectionChange={setSection}
-          currentUser={{
-            id: 5,
-            email: "customer@example.com",
-            fullName: "Customer User",
-            role: "customer",
-            isActive: true,
-            customerId: 99,
-            customerName: "Customer Portal Co",
-            createdAt: "2026-03-24T10:00:00Z"
-          }}
-        />
-      );
-    }
-
-    renderWithProviders(<PortalHarness />);
-
-    expect(await screen.findByText("CUST-SKU-321")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Start Outbound Order/i }));
-    expect(await screen.findByText("Selected Inventory")).toBeInTheDocument();
-
-    await user.type(screen.getByLabelText("Picking Order #"), "PL-PORTAL-77");
-    await user.type(screen.getByLabelText("Order Ref."), "SO-PORTAL-77");
-    await user.type(screen.getByLabelText("Ship-to Name"), "Receiver Dock");
-
-    const fileInput = document.querySelector<HTMLInputElement>("input[type='file']");
-    expect(fileInput).not.toBeNull();
-    const packingListPdf = new File(["%PDF-packing-list"], "customer-pl.pdf", { type: "application/pdf" });
-    const boImage = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], "bo.png", { type: "image/png" });
-    await user.upload(fileInput as HTMLInputElement, [packingListPdf, boImage]);
-
-    const displayNameInputs = screen.getAllByLabelText("Display Name");
-    await user.clear(displayNameInputs[0]);
-    await user.type(displayNameInputs[0], "Customer Picking Order");
-    await user.clear(displayNameInputs[1]);
-    await user.type(displayNameInputs[1], "Signed BO Proof");
-
-    await user.click(screen.getByRole("button", { name: /Submit Outbound Order/i }));
-
-    await waitFor(() => {
-      expect(createPickingOrder).toHaveBeenCalledWith(expect.objectContaining({
-        packingListNo: "PL-PORTAL-77",
-        orderRef: "SO-PORTAL-77",
-        shipToName: "Receiver Dock",
-        lines: [
-          expect.objectContaining({
-            customerId: 99,
-            locationId: 11,
-            skuMasterId: 321,
-            quantity: 1
-          })
-        ]
-      }), undefined);
-    });
-    expect(uploadPickingOrderAttachment).toHaveBeenNthCalledWith(1, 77, packingListPdf, "Customer Picking Order", undefined);
-    expect(uploadPickingOrderAttachment).toHaveBeenNthCalledWith(2, 77, boImage, "Signed BO Proof", undefined);
-    expect(await screen.findByText(/PL-PORTAL-77/)).toBeInTheDocument();
-  });
-
-  it("keeps failed outbound order attachments visible on the documents tab after submit", async () => {
-    const user = userEvent.setup();
-    const inventoryItem = createItem({
-      id: 89,
-      skuMasterId: 322,
-      itemNumber: "RETRY-SKU-322",
-      sku: "RETRY-SKU-322",
-      locationId: 11,
-      locationName: "NJ",
-      availableQty: 6,
-      quantity: 6
-    });
-    const createdDocument = createOutboundDocument({
-      id: 78,
-      packingListNo: "PL-RETRY-78",
-      orderRef: "SO-RETRY-78"
-    });
-
-    getInventory.mockResolvedValue([inventoryItem]);
-    getPickingOrders
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([createdDocument]);
-    createPickingOrder.mockResolvedValue(createdDocument);
-    uploadPickingOrderAttachment.mockRejectedValue(new Error("upload failed"));
-
-    function PortalHarness() {
-      const [section, setSection] = useState<CustomerPortalSection>("inventory");
-      return (
-        <CustomerPortalPage
-          activeSection={section}
-          onSectionChange={setSection}
-          currentUser={{
-            id: 5,
-            email: "customer@example.com",
-            fullName: "Customer User",
-            role: "customer",
-            isActive: true,
-            customerId: 99,
-            customerName: "Customer Portal Co",
-            createdAt: "2026-03-24T10:00:00Z"
-          }}
-        />
-      );
-    }
-
-    renderWithProviders(<PortalHarness />);
-
-    expect(await screen.findByText("RETRY-SKU-322")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Start Outbound Order/i }));
-    await user.type(screen.getByLabelText("Picking Order #"), "PL-RETRY-78");
-
-    const fileInput = document.querySelector<HTMLInputElement>("input[type='file']");
-    expect(fileInput).not.toBeNull();
-    const proofFile = new File(["retry"], "retry-proof.pdf", { type: "application/pdf" });
-    await user.upload(fileInput as HTMLInputElement, proofFile);
-
-    await user.click(screen.getByRole("button", { name: /Submit Outbound Order/i }));
-
-    expect((await screen.findAllByText(/some files could not upload/i)).length).toBeGreaterThan(0);
-    await waitFor(() => {
-      expect(screen.getByRole("tab", { name: /Attachments/i })).toHaveAttribute("aria-selected", "true");
-    });
-    expect(screen.getByText("retry-proof.pdf")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Upload$/i })).toBeInTheDocument();
-  });
-
-  it("blocks outbound order quantities above available customer inventory before submit", async () => {
-    const user = userEvent.setup();
-    getInventory.mockResolvedValue([
-      createItem({
-        id: 91,
-        skuMasterId: 901,
-        itemNumber: "LIMITED-SKU",
-        sku: "LIMITED-SKU",
-        availableQty: 2,
-        quantity: 2
-      })
-    ]);
-    getPickingOrders.mockResolvedValue([]);
-
-    function PortalHarness() {
-      const [section, setSection] = useState<CustomerPortalSection>("inventory");
-      return (
-        <CustomerPortalPage
-          activeSection={section}
-          onSectionChange={setSection}
-          currentUser={{
-            id: 5,
-            email: "customer@example.com",
-            fullName: "Customer User",
-            role: "customer",
-            isActive: true,
-            customerId: 99,
-            customerName: "Customer Portal Co",
-            createdAt: "2026-03-24T10:00:00Z"
-          }}
-        />
-      );
-    }
-
-    renderWithProviders(<PortalHarness />);
-
-    expect(await screen.findByText("LIMITED-SKU")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Start Outbound Order/i }));
-
-    const quantityInput = screen.getByRole("spinbutton");
-    await user.clear(quantityInput);
-    await user.type(quantityInput, "3");
-    await user.click(screen.getByRole("button", { name: /Submit Outbound Order/i }));
-
-    expect((await screen.findAllByText("Requested quantity cannot exceed available inventory.")).length).toBeGreaterThan(0);
-    expect(createPickingOrder).not.toHaveBeenCalled();
-  });
 });

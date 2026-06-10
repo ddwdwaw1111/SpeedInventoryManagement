@@ -217,6 +217,73 @@ describe("BillingContainerDetailPage", () => {
 		expect(within(timelineTable).getByText("RECEIVED")).toBeInTheDocument();
 		expect(within(timelineTable).queryByText("OUTBOUND")).not.toBeInTheDocument();
 	});
+
+	it("ignores a stale workspace grace-period setting when the stored context does not match the route", async () => {
+		window.sessionStorage.setItem("sim-billing-workspace-context", JSON.stringify({
+			startDate: "2026-02-01",
+			endDate: "2026-02-28",
+			customerId: "all",
+			warehouseLocationId: "all",
+			containerType: "all",
+			normalPalletGracePeriodEnabled: false,
+			rates: {
+				inboundContainerFee: 450,
+				transferInboundFeePerPallet: 10,
+				wrappingFeePerPallet: 15,
+				storageFeePerPalletPerWeek: 7,
+				storageFeePerPalletPerWeekNormal: 7,
+				storageFeePerPalletPerWeekWestCoastTransfer: 7,
+				outboundFeePerPallet: 0
+			}
+		}));
+		getPallets.mockResolvedValue([createPalletTrace({
+			id: 31,
+			palletCode: "PLT-031",
+			actualArrivalDate: "2026-03-01",
+			currentContainerNo: "STALE-GRACE",
+			createdAt: "2026-03-01T09:00:00Z",
+			updatedAt: "2026-03-31T23:59:00Z"
+		})]);
+		getPalletLocationEvents.mockResolvedValue([
+			{
+				id: 301,
+				palletId: 31,
+				palletCode: "PLT-031",
+				containerVisitId: 1,
+				customerId: 1,
+				customerName: "Imperial Bag & Paper",
+				locationId: 1,
+				locationName: "NJ",
+				storageSection: "TEMP",
+				containerNo: "STALE-GRACE",
+				eventType: "RECEIVED",
+				quantityDelta: 12,
+				palletDelta: 1,
+				eventTime: "2026-03-01T09:00:00Z",
+				createdAt: "2026-03-01T09:00:00Z"
+			}
+		]);
+
+		renderWithProviders(
+			<BillingContainerDetailPage
+				routeKey="/billing/container/2026-03-01/2026-03-31/all/all/STALE-GRACE"
+				startDate="2026-03-01"
+				endDate="2026-03-31"
+				customerId="all"
+				warehouseLocationId="all"
+				containerNo="STALE-GRACE"
+				customers={[createCustomer()]}
+				locations={[createLocation()]}
+				inboundDocuments={[]}
+				outboundDocuments={[]}
+				onBackToBilling={vi.fn()}
+				onOpenContainerDetail={vi.fn()}
+			/>
+		);
+
+		expect(await screen.findAllByText("$24.00")).not.toHaveLength(0);
+		expect(screen.queryByText("$31.00")).not.toBeInTheDocument();
+	});
 });
 
 function createPalletTrace(overrides: Partial<PalletTrace> = {}): PalletTrace {

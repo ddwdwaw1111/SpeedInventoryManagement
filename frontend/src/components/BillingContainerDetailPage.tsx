@@ -74,22 +74,24 @@ export function BillingContainerDetailPage({
 	const [errorMessage, setErrorMessage] = useState("");
 
 	const workspaceContext = useMemo(() => readBillingWorkspaceContext(), [routeKey]);
-	const activeRates: BillingRates = useMemo(() => {
+	const activeWorkspaceContext = useMemo(() => {
 		if (!workspaceContext) {
-			return DEFAULT_BILLING_RATES;
+			return null;
 		}
 		if (workspaceContext.startDate !== startDate || workspaceContext.endDate !== endDate) {
-			return DEFAULT_BILLING_RATES;
+			return null;
 		}
 		if (workspaceContext.customerId !== customerId) {
-			return DEFAULT_BILLING_RATES;
+			return null;
 		}
 		if (workspaceContext.warehouseLocationId !== warehouseLocationId) {
-			return DEFAULT_BILLING_RATES;
+			return null;
 		}
-		return workspaceContext.rates;
+		return workspaceContext;
 	}, [customerId, endDate, startDate, warehouseLocationId, workspaceContext]);
-	const activeContainerType = workspaceContext?.containerType ?? "all";
+	const activeRates: BillingRates = activeWorkspaceContext?.rates ?? DEFAULT_BILLING_RATES;
+	const activeContainerType = activeWorkspaceContext?.containerType ?? "all";
+	const activeNormalPalletGracePeriodEnabled = activeWorkspaceContext?.normalPalletGracePeriodEnabled ?? true;
 
 	useEffect(() => {
 		let active = true;
@@ -146,8 +148,9 @@ export function BillingContainerDetailPage({
 		outboundDocuments,
 		locationId: warehouseLocationId,
 		containerType: activeContainerType,
+		normalPalletGracePeriodEnabled: activeNormalPalletGracePeriodEnabled,
 		rates: activeRates
-	}), [activeContainerType, activeRates, customerId, customers, endDate, inboundDocuments, outboundDocuments, palletLocationEvents, pallets, startDate, warehouseLocationId]);
+	}), [activeContainerType, activeNormalPalletGracePeriodEnabled, activeRates, customerId, customers, endDate, inboundDocuments, outboundDocuments, palletLocationEvents, pallets, startDate, warehouseLocationId]);
 
 	const containerInvoiceLines = useMemo(
 		() => billingPreview.invoiceLines.filter((line) => normalizeContainerNo(line.containerNo) === normalizedContainerNo),
@@ -254,10 +257,6 @@ export function BillingContainerDetailPage({
 								<strong>{formatMoney(summary.storageAmount)}</strong>
 							</article>
 							<article className="metric-card">
-								<span>{t("billingOutboundCharges")}</span>
-								<strong>{formatMoney(summary.outboundAmount)}</strong>
-							</article>
-							<article className="metric-card">
 								<span>{t("billingGrandTotal")}</span>
 								<strong>{formatMoney(summary.totalAmount)}</strong>
 							</article>
@@ -301,8 +300,7 @@ export function BillingContainerDetailPage({
 											value: effectiveContainerType === "WEST_COAST_TRANSFER"
 												? activeRates.storageFeePerPalletPerWeekWestCoastTransfer
 												: activeRates.storageFeePerPalletPerWeekNormal
-										},
-										{ label: t("billingOutboundFee"), value: activeRates.outboundFeePerPallet }
+										}
 									].map((row) => (
 										<div className="report-bars__row" key={row.label}>
 											<div className="report-bars__labels"><strong>{row.label}</strong></div>

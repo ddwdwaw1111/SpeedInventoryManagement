@@ -97,6 +97,7 @@ type BuildBillingPreviewInput = {
   customerId: number | "all";
   locationId?: number | "all";
   containerType?: ContainerType | "all";
+  normalPalletGracePeriodEnabled?: boolean;
   customers: Customer[];
   pallets: PalletTrace[];
   palletLocationEvents: PalletLocationEvent[];
@@ -145,11 +146,10 @@ export function buildBillingPreview(input: BuildBillingPreviewInput): BillingPre
     input.rates,
     billingRange
   );
-  const outboundLines = buildOutboundInvoiceLines(
+  const shippedPallets = countShippedPallets(
     input.outboundDocuments,
     input.customerId,
     input.locationId,
-    input.rates,
     billingRange
   );
   const { storageRows, storageLines, dailyBalanceRows } = buildStorageCharges(
@@ -158,12 +158,13 @@ export function buildBillingPreview(input: BuildBillingPreviewInput): BillingPre
     input.customerId,
     input.locationId,
     input.containerType,
+    input.normalPalletGracePeriodEnabled ?? true,
     input.rates,
     billingRange,
     rangeDays
   );
 
-  const invoiceLines = [...inboundLines, ...storageLines, ...outboundLines]
+  const invoiceLines = [...inboundLines, ...storageLines]
     .sort(compareInvoiceLines);
 
   const summary: BillingPreviewSummary = {
@@ -171,17 +172,17 @@ export function buildBillingPreview(input: BuildBillingPreviewInput): BillingPre
     receivedPallets: inboundLines
       .filter((line) => line.chargeType === "WRAPPING")
       .reduce((total, line) => total + line.quantity, 0),
-    shippedPallets: outboundLines.reduce((total, line) => total + line.quantity, 0),
+    shippedPallets,
     palletDays: storageRows.reduce((total, row) => total + row.palletDays, 0),
     inboundAmount: roundCurrency(inboundLines.filter((line) => line.chargeType === "INBOUND").reduce((total, line) => total + line.amount, 0)),
     wrappingAmount: roundCurrency(inboundLines.filter((line) => line.chargeType === "WRAPPING").reduce((total, line) => total + line.amount, 0)),
     storageGrossAmount: roundCurrency(storageRows.reduce((total, row) => total + row.grossAmount, 0)),
     storageDiscountAmount: roundCurrency(storageRows.reduce((total, row) => total + row.discountAmount, 0)),
     storageAmount: roundCurrency(storageRows.reduce((total, row) => total + row.amount, 0)),
-    outboundAmount: roundCurrency(outboundLines.reduce((total, line) => total + line.amount, 0)),
+    outboundAmount: 0,
     grandTotal: 0
   };
-  summary.grandTotal = roundCurrency(summary.inboundAmount + summary.wrappingAmount + summary.storageAmount + summary.outboundAmount);
+  summary.grandTotal = roundCurrency(summary.inboundAmount + summary.wrappingAmount + summary.storageAmount);
 
   return {
     startDate: billingRange.startDate,
@@ -257,7 +258,10 @@ function resolveInboundCharge(containerType: ContainerType, rates: BillingRates,
   };
 }
 
-function resolveStorageGraceDays(containerType: ContainerType) {
+function resolveStorageGraceDays(containerType: ContainerType, normalPalletGracePeriodEnabled: boolean) {
+  if (!normalPalletGracePeriodEnabled) {
+    return 0;
+  }
   return containerType === "WEST_COAST_TRANSFER" ? 0 : STORAGE_GRACE_DAYS;
 }
 
@@ -333,14 +337,13 @@ function buildInboundInvoiceLines(
   return lines;
 }
 
-function buildOutboundInvoiceLines(
+function countShippedPallets(
   outboundDocuments: OutboundDocument[],
   customerId: number | "all",
   locationId: number | "all" | undefined,
-  rates: BillingRates,
   billingRange: BillingRange
 ) {
-  const lines: BillingInvoiceLine[] = [];
+  let totalShippedPallets = 0;
 
   for (const document of outboundDocuments) {
     if (!belongsToCustomer(document.customerId, customerId)) {
@@ -363,27 +366,10 @@ function buildOutboundInvoiceLines(
     if (shippedPallets <= 0) {
       continue;
     }
-    const warehouseSummary = locationId && locationId !== "all"
-      ? (lineScope[0]?.locationName || document.storages || "-")
-      : (document.storages || "-");
-
-    lines.push({
-      id: `outbound-${document.id}`,
-      customerId: document.customerId,
-      customerName: document.customerName,
-      chargeType: "OUTBOUND",
-      reference: buildOutboundReference(document),
-      containerNo: "-",
-      warehouseSummary,
-      occurredOn,
-      quantity: shippedPallets,
-      unitRate: rates.outboundFeePerPallet,
-      amount: roundCurrency(shippedPallets * rates.outboundFeePerPallet),
-      meta: `${shippedPallets} shipped pallets`
-    });
+    totalShippedPallets += shippedPallets;
   }
 
-  return lines;
+  return totalShippedPallets;
 }
 
 function buildStorageCharges(
@@ -392,6 +378,7 @@ function buildStorageCharges(
   customerId: number | "all",
   locationId: number | "all" | undefined,
   containerType: ContainerType | "all" | undefined,
+  normalPalletGracePeriodEnabled: boolean,
   rates: BillingRates,
   billingRange: BillingRange,
   rangeDays: number
@@ -450,7 +437,7 @@ function buildStorageCharges(
       freeDailyBalanceMap: new Map<string, number>()
     };
 
-    const graceDays = resolveStorageGraceDays(pallet.containerType);
+    const graceDays = resolveStorageGraceDays(pallet.containerType, normalPalletGracePeriodEnabled);
     let storageDaysConsumed = countStorageDaysBeforeRange(intervals, billingRange.start, graceDays);
     let countedAnyDay = false;
     for (let dayCursor = new Date(billingRange.start); dayCursor < billingRange.endExclusive; dayCursor = shiftDay(dayCursor, 1)) {
@@ -889,12 +876,6 @@ function buildInboundReference(document: InboundDocument, containerNo: string) {
     return `Receipt ${document.id} | ${containerNo}`;
   }
   return `Receipt ${document.id}`;
-}
-
-function buildOutboundReference(document: OutboundDocument) {
-  return document.packingListNo.trim()
-    || document.orderRef.trim()
-    || `Shipment ${document.id}`;
 }
 
 function compareInvoiceLines(left: BillingInvoiceLine, right: BillingInvoiceLine) {

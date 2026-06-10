@@ -266,6 +266,7 @@ describe("buildBillingInvoicePdfDefinition", () => {
     expect(content.slice(0, lineDetailTitleIndex).map((block) => block.text)).toContain("Amount Summary");
     expect(content.slice(0, lineDetailTitleIndex).map((block) => block.text)).not.toContain("Charge Summary");
     expect(content.slice(0, lineDetailTitleIndex).map((block) => block.text)).not.toContain("Discount Sources");
+    expect(content.map((block) => block.text)).not.toContain("Storage Segment Detail");
 
     const amountSummaryTable = content[3].table.body;
     expect(amountSummaryTable[0].map((cell: { text: string }) => cell.text)).toEqual([
@@ -275,12 +276,16 @@ describe("buildBillingInvoicePdfDefinition", () => {
       "Discounts",
       "Net Amount"
     ]);
-    expect(JSON.stringify(amountSummaryTable)).not.toContain("Storage pallet-days");
-    expect(amountSummaryTable[1][0].text).toBe("Storage Charges");
+    expect(JSON.stringify(amountSummaryTable)).toContain("140 pallet-days");
+    expect(amountSummaryTable[1][0].text).toBe("Storage Segment Detail");
+    expect(amountSummaryTable[1][1].text).toBe("2026-03-01 to 2026-03-14 | 10 pallets | 14 days | 140 pallet-days");
     expect(amountSummaryTable[1][2].text).toBe("$140.00");
-    expect(amountSummaryTable[4][2].text).toBe("$140.00");
-    expect(amountSummaryTable[5][3].text).toBe("-$27.00");
-    expect(amountSummaryTable[6][4].text).toBe("$113.00");
+    expect(amountSummaryTable[2][0].text).toBe("Storage Segment Detail");
+    expect(amountSummaryTable[2][1].text).toBe("2026-03-01 to 2026-03-14 | 7 free pallet-days | Storage grace period");
+    expect(amountSummaryTable[2][3].text).toBe("-$7.00");
+    expect(amountSummaryTable[5][2].text).toBe("$140.00");
+    expect(amountSummaryTable[6][3].text).toBe("-$27.00");
+    expect(amountSummaryTable[7][4].text).toBe("$113.00");
     expect(JSON.stringify(content)).not.toContain("Invoice Notes");
     expect(JSON.stringify(content)).not.toContain("March billing");
   });
@@ -322,12 +327,16 @@ describe("buildBillingInvoicePdfDefinition", () => {
     const content = definition.content as any[];
     const amountSummaryTable = content[3].table.body;
     expect(amountSummaryTable[0].map((cell: { text: string }) => cell.text)).not.toContain("Container");
-    expect(amountSummaryTable[2][0].text).toBe("Discount source");
-    expect(amountSummaryTable[2][1].text).toBe("Storage grace period | Storage | GCXU5817233 | 7 free pallet-days");
-    expect(amountSummaryTable[2][3].text).toBe("-$7.00");
+    expect(amountSummaryTable[1][0].text).toBe("Storage Segment Detail");
+    expect(amountSummaryTable[1][1].text).toBe("2026-03-01 to 2026-03-14 | 10 pallets | 14 days | 140 pallet-days");
+    expect(amountSummaryTable[2][0].text).toBe("Storage Segment Detail");
+    expect(amountSummaryTable[2][1].text).toBe("2026-03-01 to 2026-03-14 | 7 free pallet-days | Storage grace period");
     expect(amountSummaryTable[3][0].text).toBe("Discount source");
-    expect(amountSummaryTable[3][1].text).toBe("Manual discount line | Line 2 | Courtesy discount");
-    expect(amountSummaryTable[3][3].text).toBe("-$20.00");
+    expect(amountSummaryTable[3][1].text).toBe("Storage grace period | Storage | GCXU5817233 | 7 free pallet-days");
+    expect(amountSummaryTable[3][3].text).toBe("-$7.00");
+    expect(amountSummaryTable[4][0].text).toBe("Discount source");
+    expect(amountSummaryTable[4][1].text).toBe("Manual discount line | Line 2 | Courtesy discount");
+    expect(amountSummaryTable[4][3].text).toBe("-$20.00");
 
     const lineDetailTitleIndex = content.findIndex((block) => block.text === "Line Item Detail");
     const lineDetailTable = content[lineDetailTitleIndex + 1].table.body;
@@ -345,19 +354,7 @@ describe("buildBillingInvoicePdfDefinition", () => {
     expect(lineDetailTable[3][2].text).toBe("Courtesy discount");
     expect(lineDetailTable[3][7].text).toBe("-$20.00");
     expect(lineDetailTable[3][8].text).toBe("Manual discount line");
-
-    const segmentTitleIndex = content.findIndex((block) => block.text === "Storage Segment Detail");
-    expect(content[segmentTitleIndex].pageBreak).toBe("before");
-    const segmentTable = content[segmentTitleIndex + 1].table.body;
-    const segmentHeaders = segmentTable[0].map((cell: { text: string }) => cell.text);
-    expect(segmentHeaders).toContain("Discount Source");
-    expect(segmentHeaders).not.toContain("Container");
-    expect(segmentHeaders).not.toContain("Warehouses");
-    expect(segmentTable[1][5].text).toBe("140 pallet-days");
-    expect(segmentTable[1][6].text).toBe("$140.00");
-    expect(segmentTable[2][5].text).toBe("7 free pallet-days");
-    expect(segmentTable[2][6].text).toBe("-$7.00");
-    expect(segmentTable[2][7].text).toBe("Storage grace period");
+    expect(content.findIndex((block) => block.text === "Storage Segment Detail")).toBe(-1);
   });
 
   it("aggregates overlapping storage segment dates when container columns are hidden", () => {
@@ -367,14 +364,100 @@ describe("buildBillingInvoicePdfDefinition", () => {
     });
 
     const content = definition.content as any[];
-    const segmentTitleIndex = content.findIndex((block) => block.text === "Storage Segment Detail");
-    const segmentTable = content[segmentTitleIndex + 1].table.body;
-
-    expect(segmentTable.slice(1).map((row: Array<{ text: string }>) => row.slice(1, 7).map((cell) => cell.text))).toEqual([
-      ["2026-04-01", "2026-04-02", "10", "2", "20 pallet-days", "$20.00"],
-      ["2026-04-03", "2026-04-04", "15", "2", "30 pallet-days", "$30.00"],
-      ["2026-04-05", "2026-04-06", "5", "2", "10 pallet-days", "$10.00"]
+    const amountSummaryTable = content[3].table.body;
+    expect(amountSummaryTable[0].map((cell: { text: string }) => cell.text)).toEqual([
+      "Summary Item",
+      "Basis / Source",
+      "Amount"
     ]);
+    expect(content.findIndex((block) => block.text === "Storage Segment Detail")).toBe(-1);
+
+    expect(amountSummaryTable.slice(1, 4).map((row: Array<{ text: string }>) => row.map((cell) => cell.text))).toEqual([
+      ["Storage Segment Detail", "2026-04-01 to 2026-04-02 | 10 pallets | 2 days | 20 pallet-days", "$20.00"],
+      ["Storage Segment Detail", "2026-04-03 to 2026-04-04 | 15 pallets | 2 days | 30 pallet-days", "$30.00"],
+      ["Storage Segment Detail", "2026-04-05 to 2026-04-06 | 5 pallets | 2 days | 10 pallet-days", "$10.00"]
+    ]);
+  });
+
+  it("includes storage segment details on mixed invoices", () => {
+    const base = createInboundInvoiceFixture();
+    const definition = buildBillingInvoicePdfDefinition({
+      invoice: {
+        ...base,
+        lines: [
+          ...base.lines,
+          {
+            ...createInvoiceFixture().lines[0],
+            id: 3003,
+            invoiceId: base.id,
+            sortOrder: 3,
+            amount: 140,
+            quantity: 140,
+            details: {
+              kind: "STORAGE_CONTAINER_SUMMARY",
+              warehousesTouched: ["NJ"],
+              palletsTracked: 10,
+              palletDays: 140,
+              freePalletDays: 0,
+              billablePalletDays: 140,
+              grossAmount: 140,
+              discountAmount: 0,
+              segments: [
+                {
+                  startDate: "2026-04-10",
+                  endDate: "2026-04-23",
+                  dayEndPallets: 10,
+                  billedDays: 14,
+                  palletDays: 140,
+                  freePalletDays: 0,
+                  billablePalletDays: 140,
+                  grossAmount: 140,
+                  discountAmount: 0,
+                  amount: 140
+                }
+              ]
+            }
+          }
+        ]
+      },
+      timeZone: "UTC"
+    });
+
+    const content = definition.content as any[];
+    expect(content.findIndex((block) => block.text === "Storage Segment Detail")).toBe(-1);
+    const amountSummaryTable = content[3].table.body;
+    expect(JSON.stringify(amountSummaryTable)).toContain("140 pallet-days");
+  });
+
+  it("omits zero-amount discount lines from line details", () => {
+    const invoice = createOverlappingSegmentInvoiceFixture();
+    const definition = buildBillingInvoicePdfDefinition({
+      invoice: {
+        ...invoice,
+        lineCount: invoice.lines.length + 1,
+        lines: [
+          ...invoice.lines,
+          {
+            ...createInvoiceFixture().lines[1],
+            id: 4001,
+            invoiceId: invoice.id,
+            description: "Zero discount",
+            unitRate: 0,
+            amount: 0,
+            sortOrder: 3
+          }
+        ]
+      },
+      timeZone: "UTC"
+    });
+
+    const content = definition.content as any[];
+    const lineDetailTitleIndex = content.findIndex((block) => block.text === "Line Item Detail");
+    const lineDetailTable = content[lineDetailTitleIndex + 1].table.body;
+    const lineHeaders = lineDetailTable[0].map((cell: { text: string }) => cell.text);
+
+    expect(JSON.stringify(lineDetailTable)).not.toContain("Zero discount");
+    expect(lineHeaders).not.toContain("Discount Source");
   });
 
   it("shows transfer inbound quantity as pallets instead of containers", () => {

@@ -230,6 +230,7 @@ describe("buildBillingPreviewPdfDefinition", () => {
     const amountSummaryTable = content[3].table.body;
     expect(content.map((block) => block.text)).not.toContain("Charge Summary");
     expect(content.map((block) => block.text)).not.toContain("Discount Sources");
+    expect(content.map((block) => block.text)).not.toContain("Storage Segment Detail");
     expect(amountSummaryTable[0].map((cell: { text: string }) => cell.text)).toEqual([
       "Summary Item",
       "Basis / Source",
@@ -237,17 +238,23 @@ describe("buildBillingPreviewPdfDefinition", () => {
       "Discounts",
       "Net Amount"
     ]);
-    expect(JSON.stringify(amountSummaryTable)).not.toContain("Storage pallet-days");
-    expect(amountSummaryTable[1][0].text).toBe("Storage Charges");
+    expect(JSON.stringify(amountSummaryTable)).toContain("140 pallet-days");
+    expect(amountSummaryTable[1][0].text).toBe("Storage Segment Detail");
+    expect(amountSummaryTable[1][1].text).toBe("2026-03-01 to 2026-03-14 | 10 pallets | 14 days | 140 pallet-days");
     expect(amountSummaryTable[1][2].text).toBe("$140.00");
-    expect(amountSummaryTable[1][3].text).toBe("-$7.00");
-    expect(amountSummaryTable[1][4].text).toBe("$133.00");
-    expect(amountSummaryTable[2][0].text).toBe("Discount source");
-    expect(amountSummaryTable[2][1].text).toBe("Storage grace period | Storage | GCXU5817233 | 7 free pallet-days");
+    expect(amountSummaryTable[1][3].text).toBe("-");
+    expect(amountSummaryTable[1][4].text).toBe("-");
+    expect(amountSummaryTable[2][0].text).toBe("Storage Segment Detail");
+    expect(amountSummaryTable[2][1].text).toBe("2026-03-01 to 2026-03-14 | 7 free pallet-days | Storage grace period");
+    expect(amountSummaryTable[2][2].text).toBe("-");
     expect(amountSummaryTable[2][3].text).toBe("-$7.00");
-    expect(amountSummaryTable[3][2].text).toBe("$140.00");
-    expect(amountSummaryTable[4][3].text).toBe("-$7.00");
-    expect(amountSummaryTable[5][4].text).toBe("$133.00");
+    expect(amountSummaryTable[2][4].text).toBe("-");
+    expect(amountSummaryTable[3][0].text).toBe("Discount source");
+    expect(amountSummaryTable[3][1].text).toBe("Storage grace period | Storage | GCXU5817233 | 7 free pallet-days");
+    expect(amountSummaryTable[3][3].text).toBe("-$7.00");
+    expect(amountSummaryTable[4][2].text).toBe("$140.00");
+    expect(amountSummaryTable[5][3].text).toBe("-$7.00");
+    expect(amountSummaryTable[6][4].text).toBe("$133.00");
 
     const lineDetailTitleIndex = content.findIndex((block) => block.text === "Line Item Detail");
     expect(content[lineDetailTitleIndex].pageBreak).toBe("before");
@@ -261,17 +268,6 @@ describe("buildBillingPreviewPdfDefinition", () => {
     expect(lineDetailTable[2][5].text).toBe("7 free pallet-days");
     expect(lineDetailTable[2][7].text).toBe("-$7.00");
     expect(lineDetailTable[2][8].text).toBe("Storage grace period");
-
-    const segmentTitleIndex = content.findIndex((block) => block.text === "Storage Segment Detail");
-    expect(content[segmentTitleIndex].pageBreak).toBe("before");
-    const segmentTable = content[segmentTitleIndex + 1].table.body;
-    const segmentHeaders = segmentTable[0].map((cell: { text: string }) => cell.text);
-    expect(segmentHeaders).not.toContain("Container");
-    expect(segmentHeaders).not.toContain("Warehouses");
-    expect(segmentTable[1][5].text).toBe("140 pallet-days");
-    expect(segmentTable[1][6].text).toBe("$140.00");
-    expect(segmentTable[2][5].text).toBe("7 free pallet-days");
-    expect(segmentTable[2][6].text).toBe("-$7.00");
   });
 
   it("aggregates overlapping storage segment dates when container columns are hidden", () => {
@@ -285,13 +281,18 @@ describe("buildBillingPreviewPdfDefinition", () => {
     const definition = buildBillingPreviewPdfDefinition(document);
 
     const content = definition.content as any[];
-    const segmentTitleIndex = content.findIndex((block) => block.text === "Storage Segment Detail");
-    const segmentTable = content[segmentTitleIndex + 1].table.body;
+    const amountSummaryTable = content[3].table.body;
+    expect(amountSummaryTable[0].map((cell: { text: string }) => cell.text)).toEqual([
+      "Summary Item",
+      "Basis / Source",
+      "Amount"
+    ]);
+    expect(content.findIndex((block) => block.text === "Storage Segment Detail")).toBe(-1);
 
-    expect(segmentTable.slice(1).map((row: Array<{ text: string }>) => row.slice(1, 7).map((cell) => cell.text))).toEqual([
-      ["2026-04-01", "2026-04-02", "10", "2", "20 pallet-days", "$20.00"],
-      ["2026-04-03", "2026-04-04", "15", "2", "30 pallet-days", "$30.00"],
-      ["2026-04-05", "2026-04-06", "5", "2", "10 pallet-days", "$10.00"]
+    expect(amountSummaryTable.slice(1, 4).map((row: Array<{ text: string }>) => row.map((cell) => cell.text))).toEqual([
+      ["Storage Segment Detail", "2026-04-01 to 2026-04-02 | 10 pallets | 2 days | 20 pallet-days", "$20.00"],
+      ["Storage Segment Detail", "2026-04-03 to 2026-04-04 | 15 pallets | 2 days | 30 pallet-days", "$30.00"],
+      ["Storage Segment Detail", "2026-04-05 to 2026-04-06 | 5 pallets | 2 days | 10 pallet-days", "$10.00"]
     ]);
   });
 

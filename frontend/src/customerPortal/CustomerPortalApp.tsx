@@ -1,4 +1,4 @@
-import { ChevronDown, LogOut, PackageSearch, RefreshCw } from "lucide-react";
+import { ChevronDown, LogOut, PackageSearch } from "lucide-react";
 import { Suspense, lazy, type ReactNode, useEffect, useState } from "react";
 
 import { Button } from "../components/ui/button";
@@ -200,7 +200,6 @@ export function CustomerPortalApp({ onExitToAdmin }: CustomerPortalAppProps) {
       <div className="grid min-h-[calc(100vh-4rem)] grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)]">
         <CustomerPortalSidebar
           activeSection={activeSection}
-          portalAccess={portalAccess}
           onChangeSection={setActiveSection}
         />
 
@@ -269,32 +268,26 @@ function CustomerPortalUserMenu({
 
 function CustomerPortalSidebar({
   activeSection,
-  portalAccess,
   onChangeSection
 }: {
   activeSection: CustomerPortalSection;
-  portalAccess: PortalAccess | null;
   onChangeSection: (section: CustomerPortalSection) => void;
 }) {
   const { t } = useI18n();
   const sidebarActiveSection = sidebarParents[activeSection];
-  const navItems: Array<{ key: CustomerPortalSection; label: string; description: string; icon: ReactNode }> = [
-    { key: "inventory", label: t("customerPortalInventory"), description: t("customerPortalInventoryNavDesc"), icon: <PackageSearch className="h-5 w-5" /> }
+  const navItems: Array<{ key: CustomerPortalSection; label: string; icon: ReactNode }> = [
+    { key: "inventory", label: t("customerPortalInventory"), icon: <PackageSearch className="h-5 w-5" /> }
   ];
 
   return (
     <aside className="border-b border-slate-200 bg-white p-4 lg:sticky lg:top-16 lg:h-[calc(100vh-4rem)] lg:border-b-0 lg:border-r">
-      <div className="mb-5 rounded-lg border border-slate-200 bg-slate-50 p-3">
-        <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{t("customerPortal")}</span>
-        <strong className="mt-1 block truncate text-sm text-slate-950">{portalAccess?.customerName || t("customerPortal")}</strong>
-      </div>
       <nav className="grid gap-2" aria-label={t("customerPortal")}>
         {navItems.map((item) => (
           <button
             key={item.key}
             type="button"
             className={cn(
-              "flex min-h-16 w-full items-start gap-3 rounded-lg px-3 py-3 text-left transition",
+              "flex min-h-12 w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition",
               sidebarActiveSection === item.key
                 ? "bg-slate-950 text-white shadow-sm"
                 : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
@@ -302,20 +295,15 @@ function CustomerPortalSidebar({
             aria-current={sidebarActiveSection === item.key ? "page" : undefined}
             onClick={() => onChangeSection(item.key)}
           >
-            <span className={cn("mt-0.5", sidebarActiveSection === item.key ? "text-white" : "text-slate-500")}>{item.icon}</span>
+            <span className={cn(sidebarActiveSection === item.key ? "text-white" : "text-slate-500")}>{item.icon}</span>
             <span className="min-w-0">
               <span className="flex items-center gap-1.5 text-sm font-semibold">
                 {item.label}
               </span>
-              <span className={cn("mt-0.5 block text-xs leading-5", sidebarActiveSection === item.key ? "text-slate-300" : "text-slate-500")}>{item.description}</span>
             </span>
           </button>
         ))}
       </nav>
-      <div className="mt-6 hidden rounded-lg border border-slate-200 bg-white p-3 text-xs leading-5 text-slate-500 lg:block">
-        <RefreshCw className="mb-2 h-4 w-4 text-slate-400" />
-        {t("customerPortalDesc")}
-      </div>
     </aside>
   );
 }

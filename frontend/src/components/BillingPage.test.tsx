@@ -435,6 +435,112 @@ describe("BillingPage", () => {
     expect(payload.lines[0].details?.segments).toHaveLength(2);
   });
 
+  it("creates storage settlement invoices without normal pallet grace days when the switch is off", async () => {
+    const customer = createCustomer({ id: 1, name: "Acme" });
+
+    getPallets.mockResolvedValue([
+      {
+        id: 1,
+        parentPalletId: 0,
+        palletCode: "PLT-001",
+        containerVisitId: 1,
+        sourceInboundDocumentId: 10,
+        sourceInboundLineId: 100,
+        actualArrivalDate: "2026-03-01",
+        customerId: 1,
+        customerName: "Acme",
+        skuMasterId: 11,
+        sku: "SKU-1",
+        description: "Widget",
+        currentLocationId: 1,
+        currentLocationName: "NJ",
+        currentStorageSection: "A-01",
+        currentContainerNo: "CONT-NO-GRACE",
+        containerType: "NORMAL",
+        status: "STORED",
+        createdAt: "2026-03-01T09:00:00Z",
+        updatedAt: "2026-03-31T09:00:00Z",
+        contents: []
+      }
+    ]);
+    getPalletLocationEvents.mockResolvedValue([
+      {
+        id: 1,
+        palletId: 1,
+        palletCode: "PLT-001",
+        containerVisitId: 1,
+        customerId: 1,
+        customerName: "Acme",
+        locationId: 1,
+        locationName: "NJ",
+        storageSection: "A-01",
+        containerNo: "CONT-NO-GRACE",
+        eventType: "RECEIVED",
+        quantityDelta: 100,
+        palletDelta: 1,
+        eventTime: "2026-03-01T09:00:00Z",
+        createdAt: "2026-03-01T09:00:00Z"
+      }
+    ]);
+
+    renderWithProviders(
+      <BillingPage
+        customers={[customer]}
+        locations={[createLocation()]}
+        inboundDocuments={[]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        onOpenBillingContainerDetail={vi.fn()}
+        onOpenBillingInvoice={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-03-01" } });
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-03-31" } });
+    await pickComboOption("Customer", "Acme");
+    fireEvent.click(screen.getByRole("button", { name: "Storage Settlement" }));
+    await pickComboOption("Container Type", "Normal");
+
+    const graceSwitch = screen.getByRole("switch", { name: "Normal 7-day free" });
+    expect(graceSwitch).toBeChecked();
+    fireEvent.click(graceSwitch);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Create Storage Invoice" }));
+
+    await waitFor(() => {
+      expect(createBillingInvoice).toHaveBeenCalledTimes(1);
+    });
+
+    const payload = createBillingInvoice.mock.calls[0][0];
+    expect(payload.lines).toHaveLength(1);
+    expect(payload.lines[0]).toMatchObject({
+      chargeType: "STORAGE",
+      containerNo: "CONT-NO-GRACE",
+      quantity: 31,
+      unitRate: 1,
+      amount: 31,
+      details: {
+        kind: "STORAGE_CONTAINER_SUMMARY",
+        palletsTracked: 1,
+        palletDays: 31,
+        normalPalletGracePeriodEnabled: false,
+        freePalletDays: 0,
+        billablePalletDays: 31,
+        grossAmount: 31,
+        discountAmount: 0
+      }
+    });
+    expect(payload.lines[0].details?.segments).toEqual([
+      expect.objectContaining({
+        palletDays: 31,
+        freePalletDays: 0,
+        billablePalletDays: 31,
+        discountAmount: 0,
+        amount: 31
+      })
+    ]);
+  });
+
   it("creates mixed invoices from the exact preview line set", async () => {
     const customer = createCustomer({ id: 1, name: "Acme" });
 
@@ -528,13 +634,49 @@ describe("BillingPage", () => {
 
     const payload = createBillingInvoice.mock.calls[0][0];
     expect(payload.invoiceType).toBe("MIXED");
-    expect(payload.lines.map((line: { chargeType: string }) => line.chargeType)).toEqual(["INBOUND", "WRAPPING", "OUTBOUND", "STORAGE"]);
+    expect(payload.lines.map((line: { chargeType: string }) => line.chargeType)).toEqual(["INBOUND", "WRAPPING", "STORAGE"]);
     expect(payload.lines).toMatchObject([
       { chargeType: "INBOUND", quantity: 1, amount: 450, sourceType: "AUTO" },
       { chargeType: "WRAPPING", quantity: 2, amount: 30, sourceType: "AUTO" },
-      { chargeType: "OUTBOUND", quantity: 1, amount: 0, sourceType: "AUTO" },
       { chargeType: "STORAGE", quantity: 20, amount: 20, sourceType: "AUTO" }
     ]);
+    const storageLine = payload.lines.find((line: { chargeType: string }) => line.chargeType === "STORAGE");
+    expect(storageLine.details).toMatchObject({
+      kind: "STORAGE_CONTAINER_SUMMARY",
+      palletsTracked: 1,
+      palletDays: 27,
+      normalPalletGracePeriodEnabled: true,
+      freePalletDays: 7,
+      billablePalletDays: 20,
+      grossAmount: 27,
+      discountAmount: 7,
+      segments: [
+        {
+          startDate: "2026-03-05",
+          endDate: "2026-03-11",
+          dayEndPallets: 1,
+          billedDays: 7,
+          palletDays: 7,
+          freePalletDays: 7,
+          billablePalletDays: 0,
+          grossAmount: 7,
+          discountAmount: 7,
+          amount: 0
+        },
+        {
+          startDate: "2026-03-12",
+          endDate: "2026-03-31",
+          dayEndPallets: 1,
+          billedDays: 20,
+          palletDays: 20,
+          freePalletDays: 0,
+          billablePalletDays: 20,
+          grossAmount: 20,
+          discountAmount: 0,
+          amount: 20
+        }
+      ]
+    });
   });
 
   it("passes the selected warehouse scope into storage settlement invoice creation", async () => {

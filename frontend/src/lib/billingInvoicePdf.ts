@@ -132,9 +132,12 @@ export async function downloadBillingInvoicePdf({ invoice, timeZone }: BillingIn
 
 export function buildBillingInvoicePdfDefinition({ invoice, timeZone }: BillingInvoicePdfInput): TDocumentDefinitions {
   const header = getInvoiceHeader(invoice);
+  const visibleLines = filterVisibleInvoiceLines(invoice.lines);
   const totals = getBillingInvoiceDisplayTotals(invoice);
-  const chargeSummaryRows = buildChargeSummaryRows(invoice.lines);
-  const discountSourceRows = buildDiscountSourceRows(invoice.lines);
+  const chargeSummaryRows = buildChargeSummaryRows(visibleLines);
+  const discountSourceRows = buildDiscountSourceRows(visibleLines);
+  const storageSegmentRows = flattenStorageSettlementSegments(visibleLines);
+  const storageSegmentDetailRows = buildStorageSegmentDetailRows(storageSegmentRows);
   const invoiceDate = getInvoiceDate(invoice);
   const dueDate = getDueDate(invoiceDate, header.paymentDueDays);
 
@@ -158,24 +161,16 @@ export function buildBillingInvoicePdfDefinition({ invoice, timeZone }: BillingI
       margin: [0, 0, 0, 10]
     },
     { text: "Amount Summary", style: "sectionTitle", margin: [0, 0, 0, 4] },
-    buildAmountSummaryTable(totals, chargeSummaryRows, discountSourceRows)
+    buildAmountSummaryTable(totals, chargeSummaryRows, discountSourceRows, storageSegmentDetailRows)
   ];
 
   if (header.paymentInstructions) {
     content.push({ text: header.paymentInstructions, style: "pageSubtitle", margin: [0, 6, 0, 0] });
   }
 
-  if (invoice.lines.length > 0) {
+  if (visibleLines.length > 0) {
     content.push({ text: "Line Item Detail", style: "sectionTitle", margin: [0, 0, 0, 4], pageBreak: "before" });
-    content.push(buildLineDetailTable(invoice.lines, invoice.rates.transferInboundFeePerPallet));
-  }
-
-  if (invoice.invoiceType === "STORAGE_SETTLEMENT") {
-    const segmentRows = flattenStorageSettlementSegments(invoice.lines);
-    if (segmentRows.length > 0) {
-      content.push({ text: "Storage Segment Detail", style: "sectionTitle", margin: [0, 0, 0, 4], pageBreak: "before" });
-      content.push(buildStorageSegmentTable(segmentRows));
-    }
+    content.push(buildLineDetailTable(visibleLines, invoice.rates.transferInboundFeePerPallet));
   }
 
   return {
@@ -244,8 +239,39 @@ function buildInvoiceHeader(invoice: BillingInvoice, totals: InvoiceDisplayTotal
 function buildAmountSummaryTable(
   totals: InvoiceDisplayTotals,
   chargeRows: ChargeSummaryRow[],
-  discountRows: DiscountSourceRow[]
+  discountRows: DiscountSourceRow[],
+  segmentRows: StorageSegmentDetailRow[]
 ): Content {
+  const showDiscounts = totals.discountTotal !== 0
+    || discountRows.length > 0
+    || chargeRows.some((row) => row.discountAmount !== 0);
+  const summaryRows = buildAmountSummaryChargeRows(chargeRows, segmentRows, showDiscounts);
+  if (!showDiscounts) {
+    const body: TableCell[][] = [
+      [
+        headerCell("Summary Item"),
+        headerCell("Basis / Source"),
+        headerCell("Amount")
+      ],
+      ...summaryRows,
+      [
+        { text: "Amount Due", style: "amountDueLabel" },
+        { text: "", style: "amountDueValue" },
+        { text: formatMoney(totals.grandTotal), style: "amountDueValue" }
+      ]
+    ];
+
+    return {
+      table: {
+        headerRows: 1,
+        dontBreakRows: true,
+        widths: [118, "*", 82],
+        body
+      },
+      layout: BILLING_TABLE_LAYOUT_NAME
+    };
+  }
+
   const body: TableCell[][] = [
     [
       headerCell("Summary Item"),
@@ -254,19 +280,13 @@ function buildAmountSummaryTable(
       headerCell("Discounts"),
       headerCell("Net Amount")
     ],
-    ...chargeRows.map((row, index): TableCell[] => ([
-      bodyCell(row.chargeType, "tableCell", index),
-      bodyCell("Charge summary", "tableCell", index),
-      bodyCell(formatMoney(row.grossAmount), "tableCellRight", index),
-      bodyCell(formatDiscountAmount(row.discountAmount), "tableCellRight", index),
-      bodyCell(formatMoney(row.netAmount), "tableCellRight", index)
-    ])),
+    ...summaryRows,
     ...discountRows.map((row, index): TableCell[] => ([
-      bodyCell("Discount source", "tableCell", index + chargeRows.length),
-      bodyCell(`${row.source} | ${row.reference} | ${row.basis}`, "tableCell", index + chargeRows.length),
-      bodyCell("-", "tableCellRight", index + chargeRows.length),
-      bodyCell(formatDiscountAmount(row.amount), "tableCellRight", index + chargeRows.length),
-      bodyCell("-", "tableCellRight", index + chargeRows.length)
+      bodyCell("Discount source", "tableCell", index + summaryRows.length),
+      bodyCell(`${row.source} | ${row.reference} | ${row.basis}`, "tableCell", index + summaryRows.length),
+      bodyCell("-", "tableCellRight", index + summaryRows.length),
+      bodyCell(formatDiscountAmount(row.amount), "tableCellRight", index + summaryRows.length),
+      bodyCell("-", "tableCellRight", index + summaryRows.length)
     ])),
     [
       { text: "Subtotal before discounts", style: "tableTotalLabel" },
@@ -302,16 +322,85 @@ function buildAmountSummaryTable(
   };
 }
 
+function buildAmountSummaryChargeRows(
+  chargeRows: ChargeSummaryRow[],
+  segmentRows: StorageSegmentDetailRow[],
+  showDiscounts: boolean
+) {
+  const rows: TableCell[][] = [];
+  for (const chargeRow of chargeRows) {
+    if (chargeRow.chargeType === "Storage Charges" && segmentRows.length > 0) {
+      segmentRows.forEach((segmentRow) => {
+        rows.push(buildStorageSegmentSummaryRow(segmentRow, rows.length, showDiscounts));
+      });
+      continue;
+    }
+
+    rows.push(showDiscounts
+      ? [
+        bodyCell(chargeRow.chargeType, "tableCell", rows.length),
+        bodyCell(chargeSummaryBasis(chargeRow), "tableCell", rows.length),
+        bodyCell(formatMoney(chargeRow.grossAmount), "tableCellRight", rows.length),
+        bodyCell(formatDiscountAmount(chargeRow.discountAmount), "tableCellRight", rows.length),
+        bodyCell(formatMoney(chargeRow.netAmount), "tableCellRight", rows.length)
+      ]
+      : [
+        bodyCell(chargeRow.chargeType, "tableCell", rows.length),
+        bodyCell(chargeSummaryBasis(chargeRow), "tableCell", rows.length),
+        bodyCell(formatMoney(chargeRow.netAmount), "tableCellRight", rows.length)
+      ]);
+  }
+  return rows;
+}
+
+function buildStorageSegmentSummaryRow(row: StorageSegmentDetailRow, index: number, showDiscounts: boolean): TableCell[] {
+  const isDiscountRow = row.amount < 0 || row.discountSource !== "-";
+  if (!showDiscounts) {
+    return [
+      bodyCell("Storage Segment Detail", "tableCell", index),
+      bodyCell(formatStorageSegmentBasis(row), "tableCell", index),
+      bodyCell(formatMoney(row.amount), "tableCellRight", index)
+    ];
+  }
+
+  return [
+    bodyCell("Storage Segment Detail", "tableCell", index),
+    bodyCell(formatStorageSegmentBasis(row), "tableCell", index),
+    bodyCell(isDiscountRow ? "-" : formatMoney(row.amount), "tableCellRight", index),
+    bodyCell(isDiscountRow ? formatDiscountAmount(row.amount) : "-", "tableCellRight", index),
+    bodyCell("-", "tableCellRight", index)
+  ];
+}
+
+function formatStorageSegmentBasis(row: StorageSegmentDetailRow) {
+  if (row.discountSource !== "-") {
+    return `${row.startDate} to ${row.endDate} | ${row.basis} | ${row.discountSource}`;
+  }
+
+  return `${row.startDate} to ${row.endDate} | ${row.pallets} ${unitLabel(row.pallets, "pallet", "pallets")} | ${row.days} ${unitLabel(row.days, "day", "days")} | ${row.basis}`;
+}
+
+function unitLabel(value: string, singular: string, plural: string) {
+  return value === "1" ? singular : plural;
+}
+
+function chargeSummaryBasis(row: ChargeSummaryRow) {
+  return row.chargeType === "Storage Charges" ? "Storage Segment Detail" : "Charge summary";
+}
+
 function buildLineDetailTable(lines: BillingInvoiceLineData[], transferInboundFeePerPallet?: number): Content {
   const rows = buildLineDetailRows(lines, transferInboundFeePerPallet);
+  const showDiscountSource = rows.some((row) => row.discountSource && row.discountSource !== "-");
 
   return {
     table: {
       headerRows: 1,
       dontBreakRows: true,
-      widths: [18, 45, "*", 55, 42, 58, 44, 52, 76],
+      widths: showDiscountSource
+        ? [18, 45, "*", 55, 42, 58, 44, 52, 76]
+        : [18, 45, "*", 55, 42, 58, 44, 52],
       body: [
-        [
+        ([
           headerCell("#"),
           headerCell("Charge"),
           headerCell("Description"),
@@ -320,8 +409,8 @@ function buildLineDetailTable(lines: BillingInvoiceLineData[], transferInboundFe
           headerCell("Qty / Basis"),
           headerCell("Unit Rate"),
           headerCell("Amount"),
-          headerCell("Discount Source")
-        ],
+          ...(showDiscountSource ? [headerCell("Discount Source")] : [])
+        ]),
         ...rows.map((row, index) => ([
           bodyCell(row.lineNo, "tableCellCenter", index),
           bodyCell(row.charge, "tableCellCenter", index),
@@ -331,42 +420,7 @@ function buildLineDetailTable(lines: BillingInvoiceLineData[], transferInboundFe
           bodyCell(row.quantity, "tableCellRight", index),
           bodyCell(row.rate, "tableCellRight", index),
           bodyCell(formatMoney(row.amount), "tableCellRight", index),
-          bodyCell(row.discountSource, "tableCell", index)
-        ]))
-      ]
-    },
-    layout: BILLING_TABLE_LAYOUT_NAME
-  };
-}
-
-function buildStorageSegmentTable(segmentRows: StorageSegmentRow[]): Content {
-  const rows = buildStorageSegmentDetailRows(segmentRows);
-
-  return {
-    table: {
-      headerRows: 1,
-      dontBreakRows: true,
-      widths: [20, 58, 58, 42, 36, "*", 55, 78],
-      body: [
-        [
-          headerCell("#"),
-          headerCell("Start"),
-          headerCell("End"),
-          headerCell("Pallets"),
-          headerCell("Days"),
-          headerCell("Basis"),
-          headerCell("Amount"),
-          headerCell("Discount Source")
-        ],
-        ...rows.map((row, index) => ([
-          bodyCell(row.lineNo, "tableCellCenter", index),
-          bodyCell(row.startDate, "tableCellCenter", index),
-          bodyCell(row.endDate, "tableCellCenter", index),
-          bodyCell(row.pallets, "tableCellRight", index),
-          bodyCell(row.days, "tableCellRight", index),
-          bodyCell(row.basis, "tableCellRight", index),
-          bodyCell(formatMoney(row.amount), "tableCellRight", index),
-          bodyCell(row.discountSource, "tableCell", index)
+          ...(showDiscountSource ? [bodyCell(row.discountSource, "tableCell", index)] : [])
         ]))
       ]
     },
@@ -529,7 +583,7 @@ function buildDiscountSourceRows(lines: BillingInvoiceLineData[]): DiscountSourc
 function buildLineDetailRows(lines: BillingInvoiceLineData[], transferInboundFeePerPallet?: number) {
   const rows: LineDetailRow[] = [];
 
-  lines.forEach((line, index) => {
+  filterVisibleInvoiceLines(lines).forEach((line, index) => {
     if (line.chargeType === "DISCOUNT") {
       rows.push({
         lineNo: String(index + 1),
@@ -574,6 +628,14 @@ function buildLineDetailRows(lines: BillingInvoiceLineData[], transferInboundFee
   });
 
   return rows;
+}
+
+function filterVisibleInvoiceLines(lines: BillingInvoiceLineData[]) {
+  return lines.filter(isVisibleInvoiceLine);
+}
+
+function isVisibleInvoiceLine(line: BillingInvoiceLineData) {
+  return line.chargeType !== "DISCOUNT" || roundCurrency(line.amount) !== 0;
 }
 
 function buildStorageSegmentDetailRows(segmentRows: StorageSegmentRow[]) {

@@ -6,6 +6,7 @@ export type BillingWorkspaceContext = {
 	customerId: number | "all";
 	warehouseLocationId: number | "all";
 	containerType: "all" | "NORMAL" | "WEST_COAST_TRANSFER";
+	normalPalletGracePeriodEnabled: boolean;
 	rates: BillingRates;
 };
 
@@ -52,6 +53,7 @@ export function readBillingWorkspaceContext(): BillingWorkspaceContext | null {
 			customerId: parsed.customerId,
 			warehouseLocationId: parsed.warehouseLocationId ?? "all",
 			containerType: parsed.containerType ?? "all",
+			normalPalletGracePeriodEnabled: parsed.normalPalletGracePeriodEnabled !== false,
 			rates: {
 				inboundContainerFee: normalizeRate(parsed.rates.inboundContainerFee),
 				transferInboundFeePerPallet: normalizeRate(parsed.rates.transferInboundFeePerPallet ?? 10),

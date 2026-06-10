@@ -22,6 +22,7 @@ import {
   Chip,
   Divider,
   Drawer,
+  FormControlLabel,
   IconButton,
   InputAdornment,
   ListItemIcon,
@@ -29,6 +30,7 @@ import {
   MenuItem,
   Menu,
   Stack,
+  Switch,
   Tab,
   Tabs,
   TextField,
@@ -46,7 +48,8 @@ import {
   getCurrentBillingDateRange,
   type BillingInvoiceLine,
   type BillingRates,
-  type BillingStorageRow
+  type BillingStorageRow,
+  type BillingStorageSegment
 } from "../lib/billingPreview";
 import { downloadBillingPreviewPdf } from "../lib/billingPreviewPdf";
 import { formatDateTimeValue } from "../lib/dates";
@@ -98,8 +101,15 @@ type BillingContainerSummaryRow = {
   inboundAmount: number;
   wrappingAmount: number;
   storageAmount: number;
-  outboundAmount: number;
   totalAmount: number;
+};
+
+type BillingStorageSegmentDisplayRow = {
+  customerName: string;
+  containerNo: string;
+  containerType: ContainerType;
+  warehouseLabel: string;
+  segment: BillingStorageSegment;
 };
 
 type BillingWorkspaceMode = "OVERVIEW" | "STORAGE_SETTLEMENT";
@@ -123,6 +133,7 @@ export function BillingPage({
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>("all");
   const [selectedWarehouseLocationId, setSelectedWarehouseLocationId] = useState<string>("all");
   const [selectedContainerType, setSelectedContainerType] = useState<ContainerType | "all">("all");
+  const [normalPalletGracePeriodEnabled, setNormalPalletGracePeriodEnabled] = useState(true);
   const [workspaceMode, setWorkspaceMode] = useState<BillingWorkspaceMode>("OVERVIEW");
   const [rates, setRates] = useState<BillingRates>(DEFAULT_BILLING_RATES);
   const [pallets, setPallets] = useState<PalletTrace[]>([]);
@@ -189,9 +200,10 @@ export function BillingPage({
       customerId,
       warehouseLocationId,
       containerType: selectedContainerType,
+      normalPalletGracePeriodEnabled,
       rates
     });
-  }, [customerId, rates, selectedContainerType, selectedEndDate, selectedStartDate, warehouseLocationId]);
+  }, [customerId, normalPalletGracePeriodEnabled, rates, selectedContainerType, selectedEndDate, selectedStartDate, warehouseLocationId]);
 
   // Load invoice history
   useEffect(() => {
@@ -236,19 +248,25 @@ export function BillingPage({
     const customerName = selectedCustomer?.name ?? billingPreview.customerName;
     const invoiceType: BillingInvoiceType = workspaceMode === "STORAGE_SETTLEMENT" ? "STORAGE_SETTLEMENT" : "MIXED";
     const lines = invoiceType === "STORAGE_SETTLEMENT"
-      ? buildStorageSettlementInvoiceLines(storageSettlementRows)
-      : activeInvoiceLines.map((line) => ({
-          chargeType: line.chargeType,
-          description: line.meta || chargeTypeDescription(line.chargeType),
-          reference: line.reference,
-          containerNo: line.containerNo,
-          warehouse: line.warehouseSummary,
-          occurredOn: line.occurredOn ?? undefined,
-          quantity: line.quantity,
-          unitRate: line.unitRate,
-          amount: line.amount,
-          sourceType: "AUTO"
-        }));
+      ? buildStorageSettlementInvoiceLines(storageSettlementRows, normalPalletGracePeriodEnabled)
+      : activeInvoiceLines.map((line) => {
+          const storageRow = line.chargeType === "STORAGE" ? storageRowsByInvoiceLineId.get(line.id) : undefined;
+          return {
+            chargeType: line.chargeType,
+            description: line.meta || chargeTypeDescription(line.chargeType),
+            reference: line.reference,
+            containerNo: line.containerNo,
+            warehouse: line.warehouseSummary,
+            occurredOn: line.occurredOn ?? undefined,
+            quantity: line.quantity,
+            unitRate: line.unitRate,
+            amount: line.amount,
+            sourceType: "AUTO",
+            ...(storageRow
+              ? { details: buildStorageInvoiceLineDetails(storageRow, normalPalletGracePeriodEnabled) }
+              : {})
+          };
+        });
 
     if (lines.length === 0) {
       return;
@@ -304,8 +322,9 @@ export function BillingPage({
     outboundDocuments,
     locationId: warehouseLocationId,
     containerType: selectedContainerType,
+    normalPalletGracePeriodEnabled,
     rates
-  }), [customerId, customers, inboundDocuments, outboundDocuments, palletLocationEvents, pallets, rates, selectedContainerType, selectedEndDate, selectedStartDate, warehouseLocationId, workspaceMode]);
+  }), [customerId, customers, inboundDocuments, normalPalletGracePeriodEnabled, outboundDocuments, palletLocationEvents, pallets, rates, selectedContainerType, selectedEndDate, selectedStartDate, warehouseLocationId, workspaceMode]);
 
   const previousPeriodRange = useMemo(
     () => computePreviousPeriodRange(selectedStartDate, selectedEndDate),
@@ -324,9 +343,10 @@ export function BillingPage({
       outboundDocuments,
       locationId: warehouseLocationId,
       containerType: selectedContainerType,
+      normalPalletGracePeriodEnabled,
       rates
     });
-  }, [customerId, customers, inboundDocuments, outboundDocuments, palletLocationEvents, pallets, previousPeriodRange, rates, selectedContainerType, warehouseLocationId]);
+  }, [customerId, customers, inboundDocuments, normalPalletGracePeriodEnabled, outboundDocuments, palletLocationEvents, pallets, previousPeriodRange, rates, selectedContainerType, warehouseLocationId]);
   const containerSummaryRows = useMemo(
     () => buildBillingContainerSummaryRows(billingPreview.invoiceLines, billingPreview.storageRows),
     [billingPreview.invoiceLines, billingPreview.storageRows]
@@ -338,6 +358,19 @@ export function BillingPage({
     }
     return billingPreview.storageRows.filter((row) => row.containerNo.toUpperCase().includes(filter));
   }, [billingPreview.storageRows, containerNoFilter]);
+
+  const activeStorageSegmentRows = useMemo(
+    () => flattenBillingStorageSegmentDisplayRows(storageSettlementRows),
+    [storageSettlementRows]
+  );
+
+  const storageRowsByInvoiceLineId = useMemo(() => {
+    const rowsById = new Map<string, BillingStorageRow>();
+    for (const row of billingPreview.storageRows) {
+      rowsById.set(buildStorageInvoiceLineId(row), row);
+    }
+    return rowsById;
+  }, [billingPreview.storageRows]);
 
   const activeInvoiceLines = useMemo(() => {
     const filter = containerNoFilter.trim().toUpperCase();
@@ -363,6 +396,7 @@ export function BillingPage({
     () => storageSettlementRows.reduce((sum, row) => sum + row.discountAmount, 0),
     [storageSettlementRows]
   );
+  const hasStorageDiscount = storageSettlementDiscountTotal > 0;
   const storageSettlementPalletDays = useMemo(
     () => storageSettlementRows.reduce((sum, row) => sum + row.palletDays, 0),
     [storageSettlementRows]
@@ -429,8 +463,8 @@ export function BillingPage({
     [billingPreview.customerName, billingPreview.endDate, billingPreview.startDate, selectedContainerType, selectedWarehouse?.name, warehouseLocationId, workspaceMode]
   );
   const exportColumns = useMemo<ExcelExportColumn[]>(
-    () => buildBillingPageExportColumns(workspaceMode),
-    [workspaceMode]
+    () => buildBillingPageExportColumns(workspaceMode, { includeDiscountColumns: hasStorageDiscount }),
+    [hasStorageDiscount, workspaceMode]
   );
   const exportRows = useMemo<Array<Record<string, ExcelExportCell>>>(
     () => buildBillingPageExportRows({
@@ -466,7 +500,6 @@ export function BillingPage({
               ? [{ label: "Discount", value: -billingPreview.summary.storageDiscountAmount, numberFormat: "currency" as const }]
               : []),
             { label: "Storage Charges", value: billingPreview.summary.storageAmount, numberFormat: "currency" },
-            { label: "Outbound Charges", value: billingPreview.summary.outboundAmount, numberFormat: "currency" },
             { label: "Grand Total", value: billingPreview.summary.grandTotal, numberFormat: "currency", bold: true }
           ]
     });
@@ -730,6 +763,34 @@ export function BillingPage({
                 <MenuItem value="NORMAL">{containerTypeLabel("NORMAL", t)}</MenuItem>
                 <MenuItem value="WEST_COAST_TRANSFER">{containerTypeLabel("WEST_COAST_TRANSFER", t)}</MenuItem>
               </TextField>
+              <Box
+                sx={{
+                  minHeight: 40,
+                  px: 1.5,
+                  py: 0.75,
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  justifyContent: "center"
+                }}
+              >
+                <FormControlLabel
+                  sx={{ m: 0, alignItems: "center", "& .MuiFormControlLabel-label": { fontSize: "0.875rem", fontWeight: 600 } }}
+                  control={(
+                    <Switch
+                      size="small"
+                      checked={normalPalletGracePeriodEnabled}
+                      onChange={(event) => setNormalPalletGracePeriodEnabled(event.target.checked)}
+                    />
+                  )}
+                  label={t("billingNormalPalletGracePeriod")}
+                />
+                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.25 }}>
+                  {t("billingNormalPalletGracePeriodDesc")}
+                </Typography>
+              </Box>
               <TextField
                 size="small"
                 label={t("containerNo")}
@@ -864,8 +925,7 @@ export function BillingPage({
                   ...(billingPreview.summary.storageDiscountAmount > 0
                     ? [{ label: t("billingDiscount"), value: -billingPreview.summary.storageDiscountAmount }]
                     : []),
-                  { label: t("billingStorageCharges"), value: billingPreview.summary.storageAmount },
-                  { label: t("billingOutboundCharges"), value: billingPreview.summary.outboundAmount }
+                  { label: t("billingStorageCharges"), value: billingPreview.summary.storageAmount }
                 ].map((row) => (
                   <div className="report-bars__row" key={row.label}>
                     <div className="report-bars__labels">
@@ -1061,7 +1121,7 @@ export function BillingPage({
                       <th>{t("billingWarehousesTouched")}</th>
                       <th>{t("billingTrackedPallets")}</th>
                       <th>{t("palletDays")}</th>
-                      <th>{t("billingDiscount")}</th>
+                      {hasStorageDiscount && <th>{t("billingDiscount")}</th>}
                       <th>{t("billingStorageCharges")}</th>
                       <th>{t("actions")}</th>
                     </tr>
@@ -1075,7 +1135,7 @@ export function BillingPage({
                         <td>{row.locationName || row.warehousesTouched.join(", ") || "-"}</td>
                         <td className="cell--mono">{formatNumber(row.palletsTracked)}</td>
                         <td className="cell--mono">{formatNumber(row.palletDays)}</td>
-                        <td className="cell--mono">{formatDiscountMoney(row.discountAmount)}</td>
+                        {hasStorageDiscount && <td className="cell--mono">{row.discountAmount > 0 ? formatDiscountMoney(row.discountAmount) : "-"}</td>}
                         <td className="cell--mono">{formatMoney(row.amount)}</td>
                         <td>
                           {isNavigableContainerNo(row.containerNo) ? (
@@ -1112,7 +1172,6 @@ export function BillingPage({
                       <th>{t("billingInboundCharges")}</th>
                       <th>{t("billingWrappingCharges")}</th>
                       <th>{t("billingStorageCharges")}</th>
-                      <th>{t("billingOutboundCharges")}</th>
                       <th>{t("amount")}</th>
                       <th>{t("actions")}</th>
                     </tr>
@@ -1127,7 +1186,6 @@ export function BillingPage({
                         <td className="cell--mono">{formatMoney(row.inboundAmount)}</td>
                         <td className="cell--mono">{formatMoney(row.wrappingAmount)}</td>
                         <td className="cell--mono">{formatMoney(row.storageAmount)}</td>
-                        <td className="cell--mono">{formatMoney(row.outboundAmount)}</td>
                         <td className="cell--mono">{formatMoney(row.totalAmount)}</td>
                         <td>
                           {isNavigableContainerNo(row.containerNo) ? (
@@ -1195,6 +1253,58 @@ export function BillingPage({
                 </div>
               </article>
             </div>
+
+            {/* Storage segment detail */}
+            <section className="workbook-panel" style={{ margin: "0 1rem 1rem" }}>
+              <WorkspacePanelHeader
+                title={t("billingStorageTimeline")}
+                description={t("billingStorageTimelineDesc")}
+              />
+              {activeStorageSegmentRows.length === 0 ? (
+                <WorkspaceTableEmptyState title={t("noBillingData")} description={t("billingStorageTimelineDesc")} />
+              ) : (
+                <div className="sheet-table-wrap">
+                  <table className="sheet-table" aria-label={t("billingStorageTimeline")}>
+                    <thead>
+                      <tr>
+                        <th>{t("customer")}</th>
+                        <th>{t("containerNo")}</th>
+                        <th>{t("billingContainerType")}</th>
+                        <th>{t("currentStorage")}</th>
+                        <th>{t("fromDate")}</th>
+                        <th>{t("toDate")}</th>
+                        <th>{t("billingDayEndPallets")}</th>
+                        <th>{t("billingBilledDays")}</th>
+                        <th>{t("palletDays")}</th>
+                        {hasStorageDiscount && <th>{t("billingFreePalletDays")}</th>}
+                        {hasStorageDiscount && <th>{t("billingInvoiceSubtotal")}</th>}
+                        {hasStorageDiscount && <th>{t("billingDiscount")}</th>}
+                        <th>{t("billingStorageCharges")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeStorageSegmentRows.map((row) => (
+                        <tr key={`${row.customerName}-${row.containerNo}-${row.segment.startDate}-${row.segment.endDate}-${row.segment.dayEndPallets}`}>
+                          <td>{row.customerName}</td>
+                          <td className="cell--mono">{row.containerNo}</td>
+                          <td>{containerTypeLabel(row.containerType, t)}</td>
+                          <td>{row.warehouseLabel}</td>
+                          <td className="cell--mono">{row.segment.startDate}</td>
+                          <td className="cell--mono">{row.segment.endDate}</td>
+                          <td className="cell--mono">{formatNumber(row.segment.dayEndPallets)}</td>
+                          <td className="cell--mono">{formatNumber(row.segment.billedDays)}</td>
+                          <td className="cell--mono">{formatNumber(row.segment.palletDays)}</td>
+                          {hasStorageDiscount && <td className="cell--mono">{row.segment.freePalletDays > 0 ? formatNumber(row.segment.freePalletDays) : "-"}</td>}
+                          {hasStorageDiscount && <td className="cell--mono">{formatMoney(row.segment.grossAmount)}</td>}
+                          {hasStorageDiscount && <td className="cell--mono">{row.segment.discountAmount > 0 ? formatDiscountMoney(row.segment.discountAmount) : "-"}</td>}
+                          <td className="cell--mono">{formatMoney(row.segment.amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
 
             {/* Invoice preview lines */}
             <section className="workbook-panel" style={{ margin: "0 1rem 1rem" }}>
@@ -1279,8 +1389,7 @@ export function BillingPage({
               { key: "transferInboundFeePerPallet", label: t("billingTransferInboundFee"), value: rates.transferInboundFeePerPallet, set: (n: number) => setRates((c) => ({ ...c, transferInboundFeePerPallet: n })) },
               { key: "wrappingFeePerPallet", label: t("billingWrappingFee"), value: rates.wrappingFeePerPallet, set: (n: number) => setRates((c) => ({ ...c, wrappingFeePerPallet: n })) },
               { key: "storageFeePerPalletPerWeekNormal", label: t("billingStorageRateNormal"), value: rates.storageFeePerPalletPerWeekNormal, set: (n: number) => setRates((c) => ({ ...c, storageFeePerPalletPerWeek: n, storageFeePerPalletPerWeekNormal: n })) },
-              { key: "storageFeePerPalletPerWeekWestCoastTransfer", label: t("billingStorageRateWestCoast"), value: rates.storageFeePerPalletPerWeekWestCoastTransfer, set: (n: number) => setRates((c) => ({ ...c, storageFeePerPalletPerWeekWestCoastTransfer: n })) },
-              { key: "outboundFeePerPallet", label: t("billingOutboundFee"), value: rates.outboundFeePerPallet, set: (n: number) => setRates((c) => ({ ...c, outboundFeePerPallet: n })) }
+              { key: "storageFeePerPalletPerWeekWestCoastTransfer", label: t("billingStorageRateWestCoast"), value: rates.storageFeePerPalletPerWeekWestCoastTransfer, set: (n: number) => setRates((c) => ({ ...c, storageFeePerPalletPerWeekWestCoastTransfer: n })) }
             ].map((field) => (
               <TextField
                 key={field.key}
@@ -1353,7 +1462,6 @@ function buildBillingContainerSummaryRows(invoiceLines: BillingInvoiceLine[], st
       inboundAmount: 0,
       wrappingAmount: 0,
       storageAmount: 0,
-      outboundAmount: 0,
       totalAmount: 0,
       referenceSet: new Set<string>(),
       warehouseSet: new Set<string>()
@@ -1376,9 +1484,6 @@ function buildBillingContainerSummaryRows(invoiceLines: BillingInvoiceLine[], st
       case "STORAGE":
         row.storageAmount += line.amount;
         break;
-      case "OUTBOUND":
-        row.outboundAmount += line.amount;
-        break;
     }
     row.totalAmount += line.amount;
     rowMap.set(rowKey, row);
@@ -1399,7 +1504,6 @@ function buildBillingContainerSummaryRows(invoiceLines: BillingInvoiceLine[], st
       inboundAmount: 0,
       wrappingAmount: 0,
       storageAmount: 0,
-      outboundAmount: 0,
       totalAmount: 0,
       referenceSet: new Set<string>(),
       warehouseSet: new Set<string>()
@@ -1410,7 +1514,7 @@ function buildBillingContainerSummaryRows(invoiceLines: BillingInvoiceLine[], st
       }
     }
     row.storageAmount = Math.max(row.storageAmount, storageRow.amount);
-    row.totalAmount = row.inboundAmount + row.wrappingAmount + row.storageAmount + row.outboundAmount;
+    row.totalAmount = row.inboundAmount + row.wrappingAmount + row.storageAmount;
     rowMap.set(rowKey, row);
   }
 
@@ -1424,7 +1528,6 @@ function buildBillingContainerSummaryRows(invoiceLines: BillingInvoiceLine[], st
       inboundAmount: row.inboundAmount,
       wrappingAmount: row.wrappingAmount,
       storageAmount: row.storageAmount,
-      outboundAmount: row.outboundAmount,
       totalAmount: row.totalAmount
     }))
     .sort((left, right) => {
@@ -1511,7 +1614,10 @@ function invoiceTypeLabel(invoiceType: BillingInvoiceType, t: (key: string) => s
   }
 }
 
-function buildStorageSettlementInvoiceLines(storageRows: BillingStorageRow[]): CreateBillingInvoicePayload["lines"] {
+function buildStorageSettlementInvoiceLines(
+  storageRows: BillingStorageRow[],
+  normalPalletGracePeriodEnabled: boolean
+): CreateBillingInvoicePayload["lines"] {
   return storageRows.map((row) => ({
     chargeType: "STORAGE",
     description: `Storage settlement for ${row.containerNo}`,
@@ -1524,34 +1630,56 @@ function buildStorageSettlementInvoiceLines(storageRows: BillingStorageRow[]): C
     amount: row.amount,
     notes: buildStorageSettlementNotes(row),
     sourceType: "AUTO",
-    details: {
-      kind: "STORAGE_CONTAINER_SUMMARY",
-      warehouseLocationId: row.locationId,
-      warehouseName: row.locationName || undefined,
-      warehousesTouched: row.warehousesTouched,
-      palletsTracked: row.palletsTracked,
-      palletDays: row.palletDays,
-      freePalletDays: row.freePalletDays,
-      billablePalletDays: row.billablePalletDays,
-      grossAmount: row.grossAmount,
-      discountAmount: row.discountAmount,
-      segments: row.segments.map((segment) => ({
-        startDate: segment.startDate,
-        endDate: segment.endDate,
-        dayEndPallets: segment.dayEndPallets,
-        billedDays: segment.billedDays,
-        palletDays: segment.palletDays,
-        freePalletDays: segment.freePalletDays,
-        billablePalletDays: segment.billablePalletDays,
-        grossAmount: segment.grossAmount,
-        discountAmount: segment.discountAmount,
-        amount: segment.amount
-      }))
-    }
+    details: buildStorageInvoiceLineDetails(row, normalPalletGracePeriodEnabled)
   }));
 }
 
-function buildBillingPageExportColumns(workspaceMode: BillingWorkspaceMode): ExcelExportColumn[] {
+function buildStorageInvoiceLineDetails(row: BillingStorageRow, normalPalletGracePeriodEnabled: boolean): NonNullable<CreateBillingInvoicePayload["lines"][number]["details"]> {
+  return {
+    kind: "STORAGE_CONTAINER_SUMMARY",
+    warehouseLocationId: row.locationId,
+    warehouseName: row.locationName || undefined,
+    warehousesTouched: row.warehousesTouched,
+    palletsTracked: row.palletsTracked,
+    palletDays: row.palletDays,
+    normalPalletGracePeriodEnabled,
+    freePalletDays: row.freePalletDays,
+    billablePalletDays: row.billablePalletDays,
+    grossAmount: row.grossAmount,
+    discountAmount: row.discountAmount,
+    segments: row.segments.map((segment) => ({
+      startDate: segment.startDate,
+      endDate: segment.endDate,
+      dayEndPallets: segment.dayEndPallets,
+      billedDays: segment.billedDays,
+      palletDays: segment.palletDays,
+      freePalletDays: segment.freePalletDays,
+      billablePalletDays: segment.billablePalletDays,
+      grossAmount: segment.grossAmount,
+      discountAmount: segment.discountAmount,
+      amount: segment.amount
+    }))
+  };
+}
+
+function buildStorageInvoiceLineId(row: BillingStorageRow) {
+  return `storage-${row.customerId}-${row.containerType}-${row.containerNo}`;
+}
+
+function flattenBillingStorageSegmentDisplayRows(storageRows: BillingStorageRow[]): BillingStorageSegmentDisplayRow[] {
+  return storageRows.flatMap((row) => row.segments.map((segment) => ({
+    customerName: row.customerName,
+    containerNo: row.containerNo,
+    containerType: row.containerType,
+    warehouseLabel: row.locationName || row.warehousesTouched.join(", ") || "-",
+    segment
+  })));
+}
+
+function buildBillingPageExportColumns(
+  workspaceMode: BillingWorkspaceMode,
+  options: { includeDiscountColumns: boolean }
+): ExcelExportColumn[] {
   if (workspaceMode === "STORAGE_SETTLEMENT") {
     const base: ExcelExportColumn[] = [
       { key: "rowType", label: "Row Type" },
@@ -1561,7 +1689,9 @@ function buildBillingPageExportColumns(workspaceMode: BillingWorkspaceMode): Exc
       { key: "warehouses", label: "Warehouses Touched" },
       { key: "palletsTracked", label: "Tracked Pallets", numberFormat: "number" },
       { key: "palletDays", label: "Pallet-Days", numberFormat: "number" },
-      { key: "discountAmount", label: "Discount", numberFormat: "currency" },
+      ...(options.includeDiscountColumns
+        ? [{ key: "discountAmount", label: "Discount", numberFormat: "currency" as const }]
+        : []),
       { key: "amount", label: "Amount", numberFormat: "currency" }
     ];
     return [
@@ -1571,7 +1701,9 @@ function buildBillingPageExportColumns(workspaceMode: BillingWorkspaceMode): Exc
       { key: "dayEndPallets", label: "Day-End Pallets", numberFormat: "number" },
       { key: "billedDays", label: "Billed Days", numberFormat: "number" },
       { key: "segmentPalletDays", label: "Pallet-Days", numberFormat: "number" },
-      { key: "segmentDiscountAmount", label: "Discount", numberFormat: "currency" },
+      ...(options.includeDiscountColumns
+        ? [{ key: "segmentDiscountAmount", label: "Discount", numberFormat: "currency" as const }]
+        : []),
       { key: "segmentAmount", label: "Storage Charges", numberFormat: "currency" }
     ];
   }
@@ -1586,6 +1718,9 @@ function buildBillingPageExportColumns(workspaceMode: BillingWorkspaceMode): Exc
     { key: "occurredOn", label: "Occurred On" },
     { key: "quantity", label: "Quantity", numberFormat: "number" },
     { key: "unitRate", label: "Unit Rate", numberFormat: "currency" },
+    ...(options.includeDiscountColumns
+      ? [{ key: "discountAmount", label: "Discount", numberFormat: "currency" as const }]
+      : []),
     { key: "amount", label: "Amount", numberFormat: "currency" },
     { key: "notes", label: "Notes" }
   ];
@@ -1596,7 +1731,9 @@ function buildBillingPageExportColumns(workspaceMode: BillingWorkspaceMode): Exc
     { key: "dayEndPallets", label: "Day-End Pallets", numberFormat: "number" },
     { key: "billedDays", label: "Billed Days", numberFormat: "number" },
     { key: "segmentPalletDays", label: "Pallet-Days", numberFormat: "number" },
-    { key: "segmentDiscountAmount", label: "Discount", numberFormat: "currency" },
+    ...(options.includeDiscountColumns
+      ? [{ key: "segmentDiscountAmount", label: "Discount", numberFormat: "currency" as const }]
+      : []),
     { key: "segmentAmount", label: "Storage Charges", numberFormat: "currency" }
   ];
 }
@@ -1647,7 +1784,7 @@ function flattenStorageSettlementRows(storageRows: BillingStorageRow[]): Array<R
       warehouses: row.locationName || row.warehousesTouched.join(", ") || "-",
       palletsTracked: row.palletsTracked,
       palletDays: row.palletDays,
-      discountAmount: -row.discountAmount,
+      ...(row.discountAmount > 0 ? { discountAmount: -row.discountAmount } : {}),
       amount: row.amount
     });
     for (const segment of row.segments) {
@@ -1665,7 +1802,7 @@ function flattenStorageSettlementRows(storageRows: BillingStorageRow[]): Array<R
         dayEndPallets: segment.dayEndPallets,
         billedDays: segment.billedDays,
         segmentPalletDays: segment.palletDays,
-        segmentDiscountAmount: -segment.discountAmount,
+        ...(segment.discountAmount > 0 ? { segmentDiscountAmount: -segment.discountAmount } : {}),
         segmentAmount: segment.amount
       });
     }
@@ -1687,6 +1824,7 @@ function flattenOverviewStorageSegments(storageRows: BillingStorageRow[]): Array
       quantity: row.palletDays,
       unitRate: row.palletDays > 0 ? row.amount / row.palletDays : 0,
       amount: row.amount,
+      ...(row.discountAmount > 0 ? { discountAmount: -row.discountAmount } : {}),
       notes: `${row.palletsTracked} pallets tracked`
     });
     for (const segment of row.segments) {
@@ -1707,7 +1845,7 @@ function flattenOverviewStorageSegments(storageRows: BillingStorageRow[]): Array
         dayEndPallets: segment.dayEndPallets,
         billedDays: segment.billedDays,
         segmentPalletDays: segment.palletDays,
-        segmentDiscountAmount: -segment.discountAmount,
+        ...(segment.discountAmount > 0 ? { segmentDiscountAmount: -segment.discountAmount } : {}),
         segmentAmount: segment.amount
       });
     }

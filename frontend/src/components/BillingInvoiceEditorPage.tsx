@@ -24,6 +24,7 @@ import type {
   BillingInvoice,
   BillingInvoiceHeader,
   BillingInvoiceLineData,
+  BillingStorageSegmentDetail,
   AddBillingInvoiceLinePayload,
   ContainerType,
   UpdateBillingInvoiceLinePayload,
@@ -52,6 +53,12 @@ type LineFormState = {
   notes: string;
 };
 
+type InvoiceStorageSegmentDisplayRow = {
+  line: BillingInvoiceLineData;
+  segment: BillingStorageSegmentDetail;
+  warehouseLabel: string;
+};
+
 type HeaderFormState = {
   sellerName: string;
   subtitle: string;
@@ -74,7 +81,7 @@ const emptyLineForm: LineFormState = {
   notes: ""
 };
 
-const CHARGE_TYPE_OPTIONS = ["INBOUND", "WRAPPING", "STORAGE", "OUTBOUND", "DISCOUNT", "MANUAL"];
+const CHARGE_TYPE_OPTIONS = ["INBOUND", "WRAPPING", "STORAGE", "DISCOUNT", "MANUAL"];
 
 export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToBilling }: BillingInvoiceEditorPageProps) {
   const { t } = useI18n();
@@ -183,8 +190,20 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
     if (!invoice) return;
     await runBusyAction("save-line", async () => {
       try {
+        const chargeType = lineForm.chargeType.trim().toUpperCase();
+        const amount = toNumber(lineForm.amount);
+        if (chargeType === "DISCOUNT" && roundCurrency(amount) === 0) {
+          if (lineDialogMode === "edit" && editingLineId !== null) {
+            const updated = await api.deleteBillingInvoiceLine(invoice.id, editingLineId);
+            setInvoice(updated);
+          }
+          setLineDialogOpen(false);
+          setEditingLineId(null);
+          return;
+        }
+
         const payload: AddBillingInvoiceLinePayload & UpdateBillingInvoiceLinePayload = {
-          chargeType: lineForm.chargeType,
+          chargeType,
           description: lineForm.description,
           reference: lineForm.reference,
           containerNo: lineForm.containerNo,
@@ -192,7 +211,7 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
           occurredOn: lineForm.occurredOn,
           quantity: toNumber(lineForm.quantity),
           unitRate: toNumber(lineForm.unitRate),
-          amount: toNumber(lineForm.amount),
+          amount,
           notes: lineForm.notes
         };
 
@@ -369,7 +388,13 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
 
   const invoiceDisplayTotals = getBillingInvoiceDisplayTotals(invoice);
   const editableHeader = getEditableInvoiceHeader(invoice);
-  const showStorageDiscountColumn = invoice.invoiceType === "STORAGE_SETTLEMENT";
+  const visibleInvoiceLines = filterVisibleInvoiceLines(invoice.lines);
+  const invoiceStorageSegmentRows = buildInvoiceStorageSegmentRows(visibleInvoiceLines);
+  const showInvoiceDiscount = invoiceDisplayTotals.discountTotal !== 0;
+  const showStorageDiscountColumn = hasInvoiceStorageDiscount(invoice);
+  const showStorageSegmentDiscountColumns = invoiceStorageSegmentRows.some((row) =>
+    (row.segment.discountAmount ?? 0) > 0 || (row.segment.freePalletDays ?? 0) > 0
+  );
   const totalsLabelColSpan = showStorageDiscountColumn ? 10 : 9;
   const exportColumns = buildBillingInvoiceExportColumns(invoice);
 
@@ -390,7 +415,7 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
           ...(invoiceDisplayTotals.subtotal !== invoiceDisplayTotals.grandTotal
           ? [{ label: "Subtotal", value: invoiceDisplayTotals.subtotal, numberFormat: "currency" as const }]
           : []),
-        ...(invoiceDisplayTotals.discountTotal !== 0
+        ...(showInvoiceDiscount
           ? [{ label: "Discount", value: invoiceDisplayTotals.discountTotal, numberFormat: "currency" as const }]
           : []),
         { label: "Grand Total", value: invoiceDisplayTotals.grandTotal, numberFormat: "currency", bold: true }
@@ -429,7 +454,7 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
         startIcon={isPdfExportBusy ? <InlineLoadingIndicator /> : <FileDownloadOutlinedIcon fontSize="small" />}
         endIcon={<ExpandMoreOutlinedIcon fontSize="small" />}
         onClick={(event) => setExportMenuAnchor(event.currentTarget)}
-        disabled={invoice.lines.length === 0 || isBusy}
+        disabled={visibleInvoiceLines.length === 0 || isBusy}
         aria-busy={isPdfExportBusy}
       >
         {t("export")}
@@ -569,10 +594,12 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
             <span>{t("billingInvoiceSubtotal")}</span>
             <strong>{formatMoney(invoiceDisplayTotals.subtotal)}</strong>
           </article>
-          <article className="metric-card">
-            <span>{t("billingDiscount")}</span>
-            <strong style={{ color: invoiceDisplayTotals.discountTotal < 0 ? "#d32f2f" : undefined }}>{formatMoney(invoiceDisplayTotals.discountTotal)}</strong>
-          </article>
+          {showInvoiceDiscount && (
+            <article className="metric-card">
+              <span>{t("billingDiscount")}</span>
+              <strong style={{ color: invoiceDisplayTotals.discountTotal < 0 ? "#d32f2f" : undefined }}>{formatMoney(invoiceDisplayTotals.discountTotal)}</strong>
+            </article>
+          )}
           <article className="metric-card">
             <span>{t("billingGrandTotal")}</span>
             <strong style={{ fontSize: "1.125rem" }}>{formatMoney(invoiceDisplayTotals.grandTotal)}</strong>
@@ -705,10 +732,6 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
                 <div className="report-bars__labels"><strong>{t("billingStorageRateWestCoast")}</strong></div>
                 <div className="report-bars__value">{formatMoney(invoice.rates.storageFeePerPalletPerWeekWestCoastTransfer)}</div>
               </div>
-              <div className="report-bars__row">
-                <div className="report-bars__labels"><strong>{t("billingOutboundFee")}</strong></div>
-                <div className="report-bars__value">{formatMoney(invoice.rates.outboundFeePerPallet)}</div>
-              </div>
             </div>
           </article>
         </div>
@@ -717,9 +740,9 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
         <section className="workbook-panel" style={{ margin: "0 1rem 1rem" }}>
           <WorkspacePanelHeader
             title={t("billingInvoicePreview")}
-            description={`${invoice.lineCount || invoice.lines.length} ${t("billingLineCount").toLowerCase()}`}
+            description={`${visibleInvoiceLines.length} ${t("billingLineCount").toLowerCase()}`}
           />
-          {invoice.lines.length === 0 ? (
+          {visibleInvoiceLines.length === 0 ? (
             <WorkspaceTableEmptyState title={t("noBillingData")} description={t("billingInvoicePreviewDesc")} />
           ) : (
             <div className="sheet-table-wrap">
@@ -743,7 +766,7 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
                   </tr>
                 </thead>
                 <tbody>
-                  {invoice.lines.map((line, index) => (
+                  {visibleInvoiceLines.map((line, index) => (
                     <tr key={line.id} style={line.chargeType === "DISCOUNT" ? { backgroundColor: "rgba(211,47,47,0.04)" } : undefined}>
                       <td>{index + 1}</td>
                       <td>
@@ -797,7 +820,7 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
                     <td className="cell--mono">{formatMoney(invoiceDisplayTotals.subtotal)}</td>
                     <td colSpan={isDraft ? 3 : 2} />
                   </tr>
-                  {invoiceDisplayTotals.discountTotal !== 0 && (
+                  {showInvoiceDiscount && (
                     <tr style={{ fontWeight: 600, color: "#d32f2f" }}>
                       <td colSpan={totalsLabelColSpan} style={{ textAlign: "right" }}>{t("billingDiscount")}</td>
                       <td className="cell--mono">{formatMoney(invoiceDisplayTotals.discountTotal)}</td>
@@ -814,6 +837,51 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
             </div>
           )}
         </section>
+
+        {invoiceStorageSegmentRows.length > 0 && (
+          <section className="workbook-panel" style={{ margin: "0 1rem 1rem" }}>
+            <WorkspacePanelHeader
+              title={t("billingStorageTimeline")}
+              description={t("billingStorageTimelineDesc")}
+            />
+            <div className="sheet-table-wrap">
+              <table className="sheet-table" aria-label={t("billingStorageTimeline")}>
+                <thead>
+                  <tr>
+                    <th>{t("containerNo")}</th>
+                    <th>{t("currentStorage")}</th>
+                    <th>{t("fromDate")}</th>
+                    <th>{t("toDate")}</th>
+                    <th>{t("billingDayEndPallets")}</th>
+                    <th>{t("billingBilledDays")}</th>
+                    <th>{t("palletDays")}</th>
+                    {showStorageSegmentDiscountColumns && <th>{t("billingFreePalletDays")}</th>}
+                    {showStorageSegmentDiscountColumns && <th>{t("billingInvoiceSubtotal")}</th>}
+                    {showStorageSegmentDiscountColumns && <th>{t("billingDiscount")}</th>}
+                    <th>{t("billingStorageCharges")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoiceStorageSegmentRows.map((row) => (
+                    <tr key={`${row.line.id}-${row.segment.startDate}-${row.segment.endDate}-${row.segment.dayEndPallets}`}>
+                      <td className="cell--mono">{row.line.containerNo || "-"}</td>
+                      <td>{row.warehouseLabel}</td>
+                      <td className="cell--mono">{row.segment.startDate}</td>
+                      <td className="cell--mono">{row.segment.endDate}</td>
+                      <td className="cell--mono">{formatNumber(row.segment.dayEndPallets)}</td>
+                      <td className="cell--mono">{formatNumber(row.segment.billedDays)}</td>
+                      <td className="cell--mono">{formatNumber(row.segment.palletDays)}</td>
+                      {showStorageSegmentDiscountColumns && <td className="cell--mono">{(row.segment.freePalletDays ?? 0) > 0 ? formatNumber(row.segment.freePalletDays ?? 0) : "-"}</td>}
+                      {showStorageSegmentDiscountColumns && <td className="cell--mono">{formatMoney(row.segment.grossAmount ?? row.segment.amount + (row.segment.discountAmount ?? 0))}</td>}
+                      {showStorageSegmentDiscountColumns && <td className="cell--mono">{(row.segment.discountAmount ?? 0) > 0 ? formatDiscountMoney(row.segment.discountAmount ?? 0) : "-"}</td>}
+                      <td className="cell--mono">{formatMoney(row.segment.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
       </section>
 
       {/* Line add/edit dialog */}
@@ -825,7 +893,7 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
               <label>
                 {t("billingChargeType")}
                 <select value={lineForm.chargeType} onChange={(event) => setLineForm((f) => ({ ...f, chargeType: event.target.value }))}>
-                  {CHARGE_TYPE_OPTIONS.map((option) => (
+                  {(CHARGE_TYPE_OPTIONS.includes(lineForm.chargeType) ? CHARGE_TYPE_OPTIONS : [lineForm.chargeType, ...CHARGE_TYPE_OPTIONS]).map((option) => (
                     <option key={option} value={option}>{chargeTypeLabel(option, t)}</option>
                   ))}
                 </select>
@@ -1015,6 +1083,9 @@ function containerTypeLabel(containerType: ContainerType, t: (key: string) => st
 }
 
 function buildBillingInvoiceExportColumns(invoice: BillingInvoice): ExcelExportColumn[] {
+  const includeLineDiscountColumn = hasInvoiceStorageDiscount(invoice);
+  const includeSegmentColumns = hasInvoiceStorageSegments(invoice);
+  const includeSegmentDiscountColumns = hasInvoiceStorageSegmentDiscount(invoice);
   const base: ExcelExportColumn[] = [
     { key: "rowType", label: "Row Type" },
     { key: "chargeType", label: "Charge Type" },
@@ -1025,7 +1096,7 @@ function buildBillingInvoiceExportColumns(invoice: BillingInvoice): ExcelExportC
     { key: "occurredOn", label: "Occurred On" },
     { key: "quantity", label: "Quantity", numberFormat: "number" },
     { key: "unitRate", label: "Unit Rate", numberFormat: "currency" },
-    ...(invoice.invoiceType === "STORAGE_SETTLEMENT"
+    ...(includeLineDiscountColumn
       ? [{ key: "discountAmount", label: "Discount", numberFormat: "currency" as const }]
       : []),
     { key: "amount", label: "Amount", numberFormat: "currency" },
@@ -1033,7 +1104,7 @@ function buildBillingInvoiceExportColumns(invoice: BillingInvoice): ExcelExportC
     { key: "notes", label: "Notes" }
   ];
 
-  if (invoice.invoiceType === "STORAGE_SETTLEMENT") {
+  if (includeSegmentColumns) {
     return [
       ...base,
       { key: "segmentStart", label: "Segment Start" },
@@ -1041,7 +1112,9 @@ function buildBillingInvoiceExportColumns(invoice: BillingInvoice): ExcelExportC
       { key: "dayEndPallets", label: "Day-End Pallets", numberFormat: "number" },
       { key: "billedDays", label: "Billed Days", numberFormat: "number" },
       { key: "segmentPalletDays", label: "Pallet-Days", numberFormat: "number" },
-      { key: "segmentDiscountAmount", label: "Discount", numberFormat: "currency" },
+      ...(includeSegmentDiscountColumns
+        ? [{ key: "segmentDiscountAmount", label: "Discount", numberFormat: "currency" as const }]
+        : []),
       { key: "segmentAmount", label: "Storage Charges", numberFormat: "currency" }
     ];
   }
@@ -1053,7 +1126,8 @@ function buildBillingInvoiceExportRows(
   invoice: BillingInvoice,
   timeZone: string
 ): Array<Record<string, ExcelExportCell>> {
-  const rows: Array<Record<string, ExcelExportCell>> = invoice.lines.map((line) => ({
+  const visibleLines = filterVisibleInvoiceLines(invoice.lines);
+  const rows: Array<Record<string, ExcelExportCell>> = visibleLines.map((line) => ({
     rowType: "Invoice Line",
     chargeType: chargeTypeExportLabel(line.chargeType),
     description: line.description || "-",
@@ -1064,13 +1138,15 @@ function buildBillingInvoiceExportRows(
     quantity: line.quantity,
     unitRate: line.unitRate,
     amount: line.amount,
-    discountAmount: line.details?.kind === "STORAGE_CONTAINER_SUMMARY" ? -Math.abs(line.details.discountAmount ?? 0) : undefined,
+    ...(line.details?.kind === "STORAGE_CONTAINER_SUMMARY" && (line.details.discountAmount ?? 0) > 0
+      ? { discountAmount: -Math.abs(line.details.discountAmount ?? 0) }
+      : {}),
     sourceType: line.sourceType === "AUTO" ? "Auto" : "Manual",
     notes: line.notes || "-"
   }));
 
-  if (invoice.invoiceType === "STORAGE_SETTLEMENT") {
-    for (const line of invoice.lines) {
+  if (hasInvoiceStorageSegments(invoice)) {
+    for (const line of visibleLines) {
       if (!line.details || line.details.kind !== "STORAGE_CONTAINER_SUMMARY") {
         continue;
       }
@@ -1093,7 +1169,9 @@ function buildBillingInvoiceExportRows(
           dayEndPallets: segment.dayEndPallets,
           billedDays: segment.billedDays,
           segmentPalletDays: segment.palletDays,
-          segmentDiscountAmount: -Math.abs(segment.discountAmount ?? 0),
+          ...((segment.discountAmount ?? 0) > 0
+            ? { segmentDiscountAmount: -Math.abs(segment.discountAmount ?? 0) }
+            : {}),
           segmentAmount: segment.amount
         });
       }
@@ -1101,6 +1179,39 @@ function buildBillingInvoiceExportRows(
   }
 
   return rows;
+}
+
+function filterVisibleInvoiceLines(lines: BillingInvoiceLineData[]) {
+  return lines.filter(isVisibleInvoiceLine);
+}
+
+function isVisibleInvoiceLine(line: BillingInvoiceLineData) {
+  return line.chargeType !== "DISCOUNT" || roundCurrency(line.amount) !== 0;
+}
+
+function buildInvoiceStorageSegmentRows(lines: BillingInvoiceLineData[]): InvoiceStorageSegmentDisplayRow[] {
+  return lines.flatMap((line) => {
+    if (!line.details || line.details.kind !== "STORAGE_CONTAINER_SUMMARY") {
+      return [];
+    }
+    const warehouseLabel = line.details.warehousesTouched.join(", ") || line.warehouse || "-";
+    return line.details.segments.map((segment) => ({ line, segment, warehouseLabel }));
+  });
+}
+
+function hasInvoiceStorageSegments(invoice: BillingInvoice) {
+  return invoice.lines.some((line) => line.details?.kind === "STORAGE_CONTAINER_SUMMARY" && line.details.segments.length > 0);
+}
+
+function hasInvoiceStorageDiscount(invoice: BillingInvoice) {
+  return invoice.lines.some((line) => getInvoiceLineStorageDiscount(line) > 0);
+}
+
+function hasInvoiceStorageSegmentDiscount(invoice: BillingInvoice) {
+  return invoice.lines.some((line) =>
+    line.details?.kind === "STORAGE_CONTAINER_SUMMARY"
+    && line.details.segments.some((segment) => (segment.discountAmount ?? 0) > 0 || (segment.freePalletDays ?? 0) > 0)
+  );
 }
 
 function billingStatusLabel(status: string, t: (key: string) => string) {

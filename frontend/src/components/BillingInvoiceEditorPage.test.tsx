@@ -220,6 +220,115 @@ describe("BillingInvoiceEditorPage", () => {
     expect(await screen.findAllByText("$140.00")).not.toHaveLength(0);
   });
 
+  it("shows storage segment details and hides zero discount columns", async () => {
+    getBillingInvoice.mockResolvedValue({
+      ...invoiceFixture,
+      subtotal: 140,
+      discountTotal: 0,
+      grandTotal: 140,
+      lineCount: 1,
+      lines: [
+        {
+          ...invoiceFixture.lines[0],
+          quantity: 140,
+          amount: 140,
+          details: {
+            kind: "STORAGE_CONTAINER_SUMMARY" as const,
+            warehousesTouched: ["NJ"],
+            palletsTracked: 10,
+            palletDays: 140,
+            freePalletDays: 0,
+            billablePalletDays: 140,
+            grossAmount: 140,
+            discountAmount: 0,
+            segments: [
+              {
+                startDate: "2026-03-01",
+                endDate: "2026-03-14",
+                dayEndPallets: 10,
+                billedDays: 14,
+                palletDays: 140,
+                freePalletDays: 0,
+                billablePalletDays: 140,
+                grossAmount: 140,
+                discountAmount: 0,
+                amount: 140
+              }
+            ]
+          }
+        }
+      ]
+    });
+
+    renderWithProviders(
+      <BillingInvoiceEditorPage
+        invoiceId={42}
+        currentUserRole="admin"
+        onBackToBilling={vi.fn()}
+      />
+    );
+
+    const segmentTable = await screen.findByRole("table", { name: "Storage Segment Breakdown" });
+    expect(within(segmentTable).queryByText("Free Pallet-Days")).not.toBeInTheDocument();
+    expect(within(segmentTable).queryByText("Discount")).not.toBeInTheDocument();
+    expect(within(segmentTable).getByText("2026-03-01")).toBeInTheDocument();
+    expect(within(segmentTable).getByText("2026-03-14")).toBeInTheDocument();
+    expect(within(segmentTable).getByText("140")).toBeInTheDocument();
+    expect(within(segmentTable).getByText("$140.00")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Export" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Export Excel/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Download Excel" }));
+
+    await waitFor(() => {
+      expect(downloadExcelWorkbook).toHaveBeenCalledTimes(1);
+    });
+    const exportPayload = downloadExcelWorkbook.mock.calls[0][0];
+    expect(exportPayload.columns.map((column: { label: string }) => column.label)).not.toContain("Discount");
+    expect(exportPayload.rows.map((row: { rowType: string }) => row.rowType)).toContain("Storage Segment");
+  });
+
+  it("hides zero-amount manual discount lines from display and export", async () => {
+    getBillingInvoice.mockResolvedValue({
+      ...invoiceFixture,
+      subtotal: 140,
+      discountTotal: 0,
+      grandTotal: 140,
+      lineCount: 2,
+      lines: [
+        invoiceFixture.lines[0],
+        {
+          ...invoiceFixture.lines[1],
+          description: "Zero discount",
+          unitRate: 0,
+          amount: 0
+        }
+      ]
+    });
+
+    renderWithProviders(
+      <BillingInvoiceEditorPage
+        invoiceId={42}
+        currentUserRole="admin"
+        onBackToBilling={vi.fn()}
+      />
+    );
+
+    expect(await screen.findByText("Storage settlement for GCXU5817233")).toBeInTheDocument();
+    expect(screen.queryByText("Zero discount")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Export" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Export Excel/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Download Excel" }));
+
+    await waitFor(() => {
+      expect(downloadExcelWorkbook).toHaveBeenCalledTimes(1);
+    });
+    const exportPayload = downloadExcelWorkbook.mock.calls[0][0];
+    expect(exportPayload.rows.map((row: { description: string }) => row.description)).not.toContain("Zero discount");
+    expect(exportPayload.rows.map((row: { chargeType: string }) => row.chargeType)).not.toContain("Discount");
+  });
+
   it("exports the current invoice to Excel", async () => {
     renderWithProviders(
       <BillingInvoiceEditorPage

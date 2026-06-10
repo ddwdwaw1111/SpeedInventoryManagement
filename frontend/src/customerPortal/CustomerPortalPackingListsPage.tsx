@@ -119,13 +119,13 @@ export function CustomerPortalPackingListsPage({
               <option key={option} value={option}>{formatPackingListTrackingStatusFilterLabel(option, t)}</option>
             ))}
           </NativeSelect>
-          <Button type="button" onClick={() => void refreshPackingLists()} disabled={loading}>
+          <Button type="button" onClick={() => void refreshPackingLists()} disabled={loading} aria-busy={loading}>
             {loading ? <InlineLoadingIndicator /> : <Search className="h-4 w-4" />}
-            {t("apply")}
+            {t("search")}
           </Button>
         </div>
 
-        <Table aria-label={t("customerPortalPackingLists")}>
+        <Table aria-label={t("customerPortalPackingLists")} aria-busy={loading}>
           <TableHeader>
             <TableRow>
               <TableHead>{t("containerNo")}</TableHead>
@@ -140,7 +140,16 @@ export function CustomerPortalPackingListsPage({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {packingLists.map((document) => {
+            {loading ? (
+              <TableRow>
+                <TableCell colSpan={9} className="py-10 text-center text-slate-500">
+                  <span className="inline-flex items-center justify-center gap-2">
+                    <InlineLoadingIndicator />
+                    {t("loadingRecords")}
+                  </span>
+                </TableCell>
+              </TableRow>
+            ) : packingLists.map((document) => {
               const trackingClass = getPackingListTrackingStatusPillClass(document);
               const completionClass = isCompletedPackingList(document) ? "status-pill--ok" : "status-pill--alert";
               return (
@@ -175,10 +184,10 @@ export function CustomerPortalPackingListsPage({
                 </TableRow>
               );
             })}
-            {packingLists.length === 0 ? (
+            {!loading && packingLists.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={9} className="py-10 text-center text-slate-500">
-                  {loading ? t("loadingRecords") : t("noPackingLists")}
+                  {t("noPackingLists")}
                 </TableCell>
               </TableRow>
             ) : null}

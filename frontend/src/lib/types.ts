@@ -844,6 +844,7 @@ export type BillingInvoiceLineDetails = {
   warehousesTouched: string[];
   palletsTracked: number;
   palletDays: number;
+  normalPalletGracePeriodEnabled?: boolean;
   freePalletDays?: number;
   billablePalletDays?: number;
   grossAmount?: number;

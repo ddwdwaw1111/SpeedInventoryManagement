@@ -1,4 +1,4 @@
-import { FileText, Plus, Search, SendToBack } from "lucide-react";
+import { FileText, Search, SendToBack } from "lucide-react";
 import { useState, type KeyboardEvent } from "react";
 
 import { Badge } from "../components/ui/badge";
@@ -30,7 +30,6 @@ type CustomerPortalPickingOrdersPageProps = {
   selectedPickingOrderId: number | null;
   onPickingOrdersChange: (documents: OutboundDocument[]) => void;
   onOpenDetail: (documentId: number) => void;
-  onCreateNewOrder: () => void;
   onError: (message: string) => void;
 };
 
@@ -40,7 +39,6 @@ export function CustomerPortalPickingOrdersPage({
   adminPortalCustomerId,
   selectedPickingOrderId,
   onPickingOrdersChange,
-  onCreateNewOrder,
   onOpenDetail,
   onError
 }: CustomerPortalPickingOrdersPageProps) {
@@ -92,16 +90,10 @@ export function CustomerPortalPickingOrdersPage({
           icon={<SendToBack className="h-4 w-4" />}
           errorMessage={errorMessage}
           actions={(
-            <>
-              <div className="flex flex-wrap gap-2">
-                <Badge variant="warning">{openCount} {t("open")}</Badge>
-                <Badge variant="success">{completedCount} {t("completed")}</Badge>
-              </div>
-              <Button type="button" onClick={onCreateNewOrder}>
-                <Plus className="h-4 w-4" />
-                {t("newPickingOrder")}
-              </Button>
-            </>
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="warning">{openCount} {t("open")}</Badge>
+              <Badge variant="success">{completedCount} {t("completed")}</Badge>
+            </div>
           )}
         />
       </CardHeader>
@@ -127,13 +119,13 @@ export function CustomerPortalPickingOrdersPage({
               <option key={option} value={option}>{formatPickingOrderTrackingStatusFilterLabel(option, t)}</option>
             ))}
           </NativeSelect>
-          <Button type="button" onClick={() => void refreshPickingOrders()} disabled={loading}>
+          <Button type="button" onClick={() => void refreshPickingOrders()} disabled={loading} aria-busy={loading}>
             {loading ? <InlineLoadingIndicator /> : <Search className="h-4 w-4" />}
-            {t("apply")}
+            {t("search")}
           </Button>
         </div>
 
-        <Table aria-label={t("customerPortalPickingOrders")}>
+        <Table aria-label={t("customerPortalPickingOrders")} aria-busy={loading}>
           <TableHeader>
             <TableRow>
               <TableHead>{t("packingListNo")}</TableHead>
@@ -148,7 +140,16 @@ export function CustomerPortalPickingOrdersPage({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {pickingOrders.map((document) => {
+            {loading ? (
+              <TableRow>
+                <TableCell colSpan={9} className="py-10 text-center text-slate-500">
+                  <span className="inline-flex items-center justify-center gap-2">
+                    <InlineLoadingIndicator />
+                    {t("loadingRecords")}
+                  </span>
+                </TableCell>
+              </TableRow>
+            ) : pickingOrders.map((document) => {
               const trackingClass = getPickingOrderTrackingStatusPillClass(document);
               const completionClass = isCompletedPickingOrder(document) ? "status-pill--ok" : "status-pill--alert";
               return (
@@ -183,10 +184,10 @@ export function CustomerPortalPickingOrdersPage({
                 </TableRow>
               );
             })}
-            {pickingOrders.length === 0 ? (
+            {!loading && pickingOrders.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={9} className="py-10 text-center text-slate-500">
-                  {loading ? t("loadingRecords") : t("noPickingOrders")}
+                  {t("noPickingOrders")}
                 </TableCell>
               </TableRow>
             ) : null}

@@ -59,12 +59,12 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
     void loadPortalData();
   }, [adminPortalCustomerId]);
 
-  async function loadPortalData() {
+  async function loadPortalData(nextInventorySearch = inventorySearch) {
     setIsLoading(true);
     setErrorMessage("");
     try {
       const [inventoryRows, packingListRows, pickingOrderRows] = await Promise.all([
-        customerPortalApi.getInventory(inventorySearch, adminPortalCustomerId),
+        customerPortalApi.getInventory(nextInventorySearch, adminPortalCustomerId),
         customerPortalApi.getPackingLists(100, { search: "", status: "all", trackingStatus: "all" }, adminPortalCustomerId),
         customerPortalApi.getPickingOrders(100, { search: "", status: "all", trackingStatus: "all" }, adminPortalCustomerId)
       ]);
@@ -80,35 +80,6 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
     }
   }
 
-  function startPickingOrderFromInventory(item: Item) {
-    setLineDrafts((current) => {
-      const existing = current.find((line) => line.skuMasterId === item.skuMasterId && line.locationId === item.locationId);
-      if (existing) {
-        return current.map((line) => line.id === existing.id ? {
-          ...line,
-          quantity: String(Math.min(Number(line.quantity || "0") + 1, Math.max(1, item.availableQty)))
-        } : line);
-      }
-      return [
-        ...current,
-        {
-          id: `${item.id}-${Date.now()}`,
-          skuMasterId: item.skuMasterId,
-          itemNumber: item.itemNumber,
-          sku: item.sku,
-          description: item.description || item.name,
-          locationId: item.locationId,
-          locationName: item.locationName,
-          unitLabel: item.unit || "CTN",
-          availableQty: item.availableQty,
-          quantity: item.availableQty > 0 ? "1" : "0",
-          lineNote: ""
-        }
-      ];
-    });
-    onSectionChange?.("new-outbound-order");
-  }
-
   function updateLineDraft(id: string, updates: Partial<PickingOrderLineDraft>) {
     setLineDrafts((current) => current.map((line) => line.id === id ? { ...line, ...updates } : line));
   }
@@ -119,11 +90,6 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
 
   function updatePickingOrderForm(updates: Partial<PickingOrderFormState>) {
     setForm((current) => ({ ...current, ...updates }));
-  }
-
-  function openNewPickingOrder() {
-    setErrorMessage("");
-    onSectionChange?.("new-outbound-order");
   }
 
   function openPackingListDetail(documentId: number) {
@@ -252,6 +218,11 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
     showError(message);
   }
 
+  function resetInventorySearch() {
+    setInventorySearch("");
+    void loadPortalData("");
+  }
+
   return (
     <main className="mx-auto grid max-w-7xl gap-4 p-4 lg:p-6">
       {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
@@ -262,8 +233,8 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
           isLoading={isLoading}
           search={inventorySearch}
           onSearchChange={setInventorySearch}
-          onApplySearch={() => void loadPortalData()}
-          onStartPickingOrder={startPickingOrderFromInventory}
+          onApplySearch={() => void loadPortalData(inventorySearch)}
+          onResetSearch={resetInventorySearch}
         />
       ) : null}
 
@@ -313,7 +284,6 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
           selectedPickingOrderId={selectedPickingOrderId}
           onPickingOrdersChange={setPickingOrders}
           onOpenDetail={openPickingOrderDetail}
-          onCreateNewOrder={openNewPickingOrder}
           onError={showPortalError}
         />
       ) : null}
