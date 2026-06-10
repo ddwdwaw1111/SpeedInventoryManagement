@@ -1,9 +1,4 @@
-import AttachFileRoundedIcon from "@mui/icons-material/AttachFileRounded";
-import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
-import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
-import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
-import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
-import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
+import { Copy, ExternalLink, History, Inbox, Paperclip, Warehouse } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { api } from "../lib/api";
@@ -233,7 +228,7 @@ export function InboundDetailPage({
                 disabled={!document}
                 className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <WarehouseOutlinedIcon sx={{ fontSize: 18 }} />
+                <Warehouse size={18} strokeWidth={2.1} />
                 {t("openPalletWorkspace")}
               </button>
               <button
@@ -242,7 +237,7 @@ export function InboundDetailPage({
                 disabled={!document}
                 className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <OpenInNewRoundedIcon sx={{ fontSize: 18 }} />
+                <ExternalLink size={18} strokeWidth={2.1} />
                 {t("inboundDetailOpenWorkspace")}
               </button>
               {canConvertSealedTransit ? (
@@ -251,7 +246,7 @@ export function InboundDetailPage({
                   onClick={handleConvertToPalletized}
                   className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-[#143569] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(20,53,105,0.18)] transition hover:bg-[#102f5f]"
                 >
-                  <MoveToInboxOutlinedIcon sx={{ fontSize: 18 }} />
+                  <Inbox size={18} strokeWidth={2.1} />
                   {t("convertToPalletized")}
                 </button>
               ) : null}
@@ -262,7 +257,7 @@ export function InboundDetailPage({
                   disabled={!document}
                   className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-[#143569] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(20,53,105,0.18)] transition hover:bg-[#102f5f] disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <MoveToInboxOutlinedIcon sx={{ fontSize: 18 }} />
+                  <Inbox size={18} strokeWidth={2.1} />
                   {t("editDraft")}
                 </button>
               ) : null}
@@ -273,7 +268,7 @@ export function InboundDetailPage({
                   disabled={!document}
                   className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-[#143569] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(20,53,105,0.18)] transition hover:bg-[#102f5f] disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <ContentCopyOutlinedIcon sx={{ fontSize: 18 }} />
+                  <Copy size={18} strokeWidth={2.1} />
                   {t("reEnterReceipt")}
                 </button>
               ) : null}
@@ -295,26 +290,26 @@ export function InboundDetailPage({
               <>
                 <div className="grid gap-3 md:grid-cols-4">
                   <OverviewStatCard
-                    icon={<MoveToInboxOutlinedIcon sx={{ fontSize: 18 }} />}
+                    icon={<Inbox size={18} strokeWidth={2.1} />}
                     label={t("totalLines")}
                     value={String(document.totalLines)}
                     meta={t("skuLines")}
                   />
                   <OverviewStatCard
-                    icon={<WarehouseOutlinedIcon sx={{ fontSize: 18 }} />}
+                    icon={<Warehouse size={18} strokeWidth={2.1} />}
                     label={t("expectedQty")}
                     value={String(document.totalExpectedQty)}
                     meta={t("receivedQty")}
                     secondaryValue={String(document.totalReceivedQty)}
                   />
                   <OverviewStatCard
-                    icon={<WarehouseOutlinedIcon sx={{ fontSize: 18 }} />}
+                    icon={<Warehouse size={18} strokeWidth={2.1} />}
                     label={t("currentStorage")}
                     value={sectionSummary}
                     meta={document.locationName || "-"}
                   />
                   <OverviewStatCard
-                    icon={<HistoryOutlinedIcon sx={{ fontSize: 18 }} />}
+                    icon={<History size={18} strokeWidth={2.1} />}
                     label={t("pallets")}
                     value={String(totalPallets)}
                     meta={t("inboundDetailVariance", { variance: quantityVariance })}
@@ -374,8 +369,8 @@ export function InboundDetailPage({
 
         <div className="inline-flex w-full flex-wrap gap-1 rounded-2xl border border-slate-200/80 bg-slate-100/80 p-1 sm:w-auto" role="tablist" aria-label={t("details")}>
           {([
-            ["details", t("details"), <HistoryOutlinedIcon key="details" sx={{ fontSize: 17 }} />],
-            ["attachments", t("attachments"), <AttachFileRoundedIcon key="attachments" sx={{ fontSize: 17 }} />]
+            ["details", t("details"), <History key="details" size={17} strokeWidth={2.1} />],
+            ["attachments", t("attachments"), <Paperclip key="attachments" size={17} strokeWidth={2.1} />]
           ] as const).map(([tabKey, label, icon]) => {
             const isActive = activeDetailTab === tabKey;
             return (

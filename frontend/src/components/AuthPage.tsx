@@ -1,6 +1,5 @@
-import { type FormEvent, useState } from "react";
-import { AdminPanelSettingsOutlined } from "@mui/icons-material";
-import { Alert } from "@mui/material";
+﻿import { type FormEvent, useState } from "react";
+import { ShieldCheck } from "lucide-react";
 
 import { useI18n } from "../lib/i18n";
 import type { LoginPayload, SignUpPayload, User } from "../lib/types";
@@ -67,7 +66,7 @@ export function AuthPage({
             <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" autoComplete="current-password" />
           </label>
 
-          {errorMessage ? <Alert severity="error" variant="outlined" sx={{ mb: 2, borderRadius: 2 }}>{errorMessage}</Alert> : null}
+          {errorMessage ? <div className="auth-alert" role="alert">{errorMessage}</div> : null}
 
           <button className="button button--primary auth-submit" type="submit" disabled={isSubmitting}>
             {isSubmitting ? "Signing in..." : "Sign in"}
@@ -75,7 +74,7 @@ export function AuthPage({
 
           <div className="auth-admin-entry">
             <a className="button button--ghost auth-admin-entry__link" href="/admin">
-              <AdminPanelSettingsOutlined fontSize="small" />
+              <ShieldCheck size={16} strokeWidth={2.1} />
               <span>{t("adminEntrance")}</span>
             </a>
             <span>{t("adminEntranceHint")}</span>

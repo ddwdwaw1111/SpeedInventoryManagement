@@ -1,8 +1,4 @@
-import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
-import ArrowBackOutlinedIcon from "@mui/icons-material/ArrowBackOutlined";
-import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
-import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
-import WidgetsOutlinedIcon from "@mui/icons-material/WidgetsOutlined";
+﻿import { ArrowLeft, Boxes, LayoutGrid, Plus, Save } from "lucide-react";
 import { type FormEvent, type RefObject, useEffect, useMemo, useState } from "react";
 import { GridLayout, noCompactor, useContainerWidth, type Layout, type LayoutItem as GridLayoutItem } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
@@ -401,7 +397,7 @@ export function StorageLocationEditorPage({
               <h1 className="m-0 text-[1.375rem] font-semibold tracking-tight text-slate-950">{t("editStorageLocation")}</h1>
             </div>
             <button className={secondaryButtonClass} type="button" onClick={onBack}>
-              <ArrowBackOutlinedIcon fontSize="small" />
+              <ArrowLeft size={16} strokeWidth={2.1} />
               {t("back")}
             </button>
           </div>
@@ -427,7 +423,7 @@ export function StorageLocationEditorPage({
 
             <div className="flex flex-wrap items-center gap-3">
               <button className={secondaryButtonClass} type="button" onClick={onBack}>
-                <ArrowBackOutlinedIcon fontSize="small" />
+                <ArrowLeft size={16} strokeWidth={2.1} />
                 {t("back")}
               </button>
               {canManage ? (
@@ -437,7 +433,7 @@ export function StorageLocationEditorPage({
                   type="submit"
                   disabled={submitting || isLoading}
                 >
-                  <SaveOutlinedIcon fontSize="small" />
+                  <Save size={16} strokeWidth={2.1} />
                   {submitting ? t("saving") : location ? t("updateLocation") : t("addLocation")}
                 </button>
               ) : null}
@@ -514,15 +510,15 @@ export function StorageLocationEditorPage({
 
               <div className="flex flex-wrap gap-2">
                 <button className={actionButtonClass} type="button" onClick={() => addLayoutBlock("temporary")} disabled={temporaryBlockExists}>
-                  <AddOutlinedIcon fontSize="small" />
+                  <Plus size={16} strokeWidth={2.1} />
                   {t("addTemporaryArea")}
                 </button>
                 <button className={actionButtonClass} type="button" onClick={() => addLayoutBlock("section")}>
-                  <Inventory2OutlinedIcon fontSize="small" />
+                  <Boxes size={16} strokeWidth={2.1} />
                   {t("addSectionArea")}
                 </button>
                 <button className={actionButtonClass} type="button" onClick={() => addLayoutBlock("support")}>
-                  <WidgetsOutlinedIcon fontSize="small" />
+                  <LayoutGrid size={16} strokeWidth={2.1} />
                   {t("addSupportArea")}
                 </button>
               </div>

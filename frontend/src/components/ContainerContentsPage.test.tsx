@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+﻿import type { ReactNode } from "react";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -6,7 +6,7 @@ const { getMovements } = vi.hoisted(() => ({
   getMovements: vi.fn()
 }));
 
-vi.mock("@mui/x-data-grid", () => ({
+vi.mock("./ui/dataGridCompat", () => ({
   DataGrid: ({
     rows = [],
     columns = []

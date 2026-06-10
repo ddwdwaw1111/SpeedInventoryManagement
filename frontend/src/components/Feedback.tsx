@@ -1,9 +1,10 @@
-import { type ReactNode, type SyntheticEvent, useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Button, Dialog, DialogActions, DialogContent, DialogTitle, Snackbar } from "@mui/material";
-import type { AlertColor, ButtonProps } from "@mui/material";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+
+export type AlertSeverity = "error" | "warning" | "info" | "success";
+type ConfirmColor = "primary" | "secondary" | "success" | "error" | "warning" | "info" | "inherit";
 
 type InlineAlertProps = {
-  severity?: AlertColor;
+  severity?: AlertSeverity;
   children: ReactNode;
   className?: string;
 };
@@ -13,34 +14,32 @@ type ConfirmDialogOptions = {
   message: ReactNode;
   confirmLabel: ReactNode;
   cancelLabel: ReactNode;
-  confirmColor?: ButtonProps["color"];
-  severity?: AlertColor;
+  confirmColor?: ConfirmColor;
+  severity?: AlertSeverity;
 };
 
 type ToastNotice = {
   id: number;
   message: ReactNode;
-  severity: AlertColor;
+  severity: AlertSeverity;
   autoHideDuration: number;
 };
 
+function getButtonToneClassName(color: ConfirmColor | undefined) {
+  if (color === "error") {
+    return "button--danger";
+  }
+  if (color === "warning") {
+    return "button--warning";
+  }
+  return "button--primary";
+}
+
 export function InlineAlert({ severity = "error", children, className }: InlineAlertProps) {
   return (
-    <Alert
-      severity={severity}
-      variant="outlined"
-      className={className}
-      sx={{
-        mb: 2,
-        borderRadius: 2,
-        alignItems: "center",
-        "& .MuiAlert-message": {
-          width: "100%"
-        }
-      }}
-    >
+    <div className={`inline-alert inline-alert--${severity} ${className ?? ""}`.trim()} role="alert">
       {children}
-    </Alert>
+    </div>
   );
 }
 
@@ -70,41 +69,55 @@ export function useConfirmDialog() {
     resolverRef.current = null;
   }, []);
 
-  const confirmationDialog = (
-    <Dialog
-      open={Boolean(options)}
-      onClose={() => closeDialog(false)}
-      fullWidth
-      maxWidth="xs"
+  useEffect(() => {
+    if (!options) return undefined;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        closeDialog(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [closeDialog, options]);
+
+  const confirmationDialog = options ? (
+    <div
+      className="confirm-dialog__backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          closeDialog(false);
+        }
+      }}
     >
-      {options ? (
-        <>
-          <DialogTitle>{options.title}</DialogTitle>
-          <DialogContent dividers>
-            <Alert
-              severity={options.severity ?? "warning"}
-              variant="outlined"
-              sx={{ borderRadius: 2 }}
-            >
-              {options.message}
-            </Alert>
-          </DialogContent>
-          <DialogActions sx={{ px: 3, pb: 2 }}>
-            <Button onClick={() => closeDialog(false)}>
-              {options.cancelLabel}
-            </Button>
-            <Button
-              variant="contained"
-              color={options.confirmColor ?? "primary"}
-              onClick={() => closeDialog(true)}
-            >
-              {options.confirmLabel}
-            </Button>
-          </DialogActions>
-        </>
-      ) : null}
-    </Dialog>
-  );
+      <section
+        className="confirm-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-dialog-title"
+      >
+        <header className="confirm-dialog__header">
+          <h2 id="confirm-dialog-title">{options.title}</h2>
+        </header>
+        <div className="confirm-dialog__body">
+          <InlineAlert severity={options.severity ?? "warning"}>{options.message}</InlineAlert>
+        </div>
+        <footer className="confirm-dialog__actions">
+          <button className="button button--ghost" type="button" onClick={() => closeDialog(false)}>
+            {options.cancelLabel}
+          </button>
+          <button
+            className={`button ${getButtonToneClassName(options.confirmColor)}`}
+            type="button"
+            onClick={() => closeDialog(true)}
+          >
+            {options.confirmLabel}
+          </button>
+        </footer>
+      </section>
+    </div>
+  ) : null;
 
   return { confirm, confirmationDialog };
 }
@@ -112,14 +125,11 @@ export function useConfirmDialog() {
 export function useFeedbackToast() {
   const [notice, setNotice] = useState<ToastNotice | null>(null);
 
-  const closeToast = useCallback((_event?: Event | SyntheticEvent, reason?: string) => {
-    if (reason === "clickaway") {
-      return;
-    }
+  const closeToast = useCallback(() => {
     setNotice(null);
   }, []);
 
-  const showToast = useCallback((message: ReactNode, severity: AlertColor = "success", autoHideDuration = 3200) => {
+  const showToast = useCallback((message: ReactNode, severity: AlertSeverity = "success", autoHideDuration = 3200) => {
     setNotice({
       id: Date.now(),
       message,
@@ -136,29 +146,24 @@ export function useFeedbackToast() {
     showToast(message, "error", autoHideDuration ?? 4200);
   }, [showToast]);
 
-  const feedbackToast = (
-    <Snackbar
-      key={notice?.id ?? "feedback-toast"}
-      open={Boolean(notice)}
-      autoHideDuration={notice?.autoHideDuration ?? 3200}
-      onClose={closeToast}
-      anchorOrigin={{ vertical: "top", horizontal: "center" }}
-    >
-      <Alert
-        severity={notice?.severity ?? "success"}
-        variant="filled"
-        onClose={closeToast}
-        sx={{
-          width: "100%",
-          minWidth: 320,
-          alignItems: "center",
-          boxShadow: "0 14px 34px rgba(12, 33, 74, 0.2)"
-        }}
-      >
-        {notice?.message}
-      </Alert>
-    </Snackbar>
-  );
+  useEffect(() => {
+    if (!notice) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => setNotice(null), notice.autoHideDuration);
+    return () => window.clearTimeout(timeoutId);
+  }, [notice]);
+
+  const feedbackToast = notice ? (
+    <div className="feedback-toast-region" role="status" aria-live="polite">
+      <div className={`feedback-toast feedback-toast--${notice.severity}`}>
+        <span>{notice.message}</span>
+        <button type="button" aria-label="Dismiss notification" onClick={closeToast}>
+          x
+        </button>
+      </div>
+    </div>
+  ) : null;
 
   return { showToast, showSuccess, showError, feedbackToast };
 }

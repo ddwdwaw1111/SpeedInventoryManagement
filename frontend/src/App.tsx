@@ -1,25 +1,25 @@
 import {
-  AssessmentOutlined,
-  ArrowBackOutlined,
-  BadgeOutlined,
-  CategoryOutlined,
-  ChevronLeftOutlined,
-  ExpandMoreOutlined,
-  ChevronRightOutlined,
-  CompareArrowsOutlined,
-  FactCheckOutlined,
-  FileDownloadOutlined,
-  GroupsOutlined,
-  HomeOutlined,
-  HistoryOutlined,
-  ManageAccountsOutlined,
-  MoveToInboxOutlined,
-  OutboxOutlined,
-  RequestQuoteOutlined,
-  SettingsOutlined,
-  TuneOutlined,
-  WarehouseOutlined
-} from "@mui/icons-material";
+  ArrowLeft,
+  ArrowLeftRight,
+  BarChart3,
+  Boxes,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ClipboardCheck,
+  Download,
+  History,
+  Home,
+  IdCard,
+  Inbox,
+  PackageCheck,
+  ReceiptText,
+  Settings,
+  SlidersHorizontal,
+  UserCog,
+  Users,
+  Warehouse
+} from "lucide-react";
 import { Suspense, lazy, type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { AppHeaderUser, AuthPage } from "./components/AuthPage";
@@ -56,6 +56,9 @@ import {
   type PageKey
 } from "./lib/routes";
 import type { AuditLog, Customer, CycleCount, InboundDocument, InventoryAdjustment, InventoryTransfer, Item, Location, LoginPayload, Movement, OutboundDocument, SKUMaster, SignUpPayload, User } from "./lib/types";
+
+const navIconProps = { size: 16, strokeWidth: 2.1 } as const;
+const actionIconProps = { size: 17, strokeWidth: 2.1 } as const;
 
 const ActivityManagementPage = lazy(async () => {
   const module = await import("./components/ActivityManagementPage");
@@ -543,33 +546,33 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
   }, [activePage, canManageUsers, canViewAuditLogs, canViewPallets, currentUser, isCustomerPortalUser]);
 
   const pageItems: Array<{ key: PageKey; label: string; description: string; icon: ReactNode }> = [
-    { key: "dashboard", label: t("navDashboard"), description: t("dashboardDesc"), icon: <HomeOutlined fontSize="small" /> },
-    { key: "daily-operations", label: t("dailyOperations"), description: t("dailyOperationsDesc"), icon: <HomeOutlined fontSize="small" /> },
-    { key: "billing", label: t("billingPage"), description: t("billingPageDesc"), icon: <RequestQuoteOutlined fontSize="small" /> },
-    { key: "billing-container-detail", label: t("billingContainerDetailPage"), description: t("billingContainerDetailPageDesc"), icon: <RequestQuoteOutlined fontSize="small" /> },
-    { key: "reports", label: t("report"), description: t("reportDesc"), icon: <AssessmentOutlined fontSize="small" /> },
-    { key: "export-center", label: t("exportCenter"), description: t("exportCenterDesc"), icon: <FileDownloadOutlined fontSize="small" /> },
-    { key: "inbound-management", label: t("navReceiving"), description: t("inboundDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
-    { key: "inbound-detail", label: t("inboundDetailPage"), description: t("inboundDetailPageDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
-    { key: "receipt-editor", label: t("receiptEditorPage"), description: t("receiptEditorPageDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
-    { key: "outbound-management", label: t("navShipping"), description: t("outboundDesc"), icon: <OutboxOutlined fontSize="small" /> },
-    { key: "shipment-editor", label: t("shipmentEditorPage"), description: t("shipmentEditorPageDesc"), icon: <OutboxOutlined fontSize="small" /> },
-    { key: "inventory-summary", label: t("inventorySummary"), description: t("inventorySummaryDesc"), icon: <WarehouseOutlined fontSize="small" /> },
-    { key: "warehouse-map", label: t("warehouseMap"), description: t("warehouseMapDesc"), icon: <WarehouseOutlined fontSize="small" /> },
-    { key: "container-contents", label: t("containerContents"), description: t("containerContentsDesc"), icon: <WarehouseOutlined fontSize="small" /> },
-    { key: "container-detail", label: t("containerDetailPage"), description: t("containerDetailPageDesc"), icon: <WarehouseOutlined fontSize="small" /> },
-    { key: "adjustments", label: t("adjustments"), description: t("adjustmentsDesc"), icon: <TuneOutlined fontSize="small" /> },
-    { key: "transfers", label: t("transfers"), description: t("transfersDesc"), icon: <CompareArrowsOutlined fontSize="small" /> },
-    { key: "cycle-counts", label: t("cycleCounts"), description: t("cycleCountsDesc"), icon: <FactCheckOutlined fontSize="small" /> },
-    { key: "all-activity", label: t("allActivity"), description: t("allActivityDesc"), icon: <HistoryOutlined fontSize="small" /> },
-    { key: "customers", label: t("customers"), description: t("customersDesc"), icon: <GroupsOutlined fontSize="small" /> },
-    ...(canViewAuditLogs ? [{ key: "audit-logs" as PageKey, label: t("auditLogs"), description: t("auditLogsDesc"), icon: <BadgeOutlined fontSize="small" /> }] : []),
-    ...(canViewPallets ? [{ key: "pallet-trace" as PageKey, label: t("palletTrace"), description: t("palletTraceDesc"), icon: <WarehouseOutlined fontSize="small" /> }] : []),
-    ...(canManageUsers ? [{ key: "user-management" as PageKey, label: t("userManagement"), description: t("userManagementDesc"), icon: <ManageAccountsOutlined fontSize="small" /> }] : []),
-    { key: "sku-master", label: t("skuMaster"), description: t("skuMasterDesc"), icon: <CategoryOutlined fontSize="small" /> },
-    { key: "storage-management", label: t("storageManagement"), description: t("storageManagementDesc"), icon: <WarehouseOutlined fontSize="small" /> },
-    { key: "storage-location-editor", label: t("editStorageLocation"), description: t("warehouseLayoutDesc"), icon: <WarehouseOutlined fontSize="small" /> },
-    { key: "settings", label: t("settings"), description: t("settingsDesc"), icon: <SettingsOutlined fontSize="small" /> }
+    { key: "dashboard", label: t("navDashboard"), description: t("dashboardDesc"), icon: <Home {...navIconProps} /> },
+    { key: "daily-operations", label: t("dailyOperations"), description: t("dailyOperationsDesc"), icon: <Home {...navIconProps} /> },
+    { key: "billing", label: t("billingPage"), description: t("billingPageDesc"), icon: <ReceiptText {...navIconProps} /> },
+    { key: "billing-container-detail", label: t("billingContainerDetailPage"), description: t("billingContainerDetailPageDesc"), icon: <ReceiptText {...navIconProps} /> },
+    { key: "reports", label: t("report"), description: t("reportDesc"), icon: <BarChart3 {...navIconProps} /> },
+    { key: "export-center", label: t("exportCenter"), description: t("exportCenterDesc"), icon: <Download {...navIconProps} /> },
+    { key: "inbound-management", label: t("navReceiving"), description: t("inboundDesc"), icon: <Inbox {...navIconProps} /> },
+    { key: "inbound-detail", label: t("inboundDetailPage"), description: t("inboundDetailPageDesc"), icon: <Inbox {...navIconProps} /> },
+    { key: "receipt-editor", label: t("receiptEditorPage"), description: t("receiptEditorPageDesc"), icon: <Inbox {...navIconProps} /> },
+    { key: "outbound-management", label: t("navShipping"), description: t("outboundDesc"), icon: <PackageCheck {...navIconProps} /> },
+    { key: "shipment-editor", label: t("shipmentEditorPage"), description: t("shipmentEditorPageDesc"), icon: <PackageCheck {...navIconProps} /> },
+    { key: "inventory-summary", label: t("inventorySummary"), description: t("inventorySummaryDesc"), icon: <Warehouse {...navIconProps} /> },
+    { key: "warehouse-map", label: t("warehouseMap"), description: t("warehouseMapDesc"), icon: <Warehouse {...navIconProps} /> },
+    { key: "container-contents", label: t("containerContents"), description: t("containerContentsDesc"), icon: <Warehouse {...navIconProps} /> },
+    { key: "container-detail", label: t("containerDetailPage"), description: t("containerDetailPageDesc"), icon: <Warehouse {...navIconProps} /> },
+    { key: "adjustments", label: t("adjustments"), description: t("adjustmentsDesc"), icon: <SlidersHorizontal {...navIconProps} /> },
+    { key: "transfers", label: t("transfers"), description: t("transfersDesc"), icon: <ArrowLeftRight {...navIconProps} /> },
+    { key: "cycle-counts", label: t("cycleCounts"), description: t("cycleCountsDesc"), icon: <ClipboardCheck {...navIconProps} /> },
+    { key: "all-activity", label: t("allActivity"), description: t("allActivityDesc"), icon: <History {...navIconProps} /> },
+    { key: "customers", label: t("customers"), description: t("customersDesc"), icon: <Users {...navIconProps} /> },
+    ...(canViewAuditLogs ? [{ key: "audit-logs" as PageKey, label: t("auditLogs"), description: t("auditLogsDesc"), icon: <IdCard {...navIconProps} /> }] : []),
+    ...(canViewPallets ? [{ key: "pallet-trace" as PageKey, label: t("palletTrace"), description: t("palletTraceDesc"), icon: <Warehouse {...navIconProps} /> }] : []),
+    ...(canManageUsers ? [{ key: "user-management" as PageKey, label: t("userManagement"), description: t("userManagementDesc"), icon: <UserCog {...navIconProps} /> }] : []),
+    { key: "sku-master", label: t("skuMaster"), description: t("skuMasterDesc"), icon: <Boxes {...navIconProps} /> },
+    { key: "storage-management", label: t("storageManagement"), description: t("storageManagementDesc"), icon: <Warehouse {...navIconProps} /> },
+    { key: "storage-location-editor", label: t("editStorageLocation"), description: t("warehouseLayoutDesc"), icon: <Warehouse {...navIconProps} /> },
+    { key: "settings", label: t("settings"), description: t("settingsDesc"), icon: <Settings {...navIconProps} /> }
   ];
   const pageItemMap = new Map(pageItems.map((item) => [item.key, item] as const));
   const primaryNavKeys: PageKey[] = ["dashboard", "inbound-management", "outbound-management"];
@@ -707,7 +710,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
             title={t("settings")}
             aria-label={t("settings")}
           >
-            <SettingsOutlined fontSize="small" />
+            <Settings {...actionIconProps} />
           </button>
           <AppHeaderUser user={currentUser} onLogout={handleLogout} isSubmitting={isAuthSubmitting} />
         </div>
@@ -742,7 +745,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
           collapsedSections={collapsedSections}
           collapseToggle={{
             label: sidebarCollapsed ? "Expand navigation" : "Collapse navigation",
-            icon: sidebarCollapsed ? <ChevronRightOutlined fontSize="small" /> : <ChevronLeftOutlined fontSize="small" />,
+            icon: sidebarCollapsed ? <ChevronRight {...actionIconProps} /> : <ChevronLeft {...actionIconProps} />,
             onClick: () => setSidebarCollapsed((value) => !value)
           }}
           hideItemLabelsWhenCollapsed
@@ -752,8 +755,9 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
           onToggleSection={(sectionKey) => setCollapsedSections((current) => ({ ...current, [sectionKey]: !current[sectionKey] }))}
           primaryItems={primaryNavItems}
           renderSectionChevron={(_section, isCollapsed) => (
-            <ExpandMoreOutlined
-              fontSize="small"
+            <ChevronDown
+              size={16}
+              strokeWidth={2.1}
               className={`app-sidebar__section-chevron ${isCollapsed ? "app-sidebar__section-chevron--collapsed" : ""}`}
             />
           )}
@@ -771,7 +775,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
                     type="button"
                     onClick={() => handleNavigateToPage(parentPage.key)}
                   >
-                    <ArrowBackOutlined fontSize="small" />
+                    <ArrowLeft {...actionIconProps} />
                     <span>{t("back")}</span>
                   </button>
                 ) : null}

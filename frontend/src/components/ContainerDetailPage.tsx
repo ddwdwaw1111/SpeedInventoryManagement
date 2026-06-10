@@ -1,14 +1,14 @@
-import CloseIcon from "@mui/icons-material/Close";
-import CompareArrowsOutlinedIcon from "@mui/icons-material/CompareArrowsOutlined";
-import ExpandMoreRoundedIcon from "@mui/icons-material/ExpandMoreRounded";
-import SwapVertRoundedIcon from "@mui/icons-material/SwapVertRounded";
-import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
-import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
-import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
-import OutboxOutlinedIcon from "@mui/icons-material/OutboxOutlined";
-import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
-import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
-import { Chip, Dialog, DialogContent, DialogTitle, IconButton } from "@mui/material";
+import { CloseIcon } from "./ui/muiIcons";
+import { CompareArrowsOutlinedIcon } from "./ui/muiIcons";
+import { ExpandMoreRoundedIcon } from "./ui/muiIcons";
+import { SwapVertRoundedIcon } from "./ui/muiIcons";
+import { FactCheckOutlinedIcon } from "./ui/muiIcons";
+import { HistoryOutlinedIcon } from "./ui/muiIcons";
+import { MoveToInboxOutlinedIcon } from "./ui/muiIcons";
+import { OutboxOutlinedIcon } from "./ui/muiIcons";
+import { TuneOutlinedIcon } from "./ui/muiIcons";
+import { WarehouseOutlinedIcon } from "./ui/muiIcons";
+import { Chip, Dialog, DialogContent, DialogTitle, IconButton } from "./ui/muiCompat";
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { api } from "../lib/api";

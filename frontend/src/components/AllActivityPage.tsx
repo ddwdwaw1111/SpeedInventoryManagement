@@ -1,13 +1,13 @@
-import CloseIcon from "@mui/icons-material/Close";
-import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
-import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
-import OutboxOutlinedIcon from "@mui/icons-material/OutboxOutlined";
-import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
-import CompareArrowsOutlinedIcon from "@mui/icons-material/CompareArrowsOutlined";
-import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
+﻿import { CloseIcon } from "./ui/muiIcons";
+import { HistoryOutlinedIcon } from "./ui/muiIcons";
+import { MoveToInboxOutlinedIcon } from "./ui/muiIcons";
+import { OutboxOutlinedIcon } from "./ui/muiIcons";
+import { TuneOutlinedIcon } from "./ui/muiIcons";
+import { CompareArrowsOutlinedIcon } from "./ui/muiIcons";
+import { FactCheckOutlinedIcon } from "./ui/muiIcons";
 import { useEffect, useMemo, useState } from "react";
-import { Box, Button, Chip, Drawer, IconButton } from "@mui/material";
-import { DataGrid, type GridColDef } from "@mui/x-data-grid";
+import { Box, Button, Chip, Drawer, IconButton } from "./ui/muiCompat";
+import { DataGrid, type GridColDef } from "./ui/dataGridCompat";
 
 import { api } from "../lib/api";
 import { consumePendingAllActivityContext } from "../lib/allActivityContext";

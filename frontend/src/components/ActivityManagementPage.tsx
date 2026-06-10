@@ -1,15 +1,15 @@
-import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
-import ArchiveOutlinedIcon from "@mui/icons-material/ArchiveOutlined";
-import CloseIcon from "@mui/icons-material/Close";
-import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
-import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
-import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
-import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
-import PictureAsPdfOutlinedIcon from "@mui/icons-material/PictureAsPdfOutlined";
-import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
+import { AddCircleOutlineOutlinedIcon } from "./ui/muiIcons";
+import { ArchiveOutlinedIcon } from "./ui/muiIcons";
+import { CloseIcon } from "./ui/muiIcons";
+import { ContentCopyOutlinedIcon } from "./ui/muiIcons";
+import { DeleteOutlineOutlinedIcon } from "./ui/muiIcons";
+import { EditOutlinedIcon } from "./ui/muiIcons";
+import { FileDownloadOutlinedIcon } from "./ui/muiIcons";
+import { PictureAsPdfOutlinedIcon } from "./ui/muiIcons";
+import { VisibilityOutlinedIcon } from "./ui/muiIcons";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, Drawer, IconButton } from "@mui/material";
-import { DataGrid, type GridColDef } from "@mui/x-data-grid";
+import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, Drawer, IconButton } from "./ui/muiCompat";
+import { DataGrid, type GridColDef } from "./ui/dataGridCompat";
 
 import { api } from "../lib/api";
 import { consumePendingActivityManagementLaunchContext, type ActivityManagementLaunchContext, type InboundLaunchIntent } from "../lib/activityManagementLaunchContext";

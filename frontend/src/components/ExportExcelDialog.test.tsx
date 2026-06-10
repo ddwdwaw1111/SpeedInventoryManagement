@@ -33,4 +33,22 @@ describe("ExportExcelDialog", () => {
     expect(downloadButton).toHaveAttribute("aria-busy", "true");
     expect(screen.getByLabelText(/export title/i)).toBeDisabled();
   });
+
+  it("closes with Escape when export is idle", () => {
+    const onClose = vi.fn();
+
+    renderWithProviders(
+      <ExportExcelDialog
+        open
+        defaultTitle="Billing Preview"
+        defaultColumns={[{ key: "sku", label: "SKU" }]}
+        onClose={onClose}
+        onExport={vi.fn()}
+      />
+    );
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });

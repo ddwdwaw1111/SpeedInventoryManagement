@@ -1,10 +1,5 @@
-import { type ReactNode } from "react";
-import { Alert } from "@mui/material";
-import CategoryOutlinedIcon from "@mui/icons-material/CategoryOutlined";
-import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
-import MapOutlinedIcon from "@mui/icons-material/MapOutlined";
-import ViewInArOutlinedIcon from "@mui/icons-material/ViewInArOutlined";
-import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
+﻿import { type ReactNode } from "react";
+import { Boxes, History, Map as MapIcon, PackageSearch, Warehouse } from "lucide-react";
 
 import { InlineAlert } from "./Feedback";
 import type { PageKey } from "../lib/routes";
@@ -54,20 +49,9 @@ export function WorkspacePanelHeader({
       {visibleNotices.length > 0 ? (
         <div className="workspace-panel-header__notices">
           {visibleNotices.map((notice, index) => (
-            <Alert
-              severity="info"
-              variant="outlined"
-              key={index}
-              sx={{
-                borderRadius: 2,
-                mb: 0,
-                "& .MuiAlert-message": {
-                  width: "100%"
-                }
-              }}
-            >
+            <InlineAlert severity="info" key={index}>
               {notice}
-            </Alert>
+            </InlineAlert>
           ))}
         </div>
       ) : null}
@@ -164,11 +148,11 @@ type InventoryViewSwitcherProps = {
 };
 
 const INVENTORY_VIEWS: Array<{ key: PageKey; label: string; icon: ReactNode }> = [
-  { key: "inventory-summary", label: "Summary", icon: <WarehouseOutlinedIcon style={{ fontSize: "0.9rem" }} /> },
-  { key: "container-contents", label: "Containers", icon: <CategoryOutlinedIcon style={{ fontSize: "0.9rem" }} /> },
-  { key: "warehouse-map", label: "Map", icon: <MapOutlinedIcon style={{ fontSize: "0.9rem" }} /> },
-  { key: "all-activity", label: "Activity", icon: <HistoryOutlinedIcon style={{ fontSize: "0.9rem" }} /> },
-  { key: "pallet-trace", label: "Pallets", icon: <ViewInArOutlinedIcon style={{ fontSize: "0.9rem" }} /> },
+  { key: "inventory-summary", label: "Summary", icon: <Warehouse size={14} strokeWidth={2.1} /> },
+  { key: "container-contents", label: "Containers", icon: <Boxes size={14} strokeWidth={2.1} /> },
+  { key: "warehouse-map", label: "Map", icon: <MapIcon size={14} strokeWidth={2.1} /> },
+  { key: "all-activity", label: "Activity", icon: <History size={14} strokeWidth={2.1} /> },
+  { key: "pallet-trace", label: "Pallets", icon: <PackageSearch size={14} strokeWidth={2.1} /> },
 ];
 
 export function InventoryViewSwitcher({ activeView, onNavigate }: InventoryViewSwitcherProps) {

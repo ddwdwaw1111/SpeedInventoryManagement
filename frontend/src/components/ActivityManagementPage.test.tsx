@@ -1,9 +1,10 @@
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+﻿import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { within } from "@testing-library/react";
 
 const mockedDownloadOutboundPickSheetPdfFromDocument = vi.fn();
 
-vi.mock("@mui/x-data-grid", () => ({
+vi.mock("./ui/dataGridCompat", () => ({
   DataGrid: ({
     rows = [],
     columns = []
@@ -861,7 +862,7 @@ describe("ActivityManagementPage", () => {
   it("locks drawer actions while a receipt copy is in progress", async () => {
     mockedApi.copyInboundDocument.mockImplementation(() => new Promise(() => {}));
 
-    renderWithProviders(
+    const { container } = renderWithProviders(
       <ActivityManagementPage
         mode="IN"
         items={[]}
@@ -901,13 +902,18 @@ describe("ActivityManagementPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Details" }));
 
-    const reEnterButton = await screen.findByRole("button", { name: /Re-enter Receipt|reEnterReceipt/ });
+    const drawer = await waitFor(() => {
+      const element = container.querySelector(".document-drawer");
+      expect(element).not.toBeNull();
+      return element as HTMLElement;
+    });
+    const reEnterButton = await within(drawer).findByRole("button", { name: /Re-enter Receipt|reEnterReceipt/ });
 
     fireEvent.click(reEnterButton);
 
     expect(reEnterButton).toBeDisabled();
     expect(reEnterButton).toHaveAttribute("aria-busy", "true");
-    expect(screen.getByRole("button", { name: "Cancel Receipt" })).toBeDisabled();
+    expect(within(drawer).getByRole("button", { name: "Cancel Receipt" })).toBeDisabled();
     expect(mockedApi.copyInboundDocument).toHaveBeenCalledWith(14);
   });
 

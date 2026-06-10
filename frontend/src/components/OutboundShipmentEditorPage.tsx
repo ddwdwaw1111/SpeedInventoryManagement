@@ -1,4 +1,4 @@
-import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
+import { PlusCircle } from "lucide-react";
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
@@ -1389,7 +1389,7 @@ export function OutboundShipmentEditorPage({
                     disabled={isOutboundSourceReadOnly}
                     aria-label={t("addOutboundLine")}
                   >
-                    <AddCircleOutlineOutlinedIcon fontSize="small" />
+                    <PlusCircle size={16} strokeWidth={2.1} />
                   </button>
                 ) : null}
               </div>

@@ -1,20 +1,20 @@
-import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
-import CalendarMonthOutlinedIcon from "@mui/icons-material/CalendarMonthOutlined";
-import ClearOutlinedIcon from "@mui/icons-material/ClearOutlined";
-import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
-import ExpandLessOutlinedIcon from "@mui/icons-material/ExpandLessOutlined";
-import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
-import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
-import LocalShippingOutlinedIcon from "@mui/icons-material/LocalShippingOutlined";
-import PaidOutlinedIcon from "@mui/icons-material/PaidOutlined";
-import PictureAsPdfOutlinedIcon from "@mui/icons-material/PictureAsPdfOutlined";
-import RefreshOutlinedIcon from "@mui/icons-material/RefreshOutlined";
-import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
-import TrendingDownOutlinedIcon from "@mui/icons-material/TrendingDownOutlined";
-import TrendingFlatOutlinedIcon from "@mui/icons-material/TrendingFlatOutlined";
-import TrendingUpOutlinedIcon from "@mui/icons-material/TrendingUpOutlined";
-import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
-import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
+import { AddCircleOutlineOutlinedIcon } from "./ui/muiIcons";
+import { CalendarMonthOutlinedIcon } from "./ui/muiIcons";
+import { ClearOutlinedIcon } from "./ui/muiIcons";
+import { ExpandMoreOutlinedIcon } from "./ui/muiIcons";
+import { ExpandLessOutlinedIcon } from "./ui/muiIcons";
+import { FileDownloadOutlinedIcon } from "./ui/muiIcons";
+import { Inventory2OutlinedIcon } from "./ui/muiIcons";
+import { LocalShippingOutlinedIcon } from "./ui/muiIcons";
+import { PaidOutlinedIcon } from "./ui/muiIcons";
+import { PictureAsPdfOutlinedIcon } from "./ui/muiIcons";
+import { RefreshOutlinedIcon } from "./ui/muiIcons";
+import { SearchOutlinedIcon } from "./ui/muiIcons";
+import { TrendingDownOutlinedIcon } from "./ui/muiIcons";
+import { TrendingFlatOutlinedIcon } from "./ui/muiIcons";
+import { TrendingUpOutlinedIcon } from "./ui/muiIcons";
+import { TuneOutlinedIcon } from "./ui/muiIcons";
+import { WarehouseOutlinedIcon } from "./ui/muiIcons";
 import {
   Autocomplete,
   Box,
@@ -33,8 +33,8 @@ import {
   Tabs,
   TextField,
   Typography
-} from "@mui/material";
-import { BarChart } from "@mui/x-charts";
+} from "./ui/muiCompat";
+import { BarChart } from "./ui/chartCompat";
 import { useEffect, useMemo, useState } from "react";
 
 import { api } from "../lib/api";

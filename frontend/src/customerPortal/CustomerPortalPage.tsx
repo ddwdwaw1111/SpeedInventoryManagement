@@ -46,7 +46,7 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
   const [errorMessage, setErrorMessage] = useState("");
   const adminPortalCustomerId = currentUser.role === "admin" && portalCustomerId ? portalCustomerId : undefined;
   const activeCustomerId = adminPortalCustomerId ?? currentUser.customerId;
-  const currentSection = activeSection ?? "inventory";
+  const currentSection = normalizeCustomerPortalSection(activeSection);
 
   const showInventorySection = currentSection === "inventory";
   const showNewPickingOrderSection = currentSection === "new-outbound-order";
@@ -63,14 +63,10 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
     setIsLoading(true);
     setErrorMessage("");
     try {
-      const [inventoryRows, packingListRows, pickingOrderRows] = await Promise.all([
-        customerPortalApi.getInventory(inventorySearch, adminPortalCustomerId),
-        customerPortalApi.getPackingLists(100, { search: "", status: "all", trackingStatus: "all" }, adminPortalCustomerId),
-        customerPortalApi.getPickingOrders(100, { search: "", status: "all", trackingStatus: "all" }, adminPortalCustomerId)
-      ]);
+      const inventoryRows = await customerPortalApi.getInventory(inventorySearch, adminPortalCustomerId);
       setInventory(inventoryRows);
-      setPackingLists(packingListRows);
-      setPickingOrders(pickingOrderRows);
+      setPackingLists([]);
+      setPickingOrders([]);
     } catch (error) {
       const message = error instanceof Error ? error.message : t("customerPortalLoadFailed");
       setErrorMessage(message);
@@ -263,7 +259,6 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
           search={inventorySearch}
           onSearchChange={setInventorySearch}
           onApplySearch={() => void loadPortalData()}
-          onStartPickingOrder={startPickingOrderFromInventory}
         />
       ) : null}
 
@@ -335,4 +330,8 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
       {feedbackToast}
     </main>
   );
+}
+
+function normalizeCustomerPortalSection(section?: CustomerPortalSection): CustomerPortalSection {
+  return section === "inventory" ? "inventory" : "inventory";
 }

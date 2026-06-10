@@ -1,9 +1,9 @@
-import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
-import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
-import DriveFileRenameOutlineOutlinedIcon from "@mui/icons-material/DriveFileRenameOutlineOutlined";
-import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
-import { Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, TextField } from "@mui/material";
-import { DataGrid, type GridColDef } from "@mui/x-data-grid";
+﻿import { AddCircleOutlineOutlinedIcon } from "./ui/muiIcons";
+import { DeleteOutlineOutlinedIcon } from "./ui/muiIcons";
+import { DriveFileRenameOutlineOutlinedIcon } from "./ui/muiIcons";
+import { EditOutlinedIcon } from "./ui/muiIcons";
+import { Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, TextField } from "./ui/muiCompat";
+import { DataGrid, type GridColDef } from "./ui/dataGridCompat";
 import { useEffect, useMemo, useState } from "react";
 
 import { api } from "../lib/api";

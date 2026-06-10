@@ -1,6 +1,4 @@
-import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
-import ViewInArOutlinedIcon from "@mui/icons-material/ViewInArOutlined";
-import { Button, MenuItem, TextField } from "@mui/material";
+﻿import { Boxes, Warehouse } from "lucide-react";
 import { Canvas } from "@react-three/fiber";
 import { Html, MapControls } from "@react-three/drei";
 import { useEffect, useMemo, useState } from "react";
@@ -270,8 +268,9 @@ export function WarehouseMapPage({ items, isLoading, onNavigate, onOpenContainer
           actions={(
             <div className="sheet-actions">
               {selectedWarehouse ? (
-                <Button
-                  variant="outlined"
+                <button
+                  className="button button--ghost button--small"
+                  type="button"
                   onClick={() => {
                     setSelectedWarehouseId(null);
                     setSelectedSectionId(null);
@@ -279,62 +278,63 @@ export function WarehouseMapPage({ items, isLoading, onNavigate, onOpenContainer
                   }}
                 >
                   {t("warehouseMapBackWarehouses")}
-                </Button>
+                </button>
               ) : null}
               {selectedSection ? (
-                <Button
-                  variant="outlined"
+                <button
+                  className="button button--ghost button--small"
+                  type="button"
                   onClick={() => {
                     setSelectedSectionId(null);
                     setSelectedContainerId(null);
                   }}
                 >
                   {t("warehouseMapBackSections")}
-                </Button>
+                </button>
               ) : null}
             </div>
           )}
         />
         <InventoryViewSwitcher activeView="warehouse-map" onNavigate={onNavigate} />
         <div className="warehouse-map__filters">
-          <TextField
-            select
-            size="small"
-            label={t("warehouseMapWarehouseFilter")}
-            value={selectedWarehouseFilterId}
-            onChange={(event) => setSelectedWarehouseFilterId(event.target.value)}
-          >
-            <MenuItem value="all">{t("allWarehouses")}</MenuItem>
-            {warehouseOptions.map((option) => (
-              <MenuItem key={option.id} value={option.id}>{option.name}</MenuItem>
-            ))}
-          </TextField>
-          <TextField
-            select
-            size="small"
-            label={t("warehouseMapCustomerFilter")}
-            value={selectedCustomerFilterId}
-            onChange={(event) => setSelectedCustomerFilterId(event.target.value)}
-          >
-            <MenuItem value="all">{t("allCustomers")}</MenuItem>
-            {customerOptions.map((option) => (
-              <MenuItem key={option.id} value={option.id}>{option.name}</MenuItem>
-            ))}
-          </TextField>
-          <TextField
-            select
-            size="small"
-            label={t("warehouseMapExceptionFilter")}
-            value={selectedStatusFilter}
-            onChange={(event) => setSelectedStatusFilter(event.target.value as WarehouseFilterStatus)}
-          >
-            <MenuItem value="all">{t("allStatuses")}</MenuItem>
-            <MenuItem value="normal">{t("warehouseMapNormal")}</MenuItem>
-            <MenuItem value="low">{t("warehouseMapLowStock")}</MenuItem>
-            <MenuItem value="hold">{t("warehouseMapOnHold")}</MenuItem>
-            <MenuItem value="damaged">{t("warehouseMapDamaged")}</MenuItem>
-            <MenuItem value="mixed">{t("warehouseMapMixed")}</MenuItem>
-          </TextField>
+          <label>
+            {t("warehouseMapWarehouseFilter")}
+            <select
+              value={selectedWarehouseFilterId}
+              onChange={(event) => setSelectedWarehouseFilterId(event.target.value)}
+            >
+              <option value="all">{t("allWarehouses")}</option>
+              {warehouseOptions.map((option) => (
+                <option key={option.id} value={option.id}>{option.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            {t("warehouseMapCustomerFilter")}
+            <select
+              value={selectedCustomerFilterId}
+              onChange={(event) => setSelectedCustomerFilterId(event.target.value)}
+            >
+              <option value="all">{t("allCustomers")}</option>
+              {customerOptions.map((option) => (
+                <option key={option.id} value={option.id}>{option.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            {t("warehouseMapExceptionFilter")}
+            <select
+              value={selectedStatusFilter}
+              onChange={(event) => setSelectedStatusFilter(event.target.value as WarehouseFilterStatus)}
+            >
+              <option value="all">{t("allStatuses")}</option>
+              <option value="normal">{t("warehouseMapNormal")}</option>
+              <option value="low">{t("warehouseMapLowStock")}</option>
+              <option value="hold">{t("warehouseMapOnHold")}</option>
+              <option value="damaged">{t("warehouseMapDamaged")}</option>
+              <option value="mixed">{t("warehouseMapMixed")}</option>
+            </select>
+          </label>
         </div>
         <div className="warehouse-map__layout">
           <section className="warehouse-map__viewport">
@@ -406,7 +406,7 @@ export function WarehouseMapPage({ items, isLoading, onNavigate, onOpenContainer
           <aside className="warehouse-map__panel">
             <div className="warehouse-map__panel-section">
               <div className="warehouse-map__panel-title">
-                <ViewInArOutlinedIcon fontSize="small" />
+                <Boxes size={16} strokeWidth={2.1} />
                 <strong>{t("warehouseMapSummary")}</strong>
               </div>
               <div className="warehouse-map__summary-grid">
@@ -433,7 +433,7 @@ export function WarehouseMapPage({ items, isLoading, onNavigate, onOpenContainer
               {!selectedWarehouse ? (
                 <>
                   <div className="warehouse-map__panel-title">
-                    <WarehouseOutlinedIcon fontSize="small" />
+                    <Warehouse size={16} strokeWidth={2.1} />
                     <strong>{t("warehouseMapStageWarehouses")}</strong>
                   </div>
                   <div className="warehouse-map__entity-list">
@@ -456,7 +456,7 @@ export function WarehouseMapPage({ items, isLoading, onNavigate, onOpenContainer
               {selectedWarehouse && !selectedSection ? (
                 <>
                   <div className="warehouse-map__panel-title">
-                    <WarehouseOutlinedIcon fontSize="small" />
+                    <Warehouse size={16} strokeWidth={2.1} />
                     <strong>{selectedWarehouse.warehouseName}</strong>
                   </div>
                   <div className="warehouse-map__detail-meta">
@@ -484,7 +484,7 @@ export function WarehouseMapPage({ items, isLoading, onNavigate, onOpenContainer
               {selectedWarehouse && selectedSection ? (
                 <>
                   <div className="warehouse-map__panel-title">
-                    <WarehouseOutlinedIcon fontSize="small" />
+                    <Warehouse size={16} strokeWidth={2.1} />
                     <strong>{selectedWarehouse.warehouseName} / {selectedSection.sectionName}</strong>
                   </div>
                   <div className="warehouse-map__detail-meta">
@@ -518,7 +518,7 @@ export function WarehouseMapPage({ items, isLoading, onNavigate, onOpenContainer
             {selectedContainer ? (
               <div className="warehouse-map__panel-section">
                 <div className="warehouse-map__panel-title">
-                  <WarehouseOutlinedIcon fontSize="small" />
+                  <Warehouse size={16} strokeWidth={2.1} />
                   <strong>{selectedContainer.containerNo}</strong>
                 </div>
                 <div className="warehouse-map__detail-meta">

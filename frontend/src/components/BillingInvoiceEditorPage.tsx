@@ -1,15 +1,15 @@
-import ArrowBackOutlinedIcon from "@mui/icons-material/ArrowBackOutlined";
-import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
-import CheckCircleOutlineOutlinedIcon from "@mui/icons-material/CheckCircleOutlineOutlined";
-import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
-import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
-import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
-import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
-import PaidOutlinedIcon from "@mui/icons-material/PaidOutlined";
-import PictureAsPdfOutlinedIcon from "@mui/icons-material/PictureAsPdfOutlined";
-import BlockOutlinedIcon from "@mui/icons-material/BlockOutlined";
+﻿import { ArrowBackOutlinedIcon } from "./ui/muiIcons";
+import { AddCircleOutlineOutlinedIcon } from "./ui/muiIcons";
+import { CheckCircleOutlineOutlinedIcon } from "./ui/muiIcons";
+import { DeleteOutlineOutlinedIcon } from "./ui/muiIcons";
+import { EditOutlinedIcon } from "./ui/muiIcons";
+import { ExpandMoreOutlinedIcon } from "./ui/muiIcons";
+import { FileDownloadOutlinedIcon } from "./ui/muiIcons";
+import { PaidOutlinedIcon } from "./ui/muiIcons";
+import { PictureAsPdfOutlinedIcon } from "./ui/muiIcons";
+import { BlockOutlinedIcon } from "./ui/muiIcons";
 import { useState, useEffect, useCallback, type FormEvent } from "react";
-import { Button, Chip, Dialog, DialogTitle, DialogContent, DialogActions, Divider, ListItemIcon, ListItemText, Menu, MenuItem } from "@mui/material";
+import { Button, Chip, Dialog, DialogTitle, DialogContent, DialogActions, Divider, ListItemIcon, ListItemText, Menu, MenuItem } from "./ui/muiCompat";
 
 import { api } from "../lib/api";
 import { waitForNextPaint } from "../lib/asyncUi";

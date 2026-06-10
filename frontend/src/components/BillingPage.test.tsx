@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+﻿import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BillingPage } from "./BillingPage";
@@ -49,7 +49,7 @@ vi.mock("../lib/billingPreviewPdf", () => ({
   downloadBillingPreviewPdf
 }));
 
-vi.mock("@mui/x-charts", () => ({
+vi.mock("./ui/chartCompat", () => ({
   BarChart: () => <div data-testid="billing-balance-chart" />
 }));
 

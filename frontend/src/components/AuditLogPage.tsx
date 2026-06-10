@@ -1,8 +1,8 @@
-import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
+﻿import { VisibilityOutlinedIcon } from "./ui/muiIcons";
 import { useDeferredValue, useMemo, useState } from "react";
-import { Box, Button, Dialog, DialogContent, DialogTitle, IconButton, Chip } from "@mui/material";
-import CloseIcon from "@mui/icons-material/Close";
-import { DataGrid, type GridColDef } from "@mui/x-data-grid";
+import { Box, Button, Dialog, DialogContent, DialogTitle, IconButton, Chip } from "./ui/muiCompat";
+import { CloseIcon } from "./ui/muiIcons";
+import { DataGrid, type GridColDef } from "./ui/dataGridCompat";
 
 import { formatDateTimeValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";

@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@mui/x-data-grid", () => ({
+vi.mock("./ui/dataGridCompat", () => ({
   DataGrid: ({
     rows = [],
     columns = [],

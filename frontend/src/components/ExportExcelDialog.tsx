@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { Button, Dialog, DialogActions, DialogContent, DialogTitle } from "@mui/material";
 
 import { waitForNextPaint } from "../lib/asyncUi";
 import type { ExcelExportColumn } from "../lib/excelExport";
@@ -38,6 +37,19 @@ export function ExportExcelDialog({
     }
   }, [defaultColumns, defaultTitle, open]);
 
+  useEffect(() => {
+    if (!open || isExporting) return undefined;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isExporting, onClose, open]);
+
   const enabledColumns = columns.filter((column) => column.enabled).map(({ key, label, numberFormat }) => (
     numberFormat ? { key, label, numberFormat } : { key, label }
   ));
@@ -59,10 +71,24 @@ export function ExportExcelDialog({
     }
   }
 
+  if (!open) {
+    return null;
+  }
+
   return (
-    <Dialog open={open} onClose={isExporting ? undefined : onClose} fullWidth maxWidth="md">
-      <DialogTitle>{t("exportExcel")}</DialogTitle>
-      <DialogContent>
+    <div
+      className="export-dialog__backdrop"
+      onMouseDown={(event) => {
+        if (!isExporting && event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <section className="export-dialog" role="dialog" aria-modal="true" aria-labelledby="export-dialog-title">
+        <header className="export-dialog__header">
+          <h2 id="export-dialog-title">{t("exportExcel")}</h2>
+        </header>
+        <div className="export-dialog__body">
         <div className="export-dialog__form">
           <label>
             {t("exportTitle")}
@@ -108,28 +134,31 @@ export function ExportExcelDialog({
             </div>
           </div>
         </div>
-      </DialogContent>
-      <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button variant="text" onClick={onClose} disabled={isExporting}>
+        </div>
+        <footer className="export-dialog__actions">
+        <button className="button button--ghost" type="button" onClick={onClose} disabled={isExporting}>
           {t("cancel")}
-        </Button>
-        <Button
-          variant="text"
+        </button>
+        <button
+          className="button button--ghost"
+          type="button"
           disabled={isExporting}
           onClick={() => setColumns(defaultColumns.map((column) => ({ ...column, enabled: true })))}
         >
           {t("resetDefault")}
-        </Button>
-        <Button
-          variant="contained"
+        </button>
+        <button
+          className="button button--primary"
+          type="button"
           disabled={enabledColumns.length === 0 || isExporting}
           aria-busy={isExporting}
           onClick={() => void handleExport()}
         >
           {isExporting ? <InlineLoadingIndicator className="mr-1" /> : null}
           {t("downloadExcel")}
-        </Button>
-      </DialogActions>
-    </Dialog>
+        </button>
+        </footer>
+      </section>
+    </div>
   );
 }

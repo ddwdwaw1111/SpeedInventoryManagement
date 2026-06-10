@@ -20,12 +20,6 @@
     "test:e2e:headed": "playwright test --headed"
   },
   "dependencies": {
-    "@emotion/react": "^11.14.0",
-    "@emotion/styled": "^11.14.1",
-    "@mui/icons-material": "^7.3.9",
-    "@mui/material": "^7.3.9",
-    "@mui/x-charts": "^8.27.5",
-    "@mui/x-data-grid": "^8.27.5",
     "@radix-ui/react-slot": "^1.2.4",
     "@react-three/drei": "^9.121.4",
     "@react-three/fiber": "^8.17.14",

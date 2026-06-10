@@ -1,11 +1,11 @@
-import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
-import CloseIcon from "@mui/icons-material/Close";
-import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
-import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
-import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
+import { AddCircleOutlineOutlinedIcon } from "./ui/muiIcons";
+import { CloseIcon } from "./ui/muiIcons";
+import { FactCheckOutlinedIcon } from "./ui/muiIcons";
+import { HistoryOutlinedIcon } from "./ui/muiIcons";
+import { VisibilityOutlinedIcon } from "./ui/muiIcons";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
-import { Box, Button, Chip, Drawer, IconButton } from "@mui/material";
-import { DataGrid, type GridColDef } from "@mui/x-data-grid";
+import { Box, Button, Chip, Drawer, IconButton } from "./ui/muiCompat";
+import { DataGrid, type GridColDef } from "./ui/dataGridCompat";
 
 import { api } from "../lib/api";
 import { setPendingAllActivityContext } from "../lib/allActivityContext";

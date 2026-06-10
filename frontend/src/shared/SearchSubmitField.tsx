@@ -1,5 +1,4 @@
-import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
-import { IconButton } from "@mui/material";
+import { Search } from "lucide-react";
 import type { KeyboardEvent } from "react";
 
 export type SearchSubmitFieldProps = {
@@ -42,17 +41,16 @@ export function SearchSubmitField({
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
         />
-        <IconButton
+        <button
           type="button"
-          size="small"
           className="search-submit-field__button"
           aria-label={submitTitle}
           title={submitTitle}
           disabled={disabled}
           onClick={onSubmit}
         >
-          <SearchOutlinedIcon fontSize="small" />
-        </IconButton>
+          <Search size={15} strokeWidth={2.2} />
+        </button>
       </span>
     </label>
   );

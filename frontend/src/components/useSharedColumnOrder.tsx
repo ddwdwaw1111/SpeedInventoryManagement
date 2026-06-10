@@ -1,9 +1,6 @@
-import CloseIcon from "@mui/icons-material/Close";
-import DragIndicatorOutlinedIcon from "@mui/icons-material/DragIndicatorOutlined";
-import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
+﻿import { GripVertical, SlidersHorizontal, X } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { Button, Dialog, DialogContent, DialogTitle, IconButton } from "@mui/material";
-import type { GridColDef, GridValidRowModel } from "@mui/x-data-grid";
+import type { GridColDef, GridValidRowModel } from "./ui/dataGridCompat";
 
 import { api } from "../lib/api";
 import { useI18n } from "../lib/i18n";
@@ -154,83 +151,96 @@ export function useSharedColumnOrder<Row extends GridValidRowModel>({
     setIsColumnOrderModalOpen(false);
   }
 
+  useEffect(() => {
+    if (!isColumnOrderModalOpen) return undefined;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !isSavingColumnOrder) {
+        closeColumnOrderModal();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isColumnOrderModalOpen, isSavingColumnOrder]);
+
   const columnOrderAction = canManage ? (
-    <Button
-      variant="outlined"
-      startIcon={<TuneOutlinedIcon />}
+    <button
+      type="button"
       onClick={openColumnOrderModal}
-      className="!rounded-xl !border-slate-200 !bg-white !px-3.5 !py-2.5 !text-sm !font-semibold !text-slate-700 !shadow-sm hover:!bg-slate-50"
+      className="button button--ghost button--small column-order-action"
     >
+      <SlidersHorizontal size={16} strokeWidth={2.1} />
       {t("columnOrder")}
-    </Button>
+    </button>
   ) : null;
 
-  const columnOrderDialog = canManage ? (
-    <Dialog
-      open={isColumnOrderModalOpen}
-      onClose={(_, reason) => {
-        if (reason === "backdropClick" || isSavingColumnOrder) return;
-        closeColumnOrderModal();
-      }}
-      fullWidth
-      maxWidth={false}
-      PaperProps={{
-        sx: {
-          width: dialogWidth,
-          borderRadius: "1rem"
-        }
-      }}
-    >
-      <DialogTitle sx={{ pb: 1 }}>
-        {t("columnOrder")}
-        <IconButton aria-label={t("close")} onClick={closeColumnOrderModal} disabled={isSavingColumnOrder} sx={{ position: "absolute", right: 16, top: 16 }}>
-          <CloseIcon fontSize="small" />
-        </IconButton>
-      </DialogTitle>
-      <DialogContent dividers>
-        <div className="sheet-note sheet-note--readonly">{t("columnOrderSharedNotice")}</div>
-        <div className="column-order-board">
-          {draftColumnOrder.map((field, index) => {
-            const column = baseColumns.find((candidate) => candidate.field === field);
-            if (!column) return null;
+  const columnOrderDialog = canManage && isColumnOrderModalOpen ? (
+    <div className="column-order-dialog__backdrop">
+      <section
+        className="column-order-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="column-order-dialog-title"
+        style={{ width: dialogWidth }}
+      >
+        <header className="column-order-dialog__header">
+          <h2 id="column-order-dialog-title">{t("columnOrder")}</h2>
+          <button
+            aria-label={t("close")}
+            className="column-order-dialog__close"
+            disabled={isSavingColumnOrder}
+            onClick={closeColumnOrderModal}
+            type="button"
+          >
+            <X size={16} strokeWidth={2.1} />
+          </button>
+        </header>
+        <div className="column-order-dialog__body">
+          <div className="sheet-note sheet-note--readonly">{t("columnOrderSharedNotice")}</div>
+          <div className="column-order-board">
+            {draftColumnOrder.map((field, index) => {
+              const column = baseColumns.find((candidate) => candidate.field === field);
+              if (!column) return null;
 
-            return (
-              <div
-                className={`column-order-card ${draggingColumnField === field ? "column-order-card--dragging" : ""}`}
-                key={field}
-                draggable={!isSavingColumnOrder}
-                onDragStart={() => setDraggingColumnField(field)}
-                onDragEnd={() => setDraggingColumnField(null)}
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  if (!draggingColumnField) return;
-                  moveDraftColumn(draggingColumnField, field);
-                  setDraggingColumnField(null);
-                }}
-              >
-                <DragIndicatorOutlinedIcon fontSize="small" />
-                <div className="column-order-card__copy">
-                  <strong>{column.headerName}</strong>
-                  <span>{t("positionLabel", { position: index + 1 })}</span>
+              return (
+                <div
+                  className={`column-order-card ${draggingColumnField === field ? "column-order-card--dragging" : ""}`}
+                  key={field}
+                  draggable={!isSavingColumnOrder}
+                  onDragStart={() => setDraggingColumnField(field)}
+                  onDragEnd={() => setDraggingColumnField(null)}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    if (!draggingColumnField) return;
+                    moveDraftColumn(draggingColumnField, field);
+                    setDraggingColumnField(null);
+                  }}
+                >
+                  <GripVertical size={16} strokeWidth={2.1} />
+                  <div className="column-order-card__copy">
+                    <strong>{column.headerName}</strong>
+                    <span>{t("positionLabel", { position: index + 1 })}</span>
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
+          <div className="sheet-form__actions" style={{ marginTop: "1rem" }}>
+            <button className="button button--primary" type="button" disabled={isSavingColumnOrder} onClick={() => void saveColumnOrder()}>
+              {isSavingColumnOrder ? t("saving") : t("saveChanges")}
+            </button>
+            <button className="button button--ghost" type="button" disabled={isSavingColumnOrder} onClick={() => setDraftColumnOrder(orderableFields)}>
+              {t("resetDefault")}
+            </button>
+            <button className="button button--ghost" type="button" disabled={isSavingColumnOrder} onClick={closeColumnOrderModal}>
+              {t("cancel")}
+            </button>
+          </div>
         </div>
-        <div className="sheet-form__actions" style={{ marginTop: "1rem" }}>
-          <button className="button button--primary" type="button" disabled={isSavingColumnOrder} onClick={() => void saveColumnOrder()}>
-            {isSavingColumnOrder ? t("saving") : t("saveChanges")}
-          </button>
-          <button className="button button--ghost" type="button" disabled={isSavingColumnOrder} onClick={() => setDraftColumnOrder(orderableFields)}>
-            {t("resetDefault")}
-          </button>
-          <button className="button button--ghost" type="button" disabled={isSavingColumnOrder} onClick={closeColumnOrderModal}>
-            {t("cancel")}
-          </button>
-        </div>
-      </DialogContent>
-    </Dialog>
+      </section>
+    </div>
   ) : null;
 
   return {

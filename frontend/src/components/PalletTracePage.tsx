@@ -1,8 +1,8 @@
-import CloseIcon from "@mui/icons-material/Close";
-import RefreshOutlinedIcon from "@mui/icons-material/RefreshOutlined";
-import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
-import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, IconButton } from "@mui/material";
-import { DataGrid, type GridColDef } from "@mui/x-data-grid";
+﻿import { CloseIcon } from "./ui/muiIcons";
+import { RefreshOutlinedIcon } from "./ui/muiIcons";
+import { VisibilityOutlinedIcon } from "./ui/muiIcons";
+import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, IconButton } from "./ui/muiCompat";
+import { DataGrid, type GridColDef } from "./ui/dataGridCompat";
 import { useEffect, useMemo, useState } from "react";
 
 import { api } from "../lib/api";

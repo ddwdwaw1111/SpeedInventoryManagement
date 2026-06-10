@@ -1,5 +1,4 @@
-import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
-import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
+import { ExternalLink, PlusCircle } from "lucide-react";
 import { Fragment, type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
@@ -837,7 +836,7 @@ export function InboundReceiptEditorPage({
                   onClick={() => onOpenInboundDetail(document.id)}
                   className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50"
                 >
-                  <OpenInNewRoundedIcon sx={{ fontSize: 18 }} />
+                  <ExternalLink size={18} strokeWidth={2.1} />
                   {t("details")}
                 </button>
                 {isEditingConfirmedInbound && canManage ? (
@@ -1169,7 +1168,7 @@ export function InboundReceiptEditorPage({
                               disabled={isReadOnly}
                               aria-label={t("addSkuLine")}
                             >
-                              <AddCircleOutlineOutlinedIcon fontSize="small" />
+                              <PlusCircle size={16} strokeWidth={2.1} />
                             </button>
                           </td>
                         </tr>

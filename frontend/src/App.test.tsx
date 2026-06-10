@@ -141,26 +141,26 @@ describe("App role routing", () => {
 
     const { container } = renderWithProviders(<App />);
 
-    expect(await screen.findByText("Customer Inventory")).toBeInTheDocument();
+    expect(await screen.findByRole("table", { name: /Inventory/i }, { timeout: 5000 })).toBeInTheDocument();
     await waitFor(() => {
       expect(window.location.pathname).toBe("/portal");
     });
     expect(screen.getAllByText("Customer Portal").length).toBeGreaterThan(0);
-    expect(container.querySelector(".customer-portal-sidebar")).not.toBeNull();
+    expect(screen.getByRole("navigation", { name: /Customer Portal/i })).toBeInTheDocument();
     expect(container.querySelector(".app-sidebar")).toBeNull();
-    expect(screen.getByRole("button", { name: /Overview/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Customer Inventory/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Packing Lists/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Picking Orders/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Overview/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Inventory/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Packing Lists/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Picking Orders/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /New Picking Order/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Picking Order Documents/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Home$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Shipments$/i })).not.toBeInTheDocument();
     await waitFor(() => {
       expect(portalApiMocks.getInventory).toHaveBeenCalled();
-      expect(portalApiMocks.getPackingLists).toHaveBeenCalled();
-      expect(portalApiMocks.getPickingOrders).toHaveBeenCalled();
     });
+    expect(portalApiMocks.getPackingLists).not.toHaveBeenCalled();
+    expect(portalApiMocks.getPickingOrders).not.toHaveBeenCalled();
     for (const name of staffDataApiNames) {
       expect(apiMocks[name]).not.toHaveBeenCalled();
     }
@@ -185,7 +185,7 @@ describe("App role routing", () => {
     await waitFor(() => {
       expect(window.location.pathname).toBe("/admin");
     });
-    expect(screen.queryByText("Customer Inventory")).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: /Customer Portal/i })).not.toBeInTheDocument();
     for (const name of staffDataApiNames) {
       expect(apiMocks[name]).toHaveBeenCalled();
     }
@@ -204,22 +204,14 @@ describe("App role routing", () => {
 
     const { container } = renderWithProviders(<App />);
 
-    expect(await screen.findByText("Customer Inventory")).toBeInTheDocument();
+    expect(await screen.findByRole("table", { name: /Inventory/i }, { timeout: 5000 })).toBeInTheDocument();
     await waitFor(() => {
       expect(portalApiMocks.getProfile).toHaveBeenCalledWith(7);
       expect(portalApiMocks.getInventory).toHaveBeenCalledWith("", 7);
     });
-    expect(portalApiMocks.getPackingLists).toHaveBeenCalledWith(100, {
-      search: "",
-      status: "all",
-      trackingStatus: "all"
-    }, 7);
-    expect(portalApiMocks.getPickingOrders).toHaveBeenCalledWith(100, {
-      search: "",
-      status: "all",
-      trackingStatus: "all"
-    }, 7);
-    expect(container.querySelector(".customer-portal-sidebar")).not.toBeNull();
+    expect(portalApiMocks.getPackingLists).not.toHaveBeenCalled();
+    expect(portalApiMocks.getPickingOrders).not.toHaveBeenCalled();
+    expect(screen.getByRole("navigation", { name: /Customer Portal/i })).toBeInTheDocument();
     expect(container.querySelector(".app-sidebar")).toBeNull();
     expect(screen.queryByRole("button", { name: /^Home$/i })).not.toBeInTheDocument();
   });

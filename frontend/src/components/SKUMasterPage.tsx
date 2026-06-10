@@ -1,12 +1,12 @@
-import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
-import CloseIcon from "@mui/icons-material/Close";
-import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
-import DragIndicatorOutlinedIcon from "@mui/icons-material/DragIndicatorOutlined";
-import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
-import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
+﻿import { AddCircleOutlineOutlinedIcon } from "./ui/muiIcons";
+import { CloseIcon } from "./ui/muiIcons";
+import { DeleteOutlineOutlinedIcon } from "./ui/muiIcons";
+import { DragIndicatorOutlinedIcon } from "./ui/muiIcons";
+import { EditOutlinedIcon } from "./ui/muiIcons";
+import { TuneOutlinedIcon } from "./ui/muiIcons";
 import { type FormEvent, useDeferredValue, useEffect, useMemo, useState } from "react";
-import { Box, Button, Dialog, DialogContent, DialogTitle, IconButton } from "@mui/material";
-import { DataGrid, type GridColDef } from "@mui/x-data-grid";
+import { Box, Button, Dialog, DialogContent, DialogTitle, IconButton } from "./ui/muiCompat";
+import { DataGrid, type GridColDef } from "./ui/dataGridCompat";
 
 import { api } from "../lib/api";
 import { RowActionsMenu } from "./RowActionsMenu";

@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+﻿import { screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PalletTrace } from "../lib/types";

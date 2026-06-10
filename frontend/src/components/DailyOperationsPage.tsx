@@ -1,11 +1,4 @@
-import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
-import ChevronLeftRoundedIcon from "@mui/icons-material/ChevronLeftRounded";
-import ChevronRightRoundedIcon from "@mui/icons-material/ChevronRightRounded";
-import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
-import LabelImportantOutlinedIcon from "@mui/icons-material/LabelImportantOutlined";
-import LocalShippingOutlinedIcon from "@mui/icons-material/LocalShippingOutlined";
-import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
-import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
+﻿import { ChevronLeft, ChevronRight, Copy, Eye, Flag, Inbox, PlusCircle, Truck } from "lucide-react";
 import { type ChangeEvent, type ReactNode, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
@@ -151,7 +144,7 @@ export function DailyOperationsPage({
         value: inboundRows.length,
         meta: t("dailyOperationsSummaryScheduledMeta", { date: activeDateLabel }),
         tone: "emerald" as const,
-        icon: <MoveToInboxOutlinedIcon sx={{ fontSize: 18 }} />
+        icon: <Inbox size={18} strokeWidth={2.1} />
       },
       {
         key: "shipments",
@@ -159,7 +152,7 @@ export function DailyOperationsPage({
         value: outboundRows.length,
         meta: t("dailyOperationsSummaryScheduledMeta", { date: activeDateLabel }),
         tone: "blue" as const,
-        icon: <LocalShippingOutlinedIcon sx={{ fontSize: 18 }} />
+        icon: <Truck size={18} strokeWidth={2.1} />
       },
       {
         key: "receiving",
@@ -167,7 +160,7 @@ export function DailyOperationsPage({
         value: inboundRows.filter((row) => row.tone === "amber").length,
         meta: t("dailyOperationsSummaryReceivingMeta"),
         tone: "amber" as const,
-        icon: <MoveToInboxOutlinedIcon sx={{ fontSize: 18 }} />
+        icon: <Inbox size={18} strokeWidth={2.1} />
       },
       {
         key: "shipping",
@@ -175,7 +168,7 @@ export function DailyOperationsPage({
         value: outboundRows.filter((row) => row.tone === "amber").length,
         meta: t("dailyOperationsSummaryShippingMeta"),
         tone: "slate" as const,
-        icon: <LocalShippingOutlinedIcon sx={{ fontSize: 18 }} />
+        icon: <Truck size={18} strokeWidth={2.1} />
       }
     ],
     [activeDateLabel, inboundRows, outboundRows, t]
@@ -315,7 +308,7 @@ export function DailyOperationsPage({
                 className="interactive-button-lift inline-flex h-11 w-11 items-center justify-center rounded-xl bg-white text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-50"
                 aria-label={t("previousDay")}
               >
-                <ChevronLeftRoundedIcon fontSize="small" />
+                <ChevronLeft size={18} strokeWidth={2.1} />
               </button>
               <button
                 type="button"
@@ -335,7 +328,7 @@ export function DailyOperationsPage({
                 className="interactive-button-lift inline-flex h-11 w-11 items-center justify-center rounded-xl bg-white text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-50"
                 aria-label={t("nextDay")}
               >
-                <ChevronRightRoundedIcon fontSize="small" />
+                <ChevronRight size={18} strokeWidth={2.1} />
               </button>
               <input
                 ref={dateInputRef}
@@ -374,7 +367,7 @@ export function DailyOperationsPage({
             title={t("dailyOperationsReceipts")}
             description={t("dailyOperationsReceiptsDesc")}
             actionLabel={t("dailyOperationsCreateReceipt")}
-            actionIcon={<AddCircleOutlineOutlinedIcon sx={{ fontSize: 18 }} />}
+            actionIcon={<PlusCircle size={18} strokeWidth={2.1} />}
             actionDisabled={!canManage}
             onAction={handleCreateInbound}
             rows={inboundRows}
@@ -391,7 +384,7 @@ export function DailyOperationsPage({
             title={t("dailyOperationsShipments")}
             description={t("dailyOperationsShipmentsDesc")}
             actionLabel={t("dailyOperationsCreateShipment")}
-            actionIcon={<AddCircleOutlineOutlinedIcon sx={{ fontSize: 18 }} />}
+            actionIcon={<PlusCircle size={18} strokeWidth={2.1} />}
             actionDisabled={!canManage}
             onAction={handleCreateOutbound}
             rows={outboundRows}
@@ -522,7 +515,7 @@ function DailyOperationsSection({
                         disabled={isRowBusy}
                         className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-[#143569] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(20,53,105,0.14)] transition hover:bg-[#102f5f] disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        {isAdvanceBusy ? <InlineLoadingIndicator /> : <ChevronRightRoundedIcon sx={{ fontSize: 18 }} />}
+                        {isAdvanceBusy ? <InlineLoadingIndicator /> : <ChevronRight size={18} strokeWidth={2.1} />}
                         {row.nextActionLabel}
                       </button>
                     ) : null}
@@ -534,7 +527,7 @@ function DailyOperationsSection({
                         disabled={isRowBusy}
                         className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        {isCopyBusy ? <InlineLoadingIndicator /> : <ContentCopyOutlinedIcon sx={{ fontSize: 18 }} />}
+                        {isCopyBusy ? <InlineLoadingIndicator /> : <Copy size={18} strokeWidth={2.1} />}
                         {copyLabel}
                       </button>
                     ) : null}
@@ -544,7 +537,7 @@ function DailyOperationsSection({
                       disabled={isRowBusy}
                       className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      <VisibilityOutlinedIcon sx={{ fontSize: 18 }} />
+                      <Eye size={18} strokeWidth={2.1} />
                       {t("details")}
                     </button>
                   </div>
@@ -587,10 +580,11 @@ function MinimalWorkflowStepper({
                   {step}
                   </span>
                   {index < steps.length - 1 ? (
-                    <LabelImportantOutlinedIcon
+                    <Flag
                       aria-hidden="true"
                       className="shrink-0 text-[#143569]"
-                      sx={{ fontSize: 14 }}
+                      size={14}
+                      strokeWidth={2.1}
                     />
                   ) : null}
                 </div>

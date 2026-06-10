@@ -1,5 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react";
-import { BarChart } from "@mui/x-charts";
+﻿import { type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { InlineAlert } from "./Feedback";
 import { SearchSubmitField } from "./SearchSubmitField";
@@ -25,6 +24,11 @@ type ChartTone = "blue" | "green" | "amber" | "red";
 type BarRow = { label: string; value: number; meta?: string; tone?: ChartTone };
 type TrendRow = { key: string; label: string; inbound: number; outbound: number };
 type PalletFlowRow = OperationsReportPalletFlowRow & { label: string };
+type LocalChartSeries<T> = {
+  key: keyof T;
+  label: string;
+  color: string;
+};
 
 const shortDateFormatter = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
 const mediumDateFormatter = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -819,6 +823,98 @@ function HorizontalBarList({
   );
 }
 
+function LocalBarChart<T extends Record<string, unknown>>({
+  rows,
+  series,
+  height = 300,
+  formatValue = formatNumber
+}: {
+  rows: T[];
+  series: Array<LocalChartSeries<T>>;
+  height?: number;
+  formatValue?: (value: number) => string;
+}) {
+  const chartWidth = Math.max(520, rows.length * Math.max(52, series.length * 34));
+  const chartHeight = height;
+  const margins = { top: 26, right: 20, bottom: 56, left: 46 };
+  const plotWidth = chartWidth - margins.left - margins.right;
+  const plotHeight = chartHeight - margins.top - margins.bottom;
+  const maxValue = Math.max(
+    ...rows.flatMap((row) => series.map((entry) => Number(row[entry.key]) || 0)),
+    1
+  );
+  const groupWidth = plotWidth / Math.max(rows.length, 1);
+  const barWidth = Math.max(9, Math.min(24, (groupWidth - 14) / Math.max(series.length, 1)));
+  const yTicks = [0, 0.25, 0.5, 0.75, 1].map((ratio) => Math.round(maxValue * ratio));
+
+  return (
+    <div className="local-chart">
+      <svg
+        role="img"
+        viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+        width={chartWidth}
+        height={chartHeight}
+        className="local-chart__svg"
+      >
+        {yTicks.map((tick) => {
+          const y = margins.top + plotHeight - (tick / maxValue) * plotHeight;
+          return (
+            <g key={tick}>
+              <line x1={margins.left} y1={y} x2={chartWidth - margins.right} y2={y} className="local-chart__grid-line" />
+              <text x={margins.left - 10} y={y + 4} textAnchor="end" className="local-chart__axis-text">
+                {formatValue(tick)}
+              </text>
+            </g>
+          );
+        })}
+        {rows.map((row, rowIndex) => {
+          const label = String(row.label ?? "");
+          const groupX = margins.left + rowIndex * groupWidth + groupWidth / 2;
+          const firstBarX = groupX - (series.length * barWidth + (series.length - 1) * 4) / 2;
+          return (
+            <g key={`${label}-${rowIndex}`}>
+              {series.map((entry, seriesIndex) => {
+                const value = Number(row[entry.key]) || 0;
+                const barHeight = (value / maxValue) * plotHeight;
+                const x = firstBarX + seriesIndex * (barWidth + 4);
+                const y = margins.top + plotHeight - barHeight;
+                return (
+                  <g key={String(entry.key)}>
+                    <rect
+                      x={x}
+                      y={y}
+                      width={barWidth}
+                      height={Math.max(value > 0 ? 2 : 0, barHeight)}
+                      rx={4}
+                      fill={entry.color}
+                    />
+                    {value > 0 && rows.length <= 10 ? (
+                      <text x={x + barWidth / 2} y={Math.max(12, y - 5)} textAnchor="middle" className="local-chart__value-text">
+                        {formatValue(value)}
+                      </text>
+                    ) : null}
+                  </g>
+                );
+              })}
+              <text x={groupX} y={chartHeight - 24} textAnchor="middle" className="local-chart__axis-text">
+                {label}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+      <div className="local-chart__legend">
+        {series.map((entry) => (
+          <span key={String(entry.key)}>
+            <i style={{ background: entry.color }} />
+            {entry.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PalletFlowChart({
   rows,
   emptyLabel,
@@ -836,16 +932,13 @@ function PalletFlowChart({
 
   return (
     <div className="report-chart-wrap">
-      <BarChart
-        dataset={rows}
+      <LocalBarChart
+        rows={rows}
         height={320}
-        margin={{ top: 20, bottom: 20, left: 38, right: 18 }}
-        xAxis={[{ scaleType: "band", dataKey: "label" }]}
         series={[
-          { dataKey: "inbound", label: inboundLabel, color: "#3c6e71" },
-          { dataKey: "outbound", label: outboundLabel, color: "#b76857" }
+          { key: "inbound", label: inboundLabel, color: "#3c6e71" },
+          { key: "outbound", label: outboundLabel, color: "#b76857" }
         ]}
-        grid={{ horizontal: true }}
       />
     </div>
   );
@@ -866,13 +959,10 @@ function PalletBalanceChart({
 
   return (
     <div className="report-chart-wrap">
-      <BarChart
-        dataset={rows}
+      <LocalBarChart
+        rows={rows}
         height={300}
-        margin={{ top: 20, bottom: 20, left: 38, right: 18 }}
-        xAxis={[{ scaleType: "band", dataKey: "label" }]}
-        series={[{ dataKey: "endOfDay", label: balanceLabel, color: "#274c77" }]}
-        grid={{ horizontal: true }}
+        series={[{ key: "endOfDay", label: balanceLabel, color: "#274c77" }]}
       />
     </div>
   );
@@ -898,16 +988,13 @@ function MovementTrendChart({
   return (
     <>
       <div className="report-chart-wrap">
-        <BarChart
-          dataset={rows}
+        <LocalBarChart
+          rows={rows}
           height={300}
-          margin={{ top: 20, bottom: 20, left: 38, right: 18 }}
-          xAxis={[{ scaleType: "band", dataKey: "label" }]}
           series={[
-            { dataKey: "inbound", label: inboundLabel, color: "#3c6e71" },
-            { dataKey: "outbound", label: outboundLabel, color: "#b76857" }
+            { key: "inbound", label: inboundLabel, color: "#3c6e71" },
+            { key: "outbound", label: outboundLabel, color: "#b76857" }
           ]}
-          grid={{ horizontal: true }}
         />
       </div>
       <div className="trend-chart__grid">

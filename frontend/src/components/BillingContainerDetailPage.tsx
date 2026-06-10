@@ -1,6 +1,4 @@
-import ArrowBackOutlinedIcon from "@mui/icons-material/ArrowBackOutlined";
-import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
-import { Button } from "@mui/material";
+import { ArrowLeft, ExternalLink } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { api } from "../lib/api";
@@ -202,13 +200,15 @@ export function BillingContainerDetailPage({
 
 	const headerActions = (
 		<div className="sheet-actions">
-			<Button size="small" variant="outlined" startIcon={<ArrowBackOutlinedIcon fontSize="small" />} onClick={onBackToBilling}>
+			<button className="button button--ghost button--small" type="button" onClick={onBackToBilling}>
+				<ArrowLeft size={16} strokeWidth={2.1} />
 				{t("billingPage")}
-			</Button>
+			</button>
 			{isNavigableContainerNo(normalizedContainerNo) ? (
-				<Button size="small" variant="text" startIcon={<OpenInNewRoundedIcon fontSize="small" />} onClick={() => onOpenContainerDetail(normalizedContainerNo)}>
+				<button className="button button--ghost button--small" type="button" onClick={() => onOpenContainerDetail(normalizedContainerNo)}>
+					<ExternalLink size={16} strokeWidth={2.1} />
 					{t("viewContainerDetail")}
-				</Button>
+				</button>
 			) : null}
 		</div>
 	);

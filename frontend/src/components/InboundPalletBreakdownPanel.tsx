@@ -1,5 +1,4 @@
-import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
-import { Button } from "@mui/material";
+﻿import { ChevronDown } from "lucide-react";
 
 import { LineDetailAccordionPanel } from "./LineDetailAccordionPanel";
 
@@ -83,33 +82,28 @@ export function InboundPalletBreakdownPanel({
       ]}
       actions={(
         <>
-          <Button
-            size="small"
-            variant="text"
+          <button
             type="button"
             onClick={onReset}
             disabled={resetDisabled}
             className="!min-h-9 !rounded-xl !px-3 !text-[12px] !font-semibold !text-[#143569]"
           >
             {resetLabel}
-          </Button>
+          </button>
           {canExpand ? (
-            <Button
-              size="small"
-              variant="outlined"
+            <button
               type="button"
               onClick={onToggle}
               aria-expanded={expanded}
-              endIcon={
-                <ExpandMoreOutlinedIcon
-                  fontSize="small"
-                  className={`transition-transform duration-200 ${expanded ? "rotate-180" : "rotate-0"}`}
-                />
-              }
-              className="!min-h-9 !rounded-xl !border-slate-200/80 !bg-white/90 !px-3 !text-[12px] !font-semibold !text-[#143569] hover:!border-slate-300 hover:!bg-white"
+              className="inline-flex !min-h-9 items-center gap-1.5 !rounded-xl !border !border-slate-200/80 !bg-white/90 !px-3 !text-[12px] !font-semibold !text-[#143569] hover:!border-slate-300 hover:!bg-white"
             >
               {detailsLabel}
-            </Button>
+              <ChevronDown
+                size={15}
+                strokeWidth={2.1}
+                className={`transition-transform duration-200 ${expanded ? "rotate-180" : "rotate-0"}`}
+              />
+            </button>
           ) : null}
         </>
       )}

@@ -1,8 +1,8 @@
-import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
-import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
+﻿import { FileDownloadOutlinedIcon } from "./ui/muiIcons";
+import { OpenInNewRoundedIcon } from "./ui/muiIcons";
 import { useEffect, useMemo, useState } from "react";
-import { Box, Button } from "@mui/material";
-import { DataGrid, type GridColDef } from "@mui/x-data-grid";
+import { Box, Button } from "./ui/muiCompat";
+import { DataGrid, type GridColDef } from "./ui/dataGridCompat";
 
 import { api } from "../lib/api";
 import { consumePendingContainerContentsContext } from "../lib/containerContentsContext";

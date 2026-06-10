@@ -1,4 +1,4 @@
-type InlineLoadingIndicatorProps = {
+﻿type InlineLoadingIndicatorProps = {
   className?: string;
   sizeClassName?: string;
 };

@@ -63,6 +63,18 @@ describe("Feedback", () => {
     expect(screen.getByText("accepted")).toBeInTheDocument();
   });
 
+  it("cancels the confirmation hook when Escape is pressed", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ConfirmDialogHarness />);
+
+    await user.click(screen.getByRole("button", { name: "Open Dialog" }));
+    expect(screen.getByText("Archive receipt")).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+
+    expect(await screen.findByText("cancelled")).toBeInTheDocument();
+  });
+
   it("renders success toast feedback when requested", async () => {
     const user = userEvent.setup();
     renderWithProviders(<FeedbackToastHarness />);

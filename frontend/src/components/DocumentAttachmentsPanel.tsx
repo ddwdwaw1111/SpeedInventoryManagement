@@ -1,9 +1,4 @@
-import AttachFileRoundedIcon from "@mui/icons-material/AttachFileRounded";
-import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
-import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
-import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
-import UploadFileRoundedIcon from "@mui/icons-material/UploadFileRounded";
-import VisibilityRoundedIcon from "@mui/icons-material/VisibilityRounded";
+﻿import { ExternalLink, Eye, Paperclip, Trash2, Upload, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { useI18n } from "../lib/i18n";
@@ -222,7 +217,7 @@ export function DocumentAttachmentsPanel({
               onClick={() => fileInputRef.current?.click()}
               disabled={disabled || Boolean(busyKey)}
             >
-              <AttachFileRoundedIcon fontSize="small" />
+              <Paperclip size={16} strokeWidth={2.1} />
               {t("addFiles")}
             </button>
             {hasUploadAction ? (
@@ -233,7 +228,7 @@ export function DocumentAttachmentsPanel({
                 disabled={!canUpload}
                 aria-busy={isUploading}
               >
-                {isUploading ? <InlineLoadingIndicator /> : <UploadFileRoundedIcon fontSize="small" />}
+                {isUploading ? <InlineLoadingIndicator /> : <Upload size={16} strokeWidth={2.1} />}
                 {t("uploadFiles")}
               </button>
             ) : null}
@@ -267,7 +262,7 @@ export function DocumentAttachmentsPanel({
                   disabled={Boolean(busyKey)}
                   aria-label={t("previewFile")}
                 >
-                  <VisibilityRoundedIcon fontSize="small" />
+                  <Eye size={16} strokeWidth={2.1} />
                 </button>
                 <button
                   className="button button--ghost button--small"
@@ -299,7 +294,7 @@ export function DocumentAttachmentsPanel({
                   disabled={Boolean(busyKey)}
                   aria-label={t("previewFile")}
                 >
-                  {busyKey === `preview-${attachment.id}` ? <InlineLoadingIndicator /> : <VisibilityRoundedIcon fontSize="small" />}
+                  {busyKey === `preview-${attachment.id}` ? <InlineLoadingIndicator /> : <Eye size={16} strokeWidth={2.1} />}
                 </button>
                 <button
                   className="button button--ghost button--small"
@@ -308,7 +303,7 @@ export function DocumentAttachmentsPanel({
                   disabled={Boolean(busyKey)}
                   aria-label={t("openFile")}
                 >
-                  {busyKey === `open-${attachment.id}` ? <InlineLoadingIndicator /> : <OpenInNewRoundedIcon fontSize="small" />}
+                  {busyKey === `open-${attachment.id}` ? <InlineLoadingIndicator /> : <ExternalLink size={16} strokeWidth={2.1} />}
                 </button>
                 {onDelete ? (
                   <button
@@ -318,7 +313,7 @@ export function DocumentAttachmentsPanel({
                     disabled={disabled || Boolean(busyKey)}
                     aria-label={t("removeFile")}
                   >
-                    {busyKey === `delete-${attachment.id}` ? <InlineLoadingIndicator /> : <DeleteOutlineRoundedIcon fontSize="small" />}
+                    {busyKey === `delete-${attachment.id}` ? <InlineLoadingIndicator /> : <Trash2 size={16} strokeWidth={2.1} />}
                   </button>
                 ) : null}
               </div>
@@ -341,7 +336,7 @@ export function DocumentAttachmentsPanel({
                   type="button"
                   onClick={() => window.open(preview.url, "_blank", "noopener,noreferrer")}
                 >
-                  <OpenInNewRoundedIcon fontSize="small" />
+                  <ExternalLink size={16} strokeWidth={2.1} />
                   {t("openFile")}
                 </button>
                 <button
@@ -350,7 +345,7 @@ export function DocumentAttachmentsPanel({
                   onClick={closePreview}
                   aria-label={t("close")}
                 >
-                  <CloseRoundedIcon fontSize="small" />
+                  <X size={16} strokeWidth={2.1} />
                 </button>
               </div>
             </div>

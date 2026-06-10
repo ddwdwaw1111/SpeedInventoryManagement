@@ -1,4 +1,4 @@
-import { Plus, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import type { KeyboardEvent } from "react";
 
 import { Badge } from "../components/ui/badge";
@@ -16,7 +16,6 @@ type CustomerPortalInventoryPageProps = {
   search: string;
   onSearchChange: (value: string) => void;
   onApplySearch: () => void;
-  onStartPickingOrder: (item: Item) => void;
 };
 
 export function CustomerPortalInventoryPage({
@@ -24,8 +23,7 @@ export function CustomerPortalInventoryPage({
   isLoading,
   search,
   onSearchChange,
-  onApplySearch,
-  onStartPickingOrder
+  onApplySearch
 }: CustomerPortalInventoryPageProps) {
   const { t } = useI18n();
   const visibleInventory = inventory.filter((item) => item.availableQty > 0 || item.quantity > 0);
@@ -83,7 +81,6 @@ export function CustomerPortalInventoryPage({
               <TableHead>{t("storageName")}</TableHead>
               <TableHead>{t("availableQty")}</TableHead>
               <TableHead>{t("onHand")}</TableHead>
-              <TableHead className="text-right">{t("actions")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -97,23 +94,11 @@ export function CustomerPortalInventoryPage({
                 <TableCell>{item.locationName}</TableCell>
                 <TableCell><Badge variant={item.availableQty > 0 ? "success" : "warning"}>{item.availableQty}</Badge></TableCell>
                 <TableCell>{item.quantity}</TableCell>
-                <TableCell className="text-right">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    type="button"
-                    onClick={() => onStartPickingOrder(item)}
-                    disabled={item.availableQty <= 0}
-                  >
-                    <Plus className="h-4 w-4" />
-                    {t("startPickingOrder")}
-                  </Button>
-                </TableCell>
               </TableRow>
             ))}
             {visibleInventory.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="py-10 text-center text-slate-500">
+                <TableCell colSpan={5} className="py-10 text-center text-slate-500">
                   {isLoading ? t("loadingRecords") : t("noInventoryAvailable")}
                 </TableCell>
               </TableRow>

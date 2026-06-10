@@ -1,11 +1,4 @@
-import ChevronLeftRoundedIcon from "@mui/icons-material/ChevronLeftRounded";
-import ChevronRightRoundedIcon from "@mui/icons-material/ChevronRightRounded";
-import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
-import LocalShippingOutlinedIcon from "@mui/icons-material/LocalShippingOutlined";
-import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
-import ReportProblemOutlinedIcon from "@mui/icons-material/ReportProblemOutlined";
-import TimelineOutlinedIcon from "@mui/icons-material/TimelineOutlined";
-import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
+import { Activity, ChevronLeft, ChevronRight, Inbox, Package, TriangleAlert, Truck, Warehouse } from "lucide-react";
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 
@@ -149,7 +142,7 @@ export function HomeDashboardPage({
         value: numberFormatter.format(onHandUnits),
         meta: t("dashboardKpiOnHandMeta", { count: activePositions }),
         tone: "blue",
-        icon: <Inventory2OutlinedIcon fontSize="small" />,
+        icon: <Package size={16} strokeWidth={2.1} />,
         onOpen: () => {
           setPendingInventorySummaryContext({ healthFilter: "ALL" });
           onNavigate("inventory-summary");
@@ -161,7 +154,7 @@ export function HomeDashboardPage({
         value: numberFormatter.format(scheduledReceipts),
         meta: t("dashboardKpiScheduledReceiptsMeta", { arrived: arrivedReceipts, receiving: receivingReceipts }),
         tone: "emerald",
-        icon: <MoveToInboxOutlinedIcon fontSize="small" />,
+        icon: <Inbox size={16} strokeWidth={2.1} />,
         onOpen: () => {
           setPendingActivityManagementLaunchContext("IN", { selectedStatus: "DRAFT" });
           onNavigate("inbound-management");
@@ -173,7 +166,7 @@ export function HomeDashboardPage({
         value: numberFormatter.format(pendingShipments),
         meta: t("dashboardKpiPendingShipmentsMeta", { picking: pickingShipments, packed: packedShipments }),
         tone: "amber",
-        icon: <LocalShippingOutlinedIcon fontSize="small" />,
+        icon: <Truck size={16} strokeWidth={2.1} />,
         onOpen: () => {
           setPendingActivityManagementLaunchContext("OUT", { selectedStatus: "DRAFT" });
           onNavigate("outbound-management");
@@ -185,7 +178,7 @@ export function HomeDashboardPage({
         value: numberFormatter.format(lowStockSkus),
         meta: t("dashboardKpiLowStockMeta", { warehouses: atRiskWarehouses }),
         tone: "red",
-        icon: <ReportProblemOutlinedIcon fontSize="small" />,
+        icon: <TriangleAlert size={16} strokeWidth={2.1} />,
         onOpen: () => {
           setPendingInventorySummaryContext({ healthFilter: "LOW_STOCK" });
           onNavigate("inventory-summary");
@@ -273,7 +266,7 @@ export function HomeDashboardPage({
           <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
             <div className="space-y-2.5">
               <div className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500 ring-1 ring-slate-200/70">
-                <WarehouseOutlinedIcon sx={{ fontSize: 14 }} />
+                <Warehouse size={14} strokeWidth={2.1} />
                 {t("navDashboard")}
               </div>
               <div>
@@ -347,7 +340,7 @@ export function HomeDashboardPage({
                   value={numberFormatter.format(throughputTotals.outbound)}
                 />
                 <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-500">
-                  <TimelineOutlinedIcon sx={{ fontSize: 15 }} />
+                  <Activity size={15} strokeWidth={2.1} />
                   {t("dashboardFlowLineMeta")}
                 </div>
               </div>
@@ -647,7 +640,7 @@ function ProcessingCalendarCard({
             className="interactive-button-lift inline-flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600 transition hover:bg-slate-200"
             aria-label={t("previousWeek")}
           >
-            <ChevronLeftRoundedIcon fontSize="small" />
+            <ChevronLeft size={18} strokeWidth={2.1} />
           </button>
           <div className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-semibold text-[#143569]">
             {weekLabel}
@@ -658,7 +651,7 @@ function ProcessingCalendarCard({
             className="interactive-button-lift inline-flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600 transition hover:bg-slate-200"
             aria-label={t("nextWeek")}
           >
-            <ChevronRightRoundedIcon fontSize="small" />
+            <ChevronRight size={18} strokeWidth={2.1} />
           </button>
         </div>
 

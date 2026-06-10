@@ -1,5 +1,4 @@
-import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
-import { Button, Chip } from "@mui/material";
+﻿import { ChevronDown } from "lucide-react";
 import { type KeyboardEvent, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 
 import { LineDetailAccordionPanel } from "./LineDetailAccordionPanel";
@@ -232,27 +231,23 @@ export function OutboundPickPlanPanel({
       ]}
       actions={(
         <>
-          <Chip
-            size="small"
-            label={autoPickLabel}
-            className="!h-7 !rounded-lg !border !border-sky-200/80 !bg-sky-50 !px-2 !text-[11px] !font-semibold !text-sky-700"
-          />
+          <span className="inline-flex !h-7 items-center !rounded-lg !border !border-sky-200/80 !bg-sky-50 !px-2 !text-[11px] !font-semibold !text-sky-700">
+            {autoPickLabel}
+          </span>
           {canExpand ? (
-            <Button
-              size="small"
-              variant="outlined"
+            <button
+              type="button"
               onClick={onToggle}
               aria-expanded={expanded}
-              endIcon={
-                <ExpandMoreOutlinedIcon
-                  fontSize="small"
-                  className={`transition-transform duration-200 ${expanded ? "rotate-180" : "rotate-0"}`}
-                />
-              }
-              className="!min-h-8 !rounded-lg !border-slate-300/80 !bg-white/90 !px-2.5 !text-[11px] !font-semibold !text-[#143569] hover:!border-slate-400 hover:!bg-white"
+              className="inline-flex !min-h-8 items-center gap-1.5 !rounded-lg !border !border-slate-300/80 !bg-white/90 !px-2.5 !text-[11px] !font-semibold !text-[#143569] hover:!border-slate-400 hover:!bg-white"
             >
               {detailsLabel}
-            </Button>
+              <ChevronDown
+                size={14}
+                strokeWidth={2.1}
+                className={`transition-transform duration-200 ${expanded ? "rotate-180" : "rotate-0"}`}
+              />
+            </button>
           ) : null}
         </>
       )}
@@ -320,8 +315,9 @@ export function OutboundPickPlanPanel({
                         aria-label={`${detailsLabel}: ${group.containerNo}`}
                         className="flex min-w-0 flex-1 items-center gap-2 text-left text-[12px] font-semibold text-slate-700"
                       >
-                        <ExpandMoreOutlinedIcon
-                          fontSize="small"
+                        <ChevronDown
+                          size={14}
+                          strokeWidth={2.1}
                           className={`shrink-0 transition-transform duration-200 ${isGroupExpanded ? "rotate-180" : "rotate-0"}`}
                         />
                         <span className="truncate">

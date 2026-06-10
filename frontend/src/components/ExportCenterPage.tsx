@@ -1,8 +1,4 @@
-import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
-import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
-import OutboxOutlinedIcon from "@mui/icons-material/OutboxOutlined";
-import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
-import { Button } from "@mui/material";
+﻿import { Download, Inbox, PackageCheck, Warehouse } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 
 import { formatDateValue } from "../lib/dates";
@@ -126,7 +122,7 @@ export function ExportCenterPage({
         title: "Inventory Summary",
         description: t("inventorySummaryDesc"),
         rowCount: inventorySummaryRows.length,
-        icon: <WarehouseOutlinedIcon fontSize="small" />,
+        icon: <Warehouse size={16} strokeWidth={2.1} />,
         sheetName: "Inventory Summary",
         columns: [...INVENTORY_SUMMARY_EXPORT_COLUMNS],
         rows: inventorySummaryRows
@@ -136,7 +132,7 @@ export function ExportCenterPage({
         title: "Inventory Detail",
         description: t("stockByLocationDesc"),
         rowCount: inventoryDetailRows.length,
-        icon: <WarehouseOutlinedIcon fontSize="small" />,
+        icon: <Warehouse size={16} strokeWidth={2.1} />,
         sheetName: "Inventory Detail",
         columns: [...INVENTORY_DETAIL_EXPORT_COLUMNS],
         rows: inventoryDetailRows
@@ -146,7 +142,7 @@ export function ExportCenterPage({
         title: "Container Contents",
         description: t("containerContentsDesc"),
         rowCount: containerContentsRows.length,
-        icon: <WarehouseOutlinedIcon fontSize="small" />,
+        icon: <Warehouse size={16} strokeWidth={2.1} />,
         sheetName: "Container Contents",
         columns: [...CONTAINER_CONTENTS_EXPORT_COLUMNS],
         rows: containerContentsRows
@@ -156,7 +152,7 @@ export function ExportCenterPage({
         title: "Receipts",
         description: t("inboundDesc"),
         rowCount: receiptRows.length,
-        icon: <MoveToInboxOutlinedIcon fontSize="small" />,
+        icon: <Inbox size={16} strokeWidth={2.1} />,
         sheetName: "Receipts",
         columns: [...RECEIPTS_EXPORT_COLUMNS],
         rows: receiptRows
@@ -166,7 +162,7 @@ export function ExportCenterPage({
         title: "Shipments",
         description: t("outboundDesc"),
         rowCount: shipmentRows.length,
-        icon: <OutboxOutlinedIcon fontSize="small" />,
+        icon: <PackageCheck size={16} strokeWidth={2.1} />,
         sheetName: "Shipments",
         columns: [...SHIPMENTS_EXPORT_COLUMNS],
         rows: shipmentRows
@@ -202,9 +198,9 @@ export function ExportCenterPage({
             title={t("exportCenter")}
             actions={(
               <div className="sheet-actions">
-                <Button variant="outlined" onClick={() => onNavigate("reports")}>
+                <button className="button button--ghost" type="button" onClick={() => onNavigate("reports")}>
                   {t("report")}
-                </Button>
+                </button>
               </div>
             )}
           />
@@ -225,14 +221,15 @@ export function ExportCenterPage({
                 <span>{t("recordCount")}</span>
               </div>
               <div className="export-center__card-actions">
-                <Button
-                  variant="contained"
-                  startIcon={<FileDownloadOutlinedIcon fontSize="small" />}
+                <button
+                  className="button button--primary"
+                  type="button"
                   onClick={() => setSelectedDatasetKey(dataset.key)}
                   disabled={dataset.rowCount === 0}
                 >
+                  <Download size={16} strokeWidth={2.1} />
                   {t("exportExcel")}
-                </Button>
+                </button>
               </div>
             </article>
           ))}
