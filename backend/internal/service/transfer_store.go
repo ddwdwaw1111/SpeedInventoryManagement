@@ -374,6 +374,7 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 				ItemNumber:          sourceItem.SKU,
 				DescriptionSnapshot: sourceItem.Description,
 				Reason:              reason,
+				ReferenceCode:       input.TransferNo,
 			}); err != nil {
 				return InventoryTransfer{}, err
 			}
@@ -421,6 +422,7 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 				ItemNumber:          sourceItem.SKU,
 				DescriptionSnapshot: sourceItem.Description,
 				Reason:              reason,
+				ReferenceCode:       input.TransferNo,
 			}); err != nil {
 				return InventoryTransfer{}, err
 			}

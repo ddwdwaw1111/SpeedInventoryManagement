@@ -1,4 +1,4 @@
-import { ChevronDown, LogOut, PackageSearch } from "lucide-react";
+import { ChevronDown, Container, LogOut, PackageSearch } from "lucide-react";
 import { Suspense, lazy, type ReactNode, useEffect, useState } from "react";
 
 import { Button } from "../components/ui/button";
@@ -28,6 +28,8 @@ type PortalAccess = {
 
 const sidebarParents: Record<CustomerPortalSection, CustomerPortalSection> = {
   inventory: "inventory",
+  containers: "containers",
+  "container-detail": "containers",
   "inbound-shipments": "inbound-shipments",
   "inbound-shipment-detail": "inbound-shipments",
   "outbound-orders": "outbound-orders",
@@ -276,7 +278,8 @@ function CustomerPortalSidebar({
   const { t } = useI18n();
   const sidebarActiveSection = sidebarParents[activeSection];
   const navItems: Array<{ key: CustomerPortalSection; label: string; icon: ReactNode }> = [
-    { key: "inventory", label: t("customerPortalInventory"), icon: <PackageSearch className="h-5 w-5" /> }
+    { key: "inventory", label: t("customerPortalInventory"), icon: <PackageSearch className="h-5 w-5" /> },
+    { key: "containers", label: t("customerPortalContainers"), icon: <Container className="h-5 w-5" /> }
   ];
 
   return (

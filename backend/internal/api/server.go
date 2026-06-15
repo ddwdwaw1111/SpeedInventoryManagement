@@ -502,6 +502,7 @@ func (s *Server) handleListPallets(c *gin.Context) {
 		SourceInboundDocumentID: sourceInboundDocumentID,
 		CustomerID:              customerID,
 		LocationID:              locationID,
+		ContainerNo:             c.Query("containerNo"),
 		Status:                  c.Query("status"),
 	})
 	if err != nil {
@@ -523,8 +524,15 @@ func (s *Server) handleListPalletLocationEvents(c *gin.Context) {
 		limit = parsed
 	}
 
+	customerID, err := parseOptionalInt64Query(c, "customerId", "customerId must be a number")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	events, err := s.store.ListPalletLocationEvents(c.Request.Context(), limit, service.ListPalletLocationEventFilters{
 		ContainerNo: c.Query("containerNo"),
+		CustomerID:  customerID,
 	})
 	if err != nil {
 		writeServerError(c, err)

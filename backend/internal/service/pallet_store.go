@@ -38,6 +38,7 @@ type createPalletLocationEventInput struct {
 
 type ListPalletLocationEventFilters struct {
 	ContainerNo string
+	CustomerID  int64
 }
 
 type PalletLocationEvent struct {
@@ -300,6 +301,10 @@ func (s *Store) ListPalletLocationEvents(ctx context.Context, limit int, filters
 	if normalizedContainerNo := strings.TrimSpace(strings.ToUpper(filters.ContainerNo)); normalizedContainerNo != "" {
 		query += ` AND UPPER(TRIM(ple.container_no)) = ?`
 		args = append(args, normalizedContainerNo)
+	}
+	if filters.CustomerID > 0 {
+		query += ` AND ple.customer_id = ?`
+		args = append(args, filters.CustomerID)
 	}
 
 	query += ` ORDER BY ple.event_time DESC, ple.id DESC LIMIT ?`

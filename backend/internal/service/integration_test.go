@@ -1639,6 +1639,18 @@ func TestSelectedPalletInventoryActionsIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create selected-pallet adjustment: %v", err)
 	}
+	if len(adjustment.Lines) != 1 {
+		t.Fatalf("expected 1 selected-pallet adjustment line, got %d", len(adjustment.Lines))
+	}
+	if adjustment.Lines[0].PalletID != adjustmentPallet.ID {
+		t.Fatalf("expected adjustment line pallet id %d, got %d", adjustmentPallet.ID, adjustment.Lines[0].PalletID)
+	}
+	if adjustment.Lines[0].PalletCode != adjustmentPallet.PalletCode {
+		t.Fatalf("expected adjustment line pallet code %q, got %q", adjustmentPallet.PalletCode, adjustment.Lines[0].PalletCode)
+	}
+	if adjustment.Lines[0].PalletBeforeQty != adjustmentQty || adjustment.Lines[0].PalletAfterQty != 0 {
+		t.Fatalf("expected adjustment pallet qty %d->0, got %d->%d", adjustmentQty, adjustment.Lines[0].PalletBeforeQty, adjustment.Lines[0].PalletAfterQty)
+	}
 
 	var adjustmentSelectedLedgerQty int
 	if err := store.db.GetContext(ctx, &adjustmentSelectedLedgerQty, `

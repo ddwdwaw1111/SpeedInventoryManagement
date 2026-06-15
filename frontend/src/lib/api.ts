@@ -6,6 +6,8 @@ import type {
   CreateBillingInvoicePayload,
   AddBillingInvoiceLinePayload,
   UpdateBillingInvoiceLinePayload,
+  CustomerPortalContainerLifecycle,
+  CustomerPortalContainerSummary,
   CycleCount,
   CycleCountPayload,
   CreateUserPayload,
@@ -418,6 +420,21 @@ export const api = {
     }
     const suffix = params.toString() ? `?${params.toString()}` : "";
     return request<Item[]>(`${customerPortalBasePath(customerId)}/inventory${suffix}`);
+  },
+
+  getCustomerPortalContainers(search = "", customerId?: number) {
+    const params = new URLSearchParams();
+    if (search.trim()) {
+      params.set("search", search.trim());
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    return request<CustomerPortalContainerSummary[]>(`${customerPortalBasePath(customerId)}/containers${suffix}`);
+  },
+
+  getCustomerPortalContainerLifecycle(containerNo: string, customerId?: number) {
+    return request<CustomerPortalContainerLifecycle>(
+      `${customerPortalBasePath(customerId)}/containers/${encodeURIComponent(containerNo)}/lifecycle`
+    );
   },
 
   getCustomerPortalPickingOrders(limit = 100, query?: { search?: string; status?: string; trackingStatus?: string }, customerId?: number) {

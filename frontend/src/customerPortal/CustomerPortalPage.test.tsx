@@ -10,6 +10,8 @@ import { renderWithProviders } from "../test/renderWithProviders";
 
 const {
   getInventory,
+  getContainers,
+  getContainerLifecycle,
   getPackingLists,
   getPickingOrders,
   uploadPickingOrderAttachment,
@@ -19,6 +21,8 @@ const {
   createPickingOrder
 } = vi.hoisted(() => ({
   getInventory: vi.fn(),
+  getContainers: vi.fn(),
+  getContainerLifecycle: vi.fn(),
   getPackingLists: vi.fn(),
   getPickingOrders: vi.fn(),
   uploadPickingOrderAttachment: vi.fn(),
@@ -31,6 +35,8 @@ const {
 vi.mock("./api", () => ({
   customerPortalApi: {
     getInventory,
+    getContainers,
+    getContainerLifecycle,
     getPackingLists,
     getPickingOrders,
     uploadPickingOrderAttachment,
@@ -54,6 +60,8 @@ function createDeferred<T>() {
 describe("CustomerPortalPage", () => {
   beforeEach(() => {
     getInventory.mockReset();
+    getContainers.mockReset();
+    getContainerLifecycle.mockReset();
     getPackingLists.mockReset();
     getPickingOrders.mockReset();
     uploadPickingOrderAttachment.mockReset();
@@ -63,6 +71,56 @@ describe("CustomerPortalPage", () => {
     createPickingOrder.mockReset();
 
     getInventory.mockResolvedValue([]);
+    getContainers.mockResolvedValue([
+      {
+        containerNo: "CNT-CUST-11",
+        customerId: 1,
+        customerName: "Imperial Bag & Paper",
+        warehouses: ["NJ"],
+        packingListCount: 1,
+        firstPackingListId: 11,
+        totalExpectedQty: 24,
+        totalReceivedQty: 12,
+        currentQty: 8,
+        availableQty: 8,
+        shippedQty: 4,
+        outboundOrderCount: 1,
+        pickingOrderRefs: ["PL-CUST-42"],
+        transferCount: 2,
+        palletCount: 3,
+        status: "PARTIAL",
+        firstReceivedAt: "2026-03-24T10:00:00Z",
+        lastActivityAt: "2026-03-25T10:00:00Z"
+      }
+    ]);
+    getContainerLifecycle.mockResolvedValue({
+      summary: {
+        containerNo: "CNT-CUST-11",
+        customerId: 1,
+        customerName: "Imperial Bag & Paper",
+        warehouses: ["NJ"],
+        packingListCount: 1,
+        firstPackingListId: 11,
+        totalExpectedQty: 24,
+        totalReceivedQty: 12,
+        currentQty: 8,
+        availableQty: 8,
+        shippedQty: 4,
+        outboundOrderCount: 1,
+        pickingOrderRefs: ["PL-CUST-42"],
+        transferCount: 2,
+        palletCount: 3,
+        status: "PARTIAL",
+        firstReceivedAt: "2026-03-24T10:00:00Z",
+        lastActivityAt: "2026-03-25T10:00:00Z"
+      },
+      packingLists: [],
+      pickingOrders: [],
+      movements: [],
+      lifecycleEvents: [],
+      pallets: [],
+      palletEvents: []
+    });
     getPackingLists.mockResolvedValue([
       createInboundDocument({
         id: 11,
@@ -276,6 +334,44 @@ describe("CustomerPortalPage", () => {
     expect(screen.queryByRole("button", { name: /New Outbound Order/i })).not.toBeInTheDocument();
   });
 
+  it("shows customer containers and opens a container lifecycle view", async () => {
+    const user = userEvent.setup();
+
+    function PortalHarness() {
+      const [section, setSection] = useState<CustomerPortalSection>("containers");
+      return (
+        <CustomerPortalPage
+          activeSection={section}
+          onSectionChange={setSection}
+          currentUser={{
+            id: 5,
+            email: "customer@example.com",
+            fullName: "Customer User",
+            role: "customer",
+            isActive: true,
+            customerId: 1,
+            customerName: "Imperial Bag & Paper",
+            createdAt: "2026-03-24T10:00:00Z"
+          }}
+        />
+      );
+    }
+
+    renderWithProviders(<PortalHarness />);
+
+    expect(await screen.findByText("CNT-CUST-11")).toBeInTheDocument();
+    expect(screen.getAllByText("Partially shipped").length).toBeGreaterThan(0);
+    expect(screen.getByText("PL-CUST-42")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Open container lifecycle CNT-CUST-11/i }));
+
+    await waitFor(() => {
+      expect(getContainerLifecycle).toHaveBeenCalledWith("CNT-CUST-11", undefined);
+    });
+    expect(await screen.findByText("Container Lifecycle CNT-CUST-11")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Back to Containers/i })).toBeInTheDocument();
+  });
+
   it("defaults to the inventory lookup as the first customer portal feature", async () => {
     getInventory.mockResolvedValue([
       createItem({
@@ -432,6 +528,7 @@ describe("CustomerPortalPage", () => {
     await waitFor(() => {
       expect(getInventory).toHaveBeenCalledWith("", 77);
     });
+    expect(getContainers).toHaveBeenCalledWith("", 77);
     expect(getPackingLists).toHaveBeenCalledWith(100, {
       search: "",
       status: "all",

@@ -141,6 +141,7 @@ type ListPalletFilters struct {
 	SourceInboundDocumentID int64
 	CustomerID              int64
 	LocationID              int64
+	ContainerNo             string
 	Status                  string
 }
 
@@ -386,6 +387,10 @@ func (s *Store) ListPallets(ctx context.Context, limit int, filters ListPalletFi
 	if filters.LocationID > 0 {
 		whereClauses = append(whereClauses, "p.current_location_id = ?")
 		args = append(args, filters.LocationID)
+	}
+	if containerNo := strings.TrimSpace(strings.ToUpper(filters.ContainerNo)); containerNo != "" {
+		whereClauses = append(whereClauses, "UPPER(TRIM(COALESCE(NULLIF(p.current_container_no, ''), d.container_no, cv.container_no, ''))) = ?")
+		args = append(args, containerNo)
 	}
 	if status := strings.TrimSpace(strings.ToUpper(filters.Status)); status != "" {
 		whereClauses = append(whereClauses, "p.status = ?")

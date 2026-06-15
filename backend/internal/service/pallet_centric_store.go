@@ -100,6 +100,7 @@ type palletContentConsumption struct {
 type lockedPalletContentState struct {
 	PalletItemID            int64
 	PalletID                int64
+	PalletCode              string
 	SKUMasterID             int64
 	RemainingQty            int
 	AllocatedQty            int
@@ -391,6 +392,9 @@ func (s *Store) createStockLedgerEntryTx(ctx context.Context, tx *sql.Tx, input 
 	if err != nil {
 		return 0, fmt.Errorf("resolve stock ledger id: %w", err)
 	}
+	if err := s.createContainerLifecycleEventTx(ctx, tx, stockLedgerID, input); err != nil {
+		return 0, err
+	}
 	return stockLedgerID, nil
 }
 
@@ -467,6 +471,7 @@ func (s *Store) loadLockedPalletContentStateForBucketTx(
 		SELECT
 			pi.id,
 			pi.pallet_id,
+			p.pallet_code,
 			pi.sku_master_id,
 			pi.quantity,
 			pi.allocated_qty,
@@ -492,6 +497,7 @@ func (s *Store) loadLockedPalletContentStateForBucketTx(
 	`, palletID, skuMasterID, bucket.CustomerID, bucket.LocationID, storageSection, containerNo).Scan(
 		&content.PalletItemID,
 		&content.PalletID,
+		&content.PalletCode,
 		&content.SKUMasterID,
 		&content.RemainingQty,
 		&content.AllocatedQty,
@@ -532,6 +538,7 @@ func (s *Store) loadLockedPalletContentStateTx(
 		SELECT
 			pi.id,
 			pi.pallet_id,
+			p.pallet_code,
 			pi.sku_master_id,
 			pi.quantity,
 			pi.allocated_qty,
@@ -553,6 +560,7 @@ func (s *Store) loadLockedPalletContentStateTx(
 	`, palletID, skuMasterID).Scan(
 		&content.PalletItemID,
 		&content.PalletID,
+		&content.PalletCode,
 		&content.SKUMasterID,
 		&content.RemainingQty,
 		&content.AllocatedQty,

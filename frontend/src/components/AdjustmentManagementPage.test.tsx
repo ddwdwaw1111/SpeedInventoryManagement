@@ -61,7 +61,7 @@ vi.mock("../lib/api", () => ({
 
 import { setPendingInventoryActionContext } from "../lib/inventoryActionContext";
 import { buildInventoryActionSourceKey } from "../lib/inventoryActionSources";
-import type { PalletContent, PalletTrace } from "../lib/types";
+import type { InventoryAdjustment, PalletContent, PalletTrace } from "../lib/types";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { createItem } from "../test/fixtures";
 import { AdjustmentManagementPage } from "./AdjustmentManagementPage";
@@ -141,6 +141,8 @@ describe("AdjustmentManagementPage", () => {
     fireEvent.change(within(dialog).getByLabelText("Reason Code"), { target: { value: "DAMAGE" } });
     fireEvent.change(within(dialog).getByLabelText("Pallet"), { target: { value: "11" } });
     fireEvent.change(within(dialog).getAllByRole("spinbutton")[0]!, { target: { value: "-3" } });
+    expect(within(dialog).getByLabelText("Pallet Qty")).toHaveValue("6");
+    expect(within(dialog).getByLabelText("Pallet After Qty")).toHaveValue("3");
     fireEvent.click(within(dialog).getByRole("button", { name: "Post Adjustment" }));
 
     await waitFor(() => {
@@ -268,6 +270,58 @@ describe("AdjustmentManagementPage", () => {
     expect(within(dialog).getAllByRole("spinbutton")[0]).toBeDisabled();
     expect(within(dialog).getByRole("button", { name: "Post Adjustment" })).toBeDisabled();
     expect(createInventoryAdjustment).not.toHaveBeenCalled();
+  });
+
+  it("shows pallet-level before and after quantities in adjustment details", async () => {
+    const adjustment: InventoryAdjustment = {
+      id: 9,
+      adjustmentNo: "ADJ-9",
+      reasonCode: "DAMAGE",
+      actualAdjustedAt: null,
+      notes: "Damaged cartons",
+      status: "POSTED",
+      totalLines: 1,
+      totalAdjustQty: -3,
+      createdAt: "2026-04-02T10:00:00Z",
+      updatedAt: "2026-04-02T10:00:00Z",
+      lines: [
+        {
+          id: 91,
+          adjustmentId: 9,
+          customerId: 1,
+          customerName: "Imperial Bag & Paper",
+          locationId: 1,
+          locationName: "NJ",
+          storageSection: "TEMP",
+          palletId: 11,
+          palletCode: "PLT-001",
+          sku: "608333",
+          description: "VB22GC",
+          beforeQty: 10,
+          adjustQty: -3,
+          afterQty: 7,
+          palletBeforeQty: 6,
+          palletAfterQty: 3,
+          lineNote: "reduce selected pallet",
+          createdAt: "2026-04-02T10:00:00Z"
+        }
+      ]
+    };
+
+    renderWithProviders(
+      <AdjustmentManagementPage
+        {...defaultProps({
+          adjustments: [adjustment]
+        })}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId("grid-row-9"));
+    const detailRow = await screen.findByTestId("grid-row-91");
+
+    expect(within(detailRow).getByText("PLT-001")).toBeInTheDocument();
+    expect(detailRow.querySelector('[data-field="palletBeforeQty"]')?.textContent).toBe("6");
+    expect(detailRow.querySelector('[data-field="palletAfterQty"]')?.textContent).toBe("3");
   });
 });
 

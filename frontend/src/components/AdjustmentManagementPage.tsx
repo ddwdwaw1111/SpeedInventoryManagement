@@ -310,7 +310,9 @@ export function AdjustmentManagementPage({
     { field: "customerName", headerName: t("customer"), minWidth: 170, flex: 1 },
     { field: "locationName", headerName: t("currentStorage"), minWidth: 170, flex: 1 },
     { field: "storageSection", headerName: t("storageSection"), minWidth: 110 },
+    { field: "palletCode", headerName: t("palletCode"), minWidth: 130, renderCell: (params) => params.row.palletCode || "-" },
     { field: "beforeQty", headerName: t("beforeQty"), minWidth: 120, type: "number" },
+    { field: "palletBeforeQty", headerName: t("palletBeforeQty"), minWidth: 150, type: "number" },
     {
       field: "adjustQty",
       headerName: t("adjustQty"),
@@ -323,6 +325,7 @@ export function AdjustmentManagementPage({
       )
     },
     { field: "afterQty", headerName: t("afterQty"), minWidth: 120, type: "number" },
+    { field: "palletAfterQty", headerName: t("palletAfterQty"), minWidth: 150, type: "number" },
     { field: "lineNote", headerName: t("internalNotes"), minWidth: 240, flex: 1.3, renderCell: (params) => params.row.lineNote || "-" }
   ], [t]);
   const mainGridSlots = buildWorkspaceGridSlots({
@@ -694,7 +697,11 @@ export function AdjustmentManagementPage({
                   const selectedPalletAvailableQty = selectedItem && selectedPallet
                     ? getAdjustablePalletAvailableQty(selectedPallet, selectedItem.skuMasterId)
                     : 0;
+                  const selectedPalletQty = selectedItem && selectedPallet
+                    ? getPalletSkuQty(selectedPallet, selectedItem.skuMasterId)
+                    : 0;
                   const afterQty = (selectedItem?.quantity ?? 0) + line.adjustQty;
+                  const palletAfterQty = selectedPallet ? selectedPalletQty + line.adjustQty : 0;
 
                   return (
                     <div className="batch-line-card" key={line.id}>
@@ -749,15 +756,19 @@ export function AdjustmentManagementPage({
                               const palletAvailableQty = selectedItem
                                 ? getAdjustablePalletAvailableQty(pallet, selectedItem.skuMasterId)
                                 : 0;
+                              const palletQty = selectedItem
+                                ? getPalletSkuQty(pallet, selectedItem.skuMasterId)
+                                : 0;
                               return (
                                 <option key={pallet.id} value={pallet.id}>
-                                  {`${pallet.palletCode} (${t("availableQty")}: ${palletAvailableQty})`}
+                                  {`${pallet.palletCode} (${t("palletQty")}: ${palletQty} | ${t("availableQty")}: ${palletAvailableQty})`}
                                 </option>
                               );
                             })}
                           </select>
                         </label>
                         <label>{t("onHand")}<input value={selectedItem ? String(selectedItem.quantity) : ""} readOnly /></label>
+                        <label>{t("palletQty")}<input value={selectedPallet ? String(selectedPalletQty) : ""} readOnly /></label>
                         <label>
                           {t("adjustQty")}
                           <input
@@ -796,6 +807,14 @@ export function AdjustmentManagementPage({
                           {selectedItem && afterQty < 0 && (
                             <small style={{ color: "#b76857", display: "block", marginTop: 2 }}>{t("afterQtyNegativeWarning")}</small>
                           )}
+                        </label>
+                        <label>
+                          {t("palletAfterQty")}
+                          <input
+                            value={selectedPallet ? String(palletAfterQty) : ""}
+                            readOnly
+                            style={{ color: selectedPallet && palletAfterQty < 0 ? "#b76857" : undefined, fontWeight: selectedPallet && palletAfterQty < 0 ? 700 : undefined }}
+                          />
                         </label>
                         <label className="batch-line-grid__detail">{t("internalNotes")}<input value={line.lineNote} onChange={(event) => updateLine(line.id, { lineNote: event.target.value })} placeholder={t("adjustmentLineNotePlaceholder")} /></label>
                       </div>
@@ -847,6 +866,12 @@ function getAdjustablePalletAvailableQty(pallet: PalletTrace, skuMasterId: numbe
   return pallet.contents
     .filter((content) => content.skuMasterId === skuMasterId)
     .reduce((sum, content) => sum + Math.max(0, content.quantity - (content.allocatedQty ?? 0) - (content.damagedQty ?? 0) - (content.holdQty ?? 0)), 0);
+}
+
+function getPalletSkuQty(pallet: PalletTrace, skuMasterId: number) {
+  return pallet.contents
+    .filter((content) => content.skuMasterId === skuMasterId)
+    .reduce((sum, content) => sum + content.quantity, 0);
 }
 
 function clampPalletAdjustmentQty(value: number, maxRemovableQty: number) {

@@ -337,6 +337,9 @@ export type Movement = {
   inboundDocumentLineId: number;
   outboundDocumentId: number;
   outboundDocumentLineId: number;
+  sourceDocumentType: string;
+  sourceDocumentId: number;
+  sourceLineId: number;
   itemName: string;
   sku: string;
   description: string;
@@ -422,6 +425,58 @@ export type PalletLocationEvent = {
   quantityDelta: number;
   palletDelta: number;
   eventTime: string;
+  createdAt: string;
+};
+
+export type CustomerPortalContainerSummary = {
+  containerNo: string;
+  customerId: number;
+  customerName: string;
+  warehouses: string[];
+  packingListCount: number;
+  firstPackingListId: number;
+  totalExpectedQty: number;
+  totalReceivedQty: number;
+  currentQty: number;
+  availableQty: number;
+  shippedQty: number;
+  outboundOrderCount: number;
+  pickingOrderRefs: string[];
+  transferCount: number;
+  palletCount: number;
+  status: "PENDING" | "IN_STOCK" | "PARTIAL" | "SHIPPED" | "DEPLETED" | string;
+  firstReceivedAt: string | null;
+  lastActivityAt: string | null;
+};
+
+export type ContainerLifecycleEvent = {
+  id: number;
+  stockLedgerId: number;
+  customerId: number;
+  customerName: string;
+  locationId: number;
+  locationName: string;
+  storageSection: string;
+  containerNo: string;
+  eventType: string;
+  eventTime: string;
+  quantityDelta: number;
+  palletId: number;
+  palletItemId: number;
+  skuMasterId: number;
+  sourceDocumentType: string;
+  sourceDocumentId: number;
+  sourceLineId: number;
+  packingListNo: string;
+  orderRef: string;
+  itemNumber: string;
+  description: string;
+  expectedQty: number;
+  receivedQty: number;
+  pallets: number;
+  documentNote: string;
+  reason: string;
+  referenceCode: string;
   createdAt: string;
 };
 
@@ -632,6 +687,16 @@ export type InboundDocumentPayload = {
   lines: InboundDocumentLinePayload[];
 };
 
+export type CustomerPortalContainerLifecycle = {
+  summary: CustomerPortalContainerSummary;
+  packingLists: InboundDocument[];
+  pickingOrders: OutboundDocument[];
+  movements: Movement[];
+  lifecycleEvents: ContainerLifecycleEvent[];
+  pallets: PalletTrace[];
+  palletEvents: PalletLocationEvent[];
+};
+
 export type UpdateInboundDocumentNotePayload = {
   documentNote?: string;
 };
@@ -678,11 +743,15 @@ export type InventoryAdjustmentLine = {
   locationId: number;
   locationName: string;
   storageSection: string;
+  palletId: number;
+  palletCode: string;
   sku: string;
   description: string;
   beforeQty: number;
   adjustQty: number;
   afterQty: number;
+  palletBeforeQty: number;
+  palletAfterQty: number;
   lineNote: string;
   createdAt: string;
 };

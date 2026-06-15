@@ -221,6 +221,9 @@ type Movement struct {
 	InboundDocumentLineID  int64      `json:"inboundDocumentLineId"`
 	OutboundDocumentID     int64      `json:"outboundDocumentId"`
 	OutboundDocumentLineID int64      `json:"outboundDocumentLineId"`
+	SourceDocumentType     string     `json:"sourceDocumentType"`
+	SourceDocumentID       int64      `json:"sourceDocumentId"`
+	SourceLineID           int64      `json:"sourceLineId"`
 	ItemName               string     `json:"itemName"`
 	SKU                    string     `json:"sku"`
 	Description            string     `json:"description"`
@@ -263,6 +266,7 @@ type MovementFilters struct {
 	Search       string
 	CustomerID   int64
 	LocationID   int64
+	ContainerNo  string
 	MovementType string
 	StartDate    string
 	EndDate      string
@@ -744,6 +748,10 @@ func (s *Store) listStockLedgerMovements(ctx context.Context, limit int, filters
 		whereClauses = append(whereClauses, "sl.location_id = ?")
 		args = append(args, filters.LocationID)
 	}
+	if containerNo := strings.TrimSpace(strings.ToUpper(filters.ContainerNo)); containerNo != "" {
+		whereClauses = append(whereClauses, "UPPER(TRIM(COALESCE(NULLIF(sl.container_no_snapshot, ''), idoc.container_no, ''))) = ?")
+		args = append(args, containerNo)
+	}
 	if movementType := normalizeMovementTypeFilter(filters.MovementType); movementType != "" {
 		whereClauses = append(whereClauses, "sl.event_type = ?")
 		args = append(args, movementType)
@@ -801,6 +809,9 @@ func (s *Store) listStockLedgerMovements(ctx context.Context, limit int, filters
 			MAX(CASE WHEN sl.source_document_type = 'INBOUND' THEN sl.source_line_id ELSE 0 END) AS inbound_document_line_id,
 			MAX(CASE WHEN sl.source_document_type = 'OUTBOUND' THEN sl.source_document_id ELSE 0 END) AS outbound_document_id,
 			MAX(CASE WHEN sl.source_document_type = 'OUTBOUND' THEN sl.source_line_id ELSE 0 END) AS outbound_document_line_id,
+			COALESCE(MAX(sl.source_document_type), '') AS source_document_type,
+			COALESCE(MAX(sl.source_document_id), 0) AS source_document_id,
+			COALESCE(MAX(sl.source_line_id), 0) AS source_line_id,
 			COALESCE(MAX(sm.name), COALESCE(MAX(sl.description_snapshot), '')) AS item_name,
 			COALESCE(MAX(sm.sku), '') AS sku,
 			COALESCE(
@@ -1161,6 +1172,9 @@ func scanMovement(scanner itemScanner) (Movement, error) {
 		&movement.InboundDocumentLineID,
 		&movement.OutboundDocumentID,
 		&movement.OutboundDocumentLineID,
+		&movement.SourceDocumentType,
+		&movement.SourceDocumentID,
+		&movement.SourceLineID,
 		&movement.ItemName,
 		&movement.SKU,
 		&movement.Description,

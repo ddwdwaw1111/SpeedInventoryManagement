@@ -2,6 +2,8 @@ import { type FormEvent, useEffect, useState } from "react";
 
 import { useI18n } from "../lib/i18n";
 import { customerPortalApi } from "./api";
+import { CustomerPortalContainerLifecyclePage } from "./CustomerPortalContainerLifecyclePage";
+import { CustomerPortalContainersPage } from "./CustomerPortalContainersPage";
 import { CustomerPortalInventoryPage } from "./CustomerPortalInventoryPage";
 import {
   CustomerPortalNewPickingOrderPage,
@@ -17,7 +19,7 @@ import type { CustomerPortalDetailTabRequest } from "./CustomerPortalTrackingSha
 import type { CustomerPortalSection } from "./navigation";
 import { InlineAlert, useFeedbackToast } from "./sharedUi";
 import type { PendingDocumentAttachment } from "./sharedUi";
-import type { InboundDocument, Item, OutboundDocument, OutboundDocumentPayload, User } from "./types";
+import type { CustomerPortalContainerSummary, InboundDocument, Item, OutboundDocument, OutboundDocumentPayload, User } from "./types";
 
 type CustomerPortalPageProps = {
   activeSection?: CustomerPortalSection;
@@ -31,9 +33,12 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
   const { t } = useI18n();
   const { showSuccess, showError, feedbackToast } = useFeedbackToast();
   const [inventorySearch, setInventorySearch] = useState("");
+  const [containerSearch, setContainerSearch] = useState("");
   const [inventory, setInventory] = useState<Item[]>([]);
+  const [containers, setContainers] = useState<CustomerPortalContainerSummary[]>([]);
   const [packingLists, setPackingLists] = useState<InboundDocument[]>([]);
   const [pickingOrders, setPickingOrders] = useState<OutboundDocument[]>([]);
+  const [selectedContainerNo, setSelectedContainerNo] = useState<string | null>(null);
   const [selectedPackingListId, setSelectedPackingListId] = useState<number | null>(null);
   const [selectedPickingOrderId, setSelectedPickingOrderId] = useState<number | null>(null);
   const [pickingOrderDetailTabRequest, setPickingOrderDetailTabRequest] = useState<CustomerPortalDetailTabRequest | null>(null);
@@ -49,6 +54,8 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
   const currentSection = activeSection ?? "inventory";
 
   const showInventorySection = currentSection === "inventory";
+  const showContainersSection = currentSection === "containers";
+  const showContainerDetailSection = currentSection === "container-detail";
   const showNewPickingOrderSection = currentSection === "new-outbound-order";
   const showPackingListSection = currentSection === "inbound-shipments";
   const showPackingListDetailSection = currentSection === "inbound-shipment-detail";
@@ -59,16 +66,18 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
     void loadPortalData();
   }, [adminPortalCustomerId]);
 
-  async function loadPortalData(nextInventorySearch = inventorySearch) {
+  async function loadPortalData(nextInventorySearch = inventorySearch, nextContainerSearch = containerSearch) {
     setIsLoading(true);
     setErrorMessage("");
     try {
-      const [inventoryRows, packingListRows, pickingOrderRows] = await Promise.all([
+      const [inventoryRows, containerRows, packingListRows, pickingOrderRows] = await Promise.all([
         customerPortalApi.getInventory(nextInventorySearch, adminPortalCustomerId),
+        customerPortalApi.getContainers(nextContainerSearch, adminPortalCustomerId),
         customerPortalApi.getPackingLists(100, { search: "", status: "all", trackingStatus: "all" }, adminPortalCustomerId),
         customerPortalApi.getPickingOrders(100, { search: "", status: "all", trackingStatus: "all" }, adminPortalCustomerId)
       ]);
       setInventory(inventoryRows);
+      setContainers(containerRows);
       setPackingLists(packingListRows);
       setPickingOrders(pickingOrderRows);
     } catch (error) {
@@ -218,9 +227,20 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
     showError(message);
   }
 
+  function openContainerDetail(containerNo: string) {
+    setSelectedContainerNo(containerNo);
+    setErrorMessage("");
+    onSectionChange?.("container-detail");
+  }
+
   function resetInventorySearch() {
     setInventorySearch("");
-    void loadPortalData("");
+    void loadPortalData("", containerSearch);
+  }
+
+  function resetContainerSearch() {
+    setContainerSearch("");
+    void loadPortalData(inventorySearch, "");
   }
 
   return (
@@ -235,6 +255,27 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
           onSearchChange={setInventorySearch}
           onApplySearch={() => void loadPortalData(inventorySearch)}
           onResetSearch={resetInventorySearch}
+        />
+      ) : null}
+
+      {showContainersSection ? (
+        <CustomerPortalContainersPage
+          containers={containers}
+          isLoading={isLoading}
+          search={containerSearch}
+          onSearchChange={setContainerSearch}
+          onApplySearch={() => void loadPortalData(inventorySearch, containerSearch)}
+          onResetSearch={resetContainerSearch}
+          onOpenContainer={openContainerDetail}
+        />
+      ) : null}
+
+      {showContainerDetailSection ? (
+        <CustomerPortalContainerLifecyclePage
+          containerNo={selectedContainerNo}
+          adminPortalCustomerId={adminPortalCustomerId}
+          onBack={() => onSectionChange?.("containers")}
+          onError={showPortalError}
         />
       ) : null}
 

@@ -513,6 +513,47 @@ func Migrate(db *sql.DB) error {
 			CONSTRAINT fk_stock_ledger_location
 				FOREIGN KEY (location_id) REFERENCES storage_locations (id)
 		)`,
+		`CREATE TABLE IF NOT EXISTS container_lifecycle_events (
+			id BIGINT NOT NULL AUTO_INCREMENT,
+			stock_ledger_id BIGINT DEFAULT NULL,
+			customer_id BIGINT NOT NULL,
+			location_id BIGINT NOT NULL,
+			storage_section VARCHAR(16) NOT NULL DEFAULT 'TEMP',
+			container_no VARCHAR(120) NOT NULL,
+			event_type VARCHAR(32) NOT NULL,
+			event_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			quantity_delta INT NOT NULL DEFAULT 0,
+			pallet_id BIGINT DEFAULT NULL,
+			pallet_item_id BIGINT DEFAULT NULL,
+			sku_master_id BIGINT DEFAULT NULL,
+			source_document_type VARCHAR(32) DEFAULT NULL,
+			source_document_id BIGINT DEFAULT NULL,
+			source_line_id BIGINT DEFAULT NULL,
+			packing_list_no VARCHAR(120) DEFAULT NULL,
+			order_ref VARCHAR(120) DEFAULT NULL,
+			item_number_snapshot VARCHAR(120) DEFAULT NULL,
+			description_snapshot VARCHAR(255) DEFAULT NULL,
+			expected_qty INT NOT NULL DEFAULT 0,
+			received_qty INT NOT NULL DEFAULT 0,
+			pallets INT NOT NULL DEFAULT 0,
+			document_note VARCHAR(255) DEFAULT NULL,
+			reason VARCHAR(255) DEFAULT NULL,
+			reference_code VARCHAR(120) DEFAULT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			UNIQUE KEY uq_container_lifecycle_stock_ledger (stock_ledger_id),
+			KEY idx_container_lifecycle_customer_container_time (customer_id, container_no, event_time, id),
+			KEY idx_container_lifecycle_source (source_document_type, source_document_id),
+			KEY idx_container_lifecycle_event_type (event_type),
+			KEY idx_container_lifecycle_pallet_id (pallet_id),
+			CONSTRAINT fk_container_lifecycle_stock_ledger
+				FOREIGN KEY (stock_ledger_id) REFERENCES stock_ledger (id)
+				ON DELETE CASCADE,
+			CONSTRAINT fk_container_lifecycle_customer
+				FOREIGN KEY (customer_id) REFERENCES customers (id),
+			CONSTRAINT fk_container_lifecycle_location
+				FOREIGN KEY (location_id) REFERENCES storage_locations (id)
+		)`,
 		`CREATE TABLE IF NOT EXISTS outbound_picks (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			outbound_line_id BIGINT NOT NULL,
@@ -593,6 +634,78 @@ func Migrate(db *sql.DB) error {
 		`ALTER TABLE stock_ledger ADD COLUMN IF NOT EXISTS height_in INT NOT NULL DEFAULT 0 AFTER gross_weight_kgs`,
 		`ALTER TABLE stock_ledger ADD COLUMN IF NOT EXISTS document_note VARCHAR(255) DEFAULT NULL AFTER height_in`,
 		`ALTER TABLE stock_ledger ADD COLUMN IF NOT EXISTS reference_code VARCHAR(120) DEFAULT NULL AFTER reason`,
+		`INSERT INTO container_lifecycle_events (
+			stock_ledger_id,
+			customer_id,
+			location_id,
+			storage_section,
+			container_no,
+			event_type,
+			event_time,
+			quantity_delta,
+			pallet_id,
+			pallet_item_id,
+			sku_master_id,
+			source_document_type,
+			source_document_id,
+			source_line_id,
+			packing_list_no,
+			order_ref,
+			item_number_snapshot,
+			description_snapshot,
+			expected_qty,
+			received_qty,
+			pallets,
+			document_note,
+			reason,
+			reference_code,
+			created_at
+		)
+		SELECT
+			sl.id,
+			sl.customer_id,
+			sl.location_id,
+			COALESCE(NULLIF(sl.storage_section, ''), 'TEMP'),
+			COALESCE(NULLIF(sl.container_no_snapshot, ''), idoc.container_no, ''),
+			sl.event_type,
+			COALESCE(
+				sl.occurred_at,
+				CASE
+					WHEN sl.event_type = 'RECEIVE' THEN COALESCE(sl.delivery_date, idoc.actual_arrival_date, idoc.expected_arrival_date)
+					WHEN sl.event_type IN ('SHIP', 'REVERSAL') THEN COALESCE(sl.out_date, odoc.actual_ship_date, odoc.expected_ship_date)
+					ELSE NULL
+				END,
+				sl.created_at
+			),
+			sl.quantity_change,
+			sl.pallet_id,
+			sl.pallet_item_id,
+			sl.sku_master_id,
+			sl.source_document_type,
+			sl.source_document_id,
+			sl.source_line_id,
+			COALESCE(NULLIF(sl.packing_list_no, ''), odoc.packing_list_no),
+			COALESCE(NULLIF(sl.order_ref, ''), odoc.order_ref),
+			sl.item_number_snapshot,
+			sl.description_snapshot,
+			sl.expected_qty,
+			sl.received_qty,
+			sl.pallets,
+			COALESCE(NULLIF(sl.document_note, ''), idoc.document_note, odoc.document_note),
+			sl.reason,
+			sl.reference_code,
+			sl.created_at
+		FROM stock_ledger sl
+		LEFT JOIN inbound_documents idoc
+			ON sl.source_document_type = 'INBOUND' AND sl.source_document_id = idoc.id
+		LEFT JOIN outbound_documents odoc
+			ON sl.source_document_type = 'OUTBOUND' AND sl.source_document_id = odoc.id
+		WHERE COALESCE(NULLIF(sl.container_no_snapshot, ''), idoc.container_no, '') <> ''
+			AND NOT EXISTS (
+				SELECT 1
+				FROM container_lifecycle_events cle
+				WHERE cle.stock_ledger_id = sl.id
+			)`,
 		`CREATE TABLE IF NOT EXISTS inventory_adjustments (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			adjustment_no VARCHAR(120) NOT NULL,
@@ -615,16 +728,21 @@ func Migrate(db *sql.DB) error {
 			location_id BIGINT NOT NULL,
 			location_name_snapshot VARCHAR(160) NOT NULL,
 			storage_section VARCHAR(16) NOT NULL DEFAULT 'TEMP',
+			pallet_id BIGINT DEFAULT NULL,
+			pallet_code_snapshot VARCHAR(64) DEFAULT NULL,
 			sku_snapshot VARCHAR(64) NOT NULL,
 			description_snapshot VARCHAR(255) DEFAULT NULL,
 			before_qty INT NOT NULL DEFAULT 0,
 			adjust_qty INT NOT NULL DEFAULT 0,
 			after_qty INT NOT NULL DEFAULT 0,
+			pallet_before_qty INT NOT NULL DEFAULT 0,
+			pallet_after_qty INT NOT NULL DEFAULT 0,
 			line_note VARCHAR(255) DEFAULT NULL,
 			sort_order INT NOT NULL DEFAULT 1,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (id),
 			KEY idx_inventory_adjustment_lines_adjustment_id (adjustment_id),
+			KEY idx_inventory_adjustment_lines_pallet_id (pallet_id),
 			CONSTRAINT fk_inventory_adjustment_lines_adjustment
 				FOREIGN KEY (adjustment_id) REFERENCES inventory_adjustments (id)
 				ON DELETE CASCADE,
@@ -634,6 +752,10 @@ func Migrate(db *sql.DB) error {
 				FOREIGN KEY (location_id) REFERENCES storage_locations (id)
 		)`,
 		`ALTER TABLE inventory_adjustments ADD COLUMN IF NOT EXISTS actual_adjusted_at TIMESTAMP NULL DEFAULT NULL AFTER reason_code`,
+		`ALTER TABLE inventory_adjustment_lines ADD COLUMN IF NOT EXISTS pallet_id BIGINT DEFAULT NULL AFTER storage_section`,
+		`ALTER TABLE inventory_adjustment_lines ADD COLUMN IF NOT EXISTS pallet_code_snapshot VARCHAR(64) DEFAULT NULL AFTER pallet_id`,
+		`ALTER TABLE inventory_adjustment_lines ADD COLUMN IF NOT EXISTS pallet_before_qty INT NOT NULL DEFAULT 0 AFTER after_qty`,
+		`ALTER TABLE inventory_adjustment_lines ADD COLUMN IF NOT EXISTS pallet_after_qty INT NOT NULL DEFAULT 0 AFTER pallet_before_qty`,
 		`CREATE TABLE IF NOT EXISTS inventory_transfers (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			transfer_no VARCHAR(120) NOT NULL,
