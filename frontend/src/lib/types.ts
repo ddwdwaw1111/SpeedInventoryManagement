@@ -428,6 +428,200 @@ export type PalletLocationEvent = {
   createdAt: string;
 };
 
+export type ContainerRecord = {
+  id: number;
+  customerId: number;
+  customerName: string;
+  inboundDocumentId: number;
+  locationId: number;
+  locationName: string;
+  containerNo: string;
+  containerType: ContainerType | string;
+  handlingMode: string;
+  status: string;
+  trackingStatus: string;
+  lastEventAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ContainerLifecycleEventVisibility = "PUBLIC" | "CUSTOMER" | "INTERNAL" | "BOTH" | string;
+
+export type LifecycleDisplayFields = {
+  visibility?: ContainerLifecycleEventVisibility;
+  displayLabel?: string;
+  publicStatus?: string;
+  publicLabel?: string;
+  internalStatus?: string;
+  internalLabel?: string;
+};
+
+export type ContainerPayload = {
+  customerId: number;
+  inboundDocumentId?: number;
+  locationId?: number;
+  containerNo: string;
+  containerType?: ContainerType | string;
+  handlingMode?: string;
+  status?: string;
+  trackingStatus?: string;
+  lastEventAt?: string;
+};
+
+export type ContainerTrackingEvent = {
+  id: number;
+  containerId: number;
+  customerId: number;
+  customerName: string;
+  containerNo: string;
+  eventType: string;
+  eventTime: string;
+  location: string;
+  notes: string;
+  visibility?: ContainerLifecycleEventVisibility;
+  displayLabel?: string;
+  publicStatus?: string;
+  publicLabel?: string;
+  internalStatus?: string;
+  internalLabel?: string;
+  createdByUserId: number;
+  createdAt: string;
+};
+
+export type ContainerTrackingEventPayload = LifecycleDisplayFields & {
+  customerId: number;
+  eventType?: string;
+  eventTime?: string;
+  location?: string;
+  notes?: string;
+};
+
+export type ContainerPickupAssignment = {
+  id: number;
+  containerId: number;
+  customerId: number;
+  customerName: string;
+  containerNo: string;
+  assignmentType: string;
+  driverName: string;
+  vendorName: string;
+  phone: string;
+  scheduledPickupAt: string | null;
+  actualPickupAt: string | null;
+  cost: number;
+  status: string;
+  notes: string;
+  visibility?: ContainerLifecycleEventVisibility;
+  displayLabel?: string;
+  publicStatus?: string;
+  publicLabel?: string;
+  internalStatus?: string;
+  internalLabel?: string;
+  createdByUserId: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ContainerPickupAssignmentPayload = LifecycleDisplayFields & {
+  customerId: number;
+  assignmentType?: string;
+  driverName?: string;
+  vendorName?: string;
+  phone?: string;
+  scheduledPickupAt?: string;
+  actualPickupAt?: string;
+  cost?: number;
+  status?: string;
+  notes?: string;
+};
+
+export type PalletReworkEventPallet = {
+  id: number;
+  reworkEventId: number;
+  palletId: number;
+  palletCode: string;
+  role: string;
+  quantityDelta: number;
+  createdAt: string;
+};
+
+export type PalletReworkEvent = {
+  id: number;
+  referenceNo: string;
+  customerId: number;
+  customerName: string;
+  containerNo: string;
+  eventType: string;
+  eventTime: string;
+  notes: string;
+  visibility?: ContainerLifecycleEventVisibility;
+  displayLabel?: string;
+  publicStatus?: string;
+  publicLabel?: string;
+  internalStatus?: string;
+  internalLabel?: string;
+  pallets: PalletReworkEventPallet[];
+  createdAt: string;
+};
+
+export type PalletReworkPayload = LifecycleDisplayFields & {
+  referenceNo?: string;
+  customerId: number;
+  containerNo: string;
+  eventType?: string;
+  eventTime?: string;
+  palletIds?: number[];
+  sourcePalletIds?: number[];
+  targetPalletIds?: number[];
+  notes?: string;
+};
+
+export type DeliveryEvent = {
+  id: number;
+  outboundDocumentId: number;
+  customerId: number;
+  customerName: string;
+  containerNo: string;
+  eventType: string;
+  eventTime: string;
+  driverName: string;
+  vendorName: string;
+  vehicleNo: string;
+  bolNumber: string;
+  bolReceivedAt: string | null;
+  notes: string;
+  visibility?: ContainerLifecycleEventVisibility;
+  displayLabel?: string;
+  publicStatus?: string;
+  publicLabel?: string;
+  internalStatus?: string;
+  internalLabel?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DeliveryEventPayload = LifecycleDisplayFields & {
+  outboundDocumentId?: number;
+  customerId?: number;
+  containerNo?: string;
+  eventType?: string;
+  eventTime?: string;
+  driverName?: string;
+  vendorName?: string;
+  vehicleNo?: string;
+  bolNumber?: string;
+  notes?: string;
+};
+
+export type PalletOperationResult = {
+  operationType: string;
+  referenceNo: string;
+  recordId: number;
+  status: string;
+  totalLines: number;
+  totalQty: number;
+};
+
 export type CustomerPortalContainerSummary = {
   containerNo: string;
   customerId: number;
@@ -688,6 +882,7 @@ export type InboundDocumentPayload = {
 };
 
 export type CustomerPortalContainerLifecycle = {
+  container?: ContainerRecord | null;
   summary: CustomerPortalContainerSummary;
   packingLists: InboundDocument[];
   pickingOrders: OutboundDocument[];
@@ -695,6 +890,18 @@ export type CustomerPortalContainerLifecycle = {
   lifecycleEvents: ContainerLifecycleEvent[];
   pallets: PalletTrace[];
   palletEvents: PalletLocationEvent[];
+  trackingEvents?: ContainerTrackingEvent[];
+  pickupAssignments?: ContainerPickupAssignment[];
+  reworkEvents?: PalletReworkEvent[];
+  deliveryEvents?: DeliveryEvent[];
+};
+
+export type ContainerLifecycle = CustomerPortalContainerLifecycle & {
+  container?: ContainerRecord | null;
+  trackingEvents: ContainerTrackingEvent[];
+  pickupAssignments: ContainerPickupAssignment[];
+  reworkEvents: PalletReworkEvent[];
+  deliveryEvents: DeliveryEvent[];
 };
 
 export type UpdateInboundDocumentNotePayload = {

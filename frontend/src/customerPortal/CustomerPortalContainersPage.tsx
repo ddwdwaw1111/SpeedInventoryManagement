@@ -6,6 +6,7 @@ import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader } from "../components/ui/card";
 import { Input, NativeSelect } from "../components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
+import { formatContainerStatus, getContainerStatusBadgeVariant } from "../lib/containerLifecycleStatus";
 import { formatDateTimeValue } from "../lib/dates";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
@@ -276,36 +277,4 @@ export function CustomerPortalContainersPage({
       </CardContent>
     </Card>
   );
-}
-
-export function formatContainerStatus(status: string, t: (key: string) => string) {
-  switch (status) {
-    case "IN_STOCK":
-      return t("customerPortalContainerActive");
-    case "PARTIAL":
-      return t("customerPortalContainerPartial");
-    case "SHIPPED":
-      return t("customerPortalContainerShipped");
-    case "DEPLETED":
-      return t("customerPortalContainerDepleted");
-    case "PENDING":
-      return t("customerPortalContainerPending");
-    default:
-      return status || "-";
-  }
-}
-
-function getContainerStatusBadgeVariant(status: string): "success" | "warning" | "secondary" | "outline" {
-  switch (status) {
-    case "IN_STOCK":
-      return "success";
-    case "PARTIAL":
-      return "warning";
-    case "SHIPPED":
-      return "outline";
-    case "DEPLETED":
-      return "secondary";
-    default:
-      return "secondary";
-  }
 }

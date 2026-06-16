@@ -273,6 +273,138 @@ func Migrate(db *sql.DB) error {
 				ELSE 'SCHEDULED'
 			END
 			WHERE COALESCE(TRIM(tracking_status), '') = ''`,
+		`CREATE TABLE IF NOT EXISTS containers (
+			id BIGINT NOT NULL AUTO_INCREMENT,
+			customer_id BIGINT NOT NULL,
+			inbound_document_id BIGINT DEFAULT NULL,
+			location_id BIGINT DEFAULT NULL,
+			container_no VARCHAR(120) NOT NULL,
+			container_type VARCHAR(32) NOT NULL DEFAULT 'NORMAL',
+			handling_mode VARCHAR(32) NOT NULL DEFAULT 'PALLETIZED',
+			status VARCHAR(32) NOT NULL DEFAULT 'TRACKING_RECEIVED',
+			tracking_status VARCHAR(32) NOT NULL DEFAULT 'TRACKING_RECEIVED',
+			last_event_at TIMESTAMP NULL DEFAULT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			UNIQUE KEY uq_containers_customer_container_no (customer_id, container_no),
+			KEY idx_containers_customer_id (customer_id),
+			KEY idx_containers_inbound_document_id (inbound_document_id),
+			KEY idx_containers_location_id (location_id),
+			KEY idx_containers_status (status),
+			CONSTRAINT fk_containers_customer
+				FOREIGN KEY (customer_id) REFERENCES customers (id),
+			CONSTRAINT fk_containers_inbound_document
+				FOREIGN KEY (inbound_document_id) REFERENCES inbound_documents (id)
+				ON DELETE SET NULL,
+			CONSTRAINT fk_containers_location
+				FOREIGN KEY (location_id) REFERENCES storage_locations (id)
+				ON DELETE SET NULL
+		)`,
+		`INSERT INTO containers (
+			customer_id,
+			inbound_document_id,
+			location_id,
+			container_no,
+			container_type,
+			handling_mode,
+			status,
+			tracking_status,
+			last_event_at
+		)
+		SELECT
+			customer_id,
+			MIN(id),
+			MIN(location_id),
+			UPPER(TRIM(container_no)),
+			COALESCE(MAX(NULLIF(container_type, '')), 'NORMAL'),
+			COALESCE(MAX(NULLIF(handling_mode, '')), 'PALLETIZED'),
+			'IN_STOCK',
+			COALESCE(MAX(NULLIF(tracking_status, '')), 'RECEIVED'),
+			MAX(COALESCE(posted_at, confirmed_at, actual_arrival_date, expected_arrival_date, created_at))
+		FROM inbound_documents
+		WHERE COALESCE(TRIM(container_no), '') <> ''
+		GROUP BY customer_id, UPPER(TRIM(container_no))
+		ON DUPLICATE KEY UPDATE
+			inbound_document_id = COALESCE(containers.inbound_document_id, VALUES(inbound_document_id)),
+			location_id = COALESCE(containers.location_id, VALUES(location_id)),
+			container_type = VALUES(container_type),
+			handling_mode = VALUES(handling_mode),
+			last_event_at = COALESCE(containers.last_event_at, VALUES(last_event_at))`,
+		`CREATE TABLE IF NOT EXISTS container_tracking_events (
+			id BIGINT NOT NULL AUTO_INCREMENT,
+			container_id BIGINT DEFAULT NULL,
+			customer_id BIGINT NOT NULL,
+			container_no VARCHAR(120) NOT NULL,
+			event_type VARCHAR(64) NOT NULL,
+			event_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			location VARCHAR(160) DEFAULT NULL,
+			notes TEXT DEFAULT NULL,
+			visibility VARCHAR(16) NOT NULL DEFAULT 'BOTH',
+			public_status VARCHAR(64) DEFAULT NULL,
+			public_label VARCHAR(190) DEFAULT NULL,
+			internal_status VARCHAR(64) DEFAULT NULL,
+			internal_label VARCHAR(255) DEFAULT NULL,
+			created_by_user_id BIGINT DEFAULT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			KEY idx_container_tracking_container_id (container_id),
+			KEY idx_container_tracking_customer_container_time (customer_id, container_no, event_time, id),
+			KEY idx_container_tracking_event_type (event_type),
+			CONSTRAINT fk_container_tracking_container
+				FOREIGN KEY (container_id) REFERENCES containers (id)
+				ON DELETE SET NULL,
+			CONSTRAINT fk_container_tracking_customer
+				FOREIGN KEY (customer_id) REFERENCES customers (id),
+			CONSTRAINT fk_container_tracking_created_by
+				FOREIGN KEY (created_by_user_id) REFERENCES users (id)
+				ON DELETE SET NULL
+		)`,
+		`ALTER TABLE container_tracking_events ADD COLUMN IF NOT EXISTS visibility VARCHAR(16) NOT NULL DEFAULT 'BOTH' AFTER notes`,
+		`ALTER TABLE container_tracking_events ADD COLUMN IF NOT EXISTS public_status VARCHAR(64) DEFAULT NULL AFTER visibility`,
+		`ALTER TABLE container_tracking_events ADD COLUMN IF NOT EXISTS public_label VARCHAR(190) DEFAULT NULL AFTER public_status`,
+		`ALTER TABLE container_tracking_events ADD COLUMN IF NOT EXISTS internal_status VARCHAR(64) DEFAULT NULL AFTER public_label`,
+		`ALTER TABLE container_tracking_events ADD COLUMN IF NOT EXISTS internal_label VARCHAR(255) DEFAULT NULL AFTER internal_status`,
+		`CREATE TABLE IF NOT EXISTS container_pickup_assignments (
+			id BIGINT NOT NULL AUTO_INCREMENT,
+			container_id BIGINT DEFAULT NULL,
+			customer_id BIGINT NOT NULL,
+			container_no VARCHAR(120) NOT NULL,
+			assignment_type VARCHAR(32) NOT NULL DEFAULT 'INTERNAL',
+			driver_name VARCHAR(160) DEFAULT NULL,
+			vendor_name VARCHAR(160) DEFAULT NULL,
+			phone VARCHAR(64) DEFAULT NULL,
+			scheduled_pickup_at TIMESTAMP NULL DEFAULT NULL,
+			actual_pickup_at TIMESTAMP NULL DEFAULT NULL,
+			cost DECIMAL(12,2) NOT NULL DEFAULT 0,
+			status VARCHAR(32) NOT NULL DEFAULT 'SCHEDULED',
+			notes TEXT DEFAULT NULL,
+			visibility VARCHAR(16) NOT NULL DEFAULT 'BOTH',
+			public_status VARCHAR(64) DEFAULT NULL,
+			public_label VARCHAR(190) DEFAULT NULL,
+			internal_status VARCHAR(64) DEFAULT NULL,
+			internal_label VARCHAR(255) DEFAULT NULL,
+			created_by_user_id BIGINT DEFAULT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			KEY idx_container_pickup_container_id (container_id),
+			KEY idx_container_pickup_customer_container (customer_id, container_no),
+			KEY idx_container_pickup_status (status),
+			CONSTRAINT fk_container_pickup_container
+				FOREIGN KEY (container_id) REFERENCES containers (id)
+				ON DELETE SET NULL,
+			CONSTRAINT fk_container_pickup_customer
+				FOREIGN KEY (customer_id) REFERENCES customers (id),
+			CONSTRAINT fk_container_pickup_created_by
+				FOREIGN KEY (created_by_user_id) REFERENCES users (id)
+				ON DELETE SET NULL
+		)`,
+		`ALTER TABLE container_pickup_assignments ADD COLUMN IF NOT EXISTS visibility VARCHAR(16) NOT NULL DEFAULT 'BOTH' AFTER notes`,
+		`ALTER TABLE container_pickup_assignments ADD COLUMN IF NOT EXISTS public_status VARCHAR(64) DEFAULT NULL AFTER visibility`,
+		`ALTER TABLE container_pickup_assignments ADD COLUMN IF NOT EXISTS public_label VARCHAR(190) DEFAULT NULL AFTER public_status`,
+		`ALTER TABLE container_pickup_assignments ADD COLUMN IF NOT EXISTS internal_status VARCHAR(64) DEFAULT NULL AFTER public_label`,
+		`ALTER TABLE container_pickup_assignments ADD COLUMN IF NOT EXISTS internal_label VARCHAR(255) DEFAULT NULL AFTER internal_status`,
 		`CREATE TABLE IF NOT EXISTS container_visits (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			inbound_document_id BIGINT NOT NULL,
@@ -706,6 +838,86 @@ func Migrate(db *sql.DB) error {
 				FROM container_lifecycle_events cle
 				WHERE cle.stock_ledger_id = sl.id
 			)`,
+		`CREATE TABLE IF NOT EXISTS pallet_rework_events (
+			id BIGINT NOT NULL AUTO_INCREMENT,
+			reference_no VARCHAR(120) DEFAULT NULL,
+			customer_id BIGINT NOT NULL,
+			container_no VARCHAR(120) NOT NULL DEFAULT '',
+			event_type VARCHAR(32) NOT NULL DEFAULT 'REWORK',
+			event_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			notes TEXT DEFAULT NULL,
+			visibility VARCHAR(16) NOT NULL DEFAULT 'BOTH',
+			public_status VARCHAR(64) DEFAULT NULL,
+			public_label VARCHAR(190) DEFAULT NULL,
+			internal_status VARCHAR(64) DEFAULT NULL,
+			internal_label VARCHAR(255) DEFAULT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			KEY idx_pallet_rework_customer_container_time (customer_id, container_no, event_time, id),
+			KEY idx_pallet_rework_reference_no (reference_no),
+			KEY idx_pallet_rework_event_type (event_type),
+			CONSTRAINT fk_pallet_rework_customer
+				FOREIGN KEY (customer_id) REFERENCES customers (id)
+		)`,
+		`ALTER TABLE pallet_rework_events ADD COLUMN IF NOT EXISTS visibility VARCHAR(16) NOT NULL DEFAULT 'BOTH' AFTER notes`,
+		`ALTER TABLE pallet_rework_events ADD COLUMN IF NOT EXISTS public_status VARCHAR(64) DEFAULT NULL AFTER visibility`,
+		`ALTER TABLE pallet_rework_events ADD COLUMN IF NOT EXISTS public_label VARCHAR(190) DEFAULT NULL AFTER public_status`,
+		`ALTER TABLE pallet_rework_events ADD COLUMN IF NOT EXISTS internal_status VARCHAR(64) DEFAULT NULL AFTER public_label`,
+		`ALTER TABLE pallet_rework_events ADD COLUMN IF NOT EXISTS internal_label VARCHAR(255) DEFAULT NULL AFTER internal_status`,
+		`CREATE TABLE IF NOT EXISTS pallet_rework_event_pallets (
+			id BIGINT NOT NULL AUTO_INCREMENT,
+			rework_event_id BIGINT NOT NULL,
+			pallet_id BIGINT NOT NULL,
+			role VARCHAR(32) NOT NULL DEFAULT 'RELATED',
+			quantity_delta INT NOT NULL DEFAULT 0,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			KEY idx_pallet_rework_event_pallets_event_id (rework_event_id),
+			KEY idx_pallet_rework_event_pallets_pallet_id (pallet_id),
+			CONSTRAINT fk_pallet_rework_event_pallets_event
+				FOREIGN KEY (rework_event_id) REFERENCES pallet_rework_events (id)
+				ON DELETE CASCADE,
+			CONSTRAINT fk_pallet_rework_event_pallets_pallet
+				FOREIGN KEY (pallet_id) REFERENCES pallets (id)
+				ON DELETE CASCADE
+		)`,
+		`CREATE TABLE IF NOT EXISTS delivery_events (
+			id BIGINT NOT NULL AUTO_INCREMENT,
+			outbound_document_id BIGINT DEFAULT NULL,
+			customer_id BIGINT DEFAULT NULL,
+			container_no VARCHAR(120) NOT NULL DEFAULT '',
+			event_type VARCHAR(64) NOT NULL,
+			event_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			driver_name VARCHAR(160) DEFAULT NULL,
+			vendor_name VARCHAR(160) DEFAULT NULL,
+			vehicle_no VARCHAR(64) DEFAULT NULL,
+			bol_number VARCHAR(120) DEFAULT NULL,
+			bol_received_at TIMESTAMP NULL DEFAULT NULL,
+			notes TEXT DEFAULT NULL,
+			visibility VARCHAR(16) NOT NULL DEFAULT 'BOTH',
+			public_status VARCHAR(64) DEFAULT NULL,
+			public_label VARCHAR(190) DEFAULT NULL,
+			internal_status VARCHAR(64) DEFAULT NULL,
+			internal_label VARCHAR(255) DEFAULT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			KEY idx_delivery_events_outbound_document_id (outbound_document_id),
+			KEY idx_delivery_events_customer_container_time (customer_id, container_no, event_time, id),
+			KEY idx_delivery_events_event_type (event_type),
+			KEY idx_delivery_events_bol_number (bol_number),
+			CONSTRAINT fk_delivery_events_outbound_document
+				FOREIGN KEY (outbound_document_id) REFERENCES outbound_documents (id)
+				ON DELETE SET NULL,
+			CONSTRAINT fk_delivery_events_customer
+				FOREIGN KEY (customer_id) REFERENCES customers (id)
+				ON DELETE SET NULL
+		)`,
+		`ALTER TABLE delivery_events ADD COLUMN IF NOT EXISTS visibility VARCHAR(16) NOT NULL DEFAULT 'BOTH' AFTER notes`,
+		`ALTER TABLE delivery_events ADD COLUMN IF NOT EXISTS public_status VARCHAR(64) DEFAULT NULL AFTER visibility`,
+		`ALTER TABLE delivery_events ADD COLUMN IF NOT EXISTS public_label VARCHAR(190) DEFAULT NULL AFTER public_status`,
+		`ALTER TABLE delivery_events ADD COLUMN IF NOT EXISTS internal_status VARCHAR(64) DEFAULT NULL AFTER public_label`,
+		`ALTER TABLE delivery_events ADD COLUMN IF NOT EXISTS internal_label VARCHAR(255) DEFAULT NULL AFTER internal_status`,
 		`CREATE TABLE IF NOT EXISTS inventory_adjustments (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			adjustment_no VARCHAR(120) NOT NULL,

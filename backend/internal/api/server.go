@@ -17,6 +17,7 @@ import (
 
 type Server struct {
 	store               *service.Store
+	app                 *service.AppServices
 	sessionCookieName   string
 	sessionCookieSecure bool
 	attachmentStorage   AttachmentStorage
@@ -44,6 +45,7 @@ func NewHandlerWithAttachmentStorage(
 	}
 	server := &Server{
 		store:               store,
+		app:                 service.NewAppServices(store),
 		sessionCookieName:   sessionCookieName,
 		sessionCookieSecure: sessionCookieSecure,
 		attachmentStorage:   attachmentStorage,
@@ -67,6 +69,7 @@ func NewHandlerWithAttachmentStorage(
 	server.registerStaffRoutes(protected)
 
 	server.registerCustomerPortalRoutes(protected)
+	server.registerV2Routes(protected)
 
 	return router
 }
@@ -588,7 +591,7 @@ func (s *Server) handleCreateOutboundDocument(c *gin.Context) {
 		return
 	}
 
-	document, err := s.store.CreateOutboundDocument(c.Request.Context(), input)
+	document, err := s.appServices().LegacyDocuments.CreateOutboundDocument(c.Request.Context(), input)
 	if err != nil {
 		writeDomainError(c, err)
 		return
@@ -839,7 +842,7 @@ func (s *Server) handleCreateInboundDocument(c *gin.Context) {
 		return
 	}
 
-	document, err := s.store.CreateInboundDocument(c.Request.Context(), input)
+	document, err := s.appServices().LegacyDocuments.CreateInboundDocument(c.Request.Context(), input)
 	if err != nil {
 		writeDomainError(c, err)
 		return
@@ -1129,7 +1132,7 @@ func (s *Server) handleCreateInventoryAdjustment(c *gin.Context) {
 		return
 	}
 
-	adjustment, err := s.store.CreateInventoryAdjustment(c.Request.Context(), input)
+	adjustment, err := s.appServices().LegacyInventory.CreateAdjustment(c.Request.Context(), input)
 	if err != nil {
 		writeDomainError(c, err)
 		return
@@ -1171,7 +1174,7 @@ func (s *Server) handleCreateInventoryTransfer(c *gin.Context) {
 		return
 	}
 
-	transfer, err := s.store.CreateInventoryTransfer(c.Request.Context(), input)
+	transfer, err := s.appServices().LegacyInventory.CreateTransfer(c.Request.Context(), input)
 	if err != nil {
 		writeDomainError(c, err)
 		return
@@ -1613,6 +1616,8 @@ func writeDomainError(c *gin.Context, err error) {
 		writeError(c, http.StatusConflict, err.Error())
 	case errors.Is(err, service.ErrInsufficientStock):
 		writeError(c, http.StatusConflict, err.Error())
+	case errors.Is(err, service.ErrNotImplemented):
+		writeError(c, http.StatusNotImplemented, err.Error())
 	default:
 		writeServerError(c, err)
 	}

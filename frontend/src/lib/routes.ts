@@ -11,6 +11,7 @@ export type PageKey =
   | "all-activity"
   | "container-contents"
   | "container-detail"
+  | "container-lifecycle"
   | "customers"
   | "audit-logs"
   | "pallet-trace"
@@ -41,6 +42,7 @@ export const pagePathMap: Record<PageKey, string> = {
   "all-activity": "/all-activity",
   "container-contents": "/container-contents",
   "container-detail": "/container-contents",
+  "container-lifecycle": "/container-lifecycle",
   customers: "/customers",
   "audit-logs": "/audit-logs",
   "pallet-trace": "/pallets",
@@ -81,6 +83,7 @@ export function getPageFromPath(pathname: string): PageKey {
   if (normalized === "/reports") return "reports";
   if (normalized === "/export-center") return "export-center";
   if (normalized === "/all-activity") return "all-activity";
+  if (/^\/container-lifecycle\/\d+\/[^/]+$/.test(normalized) || normalized === "/container-lifecycle") return "container-lifecycle";
   if (/^\/container-contents\/[^/]+$/.test(normalized)) return "container-detail";
   if (normalized === "/container-contents") return "container-contents";
   if (normalized === "/audit-logs") return "audit-logs";
@@ -235,6 +238,41 @@ export function navigateToContainerDetail(setter: (page: PageKey) => void, conta
   }
 
   setter("container-detail");
+}
+
+export function navigateToContainerLifecycle(setter: (page: PageKey) => void, customerId?: number | null, containerNo?: string | null) {
+  const normalizedContainerNo = containerNo?.trim().toUpperCase() ?? "";
+  const path = customerId && customerId > 0 && normalizedContainerNo
+    ? `/container-lifecycle/${customerId}/${encodeURIComponent(normalizedContainerNo)}`
+    : "/container-lifecycle";
+  if (normalizePagePath(window.location.pathname) !== path) {
+    window.history.pushState({
+      page: "container-lifecycle",
+      customerId: customerId ?? null,
+      containerNo: normalizedContainerNo || null
+    }, "", path);
+  }
+
+  setter("container-lifecycle");
+}
+
+export function getContainerLifecycleScopeFromPath(pathname: string) {
+  const normalized = normalizePagePath(pathname);
+  const match = normalized.match(/^\/container-lifecycle\/(\d+)\/([^/]+)$/);
+  if (!match) {
+    return null;
+  }
+
+  try {
+    const customerId = Number(match[1]);
+    const containerNo = decodeURIComponent(match[2]).trim().toUpperCase();
+    if (!customerId || !containerNo) {
+      return null;
+    }
+    return { customerId, containerNo };
+  } catch {
+    return null;
+  }
 }
 
 export function navigateToBillingContainerDetail(

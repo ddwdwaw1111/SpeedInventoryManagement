@@ -38,6 +38,7 @@ import {
   getBillingContainerDetailFromPath,
   getBillingInvoiceIdFromPath,
   getContainerDetailContainerNoFromPath,
+  getContainerLifecycleScopeFromPath,
   getDailyOperationsDateFromPath,
   getInboundDetailIdFromPath,
   getPageFromPath,
@@ -47,6 +48,7 @@ import {
   navigateToBillingContainerDetail,
   navigateToBillingInvoiceEditor,
   navigateToContainerDetail,
+  navigateToContainerLifecycle,
   navigateToDailyOperations,
   navigateToInboundDetail,
   navigateToPage,
@@ -92,6 +94,10 @@ const ContainerContentsPage = lazy(async () => {
 const ContainerDetailPage = lazy(async () => {
   const module = await import("./components/ContainerDetailPage");
   return { default: module.ContainerDetailPage };
+});
+const AdminContainerLifecyclePage = lazy(async () => {
+  const module = await import("./components/AdminContainerLifecyclePage");
+  return { default: module.AdminContainerLifecyclePage };
 });
 const DailyOperationsPage = lazy(async () => {
   const module = await import("./components/DailyOperationsPage");
@@ -341,6 +347,11 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
     setCurrentPathname(window.location.pathname);
   }
 
+  function handleNavigateToContainerLifecycle(customerId?: number | null, containerNo?: string | null) {
+    navigateToContainerLifecycle(setActivePage, customerId, containerNo);
+    setCurrentPathname(window.location.pathname);
+  }
+
   function handleNavigateToBillingContainerDetail(
     startDate: string,
     endDate: string,
@@ -558,6 +569,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
     { key: "warehouse-map", label: t("warehouseMap"), description: t("warehouseMapDesc"), icon: <WarehouseOutlined fontSize="small" /> },
     { key: "container-contents", label: t("containerContents"), description: t("containerContentsDesc"), icon: <WarehouseOutlined fontSize="small" /> },
     { key: "container-detail", label: t("containerDetailPage"), description: t("containerDetailPageDesc"), icon: <WarehouseOutlined fontSize="small" /> },
+    { key: "container-lifecycle", label: t("adminContainerLifecyclePage"), description: t("adminContainerLifecycleDesc"), icon: <HistoryOutlined fontSize="small" /> },
     { key: "adjustments", label: t("adjustments"), description: t("adjustmentsDesc"), icon: <TuneOutlined fontSize="small" /> },
     { key: "transfers", label: t("transfers"), description: t("transfersDesc"), icon: <CompareArrowsOutlined fontSize="small" /> },
     { key: "cycle-counts", label: t("cycleCounts"), description: t("cycleCountsDesc"), icon: <FactCheckOutlined fontSize="small" /> },
@@ -577,7 +589,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
     .map((pageKey) => pageItemMap.get(pageKey))
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
   const navSections = ([
-    { key: "inventory", label: navLabels.inventory, items: ["inventory-summary"] as PageKey[] },
+    { key: "inventory", label: navLabels.inventory, items: ["inventory-summary", "container-lifecycle"] as PageKey[] },
     { key: "finance", label: navLabels.finance, items: ["billing"] as PageKey[] },
     { key: "master-data", label: navLabels.masterData, items: ["customers", "sku-master", "storage-management"] as PageKey[] },
     { key: "reports", label: navLabels.reports, items: ["reports", "export-center"] as PageKey[] },
@@ -602,6 +614,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
     "receipt-editor": "inbound-management",
     "shipment-editor": "outbound-management",
     "container-detail": "container-contents",
+    "container-lifecycle": "container-contents",
     "container-contents": "inventory-summary",
     "warehouse-map": "inventory-summary",
     "all-activity": "inventory-summary",
@@ -615,6 +628,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
     "warehouse-map": "inventory",
     "container-contents": "inventory",
     "container-detail": "inventory",
+    "container-lifecycle": "inventory",
     "adjustments": "inventory",
     "transfers": "inventory",
     "cycle-counts": "inventory",
@@ -642,6 +656,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
   const selectedReceiptEditorId = getReceiptEditorIdFromPath(currentPathname);
   const selectedShipmentEditorId = getShipmentEditorIdFromPath(currentPathname);
   const selectedContainerDetailNo = getContainerDetailContainerNoFromPath(currentPathname);
+  const selectedContainerLifecycleScope = getContainerLifecycleScopeFromPath(currentPathname);
   const selectedBillingContainerDetail = getBillingContainerDetailFromPath(currentPathname);
   const selectedBillingInvoiceId = getBillingInvoiceIdFromPath(currentPathname);
   const selectedDailyOperationsDate = getDailyOperationsDateFromPath(currentPathname);
@@ -838,8 +853,9 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
                 <WarehouseMapPage items={items} isLoading={isLoading} onNavigate={handleNavigateToPage} onOpenContainerDetail={handleNavigateToContainerDetail} />
               </Suspense>
             ) : null}
-            {activePage === "container-contents" ? renderWithSuspense(<ContainerContentsPage items={items} movements={movements} customers={customers} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onOpenContainerDetail={handleNavigateToContainerDetail} onNavigate={handleNavigateToPage} />) : null}
-            {activePage === "container-detail" ? renderWithSuspense(<ContainerDetailPage routeKey={currentPathname} containerNo={selectedContainerDetailNo} items={items} movements={movements} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} onBackToList={() => handleNavigateToPage("container-contents")} />) : null}
+            {activePage === "container-contents" ? renderWithSuspense(<ContainerContentsPage items={items} movements={movements} customers={customers} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onOpenContainerDetail={handleNavigateToContainerDetail} onOpenContainerLifecycle={handleNavigateToContainerLifecycle} onNavigate={handleNavigateToPage} />) : null}
+            {activePage === "container-detail" ? renderWithSuspense(<ContainerDetailPage routeKey={currentPathname} containerNo={selectedContainerDetailNo} items={items} movements={movements} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} onOpenContainerLifecycle={handleNavigateToContainerLifecycle} onBackToList={() => handleNavigateToPage("container-contents")} />) : null}
+            {activePage === "container-lifecycle" ? renderWithSuspense(<AdminContainerLifecyclePage routeScope={selectedContainerLifecycleScope} customers={customers} locations={locations} onOpenContainerLifecycle={handleNavigateToContainerLifecycle} onOpenContainerDetail={handleNavigateToContainerDetail} onOpenInboundDetail={handleNavigateToInboundDetail} onOpenReceiptEditor={handleNavigateToReceiptEditor} onOpenOutboundDocument={handleNavigateToOutboundDocument} onOpenShipmentEditor={handleNavigateToShipmentEditor} onOpenPalletTrace={handleNavigateToPalletTrace} onBackToContainers={() => handleNavigateToPage("container-contents")} />) : null}
             {activePage === "all-activity" ? renderWithSuspense(<AllActivityPage movements={movements} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "customers" ? renderWithSuspense(<CustomerManagementPage customers={customers} items={items} inboundDocuments={activeInboundDocuments} outboundDocuments={activeOutboundDocuments} movements={movements} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} onOpenCustomerPortal={handleNavigateToCustomerPortal} />) : null}
             {activePage === "audit-logs" && canViewAuditLogs ? renderWithSuspense(<AuditLogPage auditLogs={auditLogs} currentUserRole={currentUser.role} isLoading={isLoading} />) : null}

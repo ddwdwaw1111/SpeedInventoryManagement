@@ -75,6 +75,7 @@ type ContainerDetailPageProps = {
   isLoading: boolean;
   onRefresh: () => Promise<void>;
   onNavigate: (page: PageKey) => void;
+  onOpenContainerLifecycle?: (customerId: number | null, containerNo: string) => void;
   onBackToList: () => void;
 };
 
@@ -88,6 +89,7 @@ export function ContainerDetailPage({
   isLoading,
   onRefresh,
   onNavigate,
+  onOpenContainerLifecycle,
   onBackToList
 }: ContainerDetailPageProps) {
   const { t } = useI18n();
@@ -258,6 +260,7 @@ export function ContainerDetailPage({
   const canOpenAdjustmentDialog = canManageInventory && actionablePallets.length > 0;
   const canOpenTransferDialog = canManageInventory && actionablePallets.length > 0;
   const canLaunchCycleCount = canManageInventory && Boolean(container && container.rowCount > 0 && normalizedContainerNo);
+  const lifecycleCustomerId = container?.customerIds.length === 1 ? container.customerIds[0] : null;
 
   useEffect(() => {
     let active = true;
@@ -574,6 +577,20 @@ export function ContainerDetailPage({
 
             {canManageInventory ? (
               <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!normalizedContainerNo) {
+                      return;
+                    }
+                    onOpenContainerLifecycle?.(lifecycleCustomerId, normalizedContainerNo);
+                  }}
+                  disabled={!normalizedContainerNo || !onOpenContainerLifecycle}
+                  className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <HistoryOutlinedIcon sx={{ fontSize: 15 }} />
+                  {t("openContainerLifecycle")}
+                </button>
                 <button
                   type="button"
                   onClick={() => {

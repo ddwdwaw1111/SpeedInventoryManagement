@@ -6,6 +6,13 @@ import type {
   CreateBillingInvoicePayload,
   AddBillingInvoiceLinePayload,
   UpdateBillingInvoiceLinePayload,
+  ContainerLifecycle,
+  ContainerPayload,
+  ContainerPickupAssignment,
+  ContainerPickupAssignmentPayload,
+  ContainerRecord,
+  ContainerTrackingEvent,
+  ContainerTrackingEventPayload,
   CustomerPortalContainerLifecycle,
   CustomerPortalContainerSummary,
   CycleCount,
@@ -14,6 +21,8 @@ import type {
   Customer,
   CustomerPayload,
   DashboardData,
+  DeliveryEvent,
+  DeliveryEventPayload,
   DocumentAttachment,
   DocumentTrackingStatusPayload,
   InventoryAdjustment,
@@ -35,7 +44,9 @@ import type {
   OutboundDocument,
   OutboundDocumentPayload,
   UpdateOutboundDocumentNotePayload,
+  PalletOperationResult,
   PalletLocationEvent,
+  PalletReworkPayload,
   PalletTrace,
   SKUMaster,
   SKUMasterPayload,
@@ -100,6 +111,12 @@ type DocumentListQuery = {
   locationId?: number | "all";
   status?: string;
   trackingStatus?: string;
+};
+
+type V2ContainerQuery = {
+  search?: string;
+  customerId?: number | "all";
+  limit?: number;
 };
 
 type OperationsReportQuery = {
@@ -202,6 +219,13 @@ function customerPortalBasePath(customerId?: number) {
     return `/admin/customer-portal/customers/${customerId}`;
   }
   return "/customer-portal";
+}
+
+function customerPortalV2BasePath(customerId?: number) {
+  if (customerId && customerId > 0) {
+    return `/v2/admin/customer-portal/customers/${customerId}`;
+  }
+  return "/v2/customer-portal";
 }
 
 export const api = {
@@ -428,13 +452,75 @@ export const api = {
       params.set("search", search.trim());
     }
     const suffix = params.toString() ? `?${params.toString()}` : "";
-    return request<CustomerPortalContainerSummary[]>(`${customerPortalBasePath(customerId)}/containers${suffix}`);
+    return request<CustomerPortalContainerSummary[]>(`${customerPortalV2BasePath(customerId)}/containers${suffix}`);
   },
 
   getCustomerPortalContainerLifecycle(containerNo: string, customerId?: number) {
     return request<CustomerPortalContainerLifecycle>(
-      `${customerPortalBasePath(customerId)}/containers/${encodeURIComponent(containerNo)}/lifecycle`
+      `${customerPortalV2BasePath(customerId)}/containers/${encodeURIComponent(containerNo)}/lifecycle`
     );
+  },
+
+  getV2Containers(query: V2ContainerQuery = {}) {
+    const params = new URLSearchParams();
+    if (query.limit && query.limit > 0) {
+      params.set("limit", String(query.limit));
+    }
+    if (query.customerId && query.customerId !== "all") {
+      params.set("customerId", String(query.customerId));
+    }
+    if (query.search?.trim()) {
+      params.set("search", query.search.trim());
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    return request<CustomerPortalContainerSummary[]>(`/v2/containers${suffix}`);
+  },
+
+  getV2ContainerLifecycle(containerNo: string, customerId: number) {
+    const params = new URLSearchParams({ customerId: String(customerId) });
+    return request<ContainerLifecycle>(`/v2/containers/${encodeURIComponent(containerNo)}/lifecycle?${params.toString()}`);
+  },
+
+  saveV2Container(payload: ContainerPayload) {
+    return request<ContainerRecord>("/v2/containers", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  createV2ContainerTrackingEvent(containerNo: string, payload: ContainerTrackingEventPayload) {
+    return request<ContainerTrackingEvent>(`/v2/containers/${encodeURIComponent(containerNo)}/tracking-events`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  createV2ContainerPickupAssignment(containerNo: string, payload: ContainerPickupAssignmentPayload) {
+    return request<ContainerPickupAssignment>(`/v2/containers/${encodeURIComponent(containerNo)}/pickup-assignments`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  recordV2PalletRework(payload: PalletReworkPayload) {
+    return request<PalletOperationResult>("/v2/pallet-operations/rework", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  createV2DeliveryEvent(payload: DeliveryEventPayload) {
+    return request<DeliveryEvent>("/v2/deliveries", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  receiveV2DeliveryBOL(deliveryEventId: number, payload: DeliveryEventPayload) {
+    return request<DeliveryEvent>(`/v2/deliveries/${deliveryEventId}/bol`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
   },
 
   getCustomerPortalPickingOrders(limit = 100, query?: { search?: string; status?: string; trackingStatus?: string }, customerId?: number) {

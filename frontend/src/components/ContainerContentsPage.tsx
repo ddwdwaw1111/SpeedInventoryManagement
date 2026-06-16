@@ -30,6 +30,7 @@ type ContainerContentsPageProps = {
   currentUserRole: UserRole;
   isLoading: boolean;
   onOpenContainerDetail: (containerNo: string) => void;
+  onOpenContainerLifecycle?: (customerId: number | null, containerNo: string) => void;
   onNavigate: (page: import("../lib/routes").PageKey) => void;
 };
 const CONTAINER_CONTENTS_COLUMN_ORDER_PREFERENCE_KEY = "container-contents.column-order";
@@ -60,6 +61,7 @@ export function ContainerContentsPage({
   currentUserRole,
   isLoading,
   onOpenContainerDetail,
+  onOpenContainerLifecycle,
   onNavigate
 }: ContainerContentsPageProps) {
   const { t } = useI18n();
@@ -172,22 +174,37 @@ export function ContainerContentsPage({
     {
       field: "actions",
       headerName: t("actions"),
-      minWidth: 160,
+      minWidth: 260,
       sortable: false,
       filterable: false,
-      renderCell: (params) => (
-        <Button
-          size="small"
-          variant="text"
-          startIcon={<OpenInNewRoundedIcon fontSize="small" />}
-          onClick={() => onOpenContainerDetail(params.row.containerNo)}
-          aria-label={`${t("viewContainerDetail")} ${params.row.containerNo}`}
-        >
-          {t("viewContainerDetail")}
-        </Button>
-      )
+      renderCell: (params) => {
+        const lifecycleCustomerId = params.row.customerIds.length === 1 ? params.row.customerIds[0] : null;
+        return (
+          <div className="flex flex-wrap gap-1">
+            <Button
+              size="small"
+              variant="text"
+              startIcon={<OpenInNewRoundedIcon fontSize="small" />}
+              onClick={() => onOpenContainerDetail(params.row.containerNo)}
+              aria-label={`${t("viewContainerDetail")} ${params.row.containerNo}`}
+            >
+              {t("viewContainerDetail")}
+            </Button>
+            <Button
+              size="small"
+              variant="text"
+              startIcon={<OpenInNewRoundedIcon fontSize="small" />}
+              onClick={() => onOpenContainerLifecycle?.(lifecycleCustomerId, params.row.containerNo)}
+              disabled={!onOpenContainerLifecycle}
+              aria-label={`${t("openContainerLifecycle")} ${params.row.containerNo}`}
+            >
+              {t("openContainerLifecycle")}
+            </Button>
+          </div>
+        );
+      }
     }
-  ], [onOpenContainerDetail, resolvedTimeZone, t]);
+  ], [onOpenContainerDetail, onOpenContainerLifecycle, resolvedTimeZone, t]);
   const {
     columns,
     columnOrderAction,
