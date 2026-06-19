@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { useI18n } from "../lib/i18n";
 import type { DocumentAttachment } from "../lib/types";
+import { useConfirmDialog } from "./Feedback";
 import { InlineLoadingIndicator } from "./InlineLoadingIndicator";
 
 export type PendingDocumentAttachment = {
@@ -49,6 +50,7 @@ export function DocumentAttachmentsPanel({
   onDelete
 }: DocumentAttachmentsPanelProps) {
   const { t } = useI18n();
+  const { confirm, confirmationDialog } = useConfirmDialog();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [busyKey, setBusyKey] = useState("");
   const [panelError, setPanelError] = useState("");
@@ -164,6 +166,17 @@ export function DocumentAttachmentsPanel({
 
   async function deleteAttachment(attachment: DocumentAttachment) {
     if (!onDelete || disabled || busyKey) {
+      return;
+    }
+    const attachmentName = attachment.displayName || attachment.originalFileName || t("attachments");
+    if (!(await confirm({
+      title: t("removeFile"),
+      message: t("deleteAttachmentConfirm", { name: attachmentName }),
+      confirmLabel: t("delete"),
+      cancelLabel: t("cancel"),
+      confirmColor: "error",
+      severity: "warning"
+    }))) {
       return;
     }
     const busyID = `delete-${attachment.id}`;
@@ -364,6 +377,7 @@ export function DocumentAttachmentsPanel({
           </div>
         </div>
       ) : null}
+      {confirmationDialog}
     </div>
   );
 }

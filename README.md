@@ -285,12 +285,46 @@ curl -I https://www.corgi4ever.com
 
 ### 8. Renew certificates
 
-Run this periodically from cron:
+From your local machine, run:
+
+```bash
+bash scripts/renew_https_cert.sh --email you@example.com
+```
+
+If the remote `.env.prod` does not define `SITE_DOMAIN`, pass it explicitly:
+
+```bash
+bash scripts/renew_https_cert.sh --email you@example.com --domain www.corgi4ever.com
+```
+
+Use `--force` if the browser still reports the certificate as invalid and you
+want to reissue it immediately:
+
+```bash
+bash scripts/renew_https_cert.sh --email you@example.com --force
+```
+
+The script connects to the production VM over SSH, reads `SITE_DOMAIN` and
+`SITE_DOMAIN_ALIASES` from the remote `.env.prod`, runs Certbot inside the
+Docker Compose HTTPS stack, restarts `speed-inventory-proxy`, and verifies
+`https://<SITE_DOMAIN>/api/health`.
+
+Manual fallback:
 
 ```bash
 docker compose --env-file .env.prod -f docker-compose.https.yml run --rm certbot renew --webroot -w /var/www/certbot
 docker compose --env-file .env.prod -f docker-compose.https.yml restart reverse-proxy
 ```
+
+To install automatic daily renewal on the server:
+
+```bash
+bash scripts/install_https_cert_renewal_cron.sh
+```
+
+This writes a server-side cron job that runs every day at `03:17`, executes
+`certbot renew`, reloads `speed-inventory-proxy`, and appends logs to
+`/home/ubuntu/SpeedInventoryManagement/logs/cert-renew.log`.
 
 ## Manual local setup
 

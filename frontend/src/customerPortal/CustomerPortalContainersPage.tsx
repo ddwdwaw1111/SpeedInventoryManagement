@@ -152,7 +152,7 @@ export function CustomerPortalContainersPage({
               <TableHead>{t("containerNo")}</TableHead>
               <TableHead>{t("status")}</TableHead>
               <TableHead>{t("warehouses")}</TableHead>
-              <TableHead>{t("received")}</TableHead>
+              <TableHead>{t("containerLifecycleInboundNode")}</TableHead>
               <TableHead>{t("customerPortalContainerCurrent")}</TableHead>
               <TableHead>{t("customerPortalContainerShippedQty")}</TableHead>
               <TableHead>{t("customerPortalContainerPickingOrders")}</TableHead>

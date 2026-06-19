@@ -94,6 +94,28 @@ bash scripts/deploy_prod.sh --keep-local-archives 2
 bash scripts/deploy_prod.sh --deploy --stack https --server-host 129.213.52.3 --ssh-key ~/.ssh/oracle-prod.key
 ```
 
+Renew or issue the production HTTPS certificate, then restart and verify the
+Nginx reverse proxy:
+
+```bash
+bash scripts/renew_https_cert.sh --email you@example.com
+bash scripts/renew_https_cert.sh --email you@example.com --domain www.corgi4ever.com
+bash scripts/renew_https_cert.sh --email you@example.com --force
+```
+
+Install automatic daily certificate renewal on the server:
+
+```bash
+bash scripts/install_https_cert_renewal_cron.sh
+```
+
+Check the server-side renewal log:
+
+```bash
+ssh -i ~/.ssh/oracle-prod.key ubuntu@129.213.52.3
+tail -n 80 /home/ubuntu/SpeedInventoryManagement/logs/cert-renew.log
+```
+
 ## Data Migration
 
 Export from the local Docker MariaDB, upload to the server, back up the remote database, then import:

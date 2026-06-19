@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -7,6 +7,18 @@ import { renderWithProviders } from "../test/renderWithProviders";
 
 const originalCreateObjectURL = URL.createObjectURL;
 const originalRevokeObjectURL = URL.revokeObjectURL;
+
+const savedAttachment = {
+  id: 10,
+  documentType: "INBOUND" as const,
+  documentId: 4,
+  displayName: "Signed Packing List",
+  originalFileName: "packing-list.pdf",
+  contentType: "application/pdf",
+  sizeBytes: 2048,
+  uploadedByUserId: 1,
+  createdAt: "2026-06-01T12:00:00Z"
+};
 
 afterEach(() => {
   Object.defineProperty(URL, "createObjectURL", {
@@ -84,5 +96,46 @@ describe("DocumentAttachmentsPanel", () => {
     await user.click(screen.getByRole("button", { name: /close/i }));
 
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:pending-packing-list");
+  });
+
+  it("does not delete a saved attachment when the confirmation is cancelled", async () => {
+    const user = userEvent.setup();
+    const onDelete = vi.fn();
+
+    renderWithProviders(
+      <DocumentAttachmentsPanel
+        attachments={[savedAttachment]}
+        onGetDownloadUrl={async () => ""}
+        onDelete={onDelete}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: /remove file/i }));
+
+    expect(screen.getByText("Delete Signed Packing List? This cannot be undone.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /cancel/i }));
+
+    expect(onDelete).not.toHaveBeenCalled();
+  });
+
+  it("deletes a saved attachment only after confirmation", async () => {
+    const user = userEvent.setup();
+    const onDelete = vi.fn().mockResolvedValue(undefined);
+
+    renderWithProviders(
+      <DocumentAttachmentsPanel
+        attachments={[savedAttachment]}
+        onGetDownloadUrl={async () => ""}
+        onDelete={onDelete}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: /remove file/i }));
+    await user.click(screen.getByRole("button", { name: /^delete$/i }));
+
+    await waitFor(() => {
+      expect(onDelete).toHaveBeenCalledWith(savedAttachment);
+    });
   });
 });

@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
   ChevronLeft,
   ChevronRight,
+  Boxes,
   ClipboardList,
   Container as ContainerIcon,
   ExternalLink,
   MapPinned,
+  PackageCheck,
   RefreshCw,
   RotateCcw,
   Search,
@@ -18,6 +20,7 @@ import { api } from "../lib/api";
 import { formatContainerStatus, getContainerStatusBadgeVariant } from "../lib/containerLifecycleStatus";
 import { formatDateTimeValue } from "../lib/dates";
 import { getErrorMessage } from "../lib/errors";
+import { formatNumber } from "../lib/formatters";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type {
@@ -58,7 +61,6 @@ type AdminContainerLifecyclePageProps = {
   onOpenOutboundDocument: (documentId: number) => void;
   onOpenShipmentEditor: (documentId?: number | null) => void;
   onOpenPalletTrace: (sourceInboundDocumentId?: number) => void;
-  onBackToContainers: () => void;
 };
 
 type ContainerFormState = {
@@ -79,7 +81,6 @@ type LifecycleVisibilityFormState = {
 type TrackingFormState = LifecycleVisibilityFormState & {
   eventType: string;
   eventTime: string;
-  location: string;
   notes: string;
 };
 
@@ -112,6 +113,31 @@ type DeliveryFormState = LifecycleVisibilityFormState & {
   vehicleNo: string;
   bolNumber: string;
   notes: string;
+};
+
+type SkuQuantityRow = {
+  sku: string;
+  pallets: number;
+  quantity: number;
+  referenceQuantity?: number;
+};
+
+type ReceivingSkuQuantityRow = {
+  sku: string;
+  expectedQuantity: number;
+  receivedPallets: number;
+  receivedQuantity: number;
+  shortageReason: string;
+};
+
+type OutboundOrderGoodsRow = {
+  key: string;
+  sku: string;
+  description: string;
+  quantity: number;
+  allocatedQty: number;
+  pallets: number;
+  highlighted: boolean;
 };
 
 type SelectOption = {
@@ -169,8 +195,7 @@ export function AdminContainerLifecyclePage({
   onOpenReceiptEditor,
   onOpenOutboundDocument,
   onOpenShipmentEditor,
-  onOpenPalletTrace,
-  onBackToContainers
+  onOpenPalletTrace
 }: AdminContainerLifecyclePageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
@@ -198,9 +223,6 @@ export function AdminContainerLifecyclePage({
 
   const activeCustomerId = routeScope?.customerId ?? parsePositiveInt(selectedCustomerId);
   const activeContainerNo = routeScope?.containerNo ?? "";
-  const selectedCustomer = activeCustomerId
-    ? customers.find((customer) => customer.id === activeCustomerId) ?? null
-    : null;
 
   useEffect(() => {
     if (!routeScope) {
@@ -280,9 +302,13 @@ export function AdminContainerLifecyclePage({
     };
   }, [activeContainerNo, activeCustomerId, reloadToken, t]);
 
-  const lifecycleTitle = activeContainerNo
-    ? `${t("adminContainerLifecyclePage")} ${activeContainerNo}`
-    : t("adminContainerLifecyclePage");
+  useEffect(() => {
+    if (!lifecycle || selectedNode?.kind !== "delivery") {
+      return;
+    }
+    setDeliveryForm(createDeliveryFormFromLifecycle(lifecycle, selectedNode));
+  }, [lifecycle, selectedNode]);
+
   const visiblePallets = useMemo(() => lifecycle?.pallets ?? [], [lifecycle?.pallets]);
   const filteredSummaries = useMemo(
     () => selectedStatus === "all"
@@ -353,10 +379,8 @@ export function AdminContainerLifecyclePage({
         customerId: activeCustomerId,
         eventType: trackingForm.eventType,
         eventTime: trackingForm.eventTime,
-        location: trackingForm.location,
         notes: trackingForm.notes,
-        visibility: trackingForm.visibility,
-        displayLabel: trackingForm.displayLabel
+        visibility: trackingForm.visibility
       });
       showSuccess(t("adminContainerLifecycleSaved"));
       refreshLifecycle();
@@ -380,8 +404,7 @@ export function AdminContainerLifecyclePage({
         cost: Number(pickupForm.cost || 0),
         status: pickupForm.status,
         notes: pickupForm.notes,
-        visibility: pickupForm.visibility,
-        displayLabel: pickupForm.displayLabel
+        visibility: pickupForm.visibility
       });
       showSuccess(t("adminContainerLifecycleSaved"));
       refreshLifecycle();
@@ -478,43 +501,9 @@ export function AdminContainerLifecyclePage({
     );
   }
 
-  async function handleReplaceInboundDocumentAttachment(document: InboundDocument, file: File, displayName: string) {
-    await runDocumentMutation(async () => {
-      for (const attachment of document.attachments ?? []) {
-        await api.deleteInboundDocumentAttachment(document.id, attachment.id);
-      }
-      await api.uploadInboundDocumentAttachment(document.id, file, displayName);
-    }, t("adminContainerLifecycleDocumentReplaced"));
-  }
-
-  async function handleReplaceOutboundDocumentAttachment(document: OutboundDocument, file: File, displayName: string) {
-    await runDocumentMutation(async () => {
-      for (const attachment of document.attachments ?? []) {
-        await api.deleteOutboundDocumentAttachment(document.id, attachment.id);
-      }
-      await api.uploadOutboundDocumentAttachment(document.id, file, displayName);
-    }, t("adminContainerLifecycleDocumentReplaced"));
-  }
-
-  async function handleDeleteInboundDocumentAttachments(document: InboundDocument) {
-    await runDocumentMutation(async () => {
-      for (const attachment of document.attachments ?? []) {
-        await api.deleteInboundDocumentAttachment(document.id, attachment.id);
-      }
-    }, t("adminContainerLifecycleDocumentDeleted"));
-  }
-
   async function handleDeleteInboundDocumentAttachment(document: InboundDocument, attachment: DocumentAttachment) {
     await runDocumentMutation(async () => {
       await api.deleteInboundDocumentAttachment(document.id, attachment.id);
-    }, t("adminContainerLifecycleDocumentDeleted"));
-  }
-
-  async function handleDeleteOutboundDocumentAttachments(document: OutboundDocument) {
-    await runDocumentMutation(async () => {
-      for (const attachment of document.attachments ?? []) {
-        await api.deleteOutboundDocumentAttachment(document.id, attachment.id);
-      }
     }, t("adminContainerLifecycleDocumentDeleted"));
   }
 
@@ -605,7 +594,7 @@ export function AdminContainerLifecyclePage({
                   <TableHead>{t("containerNo")}</TableHead>
                   <TableHead>{t("status")}</TableHead>
                   <TableHead>{t("warehouses")}</TableHead>
-                  <TableHead>{t("received")}</TableHead>
+                  <TableHead>{t("containerLifecycleInboundNode")}</TableHead>
                   <TableHead>{t("customerPortalContainerCurrent")}</TableHead>
                   <TableHead>{t("customerPortalContainerShippedQty")}</TableHead>
                   <TableHead>{t("customerPortalPickingOrders")}</TableHead>
@@ -712,17 +701,9 @@ export function AdminContainerLifecyclePage({
       onCreateDeliveryEvent={handleCreateDeliveryEvent}
       onUploadInboundDocumentAttachment={handleUploadInboundDocumentAttachment}
       onUploadOutboundDocumentAttachment={handleUploadOutboundDocumentAttachment}
-      onReplaceInboundDocumentAttachment={handleReplaceInboundDocumentAttachment}
-      onReplaceOutboundDocumentAttachment={handleReplaceOutboundDocumentAttachment}
-      onDeleteInboundDocumentAttachments={handleDeleteInboundDocumentAttachments}
-      onDeleteOutboundDocumentAttachments={handleDeleteOutboundDocumentAttachments}
       onDeleteInboundDocumentAttachment={handleDeleteInboundDocumentAttachment}
       onDeleteOutboundDocumentAttachment={handleDeleteOutboundDocumentAttachment}
       onOpenContainerDetail={() => onOpenContainerDetail(activeContainerNo)}
-      onOpenInboundDetail={onOpenInboundDetail}
-      onOpenReceiptEditor={onOpenReceiptEditor}
-      onOpenOutboundDocument={onOpenOutboundDocument}
-      onOpenShipmentEditor={onOpenShipmentEditor}
       onOpenPalletTrace={onOpenPalletTrace}
     />
   ) : null;
@@ -736,16 +717,7 @@ export function AdminContainerLifecyclePage({
           visibilityMode="admin"
           isLoading={lifecycleLoading}
           errorMessage={lifecycleError}
-          title={lifecycleTitle}
-          description={selectedCustomer ? `${selectedCustomer.name} - ${t("adminContainerLifecycleNodeHint")}` : t("adminContainerLifecycleNodeHint")}
-          backLabel={t("backToContainers")}
-          onBack={onBackToContainers}
-          actions={(
-            <Button type="button" variant="outline" onClick={refreshLifecycle} disabled={!activeCustomerId || !activeContainerNo || lifecycleLoading}>
-              <RefreshCw className="h-4 w-4" />
-              {t("refresh")}
-            </Button>
-          )}
+          hideHeaderText
           sidePanel={sidePanel}
           selectedNodeId={selectedNode?.id ?? null}
           onNodeSelect={setSelectedNode}
@@ -785,17 +757,9 @@ function AdminLifecycleNodePanel({
   onCreateDeliveryEvent,
   onUploadInboundDocumentAttachment,
   onUploadOutboundDocumentAttachment,
-  onReplaceInboundDocumentAttachment,
-  onReplaceOutboundDocumentAttachment,
-  onDeleteInboundDocumentAttachments,
-  onDeleteOutboundDocumentAttachments,
   onDeleteInboundDocumentAttachment,
   onDeleteOutboundDocumentAttachment,
   onOpenContainerDetail,
-  onOpenInboundDetail,
-  onOpenReceiptEditor,
-  onOpenOutboundDocument,
-  onOpenShipmentEditor,
   onOpenPalletTrace
 }: {
   node: ContainerLifecycleNodeAction | null;
@@ -820,34 +784,30 @@ function AdminLifecycleNodePanel({
   onCreateDeliveryEvent: (event: FormEvent<HTMLFormElement>) => void;
   onUploadInboundDocumentAttachment: (document: InboundDocument, file: File, displayName: string) => Promise<void>;
   onUploadOutboundDocumentAttachment: (document: OutboundDocument, file: File, displayName: string) => Promise<void>;
-  onReplaceInboundDocumentAttachment: (document: InboundDocument, file: File, displayName: string) => Promise<void>;
-  onReplaceOutboundDocumentAttachment: (document: OutboundDocument, file: File, displayName: string) => Promise<void>;
-  onDeleteInboundDocumentAttachments: (document: InboundDocument) => Promise<void>;
-  onDeleteOutboundDocumentAttachments: (document: OutboundDocument) => Promise<void>;
   onDeleteInboundDocumentAttachment: (document: InboundDocument, attachment: DocumentAttachment) => Promise<void>;
   onDeleteOutboundDocumentAttachment: (document: OutboundDocument, attachment: DocumentAttachment) => Promise<void>;
   onOpenContainerDetail: () => void;
-  onOpenInboundDetail: (documentId: number) => void;
-  onOpenReceiptEditor: (documentId?: number | null) => void;
-  onOpenOutboundDocument: (documentId: number) => void;
-  onOpenShipmentEditor: (documentId?: number | null) => void;
   onOpenPalletTrace: (sourceInboundDocumentId?: number) => void;
 }) {
   const { t } = useI18n();
   const selectedPackingList = node?.documentId ? lifecycle.packingLists.find((document) => document.id === node.documentId) : lifecycle.packingLists[0];
   const selectedPickingOrder = node?.outboundDocumentId ? lifecycle.pickingOrders.find((document) => document.id === node.outboundDocumentId) : lifecycle.pickingOrders[0];
-  const shouldShowContainerForm = !node || node.kind === "container" || node.kind === "inventory" || node.kind === "complete";
+  const receivingSkuRows = useMemo(() => buildReceivingSkuRows(lifecycle.packingLists), [lifecycle.packingLists]);
+  const currentInventorySkuRows = useMemo(() => buildCurrentInventorySkuRows(pallets, receivingSkuRows), [pallets, receivingSkuRows]);
+  const shouldShowContainerForm = !node || node.kind === "container";
   const selectedLocationID = containerForm.locationId;
   const locationOptions = buildLocationOptions(locations, selectedLocationID, t);
   const usesOwnDriver = pickupForm.assignmentType === "OWN_DRIVER";
+  const panelTitle = node?.kind === "picking-order" && selectedPickingOrder
+    ? getOutboundOrderReference(selectedPickingOrder)
+    : node?.title ?? t("adminContainerLifecycleNodePanel");
 
   return (
-    <Card className="sticky top-4">
-      <CardHeader>
-        <CardTitle>{node?.title ?? t("adminContainerLifecycleNodePanel")}</CardTitle>
-        <p className="text-sm leading-6 text-slate-500">{node ? t("adminContainerLifecycleEditHint") : t("adminContainerLifecycleSelectNodeHint")}</p>
+    <Card className="flex h-full min-h-0 flex-col overflow-hidden xl:sticky xl:top-4">
+      <CardHeader className="shrink-0">
+        <CardTitle>{panelTitle}</CardTitle>
       </CardHeader>
-      <CardContent className="grid gap-4">
+      <CardContent className="grid min-h-0 flex-1 auto-rows-max content-start gap-4 overflow-y-auto">
         {shouldShowContainerForm ? (
           <form className="grid gap-3" onSubmit={onSaveContainer}>
             <PanelSectionTitle icon={<ContainerIcon className="h-4 w-4" />} title={t("containerStatus")} />
@@ -868,19 +828,28 @@ function AdminLifecycleNodePanel({
           <form className="grid gap-3" onSubmit={onCreateTrackingEvent}>
             <PanelSectionTitle icon={<MapPinned className="h-4 w-4" />} title={t("containerLifecycleTrackingNode")} />
             <SelectInput label={t("eventType")} value={trackingForm.eventType} options={TRACKING_EVENT_TYPE_OPTIONS} onChange={(value) => onTrackingFormChange({ ...trackingForm, eventType: value })} />
-            <VisibilityFields value={trackingForm} onChange={(nextFields) => onTrackingFormChange({ ...trackingForm, ...nextFields })} />
+            <VisibilityFields value={trackingForm} hideDisplayLabel onChange={(nextFields) => onTrackingFormChange({ ...trackingForm, ...nextFields })} />
             <TextInput type="datetime-local" label={t("eventTime")} value={trackingForm.eventTime} onChange={(value) => onTrackingFormChange({ ...trackingForm, eventTime: value })} />
-            <TextInput label={t("location")} value={trackingForm.location} onChange={(value) => onTrackingFormChange({ ...trackingForm, location: value })} />
             <TextInput label={t("notes")} value={trackingForm.notes} onChange={(value) => onTrackingFormChange({ ...trackingForm, notes: value })} />
             <Button type="submit" disabled={busyAction === "tracking"}>{busyAction === "tracking" ? t("saving") : t("adminContainerLifecycleSubmitChanges")}</Button>
           </form>
+        ) : null}
+
+        {node?.kind === "receiving" ? (
+          <ReceivingSkuSummary rows={receivingSkuRows} />
+        ) : null}
+
+        {node?.kind === "inventory" ? <CurrentInventorySkuSummary rows={currentInventorySkuRows} /> : null}
+
+        {node?.kind === "picking-order" ? (
+          <OutboundOrderSummary document={selectedPickingOrder} containerNo={lifecycle.summary.containerNo} />
         ) : null}
 
         {node?.kind === "pickup" ? (
           <form className="grid gap-3" onSubmit={onCreatePickupAssignment}>
             <PanelSectionTitle icon={<Truck className="h-4 w-4" />} title={t("containerLifecyclePickupNode")} />
             <SelectInput label={t("assignmentType")} value={pickupForm.assignmentType} options={PICKUP_ASSIGNMENT_TYPE_OPTIONS} onChange={(value) => onPickupFormChange({ ...pickupForm, assignmentType: value })} />
-            <VisibilityFields value={pickupForm} onChange={(nextFields) => onPickupFormChange({ ...pickupForm, ...nextFields })} />
+            <VisibilityFields value={pickupForm} hideDisplayLabel onChange={(nextFields) => onPickupFormChange({ ...pickupForm, ...nextFields })} />
             <TextInput label={t("driverName")} value={pickupForm.driverName} onChange={(value) => onPickupFormChange({ ...pickupForm, driverName: value })} />
             {!usesOwnDriver ? (
               <>
@@ -926,40 +895,32 @@ function AdminLifecycleNodePanel({
           </form>
         ) : null}
 
-        {node?.kind === "documents" || node?.kind === "packing-list" || node?.kind === "receiving" ? (
+        {node?.kind === "documents" && node.documentId ? (
           <DocumentActions
             icon={<ClipboardList className="h-4 w-4" />}
             title={t("customerPortalLifecycleDocuments")}
             document={selectedPackingList}
             emptyLabel={t("noPackingLists")}
-            onOpen={(document) => onOpenInboundDetail(document.id)}
-            onEdit={(document) => onOpenReceiptEditor(document.id)}
             onUpload={onUploadInboundDocumentAttachment}
             onGetDownloadUrl={async (attachment) => {
               const result = await api.getInboundDocumentAttachmentDownloadUrl(attachment.documentId, attachment.id);
               return result.url;
             }}
-            onReplace={onReplaceInboundDocumentAttachment}
-            onDeleteDocument={onDeleteInboundDocumentAttachments}
             onDeleteAttachment={onDeleteInboundDocumentAttachment}
           />
         ) : null}
 
-        {node?.kind === "picking-order" ? (
+        {node?.kind === "documents" && node.outboundDocumentId ? (
           <DocumentActions
             icon={<Send className="h-4 w-4" />}
             title={t("customerPortalPickingOrders")}
             document={selectedPickingOrder}
             emptyLabel={t("noPickingOrders")}
-            onOpen={(document) => onOpenOutboundDocument(document.id)}
-            onEdit={(document) => onOpenShipmentEditor(document.id)}
             onUpload={onUploadOutboundDocumentAttachment}
             onGetDownloadUrl={async (attachment) => {
               const result = await api.getOutboundDocumentAttachmentDownloadUrl(attachment.documentId, attachment.id);
               return result.url;
             }}
-            onReplace={onReplaceOutboundDocumentAttachment}
-            onDeleteDocument={onDeleteOutboundDocumentAttachments}
             onDeleteAttachment={onDeleteOutboundDocumentAttachment}
           />
         ) : null}
@@ -968,7 +929,6 @@ function AdminLifecycleNodePanel({
           <QuickActionPanel
             icon={<RefreshCwIcon />}
             title={t("customerPortalContainerTransfers")}
-            description={t("adminContainerLifecycleTransferHint")}
             actions={<Button type="button" onClick={() => onOpenPalletTrace(lifecycle.summary.firstPackingListId)}>{t("palletTrace")}</Button>}
           />
         ) : null}
@@ -982,6 +942,182 @@ function PanelSectionTitle({ icon, title }: { icon: ReactNode; title: string }) 
     <div className="flex items-center gap-2 border-b border-slate-100 pb-2 text-sm font-semibold text-slate-950">
       <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-slate-100 text-slate-700">{icon}</span>
       <span>{title}</span>
+    </div>
+  );
+}
+
+function ReceivingSkuSummary({ rows }: { rows: ReceivingSkuQuantityRow[] }) {
+  const { t } = useI18n();
+
+  return (
+    <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <PanelSectionTitle icon={<PackageCheck className="h-4 w-4" />} title={t("containerLifecycleInboundNode")} />
+      <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t("sku")}</TableHead>
+              <TableHead className="w-24 text-right">{t("expectedQty")}</TableHead>
+              <TableHead className="w-24 text-right">{t("receivedPallets")}</TableHead>
+              <TableHead className="w-24 text-right">{t("received")}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.length ? (
+              rows.map((row) => {
+                const shortage = row.receivedQuantity < row.expectedQuantity;
+                const overage = row.receivedQuantity > row.expectedQuantity;
+                return (
+                  <TableRow
+                    key={row.sku}
+                    className={shortage ? "bg-red-50/70" : overage ? "bg-amber-50/70" : undefined}
+                  >
+                    <TableCell className="align-top">
+                      <div className="font-medium text-slate-950">{row.sku}</div>
+                      {shortage ? (
+                        <div className="mt-1 grid gap-1">
+                          <Badge variant="destructive" className="w-fit">{t("inboundDiscrepancyShortage")}</Badge>
+                          <div className="text-xs text-red-700">
+                            {t("inboundShortageReason")}: {row.shortageReason || t("inboundDiscrepancyShortage")}
+                          </div>
+                        </div>
+                      ) : overage ? (
+                        <Badge variant="warning" className="mt-1 w-fit">{t("inboundDiscrepancyOverage")}</Badge>
+                      ) : null}
+                    </TableCell>
+                    <TableCell className="align-top text-right tabular-nums">{formatNumber(row.expectedQuantity)}</TableCell>
+                    <TableCell className="align-top text-right tabular-nums">{formatNumber(row.receivedPallets)}</TableCell>
+                    <TableCell className="align-top text-right tabular-nums">{formatNumber(row.receivedQuantity)}</TableCell>
+                  </TableRow>
+                );
+              })
+            ) : (
+              <TableRow>
+                <TableCell colSpan={4} className="py-6 text-center text-sm text-slate-500">
+                  {t("noResults")}
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  );
+}
+
+function CurrentInventorySkuSummary({ rows }: { rows: SkuQuantityRow[] }) {
+  const { t } = useI18n();
+
+  return (
+    <SkuQuantitySummary
+      icon={<Boxes className="h-4 w-4" />}
+      title={t("customerPortalContainerCurrent")}
+      rows={rows}
+      showReferenceQuantity
+    />
+  );
+}
+
+function OutboundOrderSummary({ document, containerNo }: { document?: OutboundDocument; containerNo: string }) {
+  const { t } = useI18n();
+  const rows = useMemo(() => buildOutboundOrderGoodsRows(document, containerNo), [document, containerNo]);
+
+  return (
+    <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <PanelSectionTitle icon={<Send className="h-4 w-4" />} title={t("customerPortalPickingOrders")} />
+      {document ? (
+        <div className="grid gap-2">
+          {rows.length > 0 ? rows.map((row) => (
+            <div
+              key={row.key}
+              className={[
+                "grid gap-2 rounded-md border px-3 py-2 text-sm transition",
+                row.highlighted
+                  ? "border-emerald-200 bg-emerald-50 text-slate-950 shadow-sm"
+                  : "border-slate-200 bg-white text-slate-400"
+              ].join(" ")}
+            >
+              <div className="flex min-w-0 items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className={row.highlighted ? "font-semibold text-slate-950" : "font-medium text-slate-500"}>
+                    {row.sku}
+                  </div>
+                  {row.description ? (
+                    <div className={row.highlighted ? "mt-1 truncate text-xs text-slate-600" : "mt-1 truncate text-xs text-slate-400"} title={row.description}>
+                      {row.description}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="shrink-0 text-right tabular-nums">
+                  <div className={row.highlighted ? "font-semibold text-slate-950" : "text-slate-500"}>{formatNumber(row.quantity)}</div>
+                  {row.pallets > 0 ? <div className="mt-1 text-xs text-slate-400">{formatNumber(row.pallets)} {t("pallets")}</div> : null}
+                </div>
+              </div>
+              {row.highlighted ? (
+                <div>
+                  <Badge variant="success">{containerNo} / {formatNumber(row.allocatedQty || row.quantity)}</Badge>
+                </div>
+              ) : null}
+            </div>
+          )) : (
+            <div className="rounded-md border border-slate-200 bg-white p-3 text-sm text-slate-500">{t("noResults")}</div>
+          )}
+        </div>
+      ) : (
+        <div className="rounded-md border border-slate-200 bg-white p-3 text-sm text-slate-500">{t("noPickingOrders")}</div>
+      )}
+    </div>
+  );
+}
+
+function SkuQuantitySummary({
+  icon,
+  title,
+  rows,
+  showReferenceQuantity = false
+}: {
+  icon: ReactNode;
+  title: string;
+  rows: SkuQuantityRow[];
+  showReferenceQuantity?: boolean;
+}) {
+  const { t } = useI18n();
+
+  return (
+    <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <PanelSectionTitle icon={icon} title={title} />
+      <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t("sku")}</TableHead>
+              <TableHead className="w-24 text-right">{t("pallets")}</TableHead>
+              <TableHead className="w-24 text-right">{t("quantity")}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.length ? (
+              rows.map((row) => (
+                <TableRow key={row.sku}>
+                  <TableCell className="font-medium text-slate-950">{row.sku}</TableCell>
+                  <TableCell className="text-right tabular-nums">{formatNumber(row.pallets)}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {showReferenceQuantity
+                      ? `${formatNumber(row.quantity)} / ${formatNumber(row.referenceQuantity ?? row.quantity)}`
+                      : formatNumber(row.quantity)}
+                  </TableCell>
+                </TableRow>
+              ))
+            ) : (
+              <TableRow>
+                <TableCell colSpan={3} className="py-6 text-center text-sm text-slate-500">
+                  {t("noResults")}
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   );
 }
@@ -1056,16 +1192,14 @@ function buildLocationOptions(locations: Location[], currentLocationId: string, 
   return options;
 }
 
-function defaultAttachmentDisplayName(fileName: string) {
-  return fileName.trim() || "document";
-}
-
 function VisibilityFields({
   value,
-  onChange
+  onChange,
+  hideDisplayLabel = false
 }: {
   value: LifecycleVisibilityFormState;
   onChange: (nextFields: LifecycleVisibilityFormState) => void;
+  hideDisplayLabel?: boolean;
 }) {
   const { t } = useI18n();
   return (
@@ -1081,7 +1215,9 @@ function VisibilityFields({
           <option value="INTERNAL">{t("lifecycleVisibilityInternal")}</option>
         </select>
       </label>
-      <TextInput label={t("displayLabel")} value={value.displayLabel} onChange={(displayLabel) => onChange({ ...value, displayLabel })} />
+      {!hideDisplayLabel ? (
+        <TextInput label={t("displayLabel")} value={value.displayLabel} onChange={(displayLabel) => onChange({ ...value, displayLabel })} />
+      ) : null}
     </div>
   );
 }
@@ -1135,99 +1271,27 @@ function DocumentActions<TDocument extends InboundDocument | OutboundDocument>({
   title,
   document,
   emptyLabel,
-  onOpen,
-  onEdit,
   onUpload,
   onGetDownloadUrl,
-  onReplace,
-  onDeleteDocument,
   onDeleteAttachment
 }: {
   icon: ReactNode;
   title: string;
   document?: TDocument;
   emptyLabel: string;
-  onOpen: (document: TDocument) => void;
-  onEdit: (document: TDocument) => void;
   onUpload?: (document: TDocument, file: File, displayName: string) => Promise<void>;
   onGetDownloadUrl?: (attachment: DocumentAttachment) => Promise<string>;
-  onReplace?: (document: TDocument, file: File, displayName: string) => Promise<void>;
-  onDeleteDocument?: (document: TDocument) => Promise<void>;
   onDeleteAttachment?: (document: TDocument, attachment: DocumentAttachment) => Promise<void>;
 }) {
-  const { t } = useI18n();
-  const replaceInputRef = useRef<HTMLInputElement | null>(null);
   const [pendingAttachments, setPendingAttachments] = useState<PendingDocumentAttachment[]>([]);
-  const [replacementAttachment, setReplacementAttachment] = useState<PendingDocumentAttachment | null>(null);
-  const [busyAction, setBusyAction] = useState("");
-  const [errorMessage, setErrorMessage] = useState("");
   const attachments = document?.attachments ?? [];
   const canManageAttachments = Boolean(document && onUpload && onGetDownloadUrl);
-
-  function handleReplacementSelected(files: FileList | null) {
-    const file = files?.[0];
-    if (!file) {
-      return;
-    }
-    setReplacementAttachment({
-      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      file,
-      displayName: defaultAttachmentDisplayName(file.name)
-    });
-    setErrorMessage("");
-    if (replaceInputRef.current) {
-      replaceInputRef.current.value = "";
-    }
-  }
-
-  function updateReplacementDisplayName(displayName: string) {
-    setReplacementAttachment((current) => current ? { ...current, displayName } : current);
-  }
-
-  async function saveReplacement() {
-    if (!document || !replacementAttachment || !onReplace) {
-      return;
-    }
-    setBusyAction("replace");
-    setErrorMessage("");
-    try {
-      await onReplace(document, replacementAttachment.file, replacementAttachment.displayName.trim() || replacementAttachment.file.name);
-      setReplacementAttachment(null);
-    } catch (error) {
-      setErrorMessage(getErrorMessage(error, t("couldNotSaveChanges")));
-    } finally {
-      setBusyAction("");
-    }
-  }
-
-  async function deleteDocumentAttachments() {
-    if (!document || !onDeleteDocument || attachments.length === 0) {
-      return;
-    }
-    setBusyAction("delete");
-    setErrorMessage("");
-    try {
-      await onDeleteDocument(document);
-    } catch (error) {
-      setErrorMessage(getErrorMessage(error, t("couldNotSaveChanges")));
-    } finally {
-      setBusyAction("");
-    }
-  }
 
   return (
     <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
       <PanelSectionTitle icon={icon} title={title} />
       {document ? (
         <>
-          <div className="text-sm text-slate-600">
-            <div className="font-semibold text-slate-950">#{document.id}</div>
-            <div>{document.status || "-"}</div>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <Button type="button" variant="outline" onClick={() => onOpen(document)}>{t("view")}</Button>
-            <Button type="button" onClick={() => onEdit(document)}>{t("edit")}</Button>
-          </div>
           {canManageAttachments && onGetDownloadUrl ? (
             <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-3">
               <DocumentAttachmentsPanel
@@ -1246,38 +1310,6 @@ function DocumentActions<TDocument extends InboundDocument | OutboundDocument>({
                   await onDeleteAttachment(document, attachment);
                 } : undefined}
               />
-              <div className="grid gap-2 rounded-md border border-dashed border-slate-300 p-3">
-                <input
-                  ref={replaceInputRef}
-                  type="file"
-                  accept="application/pdf,image/jpeg,image/png,image/webp"
-                  className="hidden"
-                  onChange={(event) => handleReplacementSelected(event.target.files)}
-                />
-                <div className="flex flex-wrap gap-2">
-                  <Button type="button" variant="outline" onClick={() => replaceInputRef.current?.click()} disabled={Boolean(busyAction)}>
-                    {t("replaceDocument")}
-                  </Button>
-                  <Button type="button" variant="outline" onClick={() => void deleteDocumentAttachments()} disabled={attachments.length === 0 || busyAction === "delete"}>
-                    {busyAction === "delete" ? t("saving") : t("deleteDocument")}
-                  </Button>
-                </div>
-                {replacementAttachment ? (
-                  <div className="grid gap-2">
-                    <div className="text-xs text-slate-500">{t("selectedReplacementDocument")}: {replacementAttachment.file.name}</div>
-                    <TextInput label={t("fileDisplayName")} value={replacementAttachment.displayName} onChange={updateReplacementDisplayName} />
-                    <div className="flex flex-wrap gap-2">
-                      <Button type="button" onClick={() => void saveReplacement()} disabled={busyAction === "replace"}>
-                        {busyAction === "replace" ? t("saving") : t("saveChanges")}
-                      </Button>
-                      <Button type="button" variant="outline" onClick={() => setReplacementAttachment(null)} disabled={Boolean(busyAction)}>
-                        {t("cancel")}
-                      </Button>
-                    </div>
-                  </div>
-                ) : null}
-                {errorMessage ? <InlineAlert severity="error">{errorMessage}</InlineAlert> : null}
-              </div>
             </div>
           ) : null}
         </>
@@ -1291,18 +1323,15 @@ function DocumentActions<TDocument extends InboundDocument | OutboundDocument>({
 function QuickActionPanel({
   icon,
   title,
-  description,
   actions
 }: {
   icon: ReactNode;
   title: string;
-  description: string;
   actions: ReactNode;
 }) {
   return (
     <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
       <PanelSectionTitle icon={icon} title={title} />
-      <p className="text-sm leading-6 text-slate-500">{description}</p>
       {actions}
     </div>
   );
@@ -1310,6 +1339,130 @@ function QuickActionPanel({
 
 function RefreshCwIcon() {
   return <RefreshCw className="h-4 w-4" />;
+}
+
+export function buildReceivingSkuRows(packingLists: InboundDocument[]): ReceivingSkuQuantityRow[] {
+  const rows = new Map<string, ReceivingSkuQuantityRow>();
+
+  packingLists.forEach((document) => {
+    (document.lines ?? []).forEach((line) => {
+      const sku = line.sku || "-";
+      const expectedQuantity = line.expectedQty || 0;
+      const receivedQuantity = line.receivedQty || 0;
+      const receivedPallets = line.pallets || 0;
+      const shortageReason = receivedQuantity < expectedQuantity
+        ? firstNonEmptyText(line.lineNote, document.documentNote)
+        : "";
+      const existing = rows.get(sku);
+      if (existing) {
+        existing.expectedQuantity += expectedQuantity;
+        existing.receivedPallets += receivedPallets;
+        existing.receivedQuantity += receivedQuantity;
+        existing.shortageReason = appendUniqueText(existing.shortageReason, shortageReason);
+        return;
+      }
+      rows.set(sku, {
+        sku,
+        expectedQuantity,
+        receivedPallets,
+        receivedQuantity,
+        shortageReason
+      });
+    });
+  });
+
+  return Array.from(rows.values()).sort((left, right) => left.sku.localeCompare(right.sku));
+}
+
+function firstNonEmptyText(...values: Array<string | null | undefined>) {
+  return values.find((value) => value?.trim())?.trim() ?? "";
+}
+
+function appendUniqueText(current: string, next: string) {
+  if (!next) {
+    return current;
+  }
+  if (!current) {
+    return next;
+  }
+  const parts = current.split(" / ");
+  return parts.includes(next) ? current : `${current} / ${next}`;
+}
+
+function getOutboundOrderReference(document: OutboundDocument) {
+  return document.packingListNo || document.orderRef || `#${document.id}`;
+}
+
+export function buildOutboundOrderGoodsRows(document: OutboundDocument | undefined, containerNo: string): OutboundOrderGoodsRow[] {
+  if (!document) {
+    return [];
+  }
+  const normalizedContainerNo = normalizeContainerNo(containerNo);
+  const hasAnyPickAllocation = (document.lines ?? []).some((line) => (line.pickAllocations ?? []).length > 0);
+
+  return (document.lines ?? []).map((line, index) => {
+    const matchingAllocations = (line.pickAllocations ?? []).filter(
+      (allocation) => normalizeContainerNo(allocation.containerNo) === normalizedContainerNo
+    );
+    const allocatedQty = matchingAllocations.reduce((total, allocation) => total + (allocation.allocatedQty || 0), 0);
+    const quantity = line.quantity || 0;
+    return {
+      key: String(line.id || `${line.sku || line.itemNumber || "line"}-${index}`),
+      sku: line.sku || line.itemNumber || "-",
+      description: line.description || line.itemNumber || "",
+      quantity,
+      allocatedQty: hasAnyPickAllocation ? allocatedQty : quantity,
+      pallets: line.pallets || 0,
+      highlighted: hasAnyPickAllocation ? allocatedQty > 0 : true
+    };
+  });
+}
+
+function buildCurrentInventorySkuRows(pallets: PalletTrace[], receivedRows: ReceivingSkuQuantityRow[]): SkuQuantityRow[] {
+  const rows = new Map<string, { sku: string; palletIds: Set<number>; quantity: number; referenceQuantity: number }>();
+
+  receivedRows.forEach((row) => {
+    rows.set(row.sku, {
+      sku: row.sku,
+      palletIds: new Set<number>(),
+      quantity: 0,
+      referenceQuantity: row.receivedQuantity
+    });
+  });
+
+  pallets.forEach((pallet) => {
+    (pallet.contents ?? []).forEach((content) => {
+      const quantity = content.quantity || 0;
+      if (quantity <= 0) {
+        return;
+      }
+      const sku = content.sku || pallet.sku || "-";
+      const existing = rows.get(sku);
+      if (existing) {
+        existing.palletIds.add(pallet.id);
+        existing.quantity += quantity;
+        if (existing.referenceQuantity <= 0) {
+          existing.referenceQuantity = quantity;
+        }
+        return;
+      }
+      rows.set(sku, {
+        sku,
+        palletIds: new Set([pallet.id]),
+        quantity,
+        referenceQuantity: quantity
+      });
+    });
+  });
+
+  return Array.from(rows.values())
+    .map((row) => ({
+      sku: row.sku,
+      pallets: row.palletIds.size,
+      quantity: row.quantity,
+      referenceQuantity: row.referenceQuantity
+    }))
+    .sort((left, right) => left.sku.localeCompare(right.sku));
 }
 
 function createEmptyContainerForm(): ContainerFormState {
@@ -1354,7 +1507,6 @@ function createEmptyTrackingForm(): TrackingFormState {
     ...createDefaultVisibilityFields(),
     eventType: "NOT_ARRIVED",
     eventTime: toDateTimeInputValue(new Date()),
-    location: "",
     notes: ""
   };
 }
@@ -1406,12 +1558,17 @@ function createEmptyDeliveryForm(): DeliveryFormState {
   };
 }
 
-function createDeliveryFormFromLifecycle(lifecycle: ContainerLifecycle): DeliveryFormState {
-  const latestDelivery = lifecycle.deliveryEvents[0];
+function createDeliveryFormFromLifecycle(lifecycle: ContainerLifecycle, node?: ContainerLifecycleNodeAction | null): DeliveryFormState {
+  const latestDelivery = node?.deliveryEventId
+    ? lifecycle.deliveryEvents.find((event) => event.id === node.deliveryEventId)
+    : node?.outboundDocumentId
+      ? lifecycle.deliveryEvents.find((event) => event.outboundDocumentId === node.outboundDocumentId)
+      : lifecycle.deliveryEvents[0];
   const firstPickingOrder = lifecycle.pickingOrders[0];
+  const outboundDocumentId = node?.outboundDocumentId || latestDelivery?.outboundDocumentId || firstPickingOrder?.id || "";
   return {
     deliveryEventId: latestDelivery ? String(latestDelivery.id) : "",
-    outboundDocumentId: String(latestDelivery?.outboundDocumentId || firstPickingOrder?.id || ""),
+    outboundDocumentId: String(outboundDocumentId),
     eventType: latestDelivery?.bolReceivedAt ? "BOL_RECEIVED" : "DISPATCHED",
     eventTime: toDateTimeInputValue(latestDelivery?.eventTime || new Date()),
     driverName: latestDelivery?.driverName || "",
@@ -1446,6 +1603,6 @@ function parseOptionalPositiveInt(value: string) {
   return parsed > 0 ? parsed : undefined;
 }
 
-function normalizeContainerNo(value: string) {
-  return value.trim().toUpperCase();
+function normalizeContainerNo(value: string | null | undefined) {
+  return String(value || "").trim().toUpperCase();
 }

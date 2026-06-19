@@ -3,16 +3,17 @@ import "@xyflow/react/dist/style.css";
 import {
   Background,
   Controls,
+  Handle,
   MarkerType,
   Position,
   ReactFlow,
   type Edge,
-  type Node
+  type Node,
+  type NodeProps
 } from "@xyflow/react";
 import {
   ArrowLeft,
   Boxes,
-  CheckCircle2,
   ClipboardList,
   Container as ContainerIcon,
   GitBranch,
@@ -23,19 +24,17 @@ import {
   Truck,
   Wrench
 } from "lucide-react";
-import { useMemo, type ReactNode } from "react";
+import { useMemo, type CSSProperties, type ReactNode } from "react";
 
-import { formatDateTimeValue } from "../lib/dates";
+import { formatNumber } from "../lib/formatters";
 import { useI18n } from "../lib/i18n";
-import { useSettings } from "../lib/settings";
 import type {
   ContainerLifecycle,
   CustomerPortalContainerLifecycle,
   InboundDocument,
   LifecycleDisplayFields,
   Movement,
-  OutboundDocument,
-  PalletLocationEvent
+  OutboundDocument
 } from "../lib/types";
 import { InlineLoadingIndicator } from "./InlineLoadingIndicator";
 import { Badge } from "./ui/badge";
@@ -54,8 +53,7 @@ export type ContainerLifecycleNodeKind =
   | "transfer"
   | "rework"
   | "picking-order"
-  | "delivery"
-  | "complete";
+  | "delivery";
 
 export type ContainerLifecycleNodeAction = {
   id: string;
@@ -65,6 +63,7 @@ export type ContainerLifecycleNodeAction = {
   outboundDocumentId?: number;
   deliveryEventId?: number;
   palletIds?: number[];
+  attachedToNodeId?: string;
 };
 
 export type LifecycleVisibilityMode = "customer" | "admin";
@@ -77,6 +76,7 @@ type ContainerLifecycleViewProps = {
   errorMessage?: string;
   title?: string;
   description?: string;
+  hideHeaderText?: boolean;
   backLabel?: string;
   onBack?: () => void;
   actions?: ReactNode;
@@ -102,16 +102,14 @@ type LifecycleFlowStep = {
   id: string;
   action: ContainerLifecycleNodeAction;
   label: ReactNode;
-  variant?: "default" | "success" | "warning" | "done";
+  variant?: LifecycleNodeVariant;
 };
 
-type TimelineEntry =
-  | { id: string; kind: "movement"; timestamp: number; movement: Movement }
-  | { id: string; kind: "pallet-event"; timestamp: number; event: PalletLocationEvent }
-  | { id: string; kind: "tracking-event"; timestamp: number; event: NonNullable<CustomerPortalContainerLifecycle["trackingEvents"]>[number] }
-  | { id: string; kind: "pickup-assignment"; timestamp: number; event: NonNullable<CustomerPortalContainerLifecycle["pickupAssignments"]>[number] }
-  | { id: string; kind: "rework-event"; timestamp: number; event: NonNullable<CustomerPortalContainerLifecycle["reworkEvents"]>[number] }
-  | { id: string; kind: "delivery-event"; timestamp: number; event: NonNullable<CustomerPortalContainerLifecycle["deliveryEvents"]>[number] };
+type LifecycleNodeVariant = "default" | "success" | "warning" | "danger" | "done";
+
+export type InboundDiscrepancyKind = "none" | "shortage" | "overage" | "damaged";
+
+type LifecycleEdgeRoute = "horizontal" | "vertical-down" | "vertical-up";
 
 type NormalizedContainerLifecycle = CustomerPortalContainerLifecycle & {
   packingLists: InboundDocument[];
@@ -126,6 +124,24 @@ type NormalizedContainerLifecycle = CustomerPortalContainerLifecycle & {
   deliveryEvents: NonNullable<CustomerPortalContainerLifecycle["deliveryEvents"]>;
 };
 
+const LIFECYCLE_NODE_TYPES = {
+  lifecycle: LifecycleFlowNode
+};
+
+const HANDLE_STYLE: CSSProperties = {
+  width: 10,
+  height: 10,
+  border: "2px solid #64748b",
+  background: "#ffffff",
+  zIndex: 3
+};
+
+const HIDDEN_TARGET_HANDLE_STYLE: CSSProperties = {
+  ...HANDLE_STYLE,
+  opacity: 0,
+  zIndex: 2
+};
+
 export function ContainerLifecycleView({
   containerNo,
   lifecycle: rawLifecycle,
@@ -134,6 +150,7 @@ export function ContainerLifecycleView({
   errorMessage = "",
   title,
   description,
+  hideHeaderText = false,
   backLabel,
   onBack,
   actions,
@@ -143,7 +160,6 @@ export function ContainerLifecycleView({
   documentActions
 }: ContainerLifecycleViewProps) {
   const { t } = useI18n();
-  const { resolvedTimeZone } = useSettings();
   const lifecycle = useMemo(
     () => rawLifecycle ? normalizeContainerLifecycle(rawLifecycle) : null,
     [rawLifecycle]
@@ -152,9 +168,6 @@ export function ContainerLifecycleView({
     () => lifecycle ? buildLifecycleFlow(lifecycle, t, Boolean(onNodeSelect), selectedNodeId ?? null, visibilityMode) : { nodes: [], edges: [] },
     [lifecycle, onNodeSelect, selectedNodeId, t, visibilityMode]
   );
-  const timelineEntries = useMemo(() => lifecycle ? buildTimelineEntries(lifecycle, visibilityMode) : [], [lifecycle, visibilityMode]);
-  const outboundMovementCount = lifecycle?.movements.filter((movement) => movement.movementType === "OUT").length ?? 0;
-  const transferMovementCount = lifecycle?.summary.transferCount ?? 0;
   const interactiveFlow = Boolean(onNodeSelect);
   const backButton = onBack ? (
     <Button type="button" variant="outline" onClick={onBack}>
@@ -162,6 +175,13 @@ export function ContainerLifecycleView({
       {backLabel ?? t("backToContainers")}
     </Button>
   ) : null;
+  const headerActions = actions || backButton ? (
+    <>
+      {actions}
+      {backButton}
+    </>
+  ) : null;
+  const showHeader = !hideHeaderText || Boolean(errorMessage) || Boolean(headerActions);
 
   if (!containerNo) {
     return (
@@ -177,20 +197,18 @@ export function ContainerLifecycleView({
   return (
     <div className="grid gap-4">
       <Card>
-        <CardHeader>
-          <PanelHeader
-            title={title ?? `${t("customerPortalContainerLifecycle")} ${containerNo}`}
-            description={description ?? t("customerPortalContainerLifecycleDesc")}
-            icon={<Route className="h-4 w-4" />}
-            errorMessage={errorMessage}
-            actions={(
-              <>
-                {actions}
-                {backButton}
-              </>
-            )}
-          />
-        </CardHeader>
+        {showHeader ? (
+          <CardHeader>
+            <PanelHeader
+              title={title ?? `${t("customerPortalContainerLifecycle")} ${containerNo}`}
+              description={description ?? t("customerPortalContainerLifecycleDesc")}
+              icon={hideHeaderText ? undefined : <Route className="h-4 w-4" />}
+              hideText={hideHeaderText}
+              errorMessage={errorMessage}
+              actions={headerActions}
+            />
+          </CardHeader>
+        ) : null}
         <CardContent className="grid gap-4">
           {isLoading ? (
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-8 text-center text-slate-500">
@@ -200,20 +218,13 @@ export function ContainerLifecycleView({
               </span>
             </div>
           ) : lifecycle ? (
-            <div className={sidePanel ? "grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]" : "grid gap-4"}>
-              <div className="grid gap-4">
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-                  <LifecycleMetric label={t("status")} value={formatContainerStatus(lifecycle.summary.status, t)} />
-                  <LifecycleMetric label={t("received")} value={String(lifecycle.summary.totalReceivedQty)} />
-                  <LifecycleMetric label={t("customerPortalContainerCurrent")} value={String(lifecycle.summary.currentQty)} />
-                  <LifecycleMetric label={t("customerPortalOutboundEvents")} value={String(outboundMovementCount)} />
-                  <LifecycleMetric label={t("customerPortalContainerTransfers")} value={String(transferMovementCount)} />
-                </div>
-
-                <div className="min-h-[460px] overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+            <div className="grid gap-4">
+              <div className={sidePanel ? "grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]" : "grid gap-4"}>
+                <div className="h-[calc(100vh-2rem)] min-h-[720px] overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
                   <ReactFlow
                     nodes={flowModel.nodes}
                     edges={flowModel.edges}
+                    nodeTypes={LIFECYCLE_NODE_TYPES}
                     fitView
                     fitViewOptions={{ padding: 0.18 }}
                     minZoom={0.35}
@@ -227,9 +238,9 @@ export function ContainerLifecycleView({
                     <Controls showInteractive={false} />
                   </ReactFlow>
                 </div>
-              </div>
 
-              {sidePanel ? <aside className="min-w-0">{sidePanel}</aside> : null}
+                {sidePanel ? <aside className="h-[calc(100vh-2rem)] min-h-[720px] min-w-0">{sidePanel}</aside> : null}
+              </div>
             </div>
           ) : (
             <InlineAlert>{t("containerDetailMissingDesc")}</InlineAlert>
@@ -238,118 +249,96 @@ export function ContainerLifecycleView({
       </Card>
 
       {lifecycle ? (
-        <>
-          <Card>
-            <CardHeader>
-              <PanelHeader
-                title={t("customerPortalContainerTimeline")}
-                description={t("customerPortalContainerTimelineDesc")}
-                icon={<GitBranch className="h-4 w-4" />}
-                actions={<Badge variant="secondary">{timelineEntries.length} {t("customerPortalLifecycleEvents")}</Badge>}
-              />
-            </CardHeader>
-            <CardContent className="grid gap-3">
-              {timelineEntries.length > 0 ? timelineEntries.map((entry) => (
-                <TimelineEntryCard key={entry.id} entry={entry} visibilityMode={visibilityMode} resolvedTimeZone={resolvedTimeZone} t={t} />
-              )) : (
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">
-                  {t("containerDetailNoHistory")}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <PanelHeader
-                title={t("customerPortalLifecycleDocuments")}
-                description={t("customerPortalLifecycleDocumentsDesc")}
-                icon={<ClipboardList className="h-4 w-4" />}
-              />
-            </CardHeader>
-            <CardContent className="grid gap-5">
-              <section className="grid gap-2">
-                <h3 className="text-sm font-semibold text-slate-950">{t("customerPortalPackingLists")}</h3>
-                <Table aria-label={t("customerPortalPackingLists")}>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t("containerNo")}</TableHead>
-                      <TableHead>{t("status")}</TableHead>
-                      <TableHead>{t("expectedQty")}</TableHead>
-                      <TableHead>{t("received")}</TableHead>
-                      <TableHead>{t("expectedArrivalDate")}</TableHead>
-                      {documentActions?.onOpenPackingList || documentActions?.onEditPackingList ? <TableHead>{t("actions")}</TableHead> : null}
+        <Card>
+          <CardHeader>
+            <PanelHeader
+              title={t("customerPortalLifecycleDocuments")}
+              description={t("customerPortalLifecycleDocumentsDesc")}
+              icon={<ClipboardList className="h-4 w-4" />}
+            />
+          </CardHeader>
+          <CardContent className="grid gap-5">
+            <section className="grid gap-2">
+              <h3 className="text-sm font-semibold text-slate-950">{t("customerPortalPackingLists")}</h3>
+              <Table aria-label={t("customerPortalPackingLists")}>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t("containerNo")}</TableHead>
+                    <TableHead>{t("status")}</TableHead>
+                    <TableHead>{t("expectedQty")}</TableHead>
+                    <TableHead>{t("received")}</TableHead>
+                    <TableHead>{t("expectedArrivalDate")}</TableHead>
+                    {documentActions?.onOpenPackingList || documentActions?.onEditPackingList ? <TableHead>{t("actions")}</TableHead> : null}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {lifecycle.packingLists.map((document) => (
+                    <TableRow key={document.id}>
+                      <TableCell className="font-semibold text-slate-950">{document.containerNo || `#${document.id}`}</TableCell>
+                      <TableCell><Badge variant="secondary">{t(document.status.toLowerCase())}</Badge></TableCell>
+                      <TableCell>{document.totalExpectedQty}</TableCell>
+                      <TableCell>{document.totalReceivedQty}</TableCell>
+                      <TableCell>{formatNullableDate(document.expectedArrivalDate)}</TableCell>
+                      {documentActions?.onOpenPackingList || documentActions?.onEditPackingList ? (
+                        <TableCell>
+                          <div className="flex flex-wrap gap-2">
+                            {documentActions.onOpenPackingList ? <Button type="button" variant="outline" size="sm" onClick={() => documentActions.onOpenPackingList?.(document)}>{t("view")}</Button> : null}
+                            {documentActions.onEditPackingList ? <Button type="button" size="sm" onClick={() => documentActions.onEditPackingList?.(document)}>{t("edit")}</Button> : null}
+                          </div>
+                        </TableCell>
+                      ) : null}
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {lifecycle.packingLists.map((document) => (
-                      <TableRow key={document.id}>
-                        <TableCell className="font-semibold text-slate-950">{document.containerNo || `#${document.id}`}</TableCell>
-                        <TableCell><Badge variant="secondary">{t(document.status.toLowerCase())}</Badge></TableCell>
-                        <TableCell>{document.totalExpectedQty}</TableCell>
-                        <TableCell>{document.totalReceivedQty}</TableCell>
-                        <TableCell>{formatNullableDate(document.expectedArrivalDate)}</TableCell>
-                        {documentActions?.onOpenPackingList || documentActions?.onEditPackingList ? (
-                          <TableCell>
-                            <div className="flex flex-wrap gap-2">
-                              {documentActions.onOpenPackingList ? <Button type="button" variant="outline" size="sm" onClick={() => documentActions.onOpenPackingList?.(document)}>{t("view")}</Button> : null}
-                              {documentActions.onEditPackingList ? <Button type="button" size="sm" onClick={() => documentActions.onEditPackingList?.(document)}>{t("edit")}</Button> : null}
-                            </div>
-                          </TableCell>
-                        ) : null}
-                      </TableRow>
-                    ))}
-                    {lifecycle.packingLists.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={documentActions?.onOpenPackingList || documentActions?.onEditPackingList ? 6 : 5} className="py-8 text-center text-slate-500">{t("noPackingLists")}</TableCell>
-                      </TableRow>
-                    ) : null}
-                  </TableBody>
-                </Table>
-              </section>
-
-              <section className="grid gap-2">
-                <h3 className="text-sm font-semibold text-slate-950">{t("customerPortalPickingOrders")}</h3>
-                <Table aria-label={t("customerPortalPickingOrders")}>
-                  <TableHeader>
+                  ))}
+                  {lifecycle.packingLists.length === 0 ? (
                     <TableRow>
-                      <TableHead>{t("customerPortalPickingOrders")}</TableHead>
-                      <TableHead>{t("orderRef")}</TableHead>
-                      <TableHead>{t("status")}</TableHead>
-                      <TableHead>{t("quantity")}</TableHead>
-                      <TableHead>{t("expectedShipDate")}</TableHead>
-                      {documentActions?.onOpenPickingOrder || documentActions?.onEditPickingOrder ? <TableHead>{t("actions")}</TableHead> : null}
+                      <TableCell colSpan={documentActions?.onOpenPackingList || documentActions?.onEditPackingList ? 6 : 5} className="py-8 text-center text-slate-500">{t("noPackingLists")}</TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {lifecycle.pickingOrders.map((document) => (
-                      <TableRow key={document.id}>
-                        <TableCell className="font-semibold text-slate-950">{document.packingListNo || `#${document.id}`}</TableCell>
-                        <TableCell>{document.orderRef || "-"}</TableCell>
-                        <TableCell><Badge variant="secondary">{t(document.status.toLowerCase())}</Badge></TableCell>
-                        <TableCell>{getOutboundContainerQuantity(document, containerNo)}</TableCell>
-                        <TableCell>{formatNullableDate(document.expectedShipDate)}</TableCell>
-                        {documentActions?.onOpenPickingOrder || documentActions?.onEditPickingOrder ? (
-                          <TableCell>
-                            <div className="flex flex-wrap gap-2">
-                              {documentActions.onOpenPickingOrder ? <Button type="button" variant="outline" size="sm" onClick={() => documentActions.onOpenPickingOrder?.(document)}>{t("view")}</Button> : null}
-                              {documentActions.onEditPickingOrder ? <Button type="button" size="sm" onClick={() => documentActions.onEditPickingOrder?.(document)}>{t("edit")}</Button> : null}
-                            </div>
-                          </TableCell>
-                        ) : null}
-                      </TableRow>
-                    ))}
-                    {lifecycle.pickingOrders.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={documentActions?.onOpenPickingOrder || documentActions?.onEditPickingOrder ? 6 : 5} className="py-8 text-center text-slate-500">{t("noPickingOrders")}</TableCell>
-                      </TableRow>
-                    ) : null}
-                  </TableBody>
-                </Table>
-              </section>
-            </CardContent>
-          </Card>
-        </>
+                  ) : null}
+                </TableBody>
+              </Table>
+            </section>
+
+            <section className="grid gap-2">
+              <h3 className="text-sm font-semibold text-slate-950">{t("customerPortalPickingOrders")}</h3>
+              <Table aria-label={t("customerPortalPickingOrders")}>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t("customerPortalPickingOrders")}</TableHead>
+                    <TableHead>{t("orderRef")}</TableHead>
+                    <TableHead>{t("status")}</TableHead>
+                    <TableHead>{t("quantity")}</TableHead>
+                    <TableHead>{t("expectedShipDate")}</TableHead>
+                    {documentActions?.onOpenPickingOrder || documentActions?.onEditPickingOrder ? <TableHead>{t("actions")}</TableHead> : null}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {lifecycle.pickingOrders.map((document) => (
+                    <TableRow key={document.id}>
+                      <TableCell className="font-semibold text-slate-950">{document.packingListNo || `#${document.id}`}</TableCell>
+                      <TableCell>{document.orderRef || "-"}</TableCell>
+                      <TableCell><Badge variant="secondary">{t(document.status.toLowerCase())}</Badge></TableCell>
+                      <TableCell>{getOutboundContainerQuantity(document, containerNo)}</TableCell>
+                      <TableCell>{formatNullableDate(document.expectedShipDate)}</TableCell>
+                      {documentActions?.onOpenPickingOrder || documentActions?.onEditPickingOrder ? (
+                        <TableCell>
+                          <div className="flex flex-wrap gap-2">
+                            {documentActions.onOpenPickingOrder ? <Button type="button" variant="outline" size="sm" onClick={() => documentActions.onOpenPickingOrder?.(document)}>{t("view")}</Button> : null}
+                            {documentActions.onEditPickingOrder ? <Button type="button" size="sm" onClick={() => documentActions.onEditPickingOrder?.(document)}>{t("edit")}</Button> : null}
+                          </div>
+                        </TableCell>
+                      ) : null}
+                    </TableRow>
+                  ))}
+                  {lifecycle.pickingOrders.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={documentActions?.onOpenPickingOrder || documentActions?.onEditPickingOrder ? 6 : 5} className="py-8 text-center text-slate-500">{t("noPickingOrders")}</TableCell>
+                    </TableRow>
+                  ) : null}
+                </TableBody>
+              </Table>
+            </section>
+          </CardContent>
+        </Card>
       ) : null}
     </div>
   );
@@ -360,24 +349,32 @@ function PanelHeader({
   description,
   icon,
   actions,
-  errorMessage
+  errorMessage,
+  hideText = false
 }: {
   title: string;
   description?: string;
   icon?: ReactNode;
   actions?: ReactNode;
   errorMessage?: string;
+  hideText?: boolean;
 }) {
   return (
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-      <div>
-        <h2 className="flex items-center gap-2 text-xl font-semibold tracking-tight text-slate-950">
-          {icon ? <span className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-slate-100 text-slate-700">{icon}</span> : null}
-          <span>{title}</span>
-        </h2>
-        {description ? <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">{description}</p> : null}
+    <div className={`flex flex-col gap-3 sm:flex-row sm:items-start ${hideText ? "sm:justify-end" : "sm:justify-between"}`}>
+      {!hideText || errorMessage ? (
+        <div>
+          {!hideText ? (
+            <>
+              <h2 className="flex items-center gap-2 text-xl font-semibold tracking-tight text-slate-950">
+                {icon ? <span className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-slate-100 text-slate-700">{icon}</span> : null}
+                <span>{title}</span>
+              </h2>
+              {description ? <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">{description}</p> : null}
+            </>
+          ) : null}
         {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
       </div>
+      ) : null}
       {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
     </div>
   );
@@ -419,18 +416,9 @@ function asArray<T>(value: T[] | null | undefined): T[] {
   return Array.isArray(value) ? value : [];
 }
 
-function LifecycleMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <article className="rounded-lg border border-slate-200 bg-white p-3">
-      <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</div>
-      <div className="mt-1 text-xl font-semibold tracking-tight text-slate-950">{value}</div>
-    </article>
-  );
-}
-
-function buildLifecycleFlow(
+export function buildLifecycleFlow(
   lifecycle: CustomerPortalContainerLifecycle,
-  t: (key: string) => string,
+  t: (key: string, params?: Record<string, string | number>) => string,
   interactive: boolean,
   selectedNodeId: string | null,
   visibilityMode: LifecycleVisibilityMode
@@ -438,6 +426,11 @@ function buildLifecycleFlow(
   const MAIN_Y = 160;
   const MAIN_GAP = 290;
   const BRANCH_Y = 390;
+  const OUTBOUND_ROW_GAP = 150;
+  const DOCUMENT_BRANCH_GAP = 175;
+  const DOCUMENT_NODE_X_GAP = 270;
+  const DOCUMENT_NODE_ROW_GAP = 150;
+  const DOCUMENT_NODE_COLUMNS = 3;
   const nodes: LifecycleNode[] = [];
   const edges: Edge[] = [];
   const nodePositions: Record<string, { x: number; y: number }> = {};
@@ -445,6 +438,7 @@ function buildLifecycleFlow(
   const pickupAssignments = filterLifecycleDisplayEvents(lifecycle.pickupAssignments ?? [], visibilityMode);
   const reworkEvents = filterLifecycleDisplayEvents(lifecycle.reworkEvents ?? [], visibilityMode);
   const deliveryEvents = filterLifecycleDisplayEvents(lifecycle.deliveryEvents ?? [], visibilityMode);
+  const reworkPalletIds = collectReworkPalletIds(reworkEvents);
   let edgeSequence = 0;
   const addNode = (
     id: string,
@@ -452,55 +446,71 @@ function buildLifecycleFlow(
     y: number,
     action: ContainerLifecycleNodeAction,
     label: ReactNode,
-    variant: "default" | "success" | "warning" | "done" = "default"
+    variant: LifecycleNodeVariant = "default"
   ) => {
     nodes.push({
       id,
       position: { x, y },
-      sourcePosition: Position.Right,
-      targetPosition: Position.Left,
+      type: "lifecycle",
       data: { label, action },
       style: getFlowNodeStyle(variant, interactive, selectedNodeId === id)
     });
     nodePositions[id] = { x, y };
   };
-  const addEdge = (source: string, target: string, label?: string) => {
+  const addEdge = (source: string, target: string, label?: string, route: LifecycleEdgeRoute = "horizontal") => {
+    const handles = getLifecycleEdgeHandles(route);
     edges.push({
       id: `${source}-${target}-${edgeSequence++}`,
       source,
       target,
+      sourceHandle: handles.sourceHandle,
+      targetHandle: handles.targetHandle,
       label,
-      type: "smoothstep",
+      type: "default",
       markerEnd: { type: MarkerType.ArrowClosed },
       style: { stroke: "#64748b", strokeWidth: 2 },
       labelStyle: { fill: "#475569", fontSize: 11, fontWeight: 600 }
     });
   };
+  const addReworkNode = (id: string, x: number, y: number) => {
+    const reworkSummary = formatPalletReworkSummary(reworkEvents[0], lifecycle.pallets.length, t);
+    addNode(id, x, y, {
+      id,
+      kind: "rework",
+      title: t("containerLifecycleReworkNode"),
+      palletIds: reworkPalletIds
+    }, (
+      <FlowNodeContent
+        icon={<Wrench className="h-4 w-4" />}
+        eyebrow={t("containerLifecycleReworkNode")}
+        title={reworkSummary}
+        lines={[]}
+      />
+    ), "warning");
+  };
 
   const shouldShowContainerNode = interactive || Boolean(lifecycle.container) || trackingEvents.length > 0 || pickupAssignments.length > 0;
   const shouldShowTrackingNode = interactive || trackingEvents.length > 0;
   const shouldShowPickupNode = interactive || pickupAssignments.length > 0;
-  const shouldShowReworkNode = interactive ? lifecycle.pallets.length > 0 : reworkEvents.length > 0;
-  const firstPackingList = lifecycle.packingLists[0];
+  const shouldShowReworkNode = reworkEvents.length > 0;
   const pickingOrderRefs = lifecycle.pickingOrders.length > 0
     ? lifecycle.pickingOrders.map((document) => document.packingListNo || document.orderRef || `#${document.id}`)
     : lifecycle.summary.pickingOrderRefs;
-  const visibleOrderRefs = pickingOrderRefs.length > 0 ? pickingOrderRefs.slice(0, 5) : [t("customerPortalNoPickingOrderNode")];
-  const shouldShowDeliveryNode = deliveryEvents.length > 0 || (interactive && pickingOrderRefs.length > 0);
-  const firstPickingRef = visibleOrderRefs[0];
+  const hasPickingOrders = pickingOrderRefs.length > 0;
+  const visibleOrderRefs = hasPickingOrders ? pickingOrderRefs.slice(0, 5) : [];
   const firstPickingDocument = lifecycle.pickingOrders[0];
-  const latestDelivery = deliveryEvents[0];
   const mainSteps: LifecycleFlowStep[] = [];
+  const selectedAnchorNodeId = getSelectedDocumentAnchorNodeId(selectedNodeId);
 
   if (shouldShowContainerNode) {
     mainSteps.push({
       id: "container",
       action: { id: "container", kind: "container", title: lifecycle.summary.containerNo },
-      variant: lifecycle.summary.status === "PENDING" ? "default" : "success",
+      variant: getContainerStatusNodeVariant(lifecycle.summary.status),
       label: (
       <FlowNodeContent
         icon={<ContainerIcon className="h-4 w-4" />}
-        eyebrow={t("containerLifecycleContainerNode")}
+        eyebrow={`${t("containerLifecycleContainerNode")} / ${formatContainerStatus(lifecycle.summary.status, t)}`}
         title={lifecycle.summary.containerNo}
         lines={[
           lifecycle.summary.customerName,
@@ -562,37 +572,31 @@ function buildLifecycleFlow(
     });
   }
 
-  mainSteps.push({
-    id: "documents",
-    action: {
-      id: "documents",
-      kind: "documents",
-      title: t("customerPortalLifecycleDocuments"),
-      documentId: firstPackingList?.id
-    },
-    label: (
-    <FlowNodeContent
-      icon={<ClipboardList className="h-4 w-4" />}
-      eyebrow={t("customerPortalLifecycleDocuments")}
-      title={t("customerPortalLifecycleDocuments")}
-      lines={[
-        `${lifecycle.summary.packingListCount} ${t("customerPortalPackingLists")}`,
-        `${lifecycle.summary.outboundOrderCount} ${t("customerPortalPickingOrders")}`
-      ]}
-    />
-    )
-  });
-
+  const receivedPalletCount = getInboundPalletCount(lifecycle);
+  const receivedSkuCount = getInboundSkuCount(lifecycle);
+  const receivedQuantity = getInboundReceivedQty(lifecycle);
+  const inboundDiscrepancyKind = getInboundDiscrepancyKind(lifecycle);
+  const receivedAt = formatNullableDate(lifecycle.summary.firstReceivedAt);
+  const inventoryWarehouses = getCurrentInventoryWarehouses(lifecycle);
+  const inventoryWarehouseSummary = formatWarehouseSummary(inventoryWarehouses);
+  const inventoryReferenceQty = getInventoryReferenceQty(lifecycle, receivedQuantity);
+  const transferMovements = getTransferMovements(lifecycle.movements);
+  const transferCount = getTransferCount(lifecycle.summary.transferCount, transferMovements);
+  const transferRouteSummary = formatTransferRouteSummary(transferMovements);
   mainSteps.push({
     id: "received",
-    action: { id: "received", kind: "receiving", title: t("received") },
-    variant: "success",
+    action: { id: "received", kind: "receiving", title: t("containerLifecycleInboundNode") },
+    variant: getInboundDiscrepancyNodeVariant(inboundDiscrepancyKind),
     label: (
-    <FlowNodeContent
+    <InboundFlowNodeContent
       icon={<PackageCheck className="h-4 w-4" />}
-      eyebrow={t("received")}
-      title={`${lifecycle.summary.totalReceivedQty}`}
-      lines={[formatNullableDate(lifecycle.summary.firstReceivedAt)]}
+      eyebrow={t("containerLifecycleInboundNode")}
+      palletCount={receivedPalletCount}
+      skuCount={receivedSkuCount}
+      quantity={receivedQuantity}
+      discrepancyKind={inboundDiscrepancyKind}
+      receivedAt={receivedAt}
+      t={t}
     />
     )
   });
@@ -602,80 +606,13 @@ function buildLifecycleFlow(
     action: { id: "inventory", kind: "inventory", title: t("customerPortalContainerCurrent") },
     variant: lifecycle.summary.currentQty > 0 ? "success" : "default",
     label: (
-    <FlowNodeContent
+    <InventoryFlowNodeContent
       icon={<Boxes className="h-4 w-4" />}
       eyebrow={t("customerPortalContainerCurrent")}
-      title={`${lifecycle.summary.currentQty}`}
-      lines={[
-        `${t("availableQty")} ${lifecycle.summary.availableQty}`,
-        lifecycle.summary.warehouses.join(", ") || "-"
-      ]}
-    />
-    )
-  });
-
-  mainSteps.push({
-    id: "picking-0",
-    action: {
-      id: "picking-0",
-      kind: "picking-order",
-      title: firstPickingRef,
-      outboundDocumentId: firstPickingDocument?.id
-    },
-    variant: pickingOrderRefs.length > 0 ? "warning" : "default",
-    label: (
-      <FlowNodeContent
-        icon={<Send className="h-4 w-4" />}
-        eyebrow={t("customerPortalPickingOrders")}
-        title={firstPickingRef}
-        lines={[`${t("customerPortalContainerShippedQty")} ${lifecycle.summary.shippedQty}`]}
-      />
-    )
-  });
-
-  if (shouldShowDeliveryNode) {
-    mainSteps.push({
-      id: "delivery",
-      action: {
-        id: "delivery",
-        kind: "delivery",
-        title: t("containerLifecycleDeliveryNode"),
-        deliveryEventId: latestDelivery?.id,
-        outboundDocumentId: latestDelivery?.outboundDocumentId
-      },
-      variant: latestDelivery?.bolReceivedAt ? "done" : "warning",
-      label: (
-      <FlowNodeContent
-        icon={<Truck className="h-4 w-4" />}
-        eyebrow={t("containerLifecycleDeliveryNode")}
-        title={getLifecycleDisplayLabel(
-          latestDelivery,
-          visibilityMode,
-          t("containerLifecycleDeliveryNode"),
-          t,
-          latestDelivery?.bolNumber || latestDelivery?.eventType
-        )}
-        lines={[
-          visibilityMode === "admin"
-            ? latestDelivery?.driverName || latestDelivery?.vendorName || latestDelivery?.internalLabel || "-"
-            : latestDelivery?.bolNumber || latestDelivery?.displayLabel || latestDelivery?.publicLabel || "-",
-          formatNullableDate(latestDelivery?.bolReceivedAt || latestDelivery?.eventTime)
-        ]}
-      />
-      )
-    });
-  }
-
-  mainSteps.push({
-    id: "complete",
-    action: { id: "complete", kind: "complete", title: t("containerStatus") },
-    variant: lifecycle.summary.currentQty > 0 ? "success" : "done",
-    label: (
-    <FlowNodeContent
-      icon={<CheckCircle2 className="h-4 w-4" />}
-      eyebrow={t("containerStatus")}
-      title={formatContainerStatus(lifecycle.summary.status, t)}
-      lines={[`${t("lastActivity")} ${formatNullableDate(lifecycle.summary.lastActivityAt)}`]}
+      quantity={lifecycle.summary.currentQty}
+      referenceQuantity={inventoryReferenceQty}
+      warehouseLabel={t("currentStorage")}
+      warehouseSummary={inventoryWarehouseSummary}
     />
     )
   });
@@ -688,111 +625,598 @@ function buildLifecycleFlow(
   });
 
   const inventoryPosition = nodePositions.inventory;
-  const pickingPosition = nodePositions["picking-0"];
-  let rejoinSource = "";
+  const shouldShowAdminTransferNode = Boolean(visibilityMode === "admin" && inventoryPosition && transferCount > 0);
+  const shouldInlineTransferNode = shouldShowAdminTransferNode && visibleOrderRefs.length > 0;
+  const transferNodeX = inventoryPosition ? inventoryPosition.x + MAIN_GAP : MAIN_GAP * mainSteps.length;
+  const outboundX = inventoryPosition ? inventoryPosition.x + MAIN_GAP + (shouldInlineTransferNode ? MAIN_GAP : 0) : MAIN_GAP * mainSteps.length;
+  const deliveryX = outboundX + MAIN_GAP;
+  const shouldShowInlineReworkNode = Boolean(inventoryPosition && shouldShowReworkNode);
+  const reworkTargetPickingIndex = shouldShowInlineReworkNode
+    ? findReworkTargetPickingOrderIndex(lifecycle.pickingOrders, reworkPalletIds, visibleOrderRefs.length)
+    : -1;
+  const transferSourceNodeId = shouldInlineTransferNode ? "transfer" : "inventory";
 
-  if (inventoryPosition && lifecycle.summary.transferCount > 0) {
-    addNode("transfers", inventoryPosition.x, BRANCH_Y, { id: "transfers", kind: "transfer", title: t("customerPortalContainerTransfers") }, (
+  if (shouldShowAdminTransferNode) {
+    addNode("transfer", shouldInlineTransferNode ? transferNodeX : inventoryPosition.x, shouldInlineTransferNode ? MAIN_Y : BRANCH_Y, { id: "transfer", kind: "transfer", title: t("containerLifecycleTransferNode") }, (
       <FlowNodeContent
         icon={<GitBranch className="h-4 w-4" />}
-        eyebrow={t("customerPortalContainerTransfers")}
-        title={`${lifecycle.summary.transferCount}`}
-        lines={[t("customerPortalTransferLifecycleNode")]}
+        eyebrow={`${t("containerLifecycleTransferNode")} / ${formatNumber(transferCount)} ${t("customerPortalMoved")}`}
+        title={transferRouteSummary || t("customerPortalTransferLifecycleNode")}
       />
     ), "warning");
-    addEdge("inventory", "transfers", t("customerPortalMoved"));
-    rejoinSource = "transfers";
+    addEdge("inventory", "transfer", t("customerPortalMoved"), shouldInlineTransferNode ? "horizontal" : "vertical-down");
   }
 
-  if (inventoryPosition && pickingPosition && shouldShowReworkNode) {
-    const reworkX = rejoinSource ? pickingPosition.x : Math.round((inventoryPosition.x + pickingPosition.x) / 2);
-    const palletIds = reworkEvents.flatMap((event) => event.pallets.map((pallet) => pallet.palletId));
-    addNode("rework", reworkX, BRANCH_Y, {
-      id: "rework",
-      kind: "rework",
-      title: t("containerLifecycleReworkNode"),
-      palletIds
-    }, (
-      <FlowNodeContent
-        icon={<Wrench className="h-4 w-4" />}
-        eyebrow={t("containerLifecycleReworkNode")}
-        title={`${reworkEvents.length || lifecycle.pallets.length}`}
-        lines={[
-          getLifecycleDisplayLabel(
-            reworkEvents[0],
-            visibilityMode,
-            t("containerLifecycleReworkNode"),
-            t,
-            reworkEvents[0]?.referenceNo || reworkEvents[0]?.eventType
-          )
-        ]}
-      />
-    ), "warning");
-    addEdge(rejoinSource || "inventory", "rework", t("containerLifecycleReworked"));
-    rejoinSource = "rework";
-  }
-
-  if (rejoinSource) {
-    addEdge(rejoinSource, "picking-0");
-  }
-
-  const branchTarget = shouldShowDeliveryNode ? "delivery" : "complete";
-  visibleOrderRefs.slice(1).forEach((ref, branchIndex) => {
-    const document = lifecycle.pickingOrders[branchIndex + 1];
-    const nodeID = `picking-${branchIndex + 1}`;
-    const branchY = MAIN_Y - 170 - branchIndex * 125;
-    addNode(nodeID, pickingPosition?.x ?? MAIN_GAP * 4, branchY, {
+  visibleOrderRefs.forEach((ref, documentIndex) => {
+    const document = lifecycle.pickingOrders[documentIndex];
+    const delivery = getDeliveryEventForOutbound(document, documentIndex, deliveryEvents);
+    const nodeID = `picking-${documentIndex}`;
+    const deliveryNodeID = `delivery-${documentIndex}`;
+    const rowY = getCenteredStackY(documentIndex, visibleOrderRefs.length, MAIN_Y, OUTBOUND_ROW_GAP);
+    const reworkNodeID = `rework-${documentIndex}`;
+    const isReworkTarget = shouldShowInlineReworkNode && documentIndex === reworkTargetPickingIndex;
+    const nodeTitle = formatOutboundNodeTitle(document, ref, lifecycle.summary.containerNo);
+    if (isReworkTarget) {
+      const reworkSourcePosition = nodePositions[transferSourceNodeId] ?? inventoryPosition!;
+      addReworkNode(reworkNodeID, Math.round((reworkSourcePosition.x + outboundX) / 2), rowY);
+    }
+    addNode(nodeID, outboundX, rowY, {
       id: nodeID,
       kind: "picking-order",
-      title: ref,
+      title: nodeTitle,
       outboundDocumentId: document?.id
     }, (
+        <FlowNodeContent
+          icon={<Send className="h-4 w-4" />}
+          eyebrow={t("customerPortalPickingOrders")}
+          title={nodeTitle}
+          lines={[]}
+        />
+    ), "warning");
+    addNode(deliveryNodeID, deliveryX, rowY, {
+      id: deliveryNodeID,
+      kind: "delivery",
+      title: formatDeliveryNodeTitle(delivery, visibilityMode, t),
+      deliveryEventId: delivery?.id,
+      outboundDocumentId: document?.id ?? delivery?.outboundDocumentId
+    }, (
       <FlowNodeContent
-        icon={<Send className="h-4 w-4" />}
-        eyebrow={t("customerPortalPickingOrders")}
-        title={ref}
+        icon={<Truck className="h-4 w-4" />}
+        eyebrow={t("containerLifecycleDeliveryNode")}
+        title={formatDeliveryNodeTitle(delivery, visibilityMode, t)}
         lines={[]}
       />
-    ), "warning");
-    addEdge("inventory", nodeID);
-    addEdge(nodeID, branchTarget);
+    ), delivery?.bolReceivedAt ? "done" : "warning");
+    if (isReworkTarget) {
+      addEdge(transferSourceNodeId, reworkNodeID, t("containerLifecycleReworked"));
+      addEdge(reworkNodeID, nodeID);
+    } else {
+      addEdge(transferSourceNodeId, nodeID);
+    }
+    addEdge(nodeID, deliveryNodeID);
   });
 
+  if (shouldShowInlineReworkNode && visibleOrderRefs.length === 0) {
+    const reworkNodeID = "rework-0";
+    addReworkNode(reworkNodeID, outboundX, MAIN_Y);
+    addEdge("inventory", reworkNodeID, t("containerLifecycleReworked"));
+  }
+
+  if (lifecycle.packingLists.length > 0 && nodePositions.received) {
+    const anchorPosition = nodePositions.received;
+    lifecycle.packingLists.forEach((document, index) => {
+      const documentNode = buildPackingListDocumentNodeAction(document, t);
+      const rowIndex = Math.floor(index / DOCUMENT_NODE_COLUMNS);
+      const columnIndex = index % DOCUMENT_NODE_COLUMNS;
+      const columnsInRow = Math.min(DOCUMENT_NODE_COLUMNS, lifecycle.packingLists.length - rowIndex * DOCUMENT_NODE_COLUMNS);
+      const documentNodeId = `documents-received-${document.id}`;
+      const x = anchorPosition.x + (columnIndex - (columnsInRow - 1) / 2) * DOCUMENT_NODE_X_GAP;
+      const y = anchorPosition.y + DOCUMENT_BRANCH_GAP + rowIndex * DOCUMENT_NODE_ROW_GAP;
+      addNode(documentNodeId, x, y, {
+        ...documentNode.action,
+        id: documentNodeId,
+        attachedToNodeId: "received"
+      }, documentNode.label, "default");
+      addEdge("received", documentNodeId, index === 0 ? t("customerPortalPackingListSource") : undefined, "vertical-down");
+    });
+  }
+
+  if (interactive && selectedAnchorNodeId && selectedAnchorNodeId !== "received" && nodePositions[selectedAnchorNodeId]) {
+    const documentNode = buildAttachedDocumentNodeAction(
+      selectedAnchorNodeId,
+      lifecycle,
+      firstPickingDocument,
+      t
+    );
+    if (documentNode) {
+      const anchorPosition = nodePositions[selectedAnchorNodeId];
+      const documentNodeId = `documents-${selectedAnchorNodeId}`;
+      addNode(documentNodeId, anchorPosition.x, anchorPosition.y + DOCUMENT_BRANCH_GAP, {
+        ...documentNode.action,
+        id: documentNodeId,
+        attachedToNodeId: selectedAnchorNodeId
+      }, documentNode.label, "default");
+      addEdge(selectedAnchorNodeId, documentNodeId, t("customerPortalLifecycleDocuments"), "vertical-down");
+    }
+  }
+
   return { nodes, edges };
+}
+
+function LifecycleFlowNode({ data }: NodeProps<LifecycleNode>) {
+  return (
+    <div className="relative h-full w-full">
+      <Handle type="source" id="top-source" position={Position.Top} isConnectable={false} style={HANDLE_STYLE} />
+      <Handle type="target" id="top-target" position={Position.Top} isConnectable={false} style={HIDDEN_TARGET_HANDLE_STYLE} />
+      <Handle type="source" id="right-source" position={Position.Right} isConnectable={false} style={HANDLE_STYLE} />
+      <Handle type="target" id="right-target" position={Position.Right} isConnectable={false} style={HIDDEN_TARGET_HANDLE_STYLE} />
+      <Handle type="source" id="bottom-source" position={Position.Bottom} isConnectable={false} style={HANDLE_STYLE} />
+      <Handle type="target" id="bottom-target" position={Position.Bottom} isConnectable={false} style={HIDDEN_TARGET_HANDLE_STYLE} />
+      <Handle type="source" id="left-source" position={Position.Left} isConnectable={false} style={HANDLE_STYLE} />
+      <Handle type="target" id="left-target" position={Position.Left} isConnectable={false} style={HIDDEN_TARGET_HANDLE_STYLE} />
+      <div className="h-full w-full p-3.5">{data.label}</div>
+    </div>
+  );
+}
+
+function getLifecycleEdgeHandles(route: LifecycleEdgeRoute) {
+  switch (route) {
+    case "vertical-down":
+      return { sourceHandle: "bottom-source", targetHandle: "top-target" };
+    case "vertical-up":
+      return { sourceHandle: "top-source", targetHandle: "bottom-target" };
+    default:
+      return { sourceHandle: "right-source", targetHandle: "left-target" };
+  }
+}
+
+function getCenteredStackY(index: number, total: number, centerY: number, rowGap: number) {
+  return centerY + (index - (total - 1) / 2) * rowGap;
+}
+
+function getSelectedDocumentAnchorNodeId(selectedNodeId: string | null) {
+  if (!selectedNodeId) {
+    return "";
+  }
+  if (selectedNodeId.startsWith("documents-received")) {
+    return "received";
+  }
+  return selectedNodeId.startsWith("documents-")
+    ? selectedNodeId.slice("documents-".length)
+    : selectedNodeId;
+}
+
+function collectReworkPalletIds(reworkEvents: NonNullable<CustomerPortalContainerLifecycle["reworkEvents"]>) {
+  return Array.from(
+    new Set(
+      reworkEvents.flatMap((event) => (event.pallets ?? []).map((pallet) => pallet.palletId))
+    )
+  );
+}
+
+function findReworkTargetPickingOrderIndex(
+  outboundDocuments: OutboundDocument[],
+  reworkPalletIds: number[],
+  visibleOutboundCount: number
+) {
+  if (visibleOutboundCount === 0) {
+    return -1;
+  }
+  if (outboundDocuments.length === 0 || reworkPalletIds.length === 0) {
+    return 0;
+  }
+  const reworkPalletIdSet = new Set(reworkPalletIds);
+  const matchedIndex = outboundDocuments.findIndex((document) =>
+    (document.lines ?? []).some((line) =>
+      (line.pickPallets ?? []).some((pick) => reworkPalletIdSet.has(pick.palletId))
+    )
+  );
+  return matchedIndex >= 0 && matchedIndex < visibleOutboundCount ? matchedIndex : 0;
+}
+
+function formatPalletReworkSummary(
+  event: NonNullable<CustomerPortalContainerLifecycle["reworkEvents"]>[number] | undefined,
+  fallbackPalletCount: number,
+  t: (key: string, params?: Record<string, string | number>) => string
+) {
+  const pallets = event?.pallets ?? [];
+  const sourceCount = countUniqueReworkPalletsByRole(pallets, "SOURCE");
+  const targetCount = countUniqueReworkPalletsByRole(pallets, "TARGET");
+  const relatedCount = countUniqueReworkPalletsByRole(pallets, "RELATED");
+  const fromCount = sourceCount || relatedCount || targetCount || fallbackPalletCount || 0;
+  const toCount = targetCount || relatedCount || fromCount;
+  return t("containerLifecycleReworkPalletSummary", {
+    from: formatPalletCount(fromCount, t),
+    to: formatPalletCount(toCount, t)
+  });
+}
+
+function countUniqueReworkPalletsByRole(
+  pallets: NonNullable<CustomerPortalContainerLifecycle["reworkEvents"]>[number]["pallets"],
+  role: string
+) {
+  return new Set(pallets.filter((pallet) => pallet.role === role).map((pallet) => pallet.palletId)).size;
+}
+
+function formatPalletCount(count: number, t: (key: string) => string) {
+  return `${count} ${count === 1 ? t("palletUnit") : t("palletUnits")}`;
+}
+
+function getCurrentInventoryWarehouses(lifecycle: CustomerPortalContainerLifecycle) {
+  if ((lifecycle.summary.currentQty ?? 0) <= 0) {
+    return [];
+  }
+  const names = new Set<string>();
+  (lifecycle.summary.warehouses ?? []).forEach((warehouse) => addNonEmptyText(names, warehouse));
+  (lifecycle.pallets ?? []).forEach((pallet) => addNonEmptyText(names, pallet.currentLocationName));
+  addNonEmptyText(names, lifecycle.container?.locationName);
+  return Array.from(names);
+}
+
+function formatWarehouseSummary(warehouses: string[]) {
+  if (warehouses.length === 0) {
+    return "-";
+  }
+  const visibleWarehouses = warehouses.slice(0, 2);
+  const remainingCount = warehouses.length - visibleWarehouses.length;
+  return remainingCount > 0 ? `${visibleWarehouses.join(", ")} +${remainingCount}` : visibleWarehouses.join(", ");
+}
+
+function getInventoryReferenceQty(lifecycle: CustomerPortalContainerLifecycle, receivedQuantity: number) {
+  return receivedQuantity || lifecycle.summary.totalReceivedQty || lifecycle.summary.currentQty || 0;
+}
+
+function getTransferMovements(movements: Movement[]) {
+  return movements.filter((movement) => movement.movementType === "TRANSFER_IN" || movement.movementType === "TRANSFER_OUT");
+}
+
+function getTransferCount(summaryTransferCount: number, transferMovements: Movement[]) {
+  if (summaryTransferCount > 0) {
+    return summaryTransferCount;
+  }
+  if (transferMovements.length === 0) {
+    return 0;
+  }
+  return new Set(transferMovements.map(getTransferMovementGroupKey)).size;
+}
+
+function formatTransferRouteSummary(transferMovements: Movement[]) {
+  const routeGroups = new Map<string, { from?: string; to?: string; fallback?: string }>();
+  transferMovements.forEach((movement) => {
+    const key = getTransferMovementGroupKey(movement);
+    const route = routeGroups.get(key) ?? {};
+    const location = formatMovementLocation(movement);
+    if (movement.movementType === "TRANSFER_OUT") {
+      route.from = route.from || location;
+    } else if (movement.movementType === "TRANSFER_IN") {
+      route.to = route.to || location;
+    }
+    route.fallback = route.fallback || location;
+    routeGroups.set(key, route);
+  });
+
+  const routes = Array.from(routeGroups.values())
+    .map((route) => {
+      if (route.from && route.to) {
+        return `${route.from} -> ${route.to}`;
+      }
+      return route.to || route.from || route.fallback || "";
+    })
+    .filter(Boolean);
+  const uniqueRoutes = Array.from(new Set(routes));
+  const visibleRoutes = uniqueRoutes.slice(0, 2);
+  const remainingCount = uniqueRoutes.length - visibleRoutes.length;
+  return remainingCount > 0 ? `${visibleRoutes.join(", ")} +${remainingCount}` : visibleRoutes.join(", ");
+}
+
+function getTransferMovementGroupKey(movement: Movement) {
+  if ((movement.sourceDocumentId || 0) > 0) {
+    return `${movement.sourceDocumentType || "TRANSFER"}-${movement.sourceDocumentId}`;
+  }
+  if (movement.referenceCode) {
+    return movement.referenceCode;
+  }
+  return String(movement.id);
+}
+
+function formatMovementLocation(movement: Pick<Movement, "locationName" | "storageSection">) {
+  return [movement.locationName, movement.storageSection].filter(Boolean).join(" / ") || "-";
+}
+
+function addNonEmptyText(values: Set<string>, value: string | null | undefined) {
+  const trimmed = String(value || "").trim();
+  if (trimmed) {
+    values.add(trimmed);
+  }
+}
+
+function getContainerStatusNodeVariant(status: string): "default" | "success" | "warning" | "done" {
+  switch (status) {
+    case "IN_STOCK":
+      return "success";
+    case "PARTIAL":
+      return "warning";
+    case "SHIPPED":
+    case "DEPLETED":
+      return "done";
+    case "PENDING":
+    default:
+      return "default";
+  }
+}
+
+function formatOutboundNodeTitle(
+  document: OutboundDocument | undefined,
+  fallbackRef: string,
+  containerNo: string
+) {
+  if (!document) {
+    return fallbackRef;
+  }
+  const reference = document.packingListNo || document.orderRef || fallbackRef || `#${document.id}`;
+  const goodsSummary = formatOutboundContainerGoodsSummary(document, containerNo);
+  return goodsSummary ? `${reference}: ${goodsSummary}` : reference;
+}
+
+function getDeliveryEventForOutbound(
+  document: OutboundDocument | undefined,
+  documentIndex: number,
+  deliveryEvents: NonNullable<CustomerPortalContainerLifecycle["deliveryEvents"]>
+) {
+  if (document?.id) {
+    return deliveryEvents.find((event) => event.outboundDocumentId === document.id);
+  }
+  return deliveryEvents[documentIndex];
+}
+
+function formatDeliveryNodeTitle(
+  event: NonNullable<CustomerPortalContainerLifecycle["deliveryEvents"]>[number] | undefined,
+  visibilityMode: LifecycleVisibilityMode,
+  t: (key: string) => string
+) {
+  return getLifecycleDisplayLabel(
+    event,
+    visibilityMode,
+    t("containerLifecycleDeliveryNode"),
+    t,
+    event?.bolNumber || event?.eventType
+  );
+}
+
+function formatOutboundContainerGoodsSummary(document: OutboundDocument, containerNo: string) {
+  const rows = getOutboundContainerGoodsRows(document, containerNo);
+  if (rows.length === 0) {
+    return "";
+  }
+  const visibleRows = rows.slice(0, 2).map((row) => `${row.sku} ${formatNumber(row.quantity)}`);
+  const remainingCount = rows.length - visibleRows.length;
+  return remainingCount > 0 ? `${visibleRows.join(", ")} +${remainingCount}` : visibleRows.join(", ");
+}
+
+function getOutboundContainerGoodsRows(document: OutboundDocument, containerNo: string) {
+  const normalizedContainerNo = normalizeContainerNo(containerNo);
+  const rows = new Map<string, number>();
+  let hasAnyPickAllocation = false;
+
+  (document.lines ?? []).forEach((line) => {
+    const sku = line.sku || line.itemNumber || "-";
+    (line.pickAllocations ?? []).forEach((allocation) => {
+      hasAnyPickAllocation = true;
+      if (normalizeContainerNo(allocation.containerNo) !== normalizedContainerNo) {
+        return;
+      }
+      rows.set(sku, (rows.get(sku) ?? 0) + (allocation.allocatedQty || 0));
+    });
+  });
+
+  if (rows.size === 0 && !hasAnyPickAllocation) {
+    (document.lines ?? []).forEach((line) => {
+      const sku = line.sku || line.itemNumber || "-";
+      rows.set(sku, (rows.get(sku) ?? 0) + (line.quantity || 0));
+    });
+  }
+
+  return Array.from(rows.entries())
+    .filter(([, quantity]) => quantity > 0)
+    .map(([sku, quantity]) => ({ sku, quantity }))
+    .sort((left, right) => left.sku.localeCompare(right.sku));
+}
+
+function buildAttachedDocumentNodeAction(
+  anchorNodeId: string,
+  lifecycle: CustomerPortalContainerLifecycle,
+  firstPickingDocument: OutboundDocument | undefined,
+  t: (key: string) => string
+): { action: ContainerLifecycleNodeAction; label: ReactNode } | null {
+  const outboundDocument = resolveOutboundDocumentForAnchor(anchorNodeId, lifecycle, firstPickingDocument);
+  if (outboundDocument) {
+    const attachmentCount = outboundDocument.attachments?.length ?? 0;
+    return {
+      action: {
+        id: "",
+        kind: "documents",
+        title: t("customerPortalLifecycleDocuments"),
+        outboundDocumentId: outboundDocument.id
+      },
+      label: (
+        <FlowNodeContent
+          icon={<ClipboardList className="h-4 w-4" />}
+          eyebrow={t("customerPortalLifecycleDocuments")}
+          title={outboundDocument.packingListNo || outboundDocument.orderRef || `#${outboundDocument.id}`}
+          lines={[
+            t("customerPortalPickingOrders"),
+            `${attachmentCount} ${t("files")}`
+          ]}
+        />
+      )
+    };
+  }
+
+  return null;
+}
+
+function buildPackingListDocumentNodeAction(
+  document: InboundDocument,
+  t: (key: string) => string
+): { action: ContainerLifecycleNodeAction; label: ReactNode } {
+  const attachmentCount = document.attachments?.length ?? 0;
+  return {
+    action: {
+      id: "",
+      kind: "documents",
+      title: t("customerPortalLifecycleDocuments"),
+      documentId: document.id
+    },
+    label: (
+      <FlowNodeContent
+        icon={<ClipboardList className="h-4 w-4" />}
+        eyebrow={t("customerPortalLifecycleDocuments")}
+        title={t("customerPortalPackingListSource")}
+        lines={[
+          document.containerNo || `#${document.id}`,
+          `${attachmentCount} ${t("files")}`
+        ]}
+      />
+    )
+  };
+}
+
+function resolveOutboundDocumentForAnchor(
+  anchorNodeId: string,
+  lifecycle: CustomerPortalContainerLifecycle,
+  firstPickingDocument: OutboundDocument | undefined
+) {
+  if (anchorNodeId.startsWith("picking-")) {
+    const index = Number(anchorNodeId.replace("picking-", ""));
+    return Number.isFinite(index) ? lifecycle.pickingOrders[index] : firstPickingDocument;
+  }
+  if (anchorNodeId.startsWith("delivery-")) {
+    const index = Number(anchorNodeId.replace("delivery-", ""));
+    return Number.isFinite(index) ? lifecycle.pickingOrders[index] : firstPickingDocument;
+  }
+  return null;
 }
 
 function FlowNodeContent({
   icon,
   eyebrow,
-  title,
-  lines
+  title
 }: {
   icon: ReactNode;
   eyebrow: string;
   title: string;
-  lines: string[];
+  lines?: string[];
 }) {
-  const visibleLines = lines.filter(Boolean).slice(0, 2);
   return (
-    <div className="grid h-full min-w-0 content-start gap-2 overflow-hidden">
+    <div className="grid h-full min-w-0 content-center gap-3 overflow-hidden">
       <div className="flex min-w-0 items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
         <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-700">{icon}</span>
         <span className="min-w-0 truncate">{eyebrow}</span>
       </div>
-      <div className="line-clamp-2 min-h-10 text-base font-semibold leading-5 text-slate-950" title={title}>{title}</div>
-      {visibleLines.length > 0 ? (
-        <div className="grid min-w-0 gap-0.5 text-xs leading-5 text-slate-500">
-          {visibleLines.map((line, index) => <span key={`${line}-${index}`} className="truncate" title={line}>{line}</span>)}
-        </div>
-      ) : null}
+      <div className="line-clamp-2 text-base font-semibold leading-5 text-slate-950" title={title}>{title}</div>
     </div>
   );
 }
 
-function getFlowNodeStyle(variant: "default" | "success" | "warning" | "done", interactive: boolean, selected: boolean) {
+function InventoryFlowNodeContent({
+  icon,
+  eyebrow,
+  quantity,
+  referenceQuantity,
+  warehouseLabel,
+  warehouseSummary
+}: {
+  icon: ReactNode;
+  eyebrow: string;
+  quantity: number;
+  referenceQuantity: number;
+  warehouseLabel: string;
+  warehouseSummary: string;
+}) {
+  return (
+    <div className="grid h-full min-w-0 grid-rows-[auto_1fr_auto] gap-2 overflow-hidden">
+      <div className="flex min-w-0 items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+        <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-emerald-100 text-emerald-700">{icon}</span>
+        <span className="min-w-0 truncate">{eyebrow}</span>
+      </div>
+      <div className="flex min-w-0 items-center rounded-md bg-white/70 px-2 py-1.5">
+        <span className="truncate text-xl font-bold tabular-nums text-slate-950">
+          {formatNumber(quantity)} / {formatNumber(referenceQuantity)}
+        </span>
+      </div>
+      <div className="truncate text-[11px] font-medium leading-3 text-slate-600" title={`${warehouseLabel}: ${warehouseSummary}`}>
+        {warehouseLabel}: {warehouseSummary}
+      </div>
+    </div>
+  );
+}
+
+function InboundFlowNodeContent({
+  icon,
+  eyebrow,
+  palletCount,
+  skuCount,
+  quantity,
+  discrepancyKind,
+  receivedAt,
+  t
+}: {
+  icon: ReactNode;
+  eyebrow: string;
+  palletCount: number;
+  skuCount: number;
+  quantity: number;
+  discrepancyKind: InboundDiscrepancyKind;
+  receivedAt: string;
+  t: (key: string) => string;
+}) {
+  return (
+    <div className="grid h-full min-w-0 grid-rows-[auto_1fr_auto] gap-2 overflow-hidden">
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+          <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-emerald-100 text-emerald-700">{icon}</span>
+          <span className="min-w-0 truncate">{eyebrow}</span>
+        </div>
+        <Badge variant={getInboundDiscrepancyBadgeVariant(discrepancyKind)} className="shrink-0 px-2 py-0 text-[10px] leading-4">
+          {discrepancyKind === "none" ? t("inboundNoDiscrepancyStatus") : t("inboundHasDiscrepancyStatus")}
+        </Badge>
+      </div>
+      <div className="grid min-w-0 content-center gap-1 rounded-md bg-white/70 px-2 py-1 text-[10px] leading-3">
+        <InboundMetric label={t("skuCount")} value={formatNumber(skuCount)} />
+        <div className="grid min-w-0 grid-cols-2 gap-2">
+          <InboundCompactMetric label={t("pallets")} value={formatNumber(palletCount)} />
+          <InboundCompactMetric label={t("received")} value={formatNumber(quantity)} />
+        </div>
+      </div>
+      <div className="truncate text-[11px] font-medium leading-3 text-slate-600" title={receivedAt}>
+        {t("containerReceivedAt")}: {receivedAt}
+      </div>
+    </div>
+  );
+}
+
+function InboundMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-1.5">
+      <span className="min-w-0 truncate font-semibold uppercase text-emerald-700" title={label}>{label}</span>
+      <span className="shrink-0 font-bold tabular-nums text-slate-950">{value}</span>
+    </div>
+  );
+}
+
+function InboundCompactMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-1">
+      <span className="min-w-0 truncate font-semibold uppercase text-slate-500" title={label}>{label}</span>
+      <span className="shrink-0 font-bold tabular-nums text-slate-950">{value}</span>
+    </div>
+  );
+}
+
+function getFlowNodeStyle(variant: LifecycleNodeVariant, interactive: boolean, selected: boolean) {
   const shared = {
     borderRadius: 12,
-    padding: 14,
+    padding: 0,
     width: 230,
     height: 132,
     boxSizing: "border-box" as const,
@@ -806,185 +1230,13 @@ function getFlowNodeStyle(variant: "default" | "success" | "warning" | "done", i
       return { ...shared, background: "#f0fdf4", border: selected ? shared.border : "1px solid #bbf7d0" };
     case "warning":
       return { ...shared, background: "#fffbeb", border: selected ? shared.border : "1px solid #fde68a" };
+    case "danger":
+      return { ...shared, background: "#fef2f2", border: selected ? shared.border : "1px solid #fecaca" };
     case "done":
       return { ...shared, background: "#f8fafc", border: selected ? shared.border : "1px solid #cbd5e1" };
     default:
       return { ...shared, background: "#ffffff" };
   }
-}
-
-function buildTimelineEntries(lifecycle: CustomerPortalContainerLifecycle, visibilityMode: LifecycleVisibilityMode): TimelineEntry[] {
-  const trackingEvents = filterLifecycleDisplayEvents(lifecycle.trackingEvents ?? [], visibilityMode);
-  const pickupAssignments = filterLifecycleDisplayEvents(lifecycle.pickupAssignments ?? [], visibilityMode);
-  const reworkEvents = filterLifecycleDisplayEvents(lifecycle.reworkEvents ?? [], visibilityMode);
-  const deliveryEvents = filterLifecycleDisplayEvents(lifecycle.deliveryEvents ?? [], visibilityMode);
-  return [
-    ...lifecycle.movements.map((movement) => ({
-      id: `movement-${movement.id}`,
-      kind: "movement" as const,
-      timestamp: getMovementTimestamp(movement),
-      movement
-    })),
-    ...lifecycle.palletEvents.map((event) => ({
-      id: `pallet-event-${event.id}`,
-      kind: "pallet-event" as const,
-      timestamp: getTimestamp(event.eventTime),
-      event
-    })),
-    ...trackingEvents.map((event) => ({
-      id: `tracking-event-${event.id}`,
-      kind: "tracking-event" as const,
-      timestamp: getTimestamp(event.eventTime),
-      event
-    })),
-    ...pickupAssignments.map((event) => ({
-      id: `pickup-assignment-${event.id}`,
-      kind: "pickup-assignment" as const,
-      timestamp: getTimestamp(event.actualPickupAt || event.scheduledPickupAt || event.createdAt),
-      event
-    })),
-    ...reworkEvents.map((event) => ({
-      id: `rework-event-${event.id}`,
-      kind: "rework-event" as const,
-      timestamp: getTimestamp(event.eventTime),
-      event
-    })),
-    ...deliveryEvents.map((event) => ({
-      id: `delivery-event-${event.id}`,
-      kind: "delivery-event" as const,
-      timestamp: getTimestamp(event.bolReceivedAt || event.eventTime),
-      event
-    }))
-  ].sort((left, right) => right.timestamp - left.timestamp);
-}
-
-function TimelineEntryCard({
-  entry,
-  visibilityMode,
-  resolvedTimeZone,
-  t
-}: {
-  entry: TimelineEntry;
-  visibilityMode: LifecycleVisibilityMode;
-  resolvedTimeZone: string;
-  t: (key: string) => string;
-}) {
-  if (entry.kind === "pallet-event") {
-    const event = entry.event;
-    return (
-      <article className="rounded-lg border border-slate-200 bg-white p-3">
-        <TimelineCardHeader
-          badge={<Badge variant="secondary">{formatPalletEventType(event.eventType, t)}</Badge>}
-          title={event.palletCode}
-          description={`${event.locationName} / ${event.storageSection || "-"} - ${event.quantityDelta >= 0 ? `+${event.quantityDelta}` : event.quantityDelta} ${t("quantity")}`}
-          time={formatDateTimeValue(event.eventTime, resolvedTimeZone)}
-        />
-      </article>
-    );
-  }
-
-  if (entry.kind === "tracking-event") {
-    const event = entry.event;
-    return (
-      <article className="rounded-lg border border-slate-200 bg-white p-3">
-        <TimelineCardHeader
-          badge={<Badge variant="info">{getLifecycleDisplayStatus(event, visibilityMode, t("containerLifecycleTrackingNode"), t, event.eventType)}</Badge>}
-          title={getLifecycleDisplayLabel(event, visibilityMode, event.location || t("containerLifecycleTrackingNode"), t, event.location || event.eventType)}
-          description={visibilityMode === "admin" ? event.notes || event.customerName || "-" : event.displayLabel || event.publicLabel || event.location || "-"}
-          time={formatDateTimeValue(event.eventTime, resolvedTimeZone)}
-        />
-      </article>
-    );
-  }
-
-  if (entry.kind === "pickup-assignment") {
-    const event = entry.event;
-    return (
-      <article className="rounded-lg border border-slate-200 bg-white p-3">
-        <TimelineCardHeader
-          badge={<Badge variant="warning">{getLifecycleDisplayStatus(event, visibilityMode, t("containerLifecyclePickupNode"), t, event.assignmentType || event.status)}</Badge>}
-          title={getLifecycleDisplayLabel(event, visibilityMode, t("containerLifecyclePickupNode"), t, event.driverName || event.vendorName || event.status)}
-          description={visibilityMode === "admin" ? [event.phone, event.notes].filter(Boolean).join(" / ") || "-" : event.displayLabel || event.publicLabel || "-"}
-          time={formatDateTimeValue(event.actualPickupAt || event.scheduledPickupAt || event.createdAt, resolvedTimeZone)}
-        />
-      </article>
-    );
-  }
-
-  if (entry.kind === "rework-event") {
-    const event = entry.event;
-    return (
-      <article className="rounded-lg border border-slate-200 bg-white p-3">
-        <TimelineCardHeader
-          badge={<Badge variant="warning">{getLifecycleDisplayStatus(event, visibilityMode, t("containerLifecycleReworkNode"), t, event.eventType)}</Badge>}
-          title={getLifecycleDisplayLabel(event, visibilityMode, t("containerLifecycleReworkNode"), t, event.referenceNo || event.pallets.map((pallet) => pallet.palletCode).join(", ") || event.eventType)}
-          description={visibilityMode === "admin" ? event.notes || `${event.pallets.length} ${t("palletTrace")}` : event.displayLabel || event.publicLabel || `${event.pallets.length} ${t("palletTrace")}`}
-          time={formatDateTimeValue(event.eventTime, resolvedTimeZone)}
-        />
-      </article>
-    );
-  }
-
-  if (entry.kind === "delivery-event") {
-    const event = entry.event;
-    return (
-      <article className="rounded-lg border border-slate-200 bg-white p-3">
-        <TimelineCardHeader
-          badge={<Badge variant={event.bolReceivedAt ? "success" : "warning"}>{getLifecycleDisplayStatus(event, visibilityMode, t("containerLifecycleDeliveryNode"), t, event.eventType)}</Badge>}
-          title={getLifecycleDisplayLabel(event, visibilityMode, t("containerLifecycleDeliveryNode"), t, event.bolNumber || event.driverName || event.vendorName || event.eventType)}
-          description={visibilityMode === "admin" ? [event.vehicleNo, event.notes].filter(Boolean).join(" / ") || "-" : event.bolNumber || event.displayLabel || event.publicLabel || "-"}
-          time={formatDateTimeValue(event.bolReceivedAt || event.eventTime, resolvedTimeZone)}
-        />
-      </article>
-    );
-  }
-
-  const movement = entry.movement;
-  return (
-    <article className="rounded-lg border border-slate-200 bg-white p-3">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <Badge variant={getMovementBadgeVariant(movement.movementType)}>{formatMovementType(movement.movementType, t)}</Badge>
-          <h3 className="mt-2 text-sm font-semibold text-slate-950">{movement.itemNumber || movement.sku || movement.description || "-"}</h3>
-          <p className="mt-1 text-sm text-slate-500">
-            {movement.locationName} / {movement.storageSection || "-"} - {movement.quantityChange >= 0 ? `+${movement.quantityChange}` : movement.quantityChange}
-          </p>
-          {movement.movementType === "OUT" ? (
-            <p className="mt-1 text-xs text-slate-500">
-              {t("customerPortalPickingOrders")}: {movement.packingListNo || movement.orderRef || `#${movement.outboundDocumentId || "-"}`}
-            </p>
-          ) : null}
-          {movement.reason || movement.referenceCode ? (
-            <p className="mt-1 text-xs text-slate-500">{movement.reason || movement.referenceCode}</p>
-          ) : null}
-        </div>
-        <time className="text-xs font-semibold text-slate-500">{formatDateTimeValue(getMovementDateValue(movement), resolvedTimeZone)}</time>
-      </div>
-    </article>
-  );
-}
-
-function TimelineCardHeader({
-  badge,
-  title,
-  description,
-  time
-}: {
-  badge: ReactNode;
-  title: string;
-  description: string;
-  time: string;
-}) {
-  return (
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div className="min-w-0">
-        {badge}
-        <h3 className="mt-2 text-sm font-semibold text-slate-950">{title || "-"}</h3>
-        <p className="mt-1 text-sm text-slate-500">{description || "-"}</p>
-      </div>
-      <time className="text-xs font-semibold text-slate-500">{time}</time>
-    </div>
-  );
 }
 
 function filterLifecycleDisplayEvents<T extends LifecycleDisplayFields>(
@@ -1067,82 +1319,149 @@ function formatLifecycleDisplayText(value: string | null | undefined, t: (key: s
   return rawValue;
 }
 
-function getMovementBadgeVariant(movementType: Movement["movementType"]): "success" | "warning" | "destructive" | "secondary" | "info" {
-  switch (movementType) {
-    case "IN":
-      return "success";
-    case "OUT":
-      return "destructive";
-    case "TRANSFER_IN":
-    case "TRANSFER_OUT":
-      return "warning";
-    case "COUNT":
-      return "info";
-    default:
-      return "secondary";
-  }
-}
-
-function formatMovementType(movementType: Movement["movementType"], t: (key: string) => string) {
-  switch (movementType) {
-    case "IN":
-      return t("inbound");
-    case "OUT":
-      return t("outbound");
-    case "TRANSFER_IN":
-      return t("transferIn");
-    case "TRANSFER_OUT":
-      return t("transferOut");
-    case "COUNT":
-      return t("cycleCount");
-    case "REVERSAL":
-      return t("reversal");
-    default:
-      return t("adjustment");
-  }
-}
-
-function formatPalletEventType(eventType: string, t: (key: string) => string) {
-  switch (eventType) {
-    case "RECEIVED":
-      return t("containerDetailHistoryPalletReceived");
-    case "CANCELLED":
-      return t("containerDetailHistoryPalletCancelled");
-    default:
-      return eventType || t("palletTrace");
-  }
-}
-
-function getMovementDateValue(movement: Movement) {
-  if ((movement.movementType === "OUT" || movement.movementType === "REVERSAL") && movement.outDate) {
-    return movement.outDate;
-  }
-  if (movement.movementType === "IN" && movement.deliveryDate) {
-    return movement.deliveryDate;
-  }
-  return movement.createdAt;
-}
-
-function getMovementTimestamp(movement: Movement) {
-  return getTimestamp(getMovementDateValue(movement));
-}
-
-function getTimestamp(value: string | null) {
-  if (!value) {
-    return 0;
-  }
-  const parsed = new Date(value);
-  const timestamp = parsed.getTime();
-  return Number.isNaN(timestamp) ? 0 : timestamp;
-}
-
 function getOutboundContainerQuantity(document: OutboundDocument, containerNo: string) {
-  const normalizedContainerNo = containerNo.trim().toUpperCase();
-  return document.lines.reduce((total, line) => (
-    total + line.pickAllocations
-      .filter((allocation) => allocation.containerNo.trim().toUpperCase() === normalizedContainerNo)
+  const normalizedContainerNo = normalizeContainerNo(containerNo);
+  return (document.lines ?? []).reduce((total, line) => (
+    total + (line.pickAllocations ?? [])
+      .filter((allocation) => normalizeContainerNo(allocation.containerNo) === normalizedContainerNo)
       .reduce((lineTotal, allocation) => lineTotal + allocation.allocatedQty, 0)
   ), 0);
+}
+
+export function getInboundPalletCount(lifecycle: Pick<CustomerPortalContainerLifecycle, "packingLists" | "summary">) {
+  const linePalletCount = (lifecycle.packingLists ?? []).reduce((documentTotal, document) => (
+    documentTotal + (document.lines ?? []).reduce((lineTotal, line) => lineTotal + (line.pallets || 0), 0)
+  ), 0);
+  return linePalletCount || lifecycle.summary.palletCount || 0;
+}
+
+export function getInboundSkuCount(lifecycle: Pick<CustomerPortalContainerLifecycle, "packingLists">) {
+  const skus = new Set<string>();
+  (lifecycle.packingLists ?? []).forEach((document) => {
+    (document.lines ?? []).forEach((line) => {
+      const sku = String(line.sku || "").trim();
+      if (sku) {
+        skus.add(sku.toUpperCase());
+      }
+    });
+  });
+  return skus.size;
+}
+
+export function getInboundExpectedQty(lifecycle: Pick<CustomerPortalContainerLifecycle, "packingLists" | "summary">) {
+  const lineExpectedQty = sumInboundLineQuantity(lifecycle.packingLists, "expectedQty");
+  const documentExpectedQty = (lifecycle.packingLists ?? []).reduce((total, document) => total + (document.totalExpectedQty || 0), 0);
+  return lineExpectedQty || lifecycle.summary.totalExpectedQty || documentExpectedQty || 0;
+}
+
+export function getInboundReceivedQty(lifecycle: Pick<CustomerPortalContainerLifecycle, "packingLists" | "summary">) {
+  const lineReceivedQty = sumInboundLineQuantity(lifecycle.packingLists, "receivedQty");
+  const documentReceivedQty = (lifecycle.packingLists ?? []).reduce((total, document) => total + (document.totalReceivedQty || 0), 0);
+  return lineReceivedQty || lifecycle.summary.totalReceivedQty || documentReceivedQty || 0;
+}
+
+export function getInboundDiscrepancyKind(lifecycle: Pick<CustomerPortalContainerLifecycle, "packingLists" | "summary">): InboundDiscrepancyKind {
+  const expectedQty = getInboundExpectedQty(lifecycle);
+  const receivedQty = getInboundReceivedQty(lifecycle);
+  if (expectedQty > 0 && receivedQty < expectedQty) {
+    return "shortage";
+  }
+  if (expectedQty > 0 && receivedQty > expectedQty) {
+    return "overage";
+  }
+
+  const noteText = getInboundDiscrepancyNoteText(lifecycle.packingLists);
+  if (hasInboundDamageNote(noteText)) {
+    return "damaged";
+  }
+  if (hasInboundShortageNote(noteText)) {
+    return "shortage";
+  }
+  if (hasInboundOverageNote(noteText)) {
+    return "overage";
+  }
+  return "none";
+}
+
+export function getInboundDiscrepancyReasons(
+  lifecycle: Pick<CustomerPortalContainerLifecycle, "packingLists" | "summary">,
+  t: (key: string) => string
+) {
+  const expectedQty = getInboundExpectedQty(lifecycle);
+  const receivedQty = getInboundReceivedQty(lifecycle);
+  const reasons = new Set<string>();
+
+  if (expectedQty > 0 && receivedQty < expectedQty) {
+    reasons.add(t("inboundDiscrepancyShortage"));
+  } else if (expectedQty > 0 && receivedQty > expectedQty) {
+    reasons.add(t("inboundDiscrepancyOverage"));
+  }
+
+  const noteText = getInboundDiscrepancyNoteText(lifecycle.packingLists);
+
+  if (hasInboundDamageNote(noteText)) {
+    reasons.add(t("inboundDiscrepancyDamaged"));
+  }
+  if (hasInboundShortageNote(noteText)) {
+    reasons.add(t("inboundDiscrepancyShortage"));
+  }
+  if (hasInboundOverageNote(noteText)) {
+    reasons.add(t("inboundDiscrepancyOverage"));
+  }
+
+  return Array.from(reasons).join(" / ");
+}
+
+function getInboundDiscrepancyNodeVariant(kind: InboundDiscrepancyKind): LifecycleNodeVariant {
+  if (kind === "overage") {
+    return "warning";
+  }
+  if (kind === "shortage" || kind === "damaged") {
+    return "danger";
+  }
+  return "success";
+}
+
+export function getInboundDiscrepancyBadgeVariant(kind: InboundDiscrepancyKind): "success" | "warning" | "destructive" {
+  if (kind === "overage") {
+    return "warning";
+  }
+  if (kind === "shortage" || kind === "damaged") {
+    return "destructive";
+  }
+  return "success";
+}
+
+function getInboundDiscrepancyNoteText(documents: CustomerPortalContainerLifecycle["packingLists"]) {
+  return (documents ?? []).flatMap((document) => [
+    document.documentNote,
+    ...(document.lines ?? []).map((line) => line.lineNote)
+  ]).filter(Boolean).join(" ");
+}
+
+function hasInboundDamageNote(noteText: string) {
+  return /\b(damage|damaged|broken)\b|破损|损坏|残损|损毁/i.test(noteText);
+}
+
+function hasInboundShortageNote(noteText: string) {
+  return /\b(short|shortage|missing)\b|缺货|少货|短收/i.test(noteText);
+}
+
+function hasInboundOverageNote(noteText: string) {
+  return /\b(over|overage|extra)\b|多收|超收/i.test(noteText);
+}
+
+function sumInboundLineQuantity(
+  documents: CustomerPortalContainerLifecycle["packingLists"],
+  field: "expectedQty" | "receivedQty"
+) {
+  return (documents ?? []).reduce((documentTotal, document) => (
+    documentTotal + (document.lines ?? []).reduce((lineTotal, line) => lineTotal + (line[field] || 0), 0)
+  ), 0);
+}
+
+function normalizeContainerNo(value: string | null | undefined) {
+  return String(value || "").trim().toUpperCase();
 }
 
 function formatNullableDate(value?: string | null) {
