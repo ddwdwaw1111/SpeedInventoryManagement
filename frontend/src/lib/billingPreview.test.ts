@@ -496,6 +496,65 @@ describe("buildBillingPreview", () => {
     ]);
   });
 
+  it("does not restart normal-pallet grace days when transfer creates a child pallet", () => {
+    const parentPallet = makePallet(1, 1, "CONT-CHILD-XFER", "SHIPPED", {
+      palletCode: "PLT-PARENT",
+      currentLocationId: 1,
+      currentLocationName: "NJ",
+      updatedAt: "2026-03-10T09:00:00Z"
+    });
+    const childPallet = makePallet(2, 1, "CONT-CHILD-XFER", "STORED", {
+      parentPalletId: 1,
+      palletCode: "PLT-CHILD",
+      currentLocationId: 2,
+      currentLocationName: "LA",
+      currentStorageSection: "B",
+      createdAt: "2026-03-10T09:00:00Z",
+      updatedAt: "2026-03-31T23:59:00Z"
+    });
+
+    const preview = buildBillingPreview({
+      startDate: "2026-03-01",
+      endDate: "2026-03-31",
+      customerId: 1,
+      locationId: 2,
+      customers,
+      pallets: [parentPallet, childPallet],
+      palletLocationEvents: [
+        makeEvent(1, 1, "PLT-PARENT", "CONT-CHILD-XFER", "RECEIVED", "2026-03-01T09:00:00Z"),
+        makeEvent(2, 1, "PLT-PARENT", "CONT-CHILD-XFER", "TRANSFER_OUT", "2026-03-10T09:00:00Z", 0, -10),
+        {
+          ...makeEvent(3, 2, "PLT-CHILD", "CONT-CHILD-XFER", "TRANSFER_IN", "2026-03-10T09:00:00Z", 0, 10),
+          locationId: 2,
+          locationName: "LA",
+          storageSection: "B"
+        }
+      ],
+      inboundDocuments: [],
+      outboundDocuments: [],
+      rates: DEFAULT_BILLING_RATES
+    });
+
+    expect(preview.storageRows).toHaveLength(1);
+    expect(preview.storageRows[0]?.palletDays).toBe(22);
+    expect(preview.storageRows[0]?.freePalletDays).toBe(0);
+    expect(preview.storageRows[0]?.discountAmount).toBe(0);
+    expect(preview.storageRows[0]?.segments).toEqual([
+      {
+        startDate: "2026-03-10",
+        endDate: "2026-03-31",
+        dayEndPallets: 1,
+        billedDays: 22,
+        palletDays: 22,
+        freePalletDays: 0,
+        billablePalletDays: 22,
+        grossAmount: 22,
+        discountAmount: 0,
+        amount: 22
+      }
+    ]);
+  });
+
   it("uses actualArrivalDate for inbound billing instead of expected arrival date", () => {
     const preview = buildBillingPreview({
       startDate: "2026-04-01",

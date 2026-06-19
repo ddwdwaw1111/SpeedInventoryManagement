@@ -390,6 +390,8 @@ function buildStorageCharges(
     bucket.push(event);
     eventsByPallet.set(event.palletId, bucket);
   }
+  const palletsById = new Map(pallets.map((pallet) => [pallet.id, pallet]));
+  const intervalsByPalletId = new Map<number, StorageInterval[]>();
 
   const dailyBalanceMap = new Map<string, number>();
   const rowMap = new Map<string, MutableStorageRow>();
@@ -402,14 +404,14 @@ function buildStorageCharges(
       continue;
     }
 
-    const palletEvents = [...(eventsByPallet.get(pallet.id) ?? [])].sort(compareEventsAscending);
-    const intervals = buildStorageIntervals(pallet, palletEvents);
+    const intervals = getStorageIntervalsForPallet(pallet, eventsByPallet, intervalsByPalletId);
     if (intervals.length === 0) {
       continue;
     }
+    const graceIntervals = buildLineageStorageIntervals(pallet, palletsById, eventsByPallet, intervalsByPalletId);
 
     const containerNo = normalizeContainerNo(
-      pallet.currentContainerNo || palletEvents.find((event) => event.containerNo.trim())?.containerNo || ""
+      pallet.currentContainerNo || (eventsByPallet.get(pallet.id) ?? []).find((event) => event.containerNo.trim())?.containerNo || ""
     );
     const rowKey = `${pallet.customerId}|${pallet.containerType}|${containerNo}`;
     const row = rowMap.get(rowKey) ?? {
@@ -438,7 +440,6 @@ function buildStorageCharges(
     };
 
     const graceDays = resolveStorageGraceDays(pallet.containerType, normalPalletGracePeriodEnabled);
-    let storageDaysConsumed = countStorageDaysBeforeRange(intervals, billingRange.start, graceDays);
     let countedAnyDay = false;
     for (let dayCursor = new Date(billingRange.start); dayCursor < billingRange.endExclusive; dayCursor = shiftDay(dayCursor, 1)) {
       const nextDay = shiftDay(dayCursor, 1);
@@ -446,8 +447,8 @@ function buildStorageCharges(
       if (!activeInterval) {
         continue;
       }
-      storageDaysConsumed += 1;
-      const isGraceDay = graceDays > 0 && storageDaysConsumed <= graceDays;
+      const storageDaysConsumedBeforeDay = countStorageDaysBeforeRange(graceIntervals, dayCursor, graceDays);
+      const isGraceDay = graceDays > 0 && storageDaysConsumedBeforeDay + 1 <= graceDays;
       if (locationId && locationId !== "all" && activeInterval.locationId !== locationId) {
         continue;
       }
@@ -563,6 +564,79 @@ function buildStorageLineMeta(row: BillingStorageRow) {
   }
 
   return parts.join(" | ");
+}
+
+function getStorageIntervalsForPallet(
+  pallet: PalletTrace,
+  eventsByPallet: Map<number, PalletLocationEvent[]>,
+  intervalsByPalletId: Map<number, StorageInterval[]>
+) {
+  const cached = intervalsByPalletId.get(pallet.id);
+  if (cached) {
+    return cached;
+  }
+  const palletEvents = [...(eventsByPallet.get(pallet.id) ?? [])].sort(compareEventsAscending);
+  const intervals = buildStorageIntervals(pallet, palletEvents);
+  intervalsByPalletId.set(pallet.id, intervals);
+  return intervals;
+}
+
+function buildLineageStorageIntervals(
+  pallet: PalletTrace,
+  palletsById: Map<number, PalletTrace>,
+  eventsByPallet: Map<number, PalletLocationEvent[]>,
+  intervalsByPalletId: Map<number, StorageInterval[]>
+) {
+  const lineage: PalletTrace[] = [];
+  const seenPalletIds = new Set<number>();
+  let current: PalletTrace | undefined = pallet;
+  while (current && !seenPalletIds.has(current.id)) {
+    lineage.push(current);
+    seenPalletIds.add(current.id);
+    current = current.parentPalletId > 0 ? palletsById.get(current.parentPalletId) : undefined;
+  }
+  lineage.reverse();
+
+  const intervals: StorageInterval[] = [];
+  for (let index = 0; index < lineage.length; index += 1) {
+    const lineagePallet = lineage[index]!;
+    const palletIntervals = getStorageIntervalsForPallet(lineagePallet, eventsByPallet, intervalsByPalletId);
+    const nextPallet = lineage[index + 1] ?? null;
+    const nextPalletFirstStart = nextPallet
+      ? getFirstStorageIntervalStart(getStorageIntervalsForPallet(nextPallet, eventsByPallet, intervalsByPalletId))
+      : null;
+    intervals.push(...truncateStorageIntervals(palletIntervals, nextPalletFirstStart));
+  }
+
+  return intervals.sort(compareIntervalsAscending);
+}
+
+function getFirstStorageIntervalStart(intervals: StorageInterval[]) {
+  return intervals.reduce<Date | null>((earliest, interval) => {
+    if (!earliest || interval.start.getTime() < earliest.getTime()) {
+      return interval.start;
+    }
+    return earliest;
+  }, null);
+}
+
+function truncateStorageIntervals(intervals: StorageInterval[], endExclusive: Date | null) {
+  if (!endExclusive) {
+    return intervals;
+  }
+
+  return intervals.flatMap((interval) => {
+    if (interval.start.getTime() >= endExclusive.getTime()) {
+      return [];
+    }
+    const end = interval.end && interval.end.getTime() < endExclusive.getTime()
+      ? interval.end
+      : endExclusive;
+    return [{
+      ...interval,
+      end
+    }];
+  });
 }
 
 function buildStorageIntervals(pallet: PalletTrace, palletEvents: PalletLocationEvent[]) {
@@ -897,6 +971,15 @@ function compareEventsAscending(left: PalletLocationEvent, right: PalletLocation
     return leftTime - rightTime;
   }
   return left.id - right.id;
+}
+
+function compareIntervalsAscending(left: StorageInterval, right: StorageInterval) {
+  const leftTime = left.start.getTime();
+  const rightTime = right.start.getTime();
+  if (leftTime !== rightTime) {
+    return leftTime - rightTime;
+  }
+  return (left.end?.getTime() ?? Number.MAX_SAFE_INTEGER) - (right.end?.getTime() ?? Number.MAX_SAFE_INTEGER);
 }
 
 function shiftDay(date: Date, delta: number) {
