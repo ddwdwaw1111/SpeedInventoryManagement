@@ -2256,56 +2256,13 @@ func (s *Store) CancelInboundDocument(ctx context.Context, documentID int64) (In
 	deletedAt := time.Now().UTC()
 
 	if status == DocumentStatusConfirmed {
-		// Collect pallet IDs created by this inbound
-		palletIDs, err := s.collectPalletIDsByInboundDocumentTx(ctx, tx, documentID)
-		if err != nil {
-			return InboundDocument{}, err
-		}
-		if len(palletIDs) > 0 {
-			inClause, args := buildInClause(palletIDs)
-
-			// Block delete if any pallet has child pallets (from transfers)
-			var childPalletCount int
-			if err := tx.QueryRowContext(ctx, fmt.Sprintf(
-				`SELECT COUNT(*) FROM pallets WHERE parent_pallet_id IN (%s)`, inClause), args...).Scan(&childPalletCount); err != nil {
-				return InboundDocument{}, mapDBError(fmt.Errorf("check child pallets for inbound pallets: %w", err))
-			}
-			if childPalletCount > 0 {
-				return InboundDocument{}, fmt.Errorf("%w: receipt has pallets that were split by transfers and cannot be deleted", ErrInvalidInput)
-			}
-
-			// Block delete if any pallet item has allocated, damaged, or hold quantities
-			var allocatedCount int
-			if err := tx.QueryRowContext(ctx, fmt.Sprintf(
-				`SELECT COUNT(*) FROM pallet_items WHERE pallet_id IN (%s) AND (allocated_qty > 0 OR damaged_qty > 0 OR hold_qty > 0)`, inClause), args...).Scan(&allocatedCount); err != nil {
-				return InboundDocument{}, mapDBError(fmt.Errorf("check pallet item flags for inbound pallets: %w", err))
-			}
-			if allocatedCount > 0 {
-				return InboundDocument{}, fmt.Errorf("%w: receipt has pallets with allocated, damaged, or held stock and cannot be deleted", ErrInvalidInput)
-			}
-		}
 		if err := s.reduceInventoryBalancesForInboundLedgerTx(ctx, tx, documentID); err != nil {
 			return InboundDocument{}, err
-		}
-		if len(palletIDs) > 0 {
-			inClause, args := buildInClause(palletIDs)
-			if _, err := tx.ExecContext(ctx, fmt.Sprintf(
-				`DELETE FROM stock_ledger WHERE pallet_id IN (%s)`, inClause), args...); err != nil {
-				return InboundDocument{}, mapDBError(fmt.Errorf("delete stock ledger for inbound pallets: %w", err))
-			}
 		}
 		if _, err := tx.ExecContext(ctx,
 			`DELETE FROM stock_ledger WHERE source_document_type = ? AND source_document_id = ?`,
 			StockLedgerSourceInbound, documentID); err != nil {
 			return InboundDocument{}, mapDBError(fmt.Errorf("delete stock ledger for inbound: %w", err))
-		}
-		if len(palletIDs) > 0 {
-			inClause, args := buildInClause(palletIDs)
-			// Delete pallets (cascades to pallet_items, pallet_location_events)
-			if _, err := tx.ExecContext(ctx, fmt.Sprintf(
-				`DELETE FROM pallets WHERE id IN (%s)`, inClause), args...); err != nil {
-				return InboundDocument{}, mapDBError(fmt.Errorf("delete inbound pallets: %w", err))
-			}
 		}
 	}
 

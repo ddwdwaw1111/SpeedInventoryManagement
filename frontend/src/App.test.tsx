@@ -29,7 +29,6 @@ const { ApiError, apiMocks, portalApiMocks } = vi.hoisted(() => {
       getOutboundDocuments: vi.fn(),
       getInventoryAdjustments: vi.fn(),
       getInventoryTransfers: vi.fn(),
-      getCycleCounts: vi.fn(),
       getAuditLogs: vi.fn(),
       getUsers: vi.fn(),
       getBillingInvoiceSettings: vi.fn(),
@@ -100,8 +99,7 @@ const staffDataApiNames = [
   "getInboundDocuments",
   "getOutboundDocuments",
   "getInventoryAdjustments",
-  "getInventoryTransfers",
-  "getCycleCounts"
+  "getInventoryTransfers"
 ] as const;
 
 describe("App role routing", () => {
@@ -157,9 +155,9 @@ describe("App role routing", () => {
     expect(screen.queryByRole("button", { name: /^Shipments$/i })).not.toBeInTheDocument();
     await waitFor(() => {
       expect(portalApiMocks.getInventory).toHaveBeenCalled();
-      expect(portalApiMocks.getPackingLists).toHaveBeenCalled();
-      expect(portalApiMocks.getPickingOrders).toHaveBeenCalled();
     });
+    expect(portalApiMocks.getPackingLists).not.toHaveBeenCalled();
+    expect(portalApiMocks.getPickingOrders).not.toHaveBeenCalled();
     for (const name of staffDataApiNames) {
       expect(apiMocks[name]).not.toHaveBeenCalled();
     }
@@ -208,16 +206,8 @@ describe("App role routing", () => {
       expect(portalApiMocks.getProfile).toHaveBeenCalledWith(7);
       expect(portalApiMocks.getInventory).toHaveBeenCalledWith("", 7);
     });
-    expect(portalApiMocks.getPackingLists).toHaveBeenCalledWith(100, {
-      search: "",
-      status: "all",
-      trackingStatus: "all"
-    }, 7);
-    expect(portalApiMocks.getPickingOrders).toHaveBeenCalledWith(100, {
-      search: "",
-      status: "all",
-      trackingStatus: "all"
-    }, 7);
+    expect(portalApiMocks.getPackingLists).not.toHaveBeenCalled();
+    expect(portalApiMocks.getPickingOrders).not.toHaveBeenCalled();
     expect(screen.getByRole("navigation", { name: /Customer Portal/i })).toBeInTheDocument();
     expect(document.querySelector(".app-sidebar")).toBeNull();
     expect(screen.queryByRole("button", { name: /^Home$/i })).not.toBeInTheDocument();

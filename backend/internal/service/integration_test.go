@@ -99,8 +99,6 @@ func resetIntegrationDatabase(t *testing.T, db *sqlx.DB) {
 		"pallet_items",
 		"pallets",
 		"container_visits",
-		"cycle_count_lines",
-		"cycle_counts",
 		"inventory_transfer_lines",
 		"inventory_transfers",
 		"inventory_adjustment_lines",
@@ -367,9 +365,7 @@ func TestListMovementsFiltersBySearchCustomerLocationTypeAndDate(t *testing.T) {
 	assertMovementContainers(t, "combined filter", combinedFiltered, containerA)
 
 	itemC := mustCreateItem(t, ctx, store, customerA.ID, locationA.ID, "MF-C-"+suffix, 5)
-	palletID := mustLoadSinglePalletIDForItem(t, ctx, store, itemC)
 	adjustmentLine := adjustmentLineFromItem(itemC, 1, "Timezone boundary adjustment")
-	adjustmentLine.PalletID = palletID
 	_, err = store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
 		ReasonCode:       "COUNT_DIFF",
 		ActualAdjustedAt: "2026-04-11T02:00:00Z",
@@ -518,24 +514,31 @@ func TestInboundActualArrivalDateOverridesContainerArrivalDateIntegration(t *tes
 		t.Fatalf("expected container visit arrival_date to use actual arrival date, got %v", arrivalDate.Time)
 	}
 
-	var (
-		palletActualArrival sql.NullTime
-		palletCreatedAt     time.Time
-	)
+	var ledgerDeliveryDate sql.NullTime
+	var ledgerOccurredAt sql.NullTime
 	if err := store.db.QueryRowContext(ctx, `
-		SELECT actual_arrival_date, created_at
-		FROM pallets
-		WHERE source_inbound_document_id = ?
+		SELECT delivery_date, occurred_at
+		FROM stock_ledger
+		WHERE source_document_type = 'INBOUND'
+		  AND source_document_id = ?
 		ORDER BY id ASC
 		LIMIT 1
-	`, inbound.ID).Scan(&palletActualArrival, &palletCreatedAt); err != nil {
-		t.Fatalf("load pallet arrival date: %v", err)
+	`, inbound.ID).Scan(&ledgerDeliveryDate, &ledgerOccurredAt); err != nil {
+		t.Fatalf("load inbound ledger arrival date: %v", err)
 	}
-	if !palletActualArrival.Valid || palletActualArrival.Time.Format("2006-01-02") != "2025-12-18" {
-		t.Fatalf("expected pallet actual_arrival_date to use actual arrival date, got %v", palletActualArrival.Time)
+	if !ledgerDeliveryDate.Valid || ledgerDeliveryDate.Time.Format("2006-01-02") != "2025-12-18" {
+		t.Fatalf("expected inbound ledger delivery_date to use actual arrival date, got %v", ledgerDeliveryDate.Time)
 	}
-	if palletCreatedAt.Before(beforeConfirm.Add(-2*time.Second)) || palletCreatedAt.After(afterConfirm.Add(2*time.Second)) {
-		t.Fatalf("expected pallet created_at to reflect real creation time, got %v", palletCreatedAt)
+	if !ledgerOccurredAt.Valid || ledgerOccurredAt.Time.Format("2006-01-02") != "2025-12-18" {
+		t.Fatalf("expected inbound ledger occurred_at to use actual arrival date, got %v", ledgerOccurredAt.Time)
+	}
+
+	itemAfterInbound := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "ARCONT-"+suffix, item.SKU)
+	if itemAfterInbound.LastRestockedAt == nil {
+		t.Fatalf("expected lastRestockedAt to be set")
+	}
+	if itemAfterInbound.LastRestockedAt.Before(beforeConfirm.Add(-2*time.Second)) || itemAfterInbound.LastRestockedAt.After(afterConfirm.Add(2*time.Second)) {
+		t.Fatalf("expected lastRestockedAt to reflect real confirmation time, got %v", itemAfterInbound.LastRestockedAt)
 	}
 }
 
@@ -627,7 +630,7 @@ func TestOutboundDocumentRequiresPositivePalletCountIntegration(t *testing.T) {
 	}
 }
 
-func TestInventoryAdjustmentUsesPalletBalanceIntegration(t *testing.T) {
+func TestInventoryAdjustmentUsesAggregateBalanceIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
@@ -635,56 +638,66 @@ func TestInventoryAdjustmentUsesPalletBalanceIntegration(t *testing.T) {
 	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
 	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
 	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 10, DefaultStorageSection)
-	palletID := mustLoadSinglePalletIDForItem(t, ctx, store, item)
 	adjustmentLine := adjustmentLineFromItem(item, -2, "reduce two units")
-	adjustmentLine.PalletID = palletID
 
 	adjustment, err := store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
 		ReasonCode: "CORRECTION",
-		Notes:      "Use pallet-backed quantity",
+		Notes:      "Use aggregate quantity",
 		Lines: []CreateInventoryAdjustmentLineInput{
 			adjustmentLine,
 		},
 	})
 	if err != nil {
-		t.Fatalf("create inventory adjustment with pallet-backed quantity: %v", err)
+		t.Fatalf("create inventory adjustment with aggregate quantity: %v", err)
 	}
 	if len(adjustment.Lines) != 1 {
 		t.Fatalf("expected 1 adjustment line, got %d", len(adjustment.Lines))
 	}
 	if adjustment.Lines[0].BeforeQty != 10 {
-		t.Fatalf("expected pallet-backed before qty 10, got %d", adjustment.Lines[0].BeforeQty)
+		t.Fatalf("expected aggregate before qty 10, got %d", adjustment.Lines[0].BeforeQty)
 	}
 	if adjustment.Lines[0].AfterQty != 8 {
-		t.Fatalf("expected pallet-backed after qty 8, got %d", adjustment.Lines[0].AfterQty)
+		t.Fatalf("expected aggregate after qty 8, got %d", adjustment.Lines[0].AfterQty)
 	}
 
 	itemAfterAdjustment := mustFindItemByID(t, ctx, store, item.ID)
 	if itemAfterAdjustment.Quantity != 8 {
-		t.Fatalf("expected pallet-backed on-hand 8 after adjustment, got %d", itemAfterAdjustment.Quantity)
+		t.Fatalf("expected aggregate on-hand 8 after adjustment, got %d", itemAfterAdjustment.Quantity)
 	}
 }
 
-func TestInventoryAdjustmentRequiresPalletSelectionIntegration(t *testing.T) {
+func TestInventoryAdjustmentAllowsAggregateAdjustmentWithoutPalletIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
 
-	customer := mustCreateCustomer(t, ctx, store, "AdjustmentPalletRequiredCustomer-"+suffix)
-	location := mustCreateLocation(t, ctx, store, "AdjustmentPalletRequiredLocation-"+suffix)
-	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "ADJ-PALLET-REQ-"+suffix, 10, DefaultStorageSection)
+	customer := mustCreateCustomer(t, ctx, store, "AdjustmentAggregateCustomer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "AdjustmentAggregateLocation-"+suffix)
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "ADJ-AGG-"+suffix, 10, DefaultStorageSection)
 
-	if _, err := store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
+	adjustment, err := store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
 		ReasonCode: "CORRECTION",
 		Lines: []CreateInventoryAdjustmentLineInput{
-			adjustmentLineFromItem(item, -2, "missing pallet"),
+			adjustmentLineFromItem(item, -2, "aggregate adjustment"),
 		},
-	}); err == nil || !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("expected adjustment without pallet to fail with ErrInvalidInput, got %v", err)
+	})
+	if err != nil {
+		t.Fatalf("create aggregate adjustment without pallet: %v", err)
+	}
+	if len(adjustment.Lines) != 1 {
+		t.Fatalf("expected 1 aggregate adjustment line, got %d", len(adjustment.Lines))
+	}
+	if adjustment.Lines[0].PalletID != 0 || adjustment.Lines[0].PalletCode != "" {
+		t.Fatalf("expected no pallet on aggregate adjustment line, got %+v", adjustment.Lines[0])
+	}
+
+	itemAfterAdjustment := mustFindItemByID(t, ctx, store, item.ID)
+	if itemAfterAdjustment.Quantity != 8 {
+		t.Fatalf("expected aggregate on-hand 8 after adjustment, got %d", itemAfterAdjustment.Quantity)
 	}
 }
 
-func TestInventoryAdjustmentCanIncreaseSelectedPalletIntegration(t *testing.T) {
+func TestInventoryAdjustmentCanIncreaseAggregateInventoryIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
@@ -692,9 +705,7 @@ func TestInventoryAdjustmentCanIncreaseSelectedPalletIntegration(t *testing.T) {
 	customer := mustCreateCustomer(t, ctx, store, "AdjustmentPositiveCustomer-"+suffix)
 	location := mustCreateLocation(t, ctx, store, "AdjustmentPositiveLocation-"+suffix)
 	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "ADJ-POS-"+suffix, 10, DefaultStorageSection)
-	palletID := mustLoadSinglePalletIDForItem(t, ctx, store, item)
-	adjustmentLine := adjustmentLineFromItem(item, 3, "increase selected pallet")
-	adjustmentLine.PalletID = palletID
+	adjustmentLine := adjustmentLineFromItem(item, 3, "increase aggregate inventory")
 
 	adjustment, err := store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
 		ReasonCode: "CORRECTION",
@@ -703,26 +714,22 @@ func TestInventoryAdjustmentCanIncreaseSelectedPalletIntegration(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("create positive selected-pallet adjustment: %v", err)
+		t.Fatalf("create positive aggregate adjustment: %v", err)
 	}
 
 	if len(adjustment.Lines) != 1 {
-		t.Fatalf("expected 1 positive selected-pallet adjustment line, got %d", len(adjustment.Lines))
+		t.Fatalf("expected 1 positive aggregate adjustment line, got %d", len(adjustment.Lines))
 	}
 	if adjustment.Lines[0].BeforeQty != 10 || adjustment.Lines[0].AfterQty != 13 {
 		t.Fatalf("expected before/after qty 10->13, got %+v", adjustment.Lines[0])
 	}
-
-	var palletQty int
-	if err := store.db.GetContext(ctx, &palletQty, `
-		SELECT COALESCE(SUM(quantity), 0)
-		FROM pallet_items
-		WHERE pallet_id = ?
-	`, palletID); err != nil {
-		t.Fatalf("load selected pallet quantity after positive adjustment: %v", err)
+	if adjustment.Lines[0].PalletID != 0 || adjustment.Lines[0].PalletCode != "" {
+		t.Fatalf("expected no pallet on positive aggregate adjustment line, got %+v", adjustment.Lines[0])
 	}
-	if palletQty != 13 {
-		t.Fatalf("expected selected pallet quantity 13 after positive adjustment, got %d", palletQty)
+
+	itemAfterAdjustment := mustFindItemByID(t, ctx, store, item.ID)
+	if itemAfterAdjustment.Quantity != 13 {
+		t.Fatalf("expected aggregate on-hand 13 after positive adjustment, got %d", itemAfterAdjustment.Quantity)
 	}
 
 	var ledgerQty int
@@ -731,8 +738,9 @@ func TestInventoryAdjustmentCanIncreaseSelectedPalletIntegration(t *testing.T) {
 		FROM stock_ledger
 		WHERE source_document_type = 'ADJUSTMENT'
 		  AND source_document_id = ?
-		  AND pallet_id = ?
-	`, adjustment.ID, palletID); err != nil {
+		  AND event_type = 'ADJUST'
+		  AND pallet_id IS NULL
+	`, adjustment.ID); err != nil {
 		t.Fatalf("load positive adjustment ledger quantity: %v", err)
 	}
 	if ledgerQty != 3 {
@@ -740,7 +748,7 @@ func TestInventoryAdjustmentCanIncreaseSelectedPalletIntegration(t *testing.T) {
 	}
 }
 
-func TestInventoryTransferUsesPalletBalanceIntegration(t *testing.T) {
+func TestInventoryTransferUsesAggregateBalanceIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
@@ -783,7 +791,7 @@ func TestInventoryTransferUsesPalletBalanceIntegration(t *testing.T) {
 		Lines: []CreateInventoryTransferLineInput{transferLine},
 	})
 	if err != nil {
-		t.Fatalf("create transfer with pallet-backed quantity: %v", err)
+		t.Fatalf("create transfer with aggregate quantity: %v", err)
 	}
 	if len(transfer.Lines) != 1 {
 		t.Fatalf("expected 1 transfer line, got %d", len(transfer.Lines))
@@ -1143,24 +1151,24 @@ func TestInboundDocumentIgnoresForeignContainerIDIntegration(t *testing.T) {
 	}
 }
 
-func TestConfirmedInboundCreatesPalletEntities(t *testing.T) {
+func TestConfirmedInboundRecordsAggregateInventoryOnly(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
 
-	customer := mustCreateCustomer(t, ctx, store, "PalletCustomer-"+suffix)
-	location := mustCreateLocation(t, ctx, store, "PalletLoc-"+suffix)
-	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "PLT-SKU-"+suffix, 0)
+	customer := mustCreateCustomer(t, ctx, store, "AggregateInboundCustomer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "AggregateInboundLoc-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "AGG-IN-SKU-"+suffix, 0)
 
 	receipt, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
 		CustomerID:          customer.ID,
 		LocationID:          location.ID,
 		ExpectedArrivalDate: "2026-04-02",
-		ContainerNo:         "PLT-" + suffix,
+		ContainerNo:         "AGG-IN-" + suffix,
 		StorageSection:      DefaultStorageSection,
 		UnitLabel:           "CTN",
 		Status:              DocumentStatusConfirmed,
-		DocumentNote:        "Create pallet entities",
+		DocumentNote:        "Aggregate inbound only",
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:            item.SKU,
 			Description:    item.Description,
@@ -1174,53 +1182,41 @@ func TestConfirmedInboundCreatesPalletEntities(t *testing.T) {
 		t.Fatalf("create confirmed receipt with pallets: %v", err)
 	}
 
-	pallets, err := store.ListPallets(ctx, 50, ListPalletFilters{Search: "PLT-" + suffix})
-	if err != nil {
-		t.Fatalf("list pallets: %v", err)
+	receivedItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "AGG-IN-"+suffix, item.SKU)
+	if receivedItem.Quantity != 11 {
+		t.Fatalf("expected aggregate quantity 11 after inbound, got %d", receivedItem.Quantity)
+	}
+	if receivedItem.Pallets != 3 {
+		t.Fatalf("expected aggregate pallet count 3 after inbound, got %d", receivedItem.Pallets)
+	}
+	if receivedItem.ContainerID != receipt.ContainerID {
+		t.Fatalf("expected inventory to use container id %d, got %d", receipt.ContainerID, receivedItem.ContainerID)
 	}
 
-	filtered := make([]PalletTrace, 0)
-	for _, pallet := range pallets {
-		if pallet.SourceInboundDocumentID == receipt.ID {
-			filtered = append(filtered, pallet)
-		}
-	}
-	if len(filtered) != 3 {
-		t.Fatalf("expected 3 pallets for receipt %d, got %d", receipt.ID, len(filtered))
-	}
-
-	totalQuantity := 0
-	for _, pallet := range filtered {
-		if pallet.ContainerVisitID <= 0 {
-			t.Fatalf("expected pallet %d to reference container visit, got %d", pallet.ID, pallet.ContainerVisitID)
-		}
-		if pallet.CurrentContainerNo != "PLT-"+suffix {
-			t.Fatalf("expected pallet %d container PLT-%s, got %q", pallet.ID, suffix, pallet.CurrentContainerNo)
-		}
-		if pallet.Status != PalletStatusOpen {
-			t.Fatalf("expected pallet %d status %s, got %s", pallet.ID, PalletStatusOpen, pallet.Status)
-		}
-		if len(pallet.Contents) != 1 {
-			t.Fatalf("expected pallet %d to have 1 content row, got %d", pallet.ID, len(pallet.Contents))
-		}
-		totalQuantity += pallet.Contents[0].Quantity
-	}
-
-	if totalQuantity != 11 {
-		t.Fatalf("expected pallet quantity total 11, got %d", totalQuantity)
-	}
-
-	var palletLocationEventCount int
-	if err := store.db.GetContext(ctx, &palletLocationEventCount, `
+	var palletCount int
+	if err := store.db.GetContext(ctx, &palletCount, `
 		SELECT COUNT(*)
-		FROM pallet_location_events
-		WHERE pallet_id IS NOT NULL
-		  AND container_no = ?
-	`, "PLT-"+suffix); err != nil {
-		t.Fatalf("count pallet-specific location events: %v", err)
+		FROM pallets
+		WHERE source_inbound_document_id = ?
+	`, receipt.ID); err != nil {
+		t.Fatalf("count inbound-created pallets: %v", err)
 	}
-	if palletLocationEventCount != 3 {
-		t.Fatalf("expected 3 pallet-specific location events, got %d", palletLocationEventCount)
+	if palletCount != 0 {
+		t.Fatalf("expected inbound confirmation to create no pallet entities, got %d", palletCount)
+	}
+
+	var ledgerCount, ledgerQty, ledgerPallets int
+	if err := store.db.QueryRowContext(ctx, `
+		SELECT COUNT(*), COALESCE(SUM(quantity_change), 0), COALESCE(SUM(pallets), 0)
+		FROM stock_ledger
+		WHERE source_document_type = 'INBOUND'
+		  AND source_document_id = ?
+		  AND event_type = 'RECEIVE'
+	`, receipt.ID).Scan(&ledgerCount, &ledgerQty, &ledgerPallets); err != nil {
+		t.Fatalf("load inbound aggregate ledger: %v", err)
+	}
+	if ledgerCount != 1 || ledgerQty != 11 || ledgerPallets != 3 {
+		t.Fatalf("expected one inbound ledger row with qty/pallets 11/3, got count=%d qty=%d pallets=%d", ledgerCount, ledgerQty, ledgerPallets)
 	}
 }
 
@@ -1309,24 +1305,24 @@ func TestListPalletsFiltersByCustomerLocationAndStatus(t *testing.T) {
 	assertPalletIDs(t, "combined filter", combinedFiltered, palletC.ID)
 }
 
-func TestPalletCentricDualWriteLifecycleIntegration(t *testing.T) {
+func TestAggregateInventoryDocumentLifecycleIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
 
-	customer := mustCreateCustomer(t, ctx, store, "DualWriteCustomer-"+suffix)
-	location := mustCreateLocation(t, ctx, store, "DualWriteLoc-"+suffix)
-	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "DUAL-SKU-"+suffix, 0)
+	customer := mustCreateCustomer(t, ctx, store, "AggregateLifecycleCustomer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "AggregateLifecycleLoc-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "AGG-LIFE-SKU-"+suffix, 0)
 
 	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
 		CustomerID:          customer.ID,
 		LocationID:          location.ID,
 		ExpectedArrivalDate: "2026-04-02",
-		ContainerNo:         "DUAL-CONT-" + suffix,
+		ContainerNo:         "AGG-LIFE-CONT-" + suffix,
 		StorageSection:      DefaultStorageSection,
 		UnitLabel:           "CTN",
 		Status:              DocumentStatusConfirmed,
-		DocumentNote:        "Dual write inbound",
+		DocumentNote:        "Aggregate inbound",
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:            item.SKU,
 			Description:    item.Description,
@@ -1340,30 +1336,16 @@ func TestPalletCentricDualWriteLifecycleIntegration(t *testing.T) {
 		t.Fatalf("create confirmed inbound document: %v", err)
 	}
 
-	var palletItemCount int
-	if err := store.db.GetContext(ctx, &palletItemCount, `
+	var palletCount int
+	if err := store.db.GetContext(ctx, &palletCount, `
 		SELECT COUNT(*)
-		FROM pallet_items pi
-		JOIN pallets p ON p.id = pi.pallet_id
-		WHERE p.source_inbound_document_id = ?
+		FROM pallets
+		WHERE source_inbound_document_id = ?
 	`, inbound.ID); err != nil {
-		t.Fatalf("count pallet items: %v", err)
+		t.Fatalf("count inbound-created pallets: %v", err)
 	}
-	if palletItemCount != 3 {
-		t.Fatalf("expected 3 pallet items after inbound confirmation, got %d", palletItemCount)
-	}
-
-	var palletItemQty int
-	if err := store.db.GetContext(ctx, &palletItemQty, `
-		SELECT COALESCE(SUM(pi.quantity), 0)
-		FROM pallet_items pi
-		JOIN pallets p ON p.id = pi.pallet_id
-		WHERE p.source_inbound_document_id = ?
-	`, inbound.ID); err != nil {
-		t.Fatalf("sum pallet item quantities after inbound: %v", err)
-	}
-	if palletItemQty != 12 {
-		t.Fatalf("expected pallet item quantity 12 after inbound, got %d", palletItemQty)
+	if palletCount != 0 {
+		t.Fatalf("expected no inbound-created pallet entities, got %d", palletCount)
 	}
 
 	var inboundLedgerCount int
@@ -1376,8 +1358,8 @@ func TestPalletCentricDualWriteLifecycleIntegration(t *testing.T) {
 	`, inbound.ID); err != nil {
 		t.Fatalf("count inbound stock ledger rows: %v", err)
 	}
-	if inboundLedgerCount != 3 {
-		t.Fatalf("expected 3 inbound stock ledger rows, got %d", inboundLedgerCount)
+	if inboundLedgerCount != 1 {
+		t.Fatalf("expected 1 inbound stock ledger row, got %d", inboundLedgerCount)
 	}
 
 	var inboundLedgerQty int
@@ -1394,17 +1376,17 @@ func TestPalletCentricDualWriteLifecycleIntegration(t *testing.T) {
 		t.Fatalf("expected inbound stock ledger quantity 12, got %d", inboundLedgerQty)
 	}
 
-	inboundItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "DUAL-CONT-"+suffix, item.SKU)
+	inboundItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "AGG-LIFE-CONT-"+suffix, item.SKU)
 	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
-		PackingListNo:    "DUAL-PL-" + suffix,
-		OrderRef:         "DUAL-SO-" + suffix,
+		PackingListNo:    "AGG-LIFE-PL-" + suffix,
+		OrderRef:         "AGG-LIFE-SO-" + suffix,
 		ExpectedShipDate: "2026-04-03",
 		ShipToName:       "Receiver " + suffix,
 		ShipToAddress:    "456 Dock Rd",
 		ShipToContact:    "Gate 2",
 		CarrierName:      "UPS",
 		Status:           DocumentStatusConfirmed,
-		DocumentNote:     "Dual write outbound",
+		DocumentNote:     "Aggregate outbound",
 		Lines: []CreateOutboundDocumentLineInput{{
 			CustomerID:   inboundItem.CustomerID,
 			LocationID:   inboundItem.LocationID,
@@ -1419,7 +1401,7 @@ func TestPalletCentricDualWriteLifecycleIntegration(t *testing.T) {
 		t.Fatalf("create confirmed outbound document: %v", err)
 	}
 
-	inboundItemAfterOutbound := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "DUAL-CONT-"+suffix, item.SKU)
+	inboundItemAfterOutbound := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "AGG-LIFE-CONT-"+suffix, item.SKU)
 	if inboundItemAfterOutbound.Quantity != 7 {
 		t.Fatalf("expected inventory item quantity 7 after outbound, got %d", inboundItemAfterOutbound.Quantity)
 	}
@@ -1442,7 +1424,7 @@ func TestPalletCentricDualWriteLifecycleIntegration(t *testing.T) {
 		t.Fatalf("cancel outbound document: %v", err)
 	}
 
-	inboundItemAfterCancel := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "DUAL-CONT-"+suffix, item.SKU)
+	inboundItemAfterCancel := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "AGG-LIFE-CONT-"+suffix, item.SKU)
 	if inboundItemAfterCancel.Quantity != 12 {
 		t.Fatalf("expected inventory item quantity 12 after outbound reversal, got %d", inboundItemAfterCancel.Quantity)
 	}
@@ -1462,7 +1444,7 @@ func TestPalletCentricDualWriteLifecycleIntegration(t *testing.T) {
 	}
 }
 
-func TestInboundDocumentCreatesPalletsFromExplicitBreakdownIntegration(t *testing.T) {
+func TestInboundDocumentRecordsExplicitBreakdownAsLineMetadataIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
@@ -1497,24 +1479,50 @@ func TestInboundDocumentCreatesPalletsFromExplicitBreakdownIntegration(t *testin
 		t.Fatalf("create confirmed inbound document with explicit pallet breakdown: %v", err)
 	}
 
-	var quantities []int
-	if err := store.db.SelectContext(ctx, &quantities, `
-		SELECT pi.quantity
-		FROM pallet_items pi
-		JOIN pallets p ON p.id = pi.pallet_id
-		WHERE p.source_inbound_document_id = ?
-		ORDER BY pi.id
+	var palletCount int
+	if err := store.db.GetContext(ctx, &palletCount, `
+		SELECT COUNT(*)
+		FROM pallets
+		WHERE source_inbound_document_id = ?
 	`, inbound.ID); err != nil {
-		t.Fatalf("list pallet item quantities: %v", err)
+		t.Fatalf("count inbound-created pallets: %v", err)
+	}
+	if palletCount != 0 {
+		t.Fatalf("expected explicit breakdown inbound to create no pallet entities, got %d", palletCount)
+	}
+	if len(inbound.Lines) != 1 {
+		t.Fatalf("expected one inbound line, got %d", len(inbound.Lines))
+	}
+	expectedBreakdown := []InboundPalletBreakdown{{Quantity: 120}, {Quantity: 95}, {Quantity: 80}}
+	if !reflect.DeepEqual(inbound.Lines[0].PalletBreakdown, expectedBreakdown) {
+		t.Fatalf("expected line pallet breakdown %v, got %v", expectedBreakdown, inbound.Lines[0].PalletBreakdown)
+	}
+	if inbound.Lines[0].Pallets != 3 || inbound.Lines[0].PalletsDetailCtns != "120+95+80" {
+		t.Fatalf("expected line pallet metadata 3 / 120+95+80, got pallets=%d detail=%q", inbound.Lines[0].Pallets, inbound.Lines[0].PalletsDetailCtns)
 	}
 
-	expected := []int{120, 95, 80}
-	if !reflect.DeepEqual(quantities, expected) {
-		t.Fatalf("expected pallet quantities %v, got %v", expected, quantities)
+	receivedItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "BREAK-CONT-"+suffix, item.SKU)
+	if receivedItem.Quantity != 295 || receivedItem.Pallets != 3 {
+		t.Fatalf("expected aggregate inventory qty/pallets 295/3, got %d/%d", receivedItem.Quantity, receivedItem.Pallets)
+	}
+
+	var ledgerQty, ledgerPallets int
+	var ledgerDetail sql.NullString
+	if err := store.db.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(quantity_change), 0), COALESCE(SUM(pallets), 0), MAX(pallets_detail_ctns)
+		FROM stock_ledger
+		WHERE source_document_type = 'INBOUND'
+		  AND source_document_id = ?
+		  AND event_type = 'RECEIVE'
+	`, inbound.ID).Scan(&ledgerQty, &ledgerPallets, &ledgerDetail); err != nil {
+		t.Fatalf("load inbound breakdown ledger: %v", err)
+	}
+	if ledgerQty != 295 || ledgerPallets != 3 || !ledgerDetail.Valid || ledgerDetail.String != "120+95+80" {
+		t.Fatalf("expected ledger qty/pallets/detail 295/3/120+95+80, got %d/%d/%q", ledgerQty, ledgerPallets, ledgerDetail.String)
 	}
 }
 
-func TestPalletCentricOperationalLedgerIntegration(t *testing.T) {
+func TestAggregateOperationalLedgerIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
@@ -1547,14 +1555,12 @@ func TestPalletCentricOperationalLedgerIntegration(t *testing.T) {
 	}
 
 	sourceItem := mustFindItemByContainer(t, ctx, store, sourceLocation.ID, DefaultStorageSection, inbound.ContainerNo, item.SKU)
-	adjustmentPalletID := mustLoadSinglePalletIDForItem(t, ctx, store, sourceItem)
 	adjustmentLine := adjustmentLineFromItem(sourceItem, -2, "Broken cartons")
-	adjustmentLine.PalletID = adjustmentPalletID
 
 	adjustment, err := store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
 		AdjustmentNo: "ADJ-" + suffix,
 		ReasonCode:   "DAMAGE",
-		Notes:        "Reduce pallet stock",
+		Notes:        "Reduce aggregate stock",
 		Lines: []CreateInventoryAdjustmentLineInput{
 			adjustmentLine,
 		},
@@ -1577,33 +1583,20 @@ func TestPalletCentricOperationalLedgerIntegration(t *testing.T) {
 		t.Fatalf("expected adjustment stock ledger quantity -2, got %d", adjustmentLedgerQty)
 	}
 
-	if err := store.db.GetContext(ctx, &adjustmentLedgerQty, `
-		SELECT COALESCE(SUM(pi.quantity), 0)
-		FROM pallet_items pi
-		JOIN pallets p ON p.id = pi.pallet_id
-		JOIN inventory_items i
-			ON i.sku_master_id = pi.sku_master_id
-			AND i.customer_id = p.customer_id
-			AND i.location_id = p.current_location_id
-			AND i.storage_section = p.current_storage_section
-			AND COALESCE(i.container_no, '') = COALESCE(p.current_container_no, '')
-		WHERE i.id = ?
-	`, sourceItem.ID); err != nil {
-		t.Fatalf("sum source pallet items after adjustment: %v", err)
-	}
-	if adjustmentLedgerQty != 10 {
-		t.Fatalf("expected source pallet item quantity 10 after adjustment, got %d", adjustmentLedgerQty)
+	sourceItemAfterAdjustment := mustFindItemByID(t, ctx, store, sourceItem.ID)
+	if sourceItemAfterAdjustment.Quantity != 10 {
+		t.Fatalf("expected source aggregate quantity 10 after adjustment, got %d", sourceItemAfterAdjustment.Quantity)
 	}
 
 	transfer, err := store.CreateInventoryTransfer(ctx, CreateInventoryTransferInput{
 		TransferNo: "TR-" + suffix,
-		Notes:      "Move palletized stock west",
+		Notes:      "Move aggregate stock west",
 		Lines: []CreateInventoryTransferLineInput{
 			transferLineFromItem(sourceItem, 4, destinationLocation.ID, "B", "Re-slot pallets"),
 		},
 	})
 	if err != nil {
-		t.Fatalf("create palletized transfer: %v", err)
+		t.Fatalf("create aggregate transfer: %v", err)
 	}
 
 	var transferOutLedgerQty int
@@ -1635,91 +1628,30 @@ func TestPalletCentricOperationalLedgerIntegration(t *testing.T) {
 	}
 
 	destinationItem := mustFindItemByLocationAndSection(t, ctx, store, destinationLocation.ID, "B", sourceItem.SKU)
-	if err := store.db.GetContext(ctx, &transferInLedgerQty, `
-		SELECT COALESCE(SUM(pi.quantity), 0)
-		FROM pallet_items pi
-		JOIN pallets p ON p.id = pi.pallet_id
-		JOIN inventory_items i
-			ON i.sku_master_id = pi.sku_master_id
-			AND i.customer_id = p.customer_id
-			AND i.location_id = p.current_location_id
-			AND i.storage_section = p.current_storage_section
-			AND COALESCE(i.container_no, '') = COALESCE(p.current_container_no, '')
-		WHERE i.id = ?
-	`, destinationItem.ID); err != nil {
-		t.Fatalf("sum destination pallet items after transfer: %v", err)
-	}
-	if transferInLedgerQty != 4 {
-		t.Fatalf("expected destination pallet item quantity 4 after transfer, got %d", transferInLedgerQty)
-	}
-
-	cycleCountPalletID := mustLoadSinglePalletIDForItem(t, ctx, store, sourceItem)
-	cycleCountLine := cycleCountLineFromItem(sourceItem, 5, "One unit missing after check")
-	cycleCountLine.PalletID = cycleCountPalletID
-
-	count, err := store.CreateCycleCount(ctx, CreateCycleCountInput{
-		CountNo: "CC-" + suffix,
-		Notes:   "Cycle count after transfer",
-		Lines: []CreateCycleCountLineInput{
-			cycleCountLine,
-		},
-	})
-	if err != nil {
-		t.Fatalf("create palletized cycle count: %v", err)
-	}
-
-	var countLedgerQty int
-	if err := store.db.GetContext(ctx, &countLedgerQty, `
-		SELECT COALESCE(SUM(quantity_change), 0)
-		FROM stock_ledger
-		WHERE source_document_type = 'CYCLE_COUNT'
-		  AND source_document_id = ?
-		  AND event_type = 'COUNT'
-	`, count.ID); err != nil {
-		t.Fatalf("sum cycle count stock ledger quantities: %v", err)
-	}
-	if countLedgerQty != -1 {
-		t.Fatalf("expected cycle count stock ledger quantity -1, got %d", countLedgerQty)
-	}
-
-	if err := store.db.GetContext(ctx, &countLedgerQty, `
-		SELECT COALESCE(SUM(pi.quantity), 0)
-		FROM pallet_items pi
-		JOIN pallets p ON p.id = pi.pallet_id
-		JOIN inventory_items i
-			ON i.sku_master_id = pi.sku_master_id
-			AND i.customer_id = p.customer_id
-			AND i.location_id = p.current_location_id
-			AND i.storage_section = p.current_storage_section
-			AND COALESCE(i.container_no, '') = COALESCE(p.current_container_no, '')
-		WHERE i.id = ?
-	`, sourceItem.ID); err != nil {
-		t.Fatalf("sum source pallet items after cycle count: %v", err)
-	}
-	if countLedgerQty != 5 {
-		t.Fatalf("expected source pallet item quantity 5 after cycle count, got %d", countLedgerQty)
+	if destinationItem.Quantity != 4 {
+		t.Fatalf("expected destination aggregate quantity 4 after transfer, got %d", destinationItem.Quantity)
 	}
 }
 
-func TestSelectedPalletInventoryActionsIntegration(t *testing.T) {
+func TestAggregateInventoryActionsIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
 
-	customer := mustCreateCustomer(t, ctx, store, "SelectedPalletCustomer-"+suffix)
-	sourceLocation := mustCreateLocation(t, ctx, store, "SelectedPalletSource-"+suffix)
-	destinationLocation := mustCreateLocation(t, ctx, store, "SelectedPalletDestination-"+suffix)
-	item := mustCreateItem(t, ctx, store, customer.ID, sourceLocation.ID, "SELECT-SKU-"+suffix, 0)
+	customer := mustCreateCustomer(t, ctx, store, "AggregateActionsCustomer-"+suffix)
+	sourceLocation := mustCreateLocation(t, ctx, store, "AggregateActionsSource-"+suffix)
+	destinationLocation := mustCreateLocation(t, ctx, store, "AggregateActionsDestination-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, sourceLocation.ID, "AGG-ACTION-SKU-"+suffix, 0)
 
 	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
 		CustomerID:          customer.ID,
 		LocationID:          sourceLocation.ID,
 		ExpectedArrivalDate: "2026-04-10",
-		ContainerNo:         "SELECT-CONT-" + suffix,
+		ContainerNo:         "AGG-ACTION-CONT-" + suffix,
 		StorageSection:      DefaultStorageSection,
 		UnitLabel:           "CTN",
 		Status:              DocumentStatusConfirmed,
-		DocumentNote:        "Selected pallet actions",
+		DocumentNote:        "Aggregate inventory actions",
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:            item.SKU,
 			Description:    item.Description,
@@ -1730,579 +1662,85 @@ func TestSelectedPalletInventoryActionsIntegration(t *testing.T) {
 		}},
 	})
 	if err != nil {
-		t.Fatalf("create selected-pallet inbound: %v", err)
+		t.Fatalf("create aggregate actions inbound: %v", err)
 	}
 
 	sourceItem := mustFindItemByContainer(t, ctx, store, sourceLocation.ID, DefaultStorageSection, inbound.ContainerNo, item.SKU)
-	pallets, err := store.ListPallets(ctx, 50, ListPalletFilters{SourceInboundDocumentID: inbound.ID})
-	if err != nil {
-		t.Fatalf("list source pallets: %v", err)
-	}
-	if len(pallets) < 2 {
-		t.Fatalf("expected at least 2 pallets, got %d", len(pallets))
-	}
-	sort.Slice(pallets, func(left, right int) bool {
-		return pallets[left].ID < pallets[right].ID
-	})
-
-	adjustmentPallet := pallets[0]
-	transferPallet := pallets[1]
-	adjustmentQty := adjustmentPallet.Contents[0].Quantity
-	transferQty := transferPallet.Contents[0].Quantity
-
-	adjustmentLine := adjustmentLineFromItem(sourceItem, -adjustmentQty, "Selected pallet adjustment")
-	adjustmentLine.PalletID = adjustmentPallet.ID
+	adjustmentQty := 4
+	adjustmentLine := adjustmentLineFromItem(sourceItem, -adjustmentQty, "Aggregate adjustment")
 	adjustment, err := store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
-		AdjustmentNo: "ADJ-SEL-" + suffix,
+		AdjustmentNo: "ADJ-AGG-" + suffix,
 		ReasonCode:   "DAMAGE",
-		Notes:        "Adjust one selected pallet",
+		Notes:        "Adjust aggregate stock",
 		Lines:        []CreateInventoryAdjustmentLineInput{adjustmentLine},
 	})
 	if err != nil {
-		t.Fatalf("create selected-pallet adjustment: %v", err)
+		t.Fatalf("create aggregate adjustment: %v", err)
 	}
 	if len(adjustment.Lines) != 1 {
-		t.Fatalf("expected 1 selected-pallet adjustment line, got %d", len(adjustment.Lines))
+		t.Fatalf("expected 1 aggregate adjustment line, got %d", len(adjustment.Lines))
 	}
-	if adjustment.Lines[0].PalletID != adjustmentPallet.ID {
-		t.Fatalf("expected adjustment line pallet id %d, got %d", adjustmentPallet.ID, adjustment.Lines[0].PalletID)
+	if adjustment.Lines[0].PalletID != 0 || adjustment.Lines[0].PalletCode != "" {
+		t.Fatalf("expected aggregate adjustment line without pallet, got %+v", adjustment.Lines[0])
 	}
-	if adjustment.Lines[0].PalletCode != adjustmentPallet.PalletCode {
-		t.Fatalf("expected adjustment line pallet code %q, got %q", adjustmentPallet.PalletCode, adjustment.Lines[0].PalletCode)
-	}
-	if adjustment.Lines[0].PalletBeforeQty != adjustmentQty || adjustment.Lines[0].PalletAfterQty != 0 {
-		t.Fatalf("expected adjustment pallet qty %d->0, got %d->%d", adjustmentQty, adjustment.Lines[0].PalletBeforeQty, adjustment.Lines[0].PalletAfterQty)
+	if adjustment.Lines[0].BeforeQty != 12 || adjustment.Lines[0].AfterQty != 8 {
+		t.Fatalf("expected aggregate adjustment qty 12->8, got %d->%d", adjustment.Lines[0].BeforeQty, adjustment.Lines[0].AfterQty)
 	}
 
-	var adjustmentSelectedLedgerQty int
-	if err := store.db.GetContext(ctx, &adjustmentSelectedLedgerQty, `
+	var adjustmentLedgerQty int
+	if err := store.db.GetContext(ctx, &adjustmentLedgerQty, `
 		SELECT COALESCE(SUM(quantity_change), 0)
 		FROM stock_ledger
 		WHERE source_document_type = 'ADJUSTMENT'
 		  AND source_document_id = ?
 		  AND event_type = 'ADJUST'
-		  AND pallet_id = ?
-	`, adjustment.ID, adjustmentPallet.ID); err != nil {
-		t.Fatalf("sum selected adjustment ledger quantities: %v", err)
+		  AND pallet_id IS NULL
+	`, adjustment.ID); err != nil {
+		t.Fatalf("sum aggregate adjustment ledger quantities: %v", err)
 	}
-	if adjustmentSelectedLedgerQty != -adjustmentQty {
-		t.Fatalf("expected selected pallet adjustment quantity -%d, got %d", adjustmentQty, adjustmentSelectedLedgerQty)
-	}
-
-	var adjustmentOtherLedgerCount int
-	if err := store.db.GetContext(ctx, &adjustmentOtherLedgerCount, `
-		SELECT COUNT(*)
-		FROM stock_ledger
-		WHERE source_document_type = 'ADJUSTMENT'
-		  AND source_document_id = ?
-		  AND pallet_id = ?
-	`, adjustment.ID, transferPallet.ID); err != nil {
-		t.Fatalf("count non-selected adjustment ledger rows: %v", err)
-	}
-	if adjustmentOtherLedgerCount != 0 {
-		t.Fatalf("expected non-selected pallet to remain untouched by adjustment, got %d ledger rows", adjustmentOtherLedgerCount)
+	if adjustmentLedgerQty != -adjustmentQty {
+		t.Fatalf("expected aggregate adjustment quantity -%d, got %d", adjustmentQty, adjustmentLedgerQty)
 	}
 
-	var adjustmentPalletQty int
-	if err := store.db.GetContext(ctx, &adjustmentPalletQty, `
-		SELECT COALESCE(SUM(quantity), 0)
-		FROM pallet_items
-		WHERE pallet_id = ?
-	`, adjustmentPallet.ID); err != nil {
-		t.Fatalf("load selected adjustment pallet quantity: %v", err)
-	}
-	if adjustmentPalletQty != 0 {
-		t.Fatalf("expected selected adjustment pallet quantity 0, got %d", adjustmentPalletQty)
+	sourceItemAfterAdjustment := mustFindItemByID(t, ctx, store, sourceItem.ID)
+	if sourceItemAfterAdjustment.Quantity != 8 {
+		t.Fatalf("expected source aggregate quantity 8 after adjustment, got %d", sourceItemAfterAdjustment.Quantity)
 	}
 
-	transferLine := transferLineFromItem(sourceItem, transferQty, destinationLocation.ID, "B", "Selected pallet transfer")
-	transferLine.PalletID = transferPallet.ID
+	transferQty := 5
+	transferLine := transferLineFromItem(sourceItemAfterAdjustment, transferQty, destinationLocation.ID, "B", "Aggregate transfer")
+	transferLine.Pallets = 1
 	transfer, err := store.CreateInventoryTransfer(ctx, CreateInventoryTransferInput{
-		TransferNo: "TR-SEL-" + suffix,
-		Notes:      "Transfer one selected pallet",
+		TransferNo: "TR-AGG-" + suffix,
+		Notes:      "Transfer aggregate stock",
 		Lines:      []CreateInventoryTransferLineInput{transferLine},
 	})
 	if err != nil {
-		t.Fatalf("create selected-pallet transfer: %v", err)
+		t.Fatalf("create aggregate transfer: %v", err)
 	}
 
-	var transferSelectedLedgerQty int
-	if err := store.db.GetContext(ctx, &transferSelectedLedgerQty, `
+	var transferOutLedgerQty int
+	if err := store.db.GetContext(ctx, &transferOutLedgerQty, `
 		SELECT COALESCE(SUM(quantity_change), 0)
 		FROM stock_ledger
 		WHERE source_document_type = 'TRANSFER'
 		  AND source_document_id = ?
 		  AND event_type = 'TRANSFER_OUT'
-		  AND pallet_id = ?
-	`, transfer.ID, transferPallet.ID); err != nil {
-		t.Fatalf("sum selected transfer-out ledger quantities: %v", err)
+		  AND pallet_id IS NULL
+	`, transfer.ID); err != nil {
+		t.Fatalf("sum aggregate transfer-out ledger quantities: %v", err)
 	}
-	if transferSelectedLedgerQty != -transferQty {
-		t.Fatalf("expected selected pallet transfer-out quantity -%d, got %d", transferQty, transferSelectedLedgerQty)
-	}
-
-	var transferAdjustmentPalletLedgerCount int
-	if err := store.db.GetContext(ctx, &transferAdjustmentPalletLedgerCount, `
-		SELECT COUNT(*)
-		FROM stock_ledger
-		WHERE source_document_type = 'TRANSFER'
-		  AND source_document_id = ?
-		  AND event_type = 'TRANSFER_OUT'
-		  AND pallet_id = ?
-	`, transfer.ID, adjustmentPallet.ID); err != nil {
-		t.Fatalf("count transfer ledger rows on non-selected pallet: %v", err)
-	}
-	if transferAdjustmentPalletLedgerCount != 0 {
-		t.Fatalf("expected transfer to leave the previously adjusted pallet untouched, got %d ledger rows", transferAdjustmentPalletLedgerCount)
+	if transferOutLedgerQty != -transferQty {
+		t.Fatalf("expected aggregate transfer-out quantity -%d, got %d", transferQty, transferOutLedgerQty)
 	}
 
-	var transferPalletQtyAfter int
-	if err := store.db.GetContext(ctx, &transferPalletQtyAfter, `
-		SELECT COALESCE(SUM(quantity), 0)
-		FROM pallet_items
-		WHERE pallet_id = ?
-	`, transferPallet.ID); err != nil {
-		t.Fatalf("load selected transfer pallet quantity: %v", err)
+	sourceItemAfterTransfer := mustFindItemByID(t, ctx, store, sourceItem.ID)
+	if sourceItemAfterTransfer.Quantity != 3 {
+		t.Fatalf("expected source aggregate quantity 3 after transfer, got %d", sourceItemAfterTransfer.Quantity)
 	}
-	if transferPalletQtyAfter != 0 {
-		t.Fatalf("expected selected transfer pallet quantity 0 after transfer, got %d", transferPalletQtyAfter)
-	}
-
 	destinationItem := mustFindItemByLocationAndSection(t, ctx, store, destinationLocation.ID, "B", sourceItem.SKU)
 	if destinationItem.Quantity != transferQty {
-		t.Fatalf("expected destination quantity %d after selected pallet transfer, got %d", transferQty, destinationItem.Quantity)
-	}
-}
-
-func TestSelectedPalletCycleCountIntegration(t *testing.T) {
-	store := newIntegrationStore(t)
-	ctx := context.Background()
-	suffix := integrationSuffix()
-
-	customer := mustCreateCustomer(t, ctx, store, "SelectedCountCustomer-"+suffix)
-	location := mustCreateLocation(t, ctx, store, "SelectedCountLocation-"+suffix)
-	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SELECT-COUNT-SKU-"+suffix, 0)
-
-	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:          customer.ID,
-		LocationID:          location.ID,
-		ExpectedArrivalDate: "2026-04-10",
-		ContainerNo:         "SELECT-COUNT-CONT-" + suffix,
-		StorageSection:      DefaultStorageSection,
-		UnitLabel:           "CTN",
-		Status:              DocumentStatusConfirmed,
-		DocumentNote:        "Selected pallet cycle count",
-		Lines: []CreateInboundDocumentLineInput{{
-			SKU:               item.SKU,
-			Description:       item.Description,
-			ExpectedQty:       12,
-			ReceivedQty:       12,
-			Pallets:           2,
-			PalletsDetailCtns: "5+7",
-			PalletBreakdown: []InboundPalletBreakdown{
-				{Quantity: 5},
-				{Quantity: 7},
-			},
-			StorageSection: DefaultStorageSection,
-		}},
-	})
-	if err != nil {
-		t.Fatalf("create selected-pallet cycle count inbound: %v", err)
-	}
-
-	sourceItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, inbound.ContainerNo, item.SKU)
-	pallets, err := store.ListPallets(ctx, 50, ListPalletFilters{SourceInboundDocumentID: inbound.ID})
-	if err != nil {
-		t.Fatalf("list selected-pallet cycle count pallets: %v", err)
-	}
-	if len(pallets) != 2 {
-		t.Fatalf("expected 2 pallets for selected-pallet cycle count, got %d", len(pallets))
-	}
-	sort.Slice(pallets, func(left, right int) bool {
-		return pallets[left].ID < pallets[right].ID
-	})
-
-	firstLine := cycleCountLineFromItem(sourceItem, 4, "First pallet recounted down")
-	firstLine.PalletID = pallets[0].ID
-	secondLine := cycleCountLineFromItem(sourceItem, 8, "Second pallet recounted up")
-	secondLine.PalletID = pallets[1].ID
-
-	count, err := store.CreateCycleCount(ctx, CreateCycleCountInput{
-		CountNo: "CC-SEL-" + suffix,
-		Notes:   "Selected pallet cycle count",
-		Lines: []CreateCycleCountLineInput{
-			firstLine,
-			secondLine,
-		},
-	})
-	if err != nil {
-		t.Fatalf("create selected-pallet cycle count: %v", err)
-	}
-	if len(count.Lines) != 2 {
-		t.Fatalf("expected 2 selected-pallet cycle count lines, got %d", len(count.Lines))
-	}
-	if count.TotalVariance != 0 {
-		t.Fatalf("expected selected-pallet cycle count total variance 0, got %d", count.TotalVariance)
-	}
-
-	var firstPalletLedgerQty int
-	if err := store.db.GetContext(ctx, &firstPalletLedgerQty, `
-		SELECT COALESCE(SUM(quantity_change), 0)
-		FROM stock_ledger
-		WHERE source_document_type = 'CYCLE_COUNT'
-		  AND source_document_id = ?
-		  AND event_type = 'COUNT'
-		  AND pallet_id = ?
-	`, count.ID, pallets[0].ID); err != nil {
-		t.Fatalf("sum first selected-pallet count ledger quantities: %v", err)
-	}
-	if firstPalletLedgerQty != -1 {
-		t.Fatalf("expected first selected-pallet count quantity -1, got %d", firstPalletLedgerQty)
-	}
-
-	var secondPalletLedgerQty int
-	if err := store.db.GetContext(ctx, &secondPalletLedgerQty, `
-		SELECT COALESCE(SUM(quantity_change), 0)
-		FROM stock_ledger
-		WHERE source_document_type = 'CYCLE_COUNT'
-		  AND source_document_id = ?
-		  AND event_type = 'COUNT'
-		  AND pallet_id = ?
-	`, count.ID, pallets[1].ID); err != nil {
-		t.Fatalf("sum second selected-pallet count ledger quantities: %v", err)
-	}
-	if secondPalletLedgerQty != 1 {
-		t.Fatalf("expected second selected-pallet count quantity 1, got %d", secondPalletLedgerQty)
-	}
-
-	var firstPalletQty int
-	if err := store.db.GetContext(ctx, &firstPalletQty, `
-		SELECT COALESCE(SUM(quantity), 0)
-		FROM pallet_items
-		WHERE pallet_id = ?
-	`, pallets[0].ID); err != nil {
-		t.Fatalf("load first selected-pallet quantity after cycle count: %v", err)
-	}
-	if firstPalletQty != 4 {
-		t.Fatalf("expected first selected-pallet quantity 4 after cycle count, got %d", firstPalletQty)
-	}
-
-	var secondPalletQty int
-	if err := store.db.GetContext(ctx, &secondPalletQty, `
-		SELECT COALESCE(SUM(quantity), 0)
-		FROM pallet_items
-		WHERE pallet_id = ?
-	`, pallets[1].ID); err != nil {
-		t.Fatalf("load second selected-pallet quantity after cycle count: %v", err)
-	}
-	if secondPalletQty != 8 {
-		t.Fatalf("expected second selected-pallet quantity 8 after cycle count, got %d", secondPalletQty)
-	}
-
-	itemAfterCount := mustFindItemByID(t, ctx, store, sourceItem.ID)
-	if itemAfterCount.Quantity != 12 {
-		t.Fatalf("expected total on-hand quantity 12 after selected-pallet cycle count, got %d", itemAfterCount.Quantity)
-	}
-}
-
-func TestCycleCountCanCreateNewPalletIntegration(t *testing.T) {
-	store := newIntegrationStore(t)
-	ctx := context.Background()
-	suffix := integrationSuffix()
-
-	customer := mustCreateCustomer(t, ctx, store, "CreateCountPalletCustomer-"+suffix)
-	location := mustCreateLocation(t, ctx, store, "CreateCountPalletLocation-"+suffix)
-	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "CREATE-COUNT-PALLET-SKU-"+suffix, 0)
-
-	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:          customer.ID,
-		LocationID:          location.ID,
-		ExpectedArrivalDate: "2026-04-10",
-		ContainerNo:         "CREATE-COUNT-PALLET-CONT-" + suffix,
-		StorageSection:      DefaultStorageSection,
-		UnitLabel:           "CTN",
-		Status:              DocumentStatusConfirmed,
-		DocumentNote:        "Create pallet through cycle count",
-		Lines: []CreateInboundDocumentLineInput{{
-			SKU:               item.SKU,
-			Description:       item.Description,
-			ExpectedQty:       12,
-			ReceivedQty:       12,
-			Pallets:           2,
-			PalletsDetailCtns: "5+7",
-			PalletBreakdown: []InboundPalletBreakdown{
-				{Quantity: 5},
-				{Quantity: 7},
-			},
-			StorageSection: DefaultStorageSection,
-		}},
-	})
-	if err != nil {
-		t.Fatalf("create inbound for cycle count pallet creation: %v", err)
-	}
-
-	sourceItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, inbound.ContainerNo, item.SKU)
-	pallets, err := store.ListPallets(ctx, 50, ListPalletFilters{SourceInboundDocumentID: inbound.ID})
-	if err != nil {
-		t.Fatalf("list pallets for cycle count pallet creation: %v", err)
-	}
-	if len(pallets) != 2 {
-		t.Fatalf("expected 2 seeded pallets, got %d", len(pallets))
-	}
-	sort.Slice(pallets, func(left, right int) bool {
-		return pallets[left].ID < pallets[right].ID
-	})
-
-	firstLine := cycleCountLineFromItem(sourceItem, pallets[0].Contents[0].Quantity, "First pallet unchanged")
-	firstLine.PalletID = pallets[0].ID
-	secondLine := cycleCountLineFromItem(sourceItem, pallets[1].Contents[0].Quantity, "Second pallet unchanged")
-	secondLine.PalletID = pallets[1].ID
-	newPalletLine := cycleCountLineFromItem(sourceItem, 2, "New pallet discovered during count")
-	newPalletLine.CreatePallet = true
-	newPalletLine.PalletCode = "SHOULD-BE-IGNORED"
-
-	count, err := store.CreateCycleCount(ctx, CreateCycleCountInput{
-		CountNo: "CC-NEW-PLT-" + suffix,
-		Notes:   "Create new pallet through cycle count",
-		Lines: []CreateCycleCountLineInput{
-			firstLine,
-			secondLine,
-			newPalletLine,
-		},
-	})
-	if err != nil {
-		t.Fatalf("create cycle count with new pallet line: %v", err)
-	}
-	if len(count.Lines) != 3 {
-		t.Fatalf("expected 3 cycle count lines after adding a new pallet, got %d", len(count.Lines))
-	}
-	if count.TotalVariance != 2 {
-		t.Fatalf("expected total variance 2 after adding a new pallet, got %d", count.TotalVariance)
-	}
-
-	var countLedgerQty int
-	if err := store.db.GetContext(ctx, &countLedgerQty, `
-		SELECT COALESCE(SUM(quantity_change), 0)
-		FROM stock_ledger
-		WHERE source_document_type = 'CYCLE_COUNT'
-		  AND source_document_id = ?
-		  AND event_type = 'COUNT'
-	`, count.ID); err != nil {
-		t.Fatalf("sum cycle count ledger quantities after adding pallet: %v", err)
-	}
-	if countLedgerQty != 2 {
-		t.Fatalf("expected cycle count ledger quantity 2 for the new pallet, got %d", countLedgerQty)
-	}
-
-	var palletCountInBucket int
-	if err := store.db.GetContext(ctx, &palletCountInBucket, `
-		SELECT COUNT(*)
-		FROM pallets
-		WHERE customer_id = ?
-		  AND current_location_id = ?
-		  AND COALESCE(current_storage_section, 'TEMP') = ?
-		  AND COALESCE(current_container_no, '') = ?
-		  AND sku_master_id = ?
-	`, customer.ID, location.ID, DefaultStorageSection, inbound.ContainerNo, item.SKUMasterID); err != nil {
-		t.Fatalf("count pallets in bucket after cycle count pallet creation: %v", err)
-	}
-	if palletCountInBucket != 3 {
-		t.Fatalf("expected 3 pallets in the bucket after cycle count pallet creation, got %d", palletCountInBucket)
-	}
-
-	var createdPalletID int64
-	if err := store.db.GetContext(ctx, &createdPalletID, `
-		SELECT id
-		FROM pallets
-		WHERE customer_id = ?
-		  AND current_location_id = ?
-		  AND COALESCE(current_storage_section, 'TEMP') = ?
-		  AND COALESCE(current_container_no, '') = ?
-		  AND sku_master_id = ?
-		  AND id NOT IN (?, ?)
-		ORDER BY id DESC
-		LIMIT 1
-	`, customer.ID, location.ID, DefaultStorageSection, inbound.ContainerNo, item.SKUMasterID, pallets[0].ID, pallets[1].ID); err != nil {
-		t.Fatalf("locate newly created pallet after cycle count: %v", err)
-	}
-
-	var createdPalletQty int
-	if err := store.db.GetContext(ctx, &createdPalletQty, `
-		SELECT COALESCE(SUM(quantity), 0)
-		FROM pallet_items
-		WHERE pallet_id = ?
-	`, createdPalletID); err != nil {
-		t.Fatalf("load created pallet quantity after cycle count: %v", err)
-	}
-	if createdPalletQty != 2 {
-		t.Fatalf("expected created pallet quantity 2 after cycle count, got %d", createdPalletQty)
-	}
-
-	var createdPalletCode string
-	if err := store.db.GetContext(ctx, &createdPalletCode, `
-		SELECT pallet_code
-		FROM pallets
-		WHERE id = ?
-	`, createdPalletID); err != nil {
-		t.Fatalf("load created pallet code after cycle count: %v", err)
-	}
-	expectedCreatedPalletCode := fmt.Sprintf("PLT-COUNT-%d-1", count.ID)
-	if createdPalletCode != expectedCreatedPalletCode {
-		t.Fatalf("expected created pallet code %q after cycle count, got %q", expectedCreatedPalletCode, createdPalletCode)
-	}
-
-	listedPallets, err := store.ListPallets(ctx, 50, ListPalletFilters{Search: expectedCreatedPalletCode})
-	if err != nil {
-		t.Fatalf("list pallets after cycle count pallet creation: %v", err)
-	}
-	if len(listedPallets) != 1 {
-		t.Fatalf("expected 1 listed pallet for %q after cycle count, got %d", expectedCreatedPalletCode, len(listedPallets))
-	}
-	if listedPallets[0].PalletCode != expectedCreatedPalletCode {
-		t.Fatalf("expected listed pallet code %q after cycle count, got %q", expectedCreatedPalletCode, listedPallets[0].PalletCode)
-	}
-
-	itemAfterCount := mustFindItemByID(t, ctx, store, sourceItem.ID)
-	if itemAfterCount.Quantity != 14 {
-		t.Fatalf("expected total on-hand quantity 14 after cycle count pallet creation, got %d", itemAfterCount.Quantity)
-	}
-}
-
-func TestCycleCountCreatesPalletLocationEventsForPalletTransitionsIntegration(t *testing.T) {
-	store := newIntegrationStore(t)
-	ctx := context.Background()
-	suffix := integrationSuffix()
-
-	customer := mustCreateCustomer(t, ctx, store, "CountEventCustomer-"+suffix)
-	location := mustCreateLocation(t, ctx, store, "CountEventLocation-"+suffix)
-	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "COUNT-EVENT-SKU-"+suffix, 0)
-
-	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:          customer.ID,
-		LocationID:          location.ID,
-		ExpectedArrivalDate: "2026-04-10",
-		ContainerNo:         "COUNT-EVENT-CONT-" + suffix,
-		StorageSection:      DefaultStorageSection,
-		UnitLabel:           "CTN",
-		Status:              DocumentStatusConfirmed,
-		DocumentNote:        "Seed inbound for count pallet events",
-		Lines: []CreateInboundDocumentLineInput{{
-			SKU:               item.SKU,
-			Description:       item.Description,
-			ExpectedQty:       12,
-			ReceivedQty:       12,
-			Pallets:           2,
-			PalletsDetailCtns: "5+7",
-			PalletBreakdown: []InboundPalletBreakdown{
-				{Quantity: 5},
-				{Quantity: 7},
-			},
-			StorageSection: DefaultStorageSection,
-		}},
-	})
-	if err != nil {
-		t.Fatalf("create inbound for cycle count pallet events: %v", err)
-	}
-
-	sourceItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, inbound.ContainerNo, item.SKU)
-	pallets, err := store.ListPallets(ctx, 50, ListPalletFilters{SourceInboundDocumentID: inbound.ID})
-	if err != nil {
-		t.Fatalf("list pallets for cycle count pallet events: %v", err)
-	}
-	if len(pallets) != 2 {
-		t.Fatalf("expected 2 seeded pallets, got %d", len(pallets))
-	}
-	sort.Slice(pallets, func(left, right int) bool {
-		return pallets[left].ID < pallets[right].ID
-	})
-
-	removedPallet := pallets[0]
-	unchangedPallet := pallets[1]
-
-	removedLine := cycleCountLineFromItem(sourceItem, 0, "Pallet removed during count")
-	removedLine.PalletID = removedPallet.ID
-	unchangedLine := cycleCountLineFromItem(sourceItem, unchangedPallet.Contents[0].Quantity, "Pallet unchanged during count")
-	unchangedLine.PalletID = unchangedPallet.ID
-	newPalletLine := cycleCountLineFromItem(sourceItem, 2, "New pallet discovered during count")
-	newPalletLine.CreatePallet = true
-
-	count, err := store.CreateCycleCount(ctx, CreateCycleCountInput{
-		CountNo: "CC-EVENT-" + suffix,
-		Notes:   "Cycle count pallet event coverage",
-		Lines: []CreateCycleCountLineInput{
-			removedLine,
-			unchangedLine,
-			newPalletLine,
-		},
-	})
-	if err != nil {
-		t.Fatalf("create cycle count with pallet transitions: %v", err)
-	}
-
-	expectedCreatedPalletCode := fmt.Sprintf("PLT-COUNT-%d-1", count.ID)
-	var createdPalletID int64
-	if err := store.db.GetContext(ctx, &createdPalletID, `
-		SELECT id
-		FROM pallets
-		WHERE pallet_code = ?
-	`, expectedCreatedPalletCode); err != nil {
-		t.Fatalf("locate created cycle count pallet: %v", err)
-	}
-
-	var removedPalletDelta float64
-	var removedQuantityDelta int
-	if err := store.db.QueryRowContext(ctx, `
-		SELECT pallet_delta, quantity_delta
-		FROM pallet_location_events
-		WHERE pallet_id = ?
-		  AND event_type = 'COUNT'
-		ORDER BY id DESC
-		LIMIT 1
-	`, removedPallet.ID).Scan(&removedPalletDelta, &removedQuantityDelta); err != nil {
-		t.Fatalf("load removed pallet count event: %v", err)
-	}
-	if removedPalletDelta != -1 {
-		t.Fatalf("expected removed pallet count event delta -1, got %v", removedPalletDelta)
-	}
-	if removedQuantityDelta != -removedPallet.Contents[0].Quantity {
-		t.Fatalf("expected removed pallet quantity delta -%d, got %d", removedPallet.Contents[0].Quantity, removedQuantityDelta)
-	}
-
-	var createdPalletDelta float64
-	var createdQuantityDelta int
-	if err := store.db.QueryRowContext(ctx, `
-		SELECT pallet_delta, quantity_delta
-		FROM pallet_location_events
-		WHERE pallet_id = ?
-		  AND event_type = 'COUNT'
-		ORDER BY id DESC
-		LIMIT 1
-	`, createdPalletID).Scan(&createdPalletDelta, &createdQuantityDelta); err != nil {
-		t.Fatalf("load created pallet count event: %v", err)
-	}
-	if createdPalletDelta != 1 {
-		t.Fatalf("expected created pallet count event delta 1, got %v", createdPalletDelta)
-	}
-	if createdQuantityDelta != 2 {
-		t.Fatalf("expected created pallet quantity delta 2, got %d", createdQuantityDelta)
-	}
-
-	var unchangedCountEventTotal int
-	if err := store.db.GetContext(ctx, &unchangedCountEventTotal, `
-		SELECT COUNT(*)
-		FROM pallet_location_events
-		WHERE pallet_id = ?
-		  AND event_type = 'COUNT'
-	`, unchangedPallet.ID); err != nil {
-		t.Fatalf("count unchanged pallet count events: %v", err)
-	}
-	if unchangedCountEventTotal != 0 {
-		t.Fatalf("expected unchanged pallet to have no count event, got %d", unchangedCountEventTotal)
-	}
-
-	itemAfterCount := mustFindItemByID(t, ctx, store, sourceItem.ID)
-	if itemAfterCount.Quantity != 9 {
-		t.Fatalf("expected total on-hand quantity 9 after cycle count pallet transitions, got %d", itemAfterCount.Quantity)
+		t.Fatalf("expected destination quantity %d after aggregate transfer, got %d", transferQty, destinationItem.Quantity)
 	}
 }
 
@@ -2853,11 +2291,9 @@ func TestAdjustmentAndTransferActualTimesIntegration(t *testing.T) {
 	}
 
 	sourceItem := mustFindItemByContainer(t, ctx, store, sourceLocation.ID, DefaultStorageSection, inbound.ContainerNo, item.SKU)
-	adjustmentPalletID := mustLoadSinglePalletIDForItem(t, ctx, store, sourceItem)
 
 	adjustmentActual := "2026-04-11T14:30:00Z"
 	adjustmentLine := adjustmentLineFromItem(sourceItem, -2, "actual-time adjustment")
-	adjustmentLine.PalletID = adjustmentPalletID
 	adjustment, err := store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
 		AdjustmentNo:     "ADJ-ACT-" + suffix,
 		ReasonCode:       "CORRECTION",
@@ -2921,20 +2357,6 @@ func TestAdjustmentAndTransferActualTimesIntegration(t *testing.T) {
 		t.Fatalf("expected transfer ledger occurred_at %s, got %v", transferActual, transferOccurredAt)
 	}
 
-	var transferEventTime sql.NullTime
-	if err := store.db.GetContext(ctx, &transferEventTime, `
-		SELECT event_time
-		FROM pallet_location_events
-		WHERE event_type = ?
-		  AND container_no = ?
-		ORDER BY id ASC
-		LIMIT 1
-	`, PalletEventTransferOut, inbound.ContainerNo); err != nil {
-		t.Fatalf("load transfer pallet event_time: %v", err)
-	}
-	if !transferEventTime.Valid || transferEventTime.Time.UTC().Format(time.RFC3339) != transferActual {
-		t.Fatalf("expected transfer pallet event_time %s, got %v", transferActual, transferEventTime)
-	}
 }
 
 func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
@@ -3517,10 +2939,8 @@ func TestOutboundReservationsBlockOtherInventoryMutationsIntegration(t *testing.
 	if _, err := store.UpdateOutboundDocumentTrackingStatus(ctx, outbound.ID, OutboundTrackingPicking); err != nil {
 		t.Fatalf("start picking outbound for reservation conflict checks: %v", err)
 	}
-	palletID := mustLoadSinglePalletIDForItem(t, ctx, store, item)
 
 	adjustmentLine := adjustmentLineFromItem(item, -3, "adjust reserved stock")
-	adjustmentLine.PalletID = palletID
 	if _, err := store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
 		ReasonCode: "COUNT_DIFF",
 		Lines: []CreateInventoryAdjustmentLineInput{
@@ -3536,16 +2956,6 @@ func TestOutboundReservationsBlockOtherInventoryMutationsIntegration(t *testing.
 		},
 	}); err == nil || !errors.Is(err, ErrReservedStock) {
 		t.Fatalf("expected transfer to fail with ErrReservedStock, got %v", err)
-	}
-
-	cycleCountLine := cycleCountLineFromItem(item, 5, "count reserved stock down")
-	cycleCountLine.PalletID = palletID
-	if _, err := store.CreateCycleCount(ctx, CreateCycleCountInput{
-		Lines: []CreateCycleCountLineInput{
-			cycleCountLine,
-		},
-	}); err == nil || !errors.Is(err, ErrReservedStock) {
-		t.Fatalf("expected cycle count to fail with ErrReservedStock, got %v", err)
 	}
 }
 
@@ -4835,79 +4245,7 @@ func TestInventoryTransferIntegration(t *testing.T) {
 		}
 	}
 	if !transferOutSeen || !transferInSeen {
-		t.Fatalf("expected pallet-centric transfer activity feed entries, got %+v", movements)
-	}
-}
-
-func TestCycleCountIntegration(t *testing.T) {
-	store := newIntegrationStore(t)
-	ctx := context.Background()
-	suffix := integrationSuffix()
-
-	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
-	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
-	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 10)
-	palletID := mustLoadSinglePalletIDForItem(t, ctx, store, item)
-	line := cycleCountLineFromItem(item, 7, "Three units missing")
-	line.PalletID = palletID
-
-	count, err := store.CreateCycleCount(ctx, CreateCycleCountInput{
-		CountNo: "CC-" + suffix,
-		Notes:   "Cycle count integration test",
-		Lines: []CreateCycleCountLineInput{
-			line,
-		},
-	})
-	if err != nil {
-		t.Fatalf("create cycle count: %v", err)
-	}
-	if !strings.EqualFold(count.Status, "POSTED") {
-		t.Fatalf("expected cycle count status POSTED, got %q", count.Status)
-	}
-	if len(count.Lines) != 1 {
-		t.Fatalf("expected 1 cycle count line, got %d", len(count.Lines))
-	}
-	if count.Lines[0].VarianceQty != -3 {
-		t.Fatalf("expected variance -3, got %d", count.Lines[0].VarianceQty)
-	}
-
-	itemAfterCount := mustFindItemByID(t, ctx, store, item.ID)
-	if itemAfterCount.Quantity != 7 {
-		t.Fatalf("expected on-hand 7 after cycle count, got %d", itemAfterCount.Quantity)
-	}
-
-	movements, err := store.ListMovements(ctx, 50)
-	if err != nil {
-		t.Fatalf("list movements: %v", err)
-	}
-	var countSeen bool
-	for _, movement := range movements {
-		if movement.MovementType == "COUNT" {
-			countSeen = true
-			break
-		}
-	}
-	if !countSeen {
-		t.Fatalf("expected pallet-centric cycle count activity feed entry, got %+v", movements)
-	}
-}
-
-func TestCycleCountRequiresPalletSelectionIntegration(t *testing.T) {
-	store := newIntegrationStore(t)
-	ctx := context.Background()
-	suffix := integrationSuffix()
-
-	customer := mustCreateCustomer(t, ctx, store, "CountPalletRequiredCustomer-"+suffix)
-	location := mustCreateLocation(t, ctx, store, "CountPalletRequiredLocation-"+suffix)
-	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "COUNT-PALLET-REQ-"+suffix, 10)
-
-	if _, err := store.CreateCycleCount(ctx, CreateCycleCountInput{
-		CountNo: "CC-PALLET-REQ-" + suffix,
-		Lines: []CreateCycleCountLineInput{
-			cycleCountLineFromItem(item, 7, "missing pallet"),
-		},
-	}); err == nil || !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("expected cycle count without pallet to fail with ErrInvalidInput, got %v", err)
+		t.Fatalf("expected aggregate transfer activity feed entries, got %+v", movements)
 	}
 }
 
@@ -5914,6 +5252,7 @@ func adjustmentLineFromItem(item Item, adjustQty int, lineNote string) CreateInv
 		CustomerID:     item.CustomerID,
 		LocationID:     item.LocationID,
 		StorageSection: item.StorageSection,
+		ContainerID:    item.ContainerID,
 		ContainerNo:    item.ContainerNo,
 		SKUMasterID:    item.SKUMasterID,
 		AdjustQty:      adjustQty,
@@ -5926,24 +5265,13 @@ func transferLineFromItem(item Item, quantity int, toLocationID int64, toStorage
 		CustomerID:       item.CustomerID,
 		LocationID:       item.LocationID,
 		StorageSection:   item.StorageSection,
+		ContainerID:      item.ContainerID,
 		ContainerNo:      item.ContainerNo,
 		SKUMasterID:      item.SKUMasterID,
 		Quantity:         quantity,
 		ToLocationID:     toLocationID,
 		ToStorageSection: toStorageSection,
 		LineNote:         lineNote,
-	}
-}
-
-func cycleCountLineFromItem(item Item, countedQty int, lineNote string) CreateCycleCountLineInput {
-	return CreateCycleCountLineInput{
-		CustomerID:     item.CustomerID,
-		LocationID:     item.LocationID,
-		StorageSection: item.StorageSection,
-		ContainerNo:    item.ContainerNo,
-		SKUMasterID:    item.SKUMasterID,
-		CountedQty:     countedQty,
-		LineNote:       lineNote,
 	}
 }
 

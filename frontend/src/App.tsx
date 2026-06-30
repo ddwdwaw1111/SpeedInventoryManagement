@@ -7,7 +7,6 @@ import {
   ExpandMoreOutlined,
   ChevronRightOutlined,
   CompareArrowsOutlined,
-  FactCheckOutlined,
   FileDownloadOutlined,
   GroupsOutlined,
   HomeOutlined,
@@ -59,7 +58,7 @@ import {
   PALLET_ENTITY_UI_ENABLED,
   type PageKey
 } from "./lib/routes";
-import type { AuditLog, Customer, CycleCount, InboundDocument, InventoryAdjustment, InventoryTransfer, Item, Location, LoginPayload, Movement, OutboundDocument, SKUMaster, SignUpPayload, User } from "./lib/types";
+import type { AuditLog, Customer, InboundDocument, InventoryAdjustment, InventoryTransfer, Item, Location, LoginPayload, Movement, OutboundDocument, SKUMaster, SignUpPayload, User } from "./lib/types";
 
 const ActivityManagementPage = lazy(async () => {
   const module = await import("./components/ActivityManagementPage");
@@ -108,10 +107,6 @@ const DailyOperationsPage = lazy(async () => {
 const CustomerManagementPage = lazy(async () => {
   const module = await import("./components/CustomerManagementPage");
   return { default: module.CustomerManagementPage };
-});
-const CycleCountManagementPage = lazy(async () => {
-  const module = await import("./components/CycleCountManagementPage");
-  return { default: module.CycleCountManagementPage };
 });
 const ExportCenterPage = lazy(async () => {
   const module = await import("./components/ExportCenterPage");
@@ -243,7 +238,6 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
   const [outboundDocuments, setOutboundDocuments] = useState<OutboundDocument[]>([]);
   const [adjustments, setAdjustments] = useState<InventoryAdjustment[]>([]);
   const [transfers, setTransfers] = useState<InventoryTransfer[]>([]);
-  const [cycleCounts, setCycleCounts] = useState<CycleCount[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const [embeddedComposer, setEmbeddedComposer] = useState<{ mode: "IN" | "OUT"; date: string } | null>(null);
@@ -417,7 +411,6 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
       setOutboundDocuments([]);
       setAdjustments([]);
       setTransfers([]);
-      setCycleCounts([]);
       if (showSpinner) setIsLoading(false);
       return;
     }
@@ -432,7 +425,6 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
         api.getOutboundDocuments(300, "all"),
         api.getInventoryAdjustments(300),
         api.getInventoryTransfers(300),
-        api.getCycleCounts(300),
         currentRole === "admin" ? api.getAuditLogs(500) : Promise.resolve([]),
         currentRole === "admin" ? api.getUsers() : Promise.resolve([]),
         refreshBillingInvoiceHeaderDefaults()
@@ -448,7 +440,6 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
         outboundDocumentsResult,
         adjustmentsResult,
         transfersResult,
-        cycleCountsResult,
         auditLogsResult,
         usersResult,
         billingInvoiceSettingsResult
@@ -468,7 +459,6 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
       if (outboundDocumentsResult.status === "fulfilled") setOutboundDocuments(outboundDocumentsResult.value);
       if (adjustmentsResult.status === "fulfilled") setAdjustments(adjustmentsResult.value);
       if (transfersResult.status === "fulfilled") setTransfers(transfersResult.value);
-      if (cycleCountsResult.status === "fulfilled") setCycleCounts(cycleCountsResult.value);
       if (billingInvoiceSettingsResult.status === "rejected") {
         console.warn("Could not load billing invoice settings", billingInvoiceSettingsResult.reason);
       }
@@ -531,7 +521,6 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
       setOutboundDocuments([]);
       setAdjustments([]);
       setTransfers([]);
-      setCycleCounts([]);
     } catch (error) {
       setAuthErrorMessage(getErrorMessage(error, "Could not sign out."));
     } finally {
@@ -581,8 +570,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
     { key: "container-lifecycle", label: t("adminContainerLifecyclePage"), description: t("adminContainerLifecycleDesc"), icon: <HistoryOutlined fontSize="small" /> },
     ...(PALLET_ENTITY_UI_ENABLED ? [
       { key: "adjustments" as PageKey, label: t("adjustments"), description: t("adjustmentsDesc"), icon: <TuneOutlined fontSize="small" /> },
-      { key: "transfers" as PageKey, label: t("transfers"), description: t("transfersDesc"), icon: <CompareArrowsOutlined fontSize="small" /> },
-      { key: "cycle-counts" as PageKey, label: t("cycleCounts"), description: t("cycleCountsDesc"), icon: <FactCheckOutlined fontSize="small" /> }
+      { key: "transfers" as PageKey, label: t("transfers"), description: t("transfersDesc"), icon: <CompareArrowsOutlined fontSize="small" /> }
     ] : []),
     { key: "all-activity", label: t("allActivity"), description: t("allActivityDesc"), icon: <HistoryOutlined fontSize="small" /> },
     { key: "customers", label: t("customers"), description: t("customersDesc"), icon: <GroupsOutlined fontSize="small" /> },
@@ -631,7 +619,6 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
     "all-activity": "inventory-summary",
     adjustments: "inventory-summary",
     transfers: "inventory-summary",
-    "cycle-counts": "inventory-summary",
     "storage-location-editor": "storage-management"
   };
   const sectionKeyByPage: Partial<Record<PageKey, string>> = {
@@ -642,7 +629,6 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
     "container-lifecycle": "inventory",
     "adjustments": "inventory",
     "transfers": "inventory",
-    "cycle-counts": "inventory",
     "all-activity": "inventory",
     "pallet-trace": "inventory",
     billing: "finance",
@@ -857,7 +843,6 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
             ) : null}
             {PALLET_ENTITY_UI_ENABLED && activePage === "adjustments" ? renderWithSuspense(<AdjustmentManagementPage adjustments={adjustments} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
             {PALLET_ENTITY_UI_ENABLED && activePage === "transfers" ? renderWithSuspense(<TransferManagementPage transfers={transfers} items={items} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
-            {PALLET_ENTITY_UI_ENABLED && activePage === "cycle-counts" ? renderWithSuspense(<CycleCountManagementPage cycleCounts={cycleCounts} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "inventory-summary" ? renderWithSuspense(<InventorySummaryPage items={items} movements={movements} customers={customers} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "warehouse-map" ? (
               <Suspense fallback={pageLoadingFallback}>
@@ -954,7 +939,6 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
                 outboundDocuments={activeOutboundDocuments}
                 adjustments={adjustments}
                 transfers={transfers}
-                cycleCounts={cycleCounts}
                 isLoading={isLoading}
                 errorMessage={errorMessage}
                 onNavigate={handleNavigateToPage}

@@ -606,7 +606,7 @@ function renderMovementTypeLabel(movementType: Movement["movementType"], t: (key
     case "TRANSFER_OUT":
       return t("transfers");
     case "COUNT":
-      return t("cycleCounts");
+      return t("cycleCount");
     default:
       return movementType;
   }

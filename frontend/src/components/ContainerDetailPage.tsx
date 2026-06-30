@@ -22,7 +22,6 @@ import {
   type ContainerSkuCard
 } from "../lib/containerInventory";
 import { setPendingAllActivityContext } from "../lib/allActivityContext";
-import { setPendingInventoryActionContext } from "../lib/inventoryActionContext";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import { PALLET_ENTITY_UI_ENABLED, type PageKey } from "../lib/routes";
@@ -59,7 +58,6 @@ type ContainerAdjustmentFormState = {
 
 type ContainerTransferFormState = {
   notes: string;
-  selectedPalletIds: number[];
   toLocationId: string;
   toStorageSection: string;
   lineNote: string;
@@ -125,6 +123,10 @@ export function ContainerDetailPage({
     [containerRows, normalizedContainerNo]
   );
   const skuCards = useMemo(() => buildContainerSkuCards(container?.items ?? []), [container?.items]);
+  const transferableContainerItems = useMemo(
+    () => (container?.items ?? []).filter(canAutoTransferContainerItem),
+    [container?.items]
+  );
   const isHistoricalOnly = Boolean(container && container.rowCount === 0);
   const containerMovements = useMemo(
     () => movements
@@ -237,17 +239,9 @@ export function ContainerDetailPage({
     () => actionablePallets.filter((pallet) => adjustmentForm.selectedPalletIds.includes(pallet.id)),
     [actionablePallets, adjustmentForm.selectedPalletIds]
   );
-  const selectedTransferPallets = useMemo(
-    () => actionablePallets.filter((pallet) => transferForm.selectedPalletIds.includes(pallet.id)),
-    [actionablePallets, transferForm.selectedPalletIds]
-  );
   const hasAllAdjustmentPalletsSelected = useMemo(
     () => actionablePallets.length > 0 && actionablePallets.every((pallet) => adjustmentForm.selectedPalletIds.includes(pallet.id)),
     [actionablePallets, adjustmentForm.selectedPalletIds]
-  );
-  const hasAllTransferPalletsSelected = useMemo(
-    () => actionablePallets.length > 0 && actionablePallets.every((pallet) => transferForm.selectedPalletIds.includes(pallet.id)),
-    [actionablePallets, transferForm.selectedPalletIds]
   );
   const transferDestinationLocation = useMemo(
     () => locations.find((location) => location.id === Number(transferForm.toLocationId)) ?? null,
@@ -258,8 +252,7 @@ export function ContainerDetailPage({
     [transferDestinationLocation]
   );
   const canOpenAdjustmentDialog = PALLET_ENTITY_UI_ENABLED && canManageInventory && actionablePallets.length > 0;
-  const canOpenTransferDialog = PALLET_ENTITY_UI_ENABLED && canManageInventory && actionablePallets.length > 0;
-  const canLaunchCycleCount = PALLET_ENTITY_UI_ENABLED && canManageInventory && Boolean(container && container.rowCount > 0 && normalizedContainerNo);
+  const canOpenTransferDialog = canManageInventory && transferableContainerItems.length > 0;
   const lifecycleCustomerId = container?.customerIds.length === 1 ? container.customerIds[0] : null;
   const containerPalletCount = useMemo(
     () => (container?.items ?? []).reduce((sum, item) => sum + item.pallets, 0),
@@ -395,7 +388,7 @@ export function ContainerDetailPage({
   }
 
   function openTransferDialog() {
-    setTransferForm(createEmptyContainerTransferForm(defaultSelectedPalletIds));
+    setTransferForm(createEmptyContainerTransferForm());
     setInventoryDialogError("");
     setInventoryDialogSubmitting(false);
     setActiveInventoryDialog("transfer");
@@ -409,24 +402,11 @@ export function ContainerDetailPage({
     setActiveInventoryDialog(null);
     setInventoryDialogError("");
     setAdjustmentForm(createEmptyContainerAdjustmentForm(defaultSelectedPalletIds));
-    setTransferForm(createEmptyContainerTransferForm(defaultSelectedPalletIds));
+    setTransferForm(createEmptyContainerTransferForm());
   }
 
   function toggleAllAdjustmentPallets() {
     setAdjustmentForm((current) => {
-      const nextSelectedPalletIds = actionablePallets.map((pallet) => pallet.id);
-      const areAllSelected = actionablePallets.length > 0
-        && actionablePallets.every((pallet) => current.selectedPalletIds.includes(pallet.id));
-
-      return {
-        ...current,
-        selectedPalletIds: areAllSelected ? [] : nextSelectedPalletIds
-      };
-    });
-  }
-
-  function toggleAllTransferPallets() {
-    setTransferForm((current) => {
       const nextSelectedPalletIds = actionablePallets.map((pallet) => pallet.id);
       const areAllSelected = actionablePallets.length > 0
         && actionablePallets.every((pallet) => current.selectedPalletIds.includes(pallet.id));
@@ -479,8 +459,8 @@ export function ContainerDetailPage({
 
   async function handleSubmitTransfer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (selectedTransferPallets.length === 0) {
-      setInventoryDialogError(t("selectAtLeastOnePallet"));
+    if (transferableContainerItems.length === 0) {
+      setInventoryDialogError(t("noInventoryAvailable"));
       return;
     }
     if (Number(transferForm.toLocationId) <= 0) {
@@ -488,14 +468,14 @@ export function ContainerDetailPage({
       return;
     }
 
-    const transferLines = buildTransferLinesFromPallets(
-      selectedTransferPallets,
+    const transferLines = buildTransferLinesFromItems(
+      transferableContainerItems,
       Number(transferForm.toLocationId),
       transferForm.toStorageSection,
       transferForm.lineNote
     );
     if (transferLines.length === 0) {
-      setInventoryDialogError(t("containerDetailNoActionablePallets"));
+      setInventoryDialogError(t("noInventoryAvailable"));
       return;
     }
 
@@ -596,45 +576,25 @@ export function ContainerDetailPage({
                   {t("openContainerLifecycle")}
                 </button>
                 {PALLET_ENTITY_UI_ENABLED ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!canLaunchCycleCount || !normalizedContainerNo) {
-                          return;
-                        }
-
-                        setPendingInventoryActionContext("cycle-counts", {
-                          containerNo: normalizedContainerNo
-                        });
-                        onNavigate("cycle-counts");
-                      }}
-                      disabled={!canLaunchCycleCount}
-                      className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <FactCheckOutlinedIcon sx={{ fontSize: 15 }} />
-                      {t("addCycleCount")}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={openAdjustmentDialog}
-                      disabled={!canOpenAdjustmentDialog}
-                      className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <TuneOutlinedIcon sx={{ fontSize: 15 }} />
-                      {t("addAdjustment")}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={openTransferDialog}
-                      disabled={!canOpenTransferDialog}
-                      className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <CompareArrowsOutlinedIcon sx={{ fontSize: 15 }} />
-                      {t("addTransfer")}
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    onClick={openAdjustmentDialog}
+                    disabled={!canOpenAdjustmentDialog}
+                    className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <TuneOutlinedIcon sx={{ fontSize: 15 }} />
+                    {t("addAdjustment")}
+                  </button>
                 ) : null}
+                <button
+                  type="button"
+                  onClick={openTransferDialog}
+                  disabled={!canOpenTransferDialog}
+                  className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <CompareArrowsOutlinedIcon sx={{ fontSize: 15 }} />
+                  {t("addTransfer")}
+                </button>
               </div>
             ) : null}
           </div>
@@ -1010,25 +970,7 @@ export function ContainerDetailPage({
         <DialogContent dividers>
           {inventoryDialogError ? <InlineAlert>{inventoryDialogError}</InlineAlert> : null}
           <form className="sheet-form" onSubmit={handleSubmitTransfer}>
-            <PalletSelectionList
-              pallets={actionablePallets}
-              selectedPalletIds={transferForm.selectedPalletIds}
-              onToggle={(palletId) => setTransferForm((current) => ({
-                ...current,
-                selectedPalletIds: toggleSelectedPalletId(current.selectedPalletIds, palletId)
-              }))}
-              headerAction={actionablePallets.length > 1 ? (
-                <button
-                  type="button"
-                  onClick={toggleAllTransferPallets}
-                  aria-pressed={hasAllTransferPalletsSelected}
-                  className="inline-flex items-center rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-xs font-semibold text-[#143569] transition hover:border-slate-300 hover:bg-slate-50"
-                >
-                  {hasAllTransferPalletsSelected ? t("clear") : t("selectAll")}
-                </button>
-              ) : null}
-              t={t}
-            />
+            <ContainerTransferItemSummary items={transferableContainerItems} t={t} />
             <label>{t("destinationStorage")}<select value={transferForm.toLocationId} onChange={(event) => setTransferForm((current) => {
               const nextLocationId = event.target.value;
               const nextLocation = locations.find((location) => location.id === Number(nextLocationId));
@@ -1585,10 +1527,9 @@ function createEmptyContainerAdjustmentForm(selectedPalletIds: number[] = []): C
   };
 }
 
-function createEmptyContainerTransferForm(selectedPalletIds: number[] = []): ContainerTransferFormState {
+function createEmptyContainerTransferForm(): ContainerTransferFormState {
   return {
     notes: "",
-    selectedPalletIds,
     toLocationId: "",
     toStorageSection: "TEMP",
     lineNote: ""
@@ -1690,6 +1631,47 @@ function PalletSelectionList({
   );
 }
 
+function ContainerTransferItemSummary({
+  items,
+  t
+}: {
+  items: Item[];
+  t: (key: string, params?: Record<string, string | number>) => string;
+}) {
+  if (items.length === 0) {
+    return <div className="sheet-note sheet-note--readonly sheet-form__wide">{t("noInventoryAvailable")}</div>;
+  }
+
+  return (
+    <div className="sheet-form__wide overflow-hidden rounded-xl border border-slate-200/80 bg-white">
+      <table className="w-full text-left text-xs">
+        <thead className="bg-slate-50 text-[11px] uppercase tracking-[0.12em] text-slate-500">
+          <tr>
+            <th className="px-3 py-2 font-semibold">{t("sku")}</th>
+            <th className="px-3 py-2 font-semibold">{t("sourceStorage")}</th>
+            <th className="px-3 py-2 text-right font-semibold">{t("availableQty")}</th>
+            <th className="px-3 py-2 text-right font-semibold">{t("palletQty")}</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {items.map((item) => (
+            <tr key={`${item.id}-${item.skuMasterId}`}>
+              <td className="px-3 py-2 font-semibold text-[#143569]">{item.sku}</td>
+              <td className="px-3 py-2 text-slate-600">{item.locationName} / {normalizeStorageSection(item.storageSection)}</td>
+              <td className="px-3 py-2 text-right font-semibold text-slate-700">{item.availableQty}</td>
+              <td className="px-3 py-2 text-right text-slate-600">{item.availableQty >= item.quantity ? item.pallets : 0}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function canAutoTransferContainerItem(item: Item) {
+  return item.availableQty > 0 && (item.pallets <= 0 || item.availableQty >= item.quantity);
+}
+
 function toggleSelectedPalletId(selectedPalletIds: number[], palletId: number) {
   if (selectedPalletIds.includes(palletId)) {
     return selectedPalletIds.filter((value) => value !== palletId);
@@ -1736,8 +1718,8 @@ function buildAdjustmentLinesFromPallets(pallets: PalletTrace[], lineNote: strin
   }));
 }
 
-function buildTransferLinesFromPallets(
-  pallets: PalletTrace[],
+function buildTransferLinesFromItems(
+  items: Item[],
   toLocationId: number,
   toStorageSection: string,
   lineNote: string
@@ -1745,24 +1727,23 @@ function buildTransferLinesFromPallets(
   const normalizedLineNote = lineNote.trim() || undefined;
   const normalizedToStorageSection = normalizeStorageSection(toStorageSection);
 
-  return pallets.flatMap((pallet) => pallet.contents.flatMap((content) => {
-    const availableQty = getPalletContentAvailableQty(content);
-    if (availableQty <= 0) {
+  return items.flatMap((item) => {
+    if (!canAutoTransferContainerItem(item)) {
       return [];
     }
 
     return [{
-      customerId: pallet.customerId,
-      locationId: pallet.currentLocationId,
-      storageSection: normalizeStorageSection(pallet.currentStorageSection),
-      containerNo: normalizeContainerNumber(pallet.currentContainerNo),
-      palletId: pallet.id,
-      skuMasterId: content.skuMasterId,
-      quantity: availableQty,
-      pallets: 1,
+      customerId: item.customerId,
+      locationId: item.locationId,
+      storageSection: normalizeStorageSection(item.storageSection),
+      containerId: item.containerId,
+      containerNo: normalizeContainerNumber(item.containerNo),
+      skuMasterId: item.skuMasterId,
+      quantity: item.availableQty,
+      pallets: Math.max(0, item.pallets),
       toLocationId,
       toStorageSection: normalizedToStorageSection,
       lineNote: normalizedLineNote
     }];
-  }));
+  });
 }

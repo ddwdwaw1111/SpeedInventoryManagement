@@ -32,7 +32,6 @@ import { getOutboundDisplayShipDate, getOutboundScheduledShipDate } from "../lib
 import { InlineAlert } from "./Feedback";
 import { useI18n } from "../lib/i18n";
 import type {
-  CycleCount,
   InboundDocument,
   InventoryAdjustment,
   InventoryTransfer,
@@ -49,7 +48,6 @@ type HomeDashboardPageProps = {
   outboundDocuments: OutboundDocument[];
   adjustments: InventoryAdjustment[];
   transfers: InventoryTransfer[];
-  cycleCounts: CycleCount[];
   isLoading: boolean;
   errorMessage: string;
   onNavigate: (page: PageKey) => void;
@@ -115,7 +113,6 @@ export function HomeDashboardPage({
   outboundDocuments,
   adjustments,
   transfers,
-  cycleCounts,
   isLoading,
   errorMessage,
   onNavigate,
@@ -199,8 +196,8 @@ export function HomeDashboardPage({
   );
 
   const recentActivity = useMemo<ActivityEntry[]>(
-    () => buildRecentActivityEntries(inboundDocuments, outboundDocuments, adjustments, transfers, cycleCounts, t),
-    [adjustments, cycleCounts, inboundDocuments, outboundDocuments, t, transfers]
+    () => buildRecentActivityEntries(inboundDocuments, outboundDocuments, adjustments, transfers, t),
+    [adjustments, inboundDocuments, outboundDocuments, t, transfers]
   );
 
   const calendarDays = useMemo(
@@ -978,7 +975,6 @@ function buildRecentActivityEntries(
   outboundDocuments: OutboundDocument[],
   adjustments: InventoryAdjustment[],
   transfers: InventoryTransfer[],
-  cycleCounts: CycleCount[],
   t: (key: string, params?: Record<string, string | number>) => string
 ) {
   const entries: Array<ActivityEntry & { timestamp: number }> = [];
@@ -1027,18 +1023,6 @@ function buildRecentActivityEntries(
       description: `${transfer.transferNo || `TRF-${transfer.id}`} / ${transfer.notes || t("dashboardRecentTransferFallback")}`,
       timeLabel: formatRelativeTime(timestamp),
       tone: "blue",
-      timestamp
-    });
-  }
-
-  for (const cycleCount of cycleCounts) {
-    const timestamp = getDocumentTime(cycleCount.updatedAt || cycleCount.createdAt);
-    entries.push({
-      id: `cycle-${cycleCount.id}`,
-      title: t("cycleCounts"),
-      description: `${cycleCount.countNo || `CNT-${cycleCount.id}`} / ${cycleCount.notes || t("dashboardRecentCountFallback")}`,
-      timeLabel: formatRelativeTime(timestamp),
-      tone: "slate",
       timestamp
     });
   }

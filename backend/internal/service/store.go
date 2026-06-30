@@ -872,7 +872,6 @@ func (s *Store) listStockLedgerMovements(ctx context.Context, limit int, filters
 				MAX(NULLIF(oline.description_snapshot, '')),
 				MAX(NULLIF(adjl.description_snapshot, '')),
 				MAX(NULLIF(trl.description_snapshot, '')),
-				MAX(NULLIF(ccl.description_snapshot, '')),
 				MAX(NULLIF(sm.description, '')),
 				MAX(NULLIF(sm.name, '')),
 				''
@@ -940,7 +939,6 @@ func (s *Store) listStockLedgerMovements(ctx context.Context, limit int, filters
 				MAX(NULLIF(odoc.document_note, '')),
 				MAX(NULLIF(adj.notes, '')),
 				MAX(NULLIF(tr.notes, '')),
-				MAX(NULLIF(cc.notes, '')),
 				''
 			) AS document_note,
 			COALESCE(
@@ -970,10 +968,6 @@ func (s *Store) listStockLedgerMovements(ctx context.Context, limit int, filters
 			ON sl.source_document_type = 'TRANSFER' AND sl.source_document_id = tr.id
 		LEFT JOIN inventory_transfer_lines trl
 			ON sl.source_document_type = 'TRANSFER' AND sl.source_line_id = trl.id
-		LEFT JOIN cycle_counts cc
-			ON sl.source_document_type = 'CYCLE_COUNT' AND sl.source_document_id = cc.id
-		LEFT JOIN cycle_count_lines ccl
-			ON sl.source_document_type = 'CYCLE_COUNT' AND sl.source_line_id = ccl.id
 		LEFT JOIN inventory_items ii
 			ON ii.sku_master_id = sl.sku_master_id
 			AND ii.customer_id = sl.customer_id
@@ -1342,13 +1336,8 @@ func resolveMovementDelta(movementType string, quantity int) (int, error) {
 			return 0, fmt.Errorf("%w: transfer-out quantity must be greater than zero", ErrInvalidInput)
 		}
 		return -quantity, nil
-	case "COUNT":
-		if quantity == 0 {
-			return 0, fmt.Errorf("%w: cycle count variance cannot be zero", ErrInvalidInput)
-		}
-		return quantity, nil
 	default:
-		return 0, fmt.Errorf("%w: movement type must be IN, OUT, ADJUST, REVERSAL, TRANSFER_IN, TRANSFER_OUT, or COUNT", ErrInvalidInput)
+		return 0, fmt.Errorf("%w: movement type must be IN, OUT, ADJUST, REVERSAL, TRANSFER_IN, or TRANSFER_OUT", ErrInvalidInput)
 	}
 }
 
@@ -1427,8 +1416,6 @@ func defaultMovementReason(movementType string) string {
 		return "Inventory transfer received"
 	case "TRANSFER_OUT":
 		return "Inventory transfer shipped"
-	case "COUNT":
-		return "Cycle count variance recorded"
 	default:
 		return "Inventory adjustment recorded"
 	}
@@ -1570,79 +1557,6 @@ func (s *Store) deleteUnusedSKUMaster(ctx context.Context, tx *sql.Tx, skuMaster
 	return nil
 }
 
-func (s *Store) createSeedPalletForInventoryItemTx(
-	ctx context.Context,
-	tx *sql.Tx,
-	itemID int64,
-	skuMasterID int64,
-	input CreateItemInput,
-	deliveryDate *time.Time,
-	quantity int,
-	palletCode string,
-	sourceDocumentType string,
-	sourceDocumentID int64,
-	sourceLineID int64,
-	reason string,
-) error {
-	if itemID <= 0 || skuMasterID <= 0 || quantity <= 0 {
-		return nil
-	}
-
-	pallet, err := s.createPalletTx(ctx, tx, createPalletInput{
-		PalletCode:            strings.TrimSpace(palletCode),
-		ActualArrivalDate:     deliveryDate,
-		CustomerID:            input.CustomerID,
-		SKUMasterID:           skuMasterID,
-		CurrentLocationID:     input.LocationID,
-		CurrentStorageSection: input.StorageSection,
-		CurrentContainerNo:    input.ContainerNo,
-		Status:                PalletStatusOpen,
-	})
-	if err != nil {
-		return err
-	}
-
-	palletItemID, err := s.createPalletItemTx(ctx, tx, createPalletItemInput{
-		PalletID:     pallet.ID,
-		SKUMasterID:  skuMasterID,
-		Quantity:     quantity,
-		AllocatedQty: input.AllocatedQty,
-		DamagedQty:   input.DamagedQty,
-		HoldQty:      input.HoldQty,
-	})
-	if err != nil {
-		return err
-	}
-
-	if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
-		EventType:           StockLedgerEventReceive,
-		PalletID:            pallet.ID,
-		PalletItemID:        palletItemID,
-		SKUMasterID:         skuMasterID,
-		CustomerID:          input.CustomerID,
-		LocationID:          input.LocationID,
-		StorageSection:      input.StorageSection,
-		QuantityChange:      quantity,
-		SourceDocumentType:  sourceDocumentType,
-		SourceDocumentID:    sourceDocumentID,
-		SourceLineID:        sourceLineID,
-		ContainerID:         input.ContainerID,
-		ContainerNo:         input.ContainerNo,
-		DeliveryDate:        deliveryDate,
-		ItemNumber:          input.ItemNumber,
-		DescriptionSnapshot: input.Description,
-		ExpectedQty:         quantity,
-		ReceivedQty:         quantity,
-		Pallets:             1,
-		UnitLabel:           strings.ToUpper(firstNonEmpty(input.Unit, "PCS")),
-		Reason:              reason,
-	}); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 func mapMovementTypeToStockLedgerEvent(movementType string) string {
 	switch movementType {
 	case "IN":
@@ -1655,8 +1569,6 @@ func mapMovementTypeToStockLedgerEvent(movementType string) string {
 		return StockLedgerEventTransferOut
 	case "TRANSFER_IN":
 		return StockLedgerEventTransferIn
-	case "COUNT":
-		return StockLedgerEventCount
 	default:
 		return StockLedgerEventAdjust
 	}
@@ -1706,31 +1618,4 @@ func mapDBError(err error) error {
 	}
 
 	return err
-}
-
-func buildInClause(ids []int64) (string, []any) {
-	placeholders := make([]string, len(ids))
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		placeholders[i] = "?"
-		args[i] = id
-	}
-	return strings.Join(placeholders, ","), args
-}
-
-func (s *Store) collectPalletIDsByInboundDocumentTx(ctx context.Context, tx *sql.Tx, inboundDocumentID int64) ([]int64, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM pallets WHERE source_inbound_document_id = ? FOR UPDATE`, inboundDocumentID)
-	if err != nil {
-		return nil, mapDBError(fmt.Errorf("collect inbound pallet ids: %w", err))
-	}
-	defer rows.Close()
-	ids := make([]int64, 0)
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan pallet id: %w", err)
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
 }

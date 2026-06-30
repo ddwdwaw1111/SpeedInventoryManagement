@@ -1,4 +1,4 @@
-export type InventoryActionPage = "adjustments" | "transfers" | "cycle-counts";
+export type InventoryActionPage = "adjustments" | "transfers";
 
 export type InventoryActionContext = {
   sourceKey?: string;

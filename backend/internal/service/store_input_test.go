@@ -117,7 +117,7 @@ func TestResolveMovementDelta(t *testing.T) {
 		{name: "reversal", movementType: "REVERSAL", quantity: 5, wantDelta: 5},
 		{name: "transfer in", movementType: "TRANSFER_IN", quantity: 3, wantDelta: 3},
 		{name: "transfer out", movementType: "TRANSFER_OUT", quantity: 3, wantDelta: -3},
-		{name: "count", movementType: "COUNT", quantity: -1, wantDelta: -1},
+		{name: "count", movementType: "COUNT", quantity: -1, wantErr: true},
 		{name: "invalid type", movementType: "OTHER", quantity: 1, wantErr: true},
 		{name: "zero outbound", movementType: "OUT", quantity: 0, wantErr: true},
 	}
@@ -243,7 +243,6 @@ func TestDefaultMovementReason(t *testing.T) {
 		"REVERSAL":     "Outbound shipment reversed",
 		"TRANSFER_IN":  "Inventory transfer received",
 		"TRANSFER_OUT": "Inventory transfer shipped",
-		"COUNT":        "Cycle count variance recorded",
 		"ADJUST":       "Inventory adjustment recorded",
 	}
 

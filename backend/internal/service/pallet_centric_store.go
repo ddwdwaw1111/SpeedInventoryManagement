@@ -21,7 +21,6 @@ const (
 	StockLedgerSourceOutbound   = "OUTBOUND"
 	StockLedgerSourceTransfer   = "TRANSFER"
 	StockLedgerSourceAdjustment = "ADJUSTMENT"
-	StockLedgerSourceCycleCount = "CYCLE_COUNT"
 )
 
 type createdPalletEntity struct {

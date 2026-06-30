@@ -15,8 +15,6 @@ import type {
   ContainerTrackingEventPayload,
   CustomerPortalContainerLifecycle,
   CustomerPortalContainerSummary,
-  CycleCount,
-  CycleCountPayload,
   CreateUserPayload,
   Customer,
   CustomerPayload,
@@ -830,17 +828,6 @@ export const api = {
 
   createInventoryTransfer(payload: InventoryTransferPayload) {
     return request<InventoryTransfer>("/transfers", {
-      method: "POST",
-      body: JSON.stringify(payload)
-    });
-  },
-
-  getCycleCounts(limit = 100) {
-    return request<CycleCount[]>(`/cycle-counts?limit=${limit}`);
-  },
-
-  createCycleCount(payload: CycleCountPayload) {
-    return request<CycleCount>("/cycle-counts", {
       method: "POST",
       body: JSON.stringify(payload)
     });

@@ -20,7 +20,6 @@ export type PageKey =
   | "warehouse-map"
   | "adjustments"
   | "transfers"
-  | "cycle-counts"
   | "sku-master"
   | "storage-management"
   | "storage-location-editor"
@@ -33,8 +32,8 @@ export type PageKey =
 
 export const PALLET_ENTITY_UI_ENABLED = false;
 
-const palletEntityPages: readonly PageKey[] = ["pallet-trace", "adjustments", "transfers", "cycle-counts"];
-const palletEntityPaths = new Set(["/pallets", "/adjustments", "/transfers", "/cycle-counts"]);
+const palletEntityPages: readonly PageKey[] = ["pallet-trace", "adjustments", "transfers"];
+const palletEntityPaths = new Set(["/pallets", "/adjustments", "/transfers"]);
 
 export function isPalletEntityPage(page: PageKey) {
   return palletEntityPages.includes(page);
@@ -64,7 +63,6 @@ export const pagePathMap: Record<PageKey, string> = {
   "warehouse-map": "/warehouse-map",
   adjustments: "/adjustments",
   transfers: "/transfers",
-  "cycle-counts": "/cycle-counts",
   "sku-master": "/sku-master",
   "storage-management": "/storage-management",
   "storage-location-editor": "/storage-management/new",
@@ -107,7 +105,7 @@ export function getPageFromPath(pathname: string): PageKey {
   if (normalized === "/warehouse-map") return "warehouse-map";
   if (normalized === "/adjustments") return "adjustments";
   if (normalized === "/transfers") return "transfers";
-  if (normalized === "/cycle-counts") return "cycle-counts";
+  if (normalized === "/cycle-counts") return "inventory-summary";
   if (normalized === "/inbound-management/new" || /^\/inbound-management\/\d+\/edit$/.test(normalized)) return "receipt-editor";
   if (/^\/inbound-management\/\d+$/.test(normalized)) return "inbound-detail";
   if (normalized === "/inbound-management") return "inbound-management";

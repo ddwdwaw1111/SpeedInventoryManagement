@@ -1028,7 +1028,6 @@ export type InventoryTransferLinePayload = {
   storageSection: string;
   containerId?: number;
   containerNo: string;
-  palletId?: number;
   skuMasterId: number;
   quantity: number;
   pallets: number;
@@ -1042,54 +1041,6 @@ export type InventoryTransferPayload = {
   actualTransferredAt?: string;
   notes?: string;
   lines: InventoryTransferLinePayload[];
-};
-
-export type CycleCountLine = {
-  id: number;
-  cycleCountId: number;
-  customerId: number;
-  customerName: string;
-  locationId: number;
-  locationName: string;
-  storageSection: string;
-  sku: string;
-  description: string;
-  systemQty: number;
-  countedQty: number;
-  varianceQty: number;
-  lineNote: string;
-  createdAt: string;
-};
-
-export type CycleCount = {
-  id: number;
-  countNo: string;
-  notes: string;
-  status: string;
-  totalLines: number;
-  totalVariance: number;
-  createdAt: string;
-  updatedAt: string;
-  lines: CycleCountLine[];
-};
-
-export type CycleCountLinePayload = {
-  customerId: number;
-  locationId: number;
-  storageSection: string;
-  containerId?: number;
-  containerNo: string;
-  palletId?: number;
-  createPallet?: boolean;
-  skuMasterId: number;
-  countedQty: number;
-  lineNote?: string;
-};
-
-export type CycleCountPayload = {
-  countNo?: string;
-  notes?: string;
-  lines: CycleCountLinePayload[];
 };
 
 // --- Billing Invoice Types ---

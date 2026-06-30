@@ -91,7 +91,6 @@ type PalletMoveLineCommand struct {
 	LocationID       int64  `json:"locationId"`
 	StorageSection   string `json:"storageSection"`
 	ContainerNo      string `json:"containerNo"`
-	PalletID         int64  `json:"palletId"`
 	SKUMasterID      int64  `json:"skuMasterId"`
 	Quantity         int    `json:"quantity"`
 	ToLocationID     int64  `json:"toLocationId"`
@@ -200,7 +199,6 @@ func (s *PalletOperationService) createTransfer(ctx context.Context, command Pal
 			LocationID:       line.LocationID,
 			StorageSection:   line.StorageSection,
 			ContainerNo:      line.ContainerNo,
-			PalletID:         line.PalletID,
 			SKUMasterID:      line.SKUMasterID,
 			Quantity:         line.Quantity,
 			ToLocationID:     line.ToLocationID,

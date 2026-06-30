@@ -1015,43 +1015,6 @@ func Migrate(db *sql.DB) error {
 		)`,
 		`ALTER TABLE inventory_transfers ADD COLUMN IF NOT EXISTS actual_transferred_at TIMESTAMP NULL DEFAULT NULL AFTER transfer_no`,
 		`ALTER TABLE inventory_transfer_lines ADD COLUMN IF NOT EXISTS pallets INT NOT NULL DEFAULT 0 AFTER quantity`,
-		`CREATE TABLE IF NOT EXISTS cycle_counts (
-			id BIGINT NOT NULL AUTO_INCREMENT,
-			count_no VARCHAR(120) NOT NULL,
-			notes TEXT DEFAULT NULL,
-			status VARCHAR(32) NOT NULL DEFAULT 'POSTED',
-			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-			PRIMARY KEY (id),
-			UNIQUE KEY uq_cycle_counts_count_no (count_no),
-			KEY idx_cycle_counts_created_at (created_at)
-		)`,
-		`CREATE TABLE IF NOT EXISTS cycle_count_lines (
-			id BIGINT NOT NULL AUTO_INCREMENT,
-			cycle_count_id BIGINT NOT NULL,
-			customer_id BIGINT NOT NULL,
-			customer_name_snapshot VARCHAR(160) NOT NULL,
-			location_id BIGINT NOT NULL,
-			location_name_snapshot VARCHAR(160) NOT NULL,
-			storage_section VARCHAR(16) NOT NULL DEFAULT 'TEMP',
-			sku_snapshot VARCHAR(64) NOT NULL,
-			description_snapshot VARCHAR(255) DEFAULT NULL,
-			system_qty INT NOT NULL DEFAULT 0,
-			counted_qty INT NOT NULL DEFAULT 0,
-			variance_qty INT NOT NULL DEFAULT 0,
-			line_note VARCHAR(255) DEFAULT NULL,
-			sort_order INT NOT NULL DEFAULT 1,
-			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (id),
-			KEY idx_cycle_count_lines_cycle_count_id (cycle_count_id),
-			CONSTRAINT fk_cycle_count_lines_cycle_count
-				FOREIGN KEY (cycle_count_id) REFERENCES cycle_counts (id)
-				ON DELETE CASCADE,
-			CONSTRAINT fk_cycle_count_lines_customer
-				FOREIGN KEY (customer_id) REFERENCES customers (id),
-			CONSTRAINT fk_cycle_count_lines_location
-				FOREIGN KEY (location_id) REFERENCES storage_locations (id)
-		)`,
 		`CREATE TABLE IF NOT EXISTS audit_logs (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			actor_user_id BIGINT NOT NULL,
@@ -1143,6 +1106,13 @@ func Migrate(db *sql.DB) error {
 		if _, err := db.Exec(statement); err != nil {
 			return fmt.Errorf("apply migration %q: %w", statement, err)
 		}
+	}
+
+	if _, err := db.Exec(`DROP TABLE IF EXISTS cycle_count_lines`); err != nil {
+		return fmt.Errorf("drop legacy cycle count lines table: %w", err)
+	}
+	if _, err := db.Exec(`DROP TABLE IF EXISTS cycle_counts`); err != nil {
+		return fmt.Errorf("drop legacy cycle counts table: %w", err)
 	}
 
 	if _, err := db.Exec(`
@@ -1743,7 +1713,6 @@ func Migrate(db *sql.DB) error {
 		{table: "inventory_adjustment_lines", name: "fk_inventory_adjustment_lines_movement"},
 		{table: "inventory_transfer_lines", name: "fk_inventory_transfer_lines_out_movement"},
 		{table: "inventory_transfer_lines", name: "fk_inventory_transfer_lines_in_movement"},
-		{table: "cycle_count_lines", name: "fk_cycle_count_lines_movement"},
 	}
 	for _, fk := range legacyMovementForeignKeys {
 		hasFK, err := foreignKeyExists(db, fk.table, fk.name)
@@ -1767,7 +1736,6 @@ func Migrate(db *sql.DB) error {
 		{table: "inventory_adjustment_lines", name: "idx_inventory_adjustment_lines_movement_id"},
 		{table: "inventory_transfer_lines", name: "idx_inventory_transfer_lines_out_movement_id"},
 		{table: "inventory_transfer_lines", name: "idx_inventory_transfer_lines_in_movement_id"},
-		{table: "cycle_count_lines", name: "idx_cycle_count_lines_movement_id"},
 	}
 	for _, idx := range legacyMovementIndexes {
 		hasIndex, err := indexExists(db, idx.table, idx.name)
@@ -1791,7 +1759,6 @@ func Migrate(db *sql.DB) error {
 		{table: "inventory_adjustment_lines", column: "movement_id"},
 		{table: "inventory_transfer_lines", column: "transfer_out_movement_id"},
 		{table: "inventory_transfer_lines", column: "transfer_in_movement_id"},
-		{table: "cycle_count_lines", column: "movement_id"},
 	}
 	for _, col := range legacyMovementColumns {
 		hasColumn, err := columnExists(db, col.table, col.column)
@@ -1939,30 +1906,6 @@ func Migrate(db *sql.DB) error {
 	} else if hasColumn {
 		if _, err := db.Exec(`ALTER TABLE inventory_adjustment_lines DROP COLUMN item_id`); err != nil {
 			return fmt.Errorf("drop inventory adjustment item column: %w", err)
-		}
-	}
-
-	if hasFK, err := foreignKeyExists(db, "cycle_count_lines", "fk_cycle_count_lines_item"); err != nil {
-		return fmt.Errorf("check cycle count item foreign key: %w", err)
-	} else if hasFK {
-		if _, err := db.Exec(`ALTER TABLE cycle_count_lines DROP FOREIGN KEY fk_cycle_count_lines_item`); err != nil {
-			return fmt.Errorf("drop cycle count item foreign key: %w", err)
-		}
-	}
-
-	if hasIndex, err := indexExists(db, "cycle_count_lines", "idx_cycle_count_lines_item_id"); err != nil {
-		return fmt.Errorf("check cycle count item index: %w", err)
-	} else if hasIndex {
-		if _, err := db.Exec(`ALTER TABLE cycle_count_lines DROP INDEX idx_cycle_count_lines_item_id`); err != nil {
-			return fmt.Errorf("drop cycle count item index: %w", err)
-		}
-	}
-
-	if hasColumn, err := columnExists(db, "cycle_count_lines", "item_id"); err != nil {
-		return fmt.Errorf("check cycle count item column: %w", err)
-	} else if hasColumn {
-		if _, err := db.Exec(`ALTER TABLE cycle_count_lines DROP COLUMN item_id`); err != nil {
-			return fmt.Errorf("drop cycle count item column: %w", err)
 		}
 	}
 

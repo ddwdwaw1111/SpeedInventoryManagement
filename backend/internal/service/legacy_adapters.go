@@ -46,7 +46,6 @@ func (a *LegacyInventoryAdapter) CreateTransfer(ctx context.Context, input Creat
 			LocationID:       line.LocationID,
 			StorageSection:   line.StorageSection,
 			ContainerNo:      line.ContainerNo,
-			PalletID:         line.PalletID,
 			SKUMasterID:      line.SKUMasterID,
 			Quantity:         line.Quantity,
 			ToLocationID:     line.ToLocationID,

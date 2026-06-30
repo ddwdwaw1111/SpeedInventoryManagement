@@ -4,7 +4,6 @@ import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
 import OutboxOutlinedIcon from "@mui/icons-material/OutboxOutlined";
 import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
 import CompareArrowsOutlinedIcon from "@mui/icons-material/CompareArrowsOutlined";
-import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
 import { useEffect, useMemo, useState } from "react";
 import { Box, Button, Chip, Drawer, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
@@ -260,7 +259,7 @@ export function AllActivityPage({ movements, customers, locations, currentUserRo
               />
             <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
             <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
-            <label>{t("movementType")}<select value={movementTypeFilter} onChange={(event) => setMovementTypeFilter(event.target.value as MovementTypeFilter)}><option value="ALL">{t("allRows")}</option><option value="IN">{t("inbound")}</option><option value="OUT">{t("outbound")}</option><option value="ADJUST">{t("adjustment")}</option><option value="COUNT">{t("cycleCount")}</option><option value="REVERSAL">{t("reversal")}</option><option value="TRANSFER_IN">{t("transferIn")}</option><option value="TRANSFER_OUT">{t("transferOut")}</option></select></label>
+            <label>{t("movementType")}<select value={movementTypeFilter} onChange={(event) => setMovementTypeFilter(event.target.value as MovementTypeFilter)}><option value="ALL">{t("allRows")}</option><option value="IN">{t("inbound")}</option><option value="OUT">{t("outbound")}</option><option value="ADJUST">{t("adjustment")}</option><option value="REVERSAL">{t("reversal")}</option><option value="TRANSFER_IN">{t("transferIn")}</option><option value="TRANSFER_OUT">{t("transferOut")}</option></select></label>
             <label>{t("fromDate")}<input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label>
             <label>{t("toDate")}<input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label>
           </div>
@@ -413,14 +412,6 @@ function renderMovementSourceAction(
     return (
       <Button variant="outlined" startIcon={<TuneOutlinedIcon fontSize="small" />} onClick={() => onNavigate("adjustments")}>
         {t("adjustments")}
-      </Button>
-    );
-  }
-
-  if (movement.movementType === "COUNT") {
-    return (
-      <Button variant="outlined" startIcon={<FactCheckOutlinedIcon fontSize="small" />} onClick={() => onNavigate("cycle-counts")}>
-        {t("cycleCounts")}
       </Button>
     );
   }

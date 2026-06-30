@@ -42,7 +42,6 @@ describe("HomeDashboardPage", () => {
         ]}
         adjustments={[]}
         transfers={[]}
-        cycleCounts={[]}
         isLoading={false}
         errorMessage=""
         onNavigate={onNavigate}

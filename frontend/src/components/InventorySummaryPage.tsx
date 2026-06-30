@@ -1,6 +1,5 @@
 import CloseIcon from "@mui/icons-material/Close";
 import CompareArrowsOutlinedIcon from "@mui/icons-material/CompareArrowsOutlined";
-import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
 import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
@@ -398,21 +397,6 @@ export function InventorySummaryPage({
               </div>
               {PALLET_ENTITY_UI_ENABLED && canManageInventory ? (
                 <div className="inventory-summary-drawer__management-actions">
-                  <Button
-                    className="inventory-summary-drawer__action-button"
-                    variant="outlined"
-                    startIcon={<FactCheckOutlinedIcon fontSize="small" />}
-                    onClick={() => {
-                      setPendingInventoryActionContext("cycle-counts", {
-                        sourceKey: buildInventoryActionSourceKey(selectedSummary.customerId, selectedSummary.sku),
-                        sku: selectedSummary.sku,
-                        customerId: selectedSummary.customerId
-                      });
-                      onNavigate("cycle-counts");
-                    }}
-                  >
-                    {t("addCycleCount")}
-                  </Button>
                   <Button
                     className="inventory-summary-drawer__action-button"
                     variant="outlined"

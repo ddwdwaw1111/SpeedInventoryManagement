@@ -2,8 +2,6 @@ import type { Page, Route } from "@playwright/test";
 import { normalizeStorageSection } from "../../src/lib/types";
 import type {
   AuthResponse,
-  CycleCount,
-  CycleCountPayload,
   Customer,
   InboundDocument,
   InboundDocumentPayload,
@@ -39,7 +37,6 @@ export type MockAppApiOptions = {
   inboundDocuments?: InboundDocument[];
   outboundDocuments?: OutboundDocument[];
   transfers?: InventoryTransfer[];
-  cycleCounts?: CycleCount[];
   operationsReport?: OperationsReportResolver;
 };
 
@@ -49,7 +46,6 @@ export type MockAppApiState = {
   postedInboundDocuments: InboundDocumentPayload[];
   postedOutboundDocuments: OutboundDocumentPayload[];
   postedTransfers: InventoryTransferPayload[];
-  postedCycleCounts: CycleCountPayload[];
   updatedInboundTrackingStatuses: Array<{ documentId: number; trackingStatus: string }>;
   updatedOutboundTrackingStatuses: Array<{ documentId: number; trackingStatus: string }>;
   copiedInboundDocuments: Array<{ sourceDocumentId: number; copiedDocumentId: number }>;
@@ -63,7 +59,6 @@ export async function mockAppApi(page: Page, options: MockAppApiOptions = {}): P
     postedInboundDocuments: [],
     postedOutboundDocuments: [],
     postedTransfers: [],
-    postedCycleCounts: [],
     updatedInboundTrackingStatuses: [],
     updatedOutboundTrackingStatuses: [],
     copiedInboundDocuments: [],
@@ -87,7 +82,6 @@ export async function mockAppApi(page: Page, options: MockAppApiOptions = {}): P
   const inboundDocumentStore = [...(options.inboundDocuments ?? [])];
   const outboundDocumentStore = [...(options.outboundDocuments ?? [])];
   const transferStore = [...(options.transfers ?? [])];
-  const cycleCountStore = [...(options.cycleCounts ?? [])];
 
   await page.route("**/api/**", async (route) => {
     const request = route.request();
@@ -214,16 +208,6 @@ export async function mockAppApi(page: Page, options: MockAppApiOptions = {}): P
       const createdTransfer = buildInventoryTransfer(payload, transferStore.length + 1, customers, locations, items);
       transferStore.unshift(createdTransfer);
       return json(route, createdTransfer, 201);
-    }
-    if (request.method() === "GET" && apiPath === "/cycle-counts") {
-      return json(route, cycleCountStore);
-    }
-    if (request.method() === "POST" && apiPath === "/cycle-counts") {
-      const payload = request.postDataJSON() as CycleCountPayload;
-      state.postedCycleCounts.push(payload);
-      const createdCycleCount = buildCycleCount(payload, cycleCountStore.length + 1, customers, locations, items, pallets);
-      cycleCountStore.unshift(createdCycleCount);
-      return json(route, createdCycleCount, 201);
     }
     if (request.method() === "GET" && apiPath === "/audit-logs") {
       return json(route, []);
@@ -685,56 +669,6 @@ function buildInventoryTransfer(
   };
 }
 
-function buildCycleCount(
-  payload: CycleCountPayload,
-  id: number,
-  customers: Customer[],
-  locations: Location[],
-  items: Item[],
-  pallets: PalletTrace[]
-): CycleCount {
-  const createdAt = "2026-04-25T11:00:00Z";
-  const lines = payload.lines.map((line, index) => {
-    const customer = customers.find((entry) => entry.id === line.customerId);
-    const location = locations.find((entry) => entry.id === line.locationId);
-    const item = findMatchingItem(items, line.customerId, line.locationId, line.storageSection, line.containerId ?? 0, line.containerNo, line.skuMasterId);
-    const pallet = line.palletId ? pallets.find((entry) => entry.id === line.palletId) : undefined;
-    const systemQty = line.createPallet
-      ? 0
-      : getPalletSkuQuantity(pallet, line.skuMasterId) || item?.quantity || 0;
-    const countedQty = Math.max(0, line.countedQty);
-
-    return {
-      id: id * 100 + index + 1,
-      cycleCountId: id,
-      customerId: line.customerId,
-      customerName: customer?.name ?? `Customer #${line.customerId}`,
-      locationId: line.locationId,
-      locationName: location?.name ?? `Warehouse #${line.locationId}`,
-      storageSection: line.storageSection,
-      sku: item?.sku ?? `SKU-${line.skuMasterId}`,
-      description: item?.description || item?.name || "Cycle count line",
-      systemQty,
-      countedQty,
-      varianceQty: countedQty - systemQty,
-      lineNote: line.lineNote ?? "",
-      createdAt
-    };
-  });
-
-  return {
-    id,
-    countNo: payload.countNo ?? `COUNT-PW-${String(id).padStart(3, "0")}`,
-    notes: payload.notes ?? "",
-    status: "POSTED",
-    totalLines: lines.length,
-    totalVariance: lines.reduce((sum, line) => sum + line.varianceQty, 0),
-    createdAt,
-    updatedAt: createdAt,
-    lines
-  };
-}
-
 export function buildInboundDocument(
   payload: InboundDocumentPayload,
   id: number,
@@ -814,16 +748,6 @@ function findMatchingItem(
     )
     && entry.skuMasterId === skuMasterId
   ));
-}
-
-function getPalletSkuQuantity(pallet: PalletTrace | undefined, skuMasterId: number) {
-  if (!pallet) {
-    return 0;
-  }
-
-  return pallet.contents
-    .filter((content) => content.skuMasterId === skuMasterId)
-    .reduce((sum, content) => sum + Math.max(0, content.quantity), 0);
 }
 
 function normalizeValue(value: string | null | undefined) {

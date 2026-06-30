@@ -1186,47 +1186,6 @@ func (s *Server) handleCreateInventoryTransfer(c *gin.Context) {
 	writeJSON(c, http.StatusCreated, transfer)
 }
 
-func (s *Server) handleListCycleCounts(c *gin.Context) {
-	limit := 100
-	if value := strings.TrimSpace(c.Query("limit")); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil {
-			writeError(c, http.StatusBadRequest, "limit must be a number")
-			return
-		}
-		limit = parsed
-	}
-
-	cycleCounts, err := s.store.ListCycleCounts(c.Request.Context(), limit)
-	if err != nil {
-		writeServerError(c, err)
-		return
-	}
-
-	writeJSON(c, http.StatusOK, cycleCounts)
-}
-
-func (s *Server) handleCreateCycleCount(c *gin.Context) {
-	var input service.CreateCycleCountInput
-	if err := bindJSON(c, &input); err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	cycleCount, err := s.store.CreateCycleCount(c.Request.Context(), input)
-	if err != nil {
-		writeDomainError(c, err)
-		return
-	}
-
-	s.writeAuditLog(c, "CREATE", "cycle_count", cycleCount.ID, cycleCount.CountNo, "Created cycle count", map[string]any{
-		"totalLines":    cycleCount.TotalLines,
-		"totalVariance": cycleCount.TotalVariance,
-	})
-
-	writeJSON(c, http.StatusCreated, cycleCount)
-}
-
 func (s *Server) handleListAuditLogs(c *gin.Context) {
 	limit := 200
 	if value := strings.TrimSpace(c.Query("limit")); value != "" {

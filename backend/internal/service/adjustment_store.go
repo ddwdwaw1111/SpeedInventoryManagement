@@ -107,6 +107,7 @@ type lockedAdjustmentItem struct {
 	StorageSection string
 	ContainerID    int64
 	ContainerNo    string
+	ItemNumber     string
 	SKU            string
 	Description    string
 	Unit           string
@@ -279,20 +280,11 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 		if err != nil {
 			return InventoryAdjustment{}, err
 		}
-		lockedPalletContent, err := s.loadLockedPalletContentStateForBucketTx(ctx, tx, bucket, line.PalletID, line.SKUMasterID)
-		if err != nil {
-			return InventoryAdjustment{}, err
-		}
 
 		afterQty := lockedItem.Quantity + line.AdjustQty
 		if afterQty < 0 {
 			return InventoryAdjustment{}, ErrInsufficientStock
 		}
-		palletAfterQty := lockedPalletContent.RemainingQty + line.AdjustQty
-		if palletAfterQty < 0 {
-			return InventoryAdjustment{}, ErrInsufficientStock
-		}
-		palletDelta := resolveInventoryPalletCountDelta(lockedPalletContent.RemainingQty, palletAfterQty)
 
 		lineResult, err := tx.ExecContext(ctx, `
 			INSERT INTO inventory_adjustment_lines (
@@ -321,15 +313,15 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 			lockedItem.LocationID,
 			lockedItem.LocationName,
 			fallbackSection(lockedItem.StorageSection),
-			lockedPalletContent.PalletID,
-			lockedPalletContent.PalletCode,
+			nullableInt64(0),
+			nil,
 			lockedItem.SKU,
 			nullableString(lockedItem.Description),
 			lockedItem.Quantity,
 			line.AdjustQty,
 			afterQty,
-			lockedPalletContent.RemainingQty,
-			palletAfterQty,
+			lockedItem.Quantity,
+			afterQty,
 			nullableString(line.LineNote),
 			index+1,
 		)
@@ -344,39 +336,27 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 
 		reason := firstNonEmpty(line.LineNote, fmt.Sprintf("Adjustment posted: %s", input.ReasonCode))
 
-		palletAdjustments, err := s.applyAdjustmentPalletDeltaTx(ctx, tx, line)
-		if err != nil {
+		if err := s.adjustInventoryBalanceByIDTx(ctx, tx, lockedItem.ItemID, line.AdjustQty, 0); err != nil {
 			return InventoryAdjustment{}, err
 		}
-		if err := s.adjustInventoryBalanceByIDTx(ctx, tx, lockedItem.ItemID, line.AdjustQty, palletDelta); err != nil {
+		if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
+			EventType:           StockLedgerEventAdjust,
+			SKUMasterID:         lockedItem.SKUMasterID,
+			CustomerID:          lockedItem.CustomerID,
+			LocationID:          lockedItem.LocationID,
+			StorageSection:      lockedItem.StorageSection,
+			QuantityChange:      line.AdjustQty,
+			OccurredAt:          actualAdjustedAt,
+			SourceDocumentType:  StockLedgerSourceAdjustment,
+			SourceDocumentID:    adjustmentID,
+			SourceLineID:        lineID,
+			ContainerID:         lockedItem.ContainerID,
+			ContainerNo:         lockedItem.ContainerNo,
+			ItemNumber:          lockedItem.ItemNumber,
+			DescriptionSnapshot: lockedItem.Description,
+			Reason:              reason,
+		}); err != nil {
 			return InventoryAdjustment{}, err
-		}
-		deltaSign := 1
-		if line.AdjustQty < 0 {
-			deltaSign = -1
-		}
-		for _, palletAdjustment := range palletAdjustments {
-			if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
-				EventType:           StockLedgerEventAdjust,
-				PalletID:            palletAdjustment.PalletID,
-				PalletItemID:        palletAdjustment.PalletItemID,
-				SKUMasterID:         palletAdjustment.SKUMasterID,
-				CustomerID:          palletAdjustment.CustomerID,
-				LocationID:          palletAdjustment.LocationID,
-				StorageSection:      palletAdjustment.StorageSection,
-				QuantityChange:      deltaSign * palletAdjustment.Quantity,
-				OccurredAt:          actualAdjustedAt,
-				SourceDocumentType:  StockLedgerSourceAdjustment,
-				SourceDocumentID:    adjustmentID,
-				SourceLineID:        lineID,
-				ContainerID:         lockedItem.ContainerID,
-				ContainerNo:         palletAdjustment.ContainerNo,
-				DescriptionSnapshot: lockedItem.Description,
-				Pallets:             stockLedgerPalletCountForQuantityChange(deltaSign*palletAdjustment.Quantity, palletDelta),
-				Reason:              reason,
-			}); err != nil {
-				return InventoryAdjustment{}, err
-			}
 		}
 	}
 
@@ -528,6 +508,7 @@ func (s *Store) loadLockedAdjustmentItem(ctx context.Context, tx *sql.Tx, bucket
 		StorageSection: projection.StorageSection,
 		ContainerID:    projection.ContainerID,
 		ContainerNo:    projection.ContainerNo,
+		ItemNumber:     projection.ItemNumber,
 		SKU:            projection.SKU,
 		Description:    projection.Description,
 		Unit:           projection.Unit,
@@ -569,8 +550,6 @@ func validateInventoryAdjustmentInput(input CreateInventoryAdjustmentInput) erro
 			return fmt.Errorf("%w: customer is required", ErrInvalidInput)
 		case line.LocationID <= 0:
 			return fmt.Errorf("%w: storage is required", ErrInvalidInput)
-		case line.PalletID <= 0:
-			return fmt.Errorf("%w: pallet is required", ErrInvalidInput)
 		case line.SKUMasterID <= 0:
 			return fmt.Errorf("%w: sku is required", ErrInvalidInput)
 		case line.AdjustQty == 0:
@@ -578,30 +557,6 @@ func validateInventoryAdjustmentInput(input CreateInventoryAdjustmentInput) erro
 		}
 	}
 	return nil
-}
-
-func (s *Store) applyAdjustmentPalletDeltaTx(
-	ctx context.Context,
-	tx *sql.Tx,
-	line CreateInventoryAdjustmentLineInput,
-) ([]palletContentConsumption, error) {
-	if line.PalletID <= 0 {
-		return nil, fmt.Errorf("%w: pallet is required", ErrInvalidInput)
-	}
-
-	bucket := palletSourceBucket{
-		SKUMasterID:    line.SKUMasterID,
-		CustomerID:     line.CustomerID,
-		LocationID:     line.LocationID,
-		StorageSection: line.StorageSection,
-		ContainerID:    line.ContainerID,
-		ContainerNo:    line.ContainerNo,
-	}
-	if line.AdjustQty < 0 {
-		return s.consumeSpecificPalletContentsForBucketTx(ctx, tx, bucket, line.PalletID, line.SKUMasterID, -line.AdjustQty)
-	}
-
-	return s.addSpecificPalletContentsForBucketTx(ctx, tx, bucket, line.PalletID, line.SKUMasterID, line.AdjustQty)
 }
 
 func generateAdjustmentNo() string {
