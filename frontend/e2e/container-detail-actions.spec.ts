@@ -233,6 +233,7 @@ test("container detail posts an inventory transfer for all selected pallets", as
         palletId: firstPallet.id,
         skuMasterId: item.skuMasterId,
         quantity: 4,
+        pallets: 1,
         toLocationId: destinationLocation.id,
         toStorageSection: "BULK"
       },
@@ -244,6 +245,7 @@ test("container detail posts an inventory transfer for all selected pallets", as
         palletId: secondPallet.id,
         skuMasterId: item.skuMasterId,
         quantity: 3,
+        pallets: 1,
         toLocationId: destinationLocation.id,
         toStorageSection: "BULK"
       }

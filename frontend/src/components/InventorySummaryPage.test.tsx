@@ -54,9 +54,6 @@ vi.mock("../lib/api", () => ({
 
 import { api } from "../lib/api";
 import { setPendingInventorySummaryContext } from "../lib/inventorySummaryContext";
-import { setPendingInventoryActionContext } from "../lib/inventoryActionContext";
-import { setPendingAllActivityContext } from "../lib/allActivityContext";
-import { setPendingContainerContentsContext } from "../lib/containerContentsContext";
 import { InventorySummaryPage } from "./InventorySummaryPage";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { createCustomer, createItem, createLocation } from "../test/fixtures";
@@ -135,7 +132,7 @@ describe("InventorySummaryPage", () => {
       />
     );
 
-    // Stat cards are always in order: [SKU count, On Hand, Available Qty, Low Stock, Warehouses]
+    // Stat cards are always in order: [SKU count, On Hand, Available Qty, Warehouses]
     const statCards = container.querySelectorAll(".workspace-summary-card");
     const skuValue = statCards[0]?.querySelector(".workspace-summary-card__value");
     const onHandValue = statCards[1]?.querySelector(".workspace-summary-card__value");
@@ -163,37 +160,23 @@ describe("InventorySummaryPage", () => {
     expect(within(grid).getByText("25")).toBeInTheDocument();
   });
 
-  it("shows 2 in the low-stock stat card when two SKU rows have items at or below their reorder level", () => {
+  it("hides low-stock stats and stock health filters while reorder-level UI is disabled", () => {
     const { container } = renderWithProviders(
       <InventorySummaryPage
         {...defaultProps({
           items: [
-            createItem({ id: 1, sku: "LOW-A", reorderLevel: 10, availableQty: 5 }),
-            createItem({ id: 2, sku: "LOW-B", reorderLevel: 5, availableQty: 5 }),  // equals threshold
-            createItem({ id: 3, sku: "OK", reorderLevel: 5, availableQty: 20 })
+            createItem({ id: 1, sku: "LOW-A", availableQty: 5 }),
+            createItem({ id: 2, sku: "LOW-B", availableQty: 5 }),
+            createItem({ id: 3, sku: "OK", availableQty: 20 })
           ]
         })}
       />
     );
 
-    // Stat cards order: [SKU count(0), On Hand(1), Available(2), Low Stock(3), Warehouses(4)]
     const statCards = container.querySelectorAll(".workspace-summary-card");
-    const lowStockValue = statCards[3]?.querySelector(".workspace-summary-card__value");
-    expect(lowStockValue?.textContent).toBe("2");
-  });
-
-  it("does not count an item as low stock when its reorderLevel is 0", () => {
-    const { container } = renderWithProviders(
-      <InventorySummaryPage
-        {...defaultProps({
-          items: [createItem({ sku: "NO-THRESHOLD", reorderLevel: 0, availableQty: 0 })]
-        })}
-      />
-    );
-
-    const statCards = container.querySelectorAll(".workspace-summary-card");
-    const lowStockValue = statCards[3]?.querySelector(".workspace-summary-card__value");
-    expect(lowStockValue?.textContent).toBe("0");
+    expect(statCards).toHaveLength(4);
+    expect(screen.queryByText("Low stock")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Stock Health" })).not.toBeInTheDocument();
   });
 
   // ──────────────────────────────────────────────────────────────
@@ -289,56 +272,7 @@ describe("InventorySummaryPage", () => {
     });
   });
 
-  it("filters summary rows by selected container type using pallet metadata", async () => {
-    mockedApi.getPallets.mockResolvedValue([
-      {
-        id: 701,
-        parentPalletId: 0,
-        palletCode: "PLT-701",
-        containerVisitId: 1,
-        sourceInboundDocumentId: 1,
-        sourceInboundLineId: 1,
-        actualArrivalDate: "2026-04-01",
-        customerId: 1,
-        customerName: "Imperial Bag & Paper",
-        skuMasterId: 1,
-        sku: "SKU-NORMAL",
-        description: "Normal stock",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "TEMP",
-        currentContainerNo: "CONT-N",
-        containerType: "NORMAL",
-        status: "OPEN",
-        createdAt: "2026-04-01T10:00:00Z",
-        updatedAt: "2026-04-01T10:00:00Z",
-        contents: []
-      },
-      {
-        id: 702,
-        parentPalletId: 0,
-        palletCode: "PLT-702",
-        containerVisitId: 2,
-        sourceInboundDocumentId: 2,
-        sourceInboundLineId: 2,
-        actualArrivalDate: "2026-04-01",
-        customerId: 1,
-        customerName: "Imperial Bag & Paper",
-        skuMasterId: 2,
-        sku: "SKU-TRANSFER",
-        description: "Transfer stock",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "TEMP",
-        currentContainerNo: "CONT-T",
-        containerType: "WEST_COAST_TRANSFER",
-        status: "OPEN",
-        createdAt: "2026-04-01T11:00:00Z",
-        updatedAt: "2026-04-01T11:00:00Z",
-        contents: []
-      }
-    ]);
-
+  it("hides the container type filter while pallet entity UI is disabled", () => {
     renderWithProviders(
       <InventorySummaryPage
         {...defaultProps({
@@ -350,46 +284,28 @@ describe("InventorySummaryPage", () => {
       />
     );
 
-    fireEvent.change(screen.getByRole("combobox", { name: "Container Type" }), {
-      target: { value: "WEST_COAST_TRANSFER" }
-    });
-
-    await waitFor(() => {
-      const grid = screen.getByTestId("mock-data-grid");
-      const rows = within(grid).getAllByRole("row");
-      expect(rows).toHaveLength(1);
-      expect(within(grid).getByText("SKU-TRANSFER")).toBeInTheDocument();
-      expect(within(grid).queryByText("SKU-NORMAL")).not.toBeInTheDocument();
-    });
+    expect(screen.queryByRole("combobox", { name: "Container Type" })).not.toBeInTheDocument();
   });
 
   // ──────────────────────────────────────────────────────────────
   // Filtering — health filter
   // ──────────────────────────────────────────────────────────────
 
-  it("hides in-stock rows and shows only low-stock rows when the LOW_STOCK health filter is selected", async () => {
+  it("does not render the stock health filter while reorder-level UI is disabled", () => {
     renderWithProviders(
       <InventorySummaryPage
         {...defaultProps({
           items: [
-            createItem({ id: 1, sku: "LOW-A", reorderLevel: 10, availableQty: 3 }),
-            createItem({ id: 2, sku: "OK-B",  reorderLevel: 10, availableQty: 50 })
+            createItem({ id: 1, sku: "LOW-A", availableQty: 3 }),
+            createItem({ id: 2, sku: "OK-B", availableQty: 50 })
           ]
         })}
       />
     );
 
-    fireEvent.change(screen.getByRole("combobox", { name: "Stock Health" }), {
-      target: { value: "LOW_STOCK" }
-    });
-
-    await waitFor(() => {
-      const grid = screen.getByTestId("mock-data-grid");
-      const rows = within(grid).getAllByRole("row");
-      expect(rows).toHaveLength(1);
-      expect(within(grid).getByText("LOW-A")).toBeInTheDocument();
-      expect(within(grid).queryByText("OK-B")).not.toBeInTheDocument();
-    });
+    const grid = screen.getByTestId("mock-data-grid");
+    expect(within(grid).getAllByRole("row")).toHaveLength(2);
+    expect(screen.queryByRole("combobox", { name: "Stock Health" })).not.toBeInTheDocument();
   });
 
   // ──────────────────────────────────────────────────────────────
@@ -412,24 +328,24 @@ describe("InventorySummaryPage", () => {
     expect(window.sessionStorage.getItem("sim-inventory-summary-context")).toBeNull();
   });
 
-  it("pre-fills customer and health filters from session storage context", async () => {
-    setPendingInventorySummaryContext({ customerId: 1, healthFilter: "LOW_STOCK" });
+  it("pre-fills customer from session storage context", async () => {
+    setPendingInventorySummaryContext({ customerId: 1 });
 
     renderWithProviders(<InventorySummaryPage {...defaultProps()} />);
 
     await waitFor(() => {
       expect(screen.getByRole("combobox", { name: "Customer" })).toHaveValue("1");
-      expect(screen.getByRole("combobox", { name: "Stock Health" })).toHaveValue("LOW_STOCK");
+      expect(screen.queryByRole("combobox", { name: "Stock Health" })).not.toBeInTheDocument();
     });
   });
 
-  it("pre-fills the container type filter from session storage context", async () => {
+  it("ignores the container type context while pallet entity UI is disabled", async () => {
     setPendingInventorySummaryContext({ containerType: "WEST_COAST_TRANSFER" });
 
     renderWithProviders(<InventorySummaryPage {...defaultProps()} />);
 
     await waitFor(() => {
-      expect(screen.getByRole("combobox", { name: "Container Type" })).toHaveValue("WEST_COAST_TRANSFER");
+      expect(screen.queryByRole("combobox", { name: "Container Type" })).not.toBeInTheDocument();
     });
   });
 
@@ -470,7 +386,7 @@ describe("InventorySummaryPage", () => {
     });
   });
 
-  it("shows pallet counts in the container breakdown drawer rows", async () => {
+  it("hides pallet counts in the container breakdown drawer rows while pallet entity UI is disabled", async () => {
     mockedApi.getPallets.mockResolvedValue([
       {
         id: 501,
@@ -576,11 +492,10 @@ describe("InventorySummaryPage", () => {
     await waitFor(() => {
       const drawer = document.querySelector(".document-drawer");
       expect(drawer).toBeInTheDocument();
-      const palletsLabel = within(drawer as HTMLElement).getAllByText(/pallets/i).find((element) =>
+      const palletsLabel = within(drawer as HTMLElement).queryAllByText(/pallets/i).find((element) =>
         element.tagName.toLowerCase() === "strong"
       );
-      expect(palletsLabel).toBeInTheDocument();
-      expect(palletsLabel?.nextElementSibling?.textContent).toBe("2");
+      expect(palletsLabel).toBeUndefined();
     });
   });
 
@@ -627,7 +542,7 @@ describe("InventorySummaryPage", () => {
   // Drawer — navigation actions
   // ──────────────────────────────────────────────────────────────
 
-  it("navigates to the adjustments page when the Inventory Adjustment button is clicked", async () => {
+  it("hides the Inventory Adjustment button while pallet entity UI is disabled", async () => {
     const onNavigate = vi.fn();
 
     renderWithProviders(
@@ -637,13 +552,13 @@ describe("InventorySummaryPage", () => {
     );
 
     fireEvent.click(screen.getByTestId("grid-row-1:608333"));
-    await waitFor(() => expect(screen.getByText("Inventory Adjustment")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Warehouse Breakdown")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("button", { name: "Inventory Adjustment" }));
-    expect(onNavigate).toHaveBeenCalledWith("adjustments");
+    expect(screen.queryByRole("button", { name: "Inventory Adjustment" })).not.toBeInTheDocument();
+    expect(onNavigate).not.toHaveBeenCalledWith("adjustments");
   });
 
-  it("navigates to the transfers page when the Inventory Transfer button is clicked", async () => {
+  it("hides the Inventory Transfer button while pallet entity UI is disabled", async () => {
     const onNavigate = vi.fn();
 
     renderWithProviders(
@@ -653,13 +568,13 @@ describe("InventorySummaryPage", () => {
     );
 
     fireEvent.click(screen.getByTestId("grid-row-1:608333"));
-    await waitFor(() => expect(screen.getByText("Inventory Transfer")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Warehouse Breakdown")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("button", { name: "Inventory Transfer" }));
-    expect(onNavigate).toHaveBeenCalledWith("transfers");
+    expect(screen.queryByRole("button", { name: "Inventory Transfer" })).not.toBeInTheDocument();
+    expect(onNavigate).not.toHaveBeenCalledWith("transfers");
   });
 
-  it("navigates to the cycle-counts page and stores SKU scope when New Count Sheet is clicked", async () => {
+  it("hides the cycle-count action while pallet entity UI is disabled", async () => {
     const onNavigate = vi.fn();
 
     renderWithProviders(
@@ -669,16 +584,11 @@ describe("InventorySummaryPage", () => {
     );
 
     fireEvent.click(screen.getByTestId("grid-row-1:608333"));
-    await waitFor(() => expect(screen.getByRole("button", { name: "New Count Sheet" })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Warehouse Breakdown")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("button", { name: "New Count Sheet" }));
-
-    expect(onNavigate).toHaveBeenCalledWith("cycle-counts");
-    expect(JSON.parse(window.sessionStorage.getItem("sim-cycle-counts-context") ?? "{}")).toMatchObject({
-      sourceKey: "1:608333",
-      sku: "608333",
-      customerId: 1
-    });
+    expect(screen.queryByRole("button", { name: "New Count Sheet" })).not.toBeInTheDocument();
+    expect(onNavigate).not.toHaveBeenCalledWith("cycle-counts");
+    expect(window.sessionStorage.getItem("sim-cycle-counts-context")).toBeNull();
   });
 
   it("navigates to container-contents page when Open Container Contents is clicked", async () => {
@@ -713,12 +623,8 @@ describe("InventorySummaryPage", () => {
     expect(onNavigate).toHaveBeenCalledWith("all-activity");
   });
 
-  it("sets context sidecars when navigating from the drawer to adjustments and all-activity", async () => {
-    const setPendingInventoryActionContextSpy = vi.spyOn({ setPendingInventoryActionContext }, "setPendingInventoryActionContext");
-    const setPendingAllActivityContextSpy = vi.spyOn({ setPendingAllActivityContext }, "setPendingAllActivityContext");
+  it("keeps pallet-centric action context unset when drawer actions are hidden", async () => {
     const onNavigate = vi.fn();
-    void setPendingInventoryActionContextSpy; // silence unused
-    void setPendingAllActivityContextSpy;
 
     const item = createItem({ id: 1, sku: "608333", customerId: 1 });
     renderWithProviders(
@@ -726,12 +632,10 @@ describe("InventorySummaryPage", () => {
     );
 
     fireEvent.click(screen.getByTestId("grid-row-1:608333"));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Inventory Adjustment" })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Warehouse Breakdown")).toBeInTheDocument());
 
-    // Navigate to adjustments — downstream context should be set in sessionStorage
-    fireEvent.click(screen.getByRole("button", { name: "Inventory Adjustment" }));
-
-    expect(onNavigate).toHaveBeenCalledWith("adjustments");
+    expect(screen.queryByRole("button", { name: "Inventory Adjustment" })).not.toBeInTheDocument();
+    expect(window.sessionStorage.getItem("sim-adjustments-context")).toBeNull();
   });
 
   // ──────────────────────────────────────────────────────────────
@@ -759,7 +663,7 @@ describe("InventorySummaryPage", () => {
     expect(screen.getByRole("button", { name: "Inventory Ledger" })).toBeInTheDocument();
   });
 
-  it("shows count, adjustment, and transfer buttons for operator-role users", async () => {
+  it("hides count, adjustment, and transfer buttons for operator-role users while pallet entity UI is disabled", async () => {
     renderWithProviders(
       <InventorySummaryPage
         {...defaultProps({
@@ -772,10 +676,11 @@ describe("InventorySummaryPage", () => {
     fireEvent.click(screen.getByTestId("grid-row-1:608333"));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "New Count Sheet" })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Inventory Adjustment" })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Inventory Transfer" })).toBeInTheDocument();
+      expect(screen.getByText("Warehouse Breakdown")).toBeInTheDocument();
     });
+    expect(screen.queryByRole("button", { name: "New Count Sheet" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Inventory Adjustment" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Inventory Transfer" })).not.toBeInTheDocument();
   });
 
   // ──────────────────────────────────────────────────────────────

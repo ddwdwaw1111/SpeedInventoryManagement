@@ -536,7 +536,6 @@ describe("ActivityManagementPage", () => {
           {
             sku: "ABC123",
             description: "Sample inbound SKU",
-            reorderLevel: 2,
             expectedQty: 8,
             receivedQty: 8,
             pallets: 0,
@@ -566,8 +565,7 @@ describe("ActivityManagementPage", () => {
           itemNumber: "ABC123",
           name: "ABC123",
           description: "Sample inbound SKU",
-          defaultUnitsPerPallet: 100,
-          reorderLevel: 2
+          defaultUnitsPerPallet: 100
         })]}
         locations={[createLocation()]}
         customers={[createCustomer()]}
@@ -614,7 +612,6 @@ describe("ActivityManagementPage", () => {
           {
             sku: "ABC123",
             description: "Sample inbound SKU",
-            reorderLevel: 2,
             expectedQty: 1024,
             receivedQty: 1024,
             pallets: 11,
@@ -658,8 +655,7 @@ describe("ActivityManagementPage", () => {
           itemNumber: "011424",
           name: "011424",
           description: "Manual pallet SKU",
-          defaultUnitsPerPallet: 0,
-          reorderLevel: 2
+          defaultUnitsPerPallet: 0
         })]}
         locations={[createLocation()]}
         customers={[createCustomer()]}
@@ -707,7 +703,6 @@ describe("ActivityManagementPage", () => {
           {
             sku: "011424",
             description: "Manual pallet SKU",
-            reorderLevel: 2,
             expectedQty: 1024,
             receivedQty: 1024,
             pallets: 11,
@@ -772,7 +767,6 @@ describe("ActivityManagementPage", () => {
                 sku: "608333",
                 description: "VB22GC",
                 storageSection: "TEMP",
-                reorderLevel: 5,
                 expectedQty: 10,
                 receivedQty: 10,
                 pallets: 1,
@@ -832,7 +826,6 @@ describe("ActivityManagementPage", () => {
                 sku: "608333",
                 description: "VB22GC",
                 storageSection: "TEMP",
-                reorderLevel: 5,
                 expectedQty: 10,
                 receivedQty: 10,
                 pallets: 1,
@@ -883,7 +876,6 @@ describe("ActivityManagementPage", () => {
                 sku: "608333",
                 description: "VB22GC",
                 storageSection: "TEMP",
-                reorderLevel: 5,
                 expectedQty: 10,
                 receivedQty: 10,
                 pallets: 1,

@@ -805,13 +805,7 @@ function findReworkTargetPickingOrderIndex(
   if (outboundDocuments.length === 0 || reworkPalletIds.length === 0) {
     return 0;
   }
-  const reworkPalletIdSet = new Set(reworkPalletIds);
-  const matchedIndex = outboundDocuments.findIndex((document) =>
-    (document.lines ?? []).some((line) =>
-      (line.pickPallets ?? []).some((pick) => reworkPalletIdSet.has(pick.palletId))
-    )
-  );
-  return matchedIndex >= 0 && matchedIndex < visibleOutboundCount ? matchedIndex : 0;
+  return 0;
 }
 
 function formatPalletReworkSummary(

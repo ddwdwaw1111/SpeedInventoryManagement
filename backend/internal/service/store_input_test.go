@@ -44,7 +44,6 @@ func TestValidateItemInput(t *testing.T) {
 		AllocatedQty: 2,
 		DamagedQty:   1,
 		HoldQty:      1,
-		ReorderLevel: 2,
 	}
 
 	if err := validateItemInput(validInput); err != nil {

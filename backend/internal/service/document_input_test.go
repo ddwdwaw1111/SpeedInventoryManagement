@@ -126,7 +126,7 @@ func TestSanitizeOutboundDocumentInput(t *testing.T) {
 func TestValidateOutboundDocumentInput(t *testing.T) {
 	validInput := CreateOutboundDocumentInput{
 		Lines: []CreateOutboundDocumentLineInput{
-			{CustomerID: 1, LocationID: 2, SKUMasterID: 3, Quantity: 3},
+			{CustomerID: 1, LocationID: 2, SKUMasterID: 3, Quantity: 3, Pallets: 1},
 		},
 	}
 
@@ -166,7 +166,7 @@ func TestOutboundTrackingBOReceivedIsTerminal(t *testing.T) {
 		Status:         DocumentStatusConfirmed,
 		TrackingStatus: OutboundTrackingBOReceived,
 		Lines: []CreateOutboundDocumentLineInput{
-			{CustomerID: 1, LocationID: 2, SKUMasterID: 3, Quantity: 3},
+			{CustomerID: 1, LocationID: 2, SKUMasterID: 3, Quantity: 3, Pallets: 1},
 		},
 	}
 	if err := validateOutboundDocumentInput(input); err != nil {

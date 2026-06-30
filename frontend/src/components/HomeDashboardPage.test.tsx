@@ -23,7 +23,6 @@ describe("HomeDashboardPage", () => {
             itemNumber: "603482",
             quantity: 2,
             availableQty: 2,
-            reorderLevel: 5,
             containerNo: "MRSU6884820"
           })
         ]}

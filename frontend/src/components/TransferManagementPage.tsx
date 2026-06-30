@@ -50,6 +50,7 @@ type TransferLineFormState = {
   id: string;
   sourceBucketKey: string;
   quantity: number;
+  pallets: number;
   toLocationId: string;
   toStorageSection: string;
   lineNote: string;
@@ -68,6 +69,7 @@ function createTransferLine(): TransferLineFormState {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     sourceBucketKey: "",
     quantity: 0,
+    pallets: 0,
     toLocationId: "",
     toStorageSection: DEFAULT_STORAGE_SECTION,
     lineNote: ""
@@ -206,6 +208,7 @@ export function TransferManagementPage({
     { field: "toLocationName", headerName: t("destinationStorage"), minWidth: 170, flex: 1 },
     { field: "toStorageSection", headerName: t("toSection"), minWidth: 110 },
     { field: "quantity", headerName: t("transferQty"), minWidth: 120, type: "number" },
+    { field: "pallets", headerName: t("palletQty"), minWidth: 120, type: "number" },
     { field: "lineNote", headerName: t("internalNotes"), minWidth: 240, flex: 1.3, renderCell: (params) => params.row.lineNote || "-" }
   ], [t]);
   const mainGridSlots = buildWorkspaceGridSlots({
@@ -273,10 +276,16 @@ export function TransferManagementPage({
     );
     return item !== undefined && line.quantity > item.availableQty;
   });
+  const hasPalletOverflow = lines.some((line) => {
+    const item = selectableSourceItems.find(
+      (i) => buildInventoryProjectionKey(toInventoryProjectionRef(i)) === line.sourceBucketKey
+    );
+    return item !== undefined && line.pallets > item.pallets;
+  });
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (hasQtyOverflow) return;
+    if (hasQtyOverflow || hasPalletOverflow) return;
     setSubmitting(true);
     setErrorMessage("");
 
@@ -297,6 +306,7 @@ export function TransferManagementPage({
             return {
               ...toInventoryProjectionRef(selectedItem),
               quantity: line.quantity,
+              pallets: line.pallets,
               toLocationId: Number(line.toLocationId),
               toStorageSection: line.toStorageSection || undefined,
               lineNote: line.lineNote || undefined
@@ -557,6 +567,15 @@ export function TransferManagementPage({
                             </small>
                           )}
                         </label>
+                        <label>
+                          {t("palletQty")}
+                          <input type="number" min="0" value={numberInputValue(line.pallets)} onChange={(event) => updateLine(line.id, { pallets: Math.max(0, Number(event.target.value || 0)) })} />
+                          {selectedItem && line.pallets > selectedItem.pallets && (
+                            <small style={{ color: "#b76857", display: "block", marginTop: 2, fontWeight: 600 }}>
+                              {t("transferPalletsExceedsAvailable", { available: String(selectedItem.pallets) })}
+                            </small>
+                          )}
+                        </label>
                         <label>{t("destinationStorage")}<select value={line.toLocationId} onChange={(event) => updateLine(line.id, { toLocationId: event.target.value, toStorageSection: getLocationSectionOptions(locations.find((location) => location.id === Number(event.target.value)))[0] || DEFAULT_STORAGE_SECTION })}><option value="">{t("selectStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
                         <label>{t("toSection")}<select value={line.toStorageSection} onChange={(event) => updateLine(line.id, { toStorageSection: event.target.value })}>{sectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}</select></label>
                         <label className="batch-line-grid__detail">{t("internalNotes")}<input value={line.lineNote} onChange={(event) => updateLine(line.id, { lineNote: event.target.value })} placeholder={t("transferLineNotePlaceholder")} /></label>
@@ -568,7 +587,7 @@ export function TransferManagementPage({
             </div>
 
             <div className="sheet-form__actions sheet-form__wide">
-              <button className="button button--primary" type="submit" disabled={submitting || hasQtyOverflow}>{submitting ? t("saving") : t("saveTransfer")}</button>
+              <button className="button button--primary" type="submit" disabled={submitting || hasQtyOverflow || hasPalletOverflow}>{submitting ? t("saving") : t("saveTransfer")}</button>
               <button className="button button--ghost" type="button" onClick={closeCreateModal}>{t("cancel")}</button>
             </div>
           </form>

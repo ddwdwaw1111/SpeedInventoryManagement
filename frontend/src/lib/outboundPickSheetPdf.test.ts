@@ -53,7 +53,6 @@ function createOutboundDocumentFixture(): OutboundDocument {
         grossWeightKgs: 65.5,
         lineNote: "Top priority",
         createdAt: "2026-03-24T10:00:00Z",
-        pickPallets: [],
         pickAllocations: [
           {
             id: 1,
@@ -100,7 +99,6 @@ function createOutboundDocumentFixture(): OutboundDocument {
         grossWeightKgs: 65.25,
         lineNote: "",
         createdAt: "2026-03-24T10:05:00Z",
-        pickPallets: [],
         pickAllocations: [
           {
             id: 3,

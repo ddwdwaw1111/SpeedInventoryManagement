@@ -277,9 +277,6 @@ func TestPrepareCustomerPortalPickingOrderInputForcesCustomerBoundary(t *testing
 				LocationID:  2,
 				SKUMasterID: 3,
 				Quantity:    4,
-				PickPallets: []service.OutboundLinePalletPick{
-					{PalletID: 44, Quantity: 4},
-				},
 				PickAllocations: []service.OutboundPickAllocation{
 					{LocationID: 2, StorageSection: "A", ContainerNo: "CONT-A", AllocatedQty: 4},
 				},
@@ -303,9 +300,6 @@ func TestPrepareCustomerPortalPickingOrderInputForcesCustomerBoundary(t *testing
 	}
 	if got.Lines[0].CustomerID != 42 {
 		t.Fatalf("expected line customer id to be forced to 42, got %d", got.Lines[0].CustomerID)
-	}
-	if len(got.Lines[0].PickPallets) != 0 {
-		t.Fatalf("expected customer portal pick pallets to be ignored, got %#v", got.Lines[0].PickPallets)
 	}
 	if len(got.Lines[0].PickAllocations) != 0 {
 		t.Fatalf("expected customer portal pick allocations to be ignored, got %#v", got.Lines[0].PickAllocations)

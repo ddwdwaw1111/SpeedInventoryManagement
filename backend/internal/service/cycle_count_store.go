@@ -49,6 +49,7 @@ type CreateCycleCountLineInput struct {
 	CustomerID     int64  `json:"customerId"`
 	LocationID     int64  `json:"locationId"`
 	StorageSection string `json:"storageSection"`
+	ContainerID    int64  `json:"containerId"`
 	ContainerNo    string `json:"containerNo"`
 	PalletID       int64  `json:"palletId"`
 	CreatePallet   bool   `json:"createPallet"`
@@ -68,6 +69,8 @@ type lockedCycleCountTarget struct {
 	LocationID     int64
 	LocationName   string
 	StorageSection string
+	ContainerID    int64
+	ContainerNo    string
 	SKU            string
 	Description    string
 	Quantity       int
@@ -299,6 +302,7 @@ func (s *Store) CreateCycleCount(ctx context.Context, input CreateCycleCountInpu
 			if varianceQty < 0 {
 				varianceSign = -1
 			}
+			totalPalletDelta := 0
 			for _, palletVariance := range palletVariances {
 				signedQuantityChange := varianceSign * palletVariance.Quantity
 				afterPalletQty, err := s.loadPalletQuantityTx(ctx, tx, palletVariance.PalletID)
@@ -306,6 +310,8 @@ func (s *Store) CreateCycleCount(ctx context.Context, input CreateCycleCountInpu
 					return CycleCount{}, err
 				}
 				beforePalletQty := afterPalletQty - signedQuantityChange
+				palletDelta := resolveInventoryPalletCountDelta(beforePalletQty, afterPalletQty)
+				totalPalletDelta += palletDelta
 				if err := s.createPalletLocationEventTx(ctx, tx, createPalletLocationEventInput{
 					PalletID:         palletVariance.PalletID,
 					ContainerVisitID: palletVariance.ContainerVisitID,
@@ -315,7 +321,7 @@ func (s *Store) CreateCycleCount(ctx context.Context, input CreateCycleCountInpu
 					ContainerNo:      palletVariance.ContainerNo,
 					EventType:        PalletEventCount,
 					QuantityDelta:    signedQuantityChange,
-					PalletDelta:      resolvePalletCountTransition(beforePalletQty, afterPalletQty),
+					PalletDelta:      float64(palletDelta),
 					EventTime:        &countOccurredAt,
 				}); err != nil {
 					return CycleCount{}, err
@@ -333,12 +339,17 @@ func (s *Store) CreateCycleCount(ctx context.Context, input CreateCycleCountInpu
 					SourceDocumentType:  StockLedgerSourceCycleCount,
 					SourceDocumentID:    countID,
 					SourceLineID:        lineID,
+					ContainerID:         lockedTarget.ContainerID,
 					ContainerNo:         palletVariance.ContainerNo,
 					DescriptionSnapshot: lockedTarget.Description,
+					Pallets:             stockLedgerPalletCountForQuantityChange(signedQuantityChange, palletDelta),
 					Reason:              reason,
 				}); err != nil {
 					return CycleCount{}, err
 				}
+			}
+			if err := s.adjustInventoryBalanceByIDTx(ctx, tx, lockedTarget.ItemID, varianceQty, totalPalletDelta); err != nil {
+				return CycleCount{}, err
 			}
 		}
 	}
@@ -368,14 +379,7 @@ func (s *Store) loadPalletQuantityTx(ctx context.Context, tx *sql.Tx, palletID i
 }
 
 func resolvePalletCountTransition(beforeQty int, afterQty int) float64 {
-	switch {
-	case beforeQty <= 0 && afterQty > 0:
-		return 1
-	case beforeQty > 0 && afterQty <= 0:
-		return -1
-	default:
-		return 0
-	}
+	return float64(resolveInventoryPalletCountDelta(beforeQty, afterQty))
 }
 
 func (s *Store) getCycleCount(ctx context.Context, countID int64) (CycleCount, error) {
@@ -565,6 +569,7 @@ func (s *Store) loadLockedCycleCountTarget(ctx context.Context, tx *sql.Tx, line
 		CustomerID:     line.CustomerID,
 		LocationID:     line.LocationID,
 		StorageSection: line.StorageSection,
+		ContainerID:    line.ContainerID,
 		ContainerNo:    line.ContainerNo,
 	})
 	if err != nil {
@@ -579,6 +584,8 @@ func (s *Store) loadLockedCycleCountTarget(ctx context.Context, tx *sql.Tx, line
 		LocationID:     lockedItem.LocationID,
 		LocationName:   lockedItem.LocationName,
 		StorageSection: lockedItem.StorageSection,
+		ContainerID:    lockedItem.ContainerID,
+		ContainerNo:    lockedItem.ContainerNo,
 		SKU:            lockedItem.SKU,
 		Description:    lockedItem.Description,
 		Quantity:       lockedItem.Quantity,
@@ -639,6 +646,7 @@ func (s *Store) applyCycleCountPalletDeltaTx(
 		CustomerID:     line.CustomerID,
 		LocationID:     line.LocationID,
 		StorageSection: line.StorageSection,
+		ContainerID:    line.ContainerID,
 		ContainerNo:    line.ContainerNo,
 	}
 	if varianceQty < 0 {

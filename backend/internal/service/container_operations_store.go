@@ -252,6 +252,113 @@ type DeliveryEventFilters struct {
 	ContainerNo string
 }
 
+func (s *Store) ensureContainerRecordTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	customerID int64,
+	inboundDocumentID int64,
+	locationID int64,
+	containerNo string,
+	containerType string,
+	handlingMode string,
+	status string,
+	trackingStatus string,
+	lastEventAt *time.Time,
+) (int64, error) {
+	normalizedContainerNo := normalizeContainerNo(containerNo)
+	if customerID <= 0 || normalizedContainerNo == "" {
+		return 0, nil
+	}
+	normalizedStatus := strings.ToUpper(strings.TrimSpace(status))
+	normalizedTrackingStatus := strings.ToUpper(strings.TrimSpace(trackingStatus))
+	if normalizedTrackingStatus == "" {
+		normalizedTrackingStatus = normalizedStatus
+	}
+	normalizedStatus = firstNonEmpty(normalizedStatus, "IN_STOCK")
+	normalizedTrackingStatus = firstNonEmpty(normalizedTrackingStatus, normalizedStatus, "RECEIVED")
+
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO containers (
+			customer_id,
+			inbound_document_id,
+			location_id,
+			container_no,
+			container_type,
+			handling_mode,
+			status,
+			tracking_status,
+			last_event_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE
+			id = LAST_INSERT_ID(id),
+			inbound_document_id = COALESCE(VALUES(inbound_document_id), inbound_document_id),
+			location_id = COALESCE(VALUES(location_id), location_id),
+			container_type = COALESCE(NULLIF(VALUES(container_type), ''), container_type),
+			handling_mode = COALESCE(NULLIF(VALUES(handling_mode), ''), handling_mode),
+			status = COALESCE(NULLIF(VALUES(status), ''), status),
+			tracking_status = COALESCE(NULLIF(VALUES(tracking_status), ''), tracking_status),
+			last_event_at = CASE
+				WHEN VALUES(last_event_at) IS NULL THEN last_event_at
+				WHEN last_event_at IS NULL OR VALUES(last_event_at) > last_event_at THEN VALUES(last_event_at)
+				ELSE last_event_at
+			END
+	`,
+		customerID,
+		nullableInt64(inboundDocumentID),
+		nullableInt64(locationID),
+		normalizedContainerNo,
+		firstNonEmpty(normalizeContainerType(containerType), ContainerTypeNormal),
+		firstNonEmpty(normalizeInboundHandlingMode(handlingMode), InboundHandlingModePalletized),
+		normalizedStatus,
+		normalizedTrackingStatus,
+		nullableTime(lastEventAt),
+	)
+	if err != nil {
+		return 0, mapDBError(fmt.Errorf("ensure container record: %w", err))
+	}
+	containerID, err := result.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("resolve container id: %w", err)
+	}
+	return containerID, nil
+}
+
+func (s *Store) syncContainerNumberTx(ctx context.Context, tx *sql.Tx, containerID int64, customerID int64, locationID int64, containerNo string) error {
+	containerNo = normalizeContainerNo(containerNo)
+	if containerID <= 0 || customerID <= 0 || containerNo == "" {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE containers
+		SET
+			container_no = ?,
+			location_id = COALESCE(?, location_id),
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+			AND customer_id = ?
+	`, containerNo, nullableInt64(locationID), containerID, customerID); err != nil {
+		return mapDBError(fmt.Errorf("sync container number: %w", err))
+	}
+	return nil
+}
+
+func (s *Store) syncContainerDocumentLinkTx(ctx context.Context, tx *sql.Tx, containerID int64, inboundDocumentID int64, locationID int64) error {
+	if containerID <= 0 || inboundDocumentID <= 0 {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE containers
+		SET
+			inbound_document_id = ?,
+			location_id = COALESCE(?, location_id),
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, inboundDocumentID, nullableInt64(locationID), containerID); err != nil {
+		return mapDBError(fmt.Errorf("sync container document link: %w", err))
+	}
+	return nil
+}
+
 func (s *Store) CreateContainer(ctx context.Context, input CreateContainerInput) (Container, error) {
 	customerID := input.CustomerID
 	containerNo := normalizeContainerNo(input.ContainerNo)

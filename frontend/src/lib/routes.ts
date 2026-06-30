@@ -31,6 +31,19 @@ export type PageKey =
   | "shipment-editor"
   | "settings";
 
+export const PALLET_ENTITY_UI_ENABLED = false;
+
+const palletEntityPages: readonly PageKey[] = ["pallet-trace", "adjustments", "transfers", "cycle-counts"];
+const palletEntityPaths = new Set(["/pallets", "/adjustments", "/transfers", "/cycle-counts"]);
+
+export function isPalletEntityPage(page: PageKey) {
+  return palletEntityPages.includes(page);
+}
+
+function resolveEnabledPage(page: PageKey): PageKey {
+  return !PALLET_ENTITY_UI_ENABLED && isPalletEntityPage(page) ? "inventory-summary" : page;
+}
+
 export const pagePathMap: Record<PageKey, string> = {
   dashboard: "/",
   "daily-operations": "/daily-operations",
@@ -75,6 +88,7 @@ export function normalizePagePath(pathname: string): string {
 export function getPageFromPath(pathname: string): PageKey {
   const normalized = normalizePagePath(pathname);
 
+  if (!PALLET_ENTITY_UI_ENABLED && palletEntityPaths.has(normalized)) return "inventory-summary";
   if (normalized === "/daily-operations" || /^\/daily-operations\/\d{4}-\d{2}-\d{2}$/.test(normalized)) return "daily-operations";
   if (normalized === "/admin") return "dashboard";
   if (/^\/billing\/container\/\d{4}-\d{2}-\d{2}\/\d{4}-\d{2}-\d{2}\/(?:all|\d+)\/(?:all|\d+)\/[^/]+$/.test(normalized)) return "billing-container-detail";
@@ -109,16 +123,17 @@ export function getPageFromPath(pathname: string): PageKey {
 }
 
 export function getPathForPage(page: PageKey): string {
-  return pagePathMap[page];
+  return pagePathMap[resolveEnabledPage(page)];
 }
 
 export function navigateToPage(page: PageKey, setter: (page: PageKey) => void) {
-  const path = getPathForPage(page);
+  const targetPage = resolveEnabledPage(page);
+  const path = getPathForPage(targetPage);
   if (normalizePagePath(window.location.pathname) !== path) {
-    window.history.pushState({ page }, "", path);
+    window.history.pushState({ page: targetPage }, "", path);
   }
 
-  setter(page);
+  setter(targetPage);
 }
 
 function normalizeIsoDateSegment(value: string) {

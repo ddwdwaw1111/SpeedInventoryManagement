@@ -4,7 +4,6 @@ export type ContainerType = "NORMAL" | "WEST_COAST_TRANSFER";
 export type DashboardData = {
   totalItems: number;
   totalUnits: number;
-  lowStockItems: number;
   locationsInUse: number;
   recentMovements: Movement[];
 };
@@ -19,7 +18,6 @@ export type OperationsReportSummary = {
   netPalletFlow: number;
   activeSkuCount: number;
   activeWarehouseCount: number;
-  lowStockCount: number;
   endingBalance: number;
   peakBalance: number;
   averageBalance: number;
@@ -35,13 +33,6 @@ export type OperationsReportSkuRow = {
   label: string;
   value: number;
   description: string;
-};
-
-export type OperationsReportLowStockRow = {
-  label: string;
-  value: number;
-  available: number;
-  reorder: number;
 };
 
 export type OperationsReportPalletFlowRow = {
@@ -65,7 +56,6 @@ export type OperationsReport = {
   summary: OperationsReportSummary;
   locationInventoryRows: OperationsReportLocationRow[];
   topSkuRows: OperationsReportSkuRow[];
-  lowStockRows: OperationsReportLowStockRow[];
   palletFlowRows: OperationsReportPalletFlowRow[];
   movementTrendRows: OperationsReportMovementTrendRow[];
 };
@@ -256,7 +246,6 @@ export type SKUMaster = {
   category: string;
   description: string;
   unit: string;
-  reorderLevel: number;
   defaultUnitsPerPallet: number;
   createdAt: string;
   updatedAt: string;
@@ -269,7 +258,6 @@ export type SKUMasterPayload = {
   category: string;
   description: string;
   unit: string;
-  reorderLevel: number;
   defaultUnitsPerPallet: number;
 };
 
@@ -283,17 +271,18 @@ export type Item = {
   description: string;
   unit: string;
   quantity: number;
+  pallets: number;
   availableQty: number;
   allocatedQty: number;
   damagedQty: number;
   holdQty: number;
-  reorderLevel: number;
   customerId: number;
   customerName: string;
   locationId: number;
   locationName: string;
   storageSection: string;
   deliveryDate: string | null;
+  containerId?: number;
   containerNo: string;
   lastRestockedAt: string | null;
   createdAt: string;
@@ -304,27 +293,32 @@ export type InventoryProjectionRef = {
   customerId: number;
   locationId: number;
   storageSection: string;
+  containerId?: number;
   containerNo: string;
   skuMasterId: number;
 };
 
 export function buildInventoryProjectionKey(input: InventoryProjectionRef) {
+  const containerKey = input.containerId && input.containerId > 0
+    ? `id:${input.containerId}`
+    : `no:${(input.containerNo ?? "").trim().toUpperCase()}`;
   return [
     String(input.customerId),
     String(input.locationId),
     normalizeStorageSection(input.storageSection),
-    (input.containerNo ?? "").trim().toUpperCase(),
+    containerKey,
     String(input.skuMasterId)
   ].join(":");
 }
 
 export function toInventoryProjectionRef(
-  item: Pick<Item, "customerId" | "locationId" | "storageSection" | "containerNo" | "skuMasterId">
+  item: Pick<Item, "customerId" | "locationId" | "storageSection" | "containerId" | "containerNo" | "skuMasterId">
 ): InventoryProjectionRef {
   return {
     customerId: item.customerId,
     locationId: item.locationId,
     storageSection: normalizeStorageSection(item.storageSection),
+    containerId: item.containerId,
     containerNo: (item.containerNo ?? "").trim().toUpperCase(),
     skuMasterId: item.skuMasterId
   };
@@ -350,6 +344,7 @@ export type Movement = {
   movementType: "IN" | "OUT" | "ADJUST" | "REVERSAL" | "TRANSFER_IN" | "TRANSFER_OUT" | "COUNT";
   quantityChange: number;
   deliveryDate: string | null;
+  containerId?: number;
   containerNo: string;
   packingListNo: string;
   orderRef: string;
@@ -420,6 +415,7 @@ export type PalletLocationEvent = {
   locationId: number;
   locationName: string;
   storageSection: string;
+  containerId?: number;
   containerNo: string;
   eventType: string;
   quantityDelta: number;
@@ -470,7 +466,7 @@ export type ContainerPayload = {
 
 export type ContainerTrackingEvent = {
   id: number;
-  containerId: number;
+  containerId?: number;
   customerId: number;
   customerName: string;
   containerNo: string;
@@ -498,7 +494,7 @@ export type ContainerTrackingEventPayload = LifecycleDisplayFields & {
 
 export type ContainerPickupAssignment = {
   id: number;
-  containerId: number;
+  containerId?: number;
   customerId: number;
   customerName: string;
   containerNo: string;
@@ -651,6 +647,7 @@ export type ContainerLifecycleEvent = {
   locationId: number;
   locationName: string;
   storageSection: string;
+  containerId?: number;
   containerNo: string;
   eventType: string;
   eventTime: string;
@@ -692,14 +689,8 @@ export type OutboundDocumentLine = {
   netWeightKgs: number;
   grossWeightKgs: number;
   lineNote: string;
-  pickPallets: OutboundLinePalletPick[];
   pickAllocations: OutboundPickAllocation[];
   createdAt: string;
-};
-
-export type OutboundLinePalletPick = {
-  palletId: number;
-  quantity: number;
 };
 
 export type OutboundPickAllocation = {
@@ -709,6 +700,7 @@ export type OutboundPickAllocation = {
   locationId: number;
   locationName: string;
   storageSection: string;
+  containerId?: number;
   containerNo: string;
   allocatedQty: number;
   pallets?: number;
@@ -732,6 +724,7 @@ export type OutboundPickAllocationPayload = {
   locationId: number;
   locationName?: string;
   storageSection?: string;
+  containerId?: number;
   containerNo?: string;
   allocatedQty: number;
   pallets?: number;
@@ -778,7 +771,6 @@ export type OutboundDocumentLinePayload = {
   netWeightKgs?: number;
   grossWeightKgs?: number;
   lineNote?: string;
-  pickPallets?: OutboundLinePalletPick[];
   pickAllocations?: OutboundPickAllocationPayload[];
 };
 
@@ -807,7 +799,6 @@ export type InboundDocumentLine = {
   sku: string;
   description: string;
   storageSection: string;
-  reorderLevel: number;
   expectedQty: number;
   receivedQty: number;
   pallets: number;
@@ -831,6 +822,7 @@ export type InboundDocument = {
   locationName: string;
   expectedArrivalDate: string | null;
   actualArrivalDate: string | null;
+  containerId?: number;
   containerNo: string;
   containerType: ContainerType;
   handlingMode: "PALLETIZED" | "SEALED_TRANSIT";
@@ -854,7 +846,6 @@ export type InboundDocument = {
 export type InboundDocumentLinePayload = {
   sku: string;
   description: string;
-  reorderLevel: number;
   expectedQty: number;
   receivedQty: number;
   pallets: number;
@@ -870,6 +861,7 @@ export type InboundDocumentPayload = {
   locationId: number;
   expectedArrivalDate?: string;
   actualArrivalDate?: string;
+  containerId?: number;
   containerNo?: string;
   containerType?: ContainerType;
   handlingMode?: string;
@@ -981,6 +973,7 @@ export type InventoryAdjustmentLinePayload = {
   customerId: number;
   locationId: number;
   storageSection: string;
+  containerId?: number;
   containerNo: string;
   palletId?: number;
   skuMasterId: number;
@@ -1010,6 +1003,7 @@ export type InventoryTransferLine = {
   sku: string;
   description: string;
   quantity: number;
+  pallets: number;
   lineNote: string;
   createdAt: string;
 };
@@ -1032,10 +1026,12 @@ export type InventoryTransferLinePayload = {
   customerId: number;
   locationId: number;
   storageSection: string;
+  containerId?: number;
   containerNo: string;
   palletId?: number;
   skuMasterId: number;
   quantity: number;
+  pallets: number;
   toLocationId: number;
   toStorageSection?: string;
   lineNote?: string;
@@ -1081,6 +1077,7 @@ export type CycleCountLinePayload = {
   customerId: number;
   locationId: number;
   storageSection: string;
+  containerId?: number;
   containerNo: string;
   palletId?: number;
   createPallet?: boolean;

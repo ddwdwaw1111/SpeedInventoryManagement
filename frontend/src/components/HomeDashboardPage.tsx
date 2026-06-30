@@ -3,7 +3,6 @@ import ChevronRightRoundedIcon from "@mui/icons-material/ChevronRightRounded";
 import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
 import LocalShippingOutlinedIcon from "@mui/icons-material/LocalShippingOutlined";
 import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
-import ReportProblemOutlinedIcon from "@mui/icons-material/ReportProblemOutlined";
 import TimelineOutlinedIcon from "@mui/icons-material/TimelineOutlined";
 import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
 import type { ReactNode } from "react";
@@ -135,14 +134,8 @@ export function HomeDashboardPage({
     const pendingShipments = outboundDocuments.filter((document) => normalizeDocumentStatus(document.status) === "DRAFT").length;
     const pickingShipments = outboundDocuments.filter((document) => normalizeOutboundTrackingStatus(document.trackingStatus, document.status) === "PICKING").length;
     const packedShipments = outboundDocuments.filter((document) => normalizeOutboundTrackingStatus(document.trackingStatus, document.status) === "PACKED").length;
-    const lowStockSkus = items.filter((item) => item.reorderLevel > 0 && item.availableQty <= item.reorderLevel).length;
-    const atRiskWarehouses = new Set(
-      items
-        .filter((item) => item.reorderLevel > 0 && item.availableQty <= item.reorderLevel)
-        .map((item) => item.locationId)
-    ).size;
 
-    return [
+    const cards: SummaryCard[] = [
       {
         key: "on-hand",
         label: t("dashboardKpiOnHand"),
@@ -151,7 +144,7 @@ export function HomeDashboardPage({
         tone: "blue",
         icon: <Inventory2OutlinedIcon fontSize="small" />,
         onOpen: () => {
-          setPendingInventorySummaryContext({ healthFilter: "ALL" });
+          setPendingInventorySummaryContext({});
           onNavigate("inventory-summary");
         }
       },
@@ -178,20 +171,9 @@ export function HomeDashboardPage({
           setPendingActivityManagementLaunchContext("OUT", { selectedStatus: "DRAFT" });
           onNavigate("outbound-management");
         }
-      },
-      {
-        key: "low-stock",
-        label: t("dashboardKpiLowStock"),
-        value: numberFormatter.format(lowStockSkus),
-        meta: t("dashboardKpiLowStockMeta", { warehouses: atRiskWarehouses }),
-        tone: "red",
-        icon: <ReportProblemOutlinedIcon fontSize="small" />,
-        onOpen: () => {
-          setPendingInventorySummaryContext({ healthFilter: "LOW_STOCK" });
-          onNavigate("inventory-summary");
-        }
       }
     ];
+    return cards;
   }, [inboundDocuments, items, onNavigate, outboundDocuments, t]);
 
   const throughputPoints = useMemo(

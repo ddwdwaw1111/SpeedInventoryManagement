@@ -34,6 +34,7 @@ type InboundReceiptVariance = "MATCHED" | "SHORT" | "OVER";
 type BatchInboundFormState = {
   expectedArrivalDate: string;
   actualArrivalDate: string;
+  containerId: number;
   containerNo: string;
   containerType: ContainerType;
   handlingMode: InboundHandlingMode;
@@ -54,7 +55,6 @@ type BatchInboundLineState = {
   sku: string;
   description: string;
   storageSection: string;
-  reorderLevel: number;
   expectedQty: number;
   receivedQty: number;
   pallets: number;
@@ -102,6 +102,8 @@ export function InboundReceiptEditorPage({
   const { t } = useI18n();
   const { showSuccess, showError, feedbackToast } = useFeedbackToast();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
+  const inboundLineColumnCount = 11;
+  const inboundLineFooterTrailingColumnSpan = 5;
   const [batchForm, setBatchForm] = useState<BatchInboundFormState>(() => createEmptyBatchInboundForm());
   const [batchLines, setBatchLines] = useState<BatchInboundLineState[]>(() => [createEmptyBatchInboundLine()]);
   const [errorMessage, setErrorMessage] = useState("");
@@ -346,7 +348,6 @@ export function InboundReceiptEditorPage({
       const previousAutoPalletPlan = buildAutoPalletPlan(totalQty, getEffectiveInboundUnitsPerPallet(line, previousSkuMaster));
       const nextAutoPalletPlan = buildAutoPalletPlan(totalQty, getEffectiveInboundUnitsPerPallet(line, nextSkuMaster));
       const shouldRefreshDescription = !line.description.trim() || (previousDescription && line.description.trim() === previousDescription);
-      const shouldRefreshReorder = line.reorderLevel <= 0 || (previousSkuMaster !== undefined && line.reorderLevel === previousSkuMaster.reorderLevel);
       const shouldRefreshPallets = line.pallets <= 0 || (previousSkuMaster !== undefined && line.pallets === previousAutoPalletPlan.pallets);
       const nextPallets = shouldRefreshPallets ? nextAutoPalletPlan.pallets : line.pallets;
       const shouldPreserveExplicitBreakdown = line.palletBreakdownExplicit || line.palletBreakdownTouched;
@@ -362,7 +363,6 @@ export function InboundReceiptEditorPage({
         sku: nextSkuValue,
         description: shouldRefreshDescription ? nextDescription : line.description,
         storageSection: normalizeStorageSection(line.storageSection || batchForm.storageSection || batchSectionOptions[0]),
-        reorderLevel: shouldRefreshReorder ? nextSkuMaster.reorderLevel : line.reorderLevel,
         pallets: nextPallets,
         palletBreakdown: nextPalletBreakdown,
         palletBreakdownExplicit: line.palletBreakdownExplicit,
@@ -383,10 +383,7 @@ export function InboundReceiptEditorPage({
 
       const skuMaster = skuMastersBySku.get(normalizeSkuLookupValue(line.sku));
       const unitsPerPallet = getEffectiveInboundUnitsPerPallet(line, skuMaster);
-      const previousSuggested = calculateSuggestedReorderLevel(line.expectedQty, line.receivedQty);
       const nextReceivedQty = line.receivedQty;
-      const nextSuggested = calculateSuggestedReorderLevel(nextExpectedQty, nextReceivedQty);
-      const shouldKeepAutoReorder = line.reorderLevel <= 0 || line.reorderLevel === previousSuggested;
       const previousAutoPalletPlan = buildAutoPalletPlan(line.receivedQty, unitsPerPallet);
       const nextAutoPalletPlan = buildAutoPalletPlan(nextReceivedQty, unitsPerPallet);
       const shouldKeepAutoPallets = line.pallets <= 0 || line.pallets === previousAutoPalletPlan.pallets;
@@ -402,7 +399,6 @@ export function InboundReceiptEditorPage({
       return {
         ...line,
         expectedQty: nextExpectedQty,
-        reorderLevel: shouldKeepAutoReorder ? nextSuggested : line.reorderLevel,
         pallets: nextPallets,
         palletBreakdown: nextPalletBreakdown,
         palletBreakdownExplicit: line.palletBreakdownExplicit,
@@ -419,9 +415,6 @@ export function InboundReceiptEditorPage({
 
       const skuMaster = skuMastersBySku.get(normalizeSkuLookupValue(line.sku));
       const unitsPerPallet = getEffectiveInboundUnitsPerPallet(line, skuMaster);
-      const previousSuggested = calculateSuggestedReorderLevel(line.expectedQty, line.receivedQty);
-      const nextSuggested = calculateSuggestedReorderLevel(line.expectedQty, nextReceivedQty);
-      const shouldKeepAutoReorder = line.reorderLevel <= 0 || line.reorderLevel === previousSuggested;
       const previousAutoPalletPlan = buildAutoPalletPlan(line.receivedQty, unitsPerPallet);
       const nextAutoPalletPlan = buildAutoPalletPlan(nextReceivedQty, unitsPerPallet);
       const shouldKeepAutoPallets = line.pallets <= 0 || line.pallets === previousAutoPalletPlan.pallets;
@@ -437,7 +430,6 @@ export function InboundReceiptEditorPage({
       return {
         ...line,
         receivedQty: nextReceivedQty,
-        reorderLevel: shouldKeepAutoReorder ? nextSuggested : line.reorderLevel,
         pallets: nextPallets,
         palletBreakdown: nextPalletBreakdown,
         palletBreakdownExplicit: line.palletBreakdownExplicit,
@@ -455,9 +447,6 @@ export function InboundReceiptEditorPage({
       const skuMaster = skuMastersBySku.get(normalizeSkuLookupValue(line.sku));
       const unitsPerPallet = getEffectiveInboundUnitsPerPallet(line, skuMaster);
       const nextReceivedQty = line.expectedQty;
-      const previousSuggested = calculateSuggestedReorderLevel(line.expectedQty, line.receivedQty);
-      const nextSuggested = calculateSuggestedReorderLevel(line.expectedQty, nextReceivedQty);
-      const shouldKeepAutoReorder = line.reorderLevel <= 0 || line.reorderLevel === previousSuggested;
       const previousAutoPalletPlan = buildAutoPalletPlan(line.receivedQty, unitsPerPallet);
       const nextAutoPalletPlan = buildAutoPalletPlan(nextReceivedQty, unitsPerPallet);
       const shouldKeepAutoPallets = line.pallets <= 0 || line.pallets === previousAutoPalletPlan.pallets;
@@ -473,7 +462,6 @@ export function InboundReceiptEditorPage({
       return {
         ...line,
         receivedQty: nextReceivedQty,
-        reorderLevel: shouldKeepAutoReorder ? nextSuggested : line.reorderLevel,
         pallets: nextPallets,
         palletBreakdown: nextPalletBreakdown,
         palletBreakdownExplicit: line.palletBreakdownExplicit,
@@ -692,6 +680,7 @@ export function InboundReceiptEditorPage({
         locationId: batchLocationId,
         expectedArrivalDate: arrivalDate || undefined,
         actualArrivalDate: arrivalDate || undefined,
+        containerId: batchForm.containerId || undefined,
         containerNo: batchForm.containerNo || undefined,
         containerType: batchForm.containerType,
         handlingMode: batchForm.handlingMode,
@@ -720,7 +709,6 @@ export function InboundReceiptEditorPage({
           return {
             sku: normalizedSku,
             description: lineDescription,
-            reorderLevel: line.reorderLevel || matchingTemplate?.reorderLevel || matchingSkuMaster?.reorderLevel || 0,
             expectedQty: line.expectedQty,
             receivedQty: normalizedReceivedQty,
             pallets: isSealedTransitMode ? 0 : line.pallets,
@@ -1035,7 +1023,6 @@ export function InboundReceiptEditorPage({
                           <th>{t("pallets")}</th>
                           <th>{t("unitsPerPallet")}</th>
                           <th>{t("palletsDetail")}</th>
-                          <th>{t("reorderLevel")}</th>
                           <th>{t("internalNotes")}</th>
                           <th>{t("status")}</th>
                           <th>{t("actions")}</th>
@@ -1051,8 +1038,6 @@ export function InboundReceiptEditorPage({
                           );
                           const batchSkuTemplate = items.find((item) => item.sku.trim().toUpperCase() === normalizedBatchLineSku);
                           const batchSkuMaster = skuMastersBySku.get(normalizedBatchLineSku);
-                          const suggestedReorderLevel = calculateSuggestedReorderLevel(line.expectedQty, line.receivedQty);
-                          const displayedReorderLevel = selectedBatchItem?.reorderLevel ?? batchSkuMaster?.reorderLevel ?? batchSkuTemplate?.reorderLevel ?? line.reorderLevel;
                           const effectiveUnitsPerPallet = getEffectiveInboundUnitsPerPallet(line, batchSkuMaster);
                           const palletUnitLabel = (batchSkuMaster?.unit || batchForm.unitLabel || "CTN").toUpperCase();
                           const lineSkuDisplay = line.sku.trim().toUpperCase() || "-";
@@ -1096,7 +1081,6 @@ export function InboundReceiptEditorPage({
                                     {t("details")}
                                   </button>
                                 </td>
-                                <td><input type="number" min="0" value={numberInputValue(displayedReorderLevel)} onChange={(event) => updateBatchLine(line.id, { reorderLevel: Math.max(0, Number(event.target.value || 0)) })} placeholder={suggestedReorderLevel > 0 ? String(suggestedReorderLevel) : ""} disabled={isReadOnly || Boolean(selectedBatchItem)} aria-label={`${t("reorderLevel")} #${index + 1}`} /></td>
                                 <td className="inbound-entry-table__note">
                                   <input value={line.lineNote} onChange={(event) => updateBatchLine(line.id, { lineNote: event.target.value })} placeholder={t("inboundLineNotePlaceholder")} disabled={isReadOnly} aria-label={`${t("internalNotes")} #${index + 1}`} />
                                 </td>
@@ -1118,7 +1102,7 @@ export function InboundReceiptEditorPage({
                               </tr>
                               {isPalletBreakdownExpanded || hasPalletBreakdownMismatch ? (
                                 <tr className="inbound-entry-table__detail-row">
-                                  <td colSpan={12}>
+                                  <td colSpan={inboundLineColumnCount}>
                                     <InboundPalletBreakdownPanel
                                       title={t("palletBreakdown")}
                                       helperText={batchSkuMaster?.defaultUnitsPerPallet ? t("palletUnitsHint", { units: batchSkuMaster.defaultUnitsPerPallet, unit: palletUnitLabel }) : undefined}
@@ -1161,7 +1145,7 @@ export function InboundReceiptEditorPage({
                           );
                         })}
                         <tr className="inbound-entry-table__add-row">
-                          <td colSpan={12}>
+                          <td colSpan={inboundLineColumnCount}>
                             <button
                               className="inbound-entry-table__add-button"
                               type="button"
@@ -1180,7 +1164,7 @@ export function InboundReceiptEditorPage({
                           <td>{inboundWizardSummary.totalExpectedQty}</td>
                           <td>{inboundWizardSummary.totalReceivedQty}</td>
                           <td>{inboundWizardSummary.totalPallets}</td>
-                          <td colSpan={6}></td>
+                          <td colSpan={inboundLineFooterTrailingColumnSpan}></td>
                         </tr>
                       </tfoot>
                     </table>
@@ -1345,6 +1329,7 @@ function buildInboundEditorSourceState({
     form: {
       expectedArrivalDate: arrivalDate,
       actualArrivalDate: arrivalDate,
+      containerId: document.containerId || 0,
       containerNo: document.containerNo || "",
       containerType: document.containerType || "NORMAL",
       handlingMode: launchContext?.forceHandlingMode ?? document.handlingMode ?? "PALLETIZED",
@@ -1360,7 +1345,6 @@ function buildInboundEditorSourceState({
           sku: line.sku || "",
           description: line.description || "",
           storageSection: normalizeStorageSection(line.storageSection || document.storageSection),
-          reorderLevel: line.reorderLevel || 0,
           expectedQty: line.expectedQty,
           receivedQty: line.receivedQty,
           pallets: line.pallets,
@@ -1384,6 +1368,7 @@ function createEmptyBatchInboundForm(arrivalDate = ""): BatchInboundFormState {
   return {
     expectedArrivalDate: arrivalDate,
     actualArrivalDate: arrivalDate,
+    containerId: 0,
     containerNo: "",
     containerType: "NORMAL",
     handlingMode: "PALLETIZED",
@@ -1401,7 +1386,6 @@ function createEmptyBatchInboundLine(defaultStorageSection = DEFAULT_STORAGE_SEC
     sku: "",
     description: "",
     storageSection: defaultStorageSection,
-    reorderLevel: 0,
     expectedQty: 0,
     receivedQty: 0,
     pallets: 0,
@@ -1743,14 +1727,6 @@ function buildInboundContainerWarnings(
     .slice(0, 3);
 
   return { exact, similar };
-}
-
-function calculateSuggestedReorderLevel(expectedQty: number, receivedQty: number) {
-  const baseQty = receivedQty > 0 ? receivedQty : expectedQty;
-  if (baseQty <= 0) {
-    return 0;
-  }
-  return Math.max(1, Math.ceil(baseQty * 0.2));
 }
 
 function getInboundReceiptVariance(expectedQty: number, receivedQty: number): InboundReceiptVariance {

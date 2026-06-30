@@ -50,15 +50,11 @@ type OutboundPickAllocation struct {
 	LocationID     int64     `json:"locationId"`
 	LocationName   string    `json:"locationName"`
 	StorageSection string    `json:"storageSection"`
+	ContainerID    int64     `json:"containerId"`
 	ContainerNo    string    `json:"containerNo"`
 	AllocatedQty   int       `json:"allocatedQty"`
 	Pallets        int       `json:"pallets"`
 	CreatedAt      time.Time `json:"createdAt"`
-}
-
-type OutboundLinePalletPick struct {
-	PalletID int64 `json:"palletId"`
-	Quantity int   `json:"quantity"`
 }
 
 type OutboundDocumentLine struct {
@@ -79,7 +75,6 @@ type OutboundDocumentLine struct {
 	NetWeightKgs      float64                  `json:"netWeightKgs"`
 	GrossWeightKgs    float64                  `json:"grossWeightKgs"`
 	LineNote          string                   `json:"lineNote"`
-	PickPallets       []OutboundLinePalletPick `json:"pickPallets"`
 	PickAllocations   []OutboundPickAllocation `json:"pickAllocations"`
 	CreatedAt         time.Time                `json:"createdAt"`
 }
@@ -115,7 +110,6 @@ type CreateOutboundDocumentLineInput struct {
 	NetWeightKgs      float64                  `json:"netWeightKgs"`
 	GrossWeightKgs    float64                  `json:"grossWeightKgs"`
 	LineNote          string                   `json:"lineNote"`
-	PickPallets       []OutboundLinePalletPick `json:"pickPallets"`
 	PickAllocations   []OutboundPickAllocation `json:"pickAllocations"`
 }
 
@@ -159,7 +153,6 @@ type outboundDocumentLineRow struct {
 	NetWeightKgs        float64   `db:"net_weight_kgs"`
 	GrossWeightKgs      float64   `db:"gross_weight_kgs"`
 	LineNote            string    `db:"line_note"`
-	PickPalletsJSON     string    `db:"pick_pallets_json"`
 	PickAllocationsJSON string    `db:"pick_allocations_json"`
 	CreatedAt           time.Time `db:"created_at"`
 }
@@ -171,6 +164,7 @@ type outboundPickAllocationRow struct {
 	LocationID     int64     `db:"location_id"`
 	LocationName   string    `db:"location_name_snapshot"`
 	StorageSection string    `db:"storage_section"`
+	ContainerID    int64     `db:"container_id"`
 	ContainerNo    string    `db:"container_no_snapshot"`
 	AllocatedQty   int       `db:"allocated_qty"`
 	Pallets        int       `db:"pallets"`
@@ -201,6 +195,7 @@ type outboundAllocationCandidate struct {
 	LocationID     int64
 	LocationName   string
 	StorageSection string
+	ContainerID    int64
 	ContainerNo    string
 	SKU            string
 	Description    string
@@ -223,6 +218,7 @@ type lockedOutboundSourceRow struct {
 	LocationID     int64
 	LocationName   string
 	StorageSection string
+	ContainerID    int64
 	ContainerNo    string
 	SKU            string
 	Description    string
@@ -232,11 +228,9 @@ type lockedOutboundSourceRow struct {
 	CreatedAt      time.Time
 }
 
-type selectedOutboundPalletTarget struct {
-	PalletID       int64
-	LocationID     int64
-	StorageSection string
-	ContainerNo    string
+type outboundRepairBucketReservation struct {
+	Bucket   palletSourceBucket
+	Quantity int
 }
 
 type OutboundDocumentFilters struct {
@@ -402,7 +396,6 @@ func (s *Store) ListOutboundDocumentsFiltered(ctx context.Context, limit int, fi
 			net_weight_kgs,
 			gross_weight_kgs,
 			COALESCE(line_note, '') AS line_note,
-			COALESCE(pick_pallets_json, '') AS pick_pallets_json,
 			COALESCE(pick_allocations_json, '') AS pick_allocations_json,
 			created_at
 		FROM outbound_document_lines
@@ -442,7 +435,6 @@ func (s *Store) ListOutboundDocumentsFiltered(ctx context.Context, limit int, fi
 			NetWeightKgs:      lineRow.NetWeightKgs,
 			GrossWeightKgs:    lineRow.GrossWeightKgs,
 			LineNote:          lineRow.LineNote,
-			PickPallets:       decodeOutboundLinePalletPicksOrEmpty(lineRow.PickPalletsJSON),
 			PickAllocations:   decodeOutboundDraftPickAllocationsOrEmpty(document.Status, lineRow.ID, lineRow.PickAllocationsJSON),
 			CreatedAt:         lineRow.CreatedAt,
 		})
@@ -659,7 +651,7 @@ func (s *Store) UpdateOutboundDocument(ctx context.Context, documentID int64, in
 		return OutboundDocument{}, err
 	}
 	if outboundTrackingRequiresActiveReservation(existingTrackingStatus) {
-		if err := s.releaseOutboundDocumentReservationsTx(ctx, tx, existingLineRows); err != nil {
+		if err := s.releaseOutboundDocumentReservationsTx(ctx, tx, documentRow.CustomerID, existingLineRows); err != nil {
 			return OutboundDocument{}, err
 		}
 	}
@@ -848,10 +840,9 @@ func (s *Store) insertOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, d
 				net_weight_kgs,
 				gross_weight_kgs,
 				line_note,
-				pick_pallets_json,
 				pick_allocations_json,
 				sort_order
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			documentID,
 			lockedSource.SKUMasterID,
@@ -869,7 +860,6 @@ func (s *Store) insertOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, d
 			line.NetWeightKgs,
 			line.GrossWeightKgs,
 			nullableString(line.LineNote),
-			nullableString(mustEncodeOutboundLinePalletPicks(line.PickPallets)),
 			nullableString(mustEncodeOutboundPickAllocations(line.PickAllocations)),
 			index+1,
 		)
@@ -1013,101 +1003,100 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 	outboundEventTime := firstNonEmptyTime(documentRow.ActualShipDate, documentRow.ConfirmedAt, documentRow.ExpectedShipDate)
 
 	for _, lineRow := range lineRows {
-		selectedPalletPicks := decodeOutboundLinePalletPicksOrEmpty(lineRow.PickPalletsJSON)
-		if len(selectedPalletPicks) == 0 {
+		selectedAllocations := decodeOutboundPickAllocationsOrEmpty(lineRow.PickAllocationsJSON)
+		if len(selectedAllocations) == 0 {
 			return fmt.Errorf("%w: shipment must be reserved before it can be shipped", ErrInvalidInput)
 		}
-		totalSelectedQty := totalOutboundLinePalletPickQuantity(selectedPalletPicks)
+		totalSelectedQty := totalOutboundPickAllocationQuantity(selectedAllocations)
 		if totalSelectedQty != lineRow.Quantity {
-			return fmt.Errorf("%w: selected pallet quantity must equal outbound quantity", ErrInvalidInput)
-		}
-		pickQuantities := make([]int, len(selectedPalletPicks))
-		for index, pick := range selectedPalletPicks {
-			pickQuantities[index] = pick.Quantity
+			return fmt.Errorf("%w: selected inventory quantity must equal outbound quantity", ErrInvalidInput)
 		}
 		effectiveLinePallets := lineRow.Pallets
 		if effectiveLinePallets <= 0 {
-			effectiveLinePallets = len(selectedPalletPicks)
+			effectiveLinePallets = totalOutboundPickAllocationPallets(selectedAllocations)
 		}
-		pickPalletSplits := splitPalletsByQuantities(float64(effectiveLinePallets), pickQuantities)
-		netWeightSplits := splitProportionalFloat(lineRow.NetWeightKgs, lineRow.Quantity, toOutboundAllocationCandidatesFromPicks(pickQuantities))
-		grossWeightSplits := splitProportionalFloat(lineRow.GrossWeightKgs, lineRow.Quantity, toOutboundAllocationCandidatesFromPicks(pickQuantities))
 
-		for pickIndex, pick := range selectedPalletPicks {
-			target, err := s.loadSelectedOutboundPalletTargetTx(ctx, tx, documentRow.CustomerID, lineRow.LocationID, lineRow.SKUMasterID, pick.PalletID)
-			if err != nil {
-				return err
+		allocationCandidates := toOutboundAllocationCandidatesFromDraftPickAllocations(lockedOutboundSource{
+			SKUMasterID:  lineRow.SKUMasterID,
+			CustomerID:   documentRow.CustomerID,
+			ItemNumber:   lineRow.ItemNumberSnapshot,
+			LocationID:   lineRow.LocationID,
+			LocationName: lineRow.LocationName,
+			SKU:          lineRow.SKUSnapshot,
+			Description:  lineRow.DescriptionSnapshot,
+			Unit:         lineRow.UnitLabel,
+			Quantity:     lineRow.Quantity,
+			AvailableQty: lineRow.Quantity,
+			AllocatedQty: lineRow.Quantity,
+			DamagedQty:   0,
+			HoldQty:      0,
+		}, selectedAllocations)
+		netWeightSplits := splitProportionalFloat(lineRow.NetWeightKgs, lineRow.Quantity, allocationCandidates)
+		grossWeightSplits := splitProportionalFloat(lineRow.GrossWeightKgs, lineRow.Quantity, allocationCandidates)
+		palletSplits := splitOutboundLinePalletsByAllocations(effectiveLinePallets, selectedAllocations)
+
+		for allocationIndex, allocation := range selectedAllocations {
+			locationID := firstNonZeroInt64(allocation.LocationID, lineRow.LocationID)
+			storageSection := fallbackSection(allocation.StorageSection)
+			containerNo := strings.TrimSpace(allocation.ContainerNo)
+			containerID := allocation.ContainerID
+			ledgerPallets := allocation.Pallets
+			if ledgerPallets <= 0 && allocationIndex < len(palletSplits) {
+				ledgerPallets = palletSplits[allocationIndex]
 			}
-			palletConsumptions, err := s.consumeReservedSpecificPalletContentsForBucketTx(ctx, tx, palletSourceBucket{
+
+			bucket := palletSourceBucket{
 				SKUMasterID:    lineRow.SKUMasterID,
 				CustomerID:     documentRow.CustomerID,
-				LocationID:     target.LocationID,
-				StorageSection: target.StorageSection,
-				ContainerNo:    target.ContainerNo,
-			}, pick.PalletID, lineRow.SKUMasterID, pick.Quantity)
-			if err != nil {
-				return fmt.Errorf("ship reserved pallet contents for outbound movement: %w", err)
+				LocationID:     locationID,
+				StorageSection: storageSection,
+				ContainerID:    containerID,
+				ContainerNo:    containerNo,
 			}
-			if len(palletConsumptions) == 0 {
-				return fmt.Errorf("%w: shipment must be reserved before it can be shipped", ErrInvalidInput)
+			currentBalance, err := s.loadLockedInventoryBalanceForBucketTx(ctx, tx, bucket)
+			if err != nil {
+				return fmt.Errorf("load reserved inventory balance for outbound movement: %w", err)
+			}
+			containerID = firstNonZeroInt64(containerID, currentBalance.ContainerID)
+			containerNo = firstNonEmpty(currentBalance.ContainerNo, containerNo)
+			bucket.ContainerID = containerID
+			bucket.ContainerNo = containerNo
+
+			if err := s.consumeReservedInventoryBalanceTx(ctx, tx, bucket, allocation.AllocatedQty, ledgerPallets); err != nil {
+				return fmt.Errorf("ship reserved inventory balance for outbound movement: %w", err)
 			}
 
-			palletDelta := pickPalletSplits[pickIndex]
-			for _, palletConsumption := range palletConsumptions {
-				if err := s.createPalletLocationEventTx(ctx, tx, createPalletLocationEventInput{
-					PalletID:         palletConsumption.PalletID,
-					ContainerVisitID: palletConsumption.ContainerVisitID,
-					CustomerID:       palletConsumption.CustomerID,
-					LocationID:       palletConsumption.LocationID,
-					StorageSection:   palletConsumption.StorageSection,
-					ContainerNo:      firstNonEmpty(palletConsumption.ContainerNo, target.ContainerNo),
-					EventType:        PalletEventOutbound,
-					QuantityDelta:    -palletConsumption.Quantity,
-					PalletDelta:      -palletDelta,
-					EventTime:        outboundEventTime,
-				}); err != nil {
-					return err
-				}
-				if err := s.createOutboundPickTx(ctx, tx, createOutboundPickInput{
-					OutboundLineID: lineRow.ID,
-					PalletID:       palletConsumption.PalletID,
-					PalletItemID:   palletConsumption.PalletItemID,
-					PickedQty:      palletConsumption.Quantity,
-				}); err != nil {
-					return err
-				}
-				_, err := s.createStockLedgerEntryTx(ctx, tx, createStockLedgerInput{
-					EventType:           StockLedgerEventShip,
-					PalletID:            palletConsumption.PalletID,
-					PalletItemID:        palletConsumption.PalletItemID,
-					SKUMasterID:         palletConsumption.SKUMasterID,
-					CustomerID:          palletConsumption.CustomerID,
-					LocationID:          palletConsumption.LocationID,
-					StorageSection:      palletConsumption.StorageSection,
-					QuantityChange:      -palletConsumption.Quantity,
-					SourceDocumentType:  StockLedgerSourceOutbound,
-					SourceDocumentID:    documentID,
-					SourceLineID:        lineRow.ID,
-					ContainerNo:         firstNonEmpty(palletConsumption.ContainerNo, target.ContainerNo),
-					OutDate:             resolveOutboundLedgerDate(documentRow.ExpectedShipDate, documentRow.ActualShipDate),
-					PackingListNo:       documentRow.PackingListNo,
-					OrderRef:            documentRow.OrderRef,
-					ItemNumber:          lineRow.ItemNumberSnapshot,
-					DescriptionSnapshot: lineRow.DescriptionSnapshot,
-					Pallets:             roundedPalletInt(palletDelta),
-					PalletsDetailCtns:   lineRow.PalletsDetailCtns,
-					CartonSizeMM:        lineRow.CartonSizeMM,
-					CartonCount:         palletConsumption.Quantity,
-					UnitLabel:           firstNonEmpty(lineRow.UnitLabel, "PCS"),
-					NetWeightKgs:        netWeightSplits[pickIndex],
-					GrossWeightKgs:      grossWeightSplits[pickIndex],
-					HeightIn:            0,
-					DocumentNote:        documentRow.DocumentNote,
-					Reason:              firstNonEmpty(lineRow.LineNote, defaultMovementReason("OUT")),
-				})
-				if err != nil {
-					return err
-				}
+			_, err = s.createStockLedgerEntryTx(ctx, tx, createStockLedgerInput{
+				EventType:           StockLedgerEventShip,
+				OccurredAt:          outboundEventTime,
+				SKUMasterID:         lineRow.SKUMasterID,
+				CustomerID:          documentRow.CustomerID,
+				LocationID:          locationID,
+				StorageSection:      storageSection,
+				QuantityChange:      -allocation.AllocatedQty,
+				SourceDocumentType:  StockLedgerSourceOutbound,
+				SourceDocumentID:    documentID,
+				SourceLineID:        lineRow.ID,
+				ContainerID:         containerID,
+				ContainerNo:         containerNo,
+				OutDate:             resolveOutboundLedgerDate(documentRow.ExpectedShipDate, documentRow.ActualShipDate),
+				PackingListNo:       documentRow.PackingListNo,
+				OrderRef:            documentRow.OrderRef,
+				ItemNumber:          lineRow.ItemNumberSnapshot,
+				DescriptionSnapshot: lineRow.DescriptionSnapshot,
+				Pallets:             ledgerPallets,
+				PalletsDetailCtns:   lineRow.PalletsDetailCtns,
+				CartonSizeMM:        lineRow.CartonSizeMM,
+				CartonCount:         allocation.AllocatedQty,
+				UnitLabel:           firstNonEmpty(lineRow.UnitLabel, "PLT"),
+				NetWeightKgs:        netWeightSplits[allocationIndex],
+				GrossWeightKgs:      grossWeightSplits[allocationIndex],
+				HeightIn:            0,
+				DocumentNote:        documentRow.DocumentNote,
+				Reason:              firstNonEmpty(lineRow.LineNote, defaultMovementReason("OUT")),
+			})
+			if err != nil {
+				return err
 			}
 		}
 		if lineRow.Pallets <= 0 && effectiveLinePallets > 0 {
@@ -1153,16 +1142,8 @@ func (s *Store) CancelOutboundDocument(ctx context.Context, documentID int64) (O
 	deletedAt := time.Now().UTC()
 
 	if status == DocumentStatusConfirmed {
-		lineRows, err := s.loadOutboundDocumentLinesTx(ctx, tx, documentID)
-		if err != nil {
+		if err := s.restoreInventoryBalancesForOutboundLedgerTx(ctx, tx, documentID); err != nil {
 			return OutboundDocument{}, err
-		}
-
-		for _, lineRow := range lineRows {
-			// Restore pallet item quantities (reads outbound_picks, restores pallet_items)
-			if _, err := s.restorePalletContentsForLineTx(ctx, tx, lineRow.ID); err != nil {
-				return OutboundDocument{}, err
-			}
 		}
 
 		// Delete stock_ledger entries created by this outbound document
@@ -1176,7 +1157,7 @@ func (s *Store) CancelOutboundDocument(ctx context.Context, documentID int64) (O
 		if err != nil {
 			return OutboundDocument{}, err
 		}
-		if err := s.releaseOutboundDocumentReservationsTx(ctx, tx, lineRows); err != nil {
+		if err := s.releaseOutboundDocumentReservationsTx(ctx, tx, documentRow.CustomerID, lineRows); err != nil {
 			return OutboundDocument{}, err
 		}
 	}
@@ -1185,7 +1166,7 @@ func (s *Store) CancelOutboundDocument(ctx context.Context, documentID int64) (O
 		return OutboundDocument{}, err
 	}
 
-	// Delete outbound document (cascades to outbound_document_lines → outbound_picks)
+	// Delete outbound document and its lines. Pallet-level pick rows are legacy-only.
 	if _, err := tx.ExecContext(ctx, `DELETE FROM outbound_documents WHERE id = ?`, documentID); err != nil {
 		return OutboundDocument{}, mapDBError(fmt.Errorf("delete outbound document: %w", err))
 	}
@@ -1238,36 +1219,8 @@ func outboundLineInputFromRow(customerID int64, lineRow outboundDocumentLineRow)
 		NetWeightKgs:      lineRow.NetWeightKgs,
 		GrossWeightKgs:    lineRow.GrossWeightKgs,
 		LineNote:          lineRow.LineNote,
-		PickPallets:       decodeOutboundLinePalletPicksOrEmpty(lineRow.PickPalletsJSON),
 		PickAllocations:   decodeOutboundPickAllocationsOrEmpty(lineRow.PickAllocationsJSON),
 	}
-}
-
-func buildOutboundLinePalletPicksFromConsumptions(consumptions []palletContentConsumption) []OutboundLinePalletPick {
-	if len(consumptions) == 0 {
-		return []OutboundLinePalletPick{}
-	}
-
-	orderedPalletIDs := make([]int64, 0, len(consumptions))
-	quantitiesByPalletID := make(map[int64]int, len(consumptions))
-	for _, consumption := range consumptions {
-		if consumption.PalletID <= 0 || consumption.Quantity <= 0 {
-			continue
-		}
-		if _, exists := quantitiesByPalletID[consumption.PalletID]; !exists {
-			orderedPalletIDs = append(orderedPalletIDs, consumption.PalletID)
-		}
-		quantitiesByPalletID[consumption.PalletID] += consumption.Quantity
-	}
-
-	picks := make([]OutboundLinePalletPick, 0, len(orderedPalletIDs))
-	for _, palletID := range orderedPalletIDs {
-		picks = append(picks, OutboundLinePalletPick{
-			PalletID: palletID,
-			Quantity: quantitiesByPalletID[palletID],
-		})
-	}
-	return normalizeOutboundLinePalletPicks(picks)
 }
 
 func (s *Store) persistOutboundDocumentLineReservationTx(
@@ -1280,12 +1233,10 @@ func (s *Store) persistOutboundDocumentLineReservationTx(
 		UPDATE outbound_document_lines
 		SET
 			pallets = ?,
-			pick_pallets_json = ?,
 			pick_allocations_json = ?
 		WHERE id = ?
 	`,
 		line.Pallets,
-		nullableString(mustEncodeOutboundLinePalletPicks(line.PickPallets)),
 		nullableString(mustEncodeOutboundPickAllocations(line.PickAllocations)),
 		lineID,
 	); err != nil {
@@ -1304,42 +1255,13 @@ func (s *Store) reserveOutboundLineTx(
 		return fmt.Errorf("%w: outbound line is required", ErrInvalidInput)
 	}
 
-	normalizedPicks := normalizeOutboundLinePalletPicks(line.PickPallets)
-	if len(normalizedPicks) > 0 {
-		if totalOutboundLinePalletPickQuantity(normalizedPicks) != line.Quantity {
-			return fmt.Errorf("%w: selected pallet quantity must equal outbound quantity", ErrInvalidInput)
-		}
-		for _, pick := range normalizedPicks {
-			target, err := s.loadSelectedOutboundPalletTargetTx(ctx, tx, source.CustomerID, source.LocationID, source.SKUMasterID, pick.PalletID)
-			if err != nil {
-				return err
-			}
-			if _, err := s.reserveSpecificPalletContentsForBucketTx(ctx, tx, palletSourceBucket{
-				SKUMasterID:    source.SKUMasterID,
-				CustomerID:     source.CustomerID,
-				LocationID:     target.LocationID,
-				StorageSection: target.StorageSection,
-				ContainerNo:    target.ContainerNo,
-			}, pick.PalletID, source.SKUMasterID, pick.Quantity); err != nil {
-				return err
-			}
-		}
-		line.PickPallets = normalizedPicks
-		line.Pallets = len(normalizedPicks)
-		pickAllocations, err := s.buildOutboundDraftPickAllocationsFromSelectedPalletsTx(ctx, tx, source, line)
+	var plannedAllocations []OutboundPickAllocation
+	if len(line.PickAllocations) > 0 {
+		allocations, err := s.resolveOutboundDraftBucketAllocationsTx(ctx, tx, source, line.Quantity, line.PickAllocations, newOutboundAllocationReservationState())
 		if err != nil {
 			return err
 		}
-		line.PickAllocations = pickAllocations
-		return nil
-	}
-
-	var plannedAllocations []OutboundPickAllocation
-	if len(line.PickAllocations) > 0 {
-		plannedAllocations = normalizeOutboundPickAllocations(line.PickAllocations)
-		if totalOutboundPickAllocationQuantity(plannedAllocations) != line.Quantity {
-			return fmt.Errorf("%w: draft pick allocation quantity must equal outbound quantity", ErrInvalidInput)
-		}
+		plannedAllocations = toOutboundPickAllocationsFromCandidates(line, allocations)
 	} else {
 		allocations, err := s.resolveOutboundLineAllocationsTx(ctx, tx, source, line.Quantity, newOutboundAllocationReservationState())
 		if err != nil {
@@ -1348,37 +1270,21 @@ func (s *Store) reserveOutboundLineTx(
 		plannedAllocations = toOutboundPickAllocationsFromCandidates(line, allocations)
 	}
 
-	exactPicks := make([]OutboundLinePalletPick, 0)
 	for _, allocation := range plannedAllocations {
 		bucket := palletSourceBucket{
 			SKUMasterID:    source.SKUMasterID,
 			CustomerID:     source.CustomerID,
 			LocationID:     firstNonZeroInt64(allocation.LocationID, source.LocationID),
 			StorageSection: allocation.StorageSection,
+			ContainerID:    allocation.ContainerID,
 			ContainerNo:    allocation.ContainerNo,
 		}
-		previewConsumptions, err := s.previewPalletContentsForBucketTx(ctx, tx, bucket, allocation.AllocatedQty)
-		if err != nil {
+		if err := s.reserveInventoryBalanceTx(ctx, tx, bucket, allocation.AllocatedQty); err != nil {
 			return err
 		}
-		for _, previewConsumption := range previewConsumptions {
-			if _, err := s.reserveSpecificPalletContentsForBucketTx(ctx, tx, bucket, previewConsumption.PalletID, source.SKUMasterID, previewConsumption.Quantity); err != nil {
-				return err
-			}
-		}
-		exactPicks = append(exactPicks, buildOutboundLinePalletPicksFromConsumptions(previewConsumptions)...)
 	}
 
-	line.PickPallets = normalizeOutboundLinePalletPicks(exactPicks)
-	if totalOutboundLinePalletPickQuantity(line.PickPallets) != line.Quantity {
-		return fmt.Errorf("%w: selected pallet quantity must equal outbound quantity", ErrInvalidInput)
-	}
-	line.Pallets = len(line.PickPallets)
-	pickAllocations, err := s.buildOutboundDraftPickAllocationsFromSelectedPalletsTx(ctx, tx, source, line)
-	if err != nil {
-		return err
-	}
-	line.PickAllocations = pickAllocations
+	line.PickAllocations = normalizeOutboundPickAllocations(plannedAllocations)
 	return nil
 }
 
@@ -1411,20 +1317,26 @@ func (s *Store) reserveOutboundDocumentLinesTx(
 		}
 
 		lineRow.Pallets = lineInput.Pallets
-		lineRow.PickPalletsJSON = mustEncodeOutboundLinePalletPicks(lineInput.PickPallets)
 		lineRow.PickAllocationsJSON = mustEncodeOutboundPickAllocations(lineInput.PickAllocations)
 	}
 
 	return lineRows, nil
 }
 
-func (s *Store) releaseOutboundDocumentReservationsTx(ctx context.Context, tx *sql.Tx, lineRows []outboundDocumentLineRow) error {
+func (s *Store) releaseOutboundDocumentReservationsTx(ctx context.Context, tx *sql.Tx, customerID int64, lineRows []outboundDocumentLineRow) error {
 	for _, lineRow := range lineRows {
-		for _, pick := range decodeOutboundLinePalletPicksOrEmpty(lineRow.PickPalletsJSON) {
-			if pick.PalletID <= 0 || pick.Quantity <= 0 {
+		for _, allocation := range decodeOutboundPickAllocationsOrEmpty(lineRow.PickAllocationsJSON) {
+			if allocation.AllocatedQty <= 0 {
 				continue
 			}
-			if _, err := s.releaseReservedPalletContentsTx(ctx, tx, pick.PalletID, lineRow.SKUMasterID, pick.Quantity); err != nil {
+			if err := s.releaseInventoryReservationTx(ctx, tx, palletSourceBucket{
+				SKUMasterID:    lineRow.SKUMasterID,
+				CustomerID:     customerID,
+				LocationID:     firstNonZeroInt64(allocation.LocationID, lineRow.LocationID),
+				StorageSection: allocation.StorageSection,
+				ContainerID:    allocation.ContainerID,
+				ContainerNo:    allocation.ContainerNo,
+			}, allocation.AllocatedQty); err != nil {
 				return err
 			}
 		}
@@ -1432,21 +1344,28 @@ func (s *Store) releaseOutboundDocumentReservationsTx(ctx context.Context, tx *s
 	return nil
 }
 
-func (s *Store) outboundDocumentReservationsSatisfiedTx(ctx context.Context, tx *sql.Tx, lineRows []outboundDocumentLineRow) (bool, error) {
+func (s *Store) outboundDocumentReservationsSatisfiedTx(ctx context.Context, tx *sql.Tx, customerID int64, lineRows []outboundDocumentLineRow) (bool, error) {
 	for _, lineRow := range lineRows {
-		picks := decodeOutboundLinePalletPicksOrEmpty(lineRow.PickPalletsJSON)
-		if len(picks) == 0 {
+		allocations := decodeOutboundPickAllocationsOrEmpty(lineRow.PickAllocationsJSON)
+		if len(allocations) == 0 {
 			return false, nil
 		}
-		for _, pick := range picks {
-			content, err := s.loadLockedPalletContentStateTx(ctx, tx, pick.PalletID, lineRow.SKUMasterID)
+		for _, allocation := range allocations {
+			state, err := s.loadLockedInventoryBalanceForBucketTx(ctx, tx, palletSourceBucket{
+				SKUMasterID:    lineRow.SKUMasterID,
+				CustomerID:     customerID,
+				LocationID:     firstNonZeroInt64(allocation.LocationID, lineRow.LocationID),
+				StorageSection: allocation.StorageSection,
+				ContainerID:    allocation.ContainerID,
+				ContainerNo:    allocation.ContainerNo,
+			})
 			if err != nil {
 				if errors.Is(err, ErrInvalidInput) {
 					return false, nil
 				}
 				return false, err
 			}
-			if content.AllocatedQty < pick.Quantity {
+			if state.AllocatedQty < allocation.AllocatedQty {
 				return false, nil
 			}
 		}
@@ -1455,83 +1374,179 @@ func (s *Store) outboundDocumentReservationsSatisfiedTx(ctx context.Context, tx 
 }
 
 func (s *Store) repairOutboundDraftReservations(ctx context.Context) error {
-	documentIDs := make([]int64, 0)
-	if err := s.db.SelectContext(ctx, &documentIDs, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin outbound reservation repair: %w", err)
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx, `
 		SELECT id
 		FROM outbound_documents
 		WHERE status = ?
 		  AND COALESCE(tracking_status, '') IN (?, ?)
 		ORDER BY id ASC
-	`, DocumentStatusDraft, OutboundTrackingPicking, OutboundTrackingPacked); err != nil {
+	`, DocumentStatusDraft, OutboundTrackingPicking, OutboundTrackingPacked)
+	if err != nil {
 		return fmt.Errorf("list outbound drafts for reservation repair: %w", err)
+	}
+	defer rows.Close()
+
+	documentIDs := make([]int64, 0)
+	for rows.Next() {
+		var documentID int64
+		if err := rows.Scan(&documentID); err != nil {
+			return fmt.Errorf("scan outbound draft for reservation repair: %w", err)
+		}
+		documentIDs = append(documentIDs, documentID)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate outbound drafts for reservation repair: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close outbound drafts for reservation repair: %w", err)
+	}
+
+	if err := s.resetOutboundDraftReservationStateTx(ctx, tx, documentIDs); err != nil {
+		return err
 	}
 
 	for _, documentID := range documentIDs {
-		if err := s.repairSingleOutboundDraftReservation(ctx, documentID); err != nil {
+		if err := s.repairSingleOutboundDraftReservationTx(ctx, tx, documentID); err != nil {
 			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit outbound reservation repair: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) resetOutboundDraftReservationStateTx(ctx context.Context, tx *sql.Tx, documentIDs []int64) error {
+	if len(documentIDs) == 0 {
+		return nil
+	}
+
+	bucketsByKey := make(map[string]outboundRepairBucketReservation)
+
+	for _, documentID := range documentIDs {
+		documentRow, err := s.loadOutboundDocumentForUpdateTx(ctx, tx, documentID)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			return err
+		}
+		if normalizeDocumentStatus(documentRow.Status) != DocumentStatusDraft || !outboundTrackingRequiresActiveReservation(documentRow.TrackingStatus) {
+			continue
+		}
+
+		lineRows, err := s.loadOutboundDocumentLinesTx(ctx, tx, documentID)
+		if err != nil {
+			return err
+		}
+		for _, lineRow := range lineRows {
+			for _, allocation := range decodeOutboundPickAllocationsOrEmpty(lineRow.PickAllocationsJSON) {
+				if allocation.AllocatedQty <= 0 {
+					continue
+				}
+				locationID := firstNonZeroInt64(allocation.LocationID, lineRow.LocationID)
+				bucket := palletSourceBucket{
+					SKUMasterID:    lineRow.SKUMasterID,
+					CustomerID:     documentRow.CustomerID,
+					LocationID:     locationID,
+					StorageSection: fallbackSection(allocation.StorageSection),
+					ContainerID:    allocation.ContainerID,
+					ContainerNo:    strings.TrimSpace(allocation.ContainerNo),
+				}
+				addOutboundRepairBucketReservation(bucketsByKey, bucket, allocation.AllocatedQty)
+			}
+
+		}
+	}
+
+	for _, reservation := range bucketsByKey {
+		if reservation.Quantity <= 0 {
+			continue
+		}
+		bucket := reservation.Bucket
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE inventory_items
+			SET allocated_qty = GREATEST(allocated_qty - ?, 0), updated_at = CURRENT_TIMESTAMP
+			WHERE sku_master_id = ?
+				AND customer_id = ?
+				AND location_id = ?
+				AND COALESCE(NULLIF(storage_section, ''), ?) = ?
+				AND (
+					(? > 0 AND COALESCE(container_id, 0) = ?)
+					OR (? <= 0 AND COALESCE(container_no, '') = ?)
+				)
+				AND allocated_qty <> 0
+		`,
+			reservation.Quantity,
+			bucket.SKUMasterID,
+			bucket.CustomerID,
+			bucket.LocationID,
+			DefaultStorageSection,
+			fallbackSection(bucket.StorageSection),
+			bucket.ContainerID,
+			bucket.ContainerID,
+			bucket.ContainerID,
+			strings.TrimSpace(bucket.ContainerNo),
+		); err != nil {
+			return mapDBError(fmt.Errorf("reset inventory reservations: %w", err))
 		}
 	}
 
 	return nil
 }
 
-func (s *Store) repairSingleOutboundDraftReservation(ctx context.Context, documentID int64) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin outbound reservation repair: %w", err)
+func addOutboundRepairBucketReservation(reservations map[string]outboundRepairBucketReservation, bucket palletSourceBucket, quantity int) {
+	if quantity <= 0 {
+		return
 	}
+	key := outboundAllocationBucketKey(bucket.CustomerID, bucket.LocationID, bucket.SKUMasterID, bucket.StorageSection, bucket.ContainerID, bucket.ContainerNo)
+	existing := reservations[key]
+	if existing.Bucket.SKUMasterID == 0 {
+		existing.Bucket = bucket
+	}
+	existing.Quantity += quantity
+	reservations[key] = existing
+}
 
+func (s *Store) repairSingleOutboundDraftReservationTx(ctx context.Context, tx *sql.Tx, documentID int64) error {
 	documentRow, err := s.loadOutboundDocumentForUpdateTx(ctx, tx, documentID)
 	if err != nil {
-		tx.Rollback()
 		if errors.Is(err, ErrNotFound) {
 			return nil
 		}
 		return err
 	}
 	if normalizeDocumentStatus(documentRow.Status) != DocumentStatusDraft || !outboundTrackingRequiresActiveReservation(documentRow.TrackingStatus) {
-		tx.Rollback()
 		return nil
 	}
 
 	lineRows, err := s.loadOutboundDocumentLinesTx(ctx, tx, documentID)
 	if err != nil {
-		tx.Rollback()
 		return err
 	}
-	reservationsSatisfied, err := s.outboundDocumentReservationsSatisfiedTx(ctx, tx, lineRows)
+	reservationsSatisfied, err := s.outboundDocumentReservationsSatisfiedTx(ctx, tx, documentRow.CustomerID, lineRows)
 	if err != nil {
-		tx.Rollback()
 		return err
 	}
 	if reservationsSatisfied {
-		tx.Rollback()
 		return nil
 	}
 
 	if _, err := s.reserveOutboundDocumentLinesTx(ctx, tx, documentRow.CustomerID, lineRows); err != nil {
-		tx.Rollback()
-
-		recoveryTx, recoveryErr := s.db.BeginTx(ctx, nil)
-		if recoveryErr != nil {
-			return fmt.Errorf("begin outbound reservation repair recovery: %w", recoveryErr)
-		}
-		if _, recoveryErr = recoveryTx.ExecContext(ctx, `
+		if _, recoveryErr := tx.ExecContext(ctx, `
 			UPDATE outbound_documents
 			SET tracking_status = ?, updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?
 		`, OutboundTrackingScheduled, documentID); recoveryErr != nil {
-			recoveryTx.Rollback()
 			return mapDBError(fmt.Errorf("downgrade outbound tracking during reservation repair: %w", recoveryErr))
 		}
-		if recoveryErr = recoveryTx.Commit(); recoveryErr != nil {
-			return fmt.Errorf("commit outbound reservation repair recovery: %w", recoveryErr)
-		}
-		return nil
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit outbound reservation repair: %w", err)
 	}
 
 	return nil
@@ -1649,10 +1664,9 @@ func (s *Store) CopyOutboundDocument(ctx context.Context, documentID int64) (Out
 				net_weight_kgs,
 				gross_weight_kgs,
 				line_note,
-				pick_pallets_json,
 				pick_allocations_json,
 				sort_order
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			newDocumentID,
 			lineRow.SKUMasterID,
@@ -1670,7 +1684,6 @@ func (s *Store) CopyOutboundDocument(ctx context.Context, documentID int64) (Out
 			lineRow.NetWeightKgs,
 			lineRow.GrossWeightKgs,
 			nullableString(lineRow.LineNote),
-			nullableString(lineRow.PickPalletsJSON),
 			nullableString(lineRow.PickAllocationsJSON),
 			index+1,
 		)
@@ -1767,7 +1780,6 @@ func (s *Store) loadOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, doc
 			net_weight_kgs,
 			gross_weight_kgs,
 			COALESCE(line_note, '') AS line_note,
-			COALESCE(pick_pallets_json, '') AS pick_pallets_json,
 			COALESCE(pick_allocations_json, '') AS pick_allocations_json,
 			created_at
 		FROM outbound_document_lines
@@ -1800,7 +1812,6 @@ func (s *Store) loadOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, doc
 			&lineRow.NetWeightKgs,
 			&lineRow.GrossWeightKgs,
 			&lineRow.LineNote,
-			&lineRow.PickPalletsJSON,
 			&lineRow.PickAllocationsJSON,
 			&lineRow.CreatedAt,
 		); err != nil {
@@ -1925,7 +1936,6 @@ func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []in
 			net_weight_kgs,
 			gross_weight_kgs,
 			COALESCE(line_note, '') AS line_note,
-			COALESCE(pick_pallets_json, '') AS pick_pallets_json,
 			COALESCE(pick_allocations_json, '') AS pick_allocations_json,
 			created_at
 		FROM outbound_document_lines
@@ -1964,7 +1974,6 @@ func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []in
 			NetWeightKgs:      lineRow.NetWeightKgs,
 			GrossWeightKgs:    lineRow.GrossWeightKgs,
 			LineNote:          lineRow.LineNote,
-			PickPallets:       decodeOutboundLinePalletPicksOrEmpty(lineRow.PickPalletsJSON),
 			PickAllocations:   decodeOutboundDraftPickAllocationsOrEmpty(document.Status, lineRow.ID, lineRow.PickAllocationsJSON),
 			CreatedAt:         lineRow.CreatedAt,
 		})
@@ -2002,14 +2011,18 @@ func buildOutboundSourceKey(customerID int64, locationID int64, skuMasterID int6
 	return fmt.Sprintf("%d|%d|%d", customerID, locationID, skuMasterID)
 }
 
-func outboundAllocationBucketKey(customerID int64, locationID int64, skuMasterID int64, storageSection string, containerNo string) string {
+func outboundAllocationBucketKey(customerID int64, locationID int64, skuMasterID int64, storageSection string, containerID int64, containerNo string) string {
+	containerKey := fmt.Sprintf("id:%d", containerID)
+	if containerID <= 0 {
+		containerKey = "no:" + strings.TrimSpace(containerNo)
+	}
 	return fmt.Sprintf(
 		"%d|%d|%d|%s|%s",
 		customerID,
 		locationID,
 		skuMasterID,
 		fallbackSection(storageSection),
-		strings.TrimSpace(containerNo),
+		containerKey,
 	)
 }
 
@@ -2017,36 +2030,34 @@ func (s *Store) loadLockedOutboundSourceTx(ctx context.Context, tx *sql.Tx, cust
 	var source lockedOutboundSource
 	if err := tx.QueryRowContext(ctx, `
 		SELECT
-			pi.sku_master_id,
-			p.customer_id,
+			i.sku_master_id,
+			i.customer_id,
 			COALESCE(NULLIF(sm.item_number, ''), '') AS item_number,
-			p.current_location_id,
+			i.location_id,
 			l.name,
 			sm.sku,
 			COALESCE(sm.description, sm.name, '') AS description,
 			COALESCE(sm.unit, 'pcs') AS unit,
-			COALESCE(SUM(pi.quantity), 0) AS quantity,
+			COALESCE(SUM(i.quantity), 0) AS quantity,
 			GREATEST(
-				SUM(pi.quantity) - SUM(pi.allocated_qty) - SUM(pi.damaged_qty) - SUM(pi.hold_qty),
+				SUM(i.quantity) - SUM(i.allocated_qty) - SUM(i.damaged_qty) - SUM(i.hold_qty),
 				0
 			) AS available_qty,
-			COALESCE(SUM(pi.allocated_qty), 0) AS allocated_qty,
-			COALESCE(SUM(pi.damaged_qty), 0) AS damaged_qty,
-			COALESCE(SUM(pi.hold_qty), 0) AS hold_qty
-		FROM pallet_items pi
-		JOIN pallets p ON p.id = pi.pallet_id
-		JOIN sku_master sm ON sm.id = pi.sku_master_id
-		JOIN storage_locations l ON l.id = p.current_location_id
-		WHERE pi.sku_master_id = ?
-		  AND p.customer_id = ?
-		  AND p.current_location_id = ?
-		  AND pi.quantity > 0
-		  AND p.status <> ?
+			COALESCE(SUM(i.allocated_qty), 0) AS allocated_qty,
+			COALESCE(SUM(i.damaged_qty), 0) AS damaged_qty,
+			COALESCE(SUM(i.hold_qty), 0) AS hold_qty
+		FROM inventory_items i
+		JOIN sku_master sm ON sm.id = i.sku_master_id
+		JOIN storage_locations l ON l.id = i.location_id
+		WHERE i.sku_master_id = ?
+		  AND i.customer_id = ?
+		  AND i.location_id = ?
+		  AND i.quantity > 0
 		GROUP BY
-			pi.sku_master_id,
-			p.customer_id,
+			i.sku_master_id,
+			i.customer_id,
 			sm.item_number,
-			p.current_location_id,
+			i.location_id,
 			l.name,
 			sm.sku,
 			sm.description,
@@ -2056,7 +2067,6 @@ func (s *Store) loadLockedOutboundSourceTx(ctx context.Context, tx *sql.Tx, cust
 		skuMasterID,
 		customerID,
 		locationID,
-		PalletStatusCancelled,
 	).Scan(
 		&source.SKUMasterID,
 		&source.CustomerID,
@@ -2084,57 +2094,36 @@ func (s *Store) loadLockedOutboundSourceTx(ctx context.Context, tx *sql.Tx, cust
 func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx *sql.Tx, source lockedOutboundSource) ([]outboundAllocationCandidate, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT
-			pi.sku_master_id,
-			p.customer_id,
+			i.sku_master_id,
+			i.customer_id,
 			COALESCE(NULLIF(sm.item_number, ''), '') AS item_number,
-			p.current_location_id,
+			i.location_id,
 			l.name,
-			COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP') AS storage_section,
-			COALESCE(p.current_container_no, '') AS container_no,
+			COALESCE(NULLIF(i.storage_section, ''), 'TEMP') AS storage_section,
+			COALESCE(i.container_id, 0) AS container_id,
+			COALESCE(i.container_no, '') AS container_no,
 			sm.sku,
 			COALESCE(sm.description, sm.name, '') AS description,
 			COALESCE(sm.unit, 'pcs') AS unit,
 			GREATEST(
-				SUM(pi.quantity) - SUM(pi.allocated_qty) - SUM(pi.damaged_qty) - SUM(pi.hold_qty),
+				i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty,
 				0
 			) AS available_qty,
-			COALESCE(MIN(p.actual_arrival_date), d.actual_arrival_date, cv.arrival_date, d.expected_arrival_date, DATE(MIN(p.created_at))) AS delivery_date,
-			MIN(p.created_at) AS sort_at
-		FROM pallet_items pi
-		JOIN pallets p ON p.id = pi.pallet_id
-		JOIN sku_master sm ON sm.id = pi.sku_master_id
-		JOIN storage_locations l ON l.id = p.current_location_id
-		LEFT JOIN container_visits cv ON cv.id = p.container_visit_id
-		LEFT JOIN inbound_documents d ON d.id = COALESCE(p.source_inbound_document_id, cv.inbound_document_id)
+			i.delivery_date AS delivery_date,
+			i.created_at AS sort_at
+		FROM inventory_items i
+		JOIN sku_master sm ON sm.id = i.sku_master_id
+		JOIN storage_locations l ON l.id = i.location_id
 		WHERE
-			p.customer_id = ?
-			AND p.current_location_id = ?
-			AND pi.sku_master_id = ?
-			AND pi.quantity > 0
-			AND p.status <> ?
-		GROUP BY
-			pi.sku_master_id,
-			p.customer_id,
-			sm.item_number,
-			p.current_location_id,
-			l.name,
-			COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP'),
-			COALESCE(p.current_container_no, ''),
-			sm.sku,
-			sm.description,
-			sm.name,
-			sm.unit,
-			d.expected_arrival_date,
-			d.actual_arrival_date,
-			cv.arrival_date
-		HAVING GREATEST(
-			SUM(pi.quantity) - SUM(pi.allocated_qty) - SUM(pi.damaged_qty) - SUM(pi.hold_qty),
-			0
-		) > 0
+			i.customer_id = ?
+			AND i.location_id = ?
+			AND i.sku_master_id = ?
+			AND i.quantity > 0
+			AND GREATEST(i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty, 0) > 0
 		ORDER BY
-			CASE WHEN COALESCE(MIN(p.actual_arrival_date), d.actual_arrival_date, cv.arrival_date, d.expected_arrival_date, DATE(MIN(p.created_at))) IS NULL THEN 1 ELSE 0 END,
-			COALESCE(MIN(p.actual_arrival_date), d.actual_arrival_date, cv.arrival_date, d.expected_arrival_date, DATE(MIN(p.created_at))) ASC,
-			MIN(p.created_at) ASC,
+			CASE WHEN i.delivery_date IS NULL THEN 1 ELSE 0 END,
+			i.delivery_date ASC,
+			i.created_at ASC,
 			storage_section ASC,
 			container_no ASC
 		FOR UPDATE
@@ -2142,7 +2131,6 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 		source.CustomerID,
 		source.LocationID,
 		source.SKUMasterID,
-		PalletStatusCancelled,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("load locked outbound source rows: %w", err)
@@ -2163,6 +2151,7 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 			&row.LocationID,
 			&row.LocationName,
 			&row.StorageSection,
+			&row.ContainerID,
 			&row.ContainerNo,
 			&row.SKU,
 			&row.Description,
@@ -2182,6 +2171,7 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 			row.LocationID,
 			row.SKUMasterID,
 			row.StorageSection,
+			row.ContainerID,
 			row.ContainerNo,
 		)
 
@@ -2208,6 +2198,7 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 			LocationID:     lockedRow.LocationID,
 			LocationName:   lockedRow.LocationName,
 			StorageSection: fallbackSection(lockedRow.StorageSection),
+			ContainerID:    lockedRow.ContainerID,
 			ContainerNo:    lockedRow.ContainerNo,
 			SKU:            lockedRow.SKU,
 			Description:    lockedRow.Description,
@@ -2249,99 +2240,16 @@ func (s *Store) prepareOutboundDraftLineAllocationsTx(
 		return nil, fmt.Errorf("%w: outbound line is required", ErrInvalidInput)
 	}
 
-	if len(line.PickPallets) > 0 {
-		pickAllocations, err := s.buildOutboundDraftPickAllocationsFromSelectedPalletsTx(ctx, tx, source, line)
-		if err != nil {
-			return nil, err
-		}
-		line.PickAllocations = pickAllocations
-		line.Pallets = totalOutboundPickAllocationPallets(pickAllocations)
-		return toOutboundAllocationCandidatesFromDraftPickAllocations(source, pickAllocations), nil
-	}
-
 	if len(line.PickAllocations) > 0 {
 		allocations, err := s.resolveOutboundDraftBucketAllocationsTx(ctx, tx, source, line.Quantity, line.PickAllocations, reservationState)
 		if err != nil {
 			return nil, err
 		}
 		line.PickAllocations = toOutboundPickAllocationsFromCandidates(line, allocations)
-		line.Pallets = totalOutboundPickAllocationPallets(line.PickAllocations)
 		return allocations, nil
 	}
 
 	return s.resolveOutboundLineAllocationsTx(ctx, tx, source, line.Quantity, reservationState)
-}
-
-func (s *Store) buildOutboundDraftPickAllocationsFromSelectedPalletsTx(
-	ctx context.Context,
-	tx *sql.Tx,
-	source lockedOutboundSource,
-	line *CreateOutboundDocumentLineInput,
-) ([]OutboundPickAllocation, error) {
-	if line == nil {
-		return nil, fmt.Errorf("%w: outbound line is required", ErrInvalidInput)
-	}
-
-	normalizedPicks := normalizeOutboundLinePalletPicks(line.PickPallets)
-	if len(normalizedPicks) == 0 {
-		return []OutboundPickAllocation{}, nil
-	}
-
-	type groupedAllocation struct {
-		OutboundPickAllocation
-		palletIDs map[int64]struct{}
-	}
-
-	groupOrder := make([]string, 0, len(normalizedPicks))
-	grouped := make(map[string]*groupedAllocation, len(normalizedPicks))
-	createdAt := time.Now().UTC()
-	for _, pick := range normalizedPicks {
-		target, err := s.loadSelectedOutboundPalletTargetTx(ctx, tx, source.CustomerID, source.LocationID, source.SKUMasterID, pick.PalletID)
-		if err != nil {
-			return nil, err
-		}
-
-		bucketKey := outboundAllocationBucketKey(
-			source.CustomerID,
-			target.LocationID,
-			source.SKUMasterID,
-			target.StorageSection,
-			target.ContainerNo,
-		)
-		existing, exists := grouped[bucketKey]
-		if !exists {
-			groupOrder = append(groupOrder, bucketKey)
-			existing = &groupedAllocation{
-				OutboundPickAllocation: OutboundPickAllocation{
-					ItemNumber:     strings.TrimSpace(source.ItemNumber),
-					LocationID:     target.LocationID,
-					LocationName:   source.LocationName,
-					StorageSection: fallbackSection(target.StorageSection),
-					ContainerNo:    strings.TrimSpace(target.ContainerNo),
-					AllocatedQty:   0,
-					Pallets:        0,
-					CreatedAt:      createdAt,
-				},
-				palletIDs: make(map[int64]struct{}),
-			}
-			grouped[bucketKey] = existing
-		}
-
-		existing.AllocatedQty += pick.Quantity
-		existing.palletIDs[pick.PalletID] = struct{}{}
-	}
-
-	allocations := make([]OutboundPickAllocation, 0, len(groupOrder))
-	for _, key := range groupOrder {
-		allocation := grouped[key]
-		if allocation == nil {
-			continue
-		}
-		allocation.Pallets = len(allocation.palletIDs)
-		allocations = append(allocations, allocation.OutboundPickAllocation)
-	}
-
-	return normalizeOutboundPickAllocations(allocations), nil
 }
 
 func (s *Store) resolveOutboundDraftBucketAllocationsTx(
@@ -2372,6 +2280,10 @@ func (s *Store) resolveOutboundDraftBucketAllocationsTx(
 	candidateByBucketKey := make(map[string]outboundAllocationCandidate, len(candidates))
 	for _, candidate := range candidates {
 		candidateByBucketKey[candidate.BucketKey] = candidate
+		legacyKey := outboundAllocationBucketKey(candidate.CustomerID, candidate.LocationID, candidate.SKUMasterID, candidate.StorageSection, 0, candidate.ContainerNo)
+		if _, exists := candidateByBucketKey[legacyKey]; !exists {
+			candidateByBucketKey[legacyKey] = candidate
+		}
 	}
 
 	allocations := make([]outboundAllocationCandidate, 0, len(normalizedDraftAllocations))
@@ -2383,8 +2295,9 @@ func (s *Store) resolveOutboundDraftBucketAllocationsTx(
 	for _, draftAllocation := range normalizedDraftAllocations {
 		locationID := firstNonZeroInt64(draftAllocation.LocationID, source.LocationID)
 		storageSection := fallbackSection(draftAllocation.StorageSection)
+		containerID := draftAllocation.ContainerID
 		containerNo := strings.TrimSpace(draftAllocation.ContainerNo)
-		bucketKey := outboundAllocationBucketKey(source.CustomerID, locationID, source.SKUMasterID, storageSection, containerNo)
+		bucketKey := outboundAllocationBucketKey(source.CustomerID, locationID, source.SKUMasterID, storageSection, containerID, containerNo)
 		candidate, exists := candidateByBucketKey[bucketKey]
 		if !exists {
 			for _, applied := range appliedReservations {
@@ -2392,8 +2305,9 @@ func (s *Store) resolveOutboundDraftBucketAllocationsTx(
 			}
 			return nil, ErrInsufficientStock
 		}
+		resolvedBucketKey := candidate.BucketKey
 
-		effectiveAvailable := candidate.AvailableQty - reservationState.ByBucketKey[bucketKey]
+		effectiveAvailable := candidate.AvailableQty - reservationState.ByBucketKey[resolvedBucketKey]
 		if draftAllocation.AllocatedQty > effectiveAvailable {
 			for _, applied := range appliedReservations {
 				reservationState.ByBucketKey[applied.BucketKey] -= applied.Allocated
@@ -2401,35 +2315,26 @@ func (s *Store) resolveOutboundDraftBucketAllocationsTx(
 			return nil, ErrInsufficientStock
 		}
 
-		previewConsumptions, err := s.previewPalletContentsForBucketTx(ctx, tx, palletSourceBucket{
-			SKUMasterID:    source.SKUMasterID,
-			CustomerID:     source.CustomerID,
-			LocationID:     locationID,
-			StorageSection: storageSection,
-			ContainerNo:    containerNo,
-		}, draftAllocation.AllocatedQty)
-		if err != nil {
-			for _, applied := range appliedReservations {
-				reservationState.ByBucketKey[applied.BucketKey] -= applied.Allocated
-			}
-			return nil, err
-		}
-
 		candidate.AllocatedQty = draftAllocation.AllocatedQty
 		candidate.LocationID = locationID
 		candidate.LocationName = firstNonEmpty(strings.TrimSpace(draftAllocation.LocationName), candidate.LocationName, source.LocationName)
 		candidate.StorageSection = storageSection
-		candidate.ContainerNo = containerNo
+		if containerID > 0 {
+			candidate.ContainerID = containerID
+		}
+		if candidate.ContainerNo == "" {
+			candidate.ContainerNo = containerNo
+		}
 		candidate.ItemNumber = firstNonEmpty(strings.TrimSpace(draftAllocation.ItemNumber), candidate.ItemNumber, source.ItemNumber)
-		candidate.Pallets = countDistinctConsumedPallets(previewConsumptions)
+		candidate.Pallets = draftAllocation.Pallets
 
 		allocations = append(allocations, candidate)
-		reservationState.ByBucketKey[bucketKey] += draftAllocation.AllocatedQty
+		reservationState.ByBucketKey[resolvedBucketKey] += draftAllocation.AllocatedQty
 		appliedReservations = append(appliedReservations, struct {
 			BucketKey string
 			Allocated int
 		}{
-			BucketKey: bucketKey,
+			BucketKey: resolvedBucketKey,
 			Allocated: draftAllocation.AllocatedQty,
 		})
 	}
@@ -2545,41 +2450,7 @@ func (s *Store) attachOutboundPickAllocations(ctx context.Context, linesByID map
 			LocationID:     allocationRow.LocationID,
 			LocationName:   allocationRow.LocationName,
 			StorageSection: fallbackSection(allocationRow.StorageSection),
-			ContainerNo:    allocationRow.ContainerNo,
-			AllocatedQty:   allocationRow.AllocatedQty,
-			Pallets:        allocationRow.Pallets,
-			CreatedAt:      allocationRow.CreatedAt,
-		})
-		attachedLineIDs[allocationRow.LineID] = struct{}{}
-	}
-
-	remainingLineIDs = make([]int64, 0, len(lineIDs))
-	for _, lineID := range lineIDs {
-		if _, attached := attachedLineIDs[lineID]; attached {
-			continue
-		}
-		remainingLineIDs = append(remainingLineIDs, lineID)
-	}
-	if len(remainingLineIDs) == 0 {
-		return nil
-	}
-
-	pickAllocationRows, err := s.listOutboundPickRowsByLineIDs(ctx, remainingLineIDs)
-	if err != nil {
-		return err
-	}
-	for _, allocationRow := range pickAllocationRows {
-		line := linesByID[allocationRow.LineID]
-		if line == nil {
-			continue
-		}
-		line.PickAllocations = append(line.PickAllocations, OutboundPickAllocation{
-			ID:             allocationRow.ID,
-			LineID:         allocationRow.LineID,
-			ItemNumber:     allocationRow.ItemNumber,
-			LocationID:     allocationRow.LocationID,
-			LocationName:   allocationRow.LocationName,
-			StorageSection: fallbackSection(allocationRow.StorageSection),
+			ContainerID:    allocationRow.ContainerID,
 			ContainerNo:    allocationRow.ContainerNo,
 			AllocatedQty:   allocationRow.AllocatedQty,
 			Pallets:        allocationRow.Pallets,
@@ -2589,54 +2460,6 @@ func (s *Store) attachOutboundPickAllocations(ctx context.Context, linesByID map
 	}
 
 	return nil
-}
-
-func (s *Store) listOutboundPickRowsByLineIDs(ctx context.Context, lineIDs []int64) ([]outboundPickAllocationRow, error) {
-	if len(lineIDs) == 0 {
-		return []outboundPickAllocationRow{}, nil
-	}
-
-	query, args, err := sqlx.In(`
-		SELECT
-			MIN(op.id) AS id,
-			op.outbound_line_id AS line_id,
-			COALESCE(NULLIF(l.item_number_snapshot, ''), sm.item_number, '') AS item_number,
-			p.current_location_id AS location_id,
-			COALESCE(sl.name, l.location_name_snapshot) AS location_name_snapshot,
-			COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP') AS storage_section,
-			COALESCE(NULLIF(p.current_container_no, ''), cv.container_no, '') AS container_no_snapshot,
-			SUM(op.picked_qty) AS allocated_qty,
-			COUNT(DISTINCT op.pallet_id) AS pallets,
-			MIN(op.created_at) AS created_at
-		FROM outbound_picks op
-		JOIN pallets p ON p.id = op.pallet_id
-		JOIN outbound_document_lines l ON l.id = op.outbound_line_id
-		LEFT JOIN sku_master sm ON sm.id = p.sku_master_id
-		LEFT JOIN storage_locations sl ON sl.id = p.current_location_id
-		LEFT JOIN container_visits cv ON cv.id = p.container_visit_id
-		WHERE op.outbound_line_id IN (?)
-		GROUP BY
-			op.outbound_line_id,
-			COALESCE(NULLIF(l.item_number_snapshot, ''), sm.item_number, ''),
-			p.current_location_id,
-			COALESCE(sl.name, l.location_name_snapshot),
-			COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP'),
-			COALESCE(NULLIF(p.current_container_no, ''), cv.container_no, '')
-		ORDER BY line_id ASC, id ASC
-	`, lineIDs)
-	if err != nil {
-		return nil, fmt.Errorf("build outbound picks query: %w", err)
-	}
-
-	rows := make([]outboundPickAllocationRow, 0)
-	if err := s.db.SelectContext(ctx, &rows, s.db.Rebind(query), args...); err != nil {
-		return nil, fmt.Errorf("load outbound picks by line id: %w", err)
-	}
-	for index := range rows {
-		rows[index].StorageSection = fallbackSection(rows[index].StorageSection)
-		rows[index].ContainerNo = strings.TrimSpace(rows[index].ContainerNo)
-	}
-	return rows, nil
 }
 
 func (s *Store) listOutboundLedgerAllocationRowsByLineIDs(ctx context.Context, lineIDs []int64) ([]outboundPickAllocationRow, error) {
@@ -2652,9 +2475,10 @@ func (s *Store) listOutboundLedgerAllocationRowsByLineIDs(ctx context.Context, l
 			sl.location_id AS location_id,
 			COALESCE(loc.name, l.location_name_snapshot) AS location_name_snapshot,
 			COALESCE(NULLIF(sl.storage_section, ''), 'TEMP') AS storage_section,
+			COALESCE(sl.container_id, 0) AS container_id,
 			COALESCE(sl.container_no_snapshot, '') AS container_no_snapshot,
 			SUM(ABS(sl.quantity_change)) AS allocated_qty,
-			COUNT(DISTINCT sl.pallet_id) AS pallets,
+			COALESCE(SUM(sl.pallets), 0) AS pallets,
 			MIN(COALESCE(sl.occurred_at, sl.created_at)) AS created_at
 		FROM stock_ledger sl
 		JOIN outbound_document_lines l ON l.id = sl.source_line_id
@@ -2668,6 +2492,7 @@ func (s *Store) listOutboundLedgerAllocationRowsByLineIDs(ctx context.Context, l
 			sl.location_id,
 			COALESCE(loc.name, l.location_name_snapshot),
 			COALESCE(NULLIF(sl.storage_section, ''), 'TEMP'),
+			COALESCE(sl.container_id, 0),
 			COALESCE(sl.container_no_snapshot, '')
 		ORDER BY line_id ASC, id ASC
 	`, StockLedgerSourceOutbound, StockLedgerEventShip, lineIDs)
@@ -2740,7 +2565,7 @@ func promoteOutboundTrackingStatusForPickPlan(status string, documentStatus stri
 
 	hasPickPlan := false
 	for _, line := range lines {
-		if len(line.PickPallets) > 0 || len(line.PickAllocations) > 0 {
+		if len(line.PickAllocations) > 0 {
 			hasPickPlan = true
 			break
 		}
@@ -2772,15 +2597,11 @@ func sanitizeOutboundDocumentInput(input CreateOutboundDocumentInput) CreateOutb
 		line.CartonSizeMM = strings.TrimSpace(line.CartonSizeMM)
 		line.PalletsDetailCtns = strings.TrimSpace(line.PalletsDetailCtns)
 		line.LineNote = strings.TrimSpace(line.LineNote)
-		line.PickPallets = normalizeOutboundLinePalletPicks(line.PickPallets)
 		line.PickAllocations = normalizeOutboundPickAllocations(line.PickAllocations)
 		if line.CustomerID <= 0 || line.LocationID <= 0 || line.SKUMasterID <= 0 || line.Quantity <= 0 {
 			continue
 		}
-		switch {
-		case len(line.PickPallets) > 0:
-			line.Pallets = len(line.PickPallets)
-		case line.Pallets <= 0 && len(line.PickAllocations) > 0:
+		if line.Pallets == 0 && len(line.PickAllocations) > 0 {
 			line.Pallets = totalOutboundPickAllocationPallets(line.PickAllocations)
 		}
 		lines = append(lines, line)
@@ -2820,12 +2641,10 @@ func validateOutboundDocumentInput(input CreateOutboundDocumentInput) error {
 			return fmt.Errorf("%w: SKU is required", ErrInvalidInput)
 		case line.Quantity <= 0:
 			return fmt.Errorf("%w: outbound quantity must be greater than zero", ErrInvalidInput)
-		case line.Pallets < 0:
-			return fmt.Errorf("%w: pallets cannot be negative", ErrInvalidInput)
+		case line.Pallets <= 0:
+			return fmt.Errorf("%w: outbound pallet count must be greater than zero", ErrInvalidInput)
 		case line.NetWeightKgs < 0 || line.GrossWeightKgs < 0:
 			return fmt.Errorf("%w: weights cannot be negative", ErrInvalidInput)
-		case len(line.PickPallets) > 0 && totalOutboundLinePalletPickQuantity(line.PickPallets) != line.Quantity:
-			return fmt.Errorf("%w: selected pallet quantity must equal outbound quantity", ErrInvalidInput)
 		case len(line.PickAllocations) > 0 && totalOutboundPickAllocationQuantity(line.PickAllocations) != line.Quantity:
 			return fmt.Errorf("%w: draft pick allocation quantity must equal outbound quantity", ErrInvalidInput)
 		}
@@ -2866,68 +2685,6 @@ func appendUniqueJoined(existing string, nextValue string) string {
 	return strings.Join(values, ", ")
 }
 
-func normalizeOutboundLinePalletPicks(entries []OutboundLinePalletPick) []OutboundLinePalletPick {
-	if len(entries) == 0 {
-		return []OutboundLinePalletPick{}
-	}
-
-	orderedIDs := make([]int64, 0, len(entries))
-	quantitiesByPalletID := make(map[int64]int)
-	for _, entry := range entries {
-		if entry.PalletID <= 0 || entry.Quantity <= 0 {
-			continue
-		}
-		if _, exists := quantitiesByPalletID[entry.PalletID]; !exists {
-			orderedIDs = append(orderedIDs, entry.PalletID)
-		}
-		quantitiesByPalletID[entry.PalletID] += entry.Quantity
-	}
-
-	normalized := make([]OutboundLinePalletPick, 0, len(orderedIDs))
-	for _, palletID := range orderedIDs {
-		normalized = append(normalized, OutboundLinePalletPick{
-			PalletID: palletID,
-			Quantity: quantitiesByPalletID[palletID],
-		})
-	}
-	return normalized
-}
-
-func decodeOutboundLinePalletPicksOrEmpty(raw string) []OutboundLinePalletPick {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return []OutboundLinePalletPick{}
-	}
-
-	var entries []OutboundLinePalletPick
-	if err := json.Unmarshal([]byte(trimmed), &entries); err != nil {
-		return []OutboundLinePalletPick{}
-	}
-	return normalizeOutboundLinePalletPicks(entries)
-}
-
-func mustEncodeOutboundLinePalletPicks(entries []OutboundLinePalletPick) string {
-	normalized := normalizeOutboundLinePalletPicks(entries)
-	if len(normalized) == 0 {
-		return ""
-	}
-	payload, err := json.Marshal(normalized)
-	if err != nil {
-		return ""
-	}
-	return string(payload)
-}
-
-func totalOutboundLinePalletPickQuantity(entries []OutboundLinePalletPick) int {
-	total := 0
-	for _, entry := range entries {
-		if entry.Quantity > 0 {
-			total += entry.Quantity
-		}
-	}
-	return total
-}
-
 func normalizeOutboundPickAllocations(entries []OutboundPickAllocation) []OutboundPickAllocation {
 	if len(entries) == 0 {
 		return []OutboundPickAllocation{}
@@ -2940,6 +2697,7 @@ func normalizeOutboundPickAllocations(entries []OutboundPickAllocation) []Outbou
 		LocationID     int64
 		LocationName   string
 		StorageSection string
+		ContainerID    int64
 		ContainerNo    string
 		AllocatedQty   int
 		Pallets        int
@@ -2956,9 +2714,10 @@ func normalizeOutboundPickAllocations(entries []OutboundPickAllocation) []Outbou
 
 		locationID := entry.LocationID
 		storageSection := fallbackSection(entry.StorageSection)
+		containerID := entry.ContainerID
 		containerNo := strings.TrimSpace(entry.ContainerNo)
 		itemNumber := strings.TrimSpace(entry.ItemNumber)
-		key := fmt.Sprintf("%d|%s|%s|%s", locationID, storageSection, containerNo, itemNumber)
+		key := outboundAllocationBucketKey(0, locationID, 0, storageSection, containerID, containerNo) + "|" + itemNumber
 
 		existing, exists := grouped[key]
 		if !exists {
@@ -2970,6 +2729,7 @@ func normalizeOutboundPickAllocations(entries []OutboundPickAllocation) []Outbou
 				LocationID:     locationID,
 				LocationName:   strings.TrimSpace(entry.LocationName),
 				StorageSection: storageSection,
+				ContainerID:    containerID,
 				ContainerNo:    containerNo,
 				AllocatedQty:   allocatedQty,
 				Pallets:        maxInt(entry.Pallets, 0),
@@ -3007,6 +2767,7 @@ func normalizeOutboundPickAllocations(entries []OutboundPickAllocation) []Outbou
 			LocationID:     entry.LocationID,
 			LocationName:   entry.LocationName,
 			StorageSection: entry.StorageSection,
+			ContainerID:    entry.ContainerID,
 			ContainerNo:    entry.ContainerNo,
 			AllocatedQty:   entry.AllocatedQty,
 			Pallets:        maxInt(entry.Pallets, 0),
@@ -3066,24 +2827,63 @@ func totalOutboundPickAllocationQuantity(entries []OutboundPickAllocation) int {
 func totalOutboundPickAllocationPallets(entries []OutboundPickAllocation) int {
 	total := 0
 	for _, entry := range entries {
-		if entry.Pallets > 0 {
-			total += entry.Pallets
-		}
+		total += maxInt(entry.Pallets, 0)
 	}
 	return total
+}
+
+func splitOutboundLinePalletsByAllocations(totalPallets int, allocations []OutboundPickAllocation) []int {
+	result := make([]int, len(allocations))
+	if totalPallets <= 0 || len(allocations) == 0 || totalOutboundPickAllocationPallets(allocations) > 0 {
+		return result
+	}
+
+	totalQty := 0
+	lastPositiveIndex := -1
+	for index, allocation := range allocations {
+		if allocation.AllocatedQty > 0 {
+			totalQty += allocation.AllocatedQty
+			lastPositiveIndex = index
+		}
+	}
+	if totalQty <= 0 {
+		return result
+	}
+
+	remainingPallets := totalPallets
+	remainingQty := totalQty
+	for index, allocation := range allocations {
+		if allocation.AllocatedQty <= 0 {
+			continue
+		}
+		if index == lastPositiveIndex || remainingQty <= 0 {
+			result[index] = remainingPallets
+			break
+		}
+
+		share := remainingPallets * allocation.AllocatedQty / remainingQty
+		if share > remainingPallets {
+			share = remainingPallets
+		}
+		result[index] = share
+		remainingPallets -= share
+		remainingQty -= allocation.AllocatedQty
+	}
+	return result
 }
 
 func toOutboundAllocationCandidatesFromDraftPickAllocations(source lockedOutboundSource, entries []OutboundPickAllocation) []outboundAllocationCandidate {
 	allocations := make([]outboundAllocationCandidate, 0, len(entries))
 	for _, entry := range normalizeOutboundPickAllocations(entries) {
 		allocations = append(allocations, outboundAllocationCandidate{
-			BucketKey:      outboundAllocationBucketKey(source.CustomerID, firstNonZeroInt64(entry.LocationID, source.LocationID), source.SKUMasterID, entry.StorageSection, entry.ContainerNo),
+			BucketKey:      outboundAllocationBucketKey(source.CustomerID, firstNonZeroInt64(entry.LocationID, source.LocationID), source.SKUMasterID, entry.StorageSection, entry.ContainerID, entry.ContainerNo),
 			SKUMasterID:    source.SKUMasterID,
 			CustomerID:     source.CustomerID,
 			ItemNumber:     firstNonEmpty(strings.TrimSpace(entry.ItemNumber), source.ItemNumber),
 			LocationID:     firstNonZeroInt64(entry.LocationID, source.LocationID),
 			LocationName:   firstNonEmpty(strings.TrimSpace(entry.LocationName), source.LocationName),
 			StorageSection: fallbackSection(entry.StorageSection),
+			ContainerID:    entry.ContainerID,
 			ContainerNo:    strings.TrimSpace(entry.ContainerNo),
 			SKU:            source.SKU,
 			Description:    source.Description,
@@ -3107,14 +2907,20 @@ func toOutboundPickAllocationsFromCandidates(line *CreateOutboundDocumentLineInp
 			LocationID:     allocation.LocationID,
 			LocationName:   allocation.LocationName,
 			StorageSection: fallbackSection(allocation.StorageSection),
+			ContainerID:    allocation.ContainerID,
 			ContainerNo:    strings.TrimSpace(allocation.ContainerNo),
 			AllocatedQty:   allocation.AllocatedQty,
 			Pallets:        maxInt(allocation.Pallets, 0),
 			CreatedAt:      createdAt,
 		})
 	}
-	if line == nil {
-		return normalizeOutboundPickAllocations(pickAllocations)
+	if line != nil && line.Pallets > 0 && totalOutboundPickAllocationPallets(pickAllocations) == 0 {
+		palletSplits := splitOutboundLinePalletsByAllocations(line.Pallets, pickAllocations)
+		for index := range pickAllocations {
+			if index < len(palletSplits) {
+				pickAllocations[index].Pallets = palletSplits[index]
+			}
+		}
 	}
 	return normalizeOutboundPickAllocations(pickAllocations)
 }
@@ -3151,46 +2957,6 @@ func maxInt(left int, right int) int {
 		return left
 	}
 	return right
-}
-
-func toOutboundAllocationCandidatesFromPicks(quantities []int) []outboundAllocationCandidate {
-	candidates := make([]outboundAllocationCandidate, 0, len(quantities))
-	for _, quantity := range quantities {
-		candidates = append(candidates, outboundAllocationCandidate{AllocatedQty: quantity})
-	}
-	return candidates
-}
-
-func (s *Store) loadSelectedOutboundPalletTargetTx(ctx context.Context, tx *sql.Tx, customerID int64, locationID int64, skuMasterID int64, palletID int64) (selectedOutboundPalletTarget, error) {
-	target := selectedOutboundPalletTarget{}
-	if err := tx.QueryRowContext(ctx, `
-		SELECT
-			p.id,
-			p.current_location_id,
-			COALESCE(p.current_storage_section, 'TEMP') AS current_storage_section,
-			COALESCE(p.current_container_no, '') AS current_container_no
-		FROM pallets p
-		INNER JOIN pallet_items pi ON pi.pallet_id = p.id
-		WHERE p.id = ?
-		  AND p.customer_id = ?
-		  AND p.current_location_id = ?
-		  AND pi.sku_master_id = ?
-		LIMIT 1
-		FOR UPDATE
-	`, palletID, customerID, locationID, skuMasterID).Scan(
-		&target.PalletID,
-		&target.LocationID,
-		&target.StorageSection,
-		&target.ContainerNo,
-	); err != nil {
-		if err == sql.ErrNoRows {
-			return selectedOutboundPalletTarget{}, fmt.Errorf("%w: selected pallet is not available for this outbound source", ErrInvalidInput)
-		}
-		return selectedOutboundPalletTarget{}, fmt.Errorf("load selected outbound pallet target: %w", err)
-	}
-	target.StorageSection = fallbackSection(target.StorageSection)
-	target.ContainerNo = strings.TrimSpace(target.ContainerNo)
-	return target, nil
 }
 
 func firstNonEmpty(values ...string) string {

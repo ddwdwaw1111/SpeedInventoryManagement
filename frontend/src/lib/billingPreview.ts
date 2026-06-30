@@ -113,9 +113,45 @@ type StorageInterval = {
   locationName: string;
 };
 
+type StorageBalanceEvent = {
+  id: string;
+  customerId: number;
+  customerName: string;
+  containerNo: string;
+  containerType: ContainerType;
+  locationId: number;
+  locationName: string;
+  occurredOn: string;
+  palletDelta: number;
+};
+
+type StorageBatch = {
+  quantity: number;
+  start: Date;
+  locationId: number;
+  locationName: string;
+};
+
+type DocumentStorageRowState = {
+  row: MutableStorageRow;
+  batches: StorageBatch[];
+};
+
+type DocumentStorageScope = {
+  containerKeys: Set<string>;
+  customerContainerKeys: Set<string>;
+};
+
+type StorageChargeResult = {
+  storageRows: BillingStorageRow[];
+  storageLines: BillingInvoiceLine[];
+  dailyBalanceRows: BillingDailyBalanceRow[];
+};
+
 type MutableStorageRow = BillingStorageRow & {
   warehouseSet: Set<string>;
   palletIdSet: Set<number>;
+  trackedPallets: number;
   dailyBalanceMap: Map<string, number>;
   freeDailyBalanceMap: Map<string, number>;
 };
@@ -155,6 +191,8 @@ export function buildBillingPreview(input: BuildBillingPreviewInput): BillingPre
   const { storageRows, storageLines, dailyBalanceRows } = buildStorageCharges(
     input.pallets,
     input.palletLocationEvents,
+    input.inboundDocuments,
+    input.outboundDocuments,
     input.customerId,
     input.locationId,
     input.containerType,
@@ -375,6 +413,59 @@ function countShippedPallets(
 function buildStorageCharges(
   pallets: PalletTrace[],
   palletLocationEvents: PalletLocationEvent[],
+  inboundDocuments: InboundDocument[],
+  outboundDocuments: OutboundDocument[],
+  customerId: number | "all",
+  locationId: number | "all" | undefined,
+  containerType: ContainerType | "all" | undefined,
+  normalPalletGracePeriodEnabled: boolean,
+  rates: BillingRates,
+  billingRange: BillingRange,
+  rangeDays: number
+) {
+  const documentEvents = buildDocumentStorageEvents(inboundDocuments, outboundDocuments, pallets, palletLocationEvents, customerId, containerType);
+  const traceStorageCharges = buildPalletTraceStorageCharges(
+    pallets,
+    palletLocationEvents,
+    customerId,
+    locationId,
+    containerType,
+    normalPalletGracePeriodEnabled,
+    rates,
+    billingRange,
+    rangeDays
+  );
+  if (documentEvents.length === 0) {
+    return traceStorageCharges;
+  }
+
+  const documentStorageScope = getDocumentStorageScope(documentEvents, locationId);
+  const documentInboundEvents = documentEvents.filter((event) => (
+    event.palletDelta > 0 && isDocumentStorageEventInScope(event, documentStorageScope)
+  ));
+  const documentStorageCharges = buildDocumentStorageCharges(
+    documentInboundEvents,
+    locationId,
+    normalPalletGracePeriodEnabled,
+    rates,
+    billingRange,
+    rangeDays
+  );
+
+  return mergeStorageChargeResults(
+    traceStorageCharges,
+    documentStorageCharges,
+    documentEvents.filter((event) => event.palletDelta < 0),
+    locationId,
+    rates,
+    billingRange,
+    rangeDays
+  );
+}
+
+function buildPalletTraceStorageCharges(
+  pallets: PalletTrace[],
+  palletLocationEvents: PalletLocationEvent[],
   customerId: number | "all",
   locationId: number | "all" | undefined,
   containerType: ContainerType | "all" | undefined,
@@ -424,6 +515,7 @@ function buildStorageCharges(
       warehousesTouched: [],
       warehouseSet: new Set<string>(),
       palletIdSet: new Set<number>(),
+      trackedPallets: 0,
       palletsTracked: 0,
       palletDays: 0,
       freePalletDays: 0,
@@ -478,9 +570,415 @@ function buildStorageCharges(
     }
 
     row.palletIdSet.add(pallet.id);
+    row.trackedPallets = row.palletIdSet.size;
     rowMap.set(rowKey, row);
   }
 
+  return finalizeStorageCharges(rowMap, dailyBalanceMap, normalizedRates, billingRange, rangeDays);
+}
+
+function buildDocumentStorageCharges(
+  documentEvents: StorageBalanceEvent[],
+  locationId: number | "all" | undefined,
+  normalPalletGracePeriodEnabled: boolean,
+  rates: BillingRates,
+  billingRange: BillingRange,
+  rangeDays: number
+) {
+  const normalizedRates = normalizeBillingRates(rates);
+  const rowStates = new Map<string, DocumentStorageRowState>();
+  const rowMap = new Map<string, MutableStorageRow>();
+  const dailyBalanceMap = new Map<string, number>();
+  const sortedEvents = [...documentEvents].sort(compareStorageBalanceEvents);
+  let eventIndex = 0;
+
+  for (let dayCursor = new Date(billingRange.start); dayCursor < billingRange.endExclusive; dayCursor = shiftDay(dayCursor, 1)) {
+    const dayKey = toIsoDateString(dayCursor);
+    while (eventIndex < sortedEvents.length && sortedEvents[eventIndex]!.occurredOn <= dayKey) {
+      applyDocumentStorageEvent(sortedEvents[eventIndex]!, rowStates, rowMap, locationId);
+      eventIndex += 1;
+    }
+
+    for (const state of rowStates.values()) {
+      const graceDays = resolveStorageGraceDays(state.row.containerType, normalPalletGracePeriodEnabled);
+      for (const batch of state.batches) {
+        if (batch.quantity <= 0) {
+          continue;
+        }
+        if (locationId && locationId !== "all" && batch.locationId !== locationId) {
+          continue;
+        }
+
+        const daysBefore = Math.max(Math.round((dayCursor.getTime() - startOfLocalDay(batch.start).getTime()) / 86400000), 0);
+        const isGraceDay = graceDays > 0 && daysBefore + 1 <= graceDays;
+        addStorageDay(state.row, dayKey, batch.quantity, isGraceDay, batch.locationName);
+        dailyBalanceMap.set(dayKey, (dailyBalanceMap.get(dayKey) ?? 0) + batch.quantity);
+      }
+    }
+  }
+
+  return finalizeStorageCharges(rowMap, dailyBalanceMap, normalizedRates, billingRange, rangeDays);
+}
+
+function buildDocumentStorageEvents(
+  inboundDocuments: InboundDocument[],
+  outboundDocuments: OutboundDocument[],
+  pallets: PalletTrace[],
+  palletLocationEvents: PalletLocationEvent[],
+  customerId: number | "all",
+  containerType: ContainerType | "all" | undefined
+) {
+  const events: StorageBalanceEvent[] = [];
+  const traceCounts = countDocumentTracePallets(inboundDocuments, pallets, customerId);
+  const traceOutboundCounts = countTraceOutboundPallets(pallets, palletLocationEvents, customerId);
+
+  for (const document of inboundDocuments) {
+    if (!belongsToCustomer(document.customerId, customerId)) {
+      continue;
+    }
+    if (!isBillableDocument(document.status)) {
+      continue;
+    }
+    const documentContainerType = normalizeContainerTypeValue(document.containerType);
+    if (containerType && containerType !== "all" && documentContainerType !== containerType) {
+      continue;
+    }
+
+    const occurredOn = resolveInboundBillingDate(document);
+    const documentPallets = sumInboundDocumentPallets(document);
+    if (!occurredOn || documentPallets <= 0) {
+      continue;
+    }
+
+    const containerNo = normalizeContainerNo(document.containerNo);
+    const containerKey = buildStorageContainerKey(document.customerId, documentContainerType, containerNo);
+    const tracedPallets = consumeDocumentTracePalletCount(traceCounts, document.id, containerKey, documentPallets);
+    const documentOnlyPallets = Math.max(documentPallets - tracedPallets, 0);
+    if (documentOnlyPallets <= 0) {
+      continue;
+    }
+
+    events.push({
+      id: `inbound-${document.id}`,
+      customerId: document.customerId,
+      customerName: document.customerName,
+      containerNo,
+      containerType: documentContainerType,
+      locationId: document.locationId,
+      locationName: document.locationName,
+      occurredOn,
+      palletDelta: documentOnlyPallets
+    });
+  }
+
+  for (const document of outboundDocuments) {
+    if (!belongsToCustomer(document.customerId, customerId)) {
+      continue;
+    }
+    if (!isBillableDocument(document.status)) {
+      continue;
+    }
+
+    const occurredOn = resolveOutboundBillingDate(document);
+    if (!occurredOn) {
+      continue;
+    }
+
+    for (const line of document.lines) {
+      line.pickAllocations.forEach((allocation, index) => {
+        const pallets = Math.max(allocation.pallets ?? 0, 0);
+        if (pallets <= 0 || !allocation.containerNo.trim()) {
+          return;
+        }
+
+        const consumedTracePallets = consumeTraceOutboundPallets(
+          traceOutboundCounts,
+          document.customerId,
+          allocation.containerNo,
+          occurredOn,
+          pallets
+        );
+        const documentOnlyOutboundPallets = pallets - consumedTracePallets;
+        if (documentOnlyOutboundPallets <= 0) {
+          return;
+        }
+
+        events.push({
+          id: `outbound-${document.id}-${line.id}-${index}`,
+          customerId: document.customerId,
+          customerName: document.customerName,
+          containerNo: normalizeContainerNo(allocation.containerNo),
+          containerType: "NORMAL",
+          locationId: allocation.locationId || line.locationId,
+          locationName: allocation.locationName || line.locationName,
+          occurredOn,
+          palletDelta: -documentOnlyOutboundPallets
+        });
+      });
+    }
+  }
+
+  return events.sort(compareStorageBalanceEvents);
+}
+
+function countDocumentTracePallets(
+  inboundDocuments: InboundDocument[],
+  pallets: PalletTrace[],
+  customerId: number | "all"
+) {
+  const inboundDocumentIds = new Set(inboundDocuments.map((document) => document.id));
+  const byDocumentId = new Map<number, number>();
+  const byContainerKey = new Map<string, number>();
+
+  for (const pallet of pallets) {
+    if (!belongsToCustomer(pallet.customerId, customerId)) {
+      continue;
+    }
+
+    if (pallet.sourceInboundDocumentId > 0 && inboundDocumentIds.has(pallet.sourceInboundDocumentId)) {
+      byDocumentId.set(pallet.sourceInboundDocumentId, (byDocumentId.get(pallet.sourceInboundDocumentId) ?? 0) + 1);
+      continue;
+    }
+
+    const containerKey = buildStorageContainerKey(
+      pallet.customerId,
+      pallet.containerType,
+      normalizeContainerNo(pallet.currentContainerNo)
+    );
+    byContainerKey.set(containerKey, (byContainerKey.get(containerKey) ?? 0) + 1);
+  }
+
+  return { byDocumentId, byContainerKey };
+}
+
+function consumeDocumentTracePalletCount(
+  traceCounts: ReturnType<typeof countDocumentTracePallets>,
+  documentId: number,
+  containerKey: string,
+  documentPallets: number
+) {
+  let tracedPallets = Math.min(traceCounts.byDocumentId.get(documentId) ?? 0, documentPallets);
+  if (tracedPallets >= documentPallets) {
+    return tracedPallets;
+  }
+
+  const remainingContainerTraces = traceCounts.byContainerKey.get(containerKey) ?? 0;
+  const consumedContainerTraces = Math.min(documentPallets - tracedPallets, remainingContainerTraces);
+  if (consumedContainerTraces > 0) {
+    traceCounts.byContainerKey.set(containerKey, remainingContainerTraces - consumedContainerTraces);
+    tracedPallets += consumedContainerTraces;
+  }
+  return tracedPallets;
+}
+
+function countTraceOutboundPallets(
+  pallets: PalletTrace[],
+  palletLocationEvents: PalletLocationEvent[],
+  customerId: number | "all"
+) {
+  const palletsById = new Map(pallets.map((pallet) => [pallet.id, pallet]));
+  const outboundCounts = new Map<string, number>();
+
+  for (const event of palletLocationEvents) {
+    if (event.eventType !== "OUTBOUND" || !belongsToCustomer(event.customerId, customerId)) {
+      continue;
+    }
+
+    const occurredOn = normalizeBusinessCalendarDate(event.eventTime);
+    if (!occurredOn) {
+      continue;
+    }
+
+    const pallet = palletsById.get(event.palletId);
+    const containerNo = normalizeContainerNo(event.containerNo || pallet?.currentContainerNo);
+    const explicitPalletCount = Math.max(Math.abs(event.palletDelta || 0), 0);
+    const palletCount = explicitPalletCount > 0 ? explicitPalletCount : 1;
+    if (palletCount <= 0) {
+      continue;
+    }
+
+    const key = buildTraceOutboundKey(event.customerId, containerNo, occurredOn);
+    outboundCounts.set(key, (outboundCounts.get(key) ?? 0) + palletCount);
+  }
+
+  return outboundCounts;
+}
+
+function consumeTraceOutboundPallets(
+  outboundCounts: Map<string, number>,
+  customerId: number,
+  containerNo: string,
+  occurredOn: string,
+  requestedPallets: number
+) {
+  const key = buildTraceOutboundKey(customerId, normalizeContainerNo(containerNo), occurredOn);
+  const remainingTracePallets = outboundCounts.get(key) ?? 0;
+  const consumedPallets = Math.min(requestedPallets, remainingTracePallets);
+  if (consumedPallets > 0) {
+    outboundCounts.set(key, remainingTracePallets - consumedPallets);
+  }
+  return consumedPallets;
+}
+
+function getDocumentStorageScope(
+  documentEvents: StorageBalanceEvent[],
+  locationId: number | "all" | undefined
+): DocumentStorageScope {
+  const scope: DocumentStorageScope = {
+    containerKeys: new Set<string>(),
+    customerContainerKeys: new Set<string>()
+  };
+  if (documentEvents.length === 0) {
+    return scope;
+  }
+
+  for (const event of documentEvents) {
+    if (event.palletDelta <= 0) {
+      continue;
+    }
+    if (locationId && locationId !== "all" && event.locationId !== locationId) {
+      continue;
+    }
+
+    const containerKey = buildStorageContainerKey(event.customerId, event.containerType, event.containerNo);
+    scope.containerKeys.add(containerKey);
+    scope.customerContainerKeys.add(buildStorageCustomerContainerKey(event.customerId, event.containerNo));
+  }
+
+  return scope;
+}
+
+function isDocumentStorageEventInScope(event: StorageBalanceEvent, scope: DocumentStorageScope) {
+  if (event.palletDelta > 0) {
+    return scope.containerKeys.has(buildStorageContainerKey(event.customerId, event.containerType, event.containerNo));
+  }
+  return scope.customerContainerKeys.has(buildStorageCustomerContainerKey(event.customerId, event.containerNo));
+}
+
+function applyDocumentStorageEvent(
+  event: StorageBalanceEvent,
+  rowStates: Map<string, DocumentStorageRowState>,
+  rowMap: Map<string, MutableStorageRow>,
+  locationId: number | "all" | undefined
+) {
+  const rowKey = resolveDocumentStorageRowKey(event, rowStates);
+  let state = rowStates.get(rowKey);
+
+  if (event.palletDelta > 0) {
+    if (!state) {
+      const row = createMutableStorageRow(event, locationId);
+      state = { row, batches: [] };
+      rowStates.set(rowKey, state);
+      rowMap.set(rowKey, row);
+    }
+
+    const start = parseDateLikeValue(event.occurredOn);
+    state.batches.push({
+      quantity: event.palletDelta,
+      start: start ? startOfLocalDay(start) : new Date(0),
+      locationId: event.locationId,
+      locationName: event.locationName
+    });
+    state.row.trackedPallets += event.palletDelta;
+    state.row.palletsTracked = state.row.trackedPallets;
+    return;
+  }
+
+  if (!state || event.palletDelta >= 0) {
+    return;
+  }
+
+  let remaining = Math.abs(event.palletDelta);
+  for (const batch of state.batches) {
+    if (remaining <= 0) {
+      break;
+    }
+    const consumed = Math.min(batch.quantity, remaining);
+    batch.quantity -= consumed;
+    remaining -= consumed;
+  }
+}
+
+function resolveDocumentStorageRowKey(
+  event: StorageBalanceEvent,
+  rowStates: Map<string, DocumentStorageRowState>
+) {
+  const exactKey = buildStorageContainerKey(event.customerId, event.containerType, event.containerNo);
+  if (event.palletDelta > 0 || rowStates.has(exactKey)) {
+    return exactKey;
+  }
+
+  for (const [rowKey, state] of rowStates.entries()) {
+    if (state.row.customerId === event.customerId && state.row.containerNo === event.containerNo) {
+      return rowKey;
+    }
+  }
+  return exactKey;
+}
+
+function createMutableStorageRow(
+  event: StorageBalanceEvent,
+  locationId: number | "all" | undefined
+): MutableStorageRow {
+  return {
+    customerId: event.customerId,
+    customerName: event.customerName,
+    containerNo: event.containerNo,
+    containerType: event.containerType,
+    locationId: locationId && locationId !== "all" ? locationId : null,
+    locationName: "",
+    warehousesTouched: [],
+    warehouseSet: new Set<string>(),
+    palletIdSet: new Set<number>(),
+    trackedPallets: 0,
+    palletsTracked: 0,
+    palletDays: 0,
+    freePalletDays: 0,
+    billablePalletDays: 0,
+    averageDailyPallets: 0,
+    firstActivityAt: null,
+    lastActivityAt: null,
+    grossAmount: 0,
+    discountAmount: 0,
+    amount: 0,
+    segments: [],
+    dailyBalanceMap: new Map<string, number>(),
+    freeDailyBalanceMap: new Map<string, number>()
+  };
+}
+
+function addStorageDay(
+  row: MutableStorageRow,
+  dayKey: string,
+  palletCount: number,
+  isGraceDay: boolean,
+  locationName: string
+) {
+  if (row.locationId === null) {
+    row.locationName = "";
+  } else if (!row.locationName) {
+    row.locationName = locationName;
+  }
+  addWarehouse(row, locationName);
+  row.palletDays += palletCount;
+  if (isGraceDay) {
+    row.freePalletDays += palletCount;
+  } else {
+    row.billablePalletDays += palletCount;
+  }
+  row.dailyBalanceMap.set(dayKey, (row.dailyBalanceMap.get(dayKey) ?? 0) + palletCount);
+  if (isGraceDay) {
+    row.freeDailyBalanceMap.set(dayKey, (row.freeDailyBalanceMap.get(dayKey) ?? 0) + palletCount);
+  }
+}
+
+function finalizeStorageCharges(
+  rowMap: Map<string, MutableStorageRow>,
+  dailyBalanceMap: Map<string, number>,
+  normalizedRates: BillingRates,
+  billingRange: BillingRange,
+  rangeDays: number
+): StorageChargeResult {
   const storageRows = [...rowMap.values()]
     .map((row) => {
       const storageRatePerDay = resolveStorageRatePerDay(row.containerType, normalizedRates);
@@ -499,7 +997,7 @@ function buildStorageCharges(
           ? ([...row.warehouseSet].sort((left, right) => left.localeCompare(right)).join(", "))
           : row.locationName,
         warehousesTouched: [...row.warehouseSet].sort((left, right) => left.localeCompare(right)),
-        palletsTracked: row.palletIdSet.size,
+        palletsTracked: row.trackedPallets || row.palletIdSet.size,
         palletDays: row.palletDays,
         freePalletDays: row.freePalletDays,
         billablePalletDays: row.billablePalletDays,
@@ -513,30 +1011,24 @@ function buildStorageCharges(
       };
     })
     .filter((row) => row.palletDays > 0)
-    .sort((left, right) => {
-      if (left.customerName !== right.customerName) {
-        return left.customerName.localeCompare(right.customerName);
-      }
-      if (left.containerType !== right.containerType) {
-        return left.containerType.localeCompare(right.containerType);
-      }
-      return left.containerNo.localeCompare(right.containerNo);
-    });
+    .sort(compareStorageRows);
 
-  const storageLines = storageRows.map((row) => ({
-    id: `storage-${row.customerId}-${row.containerType}-${row.containerNo}`,
-    customerId: row.customerId,
-    customerName: row.customerName,
-    chargeType: "STORAGE" as const,
-    reference: `Storage | ${row.containerNo}`,
-    containerNo: row.containerNo,
-    warehouseSummary: row.warehousesTouched.join(", ") || "-",
-    occurredOn: row.lastActivityAt,
-    quantity: row.billablePalletDays,
-    unitRate: roundCurrency(resolveStorageRatePerDay(row.containerType, normalizedRates)),
-    amount: row.amount,
-    meta: buildStorageLineMeta(row)
-  }));
+  const storageLines = storageRows
+    .filter((row) => row.billablePalletDays > 0)
+    .map((row) => ({
+      id: `storage-${row.customerId}-${row.containerType}-${row.containerNo}`,
+      customerId: row.customerId,
+      customerName: row.customerName,
+      chargeType: "STORAGE" as const,
+      reference: `Storage | ${row.containerNo}`,
+      containerNo: row.containerNo,
+      warehouseSummary: row.warehousesTouched.join(", ") || "-",
+      occurredOn: row.lastActivityAt,
+      quantity: row.billablePalletDays,
+      unitRate: roundCurrency(resolveStorageRatePerDay(row.containerType, normalizedRates)),
+      amount: row.amount,
+      meta: buildStorageLineMeta(row)
+    }));
 
   const dailyBalanceRows: BillingDailyBalanceRow[] = [];
   for (let dayCursor = new Date(billingRange.start); dayCursor < billingRange.endExclusive; dayCursor = shiftDay(dayCursor, 1)) {
@@ -548,6 +1040,222 @@ function buildStorageCharges(
   }
 
   return { storageRows, storageLines, dailyBalanceRows };
+}
+
+function mergeStorageChargeResults(
+  traceStorageCharges: StorageChargeResult,
+  documentStorageCharges: StorageChargeResult,
+  documentOutboundEvents: StorageBalanceEvent[],
+  locationId: number | "all" | undefined,
+  rates: BillingRates,
+  billingRange: BillingRange,
+  rangeDays: number
+): StorageChargeResult {
+  const rowMap = mergeStorageRows([...traceStorageCharges.storageRows, ...documentStorageCharges.storageRows], billingRange);
+  applyDocumentOutboundStorageAdjustments(rowMap, documentOutboundEvents, locationId, billingRange);
+  recalculateStorageRowTotals(rowMap, billingRange);
+
+  return finalizeStorageCharges(
+    rowMap,
+    buildStorageDailyBalanceMap(rowMap, billingRange),
+    normalizeBillingRates(rates),
+    billingRange,
+    rangeDays
+  );
+}
+
+function mergeStorageRows(storageRows: BillingStorageRow[], billingRange: BillingRange) {
+  const rowMap = new Map<string, MutableStorageRow>();
+  for (const row of storageRows) {
+    const rowKey = buildMergedStorageRowKey(row);
+    let merged = rowMap.get(rowKey);
+    if (!merged) {
+      merged = createMutableStorageRowFromStorageRow(row);
+      rowMap.set(rowKey, merged);
+    }
+
+    merged.trackedPallets += row.palletsTracked;
+    merged.palletsTracked = merged.trackedPallets;
+    for (const warehouse of row.warehousesTouched.length > 0 ? row.warehousesTouched : [row.locationName]) {
+      addWarehouse(merged, warehouse);
+    }
+    if (!merged.locationName && row.locationName && row.locationId !== null) {
+      merged.locationName = row.locationName;
+    }
+
+    for (const segment of row.segments) {
+      const segmentStart = parseDateLikeValue(segment.startDate);
+      const segmentEnd = parseDateLikeValue(segment.endDate);
+      if (!segmentStart || !segmentEnd || segment.billedDays <= 0) {
+        continue;
+      }
+
+      const freePalletCount = segment.freePalletDays / segment.billedDays;
+      for (let dayCursor = startOfLocalDay(segmentStart); dayCursor < shiftDay(startOfLocalDay(segmentEnd), 1); dayCursor = shiftDay(dayCursor, 1)) {
+        const dayKey = toIsoDateString(dayCursor);
+        if (dayCursor < billingRange.start || dayCursor >= billingRange.endExclusive) {
+          continue;
+        }
+        merged.palletDays += segment.dayEndPallets;
+        merged.freePalletDays += freePalletCount;
+        merged.billablePalletDays += segment.dayEndPallets - freePalletCount;
+        merged.dailyBalanceMap.set(dayKey, (merged.dailyBalanceMap.get(dayKey) ?? 0) + segment.dayEndPallets);
+        if (freePalletCount > 0) {
+          merged.freeDailyBalanceMap.set(dayKey, (merged.freeDailyBalanceMap.get(dayKey) ?? 0) + freePalletCount);
+        }
+      }
+    }
+  }
+  return rowMap;
+}
+
+function applyDocumentOutboundStorageAdjustments(
+  rowMap: Map<string, MutableStorageRow>,
+  documentOutboundEvents: StorageBalanceEvent[],
+  locationId: number | "all" | undefined,
+  billingRange: BillingRange
+) {
+  for (const event of [...documentOutboundEvents].sort(compareStorageBalanceEvents)) {
+    if (event.palletDelta >= 0) {
+      continue;
+    }
+    if (locationId && locationId !== "all" && event.locationId !== locationId) {
+      continue;
+    }
+
+    const row = resolveMergedStorageAdjustmentRow(event, rowMap);
+    const eventDate = parseDateLikeValue(event.occurredOn);
+    if (!row || !eventDate) {
+      continue;
+    }
+
+    const reduction = Math.abs(event.palletDelta);
+    const adjustmentStart = startOfLocalDay(eventDate);
+    const firstDay = adjustmentStart.getTime() < billingRange.start.getTime()
+      ? billingRange.start
+      : adjustmentStart;
+    if ((row.dailyBalanceMap.get(toIsoDateString(firstDay)) ?? 0) <= 0) {
+      continue;
+    }
+    for (let dayCursor = new Date(firstDay); dayCursor < billingRange.endExclusive; dayCursor = shiftDay(dayCursor, 1)) {
+      const dayKey = toIsoDateString(dayCursor);
+      const currentBalance = row.dailyBalanceMap.get(dayKey) ?? 0;
+      if (currentBalance <= 0) {
+        continue;
+      }
+
+      const nextBalance = Math.max(currentBalance - reduction, 0);
+      if (nextBalance > 0) {
+        row.dailyBalanceMap.set(dayKey, nextBalance);
+      } else {
+        row.dailyBalanceMap.delete(dayKey);
+      }
+    }
+  }
+}
+
+function resolveMergedStorageAdjustmentRow(
+  event: StorageBalanceEvent,
+  rowMap: Map<string, MutableStorageRow>
+) {
+  const exactRow = rowMap.get(buildStorageContainerKey(event.customerId, event.containerType, event.containerNo));
+  if (exactRow) {
+    return exactRow;
+  }
+
+  for (const row of rowMap.values()) {
+    if (row.customerId === event.customerId && row.containerNo === event.containerNo) {
+      return row;
+    }
+  }
+  return null;
+}
+
+function recalculateStorageRowTotals(rowMap: Map<string, MutableStorageRow>, billingRange: BillingRange) {
+  for (const row of rowMap.values()) {
+    let palletDays = 0;
+    let freePalletDays = 0;
+    for (let dayCursor = new Date(billingRange.start); dayCursor < billingRange.endExclusive; dayCursor = shiftDay(dayCursor, 1)) {
+      const dayKey = toIsoDateString(dayCursor);
+      const palletCount = Math.max(row.dailyBalanceMap.get(dayKey) ?? 0, 0);
+      if (palletCount <= 0) {
+        row.dailyBalanceMap.delete(dayKey);
+        row.freeDailyBalanceMap.delete(dayKey);
+        continue;
+      }
+
+      const freePalletCount = Math.min(Math.max(row.freeDailyBalanceMap.get(dayKey) ?? 0, 0), palletCount);
+      row.dailyBalanceMap.set(dayKey, palletCount);
+      if (freePalletCount > 0) {
+        row.freeDailyBalanceMap.set(dayKey, freePalletCount);
+      } else {
+        row.freeDailyBalanceMap.delete(dayKey);
+      }
+      palletDays += palletCount;
+      freePalletDays += freePalletCount;
+    }
+
+    row.palletDays = palletDays;
+    row.freePalletDays = freePalletDays;
+    row.billablePalletDays = Math.max(palletDays - freePalletDays, 0);
+  }
+}
+
+function buildStorageDailyBalanceMap(rowMap: Map<string, MutableStorageRow>, billingRange: BillingRange) {
+  const dailyBalanceMap = new Map<string, number>();
+  for (let dayCursor = new Date(billingRange.start); dayCursor < billingRange.endExclusive; dayCursor = shiftDay(dayCursor, 1)) {
+    const dayKey = toIsoDateString(dayCursor);
+    let palletCount = 0;
+    for (const row of rowMap.values()) {
+      palletCount += row.dailyBalanceMap.get(dayKey) ?? 0;
+    }
+    if (palletCount > 0) {
+      dailyBalanceMap.set(dayKey, palletCount);
+    }
+  }
+  return dailyBalanceMap;
+}
+
+function buildMergedStorageRowKey(row: BillingStorageRow) {
+  return `${row.customerId}|${row.containerType}|${row.containerNo}`;
+}
+
+function createMutableStorageRowFromStorageRow(row: BillingStorageRow): MutableStorageRow {
+  return {
+    customerId: row.customerId,
+    customerName: row.customerName,
+    containerNo: row.containerNo,
+    containerType: row.containerType,
+    locationId: row.locationId,
+    locationName: row.locationId === null ? "" : row.locationName,
+    warehousesTouched: [],
+    warehouseSet: new Set<string>(),
+    palletIdSet: new Set<number>(),
+    trackedPallets: 0,
+    palletsTracked: 0,
+    palletDays: 0,
+    freePalletDays: 0,
+    billablePalletDays: 0,
+    averageDailyPallets: 0,
+    firstActivityAt: null,
+    lastActivityAt: null,
+    grossAmount: 0,
+    discountAmount: 0,
+    amount: 0,
+    segments: [],
+    dailyBalanceMap: new Map<string, number>(),
+    freeDailyBalanceMap: new Map<string, number>()
+  };
+}
+
+function compareStorageRows(left: BillingStorageRow, right: BillingStorageRow) {
+  if (left.customerName !== right.customerName) {
+    return left.customerName.localeCompare(right.customerName);
+  }
+  if (left.containerType !== right.containerType) {
+    return left.containerType.localeCompare(right.containerType);
+  }
+  return left.containerNo.localeCompare(right.containerNo);
 }
 
 function buildStorageLineMeta(row: BillingStorageRow) {
@@ -879,6 +1587,22 @@ function belongsToCustomer(targetCustomerId: number, customerId: number | "all")
   return customerId === "all" || targetCustomerId === customerId;
 }
 
+function sumInboundDocumentPallets(document: InboundDocument) {
+  return document.lines.reduce((total, line) => total + Math.max(line.pallets, 0), 0);
+}
+
+function buildStorageContainerKey(customerId: number, containerType: ContainerType, containerNo: string) {
+  return `${customerId}|${containerType}|${containerNo}`;
+}
+
+function buildStorageCustomerContainerKey(customerId: number, containerNo: string) {
+  return `${customerId}|${containerNo}`;
+}
+
+function buildTraceOutboundKey(customerId: number, containerNo: string, occurredOn: string) {
+  return `${customerId}|${containerNo}|${occurredOn}`;
+}
+
 function resolveInboundBillingDate(document: InboundDocument) {
   return normalizeBusinessCalendarDate(document.actualArrivalDate)
     ?? normalizeIsoCandidate(document.confirmedAt)
@@ -971,6 +1695,18 @@ function compareEventsAscending(left: PalletLocationEvent, right: PalletLocation
     return leftTime - rightTime;
   }
   return left.id - right.id;
+}
+
+function compareStorageBalanceEvents(left: StorageBalanceEvent, right: StorageBalanceEvent) {
+  const leftTime = parseDateLikeValue(left.occurredOn)?.getTime() ?? 0;
+  const rightTime = parseDateLikeValue(right.occurredOn)?.getTime() ?? 0;
+  if (leftTime !== rightTime) {
+    return leftTime - rightTime;
+  }
+  if (left.palletDelta !== right.palletDelta) {
+    return right.palletDelta - left.palletDelta;
+  }
+  return left.id.localeCompare(right.id);
 }
 
 function compareIntervalsAscending(left: StorageInterval, right: StorageInterval) {

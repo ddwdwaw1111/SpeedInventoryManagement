@@ -872,7 +872,7 @@ describe("ContainerLifecycleView", () => {
     expect(pickingInboundEdge).toMatchObject({ source: "inventory", sourceHandle: "right-source", targetHandle: "left-target" });
   });
 
-  it("routes pallet rework from current inventory into the matching outbound order", () => {
+  it("routes pallet rework from current inventory into the first outbound order", () => {
     const flow = buildLifecycleFlow(
       {
         summary: {
@@ -907,7 +907,6 @@ describe("ContainerLifecycleView", () => {
               {
                 sku: "SKU-A",
                 quantity: 10,
-                pickPallets: [{ palletId: 100, quantity: 10 }],
                 pickAllocations: []
               }
             ],
@@ -923,7 +922,6 @@ describe("ContainerLifecycleView", () => {
               {
                 sku: "SKU-B",
                 quantity: 10,
-                pickPallets: [{ palletId: 501, quantity: 10 }],
                 pickAllocations: []
               }
             ],
@@ -960,10 +958,10 @@ describe("ContainerLifecycleView", () => {
     );
 
     const inventoryNode = flow.nodes.find((node) => node.id === "inventory");
-    const reworkNode = flow.nodes.find((node) => node.id === "rework-1");
-    const targetPickingNode = flow.nodes.find((node) => node.id === "picking-1");
-    const inventoryToRework = flow.edges.find((edge) => edge.source === "inventory" && edge.target === "rework-1");
-    const reworkToPicking = flow.edges.find((edge) => edge.source === "rework-1" && edge.target === "picking-1");
+    const reworkNode = flow.nodes.find((node) => node.id === "rework-0");
+    const targetPickingNode = flow.nodes.find((node) => node.id === "picking-0");
+    const inventoryToRework = flow.edges.find((edge) => edge.source === "inventory" && edge.target === "rework-0");
+    const reworkToPicking = flow.edges.find((edge) => edge.source === "rework-0" && edge.target === "picking-0");
 
     expect(reworkNode).toBeTruthy();
     expect(reworkNode?.position.y).toBe(targetPickingNode?.position.y);
@@ -971,7 +969,7 @@ describe("ContainerLifecycleView", () => {
     expect(reworkNode?.position.x).toBeLessThan(targetPickingNode?.position.x ?? 0);
     expect(inventoryToRework).toMatchObject({ sourceHandle: "right-source", targetHandle: "left-target" });
     expect(reworkToPicking).toMatchObject({ sourceHandle: "right-source", targetHandle: "left-target" });
-    expect(flow.edges.some((edge) => edge.source === "inventory" && edge.target === "picking-1")).toBe(false);
+    expect(flow.edges.some((edge) => edge.source === "inventory" && edge.target === "picking-0")).toBe(false);
   });
 
   it("centers stacked outbound orders around the inventory row", () => {

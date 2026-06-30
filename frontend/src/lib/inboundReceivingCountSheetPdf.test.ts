@@ -109,7 +109,6 @@ describe("buildInboundReceivingCountSheetDocument", () => {
         sku: "608333",
         description: "Black nitrile gloves",
         storageSection: "TEMP",
-        reorderLevel: 0,
         expectedQty: 120,
         receivedQty: 0,
         pallets: 4,
@@ -139,7 +138,6 @@ describe("buildInboundReceivingCountSheetDocument", () => {
     });
   });
 });
-
 describe("buildInboundReceivingCountSheetDefinition", () => {
   it("renders a dock count template with writable receipt fields", () => {
     const document = buildInboundReceivingCountSheetDocument(createPackingListPreviewFixture());

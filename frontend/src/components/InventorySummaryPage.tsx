@@ -19,7 +19,7 @@ import { setPendingInventoryActionContext } from "../lib/inventoryActionContext"
 import { buildInventoryActionSourceKey } from "../lib/inventoryActionSources";
 import { useI18n } from "../lib/i18n";
 import { consumePendingInventorySummaryContext } from "../lib/inventorySummaryContext";
-import type { PageKey } from "../lib/routes";
+import { PALLET_ENTITY_UI_ENABLED, type PageKey } from "../lib/routes";
 import { DEFAULT_STORAGE_SECTION, normalizeStorageSection, type ContainerType, type Customer, type Item, type Location, type Movement, type PalletTrace, type UserRole } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
 import { buildWorkspaceGridSlots, InventoryViewSwitcher, WorkspacePanelHeader } from "./WorkspacePanelChrome";
@@ -77,7 +77,6 @@ type ContainerBreakdownRow = {
   palletCount: number;
 };
 
-type InventorySummaryHealthFilter = "ALL" | "LOW_STOCK";
 type InventorySummaryContainerTypeFilter = "all" | ContainerType;
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
@@ -113,7 +112,6 @@ export function InventorySummaryPage({
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
   const [selectedContainerType, setSelectedContainerType] = useState<InventorySummaryContainerTypeFilter>("all");
-  const [healthFilter, setHealthFilter] = useState<InventorySummaryHealthFilter>("ALL");
   const [selectedSummaryId, setSelectedSummaryId] = useState<string | null>(null);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [pallets, setPallets] = useState<PalletTrace[]>([]);
@@ -129,7 +127,6 @@ export function InventorySummaryPage({
     setSelectedCustomerId(context.customerId ? String(context.customerId) : "all");
     setSelectedLocationId(context.locationId ? String(context.locationId) : "all");
     setSelectedContainerType(context.containerType ?? "all");
-    setHealthFilter(context.healthFilter ?? "ALL");
     setSelectedSummaryId(null);
   }, []);
 
@@ -137,6 +134,11 @@ export function InventorySummaryPage({
     let active = true;
 
     async function loadPallets() {
+      if (!PALLET_ENTITY_UI_ENABLED) {
+        setPallets([]);
+        return;
+      }
+
       try {
         const nextPallets = await api.getPallets(50000);
         if (!active) {
@@ -157,6 +159,7 @@ export function InventorySummaryPage({
   }, []);
 
   const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
+  const effectiveSelectedContainerType = PALLET_ENTITY_UI_ENABLED ? selectedContainerType : "all";
   const containerTypeLookup = useMemo(() => buildContainerTypeLookup(pallets), [pallets]);
   const summaryRows = useMemo(
     () => buildInventorySummaryRows(
@@ -165,11 +168,10 @@ export function InventorySummaryPage({
       normalizedSearch,
       selectedCustomerId,
       selectedLocationId,
-      selectedContainerType,
-      healthFilter,
+      effectiveSelectedContainerType,
       containerTypeLookup
     ),
-    [items, movements, normalizedSearch, selectedCustomerId, selectedLocationId, selectedContainerType, healthFilter, containerTypeLookup]
+    [items, movements, normalizedSearch, selectedCustomerId, selectedLocationId, effectiveSelectedContainerType, containerTypeLookup]
   );
   const selectedSummary = useMemo(
     () => summaryRows.find((row) => row.id === selectedSummaryId) ?? null,
@@ -178,8 +180,7 @@ export function InventorySummaryPage({
   const hasActiveFilters = normalizedSearch.length > 0
     || selectedCustomerId !== "all"
     || selectedLocationId !== "all"
-    || selectedContainerType !== "all"
-    || healthFilter !== "ALL";
+    || effectiveSelectedContainerType !== "all";
   const mainGridSlots = buildWorkspaceGridSlots({
     emptyTitle: t("noResults"),
     emptyDescription: hasActiveFilters ? t("filteredStateHint") : t("emptyStateHint"),
@@ -238,13 +239,11 @@ export function InventorySummaryPage({
   const overviewStats = useMemo(() => {
     const totalOnHand = summaryRows.reduce((sum, row) => sum + row.onHand, 0);
     const totalAvailable = summaryRows.reduce((sum, row) => sum + row.availableQty, 0);
-    const lowStockRows = summaryRows.filter((row) => row.items.some((item) => item.reorderLevel > 0 && item.availableQty <= item.reorderLevel)).length;
     const totalWarehouses = new Set(summaryRows.flatMap((row) => row.items.map((item) => item.locationId))).size;
     return [
       { label: t("sku"), value: summaryNumberFormatter.format(summaryRows.length), meta: t("allRows") },
       { label: t("onHand"), value: summaryNumberFormatter.format(totalOnHand), meta: t("units") },
       { label: t("availableQty"), value: summaryNumberFormatter.format(totalAvailable), meta: t("units") },
-      { label: t("lowStock"), value: summaryNumberFormatter.format(lowStockRows), meta: t("allRows") },
       { label: t("warehouseCount"), value: summaryNumberFormatter.format(totalWarehouses), meta: t("currentStorage") }
     ];
   }, [summaryRows, t]);
@@ -295,6 +294,7 @@ export function InventorySummaryPage({
             <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("inventorySummarySearchPlaceholder")} /></label>
             <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
             <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
+            {PALLET_ENTITY_UI_ENABLED ? (
             <label>
               {t("billingContainerType")}
               <select value={selectedContainerType} onChange={(event) => setSelectedContainerType(event.target.value as InventorySummaryContainerTypeFilter)}>
@@ -303,7 +303,7 @@ export function InventorySummaryPage({
                 <option value="WEST_COAST_TRANSFER">{containerTypeLabel("WEST_COAST_TRANSFER", t)}</option>
               </select>
             </label>
-            <label>{t("stockHealth")}<select value={healthFilter} onChange={(event) => setHealthFilter(event.target.value as InventorySummaryHealthFilter)}><option value="ALL">{t("allRows")}</option><option value="LOW_STOCK">{t("lowStock")}</option></select></label>
+            ) : null}
           </div>
         </div>
         <InventoryViewSwitcher activeView="inventory-summary" onNavigate={onNavigate} />
@@ -396,7 +396,7 @@ export function InventorySummaryPage({
                   {t("allActivity")}
                 </Button>
               </div>
-              {canManageInventory ? (
+              {PALLET_ENTITY_UI_ENABLED && canManageInventory ? (
                 <div className="inventory-summary-drawer__management-actions">
                   <Button
                     className="inventory-summary-drawer__action-button"
@@ -528,10 +528,12 @@ export function InventorySummaryPage({
                       <strong>{t("availableQty")}</strong>
                       <span>{row.availableQty}</span>
                     </div>
+                    {PALLET_ENTITY_UI_ENABLED ? (
                     <div className="inventory-summary-drawer__breakdown-metric">
                       <strong>{t("pallets")}</strong>
                       <span>{row.palletCount}</span>
                     </div>
+                    ) : null}
                   </div>
                 </div>
               ))}
@@ -550,7 +552,6 @@ function buildInventorySummaryRows(
   selectedCustomerId: string,
   selectedLocationId: string,
   selectedContainerType: InventorySummaryContainerTypeFilter,
-  healthFilter: InventorySummaryHealthFilter,
   containerTypeLookup: Map<string, ContainerType>
 ) {
   const filteredItems = items.filter((item) => {
@@ -618,7 +619,6 @@ function buildInventorySummaryRows(
         containerBalances
       };
     })
-    .filter((row) => healthFilter !== "LOW_STOCK" || row.items.some((item) => item.reorderLevel > 0 && item.availableQty <= item.reorderLevel))
     .sort((left, right) => {
       if (left.customerName !== right.customerName) return left.customerName.localeCompare(right.customerName);
       return left.sku.localeCompare(right.sku);

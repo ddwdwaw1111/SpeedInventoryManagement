@@ -58,6 +58,7 @@ test("inventory summary launches transfer workflow with the selected sku context
     `${customer.id}:${sourceLocation.id}:${selectedItem.storageSection}:${selectedItem.containerNo}:${selectedItem.skuMasterId}`
   );
   await lineCard.getByLabel("Transfer Qty").fill("5");
+  await lineCard.getByLabel("Pallet Qty").fill("1");
   await lineCard.getByLabel("Destination Warehouse").selectOption(String(destinationLocation.id));
   await lineCard.getByLabel("To Section").selectOption("BULK");
   await dialog.locator('button[type="submit"]').click();
@@ -72,6 +73,7 @@ test("inventory summary launches transfer workflow with the selected sku context
         containerNo: selectedItem.containerNo,
         skuMasterId: selectedItem.skuMasterId,
         quantity: 5,
+        pallets: 1,
         toLocationId: destinationLocation.id,
         toStorageSection: "BULK"
       }

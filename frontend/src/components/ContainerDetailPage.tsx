@@ -25,7 +25,7 @@ import { setPendingAllActivityContext } from "../lib/allActivityContext";
 import { setPendingInventoryActionContext } from "../lib/inventoryActionContext";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
-import type { PageKey } from "../lib/routes";
+import { PALLET_ENTITY_UI_ENABLED, type PageKey } from "../lib/routes";
 import {
   getLocationSectionOptions,
   normalizeStorageSection,
@@ -257,16 +257,20 @@ export function ContainerDetailPage({
     () => getLocationSectionOptions(transferDestinationLocation ?? undefined),
     [transferDestinationLocation]
   );
-  const canOpenAdjustmentDialog = canManageInventory && actionablePallets.length > 0;
-  const canOpenTransferDialog = canManageInventory && actionablePallets.length > 0;
-  const canLaunchCycleCount = canManageInventory && Boolean(container && container.rowCount > 0 && normalizedContainerNo);
+  const canOpenAdjustmentDialog = PALLET_ENTITY_UI_ENABLED && canManageInventory && actionablePallets.length > 0;
+  const canOpenTransferDialog = PALLET_ENTITY_UI_ENABLED && canManageInventory && actionablePallets.length > 0;
+  const canLaunchCycleCount = PALLET_ENTITY_UI_ENABLED && canManageInventory && Boolean(container && container.rowCount > 0 && normalizedContainerNo);
   const lifecycleCustomerId = container?.customerIds.length === 1 ? container.customerIds[0] : null;
+  const containerPalletCount = useMemo(
+    () => (container?.items ?? []).reduce((sum, item) => sum + item.pallets, 0),
+    [container]
+  );
 
   useEffect(() => {
     let active = true;
 
     async function loadPallets() {
-      if (!normalizedContainerNo) {
+      if (!PALLET_ENTITY_UI_ENABLED || !normalizedContainerNo) {
         setPallets([]);
         setPalletErrorMessage("");
         setIsPalletsLoading(false);
@@ -301,7 +305,7 @@ export function ContainerDetailPage({
     let active = true;
 
     async function loadHistoryEvents() {
-      if (!normalizedContainerNo) {
+      if (!PALLET_ENTITY_UI_ENABLED || !normalizedContainerNo) {
         setPalletLocationEvents([]);
         setHistoryErrorMessage("");
         setIsHistoryLoading(false);
@@ -591,42 +595,46 @@ export function ContainerDetailPage({
                   <HistoryOutlinedIcon sx={{ fontSize: 15 }} />
                   {t("openContainerLifecycle")}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!canLaunchCycleCount || !normalizedContainerNo) {
-                      return;
-                    }
+                {PALLET_ENTITY_UI_ENABLED ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!canLaunchCycleCount || !normalizedContainerNo) {
+                          return;
+                        }
 
-                    setPendingInventoryActionContext("cycle-counts", {
-                      containerNo: normalizedContainerNo
-                    });
-                    onNavigate("cycle-counts");
-                  }}
-                  disabled={!canLaunchCycleCount}
-                  className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <FactCheckOutlinedIcon sx={{ fontSize: 15 }} />
-                  {t("addCycleCount")}
-                </button>
-                <button
-                  type="button"
-                  onClick={openAdjustmentDialog}
-                  disabled={!canOpenAdjustmentDialog}
-                  className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <TuneOutlinedIcon sx={{ fontSize: 15 }} />
-                  {t("addAdjustment")}
-                </button>
-                <button
-                  type="button"
-                  onClick={openTransferDialog}
-                  disabled={!canOpenTransferDialog}
-                  className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <CompareArrowsOutlinedIcon sx={{ fontSize: 15 }} />
-                  {t("addTransfer")}
-                </button>
+                        setPendingInventoryActionContext("cycle-counts", {
+                          containerNo: normalizedContainerNo
+                        });
+                        onNavigate("cycle-counts");
+                      }}
+                      disabled={!canLaunchCycleCount}
+                      className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <FactCheckOutlinedIcon sx={{ fontSize: 15 }} />
+                      {t("addCycleCount")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openAdjustmentDialog}
+                      disabled={!canOpenAdjustmentDialog}
+                      className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <TuneOutlinedIcon sx={{ fontSize: 15 }} />
+                      {t("addAdjustment")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openTransferDialog}
+                      disabled={!canOpenTransferDialog}
+                      className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <CompareArrowsOutlinedIcon sx={{ fontSize: 15 }} />
+                      {t("addTransfer")}
+                    </button>
+                  </>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -647,7 +655,7 @@ export function ContainerDetailPage({
                 <div className="grid gap-2 md:grid-cols-4">
                   <OverviewStatCard icon={<FactCheckOutlinedIcon sx={{ fontSize: 16 }} />} label={t("skuCount")} value={String(skuCards.length)} meta={t("containerItems")} />
                   <OverviewStatCard icon={<MoveToInboxOutlinedIcon sx={{ fontSize: 16 }} />} label={t("onHand")} value={String(container.onHand)} meta={t("availableQty")} secondaryValue={String(container.availableQty)} />
-                  <OverviewStatCard icon={<WarehouseOutlinedIcon sx={{ fontSize: 16 }} />} label={t("palletTrace")} value={String(pallets.length)} meta={t("palletOpenCount")} secondaryValue={String(totalOpenPalletCount)} />
+                  <OverviewStatCard icon={<WarehouseOutlinedIcon sx={{ fontSize: 16 }} />} label={t("pallets")} value={String(containerPalletCount)} meta={t("currentInventoryRows")} secondaryValue={String(container.rowCount)} />
                   <OverviewStatCard icon={<TuneOutlinedIcon sx={{ fontSize: 16 }} />} label={t("currentInventoryRows")} value={String(container.rowCount)} meta={container.warehouseSummary || "-"} />
                 </div>
 
@@ -680,7 +688,7 @@ export function ContainerDetailPage({
           <div className="flex flex-wrap items-center gap-2.5 rounded-2xl bg-white px-3.5 py-2.5 shadow-[0_4px_16px_rgba(15,23,42,0.07)] ring-1 ring-slate-200/60">
             {[
               { id: "section-sku", label: t("containerNavSku"), count: skuCards.length },
-              { id: "section-pallets", label: t("containerNavPallets"), count: pallets.length },
+              ...(PALLET_ENTITY_UI_ENABLED ? [{ id: "section-pallets", label: t("containerNavPallets"), count: pallets.length }] : []),
               { id: "section-history", label: t("containerNavHistory"), count: containerHistoryEntries.length },
             ].map((section) => (
               <button
@@ -725,6 +733,7 @@ export function ContainerDetailPage({
           )}
         </section>
 
+        {PALLET_ENTITY_UI_ENABLED ? (
         <section id="section-pallets" className="rounded-[20px] border border-slate-200/80 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
           <WorkspacePanelHeader
             title={t("containerDetailPalletTitle")}
@@ -816,6 +825,7 @@ export function ContainerDetailPage({
             <div className="sheet-note sheet-note--readonly">{pallets.length > 0 ? t("containerDetailNoPalletsInScope") : t("containerDetailNoCurrentPallets")}</div>
           )}
         </section>
+        ) : null}
 
         <section id="section-history" className="rounded-[20px] border border-slate-200/80 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
           <WorkspacePanelHeader
@@ -1749,6 +1759,7 @@ function buildTransferLinesFromPallets(
       palletId: pallet.id,
       skuMasterId: content.skuMasterId,
       quantity: availableQty,
+      pallets: 1,
       toLocationId,
       toStorageSection: normalizedToStorageSection,
       lineNote: normalizedLineNote

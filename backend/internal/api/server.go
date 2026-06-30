@@ -273,7 +273,6 @@ func (s *Server) handleCreateSKUMaster(c *gin.Context) {
 		"sku":                   skuMaster.SKU,
 		"name":                  skuMaster.Name,
 		"category":              skuMaster.Category,
-		"reorderLevel":          skuMaster.ReorderLevel,
 		"defaultUnitsPerPallet": skuMaster.DefaultUnitsPerPallet,
 		"unit":                  skuMaster.Unit,
 	})
@@ -305,7 +304,6 @@ func (s *Server) handleUpdateSKUMaster(c *gin.Context) {
 		"sku":                   skuMaster.SKU,
 		"name":                  skuMaster.Name,
 		"category":              skuMaster.Category,
-		"reorderLevel":          skuMaster.ReorderLevel,
 		"defaultUnitsPerPallet": skuMaster.DefaultUnitsPerPallet,
 		"unit":                  skuMaster.Unit,
 	})
@@ -344,10 +342,9 @@ func (s *Server) handleListItems(c *gin.Context) {
 	}
 
 	items, err := s.store.ListItems(c.Request.Context(), service.ItemFilters{
-		Search:       c.Query("search"),
-		LocationID:   locationID,
-		CustomerID:   customerID,
-		LowStockOnly: strings.EqualFold(c.Query("lowStock"), "true"),
+		Search:     c.Query("search"),
+		LocationID: locationID,
+		CustomerID: customerID,
 	})
 	if err != nil {
 		writeServerError(c, err)

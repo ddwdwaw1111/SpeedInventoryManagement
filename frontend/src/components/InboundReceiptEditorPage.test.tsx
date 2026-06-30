@@ -93,7 +93,6 @@ describe("InboundReceiptEditorPage", () => {
           {
             sku: "ABC123",
             description: "Sample inbound SKU",
-            reorderLevel: 2,
             expectedQty: 8,
             receivedQty: 8,
             pallets: 0,
@@ -129,7 +128,6 @@ describe("InboundReceiptEditorPage", () => {
           sku: "022334",
           description: "Local draft SKU",
           storageSection: "TEMP",
-          reorderLevel: 1,
           expectedQty: 5,
           receivedQty: 5,
           pallets: 0,

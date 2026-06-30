@@ -76,7 +76,6 @@ type ItemQuery = {
   search?: string;
   locationId?: number;
   customerId?: number;
-  lowStock?: boolean;
 };
 
 type SKUMasterQuery = {
@@ -429,10 +428,6 @@ export const api = {
     if (query?.customerId) {
       params.set("customerId", String(query.customerId));
     }
-    if (query?.lowStock) {
-      params.set("lowStock", "true");
-    }
-
     const suffix = params.toString() ? `?${params.toString()}` : "";
     return request<Item[]>(`/items${suffix}`);
   },

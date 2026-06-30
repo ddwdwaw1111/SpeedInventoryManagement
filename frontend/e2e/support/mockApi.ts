@@ -1,4 +1,5 @@
 import type { Page, Route } from "@playwright/test";
+import { normalizeStorageSection } from "../../src/lib/types";
 import type {
   AuthResponse,
   CycleCount,
@@ -352,6 +353,7 @@ export function buildItem(overrides: Partial<Item> = {}): Item {
     description: "Playwright test stock",
     unit: "EA",
     quantity: 25,
+    pallets: 1,
     availableQty: 25,
     allocatedQty: 0,
     damagedQty: 0,
@@ -646,7 +648,7 @@ function buildInventoryTransfer(
     const customer = customers.find((entry) => entry.id === line.customerId);
     const fromLocation = locations.find((entry) => entry.id === line.locationId);
     const toLocation = locations.find((entry) => entry.id === line.toLocationId);
-    const item = findMatchingItem(items, line.customerId, line.locationId, line.storageSection, line.containerNo, line.skuMasterId);
+    const item = findMatchingItem(items, line.customerId, line.locationId, line.storageSection, line.containerId ?? 0, line.containerNo, line.skuMasterId);
 
     return {
       id: id * 100 + index + 1,
@@ -662,6 +664,7 @@ function buildInventoryTransfer(
       sku: item?.sku ?? `SKU-${line.skuMasterId}`,
       description: item?.description || item?.name || "Inventory transfer line",
       quantity: line.quantity,
+      pallets: line.pallets ?? 0,
       lineNote: line.lineNote ?? "",
       createdAt
     };
@@ -694,7 +697,7 @@ function buildCycleCount(
   const lines = payload.lines.map((line, index) => {
     const customer = customers.find((entry) => entry.id === line.customerId);
     const location = locations.find((entry) => entry.id === line.locationId);
-    const item = findMatchingItem(items, line.customerId, line.locationId, line.storageSection, line.containerNo, line.skuMasterId);
+    const item = findMatchingItem(items, line.customerId, line.locationId, line.storageSection, line.containerId ?? 0, line.containerNo, line.skuMasterId);
     const pallet = line.palletId ? pallets.find((entry) => entry.id === line.palletId) : undefined;
     const systemQty = line.createPallet
       ? 0
@@ -767,6 +770,7 @@ export function buildInboundDocument(
     locationName: location?.name ?? `Warehouse #${payload.locationId}`,
     expectedArrivalDate: payload.expectedArrivalDate ?? null,
     actualArrivalDate: payload.actualArrivalDate ?? null,
+    containerId: payload.containerId ?? id,
     containerNo: payload.containerNo ?? "",
     containerType: payload.containerType ?? "NORMAL",
     handlingMode: payload.handlingMode === "SEALED_TRANSIT" ? "SEALED_TRANSIT" : "PALLETIZED",
@@ -792,16 +796,22 @@ function findMatchingItem(
   customerId: number,
   locationId: number,
   storageSection: string,
+  containerId: number | undefined,
   containerNo: string,
   skuMasterId: number
 ) {
   const normalizedSection = normalizeValue(storageSection);
   const normalizedContainerNo = normalizeValue(containerNo);
+  const normalizedContainerId = containerId ?? 0;
   return items.find((entry) => (
     entry.customerId === customerId
     && entry.locationId === locationId
     && normalizeValue(entry.storageSection) === normalizedSection
-    && normalizeValue(entry.containerNo) === normalizedContainerNo
+    && (
+      normalizedContainerId > 0
+        ? (entry.containerId ?? 0) === normalizedContainerId
+        : normalizeValue(entry.containerNo) === normalizedContainerNo
+    )
     && entry.skuMasterId === skuMasterId
   ));
 }
@@ -831,8 +841,34 @@ export function buildOutboundDocument(
   const customer = customers.find((entry) => entry.id === customerID);
   const lines = payload.lines.map((line, index) => {
     const location = locations.find((entry) => entry.id === line.locationId);
+    const lineID = id * 100 + index + 1;
+    const fallbackPickAllocations = (line.pickPallets ?? []).map((pick) => ({
+      itemNumber: line.skuMasterId === 101 ? "ITEM-101" : String(line.skuMasterId),
+      locationId: line.locationId,
+      locationName: location?.name ?? `Warehouse #${line.locationId}`,
+      storageSection: "TEMP",
+      containerId: 0,
+      containerNo: "",
+      allocatedQty: pick.quantity,
+      pallets: undefined
+    }));
+    const pickAllocations = (line.pickAllocations?.length ? line.pickAllocations : fallbackPickAllocations)
+      .map((allocation, allocationIndex) => ({
+        id: lineID * 100 + allocationIndex + 1,
+        lineId: lineID,
+        itemNumber: allocation.itemNumber ?? (line.skuMasterId === 101 ? "ITEM-101" : String(line.skuMasterId)),
+        locationId: allocation.locationId,
+        locationName: allocation.locationName ?? location?.name ?? `Warehouse #${allocation.locationId}`,
+        storageSection: normalizeStorageSection(allocation.storageSection),
+        containerId: allocation.containerId ?? 0,
+        containerNo: allocation.containerNo ?? "",
+        allocatedQty: allocation.allocatedQty,
+        pallets: allocation.pallets,
+        createdAt
+      }));
+
     return {
-      id: id * 100 + index + 1,
+      id: lineID,
       documentId: id,
       skuMasterId: line.skuMasterId,
       itemNumber: line.skuMasterId === 101 ? "ITEM-101" : String(line.skuMasterId),
@@ -850,7 +886,7 @@ export function buildOutboundDocument(
       grossWeightKgs: line.grossWeightKgs ?? 0,
       lineNote: line.lineNote ?? "",
       pickPallets: line.pickPallets ?? [],
-      pickAllocations: [],
+      pickAllocations,
       createdAt
     };
   });

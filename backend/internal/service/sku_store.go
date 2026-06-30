@@ -18,7 +18,6 @@ func (s *Store) ListSKUMasters(ctx context.Context, search string) ([]SKUMaster,
 			category,
 			COALESCE(description, '') AS description,
 			unit,
-			reorder_level,
 			default_units_per_pallet,
 			created_at,
 			updated_at
@@ -57,10 +56,9 @@ func (s *Store) CreateSKUMaster(ctx context.Context, input CreateSKUMasterInput)
 			category,
 			description,
 			unit,
-			reorder_level,
 			default_units_per_pallet
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`,
 		nullableString(input.ItemNumber),
 		input.SKU,
@@ -68,7 +66,6 @@ func (s *Store) CreateSKUMaster(ctx context.Context, input CreateSKUMasterInput)
 		input.Category,
 		input.Description,
 		input.Unit,
-		input.ReorderLevel,
 		input.DefaultUnitsPerPallet,
 	)
 	if err != nil {
@@ -98,7 +95,6 @@ func (s *Store) UpdateSKUMaster(ctx context.Context, skuMasterID int64, input Cr
 			category = ?,
 			description = ?,
 			unit = ?,
-			reorder_level = ?,
 			default_units_per_pallet = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
@@ -109,7 +105,6 @@ func (s *Store) UpdateSKUMaster(ctx context.Context, skuMasterID int64, input Cr
 		input.Category,
 		input.Description,
 		input.Unit,
-		input.ReorderLevel,
 		input.DefaultUnitsPerPallet,
 		skuMasterID,
 	)
@@ -131,15 +126,12 @@ func (s *Store) UpdateSKUMaster(ctx context.Context, skuMasterID int64, input Cr
 func (s *Store) DeleteSKUMaster(ctx context.Context, skuMasterID int64) error {
 	var linkedInventoryCount int
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT
-			(SELECT COUNT(*) FROM inventory_items WHERE sku_master_id = ?)
-			+
-			(SELECT COUNT(*) FROM pallet_items WHERE sku_master_id = ?)
-	`, skuMasterID, skuMasterID).Scan(&linkedInventoryCount); err != nil {
+		SELECT COUNT(*) FROM inventory_items WHERE sku_master_id = ?
+	`, skuMasterID).Scan(&linkedInventoryCount); err != nil {
 		return fmt.Errorf("count linked projection rows for sku master delete: %w", err)
 	}
 	if linkedInventoryCount > 0 {
-		return fmt.Errorf("%w: sku master is linked to pallet or bucket rows", ErrInvalidInput)
+		return fmt.Errorf("%w: sku master is linked to inventory rows", ErrInvalidInput)
 	}
 
 	result, err := s.db.ExecContext(ctx, `DELETE FROM sku_master WHERE id = ?`, skuMasterID)
@@ -169,7 +161,6 @@ func (s *Store) getSKUMaster(ctx context.Context, skuMasterID int64) (SKUMaster,
 			category,
 			COALESCE(description, '') AS description,
 			unit,
-			reorder_level,
 			default_units_per_pallet,
 			created_at,
 			updated_at
@@ -212,8 +203,6 @@ func validateSKUMasterInput(input CreateSKUMasterInput) error {
 		return fmt.Errorf("%w: sku is required", ErrInvalidInput)
 	case input.Description == "":
 		return fmt.Errorf("%w: description is required", ErrInvalidInput)
-	case input.ReorderLevel < 0:
-		return fmt.Errorf("%w: reorder level cannot be negative", ErrInvalidInput)
 	case input.DefaultUnitsPerPallet < 0:
 		return fmt.Errorf("%w: default units per pallet cannot be negative", ErrInvalidInput)
 	default:

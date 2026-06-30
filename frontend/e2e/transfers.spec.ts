@@ -56,6 +56,7 @@ test("transfer management posts the selected stock row to the destination wareho
     `${customer.id}:${sourceLocation.id}:${sourceItem.storageSection}:${sourceItem.containerNo}:${sourceItem.skuMasterId}`
   );
   await lineCard.getByLabel("Transfer Qty").fill("5");
+  await lineCard.getByLabel("Pallet Qty").fill("1");
   await lineCard.getByLabel("Destination Warehouse").selectOption(String(destinationLocation.id));
   await lineCard.getByLabel("To Section").selectOption("BULK");
   await dialog.locator('button[type="submit"]').click();
@@ -70,6 +71,7 @@ test("transfer management posts the selected stock row to the destination wareho
         containerNo: sourceItem.containerNo,
         skuMasterId: sourceItem.skuMasterId,
         quantity: 5,
+        pallets: 1,
         toLocationId: destinationLocation.id,
         toStorageSection: "BULK"
       }

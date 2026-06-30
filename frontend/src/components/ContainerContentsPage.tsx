@@ -36,7 +36,7 @@ type ContainerContentsPageProps = {
 const CONTAINER_CONTENTS_COLUMN_ORDER_PREFERENCE_KEY = "container-contents.column-order";
 const CONTAINER_CONTENTS_MOVEMENT_LOAD_LIMIT = 20000;
 const CONTAINER_CONTENTS_EXPORT_TITLE = "Container Contents";
-const CONTAINER_CONTENTS_EXPORT_COLUMNS = [
+const CONTAINER_CONTENTS_EXPORT_COLUMNS: ExcelExportColumn[] = [
   { key: "containerNo", label: "Container No." },
   { key: "itemNumber", label: "Item #" },
   { key: "sku", label: "SKU" },
@@ -49,9 +49,8 @@ const CONTAINER_CONTENTS_EXPORT_COLUMNS = [
   { key: "onHand", label: "On Hand" },
   { key: "availableQty", label: "Available Qty" },
   { key: "damagedQty", label: "Damaged Qty" },
-  { key: "holdQty", label: "On Hold Qty" },
-  { key: "reorderLevel", label: "Reorder Level" }
-] as const;
+  { key: "holdQty", label: "On Hold Qty" }
+];
 
 export function ContainerContentsPage({
   items,
@@ -238,8 +237,7 @@ export function ContainerContentsPage({
               onHand: item.quantity,
               availableQty: item.availableQty,
               damagedQty: item.damagedQty,
-              holdQty: item.holdQty,
-              reorderLevel: item.reorderLevel
+              holdQty: item.holdQty
             }))
         : [{
             containerNo: row.containerNo,
@@ -254,8 +252,7 @@ export function ContainerContentsPage({
             onHand: 0,
             availableQty: 0,
             damagedQty: 0,
-            holdQty: 0,
-            reorderLevel: undefined
+            holdQty: 0
           }]
     );
 

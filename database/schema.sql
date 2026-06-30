@@ -72,7 +72,6 @@ CREATE TABLE IF NOT EXISTS sku_master (
   category VARCHAR(120) NOT NULL,
   description TEXT DEFAULT NULL,
   unit VARCHAR(32) NOT NULL DEFAULT 'pcs',
-  reorder_level INT NOT NULL DEFAULT 0,
   default_units_per_pallet INT NOT NULL DEFAULT 0,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -99,16 +98,23 @@ CREATE TABLE IF NOT EXISTS inventory_items (
   customer_id BIGINT NOT NULL,
   location_id BIGINT NOT NULL,
   storage_section VARCHAR(16) NOT NULL DEFAULT 'TEMP',
+  quantity INT NOT NULL DEFAULT 0,
+  pallets INT NOT NULL DEFAULT 0,
+  allocated_qty INT NOT NULL DEFAULT 0,
+  damaged_qty INT NOT NULL DEFAULT 0,
+  hold_qty INT NOT NULL DEFAULT 0,
   delivery_date DATE DEFAULT NULL,
+  container_id BIGINT NOT NULL DEFAULT 0,
   container_no VARCHAR(120) NOT NULL DEFAULT '',
   last_restocked_at TIMESTAMP NULL DEFAULT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  UNIQUE KEY uq_inventory_item_balance (sku_master_id, location_id, storage_section, customer_id, container_no),
+  UNIQUE KEY uq_inventory_item_balance (sku_master_id, location_id, storage_section, customer_id, container_id),
   KEY idx_inventory_items_location_id (location_id),
   KEY idx_inventory_items_sku_master_id (sku_master_id),
   KEY idx_inventory_items_customer_id (customer_id),
+  KEY idx_inventory_items_container_id (container_id),
   CONSTRAINT fk_inventory_items_sku_master
     FOREIGN KEY (sku_master_id) REFERENCES sku_master (id),
   CONSTRAINT fk_inventory_items_customer
@@ -152,6 +158,7 @@ CREATE TABLE IF NOT EXISTS inbound_documents (
   location_id BIGINT NOT NULL,
   expected_arrival_date DATE DEFAULT NULL,
   actual_arrival_date DATE DEFAULT NULL,
+  container_id BIGINT NOT NULL DEFAULT 0,
   container_no VARCHAR(120) NOT NULL DEFAULT '',
   container_type VARCHAR(32) NOT NULL DEFAULT 'NORMAL',
   handling_mode VARCHAR(32) NOT NULL DEFAULT 'PALLETIZED',
@@ -171,11 +178,41 @@ CREATE TABLE IF NOT EXISTS inbound_documents (
   KEY idx_inbound_documents_customer_id (customer_id),
   KEY idx_inbound_documents_location_id (location_id),
   KEY idx_inbound_documents_expected_arrival_date (expected_arrival_date),
+  KEY idx_inbound_documents_container_id (container_id),
   KEY idx_inbound_documents_container_no (container_no),
   CONSTRAINT fk_inbound_documents_customer
     FOREIGN KEY (customer_id) REFERENCES customers (id),
   CONSTRAINT fk_inbound_documents_location
     FOREIGN KEY (location_id) REFERENCES storage_locations (id)
+);
+
+CREATE TABLE IF NOT EXISTS containers (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  customer_id BIGINT NOT NULL,
+  inbound_document_id BIGINT DEFAULT NULL,
+  location_id BIGINT DEFAULT NULL,
+  container_no VARCHAR(120) NOT NULL,
+  container_type VARCHAR(32) NOT NULL DEFAULT 'NORMAL',
+  handling_mode VARCHAR(32) NOT NULL DEFAULT 'PALLETIZED',
+  status VARCHAR(32) NOT NULL DEFAULT 'TRACKING_RECEIVED',
+  tracking_status VARCHAR(32) NOT NULL DEFAULT 'TRACKING_RECEIVED',
+  last_event_at TIMESTAMP NULL DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_containers_customer_container_no (customer_id, container_no),
+  KEY idx_containers_customer_id (customer_id),
+  KEY idx_containers_inbound_document_id (inbound_document_id),
+  KEY idx_containers_location_id (location_id),
+  KEY idx_containers_status (status),
+  CONSTRAINT fk_containers_customer
+    FOREIGN KEY (customer_id) REFERENCES customers (id),
+  CONSTRAINT fk_containers_inbound_document
+    FOREIGN KEY (inbound_document_id) REFERENCES inbound_documents (id)
+    ON DELETE SET NULL,
+  CONSTRAINT fk_containers_location
+    FOREIGN KEY (location_id) REFERENCES storage_locations (id)
+    ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS container_visits (
@@ -213,7 +250,6 @@ CREATE TABLE IF NOT EXISTS inbound_document_lines (
   sku_snapshot VARCHAR(64) NOT NULL,
   description_snapshot VARCHAR(255) DEFAULT NULL,
   storage_section VARCHAR(16) NOT NULL DEFAULT 'TEMP',
-  reorder_level INT NOT NULL DEFAULT 0,
   expected_qty INT NOT NULL DEFAULT 0,
   received_qty INT NOT NULL DEFAULT 0,
   pallets INT NOT NULL DEFAULT 0,
@@ -244,7 +280,7 @@ CREATE TABLE IF NOT EXISTS outbound_document_lines (
   quantity INT NOT NULL DEFAULT 0,
   pallets INT NOT NULL DEFAULT 0,
   pallets_detail_ctns VARCHAR(255) DEFAULT NULL,
-  pick_pallets_json TEXT DEFAULT NULL,
+  pick_allocations_json TEXT DEFAULT NULL,
   unit_label VARCHAR(32) DEFAULT NULL,
   carton_size_mm VARCHAR(120) DEFAULT NULL,
   net_weight_kgs DECIMAL(12,2) NOT NULL DEFAULT 0,
@@ -354,7 +390,7 @@ CREATE TABLE IF NOT EXISTS stock_ledger (
   id BIGINT NOT NULL AUTO_INCREMENT,
   event_type VARCHAR(32) NOT NULL,
   occurred_at TIMESTAMP NULL DEFAULT NULL,
-  pallet_id BIGINT NOT NULL,
+  pallet_id BIGINT DEFAULT NULL,
   pallet_item_id BIGINT DEFAULT NULL,
   sku_master_id BIGINT DEFAULT NULL,
   customer_id BIGINT NOT NULL,
@@ -364,6 +400,7 @@ CREATE TABLE IF NOT EXISTS stock_ledger (
   source_document_type VARCHAR(32) DEFAULT NULL,
   source_document_id BIGINT DEFAULT NULL,
   source_line_id BIGINT DEFAULT NULL,
+  container_id BIGINT NOT NULL DEFAULT 0,
   container_no_snapshot VARCHAR(120) NOT NULL DEFAULT '',
   delivery_date DATE DEFAULT NULL,
   out_date DATE DEFAULT NULL,
@@ -389,6 +426,7 @@ CREATE TABLE IF NOT EXISTS stock_ledger (
   KEY idx_stock_ledger_pallet_id (pallet_id),
   KEY idx_stock_ledger_pallet_item_id (pallet_item_id),
   KEY idx_stock_ledger_customer_id (customer_id),
+  KEY idx_stock_ledger_container_id (container_id),
   KEY idx_stock_ledger_event_type_created (event_type, created_at),
   KEY idx_stock_ledger_created_at (created_at),
   KEY idx_stock_ledger_source (source_document_type, source_document_id),
@@ -398,26 +436,6 @@ CREATE TABLE IF NOT EXISTS stock_ledger (
     FOREIGN KEY (customer_id) REFERENCES customers (id),
   CONSTRAINT fk_stock_ledger_location
     FOREIGN KEY (location_id) REFERENCES storage_locations (id)
-);
-
-CREATE TABLE IF NOT EXISTS outbound_picks (
-  id BIGINT NOT NULL AUTO_INCREMENT,
-  outbound_line_id BIGINT NOT NULL,
-  pallet_id BIGINT NOT NULL,
-  pallet_item_id BIGINT NOT NULL,
-  picked_qty INT NOT NULL DEFAULT 0,
-  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (id),
-  KEY idx_outbound_picks_line_id (outbound_line_id),
-  KEY idx_outbound_picks_pallet_id (pallet_id),
-  KEY idx_outbound_picks_pallet_item_id (pallet_item_id),
-  CONSTRAINT fk_outbound_picks_line
-    FOREIGN KEY (outbound_line_id) REFERENCES outbound_document_lines (id)
-    ON DELETE CASCADE,
-  CONSTRAINT fk_outbound_picks_pallet
-    FOREIGN KEY (pallet_id) REFERENCES pallets (id),
-  CONSTRAINT fk_outbound_picks_item
-    FOREIGN KEY (pallet_item_id) REFERENCES pallet_items (id)
 );
 
 CREATE TABLE IF NOT EXISTS pallet_location_events (
@@ -519,6 +537,7 @@ CREATE TABLE IF NOT EXISTS inventory_transfer_lines (
   sku_snapshot VARCHAR(64) NOT NULL,
   description_snapshot VARCHAR(255) DEFAULT NULL,
   quantity INT NOT NULL DEFAULT 0,
+  pallets INT NOT NULL DEFAULT 0,
   line_note VARCHAR(255) DEFAULT NULL,
   sort_order INT NOT NULL DEFAULT 1,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,

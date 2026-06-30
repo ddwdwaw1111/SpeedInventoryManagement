@@ -52,7 +52,8 @@ type customerPortalContainerSummaryAccumulator struct {
 	warehouseSet     map[string]struct{}
 	pickingOrderRefs map[string]struct{}
 	transferRefs     map[string]struct{}
-	palletIDs        map[int64]struct{}
+	receivedPallets  int
+	currentPallets   int
 }
 
 func (s *Server) handleCustomerPortalContainers(c *gin.Context) {
@@ -125,24 +126,6 @@ func (s *Server) handleCustomerPortalContainerLifecycle(c *gin.Context) {
 		return
 	}
 
-	pallets, err := s.store.ListPallets(c.Request.Context(), customerPortalContainerLoadLimit, service.ListPalletFilters{
-		CustomerID:  customerID,
-		ContainerNo: containerNo,
-	})
-	if err != nil {
-		writeServerError(c, err)
-		return
-	}
-
-	palletEvents, err := s.store.ListPalletLocationEvents(c.Request.Context(), customerPortalContainerLoadLimit, service.ListPalletLocationEventFilters{
-		ContainerNo: containerNo,
-		CustomerID:  customerID,
-	})
-	if err != nil {
-		writeServerError(c, err)
-		return
-	}
-
 	lifecycleEvents, err := s.store.ListContainerLifecycleEvents(c.Request.Context(), customerPortalContainerLoadLimit, service.ContainerLifecycleEventFilters{
 		CustomerID:  customerID,
 		ContainerNo: containerNo,
@@ -158,7 +141,7 @@ func (s *Server) handleCustomerPortalContainerLifecycle(c *gin.Context) {
 		return
 	}
 
-	summaries := buildCustomerPortalContainerSummaries(packingLists, items, lifecycleEvents, pallets)
+	summaries := buildCustomerPortalContainerSummaries(packingLists, items, lifecycleEvents)
 	summary, found := summaries[containerNo]
 	if !found {
 		writeDomainError(c, service.ErrNotFound)
@@ -171,8 +154,8 @@ func (s *Server) handleCustomerPortalContainerLifecycle(c *gin.Context) {
 		PickingOrders:   pickingOrders,
 		Movements:       movements,
 		LifecycleEvents: lifecycleEvents,
-		Pallets:         pallets,
-		PalletEvents:    palletEvents,
+		Pallets:         []service.PalletTrace{},
+		PalletEvents:    []service.PalletLocationEvent{},
 	})
 }
 
@@ -195,12 +178,7 @@ func (s *Server) loadCustomerPortalContainerSummaries(ctx context.Context, custo
 		return nil, err
 	}
 
-	pallets, err := s.store.ListPallets(ctx, customerPortalContainerLoadLimit, service.ListPalletFilters{CustomerID: customerID})
-	if err != nil {
-		return nil, err
-	}
-
-	summariesByContainer := buildCustomerPortalContainerSummaries(packingLists, items, lifecycleEvents, pallets)
+	summariesByContainer := buildCustomerPortalContainerSummaries(packingLists, items, lifecycleEvents)
 	summaries := make([]customerPortalContainerSummary, 0, len(summariesByContainer))
 	for _, summary := range summariesByContainer {
 		summaries = append(summaries, summary)
@@ -299,7 +277,6 @@ func buildCustomerPortalContainerSummaries(
 	packingLists []service.InboundDocument,
 	items []service.Item,
 	lifecycleEvents []service.ContainerLifecycleEvent,
-	pallets []service.PalletTrace,
 ) map[string]customerPortalContainerSummary {
 	accumulators := make(map[string]*customerPortalContainerSummaryAccumulator)
 	getAccumulator := func(containerNo string) *customerPortalContainerSummaryAccumulator {
@@ -318,7 +295,6 @@ func buildCustomerPortalContainerSummaries(
 			warehouseSet:     make(map[string]struct{}),
 			pickingOrderRefs: make(map[string]struct{}),
 			transferRefs:     make(map[string]struct{}),
-			palletIDs:        make(map[int64]struct{}),
 		}
 		accumulators[normalized] = accumulator
 		return accumulator
@@ -339,6 +315,7 @@ func buildCustomerPortalContainerSummaries(
 		accumulator.summary.PackingListCount++
 		accumulator.summary.TotalExpectedQty += document.TotalExpectedQty
 		accumulator.summary.TotalReceivedQty += document.TotalReceivedQty
+		accumulator.receivedPallets += customerPortalInboundDocumentPalletCount(document)
 		accumulator.addWarehouse(document.LocationName)
 		accumulator.setFirstReceived(customerPortalInboundDocumentActivityTime(document))
 		accumulator.setLastActivity(customerPortalInboundDocumentUpdatedTime(document))
@@ -355,6 +332,9 @@ func buildCustomerPortalContainerSummaries(
 		}
 		accumulator.summary.CurrentQty += item.Quantity
 		accumulator.summary.AvailableQty += item.AvailableQty
+		if item.Pallets > 0 {
+			accumulator.currentPallets += item.Pallets
+		}
 		accumulator.addWarehouse(item.LocationName)
 		accumulator.setLastActivity(&item.UpdatedAt)
 	}
@@ -386,20 +366,6 @@ func buildCustomerPortalContainerSummaries(
 		accumulator.setLastActivity(customerPortalLifecycleEventActivityTime(event))
 	}
 
-	for _, pallet := range pallets {
-		accumulator := getAccumulator(pallet.CurrentContainerNo)
-		if accumulator == nil {
-			continue
-		}
-		if accumulator.summary.CustomerID == 0 {
-			accumulator.summary.CustomerID = pallet.CustomerID
-			accumulator.summary.CustomerName = pallet.CustomerName
-		}
-		accumulator.addWarehouse(pallet.CurrentLocationName)
-		accumulator.palletIDs[pallet.ID] = struct{}{}
-		accumulator.setLastActivity(&pallet.UpdatedAt)
-	}
-
 	summaries := make(map[string]customerPortalContainerSummary, len(accumulators))
 	for containerNo, accumulator := range accumulators {
 		summary := accumulator.summary
@@ -407,7 +373,10 @@ func buildCustomerPortalContainerSummaries(
 		summary.OutboundOrderCount = len(accumulator.pickingOrderRefs)
 		summary.PickingOrderRefs = sortedStringSet(accumulator.pickingOrderRefs)
 		summary.TransferCount = len(accumulator.transferRefs)
-		summary.PalletCount = len(accumulator.palletIDs)
+		summary.PalletCount = accumulator.currentPallets
+		if summary.PalletCount == 0 {
+			summary.PalletCount = accumulator.receivedPallets
+		}
 		if summary.ShippedQty < 0 {
 			summary.ShippedQty = 0
 		}
@@ -423,6 +392,16 @@ func (a *customerPortalContainerSummaryAccumulator) addWarehouse(value string) {
 		return
 	}
 	a.warehouseSet[trimmed] = struct{}{}
+}
+
+func customerPortalInboundDocumentPalletCount(document service.InboundDocument) int {
+	total := 0
+	for _, line := range document.Lines {
+		if line.Pallets > 0 {
+			total += line.Pallets
+		}
+	}
+	return total
 }
 
 func (a *customerPortalContainerSummaryAccumulator) addPickingOrderRef(value string) {

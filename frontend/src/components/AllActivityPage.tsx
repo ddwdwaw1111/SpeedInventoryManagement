@@ -14,7 +14,7 @@ import { consumePendingAllActivityContext } from "../lib/allActivityContext";
 import { formatDateTimeValue, formatDateValue, getZonedDateRangeUtcBounds, isCalendarDateValue, normalizeCalendarDate, parseDateValue } from "../lib/dates";
 import { getErrorMessage } from "../lib/errors";
 import { useI18n } from "../lib/i18n";
-import type { PageKey } from "../lib/routes";
+import { PALLET_ENTITY_UI_ENABLED, type PageKey } from "../lib/routes";
 import { useSettings } from "../lib/settings";
 import { normalizeStorageSection, type Customer, type Location, type Movement, type UserRole } from "../lib/types";
 import { SearchSubmitField } from "./SearchSubmitField";
@@ -403,6 +403,10 @@ function renderMovementSourceAction(
         {t("outbound")}
       </Button>
     );
+  }
+
+  if (!PALLET_ENTITY_UI_ENABLED) {
+    return null;
   }
 
   if (movement.movementType === "ADJUST") {

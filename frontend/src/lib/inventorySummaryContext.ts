@@ -1,13 +1,10 @@
 import type { ContainerType } from "./types";
 
-type InventorySummaryHealthFilter = "ALL" | "LOW_STOCK";
-
 type InventorySummaryContext = {
   searchTerm?: string;
   customerId?: number;
   locationId?: number;
   containerType?: ContainerType;
-  healthFilter?: InventorySummaryHealthFilter;
 };
 
 const STORAGE_KEY = "sim-inventory-summary-context";

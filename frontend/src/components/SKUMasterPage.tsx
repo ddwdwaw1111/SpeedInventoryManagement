@@ -29,7 +29,6 @@ type SKUMasterFormState = {
   description: string;
   category: string;
   unit: string;
-  reorderLevel: number;
   defaultUnitsPerPallet: number;
 };
 const SKU_MASTER_COLUMN_ORDER_PREFERENCE_KEY = "sku-master.column-order";
@@ -43,7 +42,6 @@ function createEmptyForm(): SKUMasterFormState {
     description: "",
     category: "General",
     unit: "pcs",
-    reorderLevel: 0,
     defaultUnitsPerPallet: 0
   };
 }
@@ -110,7 +108,8 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
     loadingDescription: pageDescription
   });
 
-  const baseColumns = useMemo<GridColDef<SKUMaster>[]>(() => [
+  const baseColumns = useMemo<GridColDef<SKUMaster>[]>(() => {
+    const columns: GridColDef<SKUMaster>[] = [
     {
       field: "itemNumber",
       headerName: t("itemNumber"),
@@ -153,7 +152,6 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
       disableReorder: !canManage,
       renderCell: (params) => <span>{String(params.value ?? "").toUpperCase()}</span>
     },
-    { field: "reorderLevel", headerName: t("reorderLevel"), minWidth: 130, type: "number", editable: canManage, disableReorder: !canManage },
     { field: "defaultUnitsPerPallet", headerName: t("defaultUnitsPerPallet"), minWidth: 170, type: "number", editable: canManage, disableReorder: !canManage },
     { field: "updatedAt", headerName: t("updated"), minWidth: 180, flex: 0.9, disableReorder: !canManage, valueFormatter: (value) => formatDateValue(value, dateFormatter) },
     {
@@ -173,7 +171,9 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
         />
       ) : null
     }
-  ], [canManage, t]);
+    ];
+    return columns;
+  }, [canManage, t]);
 
   const orderableFields = useMemo(
     () => baseColumns.filter((column) => column.field !== "actions").map((column) => column.field),
@@ -216,7 +216,6 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
       description: displayDescription(row),
       category: row.category || "General",
       unit: row.unit || "pcs",
-      reorderLevel: row.reorderLevel,
       defaultUnitsPerPallet: row.defaultUnitsPerPallet || 0
     });
     setErrorMessage("");
@@ -231,7 +230,6 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
       category: row.category.trim() || "General",
       description: displayDescription(row).trim(),
       unit: row.unit.trim() || "pcs",
-      reorderLevel: Math.max(0, Number(row.reorderLevel || 0)),
       defaultUnitsPerPallet: Math.max(0, Number(row.defaultUnitsPerPallet || 0))
     };
   }
@@ -332,7 +330,6 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
       category: form.category,
       description: form.description,
       unit: form.unit,
-      reorderLevel: form.reorderLevel,
       defaultUnitsPerPallet: form.defaultUnitsPerPallet
     };
 
@@ -439,7 +436,6 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
             <label className="sheet-form__wide">{t("description")}<input value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} placeholder={t("descriptionPlaceholder")} required /></label>
             <label>{t("category")}<input value={form.category} onChange={(event) => setForm((current) => ({ ...current, category: event.target.value }))} placeholder="General" /></label>
             <label>{t("unit")}<input value={form.unit} onChange={(event) => setForm((current) => ({ ...current, unit: event.target.value }))} placeholder="pcs" /></label>
-            <label>{t("reorderLevel")}<input type="number" min="0" value={form.reorderLevel} onChange={(event) => setForm((current) => ({ ...current, reorderLevel: Math.max(0, Number(event.target.value || 0)) }))} /></label>
             <label>{t("defaultUnitsPerPallet")}<input type="number" min="0" value={form.defaultUnitsPerPallet} onChange={(event) => setForm((current) => ({ ...current, defaultUnitsPerPallet: Math.max(0, Number(event.target.value || 0)) }))} placeholder="200" /></label>
             <div className="sheet-form__actions sheet-form__wide">
               <button className="button button--primary" type="submit" disabled={isSubmitting}>{isSubmitting ? t("saving") : editingId ? t("updateRow") : t("addRow")}</button>

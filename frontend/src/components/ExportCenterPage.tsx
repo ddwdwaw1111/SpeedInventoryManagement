@@ -47,7 +47,7 @@ const INVENTORY_SUMMARY_EXPORT_COLUMNS = [
   { key: "lastReceipt", label: "Last Receipt" }
 ] as const;
 
-const INVENTORY_DETAIL_EXPORT_COLUMNS = [
+const INVENTORY_DETAIL_EXPORT_COLUMNS: ExcelExportColumn[] = [
   { key: "itemNumber", label: "Item #" },
   { key: "sku", label: "SKU" },
   { key: "description", label: "Description" },
@@ -57,12 +57,11 @@ const INVENTORY_DETAIL_EXPORT_COLUMNS = [
   { key: "quantity", label: "On Hand" },
   { key: "availableQty", label: "Available Qty" },
   { key: "damagedQty", label: "Damaged Qty" },
-  { key: "reorderLevel", label: "Reorder Level" },
   { key: "deliveryDate", label: "Receipt Date" },
   { key: "containerNo", label: "Container No." }
-] as const;
+];
 
-const CONTAINER_CONTENTS_EXPORT_COLUMNS = [
+const CONTAINER_CONTENTS_EXPORT_COLUMNS: ExcelExportColumn[] = [
   { key: "containerNo", label: "Container No." },
   { key: "itemNumber", label: "Item #" },
   { key: "sku", label: "SKU" },
@@ -74,9 +73,8 @@ const CONTAINER_CONTENTS_EXPORT_COLUMNS = [
   { key: "availableQty", label: "Available Qty" },
   { key: "damagedQty", label: "Damaged Qty" },
   { key: "holdQty", label: "On Hold Qty" },
-  { key: "reorderLevel", label: "Reorder Level" },
   { key: "lastReceipt", label: "Last Receipt" }
-] as const;
+];
 
 const RECEIPTS_EXPORT_COLUMNS = [
   { key: "expectedArrivalDate", label: "Expected Arrival Date" },
@@ -328,7 +326,6 @@ function buildInventoryDetailExportRows(items: Item[]) {
       quantity: item.quantity,
       availableQty: item.availableQty,
       damagedQty: item.damagedQty,
-      reorderLevel: item.reorderLevel,
       deliveryDate: formatDateValue(item.deliveryDate, dateFormatter),
       containerNo: item.containerNo || "-",
     }))
@@ -354,7 +351,6 @@ function buildContainerContentsExportRows(items: Item[]) {
       availableQty: item.availableQty,
       damagedQty: item.damagedQty,
       holdQty: item.holdQty,
-      reorderLevel: item.reorderLevel,
       lastReceipt: formatDateValue(item.deliveryDate || item.lastRestockedAt || null, dateFormatter)
     }))
     .sort((left, right) => {

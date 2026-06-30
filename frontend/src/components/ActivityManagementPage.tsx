@@ -91,6 +91,7 @@ type ActivityManagementPageProps = {
 type BatchInboundFormState = {
   expectedArrivalDate: string;
   actualArrivalDate: string;
+  containerId: number;
   containerNo: string;
   containerType: ContainerType;
   handlingMode: InboundHandlingMode;
@@ -107,7 +108,6 @@ type BatchInboundLineState = {
   sku: string;
   description: string;
   storageSection: string;
-  reorderLevel: number;
   expectedQty: number;
   receivedQty: number;
   pallets: number;
@@ -157,6 +157,7 @@ type OutboundPickAllocationRow = {
   description: string;
   locationName: string;
   storageSection: string;
+  containerId: number;
   containerNo: string;
   allocatedQty: number;
 };
@@ -170,6 +171,7 @@ type OutboundAllocationPreviewRow = {
   description: string;
   locationName: string;
   storageSection: string;
+  containerId: number;
   containerNo: string;
   palletCode: string;
   allocatedQty: number;
@@ -228,6 +230,7 @@ type OutboundPalletCandidate = {
   locationId: number;
   locationName: string;
   storageSection: string;
+  containerId: number;
   containerNo: string;
   skuMasterId: number;
   sku: string;
@@ -283,6 +286,7 @@ function createEmptyBatchInboundForm(expectedArrivalDate = ""): BatchInboundForm
   return {
     expectedArrivalDate,
     actualArrivalDate: "",
+    containerId: 0,
     containerNo: "",
     containerType: "NORMAL",
     handlingMode: "PALLETIZED",
@@ -301,7 +305,6 @@ function createEmptyBatchInboundLine(defaultStorageSection = DEFAULT_STORAGE_SEC
     sku: "",
     description: "",
     storageSection: defaultStorageSection,
-    reorderLevel: 0,
     expectedQty: 0,
     receivedQty: 0,
     pallets: 0,
@@ -1434,6 +1437,7 @@ export function ActivityManagementPage({
         description: line.description,
         locationName: allocation.locationName,
         storageSection: allocation.storageSection,
+        containerId: allocation.containerId || 0,
         containerNo: allocation.containerNo,
         allocatedQty: allocation.allocatedQty
       }))
@@ -1690,6 +1694,7 @@ export function ActivityManagementPage({
     setBatchForm({
       expectedArrivalDate: document.expectedArrivalDate ? document.expectedArrivalDate.slice(0, 10) : "",
       actualArrivalDate: document.actualArrivalDate ? document.actualArrivalDate.slice(0, 10) : "",
+      containerId: document.containerId || 0,
       containerNo: document.containerNo || "",
       containerType: document.containerType || "NORMAL",
       handlingMode: options?.forceHandlingMode ?? document.handlingMode ?? "PALLETIZED",
@@ -1708,7 +1713,6 @@ export function ActivityManagementPage({
             sku: line.sku || "",
             description: line.description || "",
             storageSection: normalizeStorageSection(line.storageSection || document.storageSection),
-            reorderLevel: line.reorderLevel || 0,
             expectedQty: line.expectedQty,
             receivedQty: line.receivedQty,
             pallets: line.pallets,
@@ -1848,7 +1852,6 @@ export function ActivityManagementPage({
       const previousAutoPalletPlan = buildAutoPalletPlan(totalQty, getEffectiveInboundUnitsPerPallet(line, previousSkuMaster));
       const nextAutoPalletPlan = buildAutoPalletPlan(totalQty, getEffectiveInboundUnitsPerPallet(line, nextSkuMaster));
       const shouldRefreshDescription = !line.description.trim() || (previousDescription && line.description.trim() === previousDescription);
-      const shouldRefreshReorder = line.reorderLevel <= 0 || (previousSkuMaster !== undefined && line.reorderLevel === previousSkuMaster.reorderLevel);
       const shouldRefreshPallets = line.pallets <= 0 || (previousSkuMaster !== undefined && line.pallets === previousAutoPalletPlan.pallets);
       const nextPallets = shouldRefreshPallets ? nextAutoPalletPlan.pallets : line.pallets;
       const shouldPreserveExplicitBreakdown = line.palletBreakdownExplicit || line.palletBreakdownTouched;
@@ -1864,7 +1867,6 @@ export function ActivityManagementPage({
         sku: nextSkuValue,
         description: shouldRefreshDescription ? nextDescription : line.description,
         storageSection: normalizeStorageSection(line.storageSection || batchForm.storageSection || batchSectionOptions[0]),
-        reorderLevel: shouldRefreshReorder ? nextSkuMaster.reorderLevel : line.reorderLevel,
         pallets: nextPallets,
         palletBreakdown: nextPalletBreakdown,
         palletBreakdownExplicit: line.palletBreakdownExplicit,
@@ -1885,10 +1887,7 @@ export function ActivityManagementPage({
 
       const skuMaster = skuMastersBySku.get(normalizeSkuLookupValue(line.sku));
       const unitsPerPallet = getEffectiveInboundUnitsPerPallet(line, skuMaster);
-      const previousSuggested = calculateSuggestedReorderLevel(line.expectedQty, line.receivedQty);
       const nextReceivedQty = line.receivedQty;
-      const nextSuggested = calculateSuggestedReorderLevel(nextExpectedQty, nextReceivedQty);
-      const shouldKeepAutoReorder = line.reorderLevel <= 0 || line.reorderLevel === previousSuggested;
       const previousAutoPalletPlan = buildAutoPalletPlan(line.receivedQty, unitsPerPallet);
       const nextAutoPalletPlan = buildAutoPalletPlan(nextReceivedQty, unitsPerPallet);
       const shouldKeepAutoPallets = line.pallets <= 0 || line.pallets === previousAutoPalletPlan.pallets;
@@ -1904,7 +1903,6 @@ export function ActivityManagementPage({
       return {
         ...line,
         expectedQty: nextExpectedQty,
-        reorderLevel: shouldKeepAutoReorder ? nextSuggested : line.reorderLevel,
         pallets: nextPallets,
         palletBreakdown: nextPalletBreakdown,
         palletBreakdownExplicit: line.palletBreakdownExplicit,
@@ -1921,9 +1919,6 @@ export function ActivityManagementPage({
 
       const skuMaster = skuMastersBySku.get(normalizeSkuLookupValue(line.sku));
       const unitsPerPallet = getEffectiveInboundUnitsPerPallet(line, skuMaster);
-      const previousSuggested = calculateSuggestedReorderLevel(line.expectedQty, line.receivedQty);
-      const nextSuggested = calculateSuggestedReorderLevel(line.expectedQty, nextReceivedQty);
-      const shouldKeepAutoReorder = line.reorderLevel <= 0 || line.reorderLevel === previousSuggested;
       const previousAutoPalletPlan = buildAutoPalletPlan(line.receivedQty, unitsPerPallet);
       const nextAutoPalletPlan = buildAutoPalletPlan(nextReceivedQty, unitsPerPallet);
       const shouldKeepAutoPallets = line.pallets <= 0 || line.pallets === previousAutoPalletPlan.pallets;
@@ -1939,7 +1934,6 @@ export function ActivityManagementPage({
       return {
         ...line,
         receivedQty: nextReceivedQty,
-        reorderLevel: shouldKeepAutoReorder ? nextSuggested : line.reorderLevel,
         pallets: nextPallets,
         palletBreakdown: nextPalletBreakdown,
         palletBreakdownExplicit: line.palletBreakdownExplicit,
@@ -1957,9 +1951,6 @@ export function ActivityManagementPage({
       const skuMaster = skuMastersBySku.get(normalizeSkuLookupValue(line.sku));
       const unitsPerPallet = getEffectiveInboundUnitsPerPallet(line, skuMaster);
       const nextReceivedQty = line.expectedQty;
-      const previousSuggested = calculateSuggestedReorderLevel(line.expectedQty, line.receivedQty);
-      const nextSuggested = calculateSuggestedReorderLevel(line.expectedQty, nextReceivedQty);
-      const shouldKeepAutoReorder = line.reorderLevel <= 0 || line.reorderLevel === previousSuggested;
       const previousAutoPalletPlan = buildAutoPalletPlan(line.receivedQty, unitsPerPallet);
       const nextAutoPalletPlan = buildAutoPalletPlan(nextReceivedQty, unitsPerPallet);
       const shouldKeepAutoPallets = line.pallets <= 0 || line.pallets === previousAutoPalletPlan.pallets;
@@ -1975,7 +1966,6 @@ export function ActivityManagementPage({
       return {
         ...line,
         receivedQty: nextReceivedQty,
-        reorderLevel: shouldKeepAutoReorder ? nextSuggested : line.reorderLevel,
         pallets: nextPallets,
         palletBreakdown: nextPalletBreakdown,
         palletBreakdownExplicit: line.palletBreakdownExplicit,
@@ -2164,6 +2154,7 @@ export function ActivityManagementPage({
         locationId: batchLocationId,
         expectedArrivalDate: batchForm.expectedArrivalDate || undefined,
         actualArrivalDate: batchForm.actualArrivalDate || undefined,
+        containerId: batchForm.containerId || undefined,
         containerNo: batchForm.containerNo || undefined,
         containerType: batchForm.containerType,
         handlingMode: batchForm.handlingMode,
@@ -2197,7 +2188,6 @@ export function ActivityManagementPage({
           return {
             sku: normalizedSku,
             description: lineDescription,
-            reorderLevel: line.reorderLevel || matchingTemplate?.reorderLevel || matchingSkuMaster?.reorderLevel || 0,
             expectedQty: line.expectedQty,
             receivedQty: normalizedReceivedQty,
             pallets: isSealedTransitMode ? 0 : line.pallets,
@@ -3353,8 +3343,6 @@ export function ActivityManagementPage({
                     );
                     const batchSkuTemplate = items.find((item) => item.sku.trim().toUpperCase() === normalizedBatchLineSku);
                     const batchSkuMaster = skuMastersBySku.get(normalizedBatchLineSku);
-                    const suggestedReorderLevel = calculateSuggestedReorderLevel(line.expectedQty, line.receivedQty);
-                    const displayedReorderLevel = selectedBatchItem?.reorderLevel ?? batchSkuMaster?.reorderLevel ?? batchSkuTemplate?.reorderLevel ?? line.reorderLevel;
                     const effectiveUnitsPerPallet = getEffectiveInboundUnitsPerPallet(line, batchSkuMaster);
                     const palletUnitLabel = (batchSkuMaster?.unit || batchForm.unitLabel || "CTN").toUpperCase();
                     const lineSkuDisplay = line.sku.trim().toUpperCase() || "-";
@@ -3417,7 +3405,6 @@ export function ActivityManagementPage({
                               received: line.receivedQty
                             }) : null}
                           />
-                          <label>{t("reorderLevel")}<input type="number" min="0" value={numberInputValue(displayedReorderLevel)} onChange={(event) => updateBatchLine(line.id, { reorderLevel: Math.max(0, Number(event.target.value || 0)) })} placeholder={suggestedReorderLevel > 0 ? String(suggestedReorderLevel) : ""} disabled={Boolean(selectedBatchItem)} /></label>
                         </div>
                         <div className="batch-line-card__meta">
                           <span className="batch-line-card__hint">
@@ -4022,14 +4009,6 @@ function outboundDocumentMatchesSearch(document: OutboundDocument, normalizedSea
   return searchableFields.some((value) => String(value ?? "").toLowerCase().includes(normalizedSearch));
 }
 
-function calculateSuggestedReorderLevel(expectedQty: number, receivedQty: number) {
-  const baseQty = receivedQty > 0 ? receivedQty : expectedQty;
-  if (baseQty <= 0) {
-    return 0;
-  }
-  return Math.max(1, Math.ceil(baseQty * 0.2));
-}
-
 function getInboundReceiptVariance(expectedQty: number, receivedQty: number): InboundReceiptVariance {
   if (expectedQty <= 0 || receivedQty === expectedQty) {
     return "MATCHED";
@@ -4221,6 +4200,7 @@ function buildPreviewPickAllocations(
     locationId: line.locationId,
     locationName: row.locationName || line.locationName,
     storageSection: row.storageSection || line.storageSection,
+    containerId: row.containerId || 0,
     containerNo: row.containerNo || "",
     allocatedQty: row.allocatedQty,
     pallets: palletShares[index] ?? 0,
@@ -4241,6 +4221,7 @@ function buildDraftOutboundLinePickAllocationPayloads(
     locationId: source.locationId,
     locationName: row.locationName || source.locationName || undefined,
     storageSection: row.storageSection || undefined,
+    containerId: row.containerId || undefined,
     containerNo: row.containerNo || undefined,
     allocatedQty: row.allocatedQty
   }));
@@ -4329,6 +4310,7 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
         description: selectedSource.description,
         locationName: candidate.locationName,
         storageSection: normalizeStorageSection(candidate.storageSection),
+        containerId: candidate.containerId,
         containerNo: candidate.containerNo || "",
         palletCode: candidate.palletCode,
         allocatedQty
@@ -4475,6 +4457,7 @@ export function buildOutboundSourceOptionsFromPallets(pallets: PalletTrace[], sk
         locationId: pallet.currentLocationId,
         locationName: pallet.currentLocationName,
         storageSection: normalizeStorageSection(pallet.currentStorageSection),
+        containerId: 0,
         containerNo: pallet.currentContainerNo || "",
         skuMasterId: content.skuMasterId,
         sku: content.sku,

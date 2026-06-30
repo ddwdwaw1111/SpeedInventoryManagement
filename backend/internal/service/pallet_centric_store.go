@@ -53,6 +53,7 @@ type createStockLedgerInput struct {
 	SourceDocumentType  string
 	SourceDocumentID    int64
 	SourceLineID        int64
+	ContainerID         int64
 	ContainerNo         string
 	DeliveryDate        *time.Time
 	OutDate             *time.Time
@@ -75,13 +76,6 @@ type createStockLedgerInput struct {
 	ReferenceCode       string
 }
 
-type createOutboundPickInput struct {
-	OutboundLineID int64
-	PalletID       int64
-	PalletItemID   int64
-	PickedQty      int
-}
-
 type palletContentConsumption struct {
 	PalletID                int64
 	PalletItemID            int64
@@ -90,6 +84,7 @@ type palletContentConsumption struct {
 	CustomerID              int64
 	LocationID              int64
 	StorageSection          string
+	ContainerID             int64
 	ContainerVisitID        int64
 	SourceInboundDocumentID int64
 	SourceInboundLineID     int64
@@ -109,24 +104,12 @@ type lockedPalletContentState struct {
 	CustomerID              int64
 	LocationID              int64
 	StorageSection          string
+	ContainerID             int64
 	ContainerVisitID        int64
 	SourceInboundDocumentID int64
 	SourceInboundLineID     int64
 	ContainerNo             string
 	ActualArrivalDate       *time.Time
-}
-
-type outboundPickRestore struct {
-	ID             int64  `db:"id"`
-	OutboundLineID int64  `db:"outbound_line_id"`
-	PalletID       int64  `db:"pallet_id"`
-	PalletItemID   int64  `db:"pallet_item_id"`
-	PickedQty      int    `db:"picked_qty"`
-	SKUMasterID    int64  `db:"sku_master_id"`
-	CustomerID     int64  `db:"customer_id"`
-	LocationID     int64  `db:"location_id"`
-	StorageSection string `db:"storage_section"`
-	ContainerNo    string `db:"container_no"`
 }
 
 type inventoryItemBucket struct {
@@ -135,6 +118,7 @@ type inventoryItemBucket struct {
 	CustomerID     int64      `db:"customer_id"`
 	LocationID     int64      `db:"location_id"`
 	StorageSection string     `db:"storage_section"`
+	ContainerID    int64      `db:"container_id"`
 	ContainerNo    string     `db:"container_no"`
 	DeliveryDate   *time.Time `db:"delivery_date"`
 }
@@ -144,6 +128,7 @@ type palletSourceBucket struct {
 	CustomerID     int64
 	LocationID     int64
 	StorageSection string
+	ContainerID    int64
 	ContainerNo    string
 }
 
@@ -155,6 +140,7 @@ type palletBackedInventoryProjection struct {
 	LocationID     int64
 	LocationName   string
 	StorageSection string
+	ContainerID    int64
 	ContainerNo    string
 	ItemNumber     string
 	SKU            string
@@ -162,8 +148,8 @@ type palletBackedInventoryProjection struct {
 	Category       string
 	Description    string
 	Unit           string
-	ReorderLevel   int
 	Quantity       int
+	Pallets        int
 	AvailableQty   int
 	AllocatedQty   int
 	DamagedQty     int
@@ -185,6 +171,7 @@ func (s *Store) loadPalletBackedInventoryProjectionTx(ctx context.Context, tx *s
 			i.location_id,
 			l.name,
 			COALESCE(NULLIF(i.storage_section, ''), 'TEMP') AS storage_section,
+			COALESCE(i.container_id, 0) AS container_id,
 			COALESCE(i.container_no, '') AS container_no,
 			COALESCE(NULLIF(sm.item_number, ''), '') AS item_number,
 			sm.sku,
@@ -192,46 +179,19 @@ func (s *Store) loadPalletBackedInventoryProjectionTx(ctx context.Context, tx *s
 			sm.category,
 			COALESCE(sm.description, sm.name, '') AS description,
 			COALESCE(sm.unit, 'pcs') AS unit,
-			sm.reorder_level,
-			COALESCE(pb.quantity, 0) AS quantity,
-			GREATEST(COALESCE(pb.quantity, 0) - COALESCE(pb.allocated_qty, 0) - COALESCE(pb.damaged_qty, 0) - COALESCE(pb.hold_qty, 0), 0) AS available_qty,
-			COALESCE(pb.allocated_qty, 0) AS allocated_qty,
-			COALESCE(pb.damaged_qty, 0) AS damaged_qty,
-			COALESCE(pb.hold_qty, 0) AS hold_qty
+			i.quantity,
+			i.pallets,
+			GREATEST(i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty, 0) AS available_qty,
+			i.allocated_qty,
+			i.damaged_qty,
+			i.hold_qty
 		FROM inventory_items i
 		JOIN customers c ON c.id = i.customer_id
 		JOIN storage_locations l ON l.id = i.location_id
 		JOIN sku_master sm ON sm.id = i.sku_master_id
-		LEFT JOIN (
-			SELECT
-				pi.sku_master_id,
-				p.customer_id,
-				p.current_location_id AS location_id,
-				COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP') AS storage_section,
-				COALESCE(p.current_container_no, '') AS container_no,
-				SUM(pi.quantity) AS quantity,
-				SUM(pi.allocated_qty) AS allocated_qty,
-				SUM(pi.damaged_qty) AS damaged_qty,
-				SUM(pi.hold_qty) AS hold_qty
-			FROM pallet_items pi
-			JOIN pallets p ON p.id = pi.pallet_id
-			WHERE pi.quantity > 0
-			  AND p.status <> ?
-			GROUP BY
-				pi.sku_master_id,
-				p.customer_id,
-				p.current_location_id,
-				COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP'),
-				COALESCE(p.current_container_no, '')
-		) pb
-			ON pb.sku_master_id = i.sku_master_id
-			AND pb.customer_id = i.customer_id
-			AND pb.location_id = i.location_id
-			AND pb.storage_section = COALESCE(NULLIF(i.storage_section, ''), 'TEMP')
-			AND pb.container_no = COALESCE(i.container_no, '')
 		WHERE i.id = ?
 		FOR UPDATE
-	`, PalletStatusCancelled, itemID).Scan(
+	`, itemID).Scan(
 		&projection.ItemID,
 		&projection.SKUMasterID,
 		&projection.CustomerID,
@@ -239,6 +199,7 @@ func (s *Store) loadPalletBackedInventoryProjectionTx(ctx context.Context, tx *s
 		&projection.LocationID,
 		&projection.LocationName,
 		&projection.StorageSection,
+		&projection.ContainerID,
 		&projection.ContainerNo,
 		&projection.ItemNumber,
 		&projection.SKU,
@@ -246,8 +207,8 @@ func (s *Store) loadPalletBackedInventoryProjectionTx(ctx context.Context, tx *s
 		&projection.Category,
 		&projection.Description,
 		&projection.Unit,
-		&projection.ReorderLevel,
 		&projection.Quantity,
+		&projection.Pallets,
 		&projection.AvailableQty,
 		&projection.AllocatedQty,
 		&projection.DamagedQty,
@@ -272,6 +233,7 @@ func (s *Store) loadPalletBackedInventoryProjectionForBucketTx(ctx context.Conte
 		bucket.CustomerID,
 		bucket.LocationID,
 		bucket.StorageSection,
+		bucket.ContainerID,
 		bucket.ContainerNo,
 	)
 	if err != nil {
@@ -313,7 +275,7 @@ func (s *Store) syncPalletItemStateTx(ctx context.Context, tx *sql.Tx, input cre
 }
 
 func (s *Store) createStockLedgerEntryTx(ctx context.Context, tx *sql.Tx, input createStockLedgerInput) (int64, error) {
-	if input.PalletID <= 0 || input.CustomerID <= 0 || input.LocationID <= 0 {
+	if input.CustomerID <= 0 || input.LocationID <= 0 {
 		return 0, fmt.Errorf("%w: invalid stock ledger input", ErrInvalidInput)
 	}
 	result, err := tx.ExecContext(ctx, `
@@ -330,6 +292,7 @@ func (s *Store) createStockLedgerEntryTx(ctx context.Context, tx *sql.Tx, input 
 			source_document_type,
 			source_document_id,
 			source_line_id,
+			container_id,
 			container_no_snapshot,
 			delivery_date,
 			out_date,
@@ -350,11 +313,11 @@ func (s *Store) createStockLedgerEntryTx(ctx context.Context, tx *sql.Tx, input 
 			document_note,
 			reason,
 			reference_code
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		firstNonEmpty(input.EventType, StockLedgerEventReceive),
 		nullableTime(input.OccurredAt),
-		input.PalletID,
+		nullableInt64(input.PalletID),
 		nullableInt64(input.PalletItemID),
 		nullableInt64(input.SKUMasterID),
 		input.CustomerID,
@@ -364,6 +327,7 @@ func (s *Store) createStockLedgerEntryTx(ctx context.Context, tx *sql.Tx, input 
 		nullableString(input.SourceDocumentType),
 		nullableInt64(input.SourceDocumentID),
 		nullableInt64(input.SourceLineID),
+		input.ContainerID,
 		strings.TrimSpace(input.ContainerNo),
 		nullableTime(input.DeliveryDate),
 		nullableTime(input.OutDate),
@@ -403,23 +367,6 @@ func (s *Store) createStockLedgerTx(ctx context.Context, tx *sql.Tx, input creat
 	return err
 }
 
-func (s *Store) createOutboundPickTx(ctx context.Context, tx *sql.Tx, input createOutboundPickInput) error {
-	if input.OutboundLineID <= 0 || input.PalletID <= 0 || input.PalletItemID <= 0 || input.PickedQty <= 0 {
-		return fmt.Errorf("%w: invalid outbound pick input", ErrInvalidInput)
-	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO outbound_picks (
-			outbound_line_id,
-			pallet_id,
-			pallet_item_id,
-			picked_qty
-		) VALUES (?, ?, ?, ?)
-	`, input.OutboundLineID, input.PalletID, input.PalletItemID, input.PickedQty); err != nil {
-		return mapDBError(fmt.Errorf("create outbound pick: %w", err))
-	}
-	return nil
-}
-
 func classifyReservedStockConflict(requestedQty int, onHandQty int, allocatedQty int, damagedQty int, holdQty int) error {
 	physicalQty := onHandQty - damagedQty - holdQty
 	if allocatedQty > 0 && requestedQty <= maxInt(physicalQty, 0) {
@@ -445,6 +392,7 @@ func palletContentFromLockedState(state lockedPalletContentState, quantity int) 
 		CustomerID:              state.CustomerID,
 		LocationID:              state.LocationID,
 		StorageSection:          fallbackSection(state.StorageSection),
+		ContainerID:             state.ContainerID,
 		ContainerVisitID:        state.ContainerVisitID,
 		SourceInboundDocumentID: state.SourceInboundDocumentID,
 		SourceInboundLineID:     state.SourceInboundLineID,
@@ -519,6 +467,7 @@ func (s *Store) loadLockedPalletContentStateForBucketTx(
 	}
 
 	content.StorageSection = fallbackSection(content.StorageSection)
+	content.ContainerID = bucket.ContainerID
 	content.ContainerNo = strings.TrimSpace(content.ContainerNo)
 	return content, nil
 }
@@ -547,6 +496,7 @@ func (s *Store) loadLockedPalletContentStateTx(
 			p.customer_id,
 			p.current_location_id,
 			COALESCE(p.current_storage_section, 'TEMP') AS current_storage_section,
+			COALESCE(cn.id, 0) AS container_id,
 			COALESCE(p.container_visit_id, 0) AS container_visit_id,
 			COALESCE(p.source_inbound_document_id, 0) AS source_inbound_document_id,
 			COALESCE(p.source_inbound_line_id, 0) AS source_inbound_line_id,
@@ -554,6 +504,9 @@ func (s *Store) loadLockedPalletContentStateTx(
 			p.actual_arrival_date
 		FROM pallet_items pi
 		JOIN pallets p ON p.id = pi.pallet_id
+		LEFT JOIN containers cn
+			ON cn.customer_id = p.customer_id
+			AND cn.container_no = p.current_container_no
 		WHERE p.id = ?
 		  AND pi.sku_master_id = ?
 		FOR UPDATE
@@ -569,6 +522,7 @@ func (s *Store) loadLockedPalletContentStateTx(
 		&content.CustomerID,
 		&content.LocationID,
 		&content.StorageSection,
+		&content.ContainerID,
 		&content.ContainerVisitID,
 		&content.SourceInboundDocumentID,
 		&content.SourceInboundLineID,
@@ -639,6 +593,7 @@ func (s *Store) loadInventoryItemBucketTx(ctx context.Context, tx *sql.Tx, itemI
 			customer_id,
 			location_id,
 			COALESCE(NULLIF(storage_section, ''), 'TEMP') AS storage_section,
+			COALESCE(container_id, 0) AS container_id,
 			COALESCE(container_no, '') AS container_no,
 			delivery_date
 		FROM inventory_items
@@ -650,6 +605,7 @@ func (s *Store) loadInventoryItemBucketTx(ctx context.Context, tx *sql.Tx, itemI
 		&bucket.CustomerID,
 		&bucket.LocationID,
 		&bucket.StorageSection,
+		&bucket.ContainerID,
 		&bucket.ContainerNo,
 		&bucket.DeliveryDate,
 	); err != nil {
@@ -674,71 +630,6 @@ func (s *Store) setPalletCancelledTx(ctx context.Context, tx *sql.Tx, palletID i
 		return mapDBError(fmt.Errorf("cancel pallet: %w", err))
 	}
 	return nil
-}
-
-func (s *Store) restorePalletContentsForLineTx(ctx context.Context, tx *sql.Tx, outboundLineID int64) ([]outboundPickRestore, error) {
-	query := `
-		SELECT
-			op.id,
-			op.outbound_line_id,
-			op.pallet_id,
-			op.pallet_item_id,
-			op.picked_qty,
-			pi.sku_master_id,
-			p.customer_id,
-			p.current_location_id,
-			COALESCE(p.current_storage_section, 'TEMP') AS storage_section,
-			COALESCE(p.current_container_no, '') AS container_no
-		FROM outbound_picks op
-		JOIN pallet_items pi ON pi.id = op.pallet_item_id
-		JOIN pallets p ON p.id = op.pallet_id
-		WHERE op.outbound_line_id = ?
-		ORDER BY op.id ASC
-		FOR UPDATE
-	`
-	rows, err := tx.QueryContext(ctx, query, outboundLineID)
-	if err != nil {
-		return nil, fmt.Errorf("load outbound picks for reversal: %w", err)
-	}
-	defer rows.Close()
-
-	restores := make([]outboundPickRestore, 0)
-	for rows.Next() {
-		var restore outboundPickRestore
-		if err := rows.Scan(
-			&restore.ID,
-			&restore.OutboundLineID,
-			&restore.PalletID,
-			&restore.PalletItemID,
-			&restore.PickedQty,
-			&restore.SKUMasterID,
-			&restore.CustomerID,
-			&restore.LocationID,
-			&restore.StorageSection,
-			&restore.ContainerNo,
-		); err != nil {
-			return nil, fmt.Errorf("scan outbound pick for reversal: %w", err)
-		}
-		restores = append(restores, restore)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate outbound picks for reversal: %w", err)
-	}
-
-	for _, restore := range restores {
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE pallet_items
-			SET quantity = quantity + ?, updated_at = CURRENT_TIMESTAMP
-			WHERE id = ?
-		`, restore.PickedQty, restore.PalletItemID); err != nil {
-			return nil, mapDBError(fmt.Errorf("restore pallet item quantity: %w", err))
-		}
-		if err := s.updatePalletStatusFromContentsTx(ctx, tx, restore.PalletID); err != nil {
-			return nil, err
-		}
-	}
-
-	return restores, nil
 }
 
 func firstNonZeroInt64(values ...int64) int64 {
@@ -825,6 +716,7 @@ func (s *Store) applyPalletDeltaForItemTx(
 				CustomerID:     itemBucket.CustomerID,
 				LocationID:     itemBucket.LocationID,
 				StorageSection: fallbackSection(itemBucket.StorageSection),
+				ContainerID:    itemBucket.ContainerID,
 				ContainerNo:    strings.TrimSpace(itemBucket.ContainerNo),
 			},
 		}, nil
@@ -872,6 +764,7 @@ func (s *Store) applyPalletDeltaForItemTx(
 			CustomerID:     customerID,
 			LocationID:     locationID,
 			StorageSection: fallbackSection(storageSection),
+			ContainerID:    itemBucket.ContainerID,
 			ContainerNo:    strings.TrimSpace(itemBucket.ContainerNo),
 		},
 	}, nil
@@ -892,6 +785,7 @@ func (s *Store) consumePalletContentsForItemTx(ctx context.Context, tx *sql.Tx, 
 		CustomerID:     itemBucket.CustomerID,
 		LocationID:     itemBucket.LocationID,
 		StorageSection: itemBucket.StorageSection,
+		ContainerID:    itemBucket.ContainerID,
 		ContainerNo:    strings.TrimSpace(itemBucket.ContainerNo),
 	}, quantity)
 }
@@ -1191,6 +1085,7 @@ func (s *Store) previewPalletContentsForBucketTx(ctx context.Context, tx *sql.Tx
 			CustomerID:              content.CustomerID,
 			LocationID:              content.LocationID,
 			StorageSection:          fallbackSection(content.StorageSection),
+			ContainerID:             bucket.ContainerID,
 			ContainerVisitID:        content.ContainerVisitID,
 			SourceInboundDocumentID: content.SourceInboundDocumentID,
 			SourceInboundLineID:     content.SourceInboundLineID,
@@ -1340,6 +1235,7 @@ func (s *Store) consumePalletContentsForBucketTx(ctx context.Context, tx *sql.Tx
 			CustomerID:              content.CustomerID,
 			LocationID:              content.LocationID,
 			StorageSection:          fallbackSection(content.StorageSection),
+			ContainerID:             bucket.ContainerID,
 			ContainerVisitID:        content.ContainerVisitID,
 			SourceInboundDocumentID: content.SourceInboundDocumentID,
 			SourceInboundLineID:     content.SourceInboundLineID,
@@ -1377,6 +1273,7 @@ func (s *Store) consumePalletContentsForInboundLineTx(ctx context.Context, tx *s
 			p.customer_id,
 			p.current_location_id,
 			COALESCE(p.current_storage_section, 'TEMP') AS current_storage_section,
+			COALESCE(cn.id, 0) AS container_id,
 			COALESCE(p.container_visit_id, 0) AS container_visit_id,
 			COALESCE(p.source_inbound_document_id, 0) AS source_inbound_document_id,
 			COALESCE(p.source_inbound_line_id, 0) AS source_inbound_line_id,
@@ -1384,6 +1281,9 @@ func (s *Store) consumePalletContentsForInboundLineTx(ctx context.Context, tx *s
 			p.actual_arrival_date
 		FROM pallet_items pi
 		JOIN pallets p ON p.id = pi.pallet_id
+		LEFT JOIN containers cn
+			ON cn.customer_id = p.customer_id
+			AND cn.container_no = p.current_container_no
 		WHERE p.source_inbound_line_id = ?
 		  AND pi.sku_master_id = ?
 		  AND pi.quantity > 0
@@ -1407,6 +1307,7 @@ func (s *Store) consumePalletContentsForInboundLineTx(ctx context.Context, tx *s
 		CustomerID              int64
 		LocationID              int64
 		StorageSection          string
+		ContainerID             int64
 		ContainerVisitID        int64
 		SourceInboundDocumentID int64
 		SourceInboundLineID     int64
@@ -1428,6 +1329,7 @@ func (s *Store) consumePalletContentsForInboundLineTx(ctx context.Context, tx *s
 			&content.CustomerID,
 			&content.LocationID,
 			&content.StorageSection,
+			&content.ContainerID,
 			&content.ContainerVisitID,
 			&content.SourceInboundDocumentID,
 			&content.SourceInboundLineID,
@@ -1488,6 +1390,7 @@ func (s *Store) consumePalletContentsForInboundLineTx(ctx context.Context, tx *s
 			CustomerID:              content.CustomerID,
 			LocationID:              content.LocationID,
 			StorageSection:          fallbackSection(content.StorageSection),
+			ContainerID:             content.ContainerID,
 			ContainerVisitID:        content.ContainerVisitID,
 			SourceInboundDocumentID: content.SourceInboundDocumentID,
 			SourceInboundLineID:     content.SourceInboundLineID,

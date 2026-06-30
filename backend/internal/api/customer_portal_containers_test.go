@@ -61,7 +61,6 @@ func TestBuildCustomerPortalContainerSummariesNetsReversals(t *testing.T) {
 				CreatedAt:          now,
 			},
 		},
-		nil,
 	)
 
 	summary := summaries["CNT-REV"]
@@ -105,7 +104,7 @@ func TestBuildCustomerPortalContainerSummariesCountsTransferDocumentOnce(t *test
 			SourceLineID:       120,
 			CreatedAt:          now,
 		},
-	}, nil)
+	})
 
 	if got := summaries["CNT-MOVE"].TransferCount; got != 1 {
 		t.Fatalf("expected transfer out/in pair from one transfer document to count once, got %d", got)
@@ -139,7 +138,6 @@ func TestBuildCustomerPortalContainerSummariesSeparatesDepletedFromShipped(t *te
 			QuantityDelta: -10,
 			CreatedAt:     now,
 		}},
-		nil,
 	)
 
 	summary := summaries["CNT-ADJ"]

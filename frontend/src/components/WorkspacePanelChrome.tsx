@@ -7,7 +7,7 @@ import ViewInArOutlinedIcon from "@mui/icons-material/ViewInArOutlined";
 import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
 
 import { InlineAlert } from "./Feedback";
-import type { PageKey } from "../lib/routes";
+import { PALLET_ENTITY_UI_ENABLED, type PageKey } from "../lib/routes";
 
 type WorkspacePanelHeaderProps = {
   title?: string;
@@ -168,7 +168,7 @@ const INVENTORY_VIEWS: Array<{ key: PageKey; label: string; icon: ReactNode }> =
   { key: "container-contents", label: "Containers", icon: <CategoryOutlinedIcon style={{ fontSize: "0.9rem" }} /> },
   { key: "warehouse-map", label: "Map", icon: <MapOutlinedIcon style={{ fontSize: "0.9rem" }} /> },
   { key: "all-activity", label: "Activity", icon: <HistoryOutlinedIcon style={{ fontSize: "0.9rem" }} /> },
-  { key: "pallet-trace", label: "Pallets", icon: <ViewInArOutlinedIcon style={{ fontSize: "0.9rem" }} /> },
+  ...(PALLET_ENTITY_UI_ENABLED ? [{ key: "pallet-trace" as PageKey, label: "Pallets", icon: <ViewInArOutlinedIcon style={{ fontSize: "0.9rem" }} /> }] : [])
 ];
 
 export function InventoryViewSwitcher({ activeView, onNavigate }: InventoryViewSwitcherProps) {

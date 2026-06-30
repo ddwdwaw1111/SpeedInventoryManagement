@@ -235,18 +235,6 @@ export function ReportsPage({ locations, customers, skuMasters, isLoading, error
     })),
     [report?.topSkuRows]
   );
-  const lowStockRows = useMemo(
-    () => (report?.lowStockRows ?? []).map((row) => ({
-      label: row.label,
-      value: row.value,
-      meta: t("reportOnHandReorder", {
-        onHand: formatNumber(row.available),
-        reorder: formatNumber(row.reorder)
-      }),
-      tone: row.available === 0 ? "red" as const : "amber" as const
-    })),
-    [report?.lowStockRows, t]
-  );
   const palletFlowRows = useMemo(
     () => mapPalletFlowRows(report?.palletFlowRows ?? []),
     [report?.palletFlowRows]
@@ -264,7 +252,6 @@ export function ReportsPage({ locations, customers, skuMasters, isLoading, error
   const netPalletFlow = summary?.netPalletFlow ?? 0;
   const activeSkuCount = summary?.activeSkuCount ?? 0;
   const activeWarehouseCount = summary?.activeWarehouseCount ?? 0;
-  const totalLowStockCount = summary?.lowStockCount ?? lowStockRows.length;
   const topWarehouse = locationRows[0] ?? null;
   const endingBalance = summary?.endingBalance ?? 0;
   const peakBalance = summary?.peakBalance ?? 0;
@@ -436,12 +423,6 @@ export function ReportsPage({ locations, customers, skuMasters, isLoading, error
                 : t("reportsInsightLargestWarehouseEmpty")}
               tone="blue"
             />
-            <ExecutiveInsightCard
-              label={t("reportsInsightLowStockAlerts")}
-              value={formatNumber(totalLowStockCount)}
-              meta={t("reportsInsightLowStockMeta", { count: formatNumber(totalLowStockCount) })}
-              tone={totalLowStockCount > 0 ? "red" : "green"}
-            />
           </div>
 
           <div className="reports-exec__primary-grid">
@@ -484,10 +465,6 @@ export function ReportsPage({ locations, customers, skuMasters, isLoading, error
 
             <ReportCard title={t("topSkuOnHand")} variant="secondary">
               <HorizontalBarList rows={topSkuRows} emptyLabel={emptyLabel} valueSuffix={t("units")} />
-            </ReportCard>
-
-            <ReportCard title={t("lowStockAttention")} variant="secondary">
-              <HorizontalBarList rows={lowStockRows.slice(0, 8)} emptyLabel={emptyLabel} valueSuffix={t("unitsShort")} />
             </ReportCard>
 
             <ReportCard title={t("movementTrend")} variant="secondary">

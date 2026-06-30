@@ -94,7 +94,7 @@ export function CustomerManagementPage({
   )), [customers, normalizedSearch]);
 
   const inventorySummaryByCustomer = useMemo(() => {
-    const summary = new Map<number, { stockRows: number; onHand: number; available: number; allocated: number; warehouses: Set<number>; lowStockRows: number }>();
+    const summary = new Map<number, { stockRows: number; onHand: number; available: number; allocated: number; warehouses: Set<number> }>();
 
     for (const item of items) {
       const current = summary.get(item.customerId) ?? {
@@ -102,17 +102,13 @@ export function CustomerManagementPage({
         onHand: 0,
         available: 0,
         allocated: 0,
-        warehouses: new Set<number>(),
-        lowStockRows: 0
+        warehouses: new Set<number>()
       };
       current.stockRows += 1;
       current.onHand += item.quantity;
       current.available += item.availableQty;
       current.allocated += item.allocatedQty;
       current.warehouses.add(item.locationId);
-      if (item.reorderLevel > 0 && item.availableQty <= item.reorderLevel) {
-        current.lowStockRows += 1;
-      }
       summary.set(item.customerId, current);
     }
 
@@ -170,7 +166,7 @@ export function CustomerManagementPage({
   );
 
   const selectedCustomerSummary = selectedCustomer
-    ? inventorySummaryByCustomer.get(selectedCustomer.id) ?? { stockRows: 0, onHand: 0, available: 0, allocated: 0, warehouses: new Set<number>(), lowStockRows: 0 }
+    ? inventorySummaryByCustomer.get(selectedCustomer.id) ?? { stockRows: 0, onHand: 0, available: 0, allocated: 0, warehouses: new Set<number>() }
     : null;
   const selectedOpenDocumentsCount = selectedInboundDocuments.filter((document) => isOpenStatus(document.status)).length
     + selectedOutboundDocuments.filter((document) => isOpenStatus(document.status)).length;
@@ -448,10 +444,6 @@ export function CustomerManagementPage({
               <div className="sheet-note">
                 <strong>{t("customerWarehouseFootprint")}</strong><br />
                 {selectedCustomerSummary?.warehouses.size ?? 0}
-              </div>
-              <div className="sheet-note">
-                <strong>{t("customerLowStockRows")}</strong><br />
-                {selectedCustomerSummary?.lowStockRows ?? 0}
               </div>
               <div className="sheet-note">
                 <strong>{t("openDocuments")}</strong><br />

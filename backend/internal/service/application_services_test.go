@@ -279,7 +279,7 @@ func TestBuildContainerSummariesIncludesContainerOnlyRecords(t *testing.T) {
 		CustomerName: "Customer",
 		ContainerNo:  "CONT-ONLY",
 		Status:       ContainerStatusPickupAssigned,
-	}}, nil, nil, nil, nil)
+	}}, nil, nil, nil)
 
 	summary, ok := summaries[containerSummaryKey(7, "CONT-ONLY")]
 	if !ok {
@@ -306,7 +306,7 @@ func TestBuildContainerSummariesKeepsDuplicateContainerNumbersScopedByCustomer(t
 			ContainerNo:      "CONT-DUP",
 			TotalExpectedQty: 20,
 		},
-	}, nil, nil, nil)
+	}, nil, nil)
 
 	first := summaries[containerSummaryKey(7, "CONT-DUP")]
 	second := summaries[containerSummaryKey(8, "CONT-DUP")]

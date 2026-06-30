@@ -57,6 +57,7 @@ type CreateInventoryAdjustmentLineInput struct {
 	CustomerID     int64  `json:"customerId"`
 	LocationID     int64  `json:"locationId"`
 	StorageSection string `json:"storageSection"`
+	ContainerID    int64  `json:"containerId"`
 	ContainerNo    string `json:"containerNo"`
 	PalletID       int64  `json:"palletId"`
 	SKUMasterID    int64  `json:"skuMasterId"`
@@ -104,6 +105,8 @@ type lockedAdjustmentItem struct {
 	LocationID     int64
 	LocationName   string
 	StorageSection string
+	ContainerID    int64
+	ContainerNo    string
 	SKU            string
 	Description    string
 	Unit           string
@@ -269,6 +272,7 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 			CustomerID:     line.CustomerID,
 			LocationID:     line.LocationID,
 			StorageSection: line.StorageSection,
+			ContainerID:    line.ContainerID,
 			ContainerNo:    line.ContainerNo,
 		}
 		lockedItem, err := s.loadLockedAdjustmentItem(ctx, tx, bucket)
@@ -288,6 +292,7 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 		if palletAfterQty < 0 {
 			return InventoryAdjustment{}, ErrInsufficientStock
 		}
+		palletDelta := resolveInventoryPalletCountDelta(lockedPalletContent.RemainingQty, palletAfterQty)
 
 		lineResult, err := tx.ExecContext(ctx, `
 			INSERT INTO inventory_adjustment_lines (
@@ -343,6 +348,9 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 		if err != nil {
 			return InventoryAdjustment{}, err
 		}
+		if err := s.adjustInventoryBalanceByIDTx(ctx, tx, lockedItem.ItemID, line.AdjustQty, palletDelta); err != nil {
+			return InventoryAdjustment{}, err
+		}
 		deltaSign := 1
 		if line.AdjustQty < 0 {
 			deltaSign = -1
@@ -361,8 +369,10 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 				SourceDocumentType:  StockLedgerSourceAdjustment,
 				SourceDocumentID:    adjustmentID,
 				SourceLineID:        lineID,
+				ContainerID:         lockedItem.ContainerID,
 				ContainerNo:         palletAdjustment.ContainerNo,
 				DescriptionSnapshot: lockedItem.Description,
+				Pallets:             stockLedgerPalletCountForQuantityChange(deltaSign*palletAdjustment.Quantity, palletDelta),
 				Reason:              reason,
 			}); err != nil {
 				return InventoryAdjustment{}, err
@@ -516,6 +526,8 @@ func (s *Store) loadLockedAdjustmentItem(ctx context.Context, tx *sql.Tx, bucket
 		LocationID:     projection.LocationID,
 		LocationName:   projection.LocationName,
 		StorageSection: projection.StorageSection,
+		ContainerID:    projection.ContainerID,
+		ContainerNo:    projection.ContainerNo,
 		SKU:            projection.SKU,
 		Description:    projection.Description,
 		Unit:           projection.Unit,
@@ -582,6 +594,7 @@ func (s *Store) applyAdjustmentPalletDeltaTx(
 		CustomerID:     line.CustomerID,
 		LocationID:     line.LocationID,
 		StorageSection: line.StorageSection,
+		ContainerID:    line.ContainerID,
 		ContainerNo:    line.ContainerNo,
 	}
 	if line.AdjustQty < 0 {

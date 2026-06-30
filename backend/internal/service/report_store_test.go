@@ -15,28 +15,32 @@ func TestBuildReportPalletFlowRowsUsesLedgerBalances(t *testing.T) {
 			BusinessDate:   start,
 			EventType:      StockLedgerEventShip,
 			QuantityChange: -4,
+			PalletChange:   -1,
 		},
 		{
 			PalletID:       2,
 			BusinessDate:   start,
 			EventType:      StockLedgerEventReceive,
 			QuantityChange: 12,
+			PalletChange:   1,
 		},
 		{
 			PalletID:       2,
 			BusinessDate:   start.AddDate(0, 0, 1),
 			EventType:      StockLedgerEventShip,
 			QuantityChange: -12,
+			PalletChange:   -1,
 		},
 		{
 			PalletID:       3,
 			BusinessDate:   start.AddDate(0, 0, 1),
 			EventType:      StockLedgerEventCount,
 			QuantityChange: 5,
+			PalletChange:   1,
 		},
 	}
 
-	rows := buildReportPalletFlowRows(map[int64]int{1: 10}, events, start, end)
+	rows := buildReportPalletFlowRows(map[int64]int{0: 2}, events, start, end)
 
 	if len(rows) != 3 {
 		t.Fatalf("expected 3 daily rows, got %d", len(rows))
@@ -140,6 +144,7 @@ func TestBuildSKUFlowReportRowsAggregatesReceiveAndShip(t *testing.T) {
 			PalletID:           1,
 			EventType:          StockLedgerEventReceive,
 			QuantityChange:     10,
+			Pallets:            1,
 			DeliveryDate:       sql.NullTime{Valid: true, Time: receiveDate},
 			CustomerName:       "Acme Retail",
 			LocationName:       "North Dock",
@@ -154,6 +159,7 @@ func TestBuildSKUFlowReportRowsAggregatesReceiveAndShip(t *testing.T) {
 			PalletID:           2,
 			EventType:          StockLedgerEventReceive,
 			QuantityChange:     15,
+			Pallets:            1,
 			DeliveryDate:       sql.NullTime{Valid: true, Time: receiveDate},
 			CustomerName:       "Acme Retail",
 			LocationName:       "North Dock",
@@ -168,6 +174,7 @@ func TestBuildSKUFlowReportRowsAggregatesReceiveAndShip(t *testing.T) {
 			PalletID:           1,
 			EventType:          StockLedgerEventShip,
 			QuantityChange:     -6,
+			Pallets:            1,
 			OutDate:            sql.NullTime{Valid: true, Time: shipDate},
 			CustomerName:       "Acme Retail",
 			LocationName:       "North Dock",

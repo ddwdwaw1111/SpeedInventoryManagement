@@ -60,7 +60,7 @@ type AdminContainerLifecyclePageProps = {
   onOpenReceiptEditor: (documentId?: number | null) => void;
   onOpenOutboundDocument: (documentId: number) => void;
   onOpenShipmentEditor: (documentId?: number | null) => void;
-  onOpenPalletTrace: (sourceInboundDocumentId?: number) => void;
+  onOpenPalletTrace?: (sourceInboundDocumentId?: number) => void;
 };
 
 type ContainerFormState = {
@@ -787,7 +787,7 @@ function AdminLifecycleNodePanel({
   onDeleteInboundDocumentAttachment: (document: InboundDocument, attachment: DocumentAttachment) => Promise<void>;
   onDeleteOutboundDocumentAttachment: (document: OutboundDocument, attachment: DocumentAttachment) => Promise<void>;
   onOpenContainerDetail: () => void;
-  onOpenPalletTrace: (sourceInboundDocumentId?: number) => void;
+  onOpenPalletTrace?: (sourceInboundDocumentId?: number) => void;
 }) {
   const { t } = useI18n();
   const selectedPackingList = node?.documentId ? lifecycle.packingLists.find((document) => document.id === node.documentId) : lifecycle.packingLists[0];
@@ -925,7 +925,7 @@ function AdminLifecycleNodePanel({
           />
         ) : null}
 
-        {node?.kind === "transfer" ? (
+        {node?.kind === "transfer" && onOpenPalletTrace ? (
           <QuickActionPanel
             icon={<RefreshCwIcon />}
             title={t("customerPortalContainerTransfers")}

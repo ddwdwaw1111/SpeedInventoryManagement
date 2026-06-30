@@ -18,7 +18,7 @@ import { getErrorMessage } from "../lib/errors";
 import type { InboundReceiptEditorLaunchContext } from "../lib/inboundReceiptEditorLaunchContext";
 import { useI18n } from "../lib/i18n";
 import { setPendingPalletTraceLaunchContext } from "../lib/palletTraceLaunchContext";
-import type { PageKey } from "../lib/routes";
+import { PALLET_ENTITY_UI_ENABLED, type PageKey } from "../lib/routes";
 import type { DocumentAttachment, InboundDocument, InboundDocumentLine, PalletTrace, UserRole } from "../lib/types";
 import { DocumentAttachmentsPanel } from "./DocumentAttachmentsPanel";
 import { useFeedbackToast } from "./Feedback";
@@ -94,7 +94,7 @@ export function InboundDetailPage({
     let active = true;
 
     async function loadPallets() {
-      if (!document?.id) {
+      if (!PALLET_ENTITY_UI_ENABLED || !document?.id) {
         setPallets([]);
         setPalletErrorMessage("");
         setIsPalletsLoading(false);
@@ -227,15 +227,17 @@ export function InboundDetailPage({
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={handleOpenPalletWorkspace}
-                disabled={!document}
-                className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <WarehouseOutlinedIcon sx={{ fontSize: 18 }} />
-                {t("openPalletWorkspace")}
-              </button>
+              {PALLET_ENTITY_UI_ENABLED ? (
+                <button
+                  type="button"
+                  onClick={handleOpenPalletWorkspace}
+                  disabled={!document}
+                  className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <WarehouseOutlinedIcon sx={{ fontSize: 18 }} />
+                  {t("openPalletWorkspace")}
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={handleOpenWorkspace}
@@ -318,7 +320,7 @@ export function InboundDetailPage({
                     label={t("pallets")}
                     value={String(totalPallets)}
                     meta={t("inboundDetailVariance", { variance: quantityVariance })}
-                    secondaryValue={palletCount > 0 ? `${palletCount}` : undefined}
+                    secondaryValue={PALLET_ENTITY_UI_ENABLED && palletCount > 0 ? `${palletCount}` : undefined}
                   />
                 </div>
 
@@ -460,6 +462,7 @@ export function InboundDetailPage({
               ) : null}
             </section>
 
+            {PALLET_ENTITY_UI_ENABLED ? (
             <section className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-[0_16px_34px_rgba(15,23,42,0.05)]">
               <WorkspacePanelHeader
                 title={t("inboundDetailPalletManifest")}
@@ -532,6 +535,7 @@ export function InboundDetailPage({
                 </div>
               )}
             </section>
+            ) : null}
           </div>
 
           <div className="space-y-5">

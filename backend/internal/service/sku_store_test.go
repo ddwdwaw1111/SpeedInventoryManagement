@@ -13,7 +13,6 @@ func TestSanitizeSKUMasterInput(t *testing.T) {
 		Category:              " ",
 		Description:           "  kraft bag ",
 		Unit:                  " ctn ",
-		ReorderLevel:          200,
 		DefaultUnitsPerPallet: 200,
 	})
 
@@ -41,7 +40,6 @@ func TestValidateSKUMasterInput(t *testing.T) {
 	validInput := CreateSKUMasterInput{
 		SKU:                   "ABC123",
 		Description:           "kraft bag",
-		ReorderLevel:          200,
 		DefaultUnitsPerPallet: 200,
 	}
 
@@ -52,7 +50,6 @@ func TestValidateSKUMasterInput(t *testing.T) {
 	invalidInputs := []CreateSKUMasterInput{
 		{Description: "kraft bag"},
 		{SKU: "ABC123"},
-		{SKU: "ABC123", Description: "kraft bag", ReorderLevel: -1},
 		{SKU: "ABC123", Description: "kraft bag", DefaultUnitsPerPallet: -1},
 	}
 
