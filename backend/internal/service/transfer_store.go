@@ -269,7 +269,7 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 	}
 
 	for index, line := range input.Lines {
-		sourceItem, err := s.loadLockedTransferItem(ctx, tx, palletSourceBucket{
+		sourceItem, err := s.loadLockedTransferItem(ctx, tx, inventorySourceBucket{
 			SKUMasterID:    line.SKUMasterID,
 			CustomerID:     line.CustomerID,
 			LocationID:     line.LocationID,
@@ -531,7 +531,7 @@ func (s *Store) listInventoryTransfersByIDs(ctx context.Context, transferIDs []i
 	return transfers, nil
 }
 
-func (s *Store) loadLockedTransferItem(ctx context.Context, tx *sql.Tx, bucket palletSourceBucket) (lockedTransferItem, error) {
+func (s *Store) loadLockedTransferItem(ctx context.Context, tx *sql.Tx, bucket inventorySourceBucket) (lockedTransferItem, error) {
 	var item lockedTransferItem
 	err := tx.QueryRowContext(ctx, `
 		SELECT

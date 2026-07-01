@@ -175,19 +175,9 @@ describe("OutboundShipmentEditorPage", () => {
       cartonSizeMm: undefined,
       netWeightKgs: 0,
       grossWeightKgs: 0,
-      lineNote: undefined,
-      pickAllocations: [
-        {
-          itemNumber: "608333",
-          locationId: 1,
-          locationName: "NJ",
-          storageSection: "TEMP",
-          containerNo: "GCXU5817233",
-          allocatedQty: 5,
-          pallets: 2
-        }
-      ]
+      lineNote: undefined
     });
+    expect(payload.lines[0]).not.toHaveProperty("pickAllocations");
     expect(payload.lines[0]).not.toHaveProperty("pickPallets");
     expect(onRefresh).toHaveBeenCalled();
     expect(onBackToList).toHaveBeenCalledTimes(1);
@@ -247,12 +237,8 @@ describe("OutboundShipmentEditorPage", () => {
 
     const payload = mockedApi.createOutboundDocument.mock.calls[0][0];
     expect(payload.lines).toHaveLength(2);
-    expect(payload.lines[0].pickAllocations).toEqual([
-      expect.objectContaining({ containerNo: "GCXU5817233", allocatedQty: 5, pallets: 1 })
-    ]);
-    expect(payload.lines[1].pickAllocations).toEqual([
-      expect.objectContaining({ containerNo: "GCXU5817234", allocatedQty: 5, pallets: 1 })
-    ]);
+    expect(payload.lines[0]).not.toHaveProperty("pickAllocations");
+    expect(payload.lines[1]).not.toHaveProperty("pickAllocations");
     expect(payload.lines[0]).not.toHaveProperty("pickPallets");
     expect(payload.lines[1]).not.toHaveProperty("pickPallets");
   });
@@ -793,13 +779,7 @@ describe("OutboundShipmentEditorPage", () => {
     });
 
     const payload = mockedApi.updateOutboundDocument.mock.calls[0][1];
-    expect(payload.lines[0].pickAllocations).toEqual([
-      expect.objectContaining({
-        containerNo: "GCXU5817233",
-        allocatedQty: 5,
-        pallets: 1
-      })
-    ]);
+    expect(payload.lines[0]).not.toHaveProperty("pickAllocations");
     expect(payload.lines[0]).not.toHaveProperty("pickPallets");
   });
 });

@@ -15,8 +15,6 @@ import type {
   OperationsReport,
   OutboundDocument,
   OutboundDocumentPayload,
-  PalletLocationEvent,
-  PalletTrace,
   UIPreference,
   User
 } from "../../src/lib/types";
@@ -31,8 +29,6 @@ export type MockAppApiOptions = {
   locations?: Location[];
   items?: Item[];
   movements?: Movement[];
-  pallets?: PalletTrace[];
-  palletLocationEvents?: PalletLocationEvent[];
   adjustments?: InventoryAdjustment[];
   inboundDocuments?: InboundDocument[];
   outboundDocuments?: OutboundDocument[];
@@ -76,8 +72,6 @@ export async function mockAppApi(page: Page, options: MockAppApiOptions = {}): P
   const locations = options.locations ?? [buildLocation()];
   const items = options.items ?? [];
   const movements = options.movements ?? [];
-  const pallets = options.pallets ?? [];
-  const palletLocationEvents = options.palletLocationEvents ?? [];
   const adjustmentStore = [...(options.adjustments ?? [])];
   const inboundDocumentStore = [...(options.inboundDocuments ?? [])];
   const outboundDocumentStore = [...(options.outboundDocuments ?? [])];
@@ -214,22 +208,6 @@ export async function mockAppApi(page: Page, options: MockAppApiOptions = {}): P
     }
     if (request.method() === "GET" && apiPath === "/users") {
       return json(route, [session.user]);
-    }
-    if (request.method() === "GET" && apiPath === "/pallets") {
-      const searchTerm = url.searchParams.get("search") ?? "";
-      const sourceInboundDocumentId = Number(url.searchParams.get("sourceInboundDocumentId") ?? "");
-      const limit = Number(url.searchParams.get("limit") ?? "");
-      const filteredPallets = filterPallets(pallets, {
-        searchTerm,
-        sourceInboundDocumentId: Number.isFinite(sourceInboundDocumentId) ? sourceInboundDocumentId : undefined
-      });
-      const limitedPallets = Number.isFinite(limit) && limit > 0
-        ? filteredPallets.slice(0, limit)
-        : filteredPallets;
-      return json(route, limitedPallets);
-    }
-    if (request.method() === "GET" && apiPath === "/pallet-location-events") {
-      return json(route, palletLocationEvents);
     }
     if (request.method() === "GET" && apiPath.startsWith("/ui-preferences/")) {
       return json(route, buildUIPreference(apiPath.split("/").at(-1) ?? "", null));
@@ -396,110 +374,6 @@ export function buildMovement(overrides: Partial<Movement> = {}): Movement {
     createdAt: NOW,
     ...overrides
   };
-}
-
-export function buildPalletTrace(overrides: Partial<PalletTrace> = {}): PalletTrace {
-  return {
-    id: 501,
-    parentPalletId: 0,
-    palletCode: "PLT-PLAY-001",
-    containerVisitId: 90,
-    sourceInboundDocumentId: 91,
-    sourceInboundLineId: 92,
-    actualArrivalDate: "2026-04-20",
-    containerType: "NORMAL",
-    customerId: 1,
-    customerName: "Play Customer",
-    skuMasterId: 101,
-    sku: "SKU-PLAY",
-    description: "Playwright test stock",
-    currentLocationId: 1,
-    currentLocationName: "NJ Warehouse",
-    currentStorageSection: "TEMP",
-    currentContainerNo: "CONT-PLAY-1",
-    status: "OPEN",
-    createdAt: NOW,
-    updatedAt: NOW,
-    contents: [
-      {
-        id: 601,
-        palletId: 501,
-        skuMasterId: 101,
-        itemNumber: "ITEM-100",
-        sku: "SKU-PLAY",
-        description: "Playwright test stock",
-        quantity: 25,
-        allocatedQty: 0,
-        damagedQty: 0,
-        holdQty: 0,
-        createdAt: NOW,
-        updatedAt: NOW
-      }
-    ],
-    ...overrides
-  };
-}
-
-export function buildPalletLocationEvent(overrides: Partial<PalletLocationEvent> = {}): PalletLocationEvent {
-  return {
-    id: 701,
-    palletId: 501,
-    palletCode: "PLT-PLAY-001",
-    containerVisitId: 90,
-    customerId: 1,
-    customerName: "Play Customer",
-    locationId: 1,
-    locationName: "NJ Warehouse",
-    storageSection: "TEMP",
-    containerNo: "CONT-PLAY-1",
-    eventType: "RECEIVED",
-    quantityDelta: 25,
-    palletDelta: 1,
-    eventTime: NOW,
-    createdAt: NOW,
-    ...overrides
-  };
-}
-
-function filterPallets(
-  pallets: PalletTrace[],
-  filters: {
-    searchTerm?: string;
-    sourceInboundDocumentId?: number;
-  }
-) {
-  const normalizedSearch = filters.searchTerm?.trim().toUpperCase() ?? "";
-  const hasSearch = normalizedSearch.length > 0;
-  const sourceInboundDocumentId = filters.sourceInboundDocumentId && filters.sourceInboundDocumentId > 0
-    ? filters.sourceInboundDocumentId
-    : undefined;
-
-  return pallets.filter((pallet) => {
-    if (sourceInboundDocumentId && pallet.sourceInboundDocumentId !== sourceInboundDocumentId) {
-      return false;
-    }
-
-    if (!hasSearch) {
-      return true;
-    }
-
-    const searchableValues = [
-      pallet.palletCode,
-      pallet.customerName,
-      pallet.sku,
-      pallet.description,
-      pallet.currentLocationName,
-      pallet.currentStorageSection,
-      pallet.currentContainerNo,
-      ...pallet.contents.flatMap((content) => [
-        content.itemNumber,
-        content.sku,
-        content.description
-      ])
-    ];
-
-    return searchableValues.some((value) => normalizeValue(value).includes(normalizedSearch));
-  });
 }
 
 function nextDocumentId(documents: Array<{ id: number }>) {

@@ -60,21 +60,12 @@ test("shipment editor schedules a draft shipment with item bucket allocations", 
         locationId: location.id,
         skuMasterId: item.skuMasterId,
         quantity: 5,
-        pallets: 1,
-        pickAllocations: [
-          {
-            itemNumber: item.itemNumber,
-            locationId: location.id,
-            locationName: location.name,
-            storageSection: "TEMP",
-            containerNo: "CONT-901",
-            allocatedQty: 5,
-            pallets: 1
-          }
-        ]
+        pallets: 1
       }
     ]
   });
+  expect(apiState.postedOutboundDocuments[0].lines[0]).not.toHaveProperty("pickAllocations");
+  expect(apiState.postedOutboundDocuments[0].lines[0]).not.toHaveProperty("pickPallets");
 
   await expect(page).toHaveURL(/\/outbound-management$/);
   await expect(page.getByRole("heading", { name: "Shipments" })).toBeVisible();

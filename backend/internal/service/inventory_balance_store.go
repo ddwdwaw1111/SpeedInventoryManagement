@@ -77,7 +77,7 @@ func (s *Store) loadLockedInventoryBalanceByIDTx(ctx context.Context, tx *sql.Tx
 	return state, nil
 }
 
-func (s *Store) loadLockedInventoryBalanceForBucketTx(ctx context.Context, tx *sql.Tx, bucket palletSourceBucket) (inventoryBalanceState, error) {
+func (s *Store) loadLockedInventoryBalanceForBucketTx(ctx context.Context, tx *sql.Tx, bucket inventorySourceBucket) (inventoryBalanceState, error) {
 	itemID, err := s.findInventoryItemIDByProjectionTx(
 		ctx,
 		tx,
@@ -144,7 +144,7 @@ func (s *Store) adjustInventoryBalanceByIDTx(ctx context.Context, tx *sql.Tx, it
 	return nil
 }
 
-func (s *Store) reserveInventoryBalanceTx(ctx context.Context, tx *sql.Tx, bucket palletSourceBucket, quantity int) error {
+func (s *Store) reserveInventoryBalanceTx(ctx context.Context, tx *sql.Tx, bucket inventorySourceBucket, quantity int) error {
 	if quantity <= 0 {
 		return nil
 	}
@@ -168,7 +168,7 @@ func (s *Store) reserveInventoryBalanceTx(ctx context.Context, tx *sql.Tx, bucke
 	return nil
 }
 
-func (s *Store) releaseInventoryReservationTx(ctx context.Context, tx *sql.Tx, bucket palletSourceBucket, quantity int) error {
+func (s *Store) releaseInventoryReservationTx(ctx context.Context, tx *sql.Tx, bucket inventorySourceBucket, quantity int) error {
 	if quantity <= 0 {
 		return nil
 	}
@@ -189,7 +189,7 @@ func (s *Store) releaseInventoryReservationTx(ctx context.Context, tx *sql.Tx, b
 	return nil
 }
 
-func (s *Store) consumeReservedInventoryBalanceTx(ctx context.Context, tx *sql.Tx, bucket palletSourceBucket, quantity int, palletDeltas ...int) error {
+func (s *Store) consumeReservedInventoryBalanceTx(ctx context.Context, tx *sql.Tx, bucket inventorySourceBucket, quantity int, palletDeltas ...int) error {
 	palletDelta := firstInt(palletDeltas...)
 	if quantity <= 0 && palletDelta <= 0 {
 		return nil
@@ -221,7 +221,7 @@ func (s *Store) consumeReservedInventoryBalanceTx(ctx context.Context, tx *sql.T
 	return nil
 }
 
-func (s *Store) restoreInventoryBalanceTx(ctx context.Context, tx *sql.Tx, bucket palletSourceBucket, quantity int, palletDeltas ...int) error {
+func (s *Store) restoreInventoryBalanceTx(ctx context.Context, tx *sql.Tx, bucket inventorySourceBucket, quantity int, palletDeltas ...int) error {
 	palletDelta := firstInt(palletDeltas...)
 	if quantity <= 0 && palletDelta <= 0 {
 		return nil
@@ -261,7 +261,7 @@ func (s *Store) adjustInventoryPalletBalanceByIDTx(ctx context.Context, tx *sql.
 	return nil
 }
 
-func (s *Store) adjustInventoryPalletBalanceTx(ctx context.Context, tx *sql.Tx, bucket palletSourceBucket, palletDelta int) error {
+func (s *Store) adjustInventoryPalletBalanceTx(ctx context.Context, tx *sql.Tx, bucket inventorySourceBucket, palletDelta int) error {
 	if palletDelta == 0 {
 		return nil
 	}
@@ -326,7 +326,7 @@ func (s *Store) restoreInventoryBalancesForOutboundLedgerTx(ctx context.Context,
 	defer rows.Close()
 
 	type restoreRow struct {
-		bucket         palletSourceBucket
+		bucket         inventorySourceBucket
 		restoreQty     int
 		restorePallets int
 	}
@@ -407,7 +407,7 @@ func (s *Store) reduceInventoryBalancesForInboundLedgerTx(ctx context.Context, t
 	defer rows.Close()
 
 	type reductionRow struct {
-		bucket        palletSourceBucket
+		bucket        inventorySourceBucket
 		reduceQty     int
 		reducePallets int
 	}

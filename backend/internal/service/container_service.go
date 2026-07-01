@@ -38,11 +38,8 @@ type ContainerLifecycle struct {
 	PackingLists      []InboundDocument           `json:"packingLists"`
 	PickingOrders     []OutboundDocument          `json:"pickingOrders"`
 	LifecycleEvents   []ContainerLifecycleEvent   `json:"lifecycleEvents"`
-	Pallets           []PalletTrace               `json:"pallets"`
-	PalletEvents      []PalletLocationEvent       `json:"palletEvents"`
 	TrackingEvents    []ContainerTrackingEvent    `json:"trackingEvents"`
 	PickupAssignments []ContainerPickupAssignment `json:"pickupAssignments"`
-	ReworkEvents      []PalletReworkEvent         `json:"reworkEvents"`
 	DeliveryEvents    []DeliveryEvent             `json:"deliveryEvents"`
 }
 
@@ -70,7 +67,6 @@ type containerRepository interface {
 	CreateContainerPickupAssignment(context.Context, CreateContainerPickupAssignmentInput) (ContainerPickupAssignment, error)
 	ListContainerTrackingEvents(context.Context, int, ContainerTrackingEventFilters) ([]ContainerTrackingEvent, error)
 	ListContainerPickupAssignments(context.Context, int, ContainerPickupAssignmentFilters) ([]ContainerPickupAssignment, error)
-	ListPalletReworkEvents(context.Context, int, PalletReworkEventFilters) ([]PalletReworkEvent, error)
 	ListDeliveryEvents(context.Context, int, DeliveryEventFilters) ([]DeliveryEvent, error)
 }
 
@@ -166,13 +162,6 @@ func (s *ContainerService) GetLifecycle(ctx context.Context, input GetContainerL
 	if err != nil {
 		return ContainerLifecycle{}, err
 	}
-	reworkEvents, err := s.repo.ListPalletReworkEvents(ctx, ContainerLifecycleLoadLimit, PalletReworkEventFilters{
-		CustomerID:  input.CustomerID,
-		ContainerNo: containerNo,
-	})
-	if err != nil {
-		return ContainerLifecycle{}, err
-	}
 	deliveryEvents, err := s.repo.ListDeliveryEvents(ctx, ContainerLifecycleLoadLimit, DeliveryEventFilters{
 		CustomerID:  input.CustomerID,
 		ContainerNo: containerNo,
@@ -193,11 +182,8 @@ func (s *ContainerService) GetLifecycle(ctx context.Context, input GetContainerL
 		PackingLists:      packingLists,
 		PickingOrders:     pickingOrders,
 		LifecycleEvents:   lifecycleEvents,
-		Pallets:           []PalletTrace{},
-		PalletEvents:      []PalletLocationEvent{},
 		TrackingEvents:    trackingEvents,
 		PickupAssignments: pickupAssignments,
-		ReworkEvents:      reworkEvents,
 		DeliveryEvents:    deliveryEvents,
 	}, nil
 }

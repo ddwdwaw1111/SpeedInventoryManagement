@@ -180,48 +180,6 @@ func (s *Server) handleV2CreateContainerPickupAssignment(c *gin.Context) {
 	writeJSON(c, http.StatusCreated, assignment)
 }
 
-func (s *Server) handleV2AdjustPallets(c *gin.Context) {
-	var command service.PalletAdjustCommand
-	if err := bindJSON(c, &command); err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	result, err := s.appServices().PalletOperations.Adjust(c.Request.Context(), command)
-	if err != nil {
-		writeDomainError(c, err)
-		return
-	}
-	writeJSON(c, http.StatusCreated, result)
-}
-
-func (s *Server) handleV2MovePallets(c *gin.Context) {
-	var command service.PalletMoveCommand
-	if err := bindJSON(c, &command); err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	result, err := s.appServices().PalletOperations.Move(c.Request.Context(), command)
-	if err != nil {
-		writeDomainError(c, err)
-		return
-	}
-	writeJSON(c, http.StatusCreated, result)
-}
-
-func (s *Server) handleV2ReworkPallets(c *gin.Context) {
-	var command service.PalletReworkCommand
-	if err := bindJSON(c, &command); err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	result, err := s.appServices().PalletOperations.Rework(c.Request.Context(), command)
-	if err != nil {
-		writeDomainError(c, err)
-		return
-	}
-	writeJSON(c, http.StatusCreated, result)
-}
-
 func (s *Server) handleV2CreatePickingOrder(c *gin.Context) {
 	var input service.CreateOutboundDocumentInput
 	if err := bindJSON(c, &input); err != nil {
@@ -354,19 +312,6 @@ func customerVisibleContainerLifecycle(lifecycle service.ContainerLifecycle) ser
 		pickupAssignments = append(pickupAssignments, assignment)
 	}
 	lifecycle.PickupAssignments = pickupAssignments
-
-	reworkEvents := make([]service.PalletReworkEvent, 0, len(lifecycle.ReworkEvents))
-	for _, event := range lifecycle.ReworkEvents {
-		if !isCustomerVisibleLifecycleEvent(event.Visibility) {
-			continue
-		}
-		event.Notes = ""
-		event.InternalStatus = ""
-		event.InternalLabel = ""
-		event.DisplayLabel = strings.TrimSpace(event.PublicLabel)
-		reworkEvents = append(reworkEvents, event)
-	}
-	lifecycle.ReworkEvents = reworkEvents
 
 	deliveryEvents := make([]service.DeliveryEvent, 0, len(lifecycle.DeliveryEvents))
 	for _, event := range lifecycle.DeliveryEvents {

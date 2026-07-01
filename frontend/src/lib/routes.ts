@@ -14,12 +14,9 @@ export type PageKey =
   | "container-lifecycle"
   | "customers"
   | "audit-logs"
-  | "pallet-trace"
   | "user-management"
   | "inventory-summary"
   | "warehouse-map"
-  | "adjustments"
-  | "transfers"
   | "sku-master"
   | "storage-management"
   | "storage-location-editor"
@@ -29,19 +26,6 @@ export type PageKey =
   | "outbound-management"
   | "shipment-editor"
   | "settings";
-
-export const PALLET_ENTITY_UI_ENABLED = false;
-
-const palletEntityPages: readonly PageKey[] = ["pallet-trace", "adjustments", "transfers"];
-const palletEntityPaths = new Set(["/pallets", "/adjustments", "/transfers"]);
-
-export function isPalletEntityPage(page: PageKey) {
-  return palletEntityPages.includes(page);
-}
-
-function resolveEnabledPage(page: PageKey): PageKey {
-  return !PALLET_ENTITY_UI_ENABLED && isPalletEntityPage(page) ? "inventory-summary" : page;
-}
 
 export const pagePathMap: Record<PageKey, string> = {
   dashboard: "/",
@@ -57,12 +41,9 @@ export const pagePathMap: Record<PageKey, string> = {
   "container-lifecycle": "/container-lifecycle",
   customers: "/customers",
   "audit-logs": "/audit-logs",
-  "pallet-trace": "/pallets",
   "user-management": "/user-management",
   "inventory-summary": "/inventory-summary",
   "warehouse-map": "/warehouse-map",
-  adjustments: "/adjustments",
-  transfers: "/transfers",
   "sku-master": "/sku-master",
   "storage-management": "/storage-management",
   "storage-location-editor": "/storage-management/new",
@@ -86,7 +67,6 @@ export function normalizePagePath(pathname: string): string {
 export function getPageFromPath(pathname: string): PageKey {
   const normalized = normalizePagePath(pathname);
 
-  if (!PALLET_ENTITY_UI_ENABLED && palletEntityPaths.has(normalized)) return "inventory-summary";
   if (normalized === "/daily-operations" || /^\/daily-operations\/\d{4}-\d{2}-\d{2}$/.test(normalized)) return "daily-operations";
   if (normalized === "/admin") return "dashboard";
   if (/^\/billing\/container\/\d{4}-\d{2}-\d{2}\/\d{4}-\d{2}-\d{2}\/(?:all|\d+)\/(?:all|\d+)\/[^/]+$/.test(normalized)) return "billing-container-detail";
@@ -99,12 +79,9 @@ export function getPageFromPath(pathname: string): PageKey {
   if (/^\/container-contents\/[^/]+$/.test(normalized)) return "container-detail";
   if (normalized === "/container-contents") return "container-contents";
   if (normalized === "/audit-logs") return "audit-logs";
-  if (normalized === "/pallets") return "pallet-trace";
   if (normalized === "/user-management") return "user-management";
   if (normalized === "/inventory-summary") return "inventory-summary";
   if (normalized === "/warehouse-map") return "warehouse-map";
-  if (normalized === "/adjustments") return "adjustments";
-  if (normalized === "/transfers") return "transfers";
   if (normalized === "/cycle-counts") return "inventory-summary";
   if (normalized === "/inbound-management/new" || /^\/inbound-management\/\d+\/edit$/.test(normalized)) return "receipt-editor";
   if (/^\/inbound-management\/\d+$/.test(normalized)) return "inbound-detail";
@@ -121,17 +98,16 @@ export function getPageFromPath(pathname: string): PageKey {
 }
 
 export function getPathForPage(page: PageKey): string {
-  return pagePathMap[resolveEnabledPage(page)];
+  return pagePathMap[page];
 }
 
 export function navigateToPage(page: PageKey, setter: (page: PageKey) => void) {
-  const targetPage = resolveEnabledPage(page);
-  const path = getPathForPage(targetPage);
+  const path = getPathForPage(page);
   if (normalizePagePath(window.location.pathname) !== path) {
-    window.history.pushState({ page: targetPage }, "", path);
+    window.history.pushState({ page }, "", path);
   }
 
-  setter(targetPage);
+  setter(page);
 }
 
 function normalizeIsoDateSegment(value: string) {

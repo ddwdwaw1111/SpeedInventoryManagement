@@ -550,76 +550,10 @@ func Migrate(db *sql.DB) error {
 		)`,
 		`ALTER TABLE document_attachments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL DEFAULT NULL AFTER uploaded_by_user_id`,
 		`CREATE INDEX IF NOT EXISTS idx_document_attachments_document ON document_attachments (document_type, document_id)`,
-		`CREATE TABLE IF NOT EXISTS pallets (
-			id BIGINT NOT NULL AUTO_INCREMENT,
-			parent_pallet_id BIGINT DEFAULT NULL,
-			pallet_code VARCHAR(64) NOT NULL,
-			container_visit_id BIGINT DEFAULT NULL,
-			source_inbound_document_id BIGINT DEFAULT NULL,
-			source_inbound_line_id BIGINT DEFAULT NULL,
-			actual_arrival_date DATE DEFAULT NULL,
-			customer_id BIGINT NOT NULL,
-			sku_master_id BIGINT NOT NULL,
-			current_location_id BIGINT NOT NULL,
-			current_storage_section VARCHAR(16) NOT NULL DEFAULT 'TEMP',
-			current_container_no VARCHAR(120) NOT NULL DEFAULT '',
-			status VARCHAR(32) NOT NULL DEFAULT 'OPEN',
-			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-			PRIMARY KEY (id),
-			UNIQUE KEY uq_pallets_pallet_code (pallet_code),
-			KEY idx_pallets_parent_pallet_id (parent_pallet_id),
-			KEY idx_pallets_container_visit_id (container_visit_id),
-			KEY idx_pallets_source_inbound_line_id (source_inbound_line_id),
-			KEY idx_pallets_current_location_id (current_location_id),
-			KEY idx_pallets_status (status),
-			CONSTRAINT fk_pallets_parent
-				FOREIGN KEY (parent_pallet_id) REFERENCES pallets (id)
-				ON DELETE SET NULL,
-			CONSTRAINT fk_pallets_container_visit
-				FOREIGN KEY (container_visit_id) REFERENCES container_visits (id)
-				ON DELETE SET NULL,
-			CONSTRAINT fk_pallets_source_document
-				FOREIGN KEY (source_inbound_document_id) REFERENCES inbound_documents (id)
-				ON DELETE CASCADE,
-			CONSTRAINT fk_pallets_source_line
-				FOREIGN KEY (source_inbound_line_id) REFERENCES inbound_document_lines (id)
-				ON DELETE CASCADE,
-			CONSTRAINT fk_pallets_customer
-				FOREIGN KEY (customer_id) REFERENCES customers (id),
-			CONSTRAINT fk_pallets_sku_master
-				FOREIGN KEY (sku_master_id) REFERENCES sku_master (id),
-			CONSTRAINT fk_pallets_current_location
-				FOREIGN KEY (current_location_id) REFERENCES storage_locations (id)
-		)`,
-		`ALTER TABLE pallets ADD COLUMN IF NOT EXISTS actual_arrival_date DATE DEFAULT NULL AFTER source_inbound_line_id`,
-		`ALTER TABLE pallets MODIFY COLUMN source_inbound_document_id BIGINT DEFAULT NULL`,
-		`ALTER TABLE pallets MODIFY COLUMN source_inbound_line_id BIGINT DEFAULT NULL`,
-		`CREATE TABLE IF NOT EXISTS pallet_items (
-			id BIGINT NOT NULL AUTO_INCREMENT,
-			pallet_id BIGINT NOT NULL,
-			sku_master_id BIGINT NOT NULL,
-			quantity INT NOT NULL DEFAULT 0,
-			allocated_qty INT NOT NULL DEFAULT 0,
-			damaged_qty INT NOT NULL DEFAULT 0,
-			hold_qty INT NOT NULL DEFAULT 0,
-			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-			PRIMARY KEY (id),
-			UNIQUE KEY uq_pallet_items_pallet_sku (pallet_id, sku_master_id),
-			KEY idx_pallet_items_sku_master_id (sku_master_id),
-			CONSTRAINT fk_pallet_items_pallet
-				FOREIGN KEY (pallet_id) REFERENCES pallets (id)
-				ON DELETE CASCADE,
-			CONSTRAINT fk_pallet_items_sku
-				FOREIGN KEY (sku_master_id) REFERENCES sku_master (id)
-		)`,
 		`CREATE TABLE IF NOT EXISTS stock_ledger (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			event_type VARCHAR(32) NOT NULL,
 			occurred_at TIMESTAMP NULL DEFAULT NULL,
-			pallet_id BIGINT DEFAULT NULL,
-			pallet_item_id BIGINT DEFAULT NULL,
 			sku_master_id BIGINT DEFAULT NULL,
 			customer_id BIGINT NOT NULL,
 			location_id BIGINT NOT NULL,
@@ -651,15 +585,11 @@ func Migrate(db *sql.DB) error {
 			reference_code VARCHAR(120) DEFAULT NULL,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (id),
-			KEY idx_stock_ledger_pallet_id (pallet_id),
-			KEY idx_stock_ledger_pallet_item_id (pallet_item_id),
 			KEY idx_stock_ledger_customer_id (customer_id),
 			KEY idx_stock_ledger_container_id (container_id),
 			KEY idx_stock_ledger_event_type_created (event_type, created_at),
 			KEY idx_stock_ledger_created_at (created_at),
 			KEY idx_stock_ledger_source (source_document_type, source_document_id),
-			CONSTRAINT fk_stock_ledger_pallet
-				FOREIGN KEY (pallet_id) REFERENCES pallets (id),
 			CONSTRAINT fk_stock_ledger_customer
 				FOREIGN KEY (customer_id) REFERENCES customers (id),
 			CONSTRAINT fk_stock_ledger_location
@@ -675,8 +605,6 @@ func Migrate(db *sql.DB) error {
 			event_type VARCHAR(32) NOT NULL,
 			event_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			quantity_delta INT NOT NULL DEFAULT 0,
-			pallet_id BIGINT DEFAULT NULL,
-			pallet_item_id BIGINT DEFAULT NULL,
 			sku_master_id BIGINT DEFAULT NULL,
 			source_document_type VARCHAR(32) DEFAULT NULL,
 			source_document_id BIGINT DEFAULT NULL,
@@ -697,7 +625,6 @@ func Migrate(db *sql.DB) error {
 			KEY idx_container_lifecycle_customer_container_time (customer_id, container_no, event_time, id),
 			KEY idx_container_lifecycle_source (source_document_type, source_document_id),
 			KEY idx_container_lifecycle_event_type (event_type),
-			KEY idx_container_lifecycle_pallet_id (pallet_id),
 			CONSTRAINT fk_container_lifecycle_stock_ledger
 				FOREIGN KEY (stock_ledger_id) REFERENCES stock_ledger (id)
 				ON DELETE CASCADE,
@@ -706,49 +633,6 @@ func Migrate(db *sql.DB) error {
 			CONSTRAINT fk_container_lifecycle_location
 				FOREIGN KEY (location_id) REFERENCES storage_locations (id)
 		)`,
-		`DROP TABLE IF EXISTS outbound_picks`,
-		`CREATE TABLE IF NOT EXISTS pallet_location_events (
-			id BIGINT NOT NULL AUTO_INCREMENT,
-			pallet_id BIGINT NOT NULL,
-			container_visit_id BIGINT DEFAULT NULL,
-			customer_id BIGINT NOT NULL,
-			location_id BIGINT NOT NULL,
-			storage_section VARCHAR(16) NOT NULL DEFAULT 'TEMP',
-			container_no VARCHAR(120) NOT NULL DEFAULT '',
-			event_type VARCHAR(32) NOT NULL,
-			quantity_delta INT NOT NULL DEFAULT 0,
-			pallet_delta DECIMAL(12,4) NOT NULL DEFAULT 0,
-			event_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (id),
-			KEY idx_pallet_location_events_pallet_id (pallet_id),
-			KEY idx_pallet_location_events_container_visit_id (container_visit_id),
-			KEY idx_pallet_location_events_location_id (location_id),
-			KEY idx_pallet_location_events_event_time (event_time),
-			CONSTRAINT fk_pallet_location_events_pallet
-				FOREIGN KEY (pallet_id) REFERENCES pallets (id)
-				ON DELETE CASCADE,
-			CONSTRAINT fk_pallet_location_events_container_visit
-				FOREIGN KEY (container_visit_id) REFERENCES container_visits (id)
-				ON DELETE SET NULL,
-			CONSTRAINT fk_pallet_location_events_customer
-				FOREIGN KEY (customer_id) REFERENCES customers (id),
-			CONSTRAINT fk_pallet_location_events_location
-				FOREIGN KEY (location_id) REFERENCES storage_locations (id)
-		)`,
-		`ALTER TABLE pallet_location_events ADD COLUMN IF NOT EXISTS pallet_id BIGINT NOT NULL AFTER id`,
-		`ALTER TABLE pallet_location_events ADD COLUMN IF NOT EXISTS container_visit_id BIGINT DEFAULT NULL AFTER pallet_id`,
-		`ALTER TABLE pallet_location_events ADD COLUMN IF NOT EXISTS customer_id BIGINT NOT NULL AFTER container_visit_id`,
-		`ALTER TABLE pallet_location_events ADD COLUMN IF NOT EXISTS location_id BIGINT NOT NULL AFTER customer_id`,
-		`ALTER TABLE pallet_location_events ADD COLUMN IF NOT EXISTS storage_section VARCHAR(16) NOT NULL DEFAULT 'TEMP' AFTER location_id`,
-		`ALTER TABLE pallet_location_events ADD COLUMN IF NOT EXISTS container_no VARCHAR(120) NOT NULL DEFAULT '' AFTER storage_section`,
-		`ALTER TABLE pallet_location_events ADD COLUMN IF NOT EXISTS event_type VARCHAR(32) NOT NULL AFTER container_no`,
-		`ALTER TABLE pallet_location_events ADD COLUMN IF NOT EXISTS quantity_delta INT NOT NULL DEFAULT 0 AFTER event_type`,
-		`ALTER TABLE pallet_location_events ADD COLUMN IF NOT EXISTS pallet_delta DECIMAL(12,4) NOT NULL DEFAULT 0 AFTER quantity_delta`,
-		`ALTER TABLE pallet_location_events ADD COLUMN IF NOT EXISTS event_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP AFTER pallet_delta`,
-		`ALTER TABLE pallet_items ADD COLUMN IF NOT EXISTS allocated_qty INT NOT NULL DEFAULT 0 AFTER quantity`,
-		`ALTER TABLE pallet_items ADD COLUMN IF NOT EXISTS damaged_qty INT NOT NULL DEFAULT 0 AFTER allocated_qty`,
-		`ALTER TABLE pallet_items ADD COLUMN IF NOT EXISTS hold_qty INT NOT NULL DEFAULT 0 AFTER damaged_qty`,
 		`ALTER TABLE stock_ledger ADD COLUMN IF NOT EXISTS container_id BIGINT NOT NULL DEFAULT 0 AFTER source_line_id`,
 		`ALTER TABLE stock_ledger ADD COLUMN IF NOT EXISTS container_no_snapshot VARCHAR(120) NOT NULL DEFAULT '' AFTER source_line_id`,
 		`ALTER TABLE stock_ledger ADD COLUMN IF NOT EXISTS occurred_at TIMESTAMP NULL DEFAULT NULL AFTER event_type`,
@@ -778,8 +662,6 @@ func Migrate(db *sql.DB) error {
 			event_type,
 			event_time,
 			quantity_delta,
-			pallet_id,
-			pallet_item_id,
 			sku_master_id,
 			source_document_type,
 			source_document_id,
@@ -813,8 +695,6 @@ func Migrate(db *sql.DB) error {
 				sl.created_at
 			),
 			sl.quantity_change,
-			sl.pallet_id,
-			sl.pallet_item_id,
 			sl.sku_master_id,
 			sl.source_document_type,
 			sl.source_document_id,
@@ -841,49 +721,6 @@ func Migrate(db *sql.DB) error {
 				FROM container_lifecycle_events cle
 				WHERE cle.stock_ledger_id = sl.id
 			)`,
-		`CREATE TABLE IF NOT EXISTS pallet_rework_events (
-			id BIGINT NOT NULL AUTO_INCREMENT,
-			reference_no VARCHAR(120) DEFAULT NULL,
-			customer_id BIGINT NOT NULL,
-			container_no VARCHAR(120) NOT NULL DEFAULT '',
-			event_type VARCHAR(32) NOT NULL DEFAULT 'REWORK',
-			event_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			notes TEXT DEFAULT NULL,
-			visibility VARCHAR(16) NOT NULL DEFAULT 'BOTH',
-			public_status VARCHAR(64) DEFAULT NULL,
-			public_label VARCHAR(190) DEFAULT NULL,
-			internal_status VARCHAR(64) DEFAULT NULL,
-			internal_label VARCHAR(255) DEFAULT NULL,
-			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (id),
-			KEY idx_pallet_rework_customer_container_time (customer_id, container_no, event_time, id),
-			KEY idx_pallet_rework_reference_no (reference_no),
-			KEY idx_pallet_rework_event_type (event_type),
-			CONSTRAINT fk_pallet_rework_customer
-				FOREIGN KEY (customer_id) REFERENCES customers (id)
-		)`,
-		`ALTER TABLE pallet_rework_events ADD COLUMN IF NOT EXISTS visibility VARCHAR(16) NOT NULL DEFAULT 'BOTH' AFTER notes`,
-		`ALTER TABLE pallet_rework_events ADD COLUMN IF NOT EXISTS public_status VARCHAR(64) DEFAULT NULL AFTER visibility`,
-		`ALTER TABLE pallet_rework_events ADD COLUMN IF NOT EXISTS public_label VARCHAR(190) DEFAULT NULL AFTER public_status`,
-		`ALTER TABLE pallet_rework_events ADD COLUMN IF NOT EXISTS internal_status VARCHAR(64) DEFAULT NULL AFTER public_label`,
-		`ALTER TABLE pallet_rework_events ADD COLUMN IF NOT EXISTS internal_label VARCHAR(255) DEFAULT NULL AFTER internal_status`,
-		`CREATE TABLE IF NOT EXISTS pallet_rework_event_pallets (
-			id BIGINT NOT NULL AUTO_INCREMENT,
-			rework_event_id BIGINT NOT NULL,
-			pallet_id BIGINT NOT NULL,
-			role VARCHAR(32) NOT NULL DEFAULT 'RELATED',
-			quantity_delta INT NOT NULL DEFAULT 0,
-			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (id),
-			KEY idx_pallet_rework_event_pallets_event_id (rework_event_id),
-			KEY idx_pallet_rework_event_pallets_pallet_id (pallet_id),
-			CONSTRAINT fk_pallet_rework_event_pallets_event
-				FOREIGN KEY (rework_event_id) REFERENCES pallet_rework_events (id)
-				ON DELETE CASCADE,
-			CONSTRAINT fk_pallet_rework_event_pallets_pallet
-				FOREIGN KEY (pallet_id) REFERENCES pallets (id)
-				ON DELETE CASCADE
-		)`,
 		`CREATE TABLE IF NOT EXISTS delivery_events (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			outbound_document_id BIGINT DEFAULT NULL,
@@ -943,8 +780,6 @@ func Migrate(db *sql.DB) error {
 			location_id BIGINT NOT NULL,
 			location_name_snapshot VARCHAR(160) NOT NULL,
 			storage_section VARCHAR(16) NOT NULL DEFAULT 'TEMP',
-			pallet_id BIGINT DEFAULT NULL,
-			pallet_code_snapshot VARCHAR(64) DEFAULT NULL,
 			sku_snapshot VARCHAR(64) NOT NULL,
 			description_snapshot VARCHAR(255) DEFAULT NULL,
 			before_qty INT NOT NULL DEFAULT 0,
@@ -957,7 +792,6 @@ func Migrate(db *sql.DB) error {
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (id),
 			KEY idx_inventory_adjustment_lines_adjustment_id (adjustment_id),
-			KEY idx_inventory_adjustment_lines_pallet_id (pallet_id),
 			CONSTRAINT fk_inventory_adjustment_lines_adjustment
 				FOREIGN KEY (adjustment_id) REFERENCES inventory_adjustments (id)
 				ON DELETE CASCADE,
@@ -967,8 +801,6 @@ func Migrate(db *sql.DB) error {
 				FOREIGN KEY (location_id) REFERENCES storage_locations (id)
 		)`,
 		`ALTER TABLE inventory_adjustments ADD COLUMN IF NOT EXISTS actual_adjusted_at TIMESTAMP NULL DEFAULT NULL AFTER reason_code`,
-		`ALTER TABLE inventory_adjustment_lines ADD COLUMN IF NOT EXISTS pallet_id BIGINT DEFAULT NULL AFTER storage_section`,
-		`ALTER TABLE inventory_adjustment_lines ADD COLUMN IF NOT EXISTS pallet_code_snapshot VARCHAR(64) DEFAULT NULL AFTER pallet_id`,
 		`ALTER TABLE inventory_adjustment_lines ADD COLUMN IF NOT EXISTS pallet_before_qty INT NOT NULL DEFAULT 0 AFTER after_qty`,
 		`ALTER TABLE inventory_adjustment_lines ADD COLUMN IF NOT EXISTS pallet_after_qty INT NOT NULL DEFAULT 0 AFTER pallet_before_qty`,
 		`CREATE TABLE IF NOT EXISTS inventory_transfers (
@@ -1303,126 +1135,6 @@ func Migrate(db *sql.DB) error {
 		return fmt.Errorf("backfill user roles: %w", err)
 	}
 
-	if hasFK, err := foreignKeyExists(db, "pallets", "fk_pallets_current_item"); err != nil {
-		return fmt.Errorf("check pallet current item foreign key: %w", err)
-	} else if hasFK {
-		if _, err := db.Exec(`ALTER TABLE pallets DROP FOREIGN KEY fk_pallets_current_item`); err != nil {
-			return fmt.Errorf("drop pallet current item foreign key: %w", err)
-		}
-	}
-
-	if hasIndex, err := indexExists(db, "pallets", "idx_pallets_current_item_id"); err != nil {
-		return fmt.Errorf("check pallet current item index: %w", err)
-	} else if hasIndex {
-		if _, err := db.Exec(`ALTER TABLE pallets DROP INDEX idx_pallets_current_item_id`); err != nil {
-			return fmt.Errorf("drop pallet current item index: %w", err)
-		}
-	}
-
-	if hasColumn, err := columnExists(db, "pallets", "current_item_id"); err != nil {
-		return fmt.Errorf("check pallet current item column: %w", err)
-	} else if hasColumn {
-		if _, err := db.Exec(`ALTER TABLE pallets DROP COLUMN current_item_id`); err != nil {
-			return fmt.Errorf("drop pallet current item column: %w", err)
-		}
-	}
-
-	if hasTable, err := tableExists(db, "pallet_contents"); err != nil {
-		return fmt.Errorf("check pallet contents table: %w", err)
-	} else if hasTable {
-		if _, err := db.Exec(`DROP TABLE pallet_contents`); err != nil {
-			return fmt.Errorf("drop pallet contents table: %w", err)
-		}
-	}
-
-	if hasFK, err := foreignKeyExists(db, "pallet_location_events", "fk_pallet_location_events_receipt_lot"); err != nil {
-		return fmt.Errorf("check pallet location receipt lot foreign key: %w", err)
-	} else if hasFK {
-		if _, err := db.Exec(`ALTER TABLE pallet_location_events DROP FOREIGN KEY fk_pallet_location_events_receipt_lot`); err != nil {
-			return fmt.Errorf("drop pallet location receipt lot foreign key: %w", err)
-		}
-	}
-
-	if hasFK, err := foreignKeyExists(db, "pallet_location_events", "fk_pallet_location_events_movement"); err != nil {
-		return fmt.Errorf("check pallet location movement foreign key: %w", err)
-	} else if hasFK {
-		if _, err := db.Exec(`ALTER TABLE pallet_location_events DROP FOREIGN KEY fk_pallet_location_events_movement`); err != nil {
-			return fmt.Errorf("drop pallet location movement foreign key: %w", err)
-		}
-	}
-
-	if hasFK, err := foreignKeyExists(db, "pallet_location_events", "fk_pallet_location_events_item"); err != nil {
-		return fmt.Errorf("check pallet location item foreign key: %w", err)
-	} else if hasFK {
-		if _, err := db.Exec(`ALTER TABLE pallet_location_events DROP FOREIGN KEY fk_pallet_location_events_item`); err != nil {
-			return fmt.Errorf("drop pallet location item foreign key: %w", err)
-		}
-	}
-
-	if hasIndex, err := indexExists(db, "pallet_location_events", "idx_pallet_location_events_receipt_lot_id"); err != nil {
-		return fmt.Errorf("check pallet location receipt lot index: %w", err)
-	} else if hasIndex {
-		if _, err := db.Exec(`ALTER TABLE pallet_location_events DROP INDEX idx_pallet_location_events_receipt_lot_id`); err != nil {
-			return fmt.Errorf("drop pallet location receipt lot index: %w", err)
-		}
-	}
-
-	if hasIndex, err := indexExists(db, "pallet_location_events", "idx_pallet_location_events_movement_id"); err != nil {
-		return fmt.Errorf("check pallet location movement index: %w", err)
-	} else if hasIndex {
-		if _, err := db.Exec(`ALTER TABLE pallet_location_events DROP INDEX idx_pallet_location_events_movement_id`); err != nil {
-			return fmt.Errorf("drop pallet location movement index: %w", err)
-		}
-	}
-
-	if hasIndex, err := indexExists(db, "pallet_location_events", "idx_pallet_location_events_item_id"); err != nil {
-		return fmt.Errorf("check pallet location item index: %w", err)
-	} else if hasIndex {
-		if _, err := db.Exec(`ALTER TABLE pallet_location_events DROP INDEX idx_pallet_location_events_item_id`); err != nil {
-			return fmt.Errorf("drop pallet location item index: %w", err)
-		}
-	}
-
-	if _, err := db.Exec(`DELETE FROM pallet_location_events WHERE pallet_id IS NULL`); err != nil {
-		return fmt.Errorf("delete legacy pallet summary events: %w", err)
-	}
-
-	if hasColumn, err := columnExists(db, "pallet_location_events", "receipt_lot_id"); err != nil {
-		return fmt.Errorf("check pallet location receipt lot column: %w", err)
-	} else if hasColumn {
-		if _, err := db.Exec(`ALTER TABLE pallet_location_events DROP COLUMN receipt_lot_id`); err != nil {
-			return fmt.Errorf("drop pallet location receipt lot column: %w", err)
-		}
-	}
-
-	if hasColumn, err := columnExists(db, "pallet_location_events", "movement_id"); err != nil {
-		return fmt.Errorf("check pallet location movement column: %w", err)
-	} else if hasColumn {
-		if _, err := db.Exec(`ALTER TABLE pallet_location_events DROP COLUMN movement_id`); err != nil {
-			return fmt.Errorf("drop pallet location movement column: %w", err)
-		}
-	}
-
-	if hasColumn, err := columnExists(db, "pallet_location_events", "item_id"); err != nil {
-		return fmt.Errorf("check pallet location item column: %w", err)
-	} else if hasColumn {
-		if _, err := db.Exec(`ALTER TABLE pallet_location_events DROP COLUMN item_id`); err != nil {
-			return fmt.Errorf("drop pallet location item column: %w", err)
-		}
-	}
-
-	if _, err := db.Exec(`ALTER TABLE pallet_location_events MODIFY COLUMN pallet_id BIGINT NOT NULL`); err != nil {
-		return fmt.Errorf("normalize pallet location pallet id column: %w", err)
-	}
-
-	if hasTable, err := tableExists(db, "movement_lot_links"); err != nil {
-		return fmt.Errorf("check legacy movement_lot_links table: %w", err)
-	} else if hasTable {
-		if _, err := db.Exec(`DROP TABLE movement_lot_links`); err != nil {
-			return fmt.Errorf("drop legacy movement_lot_links table: %w", err)
-		}
-	}
-
 	if hasIndex, err := indexExists(db, "inventory_items", "uq_inventory_items_sku"); err != nil {
 		return fmt.Errorf("check inventory sku index: %w", err)
 	} else if hasIndex {
@@ -1543,87 +1255,16 @@ func Migrate(db *sql.DB) error {
 		return fmt.Errorf("backfill stock ledger container ids: %w", err)
 	}
 
-	if _, err := db.Exec(`
-		UPDATE stock_ledger
-		SET pallets = 1
-		WHERE COALESCE(pallets, 0) = 0
-			AND COALESCE(pallet_id, 0) > 0
-			AND quantity_change <> 0
-	`); err != nil {
-		return fmt.Errorf("backfill stock ledger pallet counts: %w", err)
+	if err := backfillStockLedgerPalletCountsFromLegacyPalletIDs(db); err != nil {
+		return fmt.Errorf("backfill stock ledger pallet counts from legacy pallet ids: %w", err)
 	}
 
-	if _, err := db.Exec(`
-		UPDATE inventory_items i
-		JOIN (
-			SELECT
-				pi.sku_master_id,
-				p.customer_id,
-				p.current_location_id AS location_id,
-				COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP') AS storage_section,
-				COALESCE(p.current_container_no, '') AS container_no,
-				SUM(pi.quantity) AS quantity,
-				COUNT(DISTINCT p.id) AS pallets,
-				SUM(pi.allocated_qty) AS allocated_qty,
-				SUM(pi.damaged_qty) AS damaged_qty,
-				SUM(pi.hold_qty) AS hold_qty
-			FROM pallet_items pi
-			JOIN pallets p ON p.id = pi.pallet_id
-			WHERE p.status <> 'CANCELLED'
-			GROUP BY
-				pi.sku_master_id,
-				p.customer_id,
-				p.current_location_id,
-				COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP'),
-				COALESCE(p.current_container_no, '')
-		) pb
-			ON pb.sku_master_id = i.sku_master_id
-			AND pb.customer_id = i.customer_id
-			AND pb.location_id = i.location_id
-			AND pb.storage_section = COALESCE(NULLIF(i.storage_section, ''), 'TEMP')
-			AND pb.container_no = COALESCE(i.container_no, '')
-		SET
-			i.quantity = pb.quantity,
-			i.allocated_qty = pb.allocated_qty,
-			i.damaged_qty = pb.damaged_qty,
-			i.hold_qty = pb.hold_qty
-		WHERE i.quantity = 0
-			AND i.allocated_qty = 0
-			AND i.damaged_qty = 0
-			AND i.hold_qty = 0
-	`); err != nil {
-		return fmt.Errorf("backfill inventory item quantities from pallets: %w", err)
+	if err := backfillInventoryItemsFromLegacyPalletEntities(db); err != nil {
+		return fmt.Errorf("backfill inventory items from legacy pallet entities: %w", err)
 	}
 
-	if _, err := db.Exec(`
-		UPDATE inventory_items i
-		JOIN (
-			SELECT
-				pi.sku_master_id,
-				p.customer_id,
-				p.current_location_id AS location_id,
-				COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP') AS storage_section,
-				COALESCE(p.current_container_no, '') AS container_no,
-				COUNT(DISTINCT p.id) AS pallets
-			FROM pallet_items pi
-			JOIN pallets p ON p.id = pi.pallet_id
-			WHERE p.status <> 'CANCELLED'
-			GROUP BY
-				pi.sku_master_id,
-				p.customer_id,
-				p.current_location_id,
-				COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP'),
-				COALESCE(p.current_container_no, '')
-		) pb
-			ON pb.sku_master_id = i.sku_master_id
-			AND pb.customer_id = i.customer_id
-			AND pb.location_id = i.location_id
-			AND pb.storage_section = COALESCE(NULLIF(i.storage_section, ''), 'TEMP')
-			AND pb.container_no = COALESCE(i.container_no, '')
-		SET i.pallets = pb.pallets
-		WHERE i.pallets = 0
-	`); err != nil {
-		return fmt.Errorf("backfill inventory item pallet counts from pallets: %w", err)
+	if err := dropLegacyPalletEntitySchema(db); err != nil {
+		return fmt.Errorf("drop legacy pallet entity schema: %w", err)
 	}
 
 	if _, err := db.Exec(`ALTER TABLE inventory_items MODIFY COLUMN container_no VARCHAR(120) NOT NULL DEFAULT ''`); err != nil {
@@ -1681,26 +1322,6 @@ func Migrate(db *sql.DB) error {
 	} else if !hasFK {
 		if _, err := db.Exec(`ALTER TABLE inventory_items ADD CONSTRAINT fk_inventory_items_customer FOREIGN KEY (customer_id) REFERENCES customers (id)`); err != nil {
 			return fmt.Errorf("create inventory customer foreign key: %w", err)
-		}
-	}
-
-	if hasFK, err := foreignKeyExists(db, "stock_ledger", "fk_stock_ledger_pallet"); err != nil {
-		return fmt.Errorf("check stock ledger pallet foreign key: %w", err)
-	} else if hasFK {
-		if _, err := db.Exec(`ALTER TABLE stock_ledger DROP FOREIGN KEY fk_stock_ledger_pallet`); err != nil {
-			return fmt.Errorf("drop stock ledger pallet foreign key: %w", err)
-		}
-	}
-
-	if _, err := db.Exec(`ALTER TABLE stock_ledger MODIFY COLUMN pallet_id BIGINT DEFAULT NULL`); err != nil {
-		return fmt.Errorf("make stock ledger pallet optional: %w", err)
-	}
-
-	if hasFK, err := foreignKeyExists(db, "stock_ledger", "fk_stock_ledger_pallet"); err != nil {
-		return fmt.Errorf("recheck stock ledger pallet foreign key: %w", err)
-	} else if !hasFK {
-		if _, err := db.Exec(`ALTER TABLE stock_ledger ADD CONSTRAINT fk_stock_ledger_pallet FOREIGN KEY (pallet_id) REFERENCES pallets (id)`); err != nil {
-			return fmt.Errorf("recreate stock ledger pallet foreign key: %w", err)
 		}
 	}
 
@@ -1909,34 +1530,6 @@ func Migrate(db *sql.DB) error {
 		}
 	}
 
-	if err := dropForeignKeysReferencingTable(db, "receipt_lots"); err != nil {
-		return fmt.Errorf("drop foreign keys referencing legacy receipt_lots: %w", err)
-	}
-
-	if hasIndex, err := indexExists(db, "pallets", "idx_pallets_source_receipt_lot_id"); err != nil {
-		return fmt.Errorf("check pallet source receipt lot index: %w", err)
-	} else if hasIndex {
-		if _, err := db.Exec(`ALTER TABLE pallets DROP INDEX idx_pallets_source_receipt_lot_id`); err != nil {
-			return fmt.Errorf("drop pallet source receipt lot index: %w", err)
-		}
-	}
-
-	if hasColumn, err := columnExists(db, "pallets", "source_receipt_lot_id"); err != nil {
-		return fmt.Errorf("check pallet source receipt lot column: %w", err)
-	} else if hasColumn {
-		if _, err := db.Exec(`ALTER TABLE pallets DROP COLUMN source_receipt_lot_id`); err != nil {
-			return fmt.Errorf("drop pallet source receipt lot column: %w", err)
-		}
-	}
-
-	if hasTable, err := tableExists(db, "receipt_lots"); err != nil {
-		return fmt.Errorf("check legacy receipt_lots table: %w", err)
-	} else if hasTable {
-		if _, err := db.Exec(`DROP TABLE receipt_lots`); err != nil {
-			return fmt.Errorf("drop legacy receipt_lots table: %w", err)
-		}
-	}
-
 	if hasTable, err := tableExists(db, "outbound_pick_allocations"); err != nil {
 		return fmt.Errorf("check legacy outbound_pick_allocations table: %w", err)
 	} else if hasTable {
@@ -1950,6 +1543,294 @@ func Migrate(db *sql.DB) error {
 	} else if hasTable {
 		if _, err := db.Exec(`DROP TABLE stock_movements`); err != nil {
 			return fmt.Errorf("drop legacy stock_movements table: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func backfillStockLedgerPalletCountsFromLegacyPalletIDs(db *sql.DB) error {
+	hasPalletID, err := columnExists(db, "stock_ledger", "pallet_id")
+	if err != nil {
+		return fmt.Errorf("check stock ledger legacy pallet_id column: %w", err)
+	}
+	if !hasPalletID {
+		return nil
+	}
+
+	if _, err := db.Exec(`
+		UPDATE stock_ledger
+		SET pallets = 1
+		WHERE COALESCE(pallets, 0) = 0
+			AND COALESCE(pallet_id, 0) > 0
+			AND quantity_change <> 0
+	`); err != nil {
+		return fmt.Errorf("backfill stock ledger pallet counts: %w", err)
+	}
+
+	if _, err := db.Exec(`
+		UPDATE container_lifecycle_events cle
+		JOIN stock_ledger sl ON sl.id = cle.stock_ledger_id
+		SET cle.pallets = sl.pallets
+		WHERE COALESCE(cle.pallets, 0) = 0
+			AND COALESCE(sl.pallets, 0) > 0
+	`); err != nil {
+		return fmt.Errorf("backfill container lifecycle pallet counts: %w", err)
+	}
+
+	return nil
+}
+
+func backfillInventoryItemsFromLegacyPalletEntities(db *sql.DB) error {
+	hasPallets, err := tableExists(db, "pallets")
+	if err != nil {
+		return fmt.Errorf("check legacy pallets table: %w", err)
+	}
+	hasPalletItems, err := tableExists(db, "pallet_items")
+	if err != nil {
+		return fmt.Errorf("check legacy pallet_items table: %w", err)
+	}
+	if !hasPallets || !hasPalletItems {
+		return nil
+	}
+
+	compatStatements := []string{
+		`ALTER TABLE pallets ADD COLUMN IF NOT EXISTS actual_arrival_date DATE DEFAULT NULL`,
+		`ALTER TABLE pallets ADD COLUMN IF NOT EXISTS current_storage_section VARCHAR(16) NOT NULL DEFAULT 'TEMP'`,
+		`ALTER TABLE pallets ADD COLUMN IF NOT EXISTS current_container_no VARCHAR(120) NOT NULL DEFAULT ''`,
+		`ALTER TABLE pallets ADD COLUMN IF NOT EXISTS status VARCHAR(32) NOT NULL DEFAULT 'OPEN'`,
+		`ALTER TABLE pallets ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`,
+		`ALTER TABLE pallet_items ADD COLUMN IF NOT EXISTS allocated_qty INT NOT NULL DEFAULT 0 AFTER quantity`,
+		`ALTER TABLE pallet_items ADD COLUMN IF NOT EXISTS damaged_qty INT NOT NULL DEFAULT 0 AFTER allocated_qty`,
+		`ALTER TABLE pallet_items ADD COLUMN IF NOT EXISTS hold_qty INT NOT NULL DEFAULT 0 AFTER damaged_qty`,
+	}
+	for _, statement := range compatStatements {
+		if _, err := db.Exec(statement); err != nil {
+			return fmt.Errorf("prepare legacy pallet item columns: %w", err)
+		}
+	}
+
+	if _, err := db.Exec(`
+		INSERT INTO containers (
+			customer_id,
+			location_id,
+			container_no,
+			container_type,
+			handling_mode,
+			status,
+			tracking_status,
+			last_event_at
+		)
+		SELECT
+			p.customer_id,
+			MIN(p.current_location_id),
+			UPPER(TRIM(p.current_container_no)),
+			'NORMAL',
+			'PALLETIZED',
+			'IN_STOCK',
+			'RECEIVED',
+			MAX(COALESCE(p.updated_at, p.created_at))
+		FROM pallets p
+		WHERE COALESCE(TRIM(p.current_container_no), '') <> ''
+			AND COALESCE(p.status, 'OPEN') <> 'CANCELLED'
+		GROUP BY p.customer_id, UPPER(TRIM(p.current_container_no))
+		ON DUPLICATE KEY UPDATE
+			location_id = COALESCE(containers.location_id, VALUES(location_id)),
+			last_event_at = COALESCE(containers.last_event_at, VALUES(last_event_at))
+	`); err != nil {
+		return fmt.Errorf("backfill containers from legacy pallets: %w", err)
+	}
+
+	if _, err := db.Exec(`
+		UPDATE inventory_items i
+		JOIN containers cn
+			ON cn.customer_id = i.customer_id
+			AND UPPER(TRIM(cn.container_no)) = UPPER(TRIM(i.container_no))
+		SET i.container_id = cn.id
+		WHERE COALESCE(i.container_id, 0) = 0
+			AND COALESCE(TRIM(i.container_no), '') <> ''
+	`); err != nil {
+		return fmt.Errorf("backfill inventory item container ids from legacy pallets: %w", err)
+	}
+
+	legacyInventorySelect := `
+		SELECT
+			pi.sku_master_id,
+			p.customer_id,
+			p.current_location_id AS location_id,
+			COALESCE(NULLIF(TRIM(p.current_storage_section), ''), 'TEMP') AS storage_section,
+			COALESCE(cn.id, 0) AS container_id,
+			TRIM(COALESCE(p.current_container_no, '')) AS container_no,
+			MIN(p.actual_arrival_date) AS delivery_date,
+			SUM(pi.quantity) AS quantity,
+			COUNT(DISTINCT p.id) AS pallets,
+			SUM(pi.allocated_qty) AS allocated_qty,
+			SUM(pi.damaged_qty) AS damaged_qty,
+			SUM(pi.hold_qty) AS hold_qty,
+			MAX(COALESCE(p.updated_at, p.created_at)) AS last_restocked_at
+		FROM pallet_items pi
+		JOIN pallets p ON p.id = pi.pallet_id
+		LEFT JOIN containers cn
+			ON cn.customer_id = p.customer_id
+			AND UPPER(TRIM(cn.container_no)) = UPPER(TRIM(p.current_container_no))
+		WHERE COALESCE(p.status, 'OPEN') <> 'CANCELLED'
+			AND pi.sku_master_id > 0
+			AND p.customer_id > 0
+			AND p.current_location_id > 0
+		GROUP BY
+			pi.sku_master_id,
+			p.customer_id,
+			p.current_location_id,
+			COALESCE(NULLIF(TRIM(p.current_storage_section), ''), 'TEMP'),
+			COALESCE(cn.id, 0),
+			TRIM(COALESCE(p.current_container_no, ''))
+	`
+
+	if _, err := db.Exec(fmt.Sprintf(`
+		UPDATE inventory_items i
+		JOIN (%s) pb
+			ON pb.sku_master_id = i.sku_master_id
+			AND pb.customer_id = i.customer_id
+			AND pb.location_id = i.location_id
+			AND pb.storage_section = COALESCE(NULLIF(TRIM(i.storage_section), ''), 'TEMP')
+			AND pb.container_id = COALESCE(i.container_id, 0)
+		SET
+			i.quantity = pb.quantity,
+			i.allocated_qty = pb.allocated_qty,
+			i.damaged_qty = pb.damaged_qty,
+			i.hold_qty = pb.hold_qty,
+			i.delivery_date = COALESCE(i.delivery_date, pb.delivery_date),
+			i.last_restocked_at = COALESCE(i.last_restocked_at, pb.last_restocked_at),
+			i.updated_at = CURRENT_TIMESTAMP
+		WHERE i.quantity = 0
+			AND i.allocated_qty = 0
+			AND i.damaged_qty = 0
+			AND i.hold_qty = 0
+	`, legacyInventorySelect)); err != nil {
+		return fmt.Errorf("backfill legacy pallet quantities into inventory items: %w", err)
+	}
+
+	if _, err := db.Exec(fmt.Sprintf(`
+		UPDATE inventory_items i
+		JOIN (%s) pb
+			ON pb.sku_master_id = i.sku_master_id
+			AND pb.customer_id = i.customer_id
+			AND pb.location_id = i.location_id
+			AND pb.storage_section = COALESCE(NULLIF(TRIM(i.storage_section), ''), 'TEMP')
+			AND pb.container_id = COALESCE(i.container_id, 0)
+		SET
+			i.pallets = pb.pallets,
+			i.updated_at = CURRENT_TIMESTAMP
+		WHERE i.pallets = 0
+	`, legacyInventorySelect)); err != nil {
+		return fmt.Errorf("backfill legacy pallet counts into inventory items: %w", err)
+	}
+
+	if _, err := db.Exec(fmt.Sprintf(`
+		INSERT INTO inventory_items (
+			sku_master_id,
+			customer_id,
+			location_id,
+			storage_section,
+			quantity,
+			pallets,
+			allocated_qty,
+			damaged_qty,
+			hold_qty,
+			delivery_date,
+			container_id,
+			container_no,
+			last_restocked_at
+		)
+		SELECT
+			pb.sku_master_id,
+			pb.customer_id,
+			pb.location_id,
+			pb.storage_section,
+			pb.quantity,
+			pb.pallets,
+			pb.allocated_qty,
+			pb.damaged_qty,
+			pb.hold_qty,
+			pb.delivery_date,
+			pb.container_id,
+			pb.container_no,
+			pb.last_restocked_at
+		FROM (%s) pb
+		LEFT JOIN inventory_items i
+			ON pb.sku_master_id = i.sku_master_id
+			AND pb.customer_id = i.customer_id
+			AND pb.location_id = i.location_id
+			AND pb.storage_section = COALESCE(NULLIF(TRIM(i.storage_section), ''), 'TEMP')
+			AND pb.container_id = COALESCE(i.container_id, 0)
+		WHERE i.id IS NULL
+	`, legacyInventorySelect)); err != nil {
+		return fmt.Errorf("insert legacy pallet inventory items: %w", err)
+	}
+
+	return nil
+}
+
+func dropLegacyPalletEntitySchema(db *sql.DB) error {
+	referencedTables := []string{
+		"pallet_rework_events",
+		"pallet_items",
+		"pallet_location_events",
+		"receipt_lots",
+		"pallets",
+	}
+	for _, table := range referencedTables {
+		if err := dropForeignKeysReferencingTable(db, table); err != nil {
+			return fmt.Errorf("drop foreign keys referencing %s: %w", table, err)
+		}
+	}
+
+	legacyIndexes := []struct {
+		table string
+		name  string
+	}{
+		{table: "stock_ledger", name: "idx_stock_ledger_pallet_id"},
+		{table: "stock_ledger", name: "idx_stock_ledger_pallet_item_id"},
+		{table: "container_lifecycle_events", name: "idx_container_lifecycle_pallet_id"},
+		{table: "inventory_adjustment_lines", name: "idx_inventory_adjustment_lines_pallet_id"},
+	}
+	for _, idx := range legacyIndexes {
+		if err := dropIndexIfExists(db, idx.table, idx.name); err != nil {
+			return fmt.Errorf("drop legacy index %s on %s: %w", idx.name, idx.table, err)
+		}
+	}
+
+	legacyColumns := []struct {
+		table  string
+		column string
+	}{
+		{table: "stock_ledger", column: "pallet_id"},
+		{table: "stock_ledger", column: "pallet_item_id"},
+		{table: "container_lifecycle_events", column: "pallet_id"},
+		{table: "container_lifecycle_events", column: "pallet_item_id"},
+		{table: "inventory_adjustment_lines", column: "pallet_id"},
+		{table: "inventory_adjustment_lines", column: "pallet_code_snapshot"},
+	}
+	for _, col := range legacyColumns {
+		if err := dropColumnIfExists(db, col.table, col.column); err != nil {
+			return fmt.Errorf("drop legacy column %s on %s: %w", col.column, col.table, err)
+		}
+	}
+
+	legacyTables := []string{
+		"pallet_rework_event_pallets",
+		"pallet_rework_events",
+		"pallet_location_events",
+		"pallet_items",
+		"pallet_contents",
+		"movement_lot_links",
+		"outbound_picks",
+		"receipt_lots",
+		"pallets",
+	}
+	for _, table := range legacyTables {
+		if err := dropTableIfExists(db, table); err != nil {
+			return fmt.Errorf("drop legacy table %s: %w", table, err)
 		}
 	}
 
@@ -1970,6 +1851,22 @@ func indexExists(db *sql.DB, tableName string, indexName string) (bool, error) {
 	return count > 0, nil
 }
 
+func dropIndexIfExists(db *sql.DB, tableName string, indexName string) error {
+	hasIndex, err := indexExists(db, tableName, indexName)
+	if err != nil {
+		return err
+	}
+	if !hasIndex {
+		return nil
+	}
+	_, err = db.Exec(fmt.Sprintf(
+		"ALTER TABLE %s DROP INDEX %s",
+		quoteIdentifier(tableName),
+		quoteIdentifier(indexName),
+	))
+	return err
+}
+
 func columnExists(db *sql.DB, tableName string, columnName string) (bool, error) {
 	var count int
 	if err := db.QueryRow(`
@@ -1984,6 +1881,22 @@ func columnExists(db *sql.DB, tableName string, columnName string) (bool, error)
 	return count > 0, nil
 }
 
+func dropColumnIfExists(db *sql.DB, tableName string, columnName string) error {
+	hasColumn, err := columnExists(db, tableName, columnName)
+	if err != nil {
+		return err
+	}
+	if !hasColumn {
+		return nil
+	}
+	_, err = db.Exec(fmt.Sprintf(
+		"ALTER TABLE %s DROP COLUMN %s",
+		quoteIdentifier(tableName),
+		quoteIdentifier(columnName),
+	))
+	return err
+}
+
 func tableExists(db *sql.DB, tableName string) (bool, error) {
 	var count int
 	if err := db.QueryRow(`
@@ -1995,6 +1908,18 @@ func tableExists(db *sql.DB, tableName string) (bool, error) {
 		return false, err
 	}
 	return count > 0, nil
+}
+
+func dropTableIfExists(db *sql.DB, tableName string) error {
+	hasTable, err := tableExists(db, tableName)
+	if err != nil {
+		return err
+	}
+	if !hasTable {
+		return nil
+	}
+	_, err = db.Exec(fmt.Sprintf("DROP TABLE %s", quoteIdentifier(tableName)))
+	return err
 }
 
 func foreignKeyExists(db *sql.DB, tableName string, constraintName string) (bool, error) {
@@ -2042,6 +1967,10 @@ func dropForeignKeysReferencingTable(db *sql.DB, referencedTable string) error {
 	}
 
 	return rows.Err()
+}
+
+func quoteIdentifier(identifier string) string {
+	return "`" + strings.ReplaceAll(identifier, "`", "``") + "`"
 }
 
 func isDuplicateIndexError(err error) bool {

@@ -135,7 +135,7 @@ type reportSkuBucket struct {
 
 type reportLedgerEntry struct {
 	ID             int64        `db:"id"`
-	PalletID       int64        `db:"pallet_id"`
+	LedgerID       int64        `db:"ledger_id"`
 	SKUMasterID    int64        `db:"sku_master_id"`
 	CustomerID     int64        `db:"customer_id"`
 	LocationID     int64        `db:"location_id"`
@@ -156,7 +156,7 @@ type reportLedgerEntry struct {
 }
 
 type reportLedgerEventRow struct {
-	PalletID       int64
+	LedgerID       int64
 	BusinessDate   time.Time
 	EventType      string
 	QuantityChange int
@@ -179,12 +179,11 @@ type skuFlowReportGroupKey struct {
 }
 
 type skuFlowReportGroup struct {
-	row       SKUFlowReportRow
-	palletIDs map[int64]struct{}
+	row SKUFlowReportRow
 }
 
 type skuFlowLedgerRow struct {
-	PalletID           int64        `db:"pallet_id"`
+	LedgerID           int64        `db:"ledger_id"`
 	SKUMasterID        int64        `db:"sku_master_id"`
 	SKU                string       `db:"sku"`
 	ItemNumber         string       `db:"item_number"`
@@ -516,7 +515,7 @@ func (s *Store) loadReportLedgerEntries(ctx context.Context, filters OperationsR
 	query := `
 		SELECT
 			sl.id,
-			sl.id AS pallet_id,
+			sl.id AS ledger_id,
 			COALESCE(sl.sku_master_id, 0) AS sku_master_id,
 			sl.customer_id,
 			sl.location_id,
@@ -608,7 +607,7 @@ func (s *Store) loadSKUFlowLedgerRows(ctx context.Context, filters SKUFlowReport
 	rows := make([]skuFlowLedgerRow, 0)
 	query := `
 		SELECT
-			sl.id AS pallet_id,
+			sl.id AS ledger_id,
 			sm.id AS sku_master_id,
 			COALESCE(sm.sku, '') AS sku,
 			COALESCE(sm.item_number, '') AS item_number,
@@ -746,7 +745,7 @@ func buildReportLedgerBuckets(
 		}
 
 		events = append(events, reportLedgerEventRow{
-			PalletID:       entry.PalletID,
+			LedgerID:       entry.LedgerID,
 			BusinessDate:   businessDate,
 			EventType:      entry.EventType,
 			QuantityChange: entry.QuantityChange,
@@ -800,7 +799,6 @@ func buildSKUFlowReportRows(entries []skuFlowLedgerRow) (SKUFlowReportSummary, [
 					SourceDocumentID:   key.SourceDocumentID,
 					SourceLineID:       key.SourceLineID,
 				},
-				palletIDs: make(map[int64]struct{}),
 			}
 			groups[key] = group
 		}

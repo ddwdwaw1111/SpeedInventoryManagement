@@ -65,8 +65,8 @@ type OutboundAllocationPreviewRow = {
   storageSection: string;
   containerId: number;
   containerNo: string;
-  palletId: number;
-  palletCode: string;
+  sourceItemId: number;
+  sourceLabel: string;
   availableQty: number;
   allocatedQty: number;
   pallets: number;
@@ -104,9 +104,9 @@ type OutboundShipmentReviewItemGroup = {
   description: string;
   totalQty: number;
   lineLabels: string[];
-  palletPicks: {
+  sourcePicks: {
     key: string;
-    palletCode: string;
+    sourceLabel: string;
     totalQty: number;
     lineLabels: string[];
   }[];
@@ -148,7 +148,7 @@ type OutboundSourceOption = {
   storageSections: string[];
   containerCount: number;
   containerSummary: string;
-  candidates: OutboundPalletCandidate[];
+  candidates: OutboundInventoryCandidate[];
 };
 
 type WarehouseOption = {
@@ -187,10 +187,10 @@ type RememberedOutboundHeaderDefaults = Pick<
   "shipToName" | "shipToAddress" | "shipToContact" | "carrierName"
 >;
 
-type OutboundPalletCandidate = {
+type OutboundInventoryCandidate = {
   id: string;
-  palletId: number;
-  palletCode: string;
+  sourceItemId: number;
+  sourceLabel: string;
   customerId: number;
   customerName: string;
   locationId: number;
@@ -209,7 +209,7 @@ type OutboundPalletCandidate = {
 };
 
 type OutboundCandidateSelection = {
-  palletId: number;
+  sourceItemId: number;
   quantity: number;
 };
 
@@ -757,10 +757,6 @@ export function OutboundShipmentEditorPage({
           if (!selectedOutboundSource) {
             throw new Error(t("chooseSkuAndQty"));
           }
-          const pickAllocations = buildOutboundPickAllocationPayloadsForLine(
-            line.id,
-            batchOutboundAllocationPreview.rows
-          );
 
           return {
             customerId: selectedOutboundSource.customerId,
@@ -773,8 +769,7 @@ export function OutboundShipmentEditorPage({
             cartonSizeMm: line.cartonSizeMm || undefined,
             netWeightKgs: line.netWeightKgs,
             grossWeightKgs: line.grossWeightKgs,
-            lineNote: line.reason || undefined,
-            pickAllocations: pickAllocations.length > 0 ? pickAllocations : undefined
+            lineNote: line.reason || undefined
           };
         })
       };
@@ -1192,7 +1187,7 @@ export function OutboundShipmentEditorPage({
                           title={t("containerPickPlan")}
                           autoPickLabel={t("autoPick")}
                           selectContainerLabel={t("selectContainer")}
-                          selectPalletLabel={t("selectPallet")}
+                          selectSourceLabel={t("selectContainer")}
                           searchLabel={t("search")}
                           searchPlaceholder={t("pickPlanSearchPlaceholder")}
                           detailsLabel={t("details")}
@@ -1215,7 +1210,7 @@ export function OutboundShipmentEditorPage({
                           sourceContainerLabel={t("sourceContainer")}
                           pickQtyLabel={t("pickQty")}
                           unitLabel={line.unitLabel || selectedOutboundSource.unit.toUpperCase() || "PCS"}
-                          palletLabel={t("containers")}
+                          sourceUnitLabel={t("pickRows")}
                           searchShortcutHint={t("pickPlanSearchShortcutHint")}
                           canExpand={outboundPickPlanRows.length > 0}
                           expanded={isOutboundPickPlanExpanded}
@@ -1223,8 +1218,8 @@ export function OutboundShipmentEditorPage({
                           emptyHint={t("pickAllocationPreviewEmpty")}
                           rows={outboundPickPlanRows.map((row) => ({
                             id: row.id,
-                            palletId: row.palletId,
-                            palletCode: row.palletCode,
+                            sourceItemId: row.sourceItemId,
+                            sourceLabel: row.sourceLabel,
                             containerNo: row.containerNo,
                             locationLabel: `${row.locationName} / ${normalizeStorageSection(row.storageSection)}`,
                             availableQty: row.availableQty,
@@ -1324,13 +1319,13 @@ export function OutboundShipmentEditorPage({
                                           <span>{`${t("shipmentLine")}: ${itemGroup.lineLabels.join(", ")}`}</span>
                                         </div>
                                         <div className="mt-1 flex flex-wrap gap-1.5 text-[11px] font-semibold text-slate-500">
-                                          {itemGroup.palletPicks.map((palletPick) => (
+                                          {itemGroup.sourcePicks.map((sourcePick) => (
                                             <span
-                                              key={palletPick.key}
+                                              key={sourcePick.key}
                                               className="rounded-md border border-slate-200/80 bg-white px-1.5 py-0.5 font-mono"
-                                              title={`${palletPick.lineLabels.join(", ")} · ${palletPick.totalQty}`}
+                                              title={`${sourcePick.lineLabels.join(", ")} · ${sourcePick.totalQty}`}
                                             >
-                                              {`${palletPick.palletCode || "-"}: ${palletPick.totalQty}`}
+                                              {`${sourcePick.sourceLabel || "-"}: ${sourcePick.totalQty}`}
                                             </span>
                                           ))}
                                         </div>
@@ -1648,23 +1643,23 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
 
     const lineRows: OutboundAllocationPreviewRow[] = [];
     const sourceReservations = getOutboundSourceReservations(reservationsBySourceKey, selectedSource.sourceKey);
-    const selectedPalletQuantities = new Map(
+    const selectedSourceQuantities = new Map(
       buildEffectiveOutboundLineCandidateSelections(line, selectedSource, sourceReservations)
-        .map((entry) => [entry.palletId, entry.quantity] as const)
+        .map((entry) => [entry.sourceItemId, entry.quantity] as const)
     );
     for (const candidate of selectedSource.candidates) {
-      const requestedQty = selectedPalletQuantities.get(candidate.palletId) ?? 0;
+      const requestedQty = selectedSourceQuantities.get(candidate.sourceItemId) ?? 0;
       if (requestedQty <= 0) {
         continue;
       }
-      const availableQty = Math.max(0, candidate.availableQty - (sourceReservations.get(candidate.palletId) ?? 0));
+      const availableQty = Math.max(0, candidate.availableQty - (sourceReservations.get(candidate.sourceItemId) ?? 0));
       const allocatedQty = Math.min(requestedQty, availableQty);
       if (allocatedQty <= 0) {
         continue;
       }
 
       lineRows.push({
-        id: `${line.id}-${candidate.palletId}`,
+        id: `${line.id}-${candidate.sourceItemId}`,
         lineId: line.id,
         lineLabel: summary.lineLabel,
         itemNumber: selectedSource.itemNumber || summary.itemNumber,
@@ -1675,14 +1670,14 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
         storageSection: normalizeStorageSection(candidate.storageSection),
         containerId: candidate.containerId,
         containerNo: candidate.containerNo || "",
-        palletId: candidate.palletId,
-        palletCode: candidate.palletCode,
+        sourceItemId: candidate.sourceItemId,
+        sourceLabel: candidate.sourceLabel,
         availableQty,
         allocatedQty,
         pallets: 0
       });
       summary.allocatedQty += allocatedQty;
-      sourceReservations.set(candidate.palletId, (sourceReservations.get(candidate.palletId) ?? 0) + allocatedQty);
+      sourceReservations.set(candidate.sourceItemId, (sourceReservations.get(candidate.sourceItemId) ?? 0) + allocatedQty);
     }
 
     const palletSplits = splitPalletCountAcrossAllocationRows(line.pallets, lineRows);
@@ -1718,20 +1713,20 @@ function buildOutboundPickPlanRows(
   includeAllCandidates: boolean,
   priorReservations?: Map<number, number>
 ) {
-  const selectedPalletQuantities = new Map(
+  const selectedSourceQuantities = new Map(
     buildEffectiveOutboundLineCandidateSelections(line, source, priorReservations ?? new Map<number, number>())
-      .map((entry) => [entry.palletId, entry.quantity] as const)
+      .map((entry) => [entry.sourceItemId, entry.quantity] as const)
   );
 
   return source.candidates.flatMap((candidate) => {
-    const allocatedQty = selectedPalletQuantities.get(candidate.palletId) ?? 0;
+    const allocatedQty = selectedSourceQuantities.get(candidate.sourceItemId) ?? 0;
     if (!includeAllCandidates && allocatedQty <= 0) {
       return [];
     }
-    const availableQty = Math.max(0, candidate.availableQty - (priorReservations?.get(candidate.palletId) ?? 0));
+    const availableQty = Math.max(0, candidate.availableQty - (priorReservations?.get(candidate.sourceItemId) ?? 0));
 
     return [{
-      id: `${line.id}-${candidate.palletId}`,
+      id: `${line.id}-${candidate.sourceItemId}`,
       lineId: line.id,
       lineLabel: "",
       itemNumber: source.itemNumber || "",
@@ -1742,28 +1737,13 @@ function buildOutboundPickPlanRows(
       storageSection: normalizeStorageSection(candidate.storageSection),
       containerId: candidate.containerId,
       containerNo: candidate.containerNo || "",
-      palletId: candidate.palletId,
-      palletCode: candidate.palletCode,
+      sourceItemId: candidate.sourceItemId,
+      sourceLabel: candidate.sourceLabel,
       availableQty,
       allocatedQty,
       pallets: 0
     }];
   });
-}
-
-function buildOutboundPickAllocationPayloadsForLine(lineId: string, rows: OutboundAllocationPreviewRow[]) {
-  return rows
-    .filter((row) => row.lineId === lineId && row.allocatedQty > 0)
-    .map((row) => ({
-      itemNumber: row.itemNumber || undefined,
-      locationId: row.locationId,
-      locationName: row.locationName || undefined,
-      storageSection: normalizeStorageSection(row.storageSection),
-      containerId: row.containerId || undefined,
-      containerNo: row.containerNo || undefined,
-      allocatedQty: row.allocatedQty,
-      pallets: row.pallets > 0 ? row.pallets : undefined
-    }));
 }
 
 function splitPalletCountAcrossAllocationRows(totalPallets: number, rows: Pick<OutboundAllocationPreviewRow, "allocatedQty">[]) {
@@ -1808,7 +1788,7 @@ function reserveOutboundLineCandidateSelections(
   selections: OutboundCandidateSelection[]
 ) {
   for (const selection of normalizeOutboundCandidateSelections(selections)) {
-    reservations.set(selection.palletId, (reservations.get(selection.palletId) ?? 0) + selection.quantity);
+    reservations.set(selection.sourceItemId, (reservations.get(selection.sourceItemId) ?? 0) + selection.quantity);
   }
 }
 
@@ -1845,7 +1825,7 @@ function buildOutboundPickPlanReservationMap(lines: BatchOutboundLineState[], so
   return reservationsByLineID;
 }
 
-function compareOutboundPalletCandidates(left: OutboundPalletCandidate, right: OutboundPalletCandidate) {
+function compareOutboundInventoryCandidates(left: OutboundInventoryCandidate, right: OutboundInventoryCandidate) {
   const leftArrival = left.actualArrivalDate || left.createdAt || "";
   const rightArrival = right.actualArrivalDate || right.createdAt || "";
   if (!leftArrival && rightArrival) return 1;
@@ -1854,7 +1834,7 @@ function compareOutboundPalletCandidates(left: OutboundPalletCandidate, right: O
   if (left.locationName !== right.locationName) return left.locationName.localeCompare(right.locationName);
   if (left.storageSection !== right.storageSection) return left.storageSection.localeCompare(right.storageSection);
   if (left.containerNo !== right.containerNo) return left.containerNo.localeCompare(right.containerNo);
-  return (left.palletCode || left.id).localeCompare(right.palletCode || right.id);
+  return (left.sourceLabel || left.id).localeCompare(right.sourceLabel || right.id);
 }
 
 function normalizeOutboundCandidateSelections(entries: OutboundCandidateSelection[] | null | undefined) {
@@ -1863,17 +1843,17 @@ function normalizeOutboundCandidateSelections(entries: OutboundCandidateSelectio
     if (entry.quantity <= 0) {
       continue;
     }
-    if (entry.palletId <= 0) {
+    if (entry.sourceItemId <= 0) {
       continue;
     }
-    normalized.set(entry.palletId, (normalized.get(entry.palletId) ?? 0) + entry.quantity);
+    normalized.set(entry.sourceItemId, (normalized.get(entry.sourceItemId) ?? 0) + entry.quantity);
   }
-  return [...normalized.entries()].map(([palletId, quantity]) => ({ palletId, quantity }));
+  return [...normalized.entries()].map(([sourceItemId, quantity]) => ({ sourceItemId, quantity }));
 }
 
 function buildAutoOutboundCandidateSelectionsWithReservations(
   quantity: number,
-  candidates: OutboundPalletCandidate[],
+  candidates: OutboundInventoryCandidate[],
   reservations: Map<number, number>
 ) {
   if (quantity <= 0) {
@@ -1882,20 +1862,20 @@ function buildAutoOutboundCandidateSelectionsWithReservations(
 
   let remainingQty = quantity;
   const selections: OutboundCandidateSelection[] = [];
-  for (const candidate of [...candidates].sort(compareOutboundPalletCandidates)) {
+  for (const candidate of [...candidates].sort(compareOutboundInventoryCandidates)) {
     if (remainingQty <= 0) {
       break;
     }
-    if (candidate.palletId <= 0) {
+    if (candidate.sourceItemId <= 0) {
       continue;
     }
-    const reservedQty = reservations.get(candidate.palletId) ?? 0;
+    const reservedQty = reservations.get(candidate.sourceItemId) ?? 0;
     const remainingAvailableQty = Math.max(0, candidate.availableQty - reservedQty);
     const selectedQty = Math.min(remainingAvailableQty, remainingQty);
     if (selectedQty <= 0) {
       continue;
     }
-    selections.push({ palletId: candidate.palletId, quantity: selectedQty });
+    selections.push({ sourceItemId: candidate.sourceItemId, quantity: selectedQty });
     remainingQty -= selectedQty;
   }
   return normalizeOutboundCandidateSelections(selections);
@@ -1922,9 +1902,9 @@ function buildOutboundShipmentReviewGroups(rows: OutboundAllocationPreviewRow[])
         description: string;
         totalQty: number;
         lineLabels: Set<string>;
-        palletPicks: Map<string, {
+        sourcePicks: Map<string, {
           key: string;
-          palletCode: string;
+          sourceLabel: string;
           totalQty: number;
           lineLabels: Set<string>;
         }>;
@@ -1960,12 +1940,12 @@ function buildOutboundShipmentReviewGroups(rows: OutboundAllocationPreviewRow[])
       description: row.description,
       totalQty: 0,
       lineLabels: new Set<string>(),
-      palletPicks: new Map()
+      sourcePicks: new Map()
     };
-    const palletPickKey = row.palletCode || row.containerNo || String(row.palletId);
-    const palletPickGroup = itemGroup.palletPicks.get(palletPickKey) ?? {
-      key: palletPickKey,
-      palletCode: row.palletCode || row.containerNo || "-",
+    const sourcePickKey = row.sourceLabel || row.containerNo || String(row.sourceItemId);
+    const sourcePickGroup = itemGroup.sourcePicks.get(sourcePickKey) ?? {
+      key: sourcePickKey,
+      sourceLabel: row.sourceLabel || row.containerNo || "-",
       totalQty: 0,
       lineLabels: new Set<string>()
     };
@@ -1981,9 +1961,9 @@ function buildOutboundShipmentReviewGroups(rows: OutboundAllocationPreviewRow[])
 
     itemGroup.totalQty += row.allocatedQty;
     itemGroup.lineLabels.add(row.lineLabel);
-    palletPickGroup.totalQty += row.allocatedQty;
-    palletPickGroup.lineLabels.add(row.lineLabel);
-    itemGroup.palletPicks.set(palletPickKey, palletPickGroup);
+    sourcePickGroup.totalQty += row.allocatedQty;
+    sourcePickGroup.lineLabels.add(row.lineLabel);
+    itemGroup.sourcePicks.set(sourcePickKey, sourcePickGroup);
 
     containerGroup.items.set(itemKey, itemGroup);
     warehouseGroup.containers.set(containerKey, containerGroup);
@@ -2014,14 +1994,14 @@ function buildOutboundShipmentReviewGroups(rows: OutboundAllocationPreviewRow[])
               description: itemGroup.description,
               totalQty: itemGroup.totalQty,
               lineLabels: [...itemGroup.lineLabels].sort(),
-              palletPicks: [...itemGroup.palletPicks.values()]
-                .map((palletPick) => ({
-                  key: palletPick.key,
-                  palletCode: palletPick.palletCode,
-                  totalQty: palletPick.totalQty,
-                  lineLabels: [...palletPick.lineLabels].sort()
+              sourcePicks: [...itemGroup.sourcePicks.values()]
+                .map((sourcePick) => ({
+                  key: sourcePick.key,
+                  sourceLabel: sourcePick.sourceLabel,
+                  totalQty: sourcePick.totalQty,
+                  lineLabels: [...sourcePick.lineLabels].sort()
                 }))
-                .sort((left, right) => left.palletCode.localeCompare(right.palletCode))
+                .sort((left, right) => left.sourceLabel.localeCompare(right.sourceLabel))
             }))
             .sort((left, right) => {
               const skuCompare = left.sku.localeCompare(right.sku);
@@ -2151,8 +2131,8 @@ function buildPersistedOutboundSourceOptionsFromDocument(
     const skuMasterUnit = skuMastersByID.get(line.skuMasterId)?.unit || "PCS";
     const candidates = line.pickAllocations.map((allocation, index) => ({
       id: `${line.id}-${allocation.id || index}`,
-      palletId: allocation.id > 0 ? allocation.id : index + 1,
-      palletCode: "",
+      sourceItemId: allocation.id > 0 ? allocation.id : index + 1,
+      sourceLabel: "",
       customerId: document.customerId,
       customerName: document.customerName,
       locationId: allocation.locationId || line.locationId,
@@ -2201,7 +2181,7 @@ function buildPersistedOutboundSourceOptionsFromDocument(
 }
 
 function buildOutboundSourceOptionsFromItems(items: Item[], skuMastersByID: Map<number, SKUMaster>): OutboundSourceOption[] {
-  const candidates: OutboundPalletCandidate[] = [];
+  const candidates: OutboundInventoryCandidate[] = [];
   for (const item of items) {
     const availableQty = Math.max(0, item.availableQty);
     if (availableQty <= 0) {
@@ -2210,8 +2190,8 @@ function buildOutboundSourceOptionsFromItems(items: Item[], skuMastersByID: Map<
     const skuMaster = skuMastersByID.get(item.skuMasterId);
     candidates.push({
       id: String(item.id),
-      palletId: item.id,
-      palletCode: "",
+      sourceItemId: item.id,
+      sourceLabel: "",
       customerId: item.customerId,
       customerName: item.customerName,
       locationId: item.locationId,
@@ -2231,7 +2211,7 @@ function buildOutboundSourceOptionsFromItems(items: Item[], skuMastersByID: Map<
   }
 
   const grouped = new Map<string, OutboundSourceOption>();
-  for (const candidate of candidates.sort(compareOutboundPalletCandidates)) {
+  for (const candidate of candidates.sort(compareOutboundInventoryCandidates)) {
     const sourceKey = buildOutboundSourceKey(candidate.customerId, candidate.locationId, candidate.skuMasterId);
     const existing = grouped.get(sourceKey);
     if (!existing) {
@@ -2264,11 +2244,11 @@ function buildOutboundSourceOptionsFromItems(items: Item[], skuMastersByID: Map<
   }
 
   return [...grouped.values()].map((source) => {
-    const candidatesByPalletID = new Map<number, OutboundPalletCandidate>();
+    const candidatesBySourceItemID = new Map<number, OutboundInventoryCandidate>();
     for (const candidate of source.candidates) {
-      const existing = candidatesByPalletID.get(candidate.palletId);
+      const existing = candidatesBySourceItemID.get(candidate.sourceItemId);
       if (!existing) {
-        candidatesByPalletID.set(candidate.palletId, { ...candidate });
+        candidatesBySourceItemID.set(candidate.sourceItemId, { ...candidate });
         continue;
       }
       existing.availableQty += candidate.availableQty;
@@ -2280,7 +2260,7 @@ function buildOutboundSourceOptionsFromItems(items: Item[], skuMastersByID: Map<
       }
     }
 
-    const sortedCandidates = [...candidatesByPalletID.values()].sort(compareOutboundPalletCandidates);
+    const sortedCandidates = [...candidatesBySourceItemID.values()].sort(compareOutboundInventoryCandidates);
     const sourcePalletCount = items
       .filter((item) => buildOutboundSourceKey(item.customerId, item.locationId, item.skuMasterId) === source.sourceKey)
       .reduce((sum, item) => sum + Math.max(0, item.pallets || 0), 0);

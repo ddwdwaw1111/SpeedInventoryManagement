@@ -8,12 +8,10 @@ import {
   ExternalLink,
   MapPinned,
   PackageCheck,
-  RefreshCw,
   RotateCcw,
   Search,
   Send,
-  Truck,
-  Wrench
+  Truck
 } from "lucide-react";
 
 import { api } from "../lib/api";
@@ -31,8 +29,7 @@ import type {
   DocumentAttachment,
   InboundDocument,
   Location,
-  OutboundDocument,
-  PalletTrace
+  OutboundDocument
 } from "../lib/types";
 import { DocumentAttachmentsPanel, type PendingDocumentAttachment } from "./DocumentAttachmentsPanel";
 import { InlineAlert, useFeedbackToast } from "./Feedback";
@@ -60,7 +57,6 @@ type AdminContainerLifecyclePageProps = {
   onOpenReceiptEditor: (documentId?: number | null) => void;
   onOpenOutboundDocument: (documentId: number) => void;
   onOpenShipmentEditor: (documentId?: number | null) => void;
-  onOpenPalletTrace?: (sourceInboundDocumentId?: number) => void;
 };
 
 type ContainerFormState = {
@@ -93,14 +89,6 @@ type PickupFormState = LifecycleVisibilityFormState & {
   cost: string;
   status: string;
   notes: string;
-};
-
-type ReworkFormState = LifecycleVisibilityFormState & {
-  referenceNo: string;
-  eventType: string;
-  eventTime: string;
-  notes: string;
-  palletIds: number[];
 };
 
 type DeliveryFormState = LifecycleVisibilityFormState & {
@@ -173,12 +161,6 @@ const PICKUP_STATUS_OPTIONS: SelectOption[] = [
   { value: "CANCELLED", labelKey: "cancelled" }
 ];
 
-const REWORK_EVENT_TYPE_OPTIONS: SelectOption[] = [
-  { value: "REPACK", labelKey: "reworkEventRepack" },
-  { value: "LOAD_CONSOLIDATION_NOTE", labelKey: "reworkEventLoadConsolidation" },
-  { value: "REWORK", labelKey: "containerLifecycleStatusReworked" }
-];
-
 const DELIVERY_EVENT_TYPE_OPTIONS: SelectOption[] = [
   { value: "DISPATCHED", labelKey: "containerLifecycleStatusDispatched" },
   { value: "DELIVERED", labelKey: "deliveryEventDelivered" },
@@ -194,8 +176,7 @@ export function AdminContainerLifecyclePage({
   onOpenInboundDetail,
   onOpenReceiptEditor,
   onOpenOutboundDocument,
-  onOpenShipmentEditor,
-  onOpenPalletTrace
+  onOpenShipmentEditor
 }: AdminContainerLifecyclePageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
@@ -218,7 +199,6 @@ export function AdminContainerLifecyclePage({
   const [containerForm, setContainerForm] = useState<ContainerFormState>(createEmptyContainerForm());
   const [trackingForm, setTrackingForm] = useState<TrackingFormState>(createEmptyTrackingForm());
   const [pickupForm, setPickupForm] = useState<PickupFormState>(createEmptyPickupForm());
-  const [reworkForm, setReworkForm] = useState<ReworkFormState>(createEmptyReworkForm());
   const [deliveryForm, setDeliveryForm] = useState<DeliveryFormState>(createEmptyDeliveryForm());
 
   const activeCustomerId = routeScope?.customerId ?? parsePositiveInt(selectedCustomerId);
@@ -282,7 +262,6 @@ export function AdminContainerLifecyclePage({
         setContainerForm(createContainerFormFromLifecycle(nextLifecycle));
         setTrackingForm(createEmptyTrackingForm());
         setPickupForm(createEmptyPickupForm());
-        setReworkForm(createReworkFormFromLifecycle(nextLifecycle));
         setDeliveryForm(createDeliveryFormFromLifecycle(nextLifecycle));
       } catch (error) {
         if (!active) return;
@@ -309,7 +288,6 @@ export function AdminContainerLifecyclePage({
     setDeliveryForm(createDeliveryFormFromLifecycle(lifecycle, selectedNode));
   }, [lifecycle, selectedNode]);
 
-  const visiblePallets = useMemo(() => lifecycle?.pallets ?? [], [lifecycle?.pallets]);
   const filteredSummaries = useMemo(
     () => selectedStatus === "all"
       ? containerSummaries
@@ -405,29 +383,6 @@ export function AdminContainerLifecyclePage({
         status: pickupForm.status,
         notes: pickupForm.notes,
         visibility: pickupForm.visibility
-      });
-      showSuccess(t("adminContainerLifecycleSaved"));
-      refreshLifecycle();
-    });
-  }
-
-  async function handleCreateReworkEvent(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!activeCustomerId || !activeContainerNo || reworkForm.palletIds.length === 0) {
-      setLifecycleError(t("adminContainerLifecycleSelectPallet"));
-      return;
-    }
-    await runBusyAction("rework", async () => {
-      await api.recordV2PalletRework({
-        customerId: activeCustomerId,
-        containerNo: activeContainerNo,
-        referenceNo: reworkForm.referenceNo,
-        eventType: reworkForm.eventType,
-        eventTime: reworkForm.eventTime,
-        notes: reworkForm.notes,
-        visibility: reworkForm.visibility,
-        displayLabel: reworkForm.displayLabel,
-        palletIds: reworkForm.palletIds
       });
       showSuccess(t("adminContainerLifecycleSaved"));
       refreshLifecycle();
@@ -684,27 +639,22 @@ export function AdminContainerLifecyclePage({
       containerForm={containerForm}
       trackingForm={trackingForm}
       pickupForm={pickupForm}
-      reworkForm={reworkForm}
       deliveryForm={deliveryForm}
-      pallets={visiblePallets}
       locations={locations}
       busyAction={busyAction}
       onContainerFormChange={setContainerForm}
       onTrackingFormChange={setTrackingForm}
       onPickupFormChange={setPickupForm}
-      onReworkFormChange={setReworkForm}
       onDeliveryFormChange={setDeliveryForm}
       onSaveContainer={handleSaveContainer}
       onCreateTrackingEvent={handleCreateTrackingEvent}
       onCreatePickupAssignment={handleCreatePickupAssignment}
-      onCreateReworkEvent={handleCreateReworkEvent}
       onCreateDeliveryEvent={handleCreateDeliveryEvent}
       onUploadInboundDocumentAttachment={handleUploadInboundDocumentAttachment}
       onUploadOutboundDocumentAttachment={handleUploadOutboundDocumentAttachment}
       onDeleteInboundDocumentAttachment={handleDeleteInboundDocumentAttachment}
       onDeleteOutboundDocumentAttachment={handleDeleteOutboundDocumentAttachment}
       onOpenContainerDetail={() => onOpenContainerDetail(activeContainerNo)}
-      onOpenPalletTrace={onOpenPalletTrace}
     />
   ) : null;
 
@@ -740,60 +690,53 @@ function AdminLifecycleNodePanel({
   containerForm,
   trackingForm,
   pickupForm,
-  reworkForm,
   deliveryForm,
-  pallets,
   locations,
   busyAction,
   onContainerFormChange,
   onTrackingFormChange,
   onPickupFormChange,
-  onReworkFormChange,
   onDeliveryFormChange,
   onSaveContainer,
   onCreateTrackingEvent,
   onCreatePickupAssignment,
-  onCreateReworkEvent,
   onCreateDeliveryEvent,
   onUploadInboundDocumentAttachment,
   onUploadOutboundDocumentAttachment,
   onDeleteInboundDocumentAttachment,
   onDeleteOutboundDocumentAttachment,
-  onOpenContainerDetail,
-  onOpenPalletTrace
+  onOpenContainerDetail
 }: {
   node: ContainerLifecycleNodeAction | null;
   lifecycle: ContainerLifecycle;
   containerForm: ContainerFormState;
   trackingForm: TrackingFormState;
   pickupForm: PickupFormState;
-  reworkForm: ReworkFormState;
   deliveryForm: DeliveryFormState;
-  pallets: PalletTrace[];
   locations: Location[];
   busyAction: string;
   onContainerFormChange: (nextForm: ContainerFormState) => void;
   onTrackingFormChange: (nextForm: TrackingFormState) => void;
   onPickupFormChange: (nextForm: PickupFormState) => void;
-  onReworkFormChange: (nextForm: ReworkFormState) => void;
   onDeliveryFormChange: (nextForm: DeliveryFormState) => void;
   onSaveContainer: (event: FormEvent<HTMLFormElement>) => void;
   onCreateTrackingEvent: (event: FormEvent<HTMLFormElement>) => void;
   onCreatePickupAssignment: (event: FormEvent<HTMLFormElement>) => void;
-  onCreateReworkEvent: (event: FormEvent<HTMLFormElement>) => void;
   onCreateDeliveryEvent: (event: FormEvent<HTMLFormElement>) => void;
   onUploadInboundDocumentAttachment: (document: InboundDocument, file: File, displayName: string) => Promise<void>;
   onUploadOutboundDocumentAttachment: (document: OutboundDocument, file: File, displayName: string) => Promise<void>;
   onDeleteInboundDocumentAttachment: (document: InboundDocument, attachment: DocumentAttachment) => Promise<void>;
   onDeleteOutboundDocumentAttachment: (document: OutboundDocument, attachment: DocumentAttachment) => Promise<void>;
   onOpenContainerDetail: () => void;
-  onOpenPalletTrace?: (sourceInboundDocumentId?: number) => void;
 }) {
   const { t } = useI18n();
   const selectedPackingList = node?.documentId ? lifecycle.packingLists.find((document) => document.id === node.documentId) : lifecycle.packingLists[0];
   const selectedPickingOrder = node?.outboundDocumentId ? lifecycle.pickingOrders.find((document) => document.id === node.outboundDocumentId) : lifecycle.pickingOrders[0];
   const receivingSkuRows = useMemo(() => buildReceivingSkuRows(lifecycle.packingLists), [lifecycle.packingLists]);
-  const currentInventorySkuRows = useMemo(() => buildCurrentInventorySkuRows(pallets, receivingSkuRows), [pallets, receivingSkuRows]);
+  const currentInventorySkuRows = useMemo(
+    () => buildCurrentInventorySkuRows(receivingSkuRows, lifecycle.pickingOrders, lifecycle.summary.containerNo),
+    [receivingSkuRows, lifecycle.pickingOrders, lifecycle.summary.containerNo]
+  );
   const shouldShowContainerForm = !node || node.kind === "container";
   const selectedLocationID = containerForm.locationId;
   const locationOptions = buildLocationOptions(locations, selectedLocationID, t);
@@ -865,19 +808,6 @@ function AdminLifecycleNodePanel({
           </form>
         ) : null}
 
-        {node?.kind === "rework" ? (
-          <form className="grid gap-3" onSubmit={onCreateReworkEvent}>
-            <PanelSectionTitle icon={<Wrench className="h-4 w-4" />} title={t("containerLifecycleReworkNode")} />
-            <TextInput label={t("referenceNo")} value={reworkForm.referenceNo} onChange={(value) => onReworkFormChange({ ...reworkForm, referenceNo: value })} />
-            <SelectInput label={t("eventType")} value={reworkForm.eventType} options={REWORK_EVENT_TYPE_OPTIONS} onChange={(value) => onReworkFormChange({ ...reworkForm, eventType: value })} />
-            <VisibilityFields value={reworkForm} onChange={(nextFields) => onReworkFormChange({ ...reworkForm, ...nextFields })} />
-            <TextInput type="datetime-local" label={t("eventTime")} value={reworkForm.eventTime} onChange={(value) => onReworkFormChange({ ...reworkForm, eventTime: value })} />
-            <TextInput label={t("notes")} value={reworkForm.notes} onChange={(value) => onReworkFormChange({ ...reworkForm, notes: value })} />
-            <PalletChecklist pallets={pallets} selectedIds={reworkForm.palletIds} onChange={(palletIds) => onReworkFormChange({ ...reworkForm, palletIds })} />
-            <Button type="submit" disabled={busyAction === "rework"}>{busyAction === "rework" ? t("saving") : t("adminContainerLifecycleSubmitChanges")}</Button>
-          </form>
-        ) : null}
-
         {node?.kind === "delivery" ? (
           <form className="grid gap-3" onSubmit={onCreateDeliveryEvent}>
             <PanelSectionTitle icon={<Truck className="h-4 w-4" />} title={t("containerLifecycleDeliveryNode")} />
@@ -925,13 +855,6 @@ function AdminLifecycleNodePanel({
           />
         ) : null}
 
-        {node?.kind === "transfer" && onOpenPalletTrace ? (
-          <QuickActionPanel
-            icon={<RefreshCwIcon />}
-            title={t("customerPortalContainerTransfers")}
-            actions={<Button type="button" onClick={() => onOpenPalletTrace(lifecycle.summary.firstPackingListId)}>{t("palletTrace")}</Button>}
-          />
-        ) : null}
       </CardContent>
     </Card>
   );
@@ -1222,50 +1145,6 @@ function VisibilityFields({
   );
 }
 
-function PalletChecklist({
-  pallets,
-  selectedIds,
-  onChange
-}: {
-  pallets: PalletTrace[];
-  selectedIds: number[];
-  onChange: (nextIds: number[]) => void;
-}) {
-  const { t } = useI18n();
-  const visiblePallets = pallets.slice(0, 12);
-
-  if (visiblePallets.length === 0) {
-    return <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">{t("containerDetailNoCurrentPallets")}</div>;
-  }
-
-  return (
-    <fieldset className="grid gap-2">
-      <legend className="text-sm font-medium text-slate-700">{t("palletTrace")}</legend>
-      <div className="max-h-56 overflow-auto rounded-md border border-slate-200 p-2">
-        {visiblePallets.map((pallet) => {
-          const checked = selectedIds.includes(pallet.id);
-          return (
-            <label key={pallet.id} className="flex items-start gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-slate-50">
-              <input
-                type="checkbox"
-                className="mt-1"
-                checked={checked}
-                onChange={() => {
-                  onChange(checked ? selectedIds.filter((id) => id !== pallet.id) : [...selectedIds, pallet.id]);
-                }}
-              />
-              <span>
-                <span className="block font-mono font-semibold text-slate-950">{pallet.palletCode}</span>
-                <span className="block text-xs text-slate-500">{pallet.currentLocationName || "-"} / {pallet.currentStorageSection || "-"}</span>
-              </span>
-            </label>
-          );
-        })}
-      </div>
-    </fieldset>
-  );
-}
-
 function DocumentActions<TDocument extends InboundDocument | OutboundDocument>({
   icon,
   title,
@@ -1318,27 +1197,6 @@ function DocumentActions<TDocument extends InboundDocument | OutboundDocument>({
       )}
     </div>
   );
-}
-
-function QuickActionPanel({
-  icon,
-  title,
-  actions
-}: {
-  icon: ReactNode;
-  title: string;
-  actions: ReactNode;
-}) {
-  return (
-    <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-      <PanelSectionTitle icon={icon} title={title} />
-      {actions}
-    </div>
-  );
-}
-
-function RefreshCwIcon() {
-  return <RefreshCw className="h-4 w-4" />;
 }
 
 export function buildReceivingSkuRows(packingLists: InboundDocument[]): ReceivingSkuQuantityRow[] {
@@ -1418,50 +1276,37 @@ export function buildOutboundOrderGoodsRows(document: OutboundDocument | undefin
   });
 }
 
-function buildCurrentInventorySkuRows(pallets: PalletTrace[], receivedRows: ReceivingSkuQuantityRow[]): SkuQuantityRow[] {
-  const rows = new Map<string, { sku: string; palletIds: Set<number>; quantity: number; referenceQuantity: number }>();
+function buildCurrentInventorySkuRows(
+  receivedRows: ReceivingSkuQuantityRow[],
+  pickingOrders: OutboundDocument[],
+  containerNo: string
+): SkuQuantityRow[] {
+  const rows = new Map<string, SkuQuantityRow>();
 
   receivedRows.forEach((row) => {
     rows.set(row.sku, {
       sku: row.sku,
-      palletIds: new Set<number>(),
-      quantity: 0,
+      pallets: row.receivedPallets,
+      quantity: row.receivedQuantity,
       referenceQuantity: row.receivedQuantity
     });
   });
 
-  pallets.forEach((pallet) => {
-    (pallet.contents ?? []).forEach((content) => {
-      const quantity = content.quantity || 0;
-      if (quantity <= 0) {
+  pickingOrders.forEach((document) => {
+    buildOutboundOrderGoodsRows(document, containerNo).forEach((line) => {
+      const shippedQuantity = line.allocatedQty || 0;
+      if (shippedQuantity <= 0) {
         return;
       }
-      const sku = content.sku || pallet.sku || "-";
-      const existing = rows.get(sku);
-      if (existing) {
-        existing.palletIds.add(pallet.id);
-        existing.quantity += quantity;
-        if (existing.referenceQuantity <= 0) {
-          existing.referenceQuantity = quantity;
-        }
+      const existing = rows.get(line.sku);
+      if (!existing) {
         return;
       }
-      rows.set(sku, {
-        sku,
-        palletIds: new Set([pallet.id]),
-        quantity,
-        referenceQuantity: quantity
-      });
+      existing.quantity = Math.max(0, existing.quantity - shippedQuantity);
     });
   });
 
   return Array.from(rows.values())
-    .map((row) => ({
-      sku: row.sku,
-      pallets: row.palletIds.size,
-      quantity: row.quantity,
-      referenceQuantity: row.referenceQuantity
-    }))
     .sort((left, right) => left.sku.localeCompare(right.sku));
 }
 
@@ -1522,24 +1367,6 @@ function createEmptyPickupForm(): PickupFormState {
     cost: "",
     status: "PICKED_UP",
     notes: ""
-  };
-}
-
-function createEmptyReworkForm(): ReworkFormState {
-  return {
-    ...createDefaultVisibilityFields(),
-    referenceNo: "",
-    eventType: "REPACK",
-    eventTime: toDateTimeInputValue(new Date()),
-    notes: "",
-    palletIds: []
-  };
-}
-
-function createReworkFormFromLifecycle(lifecycle: ContainerLifecycle): ReworkFormState {
-  return {
-    ...createEmptyReworkForm(),
-    palletIds: lifecycle.pallets.length === 1 ? [lifecycle.pallets[0].id] : []
   };
 }
 

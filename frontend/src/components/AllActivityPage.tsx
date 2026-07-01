@@ -2,8 +2,6 @@ import CloseIcon from "@mui/icons-material/Close";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
 import OutboxOutlinedIcon from "@mui/icons-material/OutboxOutlined";
-import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
-import CompareArrowsOutlinedIcon from "@mui/icons-material/CompareArrowsOutlined";
 import { useEffect, useMemo, useState } from "react";
 import { Box, Button, Chip, Drawer, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
@@ -13,7 +11,7 @@ import { consumePendingAllActivityContext } from "../lib/allActivityContext";
 import { formatDateTimeValue, formatDateValue, getZonedDateRangeUtcBounds, isCalendarDateValue, normalizeCalendarDate, parseDateValue } from "../lib/dates";
 import { getErrorMessage } from "../lib/errors";
 import { useI18n } from "../lib/i18n";
-import { PALLET_ENTITY_UI_ENABLED, type PageKey } from "../lib/routes";
+import { type PageKey } from "../lib/routes";
 import { useSettings } from "../lib/settings";
 import { normalizeStorageSection, type Customer, type Location, type Movement, type UserRole } from "../lib/types";
 import { SearchSubmitField } from "./SearchSubmitField";
@@ -400,26 +398,6 @@ function renderMovementSourceAction(
     return (
       <Button variant="outlined" startIcon={<OutboxOutlinedIcon fontSize="small" />} onClick={() => onNavigate("outbound-management")}>
         {t("outbound")}
-      </Button>
-    );
-  }
-
-  if (!PALLET_ENTITY_UI_ENABLED) {
-    return null;
-  }
-
-  if (movement.movementType === "ADJUST") {
-    return (
-      <Button variant="outlined" startIcon={<TuneOutlinedIcon fontSize="small" />} onClick={() => onNavigate("adjustments")}>
-        {t("adjustments")}
-      </Button>
-    );
-  }
-
-  if (movement.movementType === "TRANSFER_IN" || movement.movementType === "TRANSFER_OUT") {
-    return (
-      <Button variant="outlined" startIcon={<CompareArrowsOutlinedIcon fontSize="small" />} onClick={() => onNavigate("transfers")}>
-        {t("transfers")}
       </Button>
     );
   }

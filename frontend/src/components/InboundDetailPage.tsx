@@ -17,9 +17,8 @@ import {
 import { getErrorMessage } from "../lib/errors";
 import type { InboundReceiptEditorLaunchContext } from "../lib/inboundReceiptEditorLaunchContext";
 import { useI18n } from "../lib/i18n";
-import { setPendingPalletTraceLaunchContext } from "../lib/palletTraceLaunchContext";
-import { PALLET_ENTITY_UI_ENABLED, type PageKey } from "../lib/routes";
-import type { DocumentAttachment, InboundDocument, InboundDocumentLine, PalletTrace, UserRole } from "../lib/types";
+import type { PageKey } from "../lib/routes";
+import type { DocumentAttachment, InboundDocument, InboundDocumentLine, UserRole } from "../lib/types";
 import { DocumentAttachmentsPanel } from "./DocumentAttachmentsPanel";
 import { useFeedbackToast } from "./Feedback";
 import { WorkspacePanelHeader } from "./WorkspacePanelChrome";
@@ -53,9 +52,6 @@ export function InboundDetailPage({
   const { t } = useI18n();
   const { showError, showSuccess, feedbackToast } = useFeedbackToast();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
-  const [pallets, setPallets] = useState<PalletTrace[]>([]);
-  const [isPalletsLoading, setIsPalletsLoading] = useState(false);
-  const [palletErrorMessage, setPalletErrorMessage] = useState("");
   const [containerTypeValue, setContainerTypeValue] = useState<"NORMAL" | "WEST_COAST_TRANSFER">("NORMAL");
   const [savedContainerTypeValue, setSavedContainerTypeValue] = useState<"NORMAL" | "WEST_COAST_TRANSFER">("NORMAL");
   const [isSavingContainerType, setIsSavingContainerType] = useState(false);
@@ -81,7 +77,6 @@ export function InboundDetailPage({
   const totalPallets = document ? document.lines.reduce((sum, line) => sum + line.pallets, 0) : 0;
   const quantityVariance = document ? document.totalReceivedQty - document.totalExpectedQty : 0;
   const activityLog = useMemo(() => (document ? buildActivityLog(document, t) : []), [document, t]);
-  const palletCount = pallets.length;
   const attachmentCount = document?.attachments?.length ?? 0;
 
   useEffect(() => {
@@ -90,39 +85,6 @@ export function InboundDetailPage({
     setSavedContainerTypeValue(nextValue);
   }, [document?.containerType, document?.id]);
 
-  useEffect(() => {
-    let active = true;
-
-    async function loadPallets() {
-      if (!PALLET_ENTITY_UI_ENABLED || !document?.id) {
-        setPallets([]);
-        setPalletErrorMessage("");
-        setIsPalletsLoading(false);
-        return;
-      }
-
-      setIsPalletsLoading(true);
-      setPalletErrorMessage("");
-      try {
-        const nextPallets = await api.getPallets(200, "", document.id);
-        if (!active) return;
-        setPallets(nextPallets);
-      } catch (error) {
-        if (!active) return;
-        setPalletErrorMessage(getErrorMessage(error, t("couldNotLoadReport")));
-      } finally {
-        if (active) {
-          setIsPalletsLoading(false);
-        }
-      }
-    }
-
-    void loadPallets();
-    return () => {
-      active = false;
-    };
-  }, [document?.id, t]);
-
   function handleOpenWorkspace() {
     if (!document) {
       return;
@@ -130,15 +92,6 @@ export function InboundDetailPage({
 
     setPendingActivityManagementLaunchContext("IN", { documentId: document.id });
     onNavigate("inbound-management");
-  }
-
-  function handleOpenPalletWorkspace() {
-    if (!document) {
-      return;
-    }
-
-    setPendingPalletTraceLaunchContext({ sourceInboundDocumentId: document.id });
-    onNavigate("pallet-trace");
   }
 
   function handleConvertToPalletized() {
@@ -227,17 +180,6 @@ export function InboundDetailPage({
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
-              {PALLET_ENTITY_UI_ENABLED ? (
-                <button
-                  type="button"
-                  onClick={handleOpenPalletWorkspace}
-                  disabled={!document}
-                  className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <WarehouseOutlinedIcon sx={{ fontSize: 18 }} />
-                  {t("openPalletWorkspace")}
-                </button>
-              ) : null}
               <button
                 type="button"
                 onClick={handleOpenWorkspace}
@@ -320,7 +262,6 @@ export function InboundDetailPage({
                     label={t("pallets")}
                     value={String(totalPallets)}
                     meta={t("inboundDetailVariance", { variance: quantityVariance })}
-                    secondaryValue={PALLET_ENTITY_UI_ENABLED && palletCount > 0 ? `${palletCount}` : undefined}
                   />
                 </div>
 
@@ -462,80 +403,6 @@ export function InboundDetailPage({
               ) : null}
             </section>
 
-            {PALLET_ENTITY_UI_ENABLED ? (
-            <section className="rounded-[24px] border border-slate-200/80 bg-white p-4 shadow-[0_16px_34px_rgba(15,23,42,0.05)]">
-              <WorkspacePanelHeader
-                title={t("inboundDetailPalletManifest")}
-                description={t("inboundDetailPalletManifestDesc")}
-              />
-              {isPalletsLoading ? (
-                <div className="grid gap-3 md:grid-cols-2 animate-pulse">
-                  {Array.from({ length: 4 }, (_, index) => (
-                    <div key={index} className="rounded-[18px] border border-slate-200/80 bg-slate-50/80 p-4">
-                      <div className="h-4 w-32 rounded-full bg-slate-200" />
-                      <div className="mt-3 h-3 w-24 rounded-full bg-slate-200" />
-                      <div className="mt-4 h-12 rounded-2xl bg-slate-200" />
-                    </div>
-                  ))}
-                </div>
-              ) : palletErrorMessage ? (
-                <div className="rounded-[18px] border border-dashed border-rose-200 bg-rose-50/80 px-4 py-8 text-center text-sm text-rose-700">
-                  {palletErrorMessage}
-                </div>
-              ) : palletCount > 0 ? (
-                <div className="grid gap-3 md:grid-cols-2">
-                  {pallets.map((pallet) => {
-                    const totalQuantity = pallet.contents.reduce((sum, content) => sum + content.quantity, 0);
-                    return (
-                      <article key={pallet.id} className="rounded-[18px] border border-slate-200/80 bg-slate-50/70 p-4 shadow-[0_8px_18px_rgba(15,23,42,0.03)]">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="text-sm font-semibold text-[#0d2d63]">{pallet.palletCode}</div>
-                            <div className="mt-1 text-xs text-slate-500">
-                              {pallet.currentLocationName || "-"} / {pallet.currentStorageSection || "-"}
-                            </div>
-                          </div>
-                          <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${getPalletStatusToneClass(pallet.status)}`}>
-                            {getPalletStatusLabel(t, pallet.status)}
-                          </span>
-                        </div>
-
-                        <div className="mt-4 grid grid-cols-3 gap-3 text-xs text-slate-500">
-                          <div>
-                            <div className="font-semibold uppercase tracking-[0.18em] text-slate-400">{t("containerNo")}</div>
-                            <div className="mt-1 font-medium text-slate-700">{pallet.currentContainerNo || "-"}</div>
-                          </div>
-                          <div>
-                            <div className="font-semibold uppercase tracking-[0.18em] text-slate-400">{t("palletContents")}</div>
-                            <div className="mt-1 font-medium text-slate-700">{pallet.contents.length}</div>
-                          </div>
-                          <div>
-                            <div className="font-semibold uppercase tracking-[0.18em] text-slate-400">{t("quantity")}</div>
-                            <div className="mt-1 font-medium text-slate-700">{totalQuantity}</div>
-                          </div>
-                        </div>
-
-                        <div className="mt-4 flex flex-wrap gap-2">
-                          {pallet.contents.map((content) => (
-                            <span
-                              key={content.id}
-                              className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200"
-                            >
-                              {(content.itemNumber || content.sku || "-")} · {content.quantity}
-                            </span>
-                          ))}
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="rounded-[18px] border border-dashed border-slate-300 bg-slate-50/80 px-4 py-8 text-center text-sm text-slate-500">
-                  {t("inboundDetailNoPallets")}
-                </div>
-              )}
-            </section>
-            ) : null}
           </div>
 
           <div className="space-y-5">
@@ -789,37 +656,6 @@ function getLineReceiptVarianceToneClass(line: InboundDocumentLine) {
   }
   return "bg-[#dce8f6] text-[#143569] ring-1 ring-[#c5d8ee]";
 }
-
-function getPalletStatusLabel(t: Translate, status: string) {
-  switch ((status || "").trim().toUpperCase()) {
-    case "OPEN":
-      return t("palletOpen");
-    case "PARTIAL":
-      return t("palletPartial");
-    case "SHIPPED":
-      return t("palletShipped");
-    case "CANCELLED":
-      return t("palletCancelled");
-    default:
-      return status || t("pending");
-  }
-}
-
-function getPalletStatusToneClass(status: string) {
-  switch ((status || "").trim().toUpperCase()) {
-    case "OPEN":
-      return "bg-emerald-100 text-emerald-700";
-    case "PARTIAL":
-      return "bg-amber-100 text-amber-700";
-    case "SHIPPED":
-      return "bg-slate-100 text-slate-600";
-    case "CANCELLED":
-      return "bg-rose-100 text-rose-700";
-    default:
-      return "bg-slate-100 text-slate-600";
-  }
-}
-
 
 function getEventToneClass(tone: ActivityEvent["tone"]) {
   switch (tone) {

@@ -366,64 +366,6 @@ export type Movement = {
   createdAt: string;
 };
 
-export type PalletContent = {
-  id: number;
-  palletId: number;
-  skuMasterId: number;
-  itemNumber: string;
-  sku: string;
-  description: string;
-  quantity: number;
-  allocatedQty?: number;
-  damagedQty?: number;
-  holdQty?: number;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type PalletTrace = {
-  id: number;
-  parentPalletId: number;
-  palletCode: string;
-  containerVisitId: number;
-  sourceInboundDocumentId: number;
-  sourceInboundLineId: number;
-  actualArrivalDate: string | null;
-  containerType: ContainerType;
-  customerId: number;
-  customerName: string;
-  skuMasterId: number;
-  sku: string;
-  description: string;
-  currentLocationId: number;
-  currentLocationName: string;
-  currentStorageSection: string;
-  currentContainerNo: string;
-  status: string;
-  createdAt: string;
-  updatedAt: string;
-  contents: PalletContent[];
-};
-
-export type PalletLocationEvent = {
-  id: number;
-  palletId: number;
-  palletCode: string;
-  containerVisitId: number;
-  customerId: number;
-  customerName: string;
-  locationId: number;
-  locationName: string;
-  storageSection: string;
-  containerId?: number;
-  containerNo: string;
-  eventType: string;
-  quantityDelta: number;
-  palletDelta: number;
-  eventTime: string;
-  createdAt: string;
-};
-
 export type ContainerRecord = {
   id: number;
   customerId: number;
@@ -531,47 +473,6 @@ export type ContainerPickupAssignmentPayload = LifecycleDisplayFields & {
   notes?: string;
 };
 
-export type PalletReworkEventPallet = {
-  id: number;
-  reworkEventId: number;
-  palletId: number;
-  palletCode: string;
-  role: string;
-  quantityDelta: number;
-  createdAt: string;
-};
-
-export type PalletReworkEvent = {
-  id: number;
-  referenceNo: string;
-  customerId: number;
-  customerName: string;
-  containerNo: string;
-  eventType: string;
-  eventTime: string;
-  notes: string;
-  visibility?: ContainerLifecycleEventVisibility;
-  displayLabel?: string;
-  publicStatus?: string;
-  publicLabel?: string;
-  internalStatus?: string;
-  internalLabel?: string;
-  pallets: PalletReworkEventPallet[];
-  createdAt: string;
-};
-
-export type PalletReworkPayload = LifecycleDisplayFields & {
-  referenceNo?: string;
-  customerId: number;
-  containerNo: string;
-  eventType?: string;
-  eventTime?: string;
-  palletIds?: number[];
-  sourcePalletIds?: number[];
-  targetPalletIds?: number[];
-  notes?: string;
-};
-
 export type DeliveryEvent = {
   id: number;
   outboundDocumentId: number;
@@ -609,15 +510,6 @@ export type DeliveryEventPayload = LifecycleDisplayFields & {
   notes?: string;
 };
 
-export type PalletOperationResult = {
-  operationType: string;
-  referenceNo: string;
-  recordId: number;
-  status: string;
-  totalLines: number;
-  totalQty: number;
-};
-
 export type CustomerPortalContainerSummary = {
   containerNo: string;
   customerId: number;
@@ -652,8 +544,6 @@ export type ContainerLifecycleEvent = {
   eventType: string;
   eventTime: string;
   quantityDelta: number;
-  palletId: number;
-  palletItemId: number;
   skuMasterId: number;
   sourceDocumentType: string;
   sourceDocumentId: number;
@@ -880,11 +770,8 @@ export type CustomerPortalContainerLifecycle = {
   pickingOrders: OutboundDocument[];
   movements: Movement[];
   lifecycleEvents: ContainerLifecycleEvent[];
-  pallets: PalletTrace[];
-  palletEvents: PalletLocationEvent[];
   trackingEvents?: ContainerTrackingEvent[];
   pickupAssignments?: ContainerPickupAssignment[];
-  reworkEvents?: PalletReworkEvent[];
   deliveryEvents?: DeliveryEvent[];
 };
 
@@ -892,7 +779,6 @@ export type ContainerLifecycle = CustomerPortalContainerLifecycle & {
   container?: ContainerRecord | null;
   trackingEvents: ContainerTrackingEvent[];
   pickupAssignments: ContainerPickupAssignment[];
-  reworkEvents: PalletReworkEvent[];
   deliveryEvents: DeliveryEvent[];
 };
 
@@ -942,15 +828,11 @@ export type InventoryAdjustmentLine = {
   locationId: number;
   locationName: string;
   storageSection: string;
-  palletId: number;
-  palletCode: string;
   sku: string;
   description: string;
   beforeQty: number;
   adjustQty: number;
   afterQty: number;
-  palletBeforeQty: number;
-  palletAfterQty: number;
   lineNote: string;
   createdAt: string;
 };
@@ -975,7 +857,6 @@ export type InventoryAdjustmentLinePayload = {
   storageSection: string;
   containerId?: number;
   containerNo: string;
-  palletId?: number;
   skuMasterId: number;
   adjustQty: number;
   lineNote?: string;

@@ -890,7 +890,8 @@ func (s *Store) updateConfirmedInboundDocumentTx(
 		newQty := nextLine.receivedOrExpectedQty()
 		oldSection := fallbackSection(existingLine.StorageSection)
 		newSection := fallbackSection(firstNonEmpty(nextLine.StorageSection, input.StorageSection, existingLine.StorageSection))
-		positionChanged := oldSection != newSection || oldContainerNo != newContainerNo
+		containerChanged := documentRow.ContainerID != containerID
+		positionChanged := oldSection != newSection || oldContainerNo != newContainerNo || containerChanged
 		lineDescription := firstNonEmpty(nextLine.Description, existingLine.DescriptionSnapshot)
 		unitLabel := firstNonEmpty(input.UnitLabel, documentRow.UnitLabel, existingLine.UnitLabel, "CTN")
 
@@ -901,13 +902,13 @@ func (s *Store) updateConfirmedInboundDocumentTx(
 		}
 
 		if positionChanged {
-			if err := s.moveConfirmedInboundReceiptLotsTx(ctx, tx, documentID, documentRow, existingLine, nextLine, deliveryDate, newSection, newContainerNo, lineDescription, unitLabel); err != nil {
+			if err := s.moveConfirmedInboundReceiptLotsTx(ctx, tx, documentID, documentRow, existingLine, nextLine, deliveryDate, containerID, newSection, newContainerNo, lineDescription, unitLabel); err != nil {
 				return err
 			}
 		}
 
 		if newQty > oldQty {
-			if err := s.increaseConfirmedInboundReceiptLotsTx(ctx, tx, documentID, documentRow, existingLine, nextLine, deliveryDate, newSection, newContainerNo, newQty-oldQty, lineDescription, unitLabel); err != nil {
+			if err := s.increaseConfirmedInboundReceiptLotsTx(ctx, tx, documentID, documentRow, existingLine, nextLine, deliveryDate, containerID, newSection, newContainerNo, newQty-oldQty, lineDescription, unitLabel); err != nil {
 				return err
 			}
 		}
@@ -952,13 +953,13 @@ func (s *Store) updateConfirmedInboundDocumentTx(
 			return mapDBError(fmt.Errorf("update confirmed inbound line: %w", err))
 		}
 
-		if err := s.syncConfirmedInboundOpenPalletItemsTx(
+		if err := s.syncConfirmedInboundInventoryItemTx(
 			ctx,
 			tx,
-			existingLine.ID,
 			existingLine.SKUSnapshot,
 			documentRow.CustomerID,
 			documentRow.LocationID,
+			containerID,
 			newSection,
 			newContainerNo,
 			deliveryDate,
@@ -1060,27 +1061,8 @@ type inboundEditableItem struct {
 	Quantity       int
 }
 
-type inboundLinePalletState struct {
-	PalletID                int64
-	PalletItemID            int64
-	SKUMasterID             int64
-	Quantity                int
-	AllocatedQty            int
-	DamagedQty              int
-	HoldQty                 int
-	CustomerID              int64
-	LocationID              int64
-	StorageSection          string
-	ContainerNo             string
-	ContainerID             int64
-	ContainerVisitID        int64
-	SourceInboundDocumentID int64
-	SourceInboundLineID     int64
-	ActualArrivalDate       *time.Time
-}
-
 func (s *Store) loadLockedInboundEditableItemTx(ctx context.Context, tx *sql.Tx, itemID int64) (inboundEditableItem, error) {
-	projection, err := s.loadPalletBackedInventoryProjectionTx(ctx, tx, itemID)
+	projection, err := s.loadInventoryProjectionTx(ctx, tx, itemID)
 	if err != nil {
 		return inboundEditableItem{}, err
 	}
@@ -1153,158 +1135,37 @@ func (s *Store) updateInboundEditableItemStateTx(
 	return nil
 }
 
-func (s *Store) listActiveInboundLinePalletStatesTx(ctx context.Context, tx *sql.Tx, inboundLineID int64, newestFirst bool) ([]inboundLinePalletState, error) {
-	orderDirection := "ASC"
-	if newestFirst {
-		orderDirection = "DESC"
-	}
-	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
-		SELECT
-			p.id,
-			pi.id,
-			pi.sku_master_id,
-			pi.quantity,
-			pi.allocated_qty,
-			pi.damaged_qty,
-			pi.hold_qty,
-			p.customer_id,
-			p.current_location_id,
-			COALESCE(p.current_storage_section, 'TEMP') AS current_storage_section,
-			COALESCE(p.current_container_no, '') AS current_container_no,
-			COALESCE(cn.id, idoc.container_id, 0) AS container_id,
-			COALESCE(p.container_visit_id, 0) AS container_visit_id,
-			COALESCE(p.source_inbound_document_id, 0) AS source_inbound_document_id,
-			COALESCE(p.source_inbound_line_id, 0) AS source_inbound_line_id,
-			p.actual_arrival_date
-		FROM pallets p
-		JOIN pallet_items pi
-			ON pi.pallet_id = p.id
-			AND pi.sku_master_id = p.sku_master_id
-		LEFT JOIN containers cn
-			ON cn.customer_id = p.customer_id
-			AND cn.container_no = p.current_container_no
-		LEFT JOIN inbound_documents idoc
-			ON idoc.id = p.source_inbound_document_id
-		WHERE p.source_inbound_line_id = ?
-		  AND pi.quantity > 0
-		  AND p.status <> ?
-		ORDER BY COALESCE(p.actual_arrival_date, DATE(p.created_at)) %s, p.created_at %s, p.id %s
-		FOR UPDATE
-	`, orderDirection, orderDirection, orderDirection), inboundLineID, PalletStatusCancelled)
-	if err != nil {
-		return nil, fmt.Errorf("load active inbound-line pallets: %w", err)
-	}
-	defer rows.Close()
-
-	states := make([]inboundLinePalletState, 0)
-	for rows.Next() {
-		var state inboundLinePalletState
-		if err := rows.Scan(
-			&state.PalletID,
-			&state.PalletItemID,
-			&state.SKUMasterID,
-			&state.Quantity,
-			&state.AllocatedQty,
-			&state.DamagedQty,
-			&state.HoldQty,
-			&state.CustomerID,
-			&state.LocationID,
-			&state.StorageSection,
-			&state.ContainerNo,
-			&state.ContainerID,
-			&state.ContainerVisitID,
-			&state.SourceInboundDocumentID,
-			&state.SourceInboundLineID,
-			&state.ActualArrivalDate,
-		); err != nil {
-			return nil, fmt.Errorf("scan active inbound-line pallet: %w", err)
-		}
-		state.StorageSection = fallbackSection(state.StorageSection)
-		state.ContainerNo = strings.TrimSpace(state.ContainerNo)
-		states = append(states, state)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate active inbound-line pallets: %w", err)
-	}
-	return states, nil
-}
-
-func (s *Store) syncConfirmedInboundOpenPalletItemsTx(
+func (s *Store) syncConfirmedInboundInventoryItemTx(
 	ctx context.Context,
 	tx *sql.Tx,
-	inboundLineID int64,
 	sku string,
 	customerID int64,
 	locationID int64,
+	containerID int64,
 	storageSection string,
 	containerNo string,
 	deliveryDate *time.Time,
 	description string,
 	unitLabel string,
 ) error {
-	activePallets, err := s.listActiveInboundLinePalletStatesTx(ctx, tx, inboundLineID, false)
+	skuMasterID, err := s.getSKUMasterIDBySKUTx(ctx, tx, sku)
 	if err != nil {
 		return err
 	}
-	if len(activePallets) == 0 {
-		skuMasterID, err := s.getSKUMasterIDBySKUTx(ctx, tx, sku)
-		if err != nil {
-			return err
-		}
-		itemID, err := s.findInventoryItemIDByProjectionTx(ctx, tx, skuMasterID, customerID, locationID, storageSection, 0, containerNo)
-		if err != nil {
-			return err
-		}
-		return s.updateInboundEditableItemStateTx(
-			ctx,
-			tx,
-			itemID,
-			storageSection,
-			containerNo,
-			deliveryDate,
-			description,
-			unitLabel,
-		)
+	itemID, err := s.findInventoryItemIDByProjectionTx(ctx, tx, skuMasterID, customerID, locationID, storageSection, containerID, containerNo)
+	if err != nil {
+		return err
 	}
-
-	seenItemIDs := make(map[int64]struct{}, len(activePallets))
-	for _, palletState := range activePallets {
-		if palletState.SKUMasterID <= 0 {
-			continue
-		}
-		itemID, err := s.findInventoryItemIDByProjectionTx(
-			ctx,
-			tx,
-			palletState.SKUMasterID,
-			palletState.CustomerID,
-			palletState.LocationID,
-			palletState.StorageSection,
-			palletState.ContainerID,
-			palletState.ContainerNo,
-		)
-		if err != nil {
-			return err
-		}
-		if _, exists := seenItemIDs[itemID]; exists {
-			continue
-		}
-		if err := s.updateInboundEditableItemStateTx(
-			ctx,
-			tx,
-			itemID,
-			palletState.StorageSection,
-			palletState.ContainerNo,
-			deliveryDate,
-			description,
-			unitLabel,
-		); err != nil {
-			return err
-		}
-
-		seenItemIDs[itemID] = struct{}{}
-	}
-
-	return nil
+	return s.updateInboundEditableItemStateTx(
+		ctx,
+		tx,
+		itemID,
+		storageSection,
+		containerNo,
+		deliveryDate,
+		description,
+		unitLabel,
+	)
 }
 
 func (s *Store) reduceConfirmedInboundReceiptLotsTx(
@@ -1324,87 +1185,7 @@ func (s *Store) reduceConfirmedInboundReceiptLotsTx(
 	if reductionQty <= 0 {
 		return nil
 	}
-
-	activePallets, err := s.listActiveInboundLinePalletStatesTx(ctx, tx, existingLine.ID, true)
-	if err != nil {
-		return err
-	}
-	if len(activePallets) == 0 {
-		return s.reduceDirectConfirmedInboundReceiptBalanceTx(ctx, tx, documentID, documentRow, existingLine, nextLine, reductionQty, lineDescription, unitLabel)
-	}
-
-	oldSection := fallbackSection(existingLine.StorageSection)
-	oldContainerNo := strings.TrimSpace(documentRow.ContainerNo)
-	sourceItemID, err := s.findInventoryItemIDByProjectionTx(ctx, tx, activePallets[0].SKUMasterID, documentRow.CustomerID, documentRow.LocationID, oldSection, activePallets[0].ContainerID, oldContainerNo)
-	if err != nil {
-		return err
-	}
-
-	remainingOpenQty := 0
-	for _, palletState := range activePallets {
-		remainingOpenQty += palletState.Quantity
-	}
-	if reductionQty > remainingOpenQty {
-		return fmt.Errorf("%w: receipt line %s cannot reduce below quantity already consumed", ErrInvalidInput, existingLine.SKUSnapshot)
-	}
-	reductionPallets := 0.0
-	if nextLine.Pallets < existingLine.Pallets {
-		reductionPallets = float64(existingLine.Pallets - nextLine.Pallets)
-	}
-
-	palletConsumptions, err := s.consumePalletContentsForInboundLineTx(ctx, tx, existingLine.ID, activePallets[0].SKUMasterID, reductionQty, true)
-	if err != nil {
-		return err
-	}
-	if len(palletConsumptions) == 0 {
-		return ErrInsufficientStock
-	}
-	if err := s.adjustInventoryBalanceByIDTx(ctx, tx, sourceItemID, -reductionQty, 0); err != nil {
-		return err
-	}
-
-	consumptionQuantities := make([]int, len(palletConsumptions))
-	for index, palletConsumption := range palletConsumptions {
-		consumptionQuantities[index] = palletConsumption.Quantity
-	}
-	palletSplits := splitPalletsByQuantities(reductionPallets, consumptionQuantities)
-
-	for index, palletConsumption := range palletConsumptions {
-		if err := s.createPalletLocationEventTx(ctx, tx, createPalletLocationEventInput{
-			PalletID:         palletConsumption.PalletID,
-			ContainerVisitID: palletConsumption.ContainerVisitID,
-			CustomerID:       palletConsumption.CustomerID,
-			LocationID:       palletConsumption.LocationID,
-			StorageSection:   palletConsumption.StorageSection,
-			ContainerNo:      palletConsumption.ContainerNo,
-			EventType:        PalletEventAdjust,
-			QuantityDelta:    -palletConsumption.Quantity,
-			PalletDelta:      -palletSplits[index],
-		}); err != nil {
-			return err
-		}
-		if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
-			EventType:           StockLedgerEventAdjust,
-			PalletID:            palletConsumption.PalletID,
-			PalletItemID:        palletConsumption.PalletItemID,
-			SKUMasterID:         palletConsumption.SKUMasterID,
-			CustomerID:          palletConsumption.CustomerID,
-			LocationID:          palletConsumption.LocationID,
-			StorageSection:      palletConsumption.StorageSection,
-			QuantityChange:      -palletConsumption.Quantity,
-			SourceDocumentType:  StockLedgerSourceInbound,
-			SourceDocumentID:    documentID,
-			SourceLineID:        existingLine.ID,
-			ContainerID:         palletConsumption.ContainerID,
-			ContainerNo:         palletConsumption.ContainerNo,
-			DescriptionSnapshot: lineDescription,
-			Reason:              fmt.Sprintf("Receipt correction: quantity updated from %d to %d", existingLine.receivedOrExpectedQty(), nextLine.receivedOrExpectedQty()),
-		}); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return s.reduceDirectConfirmedInboundReceiptBalanceTx(ctx, tx, documentID, documentRow, existingLine, nextLine, reductionQty, lineDescription, unitLabel)
 }
 
 func (s *Store) moveConfirmedInboundReceiptLotsTx(
@@ -1415,198 +1196,13 @@ func (s *Store) moveConfirmedInboundReceiptLotsTx(
 	existingLine inboundDocumentLineRow,
 	nextLine CreateInboundDocumentLineInput,
 	deliveryDate *time.Time,
+	targetContainerID int64,
 	targetSection string,
 	targetContainerNo string,
 	lineDescription string,
 	unitLabel string,
 ) error {
-	activePallets, err := s.listActiveInboundLinePalletStatesTx(ctx, tx, existingLine.ID, false)
-	if err != nil {
-		return err
-	}
-	if len(activePallets) == 0 {
-		return s.moveDirectConfirmedInboundReceiptBalanceTx(ctx, tx, documentID, documentRow, existingLine, nextLine, deliveryDate, targetSection, targetContainerNo, lineDescription, unitLabel)
-	}
-
-	targetItemID, _, err := s.findOrCreateInboundItem(ctx, tx, CreateInboundDocumentInput{
-		CustomerID:          documentRow.CustomerID,
-		LocationID:          documentRow.LocationID,
-		ExpectedArrivalDate: safeDateInput(deliveryDate),
-		ContainerID:         activePallets[0].ContainerID,
-		ContainerNo:         targetContainerNo,
-		StorageSection:      targetSection,
-		UnitLabel:           unitLabel,
-		DocumentNote:        documentRow.DocumentNote,
-	}, CreateInboundDocumentLineInput{
-		SKU:               existingLine.SKUSnapshot,
-		Description:       lineDescription,
-		ExpectedQty:       nextLine.ExpectedQty,
-		ReceivedQty:       nextLine.ReceivedQty,
-		Pallets:           nextLine.Pallets,
-		PalletsDetailCtns: nextLine.PalletsDetailCtns,
-		StorageSection:    targetSection,
-		LineNote:          nextLine.LineNote,
-	}, deliveryDate)
-	if err != nil {
-		return err
-	}
-	sourceItemID, err := s.findInventoryItemIDByProjectionTx(
-		ctx,
-		tx,
-		activePallets[0].SKUMasterID,
-		documentRow.CustomerID,
-		documentRow.LocationID,
-		existingLine.StorageSection,
-		activePallets[0].ContainerID,
-		documentRow.ContainerNo,
-	)
-	if err != nil {
-		return err
-	}
-
-	palletSplitSequence := 0
-	movedQty := 0
-	movedPallets := 0
-
-	for _, palletState := range activePallets {
-		if palletState.Quantity <= 0 {
-			continue
-		}
-		if fallbackSection(palletState.StorageSection) == fallbackSection(targetSection) && strings.TrimSpace(palletState.ContainerNo) == strings.TrimSpace(targetContainerNo) {
-			continue
-		}
-		ledgerTransferOutPallets := 0
-		ledgerTransferInPallets := 0
-		if movedPallets == 0 {
-			ledgerTransferOutPallets = existingLine.Pallets
-			ledgerTransferInPallets = nextLine.Pallets
-		}
-		movedQty += palletState.Quantity
-		movedPallets++
-
-		transferReason := fmt.Sprintf(
-			"Receipt correction: moved from %s/%s to %s/%s",
-			fallbackSection(palletState.StorageSection),
-			firstNonEmpty(palletState.ContainerNo, "-"),
-			fallbackSection(targetSection),
-			firstNonEmpty(targetContainerNo, "-"),
-		)
-		if err := s.createPalletLocationEventTx(ctx, tx, createPalletLocationEventInput{
-			PalletID:         palletState.PalletID,
-			ContainerVisitID: palletState.ContainerVisitID,
-			CustomerID:       palletState.CustomerID,
-			LocationID:       palletState.LocationID,
-			StorageSection:   palletState.StorageSection,
-			ContainerNo:      palletState.ContainerNo,
-			EventType:        PalletEventTransferOut,
-			QuantityDelta:    -palletState.Quantity,
-			PalletDelta:      -1,
-		}); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE pallet_items
-			SET quantity = 0, updated_at = CURRENT_TIMESTAMP
-			WHERE id = ?
-		`, palletState.PalletItemID); err != nil {
-			return mapDBError(fmt.Errorf("move inbound pallet quantity: %w", err))
-		}
-		if err := s.updatePalletStatusFromContentsTx(ctx, tx, palletState.PalletID); err != nil {
-			return err
-		}
-
-		stockLedgerID, err := s.createStockLedgerEntryTx(ctx, tx, createStockLedgerInput{
-			EventType:           StockLedgerEventTransferOut,
-			PalletID:            palletState.PalletID,
-			PalletItemID:        palletState.PalletItemID,
-			SKUMasterID:         palletState.SKUMasterID,
-			CustomerID:          palletState.CustomerID,
-			LocationID:          palletState.LocationID,
-			StorageSection:      palletState.StorageSection,
-			QuantityChange:      -palletState.Quantity,
-			SourceDocumentType:  StockLedgerSourceInbound,
-			SourceDocumentID:    documentID,
-			SourceLineID:        existingLine.ID,
-			ContainerID:         palletState.ContainerID,
-			ContainerNo:         palletState.ContainerNo,
-			DescriptionSnapshot: lineDescription,
-			Pallets:             ledgerTransferOutPallets,
-			Reason:              transferReason,
-		})
-		if err != nil {
-			return err
-		}
-
-		palletSplitSequence++
-		childPallet, err := s.createPalletTx(ctx, tx, createPalletInput{
-			ParentPalletID:          palletState.PalletID,
-			PalletCode:              palletCodeForTransferSplit(palletState.PalletID, stockLedgerID, palletSplitSequence),
-			ContainerVisitID:        palletState.ContainerVisitID,
-			SourceInboundDocumentID: palletState.SourceInboundDocumentID,
-			SourceInboundLineID:     palletState.SourceInboundLineID,
-			ActualArrivalDate:       palletState.ActualArrivalDate,
-			CustomerID:              documentRow.CustomerID,
-			SKUMasterID:             palletState.SKUMasterID,
-			CurrentLocationID:       documentRow.LocationID,
-			CurrentStorageSection:   targetSection,
-			CurrentContainerNo:      targetContainerNo,
-			Status:                  PalletStatusOpen,
-		})
-		if err != nil {
-			return err
-		}
-		childPalletItemID, err := s.createPalletItemTx(ctx, tx, createPalletItemInput{
-			PalletID:    childPallet.ID,
-			SKUMasterID: palletState.SKUMasterID,
-			Quantity:    palletState.Quantity,
-		})
-		if err != nil {
-			return err
-		}
-		if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
-			EventType:           StockLedgerEventTransferIn,
-			PalletID:            childPallet.ID,
-			PalletItemID:        childPalletItemID,
-			SKUMasterID:         palletState.SKUMasterID,
-			CustomerID:          documentRow.CustomerID,
-			LocationID:          documentRow.LocationID,
-			StorageSection:      targetSection,
-			QuantityChange:      palletState.Quantity,
-			SourceDocumentType:  StockLedgerSourceInbound,
-			SourceDocumentID:    documentID,
-			SourceLineID:        existingLine.ID,
-			ContainerID:         palletState.ContainerID,
-			ContainerNo:         targetContainerNo,
-			DescriptionSnapshot: lineDescription,
-			Pallets:             ledgerTransferInPallets,
-			Reason:              transferReason,
-		}); err != nil {
-			return err
-		}
-		if err := s.createPalletLocationEventTx(ctx, tx, createPalletLocationEventInput{
-			PalletID:         childPallet.ID,
-			ContainerVisitID: childPallet.ContainerVisitID,
-			CustomerID:       documentRow.CustomerID,
-			LocationID:       documentRow.LocationID,
-			StorageSection:   targetSection,
-			ContainerNo:      targetContainerNo,
-			EventType:        PalletEventTransferIn,
-			QuantityDelta:    palletState.Quantity,
-			PalletDelta:      1,
-		}); err != nil {
-			return err
-		}
-	}
-	if movedQty > 0 {
-		if err := s.adjustInventoryBalanceByIDTx(ctx, tx, sourceItemID, -movedQty, -existingLine.Pallets); err != nil {
-			return err
-		}
-		if err := s.adjustInventoryBalanceByIDTx(ctx, tx, targetItemID, movedQty, nextLine.Pallets); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return s.moveDirectConfirmedInboundReceiptBalanceTx(ctx, tx, documentID, documentRow, existingLine, nextLine, deliveryDate, targetContainerID, targetSection, targetContainerNo, lineDescription, unitLabel)
 }
 
 func (s *Store) getSKUMasterIDBySKUTx(ctx context.Context, tx *sql.Tx, sku string) (int64, error) {
@@ -1653,7 +1249,7 @@ func (s *Store) reduceDirectConfirmedInboundReceiptBalanceTx(
 	}
 	oldSection := fallbackSection(existingLine.StorageSection)
 	oldContainerNo := strings.TrimSpace(documentRow.ContainerNo)
-	state, err := s.loadLockedInventoryBalanceForBucketTx(ctx, tx, palletSourceBucket{
+	state, err := s.loadLockedInventoryBalanceForBucketTx(ctx, tx, inventorySourceBucket{
 		SKUMasterID:    skuMasterID,
 		CustomerID:     documentRow.CustomerID,
 		LocationID:     documentRow.LocationID,
@@ -1720,7 +1316,7 @@ func (s *Store) adjustDirectConfirmedInboundReceiptPalletsTx(
 	if err != nil {
 		return err
 	}
-	bucket := palletSourceBucket{
+	bucket := inventorySourceBucket{
 		SKUMasterID:    skuMasterID,
 		CustomerID:     documentRow.CustomerID,
 		LocationID:     documentRow.LocationID,
@@ -1769,6 +1365,7 @@ func (s *Store) moveDirectConfirmedInboundReceiptBalanceTx(
 	existingLine inboundDocumentLineRow,
 	nextLine CreateInboundDocumentLineInput,
 	deliveryDate *time.Time,
+	targetContainerID int64,
 	targetSection string,
 	targetContainerNo string,
 	lineDescription string,
@@ -1791,7 +1388,7 @@ func (s *Store) moveDirectConfirmedInboundReceiptBalanceTx(
 	if err != nil {
 		return err
 	}
-	oldState, err := s.loadLockedInventoryBalanceForBucketTx(ctx, tx, palletSourceBucket{
+	oldState, err := s.loadLockedInventoryBalanceForBucketTx(ctx, tx, inventorySourceBucket{
 		SKUMasterID:    skuMasterID,
 		CustomerID:     documentRow.CustomerID,
 		LocationID:     documentRow.LocationID,
@@ -1813,7 +1410,7 @@ func (s *Store) moveDirectConfirmedInboundReceiptBalanceTx(
 		CustomerID:          documentRow.CustomerID,
 		LocationID:          documentRow.LocationID,
 		ExpectedArrivalDate: safeDateInput(deliveryDate),
-		ContainerID:         oldState.ContainerID,
+		ContainerID:         firstNonZeroInt64(targetContainerID, oldState.ContainerID),
 		ContainerNo:         targetContainerNo,
 		StorageSection:      targetSection,
 		UnitLabel:           unitLabel,
@@ -1911,6 +1508,7 @@ func (s *Store) increaseConfirmedInboundReceiptLotsTx(
 	existingLine inboundDocumentLineRow,
 	nextLine CreateInboundDocumentLineInput,
 	deliveryDate *time.Time,
+	targetContainerID int64,
 	targetSection string,
 	targetContainerNo string,
 	increaseQty int,
@@ -1925,8 +1523,8 @@ func (s *Store) increaseConfirmedInboundReceiptLotsTx(
 	if err != nil {
 		return err
 	}
-	containerID := int64(0)
-	oldState, err := s.loadLockedInventoryBalanceForBucketTx(ctx, tx, palletSourceBucket{
+	resolvedContainerID := targetContainerID
+	oldState, err := s.loadLockedInventoryBalanceForBucketTx(ctx, tx, inventorySourceBucket{
 		SKUMasterID:    skuMasterID,
 		CustomerID:     documentRow.CustomerID,
 		LocationID:     documentRow.LocationID,
@@ -1934,8 +1532,8 @@ func (s *Store) increaseConfirmedInboundReceiptLotsTx(
 		ContainerID:    documentRow.ContainerID,
 		ContainerNo:    strings.TrimSpace(documentRow.ContainerNo),
 	})
-	if err == nil {
-		containerID = oldState.ContainerID
+	if err == nil && resolvedContainerID <= 0 {
+		resolvedContainerID = oldState.ContainerID
 	} else if !errors.Is(err, ErrNotFound) {
 		return err
 	}
@@ -1944,7 +1542,7 @@ func (s *Store) increaseConfirmedInboundReceiptLotsTx(
 		CustomerID:          documentRow.CustomerID,
 		LocationID:          documentRow.LocationID,
 		ExpectedArrivalDate: safeDateInput(deliveryDate),
-		ContainerID:         containerID,
+		ContainerID:         resolvedContainerID,
 		ContainerNo:         targetContainerNo,
 		StorageSection:      targetSection,
 		UnitLabel:           unitLabel,

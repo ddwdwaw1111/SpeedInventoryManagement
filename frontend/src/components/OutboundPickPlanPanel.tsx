@@ -6,8 +6,8 @@ import { LineDetailAccordionPanel } from "./LineDetailAccordionPanel";
 
 type OutboundPickPlanRow = {
   id: string;
-  palletId?: number;
-  palletCode?: string;
+  sourceItemId?: number;
+  sourceLabel?: string;
   containerNo: string;
   locationLabel: string;
   availableQty?: number;
@@ -19,7 +19,7 @@ type OutboundPickPlanPanelProps = {
   title: string;
   autoPickLabel: string;
   selectContainerLabel?: string;
-  selectPalletLabel?: string;
+  selectSourceLabel?: string;
   searchLabel: string;
   searchPlaceholder: string;
   detailsLabel: string;
@@ -42,7 +42,7 @@ type OutboundPickPlanPanelProps = {
   sourceContainerLabel: string;
   pickQtyLabel: string;
   unitLabel: string;
-  palletLabel?: string;
+  sourceUnitLabel?: string;
   searchShortcutHint?: string;
   canExpand: boolean;
   expanded: boolean;
@@ -67,7 +67,7 @@ export function OutboundPickPlanPanel({
   title,
   autoPickLabel,
   selectContainerLabel = "Select Container",
-  selectPalletLabel = "Select Pallet",
+  selectSourceLabel = "Select Source",
   searchLabel,
   searchPlaceholder,
   detailsLabel,
@@ -90,7 +90,7 @@ export function OutboundPickPlanPanel({
   sourceContainerLabel,
   pickQtyLabel,
   unitLabel,
-  palletLabel,
+  sourceUnitLabel,
   searchShortcutHint = "Press / to search",
   canExpand,
   expanded,
@@ -188,7 +188,7 @@ export function OutboundPickPlanPanel({
     }
     const searchBlob = [
       row.containerNo,
-      row.palletCode,
+      row.sourceLabel,
       row.itemNumber,
       row.locationLabel
     ].join(" ").toLowerCase();
@@ -283,11 +283,11 @@ export function OutboundPickPlanPanel({
           {groupedRows.length > 0 ? groupedRows.map((group) => {
             const groupAllocatedQty = group.rows.reduce((sum, row) => sum + row.allocatedQty, 0);
             const groupAvailableQty = group.rows.reduce((sum, row) => sum + (row.availableQty ?? row.allocatedQty), 0);
-            const groupSelectedPallets = group.rows.filter((row) => row.allocatedQty > 0).length;
+            const groupSelectedRows = group.rows.filter((row) => row.allocatedQty > 0).length;
             const groupRemainingQty = Math.max(0, requiredQtyValue - (selectedQtyValue - groupAllocatedQty));
             const groupHasSelection = groupAllocatedQty > 0;
             const groupIsFullySelected = groupHasSelection
-              && (groupSelectedPallets === group.rows.length || groupAllocatedQty >= groupRemainingQty);
+              && (groupSelectedRows === group.rows.length || groupAllocatedQty >= groupRemainingQty);
             const groupIsPartiallySelected = groupHasSelection && !groupIsFullySelected;
             const groupCanSelect = Boolean(editable && onAllocatedQtyChange && !inputDisabled && (groupHasSelection || groupRemainingQty > 0));
             const isGroupExpanded = Boolean(expandedContainerGroups[group.key]) || normalizedSearch !== "";
@@ -332,7 +332,7 @@ export function OutboundPickPlanPanel({
                       </button>
                     </div>
                     <div className="flex flex-wrap justify-end gap-1.5 text-[10px] font-semibold text-slate-500">
-                      <span className="rounded-full bg-white px-2 py-0.5">{`${palletLabel || "Pallet"}: ${groupSelectedPallets}/${group.rows.length}`}</span>
+                      <span className="rounded-full bg-white px-2 py-0.5">{`${sourceUnitLabel || "Pick rows"}: ${groupSelectedRows}/${group.rows.length}`}</span>
                       <span className="rounded-full bg-white px-2 py-0.5">{`${pickQtyLabel}: ${groupAllocatedQty}/${groupAvailableQty}`}</span>
                     </div>
                   </div>
@@ -341,7 +341,7 @@ export function OutboundPickPlanPanel({
                 {isGroupExpanded ? (
                   <div className="space-y-1">
                     {group.rows.map((row) => {
-                      const rowIdentity = row.palletCode || row.containerNo || row.locationLabel;
+                      const rowIdentity = row.sourceLabel || row.containerNo || row.locationLabel;
                       const isSelected = row.allocatedQty > 0;
                       const remainingQtyForRow = Math.max(0, requiredQtyValue - (selectedQtyValue - row.allocatedQty));
                       const maxEditableQty = typeof row.availableQty === "number"
@@ -353,7 +353,7 @@ export function OutboundPickPlanPanel({
                       return (
                         <div
                           key={row.id}
-                          data-testid={`outbound-pick-pallet-${rowIdentity}`}
+                          data-testid={`outbound-pick-source-${rowIdentity}`}
                           className={`grid gap-2 rounded-lg border px-2.5 py-1.5 transition md:items-center ${
                             rowIsEditable
                               ? "grid-cols-[auto_minmax(0,1fr)] md:grid-cols-[auto_minmax(0,1fr)_auto]"
@@ -370,7 +370,7 @@ export function OutboundPickPlanPanel({
                                 type="checkbox"
                                 checked={isSelected}
                                 disabled={inputDisabled || !canSelectRow}
-                                aria-label={`${selectPalletLabel}: ${rowIdentity}`}
+                                aria-label={`${selectSourceLabel}: ${rowIdentity}`}
                                 onChange={(event) => handleAllocatedQtyUpdate(row.id, event.target.checked ? maxEditableQty : 0)}
                                 className="h-4 w-4 rounded border-slate-300 text-[#143569] focus:ring-[#143569]"
                               />
@@ -379,8 +379,8 @@ export function OutboundPickPlanPanel({
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] font-semibold text-slate-700">
                               <span>
-                                {row.palletCode ? (palletLabel || "Pallet") : sourceContainerLabel}:{" "}
-                                <span className="font-mono">{row.palletCode || row.containerNo || "-"}</span>
+                                {row.sourceLabel ? (sourceUnitLabel || "Pick row") : sourceContainerLabel}:{" "}
+                                <span className="font-mono">{row.sourceLabel || row.containerNo || "-"}</span>
                               </span>
                               {row.itemNumber ? <span className="font-mono text-[11px] text-slate-500">{row.itemNumber}</span> : null}
                             </div>

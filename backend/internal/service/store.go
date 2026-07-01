@@ -601,7 +601,7 @@ func (s *Store) UpdateItem(ctx context.Context, itemID int64, input CreateItemIn
 	}
 	defer tx.Rollback()
 
-	currentProjection, err := s.loadPalletBackedInventoryProjectionTx(ctx, tx, itemID)
+	currentProjection, err := s.loadInventoryProjectionTx(ctx, tx, itemID)
 	if err != nil {
 		return Item{}, err
 	}
@@ -711,7 +711,7 @@ func (s *Store) DeleteItem(ctx context.Context, itemID int64) error {
 	if err != nil {
 		return err
 	}
-	currentProjection, err := s.loadPalletBackedInventoryProjectionTx(ctx, tx, itemID)
+	currentProjection, err := s.loadInventoryProjectionTx(ctx, tx, itemID)
 	if err != nil {
 		return err
 	}

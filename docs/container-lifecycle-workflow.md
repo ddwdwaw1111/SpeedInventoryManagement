@@ -13,7 +13,7 @@
 - SKU、数量、pallet 数、破损、少货等异常
 - 拆柜后货物进入哪些库位
 - 后续被哪些 picking order 出库
-- 是否拆 pallet、重新合并 pallet
+- 实际出货 SKU 数量和 pallet 数是否确认
 - 出货、送达、Bill of Lading 凭证
 - container 内货物最终是否全部出完
 
@@ -75,7 +75,7 @@
 
 仓库按照 SKU 将柜子拆解进入不同库位。
 
-一个 container 内的货物可能被拆到多个 location / section / pallet。后续 customer portal 需要能从 container 视角看到这些分布。
+一个 container 内的货物可能被拆到多个 location / section / SKU balance。后续 customer portal 需要能从 container 视角看到这些分布。
 
 ### 6. 出库流程
 
@@ -83,23 +83,22 @@
 
 客户给仓库 picking order，仓库根据 picking order 准备出库。
 
-Picking order 应该能够关联回出库所使用的 container、pallet、SKU 和数量。
+Picking order 应该能够关联回出库所使用的 container、SKU、数量和 pallet 数。
 
-#### 6.2 配货、客户确认和 pallet 重组
+#### 6.2 配货、客户确认和出货数量确认
 
 仓库根据 picking order 配货到出货区，并发给客户确认。
 
 如果客户有更改，需要更新 picking order。
 
-这里有一个重要操作：拆 pallet 并重新合并 pallet。例如出库原本会出 32 板，但为了塞进卡车，仓库可能会拆开部分 pallet，并将 32 板重新合并成 30 板。
+这里不再追踪每个 pallet 的拆分和合并。仓库如果为了装车调整板数，系统只记录最终确认的 SKU 数量、pallet 数和来源 container。
 
 这意味着系统后续需要清楚表达：
 
-- 原始 pallet
-- 被拆出的数量
-- 新合并后的 pallet
-- 新 pallet 和原 container / SKU / picking order 的关系
-- 出库前后的 pallet 数变化
+- 实际出库 SKU 和数量
+- 实际出库 pallet 数
+- 来源 container / SKU / picking order 的关系
+- 出库前后的库存数量变化
 
 #### 6.3 调度进行出库流程
 
@@ -138,7 +137,6 @@ PUTAWAY
 IN_STOCK
 PICKING_ORDER_RECEIVED
 PICKING
-PALLET_REWORK
 CUSTOMER_CONFIRMATION
 READY_TO_SHIP
 DISPATCHED
@@ -155,15 +153,13 @@ CLOSED
 
 - `stock_ledger`：库存数量变化的严格账本。
 - `container_lifecycle_events`：container 视角的生命周期事件和关系投影。
-- `pallets` / `pallet_items`：pallet 实体和当前库存状态。
 - `inbound_documents` / `inbound_document_lines`：packing list 和入库明细。
-- `outbound_documents` / `outbound_document_lines` / `outbound_picks`：picking order 和实际出库分配。
+- `outbound_documents` / `outbound_document_lines` / `outbound_pick_allocations`：picking order 和实际出库分配。
 
 后续可能需要新增或扩展：
 
 - `container_tracking_events`：到港、卸船、提柜、到仓等 tracking 状态。
 - `container_pickup_assignments`：自有司机或第三方提柜安排。
-- `pallet_rework_events`：拆 pallet、合并 pallet、重组 pallet。
 - `delivery_events`：出库调度、送达、BOL 凭证。
 - `container_documents`：packing list、BOL、异常照片等附件关系。
 
@@ -176,7 +172,7 @@ Customer portal 中的 container 页面应该从客户角度回答这些问题�
 - 柜子是否已经入库？
 - 入库时和 packing list 是否一致？
 - 哪些 SKU 有少货、破损、多货？
-- 货物现在在哪些库位或 pallet？
+- 货物现在在哪些库位，以及各 SKU 还剩多少数量？
 - 哪些 picking order 已经从这个 container 出过货？
 - 出了几次货，每次出了哪些 SKU 和数量？
 - 是否发生过移库、调整、拆板、合板？
@@ -191,7 +187,6 @@ Customer portal 中的 container 页面应该从客户角度回答这些问题�
 2. 仓库操作可以变得更宽松，但库存过账仍然必须严格。
 3. 所有数量变化必须进入 `stock_ledger`。
 4. 所有 container 相关业务事件应进入或投影到 `container_lifecycle_events`。
-5. 拆 pallet、合并 pallet 不能只改当前状态，必须记录来源关系。
+5. pallet 只作为数量单位，出货以 SKU、container 和数量为准。
 6. 出库完成不等于生命周期结束，BOL 才是送达凭证。
 7. 后续应建立统一的 `InventoryMutationService`，让入库、出库、移库、调整、盘点都通过同一层写库存账本和生命周期事件。
-

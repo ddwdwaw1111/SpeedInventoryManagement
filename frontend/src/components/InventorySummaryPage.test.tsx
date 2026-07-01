@@ -46,23 +46,15 @@ vi.mock("@mui/x-data-grid", () => ({
 vi.mock("../lib/api", () => ({
   ApiError: class ApiError extends Error {},
   api: {
-    getPallets: vi.fn().mockResolvedValue([]),
     getUIPreference: vi.fn().mockResolvedValue({ value: null }),
     updateUIPreference: vi.fn().mockResolvedValue({ value: null })
   }
 }));
 
-import { api } from "../lib/api";
 import { setPendingInventorySummaryContext } from "../lib/inventorySummaryContext";
 import { InventorySummaryPage } from "./InventorySummaryPage";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { createCustomer, createItem, createLocation } from "../test/fixtures";
-
-const mockedApi = api as unknown as {
-  getPallets: ReturnType<typeof vi.fn>;
-  getUIPreference: ReturnType<typeof vi.fn>;
-  updateUIPreference: ReturnType<typeof vi.fn>;
-};
 
 function defaultProps(overrides: Partial<Parameters<typeof InventorySummaryPage>[0]> = {}) {
   return {
@@ -81,8 +73,6 @@ describe("InventorySummaryPage", () => {
   beforeEach(() => {
     window.localStorage.clear();
     window.sessionStorage.clear();
-    mockedApi.getPallets.mockReset();
-    mockedApi.getPallets.mockResolvedValue([]);
   });
 
   // ──────────────────────────────────────────────────────────────
@@ -272,7 +262,7 @@ describe("InventorySummaryPage", () => {
     });
   });
 
-  it("hides the container type filter while pallet entity UI is disabled", () => {
+  it("does not render the container type filter", () => {
     renderWithProviders(
       <InventorySummaryPage
         {...defaultProps({
@@ -339,16 +329,6 @@ describe("InventorySummaryPage", () => {
     });
   });
 
-  it("ignores the container type context while pallet entity UI is disabled", async () => {
-    setPendingInventorySummaryContext({ containerType: "WEST_COAST_TRANSFER" });
-
-    renderWithProviders(<InventorySummaryPage {...defaultProps()} />);
-
-    await waitFor(() => {
-      expect(screen.queryByRole("combobox", { name: "Container Type" })).not.toBeInTheDocument();
-    });
-  });
-
   // ──────────────────────────────────────────────────────────────
   // Row click → drawer
   // ──────────────────────────────────────────────────────────────
@@ -386,86 +366,7 @@ describe("InventorySummaryPage", () => {
     });
   });
 
-  it("hides pallet counts in the container breakdown drawer rows while pallet entity UI is disabled", async () => {
-    mockedApi.getPallets.mockResolvedValue([
-      {
-        id: 501,
-        parentPalletId: 0,
-        palletCode: "PLT-501",
-        containerVisitId: 1,
-        sourceInboundDocumentId: 1,
-        sourceInboundLineId: 1,
-        actualArrivalDate: "2026-04-01",
-        customerId: 1,
-        customerName: "Imperial Bag & Paper",
-        skuMasterId: 1,
-        sku: "608333",
-        description: "VB22GC",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "TEMP",
-        currentContainerNo: "GCXU5817233",
-        containerType: "NORMAL",
-        status: "OPEN",
-        createdAt: "2026-04-01T10:00:00Z",
-        updatedAt: "2026-04-01T10:00:00Z",
-        contents: [
-          {
-            id: 601,
-            palletId: 501,
-            skuMasterId: 1,
-            itemNumber: "608333",
-            sku: "608333",
-            description: "VB22GC",
-            quantity: 10,
-            allocatedQty: 0,
-            damagedQty: 0,
-            holdQty: 0,
-            createdAt: "2026-04-01T10:00:00Z",
-            updatedAt: "2026-04-01T10:00:00Z"
-          }
-        ]
-      },
-      {
-        id: 502,
-        parentPalletId: 0,
-        palletCode: "PLT-502",
-        containerVisitId: 1,
-        sourceInboundDocumentId: 1,
-        sourceInboundLineId: 1,
-        actualArrivalDate: "2026-04-01",
-        customerId: 1,
-        customerName: "Imperial Bag & Paper",
-        skuMasterId: 1,
-        sku: "608333",
-        description: "VB22GC",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "TEMP",
-        currentContainerNo: "GCXU5817233",
-        containerType: "NORMAL",
-        status: "OPEN",
-        createdAt: "2026-04-01T11:00:00Z",
-        updatedAt: "2026-04-01T11:00:00Z",
-        contents: [
-          {
-            id: 602,
-            palletId: 502,
-            skuMasterId: 1,
-            itemNumber: "608333",
-            sku: "608333",
-            description: "VB22GC",
-            quantity: 10,
-            allocatedQty: 0,
-            damagedQty: 0,
-            holdQty: 0,
-            createdAt: "2026-04-01T11:00:00Z",
-            updatedAt: "2026-04-01T11:00:00Z"
-          }
-        ]
-      }
-    ]);
-
+  it("does not show pallet counts in the container breakdown drawer rows", async () => {
     renderWithProviders(
       <InventorySummaryPage
         {...defaultProps({
@@ -623,7 +524,7 @@ describe("InventorySummaryPage", () => {
     expect(onNavigate).toHaveBeenCalledWith("all-activity");
   });
 
-  it("keeps pallet-centric action context unset when drawer actions are hidden", async () => {
+  it("keeps removed inventory action context unset when drawer actions are hidden", async () => {
     const onNavigate = vi.fn();
 
     const item = createItem({ id: 1, sku: "608333", customerId: 1 });

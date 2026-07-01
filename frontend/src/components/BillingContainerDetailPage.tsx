@@ -1,9 +1,8 @@
 import ArrowBackOutlinedIcon from "@mui/icons-material/ArrowBackOutlined";
 import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
 import { Button } from "@mui/material";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 
-import { api } from "../lib/api";
 import { readBillingWorkspaceContext } from "../lib/billingWorkspaceContext";
 import {
 	buildBillingPreview,
@@ -12,12 +11,11 @@ import {
 	type BillingRates,
 	type BillingStorageRow
 } from "../lib/billingPreview";
-import { formatDateTimeValue, parseDateLikeValue } from "../lib/dates";
-import { getErrorMessage } from "../lib/errors";
-import { formatMoney, formatNumber, formatSignedNumber } from "../lib/formatters";
+import { formatDateTimeValue } from "../lib/dates";
+import { formatMoney, formatNumber } from "../lib/formatters";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
-import type { Customer, InboundDocument, Location, OutboundDocument, PalletLocationEvent, PalletTrace } from "../lib/types";
+import type { Customer, InboundDocument, Location, OutboundDocument } from "../lib/types";
 import { WorkspacePanelHeader, WorkspaceTableEmptyState } from "./WorkspacePanelChrome";
 
 type BillingContainerDetailPageProps = {
@@ -33,19 +31,6 @@ type BillingContainerDetailPageProps = {
 	outboundDocuments: OutboundDocument[];
 	onBackToBilling: () => void;
 	onOpenContainerDetail: (containerNo: string) => void;
-};
-
-type ContainerTimelineRow = {
-	id: string;
-	palletId: number;
-	palletCode: string;
-	eventType: string;
-	locationLabel: string;
-	quantityDelta: number;
-	palletDelta: number;
-	runningQuantityDelta: number;
-	runningPalletDelta: number;
-	eventTime: string;
 };
 
 export function BillingContainerDetailPage({
@@ -68,10 +53,6 @@ export function BillingContainerDetailPage({
 	const selectedWarehouse = warehouseLocationId === "all"
 		? null
 		: locations.find((location) => location.id === warehouseLocationId) ?? null;
-	const [pallets, setPallets] = useState<PalletTrace[]>([]);
-	const [palletLocationEvents, setPalletLocationEvents] = useState<PalletLocationEvent[]>([]);
-	const [isLoading, setIsLoading] = useState(true);
-	const [errorMessage, setErrorMessage] = useState("");
 
 	const workspaceContext = useMemo(() => readBillingWorkspaceContext(), [routeKey]);
 	const activeWorkspaceContext = useMemo(() => {
@@ -93,64 +74,18 @@ export function BillingContainerDetailPage({
 	const activeContainerType = activeWorkspaceContext?.containerType ?? "all";
 	const activeNormalPalletGracePeriodEnabled = activeWorkspaceContext?.normalPalletGracePeriodEnabled ?? true;
 
-	useEffect(() => {
-		let active = true;
-
-		if (!normalizedContainerNo) {
-			setPallets([]);
-			setPalletLocationEvents([]);
-			setIsLoading(false);
-			setErrorMessage("");
-			return () => {
-				active = false;
-			};
-		}
-
-		async function loadDetailData() {
-			setIsLoading(true);
-			setErrorMessage("");
-			try {
-				const [nextPallets, nextEvents] = await Promise.all([
-					api.getPallets(50000),
-					api.getPalletLocationEvents(50000, normalizedContainerNo)
-				]);
-				if (!active) {
-					return;
-				}
-				setPallets(nextPallets);
-				setPalletLocationEvents(nextEvents);
-			} catch (error) {
-				if (!active) {
-					return;
-				}
-				setErrorMessage(getErrorMessage(error, t("couldNotLoadReport")));
-			} finally {
-				if (active) {
-					setIsLoading(false);
-				}
-			}
-		}
-
-		void loadDetailData();
-		return () => {
-			active = false;
-		};
-	}, [normalizedContainerNo, routeKey, t]);
-
 	const billingPreview = useMemo(() => buildBillingPreview({
 		startDate,
 		endDate,
 		customerId,
 		customers,
-		pallets,
-		palletLocationEvents,
 		inboundDocuments,
 		outboundDocuments,
 		locationId: warehouseLocationId,
 		containerType: activeContainerType,
 		normalPalletGracePeriodEnabled: activeNormalPalletGracePeriodEnabled,
 		rates: activeRates
-	}), [activeContainerType, activeNormalPalletGracePeriodEnabled, activeRates, customerId, customers, endDate, inboundDocuments, outboundDocuments, palletLocationEvents, pallets, startDate, warehouseLocationId]);
+	}), [activeContainerType, activeNormalPalletGracePeriodEnabled, activeRates, customerId, customers, endDate, inboundDocuments, outboundDocuments, startDate, warehouseLocationId]);
 
 	const containerInvoiceLines = useMemo(
 		() => billingPreview.invoiceLines.filter((line) => normalizeContainerNo(line.containerNo) === normalizedContainerNo),
@@ -159,16 +94,6 @@ export function BillingContainerDetailPage({
 	const containerStorageRow = useMemo(
 		() => billingPreview.storageRows.find((row) => normalizeContainerNo(row.containerNo) === normalizedContainerNo) ?? null,
 		[billingPreview.storageRows, normalizedContainerNo]
-	);
-	const timelineRows = useMemo(
-		() => buildContainerTimelineRows(
-			palletLocationEvents,
-			normalizedContainerNo,
-			startDate,
-			endDate,
-			warehouseLocationId
-		),
-		[endDate, normalizedContainerNo, palletLocationEvents, startDate, warehouseLocationId]
 	);
 	const references = useMemo(
 		() => uniqueStrings(containerInvoiceLines.map((line) => line.reference).filter(Boolean)),
@@ -182,8 +107,7 @@ export function BillingContainerDetailPage({
 		[containerInvoiceLines, containerStorageRow]
 	);
 	const summary = useMemo(() => summarizeContainerBilling(containerInvoiceLines), [containerInvoiceLines]);
-	const timelineSummary = useMemo(() => summarizeTimeline(timelineRows), [timelineRows]);
-	const hasContainerData = containerInvoiceLines.length > 0 || timelineRows.length > 0 || Boolean(containerStorageRow);
+	const hasContainerData = containerInvoiceLines.length > 0 || Boolean(containerStorageRow);
 	const effectiveContainerType = useMemo(() => {
 		if (containerStorageRow) {
 			return containerStorageRow.containerType;
@@ -223,7 +147,6 @@ export function BillingContainerDetailPage({
 					<WorkspacePanelHeader
 						title={`${t("billingContainerDetailPage")} · ${normalizedContainerNo || "-"}`}
 						description={t("billingContainerDetailPageDesc")}
-						errorMessage={errorMessage}
 						actions={headerActions}
 						notices={[
 							<span key="billing-start"><strong>{t("fromDate")}:</strong> {startDate}</span>,
@@ -235,9 +158,7 @@ export function BillingContainerDetailPage({
 					/>
 				</div>
 
-				{isLoading ? (
-					<div className="empty-state">{t("loadingRecords")}</div>
-				) : !hasContainerData ? (
+				{!hasContainerData ? (
 					<div style={{ padding: "0 1rem 1rem" }}>
 						<WorkspaceTableEmptyState title={t("billingNoContainerTraceTitle")} description={t("billingNoContainerTraceDesc")} />
 					</div>
@@ -379,58 +300,6 @@ export function BillingContainerDetailPage({
 						</section>
 
 						<section className="workbook-panel" style={{ margin: "0 1rem 1rem" }}>
-							<WorkspacePanelHeader title={t("billingPalletTimeline")} description={t("billingPalletTimelineDesc")} />
-							<div className="metric-ribbon" style={{ padding: "0 0 1rem" }}>
-								<article className="metric-card">
-									<span>{t("billingTimelineEventCount")}</span>
-									<strong>{formatNumber(timelineSummary.eventCount)}</strong>
-								</article>
-								<article className="metric-card">
-									<span>{t("billingTimelineNetQuantity")}</span>
-									<strong>{formatSignedNumber(timelineSummary.netQuantityDelta)}</strong>
-								</article>
-								<article className="metric-card">
-									<span>{t("billingTimelineNetPallets")}</span>
-									<strong>{formatSignedNumber(timelineSummary.netPalletDelta)}</strong>
-								</article>
-							</div>
-							{timelineRows.length === 0 ? (
-								<WorkspaceTableEmptyState title={t("billingNoPalletTimelineTitle")} description={t("billingNoPalletTimelineDesc")} />
-							) : (
-								<div className="sheet-table-wrap">
-									<table className="sheet-table" aria-label={t("billingPalletTimeline")}>
-										<thead>
-											<tr>
-												<th>{t("activityDate")}</th>
-												<th>{t("palletCode")}</th>
-												<th>{t("billingEventType")}</th>
-												<th>{t("currentStorage")}</th>
-												<th>{t("billingQuantityDelta")}</th>
-												<th>{t("billingPalletDelta")}</th>
-												<th>{t("billingRunningQuantityDelta")}</th>
-												<th>{t("billingRunningPalletDelta")}</th>
-											</tr>
-										</thead>
-										<tbody>
-											{timelineRows.map((row) => (
-												<tr key={row.id}>
-													<td className="cell--mono">{formatDateTimeValue(row.eventTime, resolvedTimeZone, { dateStyle: "medium", timeStyle: "short" })}</td>
-													<td className="cell--mono">{row.palletCode || `#${row.palletId}`}</td>
-													<td>{row.eventType}</td>
-													<td>{row.locationLabel}</td>
-													<td className="cell--mono">{formatSignedNumber(row.quantityDelta)}</td>
-													<td className="cell--mono">{formatSignedNumber(row.palletDelta)}</td>
-													<td className="cell--mono">{formatSignedNumber(row.runningQuantityDelta)}</td>
-													<td className="cell--mono">{formatSignedNumber(row.runningPalletDelta)}</td>
-												</tr>
-											))}
-										</tbody>
-									</table>
-								</div>
-							)}
-						</section>
-
-						<section className="workbook-panel" style={{ margin: "0 1rem 1rem" }}>
 							<WorkspacePanelHeader title={t("billingInvoicePreview")} description={t("billingInvoicePreviewDesc")} />
 							{containerInvoiceLines.length === 0 ? (
 								<WorkspaceTableEmptyState title={t("noBillingData")} description={t("billingInvoicePreviewDesc")} />
@@ -472,57 +341,6 @@ export function BillingContainerDetailPage({
 	);
 }
 
-function buildContainerTimelineRows(
-	events: PalletLocationEvent[],
-	containerNo: string,
-	startDate: string,
-	endDate: string,
-	warehouseLocationId: number | "all"
-) {
-	const filteredEvents = events
-		.filter((event) => normalizeContainerNo(event.containerNo) === containerNo)
-		.filter((event) => warehouseLocationId === "all" || event.locationId === warehouseLocationId)
-		.filter((event) => isWithinDateRange(event.eventTime, startDate, endDate))
-		.map((event) => ({
-			id: `ple-${event.id}`,
-			palletId: event.palletId,
-			palletCode: event.palletCode,
-			eventType: event.eventType,
-			locationLabel: summarizeLocation(event.locationName, event.storageSection),
-			quantityDelta: event.quantityDelta,
-			palletDelta: event.palletDelta,
-			eventTime: event.eventTime
-		}));
-
-	const mergedEvents = [...filteredEvents].sort((left, right) => {
-		const leftTime = parseDateLikeValue(left.eventTime)?.getTime() ?? 0;
-		const rightTime = parseDateLikeValue(right.eventTime)?.getTime() ?? 0;
-		if (leftTime !== rightTime) {
-			return leftTime - rightTime;
-		}
-		return left.id.localeCompare(right.id);
-	});
-
-	let runningQuantityDelta = 0;
-	let runningPalletDelta = 0;
-	return mergedEvents.map((event) => {
-		runningQuantityDelta += event.quantityDelta;
-		runningPalletDelta += event.palletDelta;
-		return {
-			id: event.id,
-			palletId: event.palletId,
-			palletCode: event.palletCode,
-			eventType: event.eventType,
-			locationLabel: event.locationLabel,
-			quantityDelta: event.quantityDelta,
-			palletDelta: event.palletDelta,
-			runningQuantityDelta,
-			runningPalletDelta,
-			eventTime: event.eventTime
-		} satisfies ContainerTimelineRow;
-	});
-}
-
 function summarizeContainerBilling(lines: BillingInvoiceLine[]) {
 	return lines.reduce(
 		(summary, line) => {
@@ -547,46 +365,8 @@ function summarizeContainerBilling(lines: BillingInvoiceLine[]) {
 	);
 }
 
-function summarizeTimeline(rows: ContainerTimelineRow[]) {
-	return rows.reduce(
-		(summary, row) => {
-			summary.eventCount += 1;
-			summary.netQuantityDelta += row.quantityDelta;
-			summary.netPalletDelta += row.palletDelta;
-			return summary;
-		},
-		{ eventCount: 0, netQuantityDelta: 0, netPalletDelta: 0 }
-	);
-}
-
 function normalizeContainerNo(value: string | null | undefined) {
 	return (value ?? "").trim().toUpperCase();
-}
-
-function summarizeLocation(locationName: string | null | undefined, storageSection: string | null | undefined) {
-	const normalizedLocation = (locationName ?? "").trim();
-	if (!normalizedLocation) {
-		return "-";
-	}
-	const normalizedSection = (storageSection ?? "").trim().toUpperCase();
-	return normalizedSection ? `${normalizedLocation} / ${normalizedSection}` : normalizedLocation;
-}
-
-function isWithinDateRange(value: string | null | undefined, startDate: string, endDate: string) {
-	const parsed = parseDateLikeValue(value ?? undefined);
-	if (!parsed) {
-		return false;
-	}
-	const parsedStart = parseDateLikeValue(startDate);
-	const parsedEnd = parseDateLikeValue(endDate);
-	if (!parsedStart || !parsedEnd) {
-		return false;
-	}
-	const [safeStart, safeEnd] = parsedStart.getTime() <= parsedEnd.getTime()
-		? [parsedStart.getTime(), parsedEnd.getTime()]
-		: [parsedEnd.getTime(), parsedStart.getTime()];
-	const eventTime = parsed.getTime();
-	return eventTime >= safeStart && eventTime <= safeEnd + 86400000 - 1;
 }
 
 function uniqueStrings(values: string[]) {

@@ -6,7 +6,6 @@ import {
   buildItem,
   buildLocation,
   buildOutboundDocument,
-  buildPalletTrace,
   mockAppApi
 } from "./support/mockApi";
 
@@ -44,8 +43,8 @@ test("receipt editor opens the inbound detail page for the current document", as
 
   await page.goto(`/inbound-management/${inboundDocument.id}/edit`);
 
-  await expect(page.getByRole("heading", { name: "Update Confirmed Receipt" })).toBeVisible();
-  await page.getByRole("button", { name: "Details" }).click();
+  await expect(page.getByText("Confirmed receipt details are locked.")).toBeVisible();
+  await page.getByRole("button", { name: "Details" }).first().click();
 
   await expect(page).toHaveURL(new RegExp(`/inbound-management/${inboundDocument.id}$`));
   await expect(page.getByText("Inbound Receipt")).toBeVisible();
@@ -86,7 +85,7 @@ test("receipt editor re-enters a confirmed receipt into a copied draft editor", 
 
   await page.goto(`/inbound-management/${inboundDocument.id}/edit`);
 
-  await expect(page.getByRole("heading", { name: "Update Confirmed Receipt" })).toBeVisible();
+  await expect(page.getByText("Confirmed receipt details are locked.")).toBeVisible();
   await page.getByRole("button", { name: /Re-enter Receipt|reEnterReceipt/ }).click();
 
   await expect.poll(() => apiState.copiedInboundDocuments.length).toBe(1);
@@ -97,12 +96,11 @@ test("receipt editor re-enters a confirmed receipt into a copied draft editor", 
   });
 
   await expect(page).toHaveURL(new RegExp(`/inbound-management/${copiedDocumentId}/edit$`));
-  await expect(page.getByRole("heading", { name: "Edit Receipt Draft" })).toBeVisible();
-  await expect(page.getByLabel("Expected Arrival Date")).toHaveValue("2026-04-22");
+  await expect(page.getByLabel("Actual Arrival Date")).toHaveValue("2026-04-22");
   await expect(page.getByLabel("Container No.")).toHaveValue(inboundDocument.containerNo);
 });
 
-test("shipment editor opens outbound management with the current document selected", async ({ page }) => {
+test("shipment editor loads the current confirmed shipment", async ({ page }) => {
   const customer = buildCustomer({ id: 1, name: "Acme Foods" });
   const location = buildLocation({ id: 1, name: "NJ Warehouse" });
   const outboundDocument = buildOutboundDocument({
@@ -131,18 +129,10 @@ test("shipment editor opens outbound management with the current document select
 
   await page.goto(`/outbound-management/${outboundDocument.id}/edit`);
 
-  await expect(page.getByRole("heading", { name: "Review Confirmed Shipment" })).toBeVisible();
-  await page.getByRole("button", { name: "Details" }).click();
-
-  await expect(page).toHaveURL(/\/outbound-management$/);
-  const drawer = page.locator(".document-drawer__content");
-  await expect(drawer).toBeVisible();
-  await expect(drawer).toContainText(outboundDocument.packingListNo);
-  await expect(drawer).toContainText(outboundDocument.shipToName);
-  await expect(drawer.getByRole("button", { name: /Re-enter Shipment|reEnterShipment/ })).toBeVisible();
-  await expect
-    .poll(() => page.evaluate(() => window.sessionStorage.getItem("sim-activity-management-launch-out")))
-    .toBeNull();
+  await expect(page.getByText("Confirmed shipment details are locked.")).toBeVisible();
+  await expect(page.getByLabel("Picking Order #")).toHaveValue(outboundDocument.packingListNo);
+  await expect(page.getByLabel("Order Ref.")).toHaveValue(outboundDocument.orderRef);
+  await expect(page.getByLabel("Ship-to Name")).toHaveValue(outboundDocument.shipToName);
 });
 
 test("shipment editor re-enters a confirmed shipment into a copied draft editor", async ({ page }) => {
@@ -158,37 +148,10 @@ test("shipment editor re-enters a confirmed shipment into a copied draft editor"
     customerName: customer.name,
     locationId: location.id,
     locationName: location.name,
+    containerId: 901,
     quantity: 25,
     availableQty: 25,
     containerNo: "CONT-901"
-  });
-  const pallet = buildPalletTrace({
-    id: 9001,
-    palletCode: "PLT-9001",
-    customerId: customer.id,
-    customerName: customer.name,
-    skuMasterId: item.skuMasterId,
-    sku: item.sku,
-    description: item.description,
-    currentLocationId: location.id,
-    currentLocationName: location.name,
-    currentContainerNo: item.containerNo,
-    contents: [
-      {
-        id: 9101,
-        palletId: 9001,
-        skuMasterId: item.skuMasterId,
-        itemNumber: item.itemNumber,
-        sku: item.sku,
-        description: item.description,
-        quantity: 25,
-        allocatedQty: 0,
-        damagedQty: 0,
-        holdQty: 0,
-        createdAt: "2026-04-25T09:30:00Z",
-        updatedAt: "2026-04-25T09:30:00Z"
-      }
-    ]
   });
   const outboundDocument = buildOutboundDocument({
     packingListNo: "PL-REENTER-001",
@@ -207,10 +170,16 @@ test("shipment editor re-enters a confirmed shipment into a copied draft editor"
         skuMasterId: item.skuMasterId,
         quantity: 5,
         pallets: 1,
-        pickPallets: [
+        pickAllocations: [
           {
-            palletId: pallet.id,
-            quantity: 5
+            itemNumber: item.itemNumber,
+            locationId: location.id,
+            locationName: location.name,
+            storageSection: item.storageSection,
+            containerId: item.containerId,
+            containerNo: item.containerNo,
+            allocatedQty: 5,
+            pallets: 1
           }
         ]
       }
@@ -221,13 +190,12 @@ test("shipment editor re-enters a confirmed shipment into a copied draft editor"
     customers: [customer],
     locations: [location],
     items: [item],
-    pallets: [pallet],
     outboundDocuments: [outboundDocument]
   });
 
   await page.goto(`/outbound-management/${outboundDocument.id}/edit`);
 
-  await expect(page.getByRole("heading", { name: "Review Confirmed Shipment" })).toBeVisible();
+  await expect(page.getByText("Confirmed shipment details are locked.")).toBeVisible();
   await page.getByRole("button", { name: /Re-enter Shipment|reEnterShipment/ }).first().click();
 
   await expect.poll(() => apiState.copiedOutboundDocuments.length).toBe(1);
@@ -238,8 +206,7 @@ test("shipment editor re-enters a confirmed shipment into a copied draft editor"
   });
 
   await expect(page).toHaveURL(new RegExp(`/outbound-management/${copiedDocumentId}/edit$`));
-  await expect(page.getByRole("heading", { name: "Edit Shipment Draft" })).toBeVisible();
-  await expect(page.getByLabel("Packing List No.")).toHaveValue(outboundDocument.packingListNo);
+  await expect(page.getByLabel("Picking Order #")).toHaveValue(outboundDocument.packingListNo);
   await expect(page.getByLabel("Order Ref.")).toHaveValue(outboundDocument.orderRef);
   await expect(page.getByLabel("Expected Ship Date")).toHaveValue("2026-04-24");
   await expect(page.getByLabel("Ship-to Name")).toHaveValue(outboundDocument.shipToName);

@@ -47,7 +47,7 @@ describe("WorkspacePanelChrome", () => {
     expect(screen.getByText("Refreshing the grid.")).toBeInTheDocument();
   });
 
-  it("hides pallet trace from the inventory view switcher while pallet entity UI is disabled", () => {
+  it("does not show the pallet entity view in the inventory switcher", () => {
     renderWithProviders(<InventoryViewSwitcher activeView="inventory-summary" onNavigate={() => undefined} />);
 
     expect(screen.getByRole("button", { name: "Summary" })).toBeInTheDocument();

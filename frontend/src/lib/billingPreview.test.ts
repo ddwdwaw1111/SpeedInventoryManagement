@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { buildBillingPreview, DEFAULT_BILLING_RATES } from "./billingPreview";
 import type { BillingRates } from "./billingPreview";
-import type { Customer, InboundDocument, OutboundDocument, PalletLocationEvent, PalletTrace } from "./types";
+import type { Customer, InboundDocument, OutboundDocument } from "./types";
 
 const customers: Customer[] = [
   {
@@ -18,549 +18,12 @@ const customers: Customer[] = [
 ];
 
 describe("buildBillingPreview", () => {
-  it("calculates pallet-day storage with day-end balance logic", () => {
-    const pallets: PalletTrace[] = [
-      {
-        id: 1,
-        parentPalletId: 0,
-        palletCode: "PLT-001",
-        containerVisitId: 1,
-        sourceInboundDocumentId: 10,
-        sourceInboundLineId: 100,
-        actualArrivalDate: "2026-04-01",
-        customerId: 1,
-        customerName: "Acme",
-        skuMasterId: 11,
-        sku: "SKU-1",
-        description: "Widget",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "A-01",
-        currentContainerNo: "CONT-001",
-        containerType: "NORMAL",
-        status: "SHIPPED",
-        createdAt: "2026-04-01T09:00:00Z",
-        updatedAt: "2026-04-03T10:00:00Z",
-        contents: []
-      }
-    ];
-
-    const events: PalletLocationEvent[] = [
-      {
-        id: 1,
-        palletId: 1,
-        palletCode: "PLT-001",
-        containerVisitId: 1,
-        customerId: 1,
-        customerName: "Acme",
-        locationId: 1,
-        locationName: "NJ",
-        storageSection: "A-01",
-        containerNo: "CONT-001",
-        eventType: "RECEIVED",
-        quantityDelta: 100,
-        palletDelta: 1,
-        eventTime: "2026-04-01T09:00:00Z",
-        createdAt: "2026-04-01T09:00:00Z"
-      },
-      {
-        id: 2,
-        palletId: 1,
-        palletCode: "PLT-001",
-        containerVisitId: 1,
-        customerId: 1,
-        customerName: "Acme",
-        locationId: 1,
-        locationName: "NJ",
-        storageSection: "A-01",
-        containerNo: "CONT-001",
-        eventType: "OUTBOUND",
-        quantityDelta: -100,
-        palletDelta: -1,
-        eventTime: "2026-04-03T10:00:00Z",
-        createdAt: "2026-04-03T10:00:00Z"
-      }
-    ];
-
-    const inboundDocuments: InboundDocument[] = [
-      {
-        id: 10,
-        customerId: 1,
-        customerName: "Acme",
-        locationId: 1,
-        locationName: "NJ",
-        expectedArrivalDate: "2026-04-01",
-        actualArrivalDate: null,
-        containerNo: "CONT-001",
-        containerType: "NORMAL",
-        handlingMode: "PALLETIZED",
-        storageSection: "A-01",
-        unitLabel: "CTN",
-        documentNote: "",
-        status: "CONFIRMED",
-        trackingStatus: "RECEIVED",
-        confirmedAt: "2026-04-01T09:00:00Z",
-        deletedAt: null,
-        archivedAt: null,
-        totalLines: 1,
-        totalExpectedQty: 100,
-        totalReceivedQty: 100,
-        createdAt: "2026-04-01T08:00:00Z",
-        updatedAt: "2026-04-01T09:00:00Z",
-        lines: [
-          {
-            id: 100,
-            documentId: 10,
-            sku: "SKU-1",
-            description: "Widget",
-            storageSection: "A-01",
-            expectedQty: 100,
-            receivedQty: 100,
-            pallets: 1,
-            unitsPerPallet: 100,
-            palletsDetailCtns: "100",
-            palletBreakdown: [{ quantity: 100 }],
-            unitLabel: "CTN",
-            lineNote: "",
-            createdAt: "2026-04-01T08:00:00Z"
-          }
-        ]
-      }
-    ];
-
-    const outboundDocuments: OutboundDocument[] = [
-      {
-        id: 20,
-        packingListNo: "SO-001",
-        orderRef: "",
-        customerId: 1,
-        customerName: "Acme",
-        expectedShipDate: "2026-04-03",
-        actualShipDate: null,
-        shipToName: "",
-        shipToAddress: "",
-        shipToContact: "",
-        carrierName: "",
-        documentNote: "",
-        status: "CONFIRMED",
-        trackingStatus: "SHIPPED",
-        confirmedAt: "2026-04-03T10:00:00Z",
-        deletedAt: null,
-        archivedAt: null,
-        totalLines: 1,
-        totalQty: 100,
-        totalNetWeightKgs: 0,
-        totalGrossWeightKgs: 0,
-        storages: "NJ / A-01",
-        createdAt: "2026-04-03T08:00:00Z",
-        updatedAt: "2026-04-03T10:00:00Z",
-        lines: [
-          {
-            id: 200,
-            documentId: 20,
-            skuMasterId: 11,
-            itemNumber: "ITM-1",
-            locationId: 1,
-            locationName: "NJ",
-            storageSection: "A-01",
-            sku: "SKU-1",
-            description: "Widget",
-            quantity: 100,
-            pallets: 1,
-            palletsDetailCtns: "100",
-            unitLabel: "CTN",
-            cartonSizeMm: "",
-            netWeightKgs: 0,
-            grossWeightKgs: 0,
-            lineNote: "",
-            pickAllocations: [],
-            createdAt: "2026-04-03T08:00:00Z"
-          }
-        ]
-      }
-    ];
-
-    const preview = buildBillingPreview({
-      startDate: "2026-04-01",
-      endDate: "2026-04-30",
-      customerId: 1,
-      customers,
-      pallets,
-      palletLocationEvents: events,
-      inboundDocuments,
-      outboundDocuments,
-      rates: DEFAULT_BILLING_RATES
-    });
-
-    expect(preview.summary.palletDays).toBe(2);
-    expect(preview.summary.storageAmount).toBe(0);
-    expect(preview.summary.inboundAmount).toBe(450);
-    expect(preview.summary.wrappingAmount).toBe(15);
-    expect(preview.summary.outboundAmount).toBe(0);
-    expect(preview.summary.grandTotal).toBe(465);
-    expect(preview.dailyBalanceRows.slice(0, 4)).toEqual([
-      { date: "2026-04-01", palletCount: 1 },
-      { date: "2026-04-02", palletCount: 1 },
-      { date: "2026-04-03", palletCount: 0 },
-      { date: "2026-04-04", palletCount: 0 }
-    ]);
-  });
-
-  it("builds storage segments when pallet counts change inside the billing period", () => {
-    const pallets: PalletTrace[] = Array.from({ length: 10 }, (_, index) => {
-      const palletId = index + 1;
-      const shipped = palletId > 5;
-      return {
-        id: palletId,
-        parentPalletId: 0,
-        palletCode: `PLT-${String(palletId).padStart(3, "0")}`,
-        containerVisitId: 1,
-        sourceInboundDocumentId: 10,
-        sourceInboundLineId: 100,
-        actualArrivalDate: "2026-03-01",
-        customerId: 1,
-        customerName: "Acme",
-        skuMasterId: 11,
-        sku: "SKU-1",
-        description: "Widget",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "A-01",
-        currentContainerNo: "CONT-SEG",
-        containerType: "NORMAL",
-        status: shipped ? "SHIPPED" : "STORED",
-        createdAt: "2026-03-01T09:00:00Z",
-        updatedAt: shipped ? "2026-03-15T09:00:00Z" : "2026-03-31T09:00:00Z",
-        contents: []
-      };
-    });
-
-    const palletLocationEvents: PalletLocationEvent[] = pallets.flatMap((pallet) => {
-      const receivedEvent: PalletLocationEvent = {
-        id: pallet.id * 10,
-        palletId: pallet.id,
-        palletCode: pallet.palletCode,
-        containerVisitId: 1,
-        customerId: 1,
-        customerName: "Acme",
-        locationId: 1,
-        locationName: "NJ",
-        storageSection: "A-01",
-        containerNo: "CONT-SEG",
-        eventType: "RECEIVED",
-        quantityDelta: 100,
-        palletDelta: 1,
-        eventTime: "2026-03-01T09:00:00Z",
-        createdAt: "2026-03-01T09:00:00Z"
-      };
-
-      if (pallet.status !== "SHIPPED") {
-        return [receivedEvent];
-      }
-
-      const outboundEvent: PalletLocationEvent = {
-        id: pallet.id * 10 + 1,
-        palletId: pallet.id,
-        palletCode: pallet.palletCode,
-        containerVisitId: 1,
-        customerId: 1,
-        customerName: "Acme",
-        locationId: 1,
-        locationName: "NJ",
-        storageSection: "A-01",
-        containerNo: "CONT-SEG",
-        eventType: "OUTBOUND",
-        quantityDelta: -100,
-        palletDelta: -1,
-        eventTime: "2026-03-15T09:00:00Z",
-        createdAt: "2026-03-15T09:00:00Z"
-      };
-
-      return [receivedEvent, outboundEvent];
-    });
-
-    const preview = buildBillingPreview({
-      startDate: "2026-03-01",
-      endDate: "2026-03-31",
-      customerId: 1,
-      customers,
-      pallets,
-      palletLocationEvents,
-      inboundDocuments: [],
-      outboundDocuments: [],
-      rates: DEFAULT_BILLING_RATES
-    });
-
-    expect(preview.summary.palletDays).toBe(225);
-    expect(preview.summary.storageGrossAmount).toBe(225);
-    expect(preview.summary.storageDiscountAmount).toBe(70);
-    expect(preview.summary.storageAmount).toBe(155);
-    expect(preview.storageRows).toHaveLength(1);
-    expect(preview.storageRows[0]?.segments).toEqual([
-      {
-        startDate: "2026-03-01",
-        endDate: "2026-03-07",
-        dayEndPallets: 10,
-        billedDays: 7,
-        palletDays: 70,
-        freePalletDays: 70,
-        billablePalletDays: 0,
-        grossAmount: 70,
-        discountAmount: 70,
-        amount: 0
-      },
-      {
-        startDate: "2026-03-08",
-        endDate: "2026-03-14",
-        dayEndPallets: 10,
-        billedDays: 7,
-        palletDays: 70,
-        freePalletDays: 0,
-        billablePalletDays: 70,
-        grossAmount: 70,
-        discountAmount: 0,
-        amount: 70
-      },
-      {
-        startDate: "2026-03-15",
-        endDate: "2026-03-31",
-        dayEndPallets: 5,
-        billedDays: 17,
-        palletDays: 85,
-        freePalletDays: 0,
-        billablePalletDays: 85,
-        grossAmount: 85,
-        discountAmount: 0,
-        amount: 85
-      }
-    ]);
-  });
-
-  it("supports warehouse-scoped storage settlement using location-aware pallet-day segments", () => {
-    const pallets: PalletTrace[] = [
-      {
-        id: 1,
-        parentPalletId: 0,
-        palletCode: "PLT-LOC-001",
-        containerVisitId: 1,
-        sourceInboundDocumentId: 10,
-        sourceInboundLineId: 100,
-        actualArrivalDate: "2026-03-01",
-        customerId: 1,
-        customerName: "Acme",
-        skuMasterId: 11,
-        sku: "SKU-1",
-        description: "Widget",
-        currentLocationId: 2,
-        currentLocationName: "LA",
-        currentStorageSection: "B-01",
-        currentContainerNo: "CONT-LOC",
-        containerType: "NORMAL",
-        status: "STORED",
-        createdAt: "2026-03-01T09:00:00Z",
-        updatedAt: "2026-03-31T09:00:00Z",
-        contents: []
-      }
-    ];
-
-    const events: PalletLocationEvent[] = [
-      {
-        id: 1,
-        palletId: 1,
-        palletCode: "PLT-LOC-001",
-        containerVisitId: 1,
-        customerId: 1,
-        customerName: "Acme",
-        locationId: 1,
-        locationName: "NJ",
-        storageSection: "A-01",
-        containerNo: "CONT-LOC",
-        eventType: "RECEIVED",
-        quantityDelta: 100,
-        palletDelta: 1,
-        eventTime: "2026-03-01T09:00:00Z",
-        createdAt: "2026-03-01T09:00:00Z"
-      },
-      {
-        id: 2,
-        palletId: 1,
-        palletCode: "PLT-LOC-001",
-        containerVisitId: 1,
-        customerId: 1,
-        customerName: "Acme",
-        locationId: 1,
-        locationName: "NJ",
-        storageSection: "A-01",
-        containerNo: "CONT-LOC",
-        eventType: "TRANSFER_OUT",
-        quantityDelta: 0,
-        palletDelta: 0,
-        eventTime: "2026-03-15T09:00:00Z",
-        createdAt: "2026-03-15T09:00:00Z"
-      },
-      {
-        id: 3,
-        palletId: 1,
-        palletCode: "PLT-LOC-001",
-        containerVisitId: 1,
-        customerId: 1,
-        customerName: "Acme",
-        locationId: 2,
-        locationName: "LA",
-        storageSection: "B-01",
-        containerNo: "CONT-LOC",
-        eventType: "TRANSFER_IN",
-        quantityDelta: 0,
-        palletDelta: 0,
-        eventTime: "2026-03-15T09:00:00Z",
-        createdAt: "2026-03-15T09:00:00Z"
-      }
-    ];
-
-    const njPreview = buildBillingPreview({
-      startDate: "2026-03-01",
-      endDate: "2026-03-31",
-      customerId: 1,
-      locationId: 1,
-      customers,
-      pallets,
-      palletLocationEvents: events,
-      inboundDocuments: [],
-      outboundDocuments: [],
-      rates: DEFAULT_BILLING_RATES
-    });
-
-    expect(njPreview.summary.palletDays).toBe(14);
-    expect(njPreview.storageRows).toHaveLength(1);
-    expect(njPreview.storageRows[0]?.locationId).toBe(1);
-    expect(njPreview.storageRows[0]?.locationName).toBe("NJ");
-    expect(njPreview.storageRows[0]?.segments).toEqual([
-      {
-        startDate: "2026-03-01",
-        endDate: "2026-03-07",
-        dayEndPallets: 1,
-        billedDays: 7,
-        palletDays: 7,
-        freePalletDays: 7,
-        billablePalletDays: 0,
-        grossAmount: 7,
-        discountAmount: 7,
-        amount: 0
-      },
-      {
-        startDate: "2026-03-08",
-        endDate: "2026-03-14",
-        dayEndPallets: 1,
-        billedDays: 7,
-        palletDays: 7,
-        freePalletDays: 0,
-        billablePalletDays: 7,
-        grossAmount: 7,
-        discountAmount: 0,
-        amount: 7
-      }
-    ]);
-
-    const laPreview = buildBillingPreview({
-      startDate: "2026-03-01",
-      endDate: "2026-03-31",
-      customerId: 1,
-      locationId: 2,
-      customers,
-      pallets,
-      palletLocationEvents: events,
-      inboundDocuments: [],
-      outboundDocuments: [],
-      rates: DEFAULT_BILLING_RATES
-    });
-
-    expect(laPreview.summary.palletDays).toBe(17);
-    expect(laPreview.storageRows).toHaveLength(1);
-    expect(laPreview.storageRows[0]?.locationId).toBe(2);
-    expect(laPreview.storageRows[0]?.locationName).toBe("LA");
-    expect(laPreview.storageRows[0]?.segments).toEqual([
-      {
-        startDate: "2026-03-15",
-        endDate: "2026-03-31",
-        dayEndPallets: 1,
-        billedDays: 17,
-        palletDays: 17,
-        freePalletDays: 0,
-        billablePalletDays: 17,
-        grossAmount: 17,
-        discountAmount: 0,
-        amount: 17
-      }
-    ]);
-  });
-
-  it("does not restart normal-pallet grace days when transfer creates a child pallet", () => {
-    const parentPallet = makePallet(1, 1, "CONT-CHILD-XFER", "SHIPPED", {
-      palletCode: "PLT-PARENT",
-      currentLocationId: 1,
-      currentLocationName: "NJ",
-      updatedAt: "2026-03-10T09:00:00Z"
-    });
-    const childPallet = makePallet(2, 1, "CONT-CHILD-XFER", "STORED", {
-      parentPalletId: 1,
-      palletCode: "PLT-CHILD",
-      currentLocationId: 2,
-      currentLocationName: "LA",
-      currentStorageSection: "B",
-      createdAt: "2026-03-10T09:00:00Z",
-      updatedAt: "2026-03-31T23:59:00Z"
-    });
-
-    const preview = buildBillingPreview({
-      startDate: "2026-03-01",
-      endDate: "2026-03-31",
-      customerId: 1,
-      locationId: 2,
-      customers,
-      pallets: [parentPallet, childPallet],
-      palletLocationEvents: [
-        makeEvent(1, 1, "PLT-PARENT", "CONT-CHILD-XFER", "RECEIVED", "2026-03-01T09:00:00Z"),
-        makeEvent(2, 1, "PLT-PARENT", "CONT-CHILD-XFER", "TRANSFER_OUT", "2026-03-10T09:00:00Z", 0, -10),
-        {
-          ...makeEvent(3, 2, "PLT-CHILD", "CONT-CHILD-XFER", "TRANSFER_IN", "2026-03-10T09:00:00Z", 0, 10),
-          locationId: 2,
-          locationName: "LA",
-          storageSection: "B"
-        }
-      ],
-      inboundDocuments: [],
-      outboundDocuments: [],
-      rates: DEFAULT_BILLING_RATES
-    });
-
-    expect(preview.storageRows).toHaveLength(1);
-    expect(preview.storageRows[0]?.palletDays).toBe(22);
-    expect(preview.storageRows[0]?.freePalletDays).toBe(0);
-    expect(preview.storageRows[0]?.discountAmount).toBe(0);
-    expect(preview.storageRows[0]?.segments).toEqual([
-      {
-        startDate: "2026-03-10",
-        endDate: "2026-03-31",
-        dayEndPallets: 1,
-        billedDays: 22,
-        palletDays: 22,
-        freePalletDays: 0,
-        billablePalletDays: 22,
-        grossAmount: 22,
-        discountAmount: 0,
-        amount: 22
-      }
-    ]);
-  });
-
   it("uses actualArrivalDate for inbound billing instead of expected arrival date", () => {
     const preview = buildBillingPreview({
       startDate: "2026-04-01",
       endDate: "2026-04-30",
       customerId: 1,
       customers,
-      pallets: [],
-      palletLocationEvents: [],
       inboundDocuments: [
         {
           id: 30,
@@ -622,8 +85,6 @@ describe("buildBillingPreview", () => {
       endDate: "2026-04-30",
       customerId: 1,
       customers,
-      pallets: [],
-      palletLocationEvents: [],
       inboundDocuments: [],
       outboundDocuments: [
         {
@@ -689,8 +150,6 @@ describe("buildBillingPreview", () => {
       endDate: "2026-03-31",
       customerId: 1,
       customers,
-      pallets: [],
-      palletLocationEvents: [],
       inboundDocuments: [
         {
           id: 45,
@@ -751,8 +210,6 @@ describe("buildBillingPreview", () => {
       endDate: "2026-04-30",
       customerId: 1,
       customers,
-      pallets: [],
-      palletLocationEvents: [],
       inboundDocuments: [
         {
           id: 50,
@@ -823,8 +280,6 @@ describe("buildBillingPreview", () => {
         endDate: "2026-03-31",
         customerId: "all",
         customers: [],
-        pallets: [],
-        palletLocationEvents: [],
         inboundDocuments: [],
         outboundDocuments: [],
         rates: DEFAULT_BILLING_RATES
@@ -849,8 +304,6 @@ describe("buildBillingPreview", () => {
         endDate: "2026-03-31",
         customerId: "all",
         customers,
-        pallets: [],
-        palletLocationEvents: [],
         inboundDocuments: [makeInboundDoc(1, 1, { status: "DELETED", actualArrivalDate: "2026-03-05" })],
         outboundDocuments: [],
         rates: DEFAULT_BILLING_RATES
@@ -866,8 +319,6 @@ describe("buildBillingPreview", () => {
         endDate: "2026-03-31",
         customerId: "all",
         customers,
-        pallets: [],
-        palletLocationEvents: [],
         inboundDocuments: [makeInboundDoc(1, 1, { actualArrivalDate: "2026-02-28" })],
         outboundDocuments: [],
         rates: DEFAULT_BILLING_RATES
@@ -882,8 +333,6 @@ describe("buildBillingPreview", () => {
         endDate: "2026-03-31",
         customerId: "all",
         customers,
-        pallets: [],
-        palletLocationEvents: [],
         inboundDocuments: [makeInboundDoc(1, 1, { actualArrivalDate: "2026-03-31", pallets: 3 })],
         outboundDocuments: [],
         rates: DEFAULT_BILLING_RATES
@@ -904,8 +353,6 @@ describe("buildBillingPreview", () => {
         endDate: "2026-03-31",
         customerId: "all",
         customers,
-        pallets: [],
-        palletLocationEvents: [],
         inboundDocuments: [makeInboundDoc(1, 1, { actualArrivalDate: "2026-03-05", pallets: 0 })],
         outboundDocuments: [],
         rates: DEFAULT_BILLING_RATES
@@ -922,8 +369,6 @@ describe("buildBillingPreview", () => {
         endDate: "2026-03-31",
         customerId: "all",
         customers,
-        pallets: [],
-        palletLocationEvents: [],
         inboundDocuments: [],
         outboundDocuments: [makeOutboundDoc(1, 1, { actualShipDate: "2026-03-10", pallets: 0 })],
         rates: DEFAULT_BILLING_RATES
@@ -937,14 +382,12 @@ describe("buildBillingPreview", () => {
     // Customer scoping
     // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-    it("customerId filter excludes documents and pallets belonging to other customers", () => {
+    it("customerId filter excludes documents belonging to other customers", () => {
       const preview = buildBillingPreview({
         startDate: "2026-03-01",
         endDate: "2026-03-31",
         customerId: 1,
         customers,
-        pallets: [makePallet(10, 2, "CONT-CX2")],
-        palletLocationEvents: [makeEvent(10, 10, "PLT-010", "CONT-CX2", "RECEIVED", "2026-03-01T09:00:00Z", 1, 10, 2)],
         inboundDocuments: [
           makeInboundDoc(1, 1, { actualArrivalDate: "2026-03-05", containerNo: "CONT-CX1" }),
           makeInboundDoc(2, 2, { actualArrivalDate: "2026-03-05", containerNo: "CONT-CX2" })
@@ -953,9 +396,7 @@ describe("buildBillingPreview", () => {
         rates: DEFAULT_BILLING_RATES
       });
 
-      // Only customer 1's INBOUND + WRAPPING lines should appear; customer 2 excluded
       expect(preview.invoiceLines.every((line) => line.customerId === 1)).toBe(true);
-      // Storage row for customer 2's pallet excluded
       expect(preview.storageRows.every((row) => row.customerId === 1)).toBe(true);
     });
 
@@ -965,8 +406,6 @@ describe("buildBillingPreview", () => {
         endDate: "2026-03-31",
         customerId: "all",
         customers,
-        pallets: [],
-        palletLocationEvents: [],
         inboundDocuments: [
           makeInboundDoc(1, 1, { actualArrivalDate: "2026-03-05" }),
           makeInboundDoc(2, 2, { actualArrivalDate: "2026-03-10" })
@@ -990,8 +429,6 @@ describe("buildBillingPreview", () => {
         endDate: "2026-03-01",
         customerId: "all",
         customers,
-        pallets: [],
-        palletLocationEvents: [],
         inboundDocuments: [makeInboundDoc(1, 1, { actualArrivalDate: "2026-03-15" })],
         outboundDocuments: [],
         rates: DEFAULT_BILLING_RATES
@@ -1007,255 +444,23 @@ describe("buildBillingPreview", () => {
     // Storage interval logic
     // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-    it("bills a STORED pallet for every day in the billing period", () => {
-      const pallet = makePallet(1, 1, "CONT-FULL", "STORED");
-      const preview = buildBillingPreview({
-        startDate: "2026-03-01",
-        endDate: "2026-03-31",
-        customerId: 1,
-        customers,
-        pallets: [pallet],
-        palletLocationEvents: [makeEvent(1, 1, "PLT-001", "CONT-FULL", "RECEIVED", "2026-03-01T09:00:00Z")],
-        inboundDocuments: [],
-        outboundDocuments: [],
-        rates: DEFAULT_BILLING_RATES
-      });
-
-      expect(preview.summary.palletDays).toBe(31);
-    });
-
-    it("bills a pallet that arrived before the billing range for the full range duration", () => {
-      const pallet = makePallet(1, 1, "CONT-PRE", "STORED", {
-        createdAt: "2026-02-01T09:00:00Z",
-        updatedAt: "2026-03-31T23:59:00Z"
-      });
-      const preview = buildBillingPreview({
-        startDate: "2026-03-01",
-        endDate: "2026-03-31",
-        customerId: 1,
-        customers,
-        pallets: [pallet],
-        palletLocationEvents: [makeEvent(1, 1, "PLT-001", "CONT-PRE", "RECEIVED", "2026-02-01T09:00:00Z")],
-        inboundDocuments: [],
-        outboundDocuments: [],
-        rates: DEFAULT_BILLING_RATES
-      });
-
-      expect(preview.summary.palletDays).toBe(31);
-    });
-
-    it("stops billing storage on the day a CANCELLED event is recorded mid-period", () => {
-      // Received Mar 1, cancelled Mar 10 at 12:00.
-      // Day-end check uses start-of-next-calendar-day as the boundary:
-      //   Mar 1â€“9 day-ends â†’ interval still open (end=Mar10 12:00 â‰¥ Mar10 00:00) â†’ 9 counted
-      //   Mar 10 day-end â†’ interval.end=Mar10 12:00 < Mar11 00:00 â†’ not counted
-      const pallet = makePallet(1, 1, "CONT-CANCEL", "CANCELLED", { updatedAt: "2026-03-10T12:00:00Z" });
-      const preview = buildBillingPreview({
-        startDate: "2026-03-01",
-        endDate: "2026-03-31",
-        customerId: 1,
-        customers,
-        pallets: [pallet],
-        palletLocationEvents: [
-          makeEvent(1, 1, "PLT-001", "CONT-CANCEL", "RECEIVED", "2026-03-01T09:00:00Z"),
-          makeEvent(2, 1, "PLT-001", "CONT-CANCEL", "CANCELLED", "2026-03-10T12:00:00Z", -1, -10)
-        ],
-        inboundDocuments: [],
-        outboundDocuments: [],
-        rates: DEFAULT_BILLING_RATES
-      });
-
-      expect(preview.summary.palletDays).toBe(9);
-    });
-
-    it("produces 0 pallet-days when a pallet is received and shipped on the same calendar day", () => {
-      // Received Mar 10 08:00, OUTBOUND Mar 10 20:00.
-      // Day-end of Mar 10 â†’ boundary = Mar 11 00:00, interval.end = Mar 10 20:00 < Mar 11 00:00 â†’ not counted.
-      // Days before Mar 10 â†’ interval.start = Mar 10 08:00, start < Mar 10 00:00? No â†’ not counted.
-      const pallet = makePallet(1, 1, "CONT-SAME", "SHIPPED", { updatedAt: "2026-03-10T20:00:00Z" });
-      const preview = buildBillingPreview({
-        startDate: "2026-03-01",
-        endDate: "2026-03-31",
-        customerId: 1,
-        customers,
-        pallets: [pallet],
-        palletLocationEvents: [
-          makeEvent(1, 1, "PLT-001", "CONT-SAME", "RECEIVED", "2026-03-10T08:00:00Z"),
-          makeEvent(2, 1, "PLT-001", "CONT-SAME", "OUTBOUND", "2026-03-10T20:00:00Z", -1, -10)
-        ],
-        inboundDocuments: [],
-        outboundDocuments: [],
-        rates: DEFAULT_BILLING_RATES
-      });
-
-      expect(preview.summary.palletDays).toBe(0);
-      expect(preview.storageRows).toHaveLength(0);
-    });
-
-    it("uses COUNT events when a pallet is created and later deleted by cycle counts", () => {
-      const pallet = makePallet(1, 1, "CONT-COUNT", "SHIPPED", {
-        sourceInboundDocumentId: 0,
-        sourceInboundLineId: 0,
-        actualArrivalDate: "2026-03-01",
-        createdAt: "2026-03-10T09:00:00Z",
-        updatedAt: "2026-03-20T12:00:00Z"
-      });
-      const preview = buildBillingPreview({
-        startDate: "2026-03-01",
-        endDate: "2026-03-31",
-        customerId: 1,
-        customers,
-        pallets: [pallet],
-        palletLocationEvents: [
-          makeEvent(1, 1, "PLT-001", "CONT-COUNT", "COUNT", "2026-03-10T09:00:00Z", 1, 2),
-          makeEvent(2, 1, "PLT-001", "CONT-COUNT", "COUNT", "2026-03-20T12:00:00Z", -1, -2)
-        ],
-        inboundDocuments: [],
-        outboundDocuments: [],
-        rates: DEFAULT_BILLING_RATES
-      });
-
-      expect(preview.summary.palletDays).toBe(10);
-      expect(preview.storageRows).toHaveLength(1);
-      expect(preview.storageRows[0]?.palletDays).toBe(10);
-      expect(preview.storageRows[0]?.firstActivityAt).toBe("2026-03-10");
-      expect(preview.storageRows[0]?.lastActivityAt).toBe("2026-03-19");
-      expect(preview.dailyBalanceRows.find((row) => row.date === "2026-03-09")?.palletCount).toBe(0);
-      expect(preview.dailyBalanceRows.find((row) => row.date === "2026-03-10")?.palletCount).toBe(1);
-      expect(preview.dailyBalanceRows.find((row) => row.date === "2026-03-19")?.palletCount).toBe(1);
-      expect(preview.dailyBalanceRows.find((row) => row.date === "2026-03-20")?.palletCount).toBe(0);
-    });
-
     // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Storage row grouping
     // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-    it("merges multiple pallets from the same container into a single storage row", () => {
-      const pallets = [1, 2, 3].map((id) => makePallet(id, 1, "CONT-MULTI"));
-      const events = [1, 2, 3].map((id) =>
-        makeEvent(id * 10, id, `PLT-00${id}`, "CONT-MULTI", "RECEIVED", "2026-03-01T09:00:00Z")
-      );
-      const preview = buildBillingPreview({
-        startDate: "2026-03-01",
-        endDate: "2026-03-07",
-        customerId: 1,
-        customers,
-        pallets,
-        palletLocationEvents: events,
-        inboundDocuments: [],
-        outboundDocuments: [],
-        rates: DEFAULT_BILLING_RATES
-      });
-
-      expect(preview.storageRows).toHaveLength(1);
-      expect(preview.storageRows[0]?.palletsTracked).toBe(3);
-      expect(preview.storageRows[0]?.palletDays).toBe(21); // 3 pallets Ã— 7 days
-    });
-
-    it("creates separate storage rows for different containers of the same customer", () => {
-      const pallets = [
-        makePallet(1, 1, "CONT-A"),
-        makePallet(2, 1, "CONT-B")
-      ];
-      const events = [
-        makeEvent(1, 1, "PLT-001", "CONT-A", "RECEIVED", "2026-03-01T09:00:00Z"),
-        makeEvent(2, 2, "PLT-002", "CONT-B", "RECEIVED", "2026-03-01T09:00:00Z")
-      ];
-      const preview = buildBillingPreview({
-        startDate: "2026-03-01",
-        endDate: "2026-03-07",
-        customerId: 1,
-        customers,
-        pallets,
-        palletLocationEvents: events,
-        inboundDocuments: [],
-        outboundDocuments: [],
-        rates: DEFAULT_BILLING_RATES
-      });
-
-      expect(preview.storageRows).toHaveLength(2);
-      const containerNos = preview.storageRows.map((row) => row.containerNo).sort();
-      expect(containerNos).toEqual(["CONT-A", "CONT-B"]);
-    });
 
     // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Storage fee arithmetic
     // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-    it("charges transfer storage immediately without grace days", () => {
-      const rates: BillingRates = {
-        ...DEFAULT_BILLING_RATES,
-        storageFeePerPalletPerWeek: 14,
-        storageFeePerPalletPerWeekWestCoastTransfer: 14
-      };
-      const pallet = makePallet(1, 1, "CONT-RATE", "STORED", { containerType: "WEST_COAST_TRANSFER" });
-      const preview = buildBillingPreview({
-        startDate: "2026-03-01",
-        endDate: "2026-03-07",
-        customerId: 1,
-        customers,
-        pallets: [pallet],
-        palletLocationEvents: [makeEvent(1, 1, "PLT-001", "CONT-RATE", "RECEIVED", "2026-03-01T09:00:00Z")],
-        inboundDocuments: [],
-        outboundDocuments: [],
-        rates
-      });
-
-      expect(preview.summary.palletDays).toBe(7);
-      expect(preview.summary.storageAmount).toBe(14); // 7 Ã— (14/7) = 14
-    });
   });
 
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-  it("can disable the normal pallet 7-day grace period", () => {
-      const pallet = makePallet(1, 1, "CONT-NO-GRACE", "STORED", { containerType: "NORMAL" });
-      const preview = buildBillingPreview({
-        startDate: "2026-03-01",
-        endDate: "2026-03-07",
-        customerId: 1,
-        customers,
-        pallets: [pallet],
-        palletLocationEvents: [makeEvent(1, 1, "PLT-001", "CONT-NO-GRACE", "RECEIVED", "2026-03-01T09:00:00Z")],
-        inboundDocuments: [],
-        outboundDocuments: [],
-        normalPalletGracePeriodEnabled: false,
-        rates: DEFAULT_BILLING_RATES
-      });
-
-      expect(preview.summary.palletDays).toBe(7);
-      expect(preview.summary.storageDiscountAmount).toBe(0);
-      expect(preview.summary.storageAmount).toBe(7);
-      expect(preview.storageRows[0]).toMatchObject({
-        freePalletDays: 0,
-        billablePalletDays: 7,
-        grossAmount: 7,
-        discountAmount: 0,
-        amount: 7
-      });
-      expect(preview.storageRows[0]?.segments).toEqual([
-        {
-          startDate: "2026-03-01",
-          endDate: "2026-03-07",
-          dayEndPallets: 1,
-          billedDays: 7,
-          palletDays: 7,
-          freePalletDays: 0,
-          billablePalletDays: 7,
-          grossAmount: 7,
-          discountAmount: 0,
-          amount: 7
-        }
-      ]);
-    });
-
-  it("calculates storage from document pallet counts when pallet traces are unavailable", () => {
+  it("calculates storage from document pallet counts", () => {
     const preview = buildBillingPreview({
       startDate: "2026-03-01",
       endDate: "2026-03-12",
       customerId: 1,
       customers,
-      pallets: [],
-      palletLocationEvents: [],
       inboundDocuments: [
         makeInboundDoc(100, 1, {
           containerNo: "CONT-DIRECT",
@@ -1287,177 +492,6 @@ describe("buildBillingPreview", () => {
     expect(preview.dailyBalanceRows.find((row) => row.date === "2026-03-10")?.palletCount).toBe(2);
   });
 
-  it("adds document-only storage without replacing legacy pallet trace storage", () => {
-    const preview = buildBillingPreview({
-      startDate: "2026-03-01",
-      endDate: "2026-03-07",
-      customerId: 1,
-      customers,
-      pallets: [makePallet(1, 1, "CONT-OLD")],
-      palletLocationEvents: [makeEvent(1, 1, "PLT-001", "CONT-OLD", "RECEIVED", "2026-03-01T09:00:00Z")],
-      inboundDocuments: [
-        makeInboundDoc(1, 1, {
-          containerNo: "CONT-OLD",
-          actualArrivalDate: "2026-03-01",
-          pallets: 1
-        }),
-        makeInboundDoc(2, 1, {
-          containerNo: "CONT-DIRECT",
-          actualArrivalDate: "2026-03-01",
-          pallets: 2
-        })
-      ],
-      outboundDocuments: [],
-      rates: DEFAULT_BILLING_RATES
-    });
-
-    expect(preview.storageRows).toHaveLength(2);
-    expect(preview.summary.palletDays).toBe(21);
-    expect(preview.storageRows.find((row) => row.containerNo === "CONT-OLD")?.palletDays).toBe(7);
-    expect(preview.storageRows.find((row) => row.containerNo === "CONT-DIRECT")?.palletDays).toBe(14);
-  });
-
-  it("adds document-only storage for pallets missing from partial legacy traces", () => {
-    const containerNo = "CONT-PARTIAL-DIRECT";
-    const preview = buildBillingPreview({
-      startDate: "2026-03-01",
-      endDate: "2026-03-07",
-      customerId: 1,
-      customers,
-      pallets: [
-        makePallet(1, 1, containerNo, "STORED", {
-          sourceInboundDocumentId: 100
-        })
-      ],
-      palletLocationEvents: [
-        makeEvent(1, 1, "PLT-001", containerNo, "RECEIVED", "2026-03-01T09:00:00Z")
-      ],
-      inboundDocuments: [
-        makeInboundDoc(100, 1, {
-          containerNo,
-          actualArrivalDate: "2026-03-01",
-          pallets: 3
-        })
-      ],
-      outboundDocuments: [],
-      rates: DEFAULT_BILLING_RATES
-    });
-
-    const containerPalletDays = preview.storageRows
-      .filter((row) => row.containerNo === containerNo)
-      .reduce((total, row) => total + row.palletDays, 0);
-
-    expect(preview.storageRows.filter((row) => row.containerNo === containerNo)).toHaveLength(1);
-    expect(preview.storageRows.find((row) => row.containerNo === containerNo)?.palletsTracked).toBe(3);
-    expect(containerPalletDays).toBe(21);
-    expect(preview.summary.palletDays).toBe(21);
-    expect(preview.dailyBalanceRows.slice(0, 7)).toEqual([
-      { date: "2026-03-01", palletCount: 3 },
-      { date: "2026-03-02", palletCount: 3 },
-      { date: "2026-03-03", palletCount: 3 },
-      { date: "2026-03-04", palletCount: 3 },
-      { date: "2026-03-05", palletCount: 3 },
-      { date: "2026-03-06", palletCount: 3 },
-      { date: "2026-03-07", palletCount: 3 }
-    ]);
-  });
-
-  it("does not double-count outbound pallets already represented by legacy traces", () => {
-    const containerNo = "CONT-MIXED-OUT";
-    const preview = buildBillingPreview({
-      startDate: "2026-03-01",
-      endDate: "2026-03-07",
-      customerId: 1,
-      customers,
-      pallets: [
-        makePallet(1, 1, containerNo, "SHIPPED", {
-          sourceInboundDocumentId: 100,
-          updatedAt: "2026-03-04T10:00:00Z"
-        })
-      ],
-      palletLocationEvents: [
-        makeEvent(1, 1, "PLT-001", containerNo, "RECEIVED", "2026-03-01T09:00:00Z"),
-        makeEvent(2, 1, "PLT-001", containerNo, "OUTBOUND", "2026-03-04T10:00:00Z", -1, -10)
-      ],
-      inboundDocuments: [
-        makeInboundDoc(100, 1, {
-          containerNo,
-          actualArrivalDate: "2026-03-01",
-          pallets: 3
-        })
-      ],
-      outboundDocuments: [
-        makeOutboundDoc(200, 1, {
-          containerNo,
-          actualShipDate: "2026-03-04",
-          pallets: 1
-        })
-      ],
-      rates: DEFAULT_BILLING_RATES
-    });
-
-    expect(preview.summary.palletDays).toBe(17);
-    expect(preview.dailyBalanceRows.slice(0, 7)).toEqual([
-      { date: "2026-03-01", palletCount: 3 },
-      { date: "2026-03-02", palletCount: 3 },
-      { date: "2026-03-03", palletCount: 3 },
-      { date: "2026-03-04", palletCount: 2 },
-      { date: "2026-03-05", palletCount: 2 },
-      { date: "2026-03-06", palletCount: 2 },
-      { date: "2026-03-07", palletCount: 2 }
-    ]);
-  });
-
-  it("stops legacy trace storage using document outbound allocations when no outbound trace event exists", () => {
-    const containerNo = "CONT-LEGACY-DOC-OUT";
-    const preview = buildBillingPreview({
-      startDate: "2026-03-01",
-      endDate: "2026-03-07",
-      customerId: 1,
-      customers,
-      pallets: [
-        makePallet(1, 1, containerNo, "STORED", {
-          sourceInboundDocumentId: 100
-        })
-      ],
-      palletLocationEvents: [
-        makeEvent(1, 1, "PLT-001", containerNo, "RECEIVED", "2026-03-01T09:00:00Z")
-      ],
-      inboundDocuments: [
-        makeInboundDoc(100, 1, {
-          containerNo,
-          actualArrivalDate: "2026-03-01",
-          pallets: 1
-        })
-      ],
-      outboundDocuments: [
-        makeOutboundDoc(200, 1, {
-          containerNo,
-          actualShipDate: "2026-03-04",
-          pallets: 1
-        })
-      ],
-      rates: DEFAULT_BILLING_RATES
-    });
-
-    expect(preview.summary.palletDays).toBe(3);
-    expect(preview.storageRows).toHaveLength(1);
-    expect(preview.storageRows[0]).toMatchObject({
-      containerNo,
-      palletsTracked: 1,
-      palletDays: 3
-    });
-    expect(preview.dailyBalanceRows.slice(0, 7)).toEqual([
-      { date: "2026-03-01", palletCount: 1 },
-      { date: "2026-03-02", palletCount: 1 },
-      { date: "2026-03-03", palletCount: 1 },
-      { date: "2026-03-04", palletCount: 0 },
-      { date: "2026-03-05", palletCount: 0 },
-      { date: "2026-03-06", palletCount: 0 },
-      { date: "2026-03-07", palletCount: 0 }
-    ]);
-  });
-
   // Full container lifecycle integration
   //
   // Scenario:
@@ -1487,305 +521,6 @@ describe("buildBillingPreview", () => {
   //     STORAGE  â€“       $18 after normal-pallet grace
   //     Grand total: $513
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-  describe("full container lifecycle", () => {
-    const CONTAINER = "GCXU5050505";
-
-    // â”€â”€ pallets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    const plt001 = makePallet(1, 1, CONTAINER, "SHIPPED", {
-      palletCode: "PLT-001",
-      updatedAt: "2026-03-10T10:00:00Z"
-    });
-    const plt002 = makePallet(2, 1, CONTAINER, "SHIPPED", {
-      palletCode: "PLT-002",
-      updatedAt: "2026-03-18T14:00:00Z"
-    });
-    const plt003 = makePallet(3, 1, CONTAINER, "CANCELLED", {
-      palletCode: "PLT-003",
-      updatedAt: "2026-03-20T11:00:00Z"
-    });
-    const pallets = [plt001, plt002, plt003];
-
-    // â”€â”€ pallet-location events â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    // RECEIVED events (all three pallets arrive together Mar 3)
-    const evtRecv001 = makeEvent(101, 1, "PLT-001", CONTAINER, "RECEIVED",  "2026-03-03T09:00:00Z",  1, 100);
-    const evtRecv002 = makeEvent(102, 2, "PLT-002", CONTAINER, "RECEIVED",  "2026-03-03T09:00:00Z",  1, 100);
-    const evtRecv003 = makeEvent(103, 3, "PLT-003", CONTAINER, "RECEIVED",  "2026-03-03T09:00:00Z",  1,  50);
-    // REVERSAL adjustment on PLT-001 Mar 8 â€“ should NOT split the storage interval
-    const evtReversal = makeEvent(104, 1, "PLT-001", CONTAINER, "REVERSAL", "2026-03-08T11:00:00Z",  0,  20);
-    // OUTBOUND events
-    const evtOut001 = makeEvent(105, 1, "PLT-001", CONTAINER, "OUTBOUND", "2026-03-10T10:00:00Z", -1, -100);
-    const evtOut002 = makeEvent(106, 2, "PLT-002", CONTAINER, "OUTBOUND", "2026-03-18T14:00:00Z", -1, -100);
-    // CANCELLED event on PLT-003 Mar 20
-    const evtCancel = makeEvent(107, 3, "PLT-003", CONTAINER, "CANCELLED", "2026-03-20T11:00:00Z", -1,  -50);
-
-    const palletLocationEvents = [
-      evtRecv001, evtRecv002, evtRecv003,
-      evtReversal,
-      evtOut001, evtOut002,
-      evtCancel
-    ];
-
-    // â”€â”€ inbound / outbound documents â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    const inboundDoc = {
-      ...makeInboundDoc(10, 1, {
-        containerNo: CONTAINER,
-        actualArrivalDate: "2026-03-03",
-        pallets: 3
-      })
-    };
-
-    // Override packingListNo so buildOutboundReference uses "SO-001" / "SO-002"
-    const outboundDoc1: OutboundDocument = {
-      ...makeOutboundDoc(1, 1, { actualShipDate: "2026-03-10", pallets: 1 }),
-      packingListNo: "SO-001",
-      confirmedAt: "2026-03-10T10:00:00Z",
-      lines: [{
-        ...makeOutboundDoc(1, 1, { pallets: 1 }).lines[0]!,
-        pallets: 1,
-        quantity: 100
-      }]
-    };
-    const outboundDoc2: OutboundDocument = {
-      ...makeOutboundDoc(2, 1, { actualShipDate: "2026-03-18", pallets: 1 }),
-      packingListNo: "SO-002",
-      confirmedAt: "2026-03-18T14:00:00Z",
-      lines: [{
-        ...makeOutboundDoc(2, 1, { pallets: 1 }).lines[0]!,
-        pallets: 1,
-        quantity: 100
-      }]
-    };
-
-    function buildLifecyclePreview(overrides: Partial<Parameters<typeof buildBillingPreview>[0]> = {}) {
-      return buildBillingPreview({
-        startDate: "2026-03-01",
-        endDate: "2026-03-31",
-        customerId: 1,
-        customers,
-        pallets,
-        palletLocationEvents,
-        inboundDocuments: [inboundDoc],
-        outboundDocuments: [outboundDoc1, outboundDoc2],
-        rates: DEFAULT_BILLING_RATES,
-        ...overrides
-      });
-    }
-
-    // â”€â”€ tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-    it("grand total is $513: $450 inbound + $45 wrapping + $18 storage", () => {
-      const preview = buildLifecyclePreview();
-      expect(preview.summary.inboundAmount).toBe(450);
-      expect(preview.summary.wrappingAmount).toBe(45);
-      expect(preview.summary.storageAmount).toBe(18);
-      expect(preview.summary.outboundAmount).toBe(0);
-      expect(preview.summary.grandTotal).toBe(513);
-    });
-
-    it("produces exactly 3 invoice lines (INBOUND + WRAPPING + STORAGE)", () => {
-      const preview = buildLifecyclePreview();
-      expect(preview.invoiceLines).toHaveLength(3);
-      const types = preview.invoiceLines.map((l) => l.chargeType);
-      expect(types.filter((t) => t === "INBOUND")).toHaveLength(1);
-      expect(types.filter((t) => t === "WRAPPING")).toHaveLength(1);
-      expect(types.filter((t) => t === "OUTBOUND")).toHaveLength(0);
-      expect(types.filter((t) => t === "STORAGE")).toHaveLength(1);
-    });
-
-    it("invoice lines are sorted chronologically: INBOUND/WRAPPING Mar3, then STORAGE", () => {
-      const preview = buildLifecyclePreview();
-      const nonStorage = preview.invoiceLines.filter((l) => l.chargeType !== "STORAGE");
-      const dates = nonStorage.map((l) => l.occurredOn);
-      expect(dates).toEqual(["2026-03-03", "2026-03-03"]);
-    });
-
-    it("total storage pallet-days is 39 (7 + 15 + 17)", () => {
-      const preview = buildLifecyclePreview();
-      expect(preview.summary.palletDays).toBe(39);
-    });
-
-    it("all 3 pallets contribute to a single storage row for GCXU5050505 with palletsTracked=3", () => {
-      const preview = buildLifecyclePreview();
-      expect(preview.storageRows).toHaveLength(1);
-      expect(preview.storageRows[0]?.containerNo).toBe(CONTAINER);
-      expect(preview.storageRows[0]?.palletsTracked).toBe(3);
-      expect(preview.storageRows[0]?.palletDays).toBe(39);
-    });
-
-    it("keeps storage segments, storage invoice lines, and summary totals internally consistent", () => {
-      const preview = buildLifecyclePreview();
-      const storageRow = preview.storageRows[0];
-      const storageLine = preview.invoiceLines.find((line) => line.chargeType === "STORAGE");
-      const roundCurrency = (value: number) => Math.round(value * 100) / 100;
-
-      expect(storageRow).toBeDefined();
-      expect(storageLine).toBeDefined();
-
-      const segmentPalletDays = storageRow!.segments.reduce((total, segment) => total + segment.palletDays, 0);
-      const segmentFreePalletDays = storageRow!.segments.reduce((total, segment) => total + segment.freePalletDays, 0);
-      const segmentBillablePalletDays = storageRow!.segments.reduce((total, segment) => total + segment.billablePalletDays, 0);
-      const segmentGrossAmount = roundCurrency(storageRow!.segments.reduce((total, segment) => total + segment.grossAmount, 0));
-      const segmentDiscountAmount = roundCurrency(storageRow!.segments.reduce((total, segment) => total + segment.discountAmount, 0));
-      const segmentAmount = roundCurrency(storageRow!.segments.reduce((total, segment) => total + segment.amount, 0));
-
-      expect(storageRow!.palletDays).toBe(segmentPalletDays);
-      expect(storageRow!.freePalletDays).toBe(segmentFreePalletDays);
-      expect(storageRow!.billablePalletDays).toBe(segmentBillablePalletDays);
-      expect(storageRow!.grossAmount).toBe(segmentGrossAmount);
-      expect(storageRow!.discountAmount).toBe(segmentDiscountAmount);
-      expect(storageRow!.amount).toBe(segmentAmount);
-
-      expect(storageLine).toMatchObject({
-        chargeType: "STORAGE",
-        containerNo: storageRow!.containerNo,
-        quantity: storageRow!.billablePalletDays,
-        amount: storageRow!.amount,
-        occurredOn: storageRow!.lastActivityAt
-      });
-
-      expect(preview.summary.storageAmount).toBe(roundCurrency(preview.storageRows.reduce((total, row) => total + row.amount, 0)));
-      expect(preview.summary.grandTotal).toBe(roundCurrency(preview.invoiceLines.reduce((total, line) => total + line.amount, 0)));
-    });
-
-    it("storage segments correctly reflect pallet count drops after each shipment/cancellation", () => {
-      const preview = buildLifecyclePreview();
-      const segments = preview.storageRows[0]?.segments ?? [];
-
-      // Expect 3 segments: [3 pallets Mar3â€“9, 2 pallets Mar10â€“17, 1 pallet Mar18â€“19]
-      // Note: a pallet-day is counted for day D if it's active at day-end (midnight D+1).
-      // PLT-001 last counted Mar 9 (outbound Mar 10 10:00 â†’ not active at midnight Mar 11).
-      // So segment with 3 pallets covers Mar 3â€“9 = 7 days.
-      // Segment with 2 pallets covers Mar 10â€“17 = 8 days. PLT-002 last counted Mar 17.
-      // Segment with 1 pallet covers Mar 18â€“19 = 2 days. PLT-003 last counted Mar 19.
-      const totalPalletDays = segments.reduce((sum, s) => sum + s.palletDays, 0);
-      expect(totalPalletDays).toBe(39);
-
-      // The first segment should have 3 pallets and the last should have 1 pallet
-      const sorted = [...segments].sort((a, b) => a.startDate.localeCompare(b.startDate));
-      expect(sorted[0]?.dayEndPallets).toBe(3);
-      expect(sorted[0]?.billedDays).toBe(7);
-      expect(sorted[sorted.length - 1]?.dayEndPallets).toBe(1);
-      expect(sorted[sorted.length - 1]?.billedDays).toBe(2);
-    });
-
-    it("REVERSAL adjustment on Mar 8 does NOT split PLT-001 storage interval â€” still billed for 7 contiguous days", () => {
-      // If REVERSAL incorrectly closed and reopened the interval, PLT-001 would lose the Mar 3â€“7 days
-      // (interval start would become Mar 8), giving only 2 days instead of 7.
-      // Verify that PLT-001's contribution accounts for all 7 days Mar 3â€“9.
-      //
-      // We check this indirectly: build without REVERSAL and confirm same pallet-day count.
-      const withoutReversal = buildBillingPreview({
-        startDate: "2026-03-01",
-        endDate: "2026-03-31",
-        customerId: 1,
-        customers,
-        pallets,
-        palletLocationEvents: palletLocationEvents.filter((e) => e.eventType !== "REVERSAL"),
-        inboundDocuments: [inboundDoc],
-        outboundDocuments: [outboundDoc1, outboundDoc2],
-        rates: DEFAULT_BILLING_RATES
-      });
-
-      const withReversal = buildLifecyclePreview();
-
-      // Both should produce identical pallet-day totals because REVERSAL is a start-event
-      // that merely re-opens/continues an existing interval without penalizing prior days.
-      expect(withReversal.summary.palletDays).toBe(withoutReversal.summary.palletDays);
-    });
-
-    it("CANCELLED pallet (PLT-003) stops accumulating storage on Mar 20, not at month-end", () => {
-      // PLT-003 cancelled Mar 20 11:00 â†’ last active day-end: midnight Mar 21 > Mar20 11:00? No.
-      // So last counted day is Mar 19 â†’ 17 days (Mar 3â€“19).
-      // If it were STORED all month it would be 29 days; the difference confirms billing stops at cancellation.
-      const noCancelPreview = buildBillingPreview({
-        startDate: "2026-03-01",
-        endDate: "2026-03-31",
-        customerId: 1,
-        customers,
-        pallets: [plt001, plt002, makePallet(3, 1, CONTAINER, "STORED", {
-          palletCode: "PLT-003",
-          updatedAt: "2026-03-31T23:59:00Z"
-        })],
-        palletLocationEvents: palletLocationEvents.filter(
-          (e) => !(e.palletId === 3 && e.eventType === "CANCELLED")
-        ),
-        inboundDocuments: [inboundDoc],
-        outboundDocuments: [outboundDoc1, outboundDoc2],
-        rates: DEFAULT_BILLING_RATES
-      });
-
-      const withCancel = buildLifecyclePreview();
-
-      // Without cancellation PLT-003 would run from Mar 3 to Mar 31 = 29 days.
-      // With cancellation it's only 17 days â€” a reduction of 12 days.
-      expect(withCancel.summary.palletDays).toBe(noCancelPreview.summary.palletDays - 12);
-    });
-
-    it("outbound SO-001 dated Feb 28 is excluded from the March shipped pallet summary", () => {
-      const earlyDoc: OutboundDocument = {
-        ...outboundDoc1,
-        actualShipDate: "2026-02-28",
-        confirmedAt: "2026-02-28T10:00:00Z"
-      };
-
-      const preview = buildBillingPreview({
-        startDate: "2026-03-01",
-        endDate: "2026-03-31",
-        customerId: 1,
-        customers,
-        pallets,
-        palletLocationEvents,
-        inboundDocuments: [inboundDoc],
-        outboundDocuments: [earlyDoc, outboundDoc2],
-        rates: DEFAULT_BILLING_RATES
-      });
-
-      expect(preview.invoiceLines.some((l) => l.chargeType === "OUTBOUND")).toBe(false);
-      expect(preview.summary.shippedPallets).toBe(1);
-      expect(preview.summary.outboundAmount).toBe(0);
-    });
-
-    it("inbound reference includes both receipt id and container number", () => {
-      const preview = buildLifecyclePreview();
-      const inboundLine = preview.invoiceLines.find((l) => l.chargeType === "INBOUND");
-      expect(inboundLine?.reference).toContain(String(inboundDoc.id));
-      expect(inboundLine?.reference).toContain(CONTAINER);
-    });
-
-    it("does not create outbound invoice lines for outbound shipments", () => {
-      const preview = buildLifecyclePreview();
-      const outboundLines = preview.invoiceLines.filter((l) => l.chargeType === "OUTBOUND");
-      expect(outboundLines).toHaveLength(0);
-      expect(preview.summary.shippedPallets).toBe(2);
-    });
-
-    it("daily balance rows reflect pallet count declining as shipments and cancellation occur", () => {
-      const preview = buildLifecyclePreview();
-      const rows = preview.dailyBalanceRows;
-
-      // Before receipt there are no pallets (Mar 1â€“2)
-      const beforeReceipt = rows.filter((r) => r.date < "2026-03-03");
-      expect(beforeReceipt.every((r) => r.palletCount === 0)).toBe(true);
-
-      // Between receipt and first outbound: 3 pallets (Mar 3â€“9, using day-end count)
-      // The daily balance row for Mar 9 should show count=3
-      const mar9 = rows.find((r) => r.date === "2026-03-09");
-      expect(mar9?.palletCount).toBe(3);
-
-      // After PLT-001 outbound (Mar 10) and before PLT-002 outbound (Mar 17): 2 pallets
-      const mar14 = rows.find((r) => r.date === "2026-03-14");
-      expect(mar14?.palletCount).toBe(2);
-
-      // After PLT-002 outbound (Mar 18) and before PLT-003 cancellation (Mar 19): 1 pallet
-      const mar19 = rows.find((r) => r.date === "2026-03-19");
-      expect(mar19?.palletCount).toBe(1);
-
-      // After PLT-003 cancellation (Mar 20 onwards): 0 pallets
-      const mar25 = rows.find((r) => r.date === "2026-03-25");
-      expect(mar25?.palletCount).toBe(0);
-    });
-  });
-
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // Billing date fallbacks and reference formatting
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -1799,8 +534,6 @@ describe("buildBillingPreview", () => {
         endDate: "2026-03-31",
         customerId: "all",
         customers,
-        pallets: [],
-        palletLocationEvents: [],
         inboundDocuments: [makeInboundDoc(1, 1, {
           actualArrivalDate: null,
           confirmedAt: "2026-03-12T10:00:00Z"
@@ -1819,8 +552,6 @@ describe("buildBillingPreview", () => {
         endDate: "2026-03-31",
         customerId: "all",
         customers,
-        pallets: [],
-        palletLocationEvents: [],
         inboundDocuments: [makeInboundDoc(1, 1, {
           actualArrivalDate: null,
           confirmedAt: null
@@ -1842,8 +573,6 @@ describe("buildBillingPreview", () => {
         endDate: "2026-03-31",
         customerId: "all",
         customers,
-        pallets: [],
-        palletLocationEvents: [],
         inboundDocuments: [],
         outboundDocuments: [makeOutboundDoc(1, 1, {
           actualShipDate: null,
@@ -1864,8 +593,6 @@ describe("buildBillingPreview", () => {
         endDate: "2026-03-31",
         customerId: "all",
         customers,
-        pallets: [],
-        palletLocationEvents: [],
         inboundDocuments: [],
         outboundDocuments: [makeOutboundDoc(1, 1, {
           actualShipDate: null,
@@ -1887,8 +614,6 @@ describe("buildBillingPreview", () => {
         endDate: "2026-03-31",
         customerId: "all",
         customers,
-        pallets: [],
-        palletLocationEvents: [],
         inboundDocuments: [],
         outboundDocuments: [makeOutboundDoc(1, 1, { status: "DELETED", actualShipDate: "2026-03-15", pallets: 2 })],
         rates: DEFAULT_BILLING_RATES
@@ -1907,8 +632,6 @@ describe("buildBillingPreview", () => {
         endDate: "2026-03-31",
         customerId: "all",
         customers,
-        pallets: [],
-        palletLocationEvents: [],
         inboundDocuments: [makeInboundDoc(1, 1, { containerNo: "" })],
         outboundDocuments: [],
         rates: DEFAULT_BILLING_RATES
@@ -1917,24 +640,6 @@ describe("buildBillingPreview", () => {
       const inboundLine = preview.invoiceLines.find((l) => l.chargeType === "INBOUND");
       // Reference should be "Receipt 1" only â€” no "| UNASSIGNED" suffix
       expect(inboundLine?.reference).toBe("Receipt 1");
-      expect(preview.storageRows).toHaveLength(1);
-      expect(preview.storageRows[0]?.containerNo).toBe("UNASSIGNED");
-    });
-
-    it("storage row containerNo is UNASSIGNED when pallet containerNo is blank", () => {
-      const pallet = makePallet(1, 1, ""); // blank containerNo
-      const preview = buildBillingPreview({
-        startDate: "2026-03-01",
-        endDate: "2026-03-07",
-        customerId: 1,
-        customers,
-        pallets: [pallet],
-        palletLocationEvents: [makeEvent(1, 1, "PLT-001", "", "RECEIVED", "2026-03-01T09:00:00Z")],
-        inboundDocuments: [],
-        outboundDocuments: [],
-        rates: DEFAULT_BILLING_RATES
-      });
-
       expect(preview.storageRows).toHaveLength(1);
       expect(preview.storageRows[0]?.containerNo).toBe("UNASSIGNED");
     });
@@ -1953,8 +658,6 @@ describe("buildBillingPreview", () => {
         endDate: "2026-03-31",
         customerId: "all",
         customers,
-        pallets: [],
-        palletLocationEvents: [],
         inboundDocuments: [],
         outboundDocuments: [doc],
         rates: DEFAULT_BILLING_RATES
@@ -1977,8 +680,6 @@ describe("buildBillingPreview", () => {
         endDate: "2026-03-31",
         customerId: "all",
         customers,
-        pallets: [],
-        palletLocationEvents: [],
         inboundDocuments: [],
         outboundDocuments: [doc],
         rates: DEFAULT_BILLING_RATES
@@ -1991,30 +692,6 @@ describe("buildBillingPreview", () => {
 
     // â”€â”€ TRANSFER_IN as storage start event â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-    it("TRANSFER_IN event opens a storage interval and the pallet accrues pallet-days from that point", () => {
-      // Pallet transferred in on Mar 5; no RECEIVED event.
-      // Should be billed for Mar 5â€“31 = 27 days.
-      const pallet = makePallet(1, 1, "CONT-XFER", "STORED", {
-        palletCode: "PLT-001",
-        createdAt: "2026-03-05T08:00:00Z",
-        updatedAt: "2026-03-31T23:59:00Z"
-      });
-      const preview = buildBillingPreview({
-        startDate: "2026-03-01",
-        endDate: "2026-03-31",
-        customerId: 1,
-        customers,
-        pallets: [pallet],
-        palletLocationEvents: [
-          makeEvent(1, 1, "PLT-001", "CONT-XFER", "TRANSFER_IN", "2026-03-05T08:00:00Z")
-        ],
-        inboundDocuments: [],
-        outboundDocuments: [],
-        rates: DEFAULT_BILLING_RATES
-      });
-
-      expect(preview.summary.palletDays).toBe(27);
-    });
   });
 
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -2041,8 +718,6 @@ describe("buildBillingPreview", () => {
         endDate: "2026-03-31",
         customerId: "all",
         customers,
-        pallets: [],
-        palletLocationEvents: [],
         inboundDocuments: [makeInboundDoc(1, 1, { status: "DRAFT", actualArrivalDate: "2026-03-10" })],
         outboundDocuments: [],
         rates: DEFAULT_BILLING_RATES
@@ -2058,8 +733,6 @@ describe("buildBillingPreview", () => {
         endDate: "2026-03-31",
         customerId: "all",
         customers,
-        pallets: [],
-        palletLocationEvents: [],
         inboundDocuments: [],
         outboundDocuments: [makeOutboundDoc(1, 1, { status: "DRAFT", actualShipDate: "2026-03-10", pallets: 2 })],
         rates: DEFAULT_BILLING_RATES
@@ -2091,8 +764,6 @@ describe("buildBillingPreview", () => {
         endDate: "2026-03-31",
         customerId: "all",
         customers,
-        pallets: [],
-        palletLocationEvents: [],
         inboundDocuments: [doc],
         outboundDocuments: [],
         rates: DEFAULT_BILLING_RATES
@@ -2106,199 +777,13 @@ describe("buildBillingPreview", () => {
 
     // â”€â”€ Pallet event fallback â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-    it("bills a pallet that has no location events using actualArrivalDate as interval start", () => {
-      // No events; code falls back to pallet.actualArrivalDate (Mar 5) for interval start.
-      // Pallet STORED all month â†’ billed Mar 5â€“31 = 27 days.
-      const pallet = makePallet(1, 1, "CONT-NOEVENT", "STORED", {
-        actualArrivalDate: "2026-03-05",
-        createdAt: "2026-03-05T10:00:00Z",
-        updatedAt: "2026-03-31T23:59:00Z"
-      });
-
-      const preview = buildBillingPreview({
-        startDate: "2026-03-01",
-        endDate: "2026-03-31",
-        customerId: 1,
-        customers,
-        pallets: [pallet],
-        palletLocationEvents: [],
-        inboundDocuments: [],
-        outboundDocuments: [],
-        rates: DEFAULT_BILLING_RATES
-      });
-
-      expect(preview.summary.palletDays).toBe(27);
-    });
-
     // â”€â”€ Range boundary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-    it("a single-day billing range produces exactly 1 pallet-day for a STORED pallet", () => {
-      const pallet = makePallet(1, 1, "CONT-ONEDAY", "STORED");
-
-      const preview = buildBillingPreview({
-        startDate: "2026-03-15",
-        endDate: "2026-03-15",
-        customerId: 1,
-        customers,
-        pallets: [pallet],
-        palletLocationEvents: [makeEvent(1, 1, "PLT-001", "CONT-ONEDAY", "RECEIVED", "2026-03-15T09:00:00Z")],
-        inboundDocuments: [],
-        outboundDocuments: [],
-        rates: DEFAULT_BILLING_RATES
-      });
-
-      expect(preview.summary.palletDays).toBe(1);
-      expect(preview.dailyBalanceRows).toHaveLength(1);
-      expect(preview.dailyBalanceRows[0]?.palletCount).toBe(1);
-    });
-
-    it("a pallet received on the last day of the billing range is billed for exactly 1 day", () => {
-      // Received Mar 31 08:00, STORED (end=null).
-      // Day-end check for Mar 31: boundary = Apr 1 midnight.
-      // interval.start=Mar31 08:00 < Apr1 AND interval.end=null â†’ counted. Result = 1 pallet-day.
-      const pallet = makePallet(1, 1, "CONT-LASTDAY", "STORED", {
-        createdAt: "2026-03-31T08:00:00Z",
-        updatedAt: "2026-03-31T23:59:00Z"
-      });
-
-      const preview = buildBillingPreview({
-        startDate: "2026-03-01",
-        endDate: "2026-03-31",
-        customerId: 1,
-        customers,
-        pallets: [pallet],
-        palletLocationEvents: [makeEvent(1, 1, "PLT-001", "CONT-LASTDAY", "RECEIVED", "2026-03-31T08:00:00Z")],
-        inboundDocuments: [],
-        outboundDocuments: [],
-        rates: DEFAULT_BILLING_RATES
-      });
-
-      expect(preview.summary.palletDays).toBe(1);
-    });
 
     // â”€â”€ 3-phase partial outbound â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-    it("3-phase partial outbound produces 3 segments and a pallet-day total of 75", () => {
-      // 5 pallets all received Mar 1.
-      // PLT-001, PLT-002 OUTBOUND Mar 8 10:00 â†’ last counted day = Mar 7 â†’ 7 days each
-      // PLT-003, PLT-004 OUTBOUND Mar 16 09:00 â†’ last counted day = Mar 15 â†’ 15 days each
-      // PLT-005 STORED all month â†’ 31 days
-      // Total: 2Ã—7 + 2Ã—15 + 31 = 75 pallet-days
-      //
-      // Segments (by day-end pallet count):
-      //   Seg 1: 5 pallets, Mar 1â€“7  (7 days)
-      //   Seg 2: 3 pallets, Mar 8â€“15 (8 days)
-      //   Seg 3: 1 pallet,  Mar 16â€“31(16 days)
-      const pallets = [
-        makePallet(1, 1, "CONT-PARTIAL", "SHIPPED", { palletCode: "PLT-001", updatedAt: "2026-03-08T10:00:00Z" }),
-        makePallet(2, 1, "CONT-PARTIAL", "SHIPPED", { palletCode: "PLT-002", updatedAt: "2026-03-08T10:00:00Z" }),
-        makePallet(3, 1, "CONT-PARTIAL", "SHIPPED", { palletCode: "PLT-003", updatedAt: "2026-03-16T09:00:00Z" }),
-        makePallet(4, 1, "CONT-PARTIAL", "SHIPPED", { palletCode: "PLT-004", updatedAt: "2026-03-16T09:00:00Z" }),
-        makePallet(5, 1, "CONT-PARTIAL", "STORED",  { palletCode: "PLT-005" })
-      ];
-      const events = [
-        makeEvent(11, 1, "PLT-001", "CONT-PARTIAL", "RECEIVED", "2026-03-01T09:00:00Z"),
-        makeEvent(12, 2, "PLT-002", "CONT-PARTIAL", "RECEIVED", "2026-03-01T09:00:00Z"),
-        makeEvent(13, 3, "PLT-003", "CONT-PARTIAL", "RECEIVED", "2026-03-01T09:00:00Z"),
-        makeEvent(14, 4, "PLT-004", "CONT-PARTIAL", "RECEIVED", "2026-03-01T09:00:00Z"),
-        makeEvent(15, 5, "PLT-005", "CONT-PARTIAL", "RECEIVED", "2026-03-01T09:00:00Z"),
-        makeEvent(21, 1, "PLT-001", "CONT-PARTIAL", "OUTBOUND", "2026-03-08T10:00:00Z", -1, -10),
-        makeEvent(22, 2, "PLT-002", "CONT-PARTIAL", "OUTBOUND", "2026-03-08T10:00:00Z", -1, -10),
-        makeEvent(23, 3, "PLT-003", "CONT-PARTIAL", "OUTBOUND", "2026-03-16T09:00:00Z", -1, -10),
-        makeEvent(24, 4, "PLT-004", "CONT-PARTIAL", "OUTBOUND", "2026-03-16T09:00:00Z", -1, -10)
-      ];
-
-      const preview = buildBillingPreview({
-        startDate: "2026-03-01",
-        endDate: "2026-03-31",
-        customerId: 1,
-        customers,
-        pallets,
-        palletLocationEvents: events,
-        inboundDocuments: [],
-        outboundDocuments: [],
-        rates: DEFAULT_BILLING_RATES
-      });
-
-      expect(preview.summary.palletDays).toBe(75);
-      expect(preview.storageRows).toHaveLength(1);
-      expect(preview.storageRows[0]?.palletsTracked).toBe(5);
-
-      const segments = [...(preview.storageRows[0]?.segments ?? [])].sort((a, b) => a.startDate.localeCompare(b.startDate));
-      expect(segments).toHaveLength(3);
-      expect(segments[0]?.dayEndPallets).toBe(5);
-      expect(segments[0]?.billedDays).toBe(7);
-      expect(segments[1]?.dayEndPallets).toBe(3);
-      expect(segments[1]?.billedDays).toBe(8);
-      expect(segments[2]?.dayEndPallets).toBe(1);
-      expect(segments[2]?.billedDays).toBe(16);
-    });
-
     // â”€â”€ REVERSAL reopens a closed interval â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-    it("REVERSAL after CANCELLED reopens the storage interval and bills both non-contiguous spans", () => {
-      // Interval 1: RECEIVED Mar 1 â†’ CANCELLED Mar 5 10:00
-      //   Day-end check: Mar 5 boundary = Mar 6 midnight; interval.end = Mar 5 10:00 < Mar 6 â†’ Mar 5 NOT counted.
-      //   Counted: Mar 1â€“4 = 4 days.
-      // Gap: Mar 5â€“9 (no active interval).
-      // Interval 2: REVERSAL Mar 10 09:00 â†’ open (STORED)
-      //   Counted: Mar 10â€“31 = 22 days.
-      // Total: 4 + 22 = 26 days â†’ 2 non-contiguous segments.
-      const pallet = makePallet(1, 1, "CONT-REVERSAL", "STORED", {
-        updatedAt: "2026-03-31T23:59:00Z",
-        containerType: "WEST_COAST_TRANSFER"
-      });
-
-      const preview = buildBillingPreview({
-        startDate: "2026-03-01",
-        endDate: "2026-03-31",
-        customerId: 1,
-        customers,
-        pallets: [pallet],
-        palletLocationEvents: [
-          makeEvent(1, 1, "PLT-001", "CONT-REVERSAL", "RECEIVED",  "2026-03-01T09:00:00Z"),
-          makeEvent(2, 1, "PLT-001", "CONT-REVERSAL", "CANCELLED", "2026-03-05T10:00:00Z", -1, -10),
-          makeEvent(3, 1, "PLT-001", "CONT-REVERSAL", "REVERSAL",  "2026-03-10T09:00:00Z",  1,  10)
-        ],
-        inboundDocuments: [],
-        outboundDocuments: [],
-        rates: DEFAULT_BILLING_RATES
-      });
-
-      expect(preview.summary.palletDays).toBe(26);
-
-      const segments = [...(preview.storageRows[0]?.segments ?? [])].sort((a, b) => a.startDate.localeCompare(b.startDate));
-      expect(segments).toHaveLength(2);
-      expect(segments[0]?.billedDays).toBe(4);  // Mar 1â€“4
-      expect(segments[1]?.billedDays).toBe(22); // Mar 10â€“31
-    });
-
     // â”€â”€ Customer isolation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-    it("two customers with the same containerNo get separate storage rows (not merged)", () => {
-      // rowKey is `${customerId}|${containerNo}`, so same containerNo but different customers â†’ 2 rows.
-      const pallet1 = makePallet(1, 1, "CONT-SHARED");
-      const pallet2 = makePallet(2, 2, "CONT-SHARED");
-
-      const preview = buildBillingPreview({
-        startDate: "2026-03-01",
-        endDate: "2026-03-07",
-        customerId: "all",
-        customers,
-        pallets: [pallet1, pallet2],
-        palletLocationEvents: [
-          makeEvent(1, 1, "PLT-001", "CONT-SHARED", "RECEIVED", "2026-03-01T09:00:00Z", 1, 10, 1),
-          makeEvent(2, 2, "PLT-002", "CONT-SHARED", "RECEIVED", "2026-03-01T09:00:00Z", 1, 10, 2)
-        ],
-        inboundDocuments: [],
-        outboundDocuments: [],
-        rates: DEFAULT_BILLING_RATES
-      });
-
-      expect(preview.storageRows).toHaveLength(2);
-      expect(new Set(preview.storageRows.map((r) => r.customerId)).size).toBe(2);
-      expect(preview.storageRows.every((r) => r.containerNo === "CONT-SHARED")).toBe(true);
-    });
 
     // â”€â”€ Summary field correctness â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -2308,8 +793,6 @@ describe("buildBillingPreview", () => {
         endDate: "2026-03-31",
         customerId: "all",
         customers,
-        pallets: [],
-        palletLocationEvents: [],
         inboundDocuments: [
           makeInboundDoc(1, 1, { actualArrivalDate: "2026-03-05" }),
           makeInboundDoc(2, 1, { actualArrivalDate: "2026-03-10" })
@@ -2328,8 +811,6 @@ describe("buildBillingPreview", () => {
         endDate: "2026-03-31",
         customerId: "all",
         customers,
-        pallets: [],
-        palletLocationEvents: [],
         inboundDocuments: [
           makeInboundDoc(1, 1, { actualArrivalDate: "2026-03-05", pallets: 3 }),
           makeInboundDoc(2, 1, { actualArrivalDate: "2026-03-10", pallets: 5 })
@@ -2348,8 +829,6 @@ describe("buildBillingPreview", () => {
         endDate: "2026-03-31",
         customerId: "all",
         customers,
-        pallets: [],
-        palletLocationEvents: [],
         inboundDocuments: [],
         outboundDocuments: [
           makeOutboundDoc(1, 1, { actualShipDate: "2026-03-10", pallets: 3 }),
@@ -2433,6 +912,7 @@ function makeOutboundDoc(
 ): OutboundDocument {
   const pallets = overrides.pallets ?? 2;
   const lineId = id * 100;
+  const sourceContainerNo = overrides.containerNo ?? `CONT-${String(id).padStart(3, "0")}`;
   return {
     id,
     packingListNo: `SO-${id}`,
@@ -2476,82 +956,19 @@ function makeOutboundDoc(
       netWeightKgs: 0,
       grossWeightKgs: 0,
       lineNote: "",
-      pickAllocations: overrides.containerNo ? [{
+      pickAllocations: [{
         id: id * 1000,
         lineId,
         itemNumber: "ITM-1",
         locationId: 1,
         locationName: "NJ",
         storageSection: "A",
-        containerNo: overrides.containerNo,
+        containerNo: sourceContainerNo,
         allocatedQty: pallets * 10,
         pallets,
         createdAt: "2026-03-10T09:00:00Z"
-      }] : [],
+      }],
       createdAt: "2026-03-10T09:00:00Z"
     }]
-  };
-}
-
-function makePallet(
-  id: number,
-  customerId: number,
-  containerNo: string,
-  status: PalletTrace["status"] = "STORED",
-  overrides: Partial<PalletTrace> = {}
-): PalletTrace {
-  return {
-    id,
-    parentPalletId: 0,
-    palletCode: `PLT-${String(id).padStart(3, "0")}`,
-    containerVisitId: 1,
-    sourceInboundDocumentId: 1,
-    sourceInboundLineId: 1,
-    actualArrivalDate: "2026-03-01",
-    customerId,
-    customerName: `Customer ${customerId}`,
-    skuMasterId: 1,
-    sku: "SKU-1",
-    description: "Widget",
-    currentLocationId: 1,
-    currentLocationName: "NJ",
-    currentStorageSection: "A",
-    currentContainerNo: containerNo,
-    containerType: "NORMAL",
-    status,
-    createdAt: "2026-03-01T09:00:00Z",
-    updatedAt: "2026-03-31T23:59:00Z",
-    contents: [],
-    ...overrides
-  };
-}
-
-function makeEvent(
-  id: number,
-  palletId: number,
-  palletCode: string,
-  containerNo: string,
-  eventType: string,
-  eventTime: string,
-  palletDelta = 1,
-  quantityDelta = 10,
-  customerId = 1
-): PalletLocationEvent {
-  return {
-    id,
-    palletId,
-    palletCode,
-    containerVisitId: 1,
-    customerId,
-    customerName: `Customer ${customerId}`,
-    locationId: 1,
-    locationName: "NJ",
-    storageSection: "A",
-    containerNo,
-    eventType,
-    quantityDelta,
-    palletDelta,
-    eventTime,
-    createdAt: eventTime
   };
 }

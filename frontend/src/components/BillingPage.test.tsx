@@ -15,16 +15,48 @@ async function pickComboOption(labelText: string, optionText: string | RegExp) {
   fireEvent.click(option);
 }
 
+function createBillingStorageInboundDocument({
+  id = 10,
+  containerNo = "CONT-001",
+  pallets = 1,
+  locationId = 1,
+  locationName = "NJ"
+}: {
+  id?: number;
+  containerNo?: string;
+  pallets?: number;
+  locationId?: number;
+  locationName?: string;
+} = {}) {
+  return createInboundDocument({
+    id,
+    customerId: 1,
+    customerName: "Acme",
+    locationId,
+    locationName,
+    status: "CONFIRMED",
+    trackingStatus: "RECEIVED",
+    actualArrivalDate: "2026-03-01",
+    confirmedAt: "2026-03-01T09:00:00Z",
+    containerNo,
+    lines: [
+      createInboundDocumentLine({
+        id: id * 10,
+        documentId: id,
+        pallets,
+        receivedQty: pallets * 10,
+        expectedQty: pallets * 10
+      })
+    ]
+  });
+}
+
 const {
-  getPallets,
-  getPalletLocationEvents,
   getBillingInvoices,
   createBillingInvoice,
   downloadExcelWorkbook,
   downloadBillingPreviewPdf
 } = vi.hoisted(() => ({
-  getPallets: vi.fn(),
-  getPalletLocationEvents: vi.fn(),
   getBillingInvoices: vi.fn(),
   createBillingInvoice: vi.fn(),
   downloadExcelWorkbook: vi.fn(),
@@ -34,8 +66,6 @@ const {
 vi.mock("../lib/api", () => ({
   ApiError: class ApiError extends Error {},
   api: {
-    getPallets,
-    getPalletLocationEvents,
     getBillingInvoices,
     createBillingInvoice
   }
@@ -55,8 +85,6 @@ vi.mock("@mui/x-charts", () => ({
 
 describe("BillingPage", () => {
   beforeEach(() => {
-    getPallets.mockReset();
-    getPalletLocationEvents.mockReset();
     getBillingInvoices.mockReset();
     createBillingInvoice.mockReset();
     downloadExcelWorkbook.mockReset();
@@ -64,8 +92,6 @@ describe("BillingPage", () => {
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem("sim-timezone", "UTC");
-    getPallets.mockResolvedValue([]);
-    getPalletLocationEvents.mockResolvedValue([]);
     getBillingInvoices.mockResolvedValue([]);
     createBillingInvoice.mockResolvedValue({ id: 91 });
   });
@@ -141,7 +167,7 @@ describe("BillingPage", () => {
     await waitFor(() => {
       expect(downloadExcelWorkbook).toHaveBeenCalledTimes(1);
     });
-    expect(downloadExcelWorkbook.mock.calls[0][0].rows).toHaveLength(2);
+    expect(downloadExcelWorkbook.mock.calls[0][0].rows).toHaveLength(6);
     expect(downloadExcelWorkbook.mock.calls[0][0].columns.map((column: { label: string }) => column.label)).toContain("Charge Type");
     expect(downloadExcelWorkbook.mock.calls[0][0].rows.map((row: { rowType: string }) => row.rowType)).toContain("Invoice Line");
     expect(downloadExcelWorkbook.mock.calls[0][0].summaryRows.map((row: { label: string }) => row.label)).toContain("Grand Total");
@@ -185,56 +211,11 @@ describe("BillingPage", () => {
     const onOpenBillingInvoice = vi.fn();
     const customer = createCustomer({ id: 1, name: "Acme" });
 
-    getPallets.mockResolvedValue([
-      {
-        id: 1,
-        parentPalletId: 0,
-        palletCode: "PLT-001",
-        containerVisitId: 1,
-        sourceInboundDocumentId: 10,
-        sourceInboundLineId: 100,
-        actualArrivalDate: "2026-03-01",
-        customerId: 1,
-        customerName: "Acme",
-        skuMasterId: 11,
-        sku: "SKU-1",
-        description: "Widget",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "A-01",
-        currentContainerNo: "CONT-001",
-        containerType: "NORMAL",
-        status: "STORED",
-        createdAt: "2026-03-01T09:00:00Z",
-        updatedAt: "2026-03-31T09:00:00Z",
-        contents: []
-      }
-    ]);
-    getPalletLocationEvents.mockResolvedValue([
-      {
-        id: 1,
-        palletId: 1,
-        palletCode: "PLT-001",
-        containerVisitId: 1,
-        customerId: 1,
-        customerName: "Acme",
-        locationId: 1,
-        locationName: "NJ",
-        storageSection: "A-01",
-        containerNo: "CONT-001",
-        eventType: "RECEIVED",
-        quantityDelta: 100,
-        palletDelta: 1,
-        eventTime: "2026-03-01T09:00:00Z",
-        createdAt: "2026-03-01T09:00:00Z"
-      }
-    ]);
-
     renderWithProviders(
       <BillingPage
         customers={[customer]}
         locations={[createLocation()]}
-        inboundDocuments={[]}
+        inboundDocuments={[createBillingStorageInboundDocument()]}
         outboundDocuments={[]}
         currentUserRole="admin"
         onOpenBillingContainerDetail={vi.fn()}
@@ -264,56 +245,12 @@ describe("BillingPage", () => {
     const customer = createCustomer({ id: 1, name: "Acme" });
 
     createBillingInvoice.mockImplementation(() => new Promise(() => {}));
-    getPallets.mockResolvedValue([
-      {
-        id: 1,
-        parentPalletId: 0,
-        palletCode: "PLT-001",
-        containerVisitId: 1,
-        sourceInboundDocumentId: 10,
-        sourceInboundLineId: 100,
-        actualArrivalDate: "2026-03-01",
-        customerId: 1,
-        customerName: "Acme",
-        skuMasterId: 11,
-        sku: "SKU-1",
-        description: "Widget",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "A-01",
-        currentContainerNo: "CONT-001",
-        containerType: "NORMAL",
-        status: "STORED",
-        createdAt: "2026-03-01T09:00:00Z",
-        updatedAt: "2026-03-31T09:00:00Z",
-        contents: []
-      }
-    ]);
-    getPalletLocationEvents.mockResolvedValue([
-      {
-        id: 1,
-        palletId: 1,
-        palletCode: "PLT-001",
-        containerVisitId: 1,
-        customerId: 1,
-        customerName: "Acme",
-        locationId: 1,
-        locationName: "NJ",
-        storageSection: "A-01",
-        containerNo: "CONT-001",
-        eventType: "RECEIVED",
-        quantityDelta: 100,
-        palletDelta: 1,
-        eventTime: "2026-03-01T09:00:00Z",
-        createdAt: "2026-03-01T09:00:00Z"
-      }
-    ]);
 
     renderWithProviders(
       <BillingPage
         customers={[customer]}
         locations={[createLocation()]}
-        inboundDocuments={[]}
+        inboundDocuments={[createBillingStorageInboundDocument({ containerNo: "CONT-DETAIL" })]}
         outboundDocuments={[]}
         currentUserRole="admin"
         onOpenBillingContainerDetail={vi.fn()}
@@ -342,56 +279,11 @@ describe("BillingPage", () => {
   it("includes storage detail snapshots in storage settlement invoice payloads", async () => {
     const customer = createCustomer({ id: 1, name: "Acme" });
 
-    getPallets.mockResolvedValue([
-      {
-        id: 1,
-        parentPalletId: 0,
-        palletCode: "PLT-001",
-        containerVisitId: 1,
-        sourceInboundDocumentId: 10,
-        sourceInboundLineId: 100,
-        actualArrivalDate: "2026-03-01",
-        customerId: 1,
-        customerName: "Acme",
-        skuMasterId: 11,
-        sku: "SKU-1",
-        description: "Widget",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "A-01",
-        currentContainerNo: "CONT-DETAIL",
-        containerType: "NORMAL",
-        status: "STORED",
-        createdAt: "2026-03-01T09:00:00Z",
-        updatedAt: "2026-03-31T09:00:00Z",
-        contents: []
-      }
-    ]);
-    getPalletLocationEvents.mockResolvedValue([
-      {
-        id: 1,
-        palletId: 1,
-        palletCode: "PLT-001",
-        containerVisitId: 1,
-        customerId: 1,
-        customerName: "Acme",
-        locationId: 1,
-        locationName: "NJ",
-        storageSection: "A-01",
-        containerNo: "CONT-DETAIL",
-        eventType: "RECEIVED",
-        quantityDelta: 100,
-        palletDelta: 1,
-        eventTime: "2026-03-01T09:00:00Z",
-        createdAt: "2026-03-01T09:00:00Z"
-      }
-    ]);
-
     renderWithProviders(
       <BillingPage
         customers={[customer]}
         locations={[createLocation()]}
-        inboundDocuments={[]}
+        inboundDocuments={[createBillingStorageInboundDocument({ containerNo: "CONT-DETAIL" })]}
         outboundDocuments={[]}
         currentUserRole="admin"
         onOpenBillingContainerDetail={vi.fn()}
@@ -438,56 +330,11 @@ describe("BillingPage", () => {
   it("creates storage settlement invoices without normal pallet grace days when the switch is off", async () => {
     const customer = createCustomer({ id: 1, name: "Acme" });
 
-    getPallets.mockResolvedValue([
-      {
-        id: 1,
-        parentPalletId: 0,
-        palletCode: "PLT-001",
-        containerVisitId: 1,
-        sourceInboundDocumentId: 10,
-        sourceInboundLineId: 100,
-        actualArrivalDate: "2026-03-01",
-        customerId: 1,
-        customerName: "Acme",
-        skuMasterId: 11,
-        sku: "SKU-1",
-        description: "Widget",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "A-01",
-        currentContainerNo: "CONT-NO-GRACE",
-        containerType: "NORMAL",
-        status: "STORED",
-        createdAt: "2026-03-01T09:00:00Z",
-        updatedAt: "2026-03-31T09:00:00Z",
-        contents: []
-      }
-    ]);
-    getPalletLocationEvents.mockResolvedValue([
-      {
-        id: 1,
-        palletId: 1,
-        palletCode: "PLT-001",
-        containerVisitId: 1,
-        customerId: 1,
-        customerName: "Acme",
-        locationId: 1,
-        locationName: "NJ",
-        storageSection: "A-01",
-        containerNo: "CONT-NO-GRACE",
-        eventType: "RECEIVED",
-        quantityDelta: 100,
-        palletDelta: 1,
-        eventTime: "2026-03-01T09:00:00Z",
-        createdAt: "2026-03-01T09:00:00Z"
-      }
-    ]);
-
     renderWithProviders(
       <BillingPage
         customers={[customer]}
         locations={[createLocation()]}
-        inboundDocuments={[]}
+        inboundDocuments={[createBillingStorageInboundDocument({ containerNo: "CONT-NO-GRACE" })]}
         outboundDocuments={[]}
         currentUserRole="admin"
         onOpenBillingContainerDetail={vi.fn()}
@@ -544,51 +391,6 @@ describe("BillingPage", () => {
   it("creates mixed invoices from the exact preview line set", async () => {
     const customer = createCustomer({ id: 1, name: "Acme" });
 
-    getPallets.mockResolvedValue([
-      {
-        id: 1,
-        parentPalletId: 0,
-        palletCode: "PLT-MIXED",
-        containerVisitId: 1,
-        sourceInboundDocumentId: 10,
-        sourceInboundLineId: 100,
-        actualArrivalDate: "2026-03-05",
-        customerId: 1,
-        customerName: "Acme",
-        skuMasterId: 11,
-        sku: "SKU-1",
-        description: "Widget",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "A-01",
-        currentContainerNo: "CONT-MIXED",
-        containerType: "NORMAL",
-        status: "STORED",
-        createdAt: "2026-03-05T09:00:00Z",
-        updatedAt: "2026-03-31T09:00:00Z",
-        contents: []
-      }
-    ]);
-    getPalletLocationEvents.mockResolvedValue([
-      {
-        id: 1,
-        palletId: 1,
-        palletCode: "PLT-MIXED",
-        containerVisitId: 1,
-        customerId: 1,
-        customerName: "Acme",
-        locationId: 1,
-        locationName: "NJ",
-        storageSection: "A-01",
-        containerNo: "CONT-MIXED",
-        eventType: "RECEIVED",
-        quantityDelta: 20,
-        palletDelta: 1,
-        eventTime: "2026-03-05T09:00:00Z",
-        createdAt: "2026-03-05T09:00:00Z"
-      }
-    ]);
-
     renderWithProviders(
       <BillingPage
         customers={[customer]}
@@ -638,42 +440,42 @@ describe("BillingPage", () => {
     expect(payload.lines).toMatchObject([
       { chargeType: "INBOUND", quantity: 1, amount: 450, sourceType: "AUTO" },
       { chargeType: "WRAPPING", quantity: 2, amount: 30, sourceType: "AUTO" },
-      { chargeType: "STORAGE", quantity: 20, amount: 20, sourceType: "AUTO" }
+      { chargeType: "STORAGE", quantity: 40, amount: 40, sourceType: "AUTO" }
     ]);
     const storageLine = payload.lines.find((line: { chargeType: string }) => line.chargeType === "STORAGE");
     expect(storageLine.details).toMatchObject({
       kind: "STORAGE_CONTAINER_SUMMARY",
-      palletsTracked: 1,
-      palletDays: 27,
+      palletsTracked: 2,
+      palletDays: 54,
       normalPalletGracePeriodEnabled: true,
-      freePalletDays: 7,
-      billablePalletDays: 20,
-      grossAmount: 27,
-      discountAmount: 7,
+      freePalletDays: 14,
+      billablePalletDays: 40,
+      grossAmount: 54,
+      discountAmount: 14,
       segments: [
         {
           startDate: "2026-03-05",
           endDate: "2026-03-11",
-          dayEndPallets: 1,
+          dayEndPallets: 2,
           billedDays: 7,
-          palletDays: 7,
-          freePalletDays: 7,
+          palletDays: 14,
+          freePalletDays: 14,
           billablePalletDays: 0,
-          grossAmount: 7,
-          discountAmount: 7,
+          grossAmount: 14,
+          discountAmount: 14,
           amount: 0
         },
         {
           startDate: "2026-03-12",
           endDate: "2026-03-31",
-          dayEndPallets: 1,
+          dayEndPallets: 2,
           billedDays: 20,
-          palletDays: 20,
+          palletDays: 40,
           freePalletDays: 0,
-          billablePalletDays: 20,
-          grossAmount: 20,
+          billablePalletDays: 40,
+          grossAmount: 40,
           discountAmount: 0,
-          amount: 20
+          amount: 40
         }
       ]
     });
@@ -684,90 +486,11 @@ describe("BillingPage", () => {
     const nj = createLocation({ id: 1, name: "NJ" });
     const la = createLocation({ id: 2, name: "LA" });
 
-    getPallets.mockResolvedValue([
-      {
-        id: 1,
-        parentPalletId: 0,
-        palletCode: "PLT-NJ",
-        containerVisitId: 1,
-        sourceInboundDocumentId: 10,
-        sourceInboundLineId: 100,
-        actualArrivalDate: "2026-03-01",
-        customerId: 1,
-        customerName: "Acme",
-        skuMasterId: 11,
-        sku: "SKU-1",
-        description: "Widget",
-        currentLocationId: 2,
-        currentLocationName: "LA",
-        currentStorageSection: "A-01",
-        currentContainerNo: "CONT-001",
-        containerType: "NORMAL",
-        status: "STORED",
-        createdAt: "2026-03-01T09:00:00Z",
-        updatedAt: "2026-03-31T09:00:00Z",
-        contents: []
-      }
-    ]);
-    getPalletLocationEvents.mockResolvedValue([
-      {
-        id: 1,
-        palletId: 1,
-        palletCode: "PLT-NJ",
-        containerVisitId: 1,
-        customerId: 1,
-        customerName: "Acme",
-        locationId: 1,
-        locationName: "NJ",
-        storageSection: "A-01",
-        containerNo: "CONT-001",
-        eventType: "RECEIVED",
-        quantityDelta: 100,
-        palletDelta: 1,
-        eventTime: "2026-03-01T09:00:00Z",
-        createdAt: "2026-03-01T09:00:00Z"
-      },
-      {
-        id: 2,
-        palletId: 1,
-        palletCode: "PLT-NJ",
-        containerVisitId: 1,
-        customerId: 1,
-        customerName: "Acme",
-        locationId: 1,
-        locationName: "NJ",
-        storageSection: "A-01",
-        containerNo: "CONT-001",
-        eventType: "TRANSFER_OUT",
-        quantityDelta: 0,
-        palletDelta: 0,
-        eventTime: "2026-03-15T09:00:00Z",
-        createdAt: "2026-03-15T09:00:00Z"
-      },
-      {
-        id: 3,
-        palletId: 1,
-        palletCode: "PLT-NJ",
-        containerVisitId: 1,
-        customerId: 1,
-        customerName: "Acme",
-        locationId: 2,
-        locationName: "LA",
-        storageSection: "B-01",
-        containerNo: "CONT-001",
-        eventType: "TRANSFER_IN",
-        quantityDelta: 0,
-        palletDelta: 0,
-        eventTime: "2026-03-15T09:00:00Z",
-        createdAt: "2026-03-15T09:00:00Z"
-      }
-    ]);
-
     renderWithProviders(
       <BillingPage
         customers={[customer]}
         locations={[nj, la]}
-        inboundDocuments={[]}
+        inboundDocuments={[createBillingStorageInboundDocument({ containerNo: "CONT-001", locationId: 2, locationName: "LA" })]}
         outboundDocuments={[]}
         currentUserRole="admin"
         onOpenBillingContainerDetail={vi.fn()}

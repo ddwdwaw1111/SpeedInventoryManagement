@@ -1,25 +1,21 @@
 import CloseIcon from "@mui/icons-material/Close";
-import CompareArrowsOutlinedIcon from "@mui/icons-material/CompareArrowsOutlined";
 import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
-import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
 import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Box, Button, Drawer, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
-import { api } from "../lib/api";
 import { setPendingAllActivityContext } from "../lib/allActivityContext";
 import { buildItemContainerBalances, type ItemContainerBalance } from "../lib/containerBalances";
 import { setPendingContainerContentsContext } from "../lib/containerContentsContext";
 import { formatDateValue } from "../lib/dates";
 import { downloadExcelWorkbook, type ExcelExportColumn } from "../lib/excelExport";
-import { setPendingInventoryActionContext } from "../lib/inventoryActionContext";
 import { buildInventoryActionSourceKey } from "../lib/inventoryActionSources";
 import { useI18n } from "../lib/i18n";
 import { consumePendingInventorySummaryContext } from "../lib/inventorySummaryContext";
-import { PALLET_ENTITY_UI_ENABLED, type PageKey } from "../lib/routes";
-import { DEFAULT_STORAGE_SECTION, normalizeStorageSection, type ContainerType, type Customer, type Item, type Location, type Movement, type PalletTrace, type UserRole } from "../lib/types";
+import type { PageKey } from "../lib/routes";
+import { DEFAULT_STORAGE_SECTION, normalizeStorageSection, type Customer, type Item, type Location, type Movement, type UserRole } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
 import { buildWorkspaceGridSlots, InventoryViewSwitcher, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
@@ -73,10 +69,7 @@ type ContainerBreakdownRow = {
   storageSections: string[];
   onHand: number;
   availableQty: number;
-  palletCount: number;
 };
-
-type InventorySummaryContainerTypeFilter = "all" | ContainerType;
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
 const summaryNumberFormatter = new Intl.NumberFormat("en-US");
@@ -106,14 +99,11 @@ export function InventorySummaryPage({
 }: InventorySummaryPageProps) {
   const { t } = useI18n();
   const canConfigureColumns = currentUserRole === "admin";
-  const canManageInventory = currentUserRole === "admin" || currentUserRole === "operator";
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
-  const [selectedContainerType, setSelectedContainerType] = useState<InventorySummaryContainerTypeFilter>("all");
   const [selectedSummaryId, setSelectedSummaryId] = useState<string | null>(null);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
-  const [pallets, setPallets] = useState<PalletTrace[]>([]);
   const deferredSearchTerm = useDeferredValue(searchTerm);
 
   useEffect(() => {
@@ -125,52 +115,19 @@ export function InventorySummaryPage({
     setSearchTerm(context.searchTerm?.trim() || "");
     setSelectedCustomerId(context.customerId ? String(context.customerId) : "all");
     setSelectedLocationId(context.locationId ? String(context.locationId) : "all");
-    setSelectedContainerType(context.containerType ?? "all");
     setSelectedSummaryId(null);
   }, []);
 
-  useEffect(() => {
-    let active = true;
-
-    async function loadPallets() {
-      if (!PALLET_ENTITY_UI_ENABLED) {
-        setPallets([]);
-        return;
-      }
-
-      try {
-        const nextPallets = await api.getPallets(50000);
-        if (!active) {
-          return;
-        }
-        setPallets(nextPallets);
-      } catch {
-        if (active) {
-          setPallets([]);
-        }
-      }
-    }
-
-    void loadPallets();
-    return () => {
-      active = false;
-    };
-  }, []);
-
   const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
-  const effectiveSelectedContainerType = PALLET_ENTITY_UI_ENABLED ? selectedContainerType : "all";
-  const containerTypeLookup = useMemo(() => buildContainerTypeLookup(pallets), [pallets]);
   const summaryRows = useMemo(
     () => buildInventorySummaryRows(
       items,
       movements,
       normalizedSearch,
       selectedCustomerId,
-      selectedLocationId,
-      effectiveSelectedContainerType,
-      containerTypeLookup
+      selectedLocationId
     ),
-    [items, movements, normalizedSearch, selectedCustomerId, selectedLocationId, effectiveSelectedContainerType, containerTypeLookup]
+    [items, movements, normalizedSearch, selectedCustomerId, selectedLocationId]
   );
   const selectedSummary = useMemo(
     () => summaryRows.find((row) => row.id === selectedSummaryId) ?? null,
@@ -178,8 +135,7 @@ export function InventorySummaryPage({
   );
   const hasActiveFilters = normalizedSearch.length > 0
     || selectedCustomerId !== "all"
-    || selectedLocationId !== "all"
-    || effectiveSelectedContainerType !== "all";
+    || selectedLocationId !== "all";
   const mainGridSlots = buildWorkspaceGridSlots({
     emptyTitle: t("noResults"),
     emptyDescription: hasActiveFilters ? t("filteredStateHint") : t("emptyStateHint"),
@@ -227,13 +183,8 @@ export function InventorySummaryPage({
   );
 
   const containerBreakdown = useMemo(
-    () => buildContainerBreakdown(
-      selectedSummary?.containerBalances ?? [],
-      pallets,
-      selectedSummary?.customerId ?? null,
-      selectedSummary?.skuMasterId ?? null
-    ),
-    [pallets, selectedSummary]
+    () => buildContainerBreakdown(selectedSummary?.containerBalances ?? []),
+    [selectedSummary]
   );
   const overviewStats = useMemo(() => {
     const totalOnHand = summaryRows.reduce((sum, row) => sum + row.onHand, 0);
@@ -293,16 +244,6 @@ export function InventorySummaryPage({
             <label>{t("search")}<input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={t("inventorySummarySearchPlaceholder")} /></label>
             <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
             <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
-            {PALLET_ENTITY_UI_ENABLED ? (
-            <label>
-              {t("billingContainerType")}
-              <select value={selectedContainerType} onChange={(event) => setSelectedContainerType(event.target.value as InventorySummaryContainerTypeFilter)}>
-                <option value="all">{t("allContainerTypes")}</option>
-                <option value="NORMAL">{containerTypeLabel("NORMAL", t)}</option>
-                <option value="WEST_COAST_TRANSFER">{containerTypeLabel("WEST_COAST_TRANSFER", t)}</option>
-              </select>
-            </label>
-            ) : null}
           </div>
         </div>
         <InventoryViewSwitcher activeView="inventory-summary" onNavigate={onNavigate} />
@@ -395,40 +336,6 @@ export function InventorySummaryPage({
                   {t("allActivity")}
                 </Button>
               </div>
-              {PALLET_ENTITY_UI_ENABLED && canManageInventory ? (
-                <div className="inventory-summary-drawer__management-actions">
-                  <Button
-                    className="inventory-summary-drawer__action-button"
-                    variant="outlined"
-                    startIcon={<TuneOutlinedIcon fontSize="small" />}
-                    onClick={() => {
-                      setPendingInventoryActionContext("adjustments", {
-                        sourceKey: buildInventoryActionSourceKey(selectedSummary.customerId, selectedSummary.sku),
-                        sku: selectedSummary.sku,
-                        customerId: selectedSummary.customerId
-                      });
-                      onNavigate("adjustments");
-                    }}
-                  >
-                    {t("addAdjustment")}
-                  </Button>
-                  <Button
-                    className="inventory-summary-drawer__action-button"
-                    variant="outlined"
-                    startIcon={<CompareArrowsOutlinedIcon fontSize="small" />}
-                    onClick={() => {
-                      setPendingInventoryActionContext("transfers", {
-                        sourceKey: buildInventoryActionSourceKey(selectedSummary.customerId, selectedSummary.sku),
-                        sku: selectedSummary.sku,
-                        customerId: selectedSummary.customerId
-                      });
-                      onNavigate("transfers");
-                    }}
-                  >
-                    {t("addTransfer")}
-                  </Button>
-                </div>
-              ) : null}
             </div>
 
             <div className="document-drawer__status-bar">
@@ -512,12 +419,6 @@ export function InventorySummaryPage({
                       <strong>{t("availableQty")}</strong>
                       <span>{row.availableQty}</span>
                     </div>
-                    {PALLET_ENTITY_UI_ENABLED ? (
-                    <div className="inventory-summary-drawer__breakdown-metric">
-                      <strong>{t("pallets")}</strong>
-                      <span>{row.palletCount}</span>
-                    </div>
-                    ) : null}
                   </div>
                 </div>
               ))}
@@ -534,9 +435,7 @@ function buildInventorySummaryRows(
   movements: Movement[],
   normalizedSearch: string,
   selectedCustomerId: string,
-  selectedLocationId: string,
-  selectedContainerType: InventorySummaryContainerTypeFilter,
-  containerTypeLookup: Map<string, ContainerType>
+  selectedLocationId: string
 ) {
   const filteredItems = items.filter((item) => {
     const matchesSearch = normalizedSearch.length === 0
@@ -548,8 +447,7 @@ function buildInventorySummaryRows(
       || item.containerNo.toLowerCase().includes(normalizedSearch);
     const matchesCustomer = selectedCustomerId === "all" || item.customerId === Number(selectedCustomerId);
     const matchesLocation = selectedLocationId === "all" || item.locationId === Number(selectedLocationId);
-    const matchesContainerType = matchesSelectedContainerType(item, selectedContainerType, containerTypeLookup);
-    return matchesSearch && matchesCustomer && matchesLocation && matchesContainerType;
+    return matchesSearch && matchesCustomer && matchesLocation;
   });
 
   const summaryMap = new Map<string, InventorySummaryRow>();
@@ -650,29 +548,8 @@ function buildWarehouseBreakdown(containerBalances: ItemContainerBalance[]): War
     .sort((left, right) => left.locationName.localeCompare(right.locationName));
 }
 
-function buildContainerBreakdown(
-  containerBalances: ItemContainerBalance[],
-  pallets: PalletTrace[],
-  customerId: number | null,
-  skuMasterId: number | null
-): ContainerBreakdownRow[] {
+function buildContainerBreakdown(containerBalances: ItemContainerBalance[]): ContainerBreakdownRow[] {
   const rowMap = new Map<string, ContainerBreakdownRow>();
-  const palletCountByKey = new Map<string, number>();
-
-  if (customerId !== null && skuMasterId !== null) {
-    for (const pallet of pallets) {
-      if (pallet.customerId !== customerId || pallet.status === "CANCELLED") {
-        continue;
-      }
-      const matchesSku = pallet.contents.some((content) => content.skuMasterId === skuMasterId && content.quantity > 0)
-        || (pallet.skuMasterId === skuMasterId && pallet.contents.length === 0);
-      if (!matchesSku) {
-        continue;
-      }
-      const key = `${pallet.currentLocationId}:${normalizeStorageSection(pallet.currentStorageSection)}:${(pallet.currentContainerNo || "-").trim() || "-"}`;
-      palletCountByKey.set(key, (palletCountByKey.get(key) ?? 0) + 1);
-    }
-  }
 
   for (const balance of containerBalances) {
     const containerNo = balance.containerNo.trim() || "-";
@@ -686,8 +563,7 @@ function buildContainerBreakdown(
         locationName: balance.locationName,
         storageSections: balance.storageSection ? [balance.storageSection] : [],
         onHand: balance.onHandQty,
-        availableQty: balance.availableQty,
-        palletCount: palletCountByKey.get(key) ?? 0
+        availableQty: balance.availableQty
       });
       continue;
     }
@@ -737,52 +613,4 @@ function getLatestDate(left: string | null, right: string | null) {
   if (Number.isNaN(leftTime)) return right;
   if (Number.isNaN(rightTime)) return left;
   return rightTime > leftTime ? right : left;
-}
-
-function buildContainerTypeLookup(pallets: PalletTrace[]) {
-  const lookup = new Map<string, ContainerType>();
-
-  for (const pallet of pallets) {
-    if (pallet.status === "CANCELLED") {
-      continue;
-    }
-    const key = buildContainerTypeKey(pallet.customerId, pallet.currentContainerNo || "");
-    if (!key) {
-      continue;
-    }
-    lookup.set(key, pallet.containerType === "WEST_COAST_TRANSFER" ? "WEST_COAST_TRANSFER" : "NORMAL");
-  }
-
-  return lookup;
-}
-
-function buildContainerTypeKey(customerId: number, containerNo: string) {
-  const normalizedContainerNo = containerNo.trim().toUpperCase();
-  if (!normalizedContainerNo) {
-    return "";
-  }
-  return `${customerId}:${normalizedContainerNo}`;
-}
-
-function matchesSelectedContainerType(
-  item: Pick<Item, "customerId" | "containerNo">,
-  selectedContainerType: InventorySummaryContainerTypeFilter,
-  containerTypeLookup: Map<string, ContainerType>
-) {
-  if (selectedContainerType === "all") {
-    return true;
-  }
-
-  const key = buildContainerTypeKey(item.customerId, item.containerNo || "");
-  if (!key) {
-    return false;
-  }
-
-  return containerTypeLookup.get(key) === selectedContainerType;
-}
-
-function containerTypeLabel(containerType: ContainerType, t: (key: string) => string) {
-  return containerType === "WEST_COAST_TRANSFER"
-    ? t("billingContainerTypeWestCoastTransfer")
-    : t("billingContainerTypeNormal");
 }

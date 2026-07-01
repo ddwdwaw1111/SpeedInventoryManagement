@@ -24,8 +24,6 @@ func (s *Server) registerStaffRoutes(protected gin.IRouter) {
 	staff.GET("/inbound-documents/:id/attachments/:attachmentId/download-url", s.handleGetInboundDocumentAttachmentDownloadURL)
 	staff.GET("/adjustments", s.handleListInventoryAdjustments)
 	staff.GET("/transfers", s.handleListInventoryTransfers)
-	staff.GET("/pallets", s.handleListPallets)
-	staff.GET("/pallet-location-events", s.handleListPalletLocationEvents)
 	staff.GET("/billing/invoices", s.handleListBillingInvoices)
 	staff.GET("/billing/invoices/:id", s.handleGetBillingInvoice)
 

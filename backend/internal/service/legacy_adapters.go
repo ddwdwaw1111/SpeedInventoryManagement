@@ -3,57 +3,19 @@ package service
 import "context"
 
 type LegacyInventoryAdapter struct {
-	palletOperations *PalletOperationService
+	inventoryMutation *InventoryMutationService
 }
 
-func NewLegacyInventoryAdapter(palletOperations *PalletOperationService) *LegacyInventoryAdapter {
-	return &LegacyInventoryAdapter{palletOperations: palletOperations}
+func NewLegacyInventoryAdapter(inventoryMutation *InventoryMutationService) *LegacyInventoryAdapter {
+	return &LegacyInventoryAdapter{inventoryMutation: inventoryMutation}
 }
 
 func (a *LegacyInventoryAdapter) CreateAdjustment(ctx context.Context, input CreateInventoryAdjustmentInput) (InventoryAdjustment, error) {
-	command := PalletAdjustCommand{
-		ReferenceNo: input.AdjustmentNo,
-		ReasonCode:  input.ReasonCode,
-		OccurredAt:  input.ActualAdjustedAt,
-		Notes:       input.Notes,
-		Lines:       make([]PalletAdjustLineCommand, 0, len(input.Lines)),
-	}
-	for _, line := range input.Lines {
-		command.Lines = append(command.Lines, PalletAdjustLineCommand{
-			CustomerID:     line.CustomerID,
-			LocationID:     line.LocationID,
-			StorageSection: line.StorageSection,
-			ContainerNo:    line.ContainerNo,
-			PalletID:       line.PalletID,
-			SKUMasterID:    line.SKUMasterID,
-			AdjustQty:      line.AdjustQty,
-			Note:           line.LineNote,
-		})
-	}
-	return a.palletOperations.createAdjustment(ctx, command)
+	return a.inventoryMutation.CreateAdjustment(ctx, input)
 }
 
 func (a *LegacyInventoryAdapter) CreateTransfer(ctx context.Context, input CreateInventoryTransferInput) (InventoryTransfer, error) {
-	command := PalletMoveCommand{
-		ReferenceNo: input.TransferNo,
-		OccurredAt:  input.ActualTransferredAt,
-		Notes:       input.Notes,
-		Lines:       make([]PalletMoveLineCommand, 0, len(input.Lines)),
-	}
-	for _, line := range input.Lines {
-		command.Lines = append(command.Lines, PalletMoveLineCommand{
-			CustomerID:       line.CustomerID,
-			LocationID:       line.LocationID,
-			StorageSection:   line.StorageSection,
-			ContainerNo:      line.ContainerNo,
-			SKUMasterID:      line.SKUMasterID,
-			Quantity:         line.Quantity,
-			ToLocationID:     line.ToLocationID,
-			ToStorageSection: line.ToStorageSection,
-			Note:             line.LineNote,
-		})
-	}
-	return a.palletOperations.createTransfer(ctx, command)
+	return a.inventoryMutation.CreateTransfer(ctx, input)
 }
 
 type inboundDocumentRepository interface {

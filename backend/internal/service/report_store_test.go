@@ -11,28 +11,28 @@ func TestBuildReportPalletFlowRowsUsesLedgerBalances(t *testing.T) {
 	end := time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC)
 	events := []reportLedgerEventRow{
 		{
-			PalletID:       1,
+			LedgerID:       1,
 			BusinessDate:   start,
 			EventType:      StockLedgerEventShip,
 			QuantityChange: -4,
 			PalletChange:   -1,
 		},
 		{
-			PalletID:       2,
+			LedgerID:       2,
 			BusinessDate:   start,
 			EventType:      StockLedgerEventReceive,
 			QuantityChange: 12,
 			PalletChange:   1,
 		},
 		{
-			PalletID:       2,
+			LedgerID:       2,
 			BusinessDate:   start.AddDate(0, 0, 1),
 			EventType:      StockLedgerEventShip,
 			QuantityChange: -12,
 			PalletChange:   -1,
 		},
 		{
-			PalletID:       3,
+			LedgerID:       3,
 			BusinessDate:   start.AddDate(0, 0, 1),
 			EventType:      StockLedgerEventCount,
 			QuantityChange: 5,
@@ -54,19 +54,19 @@ func TestBuildReportMovementTrendRowsUsesQuantityMovement(t *testing.T) {
 	start := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
 	events := []reportLedgerEventRow{
 		{
-			PalletID:       1,
+			LedgerID:       1,
 			BusinessDate:   start,
 			EventType:      StockLedgerEventReceive,
 			QuantityChange: 20,
 		},
 		{
-			PalletID:       2,
+			LedgerID:       2,
 			BusinessDate:   start.AddDate(0, 0, 4),
 			EventType:      StockLedgerEventShip,
 			QuantityChange: -8,
 		},
 		{
-			PalletID:       3,
+			LedgerID:       3,
 			BusinessDate:   start.AddDate(0, 0, 9),
 			EventType:      StockLedgerEventTransferIn,
 			QuantityChange: 5,
@@ -88,7 +88,7 @@ func TestBuildReportLedgerBucketsUsesBusinessDateAndSearchLookups(t *testing.T) 
 	end := time.Date(2026, 4, 11, 0, 0, 0, 0, time.UTC)
 	entries := []reportLedgerEntry{
 		{
-			PalletID:       7,
+			LedgerID:       7,
 			SKUMasterID:    42,
 			CustomerID:     3,
 			LocationID:     5,
@@ -98,7 +98,7 @@ func TestBuildReportLedgerBucketsUsesBusinessDateAndSearchLookups(t *testing.T) 
 			CreatedAt:      start.Add(-12 * time.Hour),
 		},
 		{
-			PalletID:       7,
+			LedgerID:       7,
 			SKUMasterID:    42,
 			CustomerID:     3,
 			LocationID:     5,
@@ -141,7 +141,7 @@ func TestBuildSKUFlowReportRowsAggregatesReceiveAndShip(t *testing.T) {
 	shipDate := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
 	entries := []skuFlowLedgerRow{
 		{
-			PalletID:           1,
+			LedgerID:           1,
 			EventType:          StockLedgerEventReceive,
 			QuantityChange:     10,
 			Pallets:            1,
@@ -156,7 +156,7 @@ func TestBuildSKUFlowReportRowsAggregatesReceiveAndShip(t *testing.T) {
 			CreatedAt:          receiveDate,
 		},
 		{
-			PalletID:           2,
+			LedgerID:           2,
 			EventType:          StockLedgerEventReceive,
 			QuantityChange:     15,
 			Pallets:            1,
@@ -171,7 +171,7 @@ func TestBuildSKUFlowReportRowsAggregatesReceiveAndShip(t *testing.T) {
 			CreatedAt:          receiveDate,
 		},
 		{
-			PalletID:           1,
+			LedgerID:           1,
 			EventType:          StockLedgerEventShip,
 			QuantityChange:     -6,
 			Pallets:            1,
@@ -188,7 +188,7 @@ func TestBuildSKUFlowReportRowsAggregatesReceiveAndShip(t *testing.T) {
 			CreatedAt:          shipDate,
 		},
 		{
-			PalletID:           1,
+			LedgerID:           1,
 			EventType:          StockLedgerEventShip,
 			QuantityChange:     -4,
 			OutDate:            sql.NullTime{Valid: true, Time: shipDate},
@@ -204,7 +204,7 @@ func TestBuildSKUFlowReportRowsAggregatesReceiveAndShip(t *testing.T) {
 			CreatedAt:          shipDate,
 		},
 		{
-			PalletID:       3,
+			LedgerID:       3,
 			EventType:      StockLedgerEventTransferIn,
 			QuantityChange: 99,
 			CreatedAt:      shipDate,

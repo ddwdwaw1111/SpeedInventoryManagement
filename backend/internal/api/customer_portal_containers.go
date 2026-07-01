@@ -43,8 +43,6 @@ type customerPortalContainerLifecycle struct {
 	PickingOrders   []service.OutboundDocument        `json:"pickingOrders"`
 	Movements       []service.Movement                `json:"movements"`
 	LifecycleEvents []service.ContainerLifecycleEvent `json:"lifecycleEvents"`
-	Pallets         []service.PalletTrace             `json:"pallets"`
-	PalletEvents    []service.PalletLocationEvent     `json:"palletEvents"`
 }
 
 type customerPortalContainerSummaryAccumulator struct {
@@ -154,8 +152,6 @@ func (s *Server) handleCustomerPortalContainerLifecycle(c *gin.Context) {
 		PickingOrders:   pickingOrders,
 		Movements:       movements,
 		LifecycleEvents: lifecycleEvents,
-		Pallets:         []service.PalletTrace{},
-		PalletEvents:    []service.PalletLocationEvent{},
 	})
 }
 

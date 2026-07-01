@@ -8,7 +8,6 @@ import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
 import LocalShippingOutlinedIcon from "@mui/icons-material/LocalShippingOutlined";
 import PaidOutlinedIcon from "@mui/icons-material/PaidOutlined";
 import PictureAsPdfOutlinedIcon from "@mui/icons-material/PictureAsPdfOutlined";
-import RefreshOutlinedIcon from "@mui/icons-material/RefreshOutlined";
 import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 import TrendingDownOutlinedIcon from "@mui/icons-material/TrendingDownOutlined";
 import TrendingFlatOutlinedIcon from "@mui/icons-material/TrendingFlatOutlined";
@@ -68,8 +67,6 @@ import type {
   InboundDocument,
   Location,
   OutboundDocument,
-  PalletLocationEvent,
-  PalletTrace,
   UserRole
 } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
@@ -136,9 +133,6 @@ export function BillingPage({
   const [normalPalletGracePeriodEnabled, setNormalPalletGracePeriodEnabled] = useState(true);
   const [workspaceMode, setWorkspaceMode] = useState<BillingWorkspaceMode>("OVERVIEW");
   const [rates, setRates] = useState<BillingRates>(DEFAULT_BILLING_RATES);
-  const [pallets, setPallets] = useState<PalletTrace[]>([]);
-  const [palletLocationEvents, setPalletLocationEvents] = useState<PalletLocationEvent[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const [invoices, setInvoices] = useState<BillingInvoice[]>([]);
   const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
@@ -150,40 +144,6 @@ export function BillingPage({
   const [activeTab, setActiveTab] = useState<BillingPageTab>("CREATE");
   const [isRateDrawerOpen, setIsRateDrawerOpen] = useState(false);
   const [busyActionKey, setBusyActionKey] = useState<string | null>(null);
-
-  useEffect(() => {
-    let active = true;
-
-    async function loadBillingData() {
-      setIsLoading(true);
-      setErrorMessage("");
-      try {
-        const [nextPallets, nextEvents] = await Promise.all([
-          api.getPallets(50000),
-          api.getPalletLocationEvents(50000)
-        ]);
-        if (!active) {
-          return;
-        }
-        setPallets(nextPallets);
-        setPalletLocationEvents(nextEvents);
-      } catch (error) {
-        if (!active) {
-          return;
-        }
-        setErrorMessage(getErrorMessage(error, t("couldNotLoadReport")));
-      } finally {
-        if (active) {
-          setIsLoading(false);
-        }
-      }
-    }
-
-    void loadBillingData();
-    return () => {
-      active = false;
-    };
-  }, [t]);
 
   const customerId = selectedCustomerId === "all" ? "all" : Number(selectedCustomerId);
   const warehouseLocationId = selectedWarehouseLocationId === "all" ? "all" : Number(selectedWarehouseLocationId);
@@ -221,7 +181,6 @@ export function BillingPage({
     return () => { active = false; };
   }, [customerId]);
 
-  const isRefreshing = busyActionKey === "refresh";
   const isPreviewPdfBusy = busyActionKey?.startsWith("preview-pdf-") ?? false;
   const disableHeaderActions = isCreatingInvoice || busyActionKey !== null;
 
@@ -316,15 +275,13 @@ export function BillingPage({
     endDate: selectedEndDate,
     customerId,
     customers,
-    pallets,
-    palletLocationEvents,
     inboundDocuments,
     outboundDocuments,
     locationId: warehouseLocationId,
     containerType: selectedContainerType,
     normalPalletGracePeriodEnabled,
     rates
-  }), [customerId, customers, inboundDocuments, normalPalletGracePeriodEnabled, outboundDocuments, palletLocationEvents, pallets, rates, selectedContainerType, selectedEndDate, selectedStartDate, warehouseLocationId, workspaceMode]);
+  }), [customerId, customers, inboundDocuments, normalPalletGracePeriodEnabled, outboundDocuments, rates, selectedContainerType, selectedEndDate, selectedStartDate, warehouseLocationId]);
 
   const previousPeriodRange = useMemo(
     () => computePreviousPeriodRange(selectedStartDate, selectedEndDate),
@@ -337,8 +294,6 @@ export function BillingPage({
       endDate: previousPeriodRange.endDate,
       customerId,
       customers,
-      pallets,
-      palletLocationEvents,
       inboundDocuments,
       outboundDocuments,
       locationId: warehouseLocationId,
@@ -346,7 +301,7 @@ export function BillingPage({
       normalPalletGracePeriodEnabled,
       rates
     });
-  }, [customerId, customers, inboundDocuments, normalPalletGracePeriodEnabled, outboundDocuments, palletLocationEvents, pallets, previousPeriodRange, rates, selectedContainerType, warehouseLocationId]);
+  }, [customerId, customers, inboundDocuments, normalPalletGracePeriodEnabled, outboundDocuments, previousPeriodRange, rates, selectedContainerType, warehouseLocationId]);
   const containerSummaryRows = useMemo(
     () => buildBillingContainerSummaryRows(billingPreview.invoiceLines, billingPreview.storageRows),
     [billingPreview.invoiceLines, billingPreview.storageRows]
@@ -517,17 +472,6 @@ export function BillingPage({
     });
   }
 
-  async function handleRefreshBillingData() {
-    await runBusyAction("refresh", async () => {
-      const [nextPallets, nextEvents] = await Promise.all([api.getPallets(50000), api.getPalletLocationEvents(50000)]);
-      setPallets(nextPallets);
-      setPalletLocationEvents(nextEvents);
-      setErrorMessage("");
-    }).catch((error) => {
-      setErrorMessage(getErrorMessage(error, t("couldNotLoadReport")));
-    });
-  }
-
   async function handleDownloadPdfWithFeedback() {
     setExportMenuAnchor(null);
     await runBusyAction("preview-pdf", () => {
@@ -574,16 +518,6 @@ export function BillingPage({
         </MenuItem>
       </Menu>
       <Divider orientation="vertical" flexItem />
-      <Button
-        size="small"
-        variant="outlined"
-        startIcon={isRefreshing ? <InlineLoadingIndicator /> : <RefreshOutlinedIcon fontSize="small" />}
-        onClick={() => void handleRefreshBillingData()}
-        disabled={disableHeaderActions}
-        aria-busy={isRefreshing}
-      >
-        {t("refresh")}
-      </Button>
       {workspaceMode === "OVERVIEW" && (
         <Button
           size="small"
@@ -1226,9 +1160,7 @@ export function BillingPage({
                   <h3>{t("dailyPalletBalance")}</h3>
                   <p>{t("dailyPalletBalanceDesc")}</p>
                 </div>
-                {isLoading ? (
-                  <div className="empty-state">{t("loadingRecords")}</div>
-                ) : billingPreview.dailyBalanceRows.some((row) => row.palletCount > 0) ? (
+                {billingPreview.dailyBalanceRows.some((row) => row.palletCount > 0) ? (
                   <div className="report-chart-wrap">
                     <BarChart
                       dataset={dailyBalanceDataset}

@@ -6,7 +6,6 @@ import {
   buildItem,
   buildLocation,
   buildOutboundDocument,
-  buildPalletTrace,
   mockAppApi
 } from "./support/mockApi";
 
@@ -116,37 +115,10 @@ test("daily operations copies a shipment and opens the copied draft editor", asy
     customerName: customer.name,
     locationId: location.id,
     locationName: location.name,
+    containerId: 901,
     quantity: 25,
     availableQty: 25,
     containerNo: "CONT-901"
-  });
-  const pallet = buildPalletTrace({
-    id: 9001,
-    palletCode: "PLT-9001",
-    customerId: customer.id,
-    customerName: customer.name,
-    skuMasterId: item.skuMasterId,
-    sku: item.sku,
-    description: item.description,
-    currentLocationId: location.id,
-    currentLocationName: location.name,
-    currentContainerNo: item.containerNo,
-    contents: [
-      {
-        id: 9101,
-        palletId: 9001,
-        skuMasterId: item.skuMasterId,
-        itemNumber: item.itemNumber,
-        sku: item.sku,
-        description: item.description,
-        quantity: 25,
-        allocatedQty: 0,
-        damagedQty: 0,
-        holdQty: 0,
-        createdAt: "2026-04-25T09:30:00Z",
-        updatedAt: "2026-04-25T09:30:00Z"
-      }
-    ]
   });
   const outboundDocument = buildOutboundDocument({
     packingListNo: "PL-COPY-001",
@@ -165,10 +137,16 @@ test("daily operations copies a shipment and opens the copied draft editor", asy
         skuMasterId: item.skuMasterId,
         quantity: 5,
         pallets: 1,
-        pickPallets: [
+        pickAllocations: [
           {
-            palletId: pallet.id,
-            quantity: 5
+            itemNumber: item.itemNumber,
+            locationId: location.id,
+            locationName: location.name,
+            storageSection: item.storageSection,
+            containerId: item.containerId,
+            containerNo: item.containerNo,
+            allocatedQty: 5,
+            pallets: 1
           }
         ]
       }
@@ -179,7 +157,6 @@ test("daily operations copies a shipment and opens the copied draft editor", asy
     customers: [customer],
     locations: [location],
     items: [item],
-    pallets: [pallet],
     outboundDocuments: [outboundDocument]
   });
 
@@ -199,8 +176,7 @@ test("daily operations copies a shipment and opens the copied draft editor", asy
   });
 
   await expect(page).toHaveURL(new RegExp(`/outbound-management/${copiedDocumentId}/edit$`));
-  await expect(page.getByRole("heading", { name: "Edit Shipment Draft" })).toBeVisible();
-  await expect(page.getByLabel("Packing List No.")).toHaveValue(outboundDocument.packingListNo);
+  await expect(page.getByLabel("Picking Order #")).toHaveValue(outboundDocument.packingListNo);
   await expect(page.getByLabel("Order Ref.")).toHaveValue(outboundDocument.orderRef);
   await expect(page.getByLabel("Expected Ship Date")).toHaveValue("2026-04-24");
   await expect(page.getByLabel("Ship-to Name")).toHaveValue(outboundDocument.shipToName);

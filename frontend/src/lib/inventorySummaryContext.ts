@@ -1,10 +1,7 @@
-import type { ContainerType } from "./types";
-
 type InventorySummaryContext = {
   searchTerm?: string;
   customerId?: number;
   locationId?: number;
-  containerType?: ContainerType;
 };
 
 const STORAGE_KEY = "sim-inventory-summary-context";

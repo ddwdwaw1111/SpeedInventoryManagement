@@ -229,7 +229,7 @@ type lockedOutboundSourceRow struct {
 }
 
 type outboundRepairBucketReservation struct {
-	Bucket   palletSourceBucket
+	Bucket   inventorySourceBucket
 	Quantity int
 }
 
@@ -993,7 +993,17 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 	if len(lineRows) == 0 {
 		return fmt.Errorf("%w: outbound document must contain at least one line", ErrInvalidInput)
 	}
-	if !outboundTrackingRequiresActiveReservation(currentTrackingStatus) {
+	if outboundTrackingRequiresActiveReservation(currentTrackingStatus) {
+		if outboundDocumentLineRowsMissingPickAllocations(lineRows) {
+			if err := s.releaseOutboundDocumentReservationsTx(ctx, tx, documentRow.CustomerID, lineRows); err != nil {
+				return err
+			}
+			lineRows, err = s.reserveOutboundDocumentLinesTx(ctx, tx, documentRow.CustomerID, lineRows)
+			if err != nil {
+				return err
+			}
+		}
+	} else {
 		lineRows, err = s.reserveOutboundDocumentLinesTx(ctx, tx, documentRow.CustomerID, lineRows)
 		if err != nil {
 			return err
@@ -1045,7 +1055,7 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 				ledgerPallets = palletSplits[allocationIndex]
 			}
 
-			bucket := palletSourceBucket{
+			bucket := inventorySourceBucket{
 				SKUMasterID:    lineRow.SKUMasterID,
 				CustomerID:     documentRow.CustomerID,
 				LocationID:     locationID,
@@ -1271,7 +1281,7 @@ func (s *Store) reserveOutboundLineTx(
 	}
 
 	for _, allocation := range plannedAllocations {
-		bucket := palletSourceBucket{
+		bucket := inventorySourceBucket{
 			SKUMasterID:    source.SKUMasterID,
 			CustomerID:     source.CustomerID,
 			LocationID:     firstNonZeroInt64(allocation.LocationID, source.LocationID),
@@ -1323,13 +1333,22 @@ func (s *Store) reserveOutboundDocumentLinesTx(
 	return lineRows, nil
 }
 
+func outboundDocumentLineRowsMissingPickAllocations(lineRows []outboundDocumentLineRow) bool {
+	for _, lineRow := range lineRows {
+		if len(decodeOutboundPickAllocationsOrEmpty(lineRow.PickAllocationsJSON)) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Store) releaseOutboundDocumentReservationsTx(ctx context.Context, tx *sql.Tx, customerID int64, lineRows []outboundDocumentLineRow) error {
 	for _, lineRow := range lineRows {
 		for _, allocation := range decodeOutboundPickAllocationsOrEmpty(lineRow.PickAllocationsJSON) {
 			if allocation.AllocatedQty <= 0 {
 				continue
 			}
-			if err := s.releaseInventoryReservationTx(ctx, tx, palletSourceBucket{
+			if err := s.releaseInventoryReservationTx(ctx, tx, inventorySourceBucket{
 				SKUMasterID:    lineRow.SKUMasterID,
 				CustomerID:     customerID,
 				LocationID:     firstNonZeroInt64(allocation.LocationID, lineRow.LocationID),
@@ -1351,7 +1370,7 @@ func (s *Store) outboundDocumentReservationsSatisfiedTx(ctx context.Context, tx 
 			return false, nil
 		}
 		for _, allocation := range allocations {
-			state, err := s.loadLockedInventoryBalanceForBucketTx(ctx, tx, palletSourceBucket{
+			state, err := s.loadLockedInventoryBalanceForBucketTx(ctx, tx, inventorySourceBucket{
 				SKUMasterID:    lineRow.SKUMasterID,
 				CustomerID:     customerID,
 				LocationID:     firstNonZeroInt64(allocation.LocationID, lineRow.LocationID),
@@ -1452,7 +1471,7 @@ func (s *Store) resetOutboundDraftReservationStateTx(ctx context.Context, tx *sq
 					continue
 				}
 				locationID := firstNonZeroInt64(allocation.LocationID, lineRow.LocationID)
-				bucket := palletSourceBucket{
+				bucket := inventorySourceBucket{
 					SKUMasterID:    lineRow.SKUMasterID,
 					CustomerID:     documentRow.CustomerID,
 					LocationID:     locationID,
@@ -1502,7 +1521,7 @@ func (s *Store) resetOutboundDraftReservationStateTx(ctx context.Context, tx *sq
 	return nil
 }
 
-func addOutboundRepairBucketReservation(reservations map[string]outboundRepairBucketReservation, bucket palletSourceBucket, quantity int) {
+func addOutboundRepairBucketReservation(reservations map[string]outboundRepairBucketReservation, bucket inventorySourceBucket, quantity int) {
 	if quantity <= 0 {
 		return
 	}
@@ -2923,16 +2942,6 @@ func toOutboundPickAllocationsFromCandidates(line *CreateOutboundDocumentLineInp
 		}
 	}
 	return normalizeOutboundPickAllocations(pickAllocations)
-}
-
-func countDistinctConsumedPallets(consumptions []palletContentConsumption) int {
-	seen := make(map[int64]struct{}, len(consumptions))
-	for _, consumption := range consumptions {
-		if consumption.PalletID > 0 {
-			seen[consumption.PalletID] = struct{}{}
-		}
-	}
-	return len(seen)
 }
 
 func hasExplicitAllocationPallets(allocations []outboundAllocationCandidate) bool {

@@ -5,14 +5,6 @@ import { renderWithProviders } from "../test/renderWithProviders";
 import { createItem, createLocation, createMovement } from "../test/fixtures";
 import { ContainerDetailPage } from "./ContainerDetailPage";
 
-const { getPallets } = vi.hoisted(() => ({
-  getPallets: vi.fn()
-}));
-
-const { getPalletLocationEvents } = vi.hoisted(() => ({
-  getPalletLocationEvents: vi.fn()
-}));
-
 const { createInventoryAdjustment, createInventoryTransfer } = vi.hoisted(() => ({
   createInventoryAdjustment: vi.fn(),
   createInventoryTransfer: vi.fn()
@@ -21,8 +13,6 @@ const { createInventoryAdjustment, createInventoryTransfer } = vi.hoisted(() => 
 vi.mock("../lib/api", () => ({
   ApiError: class ApiError extends Error {},
   api: {
-    getPallets,
-    getPalletLocationEvents,
     createInventoryAdjustment,
     createInventoryTransfer
   }
@@ -30,17 +20,14 @@ vi.mock("../lib/api", () => ({
 
 describe("ContainerDetailPage", () => {
   beforeEach(() => {
-    getPallets.mockReset();
-    getPalletLocationEvents.mockReset();
     createInventoryAdjustment.mockReset();
     createInventoryTransfer.mockReset();
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem("sim-timezone", "UTC");
-    getPalletLocationEvents.mockResolvedValue([]);
   });
 
-  it("renders current SKU cards without loading pallet UI data", async () => {
+  it("renders current SKU cards", async () => {
     renderWithProviders(
       <ContainerDetailPage
         routeKey="/container-contents/GCXU5817233"
@@ -77,12 +64,10 @@ describe("ContainerDetailPage", () => {
 
     expect(screen.getByRole("heading", { name: "608333" })).toBeInTheDocument();
     expect(screen.queryByText("PLT-001")).not.toBeInTheDocument();
-    expect(getPallets).not.toHaveBeenCalled();
   });
 
   it("does not show cycle count actions", async () => {
     const onNavigate = vi.fn();
-    getPallets.mockResolvedValue([]);
 
     renderWithProviders(
       <ContainerDetailPage
@@ -105,8 +90,6 @@ describe("ContainerDetailPage", () => {
   });
 
   it("keeps cycle count actions hidden when the container has historical activity but no current inventory", async () => {
-    getPallets.mockResolvedValue([]);
-
     renderWithProviders(
       <ContainerDetailPage
         routeKey="/container-contents/GCXU5817233"
@@ -126,8 +109,6 @@ describe("ContainerDetailPage", () => {
   });
 
   it("shows only historical activity tied to the current container", async () => {
-    getPallets.mockResolvedValue([]);
-
     renderWithProviders(
       <ContainerDetailPage
         routeKey="/container-contents/GCXU5817233"
