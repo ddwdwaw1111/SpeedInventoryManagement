@@ -75,7 +75,7 @@ export function getPageFromPath(pathname: string): PageKey {
   if (normalized === "/reports") return "reports";
   if (normalized === "/export-center") return "export-center";
   if (normalized === "/all-activity") return "all-activity";
-  if (/^\/container-lifecycle\/\d+\/[^/]+$/.test(normalized) || normalized === "/container-lifecycle") return "container-lifecycle";
+  if (/^\/container-lifecycle\/id\/\d+$/.test(normalized) || /^\/container-lifecycle\/\d+\/[^/]+$/.test(normalized) || normalized === "/container-lifecycle") return "container-lifecycle";
   if (/^\/container-contents\/[^/]+$/.test(normalized)) return "container-detail";
   if (normalized === "/container-contents") return "container-contents";
   if (normalized === "/audit-logs") return "audit-logs";
@@ -229,14 +229,18 @@ export function navigateToContainerDetail(setter: (page: PageKey) => void, conta
   setter("container-detail");
 }
 
-export function navigateToContainerLifecycle(setter: (page: PageKey) => void, customerId?: number | null, containerNo?: string | null) {
+export function navigateToContainerLifecycle(setter: (page: PageKey) => void, customerId?: number | null, containerNo?: string | null, containerId?: number | null) {
+  const normalizedContainerId = containerId && containerId > 0 ? containerId : null;
   const normalizedContainerNo = containerNo?.trim().toUpperCase() ?? "";
-  const path = customerId && customerId > 0 && normalizedContainerNo
+  const path = normalizedContainerId
+    ? `/container-lifecycle/id/${normalizedContainerId}`
+    : customerId && customerId > 0 && normalizedContainerNo
     ? `/container-lifecycle/${customerId}/${encodeURIComponent(normalizedContainerNo)}`
     : "/container-lifecycle";
   if (normalizePagePath(window.location.pathname) !== path) {
     window.history.pushState({
       page: "container-lifecycle",
+      containerId: normalizedContainerId,
       customerId: customerId ?? null,
       containerNo: normalizedContainerNo || null
     }, "", path);
@@ -247,6 +251,12 @@ export function navigateToContainerLifecycle(setter: (page: PageKey) => void, cu
 
 export function getContainerLifecycleScopeFromPath(pathname: string) {
   const normalized = normalizePagePath(pathname);
+  const idMatch = normalized.match(/^\/container-lifecycle\/id\/(\d+)$/);
+  if (idMatch) {
+    const containerId = Number(idMatch[1]);
+    return containerId > 0 ? { containerId } : null;
+  }
+
   const match = normalized.match(/^\/container-lifecycle\/(\d+)\/([^/]+)$/);
   if (!match) {
     return null;

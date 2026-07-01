@@ -16,6 +16,7 @@ type ContainerLifecycleEvent struct {
 	LocationID         int64     `json:"locationId"`
 	LocationName       string    `json:"locationName"`
 	StorageSection     string    `json:"storageSection"`
+	ContainerID        int64     `json:"containerId"`
 	ContainerNo        string    `json:"containerNo"`
 	EventType          string    `json:"eventType"`
 	EventTime          time.Time `json:"eventTime"`
@@ -38,6 +39,7 @@ type ContainerLifecycleEvent struct {
 }
 
 type ContainerLifecycleEventFilters struct {
+	ContainerID int64
 	CustomerID  int64
 	ContainerNo string
 }
@@ -54,11 +56,15 @@ func (s *Store) ListContainerLifecycleEvents(ctx context.Context, limit int, fil
 
 	whereClauses := []string{"1 = 1"}
 	args := make([]any, 0)
+	if filter.ContainerID > 0 {
+		whereClauses = append(whereClauses, "COALESCE(sl.container_id, 0) = ?")
+		args = append(args, filter.ContainerID)
+	}
 	if filter.CustomerID > 0 {
 		whereClauses = append(whereClauses, "cle.customer_id = ?")
 		args = append(args, filter.CustomerID)
 	}
-	if containerNo := strings.TrimSpace(strings.ToUpper(filter.ContainerNo)); containerNo != "" {
+	if containerNo := strings.TrimSpace(strings.ToUpper(filter.ContainerNo)); filter.ContainerID <= 0 && containerNo != "" {
 		whereClauses = append(whereClauses, "UPPER(TRIM(cle.container_no)) = ?")
 		args = append(args, containerNo)
 	}
@@ -72,6 +78,7 @@ func (s *Store) ListContainerLifecycleEvents(ctx context.Context, limit int, fil
 			cle.location_id,
 			l.name AS location_name,
 			COALESCE(NULLIF(cle.storage_section, ''), 'TEMP') AS storage_section,
+			COALESCE(sl.container_id, 0) AS container_id,
 			COALESCE(cle.container_no, '') AS container_no,
 			cle.event_type,
 			cle.event_time,
@@ -94,6 +101,7 @@ func (s *Store) ListContainerLifecycleEvents(ctx context.Context, limit int, fil
 		FROM container_lifecycle_events cle
 		JOIN customers c ON c.id = cle.customer_id
 		JOIN storage_locations l ON l.id = cle.location_id
+		LEFT JOIN stock_ledger sl ON sl.id = cle.stock_ledger_id
 		WHERE %s
 		ORDER BY cle.event_time DESC, cle.id DESC
 		LIMIT ?
@@ -213,6 +221,7 @@ func scanContainerLifecycleEvent(scanner itemScanner) (ContainerLifecycleEvent, 
 		&event.LocationID,
 		&event.LocationName,
 		&event.StorageSection,
+		&event.ContainerID,
 		&event.ContainerNo,
 		&event.EventType,
 		&event.EventTime,

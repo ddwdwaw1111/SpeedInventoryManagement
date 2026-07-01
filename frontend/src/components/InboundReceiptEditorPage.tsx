@@ -1309,14 +1309,20 @@ function buildInboundEditorSourceState({
   skuMastersBySku: Map<string, SKUMaster>;
 }) {
   if (!document) {
+    const emptyForm = createEmptyBatchInboundForm(launchContext?.scheduledDate || "");
+    const storageSection = normalizeStorageSection(launchContext?.storageSection || emptyForm.storageSection);
     return {
       form: {
-        ...createEmptyBatchInboundForm(launchContext?.scheduledDate || ""),
+        ...emptyForm,
+        containerId: launchContext?.containerId && launchContext.containerId > 0 ? launchContext.containerId : 0,
+        containerNo: launchContext?.containerNo?.trim().toUpperCase() || "",
+        containerType: launchContext?.containerType ?? emptyForm.containerType,
         handlingMode: launchContext?.forceHandlingMode ?? "PALLETIZED",
-        customerId: "",
-        locationId: ""
+        customerId: launchContext?.customerId ? String(launchContext.customerId) : "",
+        locationId: launchContext?.locationId ? String(launchContext.locationId) : "",
+        storageSection
       },
-      lines: [createEmptyBatchInboundLine()],
+      lines: [createEmptyBatchInboundLine(storageSection)],
       inboundEditorIntent: launchContext?.inboundIntent ?? null
     };
   }

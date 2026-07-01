@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type DragEvent, type FormEvent, type ReactNode } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -21,7 +21,10 @@ import { getErrorMessage } from "../lib/errors";
 import { formatNumber } from "../lib/formatters";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
+import type { ContainerDetailLaunchContext } from "../lib/containerDetailLaunchContext";
+import type { InboundReceiptEditorLaunchContext } from "../lib/inboundReceiptEditorLaunchContext";
 import type {
+  ContainerType,
   ContainerLifecycle,
   Customer,
   CustomerPortalContainerSummary,
@@ -34,7 +37,10 @@ import type {
 import { DocumentAttachmentsPanel, type PendingDocumentAttachment } from "./DocumentAttachmentsPanel";
 import { InlineAlert, useFeedbackToast } from "./Feedback";
 import {
+  CONTAINER_LIFECYCLE_DRAFT_NODE_MIME_TYPE,
   ContainerLifecycleView,
+  type ContainerLifecycleDraftNode,
+  type ContainerLifecycleDraftNodeKind,
   type ContainerLifecycleNodeAction
 } from "./ContainerLifecycleView";
 import { Button } from "./ui/button";
@@ -43,20 +49,28 @@ import { Badge } from "./ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 
 type AdminContainerLifecycleScope = {
-  customerId: number;
-  containerNo: string;
+  containerId?: number;
+  customerId?: number;
+  containerNo?: string;
 };
 
 type AdminContainerLifecyclePageProps = {
   routeScope: AdminContainerLifecycleScope | null;
   customers: Customer[];
   locations: Location[];
-  onOpenContainerLifecycle: (customerId: number, containerNo: string) => void;
-  onOpenContainerDetail: (containerNo: string) => void;
+  onOpenContainerLifecycle: (customerId: number | null, containerNo: string, containerId?: number | null) => void;
+  onOpenContainerDetail: (containerNo: string, context?: ContainerDetailLaunchContext) => void;
   onOpenInboundDetail: (documentId: number) => void;
-  onOpenReceiptEditor: (documentId?: number | null) => void;
+  onOpenReceiptEditor: (documentId?: number | null, context?: InboundReceiptEditorLaunchContext) => void;
   onOpenOutboundDocument: (documentId: number) => void;
   onOpenShipmentEditor: (documentId?: number | null) => void;
+  onOpenInventorySummary: (context: InventorySummaryNavigationContext) => void;
+};
+
+type InventorySummaryNavigationContext = {
+  searchTerm?: string;
+  customerId?: number;
+  locationId?: number;
 };
 
 type ContainerFormState = {
@@ -176,12 +190,13 @@ export function AdminContainerLifecyclePage({
   onOpenInboundDetail,
   onOpenReceiptEditor,
   onOpenOutboundDocument,
-  onOpenShipmentEditor
+  onOpenShipmentEditor,
+  onOpenInventorySummary
 }: AdminContainerLifecyclePageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const { showSuccess, showError, feedbackToast } = useFeedbackToast();
-  const [selectedCustomerId, setSelectedCustomerId] = useState(routeScope ? String(routeScope.customerId) : "all");
+  const [selectedCustomerId, setSelectedCustomerId] = useState(routeScope?.customerId ? String(routeScope.customerId) : "all");
   const [searchDraft, setSearchDraft] = useState(routeScope?.containerNo ?? "");
   const [containerSearch, setContainerSearch] = useState(routeScope?.containerNo ?? "");
   const [selectedStatus, setSelectedStatus] = useState("all");
@@ -194,6 +209,7 @@ export function AdminContainerLifecyclePage({
   const [lifecycleLoading, setLifecycleLoading] = useState(false);
   const [lifecycleError, setLifecycleError] = useState("");
   const [selectedNode, setSelectedNode] = useState<ContainerLifecycleNodeAction | null>(null);
+  const [draftNodes, setDraftNodes] = useState<ContainerLifecycleDraftNode[]>([]);
   const [reloadToken, setReloadToken] = useState(0);
   const [busyAction, setBusyAction] = useState("");
   const [containerForm, setContainerForm] = useState<ContainerFormState>(createEmptyContainerForm());
@@ -201,17 +217,21 @@ export function AdminContainerLifecyclePage({
   const [pickupForm, setPickupForm] = useState<PickupFormState>(createEmptyPickupForm());
   const [deliveryForm, setDeliveryForm] = useState<DeliveryFormState>(createEmptyDeliveryForm());
 
-  const activeCustomerId = routeScope?.customerId ?? parsePositiveInt(selectedCustomerId);
-  const activeContainerNo = routeScope?.containerNo ?? "";
+  const routeContainerId = routeScope?.containerId && routeScope.containerId > 0 ? routeScope.containerId : 0;
+  const routeCustomerId = routeScope?.customerId && routeScope.customerId > 0 ? routeScope.customerId : 0;
+  const routeContainerNo = routeScope?.containerNo?.trim().toUpperCase() ?? "";
+  const activeCustomerId = routeCustomerId || lifecycle?.summary.customerId || parsePositiveInt(selectedCustomerId);
+  const activeContainerNo = routeContainerNo || lifecycle?.summary.containerNo || "";
 
   useEffect(() => {
     if (!routeScope) {
       return;
     }
-    setSelectedCustomerId(String(routeScope.customerId));
-    setSearchDraft(routeScope.containerNo);
-    setContainerSearch(routeScope.containerNo);
+    setSelectedCustomerId(routeScope.customerId ? String(routeScope.customerId) : "all");
+    setSearchDraft(routeScope.containerNo ?? "");
+    setContainerSearch(routeScope.containerNo ?? "");
     setSelectedNode(null);
+    setDraftNodes([]);
   }, [routeScope]);
 
   useEffect(() => {
@@ -248,7 +268,7 @@ export function AdminContainerLifecyclePage({
     let active = true;
 
     async function loadLifecycle() {
-      if (!activeCustomerId || !activeContainerNo) {
+      if (!routeContainerId && (!routeCustomerId || !routeContainerNo)) {
         setLifecycle(null);
         setLifecycleError("");
         return;
@@ -256,7 +276,9 @@ export function AdminContainerLifecyclePage({
       setLifecycleLoading(true);
       setLifecycleError("");
       try {
-        const nextLifecycle = await api.getV2ContainerLifecycle(activeContainerNo, activeCustomerId);
+        const nextLifecycle = routeContainerId
+          ? await api.getV2ContainerLifecycleByID(routeContainerId)
+          : await api.getV2ContainerLifecycle(routeContainerNo, routeCustomerId);
         if (!active) return;
         setLifecycle(nextLifecycle);
         setContainerForm(createContainerFormFromLifecycle(nextLifecycle));
@@ -279,13 +301,13 @@ export function AdminContainerLifecyclePage({
     return () => {
       active = false;
     };
-  }, [activeContainerNo, activeCustomerId, reloadToken, t]);
+  }, [reloadToken, routeContainerId, routeContainerNo, routeCustomerId, t]);
 
   useEffect(() => {
     if (!lifecycle || selectedNode?.kind !== "delivery") {
       return;
     }
-    setDeliveryForm(createDeliveryFormFromLifecycle(lifecycle, selectedNode));
+    setDeliveryForm(selectedNode.isDraft ? createDraftDeliveryForm(lifecycle) : createDeliveryFormFromLifecycle(lifecycle, selectedNode));
   }, [lifecycle, selectedNode]);
 
   const filteredSummaries = useMemo(
@@ -310,7 +332,7 @@ export function AdminContainerLifecyclePage({
   }
 
   function openSummary(summary: CustomerPortalContainerSummary) {
-    onOpenContainerLifecycle(summary.customerId, summary.containerNo);
+    onOpenContainerLifecycle(summary.customerId, summary.containerNo, summary.containerId);
   }
 
   function submitTableSearch(event: FormEvent<HTMLFormElement>) {
@@ -323,6 +345,39 @@ export function AdminContainerLifecyclePage({
     setSearchDraft("");
     setContainerSearch("");
     setSelectedStatus("all");
+  }
+
+  function handleDraftNodeDrop(kind: ContainerLifecycleDraftNodeKind, position: ContainerLifecycleDraftNode["position"]) {
+    const title = getLifecycleDraftNodeTitle(kind, t);
+    const draftNode: ContainerLifecycleDraftNode = {
+      id: `draft-${kind}-${Date.now()}`,
+      kind,
+      title,
+      position
+    };
+    setDraftNodes([draftNode]);
+    setSelectedNode({ id: draftNode.id, kind, title, isDraft: true });
+    if (kind === "tracking") {
+      setTrackingForm(createEmptyTrackingForm());
+    } else if (kind === "pickup") {
+      setPickupForm(createEmptyPickupForm());
+    } else if (kind === "delivery" && lifecycle) {
+      setDeliveryForm(createDraftDeliveryForm(lifecycle));
+    }
+  }
+
+  function handleDraftNodeMove(id: string, position: ContainerLifecycleDraftNode["position"]) {
+    setDraftNodes((currentNodes) => currentNodes.map((node) => (
+      node.id === id ? { ...node, position } : node
+    )));
+  }
+
+  function clearSelectedDraftNode() {
+    if (!selectedNode?.isDraft) {
+      return;
+    }
+    setDraftNodes((currentNodes) => currentNodes.filter((node) => node.id !== selectedNode.id));
+    setSelectedNode(null);
   }
 
   async function handleSaveContainer(event: FormEvent<HTMLFormElement>) {
@@ -353,14 +408,17 @@ export function AdminContainerLifecyclePage({
       return;
     }
     await runBusyAction("tracking", async () => {
-      await api.createV2ContainerTrackingEvent(activeContainerNo, {
+      const containerId = lifecycle?.summary.containerId;
+      await api.createV2ContainerTrackingEvent(containerId && containerId > 0 ? containerId : activeContainerNo, {
         customerId: activeCustomerId,
+        containerId,
         eventType: trackingForm.eventType,
         eventTime: trackingForm.eventTime,
         notes: trackingForm.notes,
         visibility: trackingForm.visibility
       });
       showSuccess(t("adminContainerLifecycleSaved"));
+      clearSelectedDraftNode();
       refreshLifecycle();
     });
   }
@@ -372,8 +430,10 @@ export function AdminContainerLifecyclePage({
     }
     await runBusyAction("pickup", async () => {
       const usesOwnDriver = pickupForm.assignmentType === "OWN_DRIVER";
-      await api.createV2ContainerPickupAssignment(activeContainerNo, {
+      const containerId = lifecycle?.summary.containerId;
+      await api.createV2ContainerPickupAssignment(containerId && containerId > 0 ? containerId : activeContainerNo, {
         customerId: activeCustomerId,
+        containerId,
         assignmentType: pickupForm.assignmentType,
         driverName: pickupForm.driverName,
         vendorName: usesOwnDriver ? "" : pickupForm.vendorName,
@@ -385,6 +445,7 @@ export function AdminContainerLifecyclePage({
         visibility: pickupForm.visibility
       });
       showSuccess(t("adminContainerLifecycleSaved"));
+      clearSelectedDraftNode();
       refreshLifecycle();
     });
   }
@@ -396,6 +457,7 @@ export function AdminContainerLifecyclePage({
     }
     const payload: DeliveryEventPayload = {
       customerId: activeCustomerId,
+      containerId: lifecycle?.summary.containerId,
       containerNo: activeContainerNo,
       outboundDocumentId: parseOptionalPositiveInt(deliveryForm.outboundDocumentId),
       eventType: deliveryForm.eventType,
@@ -417,6 +479,7 @@ export function AdminContainerLifecyclePage({
         await api.createV2DeliveryEvent(payload);
       }
       showSuccess(t("adminContainerLifecycleSaved"));
+      clearSelectedDraftNode();
       refreshLifecycle();
     });
   }
@@ -654,9 +717,15 @@ export function AdminContainerLifecyclePage({
       onUploadOutboundDocumentAttachment={handleUploadOutboundDocumentAttachment}
       onDeleteInboundDocumentAttachment={handleDeleteInboundDocumentAttachment}
       onDeleteOutboundDocumentAttachment={handleDeleteOutboundDocumentAttachment}
-      onOpenContainerDetail={() => onOpenContainerDetail(activeContainerNo)}
+      onOpenContainerDetail={(context) => onOpenContainerDetail(activeContainerNo, context)}
+      onOpenInboundDetail={onOpenInboundDetail}
+      onOpenReceiptEditor={onOpenReceiptEditor}
+      onOpenOutboundDocument={onOpenOutboundDocument}
+      onOpenShipmentEditor={onOpenShipmentEditor}
+      onOpenInventorySummary={onOpenInventorySummary}
     />
   ) : null;
+  const lifecycleDraftPalette = lifecycle ? <LifecycleDraftNodePalette /> : null;
 
   return (
     <main className="workspace-main">
@@ -668,9 +737,13 @@ export function AdminContainerLifecyclePage({
           isLoading={lifecycleLoading}
           errorMessage={lifecycleError}
           hideHeaderText
+          actions={lifecycleDraftPalette}
           sidePanel={sidePanel}
           selectedNodeId={selectedNode?.id ?? null}
           onNodeSelect={setSelectedNode}
+          draftNodes={draftNodes}
+          onDraftNodeDrop={handleDraftNodeDrop}
+          onDraftNodeMove={handleDraftNodeMove}
           documentActions={{
             onOpenPackingList: (document) => onOpenInboundDetail(document.id),
             onEditPackingList: (document) => onOpenReceiptEditor(document.id),
@@ -705,7 +778,12 @@ function AdminLifecycleNodePanel({
   onUploadOutboundDocumentAttachment,
   onDeleteInboundDocumentAttachment,
   onDeleteOutboundDocumentAttachment,
-  onOpenContainerDetail
+  onOpenContainerDetail,
+  onOpenInboundDetail,
+  onOpenReceiptEditor,
+  onOpenOutboundDocument,
+  onOpenShipmentEditor,
+  onOpenInventorySummary
 }: {
   node: ContainerLifecycleNodeAction | null;
   lifecycle: ContainerLifecycle;
@@ -727,15 +805,20 @@ function AdminLifecycleNodePanel({
   onUploadOutboundDocumentAttachment: (document: OutboundDocument, file: File, displayName: string) => Promise<void>;
   onDeleteInboundDocumentAttachment: (document: InboundDocument, attachment: DocumentAttachment) => Promise<void>;
   onDeleteOutboundDocumentAttachment: (document: OutboundDocument, attachment: DocumentAttachment) => Promise<void>;
-  onOpenContainerDetail: () => void;
+  onOpenContainerDetail: (context?: ContainerDetailLaunchContext) => void;
+  onOpenInboundDetail: (documentId: number) => void;
+  onOpenReceiptEditor: (documentId?: number | null, context?: InboundReceiptEditorLaunchContext) => void;
+  onOpenOutboundDocument: (documentId: number) => void;
+  onOpenShipmentEditor: (documentId?: number | null) => void;
+  onOpenInventorySummary: (context: InventorySummaryNavigationContext) => void;
 }) {
   const { t } = useI18n();
   const selectedPackingList = node?.documentId ? lifecycle.packingLists.find((document) => document.id === node.documentId) : lifecycle.packingLists[0];
   const selectedPickingOrder = node?.outboundDocumentId ? lifecycle.pickingOrders.find((document) => document.id === node.outboundDocumentId) : lifecycle.pickingOrders[0];
   const receivingSkuRows = useMemo(() => buildReceivingSkuRows(lifecycle.packingLists), [lifecycle.packingLists]);
   const currentInventorySkuRows = useMemo(
-    () => buildCurrentInventorySkuRows(receivingSkuRows, lifecycle.pickingOrders, lifecycle.summary.containerNo),
-    [receivingSkuRows, lifecycle.pickingOrders, lifecycle.summary.containerNo]
+    () => buildCurrentInventorySkuRows(receivingSkuRows, lifecycle.pickingOrders, lifecycle.summary.containerNo, lifecycle.summary.containerId),
+    [receivingSkuRows, lifecycle.pickingOrders, lifecycle.summary.containerId, lifecycle.summary.containerNo]
   );
   const shouldShowContainerForm = !node || node.kind === "container";
   const selectedLocationID = containerForm.locationId;
@@ -760,7 +843,7 @@ function AdminLifecycleNodePanel({
             <SelectInput label={t("handlingMode")} value={containerForm.handlingMode} options={HANDLING_MODE_OPTIONS} onChange={(value) => onContainerFormChange({ ...containerForm, handlingMode: value })} />
             <TextInput type="datetime-local" label={t("lastActivity")} value={containerForm.lastEventAt} onChange={(value) => onContainerFormChange({ ...containerForm, lastEventAt: value })} />
             <Button type="submit" disabled={busyAction === "container"}>{busyAction === "container" ? t("saving") : t("saveChanges")}</Button>
-            <Button type="button" variant="outline" onClick={onOpenContainerDetail}>
+            <Button type="button" variant="outline" onClick={() => onOpenContainerDetail()}>
               <ExternalLink className="h-4 w-4" />
               {t("viewContainerDetail")}
             </Button>
@@ -779,13 +862,110 @@ function AdminLifecycleNodePanel({
         ) : null}
 
         {node?.kind === "receiving" ? (
-          <ReceivingSkuSummary rows={receivingSkuRows} />
+          <>
+            <ReceivingSkuSummary rows={receivingSkuRows} />
+            <LifecycleOperationActions title={t("adminContainerLifecycleNodePanel")}>
+              <Button
+                type="button"
+                onClick={() => onOpenReceiptEditor(null, buildInboundReceiptLaunchContext(lifecycle))}
+              >
+                <PackageCheck className="h-4 w-4" />
+                {t("newInbound")}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!selectedPackingList}
+                onClick={() => selectedPackingList && onOpenReceiptEditor(selectedPackingList.id)}
+              >
+                <ExternalLink className="h-4 w-4" />
+                {t("editReceipt")}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!selectedPackingList}
+                onClick={() => selectedPackingList && onOpenInboundDetail(selectedPackingList.id)}
+              >
+                <ClipboardList className="h-4 w-4" />
+                {t("inboundDetailOpenPage")}
+              </Button>
+            </LifecycleOperationActions>
+          </>
         ) : null}
 
-        {node?.kind === "inventory" ? <CurrentInventorySkuSummary rows={currentInventorySkuRows} /> : null}
+        {node?.kind === "inventory" ? (
+          <>
+            <CurrentInventorySkuSummary rows={currentInventorySkuRows} />
+            <LifecycleOperationActions title={t("adminContainerLifecycleNodePanel")}>
+              <Button type="button" onClick={() => onOpenContainerDetail({ openTransferDialog: true })}>
+                <Boxes className="h-4 w-4" />
+                {t("addTransfer")}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => onOpenInventorySummary(buildInventorySummaryNavigationContext(lifecycle))}
+              >
+                <ExternalLink className="h-4 w-4" />
+                {t("inventorySummary")}
+              </Button>
+              <Button type="button" variant="outline" onClick={() => onOpenShipmentEditor(null)}>
+                <Send className="h-4 w-4" />
+                {t("newOutbound")}
+              </Button>
+            </LifecycleOperationActions>
+          </>
+        ) : null}
+
+        {node?.kind === "transfer" ? (
+          <LifecycleOperationActions title={t("containerLifecycleTransferNode")}>
+            <div className="rounded-md border border-slate-200 bg-white p-3 text-sm text-slate-600">
+              {t("adminContainerLifecycleTransferHint")}
+            </div>
+            <Button type="button" onClick={() => onOpenContainerDetail({ openTransferDialog: true })}>
+              <Boxes className="h-4 w-4" />
+              {t("addTransfer")}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenInventorySummary(buildInventorySummaryNavigationContext(lifecycle))}
+            >
+              <ExternalLink className="h-4 w-4" />
+              {t("inventorySummary")}
+            </Button>
+          </LifecycleOperationActions>
+        ) : null}
 
         {node?.kind === "picking-order" ? (
-          <OutboundOrderSummary document={selectedPickingOrder} containerNo={lifecycle.summary.containerNo} />
+          <>
+            <OutboundOrderSummary document={selectedPickingOrder} containerNo={lifecycle.summary.containerNo} containerId={lifecycle.summary.containerId} />
+            <LifecycleOperationActions title={t("adminContainerLifecycleNodePanel")}>
+              <Button type="button" onClick={() => onOpenShipmentEditor(null)}>
+                <Send className="h-4 w-4" />
+                {t("newOutbound")}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!selectedPickingOrder}
+                onClick={() => selectedPickingOrder && onOpenShipmentEditor(selectedPickingOrder.id)}
+              >
+                <ExternalLink className="h-4 w-4" />
+                {t("edit")}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!selectedPickingOrder}
+                onClick={() => selectedPickingOrder && onOpenOutboundDocument(selectedPickingOrder.id)}
+              >
+                <ClipboardList className="h-4 w-4" />
+                {t("customerPortalOpenOutboundAction")}
+              </Button>
+            </LifecycleOperationActions>
+          </>
         ) : null}
 
         {node?.kind === "pickup" ? (
@@ -860,11 +1040,64 @@ function AdminLifecycleNodePanel({
   );
 }
 
+function LifecycleDraftNodePalette() {
+  const { t } = useI18n();
+  const options: Array<{ kind: ContainerLifecycleDraftNodeKind; icon: ReactNode; label: string }> = [
+    { kind: "tracking", icon: <MapPinned className="h-4 w-4" />, label: t("containerLifecycleTrackingNode") },
+    { kind: "pickup", icon: <Truck className="h-4 w-4" />, label: t("containerLifecyclePickupNode") },
+    { kind: "delivery", icon: <Send className="h-4 w-4" />, label: t("containerLifecycleDeliveryNode") }
+  ];
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white p-2 shadow-sm">
+      {options.map((option) => (
+        <button
+          key={option.kind}
+          type="button"
+          draggable
+          className="inline-flex h-9 cursor-grab items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-white active:cursor-grabbing"
+          onDragStart={(event) => handleLifecycleDraftNodeDragStart(event, option.kind)}
+        >
+          {option.icon}
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function handleLifecycleDraftNodeDragStart(event: DragEvent<HTMLButtonElement>, kind: ContainerLifecycleDraftNodeKind) {
+  event.dataTransfer.setData(CONTAINER_LIFECYCLE_DRAFT_NODE_MIME_TYPE, kind);
+  event.dataTransfer.effectAllowed = "copy";
+}
+
+function getLifecycleDraftNodeTitle(kind: ContainerLifecycleDraftNodeKind, t: (key: string) => string) {
+  switch (kind) {
+    case "tracking":
+      return t("containerLifecycleTrackingNode");
+    case "pickup":
+      return t("containerLifecyclePickupNode");
+    case "delivery":
+      return t("containerLifecycleDeliveryNode");
+  }
+}
+
 function PanelSectionTitle({ icon, title }: { icon: ReactNode; title: string }) {
   return (
     <div className="flex items-center gap-2 border-b border-slate-100 pb-2 text-sm font-semibold text-slate-950">
       <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-slate-100 text-slate-700">{icon}</span>
       <span>{title}</span>
+    </div>
+  );
+}
+
+function LifecycleOperationActions({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <PanelSectionTitle icon={<ExternalLink className="h-4 w-4" />} title={title} />
+      <div className="grid gap-2">
+        {children}
+      </div>
     </div>
   );
 }
@@ -941,9 +1174,9 @@ function CurrentInventorySkuSummary({ rows }: { rows: SkuQuantityRow[] }) {
   );
 }
 
-function OutboundOrderSummary({ document, containerNo }: { document?: OutboundDocument; containerNo: string }) {
+function OutboundOrderSummary({ document, containerNo, containerId }: { document?: OutboundDocument; containerNo: string; containerId?: number | null }) {
   const { t } = useI18n();
-  const rows = useMemo(() => buildOutboundOrderGoodsRows(document, containerNo), [document, containerNo]);
+  const rows = useMemo(() => buildOutboundOrderGoodsRows(document, containerNo, containerId), [containerId, document, containerNo]);
 
   return (
     <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -1251,16 +1484,17 @@ function getOutboundOrderReference(document: OutboundDocument) {
   return document.packingListNo || document.orderRef || `#${document.id}`;
 }
 
-export function buildOutboundOrderGoodsRows(document: OutboundDocument | undefined, containerNo: string): OutboundOrderGoodsRow[] {
+export function buildOutboundOrderGoodsRows(document: OutboundDocument | undefined, containerNo: string, containerId?: number | null): OutboundOrderGoodsRow[] {
   if (!document) {
     return [];
   }
   const normalizedContainerNo = normalizeContainerNo(containerNo);
+  const normalizedContainerId = containerId && containerId > 0 ? containerId : 0;
   const hasAnyPickAllocation = (document.lines ?? []).some((line) => (line.pickAllocations ?? []).length > 0);
 
   return (document.lines ?? []).map((line, index) => {
     const matchingAllocations = (line.pickAllocations ?? []).filter(
-      (allocation) => normalizeContainerNo(allocation.containerNo) === normalizedContainerNo
+      (allocation) => allocationMatchesContainer(allocation, normalizedContainerId, normalizedContainerNo)
     );
     const allocatedQty = matchingAllocations.reduce((total, allocation) => total + (allocation.allocatedQty || 0), 0);
     const quantity = line.quantity || 0;
@@ -1276,10 +1510,21 @@ export function buildOutboundOrderGoodsRows(document: OutboundDocument | undefin
   });
 }
 
+function allocationMatchesContainer(allocation: { containerId?: number; containerNo?: string }, containerId: number, containerNo: string) {
+  if (containerId > 0) {
+    if (allocation.containerId && allocation.containerId > 0) {
+      return allocation.containerId === containerId;
+    }
+    return normalizeContainerNo(allocation.containerNo) === containerNo;
+  }
+  return normalizeContainerNo(allocation.containerNo) === containerNo;
+}
+
 function buildCurrentInventorySkuRows(
   receivedRows: ReceivingSkuQuantityRow[],
   pickingOrders: OutboundDocument[],
-  containerNo: string
+  containerNo: string,
+  containerId?: number | null
 ): SkuQuantityRow[] {
   const rows = new Map<string, SkuQuantityRow>();
 
@@ -1293,7 +1538,7 @@ function buildCurrentInventorySkuRows(
   });
 
   pickingOrders.forEach((document) => {
-    buildOutboundOrderGoodsRows(document, containerNo).forEach((line) => {
+    buildOutboundOrderGoodsRows(document, containerNo, containerId).forEach((line) => {
       const shippedQuantity = line.allocatedQty || 0;
       if (shippedQuantity <= 0) {
         return;
@@ -1385,6 +1630,15 @@ function createEmptyDeliveryForm(): DeliveryFormState {
   };
 }
 
+function createDraftDeliveryForm(lifecycle: ContainerLifecycle): DeliveryFormState {
+  const form = createEmptyDeliveryForm();
+  const firstPickingOrder = lifecycle.pickingOrders[0];
+  return {
+    ...form,
+    outboundDocumentId: firstPickingOrder ? String(firstPickingOrder.id) : ""
+  };
+}
+
 function createDeliveryFormFromLifecycle(lifecycle: ContainerLifecycle, node?: ContainerLifecycleNodeAction | null): DeliveryFormState {
   const latestDelivery = node?.deliveryEventId
     ? lifecycle.deliveryEvents.find((event) => event.id === node.deliveryEventId)
@@ -1406,6 +1660,38 @@ function createDeliveryFormFromLifecycle(lifecycle: ContainerLifecycle, node?: C
     visibility: normalizeLifecycleVisibilityFormValue(latestDelivery?.visibility),
     displayLabel: latestDelivery?.displayLabel || latestDelivery?.publicLabel || latestDelivery?.internalLabel || ""
   };
+}
+
+function buildInboundReceiptLaunchContext(lifecycle: ContainerLifecycle): InboundReceiptEditorLaunchContext {
+  const container = lifecycle.container;
+  const firstPackingList = lifecycle.packingLists[0];
+  return {
+    customerId: container?.customerId || lifecycle.summary.customerId,
+    locationId: container?.locationId || firstPackingList?.locationId,
+    containerId: container?.id || firstPackingList?.containerId,
+    containerNo: container?.containerNo || firstPackingList?.containerNo || lifecycle.summary.containerNo,
+    containerType: normalizeContainerTypeValue(container?.containerType || firstPackingList?.containerType),
+    forceHandlingMode: normalizeInboundHandlingModeValue(container?.handlingMode || firstPackingList?.handlingMode),
+    storageSection: firstPackingList?.storageSection
+  };
+}
+
+function buildInventorySummaryNavigationContext(lifecycle: ContainerLifecycle): InventorySummaryNavigationContext {
+  const container = lifecycle.container;
+  const firstPackingList = lifecycle.packingLists[0];
+  return {
+    searchTerm: lifecycle.summary.containerNo,
+    customerId: container?.customerId || lifecycle.summary.customerId,
+    locationId: container?.locationId || firstPackingList?.locationId
+  };
+}
+
+function normalizeContainerTypeValue(value: string | null | undefined): ContainerType {
+  return value === "WEST_COAST_TRANSFER" ? "WEST_COAST_TRANSFER" : "NORMAL";
+}
+
+function normalizeInboundHandlingModeValue(value: string | null | undefined): InboundReceiptEditorLaunchContext["forceHandlingMode"] {
+  return value === "SEALED_TRANSIT" ? "SEALED_TRANSIT" : "PALLETIZED";
 }
 
 function toDateTimeInputValue(value: string | Date | null | undefined) {

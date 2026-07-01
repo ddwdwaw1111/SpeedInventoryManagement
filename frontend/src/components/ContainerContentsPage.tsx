@@ -30,7 +30,7 @@ type ContainerContentsPageProps = {
   currentUserRole: UserRole;
   isLoading: boolean;
   onOpenContainerDetail: (containerNo: string) => void;
-  onOpenContainerLifecycle?: (customerId: number | null, containerNo: string) => void;
+  onOpenContainerLifecycle?: (customerId: number | null, containerNo: string, containerId?: number | null) => void;
   onNavigate: (page: import("../lib/routes").PageKey) => void;
 };
 const CONTAINER_CONTENTS_COLUMN_ORDER_PREFERENCE_KEY = "container-contents.column-order";
@@ -178,6 +178,8 @@ export function ContainerContentsPage({
       filterable: false,
       renderCell: (params) => {
         const lifecycleCustomerId = params.row.customerIds.length === 1 ? params.row.customerIds[0] : null;
+        const lifecycleContainerIds = [...new Set(params.row.items.map((item) => item.containerId).filter((containerId): containerId is number => Boolean(containerId && containerId > 0)))];
+        const lifecycleContainerId = lifecycleContainerIds.length === 1 ? lifecycleContainerIds[0] : null;
         return (
           <div className="flex flex-wrap gap-1">
             <Button
@@ -193,7 +195,7 @@ export function ContainerContentsPage({
               size="small"
               variant="text"
               startIcon={<OpenInNewRoundedIcon fontSize="small" />}
-              onClick={() => onOpenContainerLifecycle?.(lifecycleCustomerId, params.row.containerNo)}
+              onClick={() => onOpenContainerLifecycle?.(lifecycleCustomerId, params.row.containerNo, lifecycleContainerId)}
               disabled={!onOpenContainerLifecycle}
               aria-label={`${t("openContainerLifecycle")} ${params.row.containerNo}`}
             >

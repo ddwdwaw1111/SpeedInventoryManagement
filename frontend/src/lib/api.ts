@@ -171,6 +171,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+function encodeContainerRef(containerRef: number | string) {
+  return typeof containerRef === "number" ? String(containerRef) : encodeURIComponent(containerRef);
+}
+
 function buildDocumentListQueryParams(limit: number, archiveScopeOrQuery: DocumentArchiveScope | DocumentListQuery) {
   const query = typeof archiveScopeOrQuery === "string"
     ? { archiveScope: archiveScopeOrQuery }
@@ -462,6 +466,10 @@ export const api = {
     return request<ContainerLifecycle>(`/v2/containers/${encodeURIComponent(containerNo)}/lifecycle?${params.toString()}`);
   },
 
+  getV2ContainerLifecycleByID(containerId: number) {
+    return request<ContainerLifecycle>(`/v2/containers/${containerId}/lifecycle`);
+  },
+
   saveV2Container(payload: ContainerPayload) {
     return request<ContainerRecord>("/v2/containers", {
       method: "POST",
@@ -469,15 +477,15 @@ export const api = {
     });
   },
 
-  createV2ContainerTrackingEvent(containerNo: string, payload: ContainerTrackingEventPayload) {
-    return request<ContainerTrackingEvent>(`/v2/containers/${encodeURIComponent(containerNo)}/tracking-events`, {
+  createV2ContainerTrackingEvent(containerRef: number | string, payload: ContainerTrackingEventPayload) {
+    return request<ContainerTrackingEvent>(`/v2/containers/${encodeContainerRef(containerRef)}/tracking-events`, {
       method: "POST",
       body: JSON.stringify(payload)
     });
   },
 
-  createV2ContainerPickupAssignment(containerNo: string, payload: ContainerPickupAssignmentPayload) {
-    return request<ContainerPickupAssignment>(`/v2/containers/${encodeURIComponent(containerNo)}/pickup-assignments`, {
+  createV2ContainerPickupAssignment(containerRef: number | string, payload: ContainerPickupAssignmentPayload) {
+    return request<ContainerPickupAssignment>(`/v2/containers/${encodeContainerRef(containerRef)}/pickup-assignments`, {
       method: "POST",
       body: JSON.stringify(payload)
     });

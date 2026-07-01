@@ -1,4 +1,4 @@
-type InventorySummaryContext = {
+export type InventorySummaryContext = {
   searchTerm?: string;
   customerId?: number;
   locationId?: number;

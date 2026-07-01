@@ -1,9 +1,16 @@
 import type { InboundHandlingMode, InboundLaunchIntent } from "./activityManagementLaunchContext";
+import type { ContainerType } from "./types";
 
 export type InboundReceiptEditorLaunchContext = {
   scheduledDate?: string;
   forceHandlingMode?: InboundHandlingMode;
   inboundIntent?: InboundLaunchIntent;
+  containerId?: number;
+  containerNo?: string;
+  containerType?: ContainerType;
+  customerId?: number;
+  locationId?: number;
+  storageSection?: string;
 };
 
 const STORAGE_KEY = "sim-inbound-receipt-editor-launch";

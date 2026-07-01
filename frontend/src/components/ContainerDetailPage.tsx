@@ -8,7 +8,7 @@ import OutboxOutlinedIcon from "@mui/icons-material/OutboxOutlined";
 import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
 import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
 import { Chip, Dialog, DialogContent, DialogTitle, IconButton } from "@mui/material";
-import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../lib/api";
 import { formatDateTimeValue, formatDateValue, parseDateValue } from "../lib/dates";
@@ -21,6 +21,7 @@ import {
   type ContainerSkuCard
 } from "../lib/containerInventory";
 import { setPendingAllActivityContext } from "../lib/allActivityContext";
+import { consumePendingContainerDetailLaunchContext, type ContainerDetailLaunchContext } from "../lib/containerDetailLaunchContext";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import { type PageKey } from "../lib/routes";
@@ -59,7 +60,7 @@ type ContainerDetailPageProps = {
   isLoading: boolean;
   onRefresh: () => Promise<void>;
   onNavigate: (page: PageKey) => void;
-  onOpenContainerLifecycle?: (customerId: number | null, containerNo: string) => void;
+  onOpenContainerLifecycle?: (customerId: number | null, containerNo: string, containerId?: number | null) => void;
   onBackToList: () => void;
 };
 
@@ -88,6 +89,7 @@ export function ContainerDetailPage({
   const [inventoryDialogSubmitting, setInventoryDialogSubmitting] = useState(false);
   const [historyTypeFilter, setHistoryTypeFilter] = useState<ContainerHistoryFilter>("ALL");
   const [transferForm, setTransferForm] = useState<ContainerTransferFormState>(createEmptyContainerTransferForm());
+  const pendingLaunchContextRef = useRef<ContainerDetailLaunchContext | null | undefined>(undefined);
 
   const containerRows = useMemo(
     () => buildAllContainerContentsRows(items, movements, locations),
@@ -164,6 +166,10 @@ export function ContainerDetailPage({
   );
   const canOpenTransferDialog = canManageInventory && transferableContainerItems.length > 0;
   const lifecycleCustomerId = container?.customerIds.length === 1 ? container.customerIds[0] : null;
+  const lifecycleContainerId = useMemo(() => {
+    const containerIds = [...new Set((container?.items ?? []).map((item) => item.containerId).filter((containerId): containerId is number => Boolean(containerId && containerId > 0)))];
+    return containerIds.length === 1 ? containerIds[0] : null;
+  }, [container?.items]);
   const containerPalletCount = useMemo(
     () => (container?.items ?? []).reduce((sum, item) => sum + item.pallets, 0),
     [container]
@@ -178,6 +184,27 @@ export function ContainerDetailPage({
   useEffect(() => {
     setHistoryPage(1);
   }, [historyTypeFilter, historyAscending]);
+
+  useEffect(() => {
+    if (pendingLaunchContextRef.current === undefined) {
+      pendingLaunchContextRef.current = consumePendingContainerDetailLaunchContext();
+    }
+
+    const launchContext = pendingLaunchContextRef.current;
+    if (!launchContext?.openTransferDialog) {
+      return;
+    }
+
+    if (canOpenTransferDialog) {
+      openTransferDialog();
+      pendingLaunchContextRef.current = null;
+      return;
+    }
+
+    if (!isLoading) {
+      pendingLaunchContextRef.current = null;
+    }
+  }, [canOpenTransferDialog, isLoading]);
 
   function openTransferDialog() {
     setTransferForm(createEmptyContainerTransferForm());
@@ -288,7 +315,7 @@ export function ContainerDetailPage({
                     if (!normalizedContainerNo) {
                       return;
                     }
-                    onOpenContainerLifecycle?.(lifecycleCustomerId, normalizedContainerNo);
+                    onOpenContainerLifecycle?.(lifecycleCustomerId, normalizedContainerNo, lifecycleContainerId);
                   }}
                   disabled={!normalizedContainerNo || !onOpenContainerLifecycle}
                   className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"

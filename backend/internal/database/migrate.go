@@ -725,6 +725,7 @@ func Migrate(db *sql.DB) error {
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			outbound_document_id BIGINT DEFAULT NULL,
 			customer_id BIGINT DEFAULT NULL,
+			container_id BIGINT NOT NULL DEFAULT 0,
 			container_no VARCHAR(120) NOT NULL DEFAULT '',
 			event_type VARCHAR(64) NOT NULL,
 			event_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -743,6 +744,7 @@ func Migrate(db *sql.DB) error {
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			PRIMARY KEY (id),
 			KEY idx_delivery_events_outbound_document_id (outbound_document_id),
+			KEY idx_delivery_events_container_id (container_id),
 			KEY idx_delivery_events_customer_container_time (customer_id, container_no, event_time, id),
 			KEY idx_delivery_events_event_type (event_type),
 			KEY idx_delivery_events_bol_number (bol_number),
@@ -753,6 +755,8 @@ func Migrate(db *sql.DB) error {
 				FOREIGN KEY (customer_id) REFERENCES customers (id)
 				ON DELETE SET NULL
 		)`,
+		`ALTER TABLE delivery_events ADD COLUMN IF NOT EXISTS container_id BIGINT NOT NULL DEFAULT 0 AFTER customer_id`,
+		`CREATE INDEX IF NOT EXISTS idx_delivery_events_container_id ON delivery_events (container_id)`,
 		`ALTER TABLE delivery_events ADD COLUMN IF NOT EXISTS visibility VARCHAR(16) NOT NULL DEFAULT 'BOTH' AFTER notes`,
 		`ALTER TABLE delivery_events ADD COLUMN IF NOT EXISTS public_status VARCHAR(64) DEFAULT NULL AFTER visibility`,
 		`ALTER TABLE delivery_events ADD COLUMN IF NOT EXISTS public_label VARCHAR(190) DEFAULT NULL AFTER public_status`,
@@ -1253,6 +1257,18 @@ func Migrate(db *sql.DB) error {
 			AND COALESCE(TRIM(sl.container_no_snapshot), '') <> ''
 	`); err != nil {
 		return fmt.Errorf("backfill stock ledger container ids: %w", err)
+	}
+
+	if _, err := db.Exec(`
+		UPDATE delivery_events de
+		JOIN containers cn
+			ON cn.customer_id = de.customer_id
+			AND UPPER(TRIM(cn.container_no)) = UPPER(TRIM(de.container_no))
+		SET de.container_id = cn.id
+		WHERE COALESCE(de.container_id, 0) = 0
+			AND COALESCE(TRIM(de.container_no), '') <> ''
+	`); err != nil {
+		return fmt.Errorf("backfill delivery event container ids: %w", err)
 	}
 
 	if err := backfillStockLedgerPalletCountsFromLegacyPalletIDs(db); err != nil {

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { renderWithProviders } from "../test/renderWithProviders";
 import { createItem, createLocation, createMovement } from "../test/fixtures";
+import { setPendingContainerDetailLaunchContext } from "../lib/containerDetailLaunchContext";
 import { ContainerDetailPage } from "./ContainerDetailPage";
 
 const { createInventoryAdjustment, createInventoryTransfer } = vi.hoisted(() => ({
@@ -197,6 +198,28 @@ describe("ContainerDetailPage", () => {
     expect(onRefresh).toHaveBeenCalled();
     expect(onNavigate).not.toHaveBeenCalled();
     expect(await screen.findByText("Transfer saved successfully.")).toBeInTheDocument();
+  });
+
+  it("opens the transfer dialog from launch context", async () => {
+    setPendingContainerDetailLaunchContext({ openTransferDialog: true });
+
+    renderWithProviders(
+      <ContainerDetailPage
+        routeKey="/container-contents/GCXU5817233"
+        containerNo="GCXU5817233"
+        items={[createItem({ containerId: 101, containerNo: "GCXU5817233", quantity: 8, availableQty: 8, pallets: 1 })]}
+        movements={[createMovement({ containerNo: "GCXU5817233" })]}
+        locations={[createLocation(), createLocation({ id: 2, name: "LA", sectionNames: ["TEMP", "BULK"] })]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onNavigate={vi.fn()}
+        onBackToList={vi.fn()}
+      />
+    );
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByLabelText("Destination Warehouse")).toBeInTheDocument();
   });
 
   it("posts aggregate SKU rows from the transfer dialog", async () => {

@@ -25,7 +25,9 @@ import { getCustomerPortalPath, isCustomerPortalPath } from "./customerPortal/ro
 import { ApiError, api } from "./lib/api";
 import { getErrorMessage } from "./lib/errors";
 import { setPendingActivityManagementLaunchContext } from "./lib/activityManagementLaunchContext";
+import { setPendingContainerDetailLaunchContext, type ContainerDetailLaunchContext } from "./lib/containerDetailLaunchContext";
 import { setPendingInboundReceiptEditorLaunchContext, type InboundReceiptEditorLaunchContext } from "./lib/inboundReceiptEditorLaunchContext";
+import { setPendingInventorySummaryContext, type InventorySummaryContext } from "./lib/inventorySummaryContext";
 import { setPendingOutboundShipmentEditorLaunchContext, type OutboundShipmentEditorLaunchContext } from "./lib/outboundShipmentEditorLaunchContext";
 import { useI18n } from "./lib/i18n";
 import { useSettings } from "./lib/settings";
@@ -311,13 +313,24 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
     setCurrentPathname(window.location.pathname);
   }
 
-  function handleNavigateToContainerDetail(containerNo: string) {
+  function handleNavigateToContainerDetail(containerNo: string, context?: ContainerDetailLaunchContext) {
+    if (context) {
+      setPendingContainerDetailLaunchContext(context);
+    }
     navigateToContainerDetail(setActivePage, containerNo);
     setCurrentPathname(window.location.pathname);
   }
 
-  function handleNavigateToContainerLifecycle(customerId?: number | null, containerNo?: string | null) {
-    navigateToContainerLifecycle(setActivePage, customerId, containerNo);
+  function handleNavigateToContainerLifecycle(customerId?: number | null, containerNo?: string | null, containerId?: number | null) {
+    navigateToContainerLifecycle(setActivePage, customerId, containerNo, containerId);
+    setCurrentPathname(window.location.pathname);
+  }
+
+  function handleNavigateToInventorySummary(context?: InventorySummaryContext) {
+    if (context) {
+      setPendingInventorySummaryContext(context);
+    }
+    navigateToPage("inventory-summary", setActivePage);
     setCurrentPathname(window.location.pathname);
   }
 
@@ -803,7 +816,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
             ) : null}
             {activePage === "container-contents" ? renderWithSuspense(<ContainerContentsPage items={items} movements={movements} customers={customers} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onOpenContainerDetail={handleNavigateToContainerDetail} onOpenContainerLifecycle={handleNavigateToContainerLifecycle} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "container-detail" ? renderWithSuspense(<ContainerDetailPage routeKey={currentPathname} containerNo={selectedContainerDetailNo} items={items} movements={movements} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} onOpenContainerLifecycle={handleNavigateToContainerLifecycle} onBackToList={() => handleNavigateToPage("container-contents")} />) : null}
-            {activePage === "container-lifecycle" ? renderWithSuspense(<AdminContainerLifecyclePage routeScope={selectedContainerLifecycleScope} customers={customers} locations={locations} onOpenContainerLifecycle={handleNavigateToContainerLifecycle} onOpenContainerDetail={handleNavigateToContainerDetail} onOpenInboundDetail={handleNavigateToInboundDetail} onOpenReceiptEditor={handleNavigateToReceiptEditor} onOpenOutboundDocument={handleNavigateToOutboundDocument} onOpenShipmentEditor={handleNavigateToShipmentEditor} />) : null}
+            {activePage === "container-lifecycle" ? renderWithSuspense(<AdminContainerLifecyclePage routeScope={selectedContainerLifecycleScope} customers={customers} locations={locations} onOpenContainerLifecycle={handleNavigateToContainerLifecycle} onOpenContainerDetail={handleNavigateToContainerDetail} onOpenInboundDetail={handleNavigateToInboundDetail} onOpenReceiptEditor={handleNavigateToReceiptEditor} onOpenOutboundDocument={handleNavigateToOutboundDocument} onOpenShipmentEditor={handleNavigateToShipmentEditor} onOpenInventorySummary={handleNavigateToInventorySummary} />) : null}
             {activePage === "all-activity" ? renderWithSuspense(<AllActivityPage movements={movements} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "customers" ? renderWithSuspense(<CustomerManagementPage customers={customers} items={items} inboundDocuments={activeInboundDocuments} outboundDocuments={activeOutboundDocuments} movements={movements} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} onOpenCustomerPortal={handleNavigateToCustomerPortal} />) : null}
             {activePage === "audit-logs" && canViewAuditLogs ? renderWithSuspense(<AuditLogPage auditLogs={auditLogs} currentUserRole={currentUser.role} isLoading={isLoading} />) : null}

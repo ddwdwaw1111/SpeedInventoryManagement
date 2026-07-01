@@ -101,6 +101,7 @@ func TestDeliveryServiceMapsBOLCommand(t *testing.T) {
 	service := NewDeliveryService(repo)
 
 	event, err := service.ReceiveBOL(context.Background(), 99, DeliveryCommand{
+		ContainerID:  42,
 		BOLNumber:   "BOL-123",
 		ContainerNo: "CONT-1",
 		EventTime:   "2026-06-15T12:00:00Z",
@@ -114,7 +115,7 @@ func TestDeliveryServiceMapsBOLCommand(t *testing.T) {
 	if len(repo.bolInputs) != 1 {
 		t.Fatalf("expected one BOL write, got %d", len(repo.bolInputs))
 	}
-	if repo.bolInputs[0].ContainerNo != "CONT-1" || repo.bolInputs[0].EventTime != "2026-06-15T12:00:00Z" {
+	if repo.bolInputs[0].ContainerID != 42 || repo.bolInputs[0].ContainerNo != "CONT-1" || repo.bolInputs[0].EventTime != "2026-06-15T12:00:00Z" {
 		t.Fatalf("unexpected BOL input: %#v", repo.bolInputs[0])
 	}
 }
@@ -149,8 +150,21 @@ func TestOutboundDocumentReferencesContainerNormalizesInput(t *testing.T) {
 		PickAllocations: []OutboundPickAllocation{{ContainerNo: "CONT-A"}},
 	}}}
 
-	if !outboundDocumentReferencesContainer(document, normalizeContainerNo(" cont-a ")) {
+	if !outboundDocumentReferencesContainer(document, 0, normalizeContainerNo(" cont-a ")) {
 		t.Fatalf("expected outbound document to reference normalized container")
+	}
+}
+
+func TestOutboundDocumentReferencesContainerPrefersContainerID(t *testing.T) {
+	document := OutboundDocument{Lines: []OutboundDocumentLine{{
+		PickAllocations: []OutboundPickAllocation{{ContainerID: 8, ContainerNo: "CONT-A"}},
+	}}}
+
+	if outboundDocumentReferencesContainer(document, 7, "CONT-A") {
+		t.Fatalf("expected non-matching container id to override matching container number")
+	}
+	if !outboundDocumentReferencesContainer(document, 8, "CONT-RENAMED") {
+		t.Fatalf("expected matching container id to survive container number rename")
 	}
 }
 
@@ -194,5 +208,38 @@ func TestBuildContainerSummariesKeepsDuplicateContainerNumbersScopedByCustomer(t
 	second := summaries[containerSummaryKey(8, "CONT-DUP")]
 	if len(summaries) != 2 || first.TotalExpectedQty != 10 || second.TotalExpectedQty != 20 {
 		t.Fatalf("expected duplicate container numbers to stay separated by customer, got %#v", summaries)
+	}
+}
+
+func TestBuildContainerSummariesGroupsRenamedContainerByID(t *testing.T) {
+	summaries := buildContainerSummaries([]Container{{
+		ID:           42,
+		CustomerID:   7,
+		CustomerName: "Customer",
+		ContainerNo:  "CONT-NEW",
+	}}, []InboundDocument{{
+		ID:               1,
+		ContainerID:      42,
+		CustomerID:       7,
+		CustomerName:     "Customer",
+		ContainerNo:      "CONT-OLD",
+		TotalExpectedQty: 10,
+	}}, []Item{{
+		ContainerID:  42,
+		CustomerID:   7,
+		CustomerName: "Customer",
+		ContainerNo:  "CONT-OLD",
+		Quantity:     8,
+	}}, nil)
+
+	summary, ok := summaries[containerSummaryKey(7, "CONT-NEW")]
+	if !ok {
+		t.Fatalf("expected renamed container data to be keyed by current container number")
+	}
+	if summary.ContainerID != 42 || summary.TotalExpectedQty != 10 || summary.CurrentQty != 8 {
+		t.Fatalf("expected data to be grouped by container id, got %#v", summary)
+	}
+	if _, ok := summaries[containerSummaryKey(7, "CONT-OLD")]; ok {
+		t.Fatalf("expected old container number to be folded into current container")
 	}
 }

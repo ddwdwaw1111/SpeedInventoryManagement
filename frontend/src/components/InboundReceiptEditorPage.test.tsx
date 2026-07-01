@@ -11,6 +11,7 @@ vi.mock("../lib/api", () => ({
 }));
 
 import { api } from "../lib/api";
+import { setPendingInboundReceiptEditorLaunchContext } from "../lib/inboundReceiptEditorLaunchContext";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { createCustomer, createInboundDocument, createLocation } from "../test/fixtures";
 import { InboundReceiptEditorPage } from "./InboundReceiptEditorPage";
@@ -167,6 +168,44 @@ describe("InboundReceiptEditorPage", () => {
     expect(screen.getByLabelText("Warehouse")).toHaveValue("");
     expect(screen.getByLabelText("Customer")).toHaveValue("");
     expect(screen.getByLabelText("Container No.")).toHaveValue("");
+  });
+
+  it("prefills new receipt header from launch context", () => {
+    setPendingInboundReceiptEditorLaunchContext({
+      containerId: 42,
+      containerNo: "mscu1234567",
+      customerId: 1,
+      locationId: 1,
+      containerType: "WEST_COAST_TRANSFER",
+      forceHandlingMode: "PALLETIZED",
+      storageSection: "BULK"
+    });
+
+    renderWithProviders(
+      <InboundReceiptEditorPage
+        routeKey="/inbound-management/new"
+        documentId={null}
+        document={null}
+        items={[]}
+        skuMasters={[]}
+        locations={[createLocation({ sectionNames: ["TEMP", "BULK"] })]}
+        customers={[createCustomer()]}
+        inboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onBackToList={vi.fn()}
+        onOpenInboundDetail={vi.fn()}
+        onOpenReceiptEditor={vi.fn()}
+      />
+    );
+
+    expect(screen.getByLabelText("Warehouse")).toHaveValue("1");
+    expect(screen.getByLabelText("Customer")).toHaveValue("1");
+    expect(screen.getByLabelText("Container No.")).toHaveValue("MSCU1234567");
+    expect(screen.getByLabelText("Handling Mode")).toHaveValue("PALLETIZED");
+    expect(screen.getByLabelText("Container Type")).toHaveValue("WEST_COAST_TRANSFER");
+    expect(screen.getByLabelText("Section #1")).toHaveValue("BULK");
   });
 
   it("adds SKU rows from the dashed table row", () => {

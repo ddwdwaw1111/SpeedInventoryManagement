@@ -51,6 +51,49 @@ describe("ContainerLifecycleView", () => {
     expect(screen.getByText("Container Lifecycle CNT-EMPTY-ARRAYS")).toBeInTheDocument();
   });
 
+  it("renders draft lifecycle nodes supplied by the admin drag palette", () => {
+    renderWithProviders(
+      <ContainerLifecycleView
+        containerNo="CNT-DRAFT-NODE"
+        visibilityMode="admin"
+        lifecycle={{
+          summary: {
+            containerNo: "CNT-DRAFT-NODE",
+            customerId: 1,
+            customerName: "Acme Warehouse",
+            warehouses: [],
+            packingListCount: 0,
+            firstPackingListId: 0,
+            totalExpectedQty: 0,
+            totalReceivedQty: 0,
+            currentQty: 0,
+            availableQty: 0,
+            shippedQty: 0,
+            outboundOrderCount: 0,
+            pickingOrderRefs: [],
+            transferCount: 0,
+            palletCount: 0,
+            status: "PENDING",
+            firstReceivedAt: null,
+            lastActivityAt: null
+          },
+          packingLists: [],
+          pickingOrders: [],
+          movements: [],
+          lifecycleEvents: []
+        } as unknown as CustomerPortalContainerLifecycle}
+        draftNodes={[{
+          id: "draft-tracking",
+          kind: "tracking",
+          title: "Tracking",
+          position: { x: 120, y: 80 }
+        }]}
+      />
+    );
+
+    expect(screen.getByText("Tracking")).toBeInTheDocument();
+  });
+
   it("hides internal-only lifecycle events and staff pickup details in customer mode", () => {
     renderWithProviders(
       <ContainerLifecycleView

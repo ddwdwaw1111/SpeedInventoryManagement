@@ -144,6 +144,7 @@ type inboundDocumentLineRow struct {
 type InboundDocumentFilters struct {
 	ArchiveScope   string
 	Search         string
+	ContainerID    int64
 	CustomerID     int64
 	LocationID     int64
 	Status         string
@@ -168,6 +169,10 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 	if filters.CustomerID > 0 {
 		whereClauses = append(whereClauses, "d.customer_id = ?")
 		args = append(args, filters.CustomerID)
+	}
+	if filters.ContainerID > 0 {
+		whereClauses = append(whereClauses, "COALESCE(d.container_id, 0) = ?")
+		args = append(args, filters.ContainerID)
 	}
 	if filters.LocationID > 0 {
 		whereClauses = append(whereClauses, "d.location_id = ?")

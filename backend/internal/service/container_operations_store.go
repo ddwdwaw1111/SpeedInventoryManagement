@@ -51,12 +51,14 @@ type CreateContainerInput struct {
 }
 
 type ContainerFilters struct {
+	ID         int64
 	CustomerID int64
 	Search     string
 }
 
 type CreateContainerTrackingEventInput struct {
 	CustomerID      int64  `json:"customerId"`
+	ContainerID     int64  `json:"containerId"`
 	ContainerNo     string `json:"containerNo"`
 	EventType       string `json:"eventType"`
 	EventTime       string `json:"eventTime"`
@@ -92,12 +94,14 @@ type ContainerTrackingEvent struct {
 }
 
 type ContainerTrackingEventFilters struct {
+	ContainerID int64
 	CustomerID  int64
 	ContainerNo string
 }
 
 type CreateContainerPickupAssignmentInput struct {
 	CustomerID        int64   `json:"customerId"`
+	ContainerID       int64   `json:"containerId"`
 	ContainerNo       string  `json:"containerNo"`
 	AssignmentType    string  `json:"assignmentType"`
 	DriverName        string  `json:"driverName"`
@@ -144,6 +148,7 @@ type ContainerPickupAssignment struct {
 }
 
 type ContainerPickupAssignmentFilters struct {
+	ContainerID int64
 	CustomerID  int64
 	ContainerNo string
 }
@@ -151,6 +156,7 @@ type ContainerPickupAssignmentFilters struct {
 type CreateDeliveryEventInput struct {
 	OutboundDocumentID int64  `json:"outboundDocumentId"`
 	CustomerID         int64  `json:"customerId"`
+	ContainerID        int64  `json:"containerId"`
 	ContainerNo        string `json:"containerNo"`
 	EventType          string `json:"eventType"`
 	EventTime          string `json:"eventTime"`
@@ -172,6 +178,7 @@ type DeliveryEvent struct {
 	OutboundDocumentID int64      `json:"outboundDocumentId"`
 	CustomerID         int64      `json:"customerId"`
 	CustomerName       string     `json:"customerName"`
+	ContainerID        int64      `json:"containerId"`
 	ContainerNo        string     `json:"containerNo"`
 	EventType          string     `json:"eventType"`
 	EventTime          time.Time  `json:"eventTime"`
@@ -192,6 +199,7 @@ type DeliveryEvent struct {
 }
 
 type DeliveryEventFilters struct {
+	ContainerID int64
 	CustomerID  int64
 	ContainerNo string
 }
@@ -391,6 +399,10 @@ func (s *Store) ListContainerRecords(ctx context.Context, limit int, filters Con
 	}
 	whereClauses := []string{"1 = 1"}
 	args := make([]any, 0)
+	if filters.ID > 0 {
+		whereClauses = append(whereClauses, "cn.id = ?")
+		args = append(args, filters.ID)
+	}
 	if filters.CustomerID > 0 {
 		whereClauses = append(whereClauses, "cn.customer_id = ?")
 		args = append(args, filters.CustomerID)
@@ -479,10 +491,30 @@ func (s *Store) GetContainerByNo(ctx context.Context, customerID int64, containe
 	return scanContainer(s.db.QueryRowContext(ctx, query, args...))
 }
 
+func (s *Store) GetContainerByID(ctx context.Context, containerID int64) (Container, error) {
+	if containerID <= 0 {
+		return Container{}, ErrInvalidInput
+	}
+	return s.getContainerByID(ctx, containerID)
+}
+
 func (s *Store) CreateContainerTrackingEvent(ctx context.Context, input CreateContainerTrackingEventInput) (ContainerTrackingEvent, error) {
+	customerID := input.CustomerID
+	containerID := input.ContainerID
 	containerNo := normalizeContainerNo(input.ContainerNo)
+	if containerID > 0 {
+		container, err := s.getContainerByID(ctx, containerID)
+		if err != nil {
+			return ContainerTrackingEvent{}, err
+		}
+		if customerID > 0 && customerID != container.CustomerID {
+			return ContainerTrackingEvent{}, fmt.Errorf("%w: tracking customer does not match container", ErrInvalidInput)
+		}
+		customerID = container.CustomerID
+		containerNo = normalizeContainerNo(container.ContainerNo)
+	}
 	eventType := firstNonEmpty(strings.ToUpper(strings.TrimSpace(input.EventType)), ContainerStatusTrackingReceived)
-	if input.CustomerID <= 0 || containerNo == "" {
+	if customerID <= 0 || containerNo == "" {
 		return ContainerTrackingEvent{}, ErrInvalidInput
 	}
 	eventTime, err := parseOptionalDateTime(input.EventTime)
@@ -496,7 +528,7 @@ func (s *Store) CreateContainerTrackingEvent(ctx context.Context, input CreateCo
 	publicLabel := firstNonEmpty(strings.TrimSpace(input.PublicLabel), displayLabel)
 	internalLabel := firstNonEmpty(strings.TrimSpace(input.InternalLabel), displayLabel, strings.TrimSpace(input.Notes), publicLabel)
 	container, err := s.CreateContainer(ctx, CreateContainerInput{
-		CustomerID:     input.CustomerID,
+		CustomerID:     customerID,
 		ContainerNo:    containerNo,
 		Status:         eventType,
 		TrackingStatus: eventType,
@@ -552,11 +584,15 @@ func (s *Store) ListContainerTrackingEvents(ctx context.Context, limit int, filt
 	}
 	whereClauses := []string{"1 = 1"}
 	args := make([]any, 0)
+	if filters.ContainerID > 0 {
+		whereClauses = append(whereClauses, "COALESCE(cte.container_id, 0) = ?")
+		args = append(args, filters.ContainerID)
+	}
 	if filters.CustomerID > 0 {
 		whereClauses = append(whereClauses, "cte.customer_id = ?")
 		args = append(args, filters.CustomerID)
 	}
-	if containerNo := normalizeContainerNo(filters.ContainerNo); containerNo != "" {
+	if containerNo := normalizeContainerNo(filters.ContainerNo); filters.ContainerID <= 0 && containerNo != "" {
 		whereClauses = append(whereClauses, "UPPER(TRIM(cte.container_no)) = ?")
 		args = append(args, containerNo)
 	}
@@ -605,8 +641,21 @@ func (s *Store) ListContainerTrackingEvents(ctx context.Context, limit int, filt
 }
 
 func (s *Store) CreateContainerPickupAssignment(ctx context.Context, input CreateContainerPickupAssignmentInput) (ContainerPickupAssignment, error) {
+	customerID := input.CustomerID
+	containerID := input.ContainerID
 	containerNo := normalizeContainerNo(input.ContainerNo)
-	if input.CustomerID <= 0 || containerNo == "" {
+	if containerID > 0 {
+		container, err := s.getContainerByID(ctx, containerID)
+		if err != nil {
+			return ContainerPickupAssignment{}, err
+		}
+		if customerID > 0 && customerID != container.CustomerID {
+			return ContainerPickupAssignment{}, fmt.Errorf("%w: pickup customer does not match container", ErrInvalidInput)
+		}
+		customerID = container.CustomerID
+		containerNo = normalizeContainerNo(container.ContainerNo)
+	}
+	if customerID <= 0 || containerNo == "" {
 		return ContainerPickupAssignment{}, ErrInvalidInput
 	}
 	scheduledPickupAt, err := parseOptionalDateTime(input.ScheduledPickupAt)
@@ -632,7 +681,7 @@ func (s *Store) CreateContainerPickupAssignment(ctx context.Context, input Creat
 	publicLabel := firstNonEmpty(strings.TrimSpace(input.PublicLabel), displayLabel)
 	internalLabel := firstNonEmpty(strings.TrimSpace(input.InternalLabel), displayLabel, buildPickupInternalLabel(input, assignmentType, status), publicLabel)
 	container, err := s.CreateContainer(ctx, CreateContainerInput{
-		CustomerID:     input.CustomerID,
+		CustomerID:     customerID,
 		ContainerNo:    containerNo,
 		Status:         containerStatus,
 		TrackingStatus: containerStatus,
@@ -698,11 +747,15 @@ func (s *Store) ListContainerPickupAssignments(ctx context.Context, limit int, f
 	}
 	whereClauses := []string{"1 = 1"}
 	args := make([]any, 0)
+	if filters.ContainerID > 0 {
+		whereClauses = append(whereClauses, "COALESCE(cpa.container_id, 0) = ?")
+		args = append(args, filters.ContainerID)
+	}
 	if filters.CustomerID > 0 {
 		whereClauses = append(whereClauses, "cpa.customer_id = ?")
 		args = append(args, filters.CustomerID)
 	}
-	if containerNo := normalizeContainerNo(filters.ContainerNo); containerNo != "" {
+	if containerNo := normalizeContainerNo(filters.ContainerNo); filters.ContainerID <= 0 && containerNo != "" {
 		whereClauses = append(whereClauses, "UPPER(TRIM(cpa.container_no)) = ?")
 		args = append(args, containerNo)
 	}
@@ -761,7 +814,7 @@ func (s *Store) CreateDeliveryEvent(ctx context.Context, input CreateDeliveryEve
 	if err != nil {
 		return DeliveryEvent{}, err
 	}
-	customerID, containerNo, err := s.resolveDeliveryContext(ctx, input.CustomerID, input.OutboundDocumentID, input.ContainerNo)
+	customerID, containerID, containerNo, err := s.resolveDeliveryContext(ctx, input.CustomerID, input.ContainerID, input.OutboundDocumentID, input.ContainerNo)
 	if err != nil {
 		return DeliveryEvent{}, err
 	}
@@ -784,6 +837,7 @@ func (s *Store) CreateDeliveryEvent(ctx context.Context, input CreateDeliveryEve
 		INSERT INTO delivery_events (
 			outbound_document_id,
 			customer_id,
+			container_id,
 			container_no,
 			event_type,
 			event_time,
@@ -798,10 +852,11 @@ func (s *Store) CreateDeliveryEvent(ctx context.Context, input CreateDeliveryEve
 			public_label,
 			internal_status,
 			internal_label
-		) VALUES (?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		nullableInt64(input.OutboundDocumentID),
 		nullableInt64(customerID),
+		containerID,
 		containerNo,
 		eventType,
 		nullableTime(eventTime),
@@ -838,6 +893,7 @@ func (s *Store) ReceiveDeliveryBOL(ctx context.Context, deliveryEventID int64, i
 	return s.CreateDeliveryEvent(ctx, CreateDeliveryEventInput{
 		OutboundDocumentID: existing.OutboundDocumentID,
 		CustomerID:         existing.CustomerID,
+		ContainerID:        existing.ContainerID,
 		ContainerNo:        existing.ContainerNo,
 		EventType:          DeliveryEventBOLReceived,
 		EventTime:          input.EventTime,
@@ -861,11 +917,15 @@ func (s *Store) ListDeliveryEvents(ctx context.Context, limit int, filters Deliv
 	}
 	whereClauses := []string{"1 = 1"}
 	args := make([]any, 0)
+	if filters.ContainerID > 0 {
+		whereClauses = append(whereClauses, "COALESCE(de.container_id, 0) = ?")
+		args = append(args, filters.ContainerID)
+	}
 	if filters.CustomerID > 0 {
 		whereClauses = append(whereClauses, "de.customer_id = ?")
 		args = append(args, filters.CustomerID)
 	}
-	if containerNo := normalizeContainerNo(filters.ContainerNo); containerNo != "" {
+	if containerNo := normalizeContainerNo(filters.ContainerNo); filters.ContainerID <= 0 && containerNo != "" {
 		whereClauses = append(whereClauses, "UPPER(TRIM(de.container_no)) = ?")
 		args = append(args, containerNo)
 	}
@@ -875,6 +935,7 @@ func (s *Store) ListDeliveryEvents(ctx context.Context, limit int, filters Deliv
 			COALESCE(de.outbound_document_id, 0),
 			COALESCE(de.customer_id, 0),
 			COALESCE(c.name, ''),
+			COALESCE(de.container_id, 0),
 			COALESCE(de.container_no, ''),
 			de.event_type,
 			de.event_time,
@@ -1039,38 +1100,66 @@ func (s *Store) getContainerPickupAssignmentByID(ctx context.Context, assignment
 	return assignment, nil
 }
 
-func (s *Store) resolveDeliveryContext(ctx context.Context, customerID int64, outboundDocumentID int64, containerNo string) (int64, string, error) {
+func (s *Store) resolveDeliveryContext(ctx context.Context, customerID int64, containerID int64, outboundDocumentID int64, containerNo string) (int64, int64, string, error) {
 	normalizedContainerNo := normalizeContainerNo(containerNo)
-	if outboundDocumentID <= 0 {
-		if customerID <= 0 || normalizedContainerNo == "" {
-			return 0, "", ErrInvalidInput
+	if containerID > 0 {
+		container, err := s.getContainerByID(ctx, containerID)
+		if err != nil {
+			return 0, 0, "", err
 		}
-		return customerID, normalizedContainerNo, nil
+		if customerID > 0 && customerID != container.CustomerID {
+			return 0, 0, "", fmt.Errorf("%w: delivery customer does not match container", ErrInvalidInput)
+		}
+		customerID = container.CustomerID
+		normalizedContainerNo = normalizeContainerNo(container.ContainerNo)
+	}
+	if outboundDocumentID <= 0 {
+		if customerID <= 0 || (containerID <= 0 && normalizedContainerNo == "") {
+			return 0, 0, "", ErrInvalidInput
+		}
+		return customerID, containerID, normalizedContainerNo, nil
 	}
 
 	document, err := s.getOutboundDocument(ctx, outboundDocumentID)
 	if err != nil {
-		return 0, "", err
+		return 0, 0, "", err
 	}
 	if customerID > 0 && customerID != document.CustomerID {
-		return 0, "", fmt.Errorf("%w: delivery customer does not match outbound document", ErrInvalidInput)
+		return 0, 0, "", fmt.Errorf("%w: delivery customer does not match outbound document", ErrInvalidInput)
 	}
+	if containerID > 0 {
+		if !outboundDocumentReferencesContainer(document, containerID, normalizedContainerNo) {
+			return 0, 0, "", fmt.Errorf("%w: delivery container does not match outbound document allocations", ErrInvalidInput)
+		}
+		return document.CustomerID, containerID, normalizedContainerNo, nil
+	}
+
+	containerRefs := outboundDocumentContainerRefs(document)
 	if normalizedContainerNo == "" {
-		containerNos := outboundDocumentContainerNos(document)
-		switch len(containerNos) {
+		switch len(containerRefs) {
 		case 1:
-			normalizedContainerNo = containerNos[0]
+			containerID = containerRefs[0].ContainerID
+			normalizedContainerNo = containerRefs[0].ContainerNo
 		case 0:
-			return 0, "", fmt.Errorf("%w: delivery container is required when outbound document has no container allocations", ErrInvalidInput)
+			return 0, 0, "", fmt.Errorf("%w: delivery container is required when outbound document has no container allocations", ErrInvalidInput)
 		default:
-			return 0, "", fmt.Errorf("%w: delivery container is required when outbound document spans multiple containers", ErrInvalidInput)
+			return 0, 0, "", fmt.Errorf("%w: delivery container is required when outbound document spans multiple containers", ErrInvalidInput)
 		}
 	} else {
-		if !outboundDocumentReferencesContainer(document, normalizedContainerNo) {
-			return 0, "", fmt.Errorf("%w: delivery container does not match outbound document allocations", ErrInvalidInput)
+		if !outboundDocumentReferencesContainer(document, 0, normalizedContainerNo) {
+			return 0, 0, "", fmt.Errorf("%w: delivery container does not match outbound document allocations", ErrInvalidInput)
+		}
+		for _, ref := range containerRefs {
+			if ref.ContainerID > 0 && ref.ContainerNo == normalizedContainerNo {
+				if containerID > 0 && containerID != ref.ContainerID {
+					containerID = 0
+					break
+				}
+				containerID = ref.ContainerID
+			}
 		}
 	}
-	return document.CustomerID, normalizedContainerNo, nil
+	return document.CustomerID, containerID, normalizedContainerNo, nil
 }
 
 func (s *Store) getDeliveryEventByID(ctx context.Context, eventID int64) (DeliveryEvent, error) {
@@ -1080,6 +1169,7 @@ func (s *Store) getDeliveryEventByID(ctx context.Context, eventID int64) (Delive
 			COALESCE(de.outbound_document_id, 0),
 			COALESCE(de.customer_id, 0),
 			COALESCE(c.name, ''),
+			COALESCE(de.container_id, 0),
 			COALESCE(de.container_no, ''),
 			de.event_type,
 			de.event_time,
@@ -1115,6 +1205,7 @@ func scanDeliveryEvent(scanner itemScanner) (DeliveryEvent, error) {
 		&event.OutboundDocumentID,
 		&event.CustomerID,
 		&event.CustomerName,
+		&event.ContainerID,
 		&event.ContainerNo,
 		&event.EventType,
 		&event.EventTime,

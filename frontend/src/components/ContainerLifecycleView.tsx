@@ -9,7 +9,9 @@ import {
   ReactFlow,
   type Edge,
   type Node,
-  type NodeProps
+  type NodeProps,
+  type ReactFlowInstance,
+  type XYPosition
 } from "@xyflow/react";
 import {
   ArrowLeft,
@@ -23,7 +25,7 @@ import {
   Send,
   Truck
 } from "lucide-react";
-import { useMemo, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from "react";
 
 import { formatNumber } from "../lib/formatters";
 import { useI18n } from "../lib/i18n";
@@ -57,10 +59,22 @@ export type ContainerLifecycleNodeAction = {
   id: string;
   kind: ContainerLifecycleNodeKind;
   title: string;
+  isDraft?: boolean;
   documentId?: number;
   outboundDocumentId?: number;
   deliveryEventId?: number;
   attachedToNodeId?: string;
+};
+
+export const CONTAINER_LIFECYCLE_DRAFT_NODE_MIME_TYPE = "application/x-container-lifecycle-draft-node";
+
+export type ContainerLifecycleDraftNodeKind = Extract<ContainerLifecycleNodeKind, "tracking" | "pickup" | "delivery">;
+
+export type ContainerLifecycleDraftNode = {
+  id: string;
+  kind: ContainerLifecycleDraftNodeKind;
+  title: string;
+  position: XYPosition;
 };
 
 export type LifecycleVisibilityMode = "customer" | "admin";
@@ -80,6 +94,9 @@ type ContainerLifecycleViewProps = {
   sidePanel?: ReactNode;
   selectedNodeId?: string | null;
   onNodeSelect?: (action: ContainerLifecycleNodeAction) => void;
+  draftNodes?: ContainerLifecycleDraftNode[];
+  onDraftNodeDrop?: (kind: ContainerLifecycleDraftNodeKind, position: XYPosition) => void;
+  onDraftNodeMove?: (id: string, position: XYPosition) => void;
   documentActions?: {
     onOpenPackingList?: (document: InboundDocument) => void;
     onEditPackingList?: (document: InboundDocument) => void;
@@ -151,9 +168,14 @@ export function ContainerLifecycleView({
   sidePanel,
   selectedNodeId,
   onNodeSelect,
+  draftNodes = [],
+  onDraftNodeDrop,
+  onDraftNodeMove,
   documentActions
 }: ContainerLifecycleViewProps) {
   const { t } = useI18n();
+  const flowWrapperRef = useRef<HTMLDivElement | null>(null);
+  const [flowInstance, setFlowInstance] = useState<ReactFlowInstance<LifecycleNode, Edge> | null>(null);
   const lifecycle = useMemo(
     () => rawLifecycle ? normalizeContainerLifecycle(rawLifecycle) : null,
     [rawLifecycle]
@@ -163,6 +185,60 @@ export function ContainerLifecycleView({
     [lifecycle, onNodeSelect, selectedNodeId, t, visibilityMode]
   );
   const interactiveFlow = Boolean(onNodeSelect);
+  const draftFlowNodes = useMemo(
+    () => draftNodes.map((draftNode): LifecycleNode => ({
+      id: draftNode.id,
+      position: draftNode.position,
+      type: "lifecycle",
+      draggable: true,
+      data: {
+        action: {
+          id: draftNode.id,
+          kind: draftNode.kind,
+          title: draftNode.title,
+          isDraft: true
+        },
+        label: getDraftLifecycleNodeLabel(draftNode.kind, draftNode.title, t)
+      },
+      style: getFlowNodeStyle("warning", interactiveFlow, selectedNodeId === draftNode.id)
+    })),
+    [draftNodes, interactiveFlow, selectedNodeId, t]
+  );
+  const flowNodes = useMemo(
+    () => [...flowModel.nodes, ...draftFlowNodes],
+    [draftFlowNodes, flowModel.nodes]
+  );
+  const handleFlowDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!onDraftNodeDrop || !Array.from(event.dataTransfer.types).includes(CONTAINER_LIFECYCLE_DRAFT_NODE_MIME_TYPE)) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  }, [onDraftNodeDrop]);
+  const handleFlowDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!onDraftNodeDrop) {
+      return;
+    }
+    const draftKind = event.dataTransfer.getData(CONTAINER_LIFECYCLE_DRAFT_NODE_MIME_TYPE);
+    if (!isContainerLifecycleDraftNodeKind(draftKind)) {
+      return;
+    }
+    event.preventDefault();
+    const fallbackBounds = flowWrapperRef.current?.getBoundingClientRect();
+    const position = flowInstance
+      ? flowInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+      : {
+        x: event.clientX - (fallbackBounds?.left ?? 0),
+        y: event.clientY - (fallbackBounds?.top ?? 0)
+      };
+    onDraftNodeDrop(draftKind, position);
+  }, [flowInstance, onDraftNodeDrop]);
+  const handleNodeDragStop = useCallback((_: unknown, node: LifecycleNode) => {
+    if (!node.data.action.isDraft) {
+      return;
+    }
+    onDraftNodeMove?.(node.id, node.position);
+  }, [onDraftNodeMove]);
   const backButton = onBack ? (
     <Button type="button" variant="outline" onClick={onBack}>
       <ArrowLeft className="h-4 w-4" />
@@ -214,19 +290,26 @@ export function ContainerLifecycleView({
           ) : lifecycle ? (
             <div className="grid gap-4">
               <div className={sidePanel ? "grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]" : "grid gap-4"}>
-                <div className="h-[calc(100vh-2rem)] min-h-[720px] overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                <div
+                  ref={flowWrapperRef}
+                  className="h-[calc(100vh-2rem)] min-h-[720px] overflow-hidden rounded-lg border border-slate-200 bg-slate-50"
+                  onDragOver={handleFlowDragOver}
+                  onDrop={handleFlowDrop}
+                >
                   <ReactFlow
-                    nodes={flowModel.nodes}
+                    nodes={flowNodes}
                     edges={flowModel.edges}
                     nodeTypes={LIFECYCLE_NODE_TYPES}
                     fitView
                     fitViewOptions={{ padding: 0.18 }}
                     minZoom={0.35}
                     maxZoom={1.35}
-                    nodesDraggable={false}
+                    nodesDraggable={draftNodes.length > 0}
                     nodesConnectable={false}
                     elementsSelectable={interactiveFlow}
+                    onInit={setFlowInstance}
                     onNodeClick={(_, node) => onNodeSelect?.(node.data.action)}
+                    onNodeDragStop={handleNodeDragStop}
                   >
                     <Background color="#cbd5e1" gap={20} />
                     <Controls showInteractive={false} />
@@ -438,6 +521,7 @@ export function buildLifecycleFlow(
       id,
       position: { x, y },
       type: "lifecycle",
+      draggable: false,
       data: { label, action },
       style: getFlowNodeStyle(variant, interactive, selectedNodeId === id)
     });
@@ -731,6 +815,36 @@ function getSelectedDocumentAnchorNodeId(selectedNodeId: string | null) {
   return selectedNodeId.startsWith("documents-")
     ? selectedNodeId.slice("documents-".length)
     : selectedNodeId;
+}
+
+function isContainerLifecycleDraftNodeKind(value: string): value is ContainerLifecycleDraftNodeKind {
+  return value === "tracking" || value === "pickup" || value === "delivery";
+}
+
+function getDraftLifecycleNodeLabel(
+  kind: ContainerLifecycleDraftNodeKind,
+  title: string,
+  t: (key: string) => string
+) {
+  return (
+    <FlowNodeContent
+      icon={getDraftLifecycleNodeIcon(kind)}
+      eyebrow={t("adminContainerLifecycleNodePanel")}
+      title={title}
+      lines={[]}
+    />
+  );
+}
+
+function getDraftLifecycleNodeIcon(kind: ContainerLifecycleDraftNodeKind) {
+  switch (kind) {
+    case "tracking":
+      return <MapPinned className="h-4 w-4" />;
+    case "pickup":
+      return <Truck className="h-4 w-4" />;
+    case "delivery":
+      return <Send className="h-4 w-4" />;
+  }
 }
 
 function getCurrentInventoryWarehouses(lifecycle: CustomerPortalContainerLifecycle) {

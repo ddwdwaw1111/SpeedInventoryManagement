@@ -66,13 +66,26 @@ func (s *Server) handleV2GetContainerLifecycle(c *gin.Context) {
 		writeServerError(c, service.ErrNotImplemented)
 		return
 	}
+	containerRef := strings.TrimSpace(c.Param("containerId"))
+	if containerID, parseErr := strconv.ParseInt(containerRef, 10, 64); parseErr == nil && containerID > 0 {
+		lifecycle, err := app.Container.GetLifecycle(c.Request.Context(), service.GetContainerLifecycleInput{
+			ContainerID: containerID,
+		})
+		if err != nil {
+			writeDomainError(c, err)
+			return
+		}
+		writeJSON(c, http.StatusOK, lifecycle)
+		return
+	}
+
 	customerID, ok := parseRequiredPositiveInt64Query(c, "customerId")
 	if !ok {
 		return
 	}
 	lifecycle, err := app.Container.GetLifecycle(c.Request.Context(), service.GetContainerLifecycleInput{
 		CustomerID:  customerID,
-		ContainerNo: c.Param("containerNo"),
+		ContainerNo: containerRef,
 	})
 	if err != nil {
 		writeDomainError(c, err)
@@ -150,7 +163,7 @@ func (s *Server) handleV2CreateContainerTrackingEvent(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	input.ContainerNo = c.Param("containerNo")
+	applyContainerRefToTrackingInput(c.Param("containerId"), &input)
 	if authPayload, ok := userFromContext(c); ok {
 		input.CreatedByUserID = authPayload.User.ID
 	}
@@ -168,7 +181,7 @@ func (s *Server) handleV2CreateContainerPickupAssignment(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	input.ContainerNo = c.Param("containerNo")
+	applyContainerRefToPickupInput(c.Param("containerId"), &input)
 	if authPayload, ok := userFromContext(c); ok {
 		input.CreatedByUserID = authPayload.User.ID
 	}
@@ -178,6 +191,30 @@ func (s *Server) handleV2CreateContainerPickupAssignment(c *gin.Context) {
 		return
 	}
 	writeJSON(c, http.StatusCreated, assignment)
+}
+
+func applyContainerRefToTrackingInput(containerRef string, input *service.CreateContainerTrackingEventInput) {
+	if containerID, containerNo := parseContainerRef(containerRef); containerID > 0 {
+		input.ContainerID = containerID
+	} else if containerNo != "" {
+		input.ContainerNo = containerNo
+	}
+}
+
+func applyContainerRefToPickupInput(containerRef string, input *service.CreateContainerPickupAssignmentInput) {
+	if containerID, containerNo := parseContainerRef(containerRef); containerID > 0 {
+		input.ContainerID = containerID
+	} else if containerNo != "" {
+		input.ContainerNo = containerNo
+	}
+}
+
+func parseContainerRef(containerRef string) (int64, string) {
+	trimmed := strings.TrimSpace(containerRef)
+	if containerID, err := strconv.ParseInt(trimmed, 10, 64); err == nil && containerID > 0 {
+		return containerID, ""
+	}
+	return 0, trimmed
 }
 
 func (s *Server) handleV2CreatePickingOrder(c *gin.Context) {

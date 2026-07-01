@@ -428,6 +428,7 @@ export type ContainerTrackingEvent = {
 
 export type ContainerTrackingEventPayload = LifecycleDisplayFields & {
   customerId: number;
+  containerId?: number;
   eventType?: string;
   eventTime?: string;
   location?: string;
@@ -462,6 +463,7 @@ export type ContainerPickupAssignment = {
 
 export type ContainerPickupAssignmentPayload = LifecycleDisplayFields & {
   customerId: number;
+  containerId?: number;
   assignmentType?: string;
   driverName?: string;
   vendorName?: string;
@@ -478,6 +480,7 @@ export type DeliveryEvent = {
   outboundDocumentId: number;
   customerId: number;
   customerName: string;
+  containerId: number;
   containerNo: string;
   eventType: string;
   eventTime: string;
@@ -500,6 +503,7 @@ export type DeliveryEvent = {
 export type DeliveryEventPayload = LifecycleDisplayFields & {
   outboundDocumentId?: number;
   customerId?: number;
+  containerId?: number;
   containerNo?: string;
   eventType?: string;
   eventTime?: string;
@@ -511,6 +515,7 @@ export type DeliveryEventPayload = LifecycleDisplayFields & {
 };
 
 export type CustomerPortalContainerSummary = {
+  containerId?: number;
   containerNo: string;
   customerId: number;
   customerName: string;

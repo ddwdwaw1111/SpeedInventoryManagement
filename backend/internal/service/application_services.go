@@ -74,6 +74,7 @@ func (s *PickingOrderService) Create(ctx context.Context, input CreateOutboundDo
 type DeliveryCommand struct {
 	OutboundDocumentID int64  `json:"outboundDocumentId"`
 	CustomerID         int64  `json:"customerId"`
+	ContainerID        int64  `json:"containerId"`
 	ContainerNo        string `json:"containerNo"`
 	EventType          string `json:"eventType"`
 	EventTime          string `json:"eventTime"`
@@ -107,6 +108,7 @@ func (s *DeliveryService) CreateEvent(ctx context.Context, command DeliveryComma
 	return s.repo.CreateDeliveryEvent(ctx, CreateDeliveryEventInput{
 		OutboundDocumentID: command.OutboundDocumentID,
 		CustomerID:         command.CustomerID,
+		ContainerID:        command.ContainerID,
 		ContainerNo:        command.ContainerNo,
 		EventType:          command.EventType,
 		EventTime:          command.EventTime,
@@ -128,6 +130,7 @@ func (s *DeliveryService) ReceiveBOL(ctx context.Context, deliveryEventID int64,
 	return s.repo.ReceiveDeliveryBOL(ctx, deliveryEventID, CreateDeliveryEventInput{
 		OutboundDocumentID: command.OutboundDocumentID,
 		CustomerID:         command.CustomerID,
+		ContainerID:        command.ContainerID,
 		ContainerNo:        command.ContainerNo,
 		EventType:          command.EventType,
 		EventTime:          command.EventTime,

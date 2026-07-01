@@ -76,6 +76,56 @@ describe("buildOutboundOrderGoodsRows", () => {
     ]);
   });
 
+  it("uses container id when the allocation has an old container number", () => {
+    const rows = buildOutboundOrderGoodsRows({
+      id: 22,
+      packingListNo: "PO-22",
+      orderRef: "",
+      lines: [
+        {
+          id: 1,
+          sku: "SKU-A",
+          itemNumber: "A",
+          description: "Item A",
+          quantity: 12,
+          pallets: 1,
+          pickAllocations: [
+            { containerId: 42, containerNo: "OLD-NO", allocatedQty: 7 }
+          ]
+        }
+      ]
+    } as unknown as OutboundDocument, "NEW-NO", 42);
+
+    expect(rows).toMatchObject([
+      { sku: "SKU-A", allocatedQty: 7, highlighted: true }
+    ]);
+  });
+
+  it("does not match a different container id with the same container number", () => {
+    const rows = buildOutboundOrderGoodsRows({
+      id: 23,
+      packingListNo: "PO-23",
+      orderRef: "",
+      lines: [
+        {
+          id: 1,
+          sku: "SKU-A",
+          itemNumber: "A",
+          description: "Item A",
+          quantity: 12,
+          pallets: 1,
+          pickAllocations: [
+            { containerId: 7, containerNo: "NEW-NO", allocatedQty: 7 }
+          ]
+        }
+      ]
+    } as unknown as OutboundDocument, "NEW-NO", 42);
+
+    expect(rows).toMatchObject([
+      { sku: "SKU-A", allocatedQty: 0, highlighted: false }
+    ]);
+  });
+
   it("falls back to highlighting all rows when old orders have no allocation data", () => {
     const rows = buildOutboundOrderGoodsRows({
       id: 21,

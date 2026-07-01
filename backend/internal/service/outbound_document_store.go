@@ -236,6 +236,7 @@ type outboundRepairBucketReservation struct {
 type OutboundDocumentFilters struct {
 	ArchiveScope   string
 	Search         string
+	ContainerID    int64
 	CustomerID     int64
 	LocationID     int64
 	Status         string
@@ -260,6 +261,24 @@ func (s *Store) ListOutboundDocumentsFiltered(ctx context.Context, limit int, fi
 	if filters.CustomerID > 0 {
 		whereClauses = append(whereClauses, "d.customer_id = ?")
 		args = append(args, filters.CustomerID)
+	}
+	if filters.ContainerID > 0 {
+		whereClauses = append(whereClauses, `(
+			EXISTS (
+				SELECT 1
+				FROM stock_ledger sl
+				WHERE sl.source_document_type = ?
+					AND sl.source_document_id = d.id
+					AND COALESCE(sl.container_id, 0) = ?
+			)
+			OR EXISTS (
+				SELECT 1
+				FROM outbound_document_lines dl
+				WHERE dl.document_id = d.id
+					AND COALESCE(dl.pick_allocations_json, '') LIKE ?
+			)
+		)`)
+		args = append(args, StockLedgerSourceOutbound, filters.ContainerID, fmt.Sprintf("%%\"containerId\":%d,%%", filters.ContainerID))
 	}
 	if filters.LocationID > 0 {
 		whereClauses = append(whereClauses, "EXISTS (SELECT 1 FROM outbound_document_lines dl WHERE dl.document_id = d.id AND dl.location_id = ?)")
