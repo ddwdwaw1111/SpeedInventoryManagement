@@ -632,7 +632,7 @@ export function buildLifecycleFlow(
   const inventoryWarehouses = getCurrentInventoryWarehouses(lifecycle);
   const inventoryWarehouseSummary = formatWarehouseSummary(inventoryWarehouses);
   const inventoryReferenceQty = getInventoryReferenceQty(lifecycle, receivedQuantity);
-  const transferMovements = getTransferMovements(lifecycle.movements);
+  const transferMovements = getTransferMovements(lifecycle.movements ?? []);
   const transferCount = getTransferCount(lifecycle.summary.transferCount, transferMovements);
   const transferRouteSummary = formatTransferRouteSummary(transferMovements);
   mainSteps.push({

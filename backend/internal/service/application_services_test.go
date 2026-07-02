@@ -66,6 +66,66 @@ func (s failingScanner) Scan(...any) error {
 	return s.err
 }
 
+type lifecycleCustomerGuardRepo struct {
+	container Container
+}
+
+func (r *lifecycleCustomerGuardRepo) ListInboundDocumentsFiltered(context.Context, int, InboundDocumentFilters) ([]InboundDocument, error) {
+	return nil, nil
+}
+
+func (r *lifecycleCustomerGuardRepo) ListItems(context.Context, ItemFilters) ([]Item, error) {
+	return nil, nil
+}
+
+func (r *lifecycleCustomerGuardRepo) ListContainerLifecycleEvents(context.Context, int, ...ContainerLifecycleEventFilters) ([]ContainerLifecycleEvent, error) {
+	return nil, nil
+}
+
+func (r *lifecycleCustomerGuardRepo) ListOutboundDocumentsFiltered(context.Context, int, OutboundDocumentFilters) ([]OutboundDocument, error) {
+	return nil, nil
+}
+
+func (r *lifecycleCustomerGuardRepo) GetOutboundDocumentForCustomer(context.Context, int64, int64) (OutboundDocument, error) {
+	return OutboundDocument{}, ErrNotFound
+}
+
+func (r *lifecycleCustomerGuardRepo) ListContainerRecords(context.Context, int, ContainerFilters) ([]Container, error) {
+	return nil, nil
+}
+
+func (r *lifecycleCustomerGuardRepo) GetContainerByID(context.Context, int64) (Container, error) {
+	return r.container, nil
+}
+
+func (r *lifecycleCustomerGuardRepo) GetContainerByNo(context.Context, int64, string) (Container, error) {
+	return Container{}, ErrNotFound
+}
+
+func (r *lifecycleCustomerGuardRepo) CreateContainer(context.Context, CreateContainerInput) (Container, error) {
+	return Container{}, nil
+}
+
+func (r *lifecycleCustomerGuardRepo) CreateContainerTrackingEvent(context.Context, CreateContainerTrackingEventInput) (ContainerTrackingEvent, error) {
+	return ContainerTrackingEvent{}, nil
+}
+
+func (r *lifecycleCustomerGuardRepo) CreateContainerPickupAssignment(context.Context, CreateContainerPickupAssignmentInput) (ContainerPickupAssignment, error) {
+	return ContainerPickupAssignment{}, nil
+}
+
+func (r *lifecycleCustomerGuardRepo) ListContainerTrackingEvents(context.Context, int, ContainerTrackingEventFilters) ([]ContainerTrackingEvent, error) {
+	return nil, nil
+}
+
+func (r *lifecycleCustomerGuardRepo) ListContainerPickupAssignments(context.Context, int, ContainerPickupAssignmentFilters) ([]ContainerPickupAssignment, error) {
+	return nil, nil
+}
+
+func (r *lifecycleCustomerGuardRepo) ListDeliveryEvents(context.Context, int, DeliveryEventFilters) ([]DeliveryEvent, error) {
+	return nil, nil
+}
+
 func TestLegacyInventoryAdapterUsesInventoryMutationOnce(t *testing.T) {
 	repo := &recordingInventoryMutationRepo{}
 	adapter := NewLegacyInventoryAdapter(NewInventoryMutationService(repo))
@@ -96,12 +156,31 @@ func TestLegacyInventoryAdapterUsesInventoryMutationOnce(t *testing.T) {
 	}
 }
 
+func TestContainerServiceGetLifecycleRejectsContainerFromDifferentCustomer(t *testing.T) {
+	repo := &lifecycleCustomerGuardRepo{
+		container: Container{
+			ID:          42,
+			CustomerID:  7,
+			ContainerNo: "CONT-OWNER",
+		},
+	}
+	containerService := NewContainerService(repo)
+
+	_, err := containerService.GetLifecycle(context.Background(), GetContainerLifecycleInput{
+		CustomerID:  8,
+		ContainerID: 42,
+	})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for cross-customer container lifecycle lookup, got %v", err)
+	}
+}
+
 func TestDeliveryServiceMapsBOLCommand(t *testing.T) {
 	repo := &recordingDeliveryRepo{}
 	service := NewDeliveryService(repo)
 
 	event, err := service.ReceiveBOL(context.Background(), 99, DeliveryCommand{
-		ContainerID:  42,
+		ContainerID: 42,
 		BOLNumber:   "BOL-123",
 		ContainerNo: "CONT-1",
 		EventTime:   "2026-06-15T12:00:00Z",

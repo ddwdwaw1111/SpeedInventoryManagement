@@ -6,6 +6,7 @@ import { customerPortalApi } from "./api";
 import type { CustomerPortalContainerLifecycle } from "./types";
 
 type CustomerPortalContainerLifecyclePageProps = {
+  containerId: number | null;
   containerNo: string | null;
   adminPortalCustomerId?: number;
   onBack: () => void;
@@ -13,6 +14,7 @@ type CustomerPortalContainerLifecyclePageProps = {
 };
 
 export function CustomerPortalContainerLifecyclePage({
+  containerId,
   containerNo,
   adminPortalCustomerId,
   onBack,
@@ -27,7 +29,7 @@ export function CustomerPortalContainerLifecyclePage({
     let active = true;
 
     async function loadLifecycle() {
-      if (!containerNo) {
+      if (!containerId || containerId <= 0) {
         setLifecycle(null);
         setErrorMessage("");
         return;
@@ -35,7 +37,7 @@ export function CustomerPortalContainerLifecyclePage({
       setIsLoading(true);
       setErrorMessage("");
       try {
-        const nextLifecycle = await customerPortalApi.getContainerLifecycle(containerNo, adminPortalCustomerId);
+        const nextLifecycle = await customerPortalApi.getContainerLifecycle(containerId, adminPortalCustomerId);
         if (!active) return;
         setLifecycle(nextLifecycle);
       } catch (error) {
@@ -54,7 +56,7 @@ export function CustomerPortalContainerLifecyclePage({
     return () => {
       active = false;
     };
-  }, [adminPortalCustomerId, containerNo, onError, t]);
+  }, [adminPortalCustomerId, containerId, onError, t]);
 
   return (
     <ContainerLifecycleView

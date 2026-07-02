@@ -125,6 +125,9 @@ func (s *ContainerService) GetLifecycle(ctx context.Context, input GetContainerL
 		if err != nil {
 			return ContainerLifecycle{}, err
 		}
+		if customerID > 0 && container.CustomerID != customerID {
+			return ContainerLifecycle{}, ErrNotFound
+		}
 		customerID = container.CustomerID
 		containerNo = normalizeContainerNo(container.ContainerNo)
 		containers = []Container{container}
@@ -401,7 +404,7 @@ func buildContainerSummaries(
 		}
 		accumulator := &containerSummaryAccumulator{
 			summary: ContainerSummary{
-				ContainerID: containerID,
+				ContainerID:  containerID,
 				ContainerNo:  normalized,
 				CustomerID:   customerID,
 				CustomerName: customerName,

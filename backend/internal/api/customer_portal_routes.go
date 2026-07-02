@@ -20,7 +20,7 @@ func (s *Server) registerCustomerPortalEndpoints(router gin.IRoutes) {
 	router.GET("/profile", s.handleCustomerPortalProfile)
 	router.GET("/inventory", s.handleCustomerPortalInventory)
 	router.GET("/containers", s.handleCustomerPortalContainers)
-	router.GET("/containers/:containerNo/lifecycle", s.handleCustomerPortalContainerLifecycle)
+	router.GET("/containers/:containerId/lifecycle", s.handleCustomerPortalContainerLifecycle)
 	router.GET("/packing-lists", s.handleCustomerPortalPackingLists)
 	router.GET("/packing-lists/:id/attachments/:attachmentId/download-url", s.handleGetCustomerPortalPackingListAttachmentDownloadURL)
 

@@ -66,26 +66,12 @@ func (s *Server) handleV2GetContainerLifecycle(c *gin.Context) {
 		writeServerError(c, service.ErrNotImplemented)
 		return
 	}
-	containerRef := strings.TrimSpace(c.Param("containerId"))
-	if containerID, parseErr := strconv.ParseInt(containerRef, 10, 64); parseErr == nil && containerID > 0 {
-		lifecycle, err := app.Container.GetLifecycle(c.Request.Context(), service.GetContainerLifecycleInput{
-			ContainerID: containerID,
-		})
-		if err != nil {
-			writeDomainError(c, err)
-			return
-		}
-		writeJSON(c, http.StatusOK, lifecycle)
-		return
-	}
-
-	customerID, ok := parseRequiredPositiveInt64Query(c, "customerId")
+	containerID, ok := parseRequiredPositiveInt64Param(c, "containerId")
 	if !ok {
 		return
 	}
 	lifecycle, err := app.Container.GetLifecycle(c.Request.Context(), service.GetContainerLifecycleInput{
-		CustomerID:  customerID,
-		ContainerNo: containerRef,
+		ContainerID: containerID,
 	})
 	if err != nil {
 		writeDomainError(c, err)
@@ -140,6 +126,10 @@ func (s *Server) handleV2CustomerPortalContainerLifecycle(c *gin.Context) {
 	if !ok {
 		return
 	}
+	containerID, ok := parseRequiredPositiveInt64Param(c, "containerId")
+	if !ok {
+		return
+	}
 	app := s.appServices()
 	if app == nil {
 		writeServerError(c, service.ErrNotImplemented)
@@ -148,7 +138,7 @@ func (s *Server) handleV2CustomerPortalContainerLifecycle(c *gin.Context) {
 
 	lifecycle, err := app.Container.GetLifecycle(c.Request.Context(), service.GetContainerLifecycleInput{
 		CustomerID:  customerID,
-		ContainerNo: c.Param("containerNo"),
+		ContainerID: containerID,
 	})
 	if err != nil {
 		writeDomainError(c, err)
@@ -163,7 +153,12 @@ func (s *Server) handleV2CreateContainerTrackingEvent(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	applyContainerRefToTrackingInput(c.Param("containerId"), &input)
+	containerID, ok := parseRequiredPositiveInt64Param(c, "containerId")
+	if !ok {
+		return
+	}
+	input.ContainerID = containerID
+	input.ContainerNo = ""
 	if authPayload, ok := userFromContext(c); ok {
 		input.CreatedByUserID = authPayload.User.ID
 	}
@@ -181,7 +176,12 @@ func (s *Server) handleV2CreateContainerPickupAssignment(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	applyContainerRefToPickupInput(c.Param("containerId"), &input)
+	containerID, ok := parseRequiredPositiveInt64Param(c, "containerId")
+	if !ok {
+		return
+	}
+	input.ContainerID = containerID
+	input.ContainerNo = ""
 	if authPayload, ok := userFromContext(c); ok {
 		input.CreatedByUserID = authPayload.User.ID
 	}
@@ -191,30 +191,6 @@ func (s *Server) handleV2CreateContainerPickupAssignment(c *gin.Context) {
 		return
 	}
 	writeJSON(c, http.StatusCreated, assignment)
-}
-
-func applyContainerRefToTrackingInput(containerRef string, input *service.CreateContainerTrackingEventInput) {
-	if containerID, containerNo := parseContainerRef(containerRef); containerID > 0 {
-		input.ContainerID = containerID
-	} else if containerNo != "" {
-		input.ContainerNo = containerNo
-	}
-}
-
-func applyContainerRefToPickupInput(containerRef string, input *service.CreateContainerPickupAssignmentInput) {
-	if containerID, containerNo := parseContainerRef(containerRef); containerID > 0 {
-		input.ContainerID = containerID
-	} else if containerNo != "" {
-		input.ContainerNo = containerNo
-	}
-}
-
-func parseContainerRef(containerRef string) (int64, string) {
-	trimmed := strings.TrimSpace(containerRef)
-	if containerID, err := strconv.ParseInt(trimmed, 10, 64); err == nil && containerID > 0 {
-		return containerID, ""
-	}
-	return 0, trimmed
 }
 
 func (s *Server) handleV2CreatePickingOrder(c *gin.Context) {
@@ -316,7 +292,25 @@ func parseRequiredPositiveInt64Query(c *gin.Context, key string) (int64, bool) {
 	return parsed, true
 }
 
+func parseRequiredPositiveInt64Param(c *gin.Context, key string) (int64, bool) {
+	value := strings.TrimSpace(c.Param(key))
+	if value == "" {
+		writeError(c, http.StatusBadRequest, key+" is required")
+		return 0, false
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed <= 0 {
+		writeError(c, http.StatusBadRequest, key+" must be a positive number")
+		return 0, false
+	}
+	return parsed, true
+}
+
 func customerVisibleContainerLifecycle(lifecycle service.ContainerLifecycle) service.ContainerLifecycle {
+	lifecycle.PackingLists = customerVisibleInboundDocuments(lifecycle.PackingLists)
+	lifecycle.PickingOrders = customerVisibleOutboundDocuments(lifecycle.PickingOrders)
+	lifecycle.LifecycleEvents = customerVisibleStockLifecycleEvents(lifecycle.LifecycleEvents)
+
 	trackingEvents := make([]service.ContainerTrackingEvent, 0, len(lifecycle.TrackingEvents))
 	for _, event := range lifecycle.TrackingEvents {
 		if !isCustomerVisibleLifecycleEvent(event.Visibility) {
@@ -366,6 +360,48 @@ func customerVisibleContainerLifecycle(lifecycle service.ContainerLifecycle) ser
 	}
 	lifecycle.DeliveryEvents = deliveryEvents
 	return lifecycle
+}
+
+func customerVisibleInboundDocuments(documents []service.InboundDocument) []service.InboundDocument {
+	visible := make([]service.InboundDocument, 0, len(documents))
+	for _, document := range documents {
+		document.DocumentNote = ""
+		if len(document.Lines) > 0 {
+			lines := append([]service.InboundDocumentLine(nil), document.Lines...)
+			for index := range lines {
+				lines[index].LineNote = ""
+			}
+			document.Lines = lines
+		}
+		visible = append(visible, document)
+	}
+	return visible
+}
+
+func customerVisibleOutboundDocuments(documents []service.OutboundDocument) []service.OutboundDocument {
+	visible := make([]service.OutboundDocument, 0, len(documents))
+	for _, document := range documents {
+		document.DocumentNote = ""
+		if len(document.Lines) > 0 {
+			lines := append([]service.OutboundDocumentLine(nil), document.Lines...)
+			for index := range lines {
+				lines[index].LineNote = ""
+			}
+			document.Lines = lines
+		}
+		visible = append(visible, document)
+	}
+	return visible
+}
+
+func customerVisibleStockLifecycleEvents(events []service.ContainerLifecycleEvent) []service.ContainerLifecycleEvent {
+	visible := make([]service.ContainerLifecycleEvent, 0, len(events))
+	for _, event := range events {
+		event.DocumentNote = ""
+		event.Reason = ""
+		visible = append(visible, event)
+	}
+	return visible
 }
 
 func isCustomerVisibleLifecycleEvent(visibility string) bool {

@@ -171,10 +171,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-function encodeContainerRef(containerRef: number | string) {
-  return typeof containerRef === "number" ? String(containerRef) : encodeURIComponent(containerRef);
-}
-
 function buildDocumentListQueryParams(limit: number, archiveScopeOrQuery: DocumentArchiveScope | DocumentListQuery) {
   const query = typeof archiveScopeOrQuery === "string"
     ? { archiveScope: archiveScopeOrQuery }
@@ -440,9 +436,9 @@ export const api = {
     return request<CustomerPortalContainerSummary[]>(`${customerPortalV2BasePath(customerId)}/containers${suffix}`);
   },
 
-  getCustomerPortalContainerLifecycle(containerNo: string, customerId?: number) {
+  getCustomerPortalContainerLifecycle(containerId: number, customerId?: number) {
     return request<CustomerPortalContainerLifecycle>(
-      `${customerPortalV2BasePath(customerId)}/containers/${encodeURIComponent(containerNo)}/lifecycle`
+      `${customerPortalV2BasePath(customerId)}/containers/${containerId}/lifecycle`
     );
   },
 
@@ -461,11 +457,6 @@ export const api = {
     return request<CustomerPortalContainerSummary[]>(`/v2/containers${suffix}`);
   },
 
-  getV2ContainerLifecycle(containerNo: string, customerId: number) {
-    const params = new URLSearchParams({ customerId: String(customerId) });
-    return request<ContainerLifecycle>(`/v2/containers/${encodeURIComponent(containerNo)}/lifecycle?${params.toString()}`);
-  },
-
   getV2ContainerLifecycleByID(containerId: number) {
     return request<ContainerLifecycle>(`/v2/containers/${containerId}/lifecycle`);
   },
@@ -477,15 +468,15 @@ export const api = {
     });
   },
 
-  createV2ContainerTrackingEvent(containerRef: number | string, payload: ContainerTrackingEventPayload) {
-    return request<ContainerTrackingEvent>(`/v2/containers/${encodeContainerRef(containerRef)}/tracking-events`, {
+  createV2ContainerTrackingEvent(containerId: number, payload: ContainerTrackingEventPayload) {
+    return request<ContainerTrackingEvent>(`/v2/containers/${containerId}/tracking-events`, {
       method: "POST",
       body: JSON.stringify(payload)
     });
   },
 
-  createV2ContainerPickupAssignment(containerRef: number | string, payload: ContainerPickupAssignmentPayload) {
-    return request<ContainerPickupAssignment>(`/v2/containers/${encodeContainerRef(containerRef)}/pickup-assignments`, {
+  createV2ContainerPickupAssignment(containerId: number, payload: ContainerPickupAssignmentPayload) {
+    return request<ContainerPickupAssignment>(`/v2/containers/${containerId}/pickup-assignments`, {
       method: "POST",
       body: JSON.stringify(payload)
     });

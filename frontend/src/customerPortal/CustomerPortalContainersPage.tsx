@@ -21,7 +21,7 @@ type CustomerPortalContainersPageProps = {
   onSearchChange: (value: string) => void;
   onApplySearch: () => void;
   onResetSearch: () => void;
-  onOpenContainer: (containerNo: string) => void;
+  onOpenContainer: (container: CustomerPortalContainerSummary) => void;
 };
 
 type ContainerStatusFilter = "all" | "active" | "partial" | "shipped" | "pending";
@@ -172,7 +172,7 @@ export function CustomerPortalContainersPage({
                 </TableCell>
               </TableRow>
             ) : pagedContainers.map((containerSummary) => (
-              <TableRow key={containerSummary.containerNo}>
+              <TableRow key={containerSummary.containerId && containerSummary.containerId > 0 ? `id:${containerSummary.containerId}` : `no:${containerSummary.containerNo}`}>
                 <TableCell>
                   <span className="font-semibold text-slate-950">{containerSummary.containerNo}</span>
                   <span className="mt-1 block text-xs text-slate-500">
@@ -207,7 +207,8 @@ export function CustomerPortalContainersPage({
                     variant="outline"
                     size="sm"
                     type="button"
-                    onClick={() => onOpenContainer(containerSummary.containerNo)}
+                    onClick={() => onOpenContainer(containerSummary)}
+                    disabled={!containerSummary.containerId || containerSummary.containerId <= 0}
                     aria-label={`${t("customerPortalOpenContainerLifecycle")} ${containerSummary.containerNo}`}
                   >
                     {t("details")}

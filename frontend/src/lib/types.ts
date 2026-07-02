@@ -773,7 +773,7 @@ export type CustomerPortalContainerLifecycle = {
   summary: CustomerPortalContainerSummary;
   packingLists: InboundDocument[];
   pickingOrders: OutboundDocument[];
-  movements: Movement[];
+  movements?: Movement[];
   lifecycleEvents: ContainerLifecycleEvent[];
   trackingEvents?: ContainerTrackingEvent[];
   pickupAssignments?: ContainerPickupAssignment[];

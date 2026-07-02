@@ -218,18 +218,19 @@ export function AdminContainerLifecyclePage({
   const [deliveryForm, setDeliveryForm] = useState<DeliveryFormState>(createEmptyDeliveryForm());
 
   const routeContainerId = routeScope?.containerId && routeScope.containerId > 0 ? routeScope.containerId : 0;
-  const routeCustomerId = routeScope?.customerId && routeScope.customerId > 0 ? routeScope.customerId : 0;
-  const routeContainerNo = routeScope?.containerNo?.trim().toUpperCase() ?? "";
-  const activeCustomerId = routeCustomerId || lifecycle?.summary.customerId || parsePositiveInt(selectedCustomerId);
-  const activeContainerNo = routeContainerNo || lifecycle?.summary.containerNo || "";
+  const activeCustomerId = lifecycle?.summary.customerId || parsePositiveInt(selectedCustomerId);
+  const activeContainerNo = lifecycle?.summary.containerNo || "";
+  const activeContainerId = lifecycle?.summary.containerId && lifecycle.summary.containerId > 0
+    ? lifecycle.summary.containerId
+    : routeContainerId;
 
   useEffect(() => {
     if (!routeScope) {
       return;
     }
-    setSelectedCustomerId(routeScope.customerId ? String(routeScope.customerId) : "all");
-    setSearchDraft(routeScope.containerNo ?? "");
-    setContainerSearch(routeScope.containerNo ?? "");
+    setSelectedCustomerId("all");
+    setSearchDraft("");
+    setContainerSearch("");
     setSelectedNode(null);
     setDraftNodes([]);
   }, [routeScope]);
@@ -268,7 +269,7 @@ export function AdminContainerLifecyclePage({
     let active = true;
 
     async function loadLifecycle() {
-      if (!routeContainerId && (!routeCustomerId || !routeContainerNo)) {
+      if (!routeContainerId) {
         setLifecycle(null);
         setLifecycleError("");
         return;
@@ -276,9 +277,7 @@ export function AdminContainerLifecyclePage({
       setLifecycleLoading(true);
       setLifecycleError("");
       try {
-        const nextLifecycle = routeContainerId
-          ? await api.getV2ContainerLifecycleByID(routeContainerId)
-          : await api.getV2ContainerLifecycle(routeContainerNo, routeCustomerId);
+        const nextLifecycle = await api.getV2ContainerLifecycleByID(routeContainerId);
         if (!active) return;
         setLifecycle(nextLifecycle);
         setContainerForm(createContainerFormFromLifecycle(nextLifecycle));
@@ -301,7 +300,7 @@ export function AdminContainerLifecyclePage({
     return () => {
       active = false;
     };
-  }, [reloadToken, routeContainerId, routeContainerNo, routeCustomerId, t]);
+  }, [reloadToken, routeContainerId, t]);
 
   useEffect(() => {
     if (!lifecycle || selectedNode?.kind !== "delivery") {
@@ -332,6 +331,9 @@ export function AdminContainerLifecyclePage({
   }
 
   function openSummary(summary: CustomerPortalContainerSummary) {
+    if (!summary.containerId || summary.containerId <= 0) {
+      return;
+    }
     onOpenContainerLifecycle(summary.customerId, summary.containerNo, summary.containerId);
   }
 
@@ -404,14 +406,13 @@ export function AdminContainerLifecyclePage({
 
   async function handleCreateTrackingEvent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!activeCustomerId || !activeContainerNo) {
+    if (!activeCustomerId || !activeContainerId) {
       return;
     }
     await runBusyAction("tracking", async () => {
-      const containerId = lifecycle?.summary.containerId;
-      await api.createV2ContainerTrackingEvent(containerId && containerId > 0 ? containerId : activeContainerNo, {
+      await api.createV2ContainerTrackingEvent(activeContainerId, {
         customerId: activeCustomerId,
-        containerId,
+        containerId: activeContainerId,
         eventType: trackingForm.eventType,
         eventTime: trackingForm.eventTime,
         notes: trackingForm.notes,
@@ -425,15 +426,14 @@ export function AdminContainerLifecyclePage({
 
   async function handleCreatePickupAssignment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!activeCustomerId || !activeContainerNo) {
+    if (!activeCustomerId || !activeContainerId) {
       return;
     }
     await runBusyAction("pickup", async () => {
       const usesOwnDriver = pickupForm.assignmentType === "OWN_DRIVER";
-      const containerId = lifecycle?.summary.containerId;
-      await api.createV2ContainerPickupAssignment(containerId && containerId > 0 ? containerId : activeContainerNo, {
+      await api.createV2ContainerPickupAssignment(activeContainerId, {
         customerId: activeCustomerId,
-        containerId,
+        containerId: activeContainerId,
         assignmentType: pickupForm.assignmentType,
         driverName: pickupForm.driverName,
         vendorName: usesOwnDriver ? "" : pickupForm.vendorName,
@@ -452,12 +452,12 @@ export function AdminContainerLifecyclePage({
 
   async function handleCreateDeliveryEvent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!activeCustomerId || !activeContainerNo) {
+    if (!activeCustomerId || !activeContainerId || !activeContainerNo) {
       return;
     }
     const payload: DeliveryEventPayload = {
       customerId: activeCustomerId,
-      containerId: lifecycle?.summary.containerId,
+      containerId: activeContainerId,
       containerNo: activeContainerNo,
       outboundDocumentId: parseOptionalPositiveInt(deliveryForm.outboundDocumentId),
       eventType: deliveryForm.eventType,
@@ -627,7 +627,7 @@ export function AdminContainerLifecyclePage({
                     <TableCell colSpan={10} className="py-10 text-center text-slate-500">{t("loadingRecords")}</TableCell>
                   </TableRow>
                 ) : pageRows.length > 0 ? pageRows.map((summary) => (
-                  <TableRow key={`${summary.customerId}-${summary.containerNo}`}>
+                  <TableRow key={summary.containerId && summary.containerId > 0 ? `id:${summary.containerId}` : `${summary.customerId}-${summary.containerNo}`}>
                     <TableCell>
                       <div className="font-mono text-sm font-bold text-slate-950">{summary.containerNo}</div>
                       <div className="mt-1 text-xs text-slate-500">{summary.packingListCount} {t("customerPortalPackingLists")}</div>
@@ -654,7 +654,7 @@ export function AdminContainerLifecyclePage({
                     <TableCell>{summary.transferCount}</TableCell>
                     <TableCell>{summary.lastActivityAt ? formatDateTimeValue(summary.lastActivityAt, resolvedTimeZone) : "-"}</TableCell>
                     <TableCell className="text-right">
-                      <Button type="button" variant="outline" size="sm" onClick={() => openSummary(summary)}>
+                      <Button type="button" variant="outline" size="sm" onClick={() => openSummary(summary)} disabled={!summary.containerId || summary.containerId <= 0}>
                         {t("viewDetails")}
                       </Button>
                     </TableCell>

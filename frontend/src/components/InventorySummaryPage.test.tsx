@@ -459,7 +459,7 @@ describe("InventorySummaryPage", () => {
     expect(onNavigate).not.toHaveBeenCalledWith("adjustments");
   });
 
-  it("hides the Inventory Transfer button while pallet entity UI is disabled", async () => {
+  it("does not expose inventory transfer shortcuts from the summary drawer", async () => {
     const onNavigate = vi.fn();
 
     renderWithProviders(
@@ -475,7 +475,7 @@ describe("InventorySummaryPage", () => {
     expect(onNavigate).not.toHaveBeenCalledWith("transfers");
   });
 
-  it("hides the cycle-count action while pallet entity UI is disabled", async () => {
+  it("keeps the removed cycle-count action hidden from the summary drawer", async () => {
     const onNavigate = vi.fn();
 
     renderWithProviders(

@@ -700,7 +700,7 @@ describe("buildBillingPreview", () => {
   // Covers scenarios that exercise individual engine rules in isolation:
   //   â€“ DRAFT documents included (only DELETED is excluded)
   //   â€“ Multi-line inbound: WRAPPING qty = sum of all lines' pallets
-  //   â€“ Pallet with no location events falls back to actualArrivalDate
+  //   â€“ Pallet count movement without explicit timing falls back to actualArrivalDate
   //   â€“ Single-day billing range
   //   â€“ Pallet received on last day of range = 1 pallet-day
   //   â€“ 3-phase partial outbound: correct segments and pallet-day total

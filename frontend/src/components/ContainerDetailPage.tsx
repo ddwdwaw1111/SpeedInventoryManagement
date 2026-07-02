@@ -312,12 +312,12 @@ export function ContainerDetailPage({
                 <button
                   type="button"
                   onClick={() => {
-                    if (!normalizedContainerNo) {
+                    if (!normalizedContainerNo || !lifecycleContainerId) {
                       return;
                     }
                     onOpenContainerLifecycle?.(lifecycleCustomerId, normalizedContainerNo, lifecycleContainerId);
                   }}
-                  disabled={!normalizedContainerNo || !onOpenContainerLifecycle}
+                  disabled={!normalizedContainerNo || !lifecycleContainerId || !onOpenContainerLifecycle}
                   className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <HistoryOutlinedIcon sx={{ fontSize: 15 }} />

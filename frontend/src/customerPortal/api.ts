@@ -19,8 +19,8 @@ export const customerPortalApi = {
   getProfile: (customerId?: number) => api.getCustomerPortalProfile(customerId),
   getInventory: (search = "", customerId?: number) => api.getCustomerPortalInventory(search, customerId),
   getContainers: (search = "", customerId?: number) => api.getCustomerPortalContainers(search, customerId),
-  getContainerLifecycle: (containerNo: string, customerId?: number) =>
-    api.getCustomerPortalContainerLifecycle(containerNo, customerId),
+  getContainerLifecycle: (containerId: number, customerId?: number) =>
+    api.getCustomerPortalContainerLifecycle(containerId, customerId),
   getPackingLists: (limit = 100, query?: CustomerPortalPackingListQuery, customerId?: number) =>
     api.getCustomerPortalPackingLists(limit, query, customerId),
   getPickingOrders: (limit = 100, query?: CustomerPortalPickingOrderQuery, customerId?: number) =>

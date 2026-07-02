@@ -34,5 +34,5 @@ func (s *Server) registerV2Routes(protected gin.IRouter) {
 
 func (s *Server) registerV2CustomerPortalEndpoints(router gin.IRoutes) {
 	router.GET("/containers", s.handleV2CustomerPortalContainers)
-	router.GET("/containers/:containerNo/lifecycle", s.handleV2CustomerPortalContainerLifecycle)
+	router.GET("/containers/:containerId/lifecycle", s.handleV2CustomerPortalContainerLifecycle)
 }

@@ -196,7 +196,7 @@ export function ContainerContentsPage({
               variant="text"
               startIcon={<OpenInNewRoundedIcon fontSize="small" />}
               onClick={() => onOpenContainerLifecycle?.(lifecycleCustomerId, params.row.containerNo, lifecycleContainerId)}
-              disabled={!onOpenContainerLifecycle}
+              disabled={!onOpenContainerLifecycle || !lifecycleContainerId}
               aria-label={`${t("openContainerLifecycle")} ${params.row.containerNo}`}
             >
               {t("openContainerLifecycle")}

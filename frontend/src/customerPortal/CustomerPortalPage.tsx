@@ -38,7 +38,7 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
   const [containers, setContainers] = useState<CustomerPortalContainerSummary[]>([]);
   const [packingLists, setPackingLists] = useState<InboundDocument[]>([]);
   const [pickingOrders, setPickingOrders] = useState<OutboundDocument[]>([]);
-  const [selectedContainerNo, setSelectedContainerNo] = useState<string | null>(null);
+  const [selectedContainer, setSelectedContainer] = useState<Pick<CustomerPortalContainerSummary, "containerId" | "containerNo"> | null>(null);
   const [selectedPackingListId, setSelectedPackingListId] = useState<number | null>(null);
   const [selectedPickingOrderId, setSelectedPickingOrderId] = useState<number | null>(null);
   const [pickingOrderDetailTabRequest, setPickingOrderDetailTabRequest] = useState<CustomerPortalDetailTabRequest | null>(null);
@@ -227,8 +227,11 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
     showError(message);
   }
 
-  function openContainerDetail(containerNo: string) {
-    setSelectedContainerNo(containerNo);
+  function openContainerDetail(container: CustomerPortalContainerSummary) {
+    setSelectedContainer({
+      containerId: container.containerId,
+      containerNo: container.containerNo
+    });
     setErrorMessage("");
     onSectionChange?.("container-detail");
   }
@@ -272,7 +275,8 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
 
       {showContainerDetailSection ? (
         <CustomerPortalContainerLifecyclePage
-          containerNo={selectedContainerNo}
+          containerId={selectedContainer?.containerId ?? null}
+          containerNo={selectedContainer?.containerNo ?? null}
           adminPortalCustomerId={adminPortalCustomerId}
           onBack={() => onSectionChange?.("containers")}
           onError={showPortalError}

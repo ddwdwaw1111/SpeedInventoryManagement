@@ -67,7 +67,7 @@ describe("ContainerDetailPage", () => {
     expect(screen.queryByText("PLT-001")).not.toBeInTheDocument();
   });
 
-  it("does not show cycle count actions", async () => {
+  it("does not show removed cycle count actions", async () => {
     const onNavigate = vi.fn();
 
     renderWithProviders(
@@ -90,7 +90,7 @@ describe("ContainerDetailPage", () => {
     expect(window.sessionStorage.getItem("sim-cycle-counts-context")).toBeNull();
   });
 
-  it("keeps cycle count actions hidden when the container has historical activity but no current inventory", async () => {
+  it("keeps removed cycle count actions hidden when the container has historical activity but no current inventory", async () => {
     renderWithProviders(
       <ContainerDetailPage
         routeKey="/container-contents/GCXU5817233"
