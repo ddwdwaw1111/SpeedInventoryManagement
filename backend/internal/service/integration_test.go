@@ -2509,6 +2509,69 @@ func TestInboundTrackingLifecycleIntegration(t *testing.T) {
 	}
 }
 
+func TestContainerOperationsUseExistingContainerIDIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "ContainerOpsCustomer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "ContainerOpsLoc-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "CONTAINER-OPS-"+suffix, 0)
+	containerNo := "CONTAINER-OPS-" + suffix
+
+	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-04-04",
+		ContainerNo:         containerNo,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusDraft,
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:            item.SKU,
+			Description:    item.Description,
+			ExpectedQty:    3,
+			ReceivedQty:    3,
+			StorageSection: DefaultStorageSection,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create inbound document: %v", err)
+	}
+	if inbound.ContainerID <= 0 {
+		t.Fatalf("expected inbound to create a container id, got %d", inbound.ContainerID)
+	}
+
+	if _, err := store.CreateContainerTrackingEvent(ctx, CreateContainerTrackingEventInput{
+		ContainerID: inbound.ContainerID,
+		EventType:   ContainerStatusTrackingReceived,
+		EventTime:   "2026-04-04T10:00:00Z",
+	}); err != nil {
+		t.Fatalf("create container tracking event: %v", err)
+	}
+	if _, err := store.CreateContainerPickupAssignment(ctx, CreateContainerPickupAssignmentInput{
+		ContainerID:       inbound.ContainerID,
+		AssignmentType:    "INTERNAL",
+		Status:            "SCHEDULED",
+		ScheduledPickupAt: "2026-04-04T12:00:00Z",
+	}); err != nil {
+		t.Fatalf("create container pickup assignment: %v", err)
+	}
+
+	var containerCount int
+	if err := store.db.GetContext(ctx, &containerCount, `
+		SELECT COUNT(*)
+		FROM containers
+		WHERE customer_id = ?
+			AND container_no = ?
+	`, customer.ID, containerNo); err != nil {
+		t.Fatalf("count containers: %v", err)
+	}
+	if containerCount != 1 {
+		t.Fatalf("expected tracking/pickup operations to reuse container id %d, got %d containers", inbound.ContainerID, containerCount)
+	}
+}
+
 func TestOutboundTrackingLifecycleIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()

@@ -14,6 +14,7 @@ const ContainerLifecycleLoadLimit = 5000
 type ContainerSummary struct {
 	ContainerID        int64      `json:"containerId"`
 	ContainerNo        string     `json:"containerNo"`
+	PackingListNo      string     `json:"packingListNo"`
 	CustomerID         int64      `json:"customerId"`
 	CustomerName       string     `json:"customerName"`
 	Warehouses         []string   `json:"warehouses"`
@@ -42,6 +43,7 @@ type ContainerLifecycle struct {
 	TrackingEvents    []ContainerTrackingEvent    `json:"trackingEvents"`
 	PickupAssignments []ContainerPickupAssignment `json:"pickupAssignments"`
 	DeliveryEvents    []DeliveryEvent             `json:"deliveryEvents"`
+	Nodes             []ContainerLifecycleNode    `json:"nodes"`
 }
 
 type ListContainersInput struct {
@@ -71,6 +73,9 @@ type containerRepository interface {
 	ListContainerTrackingEvents(context.Context, int, ContainerTrackingEventFilters) ([]ContainerTrackingEvent, error)
 	ListContainerPickupAssignments(context.Context, int, ContainerPickupAssignmentFilters) ([]ContainerPickupAssignment, error)
 	ListDeliveryEvents(context.Context, int, DeliveryEventFilters) ([]DeliveryEvent, error)
+	ListContainerLifecycleNodes(context.Context, int64) ([]ContainerLifecycleNode, error)
+	CreateContainerLifecycleNode(context.Context, int64, CreateContainerLifecycleNodeInput) (ContainerLifecycleNode, error)
+	UpdateContainerLifecycleNode(context.Context, int64, int64, UpdateContainerLifecycleNodeInput) (ContainerLifecycleNode, error)
 }
 
 type ContainerService struct {
@@ -91,6 +96,20 @@ func (s *ContainerService) CreateTrackingEvent(ctx context.Context, input Create
 
 func (s *ContainerService) CreatePickupAssignment(ctx context.Context, input CreateContainerPickupAssignmentInput) (ContainerPickupAssignment, error) {
 	return s.repo.CreateContainerPickupAssignment(ctx, input)
+}
+
+func (s *ContainerService) CreateLifecycleNode(ctx context.Context, containerID int64, input CreateContainerLifecycleNodeInput) (ContainerLifecycleNode, error) {
+	if containerID <= 0 {
+		return ContainerLifecycleNode{}, ErrInvalidInput
+	}
+	return s.repo.CreateContainerLifecycleNode(ctx, containerID, input)
+}
+
+func (s *ContainerService) UpdateLifecycleNode(ctx context.Context, containerID int64, nodeID int64, input UpdateContainerLifecycleNodeInput) (ContainerLifecycleNode, error) {
+	if containerID <= 0 || nodeID <= 0 {
+		return ContainerLifecycleNode{}, ErrInvalidInput
+	}
+	return s.repo.UpdateContainerLifecycleNode(ctx, containerID, nodeID, input)
 }
 
 func (s *ContainerService) ListContainers(ctx context.Context, input ListContainersInput) ([]ContainerSummary, error) {
@@ -194,9 +213,13 @@ func (s *ContainerService) GetLifecycle(ctx context.Context, input GetContainerL
 	if err != nil {
 		return ContainerLifecycle{}, err
 	}
+	nodes, err := s.repo.ListContainerLifecycleNodes(ctx, containerID)
+	if err != nil {
+		return ContainerLifecycle{}, err
+	}
 
-	summaries := buildContainerSummaries(containers, packingLists, items, lifecycleEvents)
-	summary, found := summaries[containerSummaryKey(customerID, containerNo)]
+	summaries := buildContainerSummaries(containers, packingLists, items, lifecycleEvents, trackingEvents, pickupAssignments, deliveryEvents)
+	summary, found := summaries[containerSummaryKey(containerID)]
 	if !found {
 		return ContainerLifecycle{}, ErrNotFound
 	}
@@ -210,6 +233,7 @@ func (s *ContainerService) GetLifecycle(ctx context.Context, input GetContainerL
 		TrackingEvents:    trackingEvents,
 		PickupAssignments: pickupAssignments,
 		DeliveryEvents:    deliveryEvents,
+		Nodes:             nodes,
 	}, nil
 }
 
@@ -220,8 +244,9 @@ func (s *ContainerService) loadContainerSummaries(ctx context.Context, customerI
 	}
 
 	packingLists, err := s.repo.ListInboundDocumentsFiltered(ctx, ContainerLifecycleLoadLimit, InboundDocumentFilters{
-		ArchiveScope: DocumentArchiveScopeAll,
-		CustomerID:   customerID,
+		ArchiveScope:   DocumentArchiveScopeActive,
+		CustomerID:     customerID,
+		ExcludeDeleted: true,
 	})
 	if err != nil {
 		return nil, err
@@ -237,7 +262,22 @@ func (s *ContainerService) loadContainerSummaries(ctx context.Context, customerI
 		return nil, err
 	}
 
-	summariesByContainer := buildContainerSummaries(containerRecords, packingLists, items, lifecycleEvents)
+	trackingEvents, err := s.repo.ListContainerTrackingEvents(ctx, ContainerLifecycleLoadLimit, ContainerTrackingEventFilters{CustomerID: customerID})
+	if err != nil {
+		return nil, err
+	}
+
+	pickupAssignments, err := s.repo.ListContainerPickupAssignments(ctx, ContainerLifecycleLoadLimit, ContainerPickupAssignmentFilters{CustomerID: customerID})
+	if err != nil {
+		return nil, err
+	}
+
+	deliveryEvents, err := s.repo.ListDeliveryEvents(ctx, ContainerLifecycleLoadLimit, DeliveryEventFilters{CustomerID: customerID})
+	if err != nil {
+		return nil, err
+	}
+
+	summariesByContainer := buildContainerSummaries(containerRecords, packingLists, items, lifecycleEvents, trackingEvents, pickupAssignments, deliveryEvents)
 	summaries := make([]ContainerSummary, 0, len(summariesByContainer))
 	for _, summary := range summariesByContainer {
 		summaries = append(summaries, summary)
@@ -264,8 +304,9 @@ func (s *ContainerService) loadContainerSummaries(ctx context.Context, customerI
 
 func (s *ContainerService) loadPackingListsForContainer(ctx context.Context, customerID int64, containerID int64, containerNo string) ([]InboundDocument, error) {
 	filters := InboundDocumentFilters{
-		ArchiveScope: DocumentArchiveScopeAll,
-		CustomerID:   customerID,
+		ArchiveScope:   DocumentArchiveScopeActive,
+		CustomerID:     customerID,
+		ExcludeDeleted: true,
 	}
 	if containerID > 0 {
 		filters.ContainerID = containerID
@@ -306,13 +347,17 @@ func (s *ContainerService) loadPickingOrdersForContainer(ctx context.Context, cu
 				}
 				return nil, err
 			}
+			if document.ArchivedAt != nil || normalizeDocumentStatus(document.Status) == DocumentStatusDeleted {
+				continue
+			}
 			documentsByID[document.ID] = document
 		}
 	}
 
 	filters := OutboundDocumentFilters{
-		ArchiveScope: DocumentArchiveScopeAll,
-		CustomerID:   customerID,
+		ArchiveScope:   DocumentArchiveScopeActive,
+		CustomerID:     customerID,
+		ExcludeDeleted: true,
 	}
 	if containerID > 0 {
 		filters.ContainerID = containerID
@@ -378,6 +423,9 @@ func buildContainerSummaries(
 	packingLists []InboundDocument,
 	items []Item,
 	lifecycleEvents []ContainerLifecycleEvent,
+	trackingEvents []ContainerTrackingEvent,
+	pickupAssignments []ContainerPickupAssignment,
+	deliveryEvents []DeliveryEvent,
 ) map[string]ContainerSummary {
 	accumulators := make(map[string]*containerSummaryAccumulator)
 	containerNosByID := make(map[int64]string)
@@ -391,11 +439,14 @@ func buildContainerSummaries(
 	}
 
 	getAccumulator := func(customerID int64, customerName string, containerID int64, containerNo string) *containerSummaryAccumulator {
+		key := containerSummaryKey(containerID)
+		if key == "" {
+			return nil
+		}
 		normalized := resolveContainerSummaryNo(containerNosByID, containerID, containerNo)
 		if normalized == "" {
 			return nil
 		}
-		key := containerSummaryKey(customerID, normalized)
 		if existing := accumulators[key]; existing != nil {
 			if existing.summary.ContainerID == 0 && containerID > 0 {
 				existing.summary.ContainerID = containerID
@@ -418,27 +469,10 @@ func buildContainerSummaries(
 		return accumulator
 	}
 
-	for _, container := range containers {
-		accumulator := getAccumulator(container.CustomerID, container.CustomerName, container.ID, container.ContainerNo)
-		if accumulator == nil {
+	for _, document := range packingLists {
+		if document.ArchivedAt != nil || normalizeDocumentStatus(document.Status) == DocumentStatusDeleted {
 			continue
 		}
-		if accumulator.summary.ContainerID == 0 {
-			accumulator.summary.ContainerID = container.ID
-		}
-		if accumulator.summary.CustomerID == 0 {
-			accumulator.summary.CustomerID = container.CustomerID
-			accumulator.summary.CustomerName = container.CustomerName
-		}
-		accumulator.summary.Status = strings.TrimSpace(container.Status)
-		if container.LocationName != "" {
-			accumulator.addWarehouse(container.LocationName)
-		}
-		accumulator.setLastActivity(container.LastEventAt)
-		accumulator.setLastActivity(&container.UpdatedAt)
-	}
-
-	for _, document := range packingLists {
 		accumulator := getAccumulator(document.CustomerID, document.CustomerName, document.ContainerID, document.ContainerNo)
 		if accumulator == nil {
 			continue
@@ -463,6 +497,9 @@ func buildContainerSummaries(
 	}
 
 	for _, item := range items {
+		if item.Quantity == 0 && item.Pallets == 0 && item.AllocatedQty == 0 && item.DamagedQty == 0 && item.HoldQty == 0 {
+			continue
+		}
 		accumulator := getAccumulator(item.CustomerID, item.CustomerName, item.ContainerID, item.ContainerNo)
 		if accumulator == nil {
 			continue
@@ -511,6 +548,77 @@ func buildContainerSummaries(
 		accumulator.setLastActivity(lifecycleEventActivityTime(event))
 	}
 
+	for _, event := range trackingEvents {
+		accumulator := getAccumulator(event.CustomerID, event.CustomerName, event.ContainerID, event.ContainerNo)
+		if accumulator == nil {
+			continue
+		}
+		if strings.TrimSpace(accumulator.summary.Status) == "" {
+			accumulator.summary.Status = strings.TrimSpace(event.EventType)
+		}
+		accumulator.addWarehouse(event.Location)
+		accumulator.setLastActivity(&event.EventTime)
+	}
+
+	for _, assignment := range pickupAssignments {
+		accumulator := getAccumulator(assignment.CustomerID, assignment.CustomerName, assignment.ContainerID, assignment.ContainerNo)
+		if accumulator == nil {
+			continue
+		}
+		if strings.TrimSpace(accumulator.summary.Status) == "" {
+			accumulator.summary.Status = strings.TrimSpace(assignment.Status)
+		}
+		accumulator.setLastActivity(assignment.ScheduledPickupAt)
+		accumulator.setLastActivity(assignment.ActualPickupAt)
+		accumulator.setLastActivity(&assignment.UpdatedAt)
+	}
+
+	for _, event := range deliveryEvents {
+		accumulator := getAccumulator(event.CustomerID, event.CustomerName, event.ContainerID, event.ContainerNo)
+		if accumulator == nil {
+			continue
+		}
+		if strings.TrimSpace(accumulator.summary.Status) == "" {
+			accumulator.summary.Status = strings.TrimSpace(event.EventType)
+		}
+		accumulator.setLastActivity(&event.EventTime)
+	}
+
+	for _, container := range containers {
+		if strings.TrimSpace(container.PackingListNo) != "" {
+			accumulator := getAccumulator(container.CustomerID, container.CustomerName, container.ID, container.ContainerNo)
+			if accumulator != nil {
+				accumulator.summary.PackingListNo = strings.TrimSpace(container.PackingListNo)
+				accumulator.summary.Status = strings.TrimSpace(container.Status)
+				accumulator.setLastActivity(firstNonEmptyTime(container.LastEventAt, &container.UpdatedAt))
+				if container.LocationName != "" {
+					accumulator.addWarehouse(container.LocationName)
+				}
+			}
+		}
+		key := containerSummaryKey(container.ID)
+		accumulator := accumulators[key]
+		if accumulator == nil {
+			continue
+		}
+		if accumulator.summary.ContainerID == 0 {
+			accumulator.summary.ContainerID = container.ID
+		}
+		if accumulator.summary.CustomerID == 0 {
+			accumulator.summary.CustomerID = container.CustomerID
+			accumulator.summary.CustomerName = container.CustomerName
+		}
+		if strings.TrimSpace(accumulator.summary.Status) == "" {
+			accumulator.summary.Status = strings.TrimSpace(container.Status)
+		}
+		if strings.TrimSpace(accumulator.summary.PackingListNo) == "" {
+			accumulator.summary.PackingListNo = strings.TrimSpace(container.PackingListNo)
+		}
+		if container.LocationName != "" {
+			accumulator.addWarehouse(container.LocationName)
+		}
+	}
+
 	summaries := make(map[string]ContainerSummary, len(accumulators))
 	for key, accumulator := range accumulators {
 		summary := accumulator.summary
@@ -528,13 +636,19 @@ func buildContainerSummaries(
 		if summary.CurrentQty > 0 || summary.ShippedQty > 0 || summary.TotalReceivedQty > 0 || strings.TrimSpace(summary.Status) == "" {
 			summary.Status = containerStatus(summary)
 		}
+		if strings.TrimSpace(summary.PackingListNo) != "" && strings.TrimSpace(summary.Status) == "" {
+			summary.Status = "PENDING"
+		}
 		summaries[key] = summary
 	}
 	return summaries
 }
 
-func containerSummaryKey(customerID int64, containerNo string) string {
-	return strconv.FormatInt(customerID, 10) + "|" + normalizeContainerNo(containerNo)
+func containerSummaryKey(containerID int64) string {
+	if containerID > 0 {
+		return "id:" + strconv.FormatInt(containerID, 10)
+	}
+	return ""
 }
 
 func resolveContainerSummaryNo(containerNosByID map[int64]string, containerID int64, containerNo string) string {
@@ -608,14 +722,8 @@ func filterItemsByContainer(items []Item, containerID int64, containerNo string)
 	return filtered
 }
 
-func matchesContainer(targetContainerID int64, targetContainerNo string, recordContainerID int64, recordContainerNo string) bool {
-	if targetContainerID > 0 {
-		if recordContainerID > 0 {
-			return recordContainerID == targetContainerID
-		}
-		return targetContainerNo != "" && normalizeContainerNo(recordContainerNo) == targetContainerNo
-	}
-	return targetContainerNo != "" && normalizeContainerNo(recordContainerNo) == targetContainerNo
+func matchesContainer(targetContainerID int64, _ string, recordContainerID int64, _ string) bool {
+	return targetContainerID > 0 && recordContainerID == targetContainerID
 }
 
 func outboundDocumentReferencesContainer(document OutboundDocument, containerID int64, containerNo string) bool {
@@ -687,6 +795,7 @@ func containerSummaryMatchesSearch(summary ContainerSummary, search string) bool
 	}
 	searchable := strings.ToLower(strings.Join([]string{
 		summary.ContainerNo,
+		summary.PackingListNo,
 		summary.CustomerName,
 		strings.Join(summary.Warehouses, " "),
 		strings.Join(summary.PickingOrderRefs, " "),

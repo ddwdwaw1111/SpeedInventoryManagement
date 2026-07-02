@@ -193,6 +193,46 @@ func (s *Server) handleV2CreateContainerPickupAssignment(c *gin.Context) {
 	writeJSON(c, http.StatusCreated, assignment)
 }
 
+func (s *Server) handleV2CreateContainerLifecycleNode(c *gin.Context) {
+	var input service.CreateContainerLifecycleNodeInput
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	containerID, ok := parseRequiredPositiveInt64Param(c, "containerId")
+	if !ok {
+		return
+	}
+	node, err := s.appServices().Container.CreateLifecycleNode(c.Request.Context(), containerID, input)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+	writeJSON(c, http.StatusCreated, node)
+}
+
+func (s *Server) handleV2UpdateContainerLifecycleNode(c *gin.Context) {
+	var input service.UpdateContainerLifecycleNodeInput
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	containerID, ok := parseRequiredPositiveInt64Param(c, "containerId")
+	if !ok {
+		return
+	}
+	nodeID, ok := parseRequiredPositiveInt64Param(c, "nodeId")
+	if !ok {
+		return
+	}
+	node, err := s.appServices().Container.UpdateLifecycleNode(c.Request.Context(), containerID, nodeID, input)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+	writeJSON(c, http.StatusOK, node)
+}
+
 func (s *Server) handleV2CreatePickingOrder(c *gin.Context) {
 	var input service.CreateOutboundDocumentInput
 	if err := bindJSON(c, &input); err != nil {
@@ -359,6 +399,15 @@ func customerVisibleContainerLifecycle(lifecycle service.ContainerLifecycle) ser
 		deliveryEvents = append(deliveryEvents, event)
 	}
 	lifecycle.DeliveryEvents = deliveryEvents
+
+	nodes := make([]service.ContainerLifecycleNode, 0, len(lifecycle.Nodes))
+	for _, node := range lifecycle.Nodes {
+		if !isCustomerVisibleLifecycleEvent(node.Visibility) {
+			continue
+		}
+		nodes = append(nodes, node)
+	}
+	lifecycle.Nodes = nodes
 	return lifecycle
 }
 

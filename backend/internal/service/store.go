@@ -775,7 +775,6 @@ func (s *Store) listStockLedgerMovements(ctx context.Context, limit int, filters
 				OR LOWER(COALESCE(oline.description_snapshot, '')) LIKE ?
 				OR LOWER(COALESCE(adjl.description_snapshot, '')) LIKE ?
 				OR LOWER(COALESCE(trl.description_snapshot, '')) LIKE ?
-				OR LOWER(COALESCE(ccl.description_snapshot, '')) LIKE ?
 				OR LOWER(COALESCE(c.name, '')) LIKE ?
 				OR LOWER(COALESCE(l.name, '')) LIKE ?
 				OR LOWER(COALESCE(NULLIF(sl.storage_section, ''), 'TEMP')) LIKE ?
@@ -784,11 +783,11 @@ func (s *Store) listStockLedgerMovements(ctx context.Context, limit int, filters
 				OR LOWER(COALESCE(NULLIF(sl.order_ref, ''), odoc.order_ref, '')) LIKE ?
 				OR LOWER(COALESCE(NULLIF(sl.item_number_snapshot, ''), sm.item_number, '')) LIKE ?
 				OR LOWER(COALESCE(sl.reference_code, '')) LIKE ?
-				OR LOWER(COALESCE(NULLIF(sl.document_note, ''), idoc.document_note, odoc.document_note, adj.notes, tr.notes, cc.notes, '')) LIKE ?
+				OR LOWER(COALESCE(NULLIF(sl.document_note, ''), idoc.document_note, odoc.document_note, adj.notes, tr.notes, '')) LIKE ?
 				OR LOWER(COALESCE(NULLIF(sl.reason, ''), adj.reason_code, '')) LIKE ?
 			)
 		`)
-		for range 19 {
+		for range 18 {
 			args = append(args, searchPattern)
 		}
 	}

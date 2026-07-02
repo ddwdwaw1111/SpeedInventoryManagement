@@ -7,6 +7,7 @@ export type ItemContainerBalance = {
   locationId: number;
   locationName: string;
   storageSection: string;
+  containerId?: number;
   containerNo: string;
   onHandQty: number;
   availableQty: number;
@@ -20,6 +21,7 @@ type MovementBalanceGroup = {
   locationId: number;
   locationName: string;
   storageSection: string;
+  containerId?: number;
   containerNo: string;
   onHandQty: number;
   availableQty: number;
@@ -54,8 +56,13 @@ function buildProjectionSourceKey(item: Pick<Item, "customerId" | "locationId" |
   return `${item.customerId}|${item.locationId}|${item.skuMasterId}`;
 }
 
-function containerBalanceKey(locationId: number, storageSection: string, containerNo: string) {
-  return `${locationId}|${normalizeStorageSection(storageSection)}|${containerNo || ""}`;
+function containerIdentityKey(containerId: number | null | undefined) {
+  return containerId && containerId > 0 ? `id:${containerId}` : "";
+}
+
+function containerBalanceKey(locationId: number, storageSection: string, containerId: number | null | undefined) {
+  const containerKey = containerIdentityKey(containerId);
+  return containerKey ? `${locationId}|${normalizeStorageSection(storageSection)}|${containerKey}` : "";
 }
 
 export function buildItemContainerBalances(items: Item[], movements: Movement[]) {
@@ -93,7 +100,10 @@ export function buildItemContainerBalances(items: Item[], movements: Movement[])
     for (const item of sourceGroup.items) {
       const storageSection = normalizeStorageSection(item.storageSection);
       const containerNo = item.containerNo || "";
-      const sourceKey = containerBalanceKey(item.locationId, storageSection, containerNo);
+      const sourceKey = containerBalanceKey(item.locationId, storageSection, item.containerId);
+      if (!sourceKey) {
+        continue;
+      }
       const existing = groupedByCurrentContainer.get(sourceKey);
       if (!existing) {
         groupedByCurrentContainer.set(sourceKey, {
@@ -103,6 +113,7 @@ export function buildItemContainerBalances(items: Item[], movements: Movement[])
           locationId: item.locationId,
           locationName: item.locationName,
           storageSection,
+          containerId: item.containerId,
           containerNo,
           onHandQty: item.quantity,
           availableQty: item.availableQty,
@@ -129,7 +140,10 @@ export function buildItemContainerBalances(items: Item[], movements: Movement[])
 
       const storageSection = normalizeStorageSection(movement.storageSection || sourceGroup.representative.storageSection);
       const containerNo = movement.containerNo || "";
-      const key = containerBalanceKey(sourceGroup.representative.locationId, storageSection, containerNo);
+      const key = containerBalanceKey(sourceGroup.representative.locationId, storageSection, movement.containerId);
+      if (!key) {
+        continue;
+      }
       const existing = movementContainerBalances.get(key);
       const nextSortAt = parseMovementSortAt(movement) || parseItemSortAt(sourceGroup.representative);
 
@@ -141,6 +155,7 @@ export function buildItemContainerBalances(items: Item[], movements: Movement[])
           locationId: sourceGroup.representative.locationId,
           locationName: sourceGroup.representative.locationName,
           storageSection,
+          containerId: movement.containerId,
           containerNo,
           onHandQty: movement.quantityChange,
           availableQty: 0,
@@ -180,6 +195,7 @@ export function buildItemContainerBalances(items: Item[], movements: Movement[])
         locationId: balance.locationId,
         locationName: balance.locationName,
         storageSection: balance.storageSection,
+        containerId: balance.containerId,
         containerNo: balance.containerNo,
         onHandQty: balance.onHandQty,
         availableQty: balance.availableQty,

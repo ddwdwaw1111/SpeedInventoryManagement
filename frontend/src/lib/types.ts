@@ -373,6 +373,7 @@ export type ContainerRecord = {
   inboundDocumentId: number;
   locationId: number;
   locationName: string;
+  packingListNo: string;
   containerNo: string;
   containerType: ContainerType | string;
   handlingMode: string;
@@ -398,6 +399,7 @@ export type ContainerPayload = {
   customerId: number;
   inboundDocumentId?: number;
   locationId?: number;
+  packingListNo?: string;
   containerNo: string;
   containerType?: ContainerType | string;
   handlingMode?: string;
@@ -517,6 +519,7 @@ export type DeliveryEventPayload = LifecycleDisplayFields & {
 export type CustomerPortalContainerSummary = {
   containerId?: number;
   containerNo: string;
+  packingListNo?: string;
   customerId: number;
   customerName: string;
   warehouses: string[];
@@ -564,6 +567,38 @@ export type ContainerLifecycleEvent = {
   reason: string;
   referenceCode: string;
   createdAt: string;
+};
+
+export type ContainerLifecycleNode = {
+  id: number;
+  containerId: number;
+  parentNodeId: number;
+  nodeKey: string;
+  nodeKind: string;
+  title: string;
+  sourceType: string;
+  sourceId: number;
+  visibility: ContainerLifecycleEventVisibility;
+  sortOrder: number;
+  positionX: number | null;
+  positionY: number | null;
+  metadataJson: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ContainerLifecycleNodePayload = {
+  parentNodeId?: number;
+  nodeKey?: string;
+  nodeKind?: string;
+  title?: string;
+  sourceType?: string;
+  sourceId?: number;
+  visibility?: ContainerLifecycleEventVisibility;
+  sortOrder?: number;
+  positionX?: number;
+  positionY?: number;
+  metadataJson?: string;
 };
 
 export type OutboundDocumentLine = {
@@ -778,6 +813,7 @@ export type CustomerPortalContainerLifecycle = {
   trackingEvents?: ContainerTrackingEvent[];
   pickupAssignments?: ContainerPickupAssignment[];
   deliveryEvents?: DeliveryEvent[];
+  nodes?: ContainerLifecycleNode[];
 };
 
 export type ContainerLifecycle = CustomerPortalContainerLifecycle & {

@@ -149,6 +149,7 @@ type InboundDocumentFilters struct {
 	LocationID     int64
 	Status         string
 	TrackingStatus string
+	ExcludeDeleted bool
 }
 
 func (s *Store) ListInboundDocuments(ctx context.Context, limit int, archiveScope ...string) ([]InboundDocument, error) {
@@ -181,6 +182,10 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 	if statusFilterClause, statusArgs := buildDocumentStatusFilterClause("d", filters.Status); statusFilterClause != "" {
 		whereClauses = append(whereClauses, statusFilterClause)
 		args = append(args, statusArgs...)
+	}
+	if filters.ExcludeDeleted {
+		whereClauses = append(whereClauses, "UPPER(TRIM(d.status)) NOT IN (?, ?)")
+		args = append(args, DocumentStatusDeleted, "CANCELLED")
 	}
 	if trackingFilterClause, trackingArgs := buildInboundTrackingStatusFilterClause("d", filters.TrackingStatus); trackingFilterClause != "" {
 		whereClauses = append(whereClauses, trackingFilterClause)

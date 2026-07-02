@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -28,6 +29,7 @@ type Container struct {
 	InboundDocumentID int64      `json:"inboundDocumentId"`
 	LocationID        int64      `json:"locationId"`
 	LocationName      string     `json:"locationName"`
+	PackingListNo     string     `json:"packingListNo"`
 	ContainerNo       string     `json:"containerNo"`
 	ContainerType     string     `json:"containerType"`
 	HandlingMode      string     `json:"handlingMode"`
@@ -42,6 +44,7 @@ type CreateContainerInput struct {
 	CustomerID        int64  `json:"customerId"`
 	InboundDocumentID int64  `json:"inboundDocumentId"`
 	LocationID        int64  `json:"locationId"`
+	PackingListNo     string `json:"packingListNo"`
 	ContainerNo       string `json:"containerNo"`
 	ContainerType     string `json:"containerType"`
 	HandlingMode      string `json:"handlingMode"`
@@ -229,6 +232,55 @@ func (s *Store) ensureContainerRecordTx(
 	normalizedStatus = firstNonEmpty(normalizedStatus, "IN_STOCK")
 	normalizedTrackingStatus = firstNonEmpty(normalizedTrackingStatus, normalizedStatus, "RECEIVED")
 
+	if inboundDocumentID > 0 {
+		var existingID int64
+		err := tx.QueryRowContext(ctx, `
+			SELECT id
+			FROM containers
+			WHERE inbound_document_id = ?
+				AND customer_id = ?
+			ORDER BY id DESC
+			LIMIT 1
+			FOR UPDATE
+		`, inboundDocumentID, customerID).Scan(&existingID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return 0, mapDBError(fmt.Errorf("load inbound container record: %w", err))
+		}
+		if existingID > 0 {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE containers
+				SET
+					location_id = COALESCE(?, location_id),
+					container_no = ?,
+					container_type = ?,
+					handling_mode = ?,
+					status = ?,
+					tracking_status = ?,
+					last_event_at = CASE
+						WHEN ? IS NULL THEN last_event_at
+						WHEN last_event_at IS NULL OR ? > last_event_at THEN ?
+						ELSE last_event_at
+					END,
+					updated_at = CURRENT_TIMESTAMP
+				WHERE id = ?
+			`,
+				nullableInt64(locationID),
+				normalizedContainerNo,
+				firstNonEmpty(normalizeContainerType(containerType), ContainerTypeNormal),
+				firstNonEmpty(normalizeInboundHandlingMode(handlingMode), InboundHandlingModePalletized),
+				normalizedStatus,
+				normalizedTrackingStatus,
+				nullableTime(lastEventAt),
+				nullableTime(lastEventAt),
+				nullableTime(lastEventAt),
+				existingID,
+			); err != nil {
+				return 0, mapDBError(fmt.Errorf("update inbound container record: %w", err))
+			}
+			return existingID, nil
+		}
+	}
+
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO containers (
 			customer_id,
@@ -241,19 +293,6 @@ func (s *Store) ensureContainerRecordTx(
 			tracking_status,
 			last_event_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE
-			id = LAST_INSERT_ID(id),
-			inbound_document_id = COALESCE(VALUES(inbound_document_id), inbound_document_id),
-			location_id = COALESCE(VALUES(location_id), location_id),
-			container_type = COALESCE(NULLIF(VALUES(container_type), ''), container_type),
-			handling_mode = COALESCE(NULLIF(VALUES(handling_mode), ''), handling_mode),
-			status = COALESCE(NULLIF(VALUES(status), ''), status),
-			tracking_status = COALESCE(NULLIF(VALUES(tracking_status), ''), tracking_status),
-			last_event_at = CASE
-				WHEN VALUES(last_event_at) IS NULL THEN last_event_at
-				WHEN last_event_at IS NULL OR VALUES(last_event_at) > last_event_at THEN VALUES(last_event_at)
-				ELSE last_event_at
-			END
 	`,
 		customerID,
 		nullableInt64(inboundDocumentID),
@@ -314,6 +353,7 @@ func (s *Store) syncContainerDocumentLinkTx(ctx context.Context, tx *sql.Tx, con
 func (s *Store) CreateContainer(ctx context.Context, input CreateContainerInput) (Container, error) {
 	customerID := input.CustomerID
 	containerNo := normalizeContainerNo(input.ContainerNo)
+	packingListNo := strings.TrimSpace(input.PackingListNo)
 	if customerID <= 0 || containerNo == "" {
 		return Container{}, ErrInvalidInput
 	}
@@ -343,45 +383,91 @@ func (s *Store) CreateContainer(ctx context.Context, input CreateContainerInput)
 	status := firstNonEmpty(statusInput, ContainerStatusTrackingReceived)
 	trackingStatus := firstNonEmpty(trackingStatusInput, status)
 
+	if input.InboundDocumentID > 0 {
+		var existingID int64
+		err := s.db.QueryRowContext(ctx, `
+			SELECT id
+			FROM containers
+			WHERE inbound_document_id = ?
+				AND customer_id = ?
+			ORDER BY id DESC
+			LIMIT 1
+		`, input.InboundDocumentID, customerID).Scan(&existingID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return Container{}, mapDBError(fmt.Errorf("load container by inbound document: %w", err))
+		}
+		if existingID > 0 {
+			if _, err := s.db.ExecContext(ctx, `
+				UPDATE containers
+				SET
+					location_id = COALESCE(?, location_id),
+					packing_list_no = CASE
+						WHEN ? = '' THEN packing_list_no
+						ELSE ?
+					END,
+					container_no = ?,
+					container_type = ?,
+					handling_mode = ?,
+					status = ?,
+					tracking_status = ?,
+					last_event_at = CASE
+						WHEN ? IS NULL THEN last_event_at
+						WHEN last_event_at IS NULL OR ? > last_event_at THEN ?
+						ELSE last_event_at
+					END,
+					updated_at = CURRENT_TIMESTAMP
+				WHERE id = ?
+			`,
+				nullableInt64(input.LocationID),
+				packingListNo,
+				packingListNo,
+				containerNo,
+				firstNonEmpty(containerTypeInput, ContainerTypeNormal),
+				firstNonEmpty(handlingModeInput, InboundHandlingModePalletized),
+				status,
+				trackingStatus,
+				nullableTime(lastEventAt),
+				nullableTime(lastEventAt),
+				nullableTime(lastEventAt),
+				existingID,
+			); err != nil {
+				return Container{}, mapDBError(fmt.Errorf("update container by inbound document: %w", err))
+			}
+			container, err := s.getContainerByID(ctx, existingID)
+			if err != nil {
+				return Container{}, err
+			}
+			if err := s.ensureDefaultContainerLifecycleNodes(ctx, container); err != nil {
+				return Container{}, err
+			}
+			return container, nil
+		}
+	}
+
 	result, err := s.db.ExecContext(ctx, `
 		INSERT INTO containers (
 			customer_id,
 			inbound_document_id,
 			location_id,
+			packing_list_no,
 			container_no,
 			container_type,
 			handling_mode,
 			status,
 			tracking_status,
 			last_event_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE
-			id = LAST_INSERT_ID(id),
-			inbound_document_id = COALESCE(VALUES(inbound_document_id), inbound_document_id),
-			location_id = COALESCE(VALUES(location_id), location_id),
-			container_type = COALESCE(NULLIF(?, ''), container_type),
-			handling_mode = COALESCE(NULLIF(?, ''), handling_mode),
-			status = COALESCE(NULLIF(?, ''), status),
-			tracking_status = COALESCE(NULLIF(?, ''), tracking_status),
-			last_event_at = CASE
-				WHEN VALUES(last_event_at) IS NULL THEN last_event_at
-				WHEN last_event_at IS NULL OR VALUES(last_event_at) > last_event_at THEN VALUES(last_event_at)
-				ELSE last_event_at
-			END
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		customerID,
 		nullableInt64(input.InboundDocumentID),
 		nullableInt64(input.LocationID),
+		packingListNo,
 		containerNo,
 		firstNonEmpty(containerTypeInput, ContainerTypeNormal),
 		firstNonEmpty(handlingModeInput, InboundHandlingModePalletized),
 		status,
 		trackingStatus,
 		nullableTime(lastEventAt),
-		containerTypeInput,
-		handlingModeInput,
-		statusInput,
-		trackingStatusInput,
 	)
 	if err != nil {
 		return Container{}, mapDBError(fmt.Errorf("create container: %w", err))
@@ -390,7 +476,14 @@ func (s *Store) CreateContainer(ctx context.Context, input CreateContainerInput)
 	if err != nil {
 		return Container{}, fmt.Errorf("resolve container id: %w", err)
 	}
-	return s.getContainerByID(ctx, containerID)
+	container, err := s.getContainerByID(ctx, containerID)
+	if err != nil {
+		return Container{}, err
+	}
+	if err := s.ensureDefaultContainerLifecycleNodes(ctx, container); err != nil {
+		return Container{}, err
+	}
+	return container, nil
 }
 
 func (s *Store) ListContainerRecords(ctx context.Context, limit int, filters ContainerFilters) ([]Container, error) {
@@ -408,9 +501,9 @@ func (s *Store) ListContainerRecords(ctx context.Context, limit int, filters Con
 		args = append(args, filters.CustomerID)
 	}
 	if search := strings.TrimSpace(strings.ToLower(filters.Search)); search != "" {
-		whereClauses = append(whereClauses, `(LOWER(cn.container_no) LIKE ? OR LOWER(c.name) LIKE ? OR LOWER(COALESCE(l.name, '')) LIKE ?)`)
+		whereClauses = append(whereClauses, `(LOWER(cn.container_no) LIKE ? OR LOWER(cn.packing_list_no) LIKE ? OR LOWER(c.name) LIKE ? OR LOWER(COALESCE(l.name, '')) LIKE ?)`)
 		like := "%" + search + "%"
-		args = append(args, like, like, like)
+		args = append(args, like, like, like, like)
 	}
 	query := fmt.Sprintf(`
 		SELECT
@@ -420,6 +513,7 @@ func (s *Store) ListContainerRecords(ctx context.Context, limit int, filters Con
 			COALESCE(cn.inbound_document_id, 0),
 			COALESCE(cn.location_id, 0),
 			COALESCE(l.name, ''),
+			COALESCE(cn.packing_list_no, ''),
 			cn.container_no,
 			cn.container_type,
 			cn.handling_mode,
@@ -473,6 +567,7 @@ func (s *Store) GetContainerByNo(ctx context.Context, customerID int64, containe
 			COALESCE(cn.inbound_document_id, 0),
 			COALESCE(cn.location_id, 0),
 			COALESCE(l.name, ''),
+			COALESCE(cn.packing_list_no, ''),
 			cn.container_no,
 			cn.container_type,
 			cn.handling_mode,
@@ -527,15 +622,43 @@ func (s *Store) CreateContainerTrackingEvent(ctx context.Context, input CreateCo
 	displayLabel := strings.TrimSpace(input.DisplayLabel)
 	publicLabel := firstNonEmpty(strings.TrimSpace(input.PublicLabel), displayLabel)
 	internalLabel := firstNonEmpty(strings.TrimSpace(input.InternalLabel), displayLabel, strings.TrimSpace(input.Notes), publicLabel)
-	container, err := s.CreateContainer(ctx, CreateContainerInput{
-		CustomerID:     customerID,
-		ContainerNo:    containerNo,
-		Status:         eventType,
-		TrackingStatus: eventType,
-		LastEventAt:    input.EventTime,
-	})
-	if err != nil {
-		return ContainerTrackingEvent{}, err
+	if containerID > 0 {
+		if _, err := s.db.ExecContext(ctx, `
+			UPDATE containers
+			SET
+				status = ?,
+				tracking_status = ?,
+				last_event_at = CASE
+					WHEN ? IS NULL THEN last_event_at
+					WHEN last_event_at IS NULL OR ? > last_event_at THEN ?
+					ELSE last_event_at
+				END,
+				updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+				AND customer_id = ?
+		`,
+			eventType,
+			eventType,
+			nullableTime(eventTime),
+			nullableTime(eventTime),
+			nullableTime(eventTime),
+			containerID,
+			customerID,
+		); err != nil {
+			return ContainerTrackingEvent{}, mapDBError(fmt.Errorf("update tracking container status: %w", err))
+		}
+	} else {
+		container, err := s.CreateContainer(ctx, CreateContainerInput{
+			CustomerID:     customerID,
+			ContainerNo:    containerNo,
+			Status:         eventType,
+			TrackingStatus: eventType,
+			LastEventAt:    input.EventTime,
+		})
+		if err != nil {
+			return ContainerTrackingEvent{}, err
+		}
+		containerID = container.ID
 	}
 	result, err := s.db.ExecContext(ctx, `
 		INSERT INTO container_tracking_events (
@@ -554,8 +677,8 @@ func (s *Store) CreateContainerTrackingEvent(ctx context.Context, input CreateCo
 			created_by_user_id
 		) VALUES (?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		container.ID,
-		input.CustomerID,
+		containerID,
+		customerID,
 		containerNo,
 		eventType,
 		nullableTime(eventTime),
@@ -680,15 +803,47 @@ func (s *Store) CreateContainerPickupAssignment(ctx context.Context, input Creat
 	displayLabel := strings.TrimSpace(input.DisplayLabel)
 	publicLabel := firstNonEmpty(strings.TrimSpace(input.PublicLabel), displayLabel)
 	internalLabel := firstNonEmpty(strings.TrimSpace(input.InternalLabel), displayLabel, buildPickupInternalLabel(input, assignmentType, status), publicLabel)
-	container, err := s.CreateContainer(ctx, CreateContainerInput{
-		CustomerID:     customerID,
-		ContainerNo:    containerNo,
-		Status:         containerStatus,
-		TrackingStatus: containerStatus,
-		LastEventAt:    lastEventAt,
-	})
-	if err != nil {
-		return ContainerPickupAssignment{}, err
+	if containerID > 0 {
+		lastEventTime := scheduledPickupAt
+		if actualPickupAt != nil {
+			lastEventTime = actualPickupAt
+		}
+		if _, err := s.db.ExecContext(ctx, `
+			UPDATE containers
+			SET
+				status = ?,
+				tracking_status = ?,
+				last_event_at = CASE
+					WHEN ? IS NULL THEN last_event_at
+					WHEN last_event_at IS NULL OR ? > last_event_at THEN ?
+					ELSE last_event_at
+				END,
+				updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+				AND customer_id = ?
+		`,
+			containerStatus,
+			containerStatus,
+			nullableTime(lastEventTime),
+			nullableTime(lastEventTime),
+			nullableTime(lastEventTime),
+			containerID,
+			customerID,
+		); err != nil {
+			return ContainerPickupAssignment{}, mapDBError(fmt.Errorf("update pickup container status: %w", err))
+		}
+	} else {
+		container, err := s.CreateContainer(ctx, CreateContainerInput{
+			CustomerID:     customerID,
+			ContainerNo:    containerNo,
+			Status:         containerStatus,
+			TrackingStatus: containerStatus,
+			LastEventAt:    lastEventAt,
+		})
+		if err != nil {
+			return ContainerPickupAssignment{}, err
+		}
+		containerID = container.ID
 	}
 	result, err := s.db.ExecContext(ctx, `
 		INSERT INTO container_pickup_assignments (
@@ -712,8 +867,8 @@ func (s *Store) CreateContainerPickupAssignment(ctx context.Context, input Creat
 			created_by_user_id
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		container.ID,
-		input.CustomerID,
+		containerID,
+		customerID,
 		containerNo,
 		assignmentType,
 		nullableString(input.DriverName),
@@ -929,6 +1084,15 @@ func (s *Store) ListDeliveryEvents(ctx context.Context, limit int, filters Deliv
 		whereClauses = append(whereClauses, "UPPER(TRIM(de.container_no)) = ?")
 		args = append(args, containerNo)
 	}
+	whereClauses = append(whereClauses, `(
+		COALESCE(de.outbound_document_id, 0) = 0
+		OR (
+			od.id IS NOT NULL
+			AND od.archived_at IS NULL
+			AND UPPER(TRIM(od.status)) NOT IN (?, ?)
+		)
+	)`)
+	args = append(args, DocumentStatusDeleted, "CANCELLED")
 	query := fmt.Sprintf(`
 		SELECT
 			de.id,
@@ -954,6 +1118,7 @@ func (s *Store) ListDeliveryEvents(ctx context.Context, limit int, filters Deliv
 			de.updated_at
 		FROM delivery_events de
 		LEFT JOIN customers c ON c.id = de.customer_id
+		LEFT JOIN outbound_documents od ON od.id = de.outbound_document_id
 		WHERE %s
 		ORDER BY de.event_time DESC, de.id DESC
 		LIMIT ?
@@ -984,6 +1149,7 @@ func (s *Store) getContainerByID(ctx context.Context, containerID int64) (Contai
 			COALESCE(cn.inbound_document_id, 0),
 			COALESCE(cn.location_id, 0),
 			COALESCE(l.name, ''),
+			COALESCE(cn.packing_list_no, ''),
 			cn.container_no,
 			cn.container_type,
 			cn.handling_mode,
@@ -1009,6 +1175,7 @@ func scanContainer(scanner itemScanner) (Container, error) {
 		&container.InboundDocumentID,
 		&container.LocationID,
 		&container.LocationName,
+		&container.PackingListNo,
 		&container.ContainerNo,
 		&container.ContainerType,
 		&container.HandlingMode,

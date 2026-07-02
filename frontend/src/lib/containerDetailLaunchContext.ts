@@ -1,5 +1,6 @@
 export type ContainerDetailLaunchContext = {
   openTransferDialog?: boolean;
+  openAdjustmentDialog?: boolean;
 };
 
 const STORAGE_KEY = "sim-container-detail-launch";

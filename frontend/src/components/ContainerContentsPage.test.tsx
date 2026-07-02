@@ -67,6 +67,7 @@ describe("ContainerContentsPage", () => {
       <ContainerContentsPage
         items={[
           createItem({
+            containerId: 101,
             containerNo: "GCXU5817233",
             quantity: 5,
             availableQty: 5,
@@ -77,6 +78,7 @@ describe("ContainerContentsPage", () => {
         movements={[
           createMovement({
             id: 1,
+            containerId: 101,
             containerNo: "GCXU5817233",
             movementType: "IN",
             quantityChange: 10,
@@ -85,6 +87,7 @@ describe("ContainerContentsPage", () => {
           }),
           createMovement({
             id: 2,
+            containerId: 101,
             inboundDocumentId: 0,
             inboundDocumentLineId: 0,
             outboundDocumentId: 2,
@@ -126,6 +129,7 @@ describe("ContainerContentsPage", () => {
         movements={[
           createMovement({
             id: 11,
+            containerId: 202,
             containerNo: "MRSU6884820",
             movementType: "IN",
             createdAt: receivedAt,
@@ -137,6 +141,7 @@ describe("ContainerContentsPage", () => {
           }),
           createMovement({
             id: 12,
+            containerId: 202,
             inboundDocumentId: 0,
             inboundDocumentLineId: 0,
             outboundDocumentId: 3,
@@ -174,6 +179,7 @@ describe("ContainerContentsPage", () => {
     getMovements.mockResolvedValue([
       createMovement({
         id: 21,
+        containerId: 303,
         containerNo: "OLDU1234567",
         movementType: "OUT",
         quantityChange: -12,
@@ -223,6 +229,7 @@ describe("ContainerContentsPage", () => {
       <ContainerContentsPage
         items={[
           createItem({
+            containerId: 404,
             containerNo: "OOLU1234567",
             quantity: 8,
             availableQty: 8,

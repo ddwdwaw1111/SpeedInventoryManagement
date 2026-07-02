@@ -19,6 +19,8 @@ func (s *Server) registerV2Routes(protected gin.IRouter) {
 	operator.POST("/containers", s.handleV2CreateContainer)
 	operator.POST("/containers/:containerId/tracking-events", s.handleV2CreateContainerTrackingEvent)
 	operator.POST("/containers/:containerId/pickup-assignments", s.handleV2CreateContainerPickupAssignment)
+	operator.POST("/containers/:containerId/lifecycle-nodes", s.handleV2CreateContainerLifecycleNode)
+	operator.PUT("/containers/:containerId/lifecycle-nodes/:nodeId", s.handleV2UpdateContainerLifecycleNode)
 	operator.POST("/picking-orders", s.handleV2CreatePickingOrder)
 	operator.POST("/deliveries", s.handleV2CreateDeliveryEvent)
 	operator.POST("/deliveries/:id/bol", s.handleV2ReceiveBOL)

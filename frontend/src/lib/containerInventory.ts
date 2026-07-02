@@ -8,6 +8,7 @@ export type ContainerContentsRow = {
   pickLocationSummary: string;
   customerSummary: string;
   customerIds: number[];
+  containerIds: number[];
   locationIds: number[];
   skuCount: number;
   rowCount: number;
@@ -39,6 +40,21 @@ type ContainerContentsDraftRow = ContainerContentsRow & {
   warehouseNames: string[];
   pickLocations: string[];
   customerNames: string[];
+  skuSet: Set<string>;
+  itemNumbers: Set<string>;
+  descriptionSet: Set<string>;
+};
+
+type ContainerMovementSummary = {
+  containerNo: string;
+  containerIds: number[];
+  receivedAt: string | null;
+  shippedAt: string | null;
+  warehouseNames: string[];
+  pickLocations: string[];
+  customerNames: string[];
+  customerIds: number[];
+  locationIds: number[];
   skuSet: Set<string>;
   itemNumbers: Set<string>;
   descriptionSet: Set<string>;
@@ -100,21 +116,26 @@ export function buildContainerContentsRows(
 
   for (const item of filteredItems) {
     const containerNo = normalizeContainerNumber(item.containerNo);
-    const existing = rowMap.get(containerNo);
-    const timeline = containerMovementSummaryMap.get(containerNo);
+    const containerKey = containerIdentityKey(item.containerId);
+    if (!containerKey) {
+      continue;
+    }
+    const existing = rowMap.get(containerKey);
+    const timeline = containerMovementSummaryMap.get(containerKey);
     const receiptDate = timeline?.receivedAt ?? getFallbackItemReceivedAt(item);
     const shippedAt = timeline?.shippedAt ?? null;
     const pickLocation = `${item.locationName} / ${normalizeStorageSection(item.storageSection)}`;
     const description = displayContainerItemDescription(item);
 
     if (!existing) {
-      rowMap.set(containerNo, {
-        id: containerNo,
+      rowMap.set(containerKey, {
+        id: containerKey,
         containerNo,
         warehouseSummary: item.locationName,
         pickLocationSummary: pickLocation,
         customerSummary: item.customerName,
         customerIds: [item.customerId],
+        containerIds: item.containerId && item.containerId > 0 ? [item.containerId] : [],
         locationIds: [item.locationId],
         skuCount: 1,
         rowCount: 1,
@@ -145,6 +166,9 @@ export function buildContainerContentsRows(
     if (!existing.customerIds.includes(item.customerId)) {
       existing.customerIds.push(item.customerId);
     }
+    if (item.containerId && item.containerId > 0 && !existing.containerIds.includes(item.containerId)) {
+      existing.containerIds.push(item.containerId);
+    }
     if (!existing.locationIds.includes(item.locationId)) {
       existing.locationIds.push(item.locationId);
     }
@@ -166,10 +190,11 @@ export function buildContainerContentsRows(
     }
   }
 
-  for (const [containerNo, summary] of containerMovementSummaryMap.entries()) {
-    if (rowMap.has(containerNo)) {
+  for (const [containerKey, summary] of containerMovementSummaryMap.entries()) {
+    if (rowMap.has(containerKey)) {
       continue;
     }
+    const containerNo = summary.containerNo;
 
     const matchesSearch = matchesContainerSearch(normalizedSearch, {
       containerNo,
@@ -187,13 +212,14 @@ export function buildContainerContentsRows(
       continue;
     }
 
-    rowMap.set(containerNo, {
-      id: containerNo,
+    rowMap.set(containerKey, {
+      id: containerKey,
       containerNo,
       warehouseSummary: summarizeLabels(summary.warehouseNames),
       pickLocationSummary: summarizeLabels(summary.pickLocations, 3),
       customerSummary: summarizeLabels(summary.customerNames),
       customerIds: [...summary.customerIds],
+      containerIds: [...summary.containerIds],
       locationIds: [...summary.locationIds],
       skuCount: summary.skuSet.size,
       rowCount: 0,
@@ -229,7 +255,7 @@ export function buildContainerContentsRows(
         return leftHistorical - rightHistorical;
       }
 
-      return left.containerNo.localeCompare(right.containerNo);
+      return left.containerNo.localeCompare(right.containerNo) || left.id.localeCompare(right.id);
     });
 }
 
@@ -341,16 +367,25 @@ function summarizeLabels(values: string[], maxVisible = 2) {
   return `${uniqueValues.slice(0, maxVisible).join(", ")} +${uniqueValues.length - maxVisible}`;
 }
 
-function buildContainerMovementSummaryMap(items: Item[], movements: Movement[], locations: Location[]) {
+function containerIdentityKey(containerId: number | null | undefined) {
+  return containerId && containerId > 0 ? `id:${containerId}` : "";
+}
+
+function buildContainerMovementSummaryMap(items: Item[], movements: Movement[], locations: Location[]): Map<string, ContainerMovementSummary> {
   const activeContainers = new Set(
     items
-      .map((item) => normalizeContainerNumber(item.containerNo))
+      .map((item) => {
+        const containerNo = normalizeContainerNumber(item.containerNo);
+        return containerNo ? containerIdentityKey(item.containerId) : "";
+      })
       .filter(Boolean)
   );
   const locationNameToId = new Map(
     locations.map((location) => [location.name.trim().toLowerCase(), location.id] as const)
   );
   const draftMap = new Map<string, {
+    containerNo: string;
+    containerIds: number[];
     receivedAt: string | null;
     lastOutboundAt: string | null;
     hasInboundReceipt: boolean;
@@ -370,7 +405,13 @@ function buildContainerMovementSummaryMap(items: Item[], movements: Movement[], 
       continue;
     }
 
-    const current = draftMap.get(containerNo) ?? {
+    const containerKey = containerIdentityKey(movement.containerId);
+    if (!containerKey) {
+      continue;
+    }
+    const current = draftMap.get(containerKey) ?? {
+      containerNo,
+      containerIds: [],
       receivedAt: null,
       lastOutboundAt: null,
       hasInboundReceipt: false,
@@ -390,6 +431,9 @@ function buildContainerMovementSummaryMap(items: Item[], movements: Movement[], 
 
     if (movement.customerId > 0 && !current.customerIds.includes(movement.customerId)) {
       current.customerIds.push(movement.customerId);
+    }
+    if (movement.containerId && movement.containerId > 0 && !current.containerIds.includes(movement.containerId)) {
+      current.containerIds.push(movement.containerId);
     }
     if (movement.customerName.trim() && !current.customerNames.includes(movement.customerName)) {
       current.customerNames.push(movement.customerName);
@@ -424,25 +468,16 @@ function buildContainerMovementSummaryMap(items: Item[], movements: Movement[], 
       current.lastOutboundAt = getLatestDate(current.lastOutboundAt, movementTimestamp);
     }
 
-    draftMap.set(containerNo, current);
+    draftMap.set(containerKey, current);
   }
 
-  const timelineMap = new Map<string, {
-    receivedAt: string | null;
-    shippedAt: string | null;
-    warehouseNames: string[];
-    pickLocations: string[];
-    customerNames: string[];
-    customerIds: number[];
-    locationIds: number[];
-    skuSet: Set<string>;
-    itemNumbers: Set<string>;
-    descriptionSet: Set<string>;
-  }>();
-  for (const [containerNo, timeline] of draftMap.entries()) {
-    timelineMap.set(containerNo, {
+  const timelineMap = new Map<string, ContainerMovementSummary>();
+  for (const [containerKey, timeline] of draftMap.entries()) {
+    timelineMap.set(containerKey, {
+      containerNo: timeline.containerNo,
+      containerIds: timeline.containerIds,
       receivedAt: timeline.receivedAt,
-      shippedAt: activeContainers.has(containerNo) ? null : timeline.lastOutboundAt,
+      shippedAt: activeContainers.has(containerKey) ? null : timeline.lastOutboundAt,
       warehouseNames: timeline.warehouseNames,
       pickLocations: timeline.pickLocations,
       customerNames: timeline.customerNames,

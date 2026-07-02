@@ -7,6 +7,8 @@ import type {
   AddBillingInvoiceLinePayload,
   UpdateBillingInvoiceLinePayload,
   ContainerLifecycle,
+  ContainerLifecycleNode,
+  ContainerLifecycleNodePayload,
   ContainerPayload,
   ContainerPickupAssignment,
   ContainerPickupAssignmentPayload,
@@ -464,6 +466,20 @@ export const api = {
   saveV2Container(payload: ContainerPayload) {
     return request<ContainerRecord>("/v2/containers", {
       method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  createV2ContainerLifecycleNode(containerId: number, payload: ContainerLifecycleNodePayload) {
+    return request<ContainerLifecycleNode>(`/v2/containers/${containerId}/lifecycle-nodes`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  updateV2ContainerLifecycleNode(containerId: number, nodeId: number, payload: ContainerLifecycleNodePayload) {
+    return request<ContainerLifecycleNode>(`/v2/containers/${containerId}/lifecycle-nodes/${nodeId}`, {
+      method: "PUT",
       body: JSON.stringify(payload)
     });
   },

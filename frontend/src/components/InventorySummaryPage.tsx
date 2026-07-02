@@ -472,7 +472,7 @@ function buildInventorySummaryRows(
         allocatedQty: item.allocatedQty,
         damagedQty: item.damagedQty,
         warehouseCount: 1,
-        containerCount: new Set(containerBalances.map((balance) => balance.containerNo || `${balance.locationName}/${normalizeStorageSection(balance.storageSection)}`)).size,
+        containerCount: countContainerBalances(containerBalances),
         lastReceipt: receiptDate,
         containerBalances,
         items: [item]
@@ -497,7 +497,7 @@ function buildInventorySummaryRows(
       return {
         ...row,
         warehouseCount: new Set(containerBalances.map((balance) => balance.locationId)).size,
-        containerCount: new Set(containerBalances.map((balance) => balance.containerNo || `${balance.locationName}/${normalizeStorageSection(balance.storageSection)}`)).size,
+        containerCount: countContainerBalances(containerBalances),
         containerBalances
       };
     })
@@ -507,12 +507,25 @@ function buildInventorySummaryRows(
     });
 }
 
+function countContainerBalances(containerBalances: ItemContainerBalance[]) {
+  return new Set(containerBalances.map(containerBalanceCountKey).filter(Boolean)).size;
+}
+
+function containerBalanceCountKey(balance: ItemContainerBalance) {
+  return balance.containerId && balance.containerId > 0 ? `id:${balance.containerId}` : "";
+}
+
+function containerBalanceBreakdownKey(balance: ItemContainerBalance) {
+  return containerBalanceCountKey(balance);
+}
+
 function buildWarehouseBreakdown(containerBalances: ItemContainerBalance[]): WarehouseBreakdownRow[] {
   const rowMap = new Map<number, WarehouseBreakdownRow & { containerSet: Set<string> }>();
 
   for (const balance of containerBalances) {
     const existing = rowMap.get(balance.locationId);
     const receiptDate = Number.isFinite(balance.sortAt) && balance.sortAt > 0 ? new Date(balance.sortAt).toISOString() : null;
+    const countableContainerKey = containerBalanceCountKey(balance);
 
     if (!existing) {
       rowMap.set(balance.locationId, {
@@ -524,9 +537,9 @@ function buildWarehouseBreakdown(containerBalances: ItemContainerBalance[]): War
         availableQty: balance.availableQty,
         allocatedQty: 0,
         damagedQty: 0,
-        containerCount: balance.containerNo.trim() ? 1 : 0,
+        containerCount: countableContainerKey ? 1 : 0,
         lastReceipt: receiptDate,
-        containerSet: balance.containerNo.trim() ? new Set([balance.containerNo.trim()]) : new Set<string>()
+        containerSet: countableContainerKey ? new Set([countableContainerKey]) : new Set<string>()
       });
       continue;
     }
@@ -536,8 +549,8 @@ function buildWarehouseBreakdown(containerBalances: ItemContainerBalance[]): War
     if (balance.storageSection && !existing.sections.includes(balance.storageSection)) {
       existing.sections.push(balance.storageSection);
     }
-    if (balance.containerNo.trim()) {
-      existing.containerSet.add(balance.containerNo.trim());
+    if (countableContainerKey) {
+      existing.containerSet.add(countableContainerKey);
       existing.containerCount = existing.containerSet.size;
     }
     existing.lastReceipt = getLatestDate(existing.lastReceipt, receiptDate);
@@ -552,8 +565,12 @@ function buildContainerBreakdown(containerBalances: ItemContainerBalance[]): Con
   const rowMap = new Map<string, ContainerBreakdownRow>();
 
   for (const balance of containerBalances) {
+    const breakdownKey = containerBalanceBreakdownKey(balance);
+    if (!breakdownKey) {
+      continue;
+    }
     const containerNo = balance.containerNo.trim() || "-";
-    const key = `${balance.locationId}:${normalizeStorageSection(balance.storageSection)}:${containerNo}`;
+    const key = `${balance.locationId}:${breakdownKey}`;
     const existing = rowMap.get(key);
 
     if (!existing) {

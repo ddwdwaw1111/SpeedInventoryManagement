@@ -50,6 +50,14 @@ type ContainerTransferFormState = {
   lineNote: string;
 };
 
+type ContainerAdjustmentFormState = {
+  reasonCode: string;
+  actualAdjustedAt: string;
+  notes: string;
+  lineNote: string;
+  quantities: Record<string, string>;
+};
+
 type ContainerDetailPageProps = {
   routeKey: string;
   containerNo: string | null;
@@ -85,10 +93,12 @@ export function ContainerDetailPage({
   const [historyPage, setHistoryPage] = useState(1);
   const [historyAscending, setHistoryAscending] = useState(false);
   const [isTransferDialogOpen, setIsTransferDialogOpen] = useState(false);
+  const [isAdjustmentDialogOpen, setIsAdjustmentDialogOpen] = useState(false);
   const [inventoryDialogError, setInventoryDialogError] = useState("");
   const [inventoryDialogSubmitting, setInventoryDialogSubmitting] = useState(false);
   const [historyTypeFilter, setHistoryTypeFilter] = useState<ContainerHistoryFilter>("ALL");
   const [transferForm, setTransferForm] = useState<ContainerTransferFormState>(createEmptyContainerTransferForm());
+  const [adjustmentForm, setAdjustmentForm] = useState<ContainerAdjustmentFormState>(createEmptyContainerAdjustmentForm([]));
   const pendingLaunchContextRef = useRef<ContainerDetailLaunchContext | null | undefined>(undefined);
 
   const containerRows = useMemo(
@@ -102,6 +112,10 @@ export function ContainerDetailPage({
   const skuCards = useMemo(() => buildContainerSkuCards(container?.items ?? []), [container?.items]);
   const transferableContainerItems = useMemo(
     () => (container?.items ?? []).filter(canAutoTransferContainerItem),
+    [container?.items]
+  );
+  const adjustableContainerItems = useMemo(
+    () => (container?.items ?? []).filter((item) => item.containerId && item.containerId > 0 && item.skuMasterId > 0),
     [container?.items]
   );
   const isHistoricalOnly = Boolean(container && container.rowCount === 0);
@@ -165,6 +179,7 @@ export function ContainerDetailPage({
     [transferDestinationLocation]
   );
   const canOpenTransferDialog = canManageInventory && transferableContainerItems.length > 0;
+  const canOpenAdjustmentDialog = canManageInventory && adjustableContainerItems.length > 0;
   const lifecycleCustomerId = container?.customerIds.length === 1 ? container.customerIds[0] : null;
   const lifecycleContainerId = useMemo(() => {
     const containerIds = [...new Set((container?.items ?? []).map((item) => item.containerId).filter((containerId): containerId is number => Boolean(containerId && containerId > 0)))];
@@ -191,12 +206,14 @@ export function ContainerDetailPage({
     }
 
     const launchContext = pendingLaunchContextRef.current;
-    if (!launchContext?.openTransferDialog) {
+    if (launchContext?.openTransferDialog && canOpenTransferDialog) {
+      openTransferDialog();
+      pendingLaunchContextRef.current = null;
       return;
     }
 
-    if (canOpenTransferDialog) {
-      openTransferDialog();
+    if (launchContext?.openAdjustmentDialog && canOpenAdjustmentDialog) {
+      openAdjustmentDialog();
       pendingLaunchContextRef.current = null;
       return;
     }
@@ -204,7 +221,7 @@ export function ContainerDetailPage({
     if (!isLoading) {
       pendingLaunchContextRef.current = null;
     }
-  }, [canOpenTransferDialog, isLoading]);
+  }, [canOpenAdjustmentDialog, canOpenTransferDialog, isLoading]);
 
   function openTransferDialog() {
     setTransferForm(createEmptyContainerTransferForm());
@@ -221,6 +238,23 @@ export function ContainerDetailPage({
     setIsTransferDialogOpen(false);
     setInventoryDialogError("");
     setTransferForm(createEmptyContainerTransferForm());
+  }
+
+  function openAdjustmentDialog() {
+    setAdjustmentForm(createEmptyContainerAdjustmentForm(adjustableContainerItems));
+    setInventoryDialogError("");
+    setInventoryDialogSubmitting(false);
+    setIsAdjustmentDialogOpen(true);
+  }
+
+  function closeAdjustmentDialog(force = false) {
+    if (inventoryDialogSubmitting && !force) {
+      return;
+    }
+
+    setIsAdjustmentDialogOpen(false);
+    setInventoryDialogError("");
+    setAdjustmentForm(createEmptyContainerAdjustmentForm([]));
   }
 
   async function handleSubmitTransfer(event: FormEvent<HTMLFormElement>) {
@@ -258,6 +292,45 @@ export function ContainerDetailPage({
       showSuccess(t("transferSavedSuccess"));
     } catch (error) {
       const message = getErrorMessage(error, t("couldNotSaveTransfer"));
+      setInventoryDialogError(message);
+      showError(message);
+    } finally {
+      setInventoryDialogSubmitting(false);
+    }
+  }
+
+  async function handleSubmitAdjustment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (adjustableContainerItems.length === 0) {
+      setInventoryDialogError(t("noInventoryAvailable"));
+      return;
+    }
+
+    const adjustmentLines = buildAdjustmentLinesFromItems(
+      adjustableContainerItems,
+      adjustmentForm.quantities,
+      adjustmentForm.lineNote
+    );
+    if (adjustmentLines.length === 0) {
+      setInventoryDialogError(t("adjustmentRequireLine"));
+      return;
+    }
+
+    setInventoryDialogSubmitting(true);
+    setInventoryDialogError("");
+
+    try {
+      await api.createInventoryAdjustment({
+        reasonCode: adjustmentForm.reasonCode.trim() || "MANUAL",
+        actualAdjustedAt: adjustmentForm.actualAdjustedAt || undefined,
+        notes: adjustmentForm.notes.trim() || undefined,
+        lines: adjustmentLines
+      });
+      await onRefresh();
+      closeAdjustmentDialog(true);
+      showSuccess(t("adjustmentSavedSuccess"));
+    } catch (error) {
+      const message = getErrorMessage(error, t("couldNotSaveAdjustment"));
       setInventoryDialogError(message);
       showError(message);
     } finally {
@@ -331,6 +404,15 @@ export function ContainerDetailPage({
                 >
                   <CompareArrowsOutlinedIcon sx={{ fontSize: 15 }} />
                   {t("addTransfer")}
+                </button>
+                <button
+                  type="button"
+                  onClick={openAdjustmentDialog}
+                  disabled={!canOpenAdjustmentDialog}
+                  className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <TuneOutlinedIcon sx={{ fontSize: 15 }} />
+                  {t("addAdjustment")}
                 </button>
               </div>
             ) : null}
@@ -560,6 +642,46 @@ export function ContainerDetailPage({
             <div className="sheet-form__actions sheet-form__wide">
               <button className="button button--primary" type="submit" disabled={inventoryDialogSubmitting}>{inventoryDialogSubmitting ? t("saving") : t("saveTransfer")}</button>
               <button className="button button--ghost" type="button" onClick={() => closeInventoryDialog()} disabled={inventoryDialogSubmitting}>{t("cancel")}</button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={isAdjustmentDialogOpen}
+        onClose={(_, reason) => {
+          if (reason === "backdropClick") return;
+          closeAdjustmentDialog();
+        }}
+        fullWidth
+        maxWidth="md"
+      >
+        <DialogTitle sx={{ pb: 1 }}>
+          {t("addAdjustment")}
+          <IconButton aria-label={t("close")} onClick={() => closeAdjustmentDialog()} sx={{ position: "absolute", right: 16, top: 16 }}>
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          {inventoryDialogError ? <InlineAlert>{inventoryDialogError}</InlineAlert> : null}
+          <form className="sheet-form" onSubmit={handleSubmitAdjustment}>
+            <ContainerAdjustmentItemInputs
+              items={adjustableContainerItems}
+              quantities={adjustmentForm.quantities}
+              onChange={(itemKey, value) => setAdjustmentForm((current) => ({
+                ...current,
+                quantities: { ...current.quantities, [itemKey]: value }
+              }))}
+              t={t}
+            />
+            <label>{t("reasonCode")}<input value={adjustmentForm.reasonCode} onChange={(event) => setAdjustmentForm((current) => ({ ...current, reasonCode: event.target.value }))} /></label>
+            <label>{t("actualAdjustedAt")}<input type="datetime-local" value={adjustmentForm.actualAdjustedAt} onChange={(event) => setAdjustmentForm((current) => ({ ...current, actualAdjustedAt: event.target.value }))} /></label>
+            <label className="sheet-form__wide">{t("notes")}<input value={adjustmentForm.notes} onChange={(event) => setAdjustmentForm((current) => ({ ...current, notes: event.target.value }))} placeholder={t("adjustmentNotesPlaceholder")} /></label>
+            <label className="sheet-form__wide">{t("internalNotes")}<input value={adjustmentForm.lineNote} onChange={(event) => setAdjustmentForm((current) => ({ ...current, lineNote: event.target.value }))} placeholder={t("adjustmentLineNotePlaceholder")} /></label>
+
+            <div className="sheet-form__actions sheet-form__wide">
+              <button className="button button--primary" type="submit" disabled={inventoryDialogSubmitting}>{inventoryDialogSubmitting ? t("saving") : t("saveAdjustment")}</button>
+              <button className="button button--ghost" type="button" onClick={() => closeAdjustmentDialog()} disabled={inventoryDialogSubmitting}>{t("cancel")}</button>
             </div>
           </form>
         </DialogContent>
@@ -895,6 +1017,17 @@ function createEmptyContainerTransferForm(): ContainerTransferFormState {
   };
 }
 
+function createEmptyContainerAdjustmentForm(items: Item[]): ContainerAdjustmentFormState {
+  const quantities = Object.fromEntries(items.map((item) => [containerInventoryItemKey(item), ""]));
+  return {
+    reasonCode: "MANUAL",
+    actualAdjustedAt: toDateTimeInputValue(new Date()),
+    notes: "",
+    lineNote: "",
+    quantities
+  };
+}
+
 function ContainerTransferItemSummary({
   items,
   t
@@ -926,6 +1059,58 @@ function ContainerTransferItemSummary({
               <td className="px-3 py-2 text-right text-slate-600">{item.availableQty >= item.quantity ? item.pallets : 0}</td>
             </tr>
           ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ContainerAdjustmentItemInputs({
+  items,
+  quantities,
+  onChange,
+  t
+}: {
+  items: Item[];
+  quantities: Record<string, string>;
+  onChange: (itemKey: string, value: string) => void;
+  t: (key: string, params?: Record<string, string | number>) => string;
+}) {
+  if (items.length === 0) {
+    return <div className="sheet-note sheet-note--readonly sheet-form__wide">{t("noInventoryAvailable")}</div>;
+  }
+
+  return (
+    <div className="sheet-form__wide overflow-hidden rounded-xl border border-slate-200/80 bg-white">
+      <table className="w-full text-left text-xs">
+        <thead className="bg-slate-50 text-[11px] uppercase tracking-[0.12em] text-slate-500">
+          <tr>
+            <th className="px-3 py-2 font-semibold">{t("sku")}</th>
+            <th className="px-3 py-2 font-semibold">{t("sourceStorage")}</th>
+            <th className="px-3 py-2 text-right font-semibold">{t("onHand")}</th>
+            <th className="px-3 py-2 text-right font-semibold">{t("adjustQty")}</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {items.map((item) => {
+            const itemKey = containerInventoryItemKey(item);
+            return (
+              <tr key={itemKey}>
+                <td className="px-3 py-2 font-semibold text-[#143569]">{item.sku}</td>
+                <td className="px-3 py-2 text-slate-600">{item.locationName} / {normalizeStorageSection(item.storageSection)}</td>
+                <td className="px-3 py-2 text-right font-semibold text-slate-700">{item.quantity}</td>
+                <td className="px-3 py-2 text-right">
+                  <input
+                    className="w-24 rounded-md border border-slate-200 px-2 py-1 text-right"
+                    type="number"
+                    value={quantities[itemKey] ?? ""}
+                    onChange={(event) => onChange(itemKey, event.target.value)}
+                    placeholder="0"
+                  />
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -964,4 +1149,39 @@ function buildTransferLinesFromItems(
       lineNote: normalizedLineNote
     }];
   });
+}
+
+function buildAdjustmentLinesFromItems(
+  items: Item[],
+  quantities: Record<string, string>,
+  lineNote: string
+) {
+  const normalizedLineNote = lineNote.trim() || undefined;
+
+  return items.flatMap((item) => {
+    const adjustQty = Number(quantities[containerInventoryItemKey(item)] || 0);
+    if (!Number.isFinite(adjustQty) || adjustQty === 0) {
+      return [];
+    }
+
+    return [{
+      customerId: item.customerId,
+      locationId: item.locationId,
+      storageSection: normalizeStorageSection(item.storageSection),
+      containerId: item.containerId,
+      containerNo: normalizeContainerNumber(item.containerNo),
+      skuMasterId: item.skuMasterId,
+      adjustQty,
+      lineNote: normalizedLineNote
+    }];
+  });
+}
+
+function containerInventoryItemKey(item: Item) {
+  return `${item.id}-${item.customerId}-${item.locationId}-${normalizeStorageSection(item.storageSection)}-${item.containerId || 0}-${item.skuMasterId}`;
+}
+
+function toDateTimeInputValue(value: Date) {
+  const offsetMs = value.getTimezoneOffset() * 60_000;
+  return new Date(value.getTime() - offsetMs).toISOString().slice(0, 16);
 }

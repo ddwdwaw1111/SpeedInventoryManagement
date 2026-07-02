@@ -150,6 +150,37 @@ describe("InventorySummaryPage", () => {
     expect(within(grid).getByText("25")).toBeInTheDocument();
   });
 
+  it("counts duplicate container numbers by container id", () => {
+    renderWithProviders(
+      <InventorySummaryPage
+        {...defaultProps({
+          items: [
+            createItem({ id: 1, sku: "WIDGET", containerId: 101, containerNo: "DUP-CONT", quantity: 5, availableQty: 5 }),
+            createItem({ id: 2, sku: "WIDGET", containerId: 102, containerNo: "DUP-CONT", quantity: 7, availableQty: 7 })
+          ]
+        })}
+      />
+    );
+
+    const row = screen.getByTestId("grid-row-1:WIDGET");
+    expect(row.querySelector('[data-field="containerCount"]')?.textContent).toBe("2");
+  });
+
+  it("does not count container numbers without a container id", () => {
+    renderWithProviders(
+      <InventorySummaryPage
+        {...defaultProps({
+          items: [
+            createItem({ id: 1, sku: "WIDGET", containerNo: "DUP-CONT", quantity: 5, availableQty: 5 })
+          ]
+        })}
+      />
+    );
+
+    const row = screen.getByTestId("grid-row-1:WIDGET");
+    expect(row.querySelector('[data-field="containerCount"]')?.textContent).toBe("0");
+  });
+
   it("hides low-stock stats and stock health filters while reorder-level UI is disabled", () => {
     const { container } = renderWithProviders(
       <InventorySummaryPage
@@ -340,6 +371,7 @@ describe("InventorySummaryPage", () => {
           items: [
             createItem({
               id: 1,
+              containerId: 101,
               sku: "608333",
               description: "VB22GC",
               quantity: 20,
@@ -373,6 +405,7 @@ describe("InventorySummaryPage", () => {
           items: [
             createItem({
               id: 1,
+              containerId: 101,
               skuMasterId: 1,
               sku: "608333",
               description: "VB22GC",

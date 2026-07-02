@@ -178,7 +178,7 @@ export function ContainerContentsPage({
       filterable: false,
       renderCell: (params) => {
         const lifecycleCustomerId = params.row.customerIds.length === 1 ? params.row.customerIds[0] : null;
-        const lifecycleContainerIds = [...new Set(params.row.items.map((item) => item.containerId).filter((containerId): containerId is number => Boolean(containerId && containerId > 0)))];
+        const lifecycleContainerIds = params.row.containerIds;
         const lifecycleContainerId = lifecycleContainerIds.length === 1 ? lifecycleContainerIds[0] : null;
         return (
           <div className="flex flex-wrap gap-1">

@@ -68,6 +68,31 @@ func (s *Store) ListContainerLifecycleEvents(ctx context.Context, limit int, fil
 		whereClauses = append(whereClauses, "UPPER(TRIM(cle.container_no)) = ?")
 		args = append(args, containerNo)
 	}
+	whereClauses = append(whereClauses, `(
+		COALESCE(cle.source_document_type, '') NOT IN (?, ?)
+		OR (
+			cle.source_document_type = ?
+			AND idoc.id IS NOT NULL
+			AND idoc.archived_at IS NULL
+			AND UPPER(TRIM(idoc.status)) NOT IN (?, ?)
+		)
+		OR (
+			cle.source_document_type = ?
+			AND odoc.id IS NOT NULL
+			AND odoc.archived_at IS NULL
+			AND UPPER(TRIM(odoc.status)) NOT IN (?, ?)
+		)
+	)`)
+	args = append(args,
+		StockLedgerSourceInbound,
+		StockLedgerSourceOutbound,
+		StockLedgerSourceInbound,
+		DocumentStatusDeleted,
+		"CANCELLED",
+		StockLedgerSourceOutbound,
+		DocumentStatusDeleted,
+		"CANCELLED",
+	)
 
 	query := fmt.Sprintf(`
 		SELECT
@@ -102,10 +127,15 @@ func (s *Store) ListContainerLifecycleEvents(ctx context.Context, limit int, fil
 		JOIN customers c ON c.id = cle.customer_id
 		JOIN storage_locations l ON l.id = cle.location_id
 		LEFT JOIN stock_ledger sl ON sl.id = cle.stock_ledger_id
+		LEFT JOIN inbound_documents idoc
+			ON cle.source_document_type = ? AND cle.source_document_id = idoc.id
+		LEFT JOIN outbound_documents odoc
+			ON cle.source_document_type = ? AND cle.source_document_id = odoc.id
 		WHERE %s
 		ORDER BY cle.event_time DESC, cle.id DESC
 		LIMIT ?
 	`, strings.Join(whereClauses, "\n\t\tAND "))
+	args = append([]any{StockLedgerSourceInbound, StockLedgerSourceOutbound}, args...)
 	args = append(args, limit)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -158,7 +188,7 @@ func (s *Store) createContainerLifecycleEventTx(ctx context.Context, tx *sql.Tx,
 			document_note,
 			reason,
 			reference_code
-		) VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			customer_id = VALUES(customer_id),
 			location_id = VALUES(location_id),

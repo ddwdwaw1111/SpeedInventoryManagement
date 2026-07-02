@@ -375,62 +375,57 @@ describe("ContainerLifecycleView", () => {
     expect(overageFlow.nodes.find((node) => node.id === "received")?.style).toMatchObject({ background: "#fffbeb" });
   });
 
-  it("shows an attached document node for a selected secondary picking order", () => {
-    renderWithProviders(
-      <ContainerLifecycleView
-        containerNo="CNT-MULTI-PO"
-        visibilityMode="admin"
-        selectedNodeId="picking-1"
-        onNodeSelect={() => undefined}
-        lifecycle={{
-          summary: {
-            containerNo: "CNT-MULTI-PO",
-            customerId: 1,
-            customerName: "Acme Warehouse",
-            warehouses: [],
-            packingListCount: 0,
-            firstPackingListId: 0,
-            totalExpectedQty: 30,
-            totalReceivedQty: 30,
-            currentQty: 10,
-            availableQty: 10,
-            shippedQty: 20,
-            outboundOrderCount: 2,
-            pickingOrderRefs: ["PO-1", "PO-2"],
-            transferCount: 0,
-            palletCount: 0,
-            status: "PARTIAL",
-            firstReceivedAt: "2026-06-01T12:00:00Z",
-            lastActivityAt: "2026-06-02T12:00:00Z"
-          },
-          packingLists: [],
-          pickingOrders: [
-            {
-              id: 20,
-              packingListNo: "PO-1",
-              orderRef: "",
-              expectedShipDate: null,
-              status: "CONFIRMED",
-              lines: [],
-              attachments: []
-            },
-            {
-              id: 21,
-              packingListNo: "PO-2",
-              orderRef: "",
-              expectedShipDate: null,
-              status: "CONFIRMED",
-              lines: [],
-              attachments: [{ id: 4 }, { id: 5 }]
-            }
-          ],
-          movements: [],
-          lifecycleEvents: [],
-        } as unknown as CustomerPortalContainerLifecycle}
-      />
-    );
+  it("keeps documents on their source nodes instead of creating document branch nodes", () => {
+    const lifecycle = {
+      summary: {
+        containerNo: "CNT-MULTI-PO",
+        customerId: 1,
+        customerName: "Acme Warehouse",
+        warehouses: [],
+        packingListCount: 0,
+        firstPackingListId: 0,
+        totalExpectedQty: 30,
+        totalReceivedQty: 30,
+        currentQty: 10,
+        availableQty: 10,
+        shippedQty: 20,
+        outboundOrderCount: 2,
+        pickingOrderRefs: ["PO-1", "PO-2"],
+        transferCount: 0,
+        palletCount: 0,
+        status: "PARTIAL",
+        firstReceivedAt: "2026-06-01T12:00:00Z",
+        lastActivityAt: "2026-06-02T12:00:00Z"
+      },
+      packingLists: [],
+      pickingOrders: [
+        {
+          id: 20,
+          packingListNo: "PO-1",
+          orderRef: "",
+          expectedShipDate: null,
+          status: "CONFIRMED",
+          lines: [],
+          attachments: []
+        },
+        {
+          id: 21,
+          packingListNo: "PO-2",
+          orderRef: "",
+          expectedShipDate: null,
+          status: "CONFIRMED",
+          lines: [],
+          attachments: [{ id: 4 }, { id: 5 }]
+        }
+      ],
+      movements: [],
+      lifecycleEvents: [],
+    } as unknown as CustomerPortalContainerLifecycle;
 
-    expect(screen.getAllByText("PO-2").length).toBeGreaterThan(1);
+    const flow = buildLifecycleFlow(lifecycle, (key) => key, true, "picking-1", "admin");
+
+    expect(flow.nodes.some((node) => node.id.startsWith("documents-"))).toBe(false);
+    expect(flow.nodes.find((node) => node.id === "picking-1")?.data.action.outboundDocumentId).toBe(21);
   });
 
   it("labels outbound nodes with the packing order and this container's fulfilled SKUs", () => {

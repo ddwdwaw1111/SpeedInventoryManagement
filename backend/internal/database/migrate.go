@@ -291,6 +291,7 @@ func Migrate(db *sql.DB) error {
 			customer_id BIGINT NOT NULL,
 			inbound_document_id BIGINT DEFAULT NULL,
 			location_id BIGINT DEFAULT NULL,
+			packing_list_no VARCHAR(120) NOT NULL DEFAULT '',
 			container_no VARCHAR(120) NOT NULL,
 			container_type VARCHAR(32) NOT NULL DEFAULT 'NORMAL',
 			handling_mode VARCHAR(32) NOT NULL DEFAULT 'PALLETIZED',
@@ -300,7 +301,8 @@ func Migrate(db *sql.DB) error {
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			PRIMARY KEY (id),
-			UNIQUE KEY uq_containers_customer_container_no (customer_id, container_no),
+			KEY idx_containers_customer_container_no (customer_id, container_no),
+			KEY idx_containers_customer_packing_list_no (customer_id, packing_list_no),
 			KEY idx_containers_customer_id (customer_id),
 			KEY idx_containers_inbound_document_id (inbound_document_id),
 			KEY idx_containers_location_id (location_id),
@@ -314,10 +316,15 @@ func Migrate(db *sql.DB) error {
 				FOREIGN KEY (location_id) REFERENCES storage_locations (id)
 				ON DELETE SET NULL
 		)`,
+		`ALTER TABLE containers ADD COLUMN IF NOT EXISTS packing_list_no VARCHAR(120) NOT NULL DEFAULT '' AFTER location_id`,
+		`ALTER TABLE containers DROP INDEX IF EXISTS uq_containers_customer_container_no`,
+		`CREATE INDEX IF NOT EXISTS idx_containers_customer_container_no ON containers (customer_id, container_no)`,
+		`CREATE INDEX IF NOT EXISTS idx_containers_customer_packing_list_no ON containers (customer_id, packing_list_no)`,
 		`INSERT INTO containers (
 			customer_id,
 			inbound_document_id,
 			location_id,
+			packing_list_no,
 			container_no,
 			container_type,
 			handling_mode,
@@ -326,31 +333,56 @@ func Migrate(db *sql.DB) error {
 			last_event_at
 		)
 		SELECT
-			customer_id,
-			MIN(id),
-			MIN(location_id),
-			UPPER(TRIM(container_no)),
-			COALESCE(MAX(NULLIF(container_type, '')), 'NORMAL'),
-			COALESCE(MAX(NULLIF(handling_mode, '')), 'PALLETIZED'),
+			d.customer_id,
+			d.id,
+			d.location_id,
+			'',
+			UPPER(TRIM(d.container_no)),
+			COALESCE(NULLIF(d.container_type, ''), 'NORMAL'),
+			COALESCE(NULLIF(d.handling_mode, ''), 'PALLETIZED'),
 			'IN_STOCK',
-			COALESCE(MAX(NULLIF(tracking_status, '')), 'RECEIVED'),
-			MAX(COALESCE(posted_at, confirmed_at, actual_arrival_date, expected_arrival_date, created_at))
-		FROM inbound_documents
-		WHERE COALESCE(TRIM(container_no), '') <> ''
-		GROUP BY customer_id, UPPER(TRIM(container_no))
-		ON DUPLICATE KEY UPDATE
-			inbound_document_id = COALESCE(containers.inbound_document_id, VALUES(inbound_document_id)),
-			location_id = COALESCE(containers.location_id, VALUES(location_id)),
-			container_type = VALUES(container_type),
-			handling_mode = VALUES(handling_mode),
-			last_event_at = COALESCE(containers.last_event_at, VALUES(last_event_at))`,
+			COALESCE(NULLIF(d.tracking_status, ''), 'RECEIVED'),
+			COALESCE(d.posted_at, d.confirmed_at, d.actual_arrival_date, d.expected_arrival_date, d.created_at)
+		FROM inbound_documents d
+		LEFT JOIN containers existing_doc
+			ON existing_doc.inbound_document_id = d.id
+		WHERE COALESCE(d.container_id, 0) = 0
+			AND existing_doc.id IS NULL
+			AND COALESCE(TRIM(d.container_no), '') <> ''`,
 		`UPDATE inbound_documents d
 			JOIN containers cn
-				ON cn.customer_id = d.customer_id
-				AND UPPER(TRIM(cn.container_no)) = UPPER(TRIM(d.container_no))
+				ON cn.inbound_document_id = d.id
+				AND cn.customer_id = d.customer_id
 			SET d.container_id = cn.id
-			WHERE COALESCE(d.container_id, 0) = 0
-				AND COALESCE(TRIM(d.container_no), '') <> ''`,
+			WHERE COALESCE(d.container_id, 0) = 0`,
+		`CREATE TABLE IF NOT EXISTS container_lifecycle_nodes (
+			id BIGINT NOT NULL AUTO_INCREMENT,
+			container_id BIGINT NOT NULL,
+			parent_node_id BIGINT DEFAULT NULL,
+			node_key VARCHAR(120) NOT NULL,
+			node_kind VARCHAR(32) NOT NULL,
+			title VARCHAR(190) DEFAULT NULL,
+			source_type VARCHAR(32) DEFAULT NULL,
+			source_id BIGINT NOT NULL DEFAULT 0,
+			visibility VARCHAR(16) NOT NULL DEFAULT 'BOTH',
+			sort_order INT NOT NULL DEFAULT 0,
+			position_x DOUBLE DEFAULT NULL,
+			position_y DOUBLE DEFAULT NULL,
+			metadata_json JSON DEFAULT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			UNIQUE KEY uq_container_lifecycle_node_key (container_id, node_key),
+			KEY idx_container_lifecycle_nodes_container_order (container_id, sort_order, id),
+			KEY idx_container_lifecycle_nodes_parent (parent_node_id),
+			KEY idx_container_lifecycle_nodes_source (source_type, source_id),
+			CONSTRAINT fk_container_lifecycle_nodes_container
+				FOREIGN KEY (container_id) REFERENCES containers (id)
+				ON DELETE CASCADE,
+			CONSTRAINT fk_container_lifecycle_nodes_parent
+				FOREIGN KEY (parent_node_id) REFERENCES container_lifecycle_nodes (id)
+				ON DELETE SET NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS container_tracking_events (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			container_id BIGINT DEFAULT NULL,
@@ -1176,99 +1208,15 @@ func Migrate(db *sql.DB) error {
 	}
 
 	if _, err := db.Exec(`
-		INSERT INTO containers (
-			customer_id,
-			location_id,
-			container_no,
-			container_type,
-			handling_mode,
-			status,
-			tracking_status,
-			last_event_at
-		)
-		SELECT
-			customer_id,
-			MIN(location_id),
-			UPPER(TRIM(container_no)),
-			'NORMAL',
-			'PALLETIZED',
-			'IN_STOCK',
-			'RECEIVED',
-			MAX(COALESCE(last_restocked_at, updated_at, created_at))
-		FROM inventory_items
-		WHERE COALESCE(TRIM(container_no), '') <> ''
-		GROUP BY customer_id, UPPER(TRIM(container_no))
-		ON DUPLICATE KEY UPDATE
-			location_id = COALESCE(containers.location_id, VALUES(location_id)),
-			last_event_at = COALESCE(containers.last_event_at, VALUES(last_event_at))
-	`); err != nil {
-		return fmt.Errorf("backfill containers from inventory items: %w", err)
-	}
-
-	if _, err := db.Exec(`
-		INSERT INTO containers (
-			customer_id,
-			location_id,
-			container_no,
-			container_type,
-			handling_mode,
-			status,
-			tracking_status,
-			last_event_at
-		)
-		SELECT
-			customer_id,
-			MIN(location_id),
-			UPPER(TRIM(container_no_snapshot)),
-			'NORMAL',
-			'PALLETIZED',
-			'IN_STOCK',
-			'RECEIVED',
-			MAX(created_at)
-		FROM stock_ledger
-		WHERE COALESCE(TRIM(container_no_snapshot), '') <> ''
-		GROUP BY customer_id, UPPER(TRIM(container_no_snapshot))
-		ON DUPLICATE KEY UPDATE
-			location_id = COALESCE(containers.location_id, VALUES(location_id)),
-			last_event_at = COALESCE(containers.last_event_at, VALUES(last_event_at))
-	`); err != nil {
-		return fmt.Errorf("backfill containers from stock ledger: %w", err)
-	}
-
-	if _, err := db.Exec(`
-		UPDATE inventory_items i
-		JOIN containers cn
-			ON cn.customer_id = i.customer_id
-			AND UPPER(TRIM(cn.container_no)) = UPPER(TRIM(i.container_no))
-		SET i.container_id = cn.id
-		WHERE COALESCE(i.container_id, 0) = 0
-			AND COALESCE(TRIM(i.container_no), '') <> ''
-	`); err != nil {
-		return fmt.Errorf("backfill inventory item container ids: %w", err)
-	}
-
-	if _, err := db.Exec(`
 		UPDATE stock_ledger sl
-		JOIN containers cn
-			ON cn.customer_id = sl.customer_id
-			AND UPPER(TRIM(cn.container_no)) = UPPER(TRIM(sl.container_no_snapshot))
-		SET sl.container_id = cn.id
-		WHERE COALESCE(sl.container_id, 0) = 0
-			AND COALESCE(TRIM(sl.container_no_snapshot), '') <> ''
+		JOIN inbound_documents d
+			ON sl.source_document_type = 'INBOUND'
+			AND sl.source_document_id = d.id
+		SET sl.container_id = d.container_id
+		WHERE COALESCE(d.container_id, 0) > 0
+			AND COALESCE(sl.container_id, 0) <> d.container_id
 	`); err != nil {
-		return fmt.Errorf("backfill stock ledger container ids: %w", err)
-	}
-
-	if _, err := db.Exec(`
-		UPDATE delivery_events de
-		JOIN containers cn
-			ON cn.customer_id = de.customer_id
-			AND UPPER(TRIM(cn.container_no)) = UPPER(TRIM(de.container_no))
-		SET de.container_id = cn.id
-		WHERE COALESCE(de.container_id, 0) = 0
-			AND COALESCE(TRIM(de.container_no), '') <> ''
-	`); err != nil {
-		return fmt.Errorf("backfill delivery event container ids: %w", err)
+		return fmt.Errorf("backfill stock ledger container ids from inbound documents: %w", err)
 	}
 
 	if err := backfillStockLedgerPalletCountsFromLegacyPalletIDs(db); err != nil {
@@ -1626,56 +1574,13 @@ func backfillInventoryItemsFromLegacyPalletEntities(db *sql.DB) error {
 		}
 	}
 
-	if _, err := db.Exec(`
-		INSERT INTO containers (
-			customer_id,
-			location_id,
-			container_no,
-			container_type,
-			handling_mode,
-			status,
-			tracking_status,
-			last_event_at
-		)
-		SELECT
-			p.customer_id,
-			MIN(p.current_location_id),
-			UPPER(TRIM(p.current_container_no)),
-			'NORMAL',
-			'PALLETIZED',
-			'IN_STOCK',
-			'RECEIVED',
-			MAX(COALESCE(p.updated_at, p.created_at))
-		FROM pallets p
-		WHERE COALESCE(TRIM(p.current_container_no), '') <> ''
-			AND COALESCE(p.status, 'OPEN') <> 'CANCELLED'
-		GROUP BY p.customer_id, UPPER(TRIM(p.current_container_no))
-		ON DUPLICATE KEY UPDATE
-			location_id = COALESCE(containers.location_id, VALUES(location_id)),
-			last_event_at = COALESCE(containers.last_event_at, VALUES(last_event_at))
-	`); err != nil {
-		return fmt.Errorf("backfill containers from legacy pallets: %w", err)
-	}
-
-	if _, err := db.Exec(`
-		UPDATE inventory_items i
-		JOIN containers cn
-			ON cn.customer_id = i.customer_id
-			AND UPPER(TRIM(cn.container_no)) = UPPER(TRIM(i.container_no))
-		SET i.container_id = cn.id
-		WHERE COALESCE(i.container_id, 0) = 0
-			AND COALESCE(TRIM(i.container_no), '') <> ''
-	`); err != nil {
-		return fmt.Errorf("backfill inventory item container ids from legacy pallets: %w", err)
-	}
-
 	legacyInventorySelect := `
 		SELECT
 			pi.sku_master_id,
 			p.customer_id,
 			p.current_location_id AS location_id,
 			COALESCE(NULLIF(TRIM(p.current_storage_section), ''), 'TEMP') AS storage_section,
-			COALESCE(cn.id, 0) AS container_id,
+			0 AS container_id,
 			TRIM(COALESCE(p.current_container_no, '')) AS container_no,
 			MIN(p.actual_arrival_date) AS delivery_date,
 			SUM(pi.quantity) AS quantity,
@@ -1686,9 +1591,6 @@ func backfillInventoryItemsFromLegacyPalletEntities(db *sql.DB) error {
 			MAX(COALESCE(p.updated_at, p.created_at)) AS last_restocked_at
 		FROM pallet_items pi
 		JOIN pallets p ON p.id = pi.pallet_id
-		LEFT JOIN containers cn
-			ON cn.customer_id = p.customer_id
-			AND UPPER(TRIM(cn.container_no)) = UPPER(TRIM(p.current_container_no))
 		WHERE COALESCE(p.status, 'OPEN') <> 'CANCELLED'
 			AND pi.sku_master_id > 0
 			AND p.customer_id > 0
@@ -1698,7 +1600,6 @@ func backfillInventoryItemsFromLegacyPalletEntities(db *sql.DB) error {
 			p.customer_id,
 			p.current_location_id,
 			COALESCE(NULLIF(TRIM(p.current_storage_section), ''), 'TEMP'),
-			COALESCE(cn.id, 0),
 			TRIM(COALESCE(p.current_container_no, ''))
 	`
 

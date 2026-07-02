@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
+	"time"
 )
 
 type recordingInventoryMutationRepo struct {
@@ -67,11 +68,16 @@ func (s failingScanner) Scan(...any) error {
 }
 
 type lifecycleCustomerGuardRepo struct {
-	container Container
+	container       Container
+	inboundDocs     []InboundDocument
+	outboundDocs    []OutboundDocument
+	inboundFilters  []InboundDocumentFilters
+	outboundFilters []OutboundDocumentFilters
 }
 
-func (r *lifecycleCustomerGuardRepo) ListInboundDocumentsFiltered(context.Context, int, InboundDocumentFilters) ([]InboundDocument, error) {
-	return nil, nil
+func (r *lifecycleCustomerGuardRepo) ListInboundDocumentsFiltered(_ context.Context, _ int, filters InboundDocumentFilters) ([]InboundDocument, error) {
+	r.inboundFilters = append(r.inboundFilters, filters)
+	return r.inboundDocs, nil
 }
 
 func (r *lifecycleCustomerGuardRepo) ListItems(context.Context, ItemFilters) ([]Item, error) {
@@ -82,8 +88,9 @@ func (r *lifecycleCustomerGuardRepo) ListContainerLifecycleEvents(context.Contex
 	return nil, nil
 }
 
-func (r *lifecycleCustomerGuardRepo) ListOutboundDocumentsFiltered(context.Context, int, OutboundDocumentFilters) ([]OutboundDocument, error) {
-	return nil, nil
+func (r *lifecycleCustomerGuardRepo) ListOutboundDocumentsFiltered(_ context.Context, _ int, filters OutboundDocumentFilters) ([]OutboundDocument, error) {
+	r.outboundFilters = append(r.outboundFilters, filters)
+	return r.outboundDocs, nil
 }
 
 func (r *lifecycleCustomerGuardRepo) GetOutboundDocumentForCustomer(context.Context, int64, int64) (OutboundDocument, error) {
@@ -124,6 +131,18 @@ func (r *lifecycleCustomerGuardRepo) ListContainerPickupAssignments(context.Cont
 
 func (r *lifecycleCustomerGuardRepo) ListDeliveryEvents(context.Context, int, DeliveryEventFilters) ([]DeliveryEvent, error) {
 	return nil, nil
+}
+
+func (r *lifecycleCustomerGuardRepo) ListContainerLifecycleNodes(context.Context, int64) ([]ContainerLifecycleNode, error) {
+	return nil, nil
+}
+
+func (r *lifecycleCustomerGuardRepo) CreateContainerLifecycleNode(context.Context, int64, CreateContainerLifecycleNodeInput) (ContainerLifecycleNode, error) {
+	return ContainerLifecycleNode{}, nil
+}
+
+func (r *lifecycleCustomerGuardRepo) UpdateContainerLifecycleNode(context.Context, int64, int64, UpdateContainerLifecycleNodeInput) (ContainerLifecycleNode, error) {
+	return ContainerLifecycleNode{}, nil
 }
 
 func TestLegacyInventoryAdapterUsesInventoryMutationOnce(t *testing.T) {
@@ -172,6 +191,45 @@ func TestContainerServiceGetLifecycleRejectsContainerFromDifferentCustomer(t *te
 	})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound for cross-customer container lifecycle lookup, got %v", err)
+	}
+}
+
+func TestContainerServiceGetLifecycleExcludesArchivedAndDeletedDocuments(t *testing.T) {
+	repo := &lifecycleCustomerGuardRepo{
+		container: Container{
+			ID:           42,
+			CustomerID:   7,
+			CustomerName: "Customer",
+			ContainerNo:  "CONT-ACTIVE",
+		},
+		inboundDocs: []InboundDocument{{
+			ID:               99,
+			ContainerID:      42,
+			CustomerID:       7,
+			CustomerName:     "Customer",
+			ContainerNo:      "CONT-ACTIVE",
+			Status:           DocumentStatusConfirmed,
+			TotalReceivedQty: 12,
+		}},
+	}
+	containerService := NewContainerService(repo)
+
+	if _, err := containerService.GetLifecycle(context.Background(), GetContainerLifecycleInput{ContainerID: 42}); err != nil {
+		t.Fatalf("expected lifecycle lookup to succeed, got %v", err)
+	}
+	if len(repo.inboundFilters) == 0 {
+		t.Fatal("expected lifecycle lookup to query inbound documents")
+	}
+	inboundFilter := repo.inboundFilters[0]
+	if inboundFilter.ArchiveScope != DocumentArchiveScopeActive || !inboundFilter.ExcludeDeleted {
+		t.Fatalf("expected lifecycle inbound query to use active non-deleted filter, got %#v", inboundFilter)
+	}
+	if len(repo.outboundFilters) == 0 {
+		t.Fatal("expected lifecycle lookup to query outbound documents")
+	}
+	outboundFilter := repo.outboundFilters[0]
+	if outboundFilter.ArchiveScope != DocumentArchiveScopeActive || !outboundFilter.ExcludeDeleted {
+		t.Fatalf("expected lifecycle outbound query to use active non-deleted filter, got %#v", outboundFilter)
 	}
 }
 
@@ -224,13 +282,13 @@ func TestOutboundDocumentContainerNosDeduplicatesAndNormalizes(t *testing.T) {
 	}
 }
 
-func TestOutboundDocumentReferencesContainerNormalizesInput(t *testing.T) {
+func TestOutboundDocumentReferencesContainerRequiresContainerID(t *testing.T) {
 	document := OutboundDocument{Lines: []OutboundDocumentLine{{
 		PickAllocations: []OutboundPickAllocation{{ContainerNo: "CONT-A"}},
 	}}}
 
-	if !outboundDocumentReferencesContainer(document, 0, normalizeContainerNo(" cont-a ")) {
-		t.Fatalf("expected outbound document to reference normalized container")
+	if outboundDocumentReferencesContainer(document, 0, normalizeContainerNo(" cont-a ")) {
+		t.Fatalf("expected container number without container id not to match")
 	}
 }
 
@@ -247,25 +305,95 @@ func TestOutboundDocumentReferencesContainerPrefersContainerID(t *testing.T) {
 	}
 }
 
-func TestBuildContainerSummariesIncludesContainerOnlyRecords(t *testing.T) {
+func TestBuildContainerSummariesSkipsContainerOnlyRecords(t *testing.T) {
 	summaries := buildContainerSummaries([]Container{{
 		ID:           1,
 		CustomerID:   7,
 		CustomerName: "Customer",
 		ContainerNo:  "CONT-ONLY",
 		Status:       ContainerStatusPickupAssigned,
-	}}, nil, nil, nil)
+	}}, nil, nil, nil, nil, nil, nil)
 
-	summary, ok := summaries[containerSummaryKey(7, "CONT-ONLY")]
-	if !ok {
-		t.Fatalf("expected container-only record to appear in summaries")
-	}
-	if summary.Status != ContainerStatusPickupAssigned {
-		t.Fatalf("expected explicit container status to be preserved, got %q", summary.Status)
+	if len(summaries) != 0 {
+		t.Fatalf("expected container-only records not to create lifecycle summaries, got %#v", summaries)
 	}
 }
 
-func TestBuildContainerSummariesKeepsDuplicateContainerNumbersScopedByCustomer(t *testing.T) {
+func TestBuildContainerSummariesIncludesPlannedContainerRecords(t *testing.T) {
+	updatedAt := time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC)
+	summaries := buildContainerSummaries([]Container{{
+		ID:            1,
+		CustomerID:    7,
+		CustomerName:  "Customer",
+		PackingListNo: "PL-100",
+		ContainerNo:   "CONT-PLANNED",
+		Status:        "PENDING",
+		UpdatedAt:     updatedAt,
+	}}, nil, nil, nil, nil, nil, nil)
+
+	summary, ok := summaries[containerSummaryKey(1)]
+	if !ok {
+		t.Fatalf("expected planned container with packing list number to create lifecycle summary")
+	}
+	if summary.PackingListNo != "PL-100" || summary.ContainerNo != "CONT-PLANNED" {
+		t.Fatalf("unexpected planned container summary: %#v", summary)
+	}
+}
+
+func TestBuildContainerSummariesSkipsZeroBalanceItems(t *testing.T) {
+	summaries := buildContainerSummaries([]Container{{
+		ID:           1,
+		CustomerID:   7,
+		CustomerName: "Customer",
+		ContainerNo:  "CONT-ZERO",
+	}}, nil, []Item{{
+		ContainerID:  1,
+		CustomerID:   7,
+		CustomerName: "Customer",
+		ContainerNo:  "CONT-ZERO",
+		Quantity:     0,
+		Pallets:      0,
+		AvailableQty: 0,
+		AllocatedQty: 0,
+		DamagedQty:   0,
+		HoldQty:      0,
+	}}, nil, nil, nil, nil)
+
+	if len(summaries) != 0 {
+		t.Fatalf("expected zero-balance items not to create lifecycle summaries, got %#v", summaries)
+	}
+}
+
+func TestBuildContainerSummariesIncludesTrackingOnlyRecords(t *testing.T) {
+	eventTime := time.Date(2026, 4, 4, 10, 0, 0, 0, time.UTC)
+	summaries := buildContainerSummaries([]Container{{
+		ID:           7,
+		CustomerID:   9,
+		CustomerName: "Customer",
+		ContainerNo:  "TRACK-ONLY",
+		Status:       ContainerStatusTrackingReceived,
+	}}, nil, nil, nil, []ContainerTrackingEvent{{
+		ContainerID:  7,
+		CustomerID:   9,
+		CustomerName: "Customer",
+		ContainerNo:  "TRACK-ONLY",
+		EventType:    ContainerStatusTrackingReceived,
+		EventTime:    eventTime,
+	}}, nil, nil)
+
+	summary, ok := summaries[containerSummaryKey(7)]
+	if !ok {
+		t.Fatalf("expected tracking-only container to create lifecycle summary")
+	}
+	if summary.Status != ContainerStatusTrackingReceived {
+		t.Fatalf("expected tracking status to be preserved, got %q", summary.Status)
+	}
+	if summary.LastActivityAt == nil || !summary.LastActivityAt.Equal(eventTime) {
+		t.Fatalf("expected tracking event time as last activity, got %v", summary.LastActivityAt)
+	}
+}
+
+func TestBuildContainerSummariesSkipsDocumentsWithoutContainerID(t *testing.T) {
 	summaries := buildContainerSummaries(nil, []InboundDocument{
 		{
 			ID:               1,
@@ -281,12 +409,10 @@ func TestBuildContainerSummariesKeepsDuplicateContainerNumbersScopedByCustomer(t
 			ContainerNo:      "CONT-DUP",
 			TotalExpectedQty: 20,
 		},
-	}, nil, nil)
+	}, nil, nil, nil, nil, nil)
 
-	first := summaries[containerSummaryKey(7, "CONT-DUP")]
-	second := summaries[containerSummaryKey(8, "CONT-DUP")]
-	if len(summaries) != 2 || first.TotalExpectedQty != 10 || second.TotalExpectedQty != 20 {
-		t.Fatalf("expected duplicate container numbers to stay separated by customer, got %#v", summaries)
+	if len(summaries) != 0 {
+		t.Fatalf("expected documents without container id not to create container summaries, got %#v", summaries)
 	}
 }
 
@@ -309,16 +435,56 @@ func TestBuildContainerSummariesGroupsRenamedContainerByID(t *testing.T) {
 		CustomerName: "Customer",
 		ContainerNo:  "CONT-OLD",
 		Quantity:     8,
-	}}, nil)
+	}}, nil, nil, nil, nil)
 
-	summary, ok := summaries[containerSummaryKey(7, "CONT-NEW")]
+	summary, ok := summaries[containerSummaryKey(42)]
 	if !ok {
 		t.Fatalf("expected renamed container data to be keyed by current container number")
 	}
 	if summary.ContainerID != 42 || summary.TotalExpectedQty != 10 || summary.CurrentQty != 8 {
 		t.Fatalf("expected data to be grouped by container id, got %#v", summary)
 	}
-	if _, ok := summaries[containerSummaryKey(7, "CONT-OLD")]; ok {
-		t.Fatalf("expected old container number to be folded into current container")
+	if len(summaries) != 1 {
+		t.Fatalf("expected old container number to be folded into current container, got %#v", summaries)
+	}
+}
+
+func TestBuildContainerSummariesKeepsDuplicateContainerNumbersSeparatedByID(t *testing.T) {
+	summaries := buildContainerSummaries([]Container{
+		{
+			ID:           101,
+			CustomerID:   7,
+			CustomerName: "Customer",
+			ContainerNo:  "CONT-DUP",
+		},
+		{
+			ID:           102,
+			CustomerID:   7,
+			CustomerName: "Customer",
+			ContainerNo:  "CONT-DUP",
+		},
+	}, []InboundDocument{
+		{
+			ID:               1,
+			ContainerID:      101,
+			CustomerID:       7,
+			CustomerName:     "Customer",
+			ContainerNo:      "CONT-DUP",
+			TotalExpectedQty: 1055,
+		},
+		{
+			ID:               2,
+			ContainerID:      102,
+			CustomerID:       7,
+			CustomerName:     "Customer",
+			ContainerNo:      "CONT-DUP",
+			TotalExpectedQty: 2110,
+		},
+	}, nil, nil, nil, nil, nil)
+
+	first := summaries[containerSummaryKey(101)]
+	second := summaries[containerSummaryKey(102)]
+	if len(summaries) != 2 || first.TotalExpectedQty != 1055 || second.TotalExpectedQty != 2110 {
+		t.Fatalf("expected duplicate container numbers to stay separated by container id, got %#v", summaries)
 	}
 }

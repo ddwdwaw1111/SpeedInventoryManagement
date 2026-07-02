@@ -31,6 +31,7 @@ import { formatNumber } from "../lib/formatters";
 import { useI18n } from "../lib/i18n";
 import type {
   ContainerLifecycle,
+  ContainerLifecycleNode,
   CustomerPortalContainerLifecycle,
   InboundDocument,
   LifecycleDisplayFields,
@@ -47,8 +48,6 @@ export type ContainerLifecycleNodeKind =
   | "container"
   | "tracking"
   | "pickup"
-  | "documents"
-  | "packing-list"
   | "receiving"
   | "inventory"
   | "transfer"
@@ -59,6 +58,7 @@ export type ContainerLifecycleNodeAction = {
   id: string;
   kind: ContainerLifecycleNodeKind;
   title: string;
+  lifecycleNodeId?: number;
   isDraft?: boolean;
   documentId?: number;
   outboundDocumentId?: number;
@@ -68,7 +68,7 @@ export type ContainerLifecycleNodeAction = {
 
 export const CONTAINER_LIFECYCLE_DRAFT_NODE_MIME_TYPE = "application/x-container-lifecycle-draft-node";
 
-export type ContainerLifecycleDraftNodeKind = Extract<ContainerLifecycleNodeKind, "tracking" | "pickup" | "delivery">;
+export type ContainerLifecycleDraftNodeKind = Extract<ContainerLifecycleNodeKind, "tracking" | "pickup" | "receiving" | "delivery">;
 
 export type ContainerLifecycleDraftNode = {
   id: string;
@@ -94,6 +94,7 @@ type ContainerLifecycleViewProps = {
   sidePanel?: ReactNode;
   selectedNodeId?: string | null;
   onNodeSelect?: (action: ContainerLifecycleNodeAction) => void;
+  onLifecycleNodeMove?: (action: ContainerLifecycleNodeAction, position: XYPosition) => void;
   draftNodes?: ContainerLifecycleDraftNode[];
   onDraftNodeDrop?: (kind: ContainerLifecycleDraftNodeKind, position: XYPosition) => void;
   onDraftNodeMove?: (id: string, position: XYPosition) => void;
@@ -133,6 +134,7 @@ type NormalizedContainerLifecycle = CustomerPortalContainerLifecycle & {
   trackingEvents: NonNullable<CustomerPortalContainerLifecycle["trackingEvents"]>;
   pickupAssignments: NonNullable<CustomerPortalContainerLifecycle["pickupAssignments"]>;
   deliveryEvents: NonNullable<CustomerPortalContainerLifecycle["deliveryEvents"]>;
+  nodes: ContainerLifecycleNode[];
 };
 
 const LIFECYCLE_NODE_TYPES = {
@@ -168,6 +170,7 @@ export function ContainerLifecycleView({
   sidePanel,
   selectedNodeId,
   onNodeSelect,
+  onLifecycleNodeMove,
   draftNodes = [],
   onDraftNodeDrop,
   onDraftNodeMove,
@@ -234,11 +237,14 @@ export function ContainerLifecycleView({
     onDraftNodeDrop(draftKind, position);
   }, [flowInstance, onDraftNodeDrop]);
   const handleNodeDragStop = useCallback((_: unknown, node: LifecycleNode) => {
-    if (!node.data.action.isDraft) {
+    if (node.data.action.isDraft) {
+      onDraftNodeMove?.(node.id, node.position);
       return;
     }
-    onDraftNodeMove?.(node.id, node.position);
-  }, [onDraftNodeMove]);
+    if (node.data.action.lifecycleNodeId) {
+      onLifecycleNodeMove?.(node.data.action, node.position);
+    }
+  }, [onDraftNodeMove, onLifecycleNodeMove]);
   const backButton = onBack ? (
     <Button type="button" variant="outline" onClick={onBack}>
       <ArrowLeft className="h-4 w-4" />
@@ -304,7 +310,7 @@ export function ContainerLifecycleView({
                     fitViewOptions={{ padding: 0.18 }}
                     minZoom={0.35}
                     maxZoom={1.35}
-                    nodesDraggable={draftNodes.length > 0}
+                    nodesDraggable={draftNodes.length > 0 || Boolean(onLifecycleNodeMove)}
                     nodesConnectable={false}
                     elementsSelectable={interactiveFlow}
                     onInit={setFlowInstance}
@@ -394,7 +400,7 @@ export function ContainerLifecycleView({
                       <TableCell className="font-semibold text-slate-950">{document.packingListNo || `#${document.id}`}</TableCell>
                       <TableCell>{document.orderRef || "-"}</TableCell>
                       <TableCell><Badge variant="secondary">{t(document.status.toLowerCase())}</Badge></TableCell>
-                      <TableCell>{getOutboundContainerQuantity(document, containerNo)}</TableCell>
+                      <TableCell>{getOutboundContainerQuantity(document, containerNo, lifecycle.summary.containerId)}</TableCell>
                       <TableCell>{formatNullableDate(document.expectedShipDate)}</TableCell>
                       {documentActions?.onOpenPickingOrder || documentActions?.onEditPickingOrder ? (
                         <TableCell>
@@ -479,7 +485,8 @@ function normalizeContainerLifecycle(lifecycle: CustomerPortalContainerLifecycle
     lifecycleEvents: asArray(lifecycle.lifecycleEvents),
     trackingEvents: asArray(lifecycle.trackingEvents),
     pickupAssignments: asArray(lifecycle.pickupAssignments),
-    deliveryEvents: asArray(lifecycle.deliveryEvents)
+    deliveryEvents: asArray(lifecycle.deliveryEvents),
+    nodes: asArray(lifecycle.nodes)
   };
 }
 
@@ -498,17 +505,17 @@ export function buildLifecycleFlow(
   const MAIN_GAP = 290;
   const BRANCH_Y = 390;
   const OUTBOUND_ROW_GAP = 150;
-  const DOCUMENT_BRANCH_GAP = 175;
-  const DOCUMENT_NODE_X_GAP = 270;
-  const DOCUMENT_NODE_ROW_GAP = 150;
-  const DOCUMENT_NODE_COLUMNS = 3;
   const nodes: LifecycleNode[] = [];
   const edges: Edge[] = [];
   const nodePositions: Record<string, { x: number; y: number }> = {};
   const trackingEvents = filterLifecycleDisplayEvents(lifecycle.trackingEvents ?? [], visibilityMode);
   const pickupAssignments = filterLifecycleDisplayEvents(lifecycle.pickupAssignments ?? [], visibilityMode);
   const deliveryEvents = filterLifecycleDisplayEvents(lifecycle.deliveryEvents ?? [], visibilityMode);
+  const persistedNodes = filterPersistedLifecycleNodes(lifecycle.nodes ?? [], visibilityMode);
   let edgeSequence = 0;
+  if (persistedNodes.length > 0) {
+    return buildPersistedLifecycleFlow(lifecycle, persistedNodes, t, interactive, selectedNodeId, visibilityMode);
+  }
   const addNode = (
     id: string,
     x: number,
@@ -542,17 +549,41 @@ export function buildLifecycleFlow(
       labelStyle: { fill: "#475569", fontSize: 11, fontWeight: 600 }
     });
   };
-  const shouldShowContainerNode = interactive || Boolean(lifecycle.container) || trackingEvents.length > 0 || pickupAssignments.length > 0;
-  const shouldShowTrackingNode = interactive || trackingEvents.length > 0;
-  const shouldShowPickupNode = interactive || pickupAssignments.length > 0;
+  const receivedPalletCount = getInboundPalletCount(lifecycle);
+  const receivedSkuCount = getInboundSkuCount(lifecycle);
+  const receivedQuantity = getInboundReceivedQty(lifecycle);
+  const inboundDiscrepancyKind = getInboundDiscrepancyKind(lifecycle);
+  const receivedAt = formatNullableDate(lifecycle.summary.firstReceivedAt);
+  const inventoryWarehouses = getCurrentInventoryWarehouses(lifecycle);
+  const inventoryWarehouseSummary = formatWarehouseSummary(inventoryWarehouses);
+  const inventoryReferenceQty = getInventoryReferenceQty(lifecycle, receivedQuantity);
+  const transferMovements = getTransferMovements(lifecycle.movements ?? []);
+  const transferCount = getTransferCount(lifecycle.summary.transferCount, transferMovements);
+  const transferRouteSummary = formatTransferRouteSummary(transferMovements);
   const pickingOrderRefs = lifecycle.pickingOrders.length > 0
     ? lifecycle.pickingOrders.map((document) => document.packingListNo || document.orderRef || `#${document.id}`)
     : lifecycle.summary.pickingOrderRefs;
   const hasPickingOrders = pickingOrderRefs.length > 0;
   const visibleOrderRefs = hasPickingOrders ? pickingOrderRefs.slice(0, 5) : [];
-  const firstPickingDocument = lifecycle.pickingOrders[0];
+  const packingListRefs = formatLifecycleDocumentRefs(
+    lifecycle.packingLists.map((document) => document.containerNo || `#${document.id}`)
+  );
+  const hasReceivedActivity = receivedQuantity > 0
+    || (lifecycle.summary.totalReceivedQty ?? 0) > 0
+    || Boolean(lifecycle.summary.firstReceivedAt)
+    || (lifecycle.lifecycleEvents ?? []).some((event) => event.eventType === "RECEIVE");
+  const hasInventoryActivity = hasReceivedActivity
+    || (lifecycle.summary.currentQty ?? 0) > 0
+    || (lifecycle.summary.shippedQty ?? 0) > 0
+    || transferCount > 0
+    || hasPickingOrders
+    || deliveryEvents.length > 0;
+  const shouldShowContainerNode = Boolean(lifecycle.summary.containerNo);
+  const shouldShowTrackingNode = trackingEvents.length > 0;
+  const shouldShowPickupNode = pickupAssignments.length > 0;
+  const shouldShowReceivingNode = hasReceivedActivity;
+  const shouldShowInventoryNode = hasInventoryActivity;
   const mainSteps: LifecycleFlowStep[] = [];
-  const selectedAnchorNodeId = getSelectedDocumentAnchorNodeId(selectedNodeId);
 
   if (shouldShowContainerNode) {
     mainSteps.push({
@@ -566,6 +597,7 @@ export function buildLifecycleFlow(
         title={lifecycle.summary.containerNo}
         lines={[
           lifecycle.summary.customerName,
+          packingListRefs || `${lifecycle.summary.packingListCount || 0} ${t("customerPortalPackingLists")}`,
           lifecycle.container?.trackingStatus || lifecycle.summary.status || "-"
         ]}
       />
@@ -624,50 +656,44 @@ export function buildLifecycleFlow(
     });
   }
 
-  const receivedPalletCount = getInboundPalletCount(lifecycle);
-  const receivedSkuCount = getInboundSkuCount(lifecycle);
-  const receivedQuantity = getInboundReceivedQty(lifecycle);
-  const inboundDiscrepancyKind = getInboundDiscrepancyKind(lifecycle);
-  const receivedAt = formatNullableDate(lifecycle.summary.firstReceivedAt);
-  const inventoryWarehouses = getCurrentInventoryWarehouses(lifecycle);
-  const inventoryWarehouseSummary = formatWarehouseSummary(inventoryWarehouses);
-  const inventoryReferenceQty = getInventoryReferenceQty(lifecycle, receivedQuantity);
-  const transferMovements = getTransferMovements(lifecycle.movements ?? []);
-  const transferCount = getTransferCount(lifecycle.summary.transferCount, transferMovements);
-  const transferRouteSummary = formatTransferRouteSummary(transferMovements);
-  mainSteps.push({
-    id: "received",
-    action: { id: "received", kind: "receiving", title: t("containerLifecycleInboundNode") },
-    variant: getInboundDiscrepancyNodeVariant(inboundDiscrepancyKind),
-    label: (
-    <InboundFlowNodeContent
-      icon={<PackageCheck className="h-4 w-4" />}
-      eyebrow={t("containerLifecycleInboundNode")}
-      palletCount={receivedPalletCount}
-      skuCount={receivedSkuCount}
-      quantity={receivedQuantity}
-      discrepancyKind={inboundDiscrepancyKind}
-      receivedAt={receivedAt}
-      t={t}
-    />
-    )
-  });
+  if (shouldShowReceivingNode) {
+    mainSteps.push({
+      id: "received",
+      action: { id: "received", kind: "receiving", title: t("containerLifecycleInboundNode") },
+      variant: getInboundDiscrepancyNodeVariant(inboundDiscrepancyKind),
+      label: (
+      <InboundFlowNodeContent
+        icon={<PackageCheck className="h-4 w-4" />}
+        eyebrow={t("containerLifecycleInboundNode")}
+        palletCount={receivedPalletCount}
+        skuCount={receivedSkuCount}
+        quantity={receivedQuantity}
+        discrepancyKind={inboundDiscrepancyKind}
+        receivedAt={receivedAt}
+        documentSummary={packingListRefs}
+        t={t}
+      />
+      )
+    });
+  }
 
-  mainSteps.push({
-    id: "inventory",
-    action: { id: "inventory", kind: "inventory", title: t("customerPortalContainerCurrent") },
-    variant: lifecycle.summary.currentQty > 0 ? "success" : "default",
-    label: (
-    <InventoryFlowNodeContent
-      icon={<Boxes className="h-4 w-4" />}
-      eyebrow={t("customerPortalContainerCurrent")}
-      quantity={lifecycle.summary.currentQty}
-      referenceQuantity={inventoryReferenceQty}
-      warehouseLabel={t("currentStorage")}
-      warehouseSummary={inventoryWarehouseSummary}
-    />
-    )
-  });
+  if (shouldShowInventoryNode) {
+    mainSteps.push({
+      id: "inventory",
+      action: { id: "inventory", kind: "inventory", title: t("customerPortalContainerCurrent") },
+      variant: lifecycle.summary.currentQty > 0 ? "success" : "default",
+      label: (
+      <InventoryFlowNodeContent
+        icon={<Boxes className="h-4 w-4" />}
+        eyebrow={t("customerPortalContainerCurrent")}
+        quantity={lifecycle.summary.currentQty}
+        referenceQuantity={inventoryReferenceQty}
+        warehouseLabel={t("currentStorage")}
+        warehouseSummary={inventoryWarehouseSummary}
+      />
+      )
+    });
+  }
 
   mainSteps.forEach((step, index) => {
     addNode(step.id, index * MAIN_GAP, MAIN_Y, step.action, step.label, step.variant);
@@ -701,7 +727,7 @@ export function buildLifecycleFlow(
     const nodeID = `picking-${documentIndex}`;
     const deliveryNodeID = `delivery-${documentIndex}`;
     const rowY = getCenteredStackY(documentIndex, visibleOrderRefs.length, MAIN_Y, OUTBOUND_ROW_GAP);
-    const nodeTitle = formatOutboundNodeTitle(document, ref, lifecycle.summary.containerNo);
+    const nodeTitle = formatOutboundNodeTitle(document, ref, lifecycle.summary.containerNo, lifecycle.summary.containerId);
     addNode(nodeID, outboundX, rowY, {
       id: nodeID,
       kind: "picking-order",
@@ -733,45 +759,371 @@ export function buildLifecycleFlow(
     addEdge(nodeID, deliveryNodeID);
   });
 
-  if (lifecycle.packingLists.length > 0 && nodePositions.received) {
-    const anchorPosition = nodePositions.received;
-    lifecycle.packingLists.forEach((document, index) => {
-      const documentNode = buildPackingListDocumentNodeAction(document, t);
-      const rowIndex = Math.floor(index / DOCUMENT_NODE_COLUMNS);
-      const columnIndex = index % DOCUMENT_NODE_COLUMNS;
-      const columnsInRow = Math.min(DOCUMENT_NODE_COLUMNS, lifecycle.packingLists.length - rowIndex * DOCUMENT_NODE_COLUMNS);
-      const documentNodeId = `documents-received-${document.id}`;
-      const x = anchorPosition.x + (columnIndex - (columnsInRow - 1) / 2) * DOCUMENT_NODE_X_GAP;
-      const y = anchorPosition.y + DOCUMENT_BRANCH_GAP + rowIndex * DOCUMENT_NODE_ROW_GAP;
-      addNode(documentNodeId, x, y, {
-        ...documentNode.action,
-        id: documentNodeId,
-        attachedToNodeId: "received"
-      }, documentNode.label, "default");
-      addEdge("received", documentNodeId, index === 0 ? t("customerPortalPackingListSource") : undefined, "vertical-down");
-    });
-  }
+  return { nodes, edges };
+}
 
-  if (interactive && selectedAnchorNodeId && selectedAnchorNodeId !== "received" && nodePositions[selectedAnchorNodeId]) {
-    const documentNode = buildAttachedDocumentNodeAction(
-      selectedAnchorNodeId,
-      lifecycle,
-      firstPickingDocument,
-      t
-    );
-    if (documentNode) {
-      const anchorPosition = nodePositions[selectedAnchorNodeId];
-      const documentNodeId = `documents-${selectedAnchorNodeId}`;
-      addNode(documentNodeId, anchorPosition.x, anchorPosition.y + DOCUMENT_BRANCH_GAP, {
-        ...documentNode.action,
-        id: documentNodeId,
-        attachedToNodeId: selectedAnchorNodeId
-      }, documentNode.label, "default");
-      addEdge(selectedAnchorNodeId, documentNodeId, t("customerPortalLifecycleDocuments"), "vertical-down");
+function buildPersistedLifecycleFlow(
+  lifecycle: CustomerPortalContainerLifecycle,
+  persistedNodes: ContainerLifecycleNode[],
+  t: (key: string, params?: Record<string, string | number>) => string,
+  interactive: boolean,
+  selectedNodeId: string | null,
+  visibilityMode: LifecycleVisibilityMode
+): { nodes: LifecycleNode[]; edges: Edge[] } {
+  const MAIN_Y = 160;
+  const MAIN_GAP = 290;
+  const nodes: LifecycleNode[] = [];
+  const edges: Edge[] = [];
+  const flowIdByNodeId = new Map<number, string>();
+  const sortedNodes = [...persistedNodes].sort((left, right) => (
+    (left.sortOrder || 0) - (right.sortOrder || 0) || left.id - right.id
+  ));
+
+  sortedNodes.forEach((node, index) => {
+    const nodeKind = getPersistedLifecycleNodeKind(node);
+    if (!nodeKind) {
+      return;
     }
-  }
+    const flowId = persistedLifecycleNodeFlowId(node);
+    flowIdByNodeId.set(node.id, flowId);
+    const presentation = getPersistedLifecycleNodePresentation(node, nodeKind, lifecycle, t, visibilityMode);
+    const position = {
+      x: typeof node.positionX === "number" ? node.positionX : index * MAIN_GAP,
+      y: typeof node.positionY === "number" ? node.positionY : MAIN_Y
+    };
+    nodes.push({
+      id: flowId,
+      position,
+      type: "lifecycle",
+      draggable: interactive,
+      data: {
+        action: {
+          ...presentation.action,
+          id: flowId,
+          lifecycleNodeId: node.id
+        },
+        label: presentation.label
+      },
+      style: getFlowNodeStyle(presentation.variant, interactive, selectedNodeId === flowId)
+    });
+  });
+
+  sortedNodes.forEach((node, index) => {
+    const target = flowIdByNodeId.get(node.id);
+    if (!target) {
+      return;
+    }
+    const parent = node.parentNodeId ? flowIdByNodeId.get(node.parentNodeId) : undefined;
+    const previous = index > 0 ? flowIdByNodeId.get(sortedNodes[index - 1].id) : undefined;
+    const source = parent ?? previous;
+    if (!source || source === target) {
+      return;
+    }
+    const handles = getLifecycleEdgeHandles("horizontal");
+    edges.push({
+      id: `${source}-${target}`,
+      source,
+      target,
+      sourceHandle: handles.sourceHandle,
+      targetHandle: handles.targetHandle,
+      type: "default",
+      markerEnd: { type: MarkerType.ArrowClosed },
+      style: { stroke: "#64748b", strokeWidth: 2 },
+      labelStyle: { fill: "#475569", fontSize: 11, fontWeight: 600 }
+    });
+  });
 
   return { nodes, edges };
+}
+
+function getPersistedLifecycleNodePresentation(
+  node: ContainerLifecycleNode,
+  kind: ContainerLifecycleNodeKind,
+  lifecycle: CustomerPortalContainerLifecycle,
+  t: (key: string, params?: Record<string, string | number>) => string,
+  visibilityMode: LifecycleVisibilityMode
+): { action: ContainerLifecycleNodeAction; label: ReactNode; variant: LifecycleNodeVariant } {
+  const sourceType = String(node.sourceType || "").toUpperCase();
+  const title = node.title?.trim() || getLifecycleNodeDefaultTitle(kind, lifecycle, t);
+  const action: ContainerLifecycleNodeAction = {
+    id: persistedLifecycleNodeFlowId(node),
+    kind,
+    title
+  };
+
+  if (kind === "container") {
+    const packingListRefs = formatLifecycleDocumentRefs([
+      lifecycle.container?.packingListNo,
+      lifecycle.summary.packingListNo,
+      ...(lifecycle.packingLists ?? []).map((document) => document.containerNo || `#${document.id}`)
+    ].filter(Boolean) as string[]);
+    return {
+      action,
+      variant: getContainerStatusNodeVariant(lifecycle.summary.status),
+      label: (
+        <FlowNodeContent
+          icon={<ContainerIcon className="h-4 w-4" />}
+          eyebrow={`${t("containerLifecycleContainerNode")} / ${formatContainerStatus(lifecycle.summary.status, t)}`}
+          title={lifecycle.summary.containerNo || title}
+          lines={[
+            lifecycle.summary.customerName,
+            packingListRefs || `${lifecycle.summary.packingListCount || 0} ${t("customerPortalPackingLists")}`,
+            lifecycle.container?.trackingStatus || lifecycle.summary.status || "-"
+          ]}
+        />
+      )
+    };
+  }
+
+  if (kind === "receiving") {
+    const receivedQuantity = getInboundReceivedQty(lifecycle);
+    const inboundDiscrepancyKind = getInboundDiscrepancyKind(lifecycle);
+    if (sourceType === "INBOUND_DOCUMENT" && node.sourceId > 0) {
+      action.documentId = node.sourceId;
+    }
+    return {
+      action,
+      variant: receivedQuantity > 0 ? getInboundDiscrepancyNodeVariant(inboundDiscrepancyKind) : "warning",
+      label: (
+        <InboundFlowNodeContent
+          icon={<PackageCheck className="h-4 w-4" />}
+          eyebrow={t("containerLifecycleInboundNode")}
+          palletCount={getInboundPalletCount(lifecycle)}
+          skuCount={getInboundSkuCount(lifecycle)}
+          quantity={receivedQuantity}
+          discrepancyKind={inboundDiscrepancyKind}
+          receivedAt={formatNullableDate(lifecycle.summary.firstReceivedAt)}
+          documentSummary={formatLifecycleDocumentRefs((lifecycle.packingLists ?? []).map((document) => document.containerNo || `#${document.id}`))}
+          t={t}
+        />
+      )
+    };
+  }
+
+  if (kind === "inventory") {
+    const receivedQuantity = getInboundReceivedQty(lifecycle);
+    return {
+      action,
+      variant: lifecycle.summary.currentQty > 0 ? "success" : "default",
+      label: (
+        <InventoryFlowNodeContent
+          icon={<Boxes className="h-4 w-4" />}
+          eyebrow={t("customerPortalContainerCurrent")}
+          quantity={lifecycle.summary.currentQty}
+          referenceQuantity={getInventoryReferenceQty(lifecycle, receivedQuantity)}
+          warehouseLabel={t("currentStorage")}
+          warehouseSummary={formatWarehouseSummary(getCurrentInventoryWarehouses(lifecycle))}
+        />
+      )
+    };
+  }
+
+  if (kind === "tracking") {
+    const tracking = sourceType === "TRACKING_EVENT"
+      ? (lifecycle.trackingEvents ?? []).find((event) => event.id === node.sourceId)
+      : undefined;
+    return {
+      action,
+      variant: "warning",
+      label: (
+        <FlowNodeContent
+          icon={<MapPinned className="h-4 w-4" />}
+          eyebrow={t("containerLifecycleTrackingNode")}
+          title={getLifecycleDisplayLabel(tracking, visibilityMode, title, t)}
+          lines={[
+            tracking?.location || "",
+            formatNullableDate(tracking?.eventTime)
+          ]}
+        />
+      )
+    };
+  }
+
+  if (kind === "pickup") {
+    const pickup = sourceType === "PICKUP_ASSIGNMENT"
+      ? (lifecycle.pickupAssignments ?? []).find((assignment) => assignment.id === node.sourceId)
+      : undefined;
+    return {
+      action,
+      variant: pickup?.actualPickupAt ? "success" : "warning",
+      label: (
+        <FlowNodeContent
+          icon={<Truck className="h-4 w-4" />}
+          eyebrow={t("containerLifecyclePickupNode")}
+          title={getLifecycleDisplayLabel(pickup, visibilityMode, title, t, pickup?.assignmentType || pickup?.status)}
+          lines={[
+            visibilityMode === "admin" ? pickup?.driverName || pickup?.vendorName || "" : "",
+            formatNullableDate(pickup?.actualPickupAt || pickup?.scheduledPickupAt)
+          ]}
+        />
+      )
+    };
+  }
+
+  if (kind === "picking-order") {
+    const document = sourceType === "OUTBOUND_DOCUMENT"
+      ? (lifecycle.pickingOrders ?? []).find((entry) => entry.id === node.sourceId)
+      : undefined;
+    if (document?.id) {
+      action.outboundDocumentId = document.id;
+    }
+    const nodeTitle = formatOutboundNodeTitle(document, title, lifecycle.summary.containerNo, lifecycle.summary.containerId);
+    action.title = nodeTitle;
+    return {
+      action,
+      variant: "warning",
+      label: (
+        <FlowNodeContent
+          icon={<Send className="h-4 w-4" />}
+          eyebrow={t("customerPortalPickingOrders")}
+          title={nodeTitle}
+        />
+      )
+    };
+  }
+
+  if (kind === "delivery") {
+    const delivery = sourceType === "DELIVERY_EVENT"
+      ? (lifecycle.deliveryEvents ?? []).find((event) => event.id === node.sourceId)
+      : undefined;
+    if (delivery?.id) {
+      action.deliveryEventId = delivery.id;
+      action.outboundDocumentId = delivery.outboundDocumentId;
+    }
+    return {
+      action,
+      variant: delivery?.bolReceivedAt ? "done" : "warning",
+      label: (
+        <FlowNodeContent
+          icon={<Truck className="h-4 w-4" />}
+          eyebrow={t("containerLifecycleDeliveryNode")}
+          title={formatDeliveryNodeTitle(delivery, visibilityMode, t) || title}
+          lines={[delivery?.bolNumber || "", formatNullableDate(delivery?.eventTime)]}
+        />
+      )
+    };
+  }
+
+  if (kind === "transfer") {
+    const transferMovements = getTransferMovements(lifecycle.movements ?? []);
+    return {
+      action,
+      variant: "warning",
+      label: (
+        <FlowNodeContent
+          icon={<GitBranch className="h-4 w-4" />}
+          eyebrow={t("containerLifecycleTransferNode")}
+          title={formatTransferRouteSummary(transferMovements) || title}
+        />
+      )
+    };
+  }
+
+  return {
+    action,
+    variant: "warning",
+    label: (
+      <FlowNodeContent
+        icon={getLifecycleNodeIcon(kind)}
+        eyebrow={getLifecycleNodeEyebrow(kind, t)}
+        title={title}
+      />
+    )
+  };
+}
+
+function filterPersistedLifecycleNodes(nodes: ContainerLifecycleNode[], visibilityMode: LifecycleVisibilityMode) {
+  return nodes.filter((node) => getPersistedLifecycleNodeKind(node) && (
+    visibilityMode === "admin" || isCustomerVisibleLifecycleEvent(node.visibility)
+  ));
+}
+
+function getPersistedLifecycleNodeKind(node: ContainerLifecycleNode): ContainerLifecycleNodeKind | null {
+  const value = String(node.nodeKind || "").toLowerCase();
+  if (
+    value === "container"
+    || value === "tracking"
+    || value === "pickup"
+    || value === "receiving"
+    || value === "inventory"
+    || value === "transfer"
+    || value === "picking-order"
+    || value === "delivery"
+  ) {
+    return value as ContainerLifecycleNodeKind;
+  }
+  return null;
+}
+
+function persistedLifecycleNodeFlowId(node: ContainerLifecycleNode) {
+  return `lifecycle-node-${node.id}`;
+}
+
+function getLifecycleNodeDefaultTitle(
+  kind: ContainerLifecycleNodeKind,
+  lifecycle: CustomerPortalContainerLifecycle,
+  t: (key: string, params?: Record<string, string | number>) => string
+) {
+  switch (kind) {
+    case "container":
+      return lifecycle.summary.containerNo || t("containerLifecycleContainerNode");
+    case "tracking":
+      return t("containerLifecycleTrackingNode");
+    case "pickup":
+      return t("containerLifecyclePickupNode");
+    case "receiving":
+      return t("containerLifecycleInboundNode");
+    case "inventory":
+      return t("customerPortalContainerCurrent");
+    case "transfer":
+      return t("containerLifecycleTransferNode");
+    case "picking-order":
+      return t("customerPortalPickingOrders");
+    case "delivery":
+      return t("containerLifecycleDeliveryNode");
+  }
+}
+
+function getLifecycleNodeEyebrow(kind: ContainerLifecycleNodeKind, t: (key: string) => string) {
+  switch (kind) {
+    case "container":
+      return t("containerLifecycleContainerNode");
+    case "tracking":
+      return t("containerLifecycleTrackingNode");
+    case "pickup":
+      return t("containerLifecyclePickupNode");
+    case "receiving":
+      return t("containerLifecycleInboundNode");
+    case "inventory":
+      return t("customerPortalContainerCurrent");
+    case "transfer":
+      return t("containerLifecycleTransferNode");
+    case "picking-order":
+      return t("customerPortalPickingOrders");
+    case "delivery":
+      return t("containerLifecycleDeliveryNode");
+  }
+}
+
+function getLifecycleNodeIcon(kind: ContainerLifecycleNodeKind) {
+  switch (kind) {
+    case "container":
+      return <ContainerIcon className="h-4 w-4" />;
+    case "tracking":
+      return <MapPinned className="h-4 w-4" />;
+    case "pickup":
+      return <Truck className="h-4 w-4" />;
+    case "receiving":
+      return <PackageCheck className="h-4 w-4" />;
+    case "inventory":
+      return <Boxes className="h-4 w-4" />;
+    case "transfer":
+      return <GitBranch className="h-4 w-4" />;
+    case "picking-order":
+      return <Send className="h-4 w-4" />;
+    case "delivery":
+      return <Truck className="h-4 w-4" />;
+  }
 }
 
 function LifecycleFlowNode({ data }: NodeProps<LifecycleNode>) {
@@ -805,20 +1157,8 @@ function getCenteredStackY(index: number, total: number, centerY: number, rowGap
   return centerY + (index - (total - 1) / 2) * rowGap;
 }
 
-function getSelectedDocumentAnchorNodeId(selectedNodeId: string | null) {
-  if (!selectedNodeId) {
-    return "";
-  }
-  if (selectedNodeId.startsWith("documents-received")) {
-    return "received";
-  }
-  return selectedNodeId.startsWith("documents-")
-    ? selectedNodeId.slice("documents-".length)
-    : selectedNodeId;
-}
-
 function isContainerLifecycleDraftNodeKind(value: string): value is ContainerLifecycleDraftNodeKind {
-  return value === "tracking" || value === "pickup" || value === "delivery";
+  return value === "tracking" || value === "pickup" || value === "receiving" || value === "delivery";
 }
 
 function getDraftLifecycleNodeLabel(
@@ -842,6 +1182,8 @@ function getDraftLifecycleNodeIcon(kind: ContainerLifecycleDraftNodeKind) {
       return <MapPinned className="h-4 w-4" />;
     case "pickup":
       return <Truck className="h-4 w-4" />;
+    case "receiving":
+      return <PackageCheck className="h-4 w-4" />;
     case "delivery":
       return <Send className="h-4 w-4" />;
   }
@@ -952,13 +1294,14 @@ function getContainerStatusNodeVariant(status: string): "default" | "success" | 
 function formatOutboundNodeTitle(
   document: OutboundDocument | undefined,
   fallbackRef: string,
-  containerNo: string
+  containerNo: string,
+  containerId?: number | null
 ) {
   if (!document) {
     return fallbackRef;
   }
   const reference = document.packingListNo || document.orderRef || fallbackRef || `#${document.id}`;
-  const goodsSummary = formatOutboundContainerGoodsSummary(document, containerNo);
+  const goodsSummary = formatOutboundContainerGoodsSummary(document, containerNo, containerId);
   return goodsSummary ? `${reference}: ${goodsSummary}` : reference;
 }
 
@@ -987,8 +1330,8 @@ function formatDeliveryNodeTitle(
   );
 }
 
-function formatOutboundContainerGoodsSummary(document: OutboundDocument, containerNo: string) {
-  const rows = getOutboundContainerGoodsRows(document, containerNo);
+function formatOutboundContainerGoodsSummary(document: OutboundDocument, containerNo: string, containerId?: number | null) {
+  const rows = getOutboundContainerGoodsRows(document, containerNo, containerId);
   if (rows.length === 0) {
     return "";
   }
@@ -997,8 +1340,9 @@ function formatOutboundContainerGoodsSummary(document: OutboundDocument, contain
   return remainingCount > 0 ? `${visibleRows.join(", ")} +${remainingCount}` : visibleRows.join(", ");
 }
 
-function getOutboundContainerGoodsRows(document: OutboundDocument, containerNo: string) {
+function getOutboundContainerGoodsRows(document: OutboundDocument, containerNo: string, containerId?: number | null) {
   const normalizedContainerNo = normalizeContainerNo(containerNo);
+  const normalizedContainerId = containerId && containerId > 0 ? containerId : 0;
   const rows = new Map<string, number>();
   let hasAnyPickAllocation = false;
 
@@ -1006,7 +1350,7 @@ function getOutboundContainerGoodsRows(document: OutboundDocument, containerNo: 
     const sku = line.sku || line.itemNumber || "-";
     (line.pickAllocations ?? []).forEach((allocation) => {
       hasAnyPickAllocation = true;
-      if (normalizeContainerNo(allocation.containerNo) !== normalizedContainerNo) {
+      if (!outboundAllocationMatchesContainer(allocation, normalizedContainerId, normalizedContainerNo)) {
         return;
       }
       rows.set(sku, (rows.get(sku) ?? 0) + (allocation.allocatedQty || 0));
@@ -1026,85 +1370,11 @@ function getOutboundContainerGoodsRows(document: OutboundDocument, containerNo: 
     .sort((left, right) => left.sku.localeCompare(right.sku));
 }
 
-function buildAttachedDocumentNodeAction(
-  anchorNodeId: string,
-  lifecycle: CustomerPortalContainerLifecycle,
-  firstPickingDocument: OutboundDocument | undefined,
-  t: (key: string) => string
-): { action: ContainerLifecycleNodeAction; label: ReactNode } | null {
-  const outboundDocument = resolveOutboundDocumentForAnchor(anchorNodeId, lifecycle, firstPickingDocument);
-  if (outboundDocument) {
-    const attachmentCount = outboundDocument.attachments?.length ?? 0;
-    return {
-      action: {
-        id: "",
-        kind: "documents",
-        title: t("customerPortalLifecycleDocuments"),
-        outboundDocumentId: outboundDocument.id
-      },
-      label: (
-        <FlowNodeContent
-          icon={<ClipboardList className="h-4 w-4" />}
-          eyebrow={t("customerPortalLifecycleDocuments")}
-          title={outboundDocument.packingListNo || outboundDocument.orderRef || `#${outboundDocument.id}`}
-          lines={[
-            t("customerPortalPickingOrders"),
-            `${attachmentCount} ${t("files")}`
-          ]}
-        />
-      )
-    };
-  }
-
-  return null;
-}
-
-function buildPackingListDocumentNodeAction(
-  document: InboundDocument,
-  t: (key: string) => string
-): { action: ContainerLifecycleNodeAction; label: ReactNode } {
-  const attachmentCount = document.attachments?.length ?? 0;
-  return {
-    action: {
-      id: "",
-      kind: "documents",
-      title: t("customerPortalLifecycleDocuments"),
-      documentId: document.id
-    },
-    label: (
-      <FlowNodeContent
-        icon={<ClipboardList className="h-4 w-4" />}
-        eyebrow={t("customerPortalLifecycleDocuments")}
-        title={t("customerPortalPackingListSource")}
-        lines={[
-          document.containerNo || `#${document.id}`,
-          `${attachmentCount} ${t("files")}`
-        ]}
-      />
-    )
-  };
-}
-
-function resolveOutboundDocumentForAnchor(
-  anchorNodeId: string,
-  lifecycle: CustomerPortalContainerLifecycle,
-  firstPickingDocument: OutboundDocument | undefined
-) {
-  if (anchorNodeId.startsWith("picking-")) {
-    const index = Number(anchorNodeId.replace("picking-", ""));
-    return Number.isFinite(index) ? lifecycle.pickingOrders[index] : firstPickingDocument;
-  }
-  if (anchorNodeId.startsWith("delivery-")) {
-    const index = Number(anchorNodeId.replace("delivery-", ""));
-    return Number.isFinite(index) ? lifecycle.pickingOrders[index] : firstPickingDocument;
-  }
-  return null;
-}
-
 function FlowNodeContent({
   icon,
   eyebrow,
-  title
+  title,
+  lines = []
 }: {
   icon: ReactNode;
   eyebrow: string;
@@ -1118,6 +1388,13 @@ function FlowNodeContent({
         <span className="min-w-0 truncate">{eyebrow}</span>
       </div>
       <div className="line-clamp-2 text-base font-semibold leading-5 text-slate-950" title={title}>{title}</div>
+      {lines.length > 0 ? (
+        <div className="grid gap-0.5 text-[11px] font-medium leading-3 text-slate-600">
+          {lines.filter(Boolean).slice(0, 2).map((line) => (
+            <div key={line} className="truncate" title={line}>{line}</div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1163,6 +1440,7 @@ function InboundFlowNodeContent({
   quantity,
   discrepancyKind,
   receivedAt,
+  documentSummary,
   t
 }: {
   icon: ReactNode;
@@ -1172,6 +1450,7 @@ function InboundFlowNodeContent({
   quantity: number;
   discrepancyKind: InboundDiscrepancyKind;
   receivedAt: string;
+  documentSummary?: string;
   t: (key: string) => string;
 }) {
   return (
@@ -1192,8 +1471,9 @@ function InboundFlowNodeContent({
           <InboundCompactMetric label={t("received")} value={formatNumber(quantity)} />
         </div>
       </div>
-      <div className="truncate text-[11px] font-medium leading-3 text-slate-600" title={receivedAt}>
-        {t("containerReceivedAt")}: {receivedAt}
+      <div className="grid gap-0.5 text-[11px] font-medium leading-3 text-slate-600">
+        <div className="truncate" title={receivedAt}>{t("containerReceivedAt")}: {receivedAt}</div>
+        {documentSummary ? <div className="truncate" title={documentSummary}>{documentSummary}</div> : null}
       </div>
     </div>
   );
@@ -1323,13 +1603,31 @@ function formatLifecycleDisplayText(value: string | null | undefined, t: (key: s
   return rawValue;
 }
 
-function getOutboundContainerQuantity(document: OutboundDocument, containerNo: string) {
+function getOutboundContainerQuantity(document: OutboundDocument, containerNo: string, containerId?: number | null) {
   const normalizedContainerNo = normalizeContainerNo(containerNo);
+  const normalizedContainerId = containerId && containerId > 0 ? containerId : 0;
   return (document.lines ?? []).reduce((total, line) => (
     total + (line.pickAllocations ?? [])
-      .filter((allocation) => normalizeContainerNo(allocation.containerNo) === normalizedContainerNo)
+      .filter((allocation) => outboundAllocationMatchesContainer(allocation, normalizedContainerId, normalizedContainerNo))
       .reduce((lineTotal, allocation) => lineTotal + allocation.allocatedQty, 0)
   ), 0);
+}
+
+function outboundAllocationMatchesContainer(allocation: { containerId?: number; containerNo?: string }, containerId: number, containerNo: string) {
+  if (containerId > 0) {
+    return Boolean(allocation.containerId && allocation.containerId > 0 && allocation.containerId === containerId);
+  }
+  return containerNo !== "" && normalizeContainerNo(allocation.containerNo) === containerNo;
+}
+
+function formatLifecycleDocumentRefs(refs: string[]) {
+  const uniqueRefs = Array.from(new Set(refs.map((ref) => ref.trim()).filter(Boolean)));
+  if (uniqueRefs.length === 0) {
+    return "";
+  }
+  const visibleRefs = uniqueRefs.slice(0, 2);
+  const remainingCount = uniqueRefs.length - visibleRefs.length;
+  return remainingCount > 0 ? `${visibleRefs.join(", ")} +${remainingCount}` : visibleRefs.join(", ");
 }
 
 export function getInboundPalletCount(lifecycle: Pick<CustomerPortalContainerLifecycle, "packingLists" | "summary">) {

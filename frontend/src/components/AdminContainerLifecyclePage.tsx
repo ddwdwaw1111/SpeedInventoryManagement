@@ -8,6 +8,7 @@ import {
   ExternalLink,
   MapPinned,
   PackageCheck,
+  Plus,
   RotateCcw,
   Search,
   Send,
@@ -26,6 +27,7 @@ import type { InboundReceiptEditorLaunchContext } from "../lib/inboundReceiptEdi
 import type {
   ContainerType,
   ContainerLifecycle,
+  ContainerLifecycleNode,
   Customer,
   CustomerPortalContainerSummary,
   DeliveryEventPayload,
@@ -81,6 +83,12 @@ type ContainerFormState = {
   status: string;
   trackingStatus: string;
   lastEventAt: string;
+};
+
+type NewContainerFormState = {
+  customerId: string;
+  packingListNo: string;
+  containerNo: string;
 };
 
 type LifecycleVisibilityFormState = {
@@ -212,6 +220,9 @@ export function AdminContainerLifecyclePage({
   const [draftNodes, setDraftNodes] = useState<ContainerLifecycleDraftNode[]>([]);
   const [reloadToken, setReloadToken] = useState(0);
   const [busyAction, setBusyAction] = useState("");
+  const [newContainerForm, setNewContainerForm] = useState<NewContainerFormState>(() => createEmptyNewContainerForm(
+    routeScope?.customerId ? String(routeScope.customerId) : ""
+  ));
   const [containerForm, setContainerForm] = useState<ContainerFormState>(createEmptyContainerForm());
   const [trackingForm, setTrackingForm] = useState<TrackingFormState>(createEmptyTrackingForm());
   const [pickupForm, setPickupForm] = useState<PickupFormState>(createEmptyPickupForm());
@@ -326,6 +337,15 @@ export function AdminContainerLifecyclePage({
     setCurrentPage(1);
   }, [containerSearch, selectedCustomerId, selectedStatus, pageSize]);
 
+  useEffect(() => {
+    if (selectedCustomerId === "all") {
+      return;
+    }
+    setNewContainerForm((currentForm) => (
+      currentForm.customerId ? currentForm : { ...currentForm, customerId: selectedCustomerId }
+    ));
+  }, [selectedCustomerId]);
+
   function refreshLifecycle() {
     setReloadToken((current) => current + 1);
   }
@@ -349,16 +369,61 @@ export function AdminContainerLifecyclePage({
     setSelectedStatus("all");
   }
 
+  async function handleCreatePlannedContainer(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const customerId = parsePositiveInt(newContainerForm.customerId);
+    const packingListNo = newContainerForm.packingListNo.trim();
+    const containerNo = newContainerForm.containerNo.trim();
+    if (!customerId || !packingListNo || !containerNo) {
+      showError(t("fieldRequired"));
+      return;
+    }
+
+    await runBusyAction("new-container", async () => {
+      const container = await api.saveV2Container({
+        customerId,
+        packingListNo,
+        containerNo,
+        status: "PENDING",
+        trackingStatus: "TRACKING_RECEIVED"
+      });
+      setNewContainerForm(createEmptyNewContainerForm(String(container.customerId)));
+      setSelectedCustomerId(String(container.customerId));
+      setSearchDraft(container.containerNo);
+      setContainerSearch(container.containerNo);
+      showSuccess(t("containerLifecycleCreated"));
+      onOpenContainerLifecycle(container.customerId, container.containerNo, container.id);
+    });
+  }
+
   function handleDraftNodeDrop(kind: ContainerLifecycleDraftNodeKind, position: ContainerLifecycleDraftNode["position"]) {
+    void createPersistedLifecycleNode(kind, position);
+  }
+
+  async function createPersistedLifecycleNode(kind: ContainerLifecycleDraftNodeKind, position: ContainerLifecycleDraftNode["position"]) {
+    if (!activeContainerId || !lifecycle) {
+      showError(t("adminContainerLifecycleSelectContainer"));
+      return;
+    }
     const title = getLifecycleDraftNodeTitle(kind, t);
-    const draftNode: ContainerLifecycleDraftNode = {
-      id: `draft-${kind}-${Date.now()}`,
-      kind,
-      title,
-      position
-    };
-    setDraftNodes([draftNode]);
-    setSelectedNode({ id: draftNode.id, kind, title, isDraft: true });
+    await runBusyAction("lifecycle-node", async () => {
+      const parentNodeId = selectedNode?.lifecycleNodeId || getLastLifecycleNodeId(lifecycle);
+      const node = await api.createV2ContainerLifecycleNode(activeContainerId, {
+        parentNodeId,
+        nodeKind: kind,
+        title,
+        visibility: "PUBLIC",
+        positionX: position.x,
+        positionY: position.y
+      });
+      const flowNodeId = getLifecycleNodeFlowId(node);
+      setDraftNodes([]);
+      setSelectedNode({ id: flowNodeId, kind, title: node.title || title, lifecycleNodeId: node.id });
+      setLifecycle((currentLifecycle) => currentLifecycle ? {
+        ...currentLifecycle,
+        nodes: [...(currentLifecycle.nodes ?? []), node]
+      } : currentLifecycle);
+    });
     if (kind === "tracking") {
       setTrackingForm(createEmptyTrackingForm());
     } else if (kind === "pickup") {
@@ -372,6 +437,25 @@ export function AdminContainerLifecyclePage({
     setDraftNodes((currentNodes) => currentNodes.map((node) => (
       node.id === id ? { ...node, position } : node
     )));
+  }
+
+  function handleLifecycleNodeMove(action: ContainerLifecycleNodeAction, position: ContainerLifecycleDraftNode["position"]) {
+    if (!activeContainerId || !action.lifecycleNodeId) {
+      return;
+    }
+    const nodeId = action.lifecycleNodeId;
+    setLifecycle((currentLifecycle) => currentLifecycle ? {
+      ...currentLifecycle,
+      nodes: (currentLifecycle.nodes ?? []).map((node) => (
+        node.id === nodeId ? { ...node, positionX: position.x, positionY: position.y } : node
+      ))
+    } : currentLifecycle);
+    void runBusyAction("lifecycle-node-position", async () => {
+      await api.updateV2ContainerLifecycleNode(activeContainerId, nodeId, {
+        positionX: position.x,
+        positionY: position.y
+      });
+    });
   }
 
   function clearSelectedDraftNode() {
@@ -410,7 +494,7 @@ export function AdminContainerLifecyclePage({
       return;
     }
     await runBusyAction("tracking", async () => {
-      await api.createV2ContainerTrackingEvent(activeContainerId, {
+      const trackingEvent = await api.createV2ContainerTrackingEvent(activeContainerId, {
         customerId: activeCustomerId,
         containerId: activeContainerId,
         eventType: trackingForm.eventType,
@@ -418,6 +502,7 @@ export function AdminContainerLifecyclePage({
         notes: trackingForm.notes,
         visibility: trackingForm.visibility
       });
+      await attachSelectedLifecycleNodeSource("TRACKING_EVENT", trackingEvent.id, t("containerLifecycleTrackingNode"));
       showSuccess(t("adminContainerLifecycleSaved"));
       clearSelectedDraftNode();
       refreshLifecycle();
@@ -431,7 +516,7 @@ export function AdminContainerLifecyclePage({
     }
     await runBusyAction("pickup", async () => {
       const usesOwnDriver = pickupForm.assignmentType === "OWN_DRIVER";
-      await api.createV2ContainerPickupAssignment(activeContainerId, {
+      const pickupAssignment = await api.createV2ContainerPickupAssignment(activeContainerId, {
         customerId: activeCustomerId,
         containerId: activeContainerId,
         assignmentType: pickupForm.assignmentType,
@@ -444,6 +529,7 @@ export function AdminContainerLifecyclePage({
         notes: pickupForm.notes,
         visibility: pickupForm.visibility
       });
+      await attachSelectedLifecycleNodeSource("PICKUP_ASSIGNMENT", pickupAssignment.id, t("containerLifecyclePickupNode"));
       showSuccess(t("adminContainerLifecycleSaved"));
       clearSelectedDraftNode();
       refreshLifecycle();
@@ -473,11 +559,13 @@ export function AdminContainerLifecyclePage({
 
     await runBusyAction("delivery", async () => {
       const deliveryEventId = parseOptionalPositiveInt(deliveryForm.deliveryEventId);
+      let deliveryEvent: { id: number };
       if (deliveryForm.eventType === "BOL_RECEIVED" && deliveryEventId) {
-        await api.receiveV2DeliveryBOL(deliveryEventId, payload);
+        deliveryEvent = await api.receiveV2DeliveryBOL(deliveryEventId, payload);
       } else {
-        await api.createV2DeliveryEvent(payload);
+        deliveryEvent = await api.createV2DeliveryEvent(payload);
       }
+      await attachSelectedLifecycleNodeSource("DELIVERY_EVENT", deliveryEvent.id, t("containerLifecycleDeliveryNode"));
       showSuccess(t("adminContainerLifecycleSaved"));
       clearSelectedDraftNode();
       refreshLifecycle();
@@ -545,6 +633,17 @@ export function AdminContainerLifecyclePage({
     }
   }
 
+  async function attachSelectedLifecycleNodeSource(sourceType: string, sourceId: number, title: string) {
+    if (!activeContainerId || !selectedNode?.lifecycleNodeId) {
+      return;
+    }
+    await api.updateV2ContainerLifecycleNode(activeContainerId, selectedNode.lifecycleNodeId, {
+      title,
+      sourceType,
+      sourceId
+    });
+  }
+
   if (!routeScope) {
     return (
       <main className="workspace-main">
@@ -562,6 +661,45 @@ export function AdminContainerLifecyclePage({
                 {summaryError ? <InlineAlert severity="error">{summaryError}</InlineAlert> : null}
               </div>
             </div>
+
+            <form
+              className="mt-6 grid gap-3 rounded-xl border border-slate-200 bg-white p-3 lg:grid-cols-[220px_minmax(180px,1fr)_minmax(180px,1fr)_auto]"
+              onSubmit={handleCreatePlannedContainer}
+            >
+              <label className="sr-only" htmlFor="container-lifecycle-new-customer">{t("customer")}</label>
+              <select
+                id="container-lifecycle-new-customer"
+                className="min-h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm shadow-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
+                value={newContainerForm.customerId}
+                onChange={(event) => setNewContainerForm((currentForm) => ({ ...currentForm, customerId: event.target.value }))}
+                required
+              >
+                <option value="">{t("selectCustomerFirst")}</option>
+                {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}
+              </select>
+              <label className="sr-only" htmlFor="container-lifecycle-new-packing-list">{t("packingListReferenceNo")}</label>
+              <input
+                id="container-lifecycle-new-packing-list"
+                className="min-h-11 rounded-lg border border-slate-200 bg-white px-4 text-sm shadow-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
+                value={newContainerForm.packingListNo}
+                onChange={(event) => setNewContainerForm((currentForm) => ({ ...currentForm, packingListNo: event.target.value }))}
+                placeholder={t("packingListReferenceNo")}
+                required
+              />
+              <label className="sr-only" htmlFor="container-lifecycle-new-container">{t("containerNo")}</label>
+              <input
+                id="container-lifecycle-new-container"
+                className="min-h-11 rounded-lg border border-slate-200 bg-white px-4 text-sm font-mono shadow-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
+                value={newContainerForm.containerNo}
+                onChange={(event) => setNewContainerForm((currentForm) => ({ ...currentForm, containerNo: event.target.value }))}
+                placeholder={t("containerNo")}
+                required
+              />
+              <Button type="submit" className="min-h-11" disabled={busyAction === "new-container"}>
+                <Plus className="h-4 w-4" />
+                {busyAction === "new-container" ? t("saving") : t("createContainerLifecycle")}
+              </Button>
+            </form>
 
             <form className="mt-6 grid gap-3 rounded-xl bg-slate-50 p-3 lg:grid-cols-[minmax(260px,1fr)_220px_220px_auto_auto]" onSubmit={submitTableSearch}>
               <label className="sr-only" htmlFor="container-lifecycle-search">{t("search")}</label>
@@ -610,6 +748,7 @@ export function AdminContainerLifecyclePage({
               <TableHeader>
                 <TableRow>
                   <TableHead>{t("containerNo")}</TableHead>
+                  <TableHead>{t("packingListReferenceNo")}</TableHead>
                   <TableHead>{t("status")}</TableHead>
                   <TableHead>{t("warehouses")}</TableHead>
                   <TableHead>{t("containerLifecycleInboundNode")}</TableHead>
@@ -624,7 +763,7 @@ export function AdminContainerLifecyclePage({
               <TableBody>
                 {summaryLoading ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="py-10 text-center text-slate-500">{t("loadingRecords")}</TableCell>
+                    <TableCell colSpan={11} className="py-10 text-center text-slate-500">{t("loadingRecords")}</TableCell>
                   </TableRow>
                 ) : pageRows.length > 0 ? pageRows.map((summary) => (
                   <TableRow key={summary.containerId && summary.containerId > 0 ? `id:${summary.containerId}` : `${summary.customerId}-${summary.containerNo}`}>
@@ -632,6 +771,7 @@ export function AdminContainerLifecyclePage({
                       <div className="font-mono text-sm font-bold text-slate-950">{summary.containerNo}</div>
                       <div className="mt-1 text-xs text-slate-500">{summary.packingListCount} {t("customerPortalPackingLists")}</div>
                     </TableCell>
+                    <TableCell className="font-mono text-sm text-slate-700">{summary.packingListNo || "-"}</TableCell>
                     <TableCell>
                       <Badge variant={getContainerStatusBadgeVariant(summary.status)}>
                         {formatContainerStatus(summary.status, t)}
@@ -661,7 +801,7 @@ export function AdminContainerLifecyclePage({
                   </TableRow>
                 )) : (
                   <TableRow>
-                    <TableCell colSpan={10} className="py-10 text-center text-slate-500">{t("noResults")}</TableCell>
+                    <TableCell colSpan={11} className="py-10 text-center text-slate-500">{t("noResults")}</TableCell>
                   </TableRow>
                 )}
               </TableBody>
@@ -744,6 +884,7 @@ export function AdminContainerLifecyclePage({
           draftNodes={draftNodes}
           onDraftNodeDrop={handleDraftNodeDrop}
           onDraftNodeMove={handleDraftNodeMove}
+          onLifecycleNodeMove={handleLifecycleNodeMove}
           documentActions={{
             onOpenPackingList: (document) => onOpenInboundDetail(document.id),
             onEditPackingList: (document) => onOpenReceiptEditor(document.id),
@@ -891,6 +1032,18 @@ function AdminLifecycleNodePanel({
                 {t("inboundDetailOpenPage")}
               </Button>
             </LifecycleOperationActions>
+            <DocumentActions
+              icon={<ClipboardList className="h-4 w-4" />}
+              title={t("customerPortalLifecycleDocuments")}
+              document={selectedPackingList}
+              emptyLabel={t("noPackingLists")}
+              onUpload={onUploadInboundDocumentAttachment}
+              onGetDownloadUrl={async (attachment) => {
+                const result = await api.getInboundDocumentAttachmentDownloadUrl(attachment.documentId, attachment.id);
+                return result.url;
+              }}
+              onDeleteAttachment={onDeleteInboundDocumentAttachment}
+            />
           </>
         ) : null}
 
@@ -901,6 +1054,10 @@ function AdminLifecycleNodePanel({
               <Button type="button" onClick={() => onOpenContainerDetail({ openTransferDialog: true })}>
                 <Boxes className="h-4 w-4" />
                 {t("addTransfer")}
+              </Button>
+              <Button type="button" variant="outline" onClick={() => onOpenContainerDetail({ openAdjustmentDialog: true })}>
+                <ExternalLink className="h-4 w-4" />
+                {t("addAdjustment")}
               </Button>
               <Button
                 type="button"
@@ -965,6 +1122,18 @@ function AdminLifecycleNodePanel({
                 {t("customerPortalOpenOutboundAction")}
               </Button>
             </LifecycleOperationActions>
+            <DocumentActions
+              icon={<ClipboardList className="h-4 w-4" />}
+              title={t("customerPortalLifecycleDocuments")}
+              document={selectedPickingOrder}
+              emptyLabel={t("noPickingOrders")}
+              onUpload={onUploadOutboundDocumentAttachment}
+              onGetDownloadUrl={async (attachment) => {
+                const result = await api.getOutboundDocumentAttachmentDownloadUrl(attachment.documentId, attachment.id);
+                return result.url;
+              }}
+              onDeleteAttachment={onDeleteOutboundDocumentAttachment}
+            />
           </>
         ) : null}
 
@@ -1005,36 +1174,6 @@ function AdminLifecycleNodePanel({
           </form>
         ) : null}
 
-        {node?.kind === "documents" && node.documentId ? (
-          <DocumentActions
-            icon={<ClipboardList className="h-4 w-4" />}
-            title={t("customerPortalLifecycleDocuments")}
-            document={selectedPackingList}
-            emptyLabel={t("noPackingLists")}
-            onUpload={onUploadInboundDocumentAttachment}
-            onGetDownloadUrl={async (attachment) => {
-              const result = await api.getInboundDocumentAttachmentDownloadUrl(attachment.documentId, attachment.id);
-              return result.url;
-            }}
-            onDeleteAttachment={onDeleteInboundDocumentAttachment}
-          />
-        ) : null}
-
-        {node?.kind === "documents" && node.outboundDocumentId ? (
-          <DocumentActions
-            icon={<Send className="h-4 w-4" />}
-            title={t("customerPortalPickingOrders")}
-            document={selectedPickingOrder}
-            emptyLabel={t("noPickingOrders")}
-            onUpload={onUploadOutboundDocumentAttachment}
-            onGetDownloadUrl={async (attachment) => {
-              const result = await api.getOutboundDocumentAttachmentDownloadUrl(attachment.documentId, attachment.id);
-              return result.url;
-            }}
-            onDeleteAttachment={onDeleteOutboundDocumentAttachment}
-          />
-        ) : null}
-
       </CardContent>
     </Card>
   );
@@ -1045,6 +1184,7 @@ function LifecycleDraftNodePalette() {
   const options: Array<{ kind: ContainerLifecycleDraftNodeKind; icon: ReactNode; label: string }> = [
     { kind: "tracking", icon: <MapPinned className="h-4 w-4" />, label: t("containerLifecycleTrackingNode") },
     { kind: "pickup", icon: <Truck className="h-4 w-4" />, label: t("containerLifecyclePickupNode") },
+    { kind: "receiving", icon: <PackageCheck className="h-4 w-4" />, label: t("containerLifecycleInboundNode") },
     { kind: "delivery", icon: <Send className="h-4 w-4" />, label: t("containerLifecycleDeliveryNode") }
   ];
 
@@ -1077,6 +1217,8 @@ function getLifecycleDraftNodeTitle(kind: ContainerLifecycleDraftNodeKind, t: (k
       return t("containerLifecycleTrackingNode");
     case "pickup":
       return t("containerLifecyclePickupNode");
+    case "receiving":
+      return t("containerLifecycleInboundNode");
     case "delivery":
       return t("containerLifecycleDeliveryNode");
   }
@@ -1551,8 +1693,16 @@ function buildCurrentInventorySkuRows(
     });
   });
 
-  return Array.from(rows.values())
+return Array.from(rows.values())
     .sort((left, right) => left.sku.localeCompare(right.sku));
+}
+
+function createEmptyNewContainerForm(customerId = ""): NewContainerFormState {
+  return {
+    customerId,
+    packingListNo: "",
+    containerNo: ""
+  };
 }
 
 function createEmptyContainerForm(): ContainerFormState {
@@ -1565,6 +1715,16 @@ function createEmptyContainerForm(): ContainerFormState {
     trackingStatus: "TRACKING_RECEIVED",
     lastEventAt: toDateTimeInputValue(new Date())
   };
+}
+
+function getLastLifecycleNodeId(lifecycle: ContainerLifecycle) {
+  const nodes = [...(lifecycle.nodes ?? [])].filter((node) => node.id > 0);
+  nodes.sort((left, right) => (left.sortOrder || 0) - (right.sortOrder || 0) || left.id - right.id);
+  return nodes[nodes.length - 1]?.id;
+}
+
+function getLifecycleNodeFlowId(node: Pick<ContainerLifecycleNode, "id">) {
+  return `lifecycle-node-${node.id}`;
 }
 
 function createContainerFormFromLifecycle(lifecycle: ContainerLifecycle): ContainerFormState {

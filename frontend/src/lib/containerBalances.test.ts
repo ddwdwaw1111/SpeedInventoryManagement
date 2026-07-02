@@ -18,12 +18,14 @@ describe("containerBalances", () => {
       [
         createMovement({
           id: 101,
+          containerId: 101,
           quantityChange: 6,
           containerNo: "GCXU5817233",
           createdAt: "2026-03-24T08:00:00Z"
         }),
         createMovement({
           id: 102,
+          containerId: 102,
           quantityChange: 4,
           containerNo: "MRSU6884820",
           createdAt: "2026-03-24T09:00:00Z"
@@ -47,6 +49,7 @@ describe("containerBalances", () => {
       [
         createItem({
           id: 1,
+          containerId: 101,
           quantity: 5,
           availableQty: 5,
           containerNo: "GCXU5817233",
@@ -54,6 +57,7 @@ describe("containerBalances", () => {
         }),
         createItem({
           id: 2,
+          containerId: 102,
           quantity: 5,
           availableQty: 5,
           containerNo: "MRSU6884820",
@@ -71,6 +75,38 @@ describe("containerBalances", () => {
 
     expect(balances).toHaveLength(2);
     expect(balances.map((balance) => balance.containerNo)).toEqual(["GCXU5817233", "MRSU6884820"]);
+  });
+
+  it("keeps duplicate container numbers separated by container id", () => {
+    const balances = buildItemContainerBalances(
+      [
+        createItem({
+          id: 1,
+          containerId: 101,
+          containerNo: "DUP-CONT",
+          quantity: 5,
+          availableQty: 5
+        }),
+        createItem({
+          id: 2,
+          containerId: 102,
+          containerNo: "DUP-CONT",
+          quantity: 7,
+          availableQty: 7
+        })
+      ],
+      []
+    );
+
+    expect(balances).toHaveLength(2);
+    expect(balances.map((balance) => ({
+      containerId: balance.containerId,
+      containerNo: balance.containerNo,
+      onHandQty: balance.onHandQty
+    }))).toEqual([
+      { containerId: 101, containerNo: "DUP-CONT", onHandQty: 5 },
+      { containerId: 102, containerNo: "DUP-CONT", onHandQty: 7 }
+    ]);
   });
 
   it("formats a stable container distribution summary with location fallback labels", () => {
