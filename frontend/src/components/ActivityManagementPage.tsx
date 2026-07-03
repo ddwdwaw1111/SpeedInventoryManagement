@@ -680,9 +680,6 @@ export function ActivityManagementPage({
   const selectedOutboundDrawerBusy = Boolean(
     selectedOutboundDocument && documentActionKey?.startsWith(`outbound-${selectedOutboundDocument.id}-`)
   );
-  const isSelectedInboundCopyBusy = Boolean(
-    selectedInboundDocument && documentActionKey === getInboundDocumentActionKey(selectedInboundDocument.id, "copy")
-  );
   const isSelectedInboundTrackingBusy = Boolean(
     selectedInboundDocument && documentActionKey === getInboundDocumentActionKey(selectedInboundDocument.id, "tracking")
   );
@@ -1252,20 +1249,12 @@ export function ActivityManagementPage({
               icon: <VisibilityOutlinedIcon fontSize="small" />,
               onClick: () => onOpenInboundDetail ? onOpenInboundDetail(params.row.id) : setSelectedInboundDocumentId(params.row.id)
             },
-            ...(canManage && !params.row.archivedAt && normalizeDocumentStatus(params.row.status) === "DRAFT"
+            ...(canManage && !params.row.archivedAt && ["DRAFT", "CONFIRMED"].includes(normalizeDocumentStatus(params.row.status))
               ? [{
                 key: "edit",
-                label: t("editDraft"),
+                label: normalizeDocumentStatus(params.row.status) === "CONFIRMED" ? t("editReceipt") : t("editDraft"),
                 icon: <EditOutlinedIcon fontSize="small" />,
                 onClick: () => openEditInboundDocument(params.row)
-              }]
-              : []),
-            ...(canManage
-              ? [{
-                key: "copy",
-                label: normalizeDocumentStatus(params.row.status) === "CONFIRMED" ? t("reEnterReceipt") : t("copyReceipt"),
-                icon: <ContentCopyOutlinedIcon fontSize="small" />,
-                onClick: () => void handleCopyInboundDocument(params.row)
               }]
               : []),
             ...(canManage && canArchiveInboundDocument(params.row)
@@ -2066,12 +2055,6 @@ export function ActivityManagementPage({
     setBatchSubmitting(true);
     setErrorMessage("");
 
-    if (isEditingConfirmedInbound) {
-      setErrorMessage(t("confirmedReceiptImmutableNotice"));
-      setBatchSubmitting(false);
-      return;
-    }
-
     const validationError = validateInboundDraft(batchForm.handlingMode !== "SEALED_TRANSIT");
     if (validationError) {
       setErrorMessage(validationError);
@@ -2326,31 +2309,6 @@ export function ActivityManagementPage({
         showActionSuccess(t("receiptArchivedSuccess"));
       } catch (error) {
         showActionError(error, t("couldNotArchiveDocument"));
-      }
-    });
-  }
-
-  async function handleCopyInboundDocument(document: InboundDocument) {
-    if (!canManage) {
-      return;
-    }
-
-    await runDocumentAction(getInboundDocumentActionKey(document.id, "copy"), async () => {
-      setErrorMessage("");
-      try {
-        const copiedDocument = await api.copyInboundDocument(document.id);
-        setOptimisticInboundDocuments((current) => [copiedDocument, ...current.filter((entry) => entry.id !== copiedDocument.id)]);
-        setSelectedStatus("all");
-        setSelectedInboundDocumentId(copiedDocument.id);
-        if (!isEmbeddedComposer && onOpenInboundReceiptEditor) {
-          onOpenInboundReceiptEditor(copiedDocument.id);
-        } else {
-          openEditInboundDocument(copiedDocument);
-        }
-        await onRefresh();
-        showActionSuccess(t("receiptCopiedSuccess"));
-      } catch (error) {
-        showActionError(error, t("couldNotCopyDocument"));
       }
     });
   }
@@ -2702,9 +2660,9 @@ export function ActivityManagementPage({
                     {t("inboundDetailOpenPage")}
                   </Button>
                 ) : null}
-                {canManage && !selectedInboundDocument.archivedAt && normalizeDocumentStatus(selectedInboundDocument.status) === "DRAFT" ? (
+                {canManage && !selectedInboundDocument.archivedAt && ["DRAFT", "CONFIRMED"].includes(normalizeDocumentStatus(selectedInboundDocument.status)) ? (
                   <Button variant="outlined" onClick={() => openEditInboundDocument(selectedInboundDocument)} disabled={disableSelectedInboundActions}>
-                    {t("editDraft")}
+                    {normalizeDocumentStatus(selectedInboundDocument.status) === "CONFIRMED" ? t("editReceipt") : t("editDraft")}
                   </Button>
                 ) : null}
                 {canManage
@@ -2722,17 +2680,6 @@ export function ActivityManagementPage({
                     {t("convertToPalletized")}
                   </Button>
                   ) : null}
-                {canManage ? (
-                  <Button
-                    variant="outlined"
-                    startIcon={isSelectedInboundCopyBusy ? <InlineLoadingIndicator /> : <ContentCopyOutlinedIcon />}
-                    onClick={() => void handleCopyInboundDocument(selectedInboundDocument)}
-                    disabled={disableSelectedInboundActions}
-                    aria-busy={isSelectedInboundCopyBusy}
-                  >
-                    {normalizeDocumentStatus(selectedInboundDocument.status) === "CONFIRMED" ? t("reEnterReceipt") : t("copyReceipt")}
-                  </Button>
-                ) : null}
                 {canManage && !selectedInboundDocument.archivedAt && selectedInboundTrackingAction ? (
                   <Button
                     variant={selectedInboundTrackingAction.trackingStatus === "RECEIVED" ? "contained" : "outlined"}
@@ -3134,7 +3081,7 @@ export function ActivityManagementPage({
             {mode === "IN" ? (
               <form onSubmit={handleBatchSubmit}>
                 {isEditingConfirmedInbound ? (
-                  <InlineAlert severity="warning">{t("confirmedReceiptImmutableNotice")}</InlineAlert>
+                  <InlineAlert severity="info">{t("confirmedReceiptImmutableNotice")}</InlineAlert>
                 ) : null}
                 {inboundEditorIntent === "convert-sealed-transit" ? (
                   <InlineAlert severity="info">{t("convertToPalletizedNotice")}</InlineAlert>
@@ -3166,10 +3113,10 @@ export function ActivityManagementPage({
                       <label>{t("expectedArrivalDate")}<input type="date" value={batchForm.expectedArrivalDate} onChange={(event) => setBatchForm((current) => ({ ...current, expectedArrivalDate: event.target.value }))} /></label>
                       <label>{t("actualArrivalDate")}<input type="date" value={batchForm.actualArrivalDate} onChange={(event) => setBatchForm((current) => ({ ...current, actualArrivalDate: event.target.value }))} /></label>
                       <label>{t("containerNo")}<input value={batchForm.containerNo} onChange={(event) => setBatchForm((current) => ({ ...current, containerNo: event.target.value }))} placeholder="MRSU8580370" /></label>
-                      <label>{t("billingContainerType")}<select value={batchForm.containerType} onChange={(event) => setBatchForm((current) => ({ ...current, containerType: event.target.value as ContainerType }))} disabled={isEditingConfirmedInbound}><option value="NORMAL">{t("billingContainerTypeNormal")}</option><option value="WEST_COAST_TRANSFER">{t("billingContainerTypeWestCoastTransfer")}</option></select></label>
+                      <label>{t("billingContainerType")}<select value={batchForm.containerType} onChange={(event) => setBatchForm((current) => ({ ...current, containerType: event.target.value as ContainerType }))}><option value="NORMAL">{t("billingContainerTypeNormal")}</option><option value="WEST_COAST_TRANSFER">{t("billingContainerTypeWestCoastTransfer")}</option></select></label>
                       <label>{t("handlingMode")}<select value={batchForm.handlingMode} onChange={(event) => setBatchForm((current) => ({ ...current, handlingMode: event.target.value as InboundHandlingMode }))} disabled={isEditingConfirmedInbound}><option value="PALLETIZED">{t("handlingModePalletized")}</option><option value="SEALED_TRANSIT">{t("handlingModeSealedTransit")}</option></select></label>
-                      <label>{t("customer")}<select value={batchForm.customerId} onChange={(event) => setBatchForm((current) => ({ ...current, customerId: event.target.value }))}>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
-                      <label>{t("currentStorage")}<select value={batchForm.locationId} onChange={(event) => setBatchForm((current) => ({ ...current, locationId: event.target.value }))}>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
+                      <label>{t("customer")}<select value={batchForm.customerId} onChange={(event) => setBatchForm((current) => ({ ...current, customerId: event.target.value }))} disabled={isEditingConfirmedInbound}>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
+                      <label>{t("currentStorage")}<select value={batchForm.locationId} onChange={(event) => setBatchForm((current) => ({ ...current, locationId: event.target.value }))} disabled={isEditingConfirmedInbound}>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
                       <label>{t("inboundUnit")}<select value={batchForm.unitLabel} onChange={(event) => setBatchForm((current) => ({ ...current, unitLabel: event.target.value }))}><option value="CTN">CTN</option><option value="PCS">PCS</option><option value="PALLET">PALLET</option></select></label>
                       <label className="sheet-form__wide">{t("documentNotes")}<input value={batchForm.documentNote} onChange={(event) => setBatchForm((current) => ({ ...current, documentNote: event.target.value }))} placeholder={t("inboundNotePlaceholder")} /></label>
                     </div>
@@ -3253,6 +3200,7 @@ export function ActivityManagementPage({
                           max="50"
                           value={batchInboundLineAddCount}
                           onChange={(event) => setBatchInboundLineAddCount(getSafeLineAddCount(Number(event.target.value || 1)))}
+                          disabled={isEditingConfirmedInbound}
                         />
                       </label>
                       <Button
@@ -3260,6 +3208,7 @@ export function ActivityManagementPage({
                         variant="outlined"
                         startIcon={<AddCircleOutlineOutlinedIcon />}
                         onClick={() => addBatchLine()}
+                        disabled={isEditingConfirmedInbound}
                       >
                         {t("addSkuLine")}
                       </Button>
@@ -3293,10 +3242,10 @@ export function ActivityManagementPage({
                               {selectedBatchItem ? t("useExistingSku") : t("createNewSku")}
                             </span>
                           </div>
-                          <button className="button button--danger button--small" type="button" onClick={() => removeBatchLine(line.id)} disabled={batchLines.length === 1}>{t("removeLine")}</button>
+                          <button className="button button--danger button--small" type="button" onClick={() => removeBatchLine(line.id)} disabled={isEditingConfirmedInbound || batchLines.length === 1}>{t("removeLine")}</button>
                         </div>
                         <div className="batch-line-grid batch-line-grid--inbound">
-                          <label>{t("sku")}<input value={line.sku} onChange={(event) => updateBatchLineSku(line.id, event.target.value)} placeholder="ABC123" /></label>
+                          <label>{t("sku")}<input value={line.sku} onChange={(event) => updateBatchLineSku(line.id, event.target.value)} placeholder="ABC123" disabled={isEditingConfirmedInbound} /></label>
                           <label className="batch-line-grid__description">{t("description")}<input value={selectedBatchItem ? displayDescription(selectedBatchItem) : (line.description || (batchSkuMaster ? getSKUMasterDescription(batchSkuMaster) : "") || displayDescription(batchSkuTemplate ?? { description: "", name: "" }))} onChange={(event) => updateBatchLine(line.id, { description: event.target.value })} placeholder={t("descriptionPlaceholder")} disabled={Boolean(selectedBatchItem)} /></label>
                           <label>{t("expectedQty")}<input type="number" min="0" value={numberInputValue(line.expectedQty)} onChange={(event) => updateBatchLineExpectedQty(line.id, Math.max(0, Number(event.target.value || 0)))} /></label>
                           <label>{t("received")}<input type="number" min="0" value={numberInputValue(line.receivedQty)} onChange={(event) => updateBatchLineReceivedQty(line.id, Math.max(0, Number(event.target.value || 0)))} onBlur={() => autofillBatchLineReceivedQty(line.id)} placeholder={line.expectedQty > 0 ? String(line.expectedQty) : ""} /></label>
@@ -3462,25 +3411,15 @@ export function ActivityManagementPage({
                   {inboundWizardStep === 3 && !isEditingConfirmedInbound && batchForm.handlingMode !== "SEALED_TRANSIT" ? (
                     <button className="button button--ghost" type="button" disabled={batchSubmitting} onClick={() => void submitInboundDocument("DRAFT")}>{batchSubmitting ? t("saving") : isEditingInboundDraft ? t("saveChanges") : t("scheduleReceipt")}</button>
                   ) : null}
-                  {inboundWizardStep === 3 && isEditingConfirmedInbound && editingInboundDocument ? (
-                    <button
-                      className="button button--ghost"
-                      type="button"
-                      disabled={batchSubmitting}
-                      onClick={() => void handleCopyInboundDocument(editingInboundDocument)}
-                    >
-                      {t("reEnterReceipt")}
-                    </button>
-                  ) : null}
                   <div className="shipment-wizard__actions">
                     {inboundWizardStep > 1 ? (
                       <button className="button button--ghost" type="button" onClick={() => moveInboundWizardStep((inboundWizardStep - 1) as InboundWizardStep)}>{t("back")}</button>
                     ) : null}
                     {inboundWizardStep < 3 ? (
                       <button className="button button--primary" type="button" onClick={() => moveInboundWizardStep((inboundWizardStep + 1) as InboundWizardStep)}>{t("next")}</button>
-                    ) : !isEditingConfirmedInbound ? (
+                    ) : (
                       <button className="button button--primary" type="submit" disabled={batchSubmitting}>{batchSubmitting ? t("saving") : isEditingConfirmedInbound ? t("saveChanges") : batchForm.handlingMode === "SEALED_TRANSIT" ? t("saveSealedTransit") : inboundEditorIntent === "convert-sealed-transit" ? t("convertToPalletized") : t("confirmReceipt")}</button>
-                    ) : null}
+                    )}
                   </div>
                   <button className="button button--ghost" type="button" onClick={closeBatchModal}>{t("cancel")}</button>
                 </div>

@@ -792,7 +792,7 @@ func TestInventoryTransferUsesAggregateBalanceIntegration(t *testing.T) {
 	}
 }
 
-func TestConfirmedInboundDocumentIsImmutableIntegration(t *testing.T) {
+func TestConfirmedInboundDocumentUpdateAdjustsInventoryIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
@@ -825,7 +825,7 @@ func TestConfirmedInboundDocumentIsImmutableIntegration(t *testing.T) {
 		t.Fatalf("create confirmed inbound document: %v", err)
 	}
 
-	_, err = store.UpdateInboundDocument(ctx, receipt.ID, CreateInboundDocumentInput{
+	updatedReceipt, err := store.UpdateInboundDocument(ctx, receipt.ID, CreateInboundDocumentInput{
 		CustomerID:          customer.ID,
 		LocationID:          location.ID,
 		ExpectedArrivalDate: "2026-03-27",
@@ -845,24 +845,158 @@ func TestConfirmedInboundDocumentIsImmutableIntegration(t *testing.T) {
 			LineNote:          "Corrected line",
 		}},
 	})
-	if err == nil || !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("expected confirmed inbound update to fail with ErrInvalidInput, got %v", err)
+	if err != nil {
+		t.Fatalf("update confirmed inbound document: %v", err)
 	}
 
 	reloadedReceipt, err := store.getInboundDocument(ctx, receipt.ID)
 	if err != nil {
 		t.Fatalf("reload confirmed inbound document: %v", err)
 	}
-	if reloadedReceipt.ContainerNo != "EDIT-OLD-"+suffix {
-		t.Fatalf("expected confirmed inbound container to remain unchanged, got %q", reloadedReceipt.ContainerNo)
+	if updatedReceipt.ContainerNo != "EDIT-NEW-"+suffix || reloadedReceipt.ContainerNo != "EDIT-NEW-"+suffix {
+		t.Fatalf("expected confirmed inbound container to update, got updated=%q reloaded=%q", updatedReceipt.ContainerNo, reloadedReceipt.ContainerNo)
 	}
-	if len(reloadedReceipt.Lines) != 1 || reloadedReceipt.Lines[0].ReceivedQty != 10 {
-		t.Fatalf("expected confirmed inbound line to remain unchanged, got %#v", reloadedReceipt.Lines)
+	if len(reloadedReceipt.Lines) != 1 || reloadedReceipt.Lines[0].ReceivedQty != 12 || reloadedReceipt.Lines[0].Pallets != 2 {
+		t.Fatalf("expected confirmed inbound line correction to persist, got %#v", reloadedReceipt.Lines)
+	}
+	if reloadedReceipt.ExpectedArrivalDate == nil || reloadedReceipt.ExpectedArrivalDate.Format("2006-01-02") != "2026-03-27" {
+		t.Fatalf("expected corrected arrival date, got %+v", reloadedReceipt.ExpectedArrivalDate)
 	}
 
-	unchangedItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "EDIT-OLD-"+suffix, item.SKU)
-	if unchangedItem.Quantity != 10 {
-		t.Fatalf("expected confirmed inbound stock to remain at original quantity 10, got %d", unchangedItem.Quantity)
+	updatedItem := mustFindItemByContainer(t, ctx, store, location.ID, "B", "EDIT-NEW-"+suffix, item.SKU)
+	if updatedItem.Quantity != 12 {
+		t.Fatalf("expected corrected confirmed inbound stock quantity 12, got %d", updatedItem.Quantity)
+	}
+	if updatedItem.Pallets != 2 {
+		t.Fatalf("expected corrected confirmed inbound pallets 2, got %d", updatedItem.Pallets)
+	}
+}
+
+func TestConfirmedInboundDocumentUpdateMovesInventoryByContainerIDIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0)
+	containerNo := "EDIT-ID-" + suffix
+
+	receipt, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-24",
+		ContainerNo:         containerNo,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Original receipt",
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:               item.SKU,
+			Description:       item.Description,
+			ExpectedQty:       10,
+			ReceivedQty:       10,
+			StorageSection:    DefaultStorageSection,
+			Pallets:           1,
+			PalletsDetailCtns: "1*10",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create confirmed inbound document: %v", err)
+	}
+
+	targetContainer, err := store.CreateContainer(ctx, CreateContainerInput{
+		CustomerID:     customer.ID,
+		LocationID:     location.ID,
+		ContainerNo:    containerNo,
+		ContainerType:  ContainerTypeNormal,
+		HandlingMode:   InboundHandlingModePalletized,
+		Status:         "IN_STOCK",
+		TrackingStatus: InboundTrackingReceived,
+	})
+	if err != nil {
+		t.Fatalf("create target container: %v", err)
+	}
+	if targetContainer.ID == receipt.ContainerID {
+		t.Fatalf("expected a separate target container id")
+	}
+
+	updatedReceipt, err := store.UpdateInboundDocument(ctx, receipt.ID, CreateInboundDocumentInput{
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-24",
+		ContainerID:         targetContainer.ID,
+		ContainerNo:         containerNo,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Corrected receipt container id",
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:               item.SKU,
+			Description:       item.Description,
+			ExpectedQty:       10,
+			ReceivedQty:       10,
+			StorageSection:    DefaultStorageSection,
+			Pallets:           1,
+			PalletsDetailCtns: "1*10",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("update confirmed inbound document container id: %v", err)
+	}
+	if updatedReceipt.ContainerID != targetContainer.ID {
+		t.Fatalf("expected receipt container id %d, got %d", targetContainer.ID, updatedReceipt.ContainerID)
+	}
+
+	type inventoryBucketTotals struct {
+		Quantity int `db:"quantity"`
+		Pallets  int `db:"pallets"`
+	}
+	var oldBucket inventoryBucketTotals
+	if err := store.db.GetContext(ctx, &oldBucket, `
+		SELECT COALESCE(SUM(quantity), 0) AS quantity, COALESCE(SUM(pallets), 0) AS pallets
+		FROM inventory_items
+		WHERE sku_master_id = ?
+			AND customer_id = ?
+			AND location_id = ?
+			AND COALESCE(NULLIF(storage_section, ''), ?) = ?
+			AND COALESCE(container_id, 0) = ?
+	`, item.SKUMasterID, customer.ID, location.ID, DefaultStorageSection, DefaultStorageSection, receipt.ContainerID); err != nil {
+		t.Fatalf("load old container inventory totals: %v", err)
+	}
+	if oldBucket.Quantity != 0 || oldBucket.Pallets != 0 {
+		t.Fatalf("expected old container inventory to be empty, got qty=%d pallets=%d", oldBucket.Quantity, oldBucket.Pallets)
+	}
+
+	var targetBucket inventoryBucketTotals
+	if err := store.db.GetContext(ctx, &targetBucket, `
+		SELECT COALESCE(SUM(quantity), 0) AS quantity, COALESCE(SUM(pallets), 0) AS pallets
+		FROM inventory_items
+		WHERE sku_master_id = ?
+			AND customer_id = ?
+			AND location_id = ?
+			AND COALESCE(NULLIF(storage_section, ''), ?) = ?
+			AND COALESCE(container_id, 0) = ?
+	`, item.SKUMasterID, customer.ID, location.ID, DefaultStorageSection, DefaultStorageSection, targetContainer.ID); err != nil {
+		t.Fatalf("load target container inventory totals: %v", err)
+	}
+	if targetBucket.Quantity != 10 || targetBucket.Pallets != 1 {
+		t.Fatalf("expected target container inventory qty=10 pallets=1, got qty=%d pallets=%d", targetBucket.Quantity, targetBucket.Pallets)
+	}
+
+	var targetTransferInQty int
+	if err := store.db.GetContext(ctx, &targetTransferInQty, `
+		SELECT COALESCE(SUM(quantity_change), 0)
+		FROM stock_ledger
+		WHERE event_type = ?
+			AND source_document_type = ?
+			AND source_document_id = ?
+			AND container_id = ?
+	`, StockLedgerEventTransferIn, StockLedgerSourceInbound, receipt.ID, targetContainer.ID); err != nil {
+		t.Fatalf("load target transfer-in ledger quantity: %v", err)
+	}
+	if targetTransferInQty != 10 {
+		t.Fatalf("expected transfer-in ledger quantity 10 on target container, got %d", targetTransferInQty)
 	}
 }
 
@@ -914,7 +1048,7 @@ func TestConfirmedInboundDocumentNoteCanBeUpdatedIntegration(t *testing.T) {
 	}
 }
 
-func TestConfirmedInboundDocumentRemainsImmutableAfterPartialConsumptionIntegration(t *testing.T) {
+func TestConfirmedInboundDocumentCannotReduceBelowConsumedStockIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
@@ -976,20 +1110,20 @@ func TestConfirmedInboundDocumentRemainsImmutableAfterPartialConsumptionIntegrat
 		StorageSection:      DefaultStorageSection,
 		UnitLabel:           "CTN",
 		Status:              DocumentStatusConfirmed,
-		DocumentNote:        "Metadata only correction",
+		DocumentNote:        "Reduce below consumed correction",
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:               item.SKU,
 			Description:       item.Description,
-			ExpectedQty:       10,
-			ReceivedQty:       10,
+			ExpectedQty:       3,
+			ReceivedQty:       3,
 			StorageSection:    DefaultStorageSection,
-			Pallets:           2,
-			PalletsDetailCtns: "2*5",
-			LineNote:          "Metadata correction",
+			Pallets:           1,
+			PalletsDetailCtns: "1*3",
+			LineNote:          "Reduce below consumed correction",
 		}},
 	})
 	if err == nil || !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("expected partially consumed confirmed inbound update to fail with ErrInvalidInput, got %v", err)
+		t.Fatalf("expected confirmed inbound reduction below consumed stock to fail with ErrInvalidInput, got %v", err)
 	}
 
 	remainingItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, "USED-OLD-"+suffix, item.SKU)
@@ -2170,7 +2304,7 @@ func TestAdjustmentAndTransferActualTimesIntegration(t *testing.T) {
 
 }
 
-func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
+func TestInboundDocumentRejectsDuplicateReceiptForContainerIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
@@ -2202,26 +2336,63 @@ func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create inbound document: %v", err)
 	}
+	if original.ContainerID <= 0 {
+		t.Fatalf("expected original inbound document to resolve a container id, got %d", original.ContainerID)
+	}
+
+	_, err = store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-27",
+		ContainerID:         original.ContainerID,
+		ContainerNo:         original.ContainerNo,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Duplicate inbound should fail",
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:               item.SKU,
+			Description:       item.Description,
+			ExpectedQty:       4,
+			ReceivedQty:       4,
+			StorageSection:    DefaultStorageSection,
+			Pallets:           1,
+			PalletsDetailCtns: "1*4",
+		}},
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected duplicate inbound receipt for same container to fail with ErrInvalidInput, got %v", err)
+	}
+
+	_, err = store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-27",
+		ContainerNo:         original.ContainerNo,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Duplicate inbound by container number should fail",
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:               item.SKU,
+			Description:       item.Description,
+			ExpectedQty:       4,
+			ReceivedQty:       4,
+			StorageSection:    DefaultStorageSection,
+			Pallets:           1,
+			PalletsDetailCtns: "1*4",
+		}},
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected duplicate inbound receipt for same container number to fail with ErrInvalidInput, got %v", err)
+	}
+
 	if _, err := store.ArchiveInboundDocument(ctx, original.ID); err == nil {
 		t.Fatal("expected archiving a confirmed inbound document to fail")
 	}
 
-	// Copy the confirmed document before cancelling (cancel now hard-deletes)
-	copied, err := store.CopyInboundDocument(ctx, original.ID)
-	if err != nil {
-		t.Fatalf("copy confirmed inbound document: %v", err)
-	}
-	if copied.ID == original.ID {
-		t.Fatal("expected copied inbound document to have a new id")
-	}
-	if copied.Status != DocumentStatusDraft {
-		t.Fatalf("expected copied inbound status DRAFT, got %q", copied.Status)
-	}
-	if copied.TrackingStatus != InboundTrackingScheduled {
-		t.Fatalf("expected copied inbound tracking status %q, got %q", InboundTrackingScheduled, copied.TrackingStatus)
-	}
-	if len(copied.Lines) != 1 || copied.Lines[0].SKU != item.SKU {
-		t.Fatalf("expected copied inbound line for %q, got %#v", item.SKU, copied.Lines)
+	if _, err := store.CopyInboundDocument(ctx, original.ID); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected copying active inbound receipt for same container to fail with ErrInvalidInput, got %v", err)
 	}
 
 	// Cancel (hard-delete) the original document and all related records
@@ -2233,19 +2404,46 @@ func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 		t.Fatalf("expected deleted inbound status, got %q", cancelled.Status)
 	}
 
-	// After cancel/hard-delete, only the copied document should remain
+	recreated, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-28",
+		ContainerID:         original.ContainerID,
+		ContainerNo:         original.ContainerNo,
+		StorageSection:      DefaultStorageSection,
+		UnitLabel:           "CTN",
+		Status:              DocumentStatusConfirmed,
+		DocumentNote:        "Recreated inbound after delete",
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:               item.SKU,
+			Description:       item.Description,
+			ExpectedQty:       8,
+			ReceivedQty:       8,
+			StorageSection:    DefaultStorageSection,
+			Pallets:           1,
+			PalletsDetailCtns: "1*8",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("recreate inbound document after deleting original: %v", err)
+	}
+	if recreated.ContainerID != original.ContainerID {
+		t.Fatalf("expected recreated receipt to keep container id %d, got %d", original.ContainerID, recreated.ContainerID)
+	}
+
+	// After cancel/hard-delete, only the recreated document should remain
 	inboundDocuments, err := store.ListInboundDocuments(ctx, 20)
 	if err != nil {
 		t.Fatalf("list inbound documents: %v", err)
 	}
 	if len(inboundDocuments) != 1 {
-		t.Fatalf("expected only copied inbound document to remain in active list, got %d", len(inboundDocuments))
+		t.Fatalf("expected only recreated inbound document to remain in active list, got %d", len(inboundDocuments))
 	}
-	if inboundDocuments[0].ID != copied.ID {
-		t.Fatalf("expected copied inbound document %d in active list, got %d", copied.ID, inboundDocuments[0].ID)
+	if inboundDocuments[0].ID != recreated.ID {
+		t.Fatalf("expected recreated inbound document %d in active list, got %d", recreated.ID, inboundDocuments[0].ID)
 	}
 
-	// Archived and all-scope lists should also have only the copy
+	// Archived and all-scope lists should also have only the recreated receipt
 	archivedInboundDocuments, err := store.ListInboundDocuments(ctx, 20, DocumentArchiveScopeArchived)
 	if err != nil {
 		t.Fatalf("list archived inbound documents: %v", err)
@@ -2259,7 +2457,10 @@ func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 		t.Fatalf("list all inbound documents: %v", err)
 	}
 	if len(allInboundDocuments) != 1 {
-		t.Fatalf("expected only copied inbound document in all list, got %d", len(allInboundDocuments))
+		t.Fatalf("expected only recreated inbound document in all list, got %d", len(allInboundDocuments))
+	}
+	if allInboundDocuments[0].ID != recreated.ID {
+		t.Fatalf("expected recreated inbound document %d in all list, got %d", recreated.ID, allInboundDocuments[0].ID)
 	}
 }
 

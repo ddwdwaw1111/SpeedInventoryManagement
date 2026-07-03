@@ -233,6 +233,22 @@ func (s *Server) handleV2UpdateContainerLifecycleNode(c *gin.Context) {
 	writeJSON(c, http.StatusOK, node)
 }
 
+func (s *Server) handleV2DeleteContainerLifecycleNode(c *gin.Context) {
+	containerID, ok := parseRequiredPositiveInt64Param(c, "containerId")
+	if !ok {
+		return
+	}
+	nodeID, ok := parseRequiredPositiveInt64Param(c, "nodeId")
+	if !ok {
+		return
+	}
+	if err := s.appServices().Container.DeleteLifecycleNode(c.Request.Context(), containerID, nodeID); err != nil {
+		writeDomainError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func (s *Server) handleV2CreatePickingOrder(c *gin.Context) {
 	var input service.CreateOutboundDocumentInput
 	if err := bindJSON(c, &input); err != nil {

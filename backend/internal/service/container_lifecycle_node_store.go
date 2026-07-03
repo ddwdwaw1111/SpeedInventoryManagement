@@ -259,6 +259,56 @@ func (s *Store) UpdateContainerLifecycleNode(ctx context.Context, containerID in
 	return s.getContainerLifecycleNodeByID(ctx, containerID, nodeID)
 }
 
+func (s *Store) DeleteContainerLifecycleNode(ctx context.Context, containerID int64, nodeID int64) error {
+	if containerID <= 0 || nodeID <= 0 {
+		return ErrInvalidInput
+	}
+	existing, err := s.getContainerLifecycleNodeByID(ctx, containerID, nodeID)
+	if err != nil {
+		return err
+	}
+	if existing.NodeKind == ContainerLifecycleNodeKindContainer || existing.NodeKey == "container" {
+		return fmt.Errorf("%w: container lifecycle root node cannot be deleted", ErrInvalidInput)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return mapDBError(fmt.Errorf("begin delete container lifecycle node: %w", err))
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE container_lifecycle_nodes
+		SET
+			parent_node_id = ?,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE container_id = ?
+			AND parent_node_id = ?
+	`, nullableInt64(existing.ParentNodeID), containerID, nodeID); err != nil {
+		return mapDBError(fmt.Errorf("reparent container lifecycle child nodes: %w", err))
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		DELETE FROM container_lifecycle_nodes
+		WHERE id = ?
+			AND container_id = ?
+	`, nodeID, containerID)
+	if err != nil {
+		return mapDBError(fmt.Errorf("delete container lifecycle node: %w", err))
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("resolve deleted container lifecycle node count: %w", err)
+	}
+	if rowsAffected == 0 {
+		return ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return mapDBError(fmt.Errorf("commit delete container lifecycle node: %w", err))
+	}
+	return nil
+}
+
 func (s *Store) ensureDefaultContainerLifecycleNodes(ctx context.Context, container Container) error {
 	if container.ID <= 0 {
 		return nil

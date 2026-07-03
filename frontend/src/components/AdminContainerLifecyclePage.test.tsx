@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { InboundDocument, OutboundDocument } from "../lib/types";
-import { buildOutboundOrderGoodsRows, buildReceivingSkuRows } from "./AdminContainerLifecyclePage";
+import type { ContainerLifecycle, InboundDocument, OutboundDocument } from "../lib/types";
+import { buildOutboundOrderGoodsRows, buildQuickInboundPayload, buildReceivingSkuRows } from "./AdminContainerLifecyclePage";
 
 describe("buildReceivingSkuRows", () => {
   it("summarizes expected quantity, received pallets, received quantity, and shortage reason by sku", () => {
@@ -147,5 +147,76 @@ describe("buildOutboundOrderGoodsRows", () => {
     expect(rows).toMatchObject([
       { sku: "SKU-A", quantity: 12, allocatedQty: 12, highlighted: true }
     ]);
+  });
+});
+
+describe("buildQuickInboundPayload", () => {
+  it("requires received quantity to be greater than zero", () => {
+    const result = buildQuickInboundPayload(
+      {
+        editingDocumentId: 0,
+        documentStatus: "CONFIRMED",
+        trackingStatus: "RECEIVED",
+        locationId: "1",
+        actualArrivalDate: "2026-03-24",
+        storageSection: "A",
+        unitLabel: "CTN",
+        documentNote: "",
+        lines: [{
+          id: "line-1",
+          sku: "SKU-A",
+          description: "Item A",
+          expectedQty: "10",
+          receivedQty: "0",
+          pallets: "1",
+          unitsPerPallet: "",
+          storageSection: "A",
+          lineNote: ""
+        }]
+      },
+      { container: { containerType: "NORMAL" } } as unknown as ContainerLifecycle,
+      1,
+      42,
+      "CNT-1"
+    );
+
+    expect(result).toEqual({ error: "quickInboundLineRequired" });
+  });
+
+  it("preserves draft status when editing an existing draft receipt", () => {
+    const result = buildQuickInboundPayload(
+      {
+        editingDocumentId: 88,
+        documentStatus: "DRAFT",
+        trackingStatus: "SCHEDULED",
+        locationId: "1",
+        actualArrivalDate: "2026-03-24",
+        storageSection: "A",
+        unitLabel: "CTN",
+        documentNote: "",
+        lines: [{
+          id: "line-1",
+          sku: "SKU-A",
+          description: "Item A",
+          expectedQty: "10",
+          receivedQty: "10",
+          pallets: "1",
+          unitsPerPallet: "",
+          storageSection: "A",
+          lineNote: ""
+        }]
+      },
+      { container: { containerType: "NORMAL" } } as unknown as ContainerLifecycle,
+      1,
+      42,
+      "CNT-1"
+    );
+
+    expect(result).toMatchObject({
+      payload: {
+        status: "DRAFT",
+        trackingStatus: "SCHEDULED"
+      }
+    });
   });
 });

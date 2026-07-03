@@ -253,24 +253,6 @@ export function DailyOperationsPage({
     }
   }
 
-  async function handleCopyInbound(row: DailyOperationsRow) {
-    if (!canManage) {
-      return;
-    }
-
-    setBusyActionKey(`copy-${row.rowKey}`);
-    try {
-      const copiedDocument = await api.copyInboundDocument(row.id);
-      await onRefresh();
-      showSuccess(t("receiptCopiedSuccess"));
-      onOpenInboundReceiptEditor(copiedDocument.id);
-    } catch (error) {
-      showError(error instanceof Error && error.message ? error.message : t("couldNotCopyDocument"));
-    } finally {
-      setBusyActionKey(null);
-    }
-  }
-
   async function handleCopyOutbound(row: DailyOperationsRow) {
     if (!canManage) {
       return;
@@ -384,7 +366,6 @@ export function DailyOperationsPage({
             copyLabel={null}
             canManage={canManage}
             onAdvanceRow={handleAdvanceInbound}
-            onCopyRow={handleCopyInbound}
             busyActionKey={busyActionKey}
           />
           <DailyOperationsSection
@@ -441,7 +422,7 @@ function DailyOperationsSection({
   copyLabel: string | null;
   canManage: boolean;
   onAdvanceRow: (row: DailyOperationsRow) => void;
-  onCopyRow: (row: DailyOperationsRow) => void;
+  onCopyRow?: (row: DailyOperationsRow) => void;
   busyActionKey: string | null;
 }) {
   const { t } = useI18n();
@@ -526,7 +507,7 @@ function DailyOperationsSection({
                         {row.nextActionLabel}
                       </button>
                     ) : null}
-                    {canManage && copyLabel ? (
+                    {canManage && copyLabel && onCopyRow ? (
                       <button
                         type="button"
                         onClick={() => onCopyRow(row)}

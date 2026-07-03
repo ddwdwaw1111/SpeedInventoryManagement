@@ -12,32 +12,38 @@ import {
   RotateCcw,
   Search,
   Send,
-  Truck
+  Trash2,
+  Truck,
+  X
 } from "lucide-react";
 
 import { api } from "../lib/api";
 import { formatContainerStatus, getContainerStatusBadgeVariant } from "../lib/containerLifecycleStatus";
 import { formatDateTimeValue } from "../lib/dates";
+import { normalizeDocumentStatus, normalizeInboundTrackingStatus } from "../lib/documentTracking";
 import { getErrorMessage } from "../lib/errors";
 import { formatNumber } from "../lib/formatters";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type { ContainerDetailLaunchContext } from "../lib/containerDetailLaunchContext";
 import type { InboundReceiptEditorLaunchContext } from "../lib/inboundReceiptEditorLaunchContext";
-import type {
-  ContainerType,
-  ContainerLifecycle,
-  ContainerLifecycleNode,
-  Customer,
-  CustomerPortalContainerSummary,
-  DeliveryEventPayload,
-  DocumentAttachment,
-  InboundDocument,
-  Location,
-  OutboundDocument
+import {
+  DEFAULT_STORAGE_SECTION,
+  normalizeStorageSection,
+  type ContainerType,
+  type ContainerLifecycle,
+  type ContainerLifecycleNode,
+  type Customer,
+  type CustomerPortalContainerSummary,
+  type DeliveryEventPayload,
+  type DocumentAttachment,
+  type InboundDocument,
+  type InboundDocumentPayload,
+  type Location,
+  type OutboundDocument
 } from "../lib/types";
 import { DocumentAttachmentsPanel, type PendingDocumentAttachment } from "./DocumentAttachmentsPanel";
-import { InlineAlert, useFeedbackToast } from "./Feedback";
+import { InlineAlert, useConfirmDialog, useFeedbackToast } from "./Feedback";
 import {
   CONTAINER_LIFECYCLE_DRAFT_NODE_MIME_TYPE,
   ContainerLifecycleView,
@@ -67,6 +73,7 @@ type AdminContainerLifecyclePageProps = {
   onOpenOutboundDocument: (documentId: number) => void;
   onOpenShipmentEditor: (documentId?: number | null) => void;
   onOpenInventorySummary: (context: InventorySummaryNavigationContext) => void;
+  onRefresh: () => Promise<void>;
 };
 
 type InventorySummaryNavigationContext = {
@@ -123,6 +130,30 @@ type DeliveryFormState = LifecycleVisibilityFormState & {
   vehicleNo: string;
   bolNumber: string;
   notes: string;
+};
+
+type QuickInboundLineFormState = {
+  id: string;
+  sku: string;
+  description: string;
+  expectedQty: string;
+  receivedQty: string;
+  pallets: string;
+  unitsPerPallet: string;
+  storageSection: string;
+  lineNote: string;
+};
+
+type QuickInboundFormState = {
+  editingDocumentId: number;
+  documentStatus: string;
+  trackingStatus: string;
+  locationId: string;
+  actualArrivalDate: string;
+  storageSection: string;
+  unitLabel: string;
+  documentNote: string;
+  lines: QuickInboundLineFormState[];
 };
 
 type SkuQuantityRow = {
@@ -196,14 +227,15 @@ export function AdminContainerLifecyclePage({
   onOpenContainerLifecycle,
   onOpenContainerDetail,
   onOpenInboundDetail,
-  onOpenReceiptEditor,
   onOpenOutboundDocument,
   onOpenShipmentEditor,
-  onOpenInventorySummary
+  onOpenInventorySummary,
+  onRefresh
 }: AdminContainerLifecyclePageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const { showSuccess, showError, feedbackToast } = useFeedbackToast();
+  const { confirm, confirmationDialog } = useConfirmDialog();
   const [selectedCustomerId, setSelectedCustomerId] = useState(routeScope?.customerId ? String(routeScope.customerId) : "all");
   const [searchDraft, setSearchDraft] = useState(routeScope?.containerNo ?? "");
   const [containerSearch, setContainerSearch] = useState(routeScope?.containerNo ?? "");
@@ -227,6 +259,8 @@ export function AdminContainerLifecyclePage({
   const [trackingForm, setTrackingForm] = useState<TrackingFormState>(createEmptyTrackingForm());
   const [pickupForm, setPickupForm] = useState<PickupFormState>(createEmptyPickupForm());
   const [deliveryForm, setDeliveryForm] = useState<DeliveryFormState>(createEmptyDeliveryForm());
+  const [quickInboundOpen, setQuickInboundOpen] = useState(false);
+  const [quickInboundForm, setQuickInboundForm] = useState<QuickInboundFormState>(() => createEmptyQuickInboundForm());
 
   const routeContainerId = routeScope?.containerId && routeScope.containerId > 0 ? routeScope.containerId : 0;
   const activeCustomerId = lifecycle?.summary.customerId || parsePositiveInt(selectedCustomerId);
@@ -572,6 +606,86 @@ export function AdminContainerLifecyclePage({
     });
   }
 
+  function handleOpenQuickInboundDialog() {
+    if (!lifecycle || !activeCustomerId || !activeContainerId || !activeContainerNo) {
+      showError(t("adminContainerLifecycleSelectContainer"));
+      return;
+    }
+    const existingReceipt = lifecycle.packingLists[0];
+    if (existingReceipt) {
+      openInboundReceiptDialog(existingReceipt);
+      return;
+    }
+    setQuickInboundForm(createQuickInboundFormFromLifecycle(lifecycle, locations));
+    setQuickInboundOpen(true);
+  }
+
+  function openInboundReceiptDialog(document: InboundDocument) {
+    if (!lifecycle) {
+      showError(t("adminContainerLifecycleSelectContainer"));
+      return;
+    }
+    setQuickInboundForm(createQuickInboundFormFromDocument(document, lifecycle, locations));
+    setQuickInboundOpen(true);
+  }
+
+  async function handleSubmitQuickInbound(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!lifecycle || !activeCustomerId || !activeContainerId || !activeContainerNo) {
+      showError(t("adminContainerLifecycleSelectContainer"));
+      return;
+    }
+    const editingDocumentId = quickInboundForm.editingDocumentId;
+    if (!editingDocumentId && lifecycle.packingLists[0]) {
+      showError(t("quickInboundExistingReceipt"));
+      return;
+    }
+    const payloadResult = buildQuickInboundPayload(quickInboundForm, lifecycle, activeCustomerId, activeContainerId, activeContainerNo);
+    if ("error" in payloadResult) {
+      showError(t(payloadResult.error));
+      return;
+    }
+    await runBusyAction("quick-inbound", async () => {
+      const document = editingDocumentId
+        ? await api.updateInboundDocument(editingDocumentId, payloadResult.payload)
+        : await api.createInboundDocument(payloadResult.payload);
+      if (!editingDocumentId && selectedNode?.kind === "receiving") {
+        await attachSelectedLifecycleNodeSource("INBOUND_DOCUMENT", document.id, t("containerLifecycleInboundNode"));
+      }
+      await onRefresh();
+      setQuickInboundOpen(false);
+      showSuccess(editingDocumentId ? t("receiptSavedSuccess") : t("quickInboundSaved"));
+      refreshLifecycle();
+    });
+  }
+
+  async function handleDeleteLifecycleNode(node: ContainerLifecycleNodeAction) {
+    if (!activeContainerId || !node.lifecycleNodeId || node.kind === "container") {
+      return;
+    }
+    if (!(await confirm({
+      title: t("deleteContainerLifecycleNode"),
+      message: t("deleteContainerLifecycleNodeConfirm", { title: node.title }),
+      confirmLabel: t("delete"),
+      cancelLabel: t("cancel"),
+      confirmColor: "error",
+      severity: "warning"
+    }))) {
+      return;
+    }
+
+    await runBusyAction("delete-lifecycle-node", async () => {
+      await api.deleteV2ContainerLifecycleNode(activeContainerId, node.lifecycleNodeId as number);
+      setSelectedNode(null);
+      setLifecycle((currentLifecycle) => currentLifecycle ? {
+        ...currentLifecycle,
+        nodes: (currentLifecycle.nodes ?? []).filter((entry) => entry.id !== node.lifecycleNodeId)
+      } : currentLifecycle);
+      showSuccess(t("containerLifecycleNodeDeleted"));
+      refreshLifecycle();
+    });
+  }
+
   async function runDocumentMutation(action: () => Promise<void>, successMessage: string) {
     setBusyAction("documents");
     setLifecycleError("");
@@ -831,6 +945,8 @@ export function AdminContainerLifecyclePage({
             </div>
           </div>
         </section>
+        {feedbackToast}
+        {confirmationDialog}
       </main>
     );
   }
@@ -853,13 +969,14 @@ export function AdminContainerLifecyclePage({
       onCreateTrackingEvent={handleCreateTrackingEvent}
       onCreatePickupAssignment={handleCreatePickupAssignment}
       onCreateDeliveryEvent={handleCreateDeliveryEvent}
+      onOpenQuickInbound={handleOpenQuickInboundDialog}
+      onDeleteLifecycleNode={handleDeleteLifecycleNode}
       onUploadInboundDocumentAttachment={handleUploadInboundDocumentAttachment}
       onUploadOutboundDocumentAttachment={handleUploadOutboundDocumentAttachment}
       onDeleteInboundDocumentAttachment={handleDeleteInboundDocumentAttachment}
       onDeleteOutboundDocumentAttachment={handleDeleteOutboundDocumentAttachment}
       onOpenContainerDetail={(context) => onOpenContainerDetail(activeContainerNo, context)}
       onOpenInboundDetail={onOpenInboundDetail}
-      onOpenReceiptEditor={onOpenReceiptEditor}
       onOpenOutboundDocument={onOpenOutboundDocument}
       onOpenShipmentEditor={onOpenShipmentEditor}
       onOpenInventorySummary={onOpenInventorySummary}
@@ -887,13 +1004,23 @@ export function AdminContainerLifecyclePage({
           onLifecycleNodeMove={handleLifecycleNodeMove}
           documentActions={{
             onOpenPackingList: (document) => onOpenInboundDetail(document.id),
-            onEditPackingList: (document) => onOpenReceiptEditor(document.id),
+            onEditPackingList: openInboundReceiptDialog,
             onOpenPickingOrder: (document) => onOpenOutboundDocument(document.id),
             onEditPickingOrder: (document) => onOpenShipmentEditor(document.id)
           }}
         />
       </div>
+      <QuickInboundDialog
+        open={quickInboundOpen}
+        form={quickInboundForm}
+        locations={locations}
+        busy={busyAction === "quick-inbound"}
+        onClose={() => setQuickInboundOpen(false)}
+        onFormChange={setQuickInboundForm}
+        onSubmit={handleSubmitQuickInbound}
+      />
       {feedbackToast}
+      {confirmationDialog}
     </main>
   );
 }
@@ -915,13 +1042,14 @@ function AdminLifecycleNodePanel({
   onCreateTrackingEvent,
   onCreatePickupAssignment,
   onCreateDeliveryEvent,
+  onOpenQuickInbound,
+  onDeleteLifecycleNode,
   onUploadInboundDocumentAttachment,
   onUploadOutboundDocumentAttachment,
   onDeleteInboundDocumentAttachment,
   onDeleteOutboundDocumentAttachment,
   onOpenContainerDetail,
   onOpenInboundDetail,
-  onOpenReceiptEditor,
   onOpenOutboundDocument,
   onOpenShipmentEditor,
   onOpenInventorySummary
@@ -942,13 +1070,14 @@ function AdminLifecycleNodePanel({
   onCreateTrackingEvent: (event: FormEvent<HTMLFormElement>) => void;
   onCreatePickupAssignment: (event: FormEvent<HTMLFormElement>) => void;
   onCreateDeliveryEvent: (event: FormEvent<HTMLFormElement>) => void;
+  onOpenQuickInbound: () => void;
+  onDeleteLifecycleNode: (node: ContainerLifecycleNodeAction) => void;
   onUploadInboundDocumentAttachment: (document: InboundDocument, file: File, displayName: string) => Promise<void>;
   onUploadOutboundDocumentAttachment: (document: OutboundDocument, file: File, displayName: string) => Promise<void>;
   onDeleteInboundDocumentAttachment: (document: InboundDocument, attachment: DocumentAttachment) => Promise<void>;
   onDeleteOutboundDocumentAttachment: (document: OutboundDocument, attachment: DocumentAttachment) => Promise<void>;
   onOpenContainerDetail: (context?: ContainerDetailLaunchContext) => void;
   onOpenInboundDetail: (documentId: number) => void;
-  onOpenReceiptEditor: (documentId?: number | null, context?: InboundReceiptEditorLaunchContext) => void;
   onOpenOutboundDocument: (documentId: number) => void;
   onOpenShipmentEditor: (documentId?: number | null) => void;
   onOpenInventorySummary: (context: InventorySummaryNavigationContext) => void;
@@ -968,6 +1097,7 @@ function AdminLifecycleNodePanel({
   const panelTitle = node?.kind === "picking-order" && selectedPickingOrder
     ? getOutboundOrderReference(selectedPickingOrder)
     : node?.title ?? t("adminContainerLifecycleNodePanel");
+  const canDeleteSelectedNode = Boolean(node?.lifecycleNodeId && node.kind !== "container");
 
   return (
     <Card className="flex h-full min-h-0 flex-col overflow-hidden xl:sticky xl:top-4">
@@ -975,6 +1105,21 @@ function AdminLifecycleNodePanel({
         <CardTitle>{panelTitle}</CardTitle>
       </CardHeader>
       <CardContent className="grid min-h-0 flex-1 auto-rows-max content-start gap-4 overflow-y-auto">
+        {canDeleteSelectedNode && node ? (
+          <div className="grid gap-3 rounded-lg border border-red-200 bg-red-50 p-3">
+            <PanelSectionTitle icon={<Trash2 className="h-4 w-4" />} title={t("deleteContainerLifecycleNode")} />
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => onDeleteLifecycleNode(node)}
+              disabled={busyAction === "delete-lifecycle-node"}
+            >
+              <Trash2 className="h-4 w-4" />
+              {busyAction === "delete-lifecycle-node" ? t("saving") : t("delete")}
+            </Button>
+          </div>
+        ) : null}
+
         {shouldShowContainerForm ? (
           <form className="grid gap-3" onSubmit={onSaveContainer}>
             <PanelSectionTitle icon={<ContainerIcon className="h-4 w-4" />} title={t("containerStatus")} />
@@ -1008,19 +1153,10 @@ function AdminLifecycleNodePanel({
             <LifecycleOperationActions title={t("adminContainerLifecycleNodePanel")}>
               <Button
                 type="button"
-                onClick={() => onOpenReceiptEditor(null, buildInboundReceiptLaunchContext(lifecycle))}
+                onClick={onOpenQuickInbound}
               >
-                <PackageCheck className="h-4 w-4" />
-                {t("newInbound")}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={!selectedPackingList}
-                onClick={() => selectedPackingList && onOpenReceiptEditor(selectedPackingList.id)}
-              >
-                <ExternalLink className="h-4 w-4" />
-                {t("editReceipt")}
+                {selectedPackingList ? <ExternalLink className="h-4 w-4" /> : <PackageCheck className="h-4 w-4" />}
+                {selectedPackingList ? t("editReceipt") : t("newInbound")}
               </Button>
               <Button
                 type="button"
@@ -1176,6 +1312,258 @@ function AdminLifecycleNodePanel({
 
       </CardContent>
     </Card>
+  );
+}
+
+function QuickInboundDialog({
+  open,
+  form,
+  locations,
+  busy,
+  onClose,
+  onFormChange,
+  onSubmit
+}: {
+  open: boolean;
+  form: QuickInboundFormState;
+  locations: Location[];
+  busy: boolean;
+  onClose: () => void;
+  onFormChange: (nextForm: QuickInboundFormState) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  const { t } = useI18n();
+  if (!open) {
+    return null;
+  }
+  const isEditing = form.editingDocumentId > 0;
+  const isConfirmedEdit = isEditing && normalizeDocumentStatus(form.documentStatus) === "CONFIRMED";
+  const title = isEditing ? t("editReceipt") : t("quickInboundTitle");
+
+  const updateLine = (lineId: string, patch: Partial<QuickInboundLineFormState>) => {
+    onFormChange({
+      ...form,
+      lines: form.lines.map((line) => line.id === lineId ? { ...line, ...patch } : line)
+    });
+  };
+  const addLine = () => {
+    if (isConfirmedEdit) {
+      return;
+    }
+    onFormChange({
+      ...form,
+      lines: [...form.lines, createEmptyQuickInboundLine(form.storageSection)]
+    });
+  };
+  const removeLine = (lineId: string) => {
+    if (isConfirmedEdit || form.lines.length <= 1) {
+      return;
+    }
+    onFormChange({
+      ...form,
+      lines: form.lines.filter((line) => line.id !== lineId)
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-2">
+      <form
+        className="flex max-h-[96vh] w-[96vw] max-w-[1600px] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onSubmit={onSubmit}
+      >
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-950">{title}</h2>
+          </div>
+          <Button type="button" variant="ghost" size="icon" onClick={onClose} disabled={busy} aria-label={t("close")}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-5">
+          <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 md:grid-cols-5">
+            <label className="grid gap-1 text-sm font-medium text-slate-700">
+              {t("currentStorage")}
+              <select
+                className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
+                value={form.locationId}
+                onChange={(event) => onFormChange({ ...form, locationId: event.target.value })}
+                required
+              >
+                <option value="">{t("selectWarehouse")}</option>
+                {locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
+              </select>
+            </label>
+            <label className="grid gap-1 text-sm font-medium text-slate-700">
+              {t("actualArrivalDate")}
+              <input
+                type="date"
+                className="rounded-md border border-slate-200 px-3 py-2 text-sm"
+                value={form.actualArrivalDate}
+                onChange={(event) => onFormChange({ ...form, actualArrivalDate: event.target.value })}
+                required
+              />
+            </label>
+            <label className="grid gap-1 text-sm font-medium text-slate-700">
+              {t("storageSection")}
+              <input
+                className="rounded-md border border-slate-200 px-3 py-2 text-sm"
+                value={form.storageSection}
+                onChange={(event) => onFormChange({ ...form, storageSection: normalizeStorageSection(event.target.value) })}
+                required
+              />
+            </label>
+            <label className="grid gap-1 text-sm font-medium text-slate-700">
+              {t("inboundUnit")}
+              <select
+                className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
+                value={form.unitLabel}
+                onChange={(event) => onFormChange({ ...form, unitLabel: event.target.value })}
+              >
+                <option value="CTN">CTN</option>
+                <option value="PCS">PCS</option>
+                <option value="PALLET">PALLET</option>
+              </select>
+            </label>
+            <label className="grid gap-1 text-sm font-medium text-slate-700">
+              {t("documentNotes")}
+              <input
+                className="rounded-md border border-slate-200 px-3 py-2 text-sm"
+                value={form.documentNote}
+                onChange={(event) => onFormChange({ ...form, documentNote: event.target.value })}
+              />
+            </label>
+          </div>
+
+          <div className="overflow-x-auto rounded-lg border border-slate-200">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="min-w-36">{t("sku")}</TableHead>
+                  <TableHead className="min-w-48">{t("description")}</TableHead>
+                  <TableHead className="min-w-28 text-right">{t("expectedQty")}</TableHead>
+                  <TableHead className="min-w-28 text-right">{t("received")}</TableHead>
+                  <TableHead className="min-w-24 text-right">{t("pallets")}</TableHead>
+                  <TableHead className="min-w-28 text-right">{t("unitsPerPallet")}</TableHead>
+                  <TableHead className="min-w-32">{t("storageSection")}</TableHead>
+                  <TableHead className="min-w-40">{t("lineNote")}</TableHead>
+                  <TableHead className="w-12 text-right">{t("actions")}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {form.lines.map((line, index) => (
+                  <TableRow key={line.id}>
+                    <TableCell>
+                      <input
+                        className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm font-mono uppercase"
+                        value={line.sku}
+                        onChange={(event) => updateLine(line.id, { sku: event.target.value.toUpperCase() })}
+                        disabled={isConfirmedEdit}
+                        required
+                        aria-label={`${t("sku")} #${index + 1}`}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <input
+                        className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm"
+                        value={line.description}
+                        onChange={(event) => updateLine(line.id, { description: event.target.value })}
+                        required
+                        aria-label={`${t("description")} #${index + 1}`}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <input
+                        type="number"
+                        min="0"
+                        className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-right text-sm"
+                        value={line.expectedQty}
+                        onChange={(event) => updateLine(line.id, { expectedQty: event.target.value })}
+                        aria-label={`${t("expectedQty")} #${index + 1}`}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <input
+                        type="number"
+                        min="1"
+                        className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-right text-sm"
+                        value={line.receivedQty}
+                        onChange={(event) => updateLine(line.id, { receivedQty: event.target.value })}
+                        required
+                        aria-label={`${t("received")} #${index + 1}`}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <input
+                        type="number"
+                        min="0"
+                        className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-right text-sm"
+                        value={line.pallets}
+                        onChange={(event) => updateLine(line.id, { pallets: event.target.value })}
+                        aria-label={`${t("pallets")} #${index + 1}`}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <input
+                        type="number"
+                        min="0"
+                        className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-right text-sm"
+                        value={line.unitsPerPallet}
+                        onChange={(event) => updateLine(line.id, { unitsPerPallet: event.target.value })}
+                        aria-label={`${t("unitsPerPallet")} #${index + 1}`}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <input
+                        className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm"
+                        value={line.storageSection}
+                        onChange={(event) => updateLine(line.id, { storageSection: normalizeStorageSection(event.target.value) })}
+                        aria-label={`${t("storageSection")} #${index + 1}`}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <input
+                        className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm"
+                        value={line.lineNote}
+                        onChange={(event) => updateLine(line.id, { lineNote: event.target.value })}
+                        aria-label={`${t("lineNote")} #${index + 1}`}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeLine(line.id)}
+                        disabled={busy || isConfirmedEdit || form.lines.length <= 1}
+                        aria-label={t("delete")}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+
+          <div>
+            <Button type="button" variant="outline" onClick={addLine} disabled={busy || isConfirmedEdit}>
+              <Plus className="h-4 w-4" />
+              {t("addSkuLine")}
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex shrink-0 justify-end gap-2 border-t border-slate-200 px-5 py-4">
+          <Button type="button" variant="outline" onClick={onClose} disabled={busy}>{t("cancel")}</Button>
+          <Button type="submit" disabled={busy}>{busy ? t("saving") : isEditing ? t("saveChanges") : t("confirmReceipt")}</Button>
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -1693,7 +2081,7 @@ function buildCurrentInventorySkuRows(
     });
   });
 
-return Array.from(rows.values())
+  return Array.from(rows.values())
     .sort((left, right) => left.sku.localeCompare(right.sku));
 }
 
@@ -1703,6 +2091,131 @@ function createEmptyNewContainerForm(customerId = ""): NewContainerFormState {
     packingListNo: "",
     containerNo: ""
   };
+}
+
+function createEmptyQuickInboundLine(storageSection = DEFAULT_STORAGE_SECTION): QuickInboundLineFormState {
+  return {
+    id: `quick-inbound-line-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    sku: "",
+    description: "",
+    expectedQty: "",
+    receivedQty: "",
+    pallets: "",
+    unitsPerPallet: "",
+    storageSection,
+    lineNote: ""
+  };
+}
+
+function createEmptyQuickInboundForm(locationId = "", storageSection = DEFAULT_STORAGE_SECTION): QuickInboundFormState {
+  return {
+    editingDocumentId: 0,
+    documentStatus: "CONFIRMED",
+    trackingStatus: "RECEIVED",
+    locationId,
+    actualArrivalDate: toDateInputValue(new Date()),
+    storageSection,
+    unitLabel: "CTN",
+    documentNote: "",
+    lines: [createEmptyQuickInboundLine(storageSection)]
+  };
+}
+
+function createQuickInboundFormFromLifecycle(lifecycle: ContainerLifecycle, locations: Location[]): QuickInboundFormState {
+  const firstPackingList = lifecycle.packingLists[0];
+  const locationId = String(lifecycle.container?.locationId || firstPackingList?.locationId || locations[0]?.id || "");
+  const storageSection = normalizeStorageSection(firstPackingList?.storageSection || DEFAULT_STORAGE_SECTION);
+  return createEmptyQuickInboundForm(locationId, storageSection);
+}
+
+function createQuickInboundFormFromDocument(document: InboundDocument, lifecycle: ContainerLifecycle, locations: Location[]): QuickInboundFormState {
+  const locationId = String(document.locationId || lifecycle.container?.locationId || locations[0]?.id || "");
+  const storageSection = normalizeStorageSection(document.storageSection || document.lines[0]?.storageSection || DEFAULT_STORAGE_SECTION);
+  return {
+    editingDocumentId: document.id,
+    documentStatus: normalizeDocumentStatus(document.status),
+    trackingStatus: normalizeInboundTrackingStatus(document.trackingStatus, document.status),
+    locationId,
+    actualArrivalDate: toDateInputValue(document.actualArrivalDate || document.expectedArrivalDate || new Date()),
+    storageSection,
+    unitLabel: document.unitLabel || "CTN",
+    documentNote: document.documentNote || "",
+    lines: document.lines.length > 0
+      ? document.lines.map((line, index) => ({
+        id: `quick-inbound-line-${document.id}-${line.id || index}`,
+        sku: line.sku || "",
+        description: line.description || "",
+        expectedQty: positiveNumberInputValue(line.expectedQty),
+        receivedQty: positiveNumberInputValue(line.receivedQty),
+        pallets: positiveNumberInputValue(line.pallets),
+        unitsPerPallet: positiveNumberInputValue(line.unitsPerPallet),
+        storageSection: normalizeStorageSection(line.storageSection || storageSection),
+        lineNote: line.lineNote || ""
+      }))
+      : [createEmptyQuickInboundLine(storageSection)]
+  };
+}
+
+export function buildQuickInboundPayload(
+  form: QuickInboundFormState,
+  lifecycle: ContainerLifecycle,
+  customerId: number,
+  containerId: number,
+  containerNo: string
+): { payload: InboundDocumentPayload } | { error: string } {
+  const locationId = parsePositiveInt(form.locationId);
+  if (!locationId || !form.actualArrivalDate) {
+    return { error: "quickInboundHeaderRequired" };
+  }
+
+  const lines = form.lines
+    .map((line) => {
+      const expectedQty = parseNonNegativeInteger(line.expectedQty);
+      const receivedQty = parseNonNegativeInteger(line.receivedQty || line.expectedQty);
+      return {
+        sku: line.sku.trim().toUpperCase(),
+        description: line.description.trim(),
+        expectedQty,
+        receivedQty,
+        pallets: parseNonNegativeInteger(line.pallets),
+        unitsPerPallet: parseOptionalPositiveInt(line.unitsPerPallet),
+        storageSection: normalizeStorageSection(line.storageSection || form.storageSection),
+        lineNote: line.lineNote.trim()
+      };
+    })
+    .filter((line) => line.sku || line.description || line.expectedQty > 0 || line.receivedQty > 0 || line.pallets > 0);
+
+  if (lines.length === 0 || lines.some((line) => !line.sku || !line.description || line.receivedQty <= 0)) {
+    return { error: "quickInboundLineRequired" };
+  }
+
+  const normalizedDocumentStatus = normalizeDocumentStatus(form.documentStatus);
+  const isDraftEdit = form.editingDocumentId > 0 && normalizedDocumentStatus === "DRAFT";
+  const status = isDraftEdit ? "DRAFT" : "CONFIRMED";
+  const trackingStatus = isDraftEdit ? normalizeInboundTrackingStatus(form.trackingStatus, status) : "RECEIVED";
+  const container = lifecycle.container;
+  return {
+    payload: {
+      customerId,
+      locationId,
+      expectedArrivalDate: form.actualArrivalDate,
+      actualArrivalDate: form.actualArrivalDate,
+      containerId,
+      containerNo,
+      containerType: (container?.containerType as ContainerType | undefined) || "NORMAL",
+      handlingMode: "PALLETIZED",
+      storageSection: normalizeStorageSection(form.storageSection),
+      unitLabel: form.unitLabel || "CTN",
+      status,
+      trackingStatus,
+      documentNote: form.documentNote.trim() || undefined,
+      lines
+    }
+  };
+}
+
+function positiveNumberInputValue(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? String(value) : "";
 }
 
 function createEmptyContainerForm(): ContainerFormState {
@@ -1866,9 +2379,26 @@ function toDateTimeInputValue(value: string | Date | null | undefined) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+function toDateInputValue(value: string | Date | null | undefined) {
+  if (!value) {
+    return "";
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  const pad = (number: number) => String(number).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
 function parsePositiveInt(value: string) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function parseNonNegativeInteger(value: string) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : 0;
 }
 
 function parseOptionalPositiveInt(value: string) {

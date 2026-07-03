@@ -145,6 +145,10 @@ func (r *lifecycleCustomerGuardRepo) UpdateContainerLifecycleNode(context.Contex
 	return ContainerLifecycleNode{}, nil
 }
 
+func (r *lifecycleCustomerGuardRepo) DeleteContainerLifecycleNode(context.Context, int64, int64) error {
+	return nil
+}
+
 func TestLegacyInventoryAdapterUsesInventoryMutationOnce(t *testing.T) {
 	repo := &recordingInventoryMutationRepo{}
 	adapter := NewLegacyInventoryAdapter(NewInventoryMutationService(repo))

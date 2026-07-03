@@ -109,7 +109,6 @@ export function InboundReceiptEditorPage({
   const [errorMessage, setErrorMessage] = useState("");
   const [showValidationErrors, setShowValidationErrors] = useState(false);
   const [batchSubmitting, setBatchSubmitting] = useState(false);
-  const [copySubmitting, setCopySubmitting] = useState(false);
   const [inboundWizardStep, setInboundWizardStep] = useState<InboundWizardStep>(2);
   const [inboundEditorIntent, setInboundEditorIntent] = useState<InboundLaunchIntent | null>(null);
   const [expandedPalletBreakdowns, setExpandedPalletBreakdowns] = useState<Record<string, boolean>>({});
@@ -165,7 +164,7 @@ export function InboundReceiptEditorPage({
   const isEditingConfirmedInbound = normalizeDocumentStatus(document?.status ?? "") === "CONFIRMED";
   const isEditingExistingDocument = Boolean(documentId && document);
   const isEditorMissing = Boolean(documentId) && !document && !isLoading;
-  const canEditCurrentDocument = !document || (!document.archivedAt && normalizeDocumentStatus(document.status) === "DRAFT");
+  const canEditCurrentDocument = !document || (!document.archivedAt && ["DRAFT", "CONFIRMED"].includes(normalizeDocumentStatus(document.status)));
   const isReadOnly = !canManage || !canEditCurrentDocument;
 
   useEffect(() => {
@@ -253,25 +252,6 @@ export function InboundReceiptEditorPage({
   function showActionSuccess(message: string) {
     setErrorMessage("");
     showSuccess(message);
-  }
-
-  async function handleCopyCurrentReceipt() {
-    if (!document?.id || copySubmitting) {
-      return;
-    }
-
-    setCopySubmitting(true);
-    setErrorMessage("");
-    try {
-      const copiedDocument = await api.copyInboundDocument(document.id);
-      showActionSuccess(t("receiptCopiedSuccess"));
-      await onRefresh();
-      onOpenReceiptEditor(copiedDocument.id);
-    } catch (error) {
-      showActionError(error, t("couldNotSaveActivity"));
-    } finally {
-      setCopySubmitting(false);
-    }
   }
 
   async function uploadPendingInboundAttachments(documentID: number) {
@@ -654,12 +634,6 @@ export function InboundReceiptEditorPage({
     setErrorMessage("");
     setShowValidationErrors(true);
 
-    if (isEditingConfirmedInbound) {
-      setErrorMessage(t("confirmedReceiptImmutableNotice"));
-      setBatchSubmitting(false);
-      return;
-    }
-
     const validationError = validateInboundDraft(batchForm.handlingMode !== "SEALED_TRANSIT");
     if (validationError) {
       setErrorMessage(validationError);
@@ -828,18 +802,6 @@ export function InboundReceiptEditorPage({
                   <OpenInNewRoundedIcon sx={{ fontSize: 18 }} />
                   {t("details")}
                 </button>
-                {isEditingConfirmedInbound && canManage ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleCopyCurrentReceipt()}
-                    aria-busy={copySubmitting}
-                    disabled={copySubmitting}
-                    className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {copySubmitting ? <InlineLoadingIndicator /> : null}
-                    {t("reEnterReceipt")}
-                  </button>
-                ) : null}
               </div>
             </div>
           ) : null}
@@ -849,7 +811,7 @@ export function InboundReceiptEditorPage({
             <InlineAlert severity="warning">{t("readOnlyModeNotice")}</InlineAlert>
           ) : null}
           {isEditingConfirmedInbound ? (
-            <InlineAlert severity="warning">{t("confirmedReceiptImmutableNotice")}</InlineAlert>
+            <InlineAlert severity="info">{t("confirmedReceiptImmutableNotice")}</InlineAlert>
           ) : null}
           {inboundEditorIntent === "convert-sealed-transit" ? (
             <InlineAlert severity="info">{t("convertToPalletizedNotice")}</InlineAlert>
@@ -860,8 +822,8 @@ export function InboundReceiptEditorPage({
 
           <form onSubmit={handleSubmit} noValidate>
             <div className="inbound-entry-form sheet-form sheet-form--compact">
-              <label>{renderFieldLabel(t("currentStorage"), true)}<select aria-label={t("currentStorage")} value={batchForm.locationId} className={getInvalidInputClassName(isMissingWarehouse)} aria-invalid={isMissingWarehouse ? "true" : undefined} onChange={(event) => setBatchForm((current) => ({ ...current, locationId: event.target.value }))} disabled={isReadOnly} required><option value="">{t("selectWarehouseFirst")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
-              <label>{renderFieldLabel(t("customer"), true)}<select aria-label={t("customer")} value={batchForm.customerId} className={getInvalidInputClassName(isMissingCustomer)} aria-invalid={isMissingCustomer ? "true" : undefined} onChange={(event) => setBatchForm((current) => ({ ...current, customerId: event.target.value }))} disabled={isReadOnly} required><option value="">{t("selectCustomerFirst")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
+              <label>{renderFieldLabel(t("currentStorage"), true)}<select aria-label={t("currentStorage")} value={batchForm.locationId} className={getInvalidInputClassName(isMissingWarehouse)} aria-invalid={isMissingWarehouse ? "true" : undefined} onChange={(event) => setBatchForm((current) => ({ ...current, locationId: event.target.value }))} disabled={isReadOnly || isEditingConfirmedInbound} required><option value="">{t("selectWarehouseFirst")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
+              <label>{renderFieldLabel(t("customer"), true)}<select aria-label={t("customer")} value={batchForm.customerId} className={getInvalidInputClassName(isMissingCustomer)} aria-invalid={isMissingCustomer ? "true" : undefined} onChange={(event) => setBatchForm((current) => ({ ...current, customerId: event.target.value }))} disabled={isReadOnly || isEditingConfirmedInbound} required><option value="">{t("selectCustomerFirst")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
               <label>{renderFieldLabel(t("actualArrivalDate"), true)}<input aria-label={t("actualArrivalDate")} type="date" value={batchForm.actualArrivalDate} className={getInvalidInputClassName(isMissingActualArrivalDate)} aria-invalid={isMissingActualArrivalDate ? "true" : undefined} disabled={isReadOnly} required onChange={(event) => {
                 const nextValue = event.target.value;
                 setBatchForm((current) => ({
@@ -935,8 +897,8 @@ export function InboundReceiptEditorPage({
                   <label>{t("containerNo")}<input value={batchForm.containerNo} disabled={isReadOnly} onChange={(event) => setBatchForm((current) => ({ ...current, containerNo: event.target.value }))} placeholder="MRSU8580370" /></label>
                   <label>{t("billingContainerType")}<select value={batchForm.containerType} onChange={(event) => setBatchForm((current) => ({ ...current, containerType: event.target.value as ContainerType }))} disabled={isReadOnly}><option value="NORMAL">{t("billingContainerTypeNormal")}</option><option value="WEST_COAST_TRANSFER">{t("billingContainerTypeWestCoastTransfer")}</option></select></label>
                   <label>{t("handlingMode")}<select value={batchForm.handlingMode} onChange={(event) => setBatchForm((current) => ({ ...current, handlingMode: event.target.value as InboundHandlingMode }))} disabled={isReadOnly || isEditingConfirmedInbound}><option value="PALLETIZED">{t("handlingModePalletized")}</option><option value="SEALED_TRANSIT">{t("handlingModeSealedTransit")}</option></select></label>
-                  <label>{t("customer")}<select value={batchForm.customerId} onChange={(event) => setBatchForm((current) => ({ ...current, customerId: event.target.value }))} disabled={isReadOnly}>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
-                  <label>{t("currentStorage")}<select value={batchForm.locationId} onChange={(event) => setBatchForm((current) => ({ ...current, locationId: event.target.value }))} disabled={isReadOnly}>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
+                  <label>{t("customer")}<select value={batchForm.customerId} onChange={(event) => setBatchForm((current) => ({ ...current, customerId: event.target.value }))} disabled={isReadOnly || isEditingConfirmedInbound}>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
+                  <label>{t("currentStorage")}<select value={batchForm.locationId} onChange={(event) => setBatchForm((current) => ({ ...current, locationId: event.target.value }))} disabled={isReadOnly || isEditingConfirmedInbound}>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
                   <label>{t("inboundUnit")}<select value={batchForm.unitLabel} onChange={(event) => setBatchForm((current) => ({ ...current, unitLabel: event.target.value }))} disabled={isReadOnly}><option value="CTN">CTN</option><option value="PCS">PCS</option><option value="PALLET">PALLET</option></select></label>
                   <div className="sheet-form__wide">
                     <label className="sheet-form__wide">{t("documentNotes")}<input value={batchForm.documentNote} disabled={isReadOnly || !canManage} onChange={(event) => setBatchForm((current) => ({ ...current, documentNote: event.target.value }))} placeholder={t("inboundNotePlaceholder")} /></label>
@@ -1055,7 +1017,7 @@ export function InboundReceiptEditorPage({
                             <Fragment key={line.id}>
                               <tr id={`receipt-editor-line-${line.id}`}>
                                 <td className="inbound-entry-table__sku">
-                                  <input value={line.sku} className={getInvalidInputClassName(hasMissingSkuLine && !line.sku.trim())} aria-invalid={hasMissingSkuLine && !line.sku.trim() ? "true" : undefined} onChange={(event) => updateBatchLineSku(line.id, event.target.value)} placeholder="ABC123" disabled={isReadOnly} list="inbound-sku-list" aria-label={`${t("sku")} #${index + 1}`} />
+                                  <input value={line.sku} className={getInvalidInputClassName(hasMissingSkuLine && !line.sku.trim())} aria-invalid={hasMissingSkuLine && !line.sku.trim() ? "true" : undefined} onChange={(event) => updateBatchLineSku(line.id, event.target.value)} placeholder="ABC123" disabled={isReadOnly || isEditingConfirmedInbound} list="inbound-sku-list" aria-label={`${t("sku")} #${index + 1}`} />
                                   <span className="inbound-entry-table__hint">
                                     {selectedBatchItem
                                       ? `${selectedBatchItem.customerName} | ${selectedBatchItem.locationName}`
@@ -1097,7 +1059,7 @@ export function InboundReceiptEditorPage({
                                   </div>
                                 </td>
                                 <td>
-                                  <button className="button button--danger button--small" type="button" onClick={() => removeBatchLine(line.id)} disabled={isReadOnly || batchLines.length === 1}>{t("removeLine")}</button>
+                                  <button className="button button--danger button--small" type="button" onClick={() => removeBatchLine(line.id)} disabled={isReadOnly || isEditingConfirmedInbound || batchLines.length === 1}>{t("removeLine")}</button>
                                 </td>
                               </tr>
                               {isPalletBreakdownExpanded || hasPalletBreakdownMismatch ? (
@@ -1150,7 +1112,7 @@ export function InboundReceiptEditorPage({
                               className="inbound-entry-table__add-button"
                               type="button"
                               onClick={() => addBatchLine()}
-                              disabled={isReadOnly}
+                              disabled={isReadOnly || isEditingConfirmedInbound}
                               aria-label={t("addSkuLine")}
                             >
                               <AddCircleOutlineOutlinedIcon fontSize="small" />
@@ -1284,7 +1246,12 @@ export function InboundReceiptEditorPage({
                     {batchSubmitting ? <InlineLoadingIndicator /> : null}
                     {batchSubmitting ? t("saving") : batchForm.handlingMode === "SEALED_TRANSIT" ? t("saveSealedTransit") : inboundEditorIntent === "convert-sealed-transit" ? t("convertToPalletized") : t("confirmReceipt")}
                   </button>
-                ) : null}
+                ) : (
+                  <button className="button button--primary" type="submit" disabled={batchSubmitting || isReadOnly} aria-busy={batchSubmitting}>
+                    {batchSubmitting ? <InlineLoadingIndicator /> : null}
+                    {batchSubmitting ? t("saving") : t("saveChanges")}
+                  </button>
+                )}
               </div>
             </div>
           </form>

@@ -408,6 +408,9 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 	if err != nil {
 		return InboundDocument{}, err
 	}
+	if err := s.ensureContainerHasNoOtherActiveInboundDocumentTx(ctx, tx, containerID, 0); err != nil {
+		return InboundDocument{}, err
+	}
 
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO inbound_documents (
@@ -541,13 +544,15 @@ func (s *Store) UpdateInboundDocument(ctx context.Context, documentID int64, inp
 	}
 	normalizedDocumentStatus := normalizeDocumentStatus(documentRow.Status)
 	if normalizedDocumentStatus == DocumentStatusConfirmed {
-		return InboundDocument{}, fmt.Errorf("%w: confirmed receipts are immutable; cancel the receipt or copy it into a new draft and record any net change through correction documents", ErrInvalidInput)
-	}
-	if normalizedDocumentStatus != DocumentStatusDraft {
-		return InboundDocument{}, fmt.Errorf("%w: only draft receipts can be edited", ErrInvalidInput)
-	}
-	if err := s.updateDraftInboundDocumentTx(ctx, tx, documentID, documentRow, input, expectedArrivalDate, actualArrivalDate, requestedStatus, requestedTrackingStatus); err != nil {
-		return InboundDocument{}, err
+		if err := s.updateConfirmedInboundDocumentTx(ctx, tx, documentID, documentRow, input, expectedArrivalDate, actualArrivalDate); err != nil {
+			return InboundDocument{}, err
+		}
+	} else if normalizedDocumentStatus == DocumentStatusDraft {
+		if err := s.updateDraftInboundDocumentTx(ctx, tx, documentID, documentRow, input, expectedArrivalDate, actualArrivalDate, requestedStatus, requestedTrackingStatus); err != nil {
+			return InboundDocument{}, err
+		}
+	} else {
+		return InboundDocument{}, fmt.Errorf("%w: only draft or confirmed receipts can be edited", ErrInvalidInput)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -671,6 +676,13 @@ func (s *Store) ensureInboundDocumentContainerTx(
 			currentContainerID = 0
 		}
 	}
+	if currentContainerID <= 0 && customerID > 0 && normalizedContainerNo != "" {
+		resolvedContainerID, err := s.resolveInboundDocumentContainerIDByNoTx(ctx, tx, customerID, normalizedContainerNo)
+		if err != nil {
+			return 0, err
+		}
+		currentContainerID = resolvedContainerID
+	}
 	if currentContainerID > 0 {
 		if err := s.syncContainerNumberTx(ctx, tx, currentContainerID, customerID, locationID, normalizedContainerNo); err != nil {
 			return 0, err
@@ -703,6 +715,57 @@ func (s *Store) ensureInboundDocumentContainerTx(
 	return containerID, nil
 }
 
+func (s *Store) resolveInboundDocumentContainerIDByNoTx(ctx context.Context, tx *sql.Tx, customerID int64, containerNo string) (int64, error) {
+	normalizedContainerNo := normalizeContainerNo(containerNo)
+	if customerID <= 0 || normalizedContainerNo == "" {
+		return 0, nil
+	}
+
+	var containerID int64
+	err := tx.QueryRowContext(ctx, `
+		SELECT id
+		FROM containers
+		WHERE customer_id = ?
+			AND UPPER(TRIM(container_no)) = ?
+		ORDER BY id DESC
+		LIMIT 1
+		FOR UPDATE
+	`, customerID, normalizedContainerNo).Scan(&containerID)
+	if err == nil {
+		return containerID, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return 0, mapDBError(fmt.Errorf("resolve inbound document container by number: %w", err))
+}
+
+func (s *Store) ensureContainerHasNoOtherActiveInboundDocumentTx(ctx context.Context, tx *sql.Tx, containerID int64, allowedDocumentID int64) error {
+	if containerID <= 0 {
+		return nil
+	}
+
+	var existingDocumentID int64
+	err := tx.QueryRowContext(ctx, `
+		SELECT id
+		FROM inbound_documents
+		WHERE COALESCE(container_id, 0) = ?
+			AND id <> ?
+			AND archived_at IS NULL
+			AND COALESCE(UPPER(TRIM(status)), '') NOT IN (?, ?)
+		ORDER BY id ASC
+		LIMIT 1
+		FOR UPDATE
+	`, containerID, allowedDocumentID, DocumentStatusDeleted, "CANCELLED").Scan(&existingDocumentID)
+	if err == nil {
+		return fmt.Errorf("%w: container already has inbound receipt #%d; edit it or delete it before creating a new receipt", ErrInvalidInput, existingDocumentID)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	return mapDBError(fmt.Errorf("load active inbound document for container: %w", err))
+}
+
 func (s *Store) updateDraftInboundDocumentTx(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -716,7 +779,7 @@ func (s *Store) updateDraftInboundDocumentTx(
 ) error {
 	normalizedDocumentStatus := normalizeDocumentStatus(documentRow.Status)
 	if normalizedDocumentStatus == DocumentStatusConfirmed {
-		return fmt.Errorf("%w: confirmed receipts are immutable; cancel the receipt or copy it into a new draft and record any net change through correction documents", ErrInvalidInput)
+		return fmt.Errorf("%w: confirmed receipts must use the confirmed receipt update flow", ErrInvalidInput)
 	}
 	if normalizedDocumentStatus != DocumentStatusDraft {
 		return fmt.Errorf("%w: only draft receipts can be edited", ErrInvalidInput)
@@ -746,6 +809,9 @@ func (s *Store) updateDraftInboundDocumentTx(
 		firstNonEmptyTime(actualArrivalDate, expectedArrivalDate),
 	)
 	if err != nil {
+		return err
+	}
+	if err := s.ensureContainerHasNoOtherActiveInboundDocumentTx(ctx, tx, containerID, documentID); err != nil {
 		return err
 	}
 
@@ -843,7 +909,8 @@ func (s *Store) updateConfirmedInboundDocumentTx(
 	documentID int64,
 	documentRow inboundDocumentRow,
 	input CreateInboundDocumentInput,
-	deliveryDate *time.Time,
+	expectedArrivalDate *time.Time,
+	actualArrivalDate *time.Time,
 ) error {
 	if documentRow.ArchivedAt != nil {
 		return fmt.Errorf("%w: archived receipts cannot be edited", ErrInvalidInput)
@@ -860,6 +927,7 @@ func (s *Store) updateConfirmedInboundDocumentTx(
 	if coalesceDocumentStatus(input.Status) != DocumentStatusConfirmed {
 		return fmt.Errorf("%w: confirmed receipts must remain confirmed", ErrInvalidInput)
 	}
+	deliveryDate := firstNonEmptyTime(actualArrivalDate, expectedArrivalDate, documentRow.ActualArrivalDate, documentRow.ExpectedArrivalDate)
 
 	existingLines, err := s.loadInboundDocumentLinesTx(ctx, tx, documentID)
 	if err != nil {
@@ -884,9 +952,12 @@ func (s *Store) updateConfirmedInboundDocumentTx(
 		InboundHandlingModePalletized,
 		"IN_STOCK",
 		InboundTrackingReceived,
-		firstNonEmptyTime(documentRow.ActualArrivalDate, documentRow.ExpectedArrivalDate),
+		deliveryDate,
 	)
 	if err != nil {
+		return err
+	}
+	if err := s.ensureContainerHasNoOtherActiveInboundDocumentTx(ctx, tx, containerID, documentID); err != nil {
 		return err
 	}
 
@@ -997,8 +1068,8 @@ func (s *Store) updateConfirmedInboundDocumentTx(
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`,
-		nullableTime(documentRow.ExpectedArrivalDate),
-		nullableTime(documentRow.ActualArrivalDate),
+		nullableTime(expectedArrivalDate),
+		nullableTime(actualArrivalDate),
 		containerID,
 		nullableString(newContainerNo),
 		coalesceContainerType(input.ContainerType),
@@ -1043,7 +1114,7 @@ func (s *Store) updateConfirmedInboundDocumentTx(
 				documentRow.CustomerID,
 				documentRow.LocationID,
 				nullableString(newContainerNo),
-				nullableTime(firstNonEmptyTime(documentRow.ActualArrivalDate, documentRow.ExpectedArrivalDate)),
+				nullableTime(deliveryDate),
 				coalesceContainerType(input.ContainerType),
 				InboundHandlingModePalletized,
 				visitID,
@@ -1385,9 +1456,6 @@ func (s *Store) moveDirectConfirmedInboundReceiptBalanceTx(
 	oldContainerNo := strings.TrimSpace(documentRow.ContainerNo)
 	targetSection = fallbackSection(targetSection)
 	targetContainerNo = strings.TrimSpace(targetContainerNo)
-	if oldSection == targetSection && oldContainerNo == targetContainerNo {
-		return nil
-	}
 
 	moveQty := minInt(existingLine.receivedOrExpectedQty(), nextLine.receivedOrExpectedQty())
 	if moveQty <= 0 {
@@ -1409,6 +1477,10 @@ func (s *Store) moveDirectConfirmedInboundReceiptBalanceTx(
 	if err != nil {
 		return err
 	}
+	resolvedTargetContainerID := firstNonZeroInt64(targetContainerID, oldState.ContainerID)
+	if oldSection == targetSection && oldContainerNo == targetContainerNo && oldState.ContainerID == resolvedTargetContainerID {
+		return nil
+	}
 	if moveQty > oldState.availableQty() {
 		return fmt.Errorf("%w: receipt line %s cannot move stock that is reserved, shipped, damaged, or held", ErrInvalidInput, existingLine.SKUSnapshot)
 	}
@@ -1420,7 +1492,7 @@ func (s *Store) moveDirectConfirmedInboundReceiptBalanceTx(
 		CustomerID:          documentRow.CustomerID,
 		LocationID:          documentRow.LocationID,
 		ExpectedArrivalDate: safeDateInput(deliveryDate),
-		ContainerID:         firstNonZeroInt64(targetContainerID, oldState.ContainerID),
+		ContainerID:         resolvedTargetContainerID,
 		ContainerNo:         targetContainerNo,
 		StorageSection:      targetSection,
 		UnitLabel:           unitLabel,
@@ -1450,6 +1522,10 @@ func (s *Store) moveDirectConfirmedInboundReceiptBalanceTx(
 		return mapDBError(fmt.Errorf("move direct inbound inventory out: %w", err))
 	}
 	if err := s.increaseInventoryBalanceTx(ctx, tx, targetItemID, moveQty, nextLine.Pallets); err != nil {
+		return err
+	}
+	targetState, err := s.loadLockedInventoryBalanceByIDTx(ctx, tx, targetItemID)
+	if err != nil {
 		return err
 	}
 
@@ -1495,8 +1571,8 @@ func (s *Store) moveDirectConfirmedInboundReceiptBalanceTx(
 		SourceDocumentType:  StockLedgerSourceInbound,
 		SourceDocumentID:    documentID,
 		SourceLineID:        existingLine.ID,
-		ContainerID:         oldState.ContainerID,
-		ContainerNo:         targetContainerNo,
+		ContainerID:         targetState.ContainerID,
+		ContainerNo:         targetState.ContainerNo,
 		DeliveryDate:        firstNonEmptyTime(documentRow.ActualArrivalDate, documentRow.ExpectedArrivalDate),
 		ItemNumber:          existingLine.SKUSnapshot,
 		DescriptionSnapshot: lineDescription,
@@ -1734,6 +1810,9 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 	if err != nil {
 		return err
 	}
+	if err := s.ensureContainerHasNoOtherActiveInboundDocumentTx(ctx, tx, containerID, documentRow.ID); err != nil {
+		return err
+	}
 
 	for _, lineRow := range lineRows {
 		itemID, itemDescription, err := s.findOrCreateInboundItem(ctx, tx, CreateInboundDocumentInput{
@@ -1950,6 +2029,9 @@ func (s *Store) CopyInboundDocument(ctx context.Context, documentID int64) (Inbo
 	}
 	if len(lineRows) == 0 {
 		return InboundDocument{}, fmt.Errorf("%w: receipt must contain at least one line", ErrInvalidInput)
+	}
+	if err := s.ensureContainerHasNoOtherActiveInboundDocumentTx(ctx, tx, documentRow.ContainerID, 0); err != nil {
+		return InboundDocument{}, err
 	}
 
 	result, err := tx.ExecContext(ctx, `

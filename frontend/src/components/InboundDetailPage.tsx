@@ -1,5 +1,4 @@
 import AttachFileRoundedIcon from "@mui/icons-material/AttachFileRounded";
-import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
 import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
@@ -105,20 +104,6 @@ export function InboundDetailPage({
     });
   }
 
-  async function handleCopyReceipt() {
-    if (!document?.id) {
-      return;
-    }
-
-    try {
-      const copiedDocument = await api.copyInboundDocument(document.id);
-      showSuccess(t("receiptCopiedSuccess"));
-      onOpenReceiptEditor(copiedDocument.id);
-    } catch (error) {
-      showError(getErrorMessage(error, t("couldNotSaveActivity")));
-    }
-  }
-
   async function handleSaveContainerType() {
     if (!document?.id) {
       return;
@@ -199,7 +184,7 @@ export function InboundDetailPage({
                   {t("convertToPalletized")}
                 </button>
               ) : null}
-              {canManage && normalizeDocumentStatus(document?.status ?? "") === "DRAFT" ? (
+              {canManage && !document?.archivedAt && ["DRAFT", "CONFIRMED"].includes(normalizeDocumentStatus(document?.status ?? "")) ? (
                 <button
                   type="button"
                   onClick={() => onOpenReceiptEditor(document?.id ?? null)}
@@ -207,18 +192,7 @@ export function InboundDetailPage({
                   className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-[#143569] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(20,53,105,0.18)] transition hover:bg-[#102f5f] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <MoveToInboxOutlinedIcon sx={{ fontSize: 18 }} />
-                  {t("editDraft")}
-                </button>
-              ) : null}
-              {canManage && normalizeDocumentStatus(document?.status ?? "") === "CONFIRMED" ? (
-                <button
-                  type="button"
-                  onClick={() => void handleCopyReceipt()}
-                  disabled={!document}
-                  className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-[#143569] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_22px_rgba(20,53,105,0.18)] transition hover:bg-[#102f5f] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <ContentCopyOutlinedIcon sx={{ fontSize: 18 }} />
-                  {t("reEnterReceipt")}
+                  {normalizeDocumentStatus(document?.status ?? "") === "CONFIRMED" ? t("editReceipt") : t("editDraft")}
                 </button>
               ) : null}
             </div>

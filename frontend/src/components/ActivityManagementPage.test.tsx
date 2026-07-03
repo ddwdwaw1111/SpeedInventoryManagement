@@ -670,18 +670,8 @@ describe("ActivityManagementPage", () => {
     expect(onRefresh).toHaveBeenCalled();
   });
 
-  it("re-enters confirmed receipts by copying them into a new draft", async () => {
+  it("does not offer re-enter for confirmed receipts in the list", () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
-
-    mockedApi.copyInboundDocument.mockResolvedValue(
-      createInboundDocument({
-        id: 22,
-        status: "DRAFT",
-        trackingStatus: "SCHEDULED",
-        expectedArrivalDate: "2026-03-24",
-        containerNo: "GCXU5817233"
-      })
-    );
 
     renderWithProviders(
       <ActivityManagementPage
@@ -721,27 +711,12 @@ describe("ActivityManagementPage", () => {
       />
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /Re-enter Receipt|reEnterReceipt/ }));
-
-    await waitFor(() => {
-      expect(mockedApi.copyInboundDocument).toHaveBeenCalledWith(11);
-    });
-
-    expect(onRefresh).toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /Re-enter Receipt|reEnterReceipt/ })).not.toBeInTheDocument();
+    expect(mockedApi.copyInboundDocument).not.toHaveBeenCalled();
   });
 
-  it("re-enters confirmed receipts from the detail drawer", async () => {
+  it("does not offer re-enter for confirmed receipts from the detail drawer", async () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
-
-    mockedApi.copyInboundDocument.mockResolvedValue(
-      createInboundDocument({
-        id: 24,
-        status: "DRAFT",
-        trackingStatus: "SCHEDULED",
-        expectedArrivalDate: "2026-03-24",
-        containerNo: "GCXU5817233"
-      })
-    );
 
     renderWithProviders(
       <ActivityManagementPage
@@ -781,65 +756,10 @@ describe("ActivityManagementPage", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Details" }));
-    fireEvent.click(await screen.findByRole("button", { name: /Re-enter Receipt|reEnterReceipt/ }));
 
-    await waitFor(() => {
-      expect(mockedApi.copyInboundDocument).toHaveBeenCalledWith(12);
-    });
-
-    expect(onRefresh).toHaveBeenCalled();
-  });
-
-  it("locks drawer actions while a receipt copy is in progress", async () => {
-    mockedApi.copyInboundDocument.mockImplementation(() => new Promise(() => {}));
-
-    renderWithProviders(
-      <ActivityManagementPage
-        mode="IN"
-        items={[]}
-        skuMasters={[]}
-        locations={[createLocation()]}
-        customers={[createCustomer()]}
-        movements={[]}
-        inboundDocuments={[
-          createInboundDocument({
-            id: 14,
-            status: "CONFIRMED",
-            trackingStatus: "RECEIVED",
-            expectedArrivalDate: "2026-03-24",
-            containerNo: "GCXU5817233",
-            lines: [
-              createInboundDocumentLine({
-                id: 141,
-                documentId: 14,
-                sku: "608333",
-                description: "VB22GC",
-                storageSection: "TEMP",
-                expectedQty: 10,
-                receivedQty: 10,
-                pallets: 1,
-                palletsDetailCtns: "1*10"
-              })
-            ]
-          })
-        ]}
-        outboundDocuments={[]}
-        currentUserRole="admin"
-        isLoading={false}
-        onRefresh={vi.fn().mockResolvedValue(undefined)}
-      />
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Details" }));
-
-    const reEnterButton = await screen.findByRole("button", { name: /Re-enter Receipt|reEnterReceipt/ });
-
-    fireEvent.click(reEnterButton);
-
-    expect(reEnterButton).toBeDisabled();
-    expect(reEnterButton).toHaveAttribute("aria-busy", "true");
-    expect(screen.getByRole("button", { name: "Cancel Receipt" })).toBeDisabled();
-    expect(mockedApi.copyInboundDocument).toHaveBeenCalledWith(14);
+    expect(await screen.findByRole("button", { name: /Edit Receipt|editReceipt/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Re-enter Receipt|reEnterReceipt/ })).not.toBeInTheDocument();
+    expect(mockedApi.copyInboundDocument).not.toHaveBeenCalled();
   });
 
   it("walks through the outbound shipment wizard and submits the shipment", async () => {

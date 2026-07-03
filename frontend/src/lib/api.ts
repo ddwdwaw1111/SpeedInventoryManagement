@@ -484,6 +484,12 @@ export const api = {
     });
   },
 
+  deleteV2ContainerLifecycleNode(containerId: number, nodeId: number) {
+    return request<void>(`/v2/containers/${containerId}/lifecycle-nodes/${nodeId}`, {
+      method: "DELETE"
+    });
+  },
+
   createV2ContainerTrackingEvent(containerId: number, payload: ContainerTrackingEventPayload) {
     return request<ContainerTrackingEvent>(`/v2/containers/${containerId}/tracking-events`, {
       method: "POST",

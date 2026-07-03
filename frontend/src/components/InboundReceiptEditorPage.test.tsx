@@ -302,7 +302,18 @@ describe("InboundReceiptEditorPage", () => {
     expect(mockedApi.createInboundDocument).not.toHaveBeenCalled();
   });
 
-  it("renders confirmed receipt notes as read-only without a standalone save button", () => {
+  it("saves editable confirmed receipt fields while keeping SKU and line count locked", async () => {
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    const onOpenInboundDetail = vi.fn();
+    mockedApi.updateInboundDocument.mockResolvedValue(createInboundDocument({
+      id: 12,
+      status: "CONFIRMED",
+      trackingStatus: "RECEIVED",
+      actualArrivalDate: "2026-03-24",
+      documentNote: "Adjusted confirmed receipt note",
+      totalReceivedQty: 12
+    }));
+
     renderWithProviders(
       <InboundReceiptEditorPage
         routeKey="/inbound-management/12"
@@ -311,6 +322,7 @@ describe("InboundReceiptEditorPage", () => {
           id: 12,
           status: "CONFIRMED",
           trackingStatus: "RECEIVED",
+          actualArrivalDate: "2026-03-24",
           documentNote: "Original confirmed receipt note"
         })}
         items={[]}
@@ -320,22 +332,39 @@ describe("InboundReceiptEditorPage", () => {
         inboundDocuments={[]}
         currentUserRole="admin"
         isLoading={false}
-        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onRefresh={onRefresh}
         onBackToList={vi.fn()}
-        onOpenInboundDetail={vi.fn()}
+        onOpenInboundDetail={onOpenInboundDetail}
         onOpenReceiptEditor={vi.fn()}
       />
     );
 
-    expect(screen.getByText("Confirmed receipt details are locked.")).toBeInTheDocument();
-    expect(screen.getByLabelText("Document Notes")).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Save Note" })).not.toBeInTheDocument();
+    expect(screen.getByText("Confirmed receipt edits update inventory automatically. SKU and line count stay locked.")).toBeInTheDocument();
+    expect(screen.getByLabelText(/SKU.*#1/)).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add SKU Line" })).toBeDisabled();
+    expect(screen.getByLabelText("Document Notes")).not.toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Document Notes"), { target: { value: "Adjusted confirmed receipt note" } });
+    fireEvent.change(screen.getByLabelText("Received #1"), { target: { value: "12" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+
+    await waitFor(() => {
+      expect(mockedApi.updateInboundDocument).toHaveBeenCalledWith(12, expect.objectContaining({
+        status: "CONFIRMED",
+        trackingStatus: "RECEIVED",
+        documentNote: "Adjusted confirmed receipt note",
+        lines: [expect.objectContaining({
+          sku: "608333",
+          receivedQty: 12
+        })]
+      }));
+    });
+    expect(onRefresh).toHaveBeenCalled();
+    expect(onOpenInboundDetail).toHaveBeenCalledWith(12);
     expect(mockedApi.updateInboundDocumentNote).not.toHaveBeenCalled();
   });
 
-  it("locks the re-enter action while copying a confirmed receipt", async () => {
-    mockedApi.copyInboundDocument.mockImplementation(() => new Promise(() => {}));
-
+  it("does not offer re-enter for a confirmed receipt", () => {
     renderWithProviders(
       <InboundReceiptEditorPage
         routeKey="/inbound-management/12"
@@ -359,12 +388,8 @@ describe("InboundReceiptEditorPage", () => {
       />
     );
 
-    const reEnterButton = screen.getByRole("button", { name: /Re-enter Receipt|reEnterReceipt/ });
-
-    fireEvent.click(reEnterButton);
-
-    expect(reEnterButton).toBeDisabled();
-    expect(reEnterButton).toHaveAttribute("aria-busy", "true");
-    expect(mockedApi.copyInboundDocument).toHaveBeenCalledWith(12);
+    expect(screen.queryByRole("button", { name: /Re-enter Receipt|reEnterReceipt/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save Changes" })).toBeInTheDocument();
+    expect(mockedApi.copyInboundDocument).not.toHaveBeenCalled();
   });
 });

@@ -76,6 +76,7 @@ type containerRepository interface {
 	ListContainerLifecycleNodes(context.Context, int64) ([]ContainerLifecycleNode, error)
 	CreateContainerLifecycleNode(context.Context, int64, CreateContainerLifecycleNodeInput) (ContainerLifecycleNode, error)
 	UpdateContainerLifecycleNode(context.Context, int64, int64, UpdateContainerLifecycleNodeInput) (ContainerLifecycleNode, error)
+	DeleteContainerLifecycleNode(context.Context, int64, int64) error
 }
 
 type ContainerService struct {
@@ -110,6 +111,13 @@ func (s *ContainerService) UpdateLifecycleNode(ctx context.Context, containerID 
 		return ContainerLifecycleNode{}, ErrInvalidInput
 	}
 	return s.repo.UpdateContainerLifecycleNode(ctx, containerID, nodeID, input)
+}
+
+func (s *ContainerService) DeleteLifecycleNode(ctx context.Context, containerID int64, nodeID int64) error {
+	if containerID <= 0 || nodeID <= 0 {
+		return ErrInvalidInput
+	}
+	return s.repo.DeleteContainerLifecycleNode(ctx, containerID, nodeID)
 }
 
 func (s *ContainerService) ListContainers(ctx context.Context, input ListContainersInput) ([]ContainerSummary, error) {
