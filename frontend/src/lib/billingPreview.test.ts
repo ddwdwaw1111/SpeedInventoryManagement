@@ -492,6 +492,88 @@ describe("buildBillingPreview", () => {
     expect(preview.dailyBalanceRows.find((row) => row.date === "2026-03-10")?.palletCount).toBe(2);
   });
 
+  it("uses source pallets for storage movement and line pallets for shipped pallet count", () => {
+    const preview = buildBillingPreview({
+      startDate: "2026-03-01",
+      endDate: "2026-03-12",
+      customerId: 1,
+      customers,
+      inboundDocuments: [
+        makeInboundDoc(101, 1, {
+          containerNo: "CONT-REPACK",
+          actualArrivalDate: "2026-03-01",
+          pallets: 30
+        })
+      ],
+      outboundDocuments: [
+        makeOutboundDoc(201, 1, {
+          containerNo: "CONT-REPACK",
+          actualShipDate: "2026-03-10",
+          pallets: 28,
+          sourcePallets: 30
+        })
+      ],
+      rates: DEFAULT_BILLING_RATES
+    });
+
+    expect(preview.summary.shippedPallets).toBe(28);
+    expect(preview.dailyBalanceRows.find((row) => row.date === "2026-03-09")?.palletCount).toBe(30);
+    expect(preview.dailyBalanceRows.find((row) => row.date === "2026-03-10")?.palletCount).toBe(0);
+  });
+
+  it("falls back to allocation pallets when source pallets are absent from legacy shipment data", () => {
+    const preview = buildBillingPreview({
+      startDate: "2026-03-01",
+      endDate: "2026-03-12",
+      customerId: 1,
+      customers,
+      inboundDocuments: [
+        makeInboundDoc(101, 1, {
+          containerNo: "CONT-LEGACY",
+          actualArrivalDate: "2026-03-01",
+          pallets: 12
+        })
+      ],
+      outboundDocuments: [
+        makeOutboundDoc(201, 1, {
+          containerNo: "CONT-LEGACY",
+          actualShipDate: "2026-03-10",
+          pallets: 12
+        })
+      ],
+      rates: DEFAULT_BILLING_RATES
+    });
+
+    expect(preview.dailyBalanceRows.find((row) => row.date === "2026-03-10")?.palletCount).toBe(0);
+  });
+
+  it("does not fall back to target pallets when source pallets are explicitly zero", () => {
+    const preview = buildBillingPreview({
+      startDate: "2026-03-01",
+      endDate: "2026-03-12",
+      customerId: 1,
+      customers,
+      inboundDocuments: [
+        makeInboundDoc(101, 1, {
+          containerNo: "CONT-SPLIT",
+          actualArrivalDate: "2026-03-01",
+          pallets: 12
+        })
+      ],
+      outboundDocuments: [
+        makeOutboundDoc(201, 1, {
+          containerNo: "CONT-SPLIT",
+          actualShipDate: "2026-03-10",
+          pallets: 12,
+          sourcePallets: 0
+        })
+      ],
+      rates: DEFAULT_BILLING_RATES
+    });
+
+    expect(preview.dailyBalanceRows.find((row) => row.date === "2026-03-10")?.palletCount).toBe(12);
+  });
+
   // Full container lifecycle integration
   //
   // Scenario:
@@ -907,6 +989,7 @@ function makeOutboundDoc(
     actualShipDate?: string | null;
     confirmedAt?: string | null;
     pallets?: number;
+    sourcePallets?: number;
     containerNo?: string;
   } = {}
 ): OutboundDocument {
@@ -966,6 +1049,7 @@ function makeOutboundDoc(
         containerNo: sourceContainerNo,
         allocatedQty: pallets * 10,
         pallets,
+        sourcePallets: overrides.sourcePallets,
         createdAt: "2026-03-10T09:00:00Z"
       }],
       createdAt: "2026-03-10T09:00:00Z"

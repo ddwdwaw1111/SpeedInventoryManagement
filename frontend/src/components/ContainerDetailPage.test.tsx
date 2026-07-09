@@ -245,7 +245,7 @@ describe("ContainerDetailPage", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("608333")).toBeInTheDocument();
 
-    fireEvent.change(within(dialog).getByPlaceholderText("0"), { target: { value: "-2" } });
+    fireEvent.change(within(dialog).getByLabelText("Adjust Qty: 608333"), { target: { value: "-2" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Post Adjustment" }));
 
     await waitFor(() => {
@@ -261,6 +261,53 @@ describe("ContainerDetailPage", () => {
           containerNo: "GCXU5817233",
           skuMasterId: 1,
           adjustQty: -2,
+          adjustPallets: 0,
+          lineNote: undefined
+        }]
+      });
+    });
+    expect(onRefresh).toHaveBeenCalled();
+  });
+
+  it("posts pallet-only inventory adjustments from the current page", async () => {
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    createInventoryAdjustment.mockResolvedValue({ id: 5 });
+
+    renderWithProviders(
+      <ContainerDetailPage
+        routeKey="/container-contents/GCXU5817233"
+        containerNo="GCXU5817233"
+        items={[createItem({ id: 1, containerId: 101, containerNo: "GCXU5817233", skuMasterId: 1, sku: "608333", quantity: 8, availableQty: 8, pallets: 3 })]}
+        movements={[createMovement({ containerId: 101, containerNo: "GCXU5817233" })]}
+        locations={[createLocation()]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={onRefresh}
+        onNavigate={vi.fn()}
+        onBackToList={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Inventory Adjustment" }));
+    const dialog = await screen.findByRole("dialog");
+
+    fireEvent.change(within(dialog).getByLabelText("Adjust Pallets: 608333"), { target: { value: "-1" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Post Adjustment" }));
+
+    await waitFor(() => {
+      expect(createInventoryAdjustment).toHaveBeenCalledWith({
+        reasonCode: "MANUAL",
+        actualAdjustedAt: expect.any(String),
+        notes: undefined,
+        lines: [{
+          customerId: 1,
+          locationId: 1,
+          storageSection: "TEMP",
+          containerId: 101,
+          containerNo: "GCXU5817233",
+          skuMasterId: 1,
+          adjustQty: 0,
+          adjustPallets: -1,
           lineNote: undefined
         }]
       });

@@ -514,7 +514,9 @@ function buildDocumentStorageEvents(
 
     for (const line of document.lines) {
       line.pickAllocations.forEach((allocation, index) => {
-        const pallets = Math.max(allocation.pallets ?? 0, 0);
+        const pallets = allocation.sourcePallets === undefined
+          ? Math.max(allocation.pallets ?? 0, 0)
+          : Math.max(allocation.sourcePallets, 0);
         if (pallets <= 0 || !allocation.containerNo.trim()) {
           return;
         }

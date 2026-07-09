@@ -164,24 +164,48 @@ type CreateCustomerInput struct {
 type SKUMaster struct {
 	ID                    int64     `db:"id" json:"id"`
 	ItemNumber            string    `db:"item_number" json:"itemNumber"`
+	AMAItemNumber         string    `db:"ama_item_number" json:"amaItemNumber"`
 	SKU                   string    `db:"sku" json:"sku"`
 	Name                  string    `db:"name" json:"name"`
 	Category              string    `db:"category" json:"category"`
 	Description           string    `db:"description" json:"description"`
+	UPC                   string    `db:"upc" json:"upc"`
 	Unit                  string    `db:"unit" json:"unit"`
 	DefaultUnitsPerPallet int       `db:"default_units_per_pallet" json:"defaultUnitsPerPallet"`
+	CaseSizeMM            string    `db:"case_size_mm" json:"caseSizeMm"`
+	CasesPerPallet        int       `db:"cases_per_pallet" json:"casesPerPallet"`
+	CartonsPerLayer       int       `db:"cartons_per_layer" json:"cartonsPerLayer"`
+	LayersPerPallet       int       `db:"layers_per_pallet" json:"layersPerPallet"`
+	PalletLengthMM        int       `db:"pallet_length_mm" json:"palletLengthMm"`
+	PalletWidthMM         int       `db:"pallet_width_mm" json:"palletWidthMm"`
+	PalletHeightMM        int       `db:"pallet_height_mm" json:"palletHeightMm"`
+	PictureURL            string    `db:"picture_url" json:"pictureUrl"`
+	FullFacePhotoURL      string    `db:"full_face_photo_url" json:"fullFacePhotoUrl"`
+	SidePhotoURL          string    `db:"side_photo_url" json:"sidePhotoUrl"`
 	CreatedAt             time.Time `db:"created_at" json:"createdAt"`
 	UpdatedAt             time.Time `db:"updated_at" json:"updatedAt"`
 }
 
 type CreateSKUMasterInput struct {
 	ItemNumber            string `json:"itemNumber"`
+	AMAItemNumber         string `json:"amaItemNumber"`
 	SKU                   string `json:"sku"`
 	Name                  string `json:"name"`
 	Category              string `json:"category"`
 	Description           string `json:"description"`
+	UPC                   string `json:"upc"`
 	Unit                  string `json:"unit"`
 	DefaultUnitsPerPallet int    `json:"defaultUnitsPerPallet"`
+	CaseSizeMM            string `json:"caseSizeMm"`
+	CasesPerPallet        int    `json:"casesPerPallet"`
+	CartonsPerLayer       int    `json:"cartonsPerLayer"`
+	LayersPerPallet       int    `json:"layersPerPallet"`
+	PalletLengthMM        int    `json:"palletLengthMm"`
+	PalletWidthMM         int    `json:"palletWidthMm"`
+	PalletHeightMM        int    `json:"palletHeightMm"`
+	PictureURL            string `json:"pictureUrl"`
+	FullFacePhotoURL      string `json:"fullFacePhotoUrl"`
+	SidePhotoURL          string `json:"sidePhotoUrl"`
 }
 
 type Item struct {
@@ -1535,24 +1559,7 @@ func (s *Store) getItemSKUMasterID(ctx context.Context, tx *sql.Tx, itemID int64
 }
 
 func (s *Store) deleteUnusedSKUMaster(ctx context.Context, tx *sql.Tx, skuMasterID int64) error {
-	if skuMasterID <= 0 {
-		return nil
-	}
-
-	var remainingCount int
-	if err := tx.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM inventory_items WHERE sku_master_id = ?
-	`, skuMasterID).Scan(&remainingCount); err != nil {
-		return fmt.Errorf("count bucket rows for sku master cleanup: %w", err)
-	}
-	if remainingCount > 0 {
-		return nil
-	}
-
-	if _, err := tx.ExecContext(ctx, `DELETE FROM sku_master WHERE id = ?`, skuMasterID); err != nil {
-		return mapDBError(fmt.Errorf("delete unused sku master: %w", err))
-	}
-
+	// SKU master holds durable packing specs; only explicit SKU deletion should remove it.
 	return nil
 }
 

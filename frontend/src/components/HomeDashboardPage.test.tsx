@@ -23,6 +23,7 @@ describe("HomeDashboardPage", () => {
             itemNumber: "603482",
             quantity: 2,
             availableQty: 2,
+            pallets: 3,
             containerNo: "MRSU6884820"
           })
         ]}
@@ -54,12 +55,16 @@ describe("HomeDashboardPage", () => {
     expect(screen.getByRole("heading", { name: "Processing Calendar" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Inbound Appointments" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Outbound Execution" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Current In-Warehouse Pallets" })).toHaveTextContent("4");
 
     await user.click(screen.getByRole("button", { name: "Scheduled Receipts" }));
     expect(onNavigate).toHaveBeenCalledWith("inbound-management");
 
     await user.click(screen.getByRole("button", { name: "Pending Shipments" }));
     expect(onNavigate).toHaveBeenCalledWith("outbound-management");
+
+    await user.click(screen.getByRole("button", { name: "Current In-Warehouse Pallets" }));
+    expect(onNavigate).toHaveBeenCalledWith("container-contents");
 
     await user.click(screen.getByRole("button", { name: "View Full Logs" }));
     expect(onNavigate).toHaveBeenCalledWith("all-activity");

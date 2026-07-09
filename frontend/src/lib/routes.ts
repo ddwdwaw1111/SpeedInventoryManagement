@@ -24,6 +24,7 @@ export type PageKey =
   | "inbound-detail"
   | "receipt-editor"
   | "outbound-management"
+  | "outbound-lifecycle"
   | "shipment-editor"
   | "settings";
 
@@ -51,6 +52,7 @@ export const pagePathMap: Record<PageKey, string> = {
   "inbound-detail": "/inbound-management",
   "receipt-editor": "/inbound-management/new",
   "outbound-management": "/outbound-management",
+  "outbound-lifecycle": "/outbound-lifecycle",
   "shipment-editor": "/outbound-management/new",
   settings: "/settings"
 };
@@ -86,6 +88,12 @@ export function getPageFromPath(pathname: string): PageKey {
   if (/^\/inbound-management\/\d+$/.test(normalized)) return "inbound-detail";
   if (normalized === "/inbound-management") return "inbound-management";
   if (normalized === "/outbound-management/new" || /^\/outbound-management\/\d+\/edit$/.test(normalized)) return "shipment-editor";
+  if (
+    normalized === "/outbound-lifecycle" ||
+    /^\/outbound-lifecycle\/\d+$/.test(normalized) ||
+    normalized === "/outbound-management/lifecycle" ||
+    /^\/outbound-management\/lifecycle\/\d+$/.test(normalized)
+  ) return "outbound-lifecycle";
   if (normalized === "/outbound-management") return "outbound-management";
   if (normalized === "/customers") return "customers";
   if (normalized === "/sku-master") return "sku-master";
@@ -205,6 +213,27 @@ export function navigateToShipmentEditor(setter: (page: PageKey) => void, docume
   }
 
   setter("shipment-editor");
+}
+
+export function navigateToOutboundLifecycle(setter: (page: PageKey) => void, documentId?: number | null) {
+  const path = documentId && documentId > 0
+    ? `/outbound-lifecycle/${documentId}`
+    : "/outbound-lifecycle";
+  if (normalizePagePath(window.location.pathname) !== path) {
+    window.history.pushState({ page: "outbound-lifecycle", documentId: documentId ?? null }, "", path);
+  }
+
+  setter("outbound-lifecycle");
+}
+
+export function getOutboundLifecycleDocumentIdFromPath(pathname: string) {
+  const normalized = normalizePagePath(pathname);
+  const match = normalized.match(/^\/outbound-lifecycle\/(\d+)$/) ?? normalized.match(/^\/outbound-management\/lifecycle\/(\d+)$/);
+  if (!match) {
+    return null;
+  }
+
+  return Number(match[1]);
 }
 
 export function getShipmentEditorIdFromPath(pathname: string) {

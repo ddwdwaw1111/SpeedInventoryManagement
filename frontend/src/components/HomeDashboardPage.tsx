@@ -125,6 +125,8 @@ export function HomeDashboardPage({
   const summaryCards = useMemo<SummaryCard[]>(() => {
     const onHandUnits = items.reduce((sum, item) => sum + item.quantity, 0);
     const activePositions = items.filter((item) => item.quantity > 0).length;
+    const currentPallets = items.reduce((sum, item) => sum + Math.max(item.pallets, 0), 0);
+    const currentPalletPositions = items.filter((item) => item.pallets > 0).length;
     const scheduledReceipts = inboundDocuments.filter((document) => normalizeDocumentStatus(document.status) === "DRAFT").length;
     const arrivedReceipts = inboundDocuments.filter((document) => normalizeInboundTrackingStatus(document.trackingStatus, document.status) === "ARRIVED").length;
     const receivingReceipts = inboundDocuments.filter((document) => normalizeInboundTrackingStatus(document.trackingStatus, document.status) === "RECEIVING").length;
@@ -143,6 +145,17 @@ export function HomeDashboardPage({
         onOpen: () => {
           setPendingInventorySummaryContext({});
           onNavigate("inventory-summary");
+        }
+      },
+      {
+        key: "current-pallets",
+        label: t("dashboardKpiCurrentPallets"),
+        value: numberFormatter.format(currentPallets),
+        meta: t("dashboardKpiCurrentPalletsMeta", { count: currentPalletPositions }),
+        tone: "blue",
+        icon: <WarehouseOutlinedIcon fontSize="small" />,
+        onOpen: () => {
+          onNavigate("container-contents");
         }
       },
       {

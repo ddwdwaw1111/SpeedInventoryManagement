@@ -689,6 +689,78 @@ func TestInventoryAdjustmentAllowsAggregateAdjustmentWithoutPalletIntegration(t 
 	}
 }
 
+func TestInventoryAdjustmentCanChangePalletCountWithoutQuantityIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "AdjustmentPalletCustomer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "AdjustmentPalletLocation-"+suffix)
+	item, err := store.CreateItem(ctx, CreateItemInput{
+		ItemNumber:     "ADJ-PLT-" + suffix,
+		SKU:            "ADJ-PLT-" + suffix,
+		Name:           "ADJ-PLT-" + suffix,
+		Category:       "General",
+		Description:    "Pallet-only adjustment " + suffix,
+		Unit:           "ctn",
+		Quantity:       10,
+		Pallets:        3,
+		CustomerID:     customer.ID,
+		LocationID:     location.ID,
+		StorageSection: DefaultStorageSection,
+		ContainerNo:    "CONT-ADJ-PLT-" + suffix,
+	})
+	if err != nil {
+		t.Fatalf("create pallet adjustment item: %v", err)
+	}
+
+	adjustmentLine := adjustmentLineFromItem(item, 0, "reduce one pallet")
+	adjustmentLine.AdjustPallets = -1
+	adjustment, err := store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
+		ReasonCode: "CORRECTION",
+		Lines: []CreateInventoryAdjustmentLineInput{
+			adjustmentLine,
+		},
+	})
+	if err != nil {
+		t.Fatalf("create pallet-only adjustment: %v", err)
+	}
+	if len(adjustment.Lines) != 1 {
+		t.Fatalf("expected 1 pallet-only adjustment line, got %d", len(adjustment.Lines))
+	}
+	line := adjustment.Lines[0]
+	if line.BeforeQty != 10 || line.AfterQty != 10 || line.PalletBeforeQty != 3 || line.AdjustPallets != -1 || line.PalletAfterQty != 2 {
+		t.Fatalf("expected qty 10->10 and pallets 3->2, got %+v", line)
+	}
+	if adjustment.TotalAdjustQty != 0 || adjustment.TotalAdjustPallets != -1 {
+		t.Fatalf("expected total adjustment qty/pallets 0/-1, got %d/%d", adjustment.TotalAdjustQty, adjustment.TotalAdjustPallets)
+	}
+
+	itemAfterAdjustment := mustFindItemByID(t, ctx, store, item.ID)
+	if itemAfterAdjustment.Quantity != 10 || itemAfterAdjustment.Pallets != 2 {
+		t.Fatalf("expected inventory qty/pallets 10/2 after pallet adjustment, got %d/%d", itemAfterAdjustment.Quantity, itemAfterAdjustment.Pallets)
+	}
+
+	var ledger struct {
+		QuantityChange int `db:"quantity_change"`
+		Pallets        int `db:"pallets"`
+	}
+	if err := store.db.GetContext(ctx, &ledger, `
+		SELECT
+			COALESCE(SUM(quantity_change), 0) AS quantity_change,
+			COALESCE(SUM(pallets), 0) AS pallets
+		FROM stock_ledger
+		WHERE source_document_type = 'ADJUSTMENT'
+		  AND source_document_id = ?
+		  AND event_type = 'ADJUST'
+	`, adjustment.ID); err != nil {
+		t.Fatalf("load pallet-only adjustment ledger: %v", err)
+	}
+	if ledger.QuantityChange != 0 || ledger.Pallets != -1 {
+		t.Fatalf("expected ledger qty/pallets 0/-1, got %d/%d", ledger.QuantityChange, ledger.Pallets)
+	}
+}
+
 func TestInventoryAdjustmentCanIncreaseAggregateInventoryIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
@@ -4148,6 +4220,83 @@ func TestOutboundAutoContainerAllocationPreservesActualPalletCountsPerContainerI
 	}
 	if palletsByContainer["CONT-3-"+suffix] != 3 {
 		t.Fatalf("expected CONT-3 pallet count 3, got %d", palletsByContainer["CONT-3-"+suffix])
+	}
+}
+
+func TestOutboundPickingReservationAllowsMultipleLinesFromSameBucketIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "NJ-"+suffix)
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0, DefaultStorageSection)
+	containerNo := "CONT-SAME-BUCKET-" + suffix
+
+	if _, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-03-23",
+		ContainerNo:         containerNo,
+		StorageSection:      DefaultStorageSection,
+		Status:              DocumentStatusConfirmed,
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:            item.SKU,
+			Description:    item.Description,
+			ExpectedQty:    100,
+			ReceivedQty:    100,
+			Pallets:        10,
+			StorageSection: DefaultStorageSection,
+		}},
+	}); err != nil {
+		t.Fatalf("create inbound receipt for same-bucket outbound reservation: %v", err)
+	}
+
+	sourceItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerNo, item.SKU)
+	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo:    "PL-SAME-BUCKET-" + suffix,
+		OrderRef:         "SO-SAME-BUCKET-" + suffix,
+		ExpectedShipDate: "2026-03-24",
+		Status:           DocumentStatusDraft,
+		DocumentNote:     "Reserve two lines from the same inventory bucket",
+		Lines: []CreateOutboundDocumentLineInput{
+			{
+				CustomerID:  sourceItem.CustomerID,
+				LocationID:  sourceItem.LocationID,
+				SKUMasterID: sourceItem.SKUMasterID,
+				Quantity:    50,
+				Pallets:     5,
+				UnitLabel:   "CTN",
+			},
+			{
+				CustomerID:  sourceItem.CustomerID,
+				LocationID:  sourceItem.LocationID,
+				SKUMasterID: sourceItem.SKUMasterID,
+				Quantity:    50,
+				Pallets:     5,
+				UnitLabel:   "CTN",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create same-bucket outbound draft: %v", err)
+	}
+
+	outbound, err = store.UpdateOutboundDocumentTrackingStatus(ctx, outbound.ID, OutboundTrackingPicking)
+	if err != nil {
+		t.Fatalf("reserve same-bucket outbound lines for picking: %v", err)
+	}
+	if outbound.TrackingStatus != OutboundTrackingPicking {
+		t.Fatalf("expected tracking status %s, got %s", OutboundTrackingPicking, outbound.TrackingStatus)
+	}
+	for _, line := range outbound.Lines {
+		if len(line.PickAllocations) != 1 {
+			t.Fatalf("expected one pick allocation for same-bucket line %d, got %+v", line.ID, line.PickAllocations)
+		}
+		allocation := line.PickAllocations[0]
+		if allocation.ContainerNo != containerNo || allocation.AllocatedQty != 50 || allocation.SourcePallets != 5 {
+			t.Fatalf("expected same-bucket allocation container=%s qty=50 source pallets=5, got %+v", containerNo, allocation)
+		}
 	}
 }
 

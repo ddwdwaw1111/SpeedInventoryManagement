@@ -12,6 +12,8 @@ type OutboundPickPlanRow = {
   locationLabel: string;
   availableQty?: number;
   allocatedQty: number;
+  sourcePallets?: number;
+  targetPallets?: number;
   itemNumber?: string;
 };
 
@@ -41,6 +43,8 @@ type OutboundPickPlanPanelProps = {
   remainingQtyValue: number;
   sourceContainerLabel: string;
   pickQtyLabel: string;
+  sourcePalletsLabel?: string;
+  targetPalletsLabel?: string;
   unitLabel: string;
   sourceUnitLabel?: string;
   searchShortcutHint?: string;
@@ -89,6 +93,8 @@ export function OutboundPickPlanPanel({
   remainingQtyValue,
   sourceContainerLabel,
   pickQtyLabel,
+  sourcePalletsLabel,
+  targetPalletsLabel,
   unitLabel,
   sourceUnitLabel,
   searchShortcutHint = "Press / to search",
@@ -283,6 +289,8 @@ export function OutboundPickPlanPanel({
           {groupedRows.length > 0 ? groupedRows.map((group) => {
             const groupAllocatedQty = group.rows.reduce((sum, row) => sum + row.allocatedQty, 0);
             const groupAvailableQty = group.rows.reduce((sum, row) => sum + (row.availableQty ?? row.allocatedQty), 0);
+            const groupSourcePallets = group.rows.reduce((sum, row) => sum + Math.max(0, row.sourcePallets ?? 0), 0);
+            const groupTargetPallets = group.rows.reduce((sum, row) => sum + Math.max(0, row.targetPallets ?? 0), 0);
             const groupSelectedRows = group.rows.filter((row) => row.allocatedQty > 0).length;
             const groupRemainingQty = Math.max(0, requiredQtyValue - (selectedQtyValue - groupAllocatedQty));
             const groupHasSelection = groupAllocatedQty > 0;
@@ -334,6 +342,12 @@ export function OutboundPickPlanPanel({
                     <div className="flex flex-wrap justify-end gap-1.5 text-[10px] font-semibold text-slate-500">
                       <span className="rounded-full bg-white px-2 py-0.5">{`${sourceUnitLabel || "Pick rows"}: ${groupSelectedRows}/${group.rows.length}`}</span>
                       <span className="rounded-full bg-white px-2 py-0.5">{`${pickQtyLabel}: ${groupAllocatedQty}/${groupAvailableQty}`}</span>
+                      {sourcePalletsLabel && groupSourcePallets > 0 ? (
+                        <span className="rounded-full bg-white px-2 py-0.5">{`${sourcePalletsLabel}: ${groupSourcePallets}`}</span>
+                      ) : null}
+                      {targetPalletsLabel && groupTargetPallets > 0 ? (
+                        <span className="rounded-full bg-white px-2 py-0.5">{`${targetPalletsLabel}: ${groupTargetPallets}`}</span>
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -387,6 +401,8 @@ export function OutboundPickPlanPanel({
                             <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-slate-500">
                               {typeof row.availableQty === "number" ? <span>{`${availableQtyLabel}: ${row.availableQty} ${unitLabel}`}</span> : null}
                               <span>{`${pickQtyLabel}: ${row.allocatedQty} ${unitLabel}`}</span>
+                              {sourcePalletsLabel && typeof row.sourcePallets === "number" ? <span>{`${sourcePalletsLabel}: ${row.sourcePallets}`}</span> : null}
+                              {targetPalletsLabel && typeof row.targetPallets === "number" ? <span>{`${targetPalletsLabel}: ${row.targetPallets}`}</span> : null}
                             </div>
                           </div>
                           <div className={rowIsEditable ? "col-span-2 justify-self-end text-right md:col-span-1" : "text-right"}>

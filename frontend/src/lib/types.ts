@@ -241,24 +241,48 @@ export type CustomerPayload = {
 export type SKUMaster = {
   id: number;
   itemNumber: string;
+  amaItemNumber: string;
   sku: string;
   name: string;
   category: string;
   description: string;
+  upc: string;
   unit: string;
   defaultUnitsPerPallet: number;
+  caseSizeMm: string;
+  casesPerPallet: number;
+  cartonsPerLayer: number;
+  layersPerPallet: number;
+  palletLengthMm: number;
+  palletWidthMm: number;
+  palletHeightMm: number;
+  pictureUrl: string;
+  fullFacePhotoUrl: string;
+  sidePhotoUrl: string;
   createdAt: string;
   updatedAt: string;
 };
 
 export type SKUMasterPayload = {
   itemNumber: string;
+  amaItemNumber?: string;
   sku: string;
   name: string;
   category: string;
   description: string;
+  upc?: string;
   unit: string;
   defaultUnitsPerPallet: number;
+  caseSizeMm?: string;
+  casesPerPallet?: number;
+  cartonsPerLayer?: number;
+  layersPerPallet?: number;
+  palletLengthMm?: number;
+  palletWidthMm?: number;
+  palletHeightMm?: number;
+  pictureUrl?: string;
+  fullFacePhotoUrl?: string;
+  sidePhotoUrl?: string;
 };
 
 export type Item = {
@@ -634,6 +658,8 @@ export type OutboundPickAllocation = {
   containerNo: string;
   allocatedQty: number;
   pallets?: number;
+  sourcePallets?: number;
+  targetPallets?: number;
   createdAt: string;
 };
 
@@ -658,6 +684,8 @@ export type OutboundPickAllocationPayload = {
   containerNo?: string;
   allocatedQty: number;
   pallets?: number;
+  sourcePallets?: number;
+  targetPallets?: number;
 };
 
 export type OutboundDocument = {
@@ -874,6 +902,9 @@ export type InventoryAdjustmentLine = {
   beforeQty: number;
   adjustQty: number;
   afterQty: number;
+  palletBeforeQty: number;
+  adjustPallets: number;
+  palletAfterQty: number;
   lineNote: string;
   createdAt: string;
 };
@@ -887,6 +918,7 @@ export type InventoryAdjustment = {
   status: string;
   totalLines: number;
   totalAdjustQty: number;
+  totalAdjustPallets: number;
   createdAt: string;
   updatedAt: string;
   lines: InventoryAdjustmentLine[];
@@ -900,6 +932,7 @@ export type InventoryAdjustmentLinePayload = {
   containerNo: string;
   skuMasterId: number;
   adjustQty: number;
+  adjustPallets?: number;
   lineNote?: string;
 };
 

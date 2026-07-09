@@ -39,6 +39,7 @@ import {
   getContainerLifecycleScopeFromPath,
   getDailyOperationsDateFromPath,
   getInboundDetailIdFromPath,
+  getOutboundLifecycleDocumentIdFromPath,
   getPageFromPath,
   getReceiptEditorIdFromPath,
   getShipmentEditorIdFromPath,
@@ -49,6 +50,7 @@ import {
   navigateToContainerLifecycle,
   navigateToDailyOperations,
   navigateToInboundDetail,
+  navigateToOutboundLifecycle,
   navigateToPage,
   navigateToReceiptEditor,
   navigateToShipmentEditor,
@@ -124,6 +126,10 @@ const InboundReceiptEditorPage = lazy(async () => {
 const OutboundShipmentEditorPage = lazy(async () => {
   const module = await import("./components/OutboundShipmentEditorPage");
   return { default: module.OutboundShipmentEditorPage };
+});
+const OutboundLifecyclePage = lazy(async () => {
+  const module = await import("./components/OutboundLifecyclePage");
+  return { default: module.OutboundLifecyclePage };
 });
 const ReportsPage = lazy(async () => {
   const module = await import("./components/ReportsPage");
@@ -310,6 +316,11 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
       "",
       window.location.pathname
     );
+    setCurrentPathname(window.location.pathname);
+  }
+
+  function handleNavigateToOutboundLifecycle(documentId?: number | null) {
+    navigateToOutboundLifecycle(setActivePage, documentId);
     setCurrentPathname(window.location.pathname);
   }
 
@@ -539,6 +550,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
     { key: "inbound-detail", label: t("inboundDetailPage"), description: t("inboundDetailPageDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
     { key: "receipt-editor", label: t("receiptEditorPage"), description: t("receiptEditorPageDesc"), icon: <MoveToInboxOutlined fontSize="small" /> },
     { key: "outbound-management", label: t("navShipping"), description: t("outboundDesc"), icon: <OutboxOutlined fontSize="small" /> },
+    { key: "outbound-lifecycle", label: t("outboundLifecyclePage"), description: t("outboundLifecyclePageDesc"), icon: <HistoryOutlined fontSize="small" /> },
     { key: "shipment-editor", label: t("shipmentEditorPage"), description: t("shipmentEditorPageDesc"), icon: <OutboxOutlined fontSize="small" /> },
     { key: "inventory-summary", label: t("inventorySummary"), description: t("inventorySummaryDesc"), icon: <WarehouseOutlined fontSize="small" /> },
     { key: "warehouse-map", label: t("warehouseMap"), description: t("warehouseMapDesc"), icon: <WarehouseOutlined fontSize="small" /> },
@@ -555,7 +567,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
     { key: "settings", label: t("settings"), description: t("settingsDesc"), icon: <SettingsOutlined fontSize="small" /> }
   ];
   const pageItemMap = new Map(pageItems.map((item) => [item.key, item] as const));
-  const primaryNavKeys: PageKey[] = ["dashboard", "inbound-management", "outbound-management"];
+  const primaryNavKeys: PageKey[] = ["dashboard", "inbound-management", "outbound-management", "outbound-lifecycle"];
   const primaryNavItems = primaryNavKeys
     .map((pageKey) => pageItemMap.get(pageKey))
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
@@ -619,6 +631,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
   const selectedInboundDetailId = getInboundDetailIdFromPath(currentPathname);
   const selectedReceiptEditorId = getReceiptEditorIdFromPath(currentPathname);
   const selectedShipmentEditorId = getShipmentEditorIdFromPath(currentPathname);
+  const selectedOutboundLifecycleDocumentId = getOutboundLifecycleDocumentIdFromPath(currentPathname);
   const selectedContainerDetailNo = getContainerDetailContainerNoFromPath(currentPathname);
   const selectedContainerLifecycleScope = getContainerLifecycleScopeFromPath(currentPathname);
   const selectedBillingContainerDetail = getBillingContainerDetailFromPath(currentPathname);
@@ -791,7 +804,8 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
                 onOpenReceiptEditor={handleNavigateToReceiptEditor}
               />)
             ) : null}
-            {activePage === "outbound-management" ? renderWithSuspense(<ActivityManagementPage mode="OUT" items={items} skuMasters={skuMasters} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onOpenOutboundShipmentEditor={handleNavigateToShipmentEditor} />) : null}
+            {activePage === "outbound-management" ? renderWithSuspense(<ActivityManagementPage mode="OUT" items={items} skuMasters={skuMasters} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onOpenOutboundShipmentEditor={handleNavigateToShipmentEditor} onOpenOutboundLifecycle={handleNavigateToOutboundLifecycle} />) : null}
+            {activePage === "outbound-lifecycle" ? renderWithSuspense(<OutboundLifecyclePage outboundDocuments={activeOutboundDocuments} isLoading={isLoading} routeDocumentId={selectedOutboundLifecycleDocumentId} onOpenDocuments={() => handleNavigateToPage("outbound-management")} onOpenShipmentEditor={handleNavigateToShipmentEditor} />) : null}
             {activePage === "shipment-editor" ? (
               renderWithSuspense(<OutboundShipmentEditorPage
                 routeKey={currentPathname}

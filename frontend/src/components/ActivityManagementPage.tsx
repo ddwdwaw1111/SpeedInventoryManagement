@@ -55,6 +55,7 @@ import { InboundPalletBreakdownPanel } from "./InboundPalletBreakdownPanel";
 import { InlineLoadingIndicator } from "./InlineLoadingIndicator";
 import { OutboundPickPlanPanel } from "./OutboundPickPlanPanel";
 import { SearchSubmitField } from "./SearchSubmitField";
+import { TabsList, TabsTrigger } from "./ui/tabs";
 import { buildWorkspaceGridSlots, WorkspaceDrawerLoadingState, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type ActivityMode = "IN" | "OUT";
@@ -79,6 +80,7 @@ type ActivityManagementPageProps = {
   onOpenInboundDetail?: (documentId: number) => void;
   onOpenInboundReceiptEditor?: (documentId?: number | null, context?: InboundReceiptEditorLaunchContext) => void;
   onOpenOutboundShipmentEditor?: (documentId?: number | null, context?: OutboundShipmentEditorLaunchContext) => void;
+  onOpenOutboundLifecycle?: (documentId?: number | null) => void;
   embeddedComposer?: {
     initialDate?: string;
     onClose: () => void;
@@ -564,6 +566,7 @@ export function ActivityManagementPage({
   onOpenInboundDetail,
   onOpenInboundReceiptEditor,
   onOpenOutboundShipmentEditor,
+  onOpenOutboundLifecycle,
   embeddedComposer
 }: ActivityManagementPageProps) {
   const { t } = useI18n();
@@ -1302,6 +1305,9 @@ export function ActivityManagementPage({
           ariaLabel={t("actions")}
           actions={[
             { key: "details", label: t("details"), icon: <VisibilityOutlinedIcon fontSize="small" />, onClick: () => setSelectedOutboundDocumentId(params.row.id) },
+            ...(onOpenOutboundLifecycle
+              ? [{ key: "lifecycle", label: t("outboundLifecycleTab"), icon: <VisibilityOutlinedIcon fontSize="small" />, onClick: () => onOpenOutboundLifecycle(params.row.id) }]
+              : []),
             ...(canManage && !params.row.archivedAt && normalizeDocumentStatus(params.row.status) === "DRAFT"
               ? [{ key: "edit", label: t("editDraft"), icon: <EditOutlinedIcon fontSize="small" />, onClick: () => openEditOutboundDraft(params.row) }]
               : []),
@@ -2550,9 +2556,16 @@ export function ActivityManagementPage({
                       {mode === "IN" ? t("newInbound") : t("newOutbound")}
                     </Button>
                   ) : null}
-                  <Button variant="outlined" disabled>
-                    {mode === "IN" ? t("documentsView") : t("packingListsView")}
-                  </Button>
+                  {mode === "OUT" && onOpenOutboundLifecycle ? (
+                    <TabsList>
+                      <TabsTrigger active>{t("outboundDocumentsTab")}</TabsTrigger>
+                      <TabsTrigger onClick={() => onOpenOutboundLifecycle(null)}>{t("outboundLifecycleTab")}</TabsTrigger>
+                    </TabsList>
+                  ) : (
+                    <Button variant="outlined" disabled>
+                      {mode === "IN" ? t("documentsView") : t("packingListsView")}
+                    </Button>
+                  )}
                 </>
               )}
               notices={[permissionNotice]}

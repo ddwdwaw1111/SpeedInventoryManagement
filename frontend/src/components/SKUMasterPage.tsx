@@ -25,11 +25,23 @@ type SKUMasterPageProps = {
 
 type SKUMasterFormState = {
   itemNumber: string;
+  amaItemNumber: string;
   sku: string;
   description: string;
+  upc: string;
   category: string;
   unit: string;
   defaultUnitsPerPallet: number;
+  caseSizeMm: string;
+  casesPerPallet: number;
+  cartonsPerLayer: number;
+  layersPerPallet: number;
+  palletLengthMm: number;
+  palletWidthMm: number;
+  palletHeightMm: number;
+  pictureUrl: string;
+  fullFacePhotoUrl: string;
+  sidePhotoUrl: string;
 };
 const SKU_MASTER_COLUMN_ORDER_PREFERENCE_KEY = "sku-master.column-order";
 
@@ -38,11 +50,23 @@ const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", ti
 function createEmptyForm(): SKUMasterFormState {
   return {
     itemNumber: "",
+    amaItemNumber: "",
     sku: "",
     description: "",
+    upc: "",
     category: "General",
     unit: "pcs",
-    defaultUnitsPerPallet: 0
+    defaultUnitsPerPallet: 0,
+    caseSizeMm: "",
+    casesPerPallet: 0,
+    cartonsPerLayer: 0,
+    layersPerPallet: 0,
+    palletLengthMm: 0,
+    palletWidthMm: 0,
+    palletHeightMm: 0,
+    pictureUrl: "",
+    fullFacePhotoUrl: "",
+    sidePhotoUrl: ""
   };
 }
 
@@ -120,6 +144,15 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
       renderCell: (params) => <span className="cell--mono">{params.value || "-"}</span>
     },
     {
+      field: "amaItemNumber",
+      headerName: t("amaItemNumber"),
+      minWidth: 140,
+      flex: 0.8,
+      editable: canManage,
+      disableReorder: !canManage,
+      renderCell: (params) => <span className="cell--mono">{params.value || "-"}</span>
+    },
+    {
       field: "sku",
       headerName: t("sku"),
       minWidth: 130,
@@ -142,6 +175,15 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
         name: String(value ?? "")
       })
     },
+    {
+      field: "upc",
+      headerName: t("upc"),
+      minWidth: 140,
+      flex: 0.8,
+      editable: canManage,
+      disableReorder: !canManage,
+      renderCell: (params) => <span className="cell--mono">{params.value || "-"}</span>
+    },
     { field: "category", headerName: t("category"), minWidth: 140, flex: 0.8, editable: canManage, disableReorder: !canManage },
     {
       field: "unit",
@@ -153,6 +195,17 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
       renderCell: (params) => <span>{String(params.value ?? "").toUpperCase()}</span>
     },
     { field: "defaultUnitsPerPallet", headerName: t("defaultUnitsPerPallet"), minWidth: 170, type: "number", editable: canManage, disableReorder: !canManage },
+    { field: "casesPerPallet", headerName: t("casesPerPallet"), minWidth: 150, type: "number", editable: canManage, disableReorder: !canManage },
+    { field: "cartonsPerLayer", headerName: t("cartonsPerLayer"), minWidth: 160, type: "number", editable: canManage, disableReorder: !canManage },
+    { field: "layersPerPallet", headerName: t("layersPerPallet"), minWidth: 160, type: "number", editable: canManage, disableReorder: !canManage },
+    {
+      field: "outboundPalletSize",
+      headerName: t("outboundPalletSizeMm"),
+      minWidth: 170,
+      flex: 0.8,
+      disableReorder: !canManage,
+      valueGetter: (_, row) => formatPalletDimensions(row)
+    },
     { field: "updatedAt", headerName: t("updated"), minWidth: 180, flex: 0.9, disableReorder: !canManage, valueFormatter: (value) => formatDateValue(value, dateFormatter) },
     {
       field: "actions",
@@ -212,11 +265,23 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
     setEditingId(row.id);
     setForm({
       itemNumber: row.itemNumber || "",
+      amaItemNumber: row.amaItemNumber || "",
       sku: row.sku,
       description: displayDescription(row),
+      upc: row.upc || "",
       category: row.category || "General",
       unit: row.unit || "pcs",
-      defaultUnitsPerPallet: row.defaultUnitsPerPallet || 0
+      defaultUnitsPerPallet: row.defaultUnitsPerPallet || 0,
+      caseSizeMm: row.caseSizeMm || "",
+      casesPerPallet: row.casesPerPallet || 0,
+      cartonsPerLayer: row.cartonsPerLayer || 0,
+      layersPerPallet: row.layersPerPallet || 0,
+      palletLengthMm: row.palletLengthMm || 0,
+      palletWidthMm: row.palletWidthMm || 0,
+      palletHeightMm: row.palletHeightMm || 0,
+      pictureUrl: row.pictureUrl || "",
+      fullFacePhotoUrl: row.fullFacePhotoUrl || "",
+      sidePhotoUrl: row.sidePhotoUrl || ""
     });
     setErrorMessage("");
     setIsModalOpen(true);
@@ -225,12 +290,24 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
   function buildPayload(row: SKUMaster): SKUMasterPayload {
     return {
       itemNumber: row.itemNumber?.trim() ?? "",
+      amaItemNumber: row.amaItemNumber?.trim() ?? "",
       sku: row.sku.trim(),
       name: displayDescription(row).trim(),
       category: row.category.trim() || "General",
       description: displayDescription(row).trim(),
+      upc: row.upc?.trim() ?? "",
       unit: row.unit.trim() || "pcs",
-      defaultUnitsPerPallet: Math.max(0, Number(row.defaultUnitsPerPallet || 0))
+      defaultUnitsPerPallet: Math.max(0, Number(row.defaultUnitsPerPallet || 0)),
+      caseSizeMm: row.caseSizeMm?.trim() ?? "",
+      casesPerPallet: Math.max(0, Number(row.casesPerPallet || 0)),
+      cartonsPerLayer: Math.max(0, Number(row.cartonsPerLayer || 0)),
+      layersPerPallet: Math.max(0, Number(row.layersPerPallet || 0)),
+      palletLengthMm: Math.max(0, Number(row.palletLengthMm || 0)),
+      palletWidthMm: Math.max(0, Number(row.palletWidthMm || 0)),
+      palletHeightMm: Math.max(0, Number(row.palletHeightMm || 0)),
+      pictureUrl: row.pictureUrl?.trim() ?? "",
+      fullFacePhotoUrl: row.fullFacePhotoUrl?.trim() ?? "",
+      sidePhotoUrl: row.sidePhotoUrl?.trim() ?? ""
     };
   }
 
@@ -325,12 +402,24 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
 
     const payload: SKUMasterPayload = {
       itemNumber: form.itemNumber,
+      amaItemNumber: form.amaItemNumber,
       sku: form.sku,
       name: form.description,
       category: form.category,
       description: form.description,
+      upc: form.upc,
       unit: form.unit,
-      defaultUnitsPerPallet: form.defaultUnitsPerPallet
+      defaultUnitsPerPallet: form.defaultUnitsPerPallet,
+      caseSizeMm: form.caseSizeMm,
+      casesPerPallet: form.casesPerPallet,
+      cartonsPerLayer: form.cartonsPerLayer,
+      layersPerPallet: form.layersPerPallet,
+      palletLengthMm: form.palletLengthMm,
+      palletWidthMm: form.palletWidthMm,
+      palletHeightMm: form.palletHeightMm,
+      pictureUrl: form.pictureUrl,
+      fullFacePhotoUrl: form.fullFacePhotoUrl,
+      sidePhotoUrl: form.sidePhotoUrl
     };
 
     try {
@@ -420,7 +509,7 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
           closeModal();
         }}
         fullWidth
-        maxWidth="sm"
+        maxWidth="md"
       >
         <DialogTitle sx={{ pb: 1 }}>
           {editingId ? t("editSkuMaster") : t("addSkuMaster")}
@@ -432,11 +521,24 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
           {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
           <form className="sheet-form" onSubmit={handleSubmit}>
             <label>{t("itemNumber")}<input value={form.itemNumber} onChange={(event) => setForm((current) => ({ ...current, itemNumber: event.target.value }))} placeholder="VB22GC" /></label>
+            <label>{t("amaItemNumber")}<input value={form.amaItemNumber} onChange={(event) => setForm((current) => ({ ...current, amaItemNumber: event.target.value }))} placeholder="AMA-1001" /></label>
             <label>{t("sku")}<input value={form.sku} onChange={(event) => setForm((current) => ({ ...current, sku: event.target.value }))} placeholder="ABC123" required /></label>
+            <label>{t("upc")}<input value={form.upc} onChange={(event) => setForm((current) => ({ ...current, upc: event.target.value }))} placeholder="012345678905" /></label>
             <label className="sheet-form__wide">{t("description")}<input value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} placeholder={t("descriptionPlaceholder")} required /></label>
             <label>{t("category")}<input value={form.category} onChange={(event) => setForm((current) => ({ ...current, category: event.target.value }))} placeholder="General" /></label>
             <label>{t("unit")}<input value={form.unit} onChange={(event) => setForm((current) => ({ ...current, unit: event.target.value }))} placeholder="pcs" /></label>
             <label>{t("defaultUnitsPerPallet")}<input type="number" min="0" value={form.defaultUnitsPerPallet} onChange={(event) => setForm((current) => ({ ...current, defaultUnitsPerPallet: Math.max(0, Number(event.target.value || 0)) }))} placeholder="200" /></label>
+            <div className="sheet-form__wide sheet-note sheet-note--readonly">{t("outboundPalletSpec")}</div>
+            <label>{t("caseSizeMm")}<input value={form.caseSizeMm} onChange={(event) => setForm((current) => ({ ...current, caseSizeMm: event.target.value }))} placeholder="600x400x300" /></label>
+            <label>{t("casesPerPallet")}<input type="number" min="0" value={form.casesPerPallet} onChange={(event) => setForm((current) => ({ ...current, casesPerPallet: Math.max(0, Number(event.target.value || 0)) }))} placeholder="84" /></label>
+            <label>{t("cartonsPerLayer")}<input type="number" min="0" value={form.cartonsPerLayer} onChange={(event) => setForm((current) => ({ ...current, cartonsPerLayer: Math.max(0, Number(event.target.value || 0)) }))} placeholder="12" /></label>
+            <label>{t("layersPerPallet")}<input type="number" min="0" value={form.layersPerPallet} onChange={(event) => setForm((current) => ({ ...current, layersPerPallet: Math.max(0, Number(event.target.value || 0)) }))} placeholder="7" /></label>
+            <label>{t("palletLengthMm")}<input type="number" min="0" value={form.palletLengthMm} onChange={(event) => setForm((current) => ({ ...current, palletLengthMm: Math.max(0, Number(event.target.value || 0)) }))} placeholder="1200" /></label>
+            <label>{t("palletWidthMm")}<input type="number" min="0" value={form.palletWidthMm} onChange={(event) => setForm((current) => ({ ...current, palletWidthMm: Math.max(0, Number(event.target.value || 0)) }))} placeholder="1000" /></label>
+            <label>{t("palletHeightMm")}<input type="number" min="0" value={form.palletHeightMm} onChange={(event) => setForm((current) => ({ ...current, palletHeightMm: Math.max(0, Number(event.target.value || 0)) }))} placeholder="1600" /></label>
+            <label>{t("pictureUrl")}<input value={form.pictureUrl} onChange={(event) => setForm((current) => ({ ...current, pictureUrl: event.target.value }))} placeholder="https://..." /></label>
+            <label>{t("fullFacePhotoUrl")}<input value={form.fullFacePhotoUrl} onChange={(event) => setForm((current) => ({ ...current, fullFacePhotoUrl: event.target.value }))} placeholder="https://..." /></label>
+            <label>{t("sidePhotoUrl")}<input value={form.sidePhotoUrl} onChange={(event) => setForm((current) => ({ ...current, sidePhotoUrl: event.target.value }))} placeholder="https://..." /></label>
             <div className="sheet-form__actions sheet-form__wide">
               <button className="button button--primary" type="submit" disabled={isSubmitting}>{isSubmitting ? t("saving") : editingId ? t("updateRow") : t("addRow")}</button>
               <button className="button button--ghost" type="button" onClick={closeModal}>{t("cancel")}</button>
@@ -517,4 +619,14 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
 
 function displayDescription(row: Pick<SKUMaster, "description" | "name">) {
   return row.description || row.name;
+}
+
+function formatPalletDimensions(row: Pick<SKUMaster, "palletLengthMm" | "palletWidthMm" | "palletHeightMm">) {
+  const length = Math.max(0, Number(row.palletLengthMm || 0));
+  const width = Math.max(0, Number(row.palletWidthMm || 0));
+  const height = Math.max(0, Number(row.palletHeightMm || 0));
+  if (length <= 0 && width <= 0 && height <= 0) {
+    return "-";
+  }
+  return `${length || "-"} x ${width || "-"} x ${height || "-"}`;
 }

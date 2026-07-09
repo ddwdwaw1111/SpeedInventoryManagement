@@ -56,6 +56,7 @@ type ContainerAdjustmentFormState = {
   notes: string;
   lineNote: string;
   quantities: Record<string, string>;
+  palletDeltas: Record<string, string>;
 };
 
 type ContainerDetailPageProps = {
@@ -309,6 +310,7 @@ export function ContainerDetailPage({
     const adjustmentLines = buildAdjustmentLinesFromItems(
       adjustableContainerItems,
       adjustmentForm.quantities,
+      adjustmentForm.palletDeltas,
       adjustmentForm.lineNote
     );
     if (adjustmentLines.length === 0) {
@@ -668,9 +670,14 @@ export function ContainerDetailPage({
             <ContainerAdjustmentItemInputs
               items={adjustableContainerItems}
               quantities={adjustmentForm.quantities}
-              onChange={(itemKey, value) => setAdjustmentForm((current) => ({
+              palletDeltas={adjustmentForm.palletDeltas}
+              onQuantityChange={(itemKey, value) => setAdjustmentForm((current) => ({
                 ...current,
                 quantities: { ...current.quantities, [itemKey]: value }
+              }))}
+              onPalletDeltaChange={(itemKey, value) => setAdjustmentForm((current) => ({
+                ...current,
+                palletDeltas: { ...current.palletDeltas, [itemKey]: value }
               }))}
               t={t}
             />
@@ -1019,12 +1026,14 @@ function createEmptyContainerTransferForm(): ContainerTransferFormState {
 
 function createEmptyContainerAdjustmentForm(items: Item[]): ContainerAdjustmentFormState {
   const quantities = Object.fromEntries(items.map((item) => [containerInventoryItemKey(item), ""]));
+  const palletDeltas = Object.fromEntries(items.map((item) => [containerInventoryItemKey(item), ""]));
   return {
     reasonCode: "MANUAL",
     actualAdjustedAt: toDateTimeInputValue(new Date()),
     notes: "",
     lineNote: "",
-    quantities
+    quantities,
+    palletDeltas
   };
 }
 
@@ -1068,12 +1077,16 @@ function ContainerTransferItemSummary({
 function ContainerAdjustmentItemInputs({
   items,
   quantities,
-  onChange,
+  palletDeltas,
+  onQuantityChange,
+  onPalletDeltaChange,
   t
 }: {
   items: Item[];
   quantities: Record<string, string>;
-  onChange: (itemKey: string, value: string) => void;
+  palletDeltas: Record<string, string>;
+  onQuantityChange: (itemKey: string, value: string) => void;
+  onPalletDeltaChange: (itemKey: string, value: string) => void;
   t: (key: string, params?: Record<string, string | number>) => string;
 }) {
   if (items.length === 0) {
@@ -1088,7 +1101,9 @@ function ContainerAdjustmentItemInputs({
             <th className="px-3 py-2 font-semibold">{t("sku")}</th>
             <th className="px-3 py-2 font-semibold">{t("sourceStorage")}</th>
             <th className="px-3 py-2 text-right font-semibold">{t("onHand")}</th>
+            <th className="px-3 py-2 text-right font-semibold">{t("palletQty")}</th>
             <th className="px-3 py-2 text-right font-semibold">{t("adjustQty")}</th>
+            <th className="px-3 py-2 text-right font-semibold">{t("adjustPallets")}</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -1099,13 +1114,25 @@ function ContainerAdjustmentItemInputs({
                 <td className="px-3 py-2 font-semibold text-[#143569]">{item.sku}</td>
                 <td className="px-3 py-2 text-slate-600">{item.locationName} / {normalizeStorageSection(item.storageSection)}</td>
                 <td className="px-3 py-2 text-right font-semibold text-slate-700">{item.quantity}</td>
+                <td className="px-3 py-2 text-right font-semibold text-slate-700">{item.pallets}</td>
                 <td className="px-3 py-2 text-right">
                   <input
                     className="w-24 rounded-md border border-slate-200 px-2 py-1 text-right"
                     type="number"
                     value={quantities[itemKey] ?? ""}
-                    onChange={(event) => onChange(itemKey, event.target.value)}
+                    onChange={(event) => onQuantityChange(itemKey, event.target.value)}
                     placeholder="0"
+                    aria-label={`${t("adjustQty")}: ${item.sku}`}
+                  />
+                </td>
+                <td className="px-3 py-2 text-right">
+                  <input
+                    className="w-24 rounded-md border border-slate-200 px-2 py-1 text-right"
+                    type="number"
+                    value={palletDeltas[itemKey] ?? ""}
+                    onChange={(event) => onPalletDeltaChange(itemKey, event.target.value)}
+                    placeholder="0"
+                    aria-label={`${t("adjustPallets")}: ${item.sku}`}
                   />
                 </td>
               </tr>
@@ -1154,13 +1181,15 @@ function buildTransferLinesFromItems(
 function buildAdjustmentLinesFromItems(
   items: Item[],
   quantities: Record<string, string>,
+  palletDeltas: Record<string, string>,
   lineNote: string
 ) {
   const normalizedLineNote = lineNote.trim() || undefined;
 
   return items.flatMap((item) => {
     const adjustQty = Number(quantities[containerInventoryItemKey(item)] || 0);
-    if (!Number.isFinite(adjustQty) || adjustQty === 0) {
+    const adjustPallets = Number(palletDeltas[containerInventoryItemKey(item)] || 0);
+    if (!Number.isFinite(adjustQty) || !Number.isFinite(adjustPallets) || (adjustQty === 0 && adjustPallets === 0)) {
       return [];
     }
 
@@ -1172,6 +1201,7 @@ function buildAdjustmentLinesFromItems(
       containerNo: normalizeContainerNumber(item.containerNo),
       skuMasterId: item.skuMasterId,
       adjustQty,
+      adjustPallets,
       lineNote: normalizedLineNote
     }];
   });

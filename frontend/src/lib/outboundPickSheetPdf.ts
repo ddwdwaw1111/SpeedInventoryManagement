@@ -223,7 +223,7 @@ function buildPickSheetRowsForLine(line: OutboundDocument["lines"][number], line
     section: normalizeStorageSection(allocation.storageSection),
     containerNo: allocation.containerNo || "",
     quantity: allocation.allocatedQty,
-    pallets: Math.max(0, allocation.pallets ?? 0)
+    pallets: Math.max(0, allocation.sourcePallets ?? allocation.pallets ?? 0)
   })));
 }
 

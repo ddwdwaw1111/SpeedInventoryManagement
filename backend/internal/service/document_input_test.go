@@ -151,6 +151,44 @@ func TestValidateOutboundDocumentInput(t *testing.T) {
 	}
 }
 
+func TestOutboundPickAllocationJSONPreservesSourcePalletPresence(t *testing.T) {
+	legacyAllocations := decodeOutboundPickAllocationsOrEmpty(`[{"containerNo":"CONT-A","allocatedQty":10,"pallets":2}]`)
+	if len(legacyAllocations) != 1 {
+		t.Fatalf("expected one legacy allocation, got %#v", legacyAllocations)
+	}
+	if legacyAllocations[0].SourcePallets != 2 {
+		t.Fatalf("expected legacy pallets to be used as source pallets, got %#v", legacyAllocations[0])
+	}
+
+	targetOnlyAllocations := decodeOutboundPickAllocationsOrEmpty(`[{"containerNo":"CONT-A","allocatedQty":10,"pallets":2,"targetPallets":1}]`)
+	if len(targetOnlyAllocations) != 1 {
+		t.Fatalf("expected one target-only allocation, got %#v", targetOnlyAllocations)
+	}
+	if outboundPickAllocationHasSourcePallets(targetOnlyAllocations[0]) {
+		t.Fatalf("expected omitted source pallets to remain omitted, got %#v", targetOnlyAllocations[0])
+	}
+	targetOnlyEncoded := mustEncodeOutboundPickAllocations(targetOnlyAllocations)
+	if strings.Contains(targetOnlyEncoded, `"sourcePallets"`) {
+		t.Fatalf("expected omitted source pallets to stay omitted in JSON, got %s", targetOnlyEncoded)
+	}
+	targetOnlyReloaded := decodeOutboundPickAllocationsOrEmpty(targetOnlyEncoded)
+	if len(targetOnlyReloaded) != 1 || outboundPickAllocationHasSourcePallets(targetOnlyReloaded[0]) {
+		t.Fatalf("expected omitted source pallets after reload, got %#v from %s", targetOnlyReloaded, targetOnlyEncoded)
+	}
+
+	explicitZeroAllocations := decodeOutboundPickAllocationsOrEmpty(`[{"containerNo":"CONT-A","allocatedQty":10,"pallets":2,"sourcePallets":0,"targetPallets":1}]`)
+	if len(explicitZeroAllocations) != 1 {
+		t.Fatalf("expected one explicit-zero allocation, got %#v", explicitZeroAllocations)
+	}
+	if !outboundPickAllocationHasSourcePallets(explicitZeroAllocations[0]) {
+		t.Fatalf("expected explicit zero source pallets to be preserved, got %#v", explicitZeroAllocations[0])
+	}
+	explicitZeroEncoded := mustEncodeOutboundPickAllocations(explicitZeroAllocations)
+	if !strings.Contains(explicitZeroEncoded, `"sourcePallets":0`) {
+		t.Fatalf("expected explicit zero source pallets in JSON, got %s", explicitZeroEncoded)
+	}
+}
+
 func TestOutboundTrackingBOReceivedIsTerminal(t *testing.T) {
 	if got := normalizeOutboundTrackingStatus(" bo_received ", DocumentStatusConfirmed); got != OutboundTrackingBOReceived {
 		t.Fatalf("expected BO received tracking status, got %q", got)

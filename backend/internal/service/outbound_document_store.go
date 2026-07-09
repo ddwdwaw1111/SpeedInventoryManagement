@@ -54,7 +54,84 @@ type OutboundPickAllocation struct {
 	ContainerNo    string    `json:"containerNo"`
 	AllocatedQty   int       `json:"allocatedQty"`
 	Pallets        int       `json:"pallets"`
+	SourcePallets  int       `json:"sourcePallets"`
+	TargetPallets  int       `json:"targetPallets"`
 	CreatedAt      time.Time `json:"createdAt"`
+
+	sourcePalletsSet bool
+	targetPalletsSet bool
+}
+
+type outboundPickAllocationJSON struct {
+	ID             int64     `json:"id"`
+	LineID         int64     `json:"lineId"`
+	ItemNumber     string    `json:"itemNumber"`
+	LocationID     int64     `json:"locationId"`
+	LocationName   string    `json:"locationName"`
+	StorageSection string    `json:"storageSection"`
+	ContainerID    int64     `json:"containerId"`
+	ContainerNo    string    `json:"containerNo"`
+	AllocatedQty   int       `json:"allocatedQty"`
+	Pallets        int       `json:"pallets"`
+	SourcePallets  *int      `json:"sourcePallets,omitempty"`
+	TargetPallets  *int      `json:"targetPallets,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
+}
+
+func (allocation OutboundPickAllocation) MarshalJSON() ([]byte, error) {
+	payload := outboundPickAllocationJSON{
+		ID:             allocation.ID,
+		LineID:         allocation.LineID,
+		ItemNumber:     allocation.ItemNumber,
+		LocationID:     allocation.LocationID,
+		LocationName:   allocation.LocationName,
+		StorageSection: allocation.StorageSection,
+		ContainerID:    allocation.ContainerID,
+		ContainerNo:    allocation.ContainerNo,
+		AllocatedQty:   allocation.AllocatedQty,
+		Pallets:        allocation.Pallets,
+		CreatedAt:      allocation.CreatedAt,
+	}
+	if outboundPickAllocationHasSourcePallets(allocation) {
+		value := allocation.SourcePallets
+		payload.SourcePallets = &value
+	}
+	if outboundPickAllocationHasTargetPallets(allocation) {
+		value := allocation.TargetPallets
+		payload.TargetPallets = &value
+	}
+	return json.Marshal(payload)
+}
+
+func (allocation *OutboundPickAllocation) UnmarshalJSON(data []byte) error {
+	var payload outboundPickAllocationJSON
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return err
+	}
+
+	allocation.ID = payload.ID
+	allocation.LineID = payload.LineID
+	allocation.ItemNumber = payload.ItemNumber
+	allocation.LocationID = payload.LocationID
+	allocation.LocationName = payload.LocationName
+	allocation.StorageSection = payload.StorageSection
+	allocation.ContainerID = payload.ContainerID
+	allocation.ContainerNo = payload.ContainerNo
+	allocation.AllocatedQty = payload.AllocatedQty
+	allocation.Pallets = payload.Pallets
+	allocation.SourcePallets = 0
+	allocation.TargetPallets = 0
+	allocation.CreatedAt = payload.CreatedAt
+	allocation.sourcePalletsSet = payload.SourcePallets != nil
+	allocation.targetPalletsSet = payload.TargetPallets != nil
+	if payload.SourcePallets != nil {
+		allocation.SourcePallets = *payload.SourcePallets
+	}
+	if payload.TargetPallets != nil {
+		allocation.TargetPallets = *payload.TargetPallets
+	}
+
+	return nil
 }
 
 type OutboundDocumentLine struct {
@@ -202,12 +279,15 @@ type outboundAllocationCandidate struct {
 	Unit           string
 	AvailableQty   int
 	AllocatedQty   int
+	SourcePallets  int
+	SourcePalletsSet bool
 	Pallets        int
 	SortAt         time.Time
 }
 
 type outboundAllocationReservationState struct {
-	ByBucketKey map[string]int
+	ByBucketKey        map[string]int
+	PalletsByBucketKey map[string]int
 }
 
 type lockedOutboundSourceRow struct {
@@ -224,6 +304,7 @@ type lockedOutboundSourceRow struct {
 	Description    string
 	Unit           string
 	AvailableQty   int
+	Pallets        int
 	DeliveryDate   *time.Time
 	CreatedAt      time.Time
 }
@@ -459,7 +540,7 @@ func (s *Store) ListOutboundDocumentsFiltered(ctx context.Context, limit int, fi
 			NetWeightKgs:      lineRow.NetWeightKgs,
 			GrossWeightKgs:    lineRow.GrossWeightKgs,
 			LineNote:          lineRow.LineNote,
-			PickAllocations:   decodeOutboundDraftPickAllocationsOrEmpty(document.Status, lineRow.ID, lineRow.PickAllocationsJSON),
+			PickAllocations:   decodeOutboundPickAllocationsForLine(lineRow.ID, lineRow.PickAllocationsJSON),
 			CreatedAt:         lineRow.CreatedAt,
 		})
 		linesByID[lineRow.ID] = &document.Lines[len(document.Lines)-1]
@@ -830,6 +911,10 @@ func (s *Store) insertOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, d
 				return err
 			}
 		}
+		pickAllocations := line.PickAllocations
+		if len(pickAllocations) == 0 && len(allocations) > 0 {
+			pickAllocations = toOutboundPickAllocationsFromCandidates(&line, allocations)
+		}
 		lineLocationID := lockedSource.LocationID
 		lineLocationName := lockedSource.LocationName
 		lineStorageSection := DefaultStorageSection
@@ -884,7 +969,7 @@ func (s *Store) insertOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, d
 			line.NetWeightKgs,
 			line.GrossWeightKgs,
 			nullableString(line.LineNote),
-			nullableString(mustEncodeOutboundPickAllocations(line.PickAllocations)),
+			nullableString(mustEncodeOutboundPickAllocations(pickAllocations)),
 			index+1,
 		)
 		if err != nil {
@@ -1074,9 +1159,9 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 			storageSection := fallbackSection(allocation.StorageSection)
 			containerNo := strings.TrimSpace(allocation.ContainerNo)
 			containerID := allocation.ContainerID
-			ledgerPallets := allocation.Pallets
-			if ledgerPallets <= 0 && allocationIndex < len(palletSplits) {
-				ledgerPallets = palletSplits[allocationIndex]
+			targetPallets := firstPositiveInt(allocation.TargetPallets, allocation.Pallets)
+			if targetPallets <= 0 && allocationIndex < len(palletSplits) {
+				targetPallets = palletSplits[allocationIndex]
 			}
 
 			bucket := inventorySourceBucket{
@@ -1096,7 +1181,20 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 			bucket.ContainerID = containerID
 			bucket.ContainerNo = containerNo
 
-			if err := s.consumeReservedInventoryBalanceTx(ctx, tx, bucket, allocation.AllocatedQty, ledgerPallets); err != nil {
+			sourcePallets := allocation.SourcePallets
+			if !outboundPickAllocationHasSourcePallets(allocation) {
+				sourcePallets = deriveOutboundSourcePallets(currentBalance.Pallets, currentBalance.Quantity, allocation.AllocatedQty)
+			}
+
+			selectedAllocations[allocationIndex].LocationID = locationID
+			selectedAllocations[allocationIndex].StorageSection = storageSection
+			selectedAllocations[allocationIndex].ContainerID = containerID
+			selectedAllocations[allocationIndex].ContainerNo = containerNo
+			selectedAllocations[allocationIndex].Pallets = targetPallets
+			selectedAllocations[allocationIndex].SourcePallets = sourcePallets
+			selectedAllocations[allocationIndex].TargetPallets = targetPallets
+
+			if err := s.consumeReservedInventoryBalanceTx(ctx, tx, bucket, allocation.AllocatedQty, sourcePallets); err != nil {
 				return fmt.Errorf("ship reserved inventory balance for outbound movement: %w", err)
 			}
 
@@ -1118,7 +1216,7 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 				OrderRef:            documentRow.OrderRef,
 				ItemNumber:          lineRow.ItemNumberSnapshot,
 				DescriptionSnapshot: lineRow.DescriptionSnapshot,
-				Pallets:             ledgerPallets,
+				Pallets:             sourcePallets,
 				PalletsDetailCtns:   lineRow.PalletsDetailCtns,
 				CartonSizeMM:        lineRow.CartonSizeMM,
 				CartonCount:         allocation.AllocatedQty,
@@ -1133,9 +1231,13 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 				return err
 			}
 		}
-		if lineRow.Pallets <= 0 && effectiveLinePallets > 0 {
-			if _, err := tx.ExecContext(ctx, `UPDATE outbound_document_lines SET pallets = ? WHERE id = ?`, effectiveLinePallets, lineRow.ID); err != nil {
-				return mapDBError(fmt.Errorf("update outbound line pallets: %w", err))
+		if effectiveLinePallets > 0 {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE outbound_document_lines
+				SET pallets = ?, pick_allocations_json = ?
+				WHERE id = ?
+			`, effectiveLinePallets, nullableString(mustEncodeOutboundPickAllocations(selectedAllocations)), lineRow.ID); err != nil {
+				return mapDBError(fmt.Errorf("update outbound line allocation pallets: %w", err))
 			}
 		}
 	}
@@ -1284,20 +1386,24 @@ func (s *Store) reserveOutboundLineTx(
 	tx *sql.Tx,
 	source lockedOutboundSource,
 	line *CreateOutboundDocumentLineInput,
+	reservationState *outboundAllocationReservationState,
 ) error {
 	if line == nil {
 		return fmt.Errorf("%w: outbound line is required", ErrInvalidInput)
 	}
+	if reservationState == nil {
+		reservationState = newOutboundAllocationReservationState()
+	}
 
 	var plannedAllocations []OutboundPickAllocation
 	if len(line.PickAllocations) > 0 {
-		allocations, err := s.resolveOutboundDraftBucketAllocationsTx(ctx, tx, source, line.Quantity, line.PickAllocations, newOutboundAllocationReservationState())
+		allocations, err := s.resolveOutboundDraftBucketAllocationsTx(ctx, tx, source, line.Quantity, line.PickAllocations, reservationState)
 		if err != nil {
 			return err
 		}
 		plannedAllocations = toOutboundPickAllocationsFromCandidates(line, allocations)
 	} else {
-		allocations, err := s.resolveOutboundLineAllocationsTx(ctx, tx, source, line.Quantity, newOutboundAllocationReservationState())
+		allocations, err := s.resolveOutboundLineAllocationsTx(ctx, tx, source, line.Quantity, reservationState)
 		if err != nil {
 			return err
 		}
@@ -1329,6 +1435,7 @@ func (s *Store) reserveOutboundDocumentLinesTx(
 	lineRows []outboundDocumentLineRow,
 ) ([]outboundDocumentLineRow, error) {
 	lockedSources := make(map[string]lockedOutboundSource)
+	palletReservationState := newOutboundAllocationReservationState()
 	for index := range lineRows {
 		lineRow := &lineRows[index]
 		sourceKey := buildOutboundSourceKey(customerID, lineRow.LocationID, lineRow.SKUMasterID)
@@ -1343,7 +1450,9 @@ func (s *Store) reserveOutboundDocumentLinesTx(
 		}
 
 		lineInput := outboundLineInputFromRow(customerID, *lineRow)
-		if err := s.reserveOutboundLineTx(ctx, tx, lockedSource, &lineInput); err != nil {
+		lineReservationState := newOutboundAllocationReservationState()
+		lineReservationState.PalletsByBucketKey = palletReservationState.PalletsByBucketKey
+		if err := s.reserveOutboundLineTx(ctx, tx, lockedSource, &lineInput, lineReservationState); err != nil {
 			return nil, err
 		}
 		if err := s.persistOutboundDocumentLineReservationTx(ctx, tx, lineRow.ID, lineInput); err != nil {
@@ -2017,7 +2126,7 @@ func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []in
 			NetWeightKgs:      lineRow.NetWeightKgs,
 			GrossWeightKgs:    lineRow.GrossWeightKgs,
 			LineNote:          lineRow.LineNote,
-			PickAllocations:   decodeOutboundDraftPickAllocationsOrEmpty(document.Status, lineRow.ID, lineRow.PickAllocationsJSON),
+			PickAllocations:   decodeOutboundPickAllocationsForLine(lineRow.ID, lineRow.PickAllocationsJSON),
 			CreatedAt:         lineRow.CreatedAt,
 		})
 		linesByID[lineRow.ID] = &document.Lines[len(document.Lines)-1]
@@ -2046,7 +2155,8 @@ func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []in
 
 func newOutboundAllocationReservationState() *outboundAllocationReservationState {
 	return &outboundAllocationReservationState{
-		ByBucketKey: make(map[string]int),
+		ByBucketKey:        make(map[string]int),
+		PalletsByBucketKey: make(map[string]int),
 	}
 }
 
@@ -2152,6 +2262,7 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 				i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty,
 				0
 			) AS available_qty,
+			COALESCE(i.pallets, 0) AS pallets,
 			i.delivery_date AS delivery_date,
 			i.created_at AS sort_at
 		FROM inventory_items i
@@ -2200,6 +2311,7 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 			&row.Description,
 			&row.Unit,
 			&row.AvailableQty,
+			&row.Pallets,
 			&deliveryDate,
 			&row.CreatedAt,
 		); err != nil {
@@ -2247,6 +2359,7 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 			Description:    lockedRow.Description,
 			Unit:           lockedRow.Unit,
 			AvailableQty:   lockedRow.AvailableQty,
+			SourcePallets:  maxInt(lockedRow.Pallets, 0),
 			SortAt:         sortTime,
 		})
 	}
@@ -2333,6 +2446,7 @@ func (s *Store) resolveOutboundDraftBucketAllocationsTx(
 	appliedReservations := make([]struct {
 		BucketKey string
 		Allocated int
+		Pallets   int
 	}, 0, len(normalizedDraftAllocations))
 
 	for _, draftAllocation := range normalizedDraftAllocations {
@@ -2345,6 +2459,7 @@ func (s *Store) resolveOutboundDraftBucketAllocationsTx(
 		if !exists {
 			for _, applied := range appliedReservations {
 				reservationState.ByBucketKey[applied.BucketKey] -= applied.Allocated
+				reservationState.PalletsByBucketKey[applied.BucketKey] -= applied.Pallets
 			}
 			return nil, ErrInsufficientStock
 		}
@@ -2354,6 +2469,7 @@ func (s *Store) resolveOutboundDraftBucketAllocationsTx(
 		if draftAllocation.AllocatedQty > effectiveAvailable {
 			for _, applied := range appliedReservations {
 				reservationState.ByBucketKey[applied.BucketKey] -= applied.Allocated
+				reservationState.PalletsByBucketKey[applied.BucketKey] -= applied.Pallets
 			}
 			return nil, ErrInsufficientStock
 		}
@@ -2369,16 +2485,26 @@ func (s *Store) resolveOutboundDraftBucketAllocationsTx(
 			candidate.ContainerNo = containerNo
 		}
 		candidate.ItemNumber = firstNonEmpty(strings.TrimSpace(draftAllocation.ItemNumber), candidate.ItemNumber, source.ItemNumber)
-		candidate.Pallets = draftAllocation.Pallets
+		remainingSourcePallets := maxInt(candidate.SourcePallets-reservationState.PalletsByBucketKey[resolvedBucketKey], 0)
+		candidate.SourcePalletsSet = outboundPickAllocationHasSourcePallets(draftAllocation)
+		if candidate.SourcePalletsSet {
+			candidate.SourcePallets = minInt(draftAllocation.SourcePallets, remainingSourcePallets)
+		} else {
+			candidate.SourcePallets = deriveOutboundSourcePallets(remainingSourcePallets, effectiveAvailable, draftAllocation.AllocatedQty)
+		}
+		candidate.Pallets = maxInt(firstPositiveInt(draftAllocation.TargetPallets, draftAllocation.Pallets), 0)
 
 		allocations = append(allocations, candidate)
 		reservationState.ByBucketKey[resolvedBucketKey] += draftAllocation.AllocatedQty
+		reservationState.PalletsByBucketKey[resolvedBucketKey] += candidate.SourcePallets
 		appliedReservations = append(appliedReservations, struct {
 			BucketKey string
 			Allocated int
+			Pallets   int
 		}{
 			BucketKey: resolvedBucketKey,
 			Allocated: draftAllocation.AllocatedQty,
+			Pallets:   candidate.SourcePallets,
 		})
 	}
 
@@ -2406,6 +2532,7 @@ func (s *Store) allocateOutboundLineTx(ctx context.Context, tx *sql.Tx, source l
 	appliedReservations := make([]struct {
 		BucketKey string
 		Allocated int
+		Pallets   int
 	}, 0)
 
 	for _, candidate := range candidates {
@@ -2423,14 +2550,19 @@ func (s *Store) allocateOutboundLineTx(ctx context.Context, tx *sql.Tx, source l
 		}
 
 		candidate.AllocatedQty = allocatedQty
+		remainingSourcePallets := maxInt(candidate.SourcePallets-reservationState.PalletsByBucketKey[candidate.BucketKey], 0)
+		candidate.SourcePallets = deriveOutboundSourcePallets(remainingSourcePallets, effectiveAvailable, allocatedQty)
 		allocations = append(allocations, candidate)
 		reservationState.ByBucketKey[candidate.BucketKey] += allocatedQty
+		reservationState.PalletsByBucketKey[candidate.BucketKey] += candidate.SourcePallets
 		appliedReservations = append(appliedReservations, struct {
 			BucketKey string
 			Allocated int
+			Pallets   int
 		}{
 			BucketKey: candidate.BucketKey,
 			Allocated: allocatedQty,
+			Pallets:   candidate.SourcePallets,
 		})
 		remainingQty -= allocatedQty
 
@@ -2441,6 +2573,7 @@ func (s *Store) allocateOutboundLineTx(ctx context.Context, tx *sql.Tx, source l
 	if remainingQty > 0 {
 		for _, applied := range appliedReservations {
 			reservationState.ByBucketKey[applied.BucketKey] -= applied.Allocated
+			reservationState.PalletsByBucketKey[applied.BucketKey] -= applied.Pallets
 		}
 		return nil, classifyReservedStockConflict(requestedQty, source.Quantity, source.AllocatedQty, source.DamagedQty, source.HoldQty)
 	}
@@ -2497,6 +2630,8 @@ func (s *Store) attachOutboundPickAllocations(ctx context.Context, linesByID map
 			ContainerNo:    allocationRow.ContainerNo,
 			AllocatedQty:   allocationRow.AllocatedQty,
 			Pallets:        allocationRow.Pallets,
+			SourcePallets:  allocationRow.Pallets,
+			TargetPallets:  allocationRow.Pallets,
 			CreatedAt:      allocationRow.CreatedAt,
 		})
 		attachedLineIDs[allocationRow.LineID] = struct{}{}
@@ -2744,6 +2879,10 @@ func normalizeOutboundPickAllocations(entries []OutboundPickAllocation) []Outbou
 		ContainerNo    string
 		AllocatedQty   int
 		Pallets        int
+		SourcePallets  int
+		SourcePalletsSet bool
+		TargetPallets  int
+		TargetPalletsSet bool
 		CreatedAt      time.Time
 	}
 
@@ -2762,6 +2901,13 @@ func normalizeOutboundPickAllocations(entries []OutboundPickAllocation) []Outbou
 		itemNumber := strings.TrimSpace(entry.ItemNumber)
 		key := outboundAllocationBucketKey(0, locationID, 0, storageSection, containerID, containerNo) + "|" + itemNumber
 
+		targetPalletsSet := outboundPickAllocationHasTargetPallets(entry)
+		targetPallets := firstPositiveInt(entry.TargetPallets, entry.Pallets)
+		sourcePalletsSet := outboundPickAllocationHasSourcePallets(entry)
+		sourcePallets := entry.SourcePallets
+		if !sourcePalletsSet && !targetPalletsSet {
+			sourcePallets = entry.Pallets
+		}
 		existing, exists := grouped[key]
 		if !exists {
 			order = append(order, key)
@@ -2775,14 +2921,22 @@ func normalizeOutboundPickAllocations(entries []OutboundPickAllocation) []Outbou
 				ContainerID:    containerID,
 				ContainerNo:    containerNo,
 				AllocatedQty:   allocatedQty,
-				Pallets:        maxInt(entry.Pallets, 0),
+				Pallets:        maxInt(targetPallets, 0),
+				SourcePallets:  maxInt(sourcePallets, 0),
+				SourcePalletsSet: sourcePalletsSet,
+				TargetPallets:  maxInt(targetPallets, 0),
+				TargetPalletsSet: targetPalletsSet,
 				CreatedAt:      entry.CreatedAt,
 			}
 			continue
 		}
 
 		existing.AllocatedQty += allocatedQty
-		existing.Pallets += maxInt(entry.Pallets, 0)
+		existing.Pallets += maxInt(targetPallets, 0)
+		existing.SourcePallets += maxInt(sourcePallets, 0)
+		existing.SourcePalletsSet = existing.SourcePalletsSet || sourcePalletsSet
+		existing.TargetPallets += maxInt(targetPallets, 0)
+		existing.TargetPalletsSet = existing.TargetPalletsSet || targetPalletsSet
 		if existing.LocationName == "" {
 			existing.LocationName = strings.TrimSpace(entry.LocationName)
 		}
@@ -2814,7 +2968,11 @@ func normalizeOutboundPickAllocations(entries []OutboundPickAllocation) []Outbou
 			ContainerNo:    entry.ContainerNo,
 			AllocatedQty:   entry.AllocatedQty,
 			Pallets:        maxInt(entry.Pallets, 0),
+			SourcePallets:  maxInt(entry.SourcePallets, 0),
+			TargetPallets:  maxInt(firstPositiveInt(entry.TargetPallets, entry.Pallets), 0),
 			CreatedAt:      entry.CreatedAt,
+			sourcePalletsSet: entry.SourcePalletsSet,
+			targetPalletsSet: entry.TargetPalletsSet,
 		})
 	}
 	return normalized
@@ -2833,11 +2991,7 @@ func decodeOutboundPickAllocationsOrEmpty(raw string) []OutboundPickAllocation {
 	return normalizeOutboundPickAllocations(entries)
 }
 
-func decodeOutboundDraftPickAllocationsOrEmpty(documentStatus string, lineID int64, raw string) []OutboundPickAllocation {
-	if normalizeDocumentStatus(documentStatus) != DocumentStatusDraft {
-		return []OutboundPickAllocation{}
-	}
-
+func decodeOutboundPickAllocationsForLine(lineID int64, raw string) []OutboundPickAllocation {
 	entries := decodeOutboundPickAllocationsOrEmpty(raw)
 	for index := range entries {
 		entries[index].LineID = lineID
@@ -2932,7 +3086,9 @@ func toOutboundAllocationCandidatesFromDraftPickAllocations(source lockedOutboun
 			Description:    source.Description,
 			Unit:           source.Unit,
 			AllocatedQty:   entry.AllocatedQty,
-			Pallets:        maxInt(entry.Pallets, 0),
+			SourcePallets:  maxInt(entry.SourcePallets, 0),
+			SourcePalletsSet: outboundPickAllocationHasSourcePallets(entry),
+			Pallets:        maxInt(firstPositiveInt(entry.TargetPallets, entry.Pallets), 0),
 		})
 	}
 	return allocations
@@ -2954,7 +3110,11 @@ func toOutboundPickAllocationsFromCandidates(line *CreateOutboundDocumentLineInp
 			ContainerNo:    strings.TrimSpace(allocation.ContainerNo),
 			AllocatedQty:   allocation.AllocatedQty,
 			Pallets:        maxInt(allocation.Pallets, 0),
+			SourcePallets:  maxInt(allocation.SourcePallets, 0),
+			TargetPallets:  maxInt(allocation.Pallets, 0),
 			CreatedAt:      createdAt,
+			sourcePalletsSet: allocation.SourcePalletsSet || allocation.SourcePallets > 0,
+			targetPalletsSet: allocation.Pallets > 0,
 		})
 	}
 	if line != nil && line.Pallets > 0 && totalOutboundPickAllocationPallets(pickAllocations) == 0 {
@@ -2962,6 +3122,7 @@ func toOutboundPickAllocationsFromCandidates(line *CreateOutboundDocumentLineInp
 		for index := range pickAllocations {
 			if index < len(palletSplits) {
 				pickAllocations[index].Pallets = palletSplits[index]
+				pickAllocations[index].TargetPallets = palletSplits[index]
 			}
 		}
 	}
@@ -2990,6 +3151,40 @@ func maxInt(left int, right int) int {
 		return left
 	}
 	return right
+}
+
+func firstPositiveInt(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func outboundPickAllocationHasSourcePallets(allocation OutboundPickAllocation) bool {
+	return allocation.sourcePalletsSet || allocation.SourcePallets > 0
+}
+
+func outboundPickAllocationHasTargetPallets(allocation OutboundPickAllocation) bool {
+	return allocation.targetPalletsSet || allocation.TargetPallets > 0
+}
+
+func deriveOutboundSourcePallets(totalPallets int, availableQty int, allocatedQty int) int {
+	if totalPallets <= 0 || allocatedQty <= 0 {
+		return 0
+	}
+	if availableQty <= 0 || allocatedQty >= availableQty {
+		return totalPallets
+	}
+	pallets := int(math.Ceil(float64(totalPallets) * float64(allocatedQty) / float64(availableQty)))
+	if pallets < 1 {
+		return 1
+	}
+	if pallets > totalPallets {
+		return totalPallets
+	}
+	return pallets
 }
 
 func firstNonEmpty(values ...string) string {
