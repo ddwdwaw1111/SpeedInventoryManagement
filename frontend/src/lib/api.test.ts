@@ -62,6 +62,16 @@ describe("api document list queries", () => {
     expect(requestUrl.searchParams.get("trackingStatus")).toBe("BO_RECEIVED");
   });
 
+  it("serializes an exact container inventory position filter", async () => {
+    await api.getItems({ containerNo: " GCXU5817233 ", customerId: 12, locationId: 34 });
+
+    const requestUrl = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(requestUrl.pathname).toBe("/api/items");
+    expect(requestUrl.searchParams.get("containerNo")).toBe("GCXU5817233");
+    expect(requestUrl.searchParams.get("customerId")).toBe("12");
+    expect(requestUrl.searchParams.get("locationId")).toBe("34");
+  });
+
   it("serializes customer portal picking order tracking status filters", async () => {
     await api.getCustomerPortalPickingOrders(25, {
       search: " PO-100 ",

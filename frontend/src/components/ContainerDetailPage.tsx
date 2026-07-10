@@ -1,6 +1,5 @@
 import CloseIcon from "@mui/icons-material/Close";
 import CompareArrowsOutlinedIcon from "@mui/icons-material/CompareArrowsOutlined";
-import ExpandMoreRoundedIcon from "@mui/icons-material/ExpandMoreRounded";
 import SwapVertRoundedIcon from "@mui/icons-material/SwapVertRounded";
 import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
@@ -39,7 +38,6 @@ import {
 import { InlineAlert, useFeedbackToast } from "./Feedback";
 import { WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
-const PALLETS_PER_PAGE = 6;
 const HISTORY_PER_PAGE = 15;
 const activityDateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
 
@@ -96,14 +94,12 @@ export function ContainerDetailPage({
   const { resolvedTimeZone } = useSettings();
   const { showSuccess, showError, feedbackToast } = useFeedbackToast();
   const canManageInventory = currentUserRole === "admin" || currentUserRole === "operator";
+  const showLegacyPalletEntities = currentUserRole === "admin";
   const normalizedContainerNo = normalizeContainerNumber(containerNo);
   const [pallets, setPallets] = useState<PalletTrace[]>([]);
-  const [isPalletsLoading, setIsPalletsLoading] = useState(false);
-  const [palletErrorMessage, setPalletErrorMessage] = useState("");
   const [palletLocationEvents, setPalletLocationEvents] = useState<PalletLocationEvent[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [historyErrorMessage, setHistoryErrorMessage] = useState("");
-  const [palletPage, setPalletPage] = useState(1);
   const [historyPage, setHistoryPage] = useState(1);
   const [historyAscending, setHistoryAscending] = useState(false);
   const [palletReloadToken, setPalletReloadToken] = useState(0);
@@ -111,8 +107,6 @@ export function ContainerDetailPage({
   const [inventoryDialogError, setInventoryDialogError] = useState("");
   const [inventoryDialogSubmitting, setInventoryDialogSubmitting] = useState(false);
   const [historyTypeFilter, setHistoryTypeFilter] = useState<ContainerHistoryFilter>("ALL");
-  const [activePalletWarehouse, setActivePalletWarehouse] = useState("ALL");
-  const [activePalletSection, setActivePalletSection] = useState("ALL");
   const [adjustmentForm, setAdjustmentForm] = useState<ContainerAdjustmentFormState>(createEmptyContainerAdjustmentForm());
   const [transferForm, setTransferForm] = useState<ContainerTransferFormState>(createEmptyContainerTransferForm());
 
@@ -191,44 +185,6 @@ export function ContainerDetailPage({
     () => pallets.filter((pallet) => isPalletActionable(pallet)),
     [pallets]
   );
-  const palletWarehouseTabs = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const pallet of pallets) {
-      const warehouse = pallet.currentLocationName.trim() || "-";
-      counts.set(warehouse, (counts.get(warehouse) ?? 0) + 1);
-    }
-
-    return [
-      { key: "ALL", label: t("allWarehouses"), count: pallets.length },
-      ...[...counts.entries()]
-        .sort((left, right) => left[0].localeCompare(right[0]))
-        .map(([warehouse, count]) => ({ key: warehouse, label: warehouse, count }))
-    ];
-  }, [pallets, t]);
-  const palletsInWarehouse = useMemo(
-    () => activePalletWarehouse === "ALL"
-      ? pallets
-      : pallets.filter((pallet) => (pallet.currentLocationName.trim() || "-") === activePalletWarehouse),
-    [activePalletWarehouse, pallets]
-  );
-  const palletSectionTabs = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const pallet of palletsInWarehouse) {
-      const section = normalizeStorageSection(pallet.currentStorageSection);
-      counts.set(section, (counts.get(section) ?? 0) + 1);
-    }
-
-    return [
-      { key: "ALL", label: t("allSections"), count: palletsInWarehouse.length },
-      ...[...counts.entries()]
-        .sort((left, right) => left[0].localeCompare(right[0]))
-        .map(([section, count]) => ({ key: section, label: section, count }))
-    ];
-  }, [palletsInWarehouse, t]);
-  const filteredPallets = useMemo(
-    () => palletsInWarehouse.filter((pallet) => activePalletSection === "ALL" || normalizeStorageSection(pallet.currentStorageSection) === activePalletSection),
-    [activePalletSection, palletsInWarehouse]
-  );
   const defaultSelectedPalletIds = useMemo(
     () => actionablePallets.length === 1 ? [actionablePallets[0].id] : [],
     [actionablePallets]
@@ -268,26 +224,18 @@ export function ContainerDetailPage({
     async function loadPallets() {
       if (!normalizedContainerNo) {
         setPallets([]);
-        setPalletErrorMessage("");
-        setIsPalletsLoading(false);
         return;
       }
 
-      setIsPalletsLoading(true);
-      setPalletErrorMessage("");
       try {
         const nextPallets = await api.getPallets(300, normalizedContainerNo);
         if (!active) return;
         setPallets(nextPallets
           .filter((pallet) => normalizeContainerNumber(pallet.currentContainerNo) === normalizedContainerNo)
           .sort(comparePallets));
-      } catch (error) {
+      } catch {
         if (!active) return;
-        setPalletErrorMessage(getErrorMessage(error, t("couldNotLoadReport")));
-      } finally {
-        if (active) {
-          setIsPalletsLoading(false);
-        }
+        setPallets([]);
       }
     }
 
@@ -295,7 +243,7 @@ export function ContainerDetailPage({
     return () => {
       active = false;
     };
-  }, [normalizedContainerNo, palletReloadToken, routeKey, t]);
+  }, [normalizedContainerNo, palletReloadToken, routeKey]);
 
   useEffect(() => {
     let active = true;
@@ -332,11 +280,6 @@ export function ContainerDetailPage({
     };
   }, [normalizedContainerNo, palletReloadToken, routeKey, t]);
 
-  const totalPalletPages = Math.max(1, Math.ceil(filteredPallets.length / PALLETS_PER_PAGE));
-  const paginatedPallets = useMemo(() => {
-    const startIndex = (palletPage - 1) * PALLETS_PER_PAGE;
-    return filteredPallets.slice(startIndex, startIndex + PALLETS_PER_PAGE);
-  }, [filteredPallets, palletPage]);
   const totalHistoryPages = Math.max(1, Math.ceil(filteredHistoryEntries.length / HISTORY_PER_PAGE));
   const paginatedHistoryEntries = useMemo(() => {
     const startIndex = (historyPage - 1) * HISTORY_PER_PAGE;
@@ -344,13 +287,7 @@ export function ContainerDetailPage({
   }, [sortedFilteredHistoryEntries, historyPage]);
 
   useEffect(() => {
-    setPalletPage(1);
-  }, [normalizedContainerNo]);
-
-  useEffect(() => {
     setHistoryTypeFilter("ALL");
-    setActivePalletWarehouse("ALL");
-    setActivePalletSection("ALL");
     setHistoryPage(1);
     setHistoryAscending(false);
   }, [normalizedContainerNo]);
@@ -362,26 +299,6 @@ export function ContainerDetailPage({
   useEffect(() => {
     setHistoryPage((current) => Math.min(current, totalHistoryPages));
   }, [totalHistoryPages]);
-
-  useEffect(() => {
-    if (activePalletWarehouse !== "ALL" && !palletWarehouseTabs.some((tab) => tab.key === activePalletWarehouse)) {
-      setActivePalletWarehouse("ALL");
-    }
-  }, [activePalletWarehouse, palletWarehouseTabs]);
-
-  useEffect(() => {
-    if (activePalletSection !== "ALL" && !palletSectionTabs.some((tab) => tab.key === activePalletSection)) {
-      setActivePalletSection("ALL");
-    }
-  }, [activePalletSection, palletSectionTabs]);
-
-  useEffect(() => {
-    setPalletPage(1);
-  }, [activePalletWarehouse, activePalletSection]);
-
-  useEffect(() => {
-    setPalletPage((current) => Math.min(current, totalPalletPages));
-  }, [totalPalletPages]);
 
   function openAdjustmentDialog() {
     setAdjustmentForm(createEmptyContainerAdjustmentForm(defaultSelectedPalletIds));
@@ -529,23 +446,6 @@ export function ContainerDetailPage({
     onNavigate("all-activity");
   }
 
-  const openPalletCount = useMemo(
-    () => filteredPallets.filter((pallet) => pallet.status === "OPEN" || pallet.status === "PARTIAL").length,
-    [filteredPallets]
-  );
-  const totalOpenPalletCount = useMemo(
-    () => pallets.filter((pallet) => pallet.status === "OPEN" || pallet.status === "PARTIAL").length,
-    [pallets]
-  );
-  const filteredPalletQty = useMemo(
-    () => filteredPallets.reduce((sum, pallet) => sum + getPalletTotalQty(pallet), 0),
-    [filteredPallets]
-  );
-  const filteredPalletSectionCount = useMemo(
-    () => new Set(filteredPallets.map((pallet) => normalizeStorageSection(pallet.currentStorageSection))).size,
-    [filteredPallets]
-  );
-
   return (
     <main className="workspace-main">
       <div className="space-y-4 pb-4">
@@ -609,24 +509,28 @@ export function ContainerDetailPage({
                   <FactCheckOutlinedIcon sx={{ fontSize: 15 }} />
                   {t("addCycleCount")}
                 </button>
-                <button
-                  type="button"
-                  onClick={openAdjustmentDialog}
-                  disabled={!canOpenAdjustmentDialog}
-                  className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <TuneOutlinedIcon sx={{ fontSize: 15 }} />
-                  {t("addAdjustment")}
-                </button>
-                <button
-                  type="button"
-                  onClick={openTransferDialog}
-                  disabled={!canOpenTransferDialog}
-                  className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <CompareArrowsOutlinedIcon sx={{ fontSize: 15 }} />
-                  {t("addTransfer")}
-                </button>
+                {showLegacyPalletEntities ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={openAdjustmentDialog}
+                      disabled={!canOpenAdjustmentDialog}
+                      className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <TuneOutlinedIcon sx={{ fontSize: 15 }} />
+                      {t("addAdjustment")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openTransferDialog}
+                      disabled={!canOpenTransferDialog}
+                      className="interactive-button-lift inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <CompareArrowsOutlinedIcon sx={{ fontSize: 15 }} />
+                      {t("addTransfer")}
+                    </button>
+                  </>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -647,7 +551,7 @@ export function ContainerDetailPage({
                 <div className="grid gap-2 md:grid-cols-4">
                   <OverviewStatCard icon={<FactCheckOutlinedIcon sx={{ fontSize: 16 }} />} label={t("skuCount")} value={String(skuCards.length)} meta={t("containerItems")} />
                   <OverviewStatCard icon={<MoveToInboxOutlinedIcon sx={{ fontSize: 16 }} />} label={t("onHand")} value={String(container.onHand)} meta={t("availableQty")} secondaryValue={String(container.availableQty)} />
-                  <OverviewStatCard icon={<WarehouseOutlinedIcon sx={{ fontSize: 16 }} />} label={t("palletTrace")} value={String(pallets.length)} meta={t("palletOpenCount")} secondaryValue={String(totalOpenPalletCount)} />
+                  <OverviewStatCard icon={<WarehouseOutlinedIcon sx={{ fontSize: 16 }} />} label={t("pallets")} value={String(container.palletCount)} meta={t("currentInventoryRows")} />
                   <OverviewStatCard icon={<TuneOutlinedIcon sx={{ fontSize: 16 }} />} label={t("currentInventoryRows")} value={String(container.rowCount)} meta={container.warehouseSummary || "-"} />
                 </div>
 
@@ -680,7 +584,6 @@ export function ContainerDetailPage({
           <div className="flex flex-wrap items-center gap-2.5 rounded-2xl bg-white px-3.5 py-2.5 shadow-[0_4px_16px_rgba(15,23,42,0.07)] ring-1 ring-slate-200/60">
             {[
               { id: "section-sku", label: t("containerNavSku"), count: skuCards.length },
-              { id: "section-pallets", label: t("containerNavPallets"), count: pallets.length },
               { id: "section-history", label: t("containerNavHistory"), count: containerHistoryEntries.length },
             ].map((section) => (
               <button
@@ -722,98 +625,6 @@ export function ContainerDetailPage({
             </div>
           ) : (
             <div className="sheet-note sheet-note--readonly">{t("containerDetailNoCurrentSku")}</div>
-          )}
-        </section>
-
-        <section id="section-pallets" className="rounded-[20px] border border-slate-200/80 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
-          <WorkspacePanelHeader
-            title={t("containerDetailPalletTitle")}
-            description={t("containerDetailPalletDesc")}
-            actions={filteredPallets.length > PALLETS_PER_PAGE ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPalletPage((current) => Math.max(1, current - 1))}
-                  disabled={palletPage === 1}
-                  className="inline-flex items-center rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-xs font-semibold text-[#143569] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {t("previousPage")}
-                </button>
-                <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                  {t("containerDetailPalletPageStatus", { page: palletPage, pages: totalPalletPages })}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setPalletPage((current) => Math.min(totalPalletPages, current + 1))}
-                  disabled={palletPage >= totalPalletPages}
-                  className="inline-flex items-center rounded-xl border border-slate-200/80 bg-white px-3 py-2 text-xs font-semibold text-[#143569] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {t("nextPage")}
-                </button>
-              </div>
-            ) : undefined}
-            errorMessage={palletErrorMessage}
-          />
-          {pallets.length > 0 ? (
-            <>
-              <div className="mt-4 flex flex-wrap gap-2">
-                {palletWarehouseTabs.map((tab) => {
-                  const selected = activePalletWarehouse === tab.key;
-                  return (
-                    <button
-                      key={tab.key}
-                      type="button"
-                      onClick={() => setActivePalletWarehouse(tab.key)}
-                      className={`interactive-block inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold transition ${selected ? "bg-[#143569] text-white shadow-[0_10px_24px_rgba(20,53,105,0.16)]" : "bg-slate-100 text-slate-600 hover:bg-slate-200/80"}`}
-                    >
-                      <span>{tab.label}</span>
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${selected ? "bg-white/15 text-white" : "bg-white text-slate-500"}`}>{tab.count}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              {palletSectionTabs.length > 1 ? (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {palletSectionTabs.map((tab) => {
-                    const selected = activePalletSection === tab.key;
-                    return (
-                      <button
-                        key={tab.key}
-                        type="button"
-                        onClick={() => setActivePalletSection(tab.key)}
-                        className={`interactive-block inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold transition ${selected ? "bg-slate-900 text-white shadow-[0_10px_24px_rgba(15,23,42,0.14)]" : "bg-slate-100 text-slate-600 hover:bg-slate-200/80"}`}
-                      >
-                        <span>{tab.label}</span>
-                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${selected ? "bg-white/15 text-white" : "bg-white text-slate-500"}`}>{tab.count}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
-              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-[14px] border border-slate-200/80 bg-slate-50/80 px-3 py-2 text-xs text-slate-500">
-                <span><span className="font-semibold text-slate-700">{filteredPallets.length}</span> {t("palletTrace")}</span>
-                <span className="text-slate-300">·</span>
-                <span><span className="font-semibold text-slate-700">{openPalletCount}</span> {t("openPalletCount")}</span>
-                <span className="text-slate-300">·</span>
-                <span><span className="font-semibold text-slate-700">{filteredPalletSectionCount}</span> {t("sections")} · <span className="font-semibold text-slate-700">{filteredPalletQty}</span> {t("quantity")}</span>
-              </div>
-            </>
-          ) : null}
-          {isPalletsLoading ? (
-            <CardSkeletonGrid />
-          ) : filteredPallets.length > 0 ? (
-            <div className="mt-4 grid gap-3 xl:grid-cols-3">
-              {paginatedPallets.map((pallet) => (
-                <PalletTraceCard
-                  key={pallet.id}
-                  pallet={pallet}
-                  resolvedTimeZone={resolvedTimeZone}
-                  t={t}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="sheet-note sheet-note--readonly">{pallets.length > 0 ? t("containerDetailNoPalletsInScope") : t("containerDetailNoCurrentPallets")}</div>
           )}
         </section>
 
@@ -1083,87 +894,6 @@ function SkuSnapshotCard({
         >
           {t("allActivity")} →
         </button>
-      </div>
-    </article>
-  );
-}
-
-function PalletTraceCard({
-  pallet,
-  resolvedTimeZone,
-  t
-}: {
-  pallet: PalletTrace;
-  resolvedTimeZone: string;
-  t: (key: string, params?: Record<string, string | number>) => string;
-}) {
-  const totalQuantity = pallet.contents.reduce((sum, content) => sum + content.quantity, 0);
-  const [contentsExpanded, setContentsExpanded] = useState(false);
-  const statusStyle = pallet.status === "OPEN"
-    ? "border-l-emerald-400 bg-[linear-gradient(135deg,#f0fdf4_0%,#f8fbff_100%)]"
-    : pallet.status === "SHIPPED"
-      ? "border-l-slate-300 bg-[linear-gradient(135deg,#f8fafc_0%,#f1f5f9_100%)]"
-      : pallet.status === "CANCELLED"
-        ? "border-l-rose-300 bg-[linear-gradient(135deg,#fff5f5_0%,#f8fbff_100%)]"
-        : "border-l-blue-400 bg-[linear-gradient(135deg,#eff6ff_0%,#f8fbff_100%)]";
-
-  return (
-    <article className={`rounded-[18px] border border-slate-200/80 border-l-4 p-3 shadow-[0_6px_16px_rgba(15,23,42,0.04)] transition hover:shadow-[0_10px_24px_rgba(15,23,42,0.09)] ${statusStyle}`}>
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-extrabold tracking-tight text-[#0d2d63] truncate">{pallet.palletCode}</span>
-        <Chip
-          size="small"
-          label={getPalletStatusLabel(t, pallet.status)}
-          color={getPalletStatusColor(pallet.status)}
-          variant={pallet.status === "SHIPPED" || pallet.status === "CANCELLED" ? "outlined" : "filled"}
-        />
-      </div>
-
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-        <span className="font-semibold text-slate-700">{pallet.currentLocationName || "-"}</span>
-        {pallet.currentStorageSection ? (
-          <span className="rounded-full bg-slate-200/70 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{pallet.currentStorageSection}</span>
-        ) : null}
-        <span className="text-slate-300">·</span>
-        <span><span className="font-semibold text-slate-700">{totalQuantity}</span> {t("quantity")}</span>
-        <span className="text-slate-300">·</span>
-        <span><span className="font-semibold text-slate-700">{pallet.contents.length}</span> SKU</span>
-      </div>
-
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400">
-        {pallet.actualArrivalDate ? (
-          <span>{t("actualArrivalDate")}: <span className="text-slate-500">{formatDateValue(pallet.actualArrivalDate, activityDateFormatter)}</span></span>
-        ) : null}
-        <span>{t("created")}: <span className="text-slate-500">{formatDateTimeValue(pallet.createdAt, resolvedTimeZone)}</span></span>
-      </div>
-
-      <div className="mt-2 border-t border-slate-200/60 pt-2">
-        <button
-          type="button"
-          onClick={() => setContentsExpanded((v) => !v)}
-          className="flex w-full items-center justify-between gap-2 text-left"
-        >
-          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">{t("palletContents")}</span>
-          <span className="flex items-center gap-0.5 text-[11px] font-semibold text-[#143569]/70">
-            {contentsExpanded ? t("palletContentsCollapse") : t("palletContentsExpand", { count: pallet.contents.length })}
-            <ExpandMoreRoundedIcon sx={{ fontSize: 14, transition: "transform 0.2s", transform: contentsExpanded ? "rotate(180deg)" : "rotate(0deg)" }} />
-          </span>
-        </button>
-        {contentsExpanded && pallet.contents.length > 0 ? (
-          <div className="mt-2 space-y-1.5">
-            {pallet.contents.map((content) => (
-              <div key={content.id} className="flex items-center justify-between gap-3 rounded-[10px] border border-slate-200/80 bg-white/90 px-2.5 py-2">
-                <div className="min-w-0">
-                  <div className="truncate text-xs font-semibold text-slate-800">{content.itemNumber || content.sku || "-"}</div>
-                  <div className="truncate text-[11px] text-slate-500">{content.description || "-"}</div>
-                </div>
-                <div className="shrink-0 text-sm font-extrabold tracking-tight text-[#0d2d63]">{content.quantity}</div>
-              </div>
-            ))}
-          </div>
-        ) : contentsExpanded ? (
-          <div className="mt-2 text-xs text-slate-500">{t("palletNoContents")}</div>
-        ) : null}
       </div>
     </article>
   );
@@ -1538,33 +1268,6 @@ function getPalletStatusRank(status: string) {
       return 4;
   }
 }
-
-function getPalletStatusLabel(t: (key: string) => string, status: string) {
-  switch (status) {
-    case "OPEN":
-      return t("palletOpen");
-    case "PARTIAL":
-      return t("palletPartial");
-    case "SHIPPED":
-      return t("palletShipped");
-    case "CANCELLED":
-      return t("palletCancelled");
-    default:
-      return status || t("pending");
-  }
-}
-
-function getPalletStatusColor(status: string): "success" | "warning" | "default" {
-  switch (status) {
-    case "OPEN":
-      return "success";
-    case "PARTIAL":
-      return "warning";
-    default:
-      return "default";
-  }
-}
-
 
 function createEmptyContainerAdjustmentForm(selectedPalletIds: number[] = []): ContainerAdjustmentFormState {
   return {

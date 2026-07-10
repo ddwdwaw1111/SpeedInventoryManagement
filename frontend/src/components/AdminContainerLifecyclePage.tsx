@@ -8,7 +8,6 @@ import {
   ExternalLink,
   MapPinned,
   PackageCheck,
-  RefreshCw,
   RotateCcw,
   Search,
   Send,
@@ -60,7 +59,6 @@ type AdminContainerLifecyclePageProps = {
   onOpenReceiptEditor: (documentId?: number | null) => void;
   onOpenOutboundDocument: (documentId: number) => void;
   onOpenShipmentEditor: (documentId?: number | null) => void;
-  onOpenPalletTrace: (sourceInboundDocumentId?: number) => void;
 };
 
 type ContainerFormState = {
@@ -194,8 +192,7 @@ export function AdminContainerLifecyclePage({
   onOpenInboundDetail,
   onOpenReceiptEditor,
   onOpenOutboundDocument,
-  onOpenShipmentEditor,
-  onOpenPalletTrace
+  onOpenShipmentEditor
 }: AdminContainerLifecyclePageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
@@ -704,7 +701,6 @@ export function AdminContainerLifecyclePage({
       onDeleteInboundDocumentAttachment={handleDeleteInboundDocumentAttachment}
       onDeleteOutboundDocumentAttachment={handleDeleteOutboundDocumentAttachment}
       onOpenContainerDetail={() => onOpenContainerDetail(activeContainerNo)}
-      onOpenPalletTrace={onOpenPalletTrace}
     />
   ) : null;
 
@@ -759,8 +755,7 @@ function AdminLifecycleNodePanel({
   onUploadOutboundDocumentAttachment,
   onDeleteInboundDocumentAttachment,
   onDeleteOutboundDocumentAttachment,
-  onOpenContainerDetail,
-  onOpenPalletTrace
+  onOpenContainerDetail
 }: {
   node: ContainerLifecycleNodeAction | null;
   lifecycle: ContainerLifecycle;
@@ -787,7 +782,6 @@ function AdminLifecycleNodePanel({
   onDeleteInboundDocumentAttachment: (document: InboundDocument, attachment: DocumentAttachment) => Promise<void>;
   onDeleteOutboundDocumentAttachment: (document: OutboundDocument, attachment: DocumentAttachment) => Promise<void>;
   onOpenContainerDetail: () => void;
-  onOpenPalletTrace: (sourceInboundDocumentId?: number) => void;
 }) {
   const { t } = useI18n();
   const selectedPackingList = node?.documentId ? lifecycle.packingLists.find((document) => document.id === node.documentId) : lifecycle.packingLists[0];
@@ -925,13 +919,6 @@ function AdminLifecycleNodePanel({
           />
         ) : null}
 
-        {node?.kind === "transfer" ? (
-          <QuickActionPanel
-            icon={<RefreshCwIcon />}
-            title={t("customerPortalContainerTransfers")}
-            actions={<Button type="button" onClick={() => onOpenPalletTrace(lifecycle.summary.firstPackingListId)}>{t("palletTrace")}</Button>}
-          />
-        ) : null}
       </CardContent>
     </Card>
   );
@@ -1318,27 +1305,6 @@ function DocumentActions<TDocument extends InboundDocument | OutboundDocument>({
       )}
     </div>
   );
-}
-
-function QuickActionPanel({
-  icon,
-  title,
-  actions
-}: {
-  icon: ReactNode;
-  title: string;
-  actions: ReactNode;
-}) {
-  return (
-    <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-      <PanelSectionTitle icon={icon} title={title} />
-      {actions}
-    </div>
-  );
-}
-
-function RefreshCwIcon() {
-  return <RefreshCw className="h-4 w-4" />;
 }
 
 export function buildReceivingSkuRows(packingLists: InboundDocument[]): ReceivingSkuQuantityRow[] {

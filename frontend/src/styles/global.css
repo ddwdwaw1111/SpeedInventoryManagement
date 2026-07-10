@@ -4414,7 +4414,7 @@ textarea:focus {
 
 .inbound-entry-table {
   width: 100%;
-  min-width: 1580px;
+  min-width: 1750px;
   border-collapse: separate;
   border-spacing: 0;
 }
@@ -4492,6 +4492,10 @@ textarea:focus {
 
 .inbound-entry-table__sku {
   min-width: 190px;
+}
+
+.inbound-entry-table__item-code {
+  min-width: 170px;
 }
 
 .inbound-entry-table__description {
@@ -5112,13 +5116,13 @@ textarea:focus {
 .batch-line-grid--inbound {
   grid-template-columns:
     120px
+    150px
     minmax(220px, 1.8fr)
     110px
     110px
     90px
     110px
-    minmax(180px, 1.25fr)
-    100px;
+    110px;
 }
 
 .batch-line-grid--outbound {

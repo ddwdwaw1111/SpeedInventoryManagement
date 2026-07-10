@@ -6,14 +6,15 @@ import (
 )
 
 type Config struct {
-	Env            string
-	Port           string
-	FrontendOrigin string
-	SessionCookie  string
-	SessionSecure  bool
-	Database       DatabaseConfig
-	R2             R2Config
-	Attachments    AttachmentConfig
+	Env                  string
+	StartupDBMaintenance bool
+	Port                 string
+	FrontendOrigin       string
+	SessionCookie        string
+	SessionSecure        bool
+	Database             DatabaseConfig
+	R2                   R2Config
+	Attachments          AttachmentConfig
 }
 
 type DatabaseConfig struct {
@@ -37,12 +38,14 @@ type AttachmentConfig struct {
 }
 
 func Load() Config {
+	env := getEnv("APP_ENV", "development")
 	return Config{
-		Env:            getEnv("APP_ENV", "development"),
-		Port:           getEnv("SERVER_PORT", "8080"),
-		FrontendOrigin: getEnv("FRONTEND_ORIGIN", "http://localhost:5173"),
-		SessionCookie:  getEnv("SESSION_COOKIE_NAME", "sim_session"),
-		SessionSecure:  getEnvBool("SESSION_COOKIE_SECURE", false),
+		Env:                  env,
+		StartupDBMaintenance: getEnvBool("STARTUP_DB_MAINTENANCE", env != "production"),
+		Port:                 getEnv("SERVER_PORT", "8080"),
+		FrontendOrigin:       getEnv("FRONTEND_ORIGIN", "http://localhost:5173"),
+		SessionCookie:        getEnv("SESSION_COOKIE_NAME", "sim_session"),
+		SessionSecure:        getEnvBool("SESSION_COOKIE_SECURE", false),
 		R2: R2Config{
 			AccountID:       getEnv("R2_ACCOUNT_ID", ""),
 			AccessKeyID:     getEnv("R2_ACCESS_KEY_ID", ""),

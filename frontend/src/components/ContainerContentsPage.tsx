@@ -48,9 +48,9 @@ const CONTAINER_CONTENTS_EXPORT_COLUMNS = [
   { key: "shippedAt", label: "Shipped At" },
   { key: "onHand", label: "On Hand" },
   { key: "availableQty", label: "Available Qty" },
+  { key: "palletCount", label: "Pallets" },
   { key: "damagedQty", label: "Damaged Qty" },
-  { key: "holdQty", label: "On Hold Qty" },
-  { key: "reorderLevel", label: "Reorder Level" }
+  { key: "holdQty", label: "On Hold Qty" }
 ] as const;
 
 export function ContainerContentsPage({
@@ -170,6 +170,7 @@ export function ContainerContentsPage({
     { field: "contentsPreview", headerName: t("contentsPreview"), minWidth: 260, flex: 1.5 },
     { field: "onHand", headerName: t("onHand"), minWidth: 110, type: "number" },
     { field: "availableQty", headerName: t("availableQty"), minWidth: 120, type: "number" },
+    { field: "palletCount", headerName: t("pallets"), minWidth: 105, type: "number" },
     { field: "damagedQty", headerName: t("damagedQty"), minWidth: 110, type: "number" },
     {
       field: "actions",
@@ -237,9 +238,9 @@ export function ContainerContentsPage({
               shippedAt: formatContainerTimelineValue(row.shippedAt, resolvedTimeZone, t("containerNotShipped")),
               onHand: item.quantity,
               availableQty: item.availableQty,
+              palletCount: item.pallets,
               damagedQty: item.damagedQty,
-              holdQty: item.holdQty,
-              reorderLevel: item.reorderLevel
+              holdQty: item.holdQty
             }))
         : [{
             containerNo: row.containerNo,
@@ -253,9 +254,9 @@ export function ContainerContentsPage({
             shippedAt: formatContainerTimelineValue(row.shippedAt, resolvedTimeZone, t("containerNotShipped")),
             onHand: 0,
             availableQty: 0,
+            palletCount: 0,
             damagedQty: 0,
-            holdQty: 0,
-            reorderLevel: undefined
+            holdQty: 0
           }]
     );
 

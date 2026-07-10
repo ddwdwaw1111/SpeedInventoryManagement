@@ -30,7 +30,6 @@ import type { InboundReceiptEditorLaunchContext } from "../lib/inboundReceiptEdi
 import type { OutboundShipmentEditorLaunchContext } from "../lib/outboundShipmentEditorLaunchContext";
 import { useI18n } from "../lib/i18n";
 import { getOutboundDisplayShipDate, getOutboundExpectedShipDate } from "../lib/outboundDates";
-import { setPendingPalletTraceLaunchContext } from "../lib/palletTraceLaunchContext";
 import { useSettings } from "../lib/settings";
 import {
   DEFAULT_STORAGE_SECTION,
@@ -53,7 +52,6 @@ import {
 } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
 import { InlineAlert, useConfirmDialog, useFeedbackToast } from "./Feedback";
-import { InboundPalletBreakdownPanel } from "./InboundPalletBreakdownPanel";
 import { InlineLoadingIndicator } from "./InlineLoadingIndicator";
 import { OutboundPickPlanPanel } from "./OutboundPickPlanPanel";
 import { SearchSubmitField } from "./SearchSubmitField";
@@ -79,7 +77,6 @@ type ActivityManagementPageProps = {
   isLoading: boolean;
   onRefresh: () => Promise<void>;
   onOpenInboundDetail?: (documentId: number) => void;
-  onOpenPalletTrace?: (sourceInboundDocumentId?: number) => void;
   onOpenInboundReceiptEditor?: (documentId?: number | null, context?: InboundReceiptEditorLaunchContext) => void;
   onOpenOutboundShipmentEditor?: (documentId?: number | null, context?: OutboundShipmentEditorLaunchContext) => void;
   embeddedComposer?: {
@@ -97,13 +94,13 @@ type BatchInboundFormState = {
   customerId: string;
   locationId: string;
   storageSection: string;
-  unitLabel: string;
   status: MutableDocumentStatus;
   documentNote: string;
 };
 
 type BatchInboundLineState = {
   id: string;
+  itemNumber: string;
   sku: string;
   description: string;
   storageSection: string;
@@ -289,7 +286,6 @@ function createEmptyBatchInboundForm(expectedArrivalDate = ""): BatchInboundForm
     customerId: "",
     locationId: "",
     storageSection: DEFAULT_STORAGE_SECTION,
-    unitLabel: "CTN",
     status: "CONFIRMED",
     documentNote: ""
   };
@@ -298,6 +294,7 @@ function createEmptyBatchInboundForm(expectedArrivalDate = ""): BatchInboundForm
 function createEmptyBatchInboundLine(defaultStorageSection = DEFAULT_STORAGE_SECTION): BatchInboundLineState {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    itemNumber: "",
     sku: "",
     description: "",
     storageSection: defaultStorageSection,
@@ -359,6 +356,10 @@ function createEmptyBatchOutboundLine(): BatchOutboundLineState {
 }
 
 function normalizeSkuLookupValue(value: string) {
+  return value.trim().toUpperCase();
+}
+
+function normalizeItemCodeLookupValue(value: string) {
   return value.trim().toUpperCase();
 }
 
@@ -562,7 +563,6 @@ export function ActivityManagementPage({
   isLoading,
   onRefresh,
   onOpenInboundDetail,
-  onOpenPalletTrace,
   onOpenInboundReceiptEditor,
   onOpenOutboundShipmentEditor,
   embeddedComposer
@@ -655,6 +655,11 @@ export function ActivityManagementPage({
   );
   const skuMastersBySku = useMemo(() => new Map(
     skuMasters.map((skuMaster) => [normalizeSkuLookupValue(skuMaster.sku), skuMaster] as const)
+  ), [skuMasters]);
+  const skuMastersByItemNumber = useMemo(() => new Map(
+    skuMasters
+      .filter((skuMaster) => skuMaster.itemNumber.trim())
+      .map((skuMaster) => [normalizeItemCodeLookupValue(skuMaster.itemNumber), skuMaster] as const)
   ), [skuMasters]);
   const editingInboundDocument = useMemo(
     () => (editingInboundDocumentId ? liveInboundDocuments.find((document) => document.id === editingInboundDocumentId) ?? null : null),
@@ -1338,7 +1343,6 @@ export function ActivityManagementPage({
     { field: "expectedQty", headerName: t("expectedQty"), minWidth: 110, type: "number", renderCell: (params) => params.row.expectedQty || "-" },
     { field: "receivedQty", headerName: t("received"), minWidth: 110, type: "number", renderCell: (params) => params.row.receivedQty || "-" },
     { field: "pallets", headerName: t("pallets"), minWidth: 90, type: "number", renderCell: (params) => params.row.pallets || "-" },
-    { field: "unitLabel", headerName: t("inboundUnit"), minWidth: 100, renderCell: (params) => params.row.unitLabel || "-" },
     { field: "palletsDetailCtns", headerName: t("palletsDetail"), minWidth: 180, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.palletsDetailCtns || "-"}</span> },
     { field: "lineNote", headerName: t("internalNotes"), minWidth: 220, flex: 1.1, renderCell: (params) => params.row.lineNote || "-" }
   ], [t]);
@@ -1519,16 +1523,15 @@ export function ActivityManagementPage({
     }
 
     if (requirePalletReady && batchForm.handlingMode !== "SEALED_TRANSIT") {
-      const invalidBreakdownLine = validBatchInboundLines.find((line) =>
-        line.pallets > 0
-        && line.receivedQty > 0
-        && getInboundPalletBreakdownTotal(line.palletBreakdown) !== line.receivedQty
-      );
-      if (invalidBreakdownLine) {
-        return t("palletBreakdownTotalMismatch", {
-          assigned: getInboundPalletBreakdownTotal(invalidBreakdownLine.palletBreakdown),
-          received: invalidBreakdownLine.receivedQty
-        });
+      const invalidPalletLine = validBatchInboundLines.find((line) => {
+        const receivedQty = line.receivedQty > 0 ? line.receivedQty : line.expectedQty;
+        return line.pallets <= 0 || line.pallets > receivedQty;
+      });
+      if (invalidPalletLine) {
+        return "Enter a pallet count between 1 and the received quantity for every SKU line.";
+      }
+      if (validBatchInboundLines.some((line) => line.unitsPerPallet <= 0)) {
+        return "Enter CTN per Pallet for every SKU line.";
       }
     }
 
@@ -1696,7 +1699,6 @@ export function ActivityManagementPage({
       customerId: String(document.customerId),
       locationId: String(document.locationId),
       storageSection: normalizeStorageSection(document.storageSection),
-      unitLabel: document.unitLabel || "CTN",
       status: normalizedStatus === "CONFIRMED" ? "CONFIRMED" : "DRAFT",
       documentNote: document.documentNote || ""
     });
@@ -1705,6 +1707,7 @@ export function ActivityManagementPage({
       document.lines.length > 0
           ? document.lines.map((line) => ({
             id: String(line.id),
+            itemNumber: line.itemNumber || skuMastersBySku.get(normalizeSkuLookupValue(line.sku))?.itemNumber || "",
             sku: line.sku || "",
             description: line.description || "",
             storageSection: normalizeStorageSection(line.storageSection || document.storageSection),
@@ -1816,13 +1819,6 @@ export function ActivityManagementPage({
     setBatchLines((current) => [...current, ...nextLines]);
   }
 
-  function handleOpenInboundPalletTrace(document: InboundDocument) {
-    setPendingPalletTraceLaunchContext({ sourceInboundDocumentId: document.id });
-    if (onOpenPalletTrace) {
-      onOpenPalletTrace(document.id);
-    }
-  }
-
   function removeBatchLine(lineID: string) {
     setBatchLines((current) => current.length === 1 ? current : current.filter((line) => line.id !== lineID));
   }
@@ -1844,31 +1840,46 @@ export function ActivityManagementPage({
 
       const previousDescription = previousSkuMaster ? getSKUMasterDescription(previousSkuMaster) : "";
       const nextDescription = getSKUMasterDescription(nextSkuMaster);
-      const totalQty = line.receivedQty;
-      const previousAutoPalletPlan = buildAutoPalletPlan(totalQty, getEffectiveInboundUnitsPerPallet(line, previousSkuMaster));
-      const nextAutoPalletPlan = buildAutoPalletPlan(totalQty, getEffectiveInboundUnitsPerPallet(line, nextSkuMaster));
       const shouldRefreshDescription = !line.description.trim() || (previousDescription && line.description.trim() === previousDescription);
-      const shouldRefreshReorder = line.reorderLevel <= 0 || (previousSkuMaster !== undefined && line.reorderLevel === previousSkuMaster.reorderLevel);
-      const shouldRefreshPallets = line.pallets <= 0 || (previousSkuMaster !== undefined && line.pallets === previousAutoPalletPlan.pallets);
-      const nextPallets = shouldRefreshPallets ? nextAutoPalletPlan.pallets : line.pallets;
-      const shouldPreserveExplicitBreakdown = line.palletBreakdownExplicit || line.palletBreakdownTouched;
-      const nextPalletBreakdown = shouldPreserveExplicitBreakdown
-        ? line.palletBreakdown
-        : buildInboundPalletBreakdown(totalQty, nextPallets, getEffectiveInboundUnitsPerPallet(line, nextSkuMaster));
-      const nextPalletDetail = shouldPreserveExplicitBreakdown
-        ? line.palletsDetailCtns
-        : formatInboundPalletBreakdownDetail(nextPalletBreakdown);
+      const previousItemNumber = previousSkuMaster?.itemNumber.trim() ?? "";
+      const shouldRefreshItemNumber = !line.itemNumber.trim()
+        || (previousItemNumber && normalizeItemCodeLookupValue(line.itemNumber) === normalizeItemCodeLookupValue(previousItemNumber));
 
       return {
         ...line,
         sku: nextSkuValue,
+        itemNumber: shouldRefreshItemNumber ? nextSkuMaster.itemNumber : line.itemNumber,
         description: shouldRefreshDescription ? nextDescription : line.description,
         storageSection: normalizeStorageSection(line.storageSection || batchForm.storageSection || batchSectionOptions[0]),
-        reorderLevel: shouldRefreshReorder ? nextSkuMaster.reorderLevel : line.reorderLevel,
-        pallets: nextPallets,
-        palletBreakdown: nextPalletBreakdown,
-        palletBreakdownExplicit: line.palletBreakdownExplicit,
-        palletsDetailCtns: nextPalletDetail
+        reorderLevel: 0,
+        unitsPerPallet: line.unitsPerPallet > 0 ? line.unitsPerPallet : Math.max(0, nextSkuMaster.defaultUnitsPerPallet || 0)
+      };
+    }));
+  }
+
+  function updateBatchLineItemNumber(lineID: string, nextItemNumberValue: string) {
+    setBatchLines((current) => current.map((line) => {
+      if (line.id !== lineID) {
+        return line;
+      }
+
+      const nextSkuMaster = skuMastersByItemNumber.get(normalizeItemCodeLookupValue(nextItemNumberValue));
+      if (!nextSkuMaster) {
+        return { ...line, itemNumber: nextItemNumberValue };
+      }
+
+      const previousSkuMaster = skuMastersBySku.get(normalizeSkuLookupValue(line.sku));
+      const previousDescription = previousSkuMaster ? getSKUMasterDescription(previousSkuMaster) : "";
+      const nextDescription = getSKUMasterDescription(nextSkuMaster);
+      const shouldRefreshDescription = !line.description.trim() || (previousDescription && line.description.trim() === previousDescription);
+      return {
+        ...line,
+        itemNumber: nextItemNumberValue,
+        sku: nextSkuMaster.sku,
+        description: shouldRefreshDescription ? nextDescription : line.description,
+        storageSection: normalizeStorageSection(line.storageSection || batchForm.storageSection || batchSectionOptions[0]),
+        reorderLevel: 0,
+        unitsPerPallet: line.unitsPerPallet > 0 ? line.unitsPerPallet : Math.max(0, nextSkuMaster.defaultUnitsPerPallet || 0)
       };
     }));
   }
@@ -1878,74 +1889,11 @@ export function ActivityManagementPage({
   }
 
   function updateBatchLineExpectedQty(lineID: string, nextExpectedQty: number) {
-    setBatchLines((current) => current.map((line) => {
-      if (line.id !== lineID) {
-        return line;
-      }
-
-      const skuMaster = skuMastersBySku.get(normalizeSkuLookupValue(line.sku));
-      const unitsPerPallet = getEffectiveInboundUnitsPerPallet(line, skuMaster);
-      const previousSuggested = calculateSuggestedReorderLevel(line.expectedQty, line.receivedQty);
-      const nextReceivedQty = line.receivedQty;
-      const nextSuggested = calculateSuggestedReorderLevel(nextExpectedQty, nextReceivedQty);
-      const shouldKeepAutoReorder = line.reorderLevel <= 0 || line.reorderLevel === previousSuggested;
-      const previousAutoPalletPlan = buildAutoPalletPlan(line.receivedQty, unitsPerPallet);
-      const nextAutoPalletPlan = buildAutoPalletPlan(nextReceivedQty, unitsPerPallet);
-      const shouldKeepAutoPallets = line.pallets <= 0 || line.pallets === previousAutoPalletPlan.pallets;
-      const nextPallets = shouldKeepAutoPallets ? nextAutoPalletPlan.pallets : line.pallets;
-      const shouldPreserveExplicitBreakdown = line.palletBreakdownExplicit || line.palletBreakdownTouched;
-      const nextPalletBreakdown = shouldPreserveExplicitBreakdown
-        ? line.palletBreakdown
-        : buildInboundPalletBreakdown(nextReceivedQty, nextPallets, unitsPerPallet);
-      const nextPalletDetail = shouldPreserveExplicitBreakdown
-        ? line.palletsDetailCtns
-        : formatInboundPalletBreakdownDetail(nextPalletBreakdown);
-
-      return {
-        ...line,
-        expectedQty: nextExpectedQty,
-        reorderLevel: shouldKeepAutoReorder ? nextSuggested : line.reorderLevel,
-        pallets: nextPallets,
-        palletBreakdown: nextPalletBreakdown,
-        palletBreakdownExplicit: line.palletBreakdownExplicit,
-        palletsDetailCtns: nextPalletDetail
-      };
-    }));
+    updateBatchLine(lineID, { expectedQty: nextExpectedQty });
   }
 
   function updateBatchLineReceivedQty(lineID: string, nextReceivedQty: number) {
-    setBatchLines((current) => current.map((line) => {
-      if (line.id !== lineID) {
-        return line;
-      }
-
-      const skuMaster = skuMastersBySku.get(normalizeSkuLookupValue(line.sku));
-      const unitsPerPallet = getEffectiveInboundUnitsPerPallet(line, skuMaster);
-      const previousSuggested = calculateSuggestedReorderLevel(line.expectedQty, line.receivedQty);
-      const nextSuggested = calculateSuggestedReorderLevel(line.expectedQty, nextReceivedQty);
-      const shouldKeepAutoReorder = line.reorderLevel <= 0 || line.reorderLevel === previousSuggested;
-      const previousAutoPalletPlan = buildAutoPalletPlan(line.receivedQty, unitsPerPallet);
-      const nextAutoPalletPlan = buildAutoPalletPlan(nextReceivedQty, unitsPerPallet);
-      const shouldKeepAutoPallets = line.pallets <= 0 || line.pallets === previousAutoPalletPlan.pallets;
-      const nextPallets = shouldKeepAutoPallets ? nextAutoPalletPlan.pallets : line.pallets;
-      const shouldPreserveExplicitBreakdown = line.palletBreakdownExplicit || line.palletBreakdownTouched;
-      const nextPalletBreakdown = shouldPreserveExplicitBreakdown
-        ? line.palletBreakdown
-        : buildInboundPalletBreakdown(nextReceivedQty, nextPallets, unitsPerPallet);
-      const nextPalletDetail = shouldPreserveExplicitBreakdown
-        ? line.palletsDetailCtns
-        : formatInboundPalletBreakdownDetail(nextPalletBreakdown);
-
-      return {
-        ...line,
-        receivedQty: nextReceivedQty,
-        reorderLevel: shouldKeepAutoReorder ? nextSuggested : line.reorderLevel,
-        pallets: nextPallets,
-        palletBreakdown: nextPalletBreakdown,
-        palletBreakdownExplicit: line.palletBreakdownExplicit,
-        palletsDetailCtns: nextPalletDetail
-      };
-    }));
+    updateBatchLine(lineID, { receivedQty: nextReceivedQty });
   }
 
   function autofillBatchLineReceivedQty(lineID: string) {
@@ -1954,83 +1902,19 @@ export function ActivityManagementPage({
         return line;
       }
 
-      const skuMaster = skuMastersBySku.get(normalizeSkuLookupValue(line.sku));
-      const unitsPerPallet = getEffectiveInboundUnitsPerPallet(line, skuMaster);
-      const nextReceivedQty = line.expectedQty;
-      const previousSuggested = calculateSuggestedReorderLevel(line.expectedQty, line.receivedQty);
-      const nextSuggested = calculateSuggestedReorderLevel(line.expectedQty, nextReceivedQty);
-      const shouldKeepAutoReorder = line.reorderLevel <= 0 || line.reorderLevel === previousSuggested;
-      const previousAutoPalletPlan = buildAutoPalletPlan(line.receivedQty, unitsPerPallet);
-      const nextAutoPalletPlan = buildAutoPalletPlan(nextReceivedQty, unitsPerPallet);
-      const shouldKeepAutoPallets = line.pallets <= 0 || line.pallets === previousAutoPalletPlan.pallets;
-      const nextPallets = shouldKeepAutoPallets ? nextAutoPalletPlan.pallets : line.pallets;
-      const shouldPreserveExplicitBreakdown = line.palletBreakdownExplicit || line.palletBreakdownTouched;
-      const nextPalletBreakdown = shouldPreserveExplicitBreakdown
-        ? line.palletBreakdown
-        : buildInboundPalletBreakdown(nextReceivedQty, nextPallets, unitsPerPallet);
-      const nextPalletDetail = shouldPreserveExplicitBreakdown
-        ? line.palletsDetailCtns
-        : formatInboundPalletBreakdownDetail(nextPalletBreakdown);
-
       return {
         ...line,
-        receivedQty: nextReceivedQty,
-        reorderLevel: shouldKeepAutoReorder ? nextSuggested : line.reorderLevel,
-        pallets: nextPallets,
-        palletBreakdown: nextPalletBreakdown,
-        palletBreakdownExplicit: line.palletBreakdownExplicit,
-        palletsDetailCtns: nextPalletDetail
+        receivedQty: line.expectedQty
       };
     }));
   }
 
   function updateBatchLinePallets(lineID: string, nextPallets: number) {
-    setBatchLines((current) => current.map((line) => {
-      if (line.id !== lineID) {
-        return line;
-      }
-
-      const previousSuggested = getSuggestedPalletsDetail(line.receivedQty, line.pallets);
-      const skuMaster = skuMastersBySku.get(normalizeSkuLookupValue(line.sku));
-      const nextPalletBreakdown = buildInboundPalletBreakdown(line.receivedQty, nextPallets, getEffectiveInboundUnitsPerPallet(line, skuMaster));
-      const nextSuggested = formatInboundPalletBreakdownDetail(nextPalletBreakdown);
-      const shouldKeepAutoPalletsDetail = !line.palletsDetailCtns || line.palletsDetailCtns === previousSuggested || !line.palletBreakdownTouched;
-
-      return {
-        ...line,
-        pallets: nextPallets,
-        palletBreakdown: nextPalletBreakdown,
-        palletBreakdownExplicit: false,
-        palletBreakdownTouched: false,
-        palletsDetailCtns: shouldKeepAutoPalletsDetail ? nextSuggested : line.palletsDetailCtns
-      };
-    }));
+    updateBatchLine(lineID, { pallets: nextPallets });
   }
 
   function updateBatchLineUnitsPerPallet(lineID: string, nextUnitsPerPallet: number) {
-    setBatchLines((current) => current.map((line) => {
-      if (line.id !== lineID) {
-        return line;
-      }
-
-      const normalizedUnitsPerPallet = Math.max(0, nextUnitsPerPallet);
-      const skuMaster = skuMastersBySku.get(normalizeSkuLookupValue(line.sku));
-      const effectiveUnitsPerPallet = normalizedUnitsPerPallet > 0
-        ? normalizedUnitsPerPallet
-        : getEffectiveInboundUnitsPerPallet({ unitsPerPallet: 0 }, skuMaster);
-      const nextAutoPalletPlan = buildAutoPalletPlan(line.receivedQty, effectiveUnitsPerPallet);
-      const nextPalletBreakdown = buildInboundPalletBreakdown(line.receivedQty, nextAutoPalletPlan.pallets, effectiveUnitsPerPallet);
-
-      return {
-        ...line,
-        unitsPerPallet: normalizedUnitsPerPallet,
-        pallets: nextAutoPalletPlan.pallets,
-        palletBreakdown: nextPalletBreakdown,
-        palletBreakdownExplicit: false,
-        palletBreakdownTouched: false,
-        palletsDetailCtns: formatInboundPalletBreakdownDetail(nextPalletBreakdown)
-      };
-    }));
+    updateBatchLine(lineID, { unitsPerPallet: Math.max(0, nextUnitsPerPallet) });
   }
 
   function updateBatchLinePalletBreakdownQuantity(lineID: string, palletLineID: string, nextQuantity: number) {
@@ -2168,7 +2052,6 @@ export function ActivityManagementPage({
         containerType: batchForm.containerType,
         handlingMode: batchForm.handlingMode,
         storageSection: normalizeStorageSection(validLines[0]?.storageSection || batchForm.storageSection || batchSectionOptions[0]),
-        unitLabel: batchForm.unitLabel || "CTN",
         status: effectiveStatus,
         trackingStatus: effectiveStatus === "DRAFT"
           ? normalizeInboundTrackingStatusValue(editingInboundDocument?.trackingStatus, editingInboundDocument?.status)
@@ -2188,24 +2071,21 @@ export function ActivityManagementPage({
             throw new Error(t("batchInboundMissingNewSkuDetails", { sku: normalizedSku || "-" }));
           }
 
-          const palletBreakdownPayload = isSealedTransitMode
-            ? undefined
-            : line.palletBreakdown
-                .filter((entry) => entry.quantity > 0)
-                .map((entry) => ({ quantity: entry.quantity }));
-
           return {
+            itemNumber: line.itemNumber.trim().toUpperCase()
+              || matchingTemplate?.itemNumber?.trim().toUpperCase()
+              || matchingSkuMaster?.itemNumber?.trim().toUpperCase()
+              || undefined,
             sku: normalizedSku,
             description: lineDescription,
-            reorderLevel: line.reorderLevel || matchingTemplate?.reorderLevel || matchingSkuMaster?.reorderLevel || 0,
+            reorderLevel: 0,
             expectedQty: line.expectedQty,
             receivedQty: normalizedReceivedQty,
             pallets: isSealedTransitMode ? 0 : line.pallets,
             ...(effectiveUnitsPerPallet > 0 ? { unitsPerPallet: effectiveUnitsPerPallet } : {}),
-            palletsDetailCtns: isSealedTransitMode ? undefined : line.palletsDetailCtns || undefined,
+            palletsDetailCtns: undefined,
             storageSection: normalizeStorageSection(line.storageSection || batchForm.storageSection || batchSectionOptions[0]),
-            lineNote: line.lineNote || undefined,
-            ...(palletBreakdownPayload && palletBreakdownPayload.length > 0 ? { palletBreakdown: palletBreakdownPayload } : {})
+            lineNote: line.lineNote || undefined
           };
         })
       };
@@ -2775,11 +2655,6 @@ export function ActivityManagementPage({
                     {t("inboundDetailOpenPage")}
                   </Button>
                 ) : null}
-                {onOpenPalletTrace ? (
-                  <Button variant="outlined" onClick={() => handleOpenInboundPalletTrace(selectedInboundDocument)} disabled={disableSelectedInboundActions}>
-                    {t("openPalletWorkspace")}
-                  </Button>
-                ) : null}
                 {canManage && !selectedInboundDocument.archivedAt && normalizeDocumentStatus(selectedInboundDocument.status) === "DRAFT" ? (
                   <Button variant="outlined" onClick={() => openEditInboundDocument(selectedInboundDocument)} disabled={disableSelectedInboundActions}>
                     {t("editDraft")}
@@ -2905,7 +2780,6 @@ export function ActivityManagementPage({
                 <div className="sheet-note"><strong>{t("actualArrivalDate")}</strong> {formatDate(selectedInboundDocument.actualArrivalDate)}</div>
                 <div className="sheet-note"><strong>{t("customer")}</strong> {selectedInboundDocument.customerName || "-"}</div>
                 <div className="sheet-note"><strong>{t("currentStorage")}</strong> {`${selectedInboundDocument.locationName} / ${summarizeInboundDocumentSections(selectedInboundDocument)}`}</div>
-                <div className="sheet-note"><strong>{t("inboundUnit")}</strong> {selectedInboundDocument.unitLabel || "-"}</div>
                 <div className="sheet-note document-drawer__meta-note">
                   <strong>{t("documentNotes")}</strong>
                   {canManage ? (
@@ -3248,7 +3122,6 @@ export function ActivityManagementPage({
                       <label>{t("handlingMode")}<select value={batchForm.handlingMode} onChange={(event) => setBatchForm((current) => ({ ...current, handlingMode: event.target.value as InboundHandlingMode }))} disabled={isEditingConfirmedInbound}><option value="PALLETIZED">{t("handlingModePalletized")}</option><option value="SEALED_TRANSIT">{t("handlingModeSealedTransit")}</option></select></label>
                       <label>{t("customer")}<select value={batchForm.customerId} onChange={(event) => setBatchForm((current) => ({ ...current, customerId: event.target.value }))}>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
                       <label>{t("currentStorage")}<select value={batchForm.locationId} onChange={(event) => setBatchForm((current) => ({ ...current, locationId: event.target.value }))}>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
-                      <label>{t("inboundUnit")}<select value={batchForm.unitLabel} onChange={(event) => setBatchForm((current) => ({ ...current, unitLabel: event.target.value }))}><option value="CTN">CTN</option><option value="PCS">PCS</option><option value="PALLET">PALLET</option></select></label>
                       <label className="sheet-form__wide">{t("documentNotes")}<input value={batchForm.documentNote} onChange={(event) => setBatchForm((current) => ({ ...current, documentNote: event.target.value }))} placeholder={t("inboundNotePlaceholder")} /></label>
                     </div>
 
@@ -3319,6 +3192,9 @@ export function ActivityManagementPage({
                   ) : null}
                 </div>
 
+                <datalist id="embedded-inbound-item-code-list">
+                  {Array.from(skuMastersByItemNumber.keys()).map((itemCode) => <option key={itemCode} value={itemCode} />)}
+                </datalist>
                 <div className="batch-lines">
                   <div className="batch-lines__toolbar batch-lines__toolbar--sticky">
                     <strong>{t("skuLines")}</strong>
@@ -3353,16 +3229,7 @@ export function ActivityManagementPage({
                     );
                     const batchSkuTemplate = items.find((item) => item.sku.trim().toUpperCase() === normalizedBatchLineSku);
                     const batchSkuMaster = skuMastersBySku.get(normalizedBatchLineSku);
-                    const suggestedReorderLevel = calculateSuggestedReorderLevel(line.expectedQty, line.receivedQty);
-                    const displayedReorderLevel = selectedBatchItem?.reorderLevel ?? batchSkuMaster?.reorderLevel ?? batchSkuTemplate?.reorderLevel ?? line.reorderLevel;
                     const effectiveUnitsPerPallet = getEffectiveInboundUnitsPerPallet(line, batchSkuMaster);
-                    const palletUnitLabel = (batchSkuMaster?.unit || batchForm.unitLabel || "CTN").toUpperCase();
-                    const lineSkuDisplay = line.sku.trim().toUpperCase() || "-";
-                    const lineStorageSectionDisplay = normalizeStorageSection(line.storageSection || batchSectionOptions[0]);
-                    const palletBreakdownTotal = getInboundPalletBreakdownTotal(line.palletBreakdown);
-                    const canExpandPalletBreakdown = batchForm.handlingMode !== "SEALED_TRANSIT" && line.pallets > 0;
-                    const isPalletBreakdownExpanded = Boolean(expandedPalletBreakdowns[line.id]);
-                    const hasPalletBreakdownMismatch = batchForm.handlingMode !== "SEALED_TRANSIT" && line.receivedQty > 0 && palletBreakdownTotal !== line.receivedQty;
 
                     return (
                       <div className="batch-line-card" key={line.id} id={`batch-line-${line.id}`}>
@@ -3377,47 +3244,13 @@ export function ActivityManagementPage({
                         </div>
                         <div className="batch-line-grid batch-line-grid--inbound">
                           <label>{t("sku")}<input value={line.sku} onChange={(event) => updateBatchLineSku(line.id, event.target.value)} placeholder="ABC123" /></label>
+                          <label>{t("itemCode")}<input value={line.itemNumber} onChange={(event) => updateBatchLineItemNumber(line.id, event.target.value)} placeholder="ITEM-001" list="embedded-inbound-item-code-list" /></label>
                           <label className="batch-line-grid__description">{t("description")}<input value={selectedBatchItem ? displayDescription(selectedBatchItem) : (line.description || (batchSkuMaster ? getSKUMasterDescription(batchSkuMaster) : "") || displayDescription(batchSkuTemplate ?? { description: "", name: "" }))} onChange={(event) => updateBatchLine(line.id, { description: event.target.value })} placeholder={t("descriptionPlaceholder")} disabled={Boolean(selectedBatchItem)} /></label>
                           <label>{t("expectedQty")}<input type="number" min="0" value={numberInputValue(line.expectedQty)} onChange={(event) => updateBatchLineExpectedQty(line.id, Math.max(0, Number(event.target.value || 0)))} /></label>
                           <label>{t("received")}<input type="number" min="0" value={numberInputValue(line.receivedQty)} onChange={(event) => updateBatchLineReceivedQty(line.id, Math.max(0, Number(event.target.value || 0)))} onBlur={() => autofillBatchLineReceivedQty(line.id)} placeholder={line.expectedQty > 0 ? String(line.expectedQty) : ""} /></label>
                           <label>{t("pallets")}<input type="number" min="0" value={numberInputValue(line.pallets)} onChange={(event) => updateBatchLinePallets(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={batchForm.handlingMode === "SEALED_TRANSIT"} /></label>
-                          <label>{t("unitsPerPallet")}<input type="number" min="0" value={numberInputValue(line.unitsPerPallet > 0 ? line.unitsPerPallet : effectiveUnitsPerPallet)} onChange={(event) => updateBatchLineUnitsPerPallet(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={batchForm.handlingMode === "SEALED_TRANSIT"} placeholder={batchSkuMaster?.defaultUnitsPerPallet ? String(batchSkuMaster.defaultUnitsPerPallet) : ""} /></label>
+                          <label>{t("ctnPerPallet")}<input type="number" min="0" value={numberInputValue(line.unitsPerPallet > 0 ? line.unitsPerPallet : effectiveUnitsPerPallet)} onChange={(event) => updateBatchLineUnitsPerPallet(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={batchForm.handlingMode === "SEALED_TRANSIT"} placeholder={batchSkuMaster?.defaultUnitsPerPallet ? String(batchSkuMaster.defaultUnitsPerPallet) : ""} /></label>
                           <label>{t("storageSection")}<select value={normalizeStorageSection(line.storageSection || batchSectionOptions[0])} onChange={(event) => updateBatchLine(line.id, { storageSection: event.target.value })}>{batchSectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}</select></label>
-                          <InboundPalletBreakdownPanel
-                            title={t("palletBreakdown")}
-                            helperText={batchSkuMaster?.defaultUnitsPerPallet ? t("palletUnitsHint", { units: batchSkuMaster.defaultUnitsPerPallet, unit: palletUnitLabel }) : undefined}
-                            skuLabel={t("sku")}
-                            skuValue={lineSkuDisplay}
-                            storageSectionLabel={t("storageSection")}
-                            storageSectionValue={lineStorageSectionDisplay}
-                            palletsLabel={t("pallets")}
-                            palletCount={line.pallets}
-                            palletsDetailLabel={t("palletsDetail")}
-                            palletsDetailValue={line.palletsDetailCtns || "-"}
-                            unitLabel={palletUnitLabel}
-                            detailTone={hasPalletBreakdownMismatch ? "danger" : "default"}
-                            resetLabel={t("resetPalletBreakdown")}
-                            detailsLabel={t("details")}
-                            emptyHint={t("palletBreakdownEmptyHint")}
-                            sealedHint={t("sealedTransitDraftNotice")}
-                            resetDisabled={batchForm.handlingMode === "SEALED_TRANSIT" || line.pallets <= 0 || line.receivedQty <= 0}
-                            canExpand={canExpandPalletBreakdown}
-                            expanded={isPalletBreakdownExpanded}
-                            onToggle={() => togglePalletBreakdown(line.id)}
-                            onReset={() => resetBatchLinePalletBreakdown(line.id)}
-                            state={batchForm.handlingMode === "SEALED_TRANSIT" ? "sealed" : line.pallets <= 0 ? "empty" : "ready"}
-                            rows={line.palletBreakdown.map((entry, palletIndex) => ({
-                              id: entry.id,
-                              label: `${t("pallet")} #${palletIndex + 1}`,
-                              quantity: entry.quantity
-                            }))}
-                            onQuantityChange={(entryId, quantity) => updateBatchLinePalletBreakdownQuantity(line.id, entryId, quantity)}
-                            mismatchMessage={hasPalletBreakdownMismatch ? t("palletBreakdownTotalMismatch", {
-                              assigned: palletBreakdownTotal,
-                              received: line.receivedQty
-                            }) : null}
-                          />
-                          <label>{t("reorderLevel")}<input type="number" min="0" value={numberInputValue(displayedReorderLevel)} onChange={(event) => updateBatchLine(line.id, { reorderLevel: Math.max(0, Number(event.target.value || 0)) })} placeholder={suggestedReorderLevel > 0 ? String(suggestedReorderLevel) : ""} disabled={Boolean(selectedBatchItem)} /></label>
                         </div>
                         <div className="batch-line-card__meta">
                           <span className="batch-line-card__hint">
@@ -3519,6 +3352,9 @@ export function ActivityManagementPage({
                             <span className="cell--mono">{line.sku.trim().toUpperCase() || "-"}</span>
                           </div>
                           <div className="batch-line-card__meta">
+                            <span className="batch-line-card__hint">
+                              {`${t("itemCode")}: ${line.itemNumber.trim().toUpperCase() || batchSkuMaster?.itemNumber || "-"}`}
+                            </span>
                             <span className="batch-line-card__hint">{line.description.trim() || (batchSkuMaster ? getSKUMasterDescription(batchSkuMaster) : "-")}</span>
                             <span className="batch-line-card__hint">
                               {[
@@ -3966,7 +3802,6 @@ function inboundDocumentMatchesSearch(document: InboundDocument, normalizedSearc
     document.customerName,
     document.locationName,
     document.storageSection,
-    document.unitLabel,
     document.documentNote,
     document.status,
     document.trackingStatus,
@@ -3974,7 +3809,6 @@ function inboundDocumentMatchesSearch(document: InboundDocument, normalizedSearc
       line.sku,
       line.description,
       line.storageSection,
-      line.unitLabel,
       line.palletsDetailCtns,
       line.lineNote
     ])

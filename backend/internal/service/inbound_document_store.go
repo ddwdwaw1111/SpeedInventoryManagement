@@ -43,6 +43,7 @@ type InboundDocument struct {
 type InboundDocumentLine struct {
 	ID                int64                    `json:"id"`
 	DocumentID        int64                    `json:"documentId"`
+	ItemNumber        string                   `json:"itemNumber"`
 	SKU               string                   `json:"sku"`
 	Description       string                   `json:"description"`
 	StorageSection    string                   `json:"storageSection"`
@@ -87,6 +88,7 @@ type UpdateInboundDocumentContainerTypeInput struct {
 }
 
 type CreateInboundDocumentLineInput struct {
+	ItemNumber        string                   `json:"itemNumber"`
 	SKU               string                   `json:"sku"`
 	Description       string                   `json:"description"`
 	ReorderLevel      int                      `json:"reorderLevel"`
@@ -126,6 +128,7 @@ type inboundDocumentRow struct {
 type inboundDocumentLineRow struct {
 	ID                  int64     `db:"id"`
 	DocumentID          int64     `db:"document_id"`
+	ItemNumber          string    `db:"item_number"`
 	SKUSnapshot         string    `db:"sku_snapshot"`
 	DescriptionSnapshot string    `db:"description_snapshot"`
 	StorageSection      string    `db:"storage_section"`
@@ -186,7 +189,6 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 		whereClauses = append(whereClauses, `(
 			LOWER(COALESCE(d.container_no, '')) LIKE ?
 			OR LOWER(COALESCE(d.document_note, '')) LIKE ?
-			OR LOWER(COALESCE(d.unit_label, '')) LIKE ?
 			OR LOWER(COALESCE(d.storage_section, '')) LIKE ?
 			OR LOWER(COALESCE(d.tracking_status, '')) LIKE ?
 			OR LOWER(COALESCE(c.name, '')) LIKE ?
@@ -197,16 +199,21 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 				WHERE il.document_id = d.id
 					AND (
 						LOWER(COALESCE(il.sku_snapshot, '')) LIKE ?
+						OR EXISTS (
+							SELECT 1
+							FROM sku_master sm
+							WHERE sm.sku = il.sku_snapshot
+								AND LOWER(COALESCE(sm.item_number, '')) LIKE ?
+						)
 						OR LOWER(COALESCE(il.description_snapshot, '')) LIKE ?
 						OR LOWER(COALESCE(il.storage_section, '')) LIKE ?
-						OR LOWER(COALESCE(il.unit_label, '')) LIKE ?
 						OR LOWER(COALESCE(il.pallets_detail_ctns, '')) LIKE ?
 						OR LOWER(COALESCE(il.pallet_breakdown_json, '')) LIKE ?
 						OR LOWER(COALESCE(il.line_note, '')) LIKE ?
 					)
 			)
 		)`)
-		for range 14 {
+		for range 13 {
 			args = append(args, searchPattern)
 		}
 	}
@@ -285,6 +292,7 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 		SELECT
 			id,
 			document_id,
+			COALESCE((SELECT sm.item_number FROM sku_master sm WHERE sm.sku = il.sku_snapshot LIMIT 1), '') AS item_number,
 			sku_snapshot,
 			COALESCE(description_snapshot, '') AS description_snapshot,
 			storage_section,
@@ -298,7 +306,7 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 			COALESCE(unit_label, '') AS unit_label,
 			COALESCE(line_note, '') AS line_note,
 			created_at
-		FROM inbound_document_lines
+		FROM inbound_document_lines il
 		WHERE document_id IN (?)
 		ORDER BY document_id DESC, sort_order ASC, id ASC
 	`, documentIDs)
@@ -319,6 +327,7 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 		document.Lines = append(document.Lines, InboundDocumentLine{
 			ID:                lineRow.ID,
 			DocumentID:        lineRow.DocumentID,
+			ItemNumber:        lineRow.ItemNumber,
 			SKU:               lineRow.SKUSnapshot,
 			Description:       lineRow.DescriptionSnapshot,
 			StorageSection:    fallbackSection(lineRow.StorageSection),
@@ -375,6 +384,9 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 		return InboundDocument{}, fmt.Errorf("begin inbound document transaction: %w", err)
 	}
 	defer tx.Rollback()
+	if err := s.upsertInboundLineItemCodesTx(ctx, tx, input); err != nil {
+		return InboundDocument{}, err
+	}
 
 	persistedStatus := requestedStatus
 	if requestedStatus == DocumentStatusConfirmed {
@@ -514,6 +526,9 @@ func (s *Store) UpdateInboundDocument(ctx context.Context, documentID int64, inp
 	}
 	if normalizedDocumentStatus != DocumentStatusDraft {
 		return InboundDocument{}, fmt.Errorf("%w: only draft receipts can be edited", ErrInvalidInput)
+	}
+	if err := s.upsertInboundLineItemCodesTx(ctx, tx, input); err != nil {
+		return InboundDocument{}, err
 	}
 	if err := s.updateDraftInboundDocumentTx(ctx, tx, documentID, documentRow, input, expectedArrivalDate, actualArrivalDate, requestedStatus, requestedTrackingStatus); err != nil {
 		return InboundDocument{}, err
@@ -1469,7 +1484,7 @@ func (s *Store) increaseConfirmedInboundReceiptLotsTx(
 	if palletCount <= 0 {
 		palletCount = 1
 	}
-	createdPallets, err := s.createPalletsForInboundLineTx(ctx, tx, documentID, existingLine.ID, containerVisitID, targetItem.SKUMasterID, increaseQty, documentRow.CustomerID, documentRow.LocationID, targetSection, targetContainerNo, documentRow.ActualArrivalDate, nil, nextLine.UnitsPerPallet, palletCount)
+	createdPallets, err := s.createPalletsForInboundLineTx(ctx, tx, documentID, existingLine.ID, containerVisitID, targetItem.SKUMasterID, increaseQty, documentRow.CustomerID, documentRow.LocationID, targetSection, targetContainerNo, documentRow.ActualArrivalDate, nil, palletCount)
 	if err != nil {
 		return err
 	}
@@ -1665,7 +1680,7 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 		receivedQty := lineRow.receivedOrExpectedQty()
 		lotSection := fallbackSection(firstNonEmpty(lineRow.StorageSection, documentRow.StorageSection))
 		lotContainer := documentRow.ContainerNo
-		createdPallets, err := s.createPalletsForInboundLineTx(ctx, tx, documentID, lineRow.ID, containerVisitID, skuMasterID, receivedQty, documentRow.CustomerID, documentRow.LocationID, lotSection, lotContainer, documentRow.ActualArrivalDate, lineRow.palletBreakdown(), lineRow.UnitsPerPallet, lineRow.Pallets)
+		createdPallets, err := s.createPalletsForInboundLineTx(ctx, tx, documentID, lineRow.ID, containerVisitID, skuMasterID, receivedQty, documentRow.CustomerID, documentRow.LocationID, lotSection, lotContainer, documentRow.ActualArrivalDate, lineRow.palletBreakdown(), lineRow.Pallets)
 		if err != nil {
 			return err
 		}
@@ -1702,7 +1717,7 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 				SourceLineID:        lineRow.ID,
 				ContainerNo:         lotContainer,
 				DeliveryDate:        firstNonEmptyTime(documentRow.ActualArrivalDate, documentRow.ExpectedArrivalDate),
-				ItemNumber:          lineRow.SKUSnapshot,
+				ItemNumber:          firstNonEmpty(lineRow.ItemNumber, lineRow.SKUSnapshot),
 				DescriptionSnapshot: itemDescription,
 				ExpectedQty:         lineRow.ExpectedQty,
 				ReceivedQty:         lineRow.ReceivedQty,
@@ -2060,6 +2075,7 @@ func (s *Store) loadInboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, docu
 		SELECT
 			id,
 			document_id,
+			COALESCE((SELECT sm.item_number FROM sku_master sm WHERE sm.sku = il.sku_snapshot LIMIT 1), '') AS item_number,
 			sku_snapshot,
 			COALESCE(description_snapshot, '') AS description_snapshot,
 			storage_section,
@@ -2073,7 +2089,7 @@ func (s *Store) loadInboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, docu
 			COALESCE(unit_label, '') AS unit_label,
 			COALESCE(line_note, '') AS line_note,
 			created_at
-		FROM inbound_document_lines
+		FROM inbound_document_lines il
 		WHERE document_id = ?
 		ORDER BY sort_order ASC, id ASC
 	`, documentID)
@@ -2088,6 +2104,7 @@ func (s *Store) loadInboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, docu
 		if err := rows.Scan(
 			&lineRow.ID,
 			&lineRow.DocumentID,
+			&lineRow.ItemNumber,
 			&lineRow.SKUSnapshot,
 			&lineRow.DescriptionSnapshot,
 			&lineRow.StorageSection,
@@ -2224,6 +2241,7 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 		SELECT
 			id,
 			document_id,
+			COALESCE((SELECT sm.item_number FROM sku_master sm WHERE sm.sku = il.sku_snapshot LIMIT 1), '') AS item_number,
 			sku_snapshot,
 			COALESCE(description_snapshot, '') AS description_snapshot,
 			storage_section,
@@ -2237,7 +2255,7 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 			COALESCE(unit_label, '') AS unit_label,
 			COALESCE(line_note, '') AS line_note,
 			created_at
-		FROM inbound_document_lines
+		FROM inbound_document_lines il
 		WHERE document_id IN (?)
 		ORDER BY document_id DESC, sort_order ASC, id ASC
 	`, documentIDs)
@@ -2259,6 +2277,7 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 		document.Lines = append(document.Lines, InboundDocumentLine{
 			ID:                lineRow.ID,
 			DocumentID:        lineRow.DocumentID,
+			ItemNumber:        lineRow.ItemNumber,
 			SKU:               lineRow.SKUSnapshot,
 			Description:       lineRow.DescriptionSnapshot,
 			StorageSection:    fallbackSection(lineRow.StorageSection),
@@ -2289,6 +2308,31 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 	return documents, nil
 }
 
+func (s *Store) upsertInboundLineItemCodesTx(ctx context.Context, tx *sql.Tx, input CreateInboundDocumentInput) error {
+	for _, line := range input.Lines {
+		if line.ItemNumber == "" {
+			continue
+		}
+
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO sku_master (item_number, sku, name, category, description, unit, reorder_level)
+			VALUES (?, ?, ?, 'General', ?, ?, 0)
+			ON DUPLICATE KEY UPDATE
+				item_number = COALESCE(NULLIF(VALUES(item_number), ''), item_number)
+		`,
+			line.ItemNumber,
+			line.SKU,
+			firstNonEmpty(line.Description, line.SKU),
+			nullableString(line.Description),
+			strings.ToLower(firstNonEmpty(input.UnitLabel, "CTN")),
+		); err != nil {
+			return mapDBError(fmt.Errorf("upsert inbound item code for sku %s: %w", line.SKU, err))
+		}
+	}
+
+	return nil
+}
+
 func (s *Store) findOrCreateInboundItem(ctx context.Context, tx *sql.Tx, documentInput CreateInboundDocumentInput, line CreateInboundDocumentLineInput, deliveryDate *time.Time) (int64, string, error) {
 	normalizedSection := fallbackSection(firstNonEmpty(line.StorageSection, documentInput.StorageSection))
 	normalizedContainerNo := strings.TrimSpace(documentInput.ContainerNo)
@@ -2297,6 +2341,7 @@ func (s *Store) findOrCreateInboundItem(ctx context.Context, tx *sql.Tx, documen
 	}
 
 	itemInput := sanitizeItemInput(CreateItemInput{
+		ItemNumber:     line.ItemNumber,
 		SKU:            line.SKU,
 		Name:           firstNonEmpty(line.Description, line.SKU),
 		Category:       "General",
@@ -2439,15 +2484,21 @@ func sanitizeInboundDocumentInput(input CreateInboundDocumentInput) CreateInboun
 	input.ContainerType = strings.TrimSpace(strings.ToUpper(input.ContainerType))
 	input.HandlingMode = strings.TrimSpace(strings.ToUpper(input.HandlingMode))
 	input.StorageSection = fallbackSection(strings.TrimSpace(strings.ToUpper(input.StorageSection)))
-	input.UnitLabel = strings.TrimSpace(strings.ToUpper(input.UnitLabel))
+	// Receiving uses cartons as its fixed internal unit. Keep the legacy API and
+	// database fields populated for compatibility, but ignore client overrides.
+	input.UnitLabel = "CTN"
 	input.Status = strings.TrimSpace(strings.ToUpper(input.Status))
 	input.TrackingStatus = strings.TrimSpace(strings.ToUpper(input.TrackingStatus))
 	input.DocumentNote = strings.TrimSpace(input.DocumentNote)
 
 	lines := make([]CreateInboundDocumentLineInput, 0, len(input.Lines))
 	for _, line := range input.Lines {
+		line.ItemNumber = strings.TrimSpace(strings.ToUpper(line.ItemNumber))
 		line.SKU = strings.TrimSpace(strings.ToUpper(line.SKU))
 		line.Description = strings.TrimSpace(line.Description)
+		// Reorder thresholds are no longer part of the receiving workflow. Keep the
+		// persisted column/API field only for backward compatibility.
+		line.ReorderLevel = 0
 		if line.UnitsPerPallet < 0 {
 			line.UnitsPerPallet = 0
 		}
@@ -2456,7 +2507,9 @@ func sanitizeInboundDocumentInput(input CreateInboundDocumentInput) CreateInboun
 		line.LineNote = strings.TrimSpace(line.LineNote)
 		line.PalletBreakdown = normalizeInboundPalletBreakdown(line.PalletBreakdown)
 		if len(line.PalletBreakdown) > 0 {
-			line.Pallets = len(line.PalletBreakdown)
+			if line.Pallets <= 0 {
+				line.Pallets = len(line.PalletBreakdown)
+			}
 			line.PalletsDetailCtns = formatInboundPalletBreakdownDetail(line.PalletBreakdown)
 		}
 		if line.SKU == "" {
@@ -2512,6 +2565,9 @@ func validateInboundDocumentInput(input CreateInboundDocumentInput) error {
 			return fmt.Errorf("%w: sealed transit receipts cannot include pallet breakdown", ErrInvalidInput)
 		}
 		if len(line.PalletBreakdown) > 0 {
+			if line.Pallets != len(line.PalletBreakdown) {
+				return fmt.Errorf("%w: pallet breakdown count must match declared pallets", ErrInvalidInput)
+			}
 			totalBreakdownQty := 0
 			for _, breakdown := range line.PalletBreakdown {
 				if breakdown.Quantity <= 0 {
@@ -2526,10 +2582,14 @@ func validateInboundDocumentInput(input CreateInboundDocumentInput) error {
 		switch {
 		case line.SKU == "":
 			return fmt.Errorf("%w: sku is required", ErrInvalidInput)
-		case line.ExpectedQty < 0 || line.ReceivedQty < 0 || line.Pallets < 0 || line.ReorderLevel < 0:
-			return fmt.Errorf("%w: quantities and reorder level cannot be negative", ErrInvalidInput)
+		case line.ExpectedQty < 0 || line.ReceivedQty < 0 || line.Pallets < 0:
+			return fmt.Errorf("%w: quantities cannot be negative", ErrInvalidInput)
 		case line.ExpectedQty == 0 && line.ReceivedQty == 0:
 			return fmt.Errorf("%w: expected or received quantity is required", ErrInvalidInput)
+		case coalescedStatus == DocumentStatusConfirmed && handlingMode == InboundHandlingModePalletized && line.receivedOrExpectedQty() > 0 && line.Pallets <= 0:
+			return fmt.Errorf("%w: confirmed palletized receipts require a pallet count", ErrInvalidInput)
+		case coalescedStatus == DocumentStatusConfirmed && line.Pallets > line.receivedOrExpectedQty():
+			return fmt.Errorf("%w: pallets cannot exceed received quantity", ErrInvalidInput)
 		}
 	}
 

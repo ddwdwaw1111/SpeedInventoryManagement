@@ -11,11 +11,11 @@ func TestSanitizeInboundDocumentInput(t *testing.T) {
 	input := sanitizeInboundDocumentInput(CreateInboundDocumentInput{
 		ContainerNo:    " mrku123 ",
 		StorageSection: " ",
-		UnitLabel:      " ctn ",
+		UnitLabel:      " pcs ",
 		Status:         " confirmed ",
 		DocumentNote:   "  inbound note ",
 		Lines: []CreateInboundDocumentLineInput{
-			{SKU: " sku-1 ", Description: "  Pan  ", StorageSection: " b ", LineNote: "  keep cold ", ExpectedQty: 10},
+			{ItemNumber: " item-100 ", SKU: " sku-1 ", Description: "  Pan  ", StorageSection: " b ", LineNote: "  keep cold ", ExpectedQty: 10, ReorderLevel: 9, UnitsPerPallet: 4},
 			{SKU: " ", Description: "ignored"},
 		},
 	})
@@ -27,7 +27,7 @@ func TestSanitizeInboundDocumentInput(t *testing.T) {
 		t.Fatalf("expected default storage section %s, got %q", DefaultStorageSection, input.StorageSection)
 	}
 	if input.UnitLabel != "CTN" {
-		t.Fatalf("expected uppercase unit label, got %q", input.UnitLabel)
+		t.Fatalf("expected receiving to force the legacy unit label to CTN, got %q", input.UnitLabel)
 	}
 	if input.Status != "CONFIRMED" {
 		t.Fatalf("expected uppercase status, got %q", input.Status)
@@ -41,11 +41,20 @@ func TestSanitizeInboundDocumentInput(t *testing.T) {
 	if input.Lines[0].SKU != "SKU-1" {
 		t.Fatalf("expected uppercase line SKU, got %q", input.Lines[0].SKU)
 	}
+	if input.Lines[0].ItemNumber != "ITEM-100" {
+		t.Fatalf("expected uppercase line item code, got %q", input.Lines[0].ItemNumber)
+	}
 	if input.Lines[0].StorageSection != "B" {
 		t.Fatalf("expected uppercase line storage section, got %q", input.Lines[0].StorageSection)
 	}
 	if input.Lines[0].LineNote != "keep cold" {
 		t.Fatalf("expected trimmed line note, got %q", input.Lines[0].LineNote)
+	}
+	if input.Lines[0].ReorderLevel != 0 {
+		t.Fatalf("expected receiving to ignore the deprecated reorder level, got %d", input.Lines[0].ReorderLevel)
+	}
+	if input.Lines[0].UnitsPerPallet != 4 {
+		t.Fatalf("expected CTN per pallet to be preserved as receipt metadata, got %d", input.Lines[0].UnitsPerPallet)
 	}
 }
 
@@ -54,7 +63,7 @@ func TestValidateInboundDocumentInput(t *testing.T) {
 		CustomerID: 1,
 		LocationID: 2,
 		Lines: []CreateInboundDocumentLineInput{
-			{SKU: "SKU-1", ExpectedQty: 10},
+			{SKU: "SKU-1", ExpectedQty: 10, Pallets: 1},
 		},
 	}
 
@@ -75,6 +84,39 @@ func TestValidateInboundDocumentInput(t *testing.T) {
 		if err := validateInboundDocumentInput(tc); err == nil || !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("expected ErrInvalidInput, got %v for input %#v", err, tc)
 		}
+	}
+}
+
+func TestConfirmedInboundKeepsQuantityAndPalletCountIndependent(t *testing.T) {
+	input := CreateInboundDocumentInput{
+		CustomerID:     1,
+		LocationID:     2,
+		HandlingMode:   InboundHandlingModePalletized,
+		Status:         DocumentStatusConfirmed,
+		TrackingStatus: InboundTrackingReceived,
+		Lines: []CreateInboundDocumentLineInput{
+			{SKU: "SKU-1", ExpectedQty: 10, ReceivedQty: 10, Pallets: 3, UnitsPerPallet: 4},
+		},
+	}
+
+	if err := validateInboundDocumentInput(input); err != nil {
+		t.Fatalf("expected independent inbound quantity and pallet count to be valid, got %v", err)
+	}
+	if len(input.Lines[0].PalletBreakdown) != 0 {
+		t.Fatal("expected no pallet breakdown to be required")
+	}
+
+	input.Lines[0].Pallets = 0
+	if err := validateInboundDocumentInput(input); err == nil || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected confirmed receipt without pallets to be invalid, got %v", err)
+	}
+}
+
+func TestInboundPalletCompatibilitySplitIgnoresCTNPerPallet(t *testing.T) {
+	got := inboundPalletBreakdownQuantities(10, nil, 3)
+	want := []int{4, 3, 3}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected declared pallet count to control compatibility split, got %v", got)
 	}
 }
 
@@ -126,7 +168,7 @@ func TestSanitizeOutboundDocumentInput(t *testing.T) {
 func TestValidateOutboundDocumentInput(t *testing.T) {
 	validInput := CreateOutboundDocumentInput{
 		Lines: []CreateOutboundDocumentLineInput{
-			{CustomerID: 1, LocationID: 2, SKUMasterID: 3, Quantity: 3},
+			{CustomerID: 1, LocationID: 2, SKUMasterID: 3, Quantity: 3, Pallets: 1},
 		},
 	}
 
@@ -151,6 +193,37 @@ func TestValidateOutboundDocumentInput(t *testing.T) {
 	}
 }
 
+func TestConfirmedOutboundKeepsQuantityAndPalletCountIndependentByContainer(t *testing.T) {
+	input := CreateOutboundDocumentInput{
+		Status:         DocumentStatusConfirmed,
+		TrackingStatus: OutboundTrackingShipped,
+		Lines: []CreateOutboundDocumentLineInput{
+			{
+				CustomerID:  1,
+				LocationID:  2,
+				SKUMasterID: 3,
+				Quantity:    10,
+				Pallets:     3,
+				PickAllocations: []OutboundPickAllocation{
+					{LocationID: 2, StorageSection: "TEMP", ContainerNo: "CONT-A", AllocatedQty: 10, Pallets: 3},
+				},
+			},
+		},
+	}
+
+	if err := validateOutboundDocumentInput(input); err != nil {
+		t.Fatalf("expected independent outbound quantity and pallet count to be valid, got %v", err)
+	}
+	if len(input.Lines[0].PickPallets) != 0 {
+		t.Fatal("expected pallet entity picks to be optional when a container allocation is declared")
+	}
+
+	input.Lines[0].PickAllocations[0].Pallets = 2
+	if err := validateOutboundDocumentInput(input); err == nil || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected mismatched allocation pallets to be invalid, got %v", err)
+	}
+}
+
 func TestOutboundTrackingBOReceivedIsTerminal(t *testing.T) {
 	if got := normalizeOutboundTrackingStatus(" bo_received ", DocumentStatusConfirmed); got != OutboundTrackingBOReceived {
 		t.Fatalf("expected BO received tracking status, got %q", got)
@@ -166,7 +239,7 @@ func TestOutboundTrackingBOReceivedIsTerminal(t *testing.T) {
 		Status:         DocumentStatusConfirmed,
 		TrackingStatus: OutboundTrackingBOReceived,
 		Lines: []CreateOutboundDocumentLineInput{
-			{CustomerID: 1, LocationID: 2, SKUMasterID: 3, Quantity: 3},
+			{CustomerID: 1, LocationID: 2, SKUMasterID: 3, Quantity: 3, Pallets: 1},
 		},
 	}
 	if err := validateOutboundDocumentInput(input); err != nil {

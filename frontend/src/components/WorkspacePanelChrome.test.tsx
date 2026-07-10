@@ -47,13 +47,13 @@ describe("WorkspacePanelChrome", () => {
     expect(screen.getByText("Refreshing the grid.")).toBeInTheDocument();
   });
 
-  it("keeps pallet trace available in the inventory view switcher", () => {
+  it("keeps the normal inventory switcher container-centric", () => {
     renderWithProviders(<InventoryViewSwitcher activeView="inventory-summary" onNavigate={() => undefined} />);
 
     expect(screen.getByRole("button", { name: "Summary" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Containers" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Map" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Activity" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Pallets" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pallets" })).not.toBeInTheDocument();
   });
 });

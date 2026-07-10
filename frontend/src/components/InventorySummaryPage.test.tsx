@@ -163,37 +163,22 @@ describe("InventorySummaryPage", () => {
     expect(within(grid).getByText("25")).toBeInTheDocument();
   });
 
-  it("shows 2 in the low-stock stat card when two SKU rows have items at or below their reorder level", () => {
+  it("does not expose reorder-level or low-stock controls", () => {
     const { container } = renderWithProviders(
       <InventorySummaryPage
         {...defaultProps({
           items: [
             createItem({ id: 1, sku: "LOW-A", reorderLevel: 10, availableQty: 5 }),
-            createItem({ id: 2, sku: "LOW-B", reorderLevel: 5, availableQty: 5 }),  // equals threshold
-            createItem({ id: 3, sku: "OK", reorderLevel: 5, availableQty: 20 })
+            createItem({ id: 2, sku: "OK", reorderLevel: 5, availableQty: 20 })
           ]
         })}
       />
     );
 
-    // Stat cards order: [SKU count(0), On Hand(1), Available(2), Low Stock(3), Warehouses(4)]
     const statCards = container.querySelectorAll(".workspace-summary-card");
-    const lowStockValue = statCards[3]?.querySelector(".workspace-summary-card__value");
-    expect(lowStockValue?.textContent).toBe("2");
-  });
-
-  it("does not count an item as low stock when its reorderLevel is 0", () => {
-    const { container } = renderWithProviders(
-      <InventorySummaryPage
-        {...defaultProps({
-          items: [createItem({ sku: "NO-THRESHOLD", reorderLevel: 0, availableQty: 0 })]
-        })}
-      />
-    );
-
-    const statCards = container.querySelectorAll(".workspace-summary-card");
-    const lowStockValue = statCards[3]?.querySelector(".workspace-summary-card__value");
-    expect(lowStockValue?.textContent).toBe("0");
+    expect(statCards).toHaveLength(4);
+    expect(screen.queryByText("Low stock")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Stock Health" })).not.toBeInTheDocument();
   });
 
   // ──────────────────────────────────────────────────────────────
@@ -367,31 +352,6 @@ describe("InventorySummaryPage", () => {
   // Filtering — health filter
   // ──────────────────────────────────────────────────────────────
 
-  it("hides in-stock rows and shows only low-stock rows when the LOW_STOCK health filter is selected", async () => {
-    renderWithProviders(
-      <InventorySummaryPage
-        {...defaultProps({
-          items: [
-            createItem({ id: 1, sku: "LOW-A", reorderLevel: 10, availableQty: 3 }),
-            createItem({ id: 2, sku: "OK-B",  reorderLevel: 10, availableQty: 50 })
-          ]
-        })}
-      />
-    );
-
-    fireEvent.change(screen.getByRole("combobox", { name: "Stock Health" }), {
-      target: { value: "LOW_STOCK" }
-    });
-
-    await waitFor(() => {
-      const grid = screen.getByTestId("mock-data-grid");
-      const rows = within(grid).getAllByRole("row");
-      expect(rows).toHaveLength(1);
-      expect(within(grid).getByText("LOW-A")).toBeInTheDocument();
-      expect(within(grid).queryByText("OK-B")).not.toBeInTheDocument();
-    });
-  });
-
   // ──────────────────────────────────────────────────────────────
   // Session storage context pre-fill
   // ──────────────────────────────────────────────────────────────
@@ -412,14 +372,13 @@ describe("InventorySummaryPage", () => {
     expect(window.sessionStorage.getItem("sim-inventory-summary-context")).toBeNull();
   });
 
-  it("pre-fills customer and health filters from session storage context", async () => {
-    setPendingInventorySummaryContext({ customerId: 1, healthFilter: "LOW_STOCK" });
+  it("pre-fills the customer filter from session storage context", async () => {
+    setPendingInventorySummaryContext({ customerId: 1 });
 
     renderWithProviders(<InventorySummaryPage {...defaultProps()} />);
 
     await waitFor(() => {
       expect(screen.getByRole("combobox", { name: "Customer" })).toHaveValue("1");
-      expect(screen.getByRole("combobox", { name: "Stock Health" })).toHaveValue("LOW_STOCK");
     });
   });
 

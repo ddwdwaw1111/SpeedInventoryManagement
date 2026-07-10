@@ -18,7 +18,7 @@ type WarehouseMapPageProps = {
   onOpenContainerDetail: (containerNo: string) => void;
 };
 
-type NodeStatus = "normal" | "low" | "hold" | "damaged" | "mixed";
+type NodeStatus = "normal" | "hold" | "damaged" | "mixed";
 
 type ContainerNode = {
   id: string;
@@ -104,7 +104,6 @@ const SCENE_CONFIG = {
 
 const STATUS_COLOR_MAP: Record<NodeStatus, string> = {
   normal: "#5f8b7f",
-  low: "#c79b5d",
   hold: "#53739a",
   damaged: "#bf6d5f",
   mixed: "#7a5fa0"
@@ -330,7 +329,6 @@ export function WarehouseMapPage({ items, isLoading, onNavigate, onOpenContainer
           >
             <MenuItem value="all">{t("allStatuses")}</MenuItem>
             <MenuItem value="normal">{t("warehouseMapNormal")}</MenuItem>
-            <MenuItem value="low">{t("warehouseMapLowStock")}</MenuItem>
             <MenuItem value="hold">{t("warehouseMapOnHold")}</MenuItem>
             <MenuItem value="damaged">{t("warehouseMapDamaged")}</MenuItem>
             <MenuItem value="mixed">{t("warehouseMapMixed")}</MenuItem>
@@ -356,7 +354,7 @@ export function WarehouseMapPage({ items, isLoading, onNavigate, onOpenContainer
                 </span>
               </div>
               <div className="warehouse-map__legend">
-                {(["normal", "low", "hold", "damaged", "mixed"] as NodeStatus[]).map((status) => (
+                {(["normal", "hold", "damaged", "mixed"] as NodeStatus[]).map((status) => (
                   <span key={status}>
                     <i style={{ background: STATUS_COLOR_MAP[status] }} />
                     {getStatusLabel(status, t)}
@@ -871,14 +869,12 @@ function deriveNodeStatus(items: Item[]): NodeStatus {
   const skuCount = new Set(items.map((item) => item.sku)).size;
   const hasDamaged = items.some((item) => item.damagedQty > 0);
   const hasHold = items.some((item) => item.holdQty > 0);
-  const hasLowStock = items.some((item) => item.reorderLevel > 0 && item.availableQty <= item.reorderLevel);
   const hasMixedStock = customerCount > 1 || skuCount > 1;
-  const activeFlags = [hasDamaged, hasHold, hasLowStock, hasMixedStock].filter(Boolean).length;
+  const activeFlags = [hasDamaged, hasHold, hasMixedStock].filter(Boolean).length;
 
   if (activeFlags > 1) return "mixed";
   if (hasDamaged) return "damaged";
   if (hasHold) return "hold";
-  if (hasLowStock) return "low";
   if (hasMixedStock) return "mixed";
   return "normal";
 }
@@ -920,8 +916,6 @@ function getNodeHeight(quantity: number) {
 
 function getStatusLabel(status: NodeStatus, t: (key: string) => string) {
   switch (status) {
-    case "low":
-      return t("warehouseMapLowStock");
     case "hold":
       return t("warehouseMapOnHold");
     case "damaged":

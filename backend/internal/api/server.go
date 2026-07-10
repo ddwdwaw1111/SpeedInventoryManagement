@@ -347,6 +347,7 @@ func (s *Server) handleListItems(c *gin.Context) {
 		Search:       c.Query("search"),
 		LocationID:   locationID,
 		CustomerID:   customerID,
+		ContainerNo:  c.Query("containerNo"),
 		LowStockOnly: strings.EqualFold(c.Query("lowStock"), "true"),
 	})
 	if err != nil {

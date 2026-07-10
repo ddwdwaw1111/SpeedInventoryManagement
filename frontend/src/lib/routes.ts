@@ -87,7 +87,7 @@ export function getPageFromPath(pathname: string): PageKey {
   if (/^\/container-contents\/[^/]+$/.test(normalized)) return "container-detail";
   if (normalized === "/container-contents") return "container-contents";
   if (normalized === "/audit-logs") return "audit-logs";
-  if (normalized === "/pallets") return "pallet-trace";
+  if (normalized === "/pallets") return "dashboard";
   if (normalized === "/user-management") return "user-management";
   if (normalized === "/inventory-summary") return "inventory-summary";
   if (normalized === "/warehouse-map") return "warehouse-map";

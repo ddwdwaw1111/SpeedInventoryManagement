@@ -41,7 +41,7 @@ describe("ContainerDetailPage", () => {
     getPalletLocationEvents.mockResolvedValue([]);
   });
 
-  it("renders current SKU cards and only the pallets assigned to the selected container", async () => {
+  it("renders current SKU cards without exposing the pallet entity manifest", async () => {
     getPallets.mockResolvedValue([
       createPalletTrace({
         id: 11,
@@ -93,10 +93,11 @@ describe("ContainerDetailPage", () => {
       />
     );
 
-    expect(await screen.findByText("PLT-001")).toBeInTheDocument();
+    await waitFor(() => expect(getPallets).toHaveBeenCalledWith(300, "GCXU5817233"));
     expect(screen.getByRole("heading", { name: "608333" })).toBeInTheDocument();
+    expect(screen.queryByText("PLT-001")).not.toBeInTheDocument();
     expect(screen.queryByText("PLT-OTHER")).not.toBeInTheDocument();
-    expect(getPallets).toHaveBeenCalledWith(300, "GCXU5817233");
+    expect(screen.queryByText("Pallet Trace in This Container")).not.toBeInTheDocument();
   });
 
   it("navigates to cycle-counts and stores the container scope when New Count Sheet is clicked", async () => {
@@ -235,7 +236,7 @@ describe("ContainerDetailPage", () => {
     expect(screen.queryByText("PLT-OTHER")).not.toBeInTheDocument();
   });
 
-  it("filters pallet trace cards by warehouse tab", async () => {
+  it("does not expose pallet warehouse filters or pallet cards", async () => {
     getPallets.mockResolvedValue([
       createPalletTrace({
         id: 11,
@@ -272,13 +273,10 @@ describe("ContainerDetailPage", () => {
       />
     );
 
-    expect(await screen.findByText("PLT-NJ")).toBeInTheDocument();
-    expect(screen.getByText("PLT-LA")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: /LA/i }));
-
-    expect(await screen.findByText("PLT-LA")).toBeInTheDocument();
+    await waitFor(() => expect(getPallets).toHaveBeenCalledWith(300, "GCXU5817233"));
     expect(screen.queryByText("PLT-NJ")).not.toBeInTheDocument();
+    expect(screen.queryByText("PLT-LA")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^LA$/i })).not.toBeInTheDocument();
   });
 
   it("posts inventory adjustment using the selected pallet contents", async () => {
@@ -552,7 +550,7 @@ describe("ContainerDetailPage", () => {
     expect(onRefresh).toHaveBeenCalled();
   });
 
-  it("paginates pallet cards and removes pallet-level action buttons", async () => {
+  it("does not render a pallet entity list for administrators", async () => {
     const onNavigate = vi.fn();
     getPallets.mockResolvedValue(
       Array.from({ length: 7 }, (_, index) => createPalletTrace({
@@ -586,16 +584,11 @@ describe("ContainerDetailPage", () => {
       />
     );
 
-    expect(await screen.findByText("PLT-001")).toBeInTheDocument();
-    expect(screen.getByText("Page 1 of 2")).toBeInTheDocument();
-    expect(screen.queryByText("PLT-007")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "View Trace" })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Next Page" }));
-
-    expect(await screen.findByText("PLT-007")).toBeInTheDocument();
-    expect(screen.getByText("Page 2 of 2")).toBeInTheDocument();
+    await waitFor(() => expect(getPallets).toHaveBeenCalledWith(300, "GCXU5817233"));
     expect(screen.queryByText("PLT-001")).not.toBeInTheDocument();
+    expect(screen.queryByText("PLT-007")).not.toBeInTheDocument();
+    expect(screen.queryByText("Pallet Trace in This Container")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Next Page" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "View Trace" })).not.toBeInTheDocument();
     expect(onNavigate).not.toHaveBeenCalledWith("pallet-trace");
   });

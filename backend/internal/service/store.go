@@ -201,6 +201,7 @@ type Item struct {
 	AllocatedQty    int        `json:"allocatedQty"`
 	DamagedQty      int        `json:"damagedQty"`
 	HoldQty         int        `json:"holdQty"`
+	Pallets         int        `json:"pallets"`
 	ReorderLevel    int        `json:"reorderLevel"`
 	CustomerID      int64      `json:"customerId"`
 	CustomerName    string     `json:"customerName"`
@@ -259,6 +260,7 @@ type ItemFilters struct {
 	Search       string
 	LocationID   int64
 	CustomerID   int64
+	ContainerNo  string
 	LowStockOnly bool
 }
 
@@ -320,9 +322,19 @@ type CreateMovementInput struct {
 }
 
 func NewStore(db *sqlx.DB) (*Store, error) {
+	return NewStoreWithOptions(db, StoreOptions{RunStartupMaintenance: true})
+}
+
+type StoreOptions struct {
+	RunStartupMaintenance bool
+}
+
+func NewStoreWithOptions(db *sqlx.DB, options StoreOptions) (*Store, error) {
 	store := &Store{db: db}
-	if err := store.repairOutboundDraftReservations(context.Background()); err != nil {
-		return nil, err
+	if options.RunStartupMaintenance {
+		if err := store.repairOutboundDraftReservations(context.Background()); err != nil {
+			return nil, err
+		}
 	}
 	return store, nil
 }
@@ -399,6 +411,7 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 			SUM(pi.allocated_qty) AS allocated_qty,
 			SUM(pi.damaged_qty) AS damaged_qty,
 			SUM(pi.hold_qty) AS hold_qty,
+			COUNT(DISTINCT p.id) AS pallets,
 			sm.reorder_level,
 			p.customer_id,
 			c.name,
@@ -441,6 +454,11 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 	if filters.CustomerID > 0 {
 		query += " AND p.customer_id = ?"
 		args = append(args, filters.CustomerID)
+	}
+
+	if containerNo := strings.TrimSpace(filters.ContainerNo); containerNo != "" {
+		query += " AND UPPER(TRIM(COALESCE(p.current_container_no, i.container_no, ''))) = UPPER(TRIM(?))"
+		args = append(args, containerNo)
 	}
 
 	query += `
@@ -997,6 +1015,7 @@ func (s *Store) getItem(ctx context.Context, itemID int64) (Item, error) {
 			COALESCE(pb.allocated_qty, 0) AS allocated_qty,
 			COALESCE(pb.damaged_qty, 0) AS damaged_qty,
 			COALESCE(pb.hold_qty, 0) AS hold_qty,
+			COALESCE(pb.pallets, 0) AS pallets,
 			sm.reorder_level,
 			i.customer_id,
 			c.name,
@@ -1023,6 +1042,7 @@ func (s *Store) getItem(ctx context.Context, itemID int64) (Item, error) {
 				SUM(pi.allocated_qty) AS allocated_qty,
 				SUM(pi.damaged_qty) AS damaged_qty,
 				SUM(pi.hold_qty) AS hold_qty,
+				COUNT(DISTINCT p.id) AS pallets,
 				MAX(pi.updated_at) AS updated_at
 			FROM pallet_items pi
 			JOIN pallets p ON p.id = pi.pallet_id
@@ -1135,6 +1155,7 @@ func scanItem(scanner itemScanner) (Item, error) {
 		&item.AllocatedQty,
 		&item.DamagedQty,
 		&item.HoldQty,
+		&item.Pallets,
 		&item.ReorderLevel,
 		&item.CustomerID,
 		&item.CustomerName,

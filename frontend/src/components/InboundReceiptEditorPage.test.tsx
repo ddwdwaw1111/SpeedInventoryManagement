@@ -12,7 +12,7 @@ vi.mock("../lib/api", () => ({
 
 import { api } from "../lib/api";
 import { renderWithProviders } from "../test/renderWithProviders";
-import { createCustomer, createInboundDocument, createLocation } from "../test/fixtures";
+import { createCustomer, createInboundDocument, createLocation, createSkuMaster } from "../test/fixtures";
 import { InboundReceiptEditorPage } from "./InboundReceiptEditorPage";
 
 const mockedApi = api as unknown as {
@@ -66,12 +66,13 @@ describe("InboundReceiptEditorPage", () => {
     fireEvent.change(screen.getByLabelText("Customer"), { target: { value: "1" } });
     fireEvent.change(screen.getByLabelText("Actual Arrival Date"), { target: { value: "2026-03-31" } });
     fireEvent.change(screen.getByLabelText("Container No."), { target: { value: "MSCU1234567" } });
+    expect(screen.queryByLabelText("Inbound Unit")).not.toBeInTheDocument();
 
-    const inboundLineInputs = document.querySelectorAll(".batch-line-grid--inbound input");
-    fireEvent.change(inboundLineInputs[0] as HTMLInputElement, { target: { value: "ABC123" } });
-    fireEvent.change(inboundLineInputs[1] as HTMLInputElement, { target: { value: "Sample inbound SKU" } });
-    fireEvent.change(inboundLineInputs[2] as HTMLInputElement, { target: { value: "8" } });
-    fireEvent.change(inboundLineInputs[3] as HTMLInputElement, { target: { value: "8" } });
+    fireEvent.change(screen.getByLabelText(/SKU.*#1/), { target: { value: "ABC123" } });
+    fireEvent.change(screen.getByLabelText("Item Code #1"), { target: { value: "ITEM-ABC123" } });
+    fireEvent.change(screen.getByLabelText("Description #1"), { target: { value: "Sample inbound SKU" } });
+    fireEvent.change(screen.getByLabelText(/Expected QTY #1/), { target: { value: "8" } });
+    fireEvent.change(screen.getByLabelText("Received #1"), { target: { value: "8" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Save Draft" }));
 
@@ -85,18 +86,18 @@ describe("InboundReceiptEditorPage", () => {
         containerType: "NORMAL",
         handlingMode: "PALLETIZED",
         storageSection: "TEMP",
-        unitLabel: "CTN",
         status: "DRAFT",
         trackingStatus: "SCHEDULED",
         documentNote: undefined,
         lines: [
           {
+            itemNumber: "ITEM-ABC123",
             sku: "ABC123",
             description: "Sample inbound SKU",
-            reorderLevel: 2,
             expectedQty: 8,
             receivedQty: 8,
             pallets: 0,
+            unitsPerPallet: undefined,
             palletsDetailCtns: undefined,
             storageSection: "TEMP",
             lineNote: undefined
@@ -110,6 +111,95 @@ describe("InboundReceiptEditorPage", () => {
     expect(onOpenInboundDetail).not.toHaveBeenCalled();
   });
 
+  it("records CTN per Pallet without coupling it to received quantity or pallet count", async () => {
+    mockedApi.createInboundDocument.mockResolvedValue(createInboundDocument({
+      id: 100,
+      status: "CONFIRMED",
+      trackingStatus: "RECEIVED",
+      containerNo: "MSCU1234567"
+    }));
+
+    renderWithProviders(
+      <InboundReceiptEditorPage
+        routeKey="/inbound-management/new"
+        documentId={null}
+        document={null}
+        items={[]}
+        skuMasters={[]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        inboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onBackToList={vi.fn()}
+        onOpenInboundDetail={vi.fn()}
+        onOpenReceiptEditor={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText("Warehouse"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("Customer"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("Actual Arrival Date"), { target: { value: "2026-03-31" } });
+    fireEvent.change(screen.getByLabelText("Container No."), { target: { value: "MSCU1234567" } });
+    fireEvent.change(screen.getByLabelText(/SKU.*#1/), { target: { value: "ABC123" } });
+    fireEvent.change(screen.getByLabelText("Item Code #1"), { target: { value: "ITEM-ABC123" } });
+    fireEvent.change(screen.getByLabelText("Description #1"), { target: { value: "Sample inbound SKU" } });
+    fireEvent.change(screen.getByLabelText(/Expected QTY #1/), { target: { value: "8" } });
+    fireEvent.change(screen.getByLabelText("Received #1"), { target: { value: "8" } });
+    fireEvent.change(screen.getByLabelText("PALLETS #1"), { target: { value: "3" } });
+    fireEvent.change(screen.getByLabelText("CTN / Pallet #1"), { target: { value: "4" } });
+
+    expect(screen.queryByLabelText("Reorder Level #1")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Receipt" }));
+
+    await waitFor(() => expect(mockedApi.createInboundDocument).toHaveBeenCalledTimes(1));
+    expect(mockedApi.createInboundDocument.mock.calls[0][0].lines[0]).toEqual({
+      itemNumber: "ITEM-ABC123",
+      sku: "ABC123",
+      description: "Sample inbound SKU",
+      expectedQty: 8,
+      receivedQty: 8,
+      pallets: 3,
+      unitsPerPallet: 4,
+      palletsDetailCtns: undefined,
+      storageSection: "TEMP",
+      lineNote: undefined
+    });
+    expect(mockedApi.createInboundDocument.mock.calls[0][0].lines[0]).not.toHaveProperty("palletBreakdown");
+    expect(mockedApi.createInboundDocument.mock.calls[0][0].lines[0]).not.toHaveProperty("reorderLevel");
+  });
+
+  it("keeps SKU and Item Code as separate fields and resolves either identifier", () => {
+    renderWithProviders(
+      <InboundReceiptEditorPage
+        routeKey="/inbound-management/new"
+        documentId={null}
+        document={null}
+        items={[]}
+        skuMasters={[createSkuMaster({ sku: "SKU-100", itemNumber: "ITEM-100", description: "Known item" })]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        inboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onBackToList={vi.fn()}
+        onOpenInboundDetail={vi.fn()}
+        onOpenReceiptEditor={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText(/SKU.*#1/), { target: { value: "SKU-100" } });
+    expect(screen.getByLabelText("Item Code #1")).toHaveValue("ITEM-100");
+
+    fireEvent.change(screen.getByLabelText(/SKU.*#1/), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Item Code #1"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Item Code #1"), { target: { value: "ITEM-100" } });
+    expect(screen.getByLabelText(/SKU.*#1/)).toHaveValue("SKU-100");
+  });
+
   it("ignores browser session drafts and starts from the source state", async () => {
     window.sessionStorage.setItem("sim-inbound-receipt-editor-draft:new", JSON.stringify({
       version: 1,
@@ -120,7 +210,6 @@ describe("InboundReceiptEditorPage", () => {
         customerId: "1",
         locationId: "1",
         storageSection: "TEMP",
-        unitLabel: "CTN",
         documentNote: "temporary receipt note"
       },
       lines: [

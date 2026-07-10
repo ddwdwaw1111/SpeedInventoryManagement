@@ -169,7 +169,7 @@ export function downloadInboundReceivingCountSheetPdfFromDocument(document: Inbo
 }
 
 export function buildInboundReceivingCountSheetInputFromDocument(document: InboundDocument): InboundReceivingCountSheetInput {
-  const unitLabel = document.unitLabel || document.lines.find((line) => line.unitLabel)?.unitLabel || "";
+  const unitLabel = "CTN";
   const totalExpectedQty = document.lines.reduce((sum, line) => sum + getLineExpectedQty(line.expectedQty, line.receivedQty), 0);
 
   return {
@@ -190,18 +190,17 @@ export function buildInboundReceivingCountSheetInputFromDocument(document: Inbou
     containerType: document.containerType,
     totalPallets: null,
     lines: document.lines.map((line, index) => {
-      const lineUnitLabel = line.unitLabel || unitLabel;
       const lineExpectedQty = getLineExpectedQty(line.expectedQty, line.receivedQty);
 
       return {
         sequence: index + 1,
-        itemNumber: "",
+        itemNumber: line.itemNumber || "",
         sku: line.sku,
         description: line.description,
         quantity: lineExpectedQty,
-        unitLabel: lineUnitLabel,
+        unitLabel,
         cartonSizeMm: "",
-        cartonCount: isCartonUnit(lineUnitLabel) ? lineExpectedQty : 0,
+        cartonCount: lineExpectedQty,
         netWeightKgs: 0,
         grossWeightKgs: 0,
         actualQty: null,

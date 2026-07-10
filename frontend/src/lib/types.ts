@@ -287,6 +287,7 @@ export type Item = {
   allocatedQty: number;
   damagedQty: number;
   holdQty: number;
+  pallets: number;
   reorderLevel: number;
   customerId: number;
   customerName: string;
@@ -804,6 +805,7 @@ export type UpdateOutboundDocumentNotePayload = {
 export type InboundDocumentLine = {
   id: number;
   documentId: number;
+  itemNumber?: string;
   sku: string;
   description: string;
   storageSection: string;
@@ -852,9 +854,10 @@ export type InboundDocument = {
 };
 
 export type InboundDocumentLinePayload = {
+  itemNumber?: string;
   sku: string;
   description: string;
-  reorderLevel: number;
+  reorderLevel?: number;
   expectedQty: number;
   receivedQty: number;
   pallets: number;
@@ -874,7 +877,6 @@ export type InboundDocumentPayload = {
   containerType?: ContainerType;
   handlingMode?: string;
   storageSection?: string;
-  unitLabel?: string;
   status?: string;
   trackingStatus?: string;
   documentNote?: string;

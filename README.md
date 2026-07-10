@@ -114,6 +114,9 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml ps
 docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f
 ```
 
+The API runs database migrations on every startup, including production.
+Production skips the separate draft-reservation repair operation by default.
+
 ### 6. Open the app
 
 - Frontend: `http://YOUR_PUBLIC_IP`

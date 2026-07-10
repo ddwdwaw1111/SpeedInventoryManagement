@@ -6,6 +6,16 @@ import (
 	"time"
 )
 
+func TestNewStoreCanDisableStartupDatabaseMaintenance(t *testing.T) {
+	store, err := NewStoreWithOptions(nil, StoreOptions{RunStartupMaintenance: false})
+	if err != nil {
+		t.Fatalf("expected startup without database maintenance to succeed, got %v", err)
+	}
+	if store == nil {
+		t.Fatal("expected store instance")
+	}
+}
+
 func TestSanitizeItemInput(t *testing.T) {
 	input := sanitizeItemInput(CreateItemInput{
 		SKU:            "  sku-1001 ",

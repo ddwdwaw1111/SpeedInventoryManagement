@@ -1325,7 +1325,9 @@ func (s *Store) reserveOutboundLineTx(
 			}
 		}
 		line.PickPallets = normalizedPicks
-		line.Pallets = len(normalizedPicks)
+		if line.Pallets <= 0 {
+			line.Pallets = len(normalizedPicks)
+		}
 		pickAllocations, err := s.buildOutboundDraftPickAllocationsFromSelectedPalletsTx(ctx, tx, source, line)
 		if err != nil {
 			return err
@@ -1335,7 +1337,8 @@ func (s *Store) reserveOutboundLineTx(
 	}
 
 	var plannedAllocations []OutboundPickAllocation
-	if len(line.PickAllocations) > 0 {
+	hasDeclaredAllocations := len(line.PickAllocations) > 0
+	if hasDeclaredAllocations {
 		plannedAllocations = normalizeOutboundPickAllocations(line.PickAllocations)
 		if totalOutboundPickAllocationQuantity(plannedAllocations) != line.Quantity {
 			return fmt.Errorf("%w: draft pick allocation quantity must equal outbound quantity", ErrInvalidInput)
@@ -1373,12 +1376,18 @@ func (s *Store) reserveOutboundLineTx(
 	if totalOutboundLinePalletPickQuantity(line.PickPallets) != line.Quantity {
 		return fmt.Errorf("%w: selected pallet quantity must equal outbound quantity", ErrInvalidInput)
 	}
-	line.Pallets = len(line.PickPallets)
-	pickAllocations, err := s.buildOutboundDraftPickAllocationsFromSelectedPalletsTx(ctx, tx, source, line)
-	if err != nil {
-		return err
+	if line.Pallets <= 0 {
+		line.Pallets = len(line.PickPallets)
 	}
-	line.PickAllocations = pickAllocations
+	if hasDeclaredAllocations {
+		line.PickAllocations = plannedAllocations
+	} else {
+		pickAllocations, err := s.buildOutboundDraftPickAllocationsFromSelectedPalletsTx(ctx, tx, source, line)
+		if err != nil {
+			return err
+		}
+		line.PickAllocations = pickAllocations
+	}
 	return nil
 }
 
@@ -2255,7 +2264,9 @@ func (s *Store) prepareOutboundDraftLineAllocationsTx(
 			return nil, err
 		}
 		line.PickAllocations = pickAllocations
-		line.Pallets = totalOutboundPickAllocationPallets(pickAllocations)
+		if line.Pallets <= 0 {
+			line.Pallets = totalOutboundPickAllocationPallets(pickAllocations)
+		}
 		return toOutboundAllocationCandidatesFromDraftPickAllocations(source, pickAllocations), nil
 	}
 
@@ -2265,7 +2276,9 @@ func (s *Store) prepareOutboundDraftLineAllocationsTx(
 			return nil, err
 		}
 		line.PickAllocations = toOutboundPickAllocationsFromCandidates(line, allocations)
-		line.Pallets = totalOutboundPickAllocationPallets(line.PickAllocations)
+		if line.Pallets <= 0 {
+			line.Pallets = totalOutboundPickAllocationPallets(line.PickAllocations)
+		}
 		return allocations, nil
 	}
 
@@ -2421,7 +2434,10 @@ func (s *Store) resolveOutboundDraftBucketAllocationsTx(
 		candidate.StorageSection = storageSection
 		candidate.ContainerNo = containerNo
 		candidate.ItemNumber = firstNonEmpty(strings.TrimSpace(draftAllocation.ItemNumber), candidate.ItemNumber, source.ItemNumber)
-		candidate.Pallets = countDistinctConsumedPallets(previewConsumptions)
+		candidate.Pallets = draftAllocation.Pallets
+		if candidate.Pallets <= 0 {
+			candidate.Pallets = countDistinctConsumedPallets(previewConsumptions)
+		}
 
 		allocations = append(allocations, candidate)
 		reservationState.ByBucketKey[bucketKey] += draftAllocation.AllocatedQty
@@ -2777,10 +2793,7 @@ func sanitizeOutboundDocumentInput(input CreateOutboundDocumentInput) CreateOutb
 		if line.CustomerID <= 0 || line.LocationID <= 0 || line.SKUMasterID <= 0 || line.Quantity <= 0 {
 			continue
 		}
-		switch {
-		case len(line.PickPallets) > 0:
-			line.Pallets = len(line.PickPallets)
-		case line.Pallets <= 0 && len(line.PickAllocations) > 0:
+		if line.Pallets <= 0 && len(line.PickAllocations) > 0 {
 			line.Pallets = totalOutboundPickAllocationPallets(line.PickAllocations)
 		}
 		lines = append(lines, line)
@@ -2822,12 +2835,18 @@ func validateOutboundDocumentInput(input CreateOutboundDocumentInput) error {
 			return fmt.Errorf("%w: outbound quantity must be greater than zero", ErrInvalidInput)
 		case line.Pallets < 0:
 			return fmt.Errorf("%w: pallets cannot be negative", ErrInvalidInput)
+		case coalescedStatus == DocumentStatusConfirmed && line.Pallets <= 0:
+			return fmt.Errorf("%w: confirmed shipments require a pallet count", ErrInvalidInput)
+		case coalescedStatus == DocumentStatusConfirmed && line.Pallets > line.Quantity:
+			return fmt.Errorf("%w: pallets cannot exceed outbound quantity", ErrInvalidInput)
 		case line.NetWeightKgs < 0 || line.GrossWeightKgs < 0:
 			return fmt.Errorf("%w: weights cannot be negative", ErrInvalidInput)
 		case len(line.PickPallets) > 0 && totalOutboundLinePalletPickQuantity(line.PickPallets) != line.Quantity:
 			return fmt.Errorf("%w: selected pallet quantity must equal outbound quantity", ErrInvalidInput)
 		case len(line.PickAllocations) > 0 && totalOutboundPickAllocationQuantity(line.PickAllocations) != line.Quantity:
 			return fmt.Errorf("%w: draft pick allocation quantity must equal outbound quantity", ErrInvalidInput)
+		case coalescedStatus == DocumentStatusConfirmed && len(line.PickAllocations) > 0 && totalOutboundPickAllocationPallets(line.PickAllocations) != line.Pallets:
+			return fmt.Errorf("%w: container allocation pallets must equal outbound pallets", ErrInvalidInput)
 		}
 	}
 

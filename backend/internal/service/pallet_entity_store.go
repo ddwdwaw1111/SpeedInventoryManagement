@@ -162,7 +162,7 @@ func splitQuantityEvenly(total int, bucketCount int) []int {
 	return result
 }
 
-func inboundPalletBreakdownQuantities(totalQty int, palletBreakdown []InboundPalletBreakdown, palletCount int, unitsPerPallet int) []int {
+func inboundPalletBreakdownQuantities(totalQty int, palletBreakdown []InboundPalletBreakdown, palletCount int) []int {
 	if len(palletBreakdown) > 0 {
 		quantities := make([]int, 0, len(palletBreakdown))
 		total := 0
@@ -174,22 +174,6 @@ func inboundPalletBreakdownQuantities(totalQty int, palletBreakdown []InboundPal
 			total += breakdown.Quantity
 		}
 		if len(quantities) > 0 && total == totalQty {
-			return quantities
-		}
-	}
-	if unitsPerPallet > 0 {
-		quantities := make([]int, 0)
-		remaining := totalQty
-		for remaining > 0 {
-			if remaining > unitsPerPallet {
-				quantities = append(quantities, unitsPerPallet)
-				remaining -= unitsPerPallet
-				continue
-			}
-			quantities = append(quantities, remaining)
-			remaining = 0
-		}
-		if len(quantities) > 0 {
 			return quantities
 		}
 	}
@@ -285,7 +269,6 @@ func (s *Store) createPalletsForInboundLineTx(
 	containerNo string,
 	actualArrivalDate *time.Time,
 	palletBreakdown []InboundPalletBreakdown,
-	unitsPerPallet int,
 	palletCount int,
 ) ([]createdPalletEntity, error) {
 	if sourceInboundLineID <= 0 || skuMasterID <= 0 || originalQty <= 0 {
@@ -301,7 +284,7 @@ func (s *Store) createPalletsForInboundLineTx(
 		return nil, fmt.Errorf("count inbound-line pallets: %w", err)
 	}
 
-	quantities := inboundPalletBreakdownQuantities(originalQty, palletBreakdown, palletCount, unitsPerPallet)
+	quantities := inboundPalletBreakdownQuantities(originalQty, palletBreakdown, palletCount)
 	pallets := make([]createdPalletEntity, 0, len(quantities))
 	for index := 0; index < len(quantities); index++ {
 		pallet, err := s.createPalletTx(ctx, tx, createPalletInput{

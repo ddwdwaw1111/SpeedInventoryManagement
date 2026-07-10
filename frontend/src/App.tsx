@@ -31,7 +31,6 @@ import { setPendingActivityManagementLaunchContext } from "./lib/activityManagem
 import { setPendingInboundReceiptEditorLaunchContext, type InboundReceiptEditorLaunchContext } from "./lib/inboundReceiptEditorLaunchContext";
 import { setPendingOutboundShipmentEditorLaunchContext, type OutboundShipmentEditorLaunchContext } from "./lib/outboundShipmentEditorLaunchContext";
 import { useI18n } from "./lib/i18n";
-import { setPendingPalletTraceLaunchContext } from "./lib/palletTraceLaunchContext";
 import { useSettings } from "./lib/settings";
 import { NavigationSidebar } from "./shared/NavigationSidebar";
 import {
@@ -134,10 +133,6 @@ const InboundReceiptEditorPage = lazy(async () => {
 const OutboundShipmentEditorPage = lazy(async () => {
   const module = await import("./components/OutboundShipmentEditorPage");
   return { default: module.OutboundShipmentEditorPage };
-});
-const PalletTracePage = lazy(async () => {
-  const module = await import("./components/PalletTracePage");
-  return { default: module.PalletTracePage };
 });
 const ReportsPage = lazy(async () => {
   const module = await import("./components/ReportsPage");
@@ -332,16 +327,6 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
     setCurrentPathname(window.location.pathname);
   }
 
-  function handleNavigateToPalletTrace(sourceInboundDocumentId?: number) {
-    if (sourceInboundDocumentId && sourceInboundDocumentId > 0) {
-      setPendingPalletTraceLaunchContext({ sourceInboundDocumentId });
-    } else {
-      setPendingPalletTraceLaunchContext({});
-    }
-    navigateToPage("pallet-trace", setActivePage);
-    setCurrentPathname(window.location.pathname);
-  }
-
   function handleNavigateToContainerDetail(containerNo: string) {
     navigateToContainerDetail(setActivePage, containerNo);
     setCurrentPathname(window.location.pathname);
@@ -533,7 +518,6 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
 
   const isCustomerPortalUser = currentUser?.role === "customer";
   const canViewAuditLogs = currentUser?.role === "admin";
-  const canViewPallets = Boolean(currentUser) && !isCustomerPortalUser;
   const canManageUsers = currentUser?.role === "admin";
 
   useEffect(() => {
@@ -546,12 +530,12 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
     }
     if (
       (activePage === "audit-logs" && !canViewAuditLogs) ||
-      (activePage === "pallet-trace" && !canViewPallets) ||
+      activePage === "pallet-trace" ||
       (activePage === "user-management" && !canManageUsers)
     ) {
       handleNavigateToPage("dashboard");
     }
-  }, [activePage, canManageUsers, canViewAuditLogs, canViewPallets, currentUser, isCustomerPortalUser]);
+  }, [activePage, canManageUsers, canViewAuditLogs, currentUser, isCustomerPortalUser]);
 
   const pageItems: Array<{ key: PageKey; label: string; description: string; icon: ReactNode }> = [
     { key: "dashboard", label: t("navDashboard"), description: t("dashboardDesc"), icon: <HomeOutlined fontSize="small" /> },
@@ -576,7 +560,6 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
     { key: "all-activity", label: t("allActivity"), description: t("allActivityDesc"), icon: <HistoryOutlined fontSize="small" /> },
     { key: "customers", label: t("customers"), description: t("customersDesc"), icon: <GroupsOutlined fontSize="small" /> },
     ...(canViewAuditLogs ? [{ key: "audit-logs" as PageKey, label: t("auditLogs"), description: t("auditLogsDesc"), icon: <BadgeOutlined fontSize="small" /> }] : []),
-    ...(canViewPallets ? [{ key: "pallet-trace" as PageKey, label: t("palletTrace"), description: t("palletTraceDesc"), icon: <WarehouseOutlined fontSize="small" /> }] : []),
     ...(canManageUsers ? [{ key: "user-management" as PageKey, label: t("userManagement"), description: t("userManagementDesc"), icon: <ManageAccountsOutlined fontSize="small" /> }] : []),
     { key: "sku-master", label: t("skuMaster"), description: t("skuMasterDesc"), icon: <CategoryOutlined fontSize="small" /> },
     { key: "storage-management", label: t("storageManagement"), description: t("storageManagementDesc"), icon: <WarehouseOutlined fontSize="small" /> },
@@ -589,7 +572,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
     .map((pageKey) => pageItemMap.get(pageKey))
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
   const navSections = ([
-    { key: "inventory", label: navLabels.inventory, items: ["inventory-summary", "container-lifecycle"] as PageKey[] },
+    { key: "inventory", label: navLabels.inventory, items: ["container-contents", "inventory-summary", "container-lifecycle"] as PageKey[] },
     { key: "finance", label: navLabels.finance, items: ["billing"] as PageKey[] },
     { key: "master-data", label: navLabels.masterData, items: ["customers", "sku-master", "storage-management"] as PageKey[] },
     { key: "reports", label: navLabels.reports, items: ["reports", "export-center"] as PageKey[] },
@@ -615,7 +598,6 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
     "shipment-editor": "outbound-management",
     "container-detail": "container-contents",
     "container-lifecycle": "container-contents",
-    "container-contents": "inventory-summary",
     "warehouse-map": "inventory-summary",
     "all-activity": "inventory-summary",
     adjustments: "inventory-summary",
@@ -633,7 +615,6 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
     "transfers": "inventory",
     "cycle-counts": "inventory",
     "all-activity": "inventory",
-    "pallet-trace": "inventory",
     billing: "finance",
     "billing-container-detail": "finance",
     customers: "master-data",
@@ -799,7 +780,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
             </div>
           ) : null}
           <div key={activePage} className="workspace-shell__page">
-            {activePage === "inbound-management" ? renderWithSuspense(<ActivityManagementPage mode="IN" items={items} skuMasters={skuMasters} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onOpenInboundDetail={handleNavigateToInboundDetail} onOpenPalletTrace={handleNavigateToPalletTrace} onOpenInboundReceiptEditor={handleNavigateToReceiptEditor} />) : null}
+            {activePage === "inbound-management" ? renderWithSuspense(<ActivityManagementPage mode="IN" items={items} skuMasters={skuMasters} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onOpenInboundDetail={handleNavigateToInboundDetail} onOpenInboundReceiptEditor={handleNavigateToReceiptEditor} />) : null}
             {activePage === "inbound-detail" ? (
               renderWithSuspense(<InboundDetailPage
                 document={selectedInboundDetailDocument}
@@ -827,7 +808,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
                 onOpenReceiptEditor={handleNavigateToReceiptEditor}
               />)
             ) : null}
-            {activePage === "outbound-management" ? renderWithSuspense(<ActivityManagementPage mode="OUT" items={items} skuMasters={skuMasters} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onOpenPalletTrace={handleNavigateToPalletTrace} onOpenOutboundShipmentEditor={handleNavigateToShipmentEditor} />) : null}
+            {activePage === "outbound-management" ? renderWithSuspense(<ActivityManagementPage mode="OUT" items={items} skuMasters={skuMasters} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onOpenOutboundShipmentEditor={handleNavigateToShipmentEditor} />) : null}
             {activePage === "shipment-editor" ? (
               renderWithSuspense(<OutboundShipmentEditorPage
                 routeKey={currentPathname}
@@ -855,11 +836,10 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
             ) : null}
             {activePage === "container-contents" ? renderWithSuspense(<ContainerContentsPage items={items} movements={movements} customers={customers} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onOpenContainerDetail={handleNavigateToContainerDetail} onOpenContainerLifecycle={handleNavigateToContainerLifecycle} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "container-detail" ? renderWithSuspense(<ContainerDetailPage routeKey={currentPathname} containerNo={selectedContainerDetailNo} items={items} movements={movements} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} onOpenContainerLifecycle={handleNavigateToContainerLifecycle} onBackToList={() => handleNavigateToPage("container-contents")} />) : null}
-            {activePage === "container-lifecycle" ? renderWithSuspense(<AdminContainerLifecyclePage routeScope={selectedContainerLifecycleScope} customers={customers} locations={locations} onOpenContainerLifecycle={handleNavigateToContainerLifecycle} onOpenContainerDetail={handleNavigateToContainerDetail} onOpenInboundDetail={handleNavigateToInboundDetail} onOpenReceiptEditor={handleNavigateToReceiptEditor} onOpenOutboundDocument={handleNavigateToOutboundDocument} onOpenShipmentEditor={handleNavigateToShipmentEditor} onOpenPalletTrace={handleNavigateToPalletTrace} />) : null}
+            {activePage === "container-lifecycle" ? renderWithSuspense(<AdminContainerLifecyclePage routeScope={selectedContainerLifecycleScope} customers={customers} locations={locations} onOpenContainerLifecycle={handleNavigateToContainerLifecycle} onOpenContainerDetail={handleNavigateToContainerDetail} onOpenInboundDetail={handleNavigateToInboundDetail} onOpenReceiptEditor={handleNavigateToReceiptEditor} onOpenOutboundDocument={handleNavigateToOutboundDocument} onOpenShipmentEditor={handleNavigateToShipmentEditor} />) : null}
             {activePage === "all-activity" ? renderWithSuspense(<AllActivityPage movements={movements} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "customers" ? renderWithSuspense(<CustomerManagementPage customers={customers} items={items} inboundDocuments={activeInboundDocuments} outboundDocuments={activeOutboundDocuments} movements={movements} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} onOpenCustomerPortal={handleNavigateToCustomerPortal} />) : null}
             {activePage === "audit-logs" && canViewAuditLogs ? renderWithSuspense(<AuditLogPage auditLogs={auditLogs} currentUserRole={currentUser.role} isLoading={isLoading} />) : null}
-            {activePage === "pallet-trace" && canViewPallets ? renderWithSuspense(<PalletTracePage onNavigate={handleNavigateToPage} currentUserRole={currentUser.role} />) : null}
             {activePage === "user-management" && canManageUsers ? renderWithSuspense(<UserManagementPage users={users} customers={customers} currentUser={currentUser} isLoading={isLoading} onRefresh={() => loadAppData(false)} />) : null}
             {activePage === "sku-master" ? renderWithSuspense(<SKUMasterPage skuMasters={skuMasters} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} />) : null}
             {activePage === "storage-management" ? (
@@ -982,7 +962,6 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
               isLoading={isLoading}
               onRefresh={() => loadAppData(false)}
               onOpenInboundDetail={handleNavigateToInboundDetail}
-              onOpenPalletTrace={handleNavigateToPalletTrace}
               embeddedComposer={{
                 initialDate: embeddedComposer.date,
                 onClose: () => setEmbeddedComposer(null)

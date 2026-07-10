@@ -70,6 +70,7 @@ describe("ContainerContentsPage", () => {
             containerNo: "GCXU5817233",
             quantity: 5,
             availableQty: 5,
+            pallets: 4,
             deliveryDate: "2026-04-01",
             lastRestockedAt: receivedAt
           })
@@ -107,6 +108,7 @@ describe("ContainerContentsPage", () => {
 
     const receivedLabel = formatDateTimeValue(receivedAt, "UTC");
     expect(screen.getByText(receivedLabel)).toBeInTheDocument();
+    expect(screen.getByText("4")).toBeInTheDocument();
     expect(screen.getAllByText("Not Shipped").length).toBeGreaterThan(0);
     expect(screen.queryByText(formatDateTimeValue(partialShipAt, "UTC"))).not.toBeInTheDocument();
 

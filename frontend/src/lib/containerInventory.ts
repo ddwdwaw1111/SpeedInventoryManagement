@@ -15,6 +15,7 @@ export type ContainerContentsRow = {
   onHand: number;
   availableQty: number;
   damagedQty: number;
+  palletCount: number;
   receivedAt: string | null;
   shippedAt: string | null;
   items: Item[];
@@ -122,6 +123,7 @@ export function buildContainerContentsRows(
         onHand: item.quantity,
         availableQty: item.availableQty,
         damagedQty: item.damagedQty,
+        palletCount: item.pallets,
         receivedAt: receiptDate,
         shippedAt,
         items: [item],
@@ -138,6 +140,7 @@ export function buildContainerContentsRows(
     existing.onHand += item.quantity;
     existing.availableQty += item.availableQty;
     existing.damagedQty += item.damagedQty;
+    existing.palletCount += item.pallets;
     existing.rowCount += 1;
     existing.items.push(item);
     existing.receivedAt = getEarliestDate(existing.receivedAt, receiptDate);
@@ -201,6 +204,7 @@ export function buildContainerContentsRows(
       onHand: 0,
       availableQty: 0,
       damagedQty: 0,
+      palletCount: 0,
       receivedAt: summary.receivedAt,
       shippedAt: summary.shippedAt,
       items: [],

@@ -511,9 +511,12 @@ describe("ActivityManagementPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     const inboundLineInputs = dialog.querySelectorAll(".batch-line-grid--inbound input");
     fireEvent.change(inboundLineInputs[0] as HTMLInputElement, { target: { value: "ABC123" } });
-    fireEvent.change(inboundLineInputs[1] as HTMLInputElement, { target: { value: "Sample inbound SKU" } });
-    fireEvent.change(inboundLineInputs[2] as HTMLInputElement, { target: { value: "8" } });
+    fireEvent.change(inboundLineInputs[1] as HTMLInputElement, { target: { value: "ITEM-ABC123" } });
+    fireEvent.change(inboundLineInputs[2] as HTMLInputElement, { target: { value: "Sample inbound SKU" } });
     fireEvent.change(inboundLineInputs[3] as HTMLInputElement, { target: { value: "8" } });
+    fireEvent.change(inboundLineInputs[4] as HTMLInputElement, { target: { value: "8" } });
+    fireEvent.change(inboundLineInputs[5] as HTMLInputElement, { target: { value: "3" } });
+    fireEvent.change(inboundLineInputs[6] as HTMLInputElement, { target: { value: "4" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(screen.getByRole("button", { name: "Confirm Receipt" }));
@@ -528,18 +531,19 @@ describe("ActivityManagementPage", () => {
         containerType: "NORMAL",
         handlingMode: "PALLETIZED",
         storageSection: "TEMP",
-        unitLabel: "CTN",
         status: "CONFIRMED",
         trackingStatus: "RECEIVED",
         documentNote: undefined,
         lines: [
           {
+            itemNumber: "ITEM-ABC123",
             sku: "ABC123",
             description: "Sample inbound SKU",
-            reorderLevel: 2,
+            reorderLevel: 0,
             expectedQty: 8,
             receivedQty: 8,
-            pallets: 0,
+            pallets: 3,
+            unitsPerPallet: 4,
             palletsDetailCtns: undefined,
             storageSection: "TEMP",
             lineNote: undefined
@@ -551,7 +555,7 @@ describe("ActivityManagementPage", () => {
     expect(onRefresh).toHaveBeenCalled();
   });
 
-  it("auto-allocates full pallets plus a remainder pallet based on units per pallet", async () => {
+  it("keeps the declared pallet count independent from default CTN per Pallet", async () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
 
     mockedApi.createInboundDocument.mockResolvedValue(undefined);
@@ -588,10 +592,11 @@ describe("ActivityManagementPage", () => {
     fireEvent.change(headerInputs[0] as HTMLInputElement, { target: { value: "2026-03-31" } });
     fireEvent.change(headerInputs[2] as HTMLInputElement, { target: { value: "MSCU7654321" } });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-  const inboundLineInputs = dialog.querySelectorAll(".batch-line-grid--inbound input");
+    const inboundLineInputs = dialog.querySelectorAll(".batch-line-grid--inbound input");
     fireEvent.change(inboundLineInputs[0] as HTMLInputElement, { target: { value: "ABC123" } });
-    fireEvent.change(inboundLineInputs[2] as HTMLInputElement, { target: { value: "1024" } });
     fireEvent.change(inboundLineInputs[3] as HTMLInputElement, { target: { value: "1024" } });
+    fireEvent.change(inboundLineInputs[4] as HTMLInputElement, { target: { value: "1024" } });
+    fireEvent.change(inboundLineInputs[5] as HTMLInputElement, { target: { value: "3" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(screen.getByRole("button", { name: "Confirm Receipt" }));
@@ -606,33 +611,20 @@ describe("ActivityManagementPage", () => {
         containerType: "NORMAL",
         handlingMode: "PALLETIZED",
         storageSection: "TEMP",
-        unitLabel: "CTN",
         status: "CONFIRMED",
         trackingStatus: "RECEIVED",
         documentNote: undefined,
         lines: [
           {
+            itemNumber: "ABC123",
             sku: "ABC123",
             description: "Sample inbound SKU",
-            reorderLevel: 2,
+            reorderLevel: 0,
             expectedQty: 1024,
             receivedQty: 1024,
-            pallets: 11,
+            pallets: 3,
             unitsPerPallet: 100,
-            palletsDetailCtns: "10*100+24",
-            palletBreakdown: [
-              { quantity: 100 },
-              { quantity: 100 },
-              { quantity: 100 },
-              { quantity: 100 },
-              { quantity: 100 },
-              { quantity: 100 },
-              { quantity: 100 },
-              { quantity: 100 },
-              { quantity: 100 },
-              { quantity: 100 },
-              { quantity: 24 }
-            ],
+            palletsDetailCtns: undefined,
             storageSection: "TEMP",
             lineNote: undefined
           }
@@ -680,11 +672,12 @@ describe("ActivityManagementPage", () => {
     fireEvent.change(headerInputs[0] as HTMLInputElement, { target: { value: "2026-03-31" } });
     fireEvent.change(headerInputs[2] as HTMLInputElement, { target: { value: "MSCU2222222" } });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-  const inboundLineInputs = dialog.querySelectorAll(".batch-line-grid--inbound input");
+    const inboundLineInputs = dialog.querySelectorAll(".batch-line-grid--inbound input");
     fireEvent.change(inboundLineInputs[0] as HTMLInputElement, { target: { value: "011424" } });
-    fireEvent.change(inboundLineInputs[2] as HTMLInputElement, { target: { value: "1024" } });
     fireEvent.change(inboundLineInputs[3] as HTMLInputElement, { target: { value: "1024" } });
-    fireEvent.change(screen.getByLabelText("Units / Pallet"), { target: { value: "100" } });
+    fireEvent.change(inboundLineInputs[4] as HTMLInputElement, { target: { value: "1024" } });
+    fireEvent.change(inboundLineInputs[5] as HTMLInputElement, { target: { value: "7" } });
+    fireEvent.change(screen.getByLabelText("CTN / Pallet"), { target: { value: "100" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(screen.getByRole("button", { name: "Confirm Receipt" }));
@@ -699,33 +692,20 @@ describe("ActivityManagementPage", () => {
         containerType: "NORMAL",
         handlingMode: "PALLETIZED",
         storageSection: "TEMP",
-        unitLabel: "CTN",
         status: "CONFIRMED",
         trackingStatus: "RECEIVED",
         documentNote: undefined,
         lines: [
           {
+            itemNumber: "011424",
             sku: "011424",
             description: "Manual pallet SKU",
-            reorderLevel: 2,
+            reorderLevel: 0,
             expectedQty: 1024,
             receivedQty: 1024,
-            pallets: 11,
+            pallets: 7,
             unitsPerPallet: 100,
-            palletsDetailCtns: "10*100+24",
-            palletBreakdown: [
-              { quantity: 100 },
-              { quantity: 100 },
-              { quantity: 100 },
-              { quantity: 100 },
-              { quantity: 100 },
-              { quantity: 100 },
-              { quantity: 100 },
-              { quantity: 100 },
-              { quantity: 100 },
-              { quantity: 100 },
-              { quantity: 24 }
-            ],
+            palletsDetailCtns: undefined,
             storageSection: "TEMP",
             lineNote: undefined
           }

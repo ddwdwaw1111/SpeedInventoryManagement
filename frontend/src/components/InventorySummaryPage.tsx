@@ -77,7 +77,6 @@ type ContainerBreakdownRow = {
   palletCount: number;
 };
 
-type InventorySummaryHealthFilter = "ALL" | "LOW_STOCK";
 type InventorySummaryContainerTypeFilter = "all" | ContainerType;
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
@@ -113,7 +112,6 @@ export function InventorySummaryPage({
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
   const [selectedContainerType, setSelectedContainerType] = useState<InventorySummaryContainerTypeFilter>("all");
-  const [healthFilter, setHealthFilter] = useState<InventorySummaryHealthFilter>("ALL");
   const [selectedSummaryId, setSelectedSummaryId] = useState<string | null>(null);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [pallets, setPallets] = useState<PalletTrace[]>([]);
@@ -129,7 +127,6 @@ export function InventorySummaryPage({
     setSelectedCustomerId(context.customerId ? String(context.customerId) : "all");
     setSelectedLocationId(context.locationId ? String(context.locationId) : "all");
     setSelectedContainerType(context.containerType ?? "all");
-    setHealthFilter(context.healthFilter ?? "ALL");
     setSelectedSummaryId(null);
   }, []);
 
@@ -166,10 +163,9 @@ export function InventorySummaryPage({
       selectedCustomerId,
       selectedLocationId,
       selectedContainerType,
-      healthFilter,
       containerTypeLookup
     ),
-    [items, movements, normalizedSearch, selectedCustomerId, selectedLocationId, selectedContainerType, healthFilter, containerTypeLookup]
+    [items, movements, normalizedSearch, selectedCustomerId, selectedLocationId, selectedContainerType, containerTypeLookup]
   );
   const selectedSummary = useMemo(
     () => summaryRows.find((row) => row.id === selectedSummaryId) ?? null,
@@ -178,8 +174,7 @@ export function InventorySummaryPage({
   const hasActiveFilters = normalizedSearch.length > 0
     || selectedCustomerId !== "all"
     || selectedLocationId !== "all"
-    || selectedContainerType !== "all"
-    || healthFilter !== "ALL";
+    || selectedContainerType !== "all";
   const mainGridSlots = buildWorkspaceGridSlots({
     emptyTitle: t("noResults"),
     emptyDescription: hasActiveFilters ? t("filteredStateHint") : t("emptyStateHint"),
@@ -238,13 +233,11 @@ export function InventorySummaryPage({
   const overviewStats = useMemo(() => {
     const totalOnHand = summaryRows.reduce((sum, row) => sum + row.onHand, 0);
     const totalAvailable = summaryRows.reduce((sum, row) => sum + row.availableQty, 0);
-    const lowStockRows = summaryRows.filter((row) => row.items.some((item) => item.reorderLevel > 0 && item.availableQty <= item.reorderLevel)).length;
     const totalWarehouses = new Set(summaryRows.flatMap((row) => row.items.map((item) => item.locationId))).size;
     return [
       { label: t("sku"), value: summaryNumberFormatter.format(summaryRows.length), meta: t("allRows") },
       { label: t("onHand"), value: summaryNumberFormatter.format(totalOnHand), meta: t("units") },
       { label: t("availableQty"), value: summaryNumberFormatter.format(totalAvailable), meta: t("units") },
-      { label: t("lowStock"), value: summaryNumberFormatter.format(lowStockRows), meta: t("allRows") },
       { label: t("warehouseCount"), value: summaryNumberFormatter.format(totalWarehouses), meta: t("currentStorage") }
     ];
   }, [summaryRows, t]);
@@ -303,7 +296,6 @@ export function InventorySummaryPage({
                 <option value="WEST_COAST_TRANSFER">{containerTypeLabel("WEST_COAST_TRANSFER", t)}</option>
               </select>
             </label>
-            <label>{t("stockHealth")}<select value={healthFilter} onChange={(event) => setHealthFilter(event.target.value as InventorySummaryHealthFilter)}><option value="ALL">{t("allRows")}</option><option value="LOW_STOCK">{t("lowStock")}</option></select></label>
           </div>
         </div>
         <InventoryViewSwitcher activeView="inventory-summary" onNavigate={onNavigate} />
@@ -550,7 +542,6 @@ function buildInventorySummaryRows(
   selectedCustomerId: string,
   selectedLocationId: string,
   selectedContainerType: InventorySummaryContainerTypeFilter,
-  healthFilter: InventorySummaryHealthFilter,
   containerTypeLookup: Map<string, ContainerType>
 ) {
   const filteredItems = items.filter((item) => {
@@ -618,7 +609,6 @@ function buildInventorySummaryRows(
         containerBalances
       };
     })
-    .filter((row) => healthFilter !== "LOW_STOCK" || row.items.some((item) => item.reorderLevel > 0 && item.availableQty <= item.reorderLevel))
     .sort((left, right) => {
       if (left.customerName !== right.customerName) return left.customerName.localeCompare(right.customerName);
       return left.sku.localeCompare(right.sku);

@@ -74,6 +74,7 @@ export function createItem(overrides: Partial<Item> = {}): Item {
     allocatedQty: 0,
     damagedQty: 0,
     holdQty: 0,
+    pallets: 1,
     reorderLevel: 5,
     customerId: 1,
     customerName: "Imperial Bag & Paper",
@@ -137,6 +138,7 @@ export function createInboundDocumentLine(overrides: Partial<InboundDocumentLine
   return {
     id: 1,
     documentId: 1,
+    itemNumber: "ITEM-608333",
     sku: "608333",
     description: "VB22GC",
     storageSection: "TEMP",

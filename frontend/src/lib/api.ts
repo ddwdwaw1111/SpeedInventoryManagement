@@ -76,6 +76,7 @@ type ItemQuery = {
   search?: string;
   locationId?: number;
   customerId?: number;
+  containerNo?: string;
   lowStock?: boolean;
 };
 
@@ -428,6 +429,9 @@ export const api = {
     }
     if (query?.customerId) {
       params.set("customerId", String(query.customerId));
+    }
+    if (query?.containerNo?.trim()) {
+      params.set("containerNo", query.containerNo.trim());
     }
     if (query?.lowStock) {
       params.set("lowStock", "true");
