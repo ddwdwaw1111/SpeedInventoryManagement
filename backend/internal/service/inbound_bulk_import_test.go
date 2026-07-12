@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xuri/excelize/v2"
 )
@@ -41,6 +42,90 @@ func TestInboundBulkImportKeysAreStableAndPayloadSensitive(t *testing.T) {
 	}
 }
 
+func TestBulkImportedHistoricalReceiptUsesActualArrivalDateForLedgerIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+	historicalDate := "2024-02-03"
+
+	customer, err := store.CreateCustomer(ctx, CreateCustomerInput{Name: "Historical Bulk Customer " + suffix})
+	if err != nil {
+		t.Fatalf("create customer: %v", err)
+	}
+	location, err := store.CreateLocation(ctx, CreateLocationInput{
+		Name:         "Historical Bulk Warehouse " + suffix,
+		Address:      "Test Address",
+		Capacity:     1000,
+		SectionNames: []string{DefaultStorageSection},
+	})
+	if err != nil {
+		t.Fatalf("create location: %v", err)
+	}
+
+	result, err := store.CreateInboundDocumentsBulkDraft(ctx, InboundBulkImportCommitInput{
+		ImportID:       "abcdef0123456789abcdef0123456789",
+		SourceFileName: "historical-receipts.xlsx",
+		CustomerID:     customer.ID,
+		Documents: []InboundBulkImportCommitDocument{{
+			DocumentKey: "HISTORICAL-1",
+			Input: CreateInboundDocumentInput{
+				LocationID:        location.ID,
+				ContainerNo:       "HIST-CONT-" + suffix,
+				ActualArrivalDate: historicalDate,
+				HandlingMode:      InboundHandlingModePalletized,
+				Lines: []CreateInboundDocumentLineInput{{
+					SKU:            "HIST-SKU-" + suffix,
+					Description:    "Historical imported cartons",
+					ExpectedQty:    10,
+					ReceivedQty:    10,
+					Pallets:        2,
+					UnitsPerPallet: 5,
+					StorageSection: DefaultStorageSection,
+				}},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create historical bulk draft: %v", err)
+	}
+	if result.CreatedDocuments != 1 || len(result.Results) != 1 || result.Results[0].Document == nil {
+		t.Fatalf("unexpected bulk import result: %#v", result)
+	}
+	documentID := result.Results[0].Document.ID
+	if result.Results[0].Document.ActualArrivalDate == nil || result.Results[0].Document.ActualArrivalDate.Format("2006-01-02") != historicalDate {
+		t.Fatalf("expected draft to preserve historical actual arrival date, got %#v", result.Results[0].Document.ActualArrivalDate)
+	}
+
+	if _, err := store.ConfirmInboundDocument(ctx, documentID); err != nil {
+		t.Fatalf("confirm historical bulk receipt: %v", err)
+	}
+
+	var ledgerDate time.Time
+	if err := store.db.GetContext(ctx, &ledgerDate, `
+		SELECT MIN(delivery_date)
+		FROM stock_ledger
+		WHERE source_document_type = 'INBOUND' AND source_document_id = ?
+	`, documentID); err != nil {
+		t.Fatalf("load historical stock ledger date: %v", err)
+	}
+	if ledgerDate.Format("2006-01-02") != historicalDate {
+		t.Fatalf("expected stock ledger date %s, got %s", historicalDate, ledgerDate.Format("2006-01-02"))
+	}
+
+	var lifecycleDate time.Time
+	if err := store.db.GetContext(ctx, &lifecycleDate, `
+		SELECT MIN(cle.event_time)
+		FROM container_lifecycle_events cle
+		JOIN stock_ledger sl ON sl.id = cle.stock_ledger_id
+		WHERE sl.source_document_type = 'INBOUND' AND sl.source_document_id = ?
+	`, documentID); err != nil {
+		t.Fatalf("load historical container lifecycle date: %v", err)
+	}
+	if lifecycleDate.Format("2006-01-02") != historicalDate {
+		t.Fatalf("expected container lifecycle date %s, got %s", historicalDate, lifecycleDate.Format("2006-01-02"))
+	}
+}
+
 func TestValidateAndNormalizeInboundBulkCommitDocumentRechecksCurrentMasterData(t *testing.T) {
 	validation := newInboundBulkValidationContext(
 		Location{ID: 2, SectionNames: []string{"A"}},
@@ -51,7 +136,7 @@ func TestValidateAndNormalizeInboundBulkCommitDocumentRechecksCurrentMasterData(
 		LocationID:          2,
 		ContainerNo:         "cont-a",
 		ExpectedArrivalDate: "2026-07-14",
-		ActualArrivalDate:   "2026-07-15",
+		ActualArrivalDate:   "2024-01-15",
 		HandlingMode:        InboundHandlingModePalletized,
 		Status:              DocumentStatusDraft,
 		TrackingStatus:      InboundTrackingScheduled,
@@ -68,7 +153,7 @@ func TestValidateAndNormalizeInboundBulkCommitDocumentRechecksCurrentMasterData(
 	if normalized.Lines[0].ExpectedQty != 930 || normalized.Lines[0].Pallets != 20 {
 		t.Fatalf("quantity and pallets must remain independent: %#v", normalized.Lines[0])
 	}
-	if normalized.ExpectedArrivalDate != "" || normalized.ActualArrivalDate != "2026-07-15" || normalized.DocumentNote != "" {
+	if normalized.ExpectedArrivalDate != "" || normalized.ActualArrivalDate != "2024-01-15" || normalized.DocumentNote != "" {
 		t.Fatalf("bulk import must keep only the actual arrival date: %#v", normalized)
 	}
 

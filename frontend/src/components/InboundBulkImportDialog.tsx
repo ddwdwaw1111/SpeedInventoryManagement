@@ -234,6 +234,7 @@ export function InboundBulkImportDialog({
               <div className="bulk-inbound-rule-grid">
                 <div><strong>{t("bulkInboundGroupingRule")}</strong><span>{t("bulkInboundGroupingRuleHint")}</span></div>
                 <div><strong>{t("bulkInboundQuantityRule")}</strong><span>{t("bulkInboundQuantityRuleHint")}</span></div>
+                <div><strong>{t("bulkInboundHistoricalDateRule")}</strong><span>{t("bulkInboundHistoricalDateRuleHint")}</span></div>
               </div>
             </section>
           </div>
@@ -258,7 +259,7 @@ export function InboundBulkImportDialog({
                   <summary>
                     <div className="bulk-inbound-document__identity">
                       {document.valid ? <CheckCircleOutlineRoundedIcon /> : <ErrorOutlineRoundedIcon />}
-                      <div><strong>{document.input.containerNo || "—"}</strong><span>{document.locationName || t("bulkInboundWarehouseMissing")} · {t("bulkInboundDocumentKey")}: {document.documentKey} · {t("bulkInboundRows")}: {formatRows(document.rowNumbers)}</span></div>
+                      <div><strong>{document.input.containerNo || "—"}</strong><span>{document.locationName || t("bulkInboundWarehouseMissing")} · {t("actualArrivalDate")}: {document.input.actualArrivalDate || "—"} · {t("bulkInboundDocumentKey")}: {document.documentKey} · {t("bulkInboundRows")}: {formatRows(document.rowNumbers)}</span></div>
                     </div>
                     <div className="bulk-inbound-document__totals">
                       <span><strong>{document.totalLines}</strong>{t("lines")}</span>

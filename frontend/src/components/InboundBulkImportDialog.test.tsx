@@ -54,6 +54,7 @@ describe("InboundBulkImportDialog", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Blank template" }));
     fireEvent.click(screen.getByRole("button", { name: "Sample workbook" }));
+    expect(screen.getByText("Historical receipts supported")).toBeInTheDocument();
     expect(downloadInboundBulkImportTemplate).toHaveBeenCalledTimes(1);
     expect(downloadInboundBulkImportSample).toHaveBeenCalledWith([expect.objectContaining({ name: "NJ" })]);
 
@@ -65,6 +66,7 @@ describe("InboundBulkImportDialog", () => {
     await screen.findByText("CONT-A");
     expect(mockedApi.previewInboundBulkImport).toHaveBeenCalledWith(file, 1);
     expect(screen.getByText(/NJ Warehouse/)).toBeInTheDocument();
+    expect(screen.getByText(/Actual Arrival Date: 2025-12-15/)).toBeInTheDocument();
     expect(screen.getByText("1", { selector: ".bulk-inbound-metric--success strong" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Create 1 drafts" }));
@@ -127,6 +129,7 @@ function createPreview(): InboundBulkImportPreview {
         customerId: 1,
         locationId: 1,
         containerNo: "CONT-A",
+        actualArrivalDate: "2025-12-15",
         status: "DRAFT",
         trackingStatus: "SCHEDULED",
         handlingMode: "PALLETIZED",

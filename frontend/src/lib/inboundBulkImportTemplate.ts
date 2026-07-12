@@ -39,12 +39,13 @@ export function downloadInboundBulkImportSample(locations: Location[]) {
   });
 }
 
-export function buildInboundBulkImportSampleRows(locations: Location[]) {
+export function buildInboundBulkImportSampleRows(locations: Location[], referenceDate = new Date()) {
   const firstLocation = locations[0];
   const secondLocation = locations[1] ?? firstLocation;
   if (!firstLocation || !secondLocation) return [];
 
-  const date = formatLocalDate(new Date());
+  const firstReceiptDate = formatLocalDate(addLocalDays(referenceDate, -30));
+  const secondReceiptDate = formatLocalDate(addLocalDays(referenceDate, -7));
   const token = Date.now().toString(36).toUpperCase();
   const firstSection = firstLocation.sectionNames.find((section) => section.trim()) || "TEMP";
   const secondSection = secondLocation.sectionNames.find((section) => section.trim()) || "TEMP";
@@ -54,7 +55,7 @@ export function buildInboundBulkImportSampleRows(locations: Location[]) {
       documentKey: `SAMPLE-RECEIPT-A-${token}`,
       containerNo: `SAMPLE-CONT-A-${token}`,
       warehouse: firstLocation.name,
-      actualArrivalDate: date,
+      actualArrivalDate: firstReceiptDate,
       containerType: "NORMAL",
       handlingMode: "PALLETIZED",
       sku: `SAMPLE-SKU-A1-${token}`,
@@ -71,7 +72,7 @@ export function buildInboundBulkImportSampleRows(locations: Location[]) {
       documentKey: `SAMPLE-RECEIPT-A-${token}`,
       containerNo: `SAMPLE-CONT-A-${token}`,
       warehouse: firstLocation.name,
-      actualArrivalDate: date,
+      actualArrivalDate: firstReceiptDate,
       containerType: "NORMAL",
       handlingMode: "PALLETIZED",
       sku: `SAMPLE-SKU-A2-${token}`,
@@ -88,7 +89,7 @@ export function buildInboundBulkImportSampleRows(locations: Location[]) {
       documentKey: `SAMPLE-RECEIPT-B-${token}`,
       containerNo: `SAMPLE-CONT-B-${token}`,
       warehouse: secondLocation.name,
-      actualArrivalDate: date,
+      actualArrivalDate: secondReceiptDate,
       containerType: "NORMAL",
       handlingMode: "PALLETIZED",
       sku: `SAMPLE-SKU-B1-${token}`,
@@ -102,6 +103,12 @@ export function buildInboundBulkImportSampleRows(locations: Location[]) {
       lineNote: "Receipt B demonstrates another warehouse"
     }
   ];
+}
+
+function addLocalDays(date: Date, days: number) {
+  const result = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  result.setDate(result.getDate() + days);
+  return result;
 }
 
 function formatLocalDate(date: Date) {
