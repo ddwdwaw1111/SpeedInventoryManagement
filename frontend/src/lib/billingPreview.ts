@@ -1,6 +1,6 @@
 import { parseDateLikeValue, startOfLocalDay, toIsoDateString } from "./dates";
 import { formatMoney } from "./formatters";
-import type { ContainerLifecycleEvent, ContainerType, Customer, InboundDocument, OutboundDocument, PalletLocationEvent, PalletTrace } from "./types";
+import type { ContainerLifecycleEvent, ContainerType, Customer, InboundDocument, OutboundDocument } from "./types";
 
 export type BillingRates = {
   inboundContainerFee: number;
@@ -99,26 +99,18 @@ type BuildBillingPreviewInput = {
   containerType?: ContainerType | "all";
   normalPalletGracePeriodEnabled?: boolean;
   customers: Customer[];
-  pallets: PalletTrace[];
-  palletLocationEvents: PalletLocationEvent[];
-	containerLifecycleEvents?: ContainerLifecycleEvent[];
+  containerLifecycleEvents?: ContainerLifecycleEvent[];
   inboundDocuments: InboundDocument[];
   outboundDocuments: OutboundDocument[];
   rates: BillingRates;
 };
 
-type StorageInterval = {
+type BillingRange = {
+  startDate: string;
+  endDate: string;
   start: Date;
-  end: Date | null;
-  locationId: number;
-  locationName: string;
-};
-
-type MutableStorageRow = BillingStorageRow & {
-  warehouseSet: Set<string>;
-  palletIdSet: Set<number>;
-  dailyBalanceMap: Map<string, number>;
-  freeDailyBalanceMap: Map<string, number>;
+  endInclusive: Date;
+  endExclusive: Date;
 };
 
 const DEFAULT_UNASSIGNED_CONTAINER = "UNASSIGNED";
@@ -160,29 +152,17 @@ export function buildBillingPreview(input: BuildBillingPreviewInput): BillingPre
 		input.rates,
 		billingRange
 	);
-	const { storageRows, storageLines, dailyBalanceRows } = input.containerLifecycleEvents?.length
-		? buildContainerLifecycleStorageCharges(
-			input.containerLifecycleEvents,
-			input.inboundDocuments,
-			input.customerId,
-			input.locationId,
-			input.containerType,
-			input.normalPalletGracePeriodEnabled ?? true,
-			input.rates,
-			billingRange,
-			rangeDays
-		)
-		: buildStorageCharges(
-			input.pallets,
-			input.palletLocationEvents,
-			input.customerId,
-			input.locationId,
-			input.containerType,
-			input.normalPalletGracePeriodEnabled ?? true,
-			input.rates,
-			billingRange,
-			rangeDays
-		);
+	const { storageRows, storageLines, dailyBalanceRows } = buildContainerLifecycleStorageCharges(
+		input.containerLifecycleEvents ?? [],
+		input.inboundDocuments,
+		input.customerId,
+		input.locationId,
+		input.containerType,
+		input.normalPalletGracePeriodEnabled ?? true,
+		input.rates,
+		billingRange,
+		rangeDays
+	);
 
   const invoiceLines = [...inboundLines, ...storageLines, ...outboundLines]
     .sort(compareInvoiceLines);
@@ -451,184 +431,6 @@ function buildOutboundInvoiceLines(
 	return lines;
 }
 
-function buildStorageCharges(
-  pallets: PalletTrace[],
-  palletLocationEvents: PalletLocationEvent[],
-  customerId: number | "all",
-  locationId: number | "all" | undefined,
-  containerType: ContainerType | "all" | undefined,
-  normalPalletGracePeriodEnabled: boolean,
-  rates: BillingRates,
-  billingRange: BillingRange,
-  rangeDays: number
-) {
-  const normalizedRates = normalizeBillingRates(rates);
-  const eventsByPallet = new Map<number, PalletLocationEvent[]>();
-  for (const event of palletLocationEvents) {
-    const bucket = eventsByPallet.get(event.palletId) ?? [];
-    bucket.push(event);
-    eventsByPallet.set(event.palletId, bucket);
-  }
-  const palletsById = new Map(pallets.map((pallet) => [pallet.id, pallet]));
-  const intervalsByPalletId = new Map<number, StorageInterval[]>();
-
-  const dailyBalanceMap = new Map<string, number>();
-  const rowMap = new Map<string, MutableStorageRow>();
-
-  for (const pallet of pallets) {
-    if (!belongsToCustomer(pallet.customerId, customerId)) {
-      continue;
-    }
-    if (containerType && containerType !== "all" && pallet.containerType !== containerType) {
-      continue;
-    }
-
-    const intervals = getStorageIntervalsForPallet(pallet, eventsByPallet, intervalsByPalletId);
-    if (intervals.length === 0) {
-      continue;
-    }
-    const graceIntervals = buildLineageStorageIntervals(pallet, palletsById, eventsByPallet, intervalsByPalletId);
-
-    const containerNo = normalizeContainerNo(
-      pallet.currentContainerNo || (eventsByPallet.get(pallet.id) ?? []).find((event) => event.containerNo.trim())?.containerNo || ""
-    );
-    const rowKey = `${pallet.customerId}|${pallet.containerType}|${containerNo}`;
-    const row = rowMap.get(rowKey) ?? {
-      customerId: pallet.customerId,
-      customerName: pallet.customerName,
-      containerNo,
-      containerType: pallet.containerType,
-      locationId: locationId && locationId !== "all" ? locationId : null,
-      locationName: "",
-      warehousesTouched: [],
-      warehouseSet: new Set<string>(),
-      palletIdSet: new Set<number>(),
-      palletsTracked: 0,
-      palletDays: 0,
-      freePalletDays: 0,
-      billablePalletDays: 0,
-      averageDailyPallets: 0,
-      firstActivityAt: null,
-      lastActivityAt: null,
-      grossAmount: 0,
-      discountAmount: 0,
-      amount: 0,
-      segments: [],
-      dailyBalanceMap: new Map<string, number>(),
-      freeDailyBalanceMap: new Map<string, number>()
-    };
-
-    const graceDays = resolveStorageGraceDays(pallet.containerType, normalPalletGracePeriodEnabled);
-    let countedAnyDay = false;
-    for (let dayCursor = new Date(billingRange.start); dayCursor < billingRange.endExclusive; dayCursor = shiftDay(dayCursor, 1)) {
-      const nextDay = shiftDay(dayCursor, 1);
-      const activeInterval = findActiveIntervalAtDayEnd(intervals, nextDay);
-      if (!activeInterval) {
-        continue;
-      }
-      const storageDaysConsumedBeforeDay = countStorageDaysBeforeRange(graceIntervals, dayCursor, graceDays);
-      const isGraceDay = graceDays > 0 && storageDaysConsumedBeforeDay + 1 <= graceDays;
-      if (locationId && locationId !== "all" && activeInterval.locationId !== locationId) {
-        continue;
-      }
-      countedAnyDay = true;
-      if (row.locationId === null) {
-        row.locationName = "";
-      } else if (!row.locationName) {
-        row.locationName = activeInterval.locationName;
-      }
-      addWarehouse(row, activeInterval.locationName);
-      row.palletDays += 1;
-      if (isGraceDay) {
-        row.freePalletDays += 1;
-      } else {
-        row.billablePalletDays += 1;
-      }
-      const dayKey = toIsoDateString(dayCursor);
-      dailyBalanceMap.set(dayKey, (dailyBalanceMap.get(dayKey) ?? 0) + 1);
-      row.dailyBalanceMap.set(dayKey, (row.dailyBalanceMap.get(dayKey) ?? 0) + 1);
-      if (isGraceDay) {
-        row.freeDailyBalanceMap.set(dayKey, (row.freeDailyBalanceMap.get(dayKey) ?? 0) + 1);
-      }
-    }
-
-    if (!countedAnyDay) {
-      continue;
-    }
-
-    row.palletIdSet.add(pallet.id);
-    rowMap.set(rowKey, row);
-  }
-
-  const storageRows = [...rowMap.values()]
-    .map((row) => {
-      const storageRatePerDay = resolveStorageRatePerDay(row.containerType, normalizedRates);
-      const segments = buildStorageSegments(row.dailyBalanceMap, row.freeDailyBalanceMap, billingRange, storageRatePerDay);
-      const firstActivityAt = segments[0]?.startDate ?? null;
-      const lastActivityAt = segments[segments.length - 1]?.endDate ?? null;
-      const grossAmount = roundCurrency(row.palletDays * storageRatePerDay);
-      const discountAmount = roundCurrency(row.freePalletDays * storageRatePerDay);
-      return {
-        customerId: row.customerId,
-        customerName: row.customerName,
-        containerNo: row.containerNo,
-        containerType: row.containerType,
-        locationId: row.locationId,
-        locationName: row.locationId === null
-          ? ([...row.warehouseSet].sort((left, right) => left.localeCompare(right)).join(", "))
-          : row.locationName,
-        warehousesTouched: [...row.warehouseSet].sort((left, right) => left.localeCompare(right)),
-        palletsTracked: row.palletIdSet.size,
-        palletDays: row.palletDays,
-        freePalletDays: row.freePalletDays,
-        billablePalletDays: row.billablePalletDays,
-        averageDailyPallets: roundQuantity(row.palletDays / rangeDays),
-        firstActivityAt,
-        lastActivityAt,
-        grossAmount,
-        discountAmount,
-        amount: roundCurrency(grossAmount - discountAmount),
-        segments
-      };
-    })
-    .filter((row) => row.palletDays > 0)
-    .sort((left, right) => {
-      if (left.customerName !== right.customerName) {
-        return left.customerName.localeCompare(right.customerName);
-      }
-      if (left.containerType !== right.containerType) {
-        return left.containerType.localeCompare(right.containerType);
-      }
-      return left.containerNo.localeCompare(right.containerNo);
-    });
-
-  const storageLines = storageRows.map((row) => ({
-    id: `storage-${row.customerId}-${row.containerType}-${row.containerNo}`,
-    customerId: row.customerId,
-    customerName: row.customerName,
-    chargeType: "STORAGE" as const,
-    reference: `Storage | ${row.containerNo}`,
-    containerNo: row.containerNo,
-    warehouseSummary: row.warehousesTouched.join(", ") || "-",
-    occurredOn: row.lastActivityAt,
-    quantity: row.billablePalletDays,
-    unitRate: roundCurrency(resolveStorageRatePerDay(row.containerType, normalizedRates)),
-    amount: row.amount,
-    meta: buildStorageLineMeta(row)
-  }));
-
-  const dailyBalanceRows: BillingDailyBalanceRow[] = [];
-  for (let dayCursor = new Date(billingRange.start); dayCursor < billingRange.endExclusive; dayCursor = shiftDay(dayCursor, 1)) {
-    const key = toIsoDateString(dayCursor);
-    dailyBalanceRows.push({
-      date: key,
-      palletCount: dailyBalanceMap.get(key) ?? 0
-    });
-  }
-
-  return { storageRows, storageLines, dailyBalanceRows };
-}
-
 function buildContainerLifecycleStorageCharges(
 	events: ContainerLifecycleEvent[],
 	inboundDocuments: InboundDocument[],
@@ -788,196 +590,6 @@ function buildStorageLineMeta(row: BillingStorageRow) {
 
   return parts.join(" | ");
 }
-
-function getStorageIntervalsForPallet(
-  pallet: PalletTrace,
-  eventsByPallet: Map<number, PalletLocationEvent[]>,
-  intervalsByPalletId: Map<number, StorageInterval[]>
-) {
-  const cached = intervalsByPalletId.get(pallet.id);
-  if (cached) {
-    return cached;
-  }
-  const palletEvents = [...(eventsByPallet.get(pallet.id) ?? [])].sort(compareEventsAscending);
-  const intervals = buildStorageIntervals(pallet, palletEvents);
-  intervalsByPalletId.set(pallet.id, intervals);
-  return intervals;
-}
-
-function buildLineageStorageIntervals(
-  pallet: PalletTrace,
-  palletsById: Map<number, PalletTrace>,
-  eventsByPallet: Map<number, PalletLocationEvent[]>,
-  intervalsByPalletId: Map<number, StorageInterval[]>
-) {
-  const lineage: PalletTrace[] = [];
-  const seenPalletIds = new Set<number>();
-  let current: PalletTrace | undefined = pallet;
-  while (current && !seenPalletIds.has(current.id)) {
-    lineage.push(current);
-    seenPalletIds.add(current.id);
-    current = current.parentPalletId > 0 ? palletsById.get(current.parentPalletId) : undefined;
-  }
-  lineage.reverse();
-
-  const intervals: StorageInterval[] = [];
-  for (let index = 0; index < lineage.length; index += 1) {
-    const lineagePallet = lineage[index]!;
-    const palletIntervals = getStorageIntervalsForPallet(lineagePallet, eventsByPallet, intervalsByPalletId);
-    const nextPallet = lineage[index + 1] ?? null;
-    const nextPalletFirstStart = nextPallet
-      ? getFirstStorageIntervalStart(getStorageIntervalsForPallet(nextPallet, eventsByPallet, intervalsByPalletId))
-      : null;
-    intervals.push(...truncateStorageIntervals(palletIntervals, nextPalletFirstStart));
-  }
-
-  return intervals.sort(compareIntervalsAscending);
-}
-
-function getFirstStorageIntervalStart(intervals: StorageInterval[]) {
-  return intervals.reduce<Date | null>((earliest, interval) => {
-    if (!earliest || interval.start.getTime() < earliest.getTime()) {
-      return interval.start;
-    }
-    return earliest;
-  }, null);
-}
-
-function truncateStorageIntervals(intervals: StorageInterval[], endExclusive: Date | null) {
-  if (!endExclusive) {
-    return intervals;
-  }
-
-  return intervals.flatMap((interval) => {
-    if (interval.start.getTime() >= endExclusive.getTime()) {
-      return [];
-    }
-    const end = interval.end && interval.end.getTime() < endExclusive.getTime()
-      ? interval.end
-      : endExclusive;
-    return [{
-      ...interval,
-      end
-    }];
-  });
-}
-
-function buildStorageIntervals(pallet: PalletTrace, palletEvents: PalletLocationEvent[]) {
-  const intervals: StorageInterval[] = [];
-  const sortedEvents = [...palletEvents].sort(compareEventsAscending);
-  let activeStart: Date | null = null;
-  let activeLocationID = 0;
-  let activeLocationName = "";
-  let active = false;
-  let hasStartEvent = false;
-
-  for (const event of sortedEvents) {
-    const eventTime = parseDateLikeValue(event.eventTime);
-    if (!eventTime) {
-      continue;
-    }
-
-    if (isStorageResumeEvent(event.eventType, event.palletDelta)) {
-      hasStartEvent = true;
-      if (!active) {
-        activeStart = eventTime;
-        activeLocationID = event.locationId;
-        activeLocationName = event.locationName;
-        active = true;
-        continue;
-      }
-      if (activeStart && (activeLocationID != event.locationId || activeLocationName != event.locationName)) {
-        intervals.push({
-          start: activeStart,
-          end: eventTime,
-          locationId: activeLocationID,
-          locationName: activeLocationName
-        });
-        activeStart = eventTime;
-        activeLocationID = event.locationId;
-        activeLocationName = event.locationName;
-      }
-      continue;
-    }
-
-    if (isStorageEndEvent(event.eventType, event.palletDelta) && active && activeStart) {
-      intervals.push({
-        start: activeStart,
-        end: eventTime,
-        locationId: activeLocationID,
-        locationName: activeLocationName
-      });
-      active = false;
-      activeStart = null;
-    }
-  }
-
-  if (!hasStartEvent) {
-    const fallbackStart = parseDateLikeValue(pallet.actualArrivalDate ?? pallet.createdAt);
-    if (!fallbackStart) {
-      return intervals;
-    }
-    activeStart = fallbackStart;
-    activeLocationID = pallet.currentLocationId;
-    activeLocationName = pallet.currentLocationName;
-    active = true;
-  }
-
-  if (active) {
-    const closedAt = isClosedPalletStatus(pallet.status) ? parseDateLikeValue(pallet.updatedAt) : null;
-    if (activeStart) {
-      intervals.push({
-        start: activeStart,
-        end: closedAt,
-        locationId: activeLocationID,
-        locationName: activeLocationName
-      });
-    }
-  }
-
-  return intervals;
-}
-
-function findActiveIntervalAtDayEnd(intervals: StorageInterval[], boundaryExclusive: Date) {
-  return intervals.find((interval) => (
-    interval.start.getTime() < boundaryExclusive.getTime()
-      && (interval.end === null || interval.end.getTime() >= boundaryExclusive.getTime())
-  )) ?? null;
-}
-
-function countStorageDaysBeforeRange(intervals: StorageInterval[], rangeStart: Date, cap: number) {
-  if (cap <= 0) {
-    return 0;
-  }
-
-  let total = 0;
-  for (const interval of intervals) {
-    const startDay = startOfLocalDay(interval.start);
-    const intervalEndDay = interval.end ? startOfLocalDay(interval.end) : null;
-    const effectiveEnd = intervalEndDay && intervalEndDay.getTime() < rangeStart.getTime()
-      ? intervalEndDay
-      : rangeStart;
-
-    if (startDay.getTime() >= effectiveEnd.getTime()) {
-      continue;
-    }
-
-    total += Math.round((effectiveEnd.getTime() - startDay.getTime()) / 86400000);
-    if (total >= cap) {
-      return cap;
-    }
-  }
-
-  return total;
-}
-
-type BillingRange = {
-  startDate: string;
-  endDate: string;
-  start: Date;
-  endInclusive: Date;
-  endExclusive: Date;
-};
 
 function getBillingRange(startDateInput: string, endDateInput: string): BillingRange {
   const fallback = getCurrentBillingDateRange();
@@ -1187,89 +799,9 @@ function compareInvoiceLines(left: BillingInvoiceLine, right: BillingInvoiceLine
   return left.reference.localeCompare(right.reference);
 }
 
-function compareEventsAscending(left: PalletLocationEvent, right: PalletLocationEvent) {
-  const leftTime = parseDateLikeValue(left.eventTime)?.getTime() ?? 0;
-  const rightTime = parseDateLikeValue(right.eventTime)?.getTime() ?? 0;
-  if (leftTime !== rightTime) {
-    return leftTime - rightTime;
-  }
-  return left.id - right.id;
-}
-
-function compareIntervalsAscending(left: StorageInterval, right: StorageInterval) {
-  const leftTime = left.start.getTime();
-  const rightTime = right.start.getTime();
-  if (leftTime !== rightTime) {
-    return leftTime - rightTime;
-  }
-  return (left.end?.getTime() ?? Number.MAX_SAFE_INTEGER) - (right.end?.getTime() ?? Number.MAX_SAFE_INTEGER);
-}
-
 function shiftDay(date: Date, delta: number) {
   const start = startOfLocalDay(date);
   return new Date(start.getFullYear(), start.getMonth(), start.getDate() + delta);
-}
-
-function isStorageStartEvent(eventType: string) {
-  const normalized = eventType.trim().toUpperCase();
-  return normalized === "RECEIVED" || normalized === "TRANSFER_IN" || normalized === "REVERSAL";
-}
-
-function isStorageResumeEvent(eventType: string, palletDelta = 0) {
-  const normalized = eventType.trim().toUpperCase();
-  if (normalized === "COUNT") {
-    return palletDelta > 0;
-  }
-  return isStorageStartEvent(normalized);
-}
-
-function isStorageEndEvent(eventType: string, palletDelta = 0) {
-  const normalized = eventType.trim().toUpperCase();
-  if (normalized === "COUNT") {
-    return palletDelta < 0;
-  }
-  return normalized === "OUTBOUND" || normalized === "CANCELLED" || normalized === "TRANSFER_OUT";
-}
-
-function isClosedPalletStatus(status: string) {
-  const normalized = status.trim().toUpperCase();
-  return normalized === "SHIPPED" || normalized === "CANCELLED";
-}
-
-function minIsoValue(values: Array<string | null | undefined>) {
-  let selected: Date | null = null;
-  for (const value of values) {
-    const parsed = parseDateLikeValue(value ?? undefined);
-    if (!parsed) {
-      continue;
-    }
-    if (!selected || parsed.getTime() < selected.getTime()) {
-      selected = parsed;
-    }
-  }
-  return selected ? selected.toISOString() : null;
-}
-
-function maxIsoValue(values: Array<string | null | undefined>) {
-  let selected: Date | null = null;
-  for (const value of values) {
-    const parsed = parseDateLikeValue(value ?? undefined);
-    if (!parsed) {
-      continue;
-    }
-    if (!selected || parsed.getTime() > selected.getTime()) {
-      selected = parsed;
-    }
-  }
-  return selected ? selected.toISOString() : null;
-}
-
-function addWarehouse(row: MutableStorageRow, warehouseName: string | null | undefined) {
-  const normalized = (warehouseName ?? "").trim();
-  if (!normalized) {
-    return;
-  }
-  row.warehouseSet.add(normalized);
 }
 
 function roundCurrency(value: number) {

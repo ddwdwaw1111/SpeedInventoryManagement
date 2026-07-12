@@ -112,14 +112,6 @@ func TestConfirmedInboundKeepsQuantityAndPalletCountIndependent(t *testing.T) {
 	}
 }
 
-func TestInboundPalletCompatibilitySplitIgnoresCTNPerPallet(t *testing.T) {
-	got := inboundPalletBreakdownQuantities(10, nil, 3)
-	want := []int{4, 3, 3}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("expected declared pallet count to control compatibility split, got %v", got)
-	}
-}
-
 func TestSanitizeOutboundDocumentInput(t *testing.T) {
 	input := sanitizeOutboundDocumentInput(CreateOutboundDocumentInput{
 		PackingListNo: " pl-001 ",
@@ -214,10 +206,6 @@ func TestConfirmedOutboundAcceptsIndependentQtyAndPalletCountWhenAllocationMatch
 	if err := validateOutboundDocumentInput(input); err != nil {
 		t.Fatalf("expected independent outbound quantity and pallet count to be valid, got %v", err)
 	}
-	if len(input.Lines[0].PickPallets) != 0 {
-		t.Fatal("expected pallet entity picks to be optional when a container allocation is declared")
-	}
-
 	input.Lines[0].PickAllocations[0].Pallets = 2
 	if err := validateOutboundDocumentInput(input); err == nil || !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("expected mismatched declared and allocation pallet counts to be rejected, got %v", err)

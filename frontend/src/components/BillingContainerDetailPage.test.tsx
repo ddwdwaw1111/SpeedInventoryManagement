@@ -1,327 +1,120 @@
 import { screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { PalletTrace } from "../lib/types";
-import { renderWithProviders } from "../test/renderWithProviders";
+import type { ContainerLifecycleEvent } from "../lib/types";
 import { createCustomer, createLocation } from "../test/fixtures";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { BillingContainerDetailPage } from "./BillingContainerDetailPage";
 
-const { getPallets, getPalletLocationEvents, getContainerLifecycleEvents } = vi.hoisted(() => ({
-	getPallets: vi.fn(),
-	getPalletLocationEvents: vi.fn(),
-	getContainerLifecycleEvents: vi.fn()
+const { getContainerLifecycleEvents } = vi.hoisted(() => ({
+  getContainerLifecycleEvents: vi.fn()
 }));
 
 vi.mock("../lib/api", () => ({
-	ApiError: class ApiError extends Error {},
-	api: {
-		getPallets,
-		getPalletLocationEvents,
-		getContainerLifecycleEvents
-	}
+  ApiError: class ApiError extends Error {},
+  api: { getContainerLifecycleEvents }
 }));
 
-describe("BillingContainerDetailPage", () => {
-	beforeEach(() => {
-		getPallets.mockReset();
-		getPalletLocationEvents.mockReset();
-		getContainerLifecycleEvents.mockReset();
-		getContainerLifecycleEvents.mockImplementation(async () => {
-			const events = await getPalletLocationEvents();
-			return events.map((event: Record<string, unknown>) => ({
-				...event,
-				stockLedgerId: event.id,
-				eventType: event.eventType === "RECEIVED" ? "RECEIVE" : event.eventType === "SHIPPED" ? "SHIP" : event.eventType
-			}));
-		});
-		window.localStorage.clear();
-		window.sessionStorage.clear();
-		window.localStorage.setItem("sim-timezone", "UTC");
-		window.sessionStorage.setItem("sim-billing-workspace-context", JSON.stringify({
-			startDate: "2026-03-01",
-			endDate: "2026-03-31",
-			customerId: "all",
-			warehouseLocationId: "all",
-			containerType: "all",
-			rates: {
-				inboundContainerFee: 450,
-				transferInboundFeePerPallet: 10,
-				wrappingFeePerPallet: 15,
-				storageFeePerPalletPerWeek: 7,
-				storageFeePerPalletPerWeekNormal: 7,
-				storageFeePerPalletPerWeekWestCoastTransfer: 7,
-				outboundFeePerPallet: 0
-			}
-		}));
-	});
-
-	it("shows only the selected date-range timeline rows for the selected container and keeps cumulative deltas", async () => {
-		getPallets.mockResolvedValue([
-			createPalletTrace({
-				id: 11,
-				palletCode: "PLT-001",
-				currentContainerNo: "GCXU5817233",
-				createdAt: "2026-03-02T09:00:00Z",
-				updatedAt: "2026-03-20T10:00:00Z"
-			})
-		]);
-		getPalletLocationEvents.mockResolvedValue([
-			{
-				id: 101,
-				palletId: 11,
-				palletCode: "PLT-001",
-				containerVisitId: 1,
-				customerId: 1,
-				customerName: "Imperial Bag & Paper",
-				locationId: 1,
-				locationName: "NJ",
-				storageSection: "TEMP",
-				containerNo: "GCXU5817233",
-				eventType: "RECEIVED",
-				quantityDelta: 10,
-				palletDelta: 1,
-				eventTime: "2026-03-02T10:00:00Z",
-				createdAt: "2026-03-02T10:00:00Z"
-			},
-			{
-				id: 102,
-				palletId: 11,
-				palletCode: "PLT-001",
-				containerVisitId: 1,
-				customerId: 1,
-				customerName: "Imperial Bag & Paper",
-				locationId: 1,
-				locationName: "NJ",
-				storageSection: "A",
-				containerNo: "GCXU5817233",
-				eventType: "TRANSFER",
-				quantityDelta: 0,
-				palletDelta: 0,
-				eventTime: "2026-03-12T12:00:00Z",
-				createdAt: "2026-03-12T12:00:00Z"
-			},
-			{
-				id: 103,
-				palletId: 11,
-				palletCode: "PLT-001",
-				containerVisitId: 1,
-				customerId: 1,
-				customerName: "Imperial Bag & Paper",
-				locationId: 1,
-				locationName: "NJ",
-				storageSection: "A",
-				containerNo: "GCXU5817233",
-				eventType: "SHIPPED",
-				quantityDelta: -4,
-				palletDelta: -1,
-				eventTime: "2026-03-20T10:00:00Z",
-				createdAt: "2026-03-20T10:00:00Z"
-			},
-			{
-				id: 104,
-				palletId: 12,
-				palletCode: "PLT-APR",
-				containerVisitId: 1,
-				customerId: 1,
-				customerName: "Imperial Bag & Paper",
-				locationId: 1,
-				locationName: "NJ",
-				storageSection: "TEMP",
-				containerNo: "GCXU5817233",
-				eventType: "RECEIVED",
-				quantityDelta: 99,
-				palletDelta: 1,
-				eventTime: "2026-04-01T08:00:00Z",
-				createdAt: "2026-04-01T08:00:00Z"
-			},
-			{
-				id: 105,
-				palletId: 13,
-				palletCode: "PLT-OTHER",
-				containerVisitId: 2,
-				customerId: 1,
-				customerName: "Imperial Bag & Paper",
-				locationId: 1,
-				locationName: "NJ",
-				storageSection: "TEMP",
-				containerNo: "MSCU0000001",
-				eventType: "RECEIVED",
-				quantityDelta: 5,
-				palletDelta: 1,
-				eventTime: "2026-03-06T08:00:00Z",
-				createdAt: "2026-03-06T08:00:00Z"
-			}
-		]);
-
-		renderWithProviders(
-			<BillingContainerDetailPage
-				routeKey="/billing/container/2026-03-01/2026-03-31/all/all/GCXU5817233"
-				startDate="2026-03-01"
-				endDate="2026-03-31"
-				customerId="all"
-				warehouseLocationId="all"
-				containerNo="GCXU5817233"
-				customers={[createCustomer()]}
-				locations={[createLocation()]}
-				inboundDocuments={[]}
-				outboundDocuments={[]}
-				onBackToBilling={vi.fn()}
-				onOpenContainerDetail={vi.fn()}
-			/>
-		);
-
-		const timelineTable = await screen.findByRole("table", { name: "Container Change Timeline" });
-		expect(getContainerLifecycleEvents).toHaveBeenCalledWith(50000, "GCXU5817233", undefined);
-		expect(within(timelineTable).getAllByRole("row")).toHaveLength(4);
-		expect(within(timelineTable).getByText("RECEIVE")).toBeInTheDocument();
-		expect(within(timelineTable).getByText("TRANSFER")).toBeInTheDocument();
-		expect(within(timelineTable).getByText("SHIP")).toBeInTheDocument();
-		expect(within(timelineTable).queryByText("+99")).not.toBeInTheDocument();
-		expect(within(timelineTable).queryByText("+5")).not.toBeInTheDocument();
-		expect(within(timelineTable).getAllByText("+10").length).toBeGreaterThan(0);
-		expect(within(timelineTable).getAllByText("+6").length).toBeGreaterThan(0);
-		expect(within(timelineTable).getByText("-1")).toBeInTheDocument();
-	});
-
-	it("does not synthesize outbound timeline rows when only pallet receive events exist", async () => {
-		getPallets.mockResolvedValue([createPalletTrace({
-			id: 21,
-			palletCode: "PLT-021",
-			currentContainerNo: "MSCU1234567"
-		})]);
-		getPalletLocationEvents.mockResolvedValue([
-			{
-				id: 201,
-				palletId: 21,
-				palletCode: "PLT-021",
-				containerVisitId: 1,
-				customerId: 1,
-				customerName: "Imperial Bag & Paper",
-				locationId: 1,
-				locationName: "NJ",
-				storageSection: "TEMP",
-				containerNo: "MSCU1234567",
-				eventType: "RECEIVED",
-				quantityDelta: 12,
-				palletDelta: 1,
-				eventTime: "2026-03-05T08:00:00Z",
-				createdAt: "2026-03-05T08:00:00Z"
-			}
-		]);
-
-		renderWithProviders(
-			<BillingContainerDetailPage
-				routeKey="/billing/container/2026-03-01/2026-03-31/all/all/MSCU1234567"
-				startDate="2026-03-01"
-				endDate="2026-03-31"
-				customerId="all"
-				warehouseLocationId="all"
-				containerNo="MSCU1234567"
-				customers={[createCustomer()]}
-				locations={[createLocation()]}
-				inboundDocuments={[]}
-				outboundDocuments={[]}
-				onBackToBilling={vi.fn()}
-				onOpenContainerDetail={vi.fn()}
-			/>
-		);
-
-		const timelineTable = await screen.findByRole("table", { name: "Container Change Timeline" });
-		expect(within(timelineTable).getByText("RECEIVE")).toBeInTheDocument();
-		expect(within(timelineTable).queryByText("SHIP")).not.toBeInTheDocument();
-	});
-
-	it("ignores a stale workspace grace-period setting when the stored context does not match the route", async () => {
-		window.sessionStorage.setItem("sim-billing-workspace-context", JSON.stringify({
-			startDate: "2026-02-01",
-			endDate: "2026-02-28",
-			customerId: "all",
-			warehouseLocationId: "all",
-			containerType: "all",
-			normalPalletGracePeriodEnabled: false,
-			rates: {
-				inboundContainerFee: 450,
-				transferInboundFeePerPallet: 10,
-				wrappingFeePerPallet: 15,
-				storageFeePerPalletPerWeek: 7,
-				storageFeePerPalletPerWeekNormal: 7,
-				storageFeePerPalletPerWeekWestCoastTransfer: 7,
-				outboundFeePerPallet: 0
-			}
-		}));
-		getPallets.mockResolvedValue([createPalletTrace({
-			id: 31,
-			palletCode: "PLT-031",
-			actualArrivalDate: "2026-03-01",
-			currentContainerNo: "STALE-GRACE",
-			createdAt: "2026-03-01T09:00:00Z",
-			updatedAt: "2026-03-31T23:59:00Z"
-		})]);
-		getPalletLocationEvents.mockResolvedValue([
-			{
-				id: 301,
-				palletId: 31,
-				palletCode: "PLT-031",
-				containerVisitId: 1,
-				customerId: 1,
-				customerName: "Imperial Bag & Paper",
-				locationId: 1,
-				locationName: "NJ",
-				storageSection: "TEMP",
-				containerNo: "STALE-GRACE",
-				eventType: "RECEIVED",
-				quantityDelta: 12,
-				palletDelta: 1,
-				eventTime: "2026-03-01T09:00:00Z",
-				createdAt: "2026-03-01T09:00:00Z"
-			}
-		]);
-
-		renderWithProviders(
-			<BillingContainerDetailPage
-				routeKey="/billing/container/2026-03-01/2026-03-31/all/all/STALE-GRACE"
-				startDate="2026-03-01"
-				endDate="2026-03-31"
-				customerId="all"
-				warehouseLocationId="all"
-				containerNo="STALE-GRACE"
-				customers={[createCustomer()]}
-				locations={[createLocation()]}
-				inboundDocuments={[]}
-				outboundDocuments={[]}
-				onBackToBilling={vi.fn()}
-				onOpenContainerDetail={vi.fn()}
-			/>
-		);
-
-		expect(await screen.findAllByText("$24.00")).not.toHaveLength(0);
-		expect(screen.queryByText("$31.00")).not.toBeInTheDocument();
-	});
-});
-
-function createPalletTrace(overrides: Partial<PalletTrace> = {}): PalletTrace {
-	return {
-		id: 1,
-		parentPalletId: 0,
-		palletCode: "PLT-001",
-		containerVisitId: 1,
-		sourceInboundDocumentId: 1,
-		sourceInboundLineId: 1,
-		actualArrivalDate: "2026-03-02",
-		customerId: 1,
-		customerName: "Imperial Bag & Paper",
-		skuMasterId: 1,
-		sku: "608333",
-		description: "VB22GC",
-		currentLocationId: 1,
-		currentLocationName: "NJ",
-		currentStorageSection: "TEMP",
-		currentContainerNo: "GCXU5817233",
-		containerType: "NORMAL",
-		status: "OPEN",
-		createdAt: "2026-03-02T09:00:00Z",
-		updatedAt: "2026-03-20T10:00:00Z",
-		contents: [],
-		...overrides
-	};
+function event(
+  id: number,
+  containerNo: string,
+  eventType: string,
+  eventTime: string,
+  quantityDelta: number,
+  palletDelta: number
+): ContainerLifecycleEvent {
+  return {
+    id,
+    stockLedgerId: id,
+    customerId: 1,
+    customerName: "Imperial Bag & Paper",
+    locationId: 1,
+    locationName: "NJ",
+    storageSection: "TEMP",
+    containerNo,
+    eventType,
+    eventTime,
+    quantityDelta,
+    palletDelta,
+    skuMasterId: 1,
+    sourceDocumentType: eventType === "RECEIVE" ? "INBOUND" : "OUTBOUND",
+    sourceDocumentId: id,
+    sourceLineId: id,
+    packingListNo: "",
+    orderRef: "",
+    itemNumber: "608333",
+    description: "VB22GC",
+    expectedQty: 0,
+    receivedQty: 0,
+    pallets: Math.abs(palletDelta),
+    documentNote: "",
+    reason: "",
+    referenceCode: "",
+    createdAt: eventTime
+  };
 }
+
+function renderPage(containerNo: string) {
+  renderWithProviders(
+    <BillingContainerDetailPage
+      routeKey={"/billing/container/2026-03-01/2026-03-31/all/all/" + containerNo}
+      startDate="2026-03-01"
+      endDate="2026-03-31"
+      customerId="all"
+      warehouseLocationId="all"
+      containerNo={containerNo}
+      customers={[createCustomer()]}
+      locations={[createLocation()]}
+      inboundDocuments={[]}
+      outboundDocuments={[]}
+      onBackToBilling={vi.fn()}
+      onOpenContainerDetail={vi.fn()}
+    />
+  );
+}
+
+describe("BillingContainerDetailPage", () => {
+  beforeEach(() => {
+    getContainerLifecycleEvents.mockReset();
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    window.localStorage.setItem("sim-timezone", "UTC");
+  });
+
+  it("shows aggregate container events and cumulative independent deltas", async () => {
+    getContainerLifecycleEvents.mockResolvedValue([
+      event(101, "GCXU5817233", "RECEIVE", "2026-03-02T10:00:00Z", 10, 3),
+      event(102, "GCXU5817233", "TRANSFER_IN", "2026-03-12T12:00:00Z", 0, 0),
+      event(103, "GCXU5817233", "SHIP", "2026-03-20T10:00:00Z", -4, -1),
+      event(104, "GCXU5817233", "RECEIVE", "2026-04-01T08:00:00Z", 99, 7),
+      event(105, "MSCU0000001", "RECEIVE", "2026-03-06T08:00:00Z", 5, 1)
+    ]);
+
+    renderPage("GCXU5817233");
+
+    const timelineTable = await screen.findByRole("table", { name: "Container Change Timeline" });
+    expect(getContainerLifecycleEvents).toHaveBeenCalledWith(50000, "GCXU5817233", undefined);
+    expect(within(timelineTable).getAllByRole("row")).toHaveLength(4);
+    expect(within(timelineTable).getByText("RECEIVE")).toBeInTheDocument();
+    expect(within(timelineTable).getByText("TRANSFER_IN")).toBeInTheDocument();
+    expect(within(timelineTable).getByText("SHIP")).toBeInTheDocument();
+    expect(within(timelineTable).queryByText("+99")).not.toBeInTheDocument();
+    expect(within(timelineTable).queryByText("+5")).not.toBeInTheDocument();
+    expect(within(timelineTable).getAllByText("+10").length).toBeGreaterThan(0);
+    expect(within(timelineTable).getAllByText("+6").length).toBeGreaterThan(0);
+    expect(within(timelineTable).getAllByText("+3").length).toBeGreaterThan(0);
+    expect(within(timelineTable).getByText("-1")).toBeInTheDocument();
+  });
+
+  it("does not synthesize outbound rows from a receive-only lifecycle", async () => {
+    getContainerLifecycleEvents.mockResolvedValue([
+      event(201, "MSCU1234567", "RECEIVE", "2026-03-05T08:00:00Z", 12, 1)
+    ]);
+
+    renderPage("MSCU1234567");
+
+    const timelineTable = await screen.findByRole("table", { name: "Container Change Timeline" });
+    expect(within(timelineTable).getByText("RECEIVE")).toBeInTheDocument();
+    expect(within(timelineTable).queryByText("SHIP")).not.toBeInTheDocument();
+  });
+});

@@ -44,28 +44,11 @@ describe("ContainerLifecycleView", () => {
           pickingOrders: undefined,
           movements: undefined,
           lifecycleEvents: undefined,
-          pallets: undefined,
-          palletEvents: undefined,
-          reworkEvents: [
-            {
-              id: 91,
-              referenceNo: "RW-91",
-              customerId: 1,
-              customerName: "Acme Warehouse",
-              containerNo: "CNT-EMPTY-ARRAYS",
-              eventType: "REWORK",
-              eventTime: "2026-05-01T12:00:00Z",
-              notes: "",
-              pallets: undefined,
-              createdAt: "2026-05-01T12:00:00Z"
-            }
-          ]
         } as unknown as CustomerPortalContainerLifecycle}
       />
     );
 
     expect(screen.getByText("Container Lifecycle CNT-EMPTY-ARRAYS")).toBeInTheDocument();
-    expect(screen.queryByText("RW-91")).not.toBeInTheDocument();
   });
 
   it("hides internal-only lifecycle events and staff pickup details in customer mode", () => {
@@ -98,8 +81,6 @@ describe("ContainerLifecycleView", () => {
           pickingOrders: [],
           movements: [],
           lifecycleEvents: [],
-          pallets: [],
-          palletEvents: [],
           pickupAssignments: [
             {
               id: 100,
@@ -210,8 +191,6 @@ describe("ContainerLifecycleView", () => {
           pickingOrders: [],
           movements: [],
           lifecycleEvents: [],
-          pallets: [],
-          palletEvents: []
         } as unknown as CustomerPortalContainerLifecycle}
       />
     );
@@ -259,8 +238,6 @@ describe("ContainerLifecycleView", () => {
       pickingOrders: [],
       movements: [],
       lifecycleEvents: [],
-      pallets: [],
-      palletEvents: []
     } as unknown as CustomerPortalContainerLifecycle;
 
     renderWithProviders(
@@ -328,8 +305,6 @@ describe("ContainerLifecycleView", () => {
       pickingOrders: [],
       movements: [],
       lifecycleEvents: [],
-      pallets: [],
-      palletEvents: []
     } as unknown as CustomerPortalContainerLifecycle;
     const overageLifecycle = {
       ...baseLifecycle,
@@ -355,65 +330,6 @@ describe("ContainerLifecycleView", () => {
 
     expect(shortageFlow.nodes.find((node) => node.id === "received")?.style).toMatchObject({ background: "#fef2f2" });
     expect(overageFlow.nodes.find((node) => node.id === "received")?.style).toMatchObject({ background: "#fffbeb" });
-  });
-
-  it("shows pallet rework as a source-to-target pallet count only", () => {
-    renderWithProviders(
-      <ContainerLifecycleView
-        containerNo="CNT-REWORK"
-        visibilityMode="admin"
-        lifecycle={{
-          summary: {
-            containerNo: "CNT-REWORK",
-            customerId: 1,
-            customerName: "Acme Warehouse",
-            warehouses: [],
-            packingListCount: 0,
-            firstPackingListId: 0,
-            totalExpectedQty: 30,
-            totalReceivedQty: 30,
-            currentQty: 30,
-            availableQty: 30,
-            shippedQty: 0,
-            outboundOrderCount: 0,
-            pickingOrderRefs: [],
-            transferCount: 0,
-            palletCount: 1,
-            status: "IN_STOCK",
-            firstReceivedAt: "2026-06-01T12:00:00Z",
-            lastActivityAt: "2026-06-02T12:00:00Z"
-          },
-          packingLists: [],
-          pickingOrders: [],
-          movements: [],
-          lifecycleEvents: [],
-          pallets: [],
-          palletEvents: [],
-          reworkEvents: [
-            {
-              id: 200,
-              referenceNo: "RW-200",
-              customerId: 1,
-              customerName: "Acme Warehouse",
-              containerNo: "CNT-REWORK",
-              eventType: "REPACK",
-              eventTime: "2026-06-02T12:00:00Z",
-              notes: "",
-              pallets: [
-                { id: 1, reworkEventId: 200, palletId: 10, palletCode: "P-10", role: "SOURCE", quantityDelta: 0, createdAt: "2026-06-02T12:00:00Z" },
-                { id: 2, reworkEventId: 200, palletId: 11, palletCode: "P-11", role: "SOURCE", quantityDelta: 0, createdAt: "2026-06-02T12:00:00Z" },
-                { id: 3, reworkEventId: 200, palletId: 12, palletCode: "P-12", role: "TARGET", quantityDelta: 0, createdAt: "2026-06-02T12:00:00Z" }
-              ],
-              createdAt: "2026-06-02T12:00:00Z"
-            }
-          ]
-        } as unknown as CustomerPortalContainerLifecycle}
-      />
-    );
-
-    expect(screen.getByText("2 pallets -> 1 pallet")).toBeInTheDocument();
-    expect(screen.queryByText("RW-200")).not.toBeInTheDocument();
-    expect(screen.queryByText("REPACK")).not.toBeInTheDocument();
   });
 
   it("shows an attached document node for a selected secondary picking order", () => {
@@ -467,8 +383,6 @@ describe("ContainerLifecycleView", () => {
           ],
           movements: [],
           lifecycleEvents: [],
-          pallets: [],
-          palletEvents: []
         } as unknown as CustomerPortalContainerLifecycle}
       />
     );
@@ -542,8 +456,6 @@ describe("ContainerLifecycleView", () => {
           ],
           movements: [],
           lifecycleEvents: [],
-          pallets: [],
-          palletEvents: []
         } as unknown as CustomerPortalContainerLifecycle}
       />
     );
@@ -563,7 +475,7 @@ describe("ContainerLifecycleView", () => {
             containerNo: "CNT-WAREHOUSE",
             customerId: 1,
             customerName: "Acme Warehouse",
-            warehouses: [],
+            warehouses: ["308 Herrod Blvd"],
             packingListCount: 0,
             firstPackingListId: 0,
             totalExpectedQty: 20,
@@ -583,14 +495,6 @@ describe("ContainerLifecycleView", () => {
           pickingOrders: [],
           movements: [],
           lifecycleEvents: [],
-          pallets: [
-            {
-              id: 1,
-              currentLocationName: "308 Herrod Blvd",
-              currentStorageSection: "A1"
-            }
-          ],
-          palletEvents: []
         } as unknown as CustomerPortalContainerLifecycle}
       />
     );
@@ -634,14 +538,6 @@ describe("ContainerLifecycleView", () => {
           pickingOrders: [],
           movements: [],
           lifecycleEvents: [],
-          pallets: [
-            {
-              id: 1,
-              currentLocationName: "308 Herrod Blvd",
-              currentStorageSection: "A1"
-            }
-          ],
-          palletEvents: []
         } as unknown as CustomerPortalContainerLifecycle}
       />
     );
@@ -696,8 +592,6 @@ describe("ContainerLifecycleView", () => {
           }
         ],
         lifecycleEvents: [],
-        pallets: [],
-        palletEvents: []
       } as unknown as CustomerPortalContainerLifecycle,
       (key) => key,
       true,
@@ -779,8 +673,6 @@ describe("ContainerLifecycleView", () => {
             eventTime: "2026-06-03T12:00:00Z"
           }
         ],
-        pallets: [{ id: 1 }],
-        palletEvents: []
       } as unknown as CustomerPortalContainerLifecycle,
       (key) => key,
       true,
@@ -857,8 +749,6 @@ describe("ContainerLifecycleView", () => {
         ],
         lifecycleEvents: [],
         deliveryEvents: [],
-        pallets: [],
-        palletEvents: []
       } as unknown as CustomerPortalContainerLifecycle,
       (key) => key,
       true,
@@ -870,108 +760,6 @@ describe("ContainerLifecycleView", () => {
 
     expect(flow.nodes.some((node) => node.id === "transfer")).toBe(false);
     expect(pickingInboundEdge).toMatchObject({ source: "inventory", sourceHandle: "right-source", targetHandle: "left-target" });
-  });
-
-  it("routes pallet rework from current inventory into the matching outbound order", () => {
-    const flow = buildLifecycleFlow(
-      {
-        summary: {
-          containerNo: "CNT-REWORK-OUTBOUND",
-          customerId: 1,
-          customerName: "Acme Warehouse",
-          warehouses: [],
-          packingListCount: 0,
-          firstPackingListId: 0,
-          totalExpectedQty: 30,
-          totalReceivedQty: 30,
-          currentQty: 10,
-          availableQty: 10,
-          shippedQty: 20,
-          outboundOrderCount: 2,
-          pickingOrderRefs: ["PO-1", "PO-2"],
-          transferCount: 0,
-          palletCount: 3,
-          status: "PARTIAL",
-          firstReceivedAt: "2026-06-01T12:00:00Z",
-          lastActivityAt: "2026-06-03T12:00:00Z"
-        },
-        packingLists: [],
-        pickingOrders: [
-          {
-            id: 20,
-            packingListNo: "PO-1",
-            orderRef: "",
-            expectedShipDate: null,
-            status: "CONFIRMED",
-            lines: [
-              {
-                sku: "SKU-A",
-                quantity: 10,
-                pickPallets: [{ palletId: 100, quantity: 10 }],
-                pickAllocations: []
-              }
-            ],
-            attachments: []
-          },
-          {
-            id: 21,
-            packingListNo: "PO-2",
-            orderRef: "",
-            expectedShipDate: null,
-            status: "CONFIRMED",
-            lines: [
-              {
-                sku: "SKU-B",
-                quantity: 10,
-                pickPallets: [{ palletId: 501, quantity: 10 }],
-                pickAllocations: []
-              }
-            ],
-            attachments: []
-          }
-        ],
-        movements: [],
-        lifecycleEvents: [],
-        deliveryEvents: [],
-        pallets: [{ id: 100 }, { id: 501 }, { id: 502 }],
-        palletEvents: [],
-        reworkEvents: [
-          {
-            id: 200,
-            referenceNo: "RW-200",
-            customerId: 1,
-            customerName: "Acme Warehouse",
-            containerNo: "CNT-REWORK-OUTBOUND",
-            eventType: "REPACK",
-            eventTime: "2026-06-03T12:00:00Z",
-            notes: "",
-            pallets: [
-              { id: 1, reworkEventId: 200, palletId: 501, palletCode: "P-501", role: "SOURCE", quantityDelta: 0, createdAt: "2026-06-03T12:00:00Z" },
-              { id: 2, reworkEventId: 200, palletId: 502, palletCode: "P-502", role: "TARGET", quantityDelta: 0, createdAt: "2026-06-03T12:00:00Z" }
-            ],
-            createdAt: "2026-06-03T12:00:00Z"
-          }
-        ]
-      } as unknown as CustomerPortalContainerLifecycle,
-      (key) => key,
-      true,
-      null,
-      "admin"
-    );
-
-    const inventoryNode = flow.nodes.find((node) => node.id === "inventory");
-    const reworkNode = flow.nodes.find((node) => node.id === "rework-1");
-    const targetPickingNode = flow.nodes.find((node) => node.id === "picking-1");
-    const inventoryToRework = flow.edges.find((edge) => edge.source === "inventory" && edge.target === "rework-1");
-    const reworkToPicking = flow.edges.find((edge) => edge.source === "rework-1" && edge.target === "picking-1");
-
-    expect(reworkNode).toBeTruthy();
-    expect(reworkNode?.position.y).toBe(targetPickingNode?.position.y);
-    expect(reworkNode?.position.x).toBeGreaterThan(inventoryNode?.position.x ?? 0);
-    expect(reworkNode?.position.x).toBeLessThan(targetPickingNode?.position.x ?? 0);
-    expect(inventoryToRework).toMatchObject({ sourceHandle: "right-source", targetHandle: "left-target" });
-    expect(reworkToPicking).toMatchObject({ sourceHandle: "right-source", targetHandle: "left-target" });
-    expect(flow.edges.some((edge) => edge.source === "inventory" && edge.target === "picking-1")).toBe(false);
   });
 
   it("centers stacked outbound orders around the inventory row", () => {
@@ -1018,8 +806,6 @@ describe("ContainerLifecycleView", () => {
           bolReceivedAt: null,
           eventTime: "2026-06-05T12:00:00Z"
         })),
-        pallets: [],
-        palletEvents: []
       } as unknown as CustomerPortalContainerLifecycle,
       (key) => key,
       true,

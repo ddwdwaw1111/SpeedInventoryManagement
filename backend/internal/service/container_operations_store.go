@@ -17,10 +17,6 @@ const (
 	LifecycleEventVisibilityInternal = "INTERNAL"
 	LifecycleEventVisibilityBoth     = "BOTH"
 
-	PalletReworkRoleRelated = "RELATED"
-	PalletReworkRoleSource  = "SOURCE"
-	PalletReworkRoleTarget  = "TARGET"
-
 	DeliveryEventDispatched  = "DISPATCHED"
 	DeliveryEventBOLReceived = "BOL_RECEIVED"
 )
@@ -148,58 +144,6 @@ type ContainerPickupAssignment struct {
 }
 
 type ContainerPickupAssignmentFilters struct {
-	CustomerID  int64
-	ContainerNo string
-}
-
-type CreatePalletReworkEventInput struct {
-	ReferenceNo     string  `json:"referenceNo"`
-	CustomerID      int64   `json:"customerId"`
-	ContainerNo     string  `json:"containerNo"`
-	EventType       string  `json:"eventType"`
-	EventTime       string  `json:"eventTime"`
-	Notes           string  `json:"notes"`
-	Visibility      string  `json:"visibility"`
-	DisplayLabel    string  `json:"displayLabel"`
-	PublicStatus    string  `json:"publicStatus"`
-	PublicLabel     string  `json:"publicLabel"`
-	InternalStatus  string  `json:"internalStatus"`
-	InternalLabel   string  `json:"internalLabel"`
-	PalletIDs       []int64 `json:"palletIds"`
-	SourcePalletIDs []int64 `json:"sourcePalletIds"`
-	TargetPalletIDs []int64 `json:"targetPalletIds"`
-}
-
-type PalletReworkEvent struct {
-	ID             int64                     `json:"id"`
-	ReferenceNo    string                    `json:"referenceNo"`
-	CustomerID     int64                     `json:"customerId"`
-	CustomerName   string                    `json:"customerName"`
-	ContainerNo    string                    `json:"containerNo"`
-	EventType      string                    `json:"eventType"`
-	EventTime      time.Time                 `json:"eventTime"`
-	Notes          string                    `json:"notes"`
-	Visibility     string                    `json:"visibility"`
-	DisplayLabel   string                    `json:"displayLabel"`
-	PublicStatus   string                    `json:"publicStatus"`
-	PublicLabel    string                    `json:"publicLabel"`
-	InternalStatus string                    `json:"internalStatus"`
-	InternalLabel  string                    `json:"internalLabel"`
-	Pallets        []PalletReworkEventPallet `json:"pallets"`
-	CreatedAt      time.Time                 `json:"createdAt"`
-}
-
-type PalletReworkEventPallet struct {
-	ID            int64     `json:"id"`
-	ReworkEventID int64     `json:"reworkEventId"`
-	PalletID      int64     `json:"palletId"`
-	PalletCode    string    `json:"palletCode"`
-	Role          string    `json:"role"`
-	QuantityDelta int       `json:"quantityDelta"`
-	CreatedAt     time.Time `json:"createdAt"`
-}
-
-type PalletReworkEventFilters struct {
 	CustomerID  int64
 	ContainerNo string
 }
@@ -705,86 +649,6 @@ func (s *Store) ListContainerPickupAssignments(ctx context.Context, limit int, f
 	return assignments, rows.Err()
 }
 
-func (s *Store) CreatePalletReworkEvent(ctx context.Context, input CreatePalletReworkEventInput) (PalletReworkEvent, error) {
-	eventTime, err := parseOptionalDateTime(input.EventTime)
-	if err != nil {
-		return PalletReworkEvent{}, err
-	}
-	lines := buildPalletReworkLines(input)
-	if len(lines) == 0 {
-		return PalletReworkEvent{}, ErrInvalidInput
-	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return PalletReworkEvent{}, err
-	}
-	defer tx.Rollback()
-
-	customerID, containerNo, err := s.resolvePalletReworkContextTx(ctx, tx, lines, input.CustomerID, input.ContainerNo)
-	if err != nil {
-		return PalletReworkEvent{}, err
-	}
-	eventType := firstNonEmpty(strings.ToUpper(strings.TrimSpace(input.EventType)), "REWORK")
-	visibility := normalizeLifecycleEventVisibility(input.Visibility)
-	publicStatus := firstNonEmpty(strings.ToUpper(strings.TrimSpace(input.PublicStatus)), "REWORKED")
-	internalStatus := firstNonEmpty(strings.ToUpper(strings.TrimSpace(input.InternalStatus)), eventType)
-	displayLabel := strings.TrimSpace(input.DisplayLabel)
-	publicLabel := firstNonEmpty(strings.TrimSpace(input.PublicLabel), displayLabel)
-	internalLabel := firstNonEmpty(strings.TrimSpace(input.InternalLabel), displayLabel, strings.TrimSpace(input.ReferenceNo), strings.TrimSpace(input.Notes), publicLabel)
-
-	result, err := tx.ExecContext(ctx, `
-		INSERT INTO pallet_rework_events (
-			reference_no,
-			customer_id,
-			container_no,
-			event_type,
-			event_time,
-			notes,
-			visibility,
-			public_status,
-			public_label,
-			internal_status,
-			internal_label
-		) VALUES (?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, ?, ?)
-	`,
-		nullableString(input.ReferenceNo),
-		customerID,
-		containerNo,
-		eventType,
-		nullableTime(eventTime),
-		nullableString(input.Notes),
-		visibility,
-		nullableString(publicStatus),
-		nullableString(publicLabel),
-		nullableString(internalStatus),
-		nullableString(internalLabel),
-	)
-	if err != nil {
-		return PalletReworkEvent{}, mapDBError(fmt.Errorf("create pallet rework event: %w", err))
-	}
-	eventID, err := result.LastInsertId()
-	if err != nil {
-		return PalletReworkEvent{}, fmt.Errorf("resolve pallet rework event id: %w", err)
-	}
-	for _, line := range lines {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO pallet_rework_event_pallets (
-				rework_event_id,
-				pallet_id,
-				role,
-				quantity_delta
-			) VALUES (?, ?, ?, ?)
-		`, eventID, line.PalletID, line.Role, line.QuantityDelta); err != nil {
-			return PalletReworkEvent{}, mapDBError(fmt.Errorf("create pallet rework event pallet: %w", err))
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return PalletReworkEvent{}, fmt.Errorf("commit pallet rework event: %w", err)
-	}
-	return s.getPalletReworkEventByID(ctx, eventID)
-}
-
 func (s *Store) CreateDeliveryEvent(ctx context.Context, input CreateDeliveryEventInput) (DeliveryEvent, error) {
 	eventTime, err := parseOptionalDateTime(input.EventTime)
 	if err != nil {
@@ -882,48 +746,6 @@ func (s *Store) ReceiveDeliveryBOL(ctx context.Context, deliveryEventID int64, i
 		InternalStatus:     input.InternalStatus,
 		InternalLabel:      input.InternalLabel,
 	})
-}
-
-func (s *Store) ListPalletReworkEvents(ctx context.Context, limit int, filters PalletReworkEventFilters) ([]PalletReworkEvent, error) {
-	if limit <= 0 {
-		limit = 1000
-	}
-	whereClauses := []string{"1 = 1"}
-	args := make([]any, 0)
-	if filters.CustomerID > 0 {
-		whereClauses = append(whereClauses, "pre.customer_id = ?")
-		args = append(args, filters.CustomerID)
-	}
-	if containerNo := normalizeContainerNo(filters.ContainerNo); containerNo != "" {
-		whereClauses = append(whereClauses, "UPPER(TRIM(pre.container_no)) = ?")
-		args = append(args, containerNo)
-	}
-	query := fmt.Sprintf(`
-		SELECT pre.id
-		FROM pallet_rework_events pre
-		WHERE %s
-		ORDER BY pre.event_time DESC, pre.id DESC
-		LIMIT ?
-	`, strings.Join(whereClauses, "\n\t\tAND "))
-	args = append(args, limit)
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, mapDBError(fmt.Errorf("list pallet rework event ids: %w", err))
-	}
-	defer rows.Close()
-	events := make([]PalletReworkEvent, 0)
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		event, err := s.getPalletReworkEventByID(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		events = append(events, event)
-	}
-	return events, rows.Err()
 }
 
 func (s *Store) ListDeliveryEvents(ctx context.Context, limit int, filters DeliveryEventFilters) ([]DeliveryEvent, error) {
@@ -1108,131 +930,6 @@ func (s *Store) getContainerPickupAssignmentByID(ctx context.Context, assignment
 	}
 	assignment.DisplayLabel = lifecycleDisplayLabel(assignment.PublicLabel, assignment.InternalLabel)
 	return assignment, nil
-}
-
-func buildPalletReworkLines(input CreatePalletReworkEventInput) []PalletReworkEventPallet {
-	lines := make([]PalletReworkEventPallet, 0, len(input.PalletIDs)+len(input.SourcePalletIDs)+len(input.TargetPalletIDs))
-	seen := make(map[string]struct{})
-	add := func(role string, palletID int64) {
-		if palletID <= 0 {
-			return
-		}
-		key := fmt.Sprintf("%s:%d", role, palletID)
-		if _, exists := seen[key]; exists {
-			return
-		}
-		seen[key] = struct{}{}
-		lines = append(lines, PalletReworkEventPallet{PalletID: palletID, Role: role})
-	}
-	for _, palletID := range input.PalletIDs {
-		add(PalletReworkRoleRelated, palletID)
-	}
-	for _, palletID := range input.SourcePalletIDs {
-		add(PalletReworkRoleSource, palletID)
-	}
-	for _, palletID := range input.TargetPalletIDs {
-		add(PalletReworkRoleTarget, palletID)
-	}
-	return lines
-}
-
-func (s *Store) resolvePalletReworkContextTx(ctx context.Context, tx *sql.Tx, lines []PalletReworkEventPallet, customerID int64, containerNo string) (int64, string, error) {
-	resolvedCustomerID := customerID
-	resolvedContainerNo := normalizeContainerNo(containerNo)
-	checkedPallets := make(map[int64]struct{}, len(lines))
-	for _, line := range lines {
-		if _, exists := checkedPallets[line.PalletID]; exists {
-			continue
-		}
-		checkedPallets[line.PalletID] = struct{}{}
-
-		var palletCustomerID int64
-		var palletContainerNo string
-		if err := tx.QueryRowContext(ctx, `
-			SELECT customer_id, COALESCE(current_container_no, '')
-			FROM pallets
-			WHERE id = ?
-		`, line.PalletID).Scan(&palletCustomerID, &palletContainerNo); err != nil {
-			if err == sql.ErrNoRows {
-				return 0, "", ErrNotFound
-			}
-			return 0, "", fmt.Errorf("resolve pallet rework context: %w", err)
-		}
-
-		palletContainerNo = normalizeContainerNo(palletContainerNo)
-		if resolvedCustomerID <= 0 {
-			resolvedCustomerID = palletCustomerID
-		} else if resolvedCustomerID != palletCustomerID {
-			return 0, "", fmt.Errorf("%w: rework pallets must belong to the same customer", ErrInvalidInput)
-		}
-		if resolvedContainerNo == "" {
-			resolvedContainerNo = palletContainerNo
-		} else if palletContainerNo != resolvedContainerNo {
-			return 0, "", fmt.Errorf("%w: rework pallets must belong to the selected container", ErrInvalidInput)
-		}
-	}
-	if resolvedCustomerID <= 0 || resolvedContainerNo == "" {
-		return 0, "", ErrInvalidInput
-	}
-	return resolvedCustomerID, resolvedContainerNo, nil
-}
-
-func (s *Store) getPalletReworkEventByID(ctx context.Context, eventID int64) (PalletReworkEvent, error) {
-	row := s.db.QueryRowContext(ctx, `
-		SELECT
-			pre.id,
-			COALESCE(pre.reference_no, ''),
-			pre.customer_id,
-			c.name,
-			COALESCE(pre.container_no, ''),
-			pre.event_type,
-			pre.event_time,
-			COALESCE(pre.notes, ''),
-			COALESCE(pre.visibility, 'BOTH'),
-			COALESCE(pre.public_status, ''),
-			COALESCE(pre.public_label, ''),
-			COALESCE(pre.internal_status, ''),
-			COALESCE(pre.internal_label, ''),
-			pre.created_at
-		FROM pallet_rework_events pre
-		JOIN customers c ON c.id = pre.customer_id
-		WHERE pre.id = ?
-	`, eventID)
-	var event PalletReworkEvent
-	if err := row.Scan(&event.ID, &event.ReferenceNo, &event.CustomerID, &event.CustomerName, &event.ContainerNo, &event.EventType, &event.EventTime, &event.Notes, &event.Visibility, &event.PublicStatus, &event.PublicLabel, &event.InternalStatus, &event.InternalLabel, &event.CreatedAt); err != nil {
-		if err == sql.ErrNoRows {
-			return PalletReworkEvent{}, ErrNotFound
-		}
-		return PalletReworkEvent{}, fmt.Errorf("scan pallet rework event: %w", err)
-	}
-	event.DisplayLabel = lifecycleDisplayLabel(event.PublicLabel, event.InternalLabel)
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT
-			prep.id,
-			prep.rework_event_id,
-			prep.pallet_id,
-			p.pallet_code,
-			prep.role,
-			prep.quantity_delta,
-			prep.created_at
-		FROM pallet_rework_event_pallets prep
-		JOIN pallets p ON p.id = prep.pallet_id
-		WHERE prep.rework_event_id = ?
-		ORDER BY prep.id
-	`, eventID)
-	if err != nil {
-		return PalletReworkEvent{}, mapDBError(fmt.Errorf("load pallet rework event pallets: %w", err))
-	}
-	defer rows.Close()
-	event.Pallets = make([]PalletReworkEventPallet, 0)
-	for rows.Next() {
-		var line PalletReworkEventPallet
-		if err := rows.Scan(&line.ID, &line.ReworkEventID, &line.PalletID, &line.PalletCode, &line.Role, &line.QuantityDelta, &line.CreatedAt); err != nil {
-			return PalletReworkEvent{}, fmt.Errorf("scan pallet rework event pallet: %w", err)
-		}
-		event.Pallets = append(event.Pallets, line)
-	}
-	return event, rows.Err()
 }
 
 func (s *Store) resolveDeliveryContext(ctx context.Context, customerID int64, outboundDocumentID int64, containerNo string) (int64, string, error) {

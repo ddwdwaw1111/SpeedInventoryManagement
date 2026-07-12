@@ -80,7 +80,6 @@ func prepareCustomerPortalPickingOrderInput(input service.CreateOutboundDocument
 	input.ActualShipDate = ""
 	for index := range input.Lines {
 		input.Lines[index].CustomerID = customerID
-		input.Lines[index].PickPallets = nil
 		input.Lines[index].PickAllocations = nil
 	}
 	return input

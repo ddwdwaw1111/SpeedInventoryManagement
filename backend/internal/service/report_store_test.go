@@ -11,58 +11,55 @@ func TestBuildReportPalletFlowRowsUsesLedgerBalances(t *testing.T) {
 	end := time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC)
 	events := []reportLedgerEventRow{
 		{
-			PalletID:       1,
 			BusinessDate:   start,
 			EventType:      StockLedgerEventShip,
 			QuantityChange: -4,
+			PalletChange:   -1,
 		},
 		{
-			PalletID:       2,
 			BusinessDate:   start,
 			EventType:      StockLedgerEventReceive,
 			QuantityChange: 12,
+			PalletChange:   1,
 		},
 		{
-			PalletID:       2,
 			BusinessDate:   start.AddDate(0, 0, 1),
 			EventType:      StockLedgerEventShip,
 			QuantityChange: -12,
+			PalletChange:   -1,
 		},
 		{
-			PalletID:       3,
 			BusinessDate:   start.AddDate(0, 0, 1),
 			EventType:      StockLedgerEventCount,
 			QuantityChange: 5,
+			PalletChange:   1,
 		},
 	}
 
-	rows := buildReportPalletFlowRows(map[int64]int{1: 10}, events, start, end)
+	rows := buildReportPalletFlowRows(1, events, start, end)
 
 	if len(rows) != 3 {
 		t.Fatalf("expected 3 daily rows, got %d", len(rows))
 	}
-	assertReportPalletFlowRow(t, rows[0], "2026-04-01", 1, 1, 0, 2)
-	assertReportPalletFlowRow(t, rows[1], "2026-04-02", 0, 1, 1, 2)
-	assertReportPalletFlowRow(t, rows[2], "2026-04-03", 0, 0, 0, 2)
+	assertReportPalletFlowRow(t, rows[0], "2026-04-01", 1, 1, 0, 1)
+	assertReportPalletFlowRow(t, rows[1], "2026-04-02", 0, 1, 1, 1)
+	assertReportPalletFlowRow(t, rows[2], "2026-04-03", 0, 0, 0, 1)
 }
 
 func TestBuildReportMovementTrendRowsUsesQuantityMovement(t *testing.T) {
 	start := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
 	events := []reportLedgerEventRow{
 		{
-			PalletID:       1,
 			BusinessDate:   start,
 			EventType:      StockLedgerEventReceive,
 			QuantityChange: 20,
 		},
 		{
-			PalletID:       2,
 			BusinessDate:   start.AddDate(0, 0, 4),
 			EventType:      StockLedgerEventShip,
 			QuantityChange: -8,
 		},
 		{
-			PalletID:       3,
 			BusinessDate:   start.AddDate(0, 0, 9),
 			EventType:      StockLedgerEventTransferIn,
 			QuantityChange: 5,
@@ -84,22 +81,22 @@ func TestBuildReportLedgerBucketsUsesBusinessDateAndSearchLookups(t *testing.T) 
 	end := time.Date(2026, 4, 11, 0, 0, 0, 0, time.UTC)
 	entries := []reportLedgerEntry{
 		{
-			PalletID:       7,
 			SKUMasterID:    42,
 			CustomerID:     3,
 			LocationID:     5,
 			EventType:      StockLedgerEventReceive,
 			QuantityChange: 9,
+			PalletChange:   1,
 			DeliveryDate:   sql.NullTime{Valid: true, Time: start},
 			CreatedAt:      start.Add(-12 * time.Hour),
 		},
 		{
-			PalletID:       7,
 			SKUMasterID:    42,
 			CustomerID:     3,
 			LocationID:     5,
 			EventType:      StockLedgerEventShip,
 			QuantityChange: -9,
+			PalletChange:   -1,
 			OutDate:        sql.NullTime{Valid: true, Time: end},
 			CreatedAt:      end,
 		},
@@ -118,8 +115,8 @@ func TestBuildReportLedgerBucketsUsesBusinessDateAndSearchLookups(t *testing.T) 
 
 	openingBalances, events := buildReportLedgerBuckets(entries, lookups, "north dock", start, end)
 
-	if len(openingBalances) != 0 {
-		t.Fatalf("expected no opening balances, got %#v", openingBalances)
+	if openingBalances != 0 {
+		t.Fatalf("expected no opening balance, got %d", openingBalances)
 	}
 	if len(events) != 2 {
 		t.Fatalf("expected 2 matching events, got %d", len(events))
@@ -137,9 +134,9 @@ func TestBuildSKUFlowReportRowsAggregatesReceiveAndShip(t *testing.T) {
 	shipDate := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
 	entries := []skuFlowLedgerRow{
 		{
-			PalletID:           1,
 			EventType:          StockLedgerEventReceive,
 			QuantityChange:     10,
+			PalletChange:       1,
 			DeliveryDate:       sql.NullTime{Valid: true, Time: receiveDate},
 			CustomerName:       "Acme Retail",
 			LocationName:       "North Dock",
@@ -151,9 +148,9 @@ func TestBuildSKUFlowReportRowsAggregatesReceiveAndShip(t *testing.T) {
 			CreatedAt:          receiveDate,
 		},
 		{
-			PalletID:           2,
 			EventType:          StockLedgerEventReceive,
 			QuantityChange:     15,
+			PalletChange:       1,
 			DeliveryDate:       sql.NullTime{Valid: true, Time: receiveDate},
 			CustomerName:       "Acme Retail",
 			LocationName:       "North Dock",
@@ -165,9 +162,9 @@ func TestBuildSKUFlowReportRowsAggregatesReceiveAndShip(t *testing.T) {
 			CreatedAt:          receiveDate,
 		},
 		{
-			PalletID:           1,
 			EventType:          StockLedgerEventShip,
 			QuantityChange:     -6,
+			PalletChange:       -1,
 			OutDate:            sql.NullTime{Valid: true, Time: shipDate},
 			CustomerName:       "Acme Retail",
 			LocationName:       "North Dock",
@@ -181,9 +178,9 @@ func TestBuildSKUFlowReportRowsAggregatesReceiveAndShip(t *testing.T) {
 			CreatedAt:          shipDate,
 		},
 		{
-			PalletID:           1,
 			EventType:          StockLedgerEventShip,
 			QuantityChange:     -4,
+			PalletChange:       0,
 			OutDate:            sql.NullTime{Valid: true, Time: shipDate},
 			CustomerName:       "Acme Retail",
 			LocationName:       "North Dock",
@@ -197,7 +194,6 @@ func TestBuildSKUFlowReportRowsAggregatesReceiveAndShip(t *testing.T) {
 			CreatedAt:          shipDate,
 		},
 		{
-			PalletID:       3,
 			EventType:      StockLedgerEventTransferIn,
 			QuantityChange: 99,
 			CreatedAt:      shipDate,

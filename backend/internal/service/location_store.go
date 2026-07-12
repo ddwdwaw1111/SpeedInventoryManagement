@@ -319,15 +319,6 @@ func updateLiveSectionNameTx(ctx context.Context, tx *sqlx.Tx, locationID int64,
 	}
 
 	if _, err := tx.ExecContext(ctx, `
-		UPDATE pallets
-		SET current_storage_section = ?
-		WHERE current_location_id = ?
-		  AND COALESCE(NULLIF(current_storage_section, ''), ?) = ?
-	`, to, locationID, DefaultStorageSection, from); err != nil {
-		return mapDBError(fmt.Errorf("rename pallet section %s -> %s: %w", from, to, err))
-	}
-
-	if _, err := tx.ExecContext(ctx, `
 		UPDATE outbound_container_allocations
 		SET storage_section = ?
 		WHERE location_id = ?

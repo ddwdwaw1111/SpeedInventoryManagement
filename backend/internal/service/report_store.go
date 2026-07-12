@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -150,7 +151,6 @@ type reportLowStockBucket struct {
 
 type reportLedgerEntry struct {
 	ID             int64        `db:"id"`
-	PalletID       int64        `db:"pallet_id"`
 	SKUMasterID    int64        `db:"sku_master_id"`
 	CustomerID     int64        `db:"customer_id"`
 	LocationID     int64        `db:"location_id"`
@@ -163,6 +163,7 @@ type reportLedgerEntry struct {
 	ReferenceCode  string       `db:"reference_code"`
 	EventType      string       `db:"event_type"`
 	QuantityChange int          `db:"quantity_change"`
+	PalletChange   float64      `db:"pallet_change"`
 	OccurredAt     sql.NullTime `db:"occurred_at"`
 	DeliveryDate   sql.NullTime `db:"delivery_date"`
 	OutDate        sql.NullTime `db:"out_date"`
@@ -170,10 +171,10 @@ type reportLedgerEntry struct {
 }
 
 type reportLedgerEventRow struct {
-	PalletID       int64
 	BusinessDate   time.Time
 	EventType      string
 	QuantityChange int
+	PalletChange   int
 }
 
 type skuFlowReportGroupKey struct {
@@ -192,12 +193,10 @@ type skuFlowReportGroupKey struct {
 }
 
 type skuFlowReportGroup struct {
-	row       SKUFlowReportRow
-	palletIDs map[int64]struct{}
+	row SKUFlowReportRow
 }
 
 type skuFlowLedgerRow struct {
-	PalletID           int64        `db:"pallet_id"`
 	SKUMasterID        int64        `db:"sku_master_id"`
 	SKU                string       `db:"sku"`
 	ItemNumber         string       `db:"item_number"`
@@ -210,6 +209,7 @@ type skuFlowLedgerRow struct {
 	OrderRef           string       `db:"order_ref"`
 	EventType          string       `db:"event_type"`
 	QuantityChange     int          `db:"quantity_change"`
+	PalletChange       float64      `db:"pallet_change"`
 	SourceDocumentType string       `db:"source_document_type"`
 	SourceDocumentID   int64        `db:"source_document_id"`
 	SourceLineID       int64        `db:"source_line_id"`
@@ -562,7 +562,6 @@ func (s *Store) loadReportLedgerEntries(ctx context.Context, filters OperationsR
 	query := `
 		SELECT
 			sl.id,
-			sl.pallet_id,
 			COALESCE(sl.sku_master_id, 0) AS sku_master_id,
 			sl.customer_id,
 			sl.location_id,
@@ -575,15 +574,15 @@ func (s *Store) loadReportLedgerEntries(ctx context.Context, filters OperationsR
 			COALESCE(sl.reference_code, '') AS reference_code,
 			sl.event_type,
 			sl.quantity_change,
+			sl.pallet_change,
 			sl.occurred_at,
 			sl.delivery_date,
 			sl.out_date,
 			sl.created_at
 		FROM stock_ledger sl
-		JOIN pallets p ON p.id = sl.pallet_id
-		WHERE p.status <> ?
+		WHERE 1 = 1
 	`
-	args := []any{PalletStatusCancelled}
+	args := make([]any, 0)
 	if filters.CustomerID > 0 {
 		query += " AND sl.customer_id = ?"
 		args = append(args, filters.CustomerID)
@@ -654,7 +653,6 @@ func (s *Store) loadSKUFlowLedgerRows(ctx context.Context, filters SKUFlowReport
 	rows := make([]skuFlowLedgerRow, 0)
 	query := `
 		SELECT
-			sl.pallet_id,
 			sm.id AS sku_master_id,
 			COALESCE(sm.sku, '') AS sku,
 			COALESCE(sm.item_number, '') AS item_number,
@@ -667,6 +665,7 @@ func (s *Store) loadSKUFlowLedgerRows(ctx context.Context, filters SKUFlowReport
 			COALESCE(NULLIF(sl.order_ref, ''), NULLIF(odoc.order_ref, ''), '') AS order_ref,
 			sl.event_type,
 			sl.quantity_change,
+			sl.pallet_change,
 			COALESCE(sl.source_document_type, '') AS source_document_type,
 			COALESCE(sl.source_document_id, 0) AS source_document_id,
 			COALESCE(sl.source_line_id, 0) AS source_line_id,
@@ -675,15 +674,12 @@ func (s *Store) loadSKUFlowLedgerRows(ctx context.Context, filters SKUFlowReport
 			sl.out_date,
 			sl.created_at
 		FROM stock_ledger sl
-		LEFT JOIN pallets p ON p.id = sl.pallet_id
-		LEFT JOIN pallet_items pi ON pi.id = sl.pallet_item_id
-		JOIN sku_master sm ON sm.id = COALESCE(sl.sku_master_id, pi.sku_master_id, p.sku_master_id)
+		JOIN sku_master sm ON sm.id = sl.sku_master_id
 		JOIN customers c ON c.id = sl.customer_id
 		JOIN storage_locations l ON l.id = sl.location_id
 		LEFT JOIN outbound_documents odoc
 			ON sl.source_document_type = 'OUTBOUND' AND sl.source_document_id = odoc.id
-		WHERE (p.id IS NULL OR p.status <> ?)
-			AND sm.id = ?
+		WHERE sm.id = ?
 			AND sl.event_type IN ('RECEIVE', 'SHIP')
 			AND sl.quantity_change <> 0
 			AND DATE(CASE
@@ -692,7 +688,7 @@ func (s *Store) loadSKUFlowLedgerRows(ctx context.Context, filters SKUFlowReport
 				ELSE COALESCE(sl.occurred_at, sl.created_at)
 			END) BETWEEN ? AND ?
 	`
-	args := []any{PalletStatusCancelled, filters.SKUMasterID, start.Format(time.DateOnly), end.Format(time.DateOnly)}
+	args := []any{filters.SKUMasterID, start.Format(time.DateOnly), end.Format(time.DateOnly)}
 	if filters.CustomerID > 0 {
 		query += " AND sl.customer_id = ?"
 		args = append(args, filters.CustomerID)
@@ -774,9 +770,9 @@ func buildReportLedgerBuckets(
 	search string,
 	start time.Time,
 	end time.Time,
-) (map[int64]int, []reportLedgerEventRow) {
+) (int, []reportLedgerEventRow) {
 	normalizedSearch := strings.ToLower(strings.TrimSpace(search))
-	openingBalances := make(map[int64]int)
+	openingBalance := 0
 	events := make([]reportLedgerEventRow, 0, len(entries))
 
 	for _, entry := range entries {
@@ -786,7 +782,7 @@ func buildReportLedgerBuckets(
 
 		businessDate := startOfUTCDate(resolveReportLedgerBusinessDate(entry))
 		if businessDate.Before(start) {
-			openingBalances[entry.PalletID] += entry.QuantityChange
+			openingBalance += int(math.Round(entry.PalletChange))
 			continue
 		}
 		if businessDate.After(end) {
@@ -794,14 +790,14 @@ func buildReportLedgerBuckets(
 		}
 
 		events = append(events, reportLedgerEventRow{
-			PalletID:       entry.PalletID,
 			BusinessDate:   businessDate,
 			EventType:      entry.EventType,
 			QuantityChange: entry.QuantityChange,
+			PalletChange:   int(math.Round(entry.PalletChange)),
 		})
 	}
 
-	return openingBalances, events
+	return maxInt(openingBalance, 0), events
 }
 
 func buildSKUFlowReportRows(entries []skuFlowLedgerRow) (SKUFlowReportSummary, []SKUFlowReportRow) {
@@ -847,14 +843,12 @@ func buildSKUFlowReportRows(entries []skuFlowLedgerRow) (SKUFlowReportSummary, [
 					SourceDocumentID:   key.SourceDocumentID,
 					SourceLineID:       key.SourceLineID,
 				},
-				palletIDs: make(map[int64]struct{}),
 			}
 			groups[key] = group
 		}
 
 		group.row.Quantity += quantity
-		group.palletIDs[entry.PalletID] = struct{}{}
-		group.row.Pallets = len(group.palletIDs)
+		group.row.Pallets += int(math.Abs(math.Round(entry.PalletChange)))
 
 		if direction == "INBOUND" {
 			summary.InboundQty += quantity
@@ -964,71 +958,40 @@ func firstNonEmptyReportTime(primary sql.NullTime, secondary sql.NullTime, fallb
 	}
 }
 
-func buildReportPalletFlowRows(openingBalances map[int64]int, events []reportLedgerEventRow, start time.Time, end time.Time) []ReportPalletFlowRow {
+func buildReportPalletFlowRows(openingBalance int, events []reportLedgerEventRow, start time.Time, end time.Time) []ReportPalletFlowRow {
 	dayKeys := buildReportDayKeys(start, end)
 	eventsByDay := make(map[string][]reportLedgerEventRow, len(dayKeys))
-	inboundPallets := make(map[string]map[int64]struct{}, len(dayKeys))
-	outboundPallets := make(map[string]map[int64]struct{}, len(dayKeys))
 
 	for _, event := range events {
 		dateKey := event.BusinessDate.Format(time.DateOnly)
 		eventsByDay[dateKey] = append(eventsByDay[dateKey], event)
-
-		if _, ok := reportInboundEvents[event.EventType]; ok && event.QuantityChange > 0 {
-			if inboundPallets[dateKey] == nil {
-				inboundPallets[dateKey] = make(map[int64]struct{})
-			}
-			inboundPallets[dateKey][event.PalletID] = struct{}{}
-		}
-		if _, ok := reportOutboundEvents[event.EventType]; ok && event.QuantityChange < 0 {
-			if outboundPallets[dateKey] == nil {
-				outboundPallets[dateKey] = make(map[int64]struct{})
-			}
-			outboundPallets[dateKey][event.PalletID] = struct{}{}
-		}
-	}
-
-	balances := make(map[int64]int, len(openingBalances))
-	for palletID, quantity := range openingBalances {
-		if quantity > 0 {
-			balances[palletID] = quantity
-		}
 	}
 
 	rows := make([]ReportPalletFlowRow, 0, len(dayKeys))
+	endingBalance := maxInt(openingBalance, 0)
 	for _, dayKey := range dayKeys {
+		inboundCount := 0
+		outboundCount := 0
 		adjustmentDelta := 0
 		for _, event := range eventsByDay[dayKey] {
-			wasActive := balances[event.PalletID] > 0
-			balances[event.PalletID] += event.QuantityChange
-			isActive := balances[event.PalletID] > 0
-			if !isActive {
-				delete(balances, event.PalletID)
-			}
-
-			if _, isInbound := reportInboundEvents[event.EventType]; isInbound {
+			endingBalance = maxInt(endingBalance+event.PalletChange, 0)
+			if _, isInbound := reportInboundEvents[event.EventType]; isInbound && event.PalletChange > 0 {
+				inboundCount += event.PalletChange
 				continue
 			}
-			if _, isOutbound := reportOutboundEvents[event.EventType]; isOutbound {
+			if _, isOutbound := reportOutboundEvents[event.EventType]; isOutbound && event.PalletChange < 0 {
+				outboundCount += -event.PalletChange
 				continue
 			}
-			switch {
-			case !wasActive && isActive:
-				adjustmentDelta++
-			case wasActive && !isActive:
-				adjustmentDelta--
-			}
+			adjustmentDelta += event.PalletChange
 		}
 
-		inboundCount := len(inboundPallets[dayKey])
-		outboundCount := len(outboundPallets[dayKey])
-		endOfDay := countActiveReportPallets(balances)
 		rows = append(rows, ReportPalletFlowRow{
 			DateKey:         dayKey,
 			Inbound:         inboundCount,
 			Outbound:        outboundCount,
 			AdjustmentDelta: adjustmentDelta,
-			EndOfDay:        endOfDay,
+			EndOfDay:        endingBalance,
 		})
 	}
 
@@ -1069,16 +1032,6 @@ func buildReportDayKeys(start time.Time, end time.Time) []string {
 		keys = append(keys, cursor.Format(time.DateOnly))
 	}
 	return keys
-}
-
-func countActiveReportPallets(balances map[int64]int) int {
-	count := 0
-	for _, quantity := range balances {
-		if quantity > 0 {
-			count++
-		}
-	}
-	return count
 }
 
 func reportTrendBucketKey(dateKey string, granularity string) string {

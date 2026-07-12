@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockedDownloadOutboundPickSheetPdfFromDocument = vi.fn();
@@ -53,7 +53,6 @@ vi.mock("./RowActionsMenu", () => ({
 
 vi.mock("../lib/api", () => ({
   api: {
-    getPallets: vi.fn(),
     getInboundDocuments: vi.fn(),
     getOutboundDocuments: vi.fn(),
     createInboundDocument: vi.fn(),
@@ -68,7 +67,7 @@ vi.mock("../lib/outboundPickSheetPdf", () => ({
 }));
 
 import { api } from "../lib/api";
-import { ActivityManagementPage, buildOutboundSourceOptionsFromPallets, buildPickSheetExportDocument } from "./ActivityManagementPage";
+import { ActivityManagementPage, buildOutboundSourceOptionsFromItems, buildPickSheetExportDocument } from "./ActivityManagementPage";
 import { renderWithProviders } from "../test/renderWithProviders";
 import {
   createCustomer,
@@ -83,7 +82,6 @@ import {
 } from "../test/fixtures";
 
 const mockedApi = api as unknown as {
-  getPallets: ReturnType<typeof vi.fn>;
   getInboundDocuments: ReturnType<typeof vi.fn>;
   getOutboundDocuments: ReturnType<typeof vi.fn>;
   createInboundDocument: ReturnType<typeof vi.fn>;
@@ -92,66 +90,8 @@ const mockedApi = api as unknown as {
   copyInboundDocument: ReturnType<typeof vi.fn>;
 };
 
-function createOutboundPalletTrace(overrides?: Partial<{
-  palletId: number;
-  contentId: number;
-  containerNo: string;
-  quantity: number;
-  sku: string;
-  itemNumber: string;
-  description: string;
-}>){
-  const palletId = overrides?.palletId ?? 501;
-  const contentId = overrides?.contentId ?? (palletId + 100);
-  const sku = overrides?.sku ?? "608333";
-  const itemNumber = overrides?.itemNumber ?? sku;
-  const description = overrides?.description ?? "VB22GC";
-  const quantity = overrides?.quantity ?? 10;
-  const containerNo = overrides?.containerNo ?? "GCXU5817233";
-
-  return {
-    id: palletId,
-    parentPalletId: 0,
-    palletCode: `PLT-${palletId}`,
-    containerVisitId: 1,
-    sourceInboundDocumentId: 1,
-    sourceInboundLineId: 1,
-    actualArrivalDate: "2026-03-24",
-    customerId: 1,
-    customerName: "Imperial Bag & Paper",
-    skuMasterId: 1,
-    sku,
-    description,
-    currentLocationId: 1,
-    currentLocationName: "NJ",
-    currentStorageSection: "TEMP",
-    currentContainerNo: containerNo,
-    containerType: "NORMAL" as const,
-    status: "OPEN",
-    createdAt: "2026-03-24T10:00:00Z",
-    updatedAt: "2026-03-24T10:00:00Z",
-    contents: [
-      {
-        id: contentId,
-        palletId,
-        skuMasterId: 1,
-        itemNumber,
-        sku,
-        description,
-        quantity,
-        allocatedQty: 0,
-        damagedQty: 0,
-        holdQty: 0,
-        createdAt: "2026-03-24T10:00:00Z",
-        updatedAt: "2026-03-24T10:00:00Z"
-      }
-    ]
-  };
-}
-
 describe("ActivityManagementPage", () => {
   beforeEach(() => {
-    mockedApi.getPallets.mockReset();
     mockedApi.getInboundDocuments.mockReset();
     mockedApi.getOutboundDocuments.mockReset();
     mockedApi.createInboundDocument.mockReset();
@@ -159,7 +99,6 @@ describe("ActivityManagementPage", () => {
     mockedApi.updateInboundDocument.mockReset();
     mockedApi.copyInboundDocument.mockReset();
     mockedDownloadOutboundPickSheetPdfFromDocument.mockReset();
-    mockedApi.getPallets.mockResolvedValue([]);
     mockedApi.getInboundDocuments.mockResolvedValue([]);
     mockedApi.getOutboundDocuments.mockResolvedValue([]);
   });
@@ -895,9 +834,6 @@ describe("ActivityManagementPage", () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
 
     mockedApi.createOutboundDocument.mockResolvedValue(undefined);
-    mockedApi.getPallets.mockResolvedValue([
-      createOutboundPalletTrace({ palletId: 501, containerNo: "GCXU5817233", quantity: 10 })
-    ]);
 
     renderWithProviders(
       <ActivityManagementPage
@@ -923,12 +859,6 @@ describe("ActivityManagementPage", () => {
       />
     );
 
-    await waitFor(() => {
-      expect(mockedApi.getPallets).toHaveBeenCalledTimes(1);
-    });
-    await act(async () => {
-      await mockedApi.getPallets.mock.results[0]?.value;
-    });
     fireEvent.click(screen.getByRole("button", { name: "New Shipment" }));
     expect(screen.getByText("Create Shipment")).toBeInTheDocument();
 
@@ -968,7 +898,7 @@ describe("ActivityManagementPage", () => {
             quantity: 5,
             pallets: 0,
             palletsDetailCtns: undefined,
-            unitLabel: "PCS",
+            unitLabel: "CTN",
             cartonSizeMm: undefined,
             netWeightKgs: 0,
             grossWeightKgs: 0,
@@ -991,35 +921,10 @@ describe("ActivityManagementPage", () => {
     expect(onRefresh).toHaveBeenCalled();
   });
 
-  it("blocks new outbound shipments until live pallet inventory finishes loading", async () => {
-    mockedApi.getPallets.mockImplementation(() => new Promise(() => {}));
-
-    renderWithProviders(
-      <ActivityManagementPage
-        mode="OUT"
-        items={[createItem({ id: 1, quantity: 10, availableQty: 10, storageSection: "TEMP", containerNo: "GCXU5817233" })]}
-        skuMasters={[]}
-        locations={[createLocation()]}
-        customers={[createCustomer()]}
-        movements={[createMovement()]}
-        inboundDocuments={[]}
-        outboundDocuments={[]}
-        currentUserRole="admin"
-        isLoading={false}
-        onRefresh={vi.fn().mockResolvedValue(undefined)}
-      />
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "New Shipment" }));
-
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getByText("Live pallet inventory is still loading. Shipment allocation will unlock once pallet data is ready.")).toBeInTheDocument();
-  });
-
   it("hydrates draft pick sheet exports with container rows when the document has no stored pick allocations", async () => {
-    const sourceOptions = buildOutboundSourceOptionsFromPallets([
-      createOutboundPalletTrace({ palletId: 511, containerNo: "CONTAINER-1", quantity: 10, sku: "011423", itemNumber: "011423", description: "011423" }),
-      createOutboundPalletTrace({ palletId: 512, containerNo: "CONTAINER-2", quantity: 20, sku: "011423", itemNumber: "011423", description: "011423" })
+    const sourceOptions = buildOutboundSourceOptionsFromItems([
+      createItem({ id: 511, containerNo: "CONTAINER-1", quantity: 10, availableQty: 10, sku: "011423", itemNumber: "011423", description: "011423" }),
+      createItem({ id: 512, containerNo: "CONTAINER-2", quantity: 20, availableQty: 20, sku: "011423", itemNumber: "011423", description: "011423" })
     ], new Map());
     const exportedDocument = buildPickSheetExportDocument(createOutboundDocument({
       id: 101,

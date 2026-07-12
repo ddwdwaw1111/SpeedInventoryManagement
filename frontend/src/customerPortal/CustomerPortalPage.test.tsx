@@ -118,8 +118,6 @@ describe("CustomerPortalPage", () => {
       pickingOrders: [],
       movements: [],
       lifecycleEvents: [],
-      pallets: [],
-      palletEvents: []
     });
     getPackingLists.mockResolvedValue([
       createInboundDocument({

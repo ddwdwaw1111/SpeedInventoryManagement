@@ -13,7 +13,7 @@ import {
   type Item,
   type Movement,
   type OutboundDocument,
-  type OutboundLinePalletPick,
+  type OutboundLineAllocationSelection,
   type OutboundDocumentPayload,
   type SKUMaster,
   type UserRole
@@ -50,8 +50,8 @@ type BatchOutboundLineState = {
   netWeightKgs: number;
   grossWeightKgs: number;
   reason: string;
-  pickPallets: OutboundLinePalletPick[];
-  pickPalletsTouched: boolean;
+  allocationSelections: OutboundLineAllocationSelection[];
+  allocationSelectionsTouched: boolean;
 };
 
 type OutboundAllocationPreviewRow = {
@@ -64,8 +64,8 @@ type OutboundAllocationPreviewRow = {
   locationName: string;
   storageSection: string;
   containerNo: string;
-  palletId: number;
-  palletCode: string;
+  inventoryItemId: number;
+  positionLabel: string;
   availableQty: number;
   allocatedQty: number;
   pallets: number;
@@ -142,7 +142,7 @@ type OutboundSourceOption = {
   storageSections: string[];
   containerCount: number;
   containerSummary: string;
-  candidates: OutboundPalletCandidate[];
+  candidates: OutboundInventoryCandidate[];
 };
 
 type WarehouseOption = {
@@ -180,10 +180,10 @@ type RememberedOutboundHeaderDefaults = Pick<
   "shipToName" | "shipToAddress" | "shipToContact" | "carrierName"
 >;
 
-type OutboundPalletCandidate = {
+type OutboundInventoryCandidate = {
   id: string;
-  palletId: number;
-  palletCode: string;
+  inventoryItemId: number;
+  positionLabel: string;
   customerId: number;
   customerName: string;
   locationId: number;
@@ -532,12 +532,12 @@ export function OutboundShipmentEditorPage({
         sourceSearch: currentLine.sourceSearch,
         pallets: 0,
         palletsDetailCtns: "",
-        pickPallets: [],
-        pickPalletsTouched: false
+        allocationSelections: [],
+        allocationSelectionsTouched: false
       };
     }
 
-    const nextPickPallets = buildAutoOutboundPalletSelections(currentLine.quantity, nextSource.candidates);
+    const nextAllocationSelections = buildAutoOutboundPalletSelections(currentLine.quantity, nextSource.candidates);
     return {
       ...currentLine,
       locationId: String(nextSource.locationId),
@@ -546,8 +546,8 @@ export function OutboundShipmentEditorPage({
       unitLabel: nextSource.unit?.toUpperCase() || currentLine.unitLabel || "PCS",
 	  pallets: currentLine.pallets,
       palletsDetailCtns: "",
-      pickPallets: nextPickPallets,
-      pickPalletsTouched: false
+      allocationSelections: nextAllocationSelections,
+      allocationSelectionsTouched: false
     };
   }
 
@@ -589,8 +589,8 @@ export function OutboundShipmentEditorPage({
         quantity: 0,
         pallets: 0,
         palletsDetailCtns: "",
-        pickPallets: [],
-        pickPalletsTouched: false
+        allocationSelections: [],
+        allocationSelectionsTouched: false
       };
     }));
   }
@@ -614,8 +614,8 @@ export function OutboundShipmentEditorPage({
           quantity: 0,
           pallets: 0,
           palletsDetailCtns: "",
-          pickPallets: [],
-          pickPalletsTouched: false
+          allocationSelections: [],
+          allocationSelectionsTouched: false
         };
       }
 
@@ -641,8 +641,8 @@ export function OutboundShipmentEditorPage({
         quantity: 0,
         pallets: 0,
         palletsDetailCtns: "",
-        pickPallets: [],
-        pickPalletsTouched: false
+        allocationSelections: [],
+        allocationSelectionsTouched: false
       };
     }));
   }
@@ -654,14 +654,14 @@ export function OutboundShipmentEditorPage({
       }
 
       const selectedSource = findOutboundSourceOption(selectableOutboundSources, line.sourceKey);
-      const nextPickPallets = line.pickPalletsTouched
-        ? line.pickPallets
+      const nextAllocationSelections = line.allocationSelectionsTouched
+        ? line.allocationSelections
         : buildAutoOutboundPalletSelections(nextQuantity, selectedSource?.candidates ?? []);
       return {
         ...line,
         quantity: nextQuantity,
         palletsDetailCtns: "",
-        pickPallets: nextPickPallets
+        allocationSelections: nextAllocationSelections
       };
     }));
   }
@@ -671,30 +671,26 @@ export function OutboundShipmentEditorPage({
       if (line.id !== lineID) {
         return line;
       }
-      const selectedSource = findOutboundSourceOption(selectableOutboundSources, line.sourceKey);
       return {
         ...line,
-        pallets: nextPallets,
-        pickPallets: buildAutoOutboundPalletSelections(line.quantity, selectedSource?.candidates ?? []),
-        pickPalletsTouched: false
+        pallets: nextPallets
       };
     }));
   }
 
-  function updateBatchOutboundLinePickPalletQuantity(lineID: string, palletID: number, nextQuantity: number) {
+  function updateBatchOutboundLineAllocationSelectionQuantity(lineID: string, inventoryItemID: number, nextQuantity: number) {
     setBatchOutboundLines((current) => current.map((line) => {
       if (line.id !== lineID) {
         return line;
       }
-      const nextPickPallets = normalizeOutboundLinePalletPicks([
-        ...line.pickPallets.filter((entry) => entry.palletId !== palletID),
-        ...(nextQuantity > 0 ? [{ palletId: palletID, quantity: nextQuantity }] : [])
+      const nextAllocationSelections = normalizeOutboundLineAllocationSelections([
+        ...line.allocationSelections.filter((entry) => entry.inventoryItemId !== inventoryItemID),
+        ...(nextQuantity > 0 ? [{ inventoryItemId: inventoryItemID, quantity: nextQuantity }] : [])
       ]);
       return {
         ...line,
-        pickPallets: nextPickPallets,
-        pickPalletsTouched: true,
-        pallets: countSelectedOutboundPallets(nextPickPallets)
+        allocationSelections: nextAllocationSelections,
+        allocationSelectionsTouched: true
       };
     }));
   }
@@ -713,18 +709,18 @@ export function OutboundShipmentEditorPage({
     }));
     let switchedToManual = false;
     setBatchOutboundLines((current) => current.map((line) => {
-      if (line.id !== lineID || line.pickPalletsTouched) {
+      if (line.id !== lineID || line.allocationSelectionsTouched) {
         return line;
       }
       switchedToManual = true;
-      return { ...line, pickPalletsTouched: true };
+      return { ...line, allocationSelectionsTouched: true };
     }));
     if (switchedToManual) {
       showSuccess(t("manualPickEnabledSuccess"));
     }
   }
 
-  function resetOutboundLinePickPallets(lineID: string) {
+  function resetOutboundLineAllocationSelections(lineID: string) {
     let nextPalletCount = 0;
     let nextPickedQty = 0;
     setBatchOutboundLines((current) => current.map((line) => {
@@ -732,13 +728,13 @@ export function OutboundShipmentEditorPage({
         return line;
       }
       const selectedSource = findOutboundSourceOption(selectableOutboundSources, line.sourceKey);
-      const nextPickPallets = buildAutoOutboundPalletSelections(line.quantity, selectedSource?.candidates ?? []);
-      nextPalletCount = countSelectedOutboundPallets(nextPickPallets);
-      nextPickedQty = nextPickPallets.reduce((sum, entry) => sum + entry.quantity, 0);
+      const nextAllocationSelections = buildAutoOutboundPalletSelections(line.quantity, selectedSource?.candidates ?? []);
+      nextPalletCount = countSelectedOutboundPallets(nextAllocationSelections);
+      nextPickedQty = nextAllocationSelections.reduce((sum, entry) => sum + entry.quantity, 0);
       return {
         ...line,
-        pickPallets: nextPickPallets,
-        pickPalletsTouched: false,
+        allocationSelections: nextAllocationSelections,
+        allocationSelectionsTouched: false,
         pallets: line.pallets
       };
     }));
@@ -748,16 +744,15 @@ export function OutboundShipmentEditorPage({
     }));
   }
 
-  function clearOutboundLinePickPallets(lineID: string) {
+  function clearOutboundLineAllocationSelections(lineID: string) {
     setBatchOutboundLines((current) => current.map((line) => {
       if (line.id !== lineID) {
         return line;
       }
       return {
         ...line,
-        pickPallets: [],
-        pickPalletsTouched: true,
-        pallets: 0
+        allocationSelections: [],
+        allocationSelectionsTouched: true
       };
     }));
     showSuccess(t("manualPickSelectionsClearedSuccess"));
@@ -817,7 +812,7 @@ export function OutboundShipmentEditorPage({
             .filter((line) => line.sourceKey.trim() !== "")
             .map((line) => {
               const summary = batchOutboundAllocationPreview.summaries.get(line.id);
-              const shouldExpand = line.pickPalletsTouched || (summary?.shortageQty ?? 0) > 0 || (summary?.containerCount ?? 0) > 1;
+              const shouldExpand = line.allocationSelectionsTouched || (summary?.shortageQty ?? 0) > 0 || (summary?.containerCount ?? 0) > 1;
               return [line.id, shouldExpand] as const;
             })
         )
@@ -1532,8 +1527,8 @@ function createEmptyBatchOutboundLine(seed?: Partial<BatchOutboundLineState>): B
     netWeightKgs: seed?.netWeightKgs ?? 0,
     grossWeightKgs: seed?.grossWeightKgs ?? 0,
     reason: seed?.reason ?? "",
-    pickPallets: seed?.pickPallets ?? [],
-    pickPalletsTouched: seed?.pickPalletsTouched ?? false
+    allocationSelections: seed?.allocationSelections ?? [],
+    allocationSelectionsTouched: seed?.allocationSelectionsTouched ?? false
   };
 }
 
@@ -1711,21 +1706,21 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
     const sourceReservations = getOutboundSourceReservations(reservationsBySourceKey, selectedSource.sourceKey);
     const selectedPalletQuantities = new Map(
       buildEffectiveOutboundLinePalletSelections(line, selectedSource, sourceReservations)
-        .map((entry) => [entry.palletId, entry.quantity] as const)
+        .map((entry) => [entry.inventoryItemId, entry.quantity] as const)
     );
     for (const candidate of selectedSource.candidates) {
-      const requestedQty = selectedPalletQuantities.get(candidate.palletId) ?? 0;
+      const requestedQty = selectedPalletQuantities.get(candidate.inventoryItemId) ?? 0;
       if (requestedQty <= 0) {
         continue;
       }
-      const availableQty = Math.max(0, candidate.availableQty - (sourceReservations.get(candidate.palletId) ?? 0));
+      const availableQty = Math.max(0, candidate.availableQty - (sourceReservations.get(candidate.inventoryItemId) ?? 0));
       const allocatedQty = Math.min(requestedQty, availableQty);
       if (allocatedQty <= 0) {
         continue;
       }
 
       rows.push({
-        id: `${line.id}-${candidate.palletId}`,
+        id: `${line.id}-${candidate.inventoryItemId}`,
         lineId: line.id,
         lineLabel: summary.lineLabel,
         itemNumber: selectedSource.itemNumber || summary.itemNumber,
@@ -1734,14 +1729,14 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
         locationName: candidate.locationName,
         storageSection: normalizeStorageSection(candidate.storageSection),
         containerNo: candidate.containerNo || "",
-        palletId: candidate.palletId,
-        palletCode: candidate.palletCode,
+        inventoryItemId: candidate.inventoryItemId,
+        positionLabel: candidate.positionLabel,
         availableQty,
         allocatedQty,
         pallets: line.pallets
       });
       summary.allocatedQty += allocatedQty;
-      sourceReservations.set(candidate.palletId, (sourceReservations.get(candidate.palletId) ?? 0) + allocatedQty);
+      sourceReservations.set(candidate.inventoryItemId, (sourceReservations.get(candidate.inventoryItemId) ?? 0) + allocatedQty);
     }
 
     const containers = new Set(
@@ -1766,25 +1761,25 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
 }
 
 function buildOutboundPickPlanRows(
-  line: Pick<BatchOutboundLineState, "id" | "quantity" | "pallets" | "pickPallets" | "pickPalletsTouched">,
+  line: Pick<BatchOutboundLineState, "id" | "quantity" | "pallets" | "allocationSelections" | "allocationSelectionsTouched">,
   source: Pick<OutboundSourceOption, "candidates" | "itemNumber" | "sku" | "description">,
   includeAllCandidates: boolean,
   priorReservations?: Map<number, number>
 ) {
   const selectedPalletQuantities = new Map(
     buildEffectiveOutboundLinePalletSelections(line, source, priorReservations ?? new Map<number, number>())
-      .map((entry) => [entry.palletId, entry.quantity] as const)
+      .map((entry) => [entry.inventoryItemId, entry.quantity] as const)
   );
 
   return source.candidates.flatMap((candidate) => {
-    const allocatedQty = selectedPalletQuantities.get(candidate.palletId) ?? 0;
+    const allocatedQty = selectedPalletQuantities.get(candidate.inventoryItemId) ?? 0;
     if (!includeAllCandidates && allocatedQty <= 0) {
       return [];
     }
-    const availableQty = Math.max(0, candidate.availableQty - (priorReservations?.get(candidate.palletId) ?? 0));
+    const availableQty = Math.max(0, candidate.availableQty - (priorReservations?.get(candidate.inventoryItemId) ?? 0));
 
     return [{
-      id: `${line.id}-${candidate.palletId}`,
+      id: `${line.id}-${candidate.inventoryItemId}`,
       lineId: line.id,
       lineLabel: "",
       itemNumber: source.itemNumber || "",
@@ -1793,8 +1788,8 @@ function buildOutboundPickPlanRows(
       locationName: candidate.locationName,
       storageSection: normalizeStorageSection(candidate.storageSection),
       containerNo: candidate.containerNo || "",
-      palletId: candidate.palletId,
-      palletCode: candidate.palletCode,
+      inventoryItemId: candidate.inventoryItemId,
+      positionLabel: candidate.positionLabel,
       availableQty,
       allocatedQty,
       pallets: line.pallets
@@ -1817,20 +1812,20 @@ function getOutboundSourceReservations(
 
 function reserveOutboundLinePalletSelections(
   reservations: Map<number, number>,
-  selections: OutboundLinePalletPick[]
+  selections: OutboundLineAllocationSelection[]
 ) {
-  for (const selection of normalizeOutboundLinePalletPicks(selections)) {
-    reservations.set(selection.palletId, (reservations.get(selection.palletId) ?? 0) + selection.quantity);
+  for (const selection of normalizeOutboundLineAllocationSelections(selections)) {
+    reservations.set(selection.inventoryItemId, (reservations.get(selection.inventoryItemId) ?? 0) + selection.quantity);
   }
 }
 
 function buildEffectiveOutboundLinePalletSelections(
-  line: Pick<BatchOutboundLineState, "quantity" | "pallets" | "pickPallets" | "pickPalletsTouched">,
+  line: Pick<BatchOutboundLineState, "quantity" | "pallets" | "allocationSelections" | "allocationSelectionsTouched">,
   source: Pick<OutboundSourceOption, "candidates">,
   reservations: Map<number, number>
 ) {
-  const normalizedSelections = normalizeOutboundLinePalletPicks(line.pickPallets);
-  if (line.pickPalletsTouched) {
+  const normalizedSelections = normalizeOutboundLineAllocationSelections(line.allocationSelections);
+  if (line.allocationSelectionsTouched) {
     return normalizedSelections;
   }
   return buildAutoOutboundPalletSelectionsWithReservations(line.quantity, source.candidates, reservations);
@@ -1851,15 +1846,15 @@ function rebalanceAutoOutboundLineSelections(lines: BatchOutboundLineState[], so
     }
 
     const sourceReservations = getOutboundSourceReservations(reservationsBySourceKey, selectedSource.sourceKey);
-    const nextPickPallets = buildEffectiveOutboundLinePalletSelections(line, selectedSource, sourceReservations);
-    reserveOutboundLinePalletSelections(sourceReservations, nextPickPallets);
+    const nextAllocationSelections = buildEffectiveOutboundLinePalletSelections(line, selectedSource, sourceReservations);
+    reserveOutboundLinePalletSelections(sourceReservations, nextAllocationSelections);
 
-    if (line.pickPalletsTouched) {
+    if (line.allocationSelectionsTouched) {
       return line;
     }
 
     if (
-      areOutboundLinePalletPicksEqual(line.pickPallets, nextPickPallets)
+      areOutboundLineAllocationSelectionsEqual(line.allocationSelections, nextAllocationSelections)
     ) {
       return line;
     }
@@ -1867,7 +1862,7 @@ function rebalanceAutoOutboundLineSelections(lines: BatchOutboundLineState[], so
     changed = true;
     return {
       ...line,
-      pickPallets: nextPickPallets
+      allocationSelections: nextAllocationSelections
     };
   });
 
@@ -1899,7 +1894,7 @@ function buildOutboundPickPlanReservationMap(lines: BatchOutboundLineState[], so
   return reservationsByLineID;
 }
 
-function compareOutboundPalletCandidates(left: OutboundPalletCandidate, right: OutboundPalletCandidate) {
+function compareOutboundInventoryCandidates(left: OutboundInventoryCandidate, right: OutboundInventoryCandidate) {
   const leftArrival = left.actualArrivalDate || left.createdAt || "";
   const rightArrival = right.actualArrivalDate || right.createdAt || "";
   if (!leftArrival && rightArrival) return 1;
@@ -1908,79 +1903,79 @@ function compareOutboundPalletCandidates(left: OutboundPalletCandidate, right: O
   if (left.locationName !== right.locationName) return left.locationName.localeCompare(right.locationName);
   if (left.storageSection !== right.storageSection) return left.storageSection.localeCompare(right.storageSection);
   if (left.containerNo !== right.containerNo) return left.containerNo.localeCompare(right.containerNo);
-  return left.palletCode.localeCompare(right.palletCode);
+  return left.positionLabel.localeCompare(right.positionLabel);
 }
 
-function normalizeOutboundLinePalletPicks(entries: OutboundLinePalletPick[] | null | undefined) {
+function normalizeOutboundLineAllocationSelections(entries: OutboundLineAllocationSelection[] | null | undefined) {
   const normalized = new Map<number, number>();
   for (const entry of Array.isArray(entries) ? entries : []) {
     if (entry.quantity <= 0) {
       continue;
     }
-    if (entry.palletId <= 0) {
+    if (entry.inventoryItemId <= 0) {
       continue;
     }
-    normalized.set(entry.palletId, (normalized.get(entry.palletId) ?? 0) + entry.quantity);
+    normalized.set(entry.inventoryItemId, (normalized.get(entry.inventoryItemId) ?? 0) + entry.quantity);
   }
-  return [...normalized.entries()].map(([palletId, quantity]) => ({ palletId, quantity }));
+  return [...normalized.entries()].map(([inventoryItemId, quantity]) => ({ inventoryItemId, quantity }));
 }
 
-function countSelectedOutboundPallets(entries: OutboundLinePalletPick[]) {
-  return normalizeOutboundLinePalletPicks(entries).filter((entry) => entry.quantity > 0).length;
+function countSelectedOutboundPallets(entries: OutboundLineAllocationSelection[]) {
+  return normalizeOutboundLineAllocationSelections(entries).filter((entry) => entry.quantity > 0).length;
 }
 
-function resolveOutboundLinePalletCount(entries: OutboundLinePalletPick[] | null | undefined, fallback = 0) {
+function resolveOutboundLinePalletCount(entries: OutboundLineAllocationSelection[] | null | undefined, fallback = 0) {
   const selectedPalletCount = countSelectedOutboundPallets(entries ?? []);
   return selectedPalletCount > 0 ? selectedPalletCount : Math.max(0, fallback);
 }
 
-function areOutboundLinePalletPicksEqual(
-  left: OutboundLinePalletPick[] | null | undefined,
-  right: OutboundLinePalletPick[] | null | undefined
+function areOutboundLineAllocationSelectionsEqual(
+  left: OutboundLineAllocationSelection[] | null | undefined,
+  right: OutboundLineAllocationSelection[] | null | undefined
 ) {
-  const normalizedLeft = normalizeOutboundLinePalletPicks(left);
-  const normalizedRight = normalizeOutboundLinePalletPicks(right);
+  const normalizedLeft = normalizeOutboundLineAllocationSelections(left);
+  const normalizedRight = normalizeOutboundLineAllocationSelections(right);
   if (normalizedLeft.length !== normalizedRight.length) {
     return false;
   }
   return normalizedLeft.every((entry, index) => (
-    entry.palletId === normalizedRight[index]?.palletId
+    entry.inventoryItemId === normalizedRight[index]?.inventoryItemId
     && entry.quantity === normalizedRight[index]?.quantity
   ));
 }
 
-function buildAutoOutboundPalletSelections(quantity: number, candidates: OutboundPalletCandidate[]) {
+function buildAutoOutboundPalletSelections(quantity: number, candidates: OutboundInventoryCandidate[]) {
   return buildAutoOutboundPalletSelectionsWithReservations(quantity, candidates, new Map<number, number>());
 }
 
 function buildAutoOutboundPalletSelectionsWithReservations(
   quantity: number,
-  candidates: OutboundPalletCandidate[],
+  candidates: OutboundInventoryCandidate[],
   reservations: Map<number, number>
 ) {
   if (quantity <= 0) {
     return [];
   }
-	const orderedCandidates = [...candidates].sort(compareOutboundPalletCandidates);
+	const orderedCandidates = [...candidates].sort(compareOutboundInventoryCandidates);
   let remainingQty = quantity;
-  const selections: OutboundLinePalletPick[] = [];
+  const selections: OutboundLineAllocationSelection[] = [];
 	for (const candidate of orderedCandidates) {
     if (remainingQty <= 0) {
       break;
     }
-    if (candidate.palletId <= 0) {
+    if (candidate.inventoryItemId <= 0) {
       continue;
     }
-    const reservedQty = reservations.get(candidate.palletId) ?? 0;
+    const reservedQty = reservations.get(candidate.inventoryItemId) ?? 0;
     const remainingAvailableQty = Math.max(0, candidate.availableQty - reservedQty);
     const selectedQty = Math.min(remainingAvailableQty, remainingQty);
     if (selectedQty <= 0) {
       continue;
     }
-    selections.push({ palletId: candidate.palletId, quantity: selectedQty });
+    selections.push({ inventoryItemId: candidate.inventoryItemId, quantity: selectedQty });
     remainingQty -= selectedQty;
   }
-  return normalizeOutboundLinePalletPicks(selections);
+  return normalizeOutboundLineAllocationSelections(selections);
 }
 
 function buildOutboundShipmentReviewGroups(rows: OutboundAllocationPreviewRow[]): OutboundShipmentReviewWarehouseGroup[] {
@@ -2265,8 +2260,8 @@ function buildPersistedOutboundSourceOptionsFromDocument(
         containerSummary: containerNo ? `${containerNo} (${availableQty})` : "",
         candidates: [{
           id: `persisted-${line.id}-${index}`,
-          palletId: candidateID,
-          palletCode: containerNo || `POSITION-${line.id}-${index + 1}`,
+          inventoryItemId: candidateID,
+          positionLabel: containerNo || `POSITION-${line.id}-${index + 1}`,
           customerId: document.customerId,
           customerName: document.customerName,
           locationId,
@@ -2311,10 +2306,10 @@ export function buildOutboundSourceOptionsFromItems(items: Item[]): OutboundSour
       continue;
     }
 
-    const candidate: OutboundPalletCandidate = {
+    const candidate: OutboundInventoryCandidate = {
         id: `item-${item.id}`,
-        palletId: item.id,
-        palletCode: containerNo,
+        inventoryItemId: item.id,
+        positionLabel: containerNo,
         customerId: item.customerId,
         customerName: item.customerName,
         locationId: item.locationId,
@@ -2417,8 +2412,8 @@ function buildOutboundEditorSourceState({
                 netWeightKgs: line.netWeightKgs || 0,
                 grossWeightKgs: line.grossWeightKgs || 0,
                 reason: line.lineNote || "",
-                pickPallets: [],
-                pickPalletsTouched: false
+                allocationSelections: [],
+                allocationSelectionsTouched: false
               };
             });
           })

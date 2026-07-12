@@ -11,38 +11,39 @@ import (
 )
 
 type InventoryAdjustment struct {
-	ID               int64                     `json:"id"`
-	AdjustmentNo     string                    `json:"adjustmentNo"`
-	ReasonCode       string                    `json:"reasonCode"`
-	ActualAdjustedAt *time.Time                `json:"actualAdjustedAt"`
-	Notes            string                    `json:"notes"`
-	Status           string                    `json:"status"`
-	TotalLines       int                       `json:"totalLines"`
-	TotalAdjustQty   int                       `json:"totalAdjustQty"`
-	CreatedAt        time.Time                 `json:"createdAt"`
-	UpdatedAt        time.Time                 `json:"updatedAt"`
-	Lines            []InventoryAdjustmentLine `json:"lines"`
+	ID                 int64                     `json:"id"`
+	AdjustmentNo       string                    `json:"adjustmentNo"`
+	ReasonCode         string                    `json:"reasonCode"`
+	ActualAdjustedAt   *time.Time                `json:"actualAdjustedAt"`
+	Notes              string                    `json:"notes"`
+	Status             string                    `json:"status"`
+	TotalLines         int                       `json:"totalLines"`
+	TotalAdjustQty     int                       `json:"totalAdjustQty"`
+	TotalAdjustPallets int                       `json:"totalAdjustPallets"`
+	CreatedAt          time.Time                 `json:"createdAt"`
+	UpdatedAt          time.Time                 `json:"updatedAt"`
+	Lines              []InventoryAdjustmentLine `json:"lines"`
 }
 
 type InventoryAdjustmentLine struct {
-	ID              int64     `json:"id"`
-	AdjustmentID    int64     `json:"adjustmentId"`
-	CustomerID      int64     `json:"customerId"`
-	CustomerName    string    `json:"customerName"`
-	LocationID      int64     `json:"locationId"`
-	LocationName    string    `json:"locationName"`
-	StorageSection  string    `json:"storageSection"`
-	PalletID        int64     `json:"palletId"`
-	PalletCode      string    `json:"palletCode"`
-	SKU             string    `json:"sku"`
-	Description     string    `json:"description"`
-	BeforeQty       int       `json:"beforeQty"`
-	AdjustQty       int       `json:"adjustQty"`
-	AfterQty        int       `json:"afterQty"`
-	PalletBeforeQty int       `json:"palletBeforeQty"`
-	PalletAfterQty  int       `json:"palletAfterQty"`
-	LineNote        string    `json:"lineNote"`
-	CreatedAt       time.Time `json:"createdAt"`
+	ID             int64     `json:"id"`
+	AdjustmentID   int64     `json:"adjustmentId"`
+	CustomerID     int64     `json:"customerId"`
+	CustomerName   string    `json:"customerName"`
+	LocationID     int64     `json:"locationId"`
+	LocationName   string    `json:"locationName"`
+	StorageSection string    `json:"storageSection"`
+	ContainerNo    string    `json:"containerNo"`
+	SKU            string    `json:"sku"`
+	Description    string    `json:"description"`
+	BeforeQty      int       `json:"beforeQty"`
+	AdjustQty      int       `json:"adjustQty"`
+	AfterQty       int       `json:"afterQty"`
+	BeforePallets  int       `json:"beforePallets"`
+	AdjustPallets  int       `json:"adjustPallets"`
+	AfterPallets   int       `json:"afterPallets"`
+	LineNote       string    `json:"lineNote"`
+	CreatedAt      time.Time `json:"createdAt"`
 }
 
 type CreateInventoryAdjustmentInput struct {
@@ -58,9 +59,9 @@ type CreateInventoryAdjustmentLineInput struct {
 	LocationID     int64  `json:"locationId"`
 	StorageSection string `json:"storageSection"`
 	ContainerNo    string `json:"containerNo"`
-	PalletID       int64  `json:"palletId"`
 	SKUMasterID    int64  `json:"skuMasterId"`
 	AdjustQty      int    `json:"adjustQty"`
+	AdjustPallets  int    `json:"adjustPallets"`
 	LineNote       string `json:"lineNote"`
 }
 
@@ -83,31 +84,37 @@ type inventoryAdjustmentLineRow struct {
 	LocationID           int64     `db:"location_id"`
 	LocationNameSnapshot string    `db:"location_name_snapshot"`
 	StorageSection       string    `db:"storage_section"`
-	PalletID             int64     `db:"pallet_id"`
-	PalletCodeSnapshot   string    `db:"pallet_code_snapshot"`
+	ContainerNo          string    `db:"container_no"`
 	SKUSnapshot          string    `db:"sku_snapshot"`
 	DescriptionSnapshot  string    `db:"description_snapshot"`
 	BeforeQty            int       `db:"before_qty"`
 	AdjustQty            int       `db:"adjust_qty"`
 	AfterQty             int       `db:"after_qty"`
-	PalletBeforeQty      int       `db:"pallet_before_qty"`
-	PalletAfterQty       int       `db:"pallet_after_qty"`
+	BeforePallets        int       `db:"before_pallets"`
+	AdjustPallets        int       `db:"adjust_pallets"`
+	AfterPallets         int       `db:"after_pallets"`
 	LineNote             string    `db:"line_note"`
 	CreatedAt            time.Time `db:"created_at"`
 }
 
 type lockedAdjustmentItem struct {
-	ItemID         int64
-	SKUMasterID    int64
-	CustomerID     int64
-	CustomerName   string
-	LocationID     int64
-	LocationName   string
-	StorageSection string
-	SKU            string
-	Description    string
-	Unit           string
-	Quantity       int
+	ItemID           int64
+	SKUMasterID      int64
+	CustomerID       int64
+	CustomerName     string
+	LocationID       int64
+	LocationName     string
+	StorageSection   string
+	ContainerNo      string
+	SKU              string
+	Description      string
+	Unit             string
+	Quantity         int
+	AllocatedQty     int
+	DamagedQty       int
+	HoldQty          int
+	Pallets          int
+	AllocatedPallets int
 }
 
 func (s *Store) ListInventoryAdjustments(ctx context.Context, limit int) ([]InventoryAdjustment, error) {
@@ -165,15 +172,15 @@ func (s *Store) ListInventoryAdjustments(ctx context.Context, limit int) ([]Inve
 			location_id,
 			location_name_snapshot,
 			storage_section,
-			COALESCE(pallet_id, 0) AS pallet_id,
-			COALESCE(pallet_code_snapshot, '') AS pallet_code_snapshot,
+			COALESCE(container_no, '') AS container_no,
 			sku_snapshot,
 			COALESCE(description_snapshot, '') AS description_snapshot,
 			before_qty,
 			adjust_qty,
 			after_qty,
-			CASE WHEN pallet_id IS NULL THEN before_qty ELSE pallet_before_qty END AS pallet_before_qty,
-			CASE WHEN pallet_id IS NULL THEN after_qty ELSE pallet_after_qty END AS pallet_after_qty,
+			before_pallets,
+			adjust_pallets,
+			after_pallets,
 			COALESCE(line_note, '') AS line_note,
 			created_at
 		FROM inventory_adjustment_lines
@@ -195,27 +202,28 @@ func (s *Store) ListInventoryAdjustments(ctx context.Context, limit int) ([]Inve
 			continue
 		}
 		adjustment.Lines = append(adjustment.Lines, InventoryAdjustmentLine{
-			ID:              lineRow.ID,
-			AdjustmentID:    lineRow.AdjustmentID,
-			CustomerID:      lineRow.CustomerID,
-			CustomerName:    lineRow.CustomerNameSnapshot,
-			LocationID:      lineRow.LocationID,
-			LocationName:    lineRow.LocationNameSnapshot,
-			StorageSection:  fallbackSection(lineRow.StorageSection),
-			PalletID:        lineRow.PalletID,
-			PalletCode:      lineRow.PalletCodeSnapshot,
-			SKU:             lineRow.SKUSnapshot,
-			Description:     lineRow.DescriptionSnapshot,
-			BeforeQty:       lineRow.BeforeQty,
-			AdjustQty:       lineRow.AdjustQty,
-			AfterQty:        lineRow.AfterQty,
-			PalletBeforeQty: lineRow.PalletBeforeQty,
-			PalletAfterQty:  lineRow.PalletAfterQty,
-			LineNote:        lineRow.LineNote,
-			CreatedAt:       lineRow.CreatedAt,
+			ID:             lineRow.ID,
+			AdjustmentID:   lineRow.AdjustmentID,
+			CustomerID:     lineRow.CustomerID,
+			CustomerName:   lineRow.CustomerNameSnapshot,
+			LocationID:     lineRow.LocationID,
+			LocationName:   lineRow.LocationNameSnapshot,
+			StorageSection: fallbackSection(lineRow.StorageSection),
+			ContainerNo:    lineRow.ContainerNo,
+			SKU:            lineRow.SKUSnapshot,
+			Description:    lineRow.DescriptionSnapshot,
+			BeforeQty:      lineRow.BeforeQty,
+			AdjustQty:      lineRow.AdjustQty,
+			AfterQty:       lineRow.AfterQty,
+			BeforePallets:  lineRow.BeforePallets,
+			AdjustPallets:  lineRow.AdjustPallets,
+			AfterPallets:   lineRow.AfterPallets,
+			LineNote:       lineRow.LineNote,
+			CreatedAt:      lineRow.CreatedAt,
 		})
 		adjustment.TotalLines++
 		adjustment.TotalAdjustQty += lineRow.AdjustQty
+		adjustment.TotalAdjustPallets += lineRow.AdjustPallets
 	}
 
 	return adjustments, nil
@@ -264,7 +272,7 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 	}
 
 	for index, line := range input.Lines {
-		bucket := palletSourceBucket{
+		bucket := inventorySourceBucket{
 			SKUMasterID:    line.SKUMasterID,
 			CustomerID:     line.CustomerID,
 			LocationID:     line.LocationID,
@@ -275,17 +283,13 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 		if err != nil {
 			return InventoryAdjustment{}, err
 		}
-		lockedPalletContent, err := s.loadLockedPalletContentStateForBucketTx(ctx, tx, bucket, line.PalletID, line.SKUMasterID)
-		if err != nil {
-			return InventoryAdjustment{}, err
-		}
 
 		afterQty := lockedItem.Quantity + line.AdjustQty
-		if afterQty < 0 {
+		if afterQty < lockedItem.AllocatedQty+lockedItem.DamagedQty+lockedItem.HoldQty {
 			return InventoryAdjustment{}, ErrInsufficientStock
 		}
-		palletAfterQty := lockedPalletContent.RemainingQty + line.AdjustQty
-		if palletAfterQty < 0 {
+		afterPallets := lockedItem.Pallets + line.AdjustPallets
+		if afterPallets < lockedItem.AllocatedPallets {
 			return InventoryAdjustment{}, ErrInsufficientStock
 		}
 
@@ -297,15 +301,15 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 				location_id,
 				location_name_snapshot,
 				storage_section,
-				pallet_id,
-				pallet_code_snapshot,
+				container_no,
 				sku_snapshot,
 				description_snapshot,
 				before_qty,
 				adjust_qty,
 				after_qty,
-				pallet_before_qty,
-				pallet_after_qty,
+				before_pallets,
+				adjust_pallets,
+				after_pallets,
 				line_note,
 				sort_order
 			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -316,15 +320,15 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 			lockedItem.LocationID,
 			lockedItem.LocationName,
 			fallbackSection(lockedItem.StorageSection),
-			lockedPalletContent.PalletID,
-			lockedPalletContent.PalletCode,
+			lockedItem.ContainerNo,
 			lockedItem.SKU,
 			nullableString(lockedItem.Description),
 			lockedItem.Quantity,
 			line.AdjustQty,
 			afterQty,
-			lockedPalletContent.RemainingQty,
-			palletAfterQty,
+			lockedItem.Pallets,
+			line.AdjustPallets,
+			afterPallets,
 			nullableString(line.LineNote),
 			index+1,
 		)
@@ -339,41 +343,25 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 
 		reason := firstNonEmpty(line.LineNote, fmt.Sprintf("Adjustment posted: %s", input.ReasonCode))
 
-		palletAdjustments, err := s.applyAdjustmentPalletDeltaTx(ctx, tx, line)
-		if err != nil {
+		if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
+			EventType:           StockLedgerEventAdjust,
+			SKUMasterID:         lockedItem.SKUMasterID,
+			CustomerID:          lockedItem.CustomerID,
+			LocationID:          lockedItem.LocationID,
+			StorageSection:      lockedItem.StorageSection,
+			QuantityChange:      line.AdjustQty,
+			PalletChange:        float64(line.AdjustPallets),
+			OccurredAt:          actualAdjustedAt,
+			SourceDocumentType:  StockLedgerSourceAdjustment,
+			SourceDocumentID:    adjustmentID,
+			SourceLineID:        lineID,
+			ContainerNo:         lockedItem.ContainerNo,
+			ItemNumber:          lockedItem.SKU,
+			DescriptionSnapshot: lockedItem.Description,
+			Reason:              reason,
+			ReferenceCode:       input.AdjustmentNo,
+		}); err != nil {
 			return InventoryAdjustment{}, err
-		}
-		deltaSign := 1
-		if line.AdjustQty < 0 {
-			deltaSign = -1
-		}
-		for _, palletAdjustment := range palletAdjustments {
-			signedQuantityChange := deltaSign * palletAdjustment.Quantity
-			afterPalletQty, err := s.loadPalletQuantityTx(ctx, tx, palletAdjustment.PalletID)
-			if err != nil {
-				return InventoryAdjustment{}, err
-			}
-			beforePalletQty := afterPalletQty - signedQuantityChange
-			if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
-				EventType:           StockLedgerEventAdjust,
-				PalletID:            palletAdjustment.PalletID,
-				PalletItemID:        palletAdjustment.PalletItemID,
-				SKUMasterID:         palletAdjustment.SKUMasterID,
-				CustomerID:          palletAdjustment.CustomerID,
-				LocationID:          palletAdjustment.LocationID,
-				StorageSection:      palletAdjustment.StorageSection,
-				QuantityChange:      signedQuantityChange,
-				PalletChange:        resolvePalletCountTransition(beforePalletQty, afterPalletQty),
-				OccurredAt:          actualAdjustedAt,
-				SourceDocumentType:  StockLedgerSourceAdjustment,
-				SourceDocumentID:    adjustmentID,
-				SourceLineID:        lineID,
-				ContainerNo:         palletAdjustment.ContainerNo,
-				DescriptionSnapshot: lockedItem.Description,
-				Reason:              reason,
-			}); err != nil {
-				return InventoryAdjustment{}, err
-			}
 		}
 	}
 
@@ -453,15 +441,15 @@ func (s *Store) listInventoryAdjustmentsByIDs(ctx context.Context, adjustmentIDs
 			location_id,
 			location_name_snapshot,
 			storage_section,
-			COALESCE(pallet_id, 0) AS pallet_id,
-			COALESCE(pallet_code_snapshot, '') AS pallet_code_snapshot,
+			COALESCE(container_no, '') AS container_no,
 			sku_snapshot,
 			COALESCE(description_snapshot, '') AS description_snapshot,
 			before_qty,
 			adjust_qty,
 			after_qty,
-			CASE WHEN pallet_id IS NULL THEN before_qty ELSE pallet_before_qty END AS pallet_before_qty,
-			CASE WHEN pallet_id IS NULL THEN after_qty ELSE pallet_after_qty END AS pallet_after_qty,
+			before_pallets,
+			adjust_pallets,
+			after_pallets,
 			COALESCE(line_note, '') AS line_note,
 			created_at
 		FROM inventory_adjustment_lines
@@ -483,51 +471,96 @@ func (s *Store) listInventoryAdjustmentsByIDs(ctx context.Context, adjustmentIDs
 			continue
 		}
 		adjustment.Lines = append(adjustment.Lines, InventoryAdjustmentLine{
-			ID:              lineRow.ID,
-			AdjustmentID:    lineRow.AdjustmentID,
-			CustomerID:      lineRow.CustomerID,
-			CustomerName:    lineRow.CustomerNameSnapshot,
-			LocationID:      lineRow.LocationID,
-			LocationName:    lineRow.LocationNameSnapshot,
-			StorageSection:  fallbackSection(lineRow.StorageSection),
-			PalletID:        lineRow.PalletID,
-			PalletCode:      lineRow.PalletCodeSnapshot,
-			SKU:             lineRow.SKUSnapshot,
-			Description:     lineRow.DescriptionSnapshot,
-			BeforeQty:       lineRow.BeforeQty,
-			AdjustQty:       lineRow.AdjustQty,
-			AfterQty:        lineRow.AfterQty,
-			PalletBeforeQty: lineRow.PalletBeforeQty,
-			PalletAfterQty:  lineRow.PalletAfterQty,
-			LineNote:        lineRow.LineNote,
-			CreatedAt:       lineRow.CreatedAt,
+			ID:             lineRow.ID,
+			AdjustmentID:   lineRow.AdjustmentID,
+			CustomerID:     lineRow.CustomerID,
+			CustomerName:   lineRow.CustomerNameSnapshot,
+			LocationID:     lineRow.LocationID,
+			LocationName:   lineRow.LocationNameSnapshot,
+			StorageSection: fallbackSection(lineRow.StorageSection),
+			ContainerNo:    lineRow.ContainerNo,
+			SKU:            lineRow.SKUSnapshot,
+			Description:    lineRow.DescriptionSnapshot,
+			BeforeQty:      lineRow.BeforeQty,
+			AdjustQty:      lineRow.AdjustQty,
+			AfterQty:       lineRow.AfterQty,
+			BeforePallets:  lineRow.BeforePallets,
+			AdjustPallets:  lineRow.AdjustPallets,
+			AfterPallets:   lineRow.AfterPallets,
+			LineNote:       lineRow.LineNote,
+			CreatedAt:      lineRow.CreatedAt,
 		})
 		adjustment.TotalLines++
 		adjustment.TotalAdjustQty += lineRow.AdjustQty
+		adjustment.TotalAdjustPallets += lineRow.AdjustPallets
 	}
 
 	return adjustments, nil
 }
 
-func (s *Store) loadLockedAdjustmentItem(ctx context.Context, tx *sql.Tx, bucket palletSourceBucket) (lockedAdjustmentItem, error) {
-	projection, err := s.loadPalletBackedInventoryProjectionForBucketTx(ctx, tx, bucket)
+func (s *Store) loadLockedAdjustmentItem(ctx context.Context, tx *sql.Tx, bucket inventorySourceBucket) (lockedAdjustmentItem, error) {
+	var item lockedAdjustmentItem
+	err := tx.QueryRowContext(ctx, `
+		SELECT
+			i.id,
+			i.sku_master_id,
+			i.customer_id,
+			c.name,
+			i.location_id,
+			l.name,
+			i.storage_section,
+			COALESCE(i.container_no, ''),
+			sm.sku,
+			COALESCE(sm.description, sm.name, ''),
+			COALESCE(sm.unit, 'pcs'),
+			i.quantity,
+			i.allocated_qty,
+			i.damaged_qty,
+			i.hold_qty,
+			i.pallets,
+			i.allocated_pallets
+		FROM inventory_items i
+		JOIN customers c ON c.id = i.customer_id
+		JOIN storage_locations l ON l.id = i.location_id
+		JOIN sku_master sm ON sm.id = i.sku_master_id
+		WHERE i.sku_master_id = ?
+			AND i.customer_id = ?
+			AND i.location_id = ?
+			AND i.storage_section = ?
+			AND i.container_no = ?
+		FOR UPDATE
+	`,
+		bucket.SKUMasterID,
+		bucket.CustomerID,
+		bucket.LocationID,
+		fallbackSection(bucket.StorageSection),
+		normalizeContainerNo(bucket.ContainerNo),
+	).Scan(
+		&item.ItemID,
+		&item.SKUMasterID,
+		&item.CustomerID,
+		&item.CustomerName,
+		&item.LocationID,
+		&item.LocationName,
+		&item.StorageSection,
+		&item.ContainerNo,
+		&item.SKU,
+		&item.Description,
+		&item.Unit,
+		&item.Quantity,
+		&item.AllocatedQty,
+		&item.DamagedQty,
+		&item.HoldQty,
+		&item.Pallets,
+		&item.AllocatedPallets,
+	)
 	if err != nil {
-		return lockedAdjustmentItem{}, err
+		if err == sql.ErrNoRows {
+			return lockedAdjustmentItem{}, ErrNotFound
+		}
+		return lockedAdjustmentItem{}, mapDBError(fmt.Errorf("load adjustment inventory bucket: %w", err))
 	}
-
-	return lockedAdjustmentItem{
-		ItemID:         projection.ItemID,
-		SKUMasterID:    projection.SKUMasterID,
-		CustomerID:     projection.CustomerID,
-		CustomerName:   projection.CustomerName,
-		LocationID:     projection.LocationID,
-		LocationName:   projection.LocationName,
-		StorageSection: projection.StorageSection,
-		SKU:            projection.SKU,
-		Description:    projection.Description,
-		Unit:           projection.Unit,
-		Quantity:       projection.Quantity,
-	}, nil
+	return item, nil
 }
 
 func sanitizeInventoryAdjustmentInput(input CreateInventoryAdjustmentInput) CreateInventoryAdjustmentInput {
@@ -541,7 +574,7 @@ func sanitizeInventoryAdjustmentInput(input CreateInventoryAdjustmentInput) Crea
 		line.StorageSection = normalizeStorageSection(line.StorageSection)
 		line.ContainerNo = strings.TrimSpace(strings.ToUpper(line.ContainerNo))
 		line.LineNote = strings.TrimSpace(line.LineNote)
-		if line.CustomerID <= 0 || line.LocationID <= 0 || line.SKUMasterID <= 0 || line.AdjustQty == 0 {
+		if line.CustomerID <= 0 || line.LocationID <= 0 || line.SKUMasterID <= 0 || (line.AdjustQty == 0 && line.AdjustPallets == 0) {
 			continue
 		}
 		lines = append(lines, line)
@@ -564,38 +597,13 @@ func validateInventoryAdjustmentInput(input CreateInventoryAdjustmentInput) erro
 			return fmt.Errorf("%w: customer is required", ErrInvalidInput)
 		case line.LocationID <= 0:
 			return fmt.Errorf("%w: storage is required", ErrInvalidInput)
-		case line.PalletID <= 0:
-			return fmt.Errorf("%w: pallet is required", ErrInvalidInput)
 		case line.SKUMasterID <= 0:
 			return fmt.Errorf("%w: sku is required", ErrInvalidInput)
-		case line.AdjustQty == 0:
-			return fmt.Errorf("%w: adjustment quantity cannot be zero", ErrInvalidInput)
+		case line.AdjustQty == 0 && line.AdjustPallets == 0:
+			return fmt.Errorf("%w: quantity or pallet adjustment is required", ErrInvalidInput)
 		}
 	}
 	return nil
-}
-
-func (s *Store) applyAdjustmentPalletDeltaTx(
-	ctx context.Context,
-	tx *sql.Tx,
-	line CreateInventoryAdjustmentLineInput,
-) ([]palletContentConsumption, error) {
-	if line.PalletID <= 0 {
-		return nil, fmt.Errorf("%w: pallet is required", ErrInvalidInput)
-	}
-
-	bucket := palletSourceBucket{
-		SKUMasterID:    line.SKUMasterID,
-		CustomerID:     line.CustomerID,
-		LocationID:     line.LocationID,
-		StorageSection: line.StorageSection,
-		ContainerNo:    line.ContainerNo,
-	}
-	if line.AdjustQty < 0 {
-		return s.consumeSpecificPalletContentsForBucketTx(ctx, tx, bucket, line.PalletID, line.SKUMasterID, -line.AdjustQty)
-	}
-
-	return s.addSpecificPalletContentsForBucketTx(ctx, tx, bucket, line.PalletID, line.SKUMasterID, line.AdjustQty)
 }
 
 func generateAdjustmentNo() string {

@@ -21,8 +21,7 @@ import {
   PackageCheck,
   Route,
   Send,
-  Truck,
-  Wrench
+  Truck
 } from "lucide-react";
 import { useMemo, type CSSProperties, type ReactNode } from "react";
 
@@ -51,7 +50,6 @@ export type ContainerLifecycleNodeKind =
   | "receiving"
   | "inventory"
   | "transfer"
-  | "rework"
   | "picking-order"
   | "delivery";
 
@@ -62,7 +60,6 @@ export type ContainerLifecycleNodeAction = {
   documentId?: number;
   outboundDocumentId?: number;
   deliveryEventId?: number;
-  palletIds?: number[];
   attachedToNodeId?: string;
 };
 
@@ -116,11 +113,8 @@ type NormalizedContainerLifecycle = CustomerPortalContainerLifecycle & {
   pickingOrders: OutboundDocument[];
   movements: Movement[];
   lifecycleEvents: CustomerPortalContainerLifecycle["lifecycleEvents"];
-  pallets: CustomerPortalContainerLifecycle["pallets"];
-  palletEvents: CustomerPortalContainerLifecycle["palletEvents"];
   trackingEvents: NonNullable<CustomerPortalContainerLifecycle["trackingEvents"]>;
   pickupAssignments: NonNullable<CustomerPortalContainerLifecycle["pickupAssignments"]>;
-  reworkEvents: NonNullable<CustomerPortalContainerLifecycle["reworkEvents"]>;
   deliveryEvents: NonNullable<CustomerPortalContainerLifecycle["deliveryEvents"]>;
 };
 
@@ -400,14 +394,8 @@ function normalizeContainerLifecycle(lifecycle: CustomerPortalContainerLifecycle
     pickingOrders: asArray(lifecycle.pickingOrders),
     movements: asArray(lifecycle.movements),
     lifecycleEvents: asArray(lifecycle.lifecycleEvents),
-    pallets: asArray(lifecycle.pallets),
-    palletEvents: asArray(lifecycle.palletEvents),
     trackingEvents: asArray(lifecycle.trackingEvents),
     pickupAssignments: asArray(lifecycle.pickupAssignments),
-    reworkEvents: asArray(lifecycle.reworkEvents).map((event) => ({
-      ...event,
-      pallets: asArray(event.pallets)
-    })),
     deliveryEvents: asArray(lifecycle.deliveryEvents)
   };
 }
@@ -436,9 +424,7 @@ export function buildLifecycleFlow(
   const nodePositions: Record<string, { x: number; y: number }> = {};
   const trackingEvents = filterLifecycleDisplayEvents(lifecycle.trackingEvents ?? [], visibilityMode);
   const pickupAssignments = filterLifecycleDisplayEvents(lifecycle.pickupAssignments ?? [], visibilityMode);
-  const reworkEvents = filterLifecycleDisplayEvents(lifecycle.reworkEvents ?? [], visibilityMode);
   const deliveryEvents = filterLifecycleDisplayEvents(lifecycle.deliveryEvents ?? [], visibilityMode);
-  const reworkPalletIds = collectReworkPalletIds(reworkEvents);
   let edgeSequence = 0;
   const addNode = (
     id: string,
@@ -472,27 +458,9 @@ export function buildLifecycleFlow(
       labelStyle: { fill: "#475569", fontSize: 11, fontWeight: 600 }
     });
   };
-  const addReworkNode = (id: string, x: number, y: number) => {
-    const reworkSummary = formatPalletReworkSummary(reworkEvents[0], lifecycle.pallets.length, t);
-    addNode(id, x, y, {
-      id,
-      kind: "rework",
-      title: t("containerLifecycleReworkNode"),
-      palletIds: reworkPalletIds
-    }, (
-      <FlowNodeContent
-        icon={<Wrench className="h-4 w-4" />}
-        eyebrow={t("containerLifecycleReworkNode")}
-        title={reworkSummary}
-        lines={[]}
-      />
-    ), "warning");
-  };
-
   const shouldShowContainerNode = interactive || Boolean(lifecycle.container) || trackingEvents.length > 0 || pickupAssignments.length > 0;
   const shouldShowTrackingNode = interactive || trackingEvents.length > 0;
   const shouldShowPickupNode = interactive || pickupAssignments.length > 0;
-  const shouldShowReworkNode = reworkEvents.length > 0;
   const pickingOrderRefs = lifecycle.pickingOrders.length > 0
     ? lifecycle.pickingOrders.map((document) => document.packingListNo || document.orderRef || `#${document.id}`)
     : lifecycle.summary.pickingOrderRefs;
@@ -630,10 +598,6 @@ export function buildLifecycleFlow(
   const transferNodeX = inventoryPosition ? inventoryPosition.x + MAIN_GAP : MAIN_GAP * mainSteps.length;
   const outboundX = inventoryPosition ? inventoryPosition.x + MAIN_GAP + (shouldInlineTransferNode ? MAIN_GAP : 0) : MAIN_GAP * mainSteps.length;
   const deliveryX = outboundX + MAIN_GAP;
-  const shouldShowInlineReworkNode = Boolean(inventoryPosition && shouldShowReworkNode);
-  const reworkTargetPickingIndex = shouldShowInlineReworkNode
-    ? findReworkTargetPickingOrderIndex(lifecycle.pickingOrders, reworkPalletIds, visibleOrderRefs.length)
-    : -1;
   const transferSourceNodeId = shouldInlineTransferNode ? "transfer" : "inventory";
 
   if (shouldShowAdminTransferNode) {
@@ -653,13 +617,7 @@ export function buildLifecycleFlow(
     const nodeID = `picking-${documentIndex}`;
     const deliveryNodeID = `delivery-${documentIndex}`;
     const rowY = getCenteredStackY(documentIndex, visibleOrderRefs.length, MAIN_Y, OUTBOUND_ROW_GAP);
-    const reworkNodeID = `rework-${documentIndex}`;
-    const isReworkTarget = shouldShowInlineReworkNode && documentIndex === reworkTargetPickingIndex;
     const nodeTitle = formatOutboundNodeTitle(document, ref, lifecycle.summary.containerNo);
-    if (isReworkTarget) {
-      const reworkSourcePosition = nodePositions[transferSourceNodeId] ?? inventoryPosition!;
-      addReworkNode(reworkNodeID, Math.round((reworkSourcePosition.x + outboundX) / 2), rowY);
-    }
     addNode(nodeID, outboundX, rowY, {
       id: nodeID,
       kind: "picking-order",
@@ -687,20 +645,9 @@ export function buildLifecycleFlow(
         lines={[]}
       />
     ), delivery?.bolReceivedAt ? "done" : "warning");
-    if (isReworkTarget) {
-      addEdge(transferSourceNodeId, reworkNodeID, t("containerLifecycleReworked"));
-      addEdge(reworkNodeID, nodeID);
-    } else {
-      addEdge(transferSourceNodeId, nodeID);
-    }
+    addEdge(transferSourceNodeId, nodeID);
     addEdge(nodeID, deliveryNodeID);
   });
-
-  if (shouldShowInlineReworkNode && visibleOrderRefs.length === 0) {
-    const reworkNodeID = "rework-0";
-    addReworkNode(reworkNodeID, outboundX, MAIN_Y);
-    addEdge("inventory", reworkNodeID, t("containerLifecycleReworked"));
-  }
 
   if (lifecycle.packingLists.length > 0 && nodePositions.received) {
     const anchorPosition = nodePositions.received;
@@ -786,69 +733,12 @@ function getSelectedDocumentAnchorNodeId(selectedNodeId: string | null) {
     : selectedNodeId;
 }
 
-function collectReworkPalletIds(reworkEvents: NonNullable<CustomerPortalContainerLifecycle["reworkEvents"]>) {
-  return Array.from(
-    new Set(
-      reworkEvents.flatMap((event) => (event.pallets ?? []).map((pallet) => pallet.palletId))
-    )
-  );
-}
-
-function findReworkTargetPickingOrderIndex(
-  outboundDocuments: OutboundDocument[],
-  reworkPalletIds: number[],
-  visibleOutboundCount: number
-) {
-  if (visibleOutboundCount === 0) {
-    return -1;
-  }
-  if (outboundDocuments.length === 0 || reworkPalletIds.length === 0) {
-    return 0;
-  }
-  const reworkPalletIdSet = new Set(reworkPalletIds);
-  const matchedIndex = outboundDocuments.findIndex((document) =>
-    (document.lines ?? []).some((line) =>
-      (line.pickPallets ?? []).some((pick) => reworkPalletIdSet.has(pick.palletId))
-    )
-  );
-  return matchedIndex >= 0 && matchedIndex < visibleOutboundCount ? matchedIndex : 0;
-}
-
-function formatPalletReworkSummary(
-  event: NonNullable<CustomerPortalContainerLifecycle["reworkEvents"]>[number] | undefined,
-  fallbackPalletCount: number,
-  t: (key: string, params?: Record<string, string | number>) => string
-) {
-  const pallets = event?.pallets ?? [];
-  const sourceCount = countUniqueReworkPalletsByRole(pallets, "SOURCE");
-  const targetCount = countUniqueReworkPalletsByRole(pallets, "TARGET");
-  const relatedCount = countUniqueReworkPalletsByRole(pallets, "RELATED");
-  const fromCount = sourceCount || relatedCount || targetCount || fallbackPalletCount || 0;
-  const toCount = targetCount || relatedCount || fromCount;
-  return t("containerLifecycleReworkPalletSummary", {
-    from: formatPalletCount(fromCount, t),
-    to: formatPalletCount(toCount, t)
-  });
-}
-
-function countUniqueReworkPalletsByRole(
-  pallets: NonNullable<CustomerPortalContainerLifecycle["reworkEvents"]>[number]["pallets"],
-  role: string
-) {
-  return new Set(pallets.filter((pallet) => pallet.role === role).map((pallet) => pallet.palletId)).size;
-}
-
-function formatPalletCount(count: number, t: (key: string) => string) {
-  return `${count} ${count === 1 ? t("palletUnit") : t("palletUnits")}`;
-}
-
 function getCurrentInventoryWarehouses(lifecycle: CustomerPortalContainerLifecycle) {
   if ((lifecycle.summary.currentQty ?? 0) <= 0) {
     return [];
   }
   const names = new Set<string>();
   (lifecycle.summary.warehouses ?? []).forEach((warehouse) => addNonEmptyText(names, warehouse));
-  (lifecycle.pallets ?? []).forEach((pallet) => addNonEmptyText(names, pallet.currentLocationName));
   addNonEmptyText(names, lifecycle.container?.locationName);
   return Array.from(names);
 }

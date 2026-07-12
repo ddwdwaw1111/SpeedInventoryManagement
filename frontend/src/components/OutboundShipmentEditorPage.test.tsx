@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/api", () => ({
   api: {
-    getPallets: vi.fn(),
     createOutboundDocument: vi.fn(),
     updateOutboundDocument: vi.fn(),
     copyOutboundDocument: vi.fn()
@@ -16,7 +15,6 @@ import { createItem, createMovement, createOutboundDocument, createOutboundDocum
 import { OutboundShipmentEditorPage } from "./OutboundShipmentEditorPage";
 
 const mockedApi = api as unknown as {
-  getPallets: ReturnType<typeof vi.fn>;
   createOutboundDocument: ReturnType<typeof vi.fn>;
   updateOutboundDocument: ReturnType<typeof vi.fn>;
   copyOutboundDocument: ReturnType<typeof vi.fn>;
@@ -113,7 +111,6 @@ async function submitReviewedDraft() {
 
 describe("OutboundShipmentEditorPage container-centric flow", () => {
   beforeEach(() => {
-    mockedApi.getPallets.mockReset();
     mockedApi.createOutboundDocument.mockReset();
     mockedApi.updateOutboundDocument.mockReset();
     mockedApi.copyOutboundDocument.mockReset();
@@ -128,8 +125,7 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
         quantity: 10,
         availableQty: 10,
         pallets: 3,
-        containerNo: "GCXU5817233",
-        palletProfiles: [palletProfile(2, 1), palletProfile(3, 2)]
+        containerNo: "GCXU5817233"
       })]
     });
 
@@ -139,7 +135,6 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
     await submitReviewedDraft();
 
     await waitFor(() => expect(mockedApi.createOutboundDocument).toHaveBeenCalledTimes(1));
-    expect(mockedApi.getPallets).not.toHaveBeenCalled();
     expect(mockedApi.createOutboundDocument.mock.calls[0][0].lines[0]).toEqual({
       customerId: 1,
       locationId: 1,
@@ -162,7 +157,6 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
         pallets: 2
       }]
     });
-    expect(mockedApi.createOutboundDocument.mock.calls[0][0].lines[0]).not.toHaveProperty("pickPallets");
     expect(onBackToList).toHaveBeenCalledTimes(1);
   });
 
@@ -173,8 +167,7 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
       items: [createItem({
         quantity: 9,
         availableQty: 9,
-        pallets: 3,
-        palletProfiles: [palletProfile(3, 3)]
+        pallets: 3
       })]
     });
 
@@ -191,8 +184,8 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
     mockedApi.createOutboundDocument.mockResolvedValue(createOutboundDocument({ id: 101, status: "DRAFT" }));
     renderEditor({
       items: [
-        createItem({ id: 1, quantity: 10, availableQty: 10, pallets: 5, containerNo: "GCXU5817233", palletProfiles: [palletProfile(2, 5)] }),
-        createItem({ id: 2, quantity: 12, availableQty: 12, pallets: 2, containerNo: "OOLU1234567", palletProfiles: [palletProfile(6, 2)] })
+        createItem({ id: 1, quantity: 10, availableQty: 10, pallets: 5, containerNo: "GCXU5817233" }),
+        createItem({ id: 2, quantity: 12, availableQty: 12, pallets: 2, containerNo: "OOLU1234567" })
       ]
     });
 
@@ -225,8 +218,7 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
       items: [createItem({
         quantity: 9,
         availableQty: 9,
-        pallets: 3,
-        palletProfiles: [palletProfile(3, 3)]
+        pallets: 3
       })]
     });
     await selectContainerSource(0, "GCXU5817233");
@@ -247,8 +239,7 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
       items: [createItem({
         quantity: 8,
         availableQty: 8,
-        pallets: 3,
-        palletProfiles: [palletProfile(2, 1), palletProfile(3, 2)]
+        pallets: 3
       })]
     });
     await selectContainerSource(0, "GCXU5817233");
@@ -287,7 +278,6 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
         documentId: 42,
         quantity: 5,
         pallets: 2,
-        pickPallets: [{ palletId: 501, quantity: 5 }],
         pickAllocations: [{
           id: 1,
           lineId: 4201,
@@ -314,7 +304,6 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
     const line = mockedApi.updateOutboundDocument.mock.calls[0][1].lines[0];
     expect(line.pallets).toBe(2);
     expect(line.pickAllocations[0]).toMatchObject({ containerNo: "GCXU5817233", allocatedQty: 5, pallets: 2 });
-    expect(line).not.toHaveProperty("pickPallets");
   });
 
   it("re-enters a confirmed shipment through the existing copy workflow", async () => {

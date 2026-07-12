@@ -11,7 +11,6 @@ export type {
   Movement,
   OutboundDocument,
   OutboundDocumentPayload,
-  PalletLocationEvent,
   SignUpPayload,
   User
 } from "../lib/types";

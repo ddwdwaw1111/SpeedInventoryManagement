@@ -20,7 +20,6 @@ import {
   toInventoryProjectionRef,
   type InventoryAdjustment,
   type Item,
-  type PalletTrace,
   type UserRole
 } from "../lib/types";
 import { InlineAlert, useFeedbackToast } from "./Feedback";
@@ -47,9 +46,8 @@ type AdjustmentFormState = {
 type AdjustmentLineFormState = {
   id: string;
   bucketKey: string;
-  palletId: number;
-  requestedPalletId: number;
   adjustQty: number;
+  adjustPallets: number;
   lineNote: string;
 };
 
@@ -60,6 +58,7 @@ const emptyAdjustmentForm: AdjustmentFormState = {
   notes: ""
 };
 const summaryNumberFormatter = new Intl.NumberFormat("en-US");
+const EMPTY_ITEMS: Item[] = [];
 const ADJUSTMENT_COLUMN_ORDER_PREFERENCE_KEY = "adjustments.column-order";
 
 function createAdjustmentLine(
@@ -68,9 +67,8 @@ function createAdjustmentLine(
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     bucketKey: "",
-    palletId: 0,
-    requestedPalletId: 0,
     adjustQty: 0,
+    adjustPallets: 0,
     lineNote: "",
     ...patch
   };
@@ -99,10 +97,6 @@ export function AdjustmentManagementPage({
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [hasProcessedLaunchContext, setHasProcessedLaunchContext] = useState(false);
-  const [pallets, setPallets] = useState<PalletTrace[]>([]);
-  const [isLoadingPallets, setIsLoadingPallets] = useState(false);
-  const [hasLoadedPallets, setHasLoadedPallets] = useState(false);
-  const [palletLoadError, setPalletLoadError] = useState("");
   const selectedAdjustment = useMemo(
     () => adjustments.find((adjustment) => adjustment.id === selectedAdjustmentId) ?? null,
     [adjustments, selectedAdjustmentId]
@@ -115,21 +109,9 @@ export function AdjustmentManagementPage({
     () => adjustmentSourceOptions.find((option) => option.key === selectedSourceKey) ?? null,
     [adjustmentSourceOptions, selectedSourceKey]
   );
-  const selectableAdjustmentItems = selectedSourceOption?.items ?? [];
-  const selectablePalletsByBucketKey = useMemo(() => {
-    const nextMap = new Map<string, PalletTrace[]>();
-
-    selectableAdjustmentItems.forEach((item) => {
-      nextMap.set(
-        buildInventoryProjectionKey(toInventoryProjectionRef(item)),
-        pallets.filter((pallet) => matchesAdjustmentPalletToItem(pallet, item))
-      );
-    });
-
-    return nextMap;
-  }, [pallets, selectableAdjustmentItems]);
+  const selectableAdjustmentItems = selectedSourceOption?.items ?? EMPTY_ITEMS;
   const canSubmitAdjustmentDraft = useMemo(() => {
-    if (submitting || isLoadingPallets) {
+    if (submitting) {
       return false;
     }
 
@@ -138,18 +120,14 @@ export function AdjustmentManagementPage({
       const selectedItem = selectableAdjustmentItems.find(
         (item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.bucketKey
       );
-      if (!selectedItem || line.adjustQty === 0) {
+      if (!selectedItem || (line.adjustQty === 0 && line.adjustPallets === 0)) {
         continue;
-      }
-      const linePalletOptions = selectablePalletsByBucketKey.get(line.bucketKey) ?? [];
-      if (linePalletOptions.length === 0 || line.palletId <= 0) {
-        return false;
       }
       hasPreparedLine = true;
     }
 
     return hasPreparedLine;
-  }, [isLoadingPallets, lines, selectableAdjustmentItems, selectablePalletsByBucketKey, submitting]);
+  }, [lines, selectableAdjustmentItems, submitting]);
 
   useEffect(() => {
     if (selectedAdjustmentId !== null && !selectedAdjustment) {
@@ -165,68 +143,12 @@ export function AdjustmentManagementPage({
       const nextBucketKey = selectableAdjustmentItems.some((item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.bucketKey)
         ? line.bucketKey
         : onlyBucketKey ?? "";
-      const nextPalletOptions = selectablePalletsByBucketKey.get(nextBucketKey) ?? [];
-      const desiredPalletId = line.palletId > 0
-        ? line.palletId
-        : nextBucketKey === line.bucketKey
-          ? line.requestedPalletId
-          : 0;
-      const shouldHoldRequestedPallet = desiredPalletId > 0 && !hasLoadedPallets && nextPalletOptions.length === 0;
-      const nextPalletId = desiredPalletId > 0 && nextPalletOptions.some((pallet) => pallet.id === desiredPalletId)
-        ? desiredPalletId
-        : shouldHoldRequestedPallet
-          ? desiredPalletId
-        : 0;
-
       return {
         ...line,
-        bucketKey: nextBucketKey,
-        palletId: nextPalletId,
-        requestedPalletId: nextPalletId > 0
-          ? nextPalletId
-          : shouldHoldRequestedPallet
-            ? desiredPalletId
-            : 0
+        bucketKey: nextBucketKey
       };
     }));
-  }, [hasLoadedPallets, selectableAdjustmentItems, selectablePalletsByBucketKey]);
-
-  useEffect(() => {
-    if (!canManage || !isModalOpen) {
-      return;
-    }
-
-    let active = true;
-
-    async function loadPallets() {
-      setIsLoadingPallets(true);
-      setHasLoadedPallets(false);
-      setPalletLoadError("");
-      try {
-        const nextPallets = await api.getPallets(50000);
-        if (!active) {
-          return;
-        }
-        setPallets(nextPallets);
-      } catch (error) {
-        if (!active) {
-          return;
-        }
-        const message = error instanceof Error ? error.message : t("couldNotLoadReport");
-        setPalletLoadError(message);
-      } finally {
-        if (active) {
-          setIsLoadingPallets(false);
-          setHasLoadedPallets(true);
-        }
-      }
-    }
-
-    void loadPallets();
-    return () => {
-      active = false;
-    };
-  }, [canManage, isModalOpen, t]);
+  }, [selectableAdjustmentItems]);
 
   useEffect(() => {
     if (hasProcessedLaunchContext || !canManage || adjustmentSourceOptions.length === 0) {
@@ -310,9 +232,9 @@ export function AdjustmentManagementPage({
     { field: "customerName", headerName: t("customer"), minWidth: 170, flex: 1 },
     { field: "locationName", headerName: t("currentStorage"), minWidth: 170, flex: 1 },
     { field: "storageSection", headerName: t("storageSection"), minWidth: 110 },
-    { field: "palletCode", headerName: t("palletCode"), minWidth: 130, renderCell: (params) => params.row.palletCode || "-" },
+    { field: "containerNo", headerName: t("containerNo"), minWidth: 150, renderCell: (params) => params.row.containerNo || "-" },
     { field: "beforeQty", headerName: t("beforeQty"), minWidth: 120, type: "number" },
-    { field: "palletBeforeQty", headerName: t("palletBeforeQty"), minWidth: 150, type: "number" },
+    { field: "beforePallets", headerName: `${t("beforeQty")} (${t("pallets")})`, minWidth: 150, type: "number" },
     {
       field: "adjustQty",
       headerName: t("adjustQty"),
@@ -324,8 +246,9 @@ export function AdjustmentManagementPage({
         </span>
       )
     },
+    { field: "adjustPallets", headerName: `${t("adjustment")} (${t("pallets")})`, minWidth: 150, type: "number", renderCell: (params) => formatSignedNumber(params.row.adjustPallets) },
     { field: "afterQty", headerName: t("afterQty"), minWidth: 120, type: "number" },
-    { field: "palletAfterQty", headerName: t("palletAfterQty"), minWidth: 150, type: "number" },
+    { field: "afterPallets", headerName: `${t("afterQty")} (${t("pallets")})`, minWidth: 150, type: "number" },
     { field: "lineNote", headerName: t("internalNotes"), minWidth: 240, flex: 1.3, renderCell: (params) => params.row.lineNote || "-" }
   ], [t]);
   const mainGridSlots = buildWorkspaceGridSlots({
@@ -371,15 +294,9 @@ export function AdjustmentManagementPage({
       : "";
 
     setForm(emptyAdjustmentForm);
-    setLines([createAdjustmentLine({
-      bucketKey: initialBucketKey,
-      palletId: initialBucketKey && initialContext?.palletId ? initialContext.palletId : 0,
-      requestedPalletId: initialBucketKey && initialContext?.palletId ? initialContext.palletId : 0
-    })]);
+    setLines([createAdjustmentLine({ bucketKey: initialBucketKey })]);
     setSelectedSourceKey(initialSourceKey);
     setErrorMessage("");
-    setPalletLoadError("");
-    setHasLoadedPallets(false);
     setIsModalOpen(true);
   }
 
@@ -390,8 +307,6 @@ export function AdjustmentManagementPage({
     setSelectedSourceKey("");
     setForm(emptyAdjustmentForm);
     setLines([createAdjustmentLine()]);
-    setPalletLoadError("");
-    setHasLoadedPallets(false);
   }
 
   function addLine() {
@@ -417,22 +332,14 @@ export function AdjustmentManagementPage({
           const selectedItem = selectableAdjustmentItems.find(
             (item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.bucketKey
           );
-          if (!selectedItem || line.adjustQty === 0) {
+          if (!selectedItem || (line.adjustQty === 0 && line.adjustPallets === 0)) {
             return null;
-          }
-
-          const linePalletOptions = selectablePalletsByBucketKey.get(line.bucketKey) ?? [];
-          if (linePalletOptions.length === 0) {
-            throw new Error(t("adjustmentRequirePalletBackedStock"));
-          }
-          if (line.palletId <= 0) {
-            throw new Error(t("adjustmentRequirePalletSelection"));
           }
 
           return {
             ...toInventoryProjectionRef(selectedItem),
-            palletId: line.palletId,
             adjustQty: line.adjustQty,
+            adjustPallets: line.adjustPallets,
             lineNote: line.lineNote || undefined
           };
         })
@@ -629,7 +536,6 @@ export function AdjustmentManagementPage({
         </DialogTitle>
         <DialogContent dividers>
           {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
-          {palletLoadError ? <InlineAlert>{palletLoadError}</InlineAlert> : null}
           <form className="sheet-form" onSubmit={handleSubmit}>
             <label>{t("adjustmentNo")}<input value={form.adjustmentNo} onChange={(event) => setForm((current) => ({ ...current, adjustmentNo: event.target.value }))} placeholder={t("autoGeneratedOptional")} /></label>
             <label>
@@ -672,12 +578,6 @@ export function AdjustmentManagementPage({
                 {t("selectSkuBeforeInventoryAction")}
               </InlineAlert>
             )}
-            {selectedSourceOption && isLoadingPallets ? (
-              <InlineAlert severity="info" className="sheet-form__wide">
-                {t("loadingRecords")}
-              </InlineAlert>
-            ) : null}
-
             <div className="sheet-form__wide">
               <div className="batch-lines__toolbar">
                 <strong>{t("adjustmentLines")}</strong>
@@ -688,20 +588,8 @@ export function AdjustmentManagementPage({
                   const selectedItem = selectableAdjustmentItems.find(
                     (item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.bucketKey
                   );
-                  const linePalletOptions = selectedItem
-                    ? selectablePalletsByBucketKey.get(line.bucketKey) ?? []
-                    : [];
-                  const selectedPallet = line.palletId > 0
-                    ? linePalletOptions.find((pallet) => pallet.id === line.palletId) ?? null
-                    : null;
-                  const selectedPalletAvailableQty = selectedItem && selectedPallet
-                    ? getAdjustablePalletAvailableQty(selectedPallet, selectedItem.skuMasterId)
-                    : 0;
-                  const selectedPalletQty = selectedItem && selectedPallet
-                    ? getPalletSkuQty(selectedPallet, selectedItem.skuMasterId)
-                    : 0;
                   const afterQty = (selectedItem?.quantity ?? 0) + line.adjustQty;
-                  const palletAfterQty = selectedPallet ? selectedPalletQty + line.adjustQty : 0;
+                  const afterPallets = (selectedItem?.pallets ?? 0) + line.adjustPallets;
 
                   return (
                     <div className="batch-line-card" key={line.id}>
@@ -716,11 +604,7 @@ export function AdjustmentManagementPage({
                           {t("stockRow")}
                           <select
                             value={line.bucketKey}
-                            onChange={(event) => updateLine(line.id, {
-                              bucketKey: event.target.value,
-                              palletId: 0,
-                              requestedPalletId: 0
-                            })}
+                            onChange={(event) => updateLine(line.id, { bucketKey: event.target.value })}
                           >
                             <option value="">{selectedSourceOption ? t("selectStockRow") : t("selectSkuForInventoryAction")}</option>
                             {selectableAdjustmentItems.map((item) => (
@@ -730,72 +614,25 @@ export function AdjustmentManagementPage({
                             ))}
                           </select>
                         </label>
-                        <label>
-                          {t("pallet")}
-                          <select
-                            value={line.palletId > 0 ? String(line.palletId) : ""}
-                            onChange={(event) => {
-                              const nextPalletId = Number(event.target.value || 0);
-                              const nextPallet = linePalletOptions.find((pallet) => pallet.id === nextPalletId);
-                              const nextAvailableQty = selectedItem && nextPallet
-                                ? getAdjustablePalletAvailableQty(nextPallet, selectedItem.skuMasterId)
-                                : 0;
-
-                              updateLine(line.id, {
-                                palletId: nextPalletId,
-                                requestedPalletId: nextPalletId,
-                                adjustQty: nextPalletId > 0
-                                  ? clampPalletAdjustmentQty(line.adjustQty, nextAvailableQty)
-                                  : 0
-                              });
-                            }}
-                            disabled={!selectedItem || isLoadingPallets || linePalletOptions.length === 0}
-                          >
-                            <option value="">{selectedItem ? t("selectPallet") : t("selectStockRow")}</option>
-                            {linePalletOptions.map((pallet) => {
-                              const palletAvailableQty = selectedItem
-                                ? getAdjustablePalletAvailableQty(pallet, selectedItem.skuMasterId)
-                                : 0;
-                              const palletQty = selectedItem
-                                ? getPalletSkuQty(pallet, selectedItem.skuMasterId)
-                                : 0;
-                              return (
-                                <option key={pallet.id} value={pallet.id}>
-                                  {`${pallet.palletCode} (${t("palletQty")}: ${palletQty} | ${t("availableQty")}: ${palletAvailableQty})`}
-                                </option>
-                              );
-                            })}
-                          </select>
-                        </label>
                         <label>{t("onHand")}<input value={selectedItem ? String(selectedItem.quantity) : ""} readOnly /></label>
-                        <label>{t("palletQty")}<input value={selectedPallet ? String(selectedPalletQty) : ""} readOnly /></label>
+                        <label>{t("pallets")}<input value={selectedItem ? String(selectedItem.pallets) : ""} readOnly /></label>
                         <label>
                           {t("adjustQty")}
                           <input
                             type="number"
                             value={numberInputValue(line.adjustQty)}
-                            disabled={!selectedPallet}
-                            onChange={(event) => {
-                              const nextAdjustQty = Number(event.target.value || 0);
-                              updateLine(line.id, {
-                                adjustQty: selectedPallet
-                                  ? clampPalletAdjustmentQty(nextAdjustQty, selectedPalletAvailableQty)
-                                  : 0
-                              });
-                            }}
+                            disabled={!selectedItem}
+                            onChange={(event) => updateLine(line.id, { adjustQty: Number(event.target.value || 0) })}
                           />
-                          {selectedPallet ? (
-                            <small style={{ color: "#617791", display: "block", marginTop: 2 }}>
-                              {t("adjustmentSelectedPalletHint", {
-                                palletCode: selectedPallet.palletCode,
-                                availableQty: selectedPalletAvailableQty
-                              })}
-                            </small>
-                          ) : selectedItem && linePalletOptions.length === 0 ? (
-                            <small style={{ color: "#b76857", display: "block", marginTop: 2 }}>{t("adjustmentRequirePalletBackedStock")}</small>
-                          ) : selectedItem ? (
-                            <small style={{ color: "#617791", display: "block", marginTop: 2 }}>{t("adjustmentRequirePalletSelection")}</small>
-                          ) : null}
+                        </label>
+                        <label>
+                          {`${t("adjustment")} (${t("pallets")})`}
+                          <input
+                            type="number"
+                            value={numberInputValue(line.adjustPallets)}
+                            disabled={!selectedItem}
+                            onChange={(event) => updateLine(line.id, { adjustPallets: Number(event.target.value || 0) })}
+                          />
                         </label>
                         <label>
                           {t("afterQty")}
@@ -809,11 +646,11 @@ export function AdjustmentManagementPage({
                           )}
                         </label>
                         <label>
-                          {t("palletAfterQty")}
+                          {`${t("afterQty")} (${t("pallets")})`}
                           <input
-                            value={selectedPallet ? String(palletAfterQty) : ""}
+                            value={selectedItem ? String(afterPallets) : ""}
                             readOnly
-                            style={{ color: selectedPallet && palletAfterQty < 0 ? "#b76857" : undefined, fontWeight: selectedPallet && palletAfterQty < 0 ? 700 : undefined }}
+                            style={{ color: selectedItem && afterPallets < 0 ? "#b76857" : undefined, fontWeight: selectedItem && afterPallets < 0 ? 700 : undefined }}
                           />
                         </label>
                         <label className="batch-line-grid__detail">{t("internalNotes")}<input value={line.lineNote} onChange={(event) => updateLine(line.id, { lineNote: event.target.value })} placeholder={t("adjustmentLineNotePlaceholder")} /></label>
@@ -851,34 +688,6 @@ function resolveAdjustmentLaunchBucketKey(items: Item[], context: InventoryActio
 
   const matchedItem = items.find((item) => normalizeContainerNumber(item.containerNo) === context.containerNo);
   return matchedItem ? buildInventoryProjectionKey(toInventoryProjectionRef(matchedItem)) : "";
-}
-
-function matchesAdjustmentPalletToItem(pallet: PalletTrace, item: Item) {
-  return (pallet.status === "OPEN" || pallet.status === "PARTIAL")
-    && pallet.customerId === item.customerId
-    && pallet.currentLocationId === item.locationId
-    && normalizeStorageSection(pallet.currentStorageSection) === normalizeStorageSection(item.storageSection)
-    && normalizeContainerNumber(pallet.currentContainerNo) === normalizeContainerNumber(item.containerNo)
-    && getAdjustablePalletAvailableQty(pallet, item.skuMasterId) > 0;
-}
-
-function getAdjustablePalletAvailableQty(pallet: PalletTrace, skuMasterId: number) {
-  return pallet.contents
-    .filter((content) => content.skuMasterId === skuMasterId)
-    .reduce((sum, content) => sum + Math.max(0, content.quantity - (content.allocatedQty ?? 0) - (content.damagedQty ?? 0) - (content.holdQty ?? 0)), 0);
-}
-
-function getPalletSkuQty(pallet: PalletTrace, skuMasterId: number) {
-  return pallet.contents
-    .filter((content) => content.skuMasterId === skuMasterId)
-    .reduce((sum, content) => sum + content.quantity, 0);
-}
-
-function clampPalletAdjustmentQty(value: number, maxRemovableQty: number) {
-  if (value >= 0) {
-    return value;
-  }
-  return Math.max(-maxRemovableQty, value);
 }
 
 function normalizeContainerNumber(value: string) {

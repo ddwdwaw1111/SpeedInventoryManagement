@@ -138,15 +138,12 @@ func (s *Store) UpdateSKUMaster(ctx context.Context, skuMasterID int64, input Cr
 func (s *Store) DeleteSKUMaster(ctx context.Context, skuMasterID int64) error {
 	var linkedInventoryCount int
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT
-			(SELECT COUNT(*) FROM inventory_items WHERE sku_master_id = ?)
-			+
-			(SELECT COUNT(*) FROM pallet_items WHERE sku_master_id = ?)
-	`, skuMasterID, skuMasterID).Scan(&linkedInventoryCount); err != nil {
+		SELECT COUNT(*) FROM inventory_items WHERE sku_master_id = ?
+	`, skuMasterID).Scan(&linkedInventoryCount); err != nil {
 		return fmt.Errorf("count linked projection rows for sku master delete: %w", err)
 	}
 	if linkedInventoryCount > 0 {
-		return fmt.Errorf("%w: sku master is linked to pallet or bucket rows", ErrInvalidInput)
+		return fmt.Errorf("%w: sku master is linked to inventory rows", ErrInvalidInput)
 	}
 
 	result, err := s.db.ExecContext(ctx, `DELETE FROM sku_master WHERE id = ?`, skuMasterID)

@@ -5,7 +5,6 @@ export type InventoryActionContext = {
   sku?: string;
   customerId?: number;
   containerNo?: string;
-  palletId?: number;
 };
 
 function getStorageKey(page: InventoryActionPage) {
@@ -19,16 +18,12 @@ function sanitizeInventoryActionContext(context: InventoryActionContext): Invent
     ? context.customerId
     : undefined;
   const containerNo = context.containerNo?.trim().toUpperCase() || undefined;
-  const palletId = typeof context.palletId === "number" && context.palletId > 0
-    ? context.palletId
-    : undefined;
 
   return {
     sourceKey,
     sku,
     customerId,
-    containerNo,
-    palletId
+    containerNo
   };
 }
 

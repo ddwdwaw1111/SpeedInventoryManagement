@@ -11,8 +11,7 @@ import {
   RotateCcw,
   Search,
   Send,
-  Truck,
-  Wrench
+  Truck
 } from "lucide-react";
 
 import { api } from "../lib/api";
@@ -30,8 +29,7 @@ import type {
   DocumentAttachment,
   InboundDocument,
   Location,
-  OutboundDocument,
-  PalletTrace
+  OutboundDocument
 } from "../lib/types";
 import { DocumentAttachmentsPanel, type PendingDocumentAttachment } from "./DocumentAttachmentsPanel";
 import { InlineAlert, useFeedbackToast } from "./Feedback";
@@ -93,14 +91,6 @@ type PickupFormState = LifecycleVisibilityFormState & {
   notes: string;
 };
 
-type ReworkFormState = LifecycleVisibilityFormState & {
-  referenceNo: string;
-  eventType: string;
-  eventTime: string;
-  notes: string;
-  palletIds: number[];
-};
-
 type DeliveryFormState = LifecycleVisibilityFormState & {
   deliveryEventId: string;
   outboundDocumentId: string;
@@ -122,6 +112,7 @@ type SkuQuantityRow = {
 
 type ReceivingSkuQuantityRow = {
   sku: string;
+  itemNumber: string;
   expectedQuantity: number;
   receivedPallets: number;
   receivedQuantity: number;
@@ -171,12 +162,6 @@ const PICKUP_STATUS_OPTIONS: SelectOption[] = [
   { value: "CANCELLED", labelKey: "cancelled" }
 ];
 
-const REWORK_EVENT_TYPE_OPTIONS: SelectOption[] = [
-  { value: "REPACK", labelKey: "reworkEventRepack" },
-  { value: "LOAD_CONSOLIDATION_NOTE", labelKey: "reworkEventLoadConsolidation" },
-  { value: "REWORK", labelKey: "containerLifecycleStatusReworked" }
-];
-
 const DELIVERY_EVENT_TYPE_OPTIONS: SelectOption[] = [
   { value: "DISPATCHED", labelKey: "containerLifecycleStatusDispatched" },
   { value: "DELIVERED", labelKey: "deliveryEventDelivered" },
@@ -215,7 +200,6 @@ export function AdminContainerLifecyclePage({
   const [containerForm, setContainerForm] = useState<ContainerFormState>(createEmptyContainerForm());
   const [trackingForm, setTrackingForm] = useState<TrackingFormState>(createEmptyTrackingForm());
   const [pickupForm, setPickupForm] = useState<PickupFormState>(createEmptyPickupForm());
-  const [reworkForm, setReworkForm] = useState<ReworkFormState>(createEmptyReworkForm());
   const [deliveryForm, setDeliveryForm] = useState<DeliveryFormState>(createEmptyDeliveryForm());
 
   const activeCustomerId = routeScope?.customerId ?? parsePositiveInt(selectedCustomerId);
@@ -279,7 +263,6 @@ export function AdminContainerLifecyclePage({
         setContainerForm(createContainerFormFromLifecycle(nextLifecycle));
         setTrackingForm(createEmptyTrackingForm());
         setPickupForm(createEmptyPickupForm());
-        setReworkForm(createReworkFormFromLifecycle(nextLifecycle));
         setDeliveryForm(createDeliveryFormFromLifecycle(nextLifecycle));
       } catch (error) {
         if (!active) return;
@@ -306,7 +289,6 @@ export function AdminContainerLifecyclePage({
     setDeliveryForm(createDeliveryFormFromLifecycle(lifecycle, selectedNode));
   }, [lifecycle, selectedNode]);
 
-  const visiblePallets = useMemo(() => lifecycle?.pallets ?? [], [lifecycle?.pallets]);
   const filteredSummaries = useMemo(
     () => selectedStatus === "all"
       ? containerSummaries
@@ -402,29 +384,6 @@ export function AdminContainerLifecyclePage({
         status: pickupForm.status,
         notes: pickupForm.notes,
         visibility: pickupForm.visibility
-      });
-      showSuccess(t("adminContainerLifecycleSaved"));
-      refreshLifecycle();
-    });
-  }
-
-  async function handleCreateReworkEvent(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!activeCustomerId || !activeContainerNo || reworkForm.palletIds.length === 0) {
-      setLifecycleError(t("adminContainerLifecycleSelectPallet"));
-      return;
-    }
-    await runBusyAction("rework", async () => {
-      await api.recordV2PalletRework({
-        customerId: activeCustomerId,
-        containerNo: activeContainerNo,
-        referenceNo: reworkForm.referenceNo,
-        eventType: reworkForm.eventType,
-        eventTime: reworkForm.eventTime,
-        notes: reworkForm.notes,
-        visibility: reworkForm.visibility,
-        displayLabel: reworkForm.displayLabel,
-        palletIds: reworkForm.palletIds
       });
       showSuccess(t("adminContainerLifecycleSaved"));
       refreshLifecycle();
@@ -681,20 +640,16 @@ export function AdminContainerLifecyclePage({
       containerForm={containerForm}
       trackingForm={trackingForm}
       pickupForm={pickupForm}
-      reworkForm={reworkForm}
       deliveryForm={deliveryForm}
-      pallets={visiblePallets}
       locations={locations}
       busyAction={busyAction}
       onContainerFormChange={setContainerForm}
       onTrackingFormChange={setTrackingForm}
       onPickupFormChange={setPickupForm}
-      onReworkFormChange={setReworkForm}
       onDeliveryFormChange={setDeliveryForm}
       onSaveContainer={handleSaveContainer}
       onCreateTrackingEvent={handleCreateTrackingEvent}
       onCreatePickupAssignment={handleCreatePickupAssignment}
-      onCreateReworkEvent={handleCreateReworkEvent}
       onCreateDeliveryEvent={handleCreateDeliveryEvent}
       onUploadInboundDocumentAttachment={handleUploadInboundDocumentAttachment}
       onUploadOutboundDocumentAttachment={handleUploadOutboundDocumentAttachment}
@@ -736,20 +691,16 @@ function AdminLifecycleNodePanel({
   containerForm,
   trackingForm,
   pickupForm,
-  reworkForm,
   deliveryForm,
-  pallets,
   locations,
   busyAction,
   onContainerFormChange,
   onTrackingFormChange,
   onPickupFormChange,
-  onReworkFormChange,
   onDeliveryFormChange,
   onSaveContainer,
   onCreateTrackingEvent,
   onCreatePickupAssignment,
-  onCreateReworkEvent,
   onCreateDeliveryEvent,
   onUploadInboundDocumentAttachment,
   onUploadOutboundDocumentAttachment,
@@ -762,20 +713,16 @@ function AdminLifecycleNodePanel({
   containerForm: ContainerFormState;
   trackingForm: TrackingFormState;
   pickupForm: PickupFormState;
-  reworkForm: ReworkFormState;
   deliveryForm: DeliveryFormState;
-  pallets: PalletTrace[];
   locations: Location[];
   busyAction: string;
   onContainerFormChange: (nextForm: ContainerFormState) => void;
   onTrackingFormChange: (nextForm: TrackingFormState) => void;
   onPickupFormChange: (nextForm: PickupFormState) => void;
-  onReworkFormChange: (nextForm: ReworkFormState) => void;
   onDeliveryFormChange: (nextForm: DeliveryFormState) => void;
   onSaveContainer: (event: FormEvent<HTMLFormElement>) => void;
   onCreateTrackingEvent: (event: FormEvent<HTMLFormElement>) => void;
   onCreatePickupAssignment: (event: FormEvent<HTMLFormElement>) => void;
-  onCreateReworkEvent: (event: FormEvent<HTMLFormElement>) => void;
   onCreateDeliveryEvent: (event: FormEvent<HTMLFormElement>) => void;
   onUploadInboundDocumentAttachment: (document: InboundDocument, file: File, displayName: string) => Promise<void>;
   onUploadOutboundDocumentAttachment: (document: OutboundDocument, file: File, displayName: string) => Promise<void>;
@@ -787,7 +734,10 @@ function AdminLifecycleNodePanel({
   const selectedPackingList = node?.documentId ? lifecycle.packingLists.find((document) => document.id === node.documentId) : lifecycle.packingLists[0];
   const selectedPickingOrder = node?.outboundDocumentId ? lifecycle.pickingOrders.find((document) => document.id === node.outboundDocumentId) : lifecycle.pickingOrders[0];
   const receivingSkuRows = useMemo(() => buildReceivingSkuRows(lifecycle.packingLists), [lifecycle.packingLists]);
-  const currentInventorySkuRows = useMemo(() => buildCurrentInventorySkuRows(pallets, receivingSkuRows), [pallets, receivingSkuRows]);
+  const currentInventorySkuRows = useMemo(
+    () => buildCurrentInventorySkuRows(lifecycle.lifecycleEvents, receivingSkuRows),
+    [lifecycle.lifecycleEvents, receivingSkuRows]
+  );
   const shouldShowContainerForm = !node || node.kind === "container";
   const selectedLocationID = containerForm.locationId;
   const locationOptions = buildLocationOptions(locations, selectedLocationID, t);
@@ -856,19 +806,6 @@ function AdminLifecycleNodePanel({
             <SelectInput label={t("status")} value={pickupForm.status} options={PICKUP_STATUS_OPTIONS} onChange={(value) => onPickupFormChange({ ...pickupForm, status: value })} />
             <TextInput label={t("notes")} value={pickupForm.notes} onChange={(value) => onPickupFormChange({ ...pickupForm, notes: value })} />
             <Button type="submit" disabled={busyAction === "pickup"}>{busyAction === "pickup" ? t("saving") : t("adminContainerLifecycleSubmitChanges")}</Button>
-          </form>
-        ) : null}
-
-        {node?.kind === "rework" ? (
-          <form className="grid gap-3" onSubmit={onCreateReworkEvent}>
-            <PanelSectionTitle icon={<Wrench className="h-4 w-4" />} title={t("containerLifecycleReworkNode")} />
-            <TextInput label={t("referenceNo")} value={reworkForm.referenceNo} onChange={(value) => onReworkFormChange({ ...reworkForm, referenceNo: value })} />
-            <SelectInput label={t("eventType")} value={reworkForm.eventType} options={REWORK_EVENT_TYPE_OPTIONS} onChange={(value) => onReworkFormChange({ ...reworkForm, eventType: value })} />
-            <VisibilityFields value={reworkForm} onChange={(nextFields) => onReworkFormChange({ ...reworkForm, ...nextFields })} />
-            <TextInput type="datetime-local" label={t("eventTime")} value={reworkForm.eventTime} onChange={(value) => onReworkFormChange({ ...reworkForm, eventTime: value })} />
-            <TextInput label={t("notes")} value={reworkForm.notes} onChange={(value) => onReworkFormChange({ ...reworkForm, notes: value })} />
-            <PalletChecklist pallets={pallets} selectedIds={reworkForm.palletIds} onChange={(palletIds) => onReworkFormChange({ ...reworkForm, palletIds })} />
-            <Button type="submit" disabled={busyAction === "rework"}>{busyAction === "rework" ? t("saving") : t("adminContainerLifecycleSubmitChanges")}</Button>
           </form>
         ) : null}
 
@@ -1209,50 +1146,6 @@ function VisibilityFields({
   );
 }
 
-function PalletChecklist({
-  pallets,
-  selectedIds,
-  onChange
-}: {
-  pallets: PalletTrace[];
-  selectedIds: number[];
-  onChange: (nextIds: number[]) => void;
-}) {
-  const { t } = useI18n();
-  const visiblePallets = pallets.slice(0, 12);
-
-  if (visiblePallets.length === 0) {
-    return <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">{t("containerDetailNoCurrentPallets")}</div>;
-  }
-
-  return (
-    <fieldset className="grid gap-2">
-      <legend className="text-sm font-medium text-slate-700">{t("palletTrace")}</legend>
-      <div className="max-h-56 overflow-auto rounded-md border border-slate-200 p-2">
-        {visiblePallets.map((pallet) => {
-          const checked = selectedIds.includes(pallet.id);
-          return (
-            <label key={pallet.id} className="flex items-start gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-slate-50">
-              <input
-                type="checkbox"
-                className="mt-1"
-                checked={checked}
-                onChange={() => {
-                  onChange(checked ? selectedIds.filter((id) => id !== pallet.id) : [...selectedIds, pallet.id]);
-                }}
-              />
-              <span>
-                <span className="block font-mono font-semibold text-slate-950">{pallet.palletCode}</span>
-                <span className="block text-xs text-slate-500">{pallet.currentLocationName || "-"} / {pallet.currentStorageSection || "-"}</span>
-              </span>
-            </label>
-          );
-        })}
-      </div>
-    </fieldset>
-  );
-}
-
 function DocumentActions<TDocument extends InboundDocument | OutboundDocument>({
   icon,
   title,
@@ -1313,22 +1206,26 @@ export function buildReceivingSkuRows(packingLists: InboundDocument[]): Receivin
   packingLists.forEach((document) => {
     (document.lines ?? []).forEach((line) => {
       const sku = line.sku || "-";
+      const itemNumber = line.itemNumber || "";
+      const key = inventorySkuRowKey(sku);
       const expectedQuantity = line.expectedQty || 0;
       const receivedQuantity = line.receivedQty || 0;
       const receivedPallets = line.pallets || 0;
       const shortageReason = receivedQuantity < expectedQuantity
         ? firstNonEmptyText(line.lineNote, document.documentNote)
         : "";
-      const existing = rows.get(sku);
+      const existing = rows.get(key);
       if (existing) {
+        existing.itemNumber ||= itemNumber;
         existing.expectedQuantity += expectedQuantity;
         existing.receivedPallets += receivedPallets;
         existing.receivedQuantity += receivedQuantity;
         existing.shortageReason = appendUniqueText(existing.shortageReason, shortageReason);
         return;
       }
-      rows.set(sku, {
+      rows.set(key, {
         sku,
+        itemNumber,
         expectedQuantity,
         receivedPallets,
         receivedQuantity,
@@ -1384,51 +1281,57 @@ export function buildOutboundOrderGoodsRows(document: OutboundDocument | undefin
   });
 }
 
-function buildCurrentInventorySkuRows(pallets: PalletTrace[], receivedRows: ReceivingSkuQuantityRow[]): SkuQuantityRow[] {
-  const rows = new Map<string, { sku: string; palletIds: Set<number>; quantity: number; referenceQuantity: number }>();
+export function buildCurrentInventorySkuRows(
+  lifecycleEvents: ContainerLifecycle["lifecycleEvents"],
+  receivedRows: ReceivingSkuQuantityRow[]
+): SkuQuantityRow[] {
+  const rows = new Map<string, { sku: string; pallets: number; quantity: number; referenceQuantity: number }>();
+  const aliases = new Map<string, string>();
 
   receivedRows.forEach((row) => {
-    rows.set(row.sku, {
+    const key = inventorySkuRowKey(row.sku);
+    rows.set(key, {
       sku: row.sku,
-      palletIds: new Set<number>(),
+      pallets: 0,
       quantity: 0,
       referenceQuantity: row.receivedQuantity
     });
+    aliases.set(inventorySkuRowKey(row.sku), key);
+    if (row.itemNumber) {
+      aliases.set(inventorySkuRowKey(row.itemNumber), key);
+    }
   });
 
-  pallets.forEach((pallet) => {
-    (pallet.contents ?? []).forEach((content) => {
-      const quantity = content.quantity || 0;
-      if (quantity <= 0) {
-        return;
-      }
-      const sku = content.sku || pallet.sku || "-";
-      const existing = rows.get(sku);
-      if (existing) {
-        existing.palletIds.add(pallet.id);
-        existing.quantity += quantity;
-        if (existing.referenceQuantity <= 0) {
-          existing.referenceQuantity = quantity;
-        }
-        return;
-      }
-      rows.set(sku, {
-        sku,
-        palletIds: new Set([pallet.id]),
-        quantity,
-        referenceQuantity: quantity
-      });
+  lifecycleEvents.forEach((event) => {
+    const sku = event.itemNumber || event.description || "-";
+    const labelKey = inventorySkuRowKey(sku);
+    const key = aliases.get(labelKey) ?? labelKey;
+    const existing = rows.get(key);
+    if (existing) {
+      existing.quantity += event.quantityDelta || 0;
+      existing.pallets += event.palletDelta || 0;
+      return;
+    }
+    rows.set(key, {
+      sku,
+      pallets: event.palletDelta || 0,
+      quantity: event.quantityDelta || 0,
+      referenceQuantity: Math.max(event.receivedQty || 0, event.quantityDelta || 0)
     });
   });
 
   return Array.from(rows.values())
     .map((row) => ({
       sku: row.sku,
-      pallets: row.palletIds.size,
-      quantity: row.quantity,
+      pallets: Math.max(0, row.pallets),
+      quantity: Math.max(0, row.quantity),
       referenceQuantity: row.referenceQuantity
     }))
     .sort((left, right) => left.sku.localeCompare(right.sku));
+}
+
+function inventorySkuRowKey(label: string) {
+  return label.trim().toUpperCase();
 }
 
 function createEmptyContainerForm(): ContainerFormState {
@@ -1488,24 +1391,6 @@ function createEmptyPickupForm(): PickupFormState {
     cost: "",
     status: "PICKED_UP",
     notes: ""
-  };
-}
-
-function createEmptyReworkForm(): ReworkFormState {
-  return {
-    ...createDefaultVisibilityFields(),
-    referenceNo: "",
-    eventType: "REPACK",
-    eventTime: toDateTimeInputValue(new Date()),
-    notes: "",
-    palletIds: []
-  };
-}
-
-function createReworkFormFromLifecycle(lifecycle: ContainerLifecycle): ReworkFormState {
-  return {
-    ...createEmptyReworkForm(),
-    palletIds: lifecycle.pallets.length === 1 ? [lifecycle.pallets[0].id] : []
   };
 }
 

@@ -48,10 +48,6 @@ import type {
   OutboundDocument,
   OutboundDocumentPayload,
   UpdateOutboundDocumentNotePayload,
-  PalletOperationResult,
-  PalletLocationEvent,
-  PalletReworkPayload,
-  PalletTrace,
   SKUMaster,
   SKUMasterPayload,
   SKUFlowReport,
@@ -86,14 +82,6 @@ type ItemQuery = {
 
 type SKUMasterQuery = {
   search?: string;
-};
-
-type PalletQuery = {
-  search?: string;
-  sourceInboundDocumentId?: number;
-  customerId?: number;
-  locationId?: number;
-  status?: string;
 };
 
 type MovementQuery = {
@@ -510,13 +498,6 @@ export const api = {
     });
   },
 
-  recordV2PalletRework(payload: PalletReworkPayload) {
-    return request<PalletOperationResult>("/v2/pallet-operations/rework", {
-      method: "POST",
-      body: JSON.stringify(payload)
-    });
-  },
-
   createV2DeliveryEvent(payload: DeliveryEventPayload) {
     return request<DeliveryEvent>("/v2/deliveries", {
       method: "POST",
@@ -593,39 +574,6 @@ export const api = {
       params.set("endBefore", query.endBefore.trim());
     }
     return request<Movement[]>(`/movements?${params.toString()}`);
-  },
-
-  getPallets(limit = 500, queryOrSearch: PalletQuery | string = "", sourceInboundDocumentId?: number) {
-    const params = new URLSearchParams({ limit: String(limit) });
-    const query = typeof queryOrSearch === "string"
-      ? { search: queryOrSearch, sourceInboundDocumentId }
-      : queryOrSearch;
-
-    const search = query.search ?? "";
-    if (search.trim()) {
-      params.set("search", search.trim());
-    }
-    if (query.sourceInboundDocumentId && query.sourceInboundDocumentId > 0) {
-      params.set("sourceInboundDocumentId", String(query.sourceInboundDocumentId));
-    }
-    if (query.customerId && query.customerId > 0) {
-      params.set("customerId", String(query.customerId));
-    }
-    if (query.locationId && query.locationId > 0) {
-      params.set("locationId", String(query.locationId));
-    }
-    if (query.status?.trim()) {
-      params.set("status", query.status.trim());
-    }
-    return request<PalletTrace[]>(`/pallets?${params.toString()}`);
-  },
-
-  getPalletLocationEvents(limit = 200, containerNo = "") {
-    const params = new URLSearchParams({ limit: String(limit) });
-    if (containerNo.trim()) {
-      params.set("containerNo", containerNo.trim());
-    }
-    return request<PalletLocationEvent[]>(`/pallet-location-events?${params.toString()}`);
   },
 
   getOutboundDocuments(limit = 100, archiveScopeOrQuery: DocumentArchiveScope | DocumentListQuery = "active") {

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import type { InboundDocument, OutboundDocument } from "../lib/types";
-import { buildOutboundOrderGoodsRows, buildReceivingSkuRows } from "./AdminContainerLifecyclePage";
+import type { ContainerLifecycleEvent, InboundDocument, OutboundDocument } from "../lib/types";
+import {
+  buildCurrentInventorySkuRows,
+  buildOutboundOrderGoodsRows,
+  buildReceivingSkuRows
+} from "./AdminContainerLifecyclePage";
 
 describe("buildReceivingSkuRows", () => {
   it("summarizes expected quantity, received pallets, received quantity, and shortage reason by sku", () => {
@@ -34,6 +38,36 @@ describe("buildReceivingSkuRows", () => {
       }
     ]);
     expect(rows[0]).not.toHaveProperty("expectedPallets");
+  });
+});
+
+describe("buildCurrentInventorySkuRows", () => {
+  it("joins lifecycle Item Codes to their receiving SKU row", () => {
+    const receivedRows = buildReceivingSkuRows([{
+      id: 10,
+      lines: [{
+        sku: "SKU-A",
+        itemNumber: "ITEM-001",
+        expectedQty: 20,
+        receivedQty: 20,
+        pallets: 2
+      }]
+    }] as unknown as InboundDocument[]);
+    const lifecycleEvents = [{
+      id: 1,
+      itemNumber: "ITEM-001",
+      description: "Item A",
+      quantityDelta: 20,
+      palletDelta: 2,
+      receivedQty: 20
+    }] as unknown as ContainerLifecycleEvent[];
+
+    expect(buildCurrentInventorySkuRows(lifecycleEvents, receivedRows)).toEqual([{
+      sku: "SKU-A",
+      pallets: 2,
+      quantity: 20,
+      referenceQuantity: 20
+    }]);
   });
 });
 

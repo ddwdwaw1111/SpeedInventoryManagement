@@ -8,8 +8,6 @@ services:
       MARIADB_DATABASE: speed_inventory_management
       MARIADB_USER: inventory_user
       MARIADB_PASSWORD: inventory_pass
-    ports:
-      - "3306:3306"
     healthcheck:
       test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-uroot", "-prootpass"]
       interval: 10s

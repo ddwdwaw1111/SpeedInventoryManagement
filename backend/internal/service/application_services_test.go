@@ -43,32 +43,6 @@ func (r *recordingInventoryMutationRepo) CreateInventoryTransfer(_ context.Conte
 	}, nil
 }
 
-type recordingPalletReworkRepo struct {
-	inputs []CreatePalletReworkEventInput
-}
-
-func (r *recordingPalletReworkRepo) CreatePalletReworkEvent(_ context.Context, input CreatePalletReworkEventInput) (PalletReworkEvent, error) {
-	r.inputs = append(r.inputs, input)
-	pallets := make([]PalletReworkEventPallet, 0, len(input.PalletIDs)+len(input.SourcePalletIDs)+len(input.TargetPalletIDs))
-	for _, palletID := range input.PalletIDs {
-		pallets = append(pallets, PalletReworkEventPallet{PalletID: palletID, Role: PalletReworkRoleRelated})
-	}
-	for _, palletID := range input.SourcePalletIDs {
-		pallets = append(pallets, PalletReworkEventPallet{PalletID: palletID, Role: PalletReworkRoleSource})
-	}
-	for _, palletID := range input.TargetPalletIDs {
-		pallets = append(pallets, PalletReworkEventPallet{PalletID: palletID, Role: PalletReworkRoleTarget})
-	}
-	return PalletReworkEvent{
-		ID:          int64(len(r.inputs)),
-		ReferenceNo: input.ReferenceNo,
-		CustomerID:  input.CustomerID,
-		ContainerNo: input.ContainerNo,
-		EventType:   firstNonEmpty(input.EventType, "REWORK"),
-		Pallets:     pallets,
-	}, nil
-}
-
 type recordingDeliveryRepo struct {
 	createInputs []CreateDeliveryEventInput
 	bolInputs    []CreateDeliveryEventInput
@@ -92,64 +66,22 @@ func (s failingScanner) Scan(...any) error {
 	return s.err
 }
 
-func TestPalletOperationAdjustMapsV2Command(t *testing.T) {
+func TestLegacyInventoryAdapterUsesAggregateInventoryServiceOnce(t *testing.T) {
 	repo := &recordingInventoryMutationRepo{}
-	service := NewPalletOperationService(NewInventoryMutationService(repo), &recordingPalletReworkRepo{})
-
-	result, err := service.Adjust(context.Background(), PalletAdjustCommand{
-		ReferenceNo: "ADJ-100",
-		ReasonCode:  "DAMAGE",
-		OccurredAt:  "2026-06-15T10:00:00Z",
-		Notes:       "broken case",
-		Lines: []PalletAdjustLineCommand{{
-			CustomerID:     7,
-			LocationID:     2,
-			StorageSection: "A1",
-			ContainerNo:    "CONT-1",
-			PalletID:       55,
-			SKUMasterID:    8,
-			AdjustQty:      -3,
-			Note:           "short",
-		}},
-	})
-	if err != nil {
-		t.Fatalf("expected adjust command to succeed, got %v", err)
-	}
-	if result.OperationType != "PALLET_ADJUST" || result.ReferenceNo != "ADJ-100" || result.TotalQty != -3 {
-		t.Fatalf("unexpected result: %#v", result)
-	}
-	if len(repo.adjustmentInputs) != 1 {
-		t.Fatalf("expected one adjustment write, got %d", len(repo.adjustmentInputs))
-	}
-	got := repo.adjustmentInputs[0]
-	if got.AdjustmentNo != "ADJ-100" || got.ReasonCode != "DAMAGE" || got.ActualAdjustedAt != "2026-06-15T10:00:00Z" {
-		t.Fatalf("unexpected adjustment header: %#v", got)
-	}
-	if len(got.Lines) != 1 {
-		t.Fatalf("expected one adjustment line, got %d", len(got.Lines))
-	}
-	line := got.Lines[0]
-	if line.ContainerNo != "CONT-1" || line.PalletID != 55 || line.SKUMasterID != 8 || line.AdjustQty != -3 || line.LineNote != "short" {
-		t.Fatalf("unexpected adjustment line: %#v", line)
-	}
-}
-
-func TestLegacyInventoryAdapterUsesPalletOperationsOnce(t *testing.T) {
-	repo := &recordingInventoryMutationRepo{}
-	palletOperations := NewPalletOperationService(NewInventoryMutationService(repo), &recordingPalletReworkRepo{})
-	adapter := NewLegacyInventoryAdapter(palletOperations)
+	inventoryMutation := NewInventoryMutationService(repo)
+	adapter := NewLegacyInventoryAdapter(inventoryMutation)
 
 	adjustment, err := adapter.CreateAdjustment(context.Background(), CreateInventoryAdjustmentInput{
 		AdjustmentNo: "ADJ-LEGACY",
 		ReasonCode:   "COUNT",
 		Lines: []CreateInventoryAdjustmentLineInput{{
-			CustomerID:  3,
-			LocationID:  4,
-			ContainerNo: "CONT-LEGACY",
-			PalletID:    9,
-			SKUMasterID: 10,
-			AdjustQty:   2,
-			LineNote:    "legacy call",
+			CustomerID:    3,
+			LocationID:    4,
+			ContainerNo:   "CONT-LEGACY",
+			SKUMasterID:   10,
+			AdjustQty:     2,
+			AdjustPallets: 1,
+			LineNote:      "legacy call",
 		}},
 	})
 	if err != nil {
@@ -163,54 +95,6 @@ func TestLegacyInventoryAdapterUsesPalletOperationsOnce(t *testing.T) {
 	}
 	if repo.adjustmentInputs[0].Lines[0].ContainerNo != "CONT-LEGACY" {
 		t.Fatalf("expected legacy adapter to preserve container number, got %#v", repo.adjustmentInputs[0].Lines[0])
-	}
-}
-
-func TestPalletReworkMapsV2Command(t *testing.T) {
-	repo := &recordingInventoryMutationRepo{}
-	reworkRepo := &recordingPalletReworkRepo{}
-	service := NewPalletOperationService(NewInventoryMutationService(repo), reworkRepo)
-
-	result, err := service.Rework(context.Background(), PalletReworkCommand{
-		ReferenceNo: "RW-100",
-		CustomerID:  7,
-		ContainerNo: "CONT-1",
-		EventType:   "LOAD_CONSOLIDATION_NOTE",
-		PalletIDs:   []int64{10, 11, 12},
-		Notes:       "load consolidation",
-	})
-	if err != nil {
-		t.Fatalf("expected rework command to succeed, got %v", err)
-	}
-	if result.OperationType != "PALLET_REWORK_EVENT" || result.Status != "RECORDED" || result.RecordID != 1 || result.TotalLines != 3 {
-		t.Fatalf("unexpected rework result: %#v", result)
-	}
-	if len(reworkRepo.inputs) != 1 {
-		t.Fatalf("expected one rework write, got %d", len(reworkRepo.inputs))
-	}
-	got := reworkRepo.inputs[0]
-	if got.ReferenceNo != "RW-100" || got.ContainerNo != "CONT-1" || len(got.PalletIDs) != 3 || len(got.SourcePalletIDs) != 0 || len(got.TargetPalletIDs) != 0 {
-		t.Fatalf("unexpected rework input: %#v", got)
-	}
-}
-
-func TestPalletReworkRejectsQuantityAwareShapeUntilImplemented(t *testing.T) {
-	reworkRepo := &recordingPalletReworkRepo{}
-	service := NewPalletOperationService(NewInventoryMutationService(&recordingInventoryMutationRepo{}), reworkRepo)
-
-	_, err := service.Rework(context.Background(), PalletReworkCommand{
-		ReferenceNo:     "RW-SPLIT",
-		CustomerID:      7,
-		ContainerNo:     "CONT-1",
-		EventType:       "SPLIT",
-		SourcePalletIDs: []int64{10},
-		TargetPalletIDs: []int64{11, 12},
-	})
-	if !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("expected ErrNotImplemented for quantity-aware rework, got %v", err)
-	}
-	if len(reworkRepo.inputs) != 0 {
-		t.Fatalf("expected no rework event to be written, got %d", len(reworkRepo.inputs))
 	}
 }
 

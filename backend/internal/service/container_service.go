@@ -38,11 +38,8 @@ type ContainerLifecycle struct {
 	PackingLists      []InboundDocument           `json:"packingLists"`
 	PickingOrders     []OutboundDocument          `json:"pickingOrders"`
 	LifecycleEvents   []ContainerLifecycleEvent   `json:"lifecycleEvents"`
-	Pallets           []PalletTrace               `json:"pallets"`
-	PalletEvents      []PalletLocationEvent       `json:"palletEvents"`
 	TrackingEvents    []ContainerTrackingEvent    `json:"trackingEvents"`
 	PickupAssignments []ContainerPickupAssignment `json:"pickupAssignments"`
-	ReworkEvents      []PalletReworkEvent         `json:"reworkEvents"`
 	DeliveryEvents    []DeliveryEvent             `json:"deliveryEvents"`
 }
 
@@ -61,8 +58,6 @@ type containerRepository interface {
 	ListInboundDocumentsFiltered(context.Context, int, InboundDocumentFilters) ([]InboundDocument, error)
 	ListItems(context.Context, ItemFilters) ([]Item, error)
 	ListContainerLifecycleEvents(context.Context, int, ...ContainerLifecycleEventFilters) ([]ContainerLifecycleEvent, error)
-	ListPallets(context.Context, int, ListPalletFilters) ([]PalletTrace, error)
-	ListPalletLocationEvents(context.Context, int, ListPalletLocationEventFilters) ([]PalletLocationEvent, error)
 	ListOutboundDocumentsFiltered(context.Context, int, OutboundDocumentFilters) ([]OutboundDocument, error)
 	GetOutboundDocumentForCustomer(context.Context, int64, int64) (OutboundDocument, error)
 	ListContainerRecords(context.Context, int, ContainerFilters) ([]Container, error)
@@ -72,7 +67,6 @@ type containerRepository interface {
 	CreateContainerPickupAssignment(context.Context, CreateContainerPickupAssignmentInput) (ContainerPickupAssignment, error)
 	ListContainerTrackingEvents(context.Context, int, ContainerTrackingEventFilters) ([]ContainerTrackingEvent, error)
 	ListContainerPickupAssignments(context.Context, int, ContainerPickupAssignmentFilters) ([]ContainerPickupAssignment, error)
-	ListPalletReworkEvents(context.Context, int, PalletReworkEventFilters) ([]PalletReworkEvent, error)
 	ListDeliveryEvents(context.Context, int, DeliveryEventFilters) ([]DeliveryEvent, error)
 }
 
@@ -142,22 +136,6 @@ func (s *ContainerService) GetLifecycle(ctx context.Context, input GetContainerL
 	}
 	items = filterItemsByContainer(items, containerNo)
 
-	pallets, err := s.repo.ListPallets(ctx, ContainerLifecycleLoadLimit, ListPalletFilters{
-		CustomerID:  input.CustomerID,
-		ContainerNo: containerNo,
-	})
-	if err != nil {
-		return ContainerLifecycle{}, err
-	}
-
-	palletEvents, err := s.repo.ListPalletLocationEvents(ctx, ContainerLifecycleLoadLimit, ListPalletLocationEventFilters{
-		CustomerID:  input.CustomerID,
-		ContainerNo: containerNo,
-	})
-	if err != nil {
-		return ContainerLifecycle{}, err
-	}
-
 	lifecycleEvents, err := s.repo.ListContainerLifecycleEvents(ctx, ContainerLifecycleLoadLimit, ContainerLifecycleEventFilters{
 		CustomerID:  input.CustomerID,
 		ContainerNo: containerNo,
@@ -184,13 +162,6 @@ func (s *ContainerService) GetLifecycle(ctx context.Context, input GetContainerL
 	if err != nil {
 		return ContainerLifecycle{}, err
 	}
-	reworkEvents, err := s.repo.ListPalletReworkEvents(ctx, ContainerLifecycleLoadLimit, PalletReworkEventFilters{
-		CustomerID:  input.CustomerID,
-		ContainerNo: containerNo,
-	})
-	if err != nil {
-		return ContainerLifecycle{}, err
-	}
 	deliveryEvents, err := s.repo.ListDeliveryEvents(ctx, ContainerLifecycleLoadLimit, DeliveryEventFilters{
 		CustomerID:  input.CustomerID,
 		ContainerNo: containerNo,
@@ -211,11 +182,8 @@ func (s *ContainerService) GetLifecycle(ctx context.Context, input GetContainerL
 		PackingLists:      packingLists,
 		PickingOrders:     pickingOrders,
 		LifecycleEvents:   lifecycleEvents,
-		Pallets:           pallets,
-		PalletEvents:      palletEvents,
 		TrackingEvents:    trackingEvents,
 		PickupAssignments: pickupAssignments,
-		ReworkEvents:      reworkEvents,
 		DeliveryEvents:    deliveryEvents,
 	}, nil
 }

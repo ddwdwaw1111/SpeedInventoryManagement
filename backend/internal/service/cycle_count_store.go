@@ -11,32 +11,37 @@ import (
 )
 
 type CycleCount struct {
-	ID            int64            `json:"id"`
-	CountNo       string           `json:"countNo"`
-	Notes         string           `json:"notes"`
-	Status        string           `json:"status"`
-	TotalLines    int              `json:"totalLines"`
-	TotalVariance int              `json:"totalVariance"`
-	CreatedAt     time.Time        `json:"createdAt"`
-	UpdatedAt     time.Time        `json:"updatedAt"`
-	Lines         []CycleCountLine `json:"lines"`
+	ID                  int64            `json:"id"`
+	CountNo             string           `json:"countNo"`
+	Notes               string           `json:"notes"`
+	Status              string           `json:"status"`
+	TotalLines          int              `json:"totalLines"`
+	TotalVariance       int              `json:"totalVariance"`
+	TotalPalletVariance int              `json:"totalPalletVariance"`
+	CreatedAt           time.Time        `json:"createdAt"`
+	UpdatedAt           time.Time        `json:"updatedAt"`
+	Lines               []CycleCountLine `json:"lines"`
 }
 
 type CycleCountLine struct {
-	ID             int64     `json:"id"`
-	CycleCountID   int64     `json:"cycleCountId"`
-	CustomerID     int64     `json:"customerId"`
-	CustomerName   string    `json:"customerName"`
-	LocationID     int64     `json:"locationId"`
-	LocationName   string    `json:"locationName"`
-	StorageSection string    `json:"storageSection"`
-	SKU            string    `json:"sku"`
-	Description    string    `json:"description"`
-	SystemQty      int       `json:"systemQty"`
-	CountedQty     int       `json:"countedQty"`
-	VarianceQty    int       `json:"varianceQty"`
-	LineNote       string    `json:"lineNote"`
-	CreatedAt      time.Time `json:"createdAt"`
+	ID              int64     `json:"id"`
+	CycleCountID    int64     `json:"cycleCountId"`
+	CustomerID      int64     `json:"customerId"`
+	CustomerName    string    `json:"customerName"`
+	LocationID      int64     `json:"locationId"`
+	LocationName    string    `json:"locationName"`
+	StorageSection  string    `json:"storageSection"`
+	ContainerNo     string    `json:"containerNo"`
+	SKU             string    `json:"sku"`
+	Description     string    `json:"description"`
+	SystemQty       int       `json:"systemQty"`
+	CountedQty      int       `json:"countedQty"`
+	VarianceQty     int       `json:"varianceQty"`
+	SystemPallets   int       `json:"systemPallets"`
+	CountedPallets  int       `json:"countedPallets"`
+	VariancePallets int       `json:"variancePallets"`
+	LineNote        string    `json:"lineNote"`
+	CreatedAt       time.Time `json:"createdAt"`
 }
 
 type CreateCycleCountInput struct {
@@ -50,27 +55,29 @@ type CreateCycleCountLineInput struct {
 	LocationID     int64  `json:"locationId"`
 	StorageSection string `json:"storageSection"`
 	ContainerNo    string `json:"containerNo"`
-	PalletID       int64  `json:"palletId"`
-	CreatePallet   bool   `json:"createPallet"`
-	PalletCode     string `json:"palletCode"`
 	SKUMasterID    int64  `json:"skuMasterId"`
 	CountedQty     int    `json:"countedQty"`
+	CountedPallets int    `json:"countedPallets"`
 	LineNote       string `json:"lineNote"`
 }
 
 type lockedCycleCountTarget struct {
-	ItemID         int64
-	PalletID       int64
-	PalletItemID   int64
-	SKUMasterID    int64
-	CustomerID     int64
-	CustomerName   string
-	LocationID     int64
-	LocationName   string
-	StorageSection string
-	SKU            string
-	Description    string
-	Quantity       int
+	ItemID           int64
+	SKUMasterID      int64
+	CustomerID       int64
+	CustomerName     string
+	LocationID       int64
+	LocationName     string
+	StorageSection   string
+	ContainerNo      string
+	SKU              string
+	Description      string
+	Quantity         int
+	Pallets          int
+	AllocatedQty     int
+	DamagedQty       int
+	HoldQty          int
+	AllocatedPallets int
 }
 
 type cycleCountRow struct {
@@ -90,11 +97,15 @@ type cycleCountLineRow struct {
 	LocationID           int64     `db:"location_id"`
 	LocationNameSnapshot string    `db:"location_name_snapshot"`
 	StorageSection       string    `db:"storage_section"`
+	ContainerNo          string    `db:"container_no"`
 	SKUSnapshot          string    `db:"sku_snapshot"`
 	DescriptionSnapshot  string    `db:"description_snapshot"`
 	SystemQty            int       `db:"system_qty"`
 	CountedQty           int       `db:"counted_qty"`
 	VarianceQty          int       `db:"variance_qty"`
+	SystemPallets        int       `db:"system_pallets"`
+	CountedPallets       int       `db:"counted_pallets"`
+	VariancePallets      int       `db:"variance_pallets"`
 	LineNote             string    `db:"line_note"`
 	CreatedAt            time.Time `db:"created_at"`
 }
@@ -150,11 +161,15 @@ func (s *Store) ListCycleCounts(ctx context.Context, limit int) ([]CycleCount, e
 			location_id,
 			location_name_snapshot,
 			storage_section,
+			COALESCE(container_no, '') AS container_no,
 			sku_snapshot,
 			COALESCE(description_snapshot, '') AS description_snapshot,
 			system_qty,
 			counted_qty,
 			variance_qty,
+			system_pallets,
+			counted_pallets,
+			variance_pallets,
 			COALESCE(line_note, '') AS line_note,
 			created_at
 		FROM cycle_count_lines
@@ -177,23 +192,28 @@ func (s *Store) ListCycleCounts(ctx context.Context, limit int) ([]CycleCount, e
 		}
 
 		count.Lines = append(count.Lines, CycleCountLine{
-			ID:             lineRow.ID,
-			CycleCountID:   lineRow.CycleCountID,
-			CustomerID:     lineRow.CustomerID,
-			CustomerName:   lineRow.CustomerNameSnapshot,
-			LocationID:     lineRow.LocationID,
-			LocationName:   lineRow.LocationNameSnapshot,
-			StorageSection: fallbackSection(lineRow.StorageSection),
-			SKU:            lineRow.SKUSnapshot,
-			Description:    lineRow.DescriptionSnapshot,
-			SystemQty:      lineRow.SystemQty,
-			CountedQty:     lineRow.CountedQty,
-			VarianceQty:    lineRow.VarianceQty,
-			LineNote:       lineRow.LineNote,
-			CreatedAt:      lineRow.CreatedAt,
+			ID:              lineRow.ID,
+			CycleCountID:    lineRow.CycleCountID,
+			CustomerID:      lineRow.CustomerID,
+			CustomerName:    lineRow.CustomerNameSnapshot,
+			LocationID:      lineRow.LocationID,
+			LocationName:    lineRow.LocationNameSnapshot,
+			StorageSection:  fallbackSection(lineRow.StorageSection),
+			ContainerNo:     lineRow.ContainerNo,
+			SKU:             lineRow.SKUSnapshot,
+			Description:     lineRow.DescriptionSnapshot,
+			SystemQty:       lineRow.SystemQty,
+			CountedQty:      lineRow.CountedQty,
+			VarianceQty:     lineRow.VarianceQty,
+			SystemPallets:   lineRow.SystemPallets,
+			CountedPallets:  lineRow.CountedPallets,
+			VariancePallets: lineRow.VariancePallets,
+			LineNote:        lineRow.LineNote,
+			CreatedAt:       lineRow.CreatedAt,
 		})
 		count.TotalLines++
 		count.TotalVariance += lineRow.VarianceQty
+		count.TotalPalletVariance += lineRow.VariancePallets
 	}
 
 	return counts, nil
@@ -234,19 +254,17 @@ func (s *Store) CreateCycleCount(ctx context.Context, input CreateCycleCountInpu
 		return CycleCount{}, fmt.Errorf("resolve cycle count id: %w", err)
 	}
 
-	newPalletSequence := 0
 	for index, line := range input.Lines {
-		if line.CreatePallet {
-			newPalletSequence++
-			line.PalletCode = palletCodeForCycleCount(countID, newPalletSequence)
-		}
-
 		lockedTarget, err := s.loadLockedCycleCountTarget(ctx, tx, line)
 		if err != nil {
 			return CycleCount{}, err
 		}
 
 		varianceQty := line.CountedQty - lockedTarget.Quantity
+		variancePallets := line.CountedPallets - lockedTarget.Pallets
+		if line.CountedQty < lockedTarget.AllocatedQty+lockedTarget.DamagedQty+lockedTarget.HoldQty || line.CountedPallets < lockedTarget.AllocatedPallets {
+			return CycleCount{}, ErrInsufficientStock
+		}
 
 		lineResult, err := tx.ExecContext(ctx, `
 			INSERT INTO cycle_count_lines (
@@ -256,14 +274,18 @@ func (s *Store) CreateCycleCount(ctx context.Context, input CreateCycleCountInpu
 				location_id,
 				location_name_snapshot,
 				storage_section,
+				container_no,
 				sku_snapshot,
 				description_snapshot,
 				system_qty,
 				counted_qty,
 				variance_qty,
+				system_pallets,
+				counted_pallets,
+				variance_pallets,
 				line_note,
 				sort_order
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			countID,
 			lockedTarget.CustomerID,
@@ -271,11 +293,15 @@ func (s *Store) CreateCycleCount(ctx context.Context, input CreateCycleCountInpu
 			lockedTarget.LocationID,
 			lockedTarget.LocationName,
 			fallbackSection(lockedTarget.StorageSection),
+			lockedTarget.ContainerNo,
 			lockedTarget.SKU,
 			nullableString(lockedTarget.Description),
 			lockedTarget.Quantity,
 			line.CountedQty,
 			varianceQty,
+			lockedTarget.Pallets,
+			line.CountedPallets,
+			variancePallets,
 			nullableString(line.LineNote),
 			index+1,
 		)
@@ -288,59 +314,27 @@ func (s *Store) CreateCycleCount(ctx context.Context, input CreateCycleCountInpu
 			return CycleCount{}, fmt.Errorf("resolve cycle count line id: %w", err)
 		}
 
-		if varianceQty != 0 {
+		if varianceQty != 0 || variancePallets != 0 {
 			reason := firstNonEmpty(line.LineNote, fmt.Sprintf("Cycle count posted: %s", input.CountNo))
-
-			palletVariances, err := s.applyCycleCountPalletDeltaTx(ctx, tx, lockedTarget.ItemID, line, varianceQty)
-			if err != nil {
+			if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
+				EventType:           StockLedgerEventCount,
+				OccurredAt:          &countOccurredAt,
+				SKUMasterID:         lockedTarget.SKUMasterID,
+				CustomerID:          lockedTarget.CustomerID,
+				LocationID:          lockedTarget.LocationID,
+				StorageSection:      lockedTarget.StorageSection,
+				QuantityChange:      varianceQty,
+				PalletChange:        float64(variancePallets),
+				SourceDocumentType:  StockLedgerSourceCycleCount,
+				SourceDocumentID:    countID,
+				SourceLineID:        lineID,
+				ContainerNo:         lockedTarget.ContainerNo,
+				ItemNumber:          lockedTarget.SKU,
+				DescriptionSnapshot: lockedTarget.Description,
+				Reason:              reason,
+				ReferenceCode:       input.CountNo,
+			}); err != nil {
 				return CycleCount{}, err
-			}
-			varianceSign := 1
-			if varianceQty < 0 {
-				varianceSign = -1
-			}
-			for _, palletVariance := range palletVariances {
-				signedQuantityChange := varianceSign * palletVariance.Quantity
-				afterPalletQty, err := s.loadPalletQuantityTx(ctx, tx, palletVariance.PalletID)
-				if err != nil {
-					return CycleCount{}, err
-				}
-				beforePalletQty := afterPalletQty - signedQuantityChange
-				palletChange := resolvePalletCountTransition(beforePalletQty, afterPalletQty)
-				if err := s.createPalletLocationEventTx(ctx, tx, createPalletLocationEventInput{
-					PalletID:         palletVariance.PalletID,
-					ContainerVisitID: palletVariance.ContainerVisitID,
-					CustomerID:       palletVariance.CustomerID,
-					LocationID:       palletVariance.LocationID,
-					StorageSection:   palletVariance.StorageSection,
-					ContainerNo:      palletVariance.ContainerNo,
-					EventType:        PalletEventCount,
-					QuantityDelta:    signedQuantityChange,
-					PalletDelta:      palletChange,
-					EventTime:        &countOccurredAt,
-				}); err != nil {
-					return CycleCount{}, err
-				}
-				if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
-					EventType:           StockLedgerEventCount,
-					OccurredAt:          &countOccurredAt,
-					PalletID:            palletVariance.PalletID,
-					PalletItemID:        palletVariance.PalletItemID,
-					SKUMasterID:         palletVariance.SKUMasterID,
-					CustomerID:          palletVariance.CustomerID,
-					LocationID:          palletVariance.LocationID,
-					StorageSection:      palletVariance.StorageSection,
-					QuantityChange:      signedQuantityChange,
-					PalletChange:        palletChange,
-					SourceDocumentType:  StockLedgerSourceCycleCount,
-					SourceDocumentID:    countID,
-					SourceLineID:        lineID,
-					ContainerNo:         palletVariance.ContainerNo,
-					DescriptionSnapshot: lockedTarget.Description,
-					Reason:              reason,
-				}); err != nil {
-					return CycleCount{}, err
-				}
 			}
 		}
 	}
@@ -350,34 +344,6 @@ func (s *Store) CreateCycleCount(ctx context.Context, input CreateCycleCountInpu
 	}
 
 	return s.getCycleCount(ctx, countID)
-}
-
-func (s *Store) loadPalletQuantityTx(ctx context.Context, tx *sql.Tx, palletID int64) (int, error) {
-	if palletID <= 0 {
-		return 0, nil
-	}
-
-	var quantity int
-	if err := tx.QueryRowContext(ctx, `
-		SELECT COALESCE(SUM(quantity), 0)
-		FROM pallet_items
-		WHERE pallet_id = ?
-	`, palletID).Scan(&quantity); err != nil {
-		return 0, fmt.Errorf("load pallet quantity: %w", err)
-	}
-
-	return quantity, nil
-}
-
-func resolvePalletCountTransition(beforeQty int, afterQty int) float64 {
-	switch {
-	case beforeQty <= 0 && afterQty > 0:
-		return 1
-	case beforeQty > 0 && afterQty <= 0:
-		return -1
-	default:
-		return 0
-	}
 }
 
 func (s *Store) getCycleCount(ctx context.Context, countID int64) (CycleCount, error) {
@@ -445,11 +411,15 @@ func (s *Store) listCycleCountsByIDs(ctx context.Context, countIDs []int64) ([]C
 			location_id,
 			location_name_snapshot,
 			storage_section,
+			COALESCE(container_no, '') AS container_no,
 			sku_snapshot,
 			COALESCE(description_snapshot, '') AS description_snapshot,
 			system_qty,
 			counted_qty,
 			variance_qty,
+			system_pallets,
+			counted_pallets,
+			variance_pallets,
 			COALESCE(line_note, '') AS line_note,
 			created_at
 		FROM cycle_count_lines
@@ -471,23 +441,28 @@ func (s *Store) listCycleCountsByIDs(ctx context.Context, countIDs []int64) ([]C
 			continue
 		}
 		count.Lines = append(count.Lines, CycleCountLine{
-			ID:             lineRow.ID,
-			CycleCountID:   lineRow.CycleCountID,
-			CustomerID:     lineRow.CustomerID,
-			CustomerName:   lineRow.CustomerNameSnapshot,
-			LocationID:     lineRow.LocationID,
-			LocationName:   lineRow.LocationNameSnapshot,
-			StorageSection: fallbackSection(lineRow.StorageSection),
-			SKU:            lineRow.SKUSnapshot,
-			Description:    lineRow.DescriptionSnapshot,
-			SystemQty:      lineRow.SystemQty,
-			CountedQty:     lineRow.CountedQty,
-			VarianceQty:    lineRow.VarianceQty,
-			LineNote:       lineRow.LineNote,
-			CreatedAt:      lineRow.CreatedAt,
+			ID:              lineRow.ID,
+			CycleCountID:    lineRow.CycleCountID,
+			CustomerID:      lineRow.CustomerID,
+			CustomerName:    lineRow.CustomerNameSnapshot,
+			LocationID:      lineRow.LocationID,
+			LocationName:    lineRow.LocationNameSnapshot,
+			StorageSection:  fallbackSection(lineRow.StorageSection),
+			ContainerNo:     lineRow.ContainerNo,
+			SKU:             lineRow.SKUSnapshot,
+			Description:     lineRow.DescriptionSnapshot,
+			SystemQty:       lineRow.SystemQty,
+			CountedQty:      lineRow.CountedQty,
+			VarianceQty:     lineRow.VarianceQty,
+			SystemPallets:   lineRow.SystemPallets,
+			CountedPallets:  lineRow.CountedPallets,
+			VariancePallets: lineRow.VariancePallets,
+			LineNote:        lineRow.LineNote,
+			CreatedAt:       lineRow.CreatedAt,
 		})
 		count.TotalLines++
 		count.TotalVariance += lineRow.VarianceQty
+		count.TotalPalletVariance += lineRow.VariancePallets
 	}
 
 	return counts, nil
@@ -502,12 +477,8 @@ func sanitizeCycleCountInput(input CreateCycleCountInput) CreateCycleCountInput 
 	for _, line := range input.Lines {
 		line.StorageSection = normalizeStorageSection(line.StorageSection)
 		line.ContainerNo = strings.TrimSpace(strings.ToUpper(line.ContainerNo))
-		line.PalletCode = strings.TrimSpace(strings.ToUpper(line.PalletCode))
 		line.LineNote = strings.TrimSpace(line.LineNote)
 		if line.CustomerID <= 0 || line.LocationID <= 0 || line.SKUMasterID <= 0 {
-			continue
-		}
-		if line.CreatePallet && line.CountedQty <= 0 {
 			continue
 		}
 		lineKey := buildCycleCountLineKey(line)
@@ -532,37 +503,25 @@ func validateCycleCountInput(input CreateCycleCountInput) error {
 		return fmt.Errorf("%w: at least one cycle count line is required", ErrInvalidInput)
 	}
 
-	bucketScopes := make(map[string]string, len(input.Lines))
 	for _, line := range input.Lines {
-		bucketKey := buildCycleCountBucketKey(line)
-		scopeMode := "pallet"
-		if existingScope, exists := bucketScopes[bucketKey]; exists && existingScope != scopeMode {
-			return fmt.Errorf("%w: cannot mix bucket-level and pallet-level count lines for the same stock position", ErrInvalidInput)
-		}
-		bucketScopes[bucketKey] = scopeMode
-
 		switch {
 		case line.CustomerID <= 0:
 			return fmt.Errorf("%w: customer is required", ErrInvalidInput)
 		case line.LocationID <= 0:
 			return fmt.Errorf("%w: storage is required", ErrInvalidInput)
-		case line.CreatePallet && line.PalletID > 0:
-			return fmt.Errorf("%w: new pallet count lines cannot target an existing pallet id", ErrInvalidInput)
-		case !line.CreatePallet && line.PalletCode != "":
-			return fmt.Errorf("%w: pallet code can only be set when creating a new pallet", ErrInvalidInput)
-		case !line.CreatePallet && line.PalletID <= 0:
-			return fmt.Errorf("%w: pallet is required unless creating a new pallet", ErrInvalidInput)
 		case line.SKUMasterID <= 0:
 			return fmt.Errorf("%w: sku is required", ErrInvalidInput)
 		case line.CountedQty < 0:
 			return fmt.Errorf("%w: counted quantity cannot be negative", ErrInvalidInput)
+		case line.CountedPallets < 0:
+			return fmt.Errorf("%w: counted pallets cannot be negative", ErrInvalidInput)
 		}
 	}
 	return nil
 }
 
 func (s *Store) loadLockedCycleCountTarget(ctx context.Context, tx *sql.Tx, line CreateCycleCountLineInput) (lockedCycleCountTarget, error) {
-	lockedItem, err := s.loadLockedAdjustmentItem(ctx, tx, palletSourceBucket{
+	lockedItem, err := s.loadLockedAdjustmentItem(ctx, tx, inventorySourceBucket{
 		SKUMasterID:    line.SKUMasterID,
 		CustomerID:     line.CustomerID,
 		LocationID:     line.LocationID,
@@ -574,131 +533,24 @@ func (s *Store) loadLockedCycleCountTarget(ctx context.Context, tx *sql.Tx, line
 	}
 
 	target := lockedCycleCountTarget{
-		ItemID:         lockedItem.ItemID,
-		SKUMasterID:    lockedItem.SKUMasterID,
-		CustomerID:     lockedItem.CustomerID,
-		CustomerName:   lockedItem.CustomerName,
-		LocationID:     lockedItem.LocationID,
-		LocationName:   lockedItem.LocationName,
-		StorageSection: lockedItem.StorageSection,
-		SKU:            lockedItem.SKU,
-		Description:    lockedItem.Description,
-		Quantity:       lockedItem.Quantity,
+		ItemID:           lockedItem.ItemID,
+		SKUMasterID:      lockedItem.SKUMasterID,
+		CustomerID:       lockedItem.CustomerID,
+		CustomerName:     lockedItem.CustomerName,
+		LocationID:       lockedItem.LocationID,
+		LocationName:     lockedItem.LocationName,
+		StorageSection:   lockedItem.StorageSection,
+		ContainerNo:      lockedItem.ContainerNo,
+		SKU:              lockedItem.SKU,
+		Description:      lockedItem.Description,
+		Quantity:         lockedItem.Quantity,
+		Pallets:          lockedItem.Pallets,
+		AllocatedQty:     lockedItem.AllocatedQty,
+		DamagedQty:       lockedItem.DamagedQty,
+		HoldQty:          lockedItem.HoldQty,
+		AllocatedPallets: lockedItem.AllocatedPallets,
 	}
-	if line.CreatePallet {
-		target.Quantity = 0
-		return target, nil
-	}
-	if line.PalletID <= 0 {
-		return target, nil
-	}
-
-	if err := tx.QueryRowContext(ctx, `
-		SELECT
-			pi.id,
-			pi.quantity
-		FROM pallet_items pi
-		JOIN pallets p ON p.id = pi.pallet_id
-		WHERE p.id = ?
-		  AND pi.sku_master_id = ?
-		  AND p.customer_id = ?
-		  AND p.current_location_id = ?
-		  AND COALESCE(p.current_storage_section, 'TEMP') = ?
-		  AND COALESCE(p.current_container_no, '') = ?
-		FOR UPDATE
-	`, line.PalletID, line.SKUMasterID, line.CustomerID, line.LocationID, fallbackSection(line.StorageSection), strings.TrimSpace(line.ContainerNo)).Scan(
-		&target.PalletItemID,
-		&target.Quantity,
-	); err != nil {
-		if err == sql.ErrNoRows {
-			return lockedCycleCountTarget{}, fmt.Errorf("%w: selected pallet is not available in this stock position", ErrInvalidInput)
-		}
-		return lockedCycleCountTarget{}, fmt.Errorf("load selected pallet for cycle count: %w", err)
-	}
-	target.PalletID = line.PalletID
 	return target, nil
-}
-
-func (s *Store) applyCycleCountPalletDeltaTx(
-	ctx context.Context,
-	tx *sql.Tx,
-	itemID int64,
-	line CreateCycleCountLineInput,
-	varianceQty int,
-) ([]palletContentConsumption, error) {
-	if varianceQty == 0 {
-		return []palletContentConsumption{}, nil
-	}
-	if line.CreatePallet {
-		return s.createCycleCountPalletTx(ctx, tx, itemID, line, varianceQty)
-	}
-	if line.PalletID <= 0 {
-		return nil, fmt.Errorf("%w: pallet is required unless creating a new pallet", ErrInvalidInput)
-	}
-
-	bucket := palletSourceBucket{
-		SKUMasterID:    line.SKUMasterID,
-		CustomerID:     line.CustomerID,
-		LocationID:     line.LocationID,
-		StorageSection: line.StorageSection,
-		ContainerNo:    line.ContainerNo,
-	}
-	if varianceQty < 0 {
-		return s.consumeSpecificPalletContentsForBucketTx(ctx, tx, bucket, line.PalletID, line.SKUMasterID, -varianceQty)
-	}
-
-	return s.addSpecificPalletContentsForBucketTx(ctx, tx, bucket, line.PalletID, line.SKUMasterID, varianceQty)
-}
-
-func (s *Store) createCycleCountPalletTx(
-	ctx context.Context,
-	tx *sql.Tx,
-	itemID int64,
-	line CreateCycleCountLineInput,
-	quantity int,
-) ([]palletContentConsumption, error) {
-	if quantity <= 0 {
-		return []palletContentConsumption{}, nil
-	}
-
-	itemBucket, err := s.loadInventoryItemBucketTx(ctx, tx, itemID)
-	if err != nil {
-		return nil, err
-	}
-
-	pallet, err := s.createPalletTx(ctx, tx, createPalletInput{
-		PalletCode:            firstNonEmpty(strings.TrimSpace(line.PalletCode), palletCodeForOperationalSeed(itemID)),
-		ActualArrivalDate:     itemBucket.DeliveryDate,
-		CustomerID:            itemBucket.CustomerID,
-		SKUMasterID:           line.SKUMasterID,
-		CurrentLocationID:     itemBucket.LocationID,
-		CurrentStorageSection: itemBucket.StorageSection,
-		CurrentContainerNo:    itemBucket.ContainerNo,
-		Status:                PalletStatusOpen,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	palletItemID, err := s.createPalletItemTx(ctx, tx, createPalletItemInput{
-		PalletID:    pallet.ID,
-		SKUMasterID: line.SKUMasterID,
-		Quantity:    quantity,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return []palletContentConsumption{{
-		PalletID:       pallet.ID,
-		PalletItemID:   palletItemID,
-		SKUMasterID:    line.SKUMasterID,
-		Quantity:       quantity,
-		CustomerID:     itemBucket.CustomerID,
-		LocationID:     itemBucket.LocationID,
-		StorageSection: fallbackSection(itemBucket.StorageSection),
-		ContainerNo:    strings.TrimSpace(itemBucket.ContainerNo),
-	}}, nil
 }
 
 func buildCycleCountBucketKey(line CreateCycleCountLineInput) string {
@@ -706,14 +558,7 @@ func buildCycleCountBucketKey(line CreateCycleCountLineInput) string {
 }
 
 func buildCycleCountLineKey(line CreateCycleCountLineInput) string {
-	if line.CreatePallet {
-		return ""
-	}
-	return fmt.Sprintf("%s:%d", buildCycleCountBucketKey(line), line.PalletID)
-}
-
-func palletCodeForCycleCount(cycleCountID int64, sequence int) string {
-	return fmt.Sprintf("PLT-COUNT-%d-%d", max(cycleCountID, 0), max(sequence, 1))
+	return buildCycleCountBucketKey(line)
 }
 
 func generateCycleCountNo() string {

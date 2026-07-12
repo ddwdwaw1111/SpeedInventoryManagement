@@ -56,6 +56,12 @@ var schemaMigrations = []schemaMigration{
 		Revision: "2026-07-11.1",
 		Apply:    applyContainerPalletProfilesMigration,
 	},
+	{
+		Version:  7,
+		Name:     "remove_pallet_entities",
+		Revision: "2026-07-11.2",
+		Apply:    applyRemovePalletEntitiesMigration,
+	},
 }
 
 // Migrate applies each schema migration exactly once. MariaDB DDL auto-commits,

@@ -21,8 +21,6 @@ type ContainerLifecycleEvent struct {
 	EventTime          time.Time `json:"eventTime"`
 	QuantityDelta      int       `json:"quantityDelta"`
 	PalletDelta        float64   `json:"palletDelta"`
-	PalletID           int64     `json:"palletId"`
-	PalletItemID       int64     `json:"palletItemId"`
 	SKUMasterID        int64     `json:"skuMasterId"`
 	SourceDocumentType string    `json:"sourceDocumentType"`
 	SourceDocumentID   int64     `json:"sourceDocumentId"`
@@ -80,8 +78,6 @@ func (s *Store) ListContainerLifecycleEvents(ctx context.Context, limit int, fil
 			cle.event_time,
 			cle.quantity_delta,
 			cle.pallet_delta,
-			COALESCE(cle.pallet_id, 0) AS pallet_id,
-			COALESCE(cle.pallet_item_id, 0) AS pallet_item_id,
 			COALESCE(cle.sku_master_id, 0) AS sku_master_id,
 			COALESCE(cle.source_document_type, '') AS source_document_type,
 			COALESCE(cle.source_document_id, 0) AS source_document_id,
@@ -144,8 +140,6 @@ func (s *Store) createContainerLifecycleEventTx(ctx context.Context, tx *sql.Tx,
 			event_time,
 			quantity_delta,
 			pallet_delta,
-			pallet_id,
-			pallet_item_id,
 			sku_master_id,
 			source_document_type,
 			source_document_id,
@@ -160,7 +154,7 @@ func (s *Store) createContainerLifecycleEventTx(ctx context.Context, tx *sql.Tx,
 			document_note,
 			reason,
 			reference_code
-		) VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			customer_id = VALUES(customer_id),
 			location_id = VALUES(location_id),
@@ -171,8 +165,6 @@ func (s *Store) createContainerLifecycleEventTx(ctx context.Context, tx *sql.Tx,
 			event_time = VALUES(event_time),
 			quantity_delta = VALUES(quantity_delta),
 			pallet_delta = VALUES(pallet_delta),
-			pallet_id = VALUES(pallet_id),
-			pallet_item_id = VALUES(pallet_item_id),
 			sku_master_id = VALUES(sku_master_id),
 			source_document_type = VALUES(source_document_type),
 			source_document_id = VALUES(source_document_id),
@@ -198,8 +190,6 @@ func (s *Store) createContainerLifecycleEventTx(ctx context.Context, tx *sql.Tx,
 		nullableTime(resolveContainerLifecycleEventTime(input)),
 		input.QuantityChange,
 		input.PalletChange,
-		nullableInt64(input.PalletID),
-		nullableInt64(input.PalletItemID),
 		nullableInt64(input.SKUMasterID),
 		nullableString(input.SourceDocumentType),
 		nullableInt64(input.SourceDocumentID),
@@ -236,8 +226,6 @@ func scanContainerLifecycleEvent(scanner itemScanner) (ContainerLifecycleEvent, 
 		&event.EventTime,
 		&event.QuantityDelta,
 		&event.PalletDelta,
-		&event.PalletID,
-		&event.PalletItemID,
 		&event.SKUMasterID,
 		&event.SourceDocumentType,
 		&event.SourceDocumentID,

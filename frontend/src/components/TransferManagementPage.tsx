@@ -50,6 +50,7 @@ type TransferLineFormState = {
   id: string;
   sourceBucketKey: string;
   quantity: number;
+  pallets: number;
   toLocationId: string;
   toStorageSection: string;
   lineNote: string;
@@ -60,6 +61,7 @@ const emptyTransferForm: TransferFormState = {
   actualTransferredAt: "",
   notes: ""
 };
+const EMPTY_ITEMS: Item[] = [];
 const summaryNumberFormatter = new Intl.NumberFormat("en-US");
 const TRANSFER_COLUMN_ORDER_PREFERENCE_KEY = "transfers.column-order";
 
@@ -68,6 +70,7 @@ function createTransferLine(): TransferLineFormState {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     sourceBucketKey: "",
     quantity: 0,
+    pallets: 0,
     toLocationId: "",
     toStorageSection: DEFAULT_STORAGE_SECTION,
     lineNote: ""
@@ -111,7 +114,7 @@ export function TransferManagementPage({
     () => transferSourceOptions.find((option) => option.key === selectedSourceKey) ?? null,
     [transferSourceOptions, selectedSourceKey]
   );
-  const selectableSourceItems = selectedSourceOption?.items ?? [];
+  const selectableSourceItems = selectedSourceOption?.items ?? EMPTY_ITEMS;
 
   useEffect(() => {
     if (selectedTransferId !== null && !selectedTransfer) {
@@ -203,9 +206,11 @@ export function TransferManagementPage({
     { field: "customerName", headerName: t("customer"), minWidth: 170, flex: 1 },
     { field: "fromLocationName", headerName: t("sourceStorage"), minWidth: 170, flex: 1 },
     { field: "fromStorageSection", headerName: t("fromSection"), minWidth: 110 },
+    { field: "containerNo", headerName: t("containerNo"), minWidth: 150 },
     { field: "toLocationName", headerName: t("destinationStorage"), minWidth: 170, flex: 1 },
     { field: "toStorageSection", headerName: t("toSection"), minWidth: 110 },
     { field: "quantity", headerName: t("transferQty"), minWidth: 120, type: "number" },
+    { field: "pallets", headerName: t("pallets"), minWidth: 110, type: "number" },
     { field: "lineNote", headerName: t("internalNotes"), minWidth: 240, flex: 1.3, renderCell: (params) => params.row.lineNote || "-" }
   ], [t]);
   const mainGridSlots = buildWorkspaceGridSlots({
@@ -225,6 +230,7 @@ export function TransferManagementPage({
       { label: t("allRows"), value: summaryNumberFormatter.format(transfers.length), meta: t("transfers") },
       { label: t("totalLines"), value: summaryNumberFormatter.format(transfers.reduce((sum, transfer) => sum + transfer.totalLines, 0)), meta: t("transferLines") },
       { label: t("totalQty"), value: summaryNumberFormatter.format(transfers.reduce((sum, transfer) => sum + transfer.totalQty, 0)), meta: t("units") },
+      { label: t("pallets"), value: summaryNumberFormatter.format(transfers.reduce((sum, transfer) => sum + transfer.totalPallets, 0)), meta: t("transfers") },
       { label: t("routes"), value: summaryNumberFormatter.format(routeCount), meta: t("destinationStorage") }
     ];
   }, [transfers, t]);
@@ -271,7 +277,7 @@ export function TransferManagementPage({
     const item = selectableSourceItems.find(
       (i) => buildInventoryProjectionKey(toInventoryProjectionRef(i)) === line.sourceBucketKey
     );
-    return item !== undefined && line.quantity > item.availableQty;
+    return item !== undefined && (line.quantity > item.availableQty || line.pallets > item.pallets);
   });
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -297,6 +303,7 @@ export function TransferManagementPage({
             return {
               ...toInventoryProjectionRef(selectedItem),
               quantity: line.quantity,
+              pallets: line.pallets,
               toLocationId: Number(line.toLocationId),
               toStorageSection: line.toStorageSection || undefined,
               lineNote: line.lineNote || undefined
@@ -543,6 +550,7 @@ export function TransferManagementPage({
                           </select>
                         </label>
                         <label>{t("availableQty")}<input value={selectedItem ? String(selectedItem.availableQty) : ""} readOnly /></label>
+                        <label>{t("pallets")}<input value={selectedItem ? String(selectedItem.pallets) : ""} readOnly /></label>
                         <label>
                           {t("transferQty")}
                           <input type="number" min="0" value={numberInputValue(line.quantity)} onChange={(event) => updateLine(line.id, { quantity: Math.max(0, Number(event.target.value || 0)) })} />
@@ -556,6 +564,15 @@ export function TransferManagementPage({
                               {t("remainingAfterTransfer")}: {selectedItem.availableQty - line.quantity}
                             </small>
                           )}
+                        </label>
+                        <label>
+                          {t("pallets")}
+                          <input type="number" min="0" value={numberInputValue(line.pallets)} onChange={(event) => updateLine(line.id, { pallets: Math.max(0, Number(event.target.value || 0)) })} />
+                          {selectedItem && line.pallets > selectedItem.pallets ? (
+                            <small style={{ color: "#b76857", display: "block", marginTop: 2, fontWeight: 600 }}>
+                              {`${t("pallets")}: ${selectedItem.pallets}`}
+                            </small>
+                          ) : null}
                         </label>
                         <label>{t("destinationStorage")}<select value={line.toLocationId} onChange={(event) => updateLine(line.id, { toLocationId: event.target.value, toStorageSection: getLocationSectionOptions(locations.find((location) => location.id === Number(event.target.value)))[0] || DEFAULT_STORAGE_SECTION })}><option value="">{t("selectStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
                         <label>{t("toSection")}<select value={line.toStorageSection} onChange={(event) => updateLine(line.id, { toStorageSection: event.target.value })}>{sectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}</select></label>

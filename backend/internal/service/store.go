@@ -188,42 +188,32 @@ type CreateSKUMasterInput struct {
 }
 
 type Item struct {
-	ID              int64                    `json:"id"`
-	SKUMasterID     int64                    `json:"skuMasterId"`
-	ItemNumber      string                   `json:"itemNumber"`
-	SKU             string                   `json:"sku"`
-	Name            string                   `json:"name"`
-	Category        string                   `json:"category"`
-	Description     string                   `json:"description"`
-	Unit            string                   `json:"unit"`
-	Quantity        int                      `json:"quantity"`
-	AvailableQty    int                      `json:"availableQty"`
-	AllocatedQty    int                      `json:"allocatedQty"`
-	DamagedQty      int                      `json:"damagedQty"`
-	HoldQty         int                      `json:"holdQty"`
-	Pallets         int                      `json:"pallets"`
-	PalletProfiles  []ContainerPalletProfile `json:"palletProfiles"`
-	ReorderLevel    int                      `json:"reorderLevel"`
-	CustomerID      int64                    `json:"customerId"`
-	CustomerName    string                   `json:"customerName"`
-	LocationID      int64                    `json:"locationId"`
-	LocationName    string                   `json:"locationName"`
-	StorageSection  string                   `json:"storageSection"`
-	DeliveryDate    *time.Time               `json:"deliveryDate"`
-	ContainerNo     string                   `json:"containerNo"`
-	ContainerType   string                   `json:"containerType"`
-	LastRestockedAt *time.Time               `json:"lastRestockedAt"`
-	CreatedAt       time.Time                `json:"createdAt"`
-	UpdatedAt       time.Time                `json:"updatedAt"`
-}
-
-type ContainerPalletProfile struct {
-	CTNPerPallet     int `db:"ctn_per_pallet" json:"ctnPerPallet"`
-	PalletCount      int `db:"pallet_count" json:"palletCount"`
-	AvailablePallets int `db:"available_pallets" json:"availablePallets"`
-	AllocatedPallets int `db:"allocated_pallets" json:"allocatedPallets"`
-	DamagedPallets   int `db:"damaged_pallets" json:"damagedPallets"`
-	HoldPallets      int `db:"hold_pallets" json:"holdPallets"`
+	ID              int64      `json:"id"`
+	SKUMasterID     int64      `json:"skuMasterId"`
+	ItemNumber      string     `json:"itemNumber"`
+	SKU             string     `json:"sku"`
+	Name            string     `json:"name"`
+	Category        string     `json:"category"`
+	Description     string     `json:"description"`
+	Unit            string     `json:"unit"`
+	Quantity        int        `json:"quantity"`
+	AvailableQty    int        `json:"availableQty"`
+	AllocatedQty    int        `json:"allocatedQty"`
+	DamagedQty      int        `json:"damagedQty"`
+	HoldQty         int        `json:"holdQty"`
+	Pallets         int        `json:"pallets"`
+	ReorderLevel    int        `json:"reorderLevel"`
+	CustomerID      int64      `json:"customerId"`
+	CustomerName    string     `json:"customerName"`
+	LocationID      int64      `json:"locationId"`
+	LocationName    string     `json:"locationName"`
+	StorageSection  string     `json:"storageSection"`
+	DeliveryDate    *time.Time `json:"deliveryDate"`
+	ContainerNo     string     `json:"containerNo"`
+	ContainerType   string     `json:"containerType"`
+	LastRestockedAt *time.Time `json:"lastRestockedAt"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	UpdatedAt       time.Time  `json:"updatedAt"`
 }
 
 type Movement struct {
@@ -298,6 +288,7 @@ type CreateItemInput struct {
 	AllocatedQty   int    `json:"allocatedQty"`
 	DamagedQty     int    `json:"damagedQty"`
 	HoldQty        int    `json:"holdQty"`
+	Pallets        int    `json:"pallets"`
 	ReorderLevel   int    `json:"reorderLevel"`
 	CustomerID     int64  `json:"customerId"`
 	LocationID     int64  `json:"locationId"`
@@ -458,54 +449,7 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate items: %w", err)
 	}
-	if err := s.attachContainerPalletProfiles(ctx, items); err != nil {
-		return nil, err
-	}
-
 	return items, nil
-}
-
-func (s *Store) attachContainerPalletProfiles(ctx context.Context, items []Item) error {
-	if len(items) == 0 {
-		return nil
-	}
-	itemIDs := make([]int64, 0, len(items))
-	itemsByID := make(map[int64]*Item, len(items))
-	for index := range items {
-		items[index].PalletProfiles = []ContainerPalletProfile{}
-		itemIDs = append(itemIDs, items[index].ID)
-		itemsByID[items[index].ID] = &items[index]
-	}
-	type profileRow struct {
-		InventoryItemID int64 `db:"inventory_item_id"`
-		ContainerPalletProfile
-	}
-	query, args, err := sqlx.In(`
-		SELECT
-			inventory_item_id,
-			ctn_per_pallet,
-			pallet_count,
-			GREATEST(pallet_count - allocated_pallets - damaged_pallets - hold_pallets, 0) AS available_pallets,
-			allocated_pallets,
-			damaged_pallets,
-			hold_pallets
-		FROM container_pallet_profiles
-		WHERE inventory_item_id IN (?)
-		ORDER BY inventory_item_id, ctn_per_pallet DESC
-	`, itemIDs)
-	if err != nil {
-		return fmt.Errorf("build container pallet profile query: %w", err)
-	}
-	rows := make([]profileRow, 0)
-	if err := s.db.SelectContext(ctx, &rows, s.db.Rebind(query), args...); err != nil {
-		return fmt.Errorf("load container pallet profiles: %w", err)
-	}
-	for _, row := range rows {
-		if item := itemsByID[row.InventoryItemID]; item != nil {
-			item.PalletProfiles = append(item.PalletProfiles, row.ContainerPalletProfile)
-		}
-	}
-	return nil
 }
 
 func (s *Store) CreateItem(ctx context.Context, input CreateItemInput) (Item, error) {
@@ -569,9 +513,37 @@ func (s *Store) CreateItem(ctx context.Context, input CreateItemInput) (Item, er
 		return Item{}, fmt.Errorf("resolve item id: %w", err)
 	}
 
-	if input.Quantity > 0 {
-		if err := s.createSeedPalletForInventoryItemTx(ctx, tx, itemID, skuMasterID, input, deliveryDate, input.Quantity, fmt.Sprintf("ITEM-%06d-SEED", itemID), StockLedgerSourceOpening, itemID, 0, "Manual inventory seed"); err != nil {
+	if input.Quantity > 0 || input.Pallets > 0 {
+		if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
+			EventType:           StockLedgerEventReceive,
+			SKUMasterID:         skuMasterID,
+			CustomerID:          input.CustomerID,
+			LocationID:          input.LocationID,
+			StorageSection:      input.StorageSection,
+			QuantityChange:      input.Quantity,
+			PalletChange:        float64(input.Pallets),
+			SourceDocumentType:  StockLedgerSourceOpening,
+			SourceDocumentID:    itemID,
+			ContainerNo:         input.ContainerNo,
+			DeliveryDate:        deliveryDate,
+			ItemNumber:          input.ItemNumber,
+			DescriptionSnapshot: input.Description,
+			ExpectedQty:         input.Quantity,
+			ReceivedQty:         input.Quantity,
+			Pallets:             input.Pallets,
+			UnitLabel:           strings.ToUpper(firstNonEmpty(input.Unit, "PCS")),
+			Reason:              "Manual inventory opening balance",
+		}); err != nil {
 			return Item{}, err
+		}
+	}
+	if input.AllocatedQty > 0 || input.DamagedQty > 0 || input.HoldQty > 0 {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE inventory_items
+			SET allocated_qty = ?, damaged_qty = ?, hold_qty = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`, input.AllocatedQty, input.DamagedQty, input.HoldQty, itemID); err != nil {
+			return Item{}, mapDBError(fmt.Errorf("set opening inventory states: %w", err))
 		}
 	}
 
@@ -599,12 +571,12 @@ func (s *Store) UpdateItem(ctx context.Context, itemID int64, input CreateItemIn
 	}
 	defer tx.Rollback()
 
-	currentProjection, err := s.loadPalletBackedInventoryProjectionTx(ctx, tx, itemID)
+	currentProjection, err := s.loadInventoryProjectionTx(ctx, tx, itemID)
 	if err != nil {
 		return Item{}, err
 	}
-	if input.Quantity != currentProjection.Quantity || input.AllocatedQty != currentProjection.AllocatedQty || input.DamagedQty != currentProjection.DamagedQty || input.HoldQty != currentProjection.HoldQty {
-		return Item{}, fmt.Errorf("%w: inventory state changes must be made through pallet operations", ErrInvalidInput)
+	if input.Quantity != currentProjection.Quantity || input.AllocatedQty != currentProjection.AllocatedQty || input.DamagedQty != currentProjection.DamagedQty || input.HoldQty != currentProjection.HoldQty || input.Pallets != currentProjection.Pallets {
+		return Item{}, fmt.Errorf("%w: inventory state changes must be made through container operations", ErrInvalidInput)
 	}
 
 	previousSKUMasterID, err := s.getItemSKUMasterID(ctx, tx, itemID)
@@ -625,7 +597,7 @@ func (s *Store) UpdateItem(ctx context.Context, itemID int64, input CreateItemIn
 		currentProjection.LocationID != input.LocationID ||
 		fallbackSection(currentProjection.StorageSection) != fallbackSection(input.StorageSection) ||
 		strings.TrimSpace(currentProjection.ContainerNo) != strings.TrimSpace(input.ContainerNo)) {
-		return Item{}, fmt.Errorf("%w: move stock through pallet operations instead of editing the bucket registry", ErrInvalidInput)
+		return Item{}, fmt.Errorf("%w: move stock through container operations instead of editing the bucket registry", ErrInvalidInput)
 	}
 
 	result, err := tx.ExecContext(ctx, `
@@ -686,12 +658,12 @@ func (s *Store) DeleteItem(ctx context.Context, itemID int64) error {
 	if err != nil {
 		return err
 	}
-	currentProjection, err := s.loadPalletBackedInventoryProjectionTx(ctx, tx, itemID)
+	currentProjection, err := s.loadInventoryProjectionTx(ctx, tx, itemID)
 	if err != nil {
 		return err
 	}
-	if currentProjection.Quantity > 0 || currentProjection.AllocatedQty > 0 || currentProjection.DamagedQty > 0 || currentProjection.HoldQty > 0 {
-		return fmt.Errorf("%w: clear pallet-backed stock before deleting the bucket registry", ErrInvalidInput)
+	if currentProjection.Quantity > 0 || currentProjection.AllocatedQty > 0 || currentProjection.DamagedQty > 0 || currentProjection.HoldQty > 0 || currentProjection.Pallets > 0 {
+		return fmt.Errorf("%w: clear container inventory before deleting the bucket registry", ErrInvalidInput)
 	}
 
 	result, err := tx.ExecContext(ctx, `DELETE FROM inventory_items WHERE id = ?`, itemID)
@@ -925,9 +897,7 @@ func (s *Store) listStockLedgerMovements(ctx context.Context, limit int, filters
 			COALESCE(MAX(NULLIF(sl.reference_code, '')), '') AS reference_code,
 			MAX(COALESCE(sl.occurred_at, sl.created_at)) AS created_at
 		FROM stock_ledger sl
-		LEFT JOIN pallets p ON p.id = sl.pallet_id
-		LEFT JOIN pallet_items pi ON pi.id = sl.pallet_item_id
-		LEFT JOIN sku_master sm ON sm.id = COALESCE(sl.sku_master_id, pi.sku_master_id, p.sku_master_id)
+		LEFT JOIN sku_master sm ON sm.id = sl.sku_master_id
 		JOIN customers c ON c.id = sl.customer_id
 		JOIN storage_locations l ON l.id = sl.location_id
 		LEFT JOIN inbound_documents idoc
@@ -951,7 +921,7 @@ func (s *Store) listStockLedgerMovements(ctx context.Context, limit int, filters
 		LEFT JOIN cycle_count_lines ccl
 			ON sl.source_document_type = 'CYCLE_COUNT' AND sl.source_line_id = ccl.id
 		LEFT JOIN inventory_items ii
-			ON ii.sku_master_id = COALESCE(sl.sku_master_id, pi.sku_master_id, p.sku_master_id)
+			ON ii.sku_master_id = sl.sku_master_id
 			AND ii.customer_id = sl.customer_id
 			AND ii.location_id = sl.location_id
 			AND ii.storage_section = COALESCE(NULLIF(sl.storage_section, ''), 'TEMP')
@@ -1056,11 +1026,7 @@ func (s *Store) getItem(ctx context.Context, itemID int64) (Item, error) {
 		return Item{}, err
 	}
 
-	items := []Item{item}
-	if err := s.attachContainerPalletProfiles(ctx, items); err != nil {
-		return Item{}, err
-	}
-	return items[0], nil
+	return item, nil
 }
 
 type itemScanner interface {
@@ -1260,6 +1226,8 @@ func validateItemInput(input CreateItemInput) error {
 		return fmt.Errorf("%w: description is required", ErrInvalidInput)
 	case input.Quantity < 0:
 		return fmt.Errorf("%w: quantity cannot be negative", ErrInvalidInput)
+	case input.Pallets < 0:
+		return fmt.Errorf("%w: pallets cannot be negative", ErrInvalidInput)
 	case input.AllocatedQty < 0 || input.DamagedQty < 0 || input.HoldQty < 0:
 		return fmt.Errorf("%w: inventory status quantities cannot be negative", ErrInvalidInput)
 	case input.AllocatedQty+input.DamagedQty+input.HoldQty > input.Quantity:
@@ -1564,11 +1532,8 @@ func (s *Store) deleteUnusedSKUMaster(ctx context.Context, tx *sql.Tx, skuMaster
 
 	var remainingCount int
 	if err := tx.QueryRowContext(ctx, `
-		SELECT
-			(SELECT COUNT(*) FROM inventory_items WHERE sku_master_id = ?)
-			+
-			(SELECT COUNT(*) FROM pallet_items WHERE sku_master_id = ?)
-	`, skuMasterID, skuMasterID).Scan(&remainingCount); err != nil {
+		SELECT COUNT(*) FROM inventory_items WHERE sku_master_id = ?
+	`, skuMasterID).Scan(&remainingCount); err != nil {
 		return fmt.Errorf("count bucket rows for sku master cleanup: %w", err)
 	}
 	if remainingCount > 0 {
@@ -1577,78 +1542,6 @@ func (s *Store) deleteUnusedSKUMaster(ctx context.Context, tx *sql.Tx, skuMaster
 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sku_master WHERE id = ?`, skuMasterID); err != nil {
 		return mapDBError(fmt.Errorf("delete unused sku master: %w", err))
-	}
-
-	return nil
-}
-
-func (s *Store) createSeedPalletForInventoryItemTx(
-	ctx context.Context,
-	tx *sql.Tx,
-	itemID int64,
-	skuMasterID int64,
-	input CreateItemInput,
-	deliveryDate *time.Time,
-	quantity int,
-	palletCode string,
-	sourceDocumentType string,
-	sourceDocumentID int64,
-	sourceLineID int64,
-	reason string,
-) error {
-	if itemID <= 0 || skuMasterID <= 0 || quantity <= 0 {
-		return nil
-	}
-
-	pallet, err := s.createPalletTx(ctx, tx, createPalletInput{
-		PalletCode:            strings.TrimSpace(palletCode),
-		ActualArrivalDate:     deliveryDate,
-		CustomerID:            input.CustomerID,
-		SKUMasterID:           skuMasterID,
-		CurrentLocationID:     input.LocationID,
-		CurrentStorageSection: input.StorageSection,
-		CurrentContainerNo:    input.ContainerNo,
-		Status:                PalletStatusOpen,
-	})
-	if err != nil {
-		return err
-	}
-
-	palletItemID, err := s.createPalletItemTx(ctx, tx, createPalletItemInput{
-		PalletID:     pallet.ID,
-		SKUMasterID:  skuMasterID,
-		Quantity:     quantity,
-		AllocatedQty: input.AllocatedQty,
-		DamagedQty:   input.DamagedQty,
-		HoldQty:      input.HoldQty,
-	})
-	if err != nil {
-		return err
-	}
-
-	if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
-		EventType:           StockLedgerEventReceive,
-		PalletID:            pallet.ID,
-		PalletItemID:        palletItemID,
-		SKUMasterID:         skuMasterID,
-		CustomerID:          input.CustomerID,
-		LocationID:          input.LocationID,
-		StorageSection:      input.StorageSection,
-		QuantityChange:      quantity,
-		SourceDocumentType:  sourceDocumentType,
-		SourceDocumentID:    sourceDocumentID,
-		SourceLineID:        sourceLineID,
-		ContainerNo:         input.ContainerNo,
-		DeliveryDate:        deliveryDate,
-		ItemNumber:          input.ItemNumber,
-		DescriptionSnapshot: input.Description,
-		ExpectedQty:         quantity,
-		ReceivedQty:         quantity,
-		Pallets:             1,
-		UnitLabel:           strings.ToUpper(firstNonEmpty(input.Unit, "PCS")),
-		Reason:              reason,
-	}); err != nil {
-		return err
 	}
 
 	return nil
@@ -1727,21 +1620,4 @@ func buildInClause(ids []int64) (string, []any) {
 		args[i] = id
 	}
 	return strings.Join(placeholders, ","), args
-}
-
-func (s *Store) collectPalletIDsByInboundDocumentTx(ctx context.Context, tx *sql.Tx, inboundDocumentID int64) ([]int64, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM pallets WHERE source_inbound_document_id = ? FOR UPDATE`, inboundDocumentID)
-	if err != nil {
-		return nil, mapDBError(fmt.Errorf("collect inbound pallet ids: %w", err))
-	}
-	defer rows.Close()
-	ids := make([]int64, 0)
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan pallet id: %w", err)
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
 }

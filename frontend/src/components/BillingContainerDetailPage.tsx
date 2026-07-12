@@ -134,8 +134,6 @@ export function BillingContainerDetailPage({
 		endDate,
 		customerId,
 		customers,
-		pallets: [],
-		palletLocationEvents: [],
 		containerLifecycleEvents,
 		inboundDocuments,
 		outboundDocuments,

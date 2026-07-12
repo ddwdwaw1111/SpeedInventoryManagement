@@ -43,8 +43,6 @@ type customerPortalContainerLifecycle struct {
 	PickingOrders   []service.OutboundDocument        `json:"pickingOrders"`
 	Movements       []service.Movement                `json:"movements"`
 	LifecycleEvents []service.ContainerLifecycleEvent `json:"lifecycleEvents"`
-	Pallets         []service.PalletTrace             `json:"pallets"`
-	PalletEvents    []service.PalletLocationEvent     `json:"palletEvents"`
 }
 
 type customerPortalContainerSummaryAccumulator struct {
@@ -125,24 +123,6 @@ func (s *Server) handleCustomerPortalContainerLifecycle(c *gin.Context) {
 		return
 	}
 
-	pallets, err := s.store.ListPallets(c.Request.Context(), customerPortalContainerLoadLimit, service.ListPalletFilters{
-		CustomerID:  customerID,
-		ContainerNo: containerNo,
-	})
-	if err != nil {
-		writeServerError(c, err)
-		return
-	}
-
-	palletEvents, err := s.store.ListPalletLocationEvents(c.Request.Context(), customerPortalContainerLoadLimit, service.ListPalletLocationEventFilters{
-		ContainerNo: containerNo,
-		CustomerID:  customerID,
-	})
-	if err != nil {
-		writeServerError(c, err)
-		return
-	}
-
 	lifecycleEvents, err := s.store.ListContainerLifecycleEvents(c.Request.Context(), customerPortalContainerLoadLimit, service.ContainerLifecycleEventFilters{
 		CustomerID:  customerID,
 		ContainerNo: containerNo,
@@ -171,8 +151,6 @@ func (s *Server) handleCustomerPortalContainerLifecycle(c *gin.Context) {
 		PickingOrders:   pickingOrders,
 		Movements:       movements,
 		LifecycleEvents: lifecycleEvents,
-		Pallets:         pallets,
-		PalletEvents:    palletEvents,
 	})
 }
 

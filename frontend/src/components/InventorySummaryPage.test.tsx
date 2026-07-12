@@ -46,7 +46,6 @@ vi.mock("@mui/x-data-grid", () => ({
 vi.mock("../lib/api", () => ({
   ApiError: class ApiError extends Error {},
   api: {
-    getPallets: vi.fn().mockResolvedValue([]),
     getUIPreference: vi.fn().mockResolvedValue({ value: null }),
     updateUIPreference: vi.fn().mockResolvedValue({ value: null })
   }
@@ -62,7 +61,6 @@ import { renderWithProviders } from "../test/renderWithProviders";
 import { createCustomer, createItem, createLocation } from "../test/fixtures";
 
 const mockedApi = api as unknown as {
-  getPallets: ReturnType<typeof vi.fn>;
   getUIPreference: ReturnType<typeof vi.fn>;
   updateUIPreference: ReturnType<typeof vi.fn>;
 };
@@ -84,13 +82,11 @@ describe("InventorySummaryPage", () => {
   beforeEach(() => {
     window.localStorage.clear();
     window.sessionStorage.clear();
-    mockedApi.getPallets.mockReset();
-    mockedApi.getPallets.mockResolvedValue([]);
   });
 
-  // ──────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Basic rendering
-  // ──────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   it("renders the page heading, search field, and filter dropdowns", () => {
     renderWithProviders(<InventorySummaryPage {...defaultProps()} />);
@@ -119,9 +115,9 @@ describe("InventorySummaryPage", () => {
     expect(within(grid).getByText("Apple Box")).toBeInTheDocument();
   });
 
-  // ──────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Summary stats strip
-  // ──────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   it("shows correct SKU count and on-hand total in the summary stats strip", () => {
     const { container } = renderWithProviders(
@@ -157,7 +153,7 @@ describe("InventorySummaryPage", () => {
 
     const grid = screen.getByTestId("mock-data-grid");
     const rows = within(grid).getAllByRole("row");
-    // Both items share the same customer+SKU key → 1 merged row
+    // Both items share the same customer+SKU key â†’ 1 merged row
     expect(rows).toHaveLength(1);
     // Combined on-hand shown
     expect(within(grid).getByText("25")).toBeInTheDocument();
@@ -181,9 +177,9 @@ describe("InventorySummaryPage", () => {
     expect(screen.queryByRole("combobox", { name: "Stock Health" })).not.toBeInTheDocument();
   });
 
-  // ──────────────────────────────────────────────────────────────
-  // Filtering — search
-  // ──────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Filtering â€” search
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   it("filters grid rows to only matching items when the user types a search term", async () => {
     renderWithProviders(
@@ -244,9 +240,9 @@ describe("InventorySummaryPage", () => {
     });
   });
 
-  // ──────────────────────────────────────────────────────────────
-  // Filtering — customer dropdown
-  // ──────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Filtering â€” customer dropdown
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   it("shows only the selected customer's items when the customer dropdown is changed", async () => {
     const customer1 = createCustomer({ id: 1, name: "Acme" });
@@ -275,55 +271,6 @@ describe("InventorySummaryPage", () => {
   });
 
   it("filters summary rows by the container aggregate type", async () => {
-    mockedApi.getPallets.mockResolvedValue([
-      {
-        id: 701,
-        parentPalletId: 0,
-        palletCode: "PLT-701",
-        containerVisitId: 1,
-        sourceInboundDocumentId: 1,
-        sourceInboundLineId: 1,
-        actualArrivalDate: "2026-04-01",
-        customerId: 1,
-        customerName: "Imperial Bag & Paper",
-        skuMasterId: 1,
-        sku: "SKU-NORMAL",
-        description: "Normal stock",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "TEMP",
-        currentContainerNo: "CONT-N",
-        containerType: "NORMAL",
-        status: "OPEN",
-        createdAt: "2026-04-01T10:00:00Z",
-        updatedAt: "2026-04-01T10:00:00Z",
-        contents: []
-      },
-      {
-        id: 702,
-        parentPalletId: 0,
-        palletCode: "PLT-702",
-        containerVisitId: 2,
-        sourceInboundDocumentId: 2,
-        sourceInboundLineId: 2,
-        actualArrivalDate: "2026-04-01",
-        customerId: 1,
-        customerName: "Imperial Bag & Paper",
-        skuMasterId: 2,
-        sku: "SKU-TRANSFER",
-        description: "Transfer stock",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "TEMP",
-        currentContainerNo: "CONT-T",
-        containerType: "WEST_COAST_TRANSFER",
-        status: "OPEN",
-        createdAt: "2026-04-01T11:00:00Z",
-        updatedAt: "2026-04-01T11:00:00Z",
-        contents: []
-      }
-    ]);
-
     renderWithProviders(
       <InventorySummaryPage
         {...defaultProps({
@@ -348,13 +295,13 @@ describe("InventorySummaryPage", () => {
     });
   });
 
-  // ──────────────────────────────────────────────────────────────
-  // Filtering — health filter
-  // ──────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Filtering â€” health filter
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-  // ──────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Session storage context pre-fill
-  // ──────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   it("pre-fills the search field from session storage context on mount", async () => {
     setPendingInventorySummaryContext({ searchTerm: "WIDGET", customerId: undefined });
@@ -368,7 +315,7 @@ describe("InventorySummaryPage", () => {
     await waitFor(() => {
       expect(screen.getByPlaceholderText(/SKU, description/i)).toHaveValue("WIDGET");
     });
-    // Context is consumed once — should not be set any more
+    // Context is consumed once â€” should not be set any more
     expect(window.sessionStorage.getItem("sim-inventory-summary-context")).toBeNull();
   });
 
@@ -392,9 +339,9 @@ describe("InventorySummaryPage", () => {
     });
   });
 
-  // ──────────────────────────────────────────────────────────────
-  // Row click → drawer
-  // ──────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Row click â†’ drawer
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   it("opens the details drawer showing warehouse and container breakdowns when a row is clicked", async () => {
     renderWithProviders(
@@ -431,85 +378,6 @@ describe("InventorySummaryPage", () => {
   });
 
   it("shows pallet counts in the container breakdown drawer rows", async () => {
-    mockedApi.getPallets.mockResolvedValue([
-      {
-        id: 501,
-        parentPalletId: 0,
-        palletCode: "PLT-501",
-        containerVisitId: 1,
-        sourceInboundDocumentId: 1,
-        sourceInboundLineId: 1,
-        actualArrivalDate: "2026-04-01",
-        customerId: 1,
-        customerName: "Imperial Bag & Paper",
-        skuMasterId: 1,
-        sku: "608333",
-        description: "VB22GC",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "TEMP",
-        currentContainerNo: "GCXU5817233",
-        containerType: "NORMAL",
-        status: "OPEN",
-        createdAt: "2026-04-01T10:00:00Z",
-        updatedAt: "2026-04-01T10:00:00Z",
-        contents: [
-          {
-            id: 601,
-            palletId: 501,
-            skuMasterId: 1,
-            itemNumber: "608333",
-            sku: "608333",
-            description: "VB22GC",
-            quantity: 10,
-            allocatedQty: 0,
-            damagedQty: 0,
-            holdQty: 0,
-            createdAt: "2026-04-01T10:00:00Z",
-            updatedAt: "2026-04-01T10:00:00Z"
-          }
-        ]
-      },
-      {
-        id: 502,
-        parentPalletId: 0,
-        palletCode: "PLT-502",
-        containerVisitId: 1,
-        sourceInboundDocumentId: 1,
-        sourceInboundLineId: 1,
-        actualArrivalDate: "2026-04-01",
-        customerId: 1,
-        customerName: "Imperial Bag & Paper",
-        skuMasterId: 1,
-        sku: "608333",
-        description: "VB22GC",
-        currentLocationId: 1,
-        currentLocationName: "NJ",
-        currentStorageSection: "TEMP",
-        currentContainerNo: "GCXU5817233",
-        containerType: "NORMAL",
-        status: "OPEN",
-        createdAt: "2026-04-01T11:00:00Z",
-        updatedAt: "2026-04-01T11:00:00Z",
-        contents: [
-          {
-            id: 602,
-            palletId: 502,
-            skuMasterId: 1,
-            itemNumber: "608333",
-            sku: "608333",
-            description: "VB22GC",
-            quantity: 10,
-            allocatedQty: 0,
-            damagedQty: 0,
-            holdQty: 0,
-            createdAt: "2026-04-01T11:00:00Z",
-            updatedAt: "2026-04-01T11:00:00Z"
-          }
-        ]
-      }
-    ]);
-
     renderWithProviders(
       <InventorySummaryPage
         {...defaultProps({
@@ -584,9 +452,9 @@ describe("InventorySummaryPage", () => {
     });
   });
 
-  // ──────────────────────────────────────────────────────────────
-  // Drawer — navigation actions
-  // ──────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Drawer â€” navigation actions
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   it("navigates to the adjustments page when the Inventory Adjustment button is clicked", async () => {
     const onNavigate = vi.fn();
@@ -689,15 +557,15 @@ describe("InventorySummaryPage", () => {
     fireEvent.click(screen.getByTestId("grid-row-1:608333"));
     await waitFor(() => expect(screen.getByRole("button", { name: "Inventory Adjustment" })).toBeInTheDocument());
 
-    // Navigate to adjustments — downstream context should be set in sessionStorage
+    // Navigate to adjustments â€” downstream context should be set in sessionStorage
     fireEvent.click(screen.getByRole("button", { name: "Inventory Adjustment" }));
 
     expect(onNavigate).toHaveBeenCalledWith("adjustments");
   });
 
-  // ──────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Role-based visibility
-  // ──────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   it("hides inventory action buttons for viewer-role users", async () => {
     renderWithProviders(
@@ -739,12 +607,12 @@ describe("InventorySummaryPage", () => {
     });
   });
 
-  // ──────────────────────────────────────────────────────────────
-  // Drawer — shows correct item count in meta section
-  // ──────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Drawer â€” shows correct item count in meta section
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   it("shows the correct current inventory rows count in the drawer meta section", async () => {
-    // Two items with the same SKU in different containers → merged row, count = 2
+    // Two items with the same SKU in different containers â†’ merged row, count = 2
     renderWithProviders(
       <InventorySummaryPage
         {...defaultProps({
