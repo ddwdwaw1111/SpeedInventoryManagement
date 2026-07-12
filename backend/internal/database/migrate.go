@@ -273,6 +273,18 @@ func applyBaselineSchemaMigration(db *sql.DB) error {
 				status = 'CONFIRMED'
 			WHERE UPPER(status) = 'POSTED'`,
 		`UPDATE inbound_documents
+			SET
+				status = CASE
+					WHEN archived_at IS NOT NULL OR UPPER(TRIM(status)) IN ('DELETED', 'CANCELLED') THEN 'DELETED'
+					WHEN UPPER(TRIM(status)) = 'CONFIRMED' THEN 'CONFIRMED'
+					ELSE 'DRAFT'
+				END,
+				cancelled_at = CASE
+					WHEN archived_at IS NOT NULL OR UPPER(TRIM(status)) IN ('DELETED', 'CANCELLED') THEN COALESCE(cancelled_at, archived_at, updated_at, created_at)
+					ELSE cancelled_at
+				END,
+				archived_at = NULL`,
+		`UPDATE inbound_documents
 			SET tracking_status = CASE
 				WHEN UPPER(status) IN ('CONFIRMED', 'POSTED') THEN 'RECEIVED'
 				ELSE 'SCHEDULED'
@@ -536,6 +548,12 @@ func applyBaselineSchemaMigration(db *sql.DB) error {
 				ON DELETE SET NULL
 		)`,
 		`ALTER TABLE document_attachments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL DEFAULT NULL AFTER uploaded_by_user_id`,
+		`UPDATE document_attachments da
+			JOIN inbound_documents d
+				ON da.document_type = 'INBOUND' AND da.document_id = d.id
+			SET da.deleted_at = COALESCE(da.deleted_at, d.cancelled_at, d.updated_at, CURRENT_TIMESTAMP)
+			WHERE UPPER(TRIM(d.status)) = 'DELETED'
+				AND da.deleted_at IS NULL`,
 		`CREATE INDEX IF NOT EXISTS idx_document_attachments_document ON document_attachments (document_type, document_id)`,
 		`CREATE TABLE IF NOT EXISTS pallets (
 			id BIGINT NOT NULL AUTO_INCREMENT,

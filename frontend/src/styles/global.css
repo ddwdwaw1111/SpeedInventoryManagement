@@ -5242,6 +5242,16 @@ textarea:focus {
   box-shadow: 0 30px 80px rgba(15, 34, 58, 0.24) !important;
 }
 
+.workspace-bulk-status-select {
+  min-height: 36px;
+  padding: 0.35rem 2rem 0.35rem 0.65rem;
+  border: 1px solid rgba(39, 76, 119, 0.24);
+  border-radius: 6px;
+  background: #fff;
+  color: #17324d;
+  font: inherit;
+}
+
 .bulk-inbound-dialog__title {
   display: flex;
   align-items: center;
@@ -5741,6 +5751,43 @@ textarea:focus {
   padding: 0.75rem 0.85rem 0.85rem;
 }
 
+.bulk-inbound-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(150px, 1fr));
+  gap: 0.6rem;
+}
+
+.bulk-inbound-edit-grid label {
+  display: grid;
+  gap: 0.3rem;
+  color: #52657a;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.bulk-inbound-edit-grid input,
+.bulk-inbound-edit-grid select,
+.bulk-inbound-line-table input {
+  min-width: 0;
+  height: 34px;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid rgba(39, 76, 119, 0.2);
+  border-radius: 6px;
+  background: #fff;
+  color: #17324d;
+  font: inherit;
+  text-transform: none;
+}
+
+.bulk-inbound-edit-grid input:focus,
+.bulk-inbound-edit-grid select:focus,
+.bulk-inbound-line-table input:focus {
+  border-color: #3976a8;
+  outline: 2px solid rgba(57, 118, 168, 0.14);
+}
+
 .bulk-inbound-issue-list {
   display: grid;
   gap: 0.35rem;
@@ -5781,7 +5828,7 @@ textarea:focus {
 
 .bulk-inbound-line-table {
   width: 100%;
-  min-width: 860px;
+  min-width: 1180px;
   border-collapse: collapse;
   font-size: 0.73rem;
 }
@@ -5811,6 +5858,14 @@ textarea:focus {
 
 .bulk-inbound-line-table tbody tr:last-child td {
   border-bottom: 0;
+}
+
+.bulk-inbound-line-table input {
+  width: 112px;
+}
+
+.bulk-inbound-line-table td:nth-child(3) input {
+  width: 190px;
 }
 
 .bulk-inbound-result__hero {

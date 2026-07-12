@@ -34,7 +34,6 @@ const (
 )
 
 const (
-	bulkFieldDocumentKey       = "documentKey"
 	bulkFieldContainerNo       = "containerNo"
 	bulkFieldWarehouse         = "warehouse"
 	bulkFieldActualArrivalDate = "actualArrivalDate"
@@ -98,6 +97,20 @@ type InboundBulkImportCommitInput struct {
 	Documents      []InboundBulkImportCommitDocument `json:"documents"`
 }
 
+type InboundBulkImportRevalidateDocument struct {
+	DocumentKey  string                     `json:"documentKey"`
+	LocationName string                     `json:"locationName"`
+	RowNumbers   []int                      `json:"rowNumbers"`
+	Input        CreateInboundDocumentInput `json:"input"`
+}
+
+type InboundBulkImportRevalidateInput struct {
+	ImportID       string                                `json:"importId"`
+	SourceFileName string                                `json:"sourceFileName"`
+	CustomerID     int64                                 `json:"customerId"`
+	Documents      []InboundBulkImportRevalidateDocument `json:"documents"`
+}
+
 type InboundBulkImportCommitResult struct {
 	DocumentKey string           `json:"documentKey"`
 	ContainerNo string           `json:"containerNo"`
@@ -152,6 +165,64 @@ func (s *Store) PreviewInboundBulkImport(ctx context.Context, fileName string, d
 		return InboundBulkImportPreview{}, fmt.Errorf("%w: only .xlsx files are supported", ErrInvalidInput)
 	}
 
+	parsedDocuments, err := parseInboundBulkImportWorkbook(fileName, data)
+	if err != nil {
+		return InboundBulkImportPreview{}, fmt.Errorf("%w: %s", ErrInvalidInput, err.Error())
+	}
+
+	preview, err := s.buildInboundBulkImportPreview(ctx, fileName, customerID, parsedDocuments)
+	if err != nil {
+		return InboundBulkImportPreview{}, err
+	}
+	preview.ImportID, err = newInboundBulkImportID()
+	if err != nil {
+		return InboundBulkImportPreview{}, err
+	}
+	return preview, nil
+}
+
+func (s *Store) RevalidateInboundBulkImport(ctx context.Context, input InboundBulkImportRevalidateInput) (InboundBulkImportPreview, error) {
+	importID, err := normalizeInboundBulkImportID(input.ImportID)
+	if err != nil {
+		return InboundBulkImportPreview{}, err
+	}
+	if input.CustomerID <= 0 {
+		return InboundBulkImportPreview{}, fmt.Errorf("%w: customer is required", ErrInvalidInput)
+	}
+	if len(input.Documents) == 0 || len(input.Documents) > MaxInboundBulkImportDocuments {
+		return InboundBulkImportPreview{}, fmt.Errorf("%w: between 1 and %d receipts are required", ErrInvalidInput, MaxInboundBulkImportDocuments)
+	}
+
+	locations, err := s.ListLocations(ctx)
+	if err != nil {
+		return InboundBulkImportPreview{}, err
+	}
+	locationsByID := make(map[int64]Location, len(locations))
+	for _, location := range locations {
+		locationsByID[location.ID] = location
+	}
+
+	parsedDocuments := make([]parsedInboundBulkDocument, 0, len(input.Documents))
+	totalLines := 0
+	for documentIndex, entry := range input.Documents {
+		document := parsedInboundBulkDocumentFromInput(entry, documentIndex, locationsByID)
+		totalLines += len(document.preview.Input.Lines)
+		if totalLines > MaxInboundBulkImportRows {
+			return InboundBulkImportPreview{}, fmt.Errorf("%w: no more than %d receipt lines can be imported at once", ErrInvalidInput, MaxInboundBulkImportRows)
+		}
+		parsedDocuments = append(parsedDocuments, document)
+	}
+	markDuplicateInboundBulkContainers(parsedDocuments)
+
+	preview, err := s.buildInboundBulkImportPreview(ctx, input.SourceFileName, input.CustomerID, parsedDocuments)
+	if err != nil {
+		return InboundBulkImportPreview{}, err
+	}
+	preview.ImportID = importID
+	return preview, nil
+}
+
+func (s *Store) buildInboundBulkImportPreview(ctx context.Context, fileName string, customerID int64, parsedDocuments []parsedInboundBulkDocument) (InboundBulkImportPreview, error) {
 	customer, err := s.getCustomer(ctx, customerID)
 	if err != nil {
 		return InboundBulkImportPreview{}, err
@@ -160,12 +231,6 @@ func (s *Store) PreviewInboundBulkImport(ctx context.Context, fileName string, d
 	if err != nil {
 		return InboundBulkImportPreview{}, err
 	}
-
-	parsedDocuments, err := parseInboundBulkImportWorkbook(fileName, data)
-	if err != nil {
-		return InboundBulkImportPreview{}, fmt.Errorf("%w: %s", ErrInvalidInput, err.Error())
-	}
-
 	skuMasters, err := s.ListSKUMasters(ctx, "", customerID)
 	if err != nil {
 		return InboundBulkImportPreview{}, err
@@ -180,13 +245,7 @@ func (s *Store) PreviewInboundBulkImport(ctx context.Context, fileName string, d
 	if err != nil {
 		return InboundBulkImportPreview{}, err
 	}
-
-	preview := buildInboundBulkImportPreview(fileName, customer, locations, skuMasters, existingContainers, parsedDocuments)
-	preview.ImportID, err = newInboundBulkImportID()
-	if err != nil {
-		return InboundBulkImportPreview{}, err
-	}
-	return preview, nil
+	return buildInboundBulkImportPreview(fileName, customer, locations, skuMasters, existingContainers, parsedDocuments), nil
 }
 
 func (s *Store) CreateInboundDocumentsBulkDraft(ctx context.Context, input InboundBulkImportCommitInput) (InboundBulkImportCommitResponse, error) {
@@ -225,26 +284,18 @@ func (s *Store) CreateInboundDocumentsBulkDraft(ctx context.Context, input Inbou
 		TotalDocuments: len(input.Documents),
 		Results:        make([]InboundBulkImportCommitResult, 0, len(input.Documents)),
 	}
-	seenDocumentKeys := make(map[string]struct{}, len(input.Documents))
 	seenContainerNos := make(map[string]struct{}, len(input.Documents))
 
 	for index, entry := range input.Documents {
-		documentKey := strings.TrimSpace(strings.ToUpper(entry.DocumentKey))
+		containerNo := strings.TrimSpace(strings.ToUpper(entry.Input.ContainerNo))
+		documentKey := containerNo
 		if documentKey == "" {
-			documentKey = fmt.Sprintf("DOCUMENT-%d", index+1)
+			documentKey = fmt.Sprintf("ROW-%d", index+1)
 		}
 		result := InboundBulkImportCommitResult{
 			DocumentKey: documentKey,
-			ContainerNo: strings.TrimSpace(strings.ToUpper(entry.Input.ContainerNo)),
+			ContainerNo: containerNo,
 		}
-
-		if _, exists := seenDocumentKeys[documentKey]; exists {
-			result.Error = "duplicate Document Key in import request"
-			response.FailedDocuments++
-			response.Results = append(response.Results, result)
-			continue
-		}
-		seenDocumentKeys[documentKey] = struct{}{}
 
 		documentInput := entry.Input
 		documentInput.CustomerID = input.CustomerID
@@ -310,7 +361,7 @@ func (s *Store) CreateInboundDocumentsBulkDraft(ctx context.Context, input Inbou
 			return InboundBulkImportCommitResponse{}, err
 		} else if found {
 			if existing.PayloadHash != payloadHash {
-				result.Error = "import Document Key was already used with different receipt data"
+				result.Error = "this import already contains different receipt data for the same Container No"
 				response.FailedDocuments++
 				response.Results = append(response.Results, result)
 				continue
@@ -401,6 +452,133 @@ func inboundBulkImportPayloadHash(documentKey string, input CreateInboundDocumen
 	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:]), nil
+}
+
+func parsedInboundBulkDocumentFromInput(
+	entry InboundBulkImportRevalidateDocument,
+	documentIndex int,
+	locationsByID map[int64]Location,
+) parsedInboundBulkDocument {
+	input := entry.Input
+	input.ContainerNo = strings.TrimSpace(strings.ToUpper(input.ContainerNo))
+	input.ActualArrivalDate = strings.TrimSpace(input.ActualArrivalDate)
+	containerType, validContainerType := normalizeInboundBulkContainerType(input.ContainerType)
+	handlingMode, validHandlingMode := normalizeInboundBulkHandlingMode(input.HandlingMode)
+	input.ContainerType = containerType
+	input.HandlingMode = handlingMode
+	input.Status = DocumentStatusDraft
+	input.TrackingStatus = InboundTrackingScheduled
+	input.UnitLabel = "CTN"
+
+	rowNumbers := append([]int(nil), entry.RowNumbers...)
+	firstRow := firstInboundBulkRowNumber(rowNumbers)
+	if firstRow <= 0 {
+		firstRow = documentIndex + 1
+	}
+	issues := make([]InboundBulkImportIssue, 0)
+	if input.ContainerNo == "" {
+		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "MISSING_CONTAINER_NO", "Container No is required.", firstRow, bulkFieldContainerNo, ""))
+	}
+	if !validContainerType {
+		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "INVALID_CONTAINER_TYPE", "Container Type must be NORMAL or WEST_COAST_TRANSFER.", firstRow, bulkFieldContainerType, entry.Input.ContainerType))
+	}
+	if !validHandlingMode {
+		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "INVALID_HANDLING_MODE", "Handling Mode must be PALLETIZED or SEALED_TRANSIT.", firstRow, bulkFieldHandlingMode, entry.Input.HandlingMode))
+	}
+	if normalizedDate, valid := normalizeInboundBulkDate(input.ActualArrivalDate); !valid {
+		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "INVALID_ACTUAL_DATE", "Actual Arrival Date must use YYYY-MM-DD.", firstRow, bulkFieldActualArrivalDate, input.ActualArrivalDate))
+	} else if normalizedDate == "" {
+		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "MISSING_ACTUAL_DATE", "Actual Arrival Date is required.", firstRow, bulkFieldActualArrivalDate, ""))
+	} else {
+		input.ActualArrivalDate = normalizedDate
+	}
+
+	locationName := strings.TrimSpace(entry.LocationName)
+	if location, exists := locationsByID[input.LocationID]; exists {
+		locationName = location.Name
+	}
+	if input.LocationID <= 0 && locationName == "" {
+		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "MISSING_WAREHOUSE", "Warehouse is required.", firstRow, bulkFieldWarehouse, ""))
+	}
+
+	lineRows := make([]int, len(input.Lines))
+	if len(input.Lines) == 0 {
+		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "MISSING_SKU", "At least one SKU line is required.", firstRow, bulkFieldSKU, ""))
+	}
+	for lineIndex := range input.Lines {
+		rowNumber := firstRow + lineIndex
+		if lineIndex < len(rowNumbers) && rowNumbers[lineIndex] > 0 {
+			rowNumber = rowNumbers[lineIndex]
+		}
+		lineRows[lineIndex] = rowNumber
+		line := &input.Lines[lineIndex]
+		line.SKU = strings.TrimSpace(strings.ToUpper(line.SKU))
+		line.ItemNumber = strings.TrimSpace(strings.ToUpper(line.ItemNumber))
+		line.Description = strings.TrimSpace(line.Description)
+		line.StorageSection = fallbackSection(strings.TrimSpace(strings.ToUpper(line.StorageSection)))
+		line.LineNote = strings.TrimSpace(line.LineNote)
+		if line.SKU == "" {
+			issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "MISSING_SKU", "SKU is required.", rowNumber, bulkFieldSKU, ""))
+		}
+		if line.ExpectedQty < 0 {
+			issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "INVALID_EXPECTED_QTY", "Expected Qty must be a non-negative whole number.", rowNumber, bulkFieldExpectedQty, strconv.Itoa(line.ExpectedQty)))
+		}
+		if line.ReceivedQty < 0 {
+			issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "INVALID_RECEIVED_QTY", "Received Qty must be a non-negative whole number.", rowNumber, bulkFieldReceivedQty, strconv.Itoa(line.ReceivedQty)))
+		}
+		if line.Pallets < 0 {
+			issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "INVALID_PALLETS", "Pallets must be a non-negative whole number.", rowNumber, bulkFieldPallets, strconv.Itoa(line.Pallets)))
+		}
+		if line.UnitsPerPallet < 0 {
+			issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "INVALID_CTN_PER_PALLET", "CTN per Pallet must be a non-negative whole number.", rowNumber, bulkFieldUnitsPerPallet, strconv.Itoa(line.UnitsPerPallet)))
+		}
+		if line.ExpectedQty == 0 && line.ReceivedQty == 0 {
+			issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "QUANTITY_REQUIRED", "Expected Qty or Received Qty is required.", rowNumber, bulkFieldReceivedQty, ""))
+		}
+	}
+
+	documentKey := strings.TrimSpace(entry.DocumentKey)
+	if documentKey == "" {
+		documentKey = input.ContainerNo
+	}
+	if documentKey == "" {
+		documentKey = fmt.Sprintf("ROW-%d", firstRow)
+	}
+	return parsedInboundBulkDocument{
+		preview: InboundBulkImportDocumentPreview{
+			DocumentKey:  documentKey,
+			LocationName: locationName,
+			RowNumbers:   rowNumbers,
+			Input:        input,
+			Issues:       issues,
+		},
+		lineRows: lineRows,
+	}
+}
+
+func markDuplicateInboundBulkContainers(documents []parsedInboundBulkDocument) {
+	indexesByContainer := make(map[string][]int)
+	for index := range documents {
+		containerNo := strings.TrimSpace(strings.ToUpper(documents[index].preview.Input.ContainerNo))
+		if containerNo != "" {
+			indexesByContainer[containerNo] = append(indexesByContainer[containerNo], index)
+		}
+	}
+	for containerNo, indexes := range indexesByContainer {
+		if len(indexes) < 2 {
+			continue
+		}
+		for _, index := range indexes {
+			documents[index].preview.Issues = append(documents[index].preview.Issues, inboundBulkIssue(
+				InboundBulkIssueError,
+				"DUPLICATE_CONTAINER_IN_PREVIEW",
+				"Each receipt in the preview must use a unique Container No.",
+				firstInboundBulkRowNumber(documents[index].preview.RowNumbers),
+				bulkFieldContainerNo,
+				containerNo,
+			))
+		}
+	}
 }
 
 func (s *Store) getInboundBulkImportRecord(ctx context.Context, importKey string) (inboundBulkImportRecord, bool, error) {
@@ -538,9 +716,9 @@ func parseInboundBulkImportWorkbook(fileName string, data []byte) ([]parsedInbou
 			return nil, fmt.Errorf("the workbook exceeds the %d row limit", MaxInboundBulkImportRows)
 		}
 		rowNumber := rowIndex + 1
-		documentKey := strings.TrimSpace(strings.ToUpper(inboundBulkCell(row, columns[bulkFieldDocumentKey])))
-		missingDocumentKey := documentKey == ""
-		if missingDocumentKey {
+		headerValues, headerIssues := parseInboundBulkHeaderValues(row, rowNumber, columns)
+		documentKey := headerValues.ContainerNo
+		if documentKey == "" {
 			documentKey = fmt.Sprintf("ROW-%d", rowNumber)
 		}
 
@@ -549,7 +727,6 @@ func parseInboundBulkImportWorkbook(fileName string, data []byte) ([]parsedInbou
 			if len(documents) >= MaxInboundBulkImportDocuments {
 				return nil, fmt.Errorf("the workbook exceeds the %d receipt limit", MaxInboundBulkImportDocuments)
 			}
-			headerValues, headerIssues := parseInboundBulkHeaderValues(row, rowNumber, columns)
 			documents = append(documents, parsedInboundBulkDocument{
 				preview: InboundBulkImportDocumentPreview{
 					DocumentKey:  documentKey,
@@ -577,16 +754,6 @@ func parseInboundBulkImportWorkbook(fileName string, data []byte) ([]parsedInbou
 		}
 
 		document := &documents[documentIndex]
-		if missingDocumentKey {
-			document.preview.Issues = append(document.preview.Issues, inboundBulkIssue(
-				InboundBulkIssueError,
-				"MISSING_DOCUMENT_KEY",
-				"Document Key is required.",
-				rowNumber,
-				bulkFieldDocumentKey,
-				"",
-			))
-		}
 		line, lineIssues := parseInboundBulkLine(row, rowNumber, columns)
 		document.preview.Issues = append(document.preview.Issues, lineIssues...)
 		document.preview.Input.Lines = append(document.preview.Input.Lines, line)
@@ -601,7 +768,6 @@ func parseInboundBulkImportWorkbook(fileName string, data []byte) ([]parsedInbou
 
 func findInboundBulkImportHeader(rows [][]string) (int, map[string]int, error) {
 	requiredFields := []string{
-		bulkFieldDocumentKey,
 		bulkFieldContainerNo,
 		bulkFieldWarehouse,
 		bulkFieldActualArrivalDate,
@@ -638,8 +804,6 @@ func findInboundBulkImportHeader(rows [][]string) (int, map[string]int, error) {
 func canonicalInboundBulkHeader(value string) string {
 	normalized := normalizeInboundBulkHeader(value)
 	aliases := map[string]string{
-		"DOCUMENTKEY":       bulkFieldDocumentKey,
-		"RECEIPTKEY":        bulkFieldDocumentKey,
 		"CONTAINERNO":       bulkFieldContainerNo,
 		"CONTAINERNUMBER":   bulkFieldContainerNo,
 		"WAREHOUSE":         bulkFieldWarehouse,
@@ -680,7 +844,6 @@ func normalizeInboundBulkHeader(value string) string {
 
 func inboundBulkTemplateHeader(field string) string {
 	headers := map[string]string{
-		bulkFieldDocumentKey:       "Document Key",
 		bulkFieldContainerNo:       "Container No",
 		bulkFieldWarehouse:         "Warehouse",
 		bulkFieldActualArrivalDate: "Actual Arrival Date",
@@ -757,7 +920,7 @@ func applyInboundBulkHeaderValues(document *InboundBulkImportDocumentPreview, ro
 			document.Issues = append(document.Issues, inboundBulkIssue(
 				InboundBulkIssueError,
 				"HEADER_CONFLICT",
-				fmt.Sprintf("Rows with the same Document Key have conflicting %s values.", inboundBulkTemplateHeader(candidate.field)),
+				fmt.Sprintf("Rows with the same Container No have conflicting %s values.", inboundBulkTemplateHeader(candidate.field)),
 				rowNumber,
 				candidate.field,
 				candidate.next,
@@ -832,7 +995,6 @@ func buildInboundBulkImportPreview(
 	}
 	usedLocations := make(map[int64]struct{})
 
-	containerDocuments := make(map[string][]int)
 	for index := range parsedDocuments {
 		document := &parsedDocuments[index]
 		document.preview.Input.CustomerID = customer.ID
@@ -967,25 +1129,6 @@ func buildInboundBulkImportPreview(
 				InboundBulkIssueWarning,
 				"EXISTING_CONTAINER",
 				"An active receipt already uses this Container No.",
-				0,
-				bulkFieldContainerNo,
-				containerNo,
-			))
-		}
-		if containerNo != "" {
-			containerDocuments[containerNo] = append(containerDocuments[containerNo], index)
-		}
-	}
-
-	for containerNo, indexes := range containerDocuments {
-		if len(indexes) < 2 {
-			continue
-		}
-		for _, index := range indexes {
-			parsedDocuments[index].preview.Issues = append(parsedDocuments[index].preview.Issues, inboundBulkIssue(
-				InboundBulkIssueError,
-				"DUPLICATE_CONTAINER_IN_FILE",
-				"The same Container No is assigned to multiple Document Keys in this file.",
 				0,
 				bulkFieldContainerNo,
 				containerNo,

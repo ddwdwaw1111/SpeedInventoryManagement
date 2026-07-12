@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -168,7 +169,10 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 		limit = 50
 	}
 
-	whereClauses := []string{buildDocumentArchiveFilterClause("d", filters.ArchiveScope)}
+	whereClauses := []string{
+		buildDocumentArchiveFilterClause("d", filters.ArchiveScope),
+		"UPPER(TRIM(d.status)) NOT IN ('DELETED', 'CANCELLED')",
+	}
 	args := make([]any, 0, 16)
 	if filters.CustomerID > 0 {
 		whereClauses = append(whereClauses, "d.customer_id = ?")
@@ -779,6 +783,74 @@ func (s *Store) ConfirmInboundDocument(ctx context.Context, documentID int64) (I
 	return s.getInboundDocument(ctx, documentID)
 }
 
+const MaxBulkUpdateInboundDocuments = 100
+
+type BulkUpdateInboundDocumentStatusInput struct {
+	DocumentIDs []int64 `json:"documentIds"`
+	Status      string  `json:"status"`
+}
+
+type BulkUpdateInboundDocumentStatusResponse struct {
+	UpdatedDocuments int               `json:"updatedDocuments"`
+	Status           string            `json:"status"`
+	Documents        []InboundDocument `json:"documents"`
+}
+
+func (s *Store) BulkUpdateInboundDocumentStatus(ctx context.Context, input BulkUpdateInboundDocumentStatusInput) (BulkUpdateInboundDocumentStatusResponse, error) {
+	targetStatus := strings.TrimSpace(strings.ToUpper(input.Status))
+	if targetStatus != DocumentStatusConfirmed && targetStatus != DocumentStatusDeleted {
+		return BulkUpdateInboundDocumentStatusResponse{}, fmt.Errorf("%w: bulk receipt status must be confirmed or deleted", ErrInvalidInput)
+	}
+	if len(input.DocumentIDs) == 0 || len(input.DocumentIDs) > MaxBulkUpdateInboundDocuments {
+		return BulkUpdateInboundDocumentStatusResponse{}, fmt.Errorf("%w: between 1 and %d receipt IDs are required", ErrInvalidInput, MaxBulkUpdateInboundDocuments)
+	}
+
+	documentIDs := append([]int64(nil), input.DocumentIDs...)
+	sort.Slice(documentIDs, func(left, right int) bool { return documentIDs[left] < documentIDs[right] })
+	for index, documentID := range documentIDs {
+		if documentID <= 0 {
+			return BulkUpdateInboundDocumentStatusResponse{}, fmt.Errorf("%w: receipt IDs must be positive", ErrInvalidInput)
+		}
+		if index > 0 && documentID == documentIDs[index-1] {
+			return BulkUpdateInboundDocumentStatusResponse{}, fmt.Errorf("%w: duplicate receipt ID %d", ErrInvalidInput, documentID)
+		}
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return BulkUpdateInboundDocumentStatusResponse{}, fmt.Errorf("begin inbound bulk status transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	for _, documentID := range documentIDs {
+		if targetStatus == DocumentStatusConfirmed {
+			if err := s.confirmInboundDocumentTx(ctx, tx, documentID); err != nil {
+				return BulkUpdateInboundDocumentStatusResponse{}, fmt.Errorf("confirm receipt %d: %w", documentID, err)
+			}
+		} else if _, err := s.deleteInboundDocumentTx(ctx, tx, documentID); err != nil {
+			return BulkUpdateInboundDocumentStatusResponse{}, fmt.Errorf("delete receipt %d: %w", documentID, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return BulkUpdateInboundDocumentStatusResponse{}, fmt.Errorf("commit inbound bulk status: %w", err)
+	}
+
+	response := BulkUpdateInboundDocumentStatusResponse{
+		UpdatedDocuments: len(documentIDs),
+		Status:           targetStatus,
+		Documents:        make([]InboundDocument, 0, len(documentIDs)),
+	}
+	for _, documentID := range documentIDs {
+		document, err := s.getInboundDocument(ctx, documentID)
+		if err != nil {
+			return BulkUpdateInboundDocumentStatusResponse{}, err
+		}
+		response.Documents = append(response.Documents, document)
+	}
+	return response, nil
+}
+
 func (s *Store) UpdateInboundDocumentTrackingStatus(ctx context.Context, documentID int64, trackingStatus string) (InboundDocument, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1081,46 +1153,52 @@ func (s *Store) CancelInboundDocument(ctx context.Context, documentID int64) (In
 	}
 	defer tx.Rollback()
 
-	documentRow, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID)
-	if err != nil {
+	if _, err := s.deleteInboundDocumentTx(ctx, tx, documentID); err != nil {
 		return InboundDocument{}, err
-	}
-
-	status := normalizeDocumentStatus(documentRow.Status)
-	if status == DocumentStatusDeleted {
-		return InboundDocument{}, fmt.Errorf("%w: inbound document is already deleted", ErrInvalidInput)
-	}
-
-	deletedAt := time.Now().UTC()
-
-	if status == DocumentStatusConfirmed {
-		if err := s.reverseConfirmedInboundInventoryTx(ctx, tx, documentRow, deletedAt); err != nil {
-			return InboundDocument{}, err
-		}
-	}
-
-	if err := markDocumentAttachmentsDeletedForDocument(ctx, tx, DocumentAttachmentInbound, documentID); err != nil {
-		return InboundDocument{}, err
-	}
-
-	// Delete inbound document (cascades to inbound_document_lines, container_visits)
-	if _, err := tx.ExecContext(ctx, `DELETE FROM inbound_documents WHERE id = ?`, documentID); err != nil {
-		return InboundDocument{}, mapDBError(fmt.Errorf("delete inbound document: %w", err))
 	}
 
 	if err := tx.Commit(); err != nil {
 		return InboundDocument{}, fmt.Errorf("commit inbound cancel: %w", err)
 	}
 
-	return InboundDocument{
-		ID:          documentRow.ID,
-		CustomerID:  documentRow.CustomerID,
-		LocationID:  documentRow.LocationID,
-		ContainerNo: documentRow.ContainerNo,
-		Status:      DocumentStatusDeleted,
-		DeletedAt:   &deletedAt,
-		CreatedAt:   documentRow.CreatedAt,
-	}, nil
+	return s.getInboundDocument(ctx, documentID)
+}
+
+func (s *Store) deleteInboundDocumentTx(ctx context.Context, tx *sql.Tx, documentID int64) (time.Time, error) {
+	documentRow, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	status := normalizeDocumentStatus(documentRow.Status)
+	if status == DocumentStatusDeleted {
+		return time.Time{}, fmt.Errorf("%w: inbound document is already deleted", ErrInvalidInput)
+	}
+
+	deletedAt := time.Now().UTC()
+	if status == DocumentStatusConfirmed {
+		if err := s.reverseConfirmedInboundInventoryTx(ctx, tx, documentRow, deletedAt); err != nil {
+			return time.Time{}, err
+		}
+	}
+	if err := markDocumentAttachmentsDeletedForDocument(ctx, tx, DocumentAttachmentInbound, documentID); err != nil {
+		return time.Time{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM container_visits WHERE inbound_document_id = ?`, documentID); err != nil {
+		return time.Time{}, mapDBError(fmt.Errorf("delete inbound container visit: %w", err))
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE inbound_documents
+		SET
+			status = ?,
+			cancelled_at = ?,
+			archived_at = NULL,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, DocumentStatusDeleted, deletedAt, documentID); err != nil {
+		return time.Time{}, mapDBError(fmt.Errorf("mark inbound document deleted: %w", err))
+	}
+	return deletedAt, nil
 }
 
 func (s *Store) ArchiveInboundDocument(ctx context.Context, documentID int64) (InboundDocument, error) {

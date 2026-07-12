@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { useI18n } from "../lib/i18n";
 import { customerPortalApi } from "./api";
 import {
-  documentStatusOptions,
+  packingListDocumentStatusOptions,
   formatPackingListCompletionStatus,
   formatPackingListTrackingStatus,
   formatPackingListTrackingStatusFilterLabel,
@@ -110,7 +110,7 @@ export function CustomerPortalPackingListsPage({
             onKeyDown={handleKeyDown}
           />
           <NativeSelect value={status} onChange={(event) => setStatus(event.target.value)} disabled={loading} aria-label={t("status")}>
-            {documentStatusOptions.map((option) => (
+            {packingListDocumentStatusOptions.map((option) => (
               <option key={option} value={option}>{option === "all" ? t("all") : t(option.toLowerCase())}</option>
             ))}
           </NativeSelect>

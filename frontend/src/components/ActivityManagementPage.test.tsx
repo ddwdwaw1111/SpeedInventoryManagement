@@ -4,20 +4,55 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockedDownloadOutboundPickSheetPdfFromDocument = vi.fn();
 
 vi.mock("@mui/x-data-grid", () => ({
+  GRID_CHECKBOX_SELECTION_COL_DEF: { field: "__check__", width: 48 },
+  gridPaginatedVisibleSortedGridRowIdsSelector: vi.fn(() => []),
+  useGridApiContext: () => ({ current: { isRowSelectable: vi.fn(() => true) } }),
+  useGridSelector: vi.fn(() => []),
   DataGrid: ({
     rows = [],
-    columns = []
+    columns = [],
+    checkboxSelection = false,
+    rowSelectionModel,
+    onRowSelectionModelChange,
+    isRowSelectable
   }: {
     rows?: Array<Record<string, unknown>>;
     columns?: Array<{
       field: string;
       renderCell?: (params: { row: Record<string, unknown>; value: unknown; field: string; id: unknown }) => React.ReactNode;
     }>;
+    checkboxSelection?: boolean;
+    rowSelectionModel?: { type: "include" | "exclude"; ids: Set<unknown> };
+    onRowSelectionModelChange?: (model: { type: "include" | "exclude"; ids: Set<unknown> }) => void;
+    isRowSelectable?: (params: { row: Record<string, unknown> }) => boolean;
   }) => (
     <div data-testid="mock-data-grid">
+      {checkboxSelection ? (
+        <button
+          type="button"
+          aria-label="Select all rows"
+          onClick={() => onRowSelectionModelChange?.({ type: "include", ids: new Set(rows.map((row) => row.id)) })}
+        >
+          Select all rows
+        </button>
+      ) : null}
       {rows.map((row, rowIndex) => (
         <div key={String(row.id ?? rowIndex)}>
-          {columns.map((column) => (
+          {checkboxSelection ? (
+            <input
+              type="checkbox"
+              aria-label={`Select row ${String(row.id)}`}
+              checked={rowSelectionModel?.ids.has(row.id) ?? false}
+              disabled={isRowSelectable ? !isRowSelectable({ row }) : false}
+              onChange={(event) => {
+                const ids = new Set(rowSelectionModel?.ids ?? []);
+                if (event.target.checked) ids.add(row.id);
+                else ids.delete(row.id);
+                onRowSelectionModelChange?.({ type: "include", ids });
+              }}
+            />
+          ) : null}
+          {columns.filter((column) => column.field !== "__check__").map((column) => (
             <div key={column.field}>
               {column.renderCell
                 ? column.renderCell({
@@ -58,6 +93,7 @@ vi.mock("../lib/api", () => ({
     createInboundDocument: vi.fn(),
     createOutboundDocument: vi.fn(),
     updateInboundDocument: vi.fn(),
+    bulkUpdateInboundDocumentStatus: vi.fn(),
     copyInboundDocument: vi.fn()
   }
 }));
@@ -67,7 +103,7 @@ vi.mock("../lib/outboundPickSheetPdf", () => ({
 }));
 
 import { api } from "../lib/api";
-import { ActivityManagementPage, buildOutboundSourceOptionsFromItems, buildPickSheetExportDocument } from "./ActivityManagementPage";
+import { ActivityManagementPage, buildOutboundSourceOptionsFromItems, buildPickSheetExportDocument, toggleCurrentPageRowSelection } from "./ActivityManagementPage";
 import { renderWithProviders } from "../test/renderWithProviders";
 import {
   createCustomer,
@@ -87,6 +123,7 @@ const mockedApi = api as unknown as {
   createInboundDocument: ReturnType<typeof vi.fn>;
   createOutboundDocument: ReturnType<typeof vi.fn>;
   updateInboundDocument: ReturnType<typeof vi.fn>;
+  bulkUpdateInboundDocumentStatus: ReturnType<typeof vi.fn>;
   copyInboundDocument: ReturnType<typeof vi.fn>;
 };
 
@@ -97,6 +134,7 @@ describe("ActivityManagementPage", () => {
     mockedApi.createInboundDocument.mockReset();
     mockedApi.createOutboundDocument.mockReset();
     mockedApi.updateInboundDocument.mockReset();
+    mockedApi.bulkUpdateInboundDocumentStatus.mockReset();
     mockedApi.copyInboundDocument.mockReset();
     mockedDownloadOutboundPickSheetPdfFromDocument.mockReset();
     mockedApi.getInboundDocuments.mockResolvedValue([]);
@@ -148,6 +186,128 @@ describe("ActivityManagementPage", () => {
       });
     });
     expect(await screen.findByText("FILT-IN-42")).toBeInTheDocument();
+  });
+
+  it("toggles selection for the current page without clearing other pages", () => {
+    const initial = { type: "include" as const, ids: new Set<string | number>([1]) };
+    const selected = toggleCurrentPageRowSelection(initial, [2, 3], 100);
+    expect([...selected.selection.ids]).toEqual([1, 2, 3]);
+    expect(selected.exceeded).toBe(false);
+
+    const deselected = toggleCurrentPageRowSelection(selected.selection, [2, 3], 100);
+    expect([...deselected.selection.ids]).toEqual([1]);
+  });
+
+  it("bulk updates the selected draft receipts to confirmed", async () => {
+    const first = createInboundDocument({ id: 11, containerNo: "BULK-11", status: "DRAFT" });
+    const second = createInboundDocument({ id: 12, containerNo: "BULK-12", status: "DRAFT" });
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    mockedApi.bulkUpdateInboundDocumentStatus.mockResolvedValue({
+      updatedDocuments: 2,
+      status: "CONFIRMED",
+      documents: [{ ...first, status: "CONFIRMED" }, { ...second, status: "CONFIRMED" }]
+    });
+
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="IN"
+        items={[]}
+        skuMasters={[]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        movements={[]}
+        inboundDocuments={[first, second]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={onRefresh}
+      />
+    );
+
+    fireEvent.click(screen.getByLabelText("Select row 11"));
+    fireEvent.click(screen.getByLabelText("Select row 12"));
+    fireEvent.change(screen.getByLabelText("Target status"), { target: { value: "CONFIRMED" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply to 2 selected" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirmed" }));
+
+    await waitFor(() => expect(mockedApi.bulkUpdateInboundDocumentStatus).toHaveBeenCalledWith([11, 12], "CONFIRMED"));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("Updated 2 receipt statuses.")).toBeInTheDocument();
+  });
+
+  it("does not offer direct confirmation for sealed-transit drafts", () => {
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="IN"
+        items={[]}
+        skuMasters={[]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        movements={[]}
+        inboundDocuments={[createInboundDocument({ id: 13, status: "DRAFT", handlingMode: "SEALED_TRANSIT" })]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: "Edit Draft" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm Receipt" })).not.toBeInTheDocument();
+  });
+
+  it("hides deleted receipts from the operational list", () => {
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="IN"
+        items={[]}
+        skuMasters={[]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        movements={[]}
+        inboundDocuments={[
+          createInboundDocument({ id: 21, containerNo: "ACTIVE-21", status: "DRAFT" }),
+          createInboundDocument({ id: 22, containerNo: "DELETED-22", status: "DELETED", deletedAt: "2026-07-12T12:00:00Z" })
+        ]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    expect(screen.getByText("ACTIVE-21")).toBeInTheDocument();
+    expect(screen.queryByText("DELETED-22")).not.toBeInTheDocument();
+    const statusFilter = screen.getByLabelText("Status") as HTMLSelectElement;
+    expect([...statusFilter.options].map((option) => option.value)).toEqual(["all", "DRAFT", "CONFIRMED"]);
+  });
+
+  it("caps bulk receipt status selection at the backend limit", () => {
+    const documents = Array.from({ length: 101 }, (_, index) => createInboundDocument({
+      id: index + 1,
+      containerNo: `LIMIT-${index + 1}`,
+      status: "DRAFT"
+    }));
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="IN"
+        items={[]}
+        skuMasters={[]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        movements={[]}
+        inboundDocuments={documents}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Select all rows" }));
+
+    expect(screen.getByRole("button", { name: "Apply to 0 selected" })).toBeInTheDocument();
+    expect(screen.getAllByText("Select no more than 100 receipts at a time.").length).toBeGreaterThan(0);
   });
 
   it("loads outbound documents from the backend when customer, warehouse, or status filters change", async () => {
@@ -380,18 +540,18 @@ describe("ActivityManagementPage", () => {
     expect(screen.queryByText("STALE-IN-55")).not.toBeInTheDocument();
   });
 
-  it("requests archived documents by archive scope instead of status", async () => {
-    const archivedDocument = createInboundDocument({
+  it("keeps archived documents as an outbound-only filter", async () => {
+    const archivedDocument = createOutboundDocument({
       id: 64,
-      containerNo: "ARCHIVED-IN-64",
+      packingListNo: "ARCHIVED-OUT-64",
       archivedAt: "2026-03-25T10:00:00Z",
       status: "CONFIRMED"
     });
-    mockedApi.getInboundDocuments.mockResolvedValue([archivedDocument]);
+    mockedApi.getOutboundDocuments.mockResolvedValue([archivedDocument]);
 
     renderWithProviders(
       <ActivityManagementPage
-        mode="IN"
+        mode="OUT"
         items={[]}
         skuMasters={[]}
         locations={[createLocation()]}
@@ -408,14 +568,14 @@ describe("ActivityManagementPage", () => {
     fireEvent.change(screen.getByLabelText("Status"), { target: { value: "ARCHIVED" } });
 
     await waitFor(() => {
-      expect(mockedApi.getInboundDocuments).toHaveBeenLastCalledWith(50000, {
+      expect(mockedApi.getOutboundDocuments).toHaveBeenLastCalledWith(50000, {
         archiveScope: "archived",
         customerId: undefined,
         locationId: undefined,
         status: undefined
       });
     });
-    expect(await screen.findByText("ARCHIVED-IN-64")).toBeInTheDocument();
+    expect(await screen.findByText("ARCHIVED-OUT-64")).toBeInTheDocument();
   });
 
   it("submits a new inbound receipt from the receipt form flow", async () => {
@@ -826,7 +986,7 @@ describe("ActivityManagementPage", () => {
 
     expect(reEnterButton).toBeDisabled();
     expect(reEnterButton).toHaveAttribute("aria-busy", "true");
-    expect(screen.getByRole("button", { name: "Cancel Receipt" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Delete Receipt" })).toBeDisabled();
     expect(mockedApi.copyInboundDocument).toHaveBeenCalledWith(14);
   });
 

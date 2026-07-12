@@ -2,7 +2,6 @@ import { downloadExcelWorkbook, type ExcelExportColumn } from "./excelExport";
 import type { Location } from "./types";
 
 export const INBOUND_BULK_IMPORT_TEMPLATE_COLUMNS: ExcelExportColumn[] = [
-  { key: "documentKey", label: "Document Key" },
   { key: "containerNo", label: "Container No" },
   { key: "warehouse", label: "Warehouse" },
   { key: "actualArrivalDate", label: "Actual Arrival Date" },
@@ -52,7 +51,6 @@ export function buildInboundBulkImportSampleRows(locations: Location[], referenc
 
   return [
     {
-      documentKey: `SAMPLE-RECEIPT-A-${token}`,
       containerNo: `SAMPLE-CONT-A-${token}`,
       warehouse: firstLocation.name,
       actualArrivalDate: firstReceiptDate,
@@ -69,7 +67,6 @@ export function buildInboundBulkImportSampleRows(locations: Location[], referenc
       lineNote: "First SKU line in receipt A"
     },
     {
-      documentKey: `SAMPLE-RECEIPT-A-${token}`,
       containerNo: `SAMPLE-CONT-A-${token}`,
       warehouse: firstLocation.name,
       actualArrivalDate: firstReceiptDate,
@@ -86,7 +83,6 @@ export function buildInboundBulkImportSampleRows(locations: Location[], referenc
       lineNote: "Second SKU line grouped into receipt A"
     },
     {
-      documentKey: `SAMPLE-RECEIPT-B-${token}`,
       containerNo: `SAMPLE-CONT-B-${token}`,
       warehouse: secondLocation.name,
       actualArrivalDate: secondReceiptDate,

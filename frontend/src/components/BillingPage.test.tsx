@@ -137,7 +137,9 @@ describe("BillingPage", () => {
       expect(downloadExcelWorkbook).toHaveBeenCalledTimes(1);
     });
     expect(downloadExcelWorkbook.mock.calls[0][0].rows).toHaveLength(2);
-    expect(downloadExcelWorkbook.mock.calls[0][0].columns.map((column: { label: string }) => column.label)).toContain("Charge Type");
+    const columnLabels = downloadExcelWorkbook.mock.calls[0][0].columns.map((column: { label: string }) => column.label);
+    expect(columnLabels).toContain("Charge Type");
+    expect(columnLabels.indexOf("Container No.")).toBeLessThan(columnLabels.indexOf("Charge Type"));
     expect(downloadExcelWorkbook.mock.calls[0][0].rows.map((row: { rowType: string }) => row.rowType)).toContain("Invoice Line");
     expect(downloadExcelWorkbook.mock.calls[0][0].summaryRows.map((row: { label: string }) => row.label)).toContain("Grand Total");
   });

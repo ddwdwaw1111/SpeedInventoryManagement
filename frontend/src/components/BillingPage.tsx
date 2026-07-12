@@ -1702,9 +1702,9 @@ function buildBillingPageExportColumns(
   const base: ExcelExportColumn[] = [
     { key: "rowType", label: "Row Type" },
     { key: "customer", label: "Customer" },
+    { key: "containerNo", label: "Container No." },
     { key: "chargeType", label: "Charge Type" },
     { key: "reference", label: "Reference" },
-    { key: "containerNo", label: "Container No." },
     { key: "warehouse", label: "Warehouse" },
     { key: "occurredOn", label: "Occurred On" },
     { key: "quantity", label: "Quantity", numberFormat: "number" },
@@ -1761,7 +1761,7 @@ function buildBillingPageExportRows({
 
   rows.push(...flattenOverviewStorageSegments(storageRows));
 
-  return rows;
+  return sortBillingExportRowsByContainer(rows);
 }
 
 function flattenStorageSettlementRows(storageRows: BillingStorageRow[]): Array<Record<string, ExcelExportCell>> {
@@ -1798,7 +1798,31 @@ function flattenStorageSettlementRows(storageRows: BillingStorageRow[]): Array<R
       });
     }
   }
-  return rows;
+  return sortBillingExportRowsByContainer(rows);
+}
+
+function sortBillingExportRowsByContainer(rows: Array<Record<string, ExcelExportCell>>) {
+  return rows
+    .map((row, index) => ({ row, index }))
+    .sort((left, right) => {
+      const leftContainer = normalizeBillingExportContainerValue(left.row.containerNo);
+      const rightContainer = normalizeBillingExportContainerValue(right.row.containerNo);
+      if (leftContainer === "" || rightContainer === "") {
+        if (leftContainer !== rightContainer) {
+          return leftContainer === "" ? 1 : -1;
+        }
+      }
+      if (leftContainer !== rightContainer) {
+        return leftContainer.localeCompare(rightContainer);
+      }
+      return left.index - right.index;
+    })
+    .map(({ row }) => row);
+}
+
+function normalizeBillingExportContainerValue(value: ExcelExportCell) {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  return normalized === "-" ? "" : normalized;
 }
 
 function flattenOverviewStorageSegments(storageRows: BillingStorageRow[]): Array<Record<string, ExcelExportCell>> {

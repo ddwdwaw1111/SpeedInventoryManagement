@@ -755,6 +755,12 @@ export type InboundDocument = {
   attachments?: DocumentAttachment[];
 };
 
+export type BulkUpdateInboundDocumentStatusResponse = {
+  updatedDocuments: number;
+  status: "CONFIRMED" | "DELETED";
+  documents: InboundDocument[];
+};
+
 export type InboundDocumentLinePayload = {
   itemNumber?: string;
   sku: string;
@@ -883,6 +889,18 @@ export type InboundBulkImportCommitPayload = {
   customerId: number;
   documents: Array<{
     documentKey: string;
+    input: InboundDocumentPayload;
+  }>;
+};
+
+export type InboundBulkImportRevalidatePayload = {
+  importId: string;
+  sourceFileName: string;
+  customerId: number;
+  documents: Array<{
+    documentKey: string;
+    locationName: string;
+    rowNumbers: number[];
     input: InboundDocumentPayload;
   }>;
 };

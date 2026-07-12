@@ -276,11 +276,12 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 		t.Fatalf("list movements: %v", err)
 	}
 
-	// After hard-delete cancel, all stock_ledger entries for the deleted
-	// pallets and documents are removed, so no movements should remain.
-	assertMovementTypeCount(t, movements, itemAfterInbound.ID, "IN", 0)
+	// Soft deletion preserves the receipt and its audit trail. The original
+	// receipt and its inventory reversal remain visible in movement history.
+	assertMovementTypeCount(t, movements, itemAfterInbound.ID, "IN", 1)
 	assertMovementTypeCount(t, movements, itemAfterInbound.ID, "OUT", 0)
 	assertMovementTypeCount(t, movements, itemAfterInbound.ID, "REVERSAL", 0)
+	assertMovementTypeCount(t, movements, itemAfterInbound.ID, "ADJUST", 1)
 }
 
 func TestBackfilledInboundUsesActualReceivedTimestampIntegration(t *testing.T) {
@@ -838,7 +839,7 @@ func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 		t.Fatal("expected archiving a confirmed inbound document to fail")
 	}
 
-	// Copy the confirmed document before cancelling (cancel now hard-deletes)
+	// Copy the confirmed document before deleting it.
 	copied, err := store.CopyInboundDocument(ctx, original.ID)
 	if err != nil {
 		t.Fatalf("copy confirmed inbound document: %v", err)
@@ -856,7 +857,7 @@ func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 		t.Fatalf("expected copied inbound line for %q, got %#v", item.SKU, copied.Lines)
 	}
 
-	// Cancel (hard-delete) the original document and all related records
+	// Delete the original document while preserving its receipt history.
 	cancelled, err := store.CancelInboundDocument(ctx, original.ID)
 	if err != nil {
 		t.Fatalf("cancel inbound document: %v", err)
@@ -865,33 +866,172 @@ func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 		t.Fatalf("expected deleted inbound status, got %q", cancelled.Status)
 	}
 
-	// After cancel/hard-delete, only the copied document should remain
+	// Deleted receipts remain in the audit tables but disappear from operational lists.
 	inboundDocuments, err := store.ListInboundDocuments(ctx, 20)
 	if err != nil {
 		t.Fatalf("list inbound documents: %v", err)
 	}
 	if len(inboundDocuments) != 1 {
-		t.Fatalf("expected only copied inbound document to remain in active list, got %d", len(inboundDocuments))
+		t.Fatalf("expected only the copied inbound document in active list, got %d", len(inboundDocuments))
 	}
 	if inboundDocuments[0].ID != copied.ID {
-		t.Fatalf("expected copied inbound document %d in active list, got %d", copied.ID, inboundDocuments[0].ID)
+		t.Fatalf("expected copied inbound document %d, got %d", copied.ID, inboundDocuments[0].ID)
 	}
 
-	// Archived and all-scope lists should also have only the copy
+	// No fourth archived state remains, and all-scope still excludes deleted records.
 	archivedInboundDocuments, err := store.ListInboundDocuments(ctx, 20, DocumentArchiveScopeArchived)
 	if err != nil {
 		t.Fatalf("list archived inbound documents: %v", err)
 	}
 	if len(archivedInboundDocuments) != 0 {
-		t.Fatalf("expected no archived inbound documents after hard-delete, got %d", len(archivedInboundDocuments))
+		t.Fatalf("expected no archived inbound documents after soft deletion, got %d", len(archivedInboundDocuments))
 	}
 
 	allInboundDocuments, err := store.ListInboundDocuments(ctx, 20, DocumentArchiveScopeAll)
 	if err != nil {
 		t.Fatalf("list all inbound documents: %v", err)
 	}
-	if len(allInboundDocuments) != 1 {
-		t.Fatalf("expected only copied inbound document in all list, got %d", len(allInboundDocuments))
+	if len(allInboundDocuments) != 1 || allInboundDocuments[0].ID != copied.ID {
+		t.Fatalf("expected only copied inbound document in all list, got %#v", allInboundDocuments)
+	}
+}
+
+func TestInboundStatusCanonicalizationMigrationIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+	customer := mustCreateCustomer(t, ctx, store, "Status Migration Customer "+suffix)
+	location := mustCreateLocation(t, ctx, store, "Status Migration Warehouse "+suffix)
+
+	postedResult, err := store.db.ExecContext(ctx, `
+		INSERT INTO inbound_documents (
+			customer_id, location_id, container_no, storage_section, unit_label,
+			status, tracking_status, confirmed_at, posted_at
+		) VALUES (?, ?, ?, ?, 'CTN', 'POSTED', 'RECEIVED', NULL, NULL)
+	`, customer.ID, location.ID, "POSTED-"+suffix, DefaultStorageSection)
+	if err != nil {
+		t.Fatalf("insert legacy posted receipt: %v", err)
+	}
+	postedID, err := postedResult.LastInsertId()
+	if err != nil {
+		t.Fatalf("resolve legacy posted receipt ID: %v", err)
+	}
+
+	archived, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:   customer.ID,
+		LocationID:   location.ID,
+		ContainerNo:  "ARCHIVED-" + suffix,
+		Status:       DocumentStatusDraft,
+		HandlingMode: InboundHandlingModePalletized,
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:            "ARCHIVED-SKU-" + suffix,
+			Description:    "Archived migration item",
+			ExpectedQty:    1,
+			StorageSection: DefaultStorageSection,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create archived migration receipt: %v", err)
+	}
+	attachment, err := store.CreateDocumentAttachment(ctx, CreateDocumentAttachmentInput{
+		DocumentType:     DocumentAttachmentInbound,
+		DocumentID:       archived.ID,
+		DisplayName:      "Archived attachment",
+		OriginalFileName: "archived.pdf",
+		StorageProvider:  "r2",
+		StorageBucket:    "speedwin-uploads",
+		StorageKey:       "documents/inbound/archived-" + suffix + ".pdf",
+		ContentType:      "application/pdf",
+		SizeBytes:        10,
+	})
+	if err != nil {
+		t.Fatalf("create archived receipt attachment: %v", err)
+	}
+	if _, err := store.ArchiveInboundDocument(ctx, archived.ID); err != nil {
+		t.Fatalf("archive migration receipt: %v", err)
+	}
+
+	if err := database.Migrate(store.db.DB); err != nil {
+		t.Fatalf("rerun status canonicalization migration: %v", err)
+	}
+
+	var postedStatus string
+	var confirmedAt sql.NullTime
+	if err := store.db.QueryRowContext(ctx, `SELECT status, confirmed_at FROM inbound_documents WHERE id = ?`, postedID).Scan(&postedStatus, &confirmedAt); err != nil {
+		t.Fatalf("load migrated posted receipt: %v", err)
+	}
+	if postedStatus != DocumentStatusConfirmed || !confirmedAt.Valid {
+		t.Fatalf("expected POSTED receipt to retain a confirmation timestamp, got status=%q confirmedAt=%#v", postedStatus, confirmedAt)
+	}
+
+	var archivedStatus string
+	var archivedAt sql.NullTime
+	if err := store.db.QueryRowContext(ctx, `SELECT status, archived_at FROM inbound_documents WHERE id = ?`, archived.ID).Scan(&archivedStatus, &archivedAt); err != nil {
+		t.Fatalf("load migrated archived receipt: %v", err)
+	}
+	if archivedStatus != DocumentStatusDeleted || archivedAt.Valid {
+		t.Fatalf("expected archived receipt to become deleted, got status=%q archivedAt=%#v", archivedStatus, archivedAt)
+	}
+	assertDocumentAttachmentSoftDeleted(t, ctx, store, attachment.ID, DocumentAttachmentInbound, archived.ID)
+}
+
+func TestBulkUpdateInboundDocumentStatusIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+	customer := mustCreateCustomer(t, ctx, store, "Bulk Status Customer "+suffix)
+	location := mustCreateLocation(t, ctx, store, "Bulk Status Warehouse "+suffix)
+
+	documentIDs := make([]int64, 0, 2)
+	for index := 1; index <= 2; index++ {
+		document, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+			CustomerID:        customer.ID,
+			LocationID:        location.ID,
+			ContainerNo:       fmt.Sprintf("BULK-STATUS-%s-%d", suffix, index),
+			ActualArrivalDate: "2026-07-12",
+			Status:            DocumentStatusDraft,
+			HandlingMode:      InboundHandlingModePalletized,
+			Lines: []CreateInboundDocumentLineInput{{
+				SKU:            fmt.Sprintf("BULK-STATUS-SKU-%s-%d", suffix, index),
+				Description:    "Bulk status item",
+				ReceivedQty:    10,
+				Pallets:        2,
+				StorageSection: DefaultStorageSection,
+			}},
+		})
+		if err != nil {
+			t.Fatalf("create bulk status receipt %d: %v", index, err)
+		}
+		documentIDs = append(documentIDs, document.ID)
+	}
+
+	confirmed, err := store.BulkUpdateInboundDocumentStatus(ctx, BulkUpdateInboundDocumentStatusInput{
+		DocumentIDs: documentIDs,
+		Status:      DocumentStatusConfirmed,
+	})
+	if err != nil {
+		t.Fatalf("bulk confirm inbound documents: %v", err)
+	}
+	if confirmed.UpdatedDocuments != 2 {
+		t.Fatalf("expected two confirmed documents, got %#v", confirmed)
+	}
+	for _, document := range confirmed.Documents {
+		if document.Status != DocumentStatusConfirmed || document.TrackingStatus != InboundTrackingReceived {
+			t.Fatalf("expected confirmed receipt, got %#v", document)
+		}
+	}
+
+	deleted, err := store.BulkUpdateInboundDocumentStatus(ctx, BulkUpdateInboundDocumentStatusInput{
+		DocumentIDs: documentIDs,
+		Status:      DocumentStatusDeleted,
+	})
+	if err != nil {
+		t.Fatalf("bulk delete inbound documents: %v", err)
+	}
+	for _, document := range deleted.Documents {
+		if document.Status != DocumentStatusDeleted || document.DeletedAt == nil {
+			t.Fatalf("expected soft-deleted receipt, got %#v", document)
+		}
 	}
 }
 

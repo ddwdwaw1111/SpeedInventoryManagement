@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../lib/api", () => ({
   api: {
     previewInboundBulkImport: vi.fn(),
+    revalidateInboundBulkImport: vi.fn(),
     commitInboundBulkImport: vi.fn()
   }
 }));
@@ -22,6 +23,7 @@ import { InboundBulkImportDialog } from "./InboundBulkImportDialog";
 
 const mockedApi = api as unknown as {
   previewInboundBulkImport: ReturnType<typeof vi.fn>;
+  revalidateInboundBulkImport: ReturnType<typeof vi.fn>;
   commitInboundBulkImport: ReturnType<typeof vi.fn>;
 };
 
@@ -39,7 +41,7 @@ describe("InboundBulkImportDialog", () => {
       totalDocuments: 1,
       createdDocuments: 1,
       failedDocuments: 0,
-      results: [{ documentKey: "DOC-1", containerNo: "CONT-A", success: true, document: { id: 42 } }]
+      results: [{ documentKey: "CONT-A", containerNo: "CONT-A", success: true, document: { id: 42 } }]
     });
 
     const { container } = renderWithProviders(
@@ -67,6 +69,7 @@ describe("InboundBulkImportDialog", () => {
     expect(mockedApi.previewInboundBulkImport).toHaveBeenCalledWith(file, 1);
     expect(screen.getByText(/NJ Warehouse/)).toBeInTheDocument();
     expect(screen.getByText(/Actual Arrival Date: 2025-12-15/)).toBeInTheDocument();
+    expect(screen.queryByText(/Document Key/)).not.toBeInTheDocument();
     expect(screen.getByText("1", { selector: ".bulk-inbound-metric--success strong" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Create 1 drafts" }));
@@ -75,7 +78,7 @@ describe("InboundBulkImportDialog", () => {
     expect(mockedApi.commitInboundBulkImport).toHaveBeenCalledWith(expect.objectContaining({
       importId: "0123456789abcdef0123456789abcdef",
       customerId: 1,
-      documents: [{ documentKey: "DOC-1", input: preview.documents[0].input }]
+      documents: [{ documentKey: "CONT-A", input: preview.documents[0].input }]
     }));
     expect(onImported).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Draft receipt #42 created")).toBeInTheDocument();
@@ -108,6 +111,48 @@ describe("InboundBulkImportDialog", () => {
     fireEvent.click(commitButton);
     await waitFor(() => expect(mockedApi.commitInboundBulkImport).not.toHaveBeenCalled());
   });
+
+  it("allows preview edits and requires backend revalidation before import", async () => {
+    const initialPreview = createPreview();
+    initialPreview.validDocuments = 0;
+    initialPreview.invalidDocuments = 1;
+    initialPreview.documents[0].valid = false;
+    initialPreview.documents[0].input.lines[0].sku = "";
+    initialPreview.documents[0].issues = [{ severity: "ERROR", code: "MISSING_SKU", message: "SKU is required.", rowNumber: 4 }];
+    const revalidatedPreview = createPreview();
+    revalidatedPreview.documents[0].input.lines[0].sku = "SKU-FIXED";
+    revalidatedPreview.documents[0].issues = [];
+    mockedApi.previewInboundBulkImport.mockResolvedValue(initialPreview);
+    mockedApi.revalidateInboundBulkImport.mockResolvedValue(revalidatedPreview);
+
+    const { container } = renderWithProviders(
+      <InboundBulkImportDialog
+        open
+        customers={[createCustomer()]}
+        locations={[createLocation()]}
+        onClose={vi.fn()}
+        onImported={vi.fn()}
+      />
+    );
+    const fileInput = container.ownerDocument.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [new File(["workbook"], "receipts.xlsx")] } });
+    fireEvent.click(screen.getByRole("button", { name: "Validate workbook" }));
+
+    const skuInput = await screen.findByRole("textbox", { name: "SKU 1" });
+    fireEvent.change(skuInput, { target: { value: "SKU-FIXED" } });
+    expect(screen.getByText("Preview data was changed. Revalidate the changes before creating drafts.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create 0 drafts" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Revalidate changes" }));
+    await waitFor(() => expect(mockedApi.revalidateInboundBulkImport).toHaveBeenCalledWith(expect.objectContaining({
+      importId: initialPreview.importId,
+      documents: [expect.objectContaining({
+        documentKey: "CONT-A",
+        input: expect.objectContaining({ lines: [expect.objectContaining({ sku: "SKU-FIXED" })] })
+      })]
+    })));
+    expect(await screen.findByRole("button", { name: "Create 1 drafts" })).toBeEnabled();
+  });
 });
 
 function createPreview(): InboundBulkImportPreview {
@@ -122,7 +167,7 @@ function createPreview(): InboundBulkImportPreview {
     invalidDocuments: 0,
     totalLines: 1,
     documents: [{
-      documentKey: "DOC-1",
+      documentKey: "CONT-A",
       locationName: "NJ Warehouse",
       rowNumbers: [4],
       input: {

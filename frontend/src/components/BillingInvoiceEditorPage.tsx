@@ -396,14 +396,14 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
     (row.segment.discountAmount ?? 0) > 0 || (row.segment.freePalletDays ?? 0) > 0
   );
   const totalsLabelColSpan = showStorageDiscountColumn ? 10 : 9;
-  const exportColumns = buildBillingTemplateSummaryColumns();
+  const exportColumns = buildBillingTemplateContainerDetailColumns();
 
   function handleExportExcel({ title, columns }: { title: string; columns: ExcelExportColumn[] }) {
     if (!invoice) {
       return;
     }
 
-    const rows = buildBillingTemplateSummaryRows(invoice);
+    const rows = buildBillingTemplateContainerDetailRows(invoice);
     const storageDetailRows = buildBillingTemplateStorageRows(invoice);
 
     downloadExcelWorkbook({
@@ -1083,9 +1083,14 @@ function containerTypeLabel(containerType: ContainerType, t: (key: string) => st
     : t("billingContainerTypeNormal");
 }
 
-function buildBillingTemplateSummaryColumns(): ExcelExportColumn[] {
+function buildBillingTemplateContainerDetailColumns(): ExcelExportColumn[] {
   return [
-    { key: "chargeType", label: "Warehouse Charges Summary" },
+    { key: "containerNo", label: "Container No." },
+    { key: "chargeType", label: "Charge Type" },
+    { key: "description", label: "Description" },
+    { key: "reference", label: "Reference" },
+    { key: "warehouse", label: "Warehouse" },
+    { key: "occurredOn", label: "Occurred On" },
     { key: "unitRate", label: "Unit Price", numberFormat: "currency" },
     { key: "quantity", label: "Qty", numberFormat: "number" },
     { key: "currency", label: "Currency" },
@@ -1093,23 +1098,45 @@ function buildBillingTemplateSummaryColumns(): ExcelExportColumn[] {
   ];
 }
 
-function buildBillingTemplateSummaryRows(invoice: BillingInvoice): Array<Record<string, ExcelExportCell>> {
-  const grouped = new Map<string, { quantity: number; amount: number; rates: Set<number> }>();
-  for (const line of filterVisibleInvoiceLines(invoice.lines)) {
-    const current = grouped.get(line.chargeType) ?? { quantity: 0, amount: 0, rates: new Set<number>() };
-    current.quantity += line.quantity;
-    current.amount += line.amount;
-    current.rates.add(line.unitRate);
-    grouped.set(line.chargeType, current);
-  }
+function buildBillingTemplateContainerDetailRows(invoice: BillingInvoice): Array<Record<string, ExcelExportCell>> {
+  return [...filterVisibleInvoiceLines(invoice.lines)]
+    .sort(compareBillingInvoiceLinesByContainer)
+    .map((line) => ({
+      containerNo: line.containerNo || "Invoice-level",
+      chargeType: invoiceChargeTypeLabel(line.chargeType),
+      description: line.description || "-",
+      reference: line.reference || "-",
+      warehouse: line.warehouse || "-",
+      occurredOn: line.occurredOn || "-",
+      unitRate: line.unitRate,
+      quantity: line.quantity,
+      currency: invoice.currencyCode,
+      amount: line.amount
+    }));
+}
 
-  return [...grouped.entries()].map(([chargeType, group]) => ({
-    chargeType: invoiceChargeTypeLabel(chargeType),
-    unitRate: group.rates.size === 1 ? [...group.rates][0] : "Multiple",
-    quantity: group.quantity,
-    currency: invoice.currencyCode,
-    amount: group.amount
-  }));
+function compareBillingInvoiceLinesByContainer(
+  left: BillingInvoice["lines"][number],
+  right: BillingInvoice["lines"][number]
+) {
+  const leftContainer = normalizeBillingExportContainer(left.containerNo);
+  const rightContainer = normalizeBillingExportContainer(right.containerNo);
+  if (leftContainer === "" || rightContainer === "") {
+    if (leftContainer !== rightContainer) {
+      return leftContainer === "" ? 1 : -1;
+    }
+  }
+  if (leftContainer !== rightContainer) {
+    return leftContainer.localeCompare(rightContainer);
+  }
+  if (left.sortOrder !== right.sortOrder) {
+    return left.sortOrder - right.sortOrder;
+  }
+  return left.id - right.id;
+}
+
+function normalizeBillingExportContainer(containerNo: string) {
+  return containerNo.trim().toUpperCase();
 }
 
 function invoiceChargeTypeLabel(chargeType: string) {

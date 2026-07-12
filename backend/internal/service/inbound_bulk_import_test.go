@@ -266,11 +266,11 @@ func TestCreateInboundDocumentsBulkDraftIsIdempotentIntegration(t *testing.T) {
 	}
 }
 
-func TestParseInboundBulkImportWorkbookGroupsRowsByDocumentKey(t *testing.T) {
+func TestParseInboundBulkImportWorkbookGroupsRowsByContainerNo(t *testing.T) {
 	data := buildInboundBulkImportWorkbook(t, [][]any{
-		{"RECEIPT-A", "CONT-A", "Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-1", "ITEM-1", "First item", 930, 900, 20, 48, "A", ""},
-		{"RECEIPT-A", "CONT-A", "Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-2", "ITEM-2", "Second item", 100, 0, 3, 32, "A", "Inspect wrap"},
-		{"RECEIPT-B", "CONT-B", "West Warehouse", "2026-07-16", "WEST_COAST_TRANSFER", "SEALED_TRANSIT", "SKU-3", "ITEM-3", "Third item", 250, 0, 0, 0, "TEMP", ""},
+		{"CONT-A", "Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-1", "ITEM-1", "First item", 930, 900, 20, 48, "A", ""},
+		{"CONT-A", "Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-2", "ITEM-2", "Second item", 100, 0, 3, 32, "A", "Inspect wrap"},
+		{"CONT-B", "West Warehouse", "2026-07-16", "WEST_COAST_TRANSFER", "SEALED_TRANSIT", "SKU-3", "ITEM-3", "Third item", 250, 0, 0, 0, "TEMP", ""},
 	})
 
 	documents, err := parseInboundBulkImportWorkbook("receipts.xlsx", data)
@@ -281,7 +281,7 @@ func TestParseInboundBulkImportWorkbookGroupsRowsByDocumentKey(t *testing.T) {
 		t.Fatalf("expected 2 grouped documents, got %d", len(documents))
 	}
 	first := documents[0].preview
-	if first.DocumentKey != "RECEIPT-A" || first.Input.ContainerNo != "CONT-A" || first.LocationName != "WAREHOUSE" {
+	if first.DocumentKey != "CONT-A" || first.Input.ContainerNo != "CONT-A" || first.LocationName != "WAREHOUSE" {
 		t.Fatalf("unexpected first document: %#v", first)
 	}
 	if first.Input.ActualArrivalDate != "2026-07-15" || first.Input.ExpectedArrivalDate != "" || first.Input.DocumentNote != "" {
@@ -297,7 +297,7 @@ func TestParseInboundBulkImportWorkbookGroupsRowsByDocumentKey(t *testing.T) {
 
 func TestParseInboundBulkImportWorkbookRequiresActualArrivalDate(t *testing.T) {
 	data := buildInboundBulkImportWorkbook(t, [][]any{
-		{"RECEIPT-A", "CONT-A", "Warehouse", "", "NORMAL", "PALLETIZED", "SKU-1", "ITEM-1", "First item", 10, 0, 1, 10, "A", ""},
+		{"CONT-A", "Warehouse", "", "NORMAL", "PALLETIZED", "SKU-1", "ITEM-1", "First item", 10, 0, 1, 10, "A", ""},
 	})
 
 	documents, err := parseInboundBulkImportWorkbook("receipts.xlsx", data)
@@ -311,8 +311,8 @@ func TestParseInboundBulkImportWorkbookRequiresActualArrivalDate(t *testing.T) {
 
 func TestParseInboundBulkImportWorkbookRejectsWarehouseConflictWithinDocument(t *testing.T) {
 	data := buildInboundBulkImportWorkbook(t, [][]any{
-		{"RECEIPT-A", "CONT-A", "East Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-1", "ITEM-1", "First item", 10, 0, 1, 10, "A", ""},
-		{"RECEIPT-A", "CONT-A", "West Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-2", "ITEM-2", "Second item", 10, 0, 1, 10, "A", ""},
+		{"CONT-A", "East Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-1", "ITEM-1", "First item", 10, 0, 1, 10, "A", ""},
+		{"CONT-A", "West Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-2", "ITEM-2", "Second item", 10, 0, 1, 10, "A", ""},
 	})
 
 	documents, err := parseInboundBulkImportWorkbook("receipts.xlsx", data)
@@ -326,9 +326,9 @@ func TestParseInboundBulkImportWorkbookRejectsWarehouseConflictWithinDocument(t 
 
 func TestBuildInboundBulkImportPreviewKeepsIndependentPalletValuesAndFlagsConflicts(t *testing.T) {
 	data := buildInboundBulkImportWorkbook(t, [][]any{
-		{"RECEIPT-A", "CONT-A", "Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-1", "ITEM-1", "", 930, 900, 20, 48, "A", ""},
-		{"RECEIPT-B", "CONT-B", "Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-2", "WRONG-CODE", "Known item", 100, 0, 2, 50, "A", ""},
-		{"RECEIPT-C", "CONT-B", "Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-3", "ITEM-3", "New item", 40, 0, 1, 40, "A", ""},
+		{"CONT-A", "Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-1", "ITEM-1", "", 930, 900, 20, 48, "A", ""},
+		{"CONT-B", "Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-2", "WRONG-CODE", "Known item", 100, 0, 2, 50, "A", ""},
+		{"CONT-B", "Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-3", "ITEM-3", "New item", 40, 0, 1, 40, "A", ""},
 	})
 	parsed, err := parseInboundBulkImportWorkbook("receipts.xlsx", data)
 	if err != nil {
@@ -347,7 +347,7 @@ func TestBuildInboundBulkImportPreviewKeepsIndependentPalletValuesAndFlagsConfli
 		parsed,
 	)
 
-	if preview.TotalDocuments != 3 || preview.ValidDocuments != 1 || preview.InvalidDocuments != 2 {
+	if preview.TotalDocuments != 2 || preview.ValidDocuments != 1 || preview.InvalidDocuments != 1 {
 		t.Fatalf("unexpected preview totals: %#v", preview)
 	}
 	first := preview.Documents[0]
@@ -363,15 +363,12 @@ func TestBuildInboundBulkImportPreviewKeepsIndependentPalletValuesAndFlagsConfli
 	if !hasInboundBulkIssue(preview.Documents[1].Issues, "SKU_ITEM_CODE_MISMATCH", InboundBulkIssueError) {
 		t.Fatalf("expected SKU/Item Code mismatch error: %#v", preview.Documents[1].Issues)
 	}
-	if !hasInboundBulkIssue(preview.Documents[1].Issues, "DUPLICATE_CONTAINER_IN_FILE", InboundBulkIssueError) || !hasInboundBulkIssue(preview.Documents[2].Issues, "DUPLICATE_CONTAINER_IN_FILE", InboundBulkIssueError) {
-		t.Fatalf("expected duplicate container errors: %#v %#v", preview.Documents[1].Issues, preview.Documents[2].Issues)
-	}
 }
 
 func TestBuildInboundBulkImportPreviewResolvesMultipleWarehouses(t *testing.T) {
 	data := buildInboundBulkImportWorkbook(t, [][]any{
-		{"RECEIPT-A", "CONT-A", "East Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-1", "ITEM-1", "First item", 10, 0, 1, 10, "A", ""},
-		{"RECEIPT-B", "CONT-B", "West Warehouse", "2026-07-16", "NORMAL", "PALLETIZED", "SKU-2", "ITEM-2", "Second item", 20, 0, 2, 10, "B", ""},
+		{"CONT-A", "East Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-1", "ITEM-1", "First item", 10, 0, 1, 10, "A", ""},
+		{"CONT-B", "West Warehouse", "2026-07-16", "NORMAL", "PALLETIZED", "SKU-2", "ITEM-2", "Second item", 20, 0, 2, 10, "B", ""},
 	})
 	parsed, err := parseInboundBulkImportWorkbook("receipts.xlsx", data)
 	if err != nil {
@@ -401,14 +398,46 @@ func TestBuildInboundBulkImportPreviewResolvesMultipleWarehouses(t *testing.T) {
 	}
 }
 
+func TestParsedInboundBulkDocumentFromInputPreservesIdentityAndEditedValues(t *testing.T) {
+	document := parsedInboundBulkDocumentFromInput(InboundBulkImportRevalidateDocument{
+		DocumentKey:  "ORIGINAL-CONTAINER",
+		LocationName: "Old warehouse name",
+		RowNumbers:   []int{4},
+		Input: CreateInboundDocumentInput{
+			LocationID:        2,
+			ContainerNo:       " edited-container ",
+			ActualArrivalDate: "2026-07-01",
+			ContainerType:     ContainerTypeNormal,
+			HandlingMode:      InboundHandlingModePalletized,
+			Lines: []CreateInboundDocumentLineInput{{
+				SKU:            " sku-edited ",
+				Description:    "Edited item",
+				ReceivedQty:    12,
+				Pallets:        3,
+				StorageSection: " a ",
+			}},
+		},
+	}, 0, map[int64]Location{2: {ID: 2, Name: "East Warehouse"}})
+
+	if document.preview.DocumentKey != "ORIGINAL-CONTAINER" {
+		t.Fatalf("expected stable preview identity, got %q", document.preview.DocumentKey)
+	}
+	if document.preview.Input.ContainerNo != "EDITED-CONTAINER" || document.preview.Input.Lines[0].SKU != "SKU-EDITED" {
+		t.Fatalf("expected edited values to be normalized: %#v", document.preview.Input)
+	}
+	if document.preview.LocationName != "East Warehouse" || len(document.preview.Issues) != 0 {
+		t.Fatalf("expected selected warehouse and no parsing issues: %#v", document.preview)
+	}
+}
+
 func buildInboundBulkImportWorkbook(t *testing.T, dataRows [][]any) []byte {
 	t.Helper()
 	workbook := excelize.NewFile()
 	sheet := workbook.GetSheetName(0)
 	rows := [][]any{
 		{"Inbound Receipt Bulk Import Template"},
-		{"Use one Document Key per receipt"},
-		{"Document Key", "Container No", "Warehouse", "Actual Arrival Date", "Container Type", "Handling Mode", "SKU", "Item Code", "Description", "Expected Qty", "Received Qty", "Pallets", "CTN per Pallet", "Storage Section", "Line Note"},
+		{"Rows with the same Container No are grouped into one receipt"},
+		{"Container No", "Warehouse", "Actual Arrival Date", "Container Type", "Handling Mode", "SKU", "Item Code", "Description", "Expected Qty", "Received Qty", "Pallets", "CTN per Pallet", "Storage Section", "Line Note"},
 	}
 	rows = append(rows, dataRows...)
 	for index, row := range rows {

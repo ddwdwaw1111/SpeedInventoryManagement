@@ -943,6 +943,46 @@ func (s *Server) handleConfirmInboundDocument(c *gin.Context) {
 	writeJSON(c, http.StatusOK, document)
 }
 
+func (s *Server) handleBulkUpdateInboundDocumentStatus(c *gin.Context) {
+	var input service.BulkUpdateInboundDocumentStatusInput
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	attachmentsByDocumentID := make(map[int64][]service.DocumentAttachment)
+	requestedStatus := strings.TrimSpace(strings.ToUpper(input.Status))
+	if (requestedStatus == service.DocumentStatusDeleted || requestedStatus == "CANCELLED") && len(input.DocumentIDs) <= service.MaxBulkUpdateInboundDocuments {
+		for _, documentID := range input.DocumentIDs {
+			attachments, err := s.store.ListDocumentAttachments(c.Request.Context(), service.DocumentAttachmentInbound, documentID)
+			if err != nil {
+				writeServerError(c, err)
+				return
+			}
+			attachmentsByDocumentID[documentID] = attachments
+		}
+	}
+
+	response, err := s.store.BulkUpdateInboundDocumentStatus(c.Request.Context(), input)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	for _, document := range response.Documents {
+		s.writeAuditLog(c, "STATUS_CHANGE", "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), "Bulk updated inbound document status", map[string]any{
+			"containerNo": document.ContainerNo,
+			"status":      document.Status,
+			"confirmedAt": document.ConfirmedAt,
+			"batchSize":   response.UpdatedDocuments,
+		})
+		if response.Status == service.DocumentStatusDeleted {
+			s.deleteDocumentAttachmentObjectsAfterCancel(service.DocumentAttachmentInbound, document.ID, attachmentsByDocumentID[document.ID])
+		}
+	}
+
+	writeJSON(c, http.StatusOK, response)
+}
+
 func (s *Server) handleCancelInboundDocument(c *gin.Context) {
 	documentID, err := parseIDParam(c, "id")
 	if err != nil {

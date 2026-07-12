@@ -105,6 +105,27 @@ func (s *Server) handleCommitInboundBulkImport(c *gin.Context) {
 	writeJSON(c, http.StatusOK, response)
 }
 
+func (s *Server) handleRevalidateInboundBulkImport(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, int64(service.MaxInboundBulkImportCommitBodySize))
+	var input service.InboundBulkImportRevalidateInput
+	if err := bindJSON(c, &input); err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			writeError(c, http.StatusRequestEntityTooLarge, "bulk import request exceeds the 20 MB limit")
+			return
+		}
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	preview, err := s.store.RevalidateInboundBulkImport(c.Request.Context(), input)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+	writeJSON(c, http.StatusOK, preview)
+}
+
 func parseInboundBulkImportFormID(c *gin.Context, field string) (int64, error) {
 	raw := strings.TrimSpace(c.PostForm(field))
 	id, err := strconv.ParseInt(raw, 10, 64)

@@ -3,6 +3,7 @@ import type {
   AuthResponse,
   BillingInvoice,
   BillingInvoiceSettings,
+  BulkUpdateInboundDocumentStatusResponse,
   CreateBillingInvoicePayload,
   AddBillingInvoiceLinePayload,
   UpdateBillingInvoiceLinePayload,
@@ -35,6 +36,7 @@ import type {
   InboundBulkImportCommitPayload,
   InboundBulkImportCommitResponse,
   InboundBulkImportPreview,
+  InboundBulkImportRevalidatePayload,
   UpdateInboundDocumentContainerTypePayload,
   UpdateInboundDocumentNotePayload,
   InboundPackingListImportPreview,
@@ -726,6 +728,13 @@ export const api = {
     });
   },
 
+  revalidateInboundBulkImport(payload: InboundBulkImportRevalidatePayload) {
+    return request<InboundBulkImportPreview>("/inbound-documents/bulk-import-revalidate", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
   updateInboundDocument(documentId: number, payload: InboundDocumentPayload) {
     return request<InboundDocument>(`/inbound-documents/${documentId}`, {
       method: "PUT",
@@ -750,6 +759,13 @@ export const api = {
   confirmInboundDocument(documentId: number) {
     return request<InboundDocument>(`/inbound-documents/${documentId}/confirm`, {
       method: "POST"
+    });
+  },
+
+  bulkUpdateInboundDocumentStatus(documentIds: number[], status: "CONFIRMED" | "DELETED") {
+    return request<BulkUpdateInboundDocumentStatusResponse>("/inbound-documents/bulk-status", {
+      method: "POST",
+      body: JSON.stringify({ documentIds, status })
     });
   },
 

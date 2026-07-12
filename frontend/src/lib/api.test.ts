@@ -38,6 +38,19 @@ describe("api document list queries", () => {
     expect(requestUrl.searchParams.get("search")).toBe("GCXU5817233");
   });
 
+  it("posts selected receipt IDs and the target bulk status", async () => {
+    fetchMock.mockResolvedValue(mockJsonResponse({ updatedDocuments: 2, status: "CONFIRMED", documents: [] }));
+
+    await api.bulkUpdateInboundDocumentStatus([11, 12], "CONFIRMED");
+
+    const [requestUrl, options] = fetchMock.mock.calls[0];
+    expect(new URL(String(requestUrl)).pathname).toBe("/api/inbound-documents/bulk-status");
+    expect(options).toEqual(expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ documentIds: [11, 12], status: "CONFIRMED" })
+    }));
+  });
+
   it("keeps the legacy outbound archive scope argument", async () => {
     await api.getOutboundDocuments(300, "all");
 

@@ -22,7 +22,8 @@ export type PortalWorkflow = {
   progress: number;
 };
 
-export const documentStatusOptions = ["all", "DRAFT", "CONFIRMED", "DELETED"];
+export const packingListDocumentStatusOptions = ["all", "DRAFT", "CONFIRMED"];
+export const pickingOrderDocumentStatusOptions = ["all", "DRAFT", "CONFIRMED", "DELETED"];
 export const PACKING_LIST_RECEIVING_RECEIVED_STATUS = "RECEIVING_RECEIVED";
 export const packingListTrackingStatusOptions = ["all", "SCHEDULED", "ARRIVED", PACKING_LIST_RECEIVING_RECEIVED_STATUS];
 export const pickingOrderTrackingStatusOptions = ["all", "SCHEDULED", "PICKING", "PACKED", "SHIPPED", "BO_RECEIVED"];

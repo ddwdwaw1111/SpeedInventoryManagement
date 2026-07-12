@@ -15,8 +15,10 @@ import { useI18n } from "../lib/i18n";
 import type {
   Customer,
   InboundBulkImportCommitResponse,
+  InboundBulkImportDocumentPreview,
   InboundBulkImportIssue,
   InboundBulkImportPreview,
+  InboundDocumentLinePayload,
   Location
 } from "../lib/types";
 import { InlineAlert } from "./Feedback";
@@ -49,7 +51,9 @@ export function InboundBulkImportDialog({
   const [file, setFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isPreviewing, setIsPreviewing] = useState(false);
+  const [isRevalidating, setIsRevalidating] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [hasPreviewChanges, setHasPreviewChanges] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [preview, setPreview] = useState<InboundBulkImportPreview | null>(null);
   const [result, setResult] = useState<InboundBulkImportCommitResponse | null>(null);
@@ -62,13 +66,15 @@ export function InboundBulkImportDialog({
     setFile(null);
     setIsDragging(false);
     setIsPreviewing(false);
+    setIsRevalidating(false);
     setIsImporting(false);
+    setHasPreviewChanges(false);
     setErrorMessage("");
     setPreview(null);
     setResult(null);
   }, [open]);
 
-  const isBusy = isPreviewing || isImporting;
+  const isBusy = isPreviewing || isRevalidating || isImporting;
 
   function closeDialog() {
     if (!isBusy) onClose();
@@ -77,6 +83,7 @@ export function InboundBulkImportDialog({
   function selectFile(nextFile: File | null) {
     setErrorMessage("");
     setPreview(null);
+    setHasPreviewChanges(false);
     setResult(null);
     if (!nextFile) {
       setFile(null);
@@ -113,11 +120,94 @@ export function InboundBulkImportDialog({
     try {
       const nextPreview = await api.previewInboundBulkImport(file, selectedCustomerId);
       setPreview(nextPreview);
+      setHasPreviewChanges(false);
       setStep("PREVIEW");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : t("bulkInboundPreviewFailed"));
     } finally {
       setIsPreviewing(false);
+    }
+  }
+
+  function updatePreviewDocument(
+    documentKey: string,
+    updater: (document: InboundBulkImportDocumentPreview) => InboundBulkImportDocumentPreview
+  ) {
+    setPreview((current) => current ? {
+      ...current,
+      documents: current.documents.map((document) => document.documentKey === documentKey ? updater(document) : document)
+    } : current);
+    setHasPreviewChanges(true);
+    setErrorMessage("");
+  }
+
+  function updateDocumentInput(documentKey: string, patch: Partial<InboundBulkImportDocumentPreview["input"]>) {
+    updatePreviewDocument(documentKey, (document) => ({
+      ...document,
+      input: { ...document.input, ...patch }
+    }));
+  }
+
+  function updateDocumentLine(documentKey: string, lineIndex: number, patch: Partial<InboundDocumentLinePayload>) {
+    updatePreviewDocument(documentKey, (document) => ({
+      ...document,
+      input: {
+        ...document.input,
+        lines: document.input.lines.map((line, index) => index === lineIndex ? { ...line, ...patch } : line)
+      }
+    }));
+  }
+
+  function addDocumentLine(documentKey: string) {
+    updatePreviewDocument(documentKey, (document) => ({
+      ...document,
+      input: {
+        ...document.input,
+        lines: [...document.input.lines, {
+          sku: "",
+          itemNumber: "",
+          description: "",
+          expectedQty: 0,
+          receivedQty: 0,
+          pallets: 0,
+          storageSection: document.input.storageSection || "TEMP"
+        }]
+      }
+    }));
+  }
+
+  function removeDocumentLine(documentKey: string, lineIndex: number) {
+    updatePreviewDocument(documentKey, (document) => ({
+      ...document,
+      input: {
+        ...document.input,
+        lines: document.input.lines.filter((_, index) => index !== lineIndex)
+      }
+    }));
+  }
+
+  async function handleRevalidate() {
+    if (!preview || !hasPreviewChanges) return;
+    setIsRevalidating(true);
+    setErrorMessage("");
+    try {
+      const nextPreview = await api.revalidateInboundBulkImport({
+        importId: preview.importId,
+        sourceFileName: preview.sourceFileName,
+        customerId: preview.customerId,
+        documents: preview.documents.map((document) => ({
+          documentKey: document.documentKey,
+          locationName: document.locationName,
+          rowNumbers: document.rowNumbers,
+          input: document.input
+        }))
+      });
+      setPreview(nextPreview);
+      setHasPreviewChanges(false);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : t("bulkInboundRevalidateFailed"));
+    } finally {
+      setIsRevalidating(false);
     }
   }
 
@@ -252,6 +342,7 @@ export function InboundBulkImportDialog({
               <div className={preview.invalidDocuments > 0 ? "bulk-inbound-metric--danger" : ""}><strong>{preview.invalidDocuments}</strong><span>{t("bulkInboundBlockedDrafts")}</span></div>
               <div><strong>{preview.totalLines}</strong><span>{t("skuLines")}</span></div>
             </div>
+            {hasPreviewChanges ? <InlineAlert severity="warning">{t("bulkInboundChangesNeedValidation")}</InlineAlert> : null}
             {preview.invalidDocuments > 0 ? <InlineAlert severity="warning">{t("bulkInboundInvalidSkipped")}</InlineAlert> : null}
             <div className="bulk-inbound-document-list">
               {preview.documents.map((document) => (
@@ -259,7 +350,7 @@ export function InboundBulkImportDialog({
                   <summary>
                     <div className="bulk-inbound-document__identity">
                       {document.valid ? <CheckCircleOutlineRoundedIcon /> : <ErrorOutlineRoundedIcon />}
-                      <div><strong>{document.input.containerNo || "—"}</strong><span>{document.locationName || t("bulkInboundWarehouseMissing")} · {t("actualArrivalDate")}: {document.input.actualArrivalDate || "—"} · {t("bulkInboundDocumentKey")}: {document.documentKey} · {t("bulkInboundRows")}: {formatRows(document.rowNumbers)}</span></div>
+                      <div><strong>{document.input.containerNo || "—"}</strong><span>{document.locationName || t("bulkInboundWarehouseMissing")} · {t("actualArrivalDate")}: {document.input.actualArrivalDate || "—"} · {t("bulkInboundRows")}: {formatRows(document.rowNumbers)}</span></div>
                     </div>
                     <div className="bulk-inbound-document__totals">
                       <span><strong>{document.totalLines}</strong>{t("lines")}</span>
@@ -270,6 +361,17 @@ export function InboundBulkImportDialog({
                     </div>
                   </summary>
                   <div className="bulk-inbound-document__body">
+                    <div className="bulk-inbound-edit-grid">
+                      <label>{t("containerNo")}<input aria-label={`${t("containerNo")} ${document.documentKey}`} value={document.input.containerNo || ""} onChange={(event) => updateDocumentInput(document.documentKey, { containerNo: event.target.value })} disabled={isBusy} /></label>
+                      <label>{t("warehouse")}<select aria-label={`${t("warehouse")} ${document.documentKey}`} value={document.input.locationId || ""} onChange={(event) => {
+                        const locationId = Number(event.target.value);
+                        const location = locations.find((candidate) => candidate.id === locationId);
+                        updatePreviewDocument(document.documentKey, (current) => ({ ...current, locationName: location?.name || "", input: { ...current.input, locationId } }));
+                      }} disabled={isBusy}><option value="">{t("selectWarehouse")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
+                      <label>{t("actualArrivalDate")}<input aria-label={`${t("actualArrivalDate")} ${document.documentKey}`} type="date" value={document.input.actualArrivalDate || ""} onChange={(event) => updateDocumentInput(document.documentKey, { actualArrivalDate: event.target.value })} disabled={isBusy} /></label>
+                      <label>{t("containerType")}<select aria-label={`${t("containerType")} ${document.documentKey}`} value={document.input.containerType || "NORMAL"} onChange={(event) => updateDocumentInput(document.documentKey, { containerType: event.target.value as "NORMAL" | "WEST_COAST_TRANSFER" })} disabled={isBusy}><option value="NORMAL">NORMAL</option><option value="WEST_COAST_TRANSFER">WEST COAST TRANSFER</option></select></label>
+                      <label>{t("handlingMode")}<select aria-label={`${t("handlingMode")} ${document.documentKey}`} value={document.input.handlingMode || "PALLETIZED"} onChange={(event) => updateDocumentInput(document.documentKey, { handlingMode: event.target.value })} disabled={isBusy}><option value="PALLETIZED">PALLETIZED</option><option value="SEALED_TRANSIT">SEALED TRANSIT</option></select></label>
+                    </div>
                     {document.issues.length > 0 ? (
                       <div className="bulk-inbound-issue-list">
                         {document.issues.map((issue, index) => (
@@ -282,12 +384,23 @@ export function InboundBulkImportDialog({
                     ) : null}
                     <div className="bulk-inbound-table-wrap">
                       <table className="bulk-inbound-line-table">
-                        <thead><tr><th>SKU</th><th>{t("itemCode")}</th><th>{t("description")}</th><th>{t("expectedQty")}</th><th>{t("receivedQty")}</th><th>{t("pallets")}</th><th>{t("ctnPerPallet")}</th><th>{t("storageSection")}</th></tr></thead>
+                        <thead><tr><th>SKU</th><th>{t("itemCode")}</th><th>{t("description")}</th><th>{t("expectedQty")}</th><th>{t("receivedQty")}</th><th>{t("pallets")}</th><th>{t("ctnPerPallet")}</th><th>{t("storageSection")}</th><th>{t("bulkInboundActions")}</th></tr></thead>
                         <tbody>{document.input.lines.map((line, index) => (
-                          <tr key={`${document.documentKey}-${line.sku}-${index}`}><td>{line.sku}</td><td>{line.itemNumber || "—"}</td><td>{line.description || "—"}</td><td>{line.expectedQty}</td><td>{line.receivedQty}</td><td>{line.pallets}</td><td>{line.unitsPerPallet || "—"}</td><td>{line.storageSection || "TEMP"}</td></tr>
+                          <tr key={`${document.documentKey}-${index}`}>
+                            <td><input aria-label={`SKU ${index + 1}`} value={line.sku} onChange={(event) => updateDocumentLine(document.documentKey, index, { sku: event.target.value })} disabled={isBusy} /></td>
+                            <td><input aria-label={`${t("itemCode")} ${index + 1}`} value={line.itemNumber || ""} onChange={(event) => updateDocumentLine(document.documentKey, index, { itemNumber: event.target.value })} disabled={isBusy} /></td>
+                            <td><input aria-label={`${t("description")} ${index + 1}`} value={line.description || ""} onChange={(event) => updateDocumentLine(document.documentKey, index, { description: event.target.value })} disabled={isBusy} /></td>
+                            <td><input aria-label={`${t("expectedQty")} ${index + 1}`} type="number" min="0" value={line.expectedQty} onChange={(event) => updateDocumentLine(document.documentKey, index, { expectedQty: toNonNegativeNumber(event.target.value) })} disabled={isBusy} /></td>
+                            <td><input aria-label={`${t("receivedQty")} ${index + 1}`} type="number" min="0" value={line.receivedQty} onChange={(event) => updateDocumentLine(document.documentKey, index, { receivedQty: toNonNegativeNumber(event.target.value) })} disabled={isBusy} /></td>
+                            <td><input aria-label={`${t("pallets")} ${index + 1}`} type="number" min="0" value={line.pallets} onChange={(event) => updateDocumentLine(document.documentKey, index, { pallets: toNonNegativeNumber(event.target.value) })} disabled={isBusy} /></td>
+                            <td><input aria-label={`${t("ctnPerPallet")} ${index + 1}`} type="number" min="0" value={line.unitsPerPallet || ""} onChange={(event) => updateDocumentLine(document.documentKey, index, { unitsPerPallet: event.target.value === "" ? undefined : toNonNegativeNumber(event.target.value) })} disabled={isBusy} /></td>
+                            <td><input aria-label={`${t("storageSection")} ${index + 1}`} value={line.storageSection || ""} onChange={(event) => updateDocumentLine(document.documentKey, index, { storageSection: event.target.value })} disabled={isBusy} /></td>
+                            <td><Button size="small" color="error" onClick={() => removeDocumentLine(document.documentKey, index)} disabled={isBusy || document.input.lines.length === 1}>{t("bulkInboundRemoveLine")}</Button></td>
+                          </tr>
                         ))}</tbody>
                       </table>
                     </div>
+                    <div><Button size="small" variant="outlined" onClick={() => addDocumentLine(document.documentKey)} disabled={isBusy}>{t("bulkInboundAddLine")}</Button></div>
                   </div>
                 </details>
               ))}
@@ -306,7 +419,7 @@ export function InboundBulkImportDialog({
                 <div className={`bulk-inbound-result-row ${entry.success ? "bulk-inbound-result-row--success" : "bulk-inbound-result-row--failed"}`} key={entry.documentKey}>
                   {entry.success ? <CheckCircleOutlineRoundedIcon /> : <ErrorOutlineRoundedIcon />}
                   <div><strong>{entry.containerNo || entry.documentKey}</strong><span>{entry.success ? t("bulkInboundDraftCreated", { id: entry.document?.id ?? "—" }) : entry.error || t("bulkInboundCommitFailed")}</span></div>
-                  <em>{entry.documentKey}</em>
+                  <em>{entry.containerNo || "—"}</em>
                 </div>
               ))}
             </div>
@@ -324,8 +437,9 @@ export function InboundBulkImportDialog({
         ) : null}
         {step === "PREVIEW" && preview ? (
           <>
-            <Button onClick={() => { setStep("UPLOAD"); setPreview(null); setErrorMessage(""); }} disabled={isBusy}>{t("back")}</Button>
-            <Button variant="contained" startIcon={isImporting ? <InlineLoadingIndicator /> : <CheckCircleOutlineRoundedIcon />} disabled={isImporting || preview.validDocuments === 0} onClick={() => void handleImport()}>
+            <Button onClick={() => { setStep("UPLOAD"); setPreview(null); setHasPreviewChanges(false); setErrorMessage(""); }} disabled={isBusy}>{t("back")}</Button>
+            {hasPreviewChanges ? <Button variant="outlined" startIcon={isRevalidating ? <InlineLoadingIndicator /> : <CheckCircleOutlineRoundedIcon />} disabled={isBusy} onClick={() => void handleRevalidate()}>{isRevalidating ? t("bulkInboundRevalidating") : t("bulkInboundRevalidate")}</Button> : null}
+            <Button variant="contained" startIcon={isImporting ? <InlineLoadingIndicator /> : <CheckCircleOutlineRoundedIcon />} disabled={isBusy || hasPreviewChanges || preview.validDocuments === 0} onClick={() => void handleImport()}>
               {isImporting ? t("bulkInboundCreatingDrafts") : t("bulkInboundImportDrafts", { count: preview.validDocuments })}
             </Button>
           </>
@@ -341,6 +455,11 @@ function formatFileSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function toNonNegativeNumber(value: string) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+}
+
 function formatRows(rows: number[]) {
   if (rows.length === 0) return "—";
   if (rows.length === 1) return String(rows[0]);
@@ -349,7 +468,6 @@ function formatRows(rows: number[]) {
 
 function formatBulkImportIssue(issue: InboundBulkImportIssue, t: (key: string, params?: Record<string, string | number>) => string) {
   const keys: Record<string, string> = {
-    MISSING_DOCUMENT_KEY: "bulkIssueMissingDocumentKey",
     MISSING_CONTAINER_NO: "bulkIssueMissingContainerNo",
     MISSING_WAREHOUSE: "bulkIssueMissingWarehouse",
     MISSING_ACTUAL_DATE: "bulkIssueMissingActualDate",
@@ -372,7 +490,6 @@ function formatBulkImportIssue(issue: InboundBulkImportIssue, t: (key: string, p
     SEALED_TRANSIT_PALLET_VALUES_IGNORED: "bulkIssueSealedPalletsIgnored",
     ZERO_PALLETS: "bulkIssueZeroPallets",
     EXISTING_CONTAINER: "bulkIssueExistingContainer",
-    DUPLICATE_CONTAINER_IN_FILE: "bulkIssueDuplicateContainer"
   };
   const key = keys[issue.code];
   return key ? t(key, { value: issue.value || "—" }) : issue.message;

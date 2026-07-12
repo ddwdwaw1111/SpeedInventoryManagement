@@ -1,5 +1,6 @@
 import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
 import ArchiveOutlinedIcon from "@mui/icons-material/ArchiveOutlined";
+import CheckCircleOutlineOutlinedIcon from "@mui/icons-material/CheckCircleOutlineOutlined";
 import CloseIcon from "@mui/icons-material/Close";
 import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
@@ -9,8 +10,17 @@ import PictureAsPdfOutlinedIcon from "@mui/icons-material/PictureAsPdfOutlined";
 import UploadFileOutlinedIcon from "@mui/icons-material/UploadFileOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, Drawer, IconButton } from "@mui/material";
-import { DataGrid, type GridColDef } from "@mui/x-data-grid";
+import { Box, Button, Checkbox, Chip, Dialog, DialogContent, DialogTitle, Drawer, IconButton } from "@mui/material";
+import {
+  DataGrid,
+  GRID_CHECKBOX_SELECTION_COL_DEF,
+  gridPaginatedVisibleSortedGridRowIdsSelector,
+  type GridColDef,
+  type GridRowId,
+  type GridRowSelectionModel,
+  useGridApiContext,
+  useGridSelector
+} from "@mui/x-data-grid";
 
 import { api } from "../lib/api";
 import { consumePendingActivityManagementLaunchContext, type ActivityManagementLaunchContext, type InboundLaunchIntent } from "../lib/activityManagementLaunchContext";
@@ -64,6 +74,62 @@ type InboundHandlingMode = "PALLETIZED" | "SEALED_TRANSIT";
 type InboundWizardStep = 1 | 2 | 3;
 type OutboundWizardStep = 1 | 2 | 3;
 type InboundReceiptVariance = "MATCHED" | "SHORT" | "OVER";
+
+const MAX_BULK_INBOUND_STATUS_DOCUMENTS = 100;
+
+export function toggleCurrentPageRowSelection(
+  currentSelection: GridRowSelectionModel,
+  currentPageIDs: GridRowId[],
+  maximum: number
+) {
+  const nextIDs = new Set(currentSelection.type === "include" ? currentSelection.ids : []);
+  const allCurrentPageSelected = currentPageIDs.length > 0 && currentPageIDs.every((id) => nextIDs.has(id));
+  if (allCurrentPageSelected) {
+    currentPageIDs.forEach((id) => nextIDs.delete(id));
+    return { selection: { type: "include", ids: nextIDs } as GridRowSelectionModel, exceeded: false };
+  }
+  currentPageIDs.forEach((id) => nextIDs.add(id));
+  if (nextIDs.size > maximum) {
+    return { selection: currentSelection, exceeded: true };
+  }
+  return { selection: { type: "include", ids: nextIDs } as GridRowSelectionModel, exceeded: false };
+}
+
+function CurrentPageSelectionHeader({
+  selection,
+  maximum,
+  ariaLabel,
+  onChange,
+  onLimitExceeded
+}: {
+  selection: GridRowSelectionModel;
+  maximum: number;
+  ariaLabel: string;
+  onChange: (selection: GridRowSelectionModel) => void;
+  onLimitExceeded: () => void;
+}) {
+  const apiRef = useGridApiContext();
+  const paginatedIDs = useGridSelector(apiRef, gridPaginatedVisibleSortedGridRowIdsSelector);
+  const currentPageIDs = paginatedIDs.filter((id) => apiRef.current.isRowSelectable(id));
+  const selectedCount = currentPageIDs.filter((id) => selection.ids.has(id)).length;
+
+  return (
+    <Checkbox
+      size="small"
+      checked={currentPageIDs.length > 0 && selectedCount === currentPageIDs.length}
+      indeterminate={selectedCount > 0 && selectedCount < currentPageIDs.length}
+      inputProps={{ "aria-label": ariaLabel }}
+      onChange={() => {
+        const result = toggleCurrentPageRowSelection(selection, currentPageIDs, maximum);
+        if (result.exceeded) {
+          onLimitExceeded();
+          return;
+        }
+        onChange(result.selection);
+      }}
+    />
+  );
+}
 
 type ActivityManagementPageProps = {
   mode: ActivityMode;
@@ -606,6 +672,9 @@ export function ActivityManagementPage({
   const [expandedOutboundPickPlans, setExpandedOutboundPickPlans] = useState<Record<string, boolean>>({});
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [isBulkInboundImportOpen, setIsBulkInboundImportOpen] = useState(false);
+  const [bulkInboundStatus, setBulkInboundStatus] = useState<"" | "CONFIRMED" | "DELETED">("");
+  const [inboundRowSelectionModel, setInboundRowSelectionModel] = useState<GridRowSelectionModel>({ type: "include", ids: new Set() });
+  const [isBulkUpdatingInboundStatus, setIsBulkUpdatingInboundStatus] = useState(false);
   const [optimisticInboundDocuments, setOptimisticInboundDocuments] = useState<InboundDocument[]>([]);
   const [optimisticOutboundDocuments, setOptimisticOutboundDocuments] = useState<OutboundDocument[]>([]);
   const [filteredInboundDocuments, setFilteredInboundDocuments] = useState<InboundDocument[]>([]);
@@ -634,6 +703,14 @@ export function ActivityManagementPage({
 
     return query;
   }, [normalizedDocumentSearch, selectedCustomerId, selectedLocationId, selectedStatus]);
+
+  useEffect(() => {
+    setInboundRowSelectionModel({ type: "include", ids: new Set() });
+    setBulkInboundStatus("");
+    if (mode === "IN") {
+      setSelectedStatus((current) => current === "ARCHIVED" || current === "DELETED" ? "all" : current);
+    }
+  }, [mode]);
   const inboundDocumentSource = useMemo(
     () => hasActiveFilters
       ? mergeDocumentsById(filteredInboundDocuments, inboundDocuments)
@@ -654,6 +731,10 @@ export function ActivityManagementPage({
     () => mergeDocumentsById(outboundDocumentSource, optimisticOutboundDocuments),
     [optimisticOutboundDocuments, outboundDocumentSource]
   );
+  const selectedInboundStatusDocuments = useMemo(() => {
+    const selectedIDs = new Set(Array.from(inboundRowSelectionModel.ids, (id) => Number(id)));
+    return liveInboundDocuments.filter((document) => selectedIDs.has(document.id));
+  }, [inboundRowSelectionModel, liveInboundDocuments]);
   const skuMastersBySku = useMemo(() => new Map(
     skuMasters.map((skuMaster) => [normalizeSkuLookupValue(skuMaster.sku), skuMaster] as const)
   ), [skuMasters]);
@@ -682,7 +763,6 @@ export function ActivityManagementPage({
   );
   const isSelectedOutboundNoteDirty = Boolean(selectedOutboundDocument)
     && selectedOutboundDocumentNoteDraft.trim() !== (selectedOutboundDocument?.documentNote ?? "").trim();
-  const selectedInboundTrackingAction = selectedInboundDocument ? getInboundTrackingAction(selectedInboundDocument, t, { draftOnly: true }) : null;
   const selectedOutboundTrackingAction = selectedOutboundDocument ? getOutboundTrackingAction(selectedOutboundDocument, t, { draftOrShippedOnly: true }) : null;
   const selectedInboundDrawerBusy = Boolean(
     selectedInboundDocument && documentActionKey?.startsWith(`inbound-${selectedInboundDocument.id}-`)
@@ -693,17 +773,11 @@ export function ActivityManagementPage({
   const isSelectedInboundCopyBusy = Boolean(
     selectedInboundDocument && documentActionKey === getInboundDocumentActionKey(selectedInboundDocument.id, "copy")
   );
-  const isSelectedInboundTrackingBusy = Boolean(
-    selectedInboundDocument && documentActionKey === getInboundDocumentActionKey(selectedInboundDocument.id, "tracking")
-  );
   const isSelectedInboundReceivingCountSheetBusy = Boolean(
     selectedInboundDocument && documentActionKey === getInboundDocumentActionKey(selectedInboundDocument.id, "download-receiving-count-sheet")
   );
   const isSelectedInboundCancelBusy = Boolean(
     selectedInboundDocument && documentActionKey === getInboundDocumentActionKey(selectedInboundDocument.id, "cancel")
-  );
-  const isSelectedInboundArchiveBusy = Boolean(
-    selectedInboundDocument && documentActionKey === getInboundDocumentActionKey(selectedInboundDocument.id, "archive")
   );
   const isSelectedOutboundCopyBusy = Boolean(
     selectedOutboundDocument && documentActionKey === getOutboundDocumentActionKey(selectedOutboundDocument.id, "copy")
@@ -746,6 +820,14 @@ export function ActivityManagementPage({
   function showActionSuccess(message: string) {
     setErrorMessage("");
     showSuccess(message);
+  }
+
+  function handleInboundRowSelectionChange(nextSelection: GridRowSelectionModel) {
+    if (nextSelection.type !== "include" || nextSelection.ids.size > MAX_BULK_INBOUND_STATUS_DOCUMENTS) {
+      showActionError(new Error(t("bulkInboundSelectionLimit", { count: MAX_BULK_INBOUND_STATUS_DOCUMENTS })), t("bulkInboundStatusFailed"));
+      return;
+    }
+    setInboundRowSelectionModel(nextSelection);
   }
 
   async function runDocumentAction<T>(actionKey: string, action: () => Promise<T>) {
@@ -1172,6 +1254,7 @@ export function ActivityManagementPage({
     if (mode !== "IN") return [];
 
     return liveInboundDocuments.filter((document) => {
+      if (normalizeDocumentStatus(document.status) === "DELETED") return false;
       const matchesSearch = inboundDocumentMatchesSearch(document, normalizedDocumentSearch);
       const matchesCustomer = selectedCustomerId === "all" || document.customerId === Number(selectedCustomerId);
       const matchesLocation = selectedLocationId === "all" || document.locationId === Number(selectedLocationId);
@@ -1226,13 +1309,13 @@ export function ActivityManagementPage({
   const overviewStats = useMemo(() => {
     if (mode === "IN") {
       const scheduled = inboundDocumentRows.filter((document) => normalizeDocumentStatus(document.status) === "DRAFT").length;
-      const receiving = inboundDocumentRows.filter((document) => normalizeInboundTrackingStatusValue(document.trackingStatus, document.status) === "RECEIVING").length;
+      const confirmed = inboundDocumentRows.filter((document) => normalizeDocumentStatus(document.status) === "CONFIRMED").length;
       const totalQty = inboundDocumentRows.reduce((sum, document) => sum + document.totalReceivedQty, 0);
       return [
         { label: t("allRows"), value: summaryNumberFormatter.format(inboundDocumentRows.length), meta: t("inbound") },
         { label: t("received"), value: summaryNumberFormatter.format(totalQty), meta: t("units") },
         { label: t("draft"), value: summaryNumberFormatter.format(scheduled), meta: t("trackingStatus") },
-        { label: t("receiving"), value: summaryNumberFormatter.format(receiving), meta: t("trackingStatus") }
+        { label: t("confirmed"), value: summaryNumberFormatter.format(confirmed), meta: t("status") }
       ];
     }
 
@@ -1255,7 +1338,6 @@ export function ActivityManagementPage({
     { field: "totalLines", headerName: t("totalLines"), minWidth: 100, type: "number" },
     { field: "totalExpectedQty", headerName: t("expectedQty"), minWidth: 120, type: "number" },
     { field: "totalReceivedQty", headerName: t("received"), minWidth: 110, type: "number" },
-    { field: "trackingStatus", headerName: t("trackingStatus"), minWidth: 140, renderCell: (params) => renderInboundTrackingStatus(params.row.trackingStatus, params.row.status, t) },
     { field: "status", headerName: t("status"), minWidth: 120, renderCell: (params) => renderDocumentStatus(params.row.status, params.row.archivedAt, t) },
     {
       field: "actions",
@@ -1279,7 +1361,14 @@ export function ActivityManagementPage({
                 label: t("editDraft"),
                 icon: <EditOutlinedIcon fontSize="small" />,
                 onClick: () => openEditInboundDocument(params.row)
-              }]
+              }, ...(params.row.handlingMode !== "SEALED_TRANSIT"
+                ? [{
+                  key: "confirm",
+                  label: t("confirmReceipt"),
+                  icon: <CheckCircleOutlineOutlinedIcon fontSize="small" />,
+                  onClick: () => void handleConfirmInboundDocument(params.row)
+                }]
+                : [])]
               : []),
             ...(canManage
               ? [{
@@ -1289,15 +1378,24 @@ export function ActivityManagementPage({
                 onClick: () => void handleCopyInboundDocument(params.row)
               }]
               : []),
-            ...(canManage && canArchiveInboundDocument(params.row)
-              ? [{ key: "archive", label: t("archiveReceipt"), icon: <ArchiveOutlinedIcon fontSize="small" />, onClick: () => void handleArchiveInboundDocument(params.row) }]
-              : []),
             { key: "download-receiving-count-sheet", label: t("downloadReceivingCountSheet"), icon: <PictureAsPdfOutlinedIcon fontSize="small" />, onClick: () => void handleDownloadReceivingCountSheet(params.row) }
           ]}
         />
       )
     }
   ], [canManage, t]);
+  const inboundSelectionColumn = useMemo<GridColDef<InboundDocument>>(() => ({
+    ...GRID_CHECKBOX_SELECTION_COL_DEF,
+    renderHeader: () => (
+      <CurrentPageSelectionHeader
+        selection={inboundRowSelectionModel}
+        maximum={MAX_BULK_INBOUND_STATUS_DOCUMENTS}
+        ariaLabel={t("selectCurrentPage")}
+        onChange={setInboundRowSelectionModel}
+        onLimitExceeded={() => showActionError(new Error(t("bulkInboundSelectionLimit", { count: MAX_BULK_INBOUND_STATUS_DOCUMENTS })), t("bulkInboundStatusFailed"))}
+      />
+    )
+  }), [inboundRowSelectionModel, t]);
 
   const inboundDocumentDetailColumns = useMemo<GridColDef<InboundDocument["lines"][number]>[]>(() => [
     { field: "sku", headerName: t("sku"), minWidth: 110, renderCell: (params) => <span className="cell--mono">{params.row.sku}</span> },
@@ -2168,6 +2266,46 @@ export function ActivityManagementPage({
     });
   }
 
+  async function handleBulkUpdateInboundStatus() {
+    if (!canManage || !bulkInboundStatus || selectedInboundStatusDocuments.length === 0) return;
+    if (bulkInboundStatus === "CONFIRMED" && selectedInboundStatusDocuments.some((document) => normalizeDocumentStatus(document.status) !== "DRAFT")) {
+      showActionError(new Error(t("bulkInboundConfirmDraftsOnly")), t("couldNotSaveActivity"));
+      return;
+    }
+    if (bulkInboundStatus === "CONFIRMED" && selectedInboundStatusDocuments.some((document) => document.handlingMode === "SEALED_TRANSIT")) {
+      showActionError(new Error(t("bulkInboundConvertSealedFirst")), t("couldNotSaveActivity"));
+      return;
+    }
+
+    const count = selectedInboundStatusDocuments.length;
+    const approved = await confirm({
+      title: t("bulkInboundChangeStatus"),
+      message: t(bulkInboundStatus === "CONFIRMED" ? "bulkInboundConfirmPrompt" : "bulkInboundDeletePrompt", { count }),
+      confirmLabel: t(bulkInboundStatus === "CONFIRMED" ? "confirmed" : "deleted"),
+      cancelLabel: t("cancel"),
+      confirmColor: bulkInboundStatus === "DELETED" ? "error" : "primary",
+      severity: bulkInboundStatus === "DELETED" ? "warning" : "info"
+    });
+    if (!approved) return;
+
+    setIsBulkUpdatingInboundStatus(true);
+    setErrorMessage("");
+    try {
+      const response = await api.bulkUpdateInboundDocumentStatus(
+        selectedInboundStatusDocuments.map((document) => document.id),
+        bulkInboundStatus
+      );
+      setInboundRowSelectionModel({ type: "include", ids: new Set() });
+      setBulkInboundStatus("");
+      await onRefresh();
+      showActionSuccess(t("bulkInboundStatusUpdated", { count: response.updatedDocuments }));
+    } catch (error) {
+      showActionError(error, t("bulkInboundStatusFailed"));
+    } finally {
+      setIsBulkUpdatingInboundStatus(false);
+    }
+  }
+
   async function handleUpdateInboundTrackingStatus(document: InboundDocument, trackingStatus: string) {
     if (!canManage) {
       return;
@@ -2506,9 +2644,19 @@ export function ActivityManagementPage({
                   {canManage ? (
                     <>
                       {mode === "IN" ? (
-                        <Button variant="outlined" startIcon={<UploadFileOutlinedIcon />} onClick={() => setIsBulkInboundImportOpen(true)}>
-                          {t("bulkInboundExcel")}
-                        </Button>
+                        <>
+                          <select className="workspace-bulk-status-select" aria-label={t("bulkInboundTargetStatus")} value={bulkInboundStatus} onChange={(event) => setBulkInboundStatus(event.target.value as "" | "CONFIRMED" | "DELETED")} disabled={isBulkUpdatingInboundStatus}>
+                            <option value="">{t("bulkInboundTargetStatus")}</option>
+                            <option value="CONFIRMED">{t("confirmed")}</option>
+                            <option value="DELETED">{t("deleted")}</option>
+                          </select>
+                          <Button variant="outlined" startIcon={isBulkUpdatingInboundStatus ? <InlineLoadingIndicator /> : <CheckCircleOutlineOutlinedIcon />} onClick={() => void handleBulkUpdateInboundStatus()} disabled={isBulkUpdatingInboundStatus || !bulkInboundStatus || selectedInboundStatusDocuments.length === 0}>
+                            {t("bulkInboundApplyStatus", { count: selectedInboundStatusDocuments.length })}
+                          </Button>
+                          <Button variant="outlined" startIcon={<UploadFileOutlinedIcon />} onClick={() => setIsBulkInboundImportOpen(true)}>
+                            {t("bulkInboundExcel")}
+                          </Button>
+                        </>
                       ) : null}
                       <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={() => void openCreateModal()}>
                         {mode === "IN" ? t("newInbound") : t("newOutbound")}
@@ -2534,7 +2682,7 @@ export function ActivityManagementPage({
               />
               <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
               <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
-              <label>{t("status")}<select value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value)}><option value="all">{t("allStatuses")}</option><option value="DRAFT">{t("draft")}</option><option value="CONFIRMED">{t("confirmed")}</option><option value="DELETED">{t("deleted")}</option><option value="ARCHIVED">{t("archived")}</option></select></label>
+              <label>{t("status")}<select value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value)}><option value="all">{t("allStatuses")}</option><option value="DRAFT">{t("draft")}</option><option value="CONFIRMED">{t("confirmed")}</option>{mode === "OUT" ? <><option value="DELETED">{t("deleted")}</option><option value="ARCHIVED">{t("archived")}</option></> : null}</select></label>
             </div>
           </div>
           <div className="workspace-summary-strip">
@@ -2551,9 +2699,14 @@ export function ActivityManagementPage({
               {mode === "IN" ? (
                 <DataGrid
                   rows={inboundDocumentRows}
-                  columns={inboundDocumentColumns}
+                  columns={[inboundSelectionColumn, ...inboundDocumentColumns]}
                   loading={isLoading || isDocumentFilterLoading}
                   pagination
+                  checkboxSelection={canManage}
+                  disableRowSelectionExcludeModel
+                  rowSelectionModel={inboundRowSelectionModel}
+                  onRowSelectionModelChange={handleInboundRowSelectionChange}
+                  isRowSelectable={(params) => !params.row.archivedAt && ["DRAFT", "CONFIRMED"].includes(normalizeDocumentStatus(params.row.status))}
                   pageSizeOptions={[10, 20, 50]}
                   disableRowSelectionOnClick
                   initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
@@ -2669,17 +2822,17 @@ export function ActivityManagementPage({
                     {normalizeDocumentStatus(selectedInboundDocument.status) === "CONFIRMED" ? t("reEnterReceipt") : t("copyReceipt")}
                   </Button>
                 ) : null}
-                {canManage && !selectedInboundDocument.archivedAt && selectedInboundTrackingAction ? (
+                {canManage
+                && !selectedInboundDocument.archivedAt
+                && normalizeDocumentStatus(selectedInboundDocument.status) === "DRAFT"
+                && selectedInboundDocument.handlingMode !== "SEALED_TRANSIT" ? (
                   <Button
-                    variant={selectedInboundTrackingAction.trackingStatus === "RECEIVED" ? "contained" : "outlined"}
-                    startIcon={isSelectedInboundTrackingBusy ? <InlineLoadingIndicator /> : undefined}
+                    variant="contained"
+                    startIcon={documentActionKey === getInboundDocumentActionKey(selectedInboundDocument.id, "confirm") ? <InlineLoadingIndicator /> : <CheckCircleOutlineOutlinedIcon />}
                     disabled={disableSelectedInboundActions}
-                    aria-busy={isSelectedInboundTrackingBusy}
-                    onClick={() => {
-                      void handleUpdateInboundTrackingStatus(selectedInboundDocument, selectedInboundTrackingAction.trackingStatus);
-                    }}
+                    onClick={() => void handleConfirmInboundDocument(selectedInboundDocument)}
                   >
-                    {selectedInboundTrackingAction.label}
+                    {t("confirmReceipt")}
                   </Button>
                 ) : null}
                 <Button
@@ -2703,23 +2856,11 @@ export function ActivityManagementPage({
                     {t("cancelReceipt")}
                   </Button>
                 ) : null}
-                {canManage && canArchiveInboundDocument(selectedInboundDocument) ? (
-                  <Button
-                    variant="outlined"
-                    startIcon={isSelectedInboundArchiveBusy ? <InlineLoadingIndicator /> : <ArchiveOutlinedIcon />}
-                    onClick={() => void handleArchiveInboundDocument(selectedInboundDocument)}
-                    disabled={disableSelectedInboundActions}
-                    aria-busy={isSelectedInboundArchiveBusy}
-                  >
-                    {t("archiveReceipt")}
-                  </Button>
-                ) : null}
               </div>
 
               <div className="document-drawer__status-bar">
                 <div className="document-drawer__status-main">
                   {renderDocumentStatus(selectedInboundDocument.status, selectedInboundDocument.archivedAt, t)}
-                  {renderInboundTrackingStatus(selectedInboundDocument.trackingStatus, selectedInboundDocument.status, t)}
                 </div>
                 <div className="document-drawer__status-stat">
                   <strong>{selectedInboundDocument.totalLines}</strong>
@@ -2747,10 +2888,6 @@ export function ActivityManagementPage({
                 <div className="document-drawer__audit-item">
                   <strong>{t("status")}</strong>
                   <span>{formatDocumentStatusAuditValue(selectedInboundDocument.status, selectedInboundDocument.archivedAt, selectedInboundDocument.deletedAt, resolvedTimeZone, t)}</span>
-                </div>
-                <div className="document-drawer__audit-item">
-                  <strong>{t("trackingStatus")}</strong>
-                  <span>{formatInboundTrackingStatusLabel(selectedInboundDocument.trackingStatus, selectedInboundDocument.status, t)}</span>
                 </div>
                 <div className="document-drawer__audit-item">
                   <strong>{t("confirmedAt")}</strong>

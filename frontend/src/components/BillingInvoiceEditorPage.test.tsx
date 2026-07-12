@@ -360,10 +360,75 @@ describe("BillingInvoiceEditorPage", () => {
     });
     const exportPayload = downloadExcelWorkbook.mock.calls[0][0];
     expect(exportPayload.sheetName).toBe("Invoice");
-    expect(exportPayload.columns.map((column: { label: string }) => column.label)).toContain("Warehouse Charges Summary");
+    expect(exportPayload.columns.map((column: { label: string }) => column.label).slice(0, 2)).toEqual([
+      "Container No.",
+      "Charge Type"
+    ]);
+    expect(exportPayload.rows[0]).toMatchObject({
+      containerNo: "GCXU5817233",
+      chargeType: "Storage Fee",
+      description: "Storage settlement for GCXU5817233"
+    });
     expect(exportPayload.rows.map((row: { chargeType: string }) => row.chargeType)).toContain("Storage Fee");
     expect(exportPayload.summaryRows.map((row: { label: string }) => row.label)).toContain("Total Fee");
     expect(exportPayload.additionalSheets[0].sheetName).toBe("Storage Fee");
+  });
+
+  it("groups Excel charge details by container before charge type", async () => {
+    getBillingInvoice.mockResolvedValue({
+      ...invoiceFixture,
+      lines: [
+        {
+          ...invoiceFixture.lines[0],
+          id: 2001,
+          sortOrder: 1,
+          chargeType: "INBOUND",
+          containerNo: "ZZZU9999999",
+          description: "Inbound Z"
+        },
+        {
+          ...invoiceFixture.lines[0],
+          id: 2002,
+          sortOrder: 2,
+          chargeType: "STORAGE",
+          containerNo: "AAAU1111111",
+          description: "Storage A"
+        },
+        {
+          ...invoiceFixture.lines[0],
+          id: 2003,
+          sortOrder: 3,
+          chargeType: "OUTBOUND",
+          containerNo: "AAAU1111111",
+          description: "Outbound A"
+        }
+      ]
+    });
+
+    renderWithProviders(
+      <BillingInvoiceEditorPage
+        invoiceId={42}
+        currentUserRole="admin"
+        onBackToBilling={vi.fn()}
+      />
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Export" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Export Excel/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Download Excel" }));
+
+    await waitFor(() => expect(downloadExcelWorkbook).toHaveBeenCalledTimes(1));
+    const rows = downloadExcelWorkbook.mock.calls[0][0].rows;
+    expect(rows.map((row: { containerNo: string }) => row.containerNo)).toEqual([
+      "AAAU1111111",
+      "AAAU1111111",
+      "ZZZU9999999"
+    ]);
+    expect(rows.map((row: { chargeType: string }) => row.chargeType)).toEqual([
+      "Storage Fee",
+      "Outbound Fee",
+      "Inbound Fee"
+    ]);
   });
 
   it("exports the current invoice to PDF", async () => {
