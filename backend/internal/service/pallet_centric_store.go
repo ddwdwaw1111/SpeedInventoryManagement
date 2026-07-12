@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -22,6 +23,7 @@ const (
 	StockLedgerSourceTransfer   = "TRANSFER"
 	StockLedgerSourceAdjustment = "ADJUSTMENT"
 	StockLedgerSourceCycleCount = "CYCLE_COUNT"
+	StockLedgerSourceOpening    = "OPENING_BALANCE"
 )
 
 type createdPalletEntity struct {
@@ -43,13 +45,16 @@ type palletItemRecord struct {
 type createStockLedgerInput struct {
 	EventType           string
 	OccurredAt          *time.Time
+	ContainerID         int64
 	PalletID            int64
 	PalletItemID        int64
 	SKUMasterID         int64
 	CustomerID          int64
 	LocationID          int64
+	SectionID           int64
 	StorageSection      string
 	QuantityChange      int
+	PalletChange        float64
 	SourceDocumentType  string
 	SourceDocumentID    int64
 	SourceLineID        int64
@@ -193,45 +198,18 @@ func (s *Store) loadPalletBackedInventoryProjectionTx(ctx context.Context, tx *s
 			COALESCE(sm.description, sm.name, '') AS description,
 			COALESCE(sm.unit, 'pcs') AS unit,
 			sm.reorder_level,
-			COALESCE(pb.quantity, 0) AS quantity,
-			GREATEST(COALESCE(pb.quantity, 0) - COALESCE(pb.allocated_qty, 0) - COALESCE(pb.damaged_qty, 0) - COALESCE(pb.hold_qty, 0), 0) AS available_qty,
-			COALESCE(pb.allocated_qty, 0) AS allocated_qty,
-			COALESCE(pb.damaged_qty, 0) AS damaged_qty,
-			COALESCE(pb.hold_qty, 0) AS hold_qty
+			i.quantity,
+			GREATEST(i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty, 0) AS available_qty,
+			i.allocated_qty,
+			i.damaged_qty,
+			i.hold_qty
 		FROM inventory_items i
 		JOIN customers c ON c.id = i.customer_id
 		JOIN storage_locations l ON l.id = i.location_id
 		JOIN sku_master sm ON sm.id = i.sku_master_id
-		LEFT JOIN (
-			SELECT
-				pi.sku_master_id,
-				p.customer_id,
-				p.current_location_id AS location_id,
-				COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP') AS storage_section,
-				COALESCE(p.current_container_no, '') AS container_no,
-				SUM(pi.quantity) AS quantity,
-				SUM(pi.allocated_qty) AS allocated_qty,
-				SUM(pi.damaged_qty) AS damaged_qty,
-				SUM(pi.hold_qty) AS hold_qty
-			FROM pallet_items pi
-			JOIN pallets p ON p.id = pi.pallet_id
-			WHERE pi.quantity > 0
-			  AND p.status <> ?
-			GROUP BY
-				pi.sku_master_id,
-				p.customer_id,
-				p.current_location_id,
-				COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP'),
-				COALESCE(p.current_container_no, '')
-		) pb
-			ON pb.sku_master_id = i.sku_master_id
-			AND pb.customer_id = i.customer_id
-			AND pb.location_id = i.location_id
-			AND pb.storage_section = COALESCE(NULLIF(i.storage_section, ''), 'TEMP')
-			AND pb.container_no = COALESCE(i.container_no, '')
 		WHERE i.id = ?
 		FOR UPDATE
-	`, PalletStatusCancelled, itemID).Scan(
+	`, itemID).Scan(
 		&projection.ItemID,
 		&projection.SKUMasterID,
 		&projection.CustomerID,
@@ -256,7 +234,7 @@ func (s *Store) loadPalletBackedInventoryProjectionTx(ctx context.Context, tx *s
 		if err == sql.ErrNoRows {
 			return palletBackedInventoryProjection{}, ErrNotFound
 		}
-		return palletBackedInventoryProjection{}, fmt.Errorf("load pallet-backed inventory projection: %w", err)
+		return palletBackedInventoryProjection{}, fmt.Errorf("load container inventory projection: %w", err)
 	}
 
 	projection.StorageSection = fallbackSection(projection.StorageSection)
@@ -313,9 +291,22 @@ func (s *Store) syncPalletItemStateTx(ctx context.Context, tx *sql.Tx, input cre
 }
 
 func (s *Store) createStockLedgerEntryTx(ctx context.Context, tx *sql.Tx, input createStockLedgerInput) (int64, error) {
-	if input.PalletID <= 0 || input.CustomerID <= 0 || input.LocationID <= 0 {
+	if input.CustomerID <= 0 || input.LocationID <= 0 {
 		return 0, fmt.Errorf("%w: invalid stock ledger input", ErrInvalidInput)
 	}
+	if input.SectionID <= 0 {
+		sectionID, sectionErr := resolveStorageSectionIDTx(ctx, tx, input.LocationID, input.StorageSection)
+		if sectionErr != nil {
+			return 0, sectionErr
+		}
+		input.SectionID = sectionID
+	}
+	containerID, err := ensureContainerForStockLedgerTx(ctx, tx, input)
+	if err != nil {
+		return 0, err
+	}
+	input.ContainerID = firstNonZeroInt64(input.ContainerID, containerID)
+	input.PalletChange = resolveStockLedgerPalletChange(input)
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO stock_ledger (
 			event_type,
@@ -324,9 +315,12 @@ func (s *Store) createStockLedgerEntryTx(ctx context.Context, tx *sql.Tx, input 
 			pallet_item_id,
 			sku_master_id,
 			customer_id,
+			container_id,
 			location_id,
+			section_id,
 			storage_section,
 			quantity_change,
+			pallet_change,
 			source_document_type,
 			source_document_id,
 			source_line_id,
@@ -350,17 +344,20 @@ func (s *Store) createStockLedgerEntryTx(ctx context.Context, tx *sql.Tx, input 
 			document_note,
 			reason,
 			reference_code
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		firstNonEmpty(input.EventType, StockLedgerEventReceive),
 		nullableTime(input.OccurredAt),
-		input.PalletID,
+		nullableInt64(input.PalletID),
 		nullableInt64(input.PalletItemID),
 		nullableInt64(input.SKUMasterID),
 		input.CustomerID,
+		nullableInt64(input.ContainerID),
 		input.LocationID,
+		nullableInt64(input.SectionID),
 		fallbackSection(input.StorageSection),
 		input.QuantityChange,
+		input.PalletChange,
 		nullableString(input.SourceDocumentType),
 		nullableInt64(input.SourceDocumentID),
 		nullableInt64(input.SourceLineID),
@@ -395,7 +392,145 @@ func (s *Store) createStockLedgerEntryTx(ctx context.Context, tx *sql.Tx, input 
 	if err := s.createContainerLifecycleEventTx(ctx, tx, stockLedgerID, input); err != nil {
 		return 0, err
 	}
+	if err := s.applyContainerInventoryLedgerDeltaTx(ctx, tx, input); err != nil {
+		return 0, err
+	}
+	if err := s.rebuildContainerPalletProfilesForBucketTx(ctx, tx, palletSourceBucket{
+		SKUMasterID:    input.SKUMasterID,
+		CustomerID:     input.CustomerID,
+		LocationID:     input.LocationID,
+		StorageSection: input.StorageSection,
+		ContainerNo:    input.ContainerNo,
+	}); err != nil {
+		return 0, err
+	}
 	return stockLedgerID, nil
+}
+
+func ensureContainerForStockLedgerTx(ctx context.Context, tx *sql.Tx, input createStockLedgerInput) (int64, error) {
+	if input.ContainerID > 0 {
+		return input.ContainerID, nil
+	}
+	containerNo := normalizeContainerNo(input.ContainerNo)
+	if containerNo == "" {
+		return 0, nil
+	}
+	inboundDocumentID := int64(0)
+	if strings.EqualFold(input.SourceDocumentType, StockLedgerSourceInbound) {
+		inboundDocumentID = input.SourceDocumentID
+	}
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO containers (
+			customer_id,
+			inbound_document_id,
+			location_id,
+			container_no,
+			container_type,
+			handling_mode,
+			status,
+			tracking_status,
+			last_event_at
+		) VALUES (?, ?, ?, ?, 'NORMAL', 'PALLETIZED', 'IN_STOCK', 'RECEIVED', COALESCE(?, CURRENT_TIMESTAMP))
+		ON DUPLICATE KEY UPDATE
+			id = LAST_INSERT_ID(id),
+			inbound_document_id = COALESCE(VALUES(inbound_document_id), inbound_document_id),
+			location_id = VALUES(location_id),
+			last_event_at = GREATEST(COALESCE(last_event_at, VALUES(last_event_at)), VALUES(last_event_at))
+	`, input.CustomerID, nullableInt64(inboundDocumentID), input.LocationID, containerNo, nullableTime(resolveContainerLifecycleEventTime(input)))
+	if err != nil {
+		return 0, mapDBError(fmt.Errorf("ensure stock ledger container: %w", err))
+	}
+	containerID, err := result.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("resolve stock ledger container id: %w", err)
+	}
+	return containerID, nil
+}
+
+func resolveStockLedgerPalletChange(input createStockLedgerInput) float64 {
+	if input.PalletChange != 0 {
+		return input.PalletChange
+	}
+	if input.PalletID <= 0 {
+		return 0
+	}
+	switch strings.ToUpper(strings.TrimSpace(input.EventType)) {
+	case StockLedgerEventReceive, StockLedgerEventReversal, "TRANSFER_IN":
+		return 1
+	case StockLedgerEventShip, "TRANSFER_OUT", "CANCELLED":
+		return -1
+	default:
+		return 0
+	}
+}
+
+func (s *Store) applyContainerInventoryLedgerDeltaTx(ctx context.Context, tx *sql.Tx, input createStockLedgerInput) error {
+	if input.SKUMasterID <= 0 {
+		return nil
+	}
+	containerNo := normalizeContainerNo(input.ContainerNo)
+	result, err := tx.ExecContext(ctx, `
+		UPDATE inventory_items
+		SET
+			container_id = COALESCE(?, container_id),
+			quantity = quantity + ?,
+			pallets = GREATEST(pallets + ROUND(?), 0),
+			last_restocked_at = CASE WHEN ? > 0 THEN CURRENT_TIMESTAMP ELSE last_restocked_at END,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE sku_master_id = ?
+			AND customer_id = ?
+			AND location_id = ?
+			AND storage_section = ?
+			AND container_no = ?
+	`,
+		nullableInt64(input.ContainerID),
+		input.QuantityChange,
+		input.PalletChange,
+		input.QuantityChange,
+		input.SKUMasterID,
+		input.CustomerID,
+		input.LocationID,
+		fallbackSection(input.StorageSection),
+		containerNo,
+	)
+	if err != nil {
+		return mapDBError(fmt.Errorf("update container inventory ledger balance: %w", err))
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("resolve container inventory balance update: %w", err)
+	}
+	if rowsAffected > 0 || (input.QuantityChange == 0 && input.PalletChange == 0) {
+		return nil
+	}
+	if input.QuantityChange < 0 || input.PalletChange < 0 {
+		return fmt.Errorf("%w: container inventory balance does not exist for outbound delta", ErrInvalidInput)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO inventory_items (
+			sku_master_id,
+			customer_id,
+			container_id,
+			location_id,
+			storage_section,
+			container_no,
+			quantity,
+			pallets,
+			last_restocked_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ROUND(?), CURRENT_TIMESTAMP)
+	`,
+		input.SKUMasterID,
+		input.CustomerID,
+		nullableInt64(input.ContainerID),
+		input.LocationID,
+		fallbackSection(input.StorageSection),
+		containerNo,
+		input.QuantityChange,
+		input.PalletChange,
+	); err != nil {
+		return mapDBError(fmt.Errorf("apply container inventory ledger delta: %w", err))
+	}
+	return nil
 }
 
 func (s *Store) createStockLedgerTx(ctx context.Context, tx *sql.Tx, input createStockLedgerInput) error {
@@ -627,6 +762,179 @@ func (s *Store) updatePalletStatusFromContentsTx(ctx context.Context, tx *sql.Tx
 	`, status, palletID); err != nil {
 		return mapDBError(fmt.Errorf("update pallet status: %w", err))
 	}
+	return s.syncContainerAllocationFromPalletBucketTx(ctx, tx, palletID)
+}
+
+func (s *Store) syncContainerAllocationFromPalletBucketTx(ctx context.Context, tx *sql.Tx, palletID int64) error {
+	var bucket palletSourceBucket
+	if err := tx.QueryRowContext(ctx, `
+		SELECT
+			p.sku_master_id,
+			p.customer_id,
+			p.current_location_id,
+			COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP'),
+			COALESCE(p.current_container_no, '')
+		FROM pallets p
+		WHERE p.id = ?
+	`, palletID).Scan(
+		&bucket.SKUMasterID,
+		&bucket.CustomerID,
+		&bucket.LocationID,
+		&bucket.StorageSection,
+		&bucket.ContainerNo,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("load pallet bucket for container allocation sync: %w", err)
+	}
+
+	var allocatedQty int
+	var allocatedPallets int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT
+			COALESCE(SUM(pi.allocated_qty), 0),
+			COUNT(DISTINCT CASE WHEN pi.allocated_qty > 0 THEN p.id END)
+		FROM pallet_items pi
+		JOIN pallets p ON p.id = pi.pallet_id
+		WHERE pi.sku_master_id = ?
+			AND p.customer_id = ?
+			AND p.current_location_id = ?
+			AND COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP') = ?
+			AND COALESCE(p.current_container_no, '') = ?
+			AND p.status <> 'CANCELLED'
+	`, bucket.SKUMasterID, bucket.CustomerID, bucket.LocationID, fallbackSection(bucket.StorageSection), strings.TrimSpace(bucket.ContainerNo)).Scan(&allocatedQty, &allocatedPallets); err != nil {
+		return fmt.Errorf("load container allocation totals: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE inventory_items
+		SET allocated_qty = ?, allocated_pallets = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE sku_master_id = ?
+			AND customer_id = ?
+			AND location_id = ?
+			AND storage_section = ?
+			AND container_no = ?
+	`, allocatedQty, allocatedPallets, bucket.SKUMasterID, bucket.CustomerID, bucket.LocationID, fallbackSection(bucket.StorageSection), strings.TrimSpace(bucket.ContainerNo)); err != nil {
+		return mapDBError(fmt.Errorf("sync container allocation totals: %w", err))
+	}
+	return s.rebuildContainerPalletProfilesForBucketTx(ctx, tx, bucket)
+}
+
+func (s *Store) rebuildContainerPalletProfilesForBucketTx(ctx context.Context, tx *sql.Tx, bucket palletSourceBucket) error {
+	itemID, err := s.findInventoryItemIDByProjectionTx(
+		ctx,
+		tx,
+		bucket.SKUMasterID,
+		bucket.CustomerID,
+		bucket.LocationID,
+		bucket.StorageSection,
+		bucket.ContainerNo,
+	)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return s.rebuildContainerPalletProfilesForItemTx(ctx, tx, itemID)
+}
+
+func (s *Store) rebuildContainerPalletProfilesForItemTx(ctx context.Context, tx *sql.Tx, itemID int64) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM container_pallet_profiles WHERE inventory_item_id = ?`, itemID); err != nil {
+		return mapDBError(fmt.Errorf("clear container pallet profiles: %w", err))
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO container_pallet_profiles (
+			inventory_item_id, ctn_per_pallet, pallet_count, allocated_pallets, damaged_pallets, hold_pallets
+		)
+		SELECT
+			i.id,
+			pi.quantity,
+			COUNT(DISTINCT p.id),
+			COUNT(DISTINCT CASE WHEN pi.allocated_qty > 0 THEN p.id END),
+			COUNT(DISTINCT CASE WHEN pi.damaged_qty > 0 THEN p.id END),
+			COUNT(DISTINCT CASE WHEN pi.hold_qty > 0 THEN p.id END)
+		FROM inventory_items i
+		JOIN pallets p
+			ON p.customer_id = i.customer_id
+			AND p.current_location_id = i.location_id
+			AND COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP') = COALESCE(NULLIF(i.storage_section, ''), 'TEMP')
+			AND COALESCE(p.current_container_no, '') = COALESCE(i.container_no, '')
+		JOIN pallet_items pi ON pi.pallet_id = p.id AND pi.sku_master_id = i.sku_master_id
+		WHERE i.id = ? AND p.status <> 'CANCELLED' AND pi.quantity > 0
+		GROUP BY i.id, pi.quantity
+	`, itemID); err != nil {
+		return mapDBError(fmt.Errorf("rebuild container pallet profiles: %w", err))
+	}
+	return nil
+}
+
+func (s *Store) rebuildContainerInventoryBalancesFromPalletsTx(ctx context.Context, tx *sql.Tx, customerID int64, locationID int64, containerNo string) error {
+	containerNo = normalizeContainerNo(containerNo)
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE inventory_items i
+		LEFT JOIN (
+			SELECT
+				pi.sku_master_id,
+				COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP') AS storage_section,
+				SUM(pi.quantity) AS quantity,
+				SUM(pi.allocated_qty) AS allocated_qty,
+				SUM(pi.damaged_qty) AS damaged_qty,
+				SUM(pi.hold_qty) AS hold_qty,
+				COUNT(DISTINCT CASE WHEN pi.quantity > 0 THEN p.id END) AS pallets,
+				COUNT(DISTINCT CASE WHEN pi.allocated_qty > 0 THEN p.id END) AS allocated_pallets
+			FROM pallet_items pi
+			JOIN pallets p ON p.id = pi.pallet_id
+			WHERE p.customer_id = ?
+				AND p.current_location_id = ?
+				AND COALESCE(p.current_container_no, '') = ?
+				AND p.status <> 'CANCELLED'
+			GROUP BY pi.sku_master_id, COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP')
+		) balances
+			ON balances.sku_master_id = i.sku_master_id
+			AND balances.storage_section = i.storage_section
+		SET
+			i.quantity = COALESCE(balances.quantity, 0),
+			i.allocated_qty = COALESCE(balances.allocated_qty, 0),
+			i.damaged_qty = COALESCE(balances.damaged_qty, 0),
+			i.hold_qty = COALESCE(balances.hold_qty, 0),
+			i.pallets = COALESCE(balances.pallets, 0),
+			i.allocated_pallets = COALESCE(balances.allocated_pallets, 0),
+			i.updated_at = CURRENT_TIMESTAMP
+		WHERE i.customer_id = ?
+			AND i.location_id = ?
+			AND i.container_no = ?
+	`, customerID, locationID, containerNo, customerID, locationID, containerNo); err != nil {
+		return mapDBError(fmt.Errorf("rebuild container inventory balances from pallets: %w", err))
+	}
+	itemIDs := make([]int64, 0)
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id FROM inventory_items WHERE customer_id = ? AND location_id = ? AND container_no = ?
+	`, customerID, locationID, containerNo)
+	if err != nil {
+		return fmt.Errorf("list container inventory items for pallet profile rebuild: %w", err)
+	}
+	for rows.Next() {
+		var itemID int64
+		if err := rows.Scan(&itemID); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan container inventory item for pallet profile rebuild: %w", err)
+		}
+		itemIDs = append(itemIDs, itemID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate container inventory items for pallet profile rebuild: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close container inventory item rows: %w", err)
+	}
+	for _, itemID := range itemIDs {
+		if err := s.rebuildContainerPalletProfilesForItemTx(ctx, tx, itemID); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -735,6 +1043,13 @@ func (s *Store) restorePalletContentsForLineTx(ctx context.Context, tx *sql.Tx, 
 		}
 		if err := s.updatePalletStatusFromContentsTx(ctx, tx, restore.PalletID); err != nil {
 			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE containers
+			SET status = 'IN_STOCK', updated_at = CURRENT_TIMESTAMP
+			WHERE customer_id = ? AND container_no = ?
+		`, restore.CustomerID, normalizeContainerNo(restore.ContainerNo)); err != nil {
+			return nil, mapDBError(fmt.Errorf("restore container status after outbound cancellation: %w", err))
 		}
 	}
 

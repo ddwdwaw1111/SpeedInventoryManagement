@@ -31,9 +31,7 @@ func main() {
 		log.Fatalf("database migration failed: %v", err)
 	}
 
-	store, err := service.NewStoreWithOptions(db, service.StoreOptions{
-		RunStartupMaintenance: cfg.StartupDBMaintenance,
-	})
+	store, err := service.NewStore(db)
 	if err != nil {
 		log.Fatalf("service initialization failed: %v", err)
 	}

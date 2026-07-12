@@ -188,31 +188,42 @@ type CreateSKUMasterInput struct {
 }
 
 type Item struct {
-	ID              int64      `json:"id"`
-	SKUMasterID     int64      `json:"skuMasterId"`
-	ItemNumber      string     `json:"itemNumber"`
-	SKU             string     `json:"sku"`
-	Name            string     `json:"name"`
-	Category        string     `json:"category"`
-	Description     string     `json:"description"`
-	Unit            string     `json:"unit"`
-	Quantity        int        `json:"quantity"`
-	AvailableQty    int        `json:"availableQty"`
-	AllocatedQty    int        `json:"allocatedQty"`
-	DamagedQty      int        `json:"damagedQty"`
-	HoldQty         int        `json:"holdQty"`
-	Pallets         int        `json:"pallets"`
-	ReorderLevel    int        `json:"reorderLevel"`
-	CustomerID      int64      `json:"customerId"`
-	CustomerName    string     `json:"customerName"`
-	LocationID      int64      `json:"locationId"`
-	LocationName    string     `json:"locationName"`
-	StorageSection  string     `json:"storageSection"`
-	DeliveryDate    *time.Time `json:"deliveryDate"`
-	ContainerNo     string     `json:"containerNo"`
-	LastRestockedAt *time.Time `json:"lastRestockedAt"`
-	CreatedAt       time.Time  `json:"createdAt"`
-	UpdatedAt       time.Time  `json:"updatedAt"`
+	ID              int64                    `json:"id"`
+	SKUMasterID     int64                    `json:"skuMasterId"`
+	ItemNumber      string                   `json:"itemNumber"`
+	SKU             string                   `json:"sku"`
+	Name            string                   `json:"name"`
+	Category        string                   `json:"category"`
+	Description     string                   `json:"description"`
+	Unit            string                   `json:"unit"`
+	Quantity        int                      `json:"quantity"`
+	AvailableQty    int                      `json:"availableQty"`
+	AllocatedQty    int                      `json:"allocatedQty"`
+	DamagedQty      int                      `json:"damagedQty"`
+	HoldQty         int                      `json:"holdQty"`
+	Pallets         int                      `json:"pallets"`
+	PalletProfiles  []ContainerPalletProfile `json:"palletProfiles"`
+	ReorderLevel    int                      `json:"reorderLevel"`
+	CustomerID      int64                    `json:"customerId"`
+	CustomerName    string                   `json:"customerName"`
+	LocationID      int64                    `json:"locationId"`
+	LocationName    string                   `json:"locationName"`
+	StorageSection  string                   `json:"storageSection"`
+	DeliveryDate    *time.Time               `json:"deliveryDate"`
+	ContainerNo     string                   `json:"containerNo"`
+	ContainerType   string                   `json:"containerType"`
+	LastRestockedAt *time.Time               `json:"lastRestockedAt"`
+	CreatedAt       time.Time                `json:"createdAt"`
+	UpdatedAt       time.Time                `json:"updatedAt"`
+}
+
+type ContainerPalletProfile struct {
+	CTNPerPallet     int `db:"ctn_per_pallet" json:"ctnPerPallet"`
+	PalletCount      int `db:"pallet_count" json:"palletCount"`
+	AvailablePallets int `db:"available_pallets" json:"availablePallets"`
+	AllocatedPallets int `db:"allocated_pallets" json:"allocatedPallets"`
+	DamagedPallets   int `db:"damaged_pallets" json:"damagedPallets"`
+	HoldPallets      int `db:"hold_pallets" json:"holdPallets"`
 }
 
 type Movement struct {
@@ -322,21 +333,7 @@ type CreateMovementInput struct {
 }
 
 func NewStore(db *sqlx.DB) (*Store, error) {
-	return NewStoreWithOptions(db, StoreOptions{RunStartupMaintenance: true})
-}
-
-type StoreOptions struct {
-	RunStartupMaintenance bool
-}
-
-func NewStoreWithOptions(db *sqlx.DB, options StoreOptions) (*Store, error) {
-	store := &Store{db: db}
-	if options.RunStartupMaintenance {
-		if err := store.repairOutboundDraftReservations(context.Background()); err != nil {
-			return nil, err
-		}
-	}
-	return store, nil
+	return &Store{db: db}, nil
 }
 
 func (s *Store) GetDashboard(ctx context.Context) (DashboardData, error) {
@@ -345,33 +342,11 @@ func (s *Store) GetDashboard(ctx context.Context) (DashboardData, error) {
 	query := `
 		SELECT
 			COUNT(*) AS total_items,
-			COALESCE(SUM(position_qty), 0) AS total_units,
-			COALESCE(SUM(CASE WHEN available_qty <= reorder_level THEN 1 ELSE 0 END), 0) AS low_stock_items,
-			COUNT(DISTINCT location_id) AS locations_in_use
-		FROM (
-			SELECT
-				pi.sku_master_id,
-				p.customer_id,
-				p.current_location_id AS location_id,
-				p.current_storage_section AS storage_section,
-				sm.reorder_level,
-				SUM(pi.quantity) AS position_qty,
-				GREATEST(
-					SUM(pi.quantity) - SUM(pi.allocated_qty) - SUM(pi.damaged_qty) - SUM(pi.hold_qty),
-					0
-				) AS available_qty
-			FROM pallet_items pi
-			JOIN pallets p ON p.id = pi.pallet_id
-			JOIN sku_master sm ON sm.id = pi.sku_master_id
-			WHERE pi.quantity > 0
-			  AND p.status <> 'CANCELLED'
-			GROUP BY
-				pi.sku_master_id,
-				p.customer_id,
-				p.current_location_id,
-				p.current_storage_section,
-				sm.reorder_level
-		) AS inventory_positions
+			COALESCE(SUM(i.quantity), 0) AS total_units,
+			0 AS low_stock_items,
+			COUNT(DISTINCT i.location_id) AS locations_in_use
+		FROM inventory_items i
+		WHERE i.quantity > 0
 	`
 
 	if err := s.db.QueryRowContext(ctx, query).Scan(
@@ -397,96 +372,72 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 		SELECT
 			i.id,
 			i.sku_master_id,
-			COALESCE(sm.item_number, ''),
+			COALESCE(cic.item_number, sm.item_number, ''),
 			sm.sku,
 			sm.name,
 			sm.category,
 			COALESCE(sm.description, ''),
 			sm.unit,
-			SUM(pi.quantity) AS quantity,
+			i.quantity,
 			GREATEST(
-				SUM(pi.quantity) - SUM(pi.allocated_qty) - SUM(pi.damaged_qty) - SUM(pi.hold_qty),
+				i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty,
 				0
 			) AS available_qty,
-			SUM(pi.allocated_qty) AS allocated_qty,
-			SUM(pi.damaged_qty) AS damaged_qty,
-			SUM(pi.hold_qty) AS hold_qty,
-			COUNT(DISTINCT p.id) AS pallets,
+			i.allocated_qty,
+			i.damaged_qty,
+			i.hold_qty,
+			i.pallets,
 			sm.reorder_level,
-			p.customer_id,
+			i.customer_id,
 			c.name,
-			p.current_location_id,
+			i.location_id,
 			l.name,
-			p.current_storage_section,
+			COALESCE(NULLIF(i.storage_section, ''), 'TEMP'),
 			i.delivery_date,
-			COALESCE(p.current_container_no, i.container_no, '') AS container_no,
+			COALESCE(i.container_no, '') AS container_no,
+			COALESCE(NULLIF(cn.container_type, ''), 'NORMAL') AS container_type,
 			i.last_restocked_at,
 			i.created_at,
-			GREATEST(i.updated_at, MAX(p.updated_at)) AS updated_at
-		FROM pallet_items pi
-		JOIN pallets p ON p.id = pi.pallet_id
-		JOIN inventory_items i
-			ON i.sku_master_id = pi.sku_master_id
-			AND i.customer_id = p.customer_id
-			AND i.location_id = p.current_location_id
-			AND i.storage_section = p.current_storage_section
-			AND COALESCE(i.container_no, '') = COALESCE(p.current_container_no, '')
-		JOIN sku_master sm ON sm.id = pi.sku_master_id
-		JOIN customers c ON c.id = p.customer_id
-		JOIN storage_locations l ON l.id = p.current_location_id
-		WHERE pi.quantity > 0
-		  AND p.status <> 'CANCELLED'
+			i.updated_at
+		FROM inventory_items i
+		JOIN sku_master sm ON sm.id = i.sku_master_id
+		LEFT JOIN customer_item_catalog cic ON cic.customer_id = i.customer_id AND cic.sku_master_id = i.sku_master_id
+		JOIN customers c ON c.id = i.customer_id
+		JOIN storage_locations l ON l.id = i.location_id
+		LEFT JOIN containers cn
+			ON cn.customer_id = i.customer_id
+			AND UPPER(TRIM(cn.container_no)) = UPPER(TRIM(COALESCE(i.container_no, '')))
+		WHERE i.quantity > 0
 	`
 
 	args := make([]any, 0)
 	if search := strings.TrimSpace(filters.Search); search != "" {
 		likeValue := "%" + search + "%"
-		query += " AND (sm.item_number LIKE ? OR sm.sku LIKE ? OR sm.name LIKE ? OR sm.description LIKE ? OR sm.category LIKE ? OR c.name LIKE ? OR COALESCE(p.current_container_no, i.container_no, '') LIKE ?)"
+		query += " AND (COALESCE(cic.item_number, sm.item_number, '') LIKE ? OR sm.sku LIKE ? OR sm.name LIKE ? OR sm.description LIKE ? OR sm.category LIKE ? OR c.name LIKE ? OR COALESCE(i.container_no, '') LIKE ?)"
 		args = append(args, likeValue, likeValue, likeValue, likeValue, likeValue, likeValue)
 		args = append(args, likeValue)
 	}
 
 	if filters.LocationID > 0 {
-		query += " AND p.current_location_id = ?"
+		query += " AND i.location_id = ?"
 		args = append(args, filters.LocationID)
 	}
 
 	if filters.CustomerID > 0 {
-		query += " AND p.customer_id = ?"
+		query += " AND i.customer_id = ?"
 		args = append(args, filters.CustomerID)
 	}
 
 	if containerNo := strings.TrimSpace(filters.ContainerNo); containerNo != "" {
-		query += " AND UPPER(TRIM(COALESCE(p.current_container_no, i.container_no, ''))) = UPPER(TRIM(?))"
+		query += " AND UPPER(TRIM(COALESCE(i.container_no, ''))) = UPPER(TRIM(?))"
 		args = append(args, containerNo)
 	}
 
-	query += `
-		GROUP BY
-			i.id,
-			sm.item_number,
-			sm.sku,
-			sm.name,
-			sm.category,
-			sm.description,
-			sm.unit,
-			sm.reorder_level,
-			p.customer_id,
-			c.name,
-			p.current_location_id,
-			l.name,
-			p.current_storage_section,
-			i.delivery_date,
-			p.current_container_no,
-			i.last_restocked_at,
-			i.created_at,
-			i.updated_at
-	`
 	if filters.LowStockOnly {
-		query += " HAVING available_qty <= sm.reorder_level"
+		query += " AND GREATEST(i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty, 0) <= sm.reorder_level"
 	}
 
-	query += " ORDER BY MAX(p.updated_at) DESC, sm.sku ASC"
+	query += " ORDER BY i.updated_at DESC, sm.sku ASC"
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -507,8 +458,54 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate items: %w", err)
 	}
+	if err := s.attachContainerPalletProfiles(ctx, items); err != nil {
+		return nil, err
+	}
 
 	return items, nil
+}
+
+func (s *Store) attachContainerPalletProfiles(ctx context.Context, items []Item) error {
+	if len(items) == 0 {
+		return nil
+	}
+	itemIDs := make([]int64, 0, len(items))
+	itemsByID := make(map[int64]*Item, len(items))
+	for index := range items {
+		items[index].PalletProfiles = []ContainerPalletProfile{}
+		itemIDs = append(itemIDs, items[index].ID)
+		itemsByID[items[index].ID] = &items[index]
+	}
+	type profileRow struct {
+		InventoryItemID int64 `db:"inventory_item_id"`
+		ContainerPalletProfile
+	}
+	query, args, err := sqlx.In(`
+		SELECT
+			inventory_item_id,
+			ctn_per_pallet,
+			pallet_count,
+			GREATEST(pallet_count - allocated_pallets - damaged_pallets - hold_pallets, 0) AS available_pallets,
+			allocated_pallets,
+			damaged_pallets,
+			hold_pallets
+		FROM container_pallet_profiles
+		WHERE inventory_item_id IN (?)
+		ORDER BY inventory_item_id, ctn_per_pallet DESC
+	`, itemIDs)
+	if err != nil {
+		return fmt.Errorf("build container pallet profile query: %w", err)
+	}
+	rows := make([]profileRow, 0)
+	if err := s.db.SelectContext(ctx, &rows, s.db.Rebind(query), args...); err != nil {
+		return fmt.Errorf("load container pallet profiles: %w", err)
+	}
+	for _, row := range rows {
+		if item := itemsByID[row.InventoryItemID]; item != nil {
+			item.PalletProfiles = append(item.PalletProfiles, row.ContainerPalletProfile)
+		}
+	}
+	return nil
 }
 
 func (s *Store) CreateItem(ctx context.Context, input CreateItemInput) (Item, error) {
@@ -537,21 +534,27 @@ func (s *Store) CreateItem(ctx context.Context, input CreateItemInput) (Item, er
 	if err != nil {
 		return Item{}, err
 	}
+	sectionID, err := resolveStorageSectionIDTx(ctx, tx, input.LocationID, input.StorageSection)
+	if err != nil {
+		return Item{}, err
+	}
 
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO inventory_items (
 			sku_master_id,
 			customer_id,
 			location_id,
+			section_id,
 			storage_section,
 			delivery_date,
 			container_no,
 			last_restocked_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		skuMasterID,
 		input.CustomerID,
 		input.LocationID,
+		sectionID,
 		input.StorageSection,
 		nullableTime(deliveryDate),
 		input.ContainerNo,
@@ -567,7 +570,7 @@ func (s *Store) CreateItem(ctx context.Context, input CreateItemInput) (Item, er
 	}
 
 	if input.Quantity > 0 {
-		if err := s.createSeedPalletForInventoryItemTx(ctx, tx, itemID, skuMasterID, input, deliveryDate, input.Quantity, fmt.Sprintf("ITEM-%06d-SEED", itemID), StockLedgerSourceAdjustment, itemID, 0, "Manual inventory seed"); err != nil {
+		if err := s.createSeedPalletForInventoryItemTx(ctx, tx, itemID, skuMasterID, input, deliveryDate, input.Quantity, fmt.Sprintf("ITEM-%06d-SEED", itemID), StockLedgerSourceOpening, itemID, 0, "Manual inventory seed"); err != nil {
 			return Item{}, err
 		}
 	}
@@ -613,6 +616,10 @@ func (s *Store) UpdateItem(ctx context.Context, itemID int64, input CreateItemIn
 	if err != nil {
 		return Item{}, err
 	}
+	sectionID, err := resolveStorageSectionIDTx(ctx, tx, input.LocationID, input.StorageSection)
+	if err != nil {
+		return Item{}, err
+	}
 	if currentProjection.Quantity > 0 && (previousSKUMasterID != skuMasterID ||
 		currentProjection.CustomerID != input.CustomerID ||
 		currentProjection.LocationID != input.LocationID ||
@@ -627,6 +634,7 @@ func (s *Store) UpdateItem(ctx context.Context, itemID int64, input CreateItemIn
 			sku_master_id = ?,
 			customer_id = ?,
 			location_id = ?,
+			section_id = ?,
 			storage_section = ?,
 			delivery_date = ?,
 			container_no = ?,
@@ -636,6 +644,7 @@ func (s *Store) UpdateItem(ctx context.Context, itemID int64, input CreateItemIn
 		skuMasterID,
 		input.CustomerID,
 		input.LocationID,
+		sectionID,
 		input.StorageSection,
 		nullableTime(deliveryDate),
 		input.ContainerNo,
@@ -916,7 +925,7 @@ func (s *Store) listStockLedgerMovements(ctx context.Context, limit int, filters
 			COALESCE(MAX(NULLIF(sl.reference_code, '')), '') AS reference_code,
 			MAX(COALESCE(sl.occurred_at, sl.created_at)) AS created_at
 		FROM stock_ledger sl
-		JOIN pallets p ON p.id = sl.pallet_id
+		LEFT JOIN pallets p ON p.id = sl.pallet_id
 		LEFT JOIN pallet_items pi ON pi.id = sl.pallet_item_id
 		LEFT JOIN sku_master sm ON sm.id = COALESCE(sl.sku_master_id, pi.sku_master_id, p.sku_master_id)
 		JOIN customers c ON c.id = sl.customer_id
@@ -1001,21 +1010,21 @@ func (s *Store) getItem(ctx context.Context, itemID int64) (Item, error) {
 		SELECT
 			i.id,
 			i.sku_master_id,
-			COALESCE(sm.item_number, ''),
+			COALESCE(cic.item_number, sm.item_number, ''),
 			sm.sku,
 			sm.name,
 			sm.category,
 			COALESCE(sm.description, ''),
 			sm.unit,
-			COALESCE(pb.quantity, 0) AS quantity,
+			i.quantity,
 			GREATEST(
-				COALESCE(pb.quantity, 0) - COALESCE(pb.allocated_qty, 0) - COALESCE(pb.damaged_qty, 0) - COALESCE(pb.hold_qty, 0),
+				i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty,
 				0
 			) AS available_qty,
-			COALESCE(pb.allocated_qty, 0) AS allocated_qty,
-			COALESCE(pb.damaged_qty, 0) AS damaged_qty,
-			COALESCE(pb.hold_qty, 0) AS hold_qty,
-			COALESCE(pb.pallets, 0) AS pallets,
+			i.allocated_qty,
+			i.damaged_qty,
+			i.hold_qty,
+			i.pallets,
 			sm.reorder_level,
 			i.customer_id,
 			c.name,
@@ -1024,42 +1033,18 @@ func (s *Store) getItem(ctx context.Context, itemID int64) (Item, error) {
 			COALESCE(NULLIF(i.storage_section, ''), 'TEMP'),
 			i.delivery_date,
 			COALESCE(i.container_no, ''),
+			COALESCE(NULLIF(cn.container_type, ''), 'NORMAL'),
 			i.last_restocked_at,
 			i.created_at,
-			GREATEST(i.updated_at, COALESCE(pb.updated_at, i.updated_at)) AS updated_at
+			i.updated_at
 		FROM inventory_items i
 		JOIN customers c ON c.id = i.customer_id
 		JOIN storage_locations l ON l.id = i.location_id
 		JOIN sku_master sm ON sm.id = i.sku_master_id
-		LEFT JOIN (
-			SELECT
-				pi.sku_master_id,
-				p.customer_id,
-				p.current_location_id AS location_id,
-				COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP') AS storage_section,
-				COALESCE(p.current_container_no, '') AS container_no,
-				SUM(pi.quantity) AS quantity,
-				SUM(pi.allocated_qty) AS allocated_qty,
-				SUM(pi.damaged_qty) AS damaged_qty,
-				SUM(pi.hold_qty) AS hold_qty,
-				COUNT(DISTINCT p.id) AS pallets,
-				MAX(pi.updated_at) AS updated_at
-			FROM pallet_items pi
-			JOIN pallets p ON p.id = pi.pallet_id
-			WHERE pi.quantity > 0
-			  AND p.status <> 'CANCELLED'
-			GROUP BY
-				pi.sku_master_id,
-				p.customer_id,
-				p.current_location_id,
-				COALESCE(NULLIF(p.current_storage_section, ''), 'TEMP'),
-				COALESCE(p.current_container_no, '')
-		) pb
-			ON pb.sku_master_id = i.sku_master_id
-			AND pb.customer_id = i.customer_id
-			AND pb.location_id = i.location_id
-			AND pb.storage_section = COALESCE(NULLIF(i.storage_section, ''), 'TEMP')
-			AND pb.container_no = COALESCE(i.container_no, '')
+		LEFT JOIN customer_item_catalog cic ON cic.customer_id = i.customer_id AND cic.sku_master_id = i.sku_master_id
+		LEFT JOIN containers cn
+			ON cn.customer_id = i.customer_id
+			AND UPPER(TRIM(cn.container_no)) = UPPER(TRIM(COALESCE(i.container_no, '')))
 		WHERE i.id = ?
 	`, itemID)
 
@@ -1071,7 +1056,11 @@ func (s *Store) getItem(ctx context.Context, itemID int64) (Item, error) {
 		return Item{}, err
 	}
 
-	return item, nil
+	items := []Item{item}
+	if err := s.attachContainerPalletProfiles(ctx, items); err != nil {
+		return Item{}, err
+	}
+	return items[0], nil
 }
 
 type itemScanner interface {
@@ -1164,6 +1153,7 @@ func scanItem(scanner itemScanner) (Item, error) {
 		&item.StorageSection,
 		&deliveryDate,
 		&item.ContainerNo,
+		&item.ContainerType,
 		&lastRestockedAt,
 		&item.CreatedAt,
 		&item.UpdatedAt,
@@ -1438,7 +1428,6 @@ func (s *Store) ensureSKUMaster(ctx context.Context, tx *sql.Tx, input CreateIte
 		INSERT INTO sku_master (item_number, sku, name, category, description, unit, reorder_level)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
-			item_number = COALESCE(NULLIF(VALUES(item_number), ''), item_number),
 			name = VALUES(name),
 			category = VALUES(category),
 			description = VALUES(description),
@@ -1465,8 +1454,64 @@ func (s *Store) ensureSKUMaster(ctx context.Context, tx *sql.Tx, input CreateIte
 	if skuMasterID <= 0 {
 		return 0, fmt.Errorf("%w: sku master id is invalid", ErrInvalidInput)
 	}
+	if err := s.upsertCustomerItemCatalogTx(ctx, tx, input.CustomerID, skuMasterID, input.ItemNumber); err != nil {
+		return 0, err
+	}
 
 	return skuMasterID, nil
+}
+
+func (s *Store) upsertCustomerItemCatalogTx(ctx context.Context, tx *sql.Tx, customerID int64, skuMasterID int64, itemNumber string) error {
+	if customerID <= 0 || skuMasterID <= 0 {
+		return fmt.Errorf("%w: customer and SKU are required for item catalog mapping", ErrInvalidInput)
+	}
+	itemNumber = strings.ToUpper(strings.TrimSpace(itemNumber))
+
+	var existingItemNumber string
+	err := tx.QueryRowContext(ctx, `
+		SELECT COALESCE(item_number, '')
+		FROM customer_item_catalog
+		WHERE customer_id = ? AND sku_master_id = ?
+		FOR UPDATE
+	`, customerID, skuMasterID).Scan(&existingItemNumber)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("lock customer item catalog mapping: %w", err)
+	}
+	if existingItemNumber != "" && itemNumber != "" && !strings.EqualFold(existingItemNumber, itemNumber) {
+		return fmt.Errorf("%w: this customer SKU already uses item code %s", ErrInvalidInput, existingItemNumber)
+	}
+
+	if itemNumber != "" {
+		var conflictingSKU string
+		err = tx.QueryRowContext(ctx, `
+			SELECT sm.sku
+			FROM customer_item_catalog cic
+			JOIN sku_master sm ON sm.id = cic.sku_master_id
+			WHERE cic.customer_id = ?
+				AND UPPER(TRIM(cic.item_number)) = ?
+				AND cic.sku_master_id <> ?
+			LIMIT 1
+			FOR UPDATE
+		`, customerID, itemNumber, skuMasterID).Scan(&conflictingSKU)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("lock customer item code %s: %w", itemNumber, err)
+		}
+		if conflictingSKU != "" {
+			return fmt.Errorf("%w: item code %s already belongs to SKU %s for this customer", ErrInvalidInput, itemNumber, conflictingSKU)
+		}
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO customer_item_catalog (customer_id, sku_master_id, item_number)
+		VALUES (?, ?, ?)
+		ON DUPLICATE KEY UPDATE
+			item_number = COALESCE(customer_item_catalog.item_number, VALUES(item_number)),
+			updated_at = CURRENT_TIMESTAMP
+	`, customerID, skuMasterID, nullableString(itemNumber))
+	if err != nil {
+		return mapDBError(fmt.Errorf("upsert customer item catalog: %w", err))
+	}
+	return nil
 }
 
 func (s *Store) findInventoryItemIDByProjectionTx(ctx context.Context, tx *sql.Tx, skuMasterID int64, customerID int64, locationID int64, storageSection string, containerNo string) (int64, error) {

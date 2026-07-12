@@ -77,6 +77,8 @@ type CreateInboundDocumentInput struct {
 	TrackingStatus      string                           `json:"trackingStatus"`
 	DocumentNote        string                           `json:"documentNote"`
 	Lines               []CreateInboundDocumentLineInput `json:"lines"`
+	ImportKey           string                           `json:"-"`
+	ImportPayloadHash   string                           `json:"-"`
 }
 
 type UpdateInboundDocumentNoteInput struct {
@@ -292,7 +294,14 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 		SELECT
 			id,
 			document_id,
-			COALESCE((SELECT sm.item_number FROM sku_master sm WHERE sm.sku = il.sku_snapshot LIMIT 1), '') AS item_number,
+			COALESCE((
+				SELECT COALESCE(cic.item_number, sm.item_number)
+				FROM sku_master sm
+				JOIN inbound_documents parent_d ON parent_d.id = il.document_id
+				LEFT JOIN customer_item_catalog cic ON cic.customer_id = parent_d.customer_id AND cic.sku_master_id = sm.id
+				WHERE sm.sku = il.sku_snapshot
+				LIMIT 1
+			), '') AS item_number,
 			sku_snapshot,
 			COALESCE(description_snapshot, '') AS description_snapshot,
 			storage_section,
@@ -405,13 +414,15 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 			storage_section,
 			unit_label,
 			document_note,
+			import_key,
+			import_payload_hash,
 			status,
 			tracking_status,
 			confirmed_at,
 			posted_at,
 			cancel_note,
 			cancelled_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)
 	`,
 		input.CustomerID,
 		input.LocationID,
@@ -423,6 +434,8 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 		fallbackSection(input.StorageSection),
 		nullableString(input.UnitLabel),
 		nullableString(input.DocumentNote),
+		nullableString(input.ImportKey),
+		nullableString(input.ImportPayloadHash),
 		persistedStatus,
 		requestedTrackingStatus,
 	)
@@ -1189,11 +1202,6 @@ func (s *Store) reduceConfirmedInboundReceiptLotsTx(
 		return nil
 	}
 
-	reductionPallets := 0.0
-	if nextLine.Pallets < existingLine.Pallets {
-		reductionPallets = float64(existingLine.Pallets - nextLine.Pallets)
-	}
-
 	palletConsumptions, err := s.consumePalletContentsForInboundLineTx(ctx, tx, existingLine.ID, activePallets[0].SKUMasterID, reductionQty, true)
 	if err != nil {
 		return err
@@ -1202,13 +1210,12 @@ func (s *Store) reduceConfirmedInboundReceiptLotsTx(
 		return ErrInsufficientStock
 	}
 
-	consumptionQuantities := make([]int, len(palletConsumptions))
-	for index, palletConsumption := range palletConsumptions {
-		consumptionQuantities[index] = palletConsumption.Quantity
-	}
-	palletSplits := splitPalletsByQuantities(reductionPallets, consumptionQuantities)
-
-	for index, palletConsumption := range palletConsumptions {
+	for _, palletConsumption := range palletConsumptions {
+		afterPalletQty, err := s.loadPalletQuantityTx(ctx, tx, palletConsumption.PalletID)
+		if err != nil {
+			return err
+		}
+		palletChange := resolvePalletCountTransition(afterPalletQty+palletConsumption.Quantity, afterPalletQty)
 		if err := s.createPalletLocationEventTx(ctx, tx, createPalletLocationEventInput{
 			PalletID:         palletConsumption.PalletID,
 			ContainerVisitID: palletConsumption.ContainerVisitID,
@@ -1218,7 +1225,7 @@ func (s *Store) reduceConfirmedInboundReceiptLotsTx(
 			ContainerNo:      targetContainerNo,
 			EventType:        PalletEventAdjust,
 			QuantityDelta:    -palletConsumption.Quantity,
-			PalletDelta:      -palletSplits[index],
+			PalletDelta:      palletChange,
 		}); err != nil {
 			return err
 		}
@@ -1231,6 +1238,7 @@ func (s *Store) reduceConfirmedInboundReceiptLotsTx(
 			LocationID:          palletConsumption.LocationID,
 			StorageSection:      targetSection,
 			QuantityChange:      -palletConsumption.Quantity,
+			PalletChange:        palletChange,
 			SourceDocumentType:  StockLedgerSourceInbound,
 			SourceDocumentID:    documentID,
 			SourceLineID:        existingLine.ID,
@@ -1311,8 +1319,8 @@ func (s *Store) moveConfirmedInboundReceiptLotsTx(
 			ContainerVisitID: palletState.ContainerVisitID,
 			CustomerID:       palletState.CustomerID,
 			LocationID:       palletState.LocationID,
-			StorageSection:   targetSection,
-			ContainerNo:      targetContainerNo,
+			StorageSection:   palletState.StorageSection,
+			ContainerNo:      palletState.ContainerNo,
 			EventType:        PalletEventTransferOut,
 			QuantityDelta:    -palletState.Quantity,
 			PalletDelta:      -1,
@@ -1337,12 +1345,13 @@ func (s *Store) moveConfirmedInboundReceiptLotsTx(
 			SKUMasterID:         palletState.SKUMasterID,
 			CustomerID:          palletState.CustomerID,
 			LocationID:          palletState.LocationID,
-			StorageSection:      targetSection,
+			StorageSection:      palletState.StorageSection,
 			QuantityChange:      -palletState.Quantity,
+			PalletChange:        -1,
 			SourceDocumentType:  StockLedgerSourceInbound,
 			SourceDocumentID:    documentID,
 			SourceLineID:        existingLine.ID,
-			ContainerNo:         targetContainerNo,
+			ContainerNo:         palletState.ContainerNo,
 			DescriptionSnapshot: lineDescription,
 			Reason:              transferReason,
 		})
@@ -1385,6 +1394,7 @@ func (s *Store) moveConfirmedInboundReceiptLotsTx(
 			LocationID:          documentRow.LocationID,
 			StorageSection:      targetSection,
 			QuantityChange:      palletState.Quantity,
+			PalletChange:        1,
 			SourceDocumentType:  StockLedgerSourceInbound,
 			SourceDocumentID:    documentID,
 			SourceLineID:        existingLine.ID,
@@ -1488,11 +1498,6 @@ func (s *Store) increaseConfirmedInboundReceiptLotsTx(
 	if err != nil {
 		return err
 	}
-	createdQuantities := make([]int, len(createdPallets))
-	for index, createdPallet := range createdPallets {
-		createdQuantities[index] = createdPallet.Quantity
-	}
-	palletDeltaSplits := splitPalletsByQuantities(increasePallets, createdQuantities)
 	for _, createdPallet := range createdPallets {
 		stockLedgerID, err := s.createStockLedgerEntryTx(ctx, tx, createStockLedgerInput{
 			EventType:           StockLedgerEventAdjust,
@@ -1503,9 +1508,11 @@ func (s *Store) increaseConfirmedInboundReceiptLotsTx(
 			LocationID:          documentRow.LocationID,
 			StorageSection:      targetSection,
 			QuantityChange:      createdPallet.Quantity,
+			PalletChange:        1,
 			SourceDocumentType:  StockLedgerSourceInbound,
 			SourceDocumentID:    documentID,
 			SourceLineID:        existingLine.ID,
+			ContainerNo:         targetContainerNo,
 			DescriptionSnapshot: lineDescription,
 			Reason:              fmt.Sprintf("Receipt correction: quantity updated from %d to %d", existingLine.receivedOrExpectedQty(), nextLine.receivedOrExpectedQty()),
 		})
@@ -1514,7 +1521,7 @@ func (s *Store) increaseConfirmedInboundReceiptLotsTx(
 		}
 		_ = stockLedgerID
 	}
-	for index, createdPallet := range createdPallets {
+	for _, createdPallet := range createdPallets {
 		if err := s.createPalletLocationEventTx(ctx, tx, createPalletLocationEventInput{
 			PalletID:         createdPallet.Pallet.ID,
 			ContainerVisitID: createdPallet.Pallet.ContainerVisitID,
@@ -1524,7 +1531,7 @@ func (s *Store) increaseConfirmedInboundReceiptLotsTx(
 			ContainerNo:      targetContainerNo,
 			EventType:        PalletEventAdjust,
 			QuantityDelta:    createdPallet.Quantity,
-			PalletDelta:      palletDeltaSplits[index],
+			PalletDelta:      1,
 		}); err != nil {
 			return err
 		}
@@ -1842,6 +1849,23 @@ func (s *Store) CancelInboundDocument(ctx context.Context, documentID int64) (In
 				`DELETE FROM pallets WHERE id IN (%s)`, inClause), args...); err != nil {
 				return InboundDocument{}, mapDBError(fmt.Errorf("delete inbound pallets: %w", err))
 			}
+			if err := s.rebuildContainerInventoryBalancesFromPalletsTx(ctx, tx, documentRow.CustomerID, documentRow.LocationID, documentRow.ContainerNo); err != nil {
+				return InboundDocument{}, err
+			}
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE containers c
+				LEFT JOIN (
+					SELECT container_id, SUM(quantity) AS remaining_qty
+					FROM inventory_items
+					WHERE container_id IS NOT NULL
+					GROUP BY container_id
+				) balance ON balance.container_id = c.id
+				SET c.status = CASE WHEN COALESCE(balance.remaining_qty, 0) > 0 THEN 'IN_STOCK' ELSE 'CANCELLED' END,
+					c.updated_at = CURRENT_TIMESTAMP
+				WHERE c.customer_id = ? AND c.container_no = ?
+			`, documentRow.CustomerID, normalizeContainerNo(documentRow.ContainerNo)); err != nil {
+				return InboundDocument{}, mapDBError(fmt.Errorf("update cancelled inbound container status: %w", err))
+			}
 		}
 	}
 
@@ -2075,7 +2099,14 @@ func (s *Store) loadInboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, docu
 		SELECT
 			id,
 			document_id,
-			COALESCE((SELECT sm.item_number FROM sku_master sm WHERE sm.sku = il.sku_snapshot LIMIT 1), '') AS item_number,
+			COALESCE((
+				SELECT COALESCE(cic.item_number, sm.item_number)
+				FROM sku_master sm
+				JOIN inbound_documents parent_d ON parent_d.id = il.document_id
+				LEFT JOIN customer_item_catalog cic ON cic.customer_id = parent_d.customer_id AND cic.sku_master_id = sm.id
+				WHERE sm.sku = il.sku_snapshot
+				LIMIT 1
+			), '') AS item_number,
 			sku_snapshot,
 			COALESCE(description_snapshot, '') AS description_snapshot,
 			storage_section,
@@ -2241,7 +2272,14 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 		SELECT
 			id,
 			document_id,
-			COALESCE((SELECT sm.item_number FROM sku_master sm WHERE sm.sku = il.sku_snapshot LIMIT 1), '') AS item_number,
+			COALESCE((
+				SELECT COALESCE(cic.item_number, sm.item_number)
+				FROM sku_master sm
+				JOIN inbound_documents parent_d ON parent_d.id = il.document_id
+				LEFT JOIN customer_item_catalog cic ON cic.customer_id = parent_d.customer_id AND cic.sku_master_id = sm.id
+				WHERE sm.sku = il.sku_snapshot
+				LIMIT 1
+			), '') AS item_number,
 			sku_snapshot,
 			COALESCE(description_snapshot, '') AS description_snapshot,
 			storage_section,
@@ -2313,20 +2351,17 @@ func (s *Store) upsertInboundLineItemCodesTx(ctx context.Context, tx *sql.Tx, in
 		if line.ItemNumber == "" {
 			continue
 		}
-
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO sku_master (item_number, sku, name, category, description, unit, reorder_level)
-			VALUES (?, ?, ?, 'General', ?, ?, 0)
-			ON DUPLICATE KEY UPDATE
-				item_number = COALESCE(NULLIF(VALUES(item_number), ''), item_number)
-		`,
-			line.ItemNumber,
-			line.SKU,
-			firstNonEmpty(line.Description, line.SKU),
-			nullableString(line.Description),
-			strings.ToLower(firstNonEmpty(input.UnitLabel, "CTN")),
-		); err != nil {
-			return mapDBError(fmt.Errorf("upsert inbound item code for sku %s: %w", line.SKU, err))
+		_, err := s.ensureSKUMaster(ctx, tx, sanitizeItemInput(CreateItemInput{
+			ItemNumber:  line.ItemNumber,
+			SKU:         line.SKU,
+			Name:        firstNonEmpty(line.Description, line.SKU),
+			Category:    "General",
+			Description: firstNonEmpty(line.Description, line.SKU),
+			Unit:        strings.ToLower(firstNonEmpty(input.UnitLabel, "CTN")),
+			CustomerID:  input.CustomerID,
+		}))
+		if err != nil {
+			return err
 		}
 	}
 
@@ -2425,21 +2460,27 @@ func (s *Store) findOrCreateInboundItem(ctx context.Context, tx *sql.Tx, documen
 	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, "", fmt.Errorf("load inbound inventory item by sku master: %w", err)
 	}
+	sectionID, err := resolveStorageSectionIDTx(ctx, tx, itemInput.LocationID, itemInput.StorageSection)
+	if err != nil {
+		return 0, "", err
+	}
 
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO inventory_items (
 			sku_master_id,
 			customer_id,
 			location_id,
+			section_id,
 			storage_section,
 			delivery_date,
 			container_no,
 			last_restocked_at
-		) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 	`,
 		skuMasterID,
 		itemInput.CustomerID,
 		itemInput.LocationID,
+		sectionID,
 		itemInput.StorageSection,
 		nullableTime(deliveryDate),
 		itemInput.ContainerNo,
@@ -2457,9 +2498,14 @@ func (s *Store) findOrCreateInboundItem(ctx context.Context, tx *sql.Tx, documen
 }
 
 func (s *Store) syncInboundItemSnapshotTx(ctx context.Context, tx *sql.Tx, itemID int64, itemInput CreateItemInput, storageSection string, containerNo string, deliveryDate *time.Time) error {
+	sectionID, err := resolveStorageSectionIDTx(ctx, tx, itemInput.LocationID, storageSection)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE inventory_items
 		SET
+			section_id = ?,
 			storage_section = ?,
 			container_no = ?,
 			delivery_date = COALESCE(?, delivery_date),
@@ -2467,6 +2513,7 @@ func (s *Store) syncInboundItemSnapshotTx(ctx context.Context, tx *sql.Tx, itemI
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`,
+		sectionID,
 		fallbackSection(storageSection),
 		nullableString(containerNo),
 		nullableTime(deliveryDate),

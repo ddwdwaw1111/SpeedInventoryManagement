@@ -590,7 +590,6 @@ describe("ContainerDetailPage", () => {
     expect(screen.queryByText("Pallet Trace in This Container")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Next Page" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "View Trace" })).not.toBeInTheDocument();
-    expect(onNavigate).not.toHaveBeenCalledWith("pallet-trace");
   });
 });
 

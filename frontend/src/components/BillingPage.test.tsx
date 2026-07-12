@@ -18,6 +18,7 @@ async function pickComboOption(labelText: string, optionText: string | RegExp) {
 const {
   getPallets,
   getPalletLocationEvents,
+  getContainerLifecycleEvents,
   getBillingInvoices,
   createBillingInvoice,
   downloadExcelWorkbook,
@@ -25,6 +26,7 @@ const {
 } = vi.hoisted(() => ({
   getPallets: vi.fn(),
   getPalletLocationEvents: vi.fn(),
+  getContainerLifecycleEvents: vi.fn(),
   getBillingInvoices: vi.fn(),
   createBillingInvoice: vi.fn(),
   downloadExcelWorkbook: vi.fn(),
@@ -36,6 +38,7 @@ vi.mock("../lib/api", () => ({
   api: {
     getPallets,
     getPalletLocationEvents,
+    getContainerLifecycleEvents,
     getBillingInvoices,
     createBillingInvoice
   }
@@ -57,6 +60,7 @@ describe("BillingPage", () => {
   beforeEach(() => {
     getPallets.mockReset();
     getPalletLocationEvents.mockReset();
+    getContainerLifecycleEvents.mockReset();
     getBillingInvoices.mockReset();
     createBillingInvoice.mockReset();
     downloadExcelWorkbook.mockReset();
@@ -66,6 +70,14 @@ describe("BillingPage", () => {
     window.localStorage.setItem("sim-timezone", "UTC");
     getPallets.mockResolvedValue([]);
     getPalletLocationEvents.mockResolvedValue([]);
+    getContainerLifecycleEvents.mockImplementation(async () => {
+      const events = await getPalletLocationEvents();
+      return events.map((event: Record<string, unknown>) => ({
+        ...event,
+        stockLedgerId: event.id,
+        eventType: event.eventType === "RECEIVED" ? "RECEIVE" : event.eventType === "SHIPPED" ? "SHIP" : event.eventType
+      }));
+    });
     getBillingInvoices.mockResolvedValue([]);
     createBillingInvoice.mockResolvedValue({ id: 91 });
   });
@@ -634,10 +646,11 @@ describe("BillingPage", () => {
 
     const payload = createBillingInvoice.mock.calls[0][0];
     expect(payload.invoiceType).toBe("MIXED");
-    expect(payload.lines.map((line: { chargeType: string }) => line.chargeType)).toEqual(["INBOUND", "WRAPPING", "STORAGE"]);
+    expect(payload.lines.map((line: { chargeType: string }) => line.chargeType)).toEqual(["INBOUND", "WRAPPING", "OUTBOUND", "STORAGE"]);
     expect(payload.lines).toMatchObject([
       { chargeType: "INBOUND", quantity: 1, amount: 450, sourceType: "AUTO" },
       { chargeType: "WRAPPING", quantity: 2, amount: 30, sourceType: "AUTO" },
+      { chargeType: "OUTBOUND", quantity: 1, amount: 0, sourceType: "AUTO" },
       { chargeType: "STORAGE", quantity: 20, amount: 20, sourceType: "AUTO" }
     ]);
     const storageLine = payload.lines.find((line: { chargeType: string }) => line.chargeType === "STORAGE");
@@ -740,7 +753,7 @@ describe("BillingPage", () => {
         containerNo: "CONT-001",
         eventType: "TRANSFER_OUT",
         quantityDelta: 0,
-        palletDelta: 0,
+        palletDelta: -1,
         eventTime: "2026-03-15T09:00:00Z",
         createdAt: "2026-03-15T09:00:00Z"
       },
@@ -757,7 +770,7 @@ describe("BillingPage", () => {
         containerNo: "CONT-001",
         eventType: "TRANSFER_IN",
         quantityDelta: 0,
-        palletDelta: 0,
+        palletDelta: 1,
         eventTime: "2026-03-15T09:00:00Z",
         createdAt: "2026-03-15T09:00:00Z"
       }

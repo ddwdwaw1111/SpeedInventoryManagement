@@ -288,6 +288,7 @@ export type Item = {
   damagedQty: number;
   holdQty: number;
   pallets: number;
+	palletProfiles?: ContainerPalletProfile[];
   reorderLevel: number;
   customerId: number;
   customerName: string;
@@ -296,6 +297,7 @@ export type Item = {
   storageSection: string;
   deliveryDate: string | null;
   containerNo: string;
+  containerType: ContainerType;
   lastRestockedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -656,6 +658,7 @@ export type ContainerLifecycleEvent = {
   eventType: string;
   eventTime: string;
   quantityDelta: number;
+	palletDelta: number;
   palletId: number;
   palletItemId: number;
   skuMasterId: number;
@@ -942,6 +945,76 @@ export type InboundPackingListImportPreview = {
   totalNetWeightKgs: number;
   totalGrossWeightKgs: number;
   lines: InboundPackingListImportLine[];
+};
+
+export type ContainerPalletProfile = {
+	ctnPerPallet: number;
+	palletCount: number;
+	availablePallets: number;
+	allocatedPallets: number;
+	damagedPallets: number;
+	holdPallets: number;
+};
+
+export type InboundBulkImportIssue = {
+  severity: "ERROR" | "WARNING";
+  code: string;
+  message: string;
+  rowNumber?: number;
+  field?: string;
+  value?: string;
+};
+
+export type InboundBulkImportDocumentPreview = {
+  documentKey: string;
+  locationName: string;
+  rowNumbers: number[];
+  input: InboundDocumentPayload;
+  issues: InboundBulkImportIssue[];
+  valid: boolean;
+  totalLines: number;
+  totalExpectedQty: number;
+  totalReceivedQty: number;
+  totalPallets: number;
+};
+
+export type InboundBulkImportPreview = {
+  importId: string;
+  sourceFileName: string;
+  customerId: number;
+  customerName: string;
+  locationCount: number;
+  totalDocuments: number;
+  validDocuments: number;
+  invalidDocuments: number;
+  totalLines: number;
+  documents: InboundBulkImportDocumentPreview[];
+};
+
+export type InboundBulkImportCommitPayload = {
+  importId: string;
+  sourceFileName: string;
+  customerId: number;
+  documents: Array<{
+    documentKey: string;
+    input: InboundDocumentPayload;
+  }>;
+};
+
+export type InboundBulkImportCommitResult = {
+  documentKey: string;
+  containerNo: string;
+  success: boolean;
+  document?: InboundDocument;
+  error?: string;
+};
+
+export type InboundBulkImportCommitResponse = {
+  sourceFileName: string;
+  totalDocuments: number;
+  createdDocuments: number;
+  failedDocuments: number;
+  results: InboundBulkImportCommitResult[];
 };
 
 export type InventoryAdjustmentLine = {

@@ -279,7 +279,7 @@ func TestBuildContainerSummariesIncludesContainerOnlyRecords(t *testing.T) {
 		CustomerName: "Customer",
 		ContainerNo:  "CONT-ONLY",
 		Status:       ContainerStatusPickupAssigned,
-	}}, nil, nil, nil, nil)
+	}}, nil, nil, nil)
 
 	summary, ok := summaries[containerSummaryKey(7, "CONT-ONLY")]
 	if !ok {
@@ -306,11 +306,33 @@ func TestBuildContainerSummariesKeepsDuplicateContainerNumbersScopedByCustomer(t
 			ContainerNo:      "CONT-DUP",
 			TotalExpectedQty: 20,
 		},
-	}, nil, nil, nil)
+	}, nil, nil)
 
 	first := summaries[containerSummaryKey(7, "CONT-DUP")]
 	second := summaries[containerSummaryKey(8, "CONT-DUP")]
 	if len(summaries) != 2 || first.TotalExpectedQty != 10 || second.TotalExpectedQty != 20 {
 		t.Fatalf("expected duplicate container numbers to stay separated by customer, got %#v", summaries)
+	}
+}
+
+func TestBuildContainerSummariesUsesAggregateInventoryPalletCount(t *testing.T) {
+	summaries := buildContainerSummaries(nil, nil, []Item{
+		{
+			CustomerID:   7,
+			CustomerName: "Customer",
+			ContainerNo:  "CONT-PALLETS",
+			Pallets:      2,
+		},
+		{
+			CustomerID:   7,
+			CustomerName: "Customer",
+			ContainerNo:  "CONT-PALLETS",
+			Pallets:      3,
+		},
+	}, nil)
+
+	summary := summaries[containerSummaryKey(7, "CONT-PALLETS")]
+	if summary.PalletCount != 5 {
+		t.Fatalf("expected aggregate pallet count 5, got %d", summary.PalletCount)
 	}
 }

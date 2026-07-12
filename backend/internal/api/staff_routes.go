@@ -27,6 +27,7 @@ func (s *Server) registerStaffRoutes(protected gin.IRouter) {
 	staff.GET("/cycle-counts", s.handleListCycleCounts)
 	staff.GET("/pallets", s.handleListPallets)
 	staff.GET("/pallet-location-events", s.handleListPalletLocationEvents)
+	staff.GET("/container-lifecycle-events", s.handleListContainerLifecycleEvents)
 	staff.GET("/billing/invoices", s.handleListBillingInvoices)
 	staff.GET("/billing/invoices/:id", s.handleGetBillingInvoice)
 
@@ -44,6 +45,8 @@ func (s *Server) registerStaffRoutes(protected gin.IRouter) {
 	operator.DELETE("/outbound-documents/:id/attachments/:attachmentId", s.handleDeleteOutboundDocumentAttachment)
 	operator.POST("/inbound-documents", s.handleCreateInboundDocument)
 	operator.POST("/inbound-documents/import-preview", s.handleImportInboundDocumentPreview)
+	operator.POST("/inbound-documents/bulk-import-preview", s.handlePreviewInboundBulkImport)
+	operator.POST("/inbound-documents/bulk-import-commit", s.handleCommitInboundBulkImport)
 	operator.PUT("/inbound-documents/:id", s.handleUpdateInboundDocument)
 	operator.PUT("/inbound-documents/:id/document-note", s.handleUpdateInboundDocumentNote)
 	operator.PUT("/inbound-documents/:id/container-type", s.handleUpdateInboundDocumentContainerType)

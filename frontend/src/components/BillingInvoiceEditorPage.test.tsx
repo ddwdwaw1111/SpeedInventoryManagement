@@ -285,7 +285,20 @@ describe("BillingInvoiceEditorPage", () => {
     });
     const exportPayload = downloadExcelWorkbook.mock.calls[0][0];
     expect(exportPayload.columns.map((column: { label: string }) => column.label)).not.toContain("Discount");
-    expect(exportPayload.rows.map((row: { rowType: string }) => row.rowType)).toContain("Storage Segment");
+    expect(exportPayload.additionalSheets).toHaveLength(1);
+    const storageSheet = exportPayload.additionalSheets[0];
+    expect(storageSheet.sheetName).toBe("Storage Fee");
+    expect(storageSheet.columns.map((column: { label: string }) => column.label)).toContain("Pallets on hand at start of billing period");
+    expect(storageSheet.columns.map((column: { label: string }) => column.label)).toContain("Pallets on hand at end of billing period");
+    expect(storageSheet.rows[0]).toMatchObject({
+      containerNo: "GCXU5817233",
+      openingPallets: 10,
+      outboundPallets: 10,
+      closingPallets: 0,
+      outboundDates: "2026-03-15 (-10)",
+      palletDays: 140,
+      storageFee: 140
+    });
   });
 
   it("hides zero-amount manual discount lines from display and export", async () => {
@@ -346,9 +359,11 @@ describe("BillingInvoiceEditorPage", () => {
       expect(downloadExcelWorkbook).toHaveBeenCalledTimes(1);
     });
     const exportPayload = downloadExcelWorkbook.mock.calls[0][0];
-    expect(exportPayload.columns.map((column: { label: string }) => column.label)).toContain("Charge Type");
-    expect(exportPayload.rows.map((row: { rowType: string }) => row.rowType)).toContain("Invoice Line");
-    expect(exportPayload.summaryRows.map((row: { label: string }) => row.label)).toContain("Grand Total");
+    expect(exportPayload.sheetName).toBe("Invoice");
+    expect(exportPayload.columns.map((column: { label: string }) => column.label)).toContain("Warehouse Charges Summary");
+    expect(exportPayload.rows.map((row: { chargeType: string }) => row.chargeType)).toContain("Storage Fee");
+    expect(exportPayload.summaryRows.map((row: { label: string }) => row.label)).toContain("Total Fee");
+    expect(exportPayload.additionalSheets[0].sheetName).toBe("Storage Fee");
   });
 
   it("exports the current invoice to PDF", async () => {

@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-func Migrate(db *sql.DB) error {
+func applyBaselineSchemaMigration(db *sql.DB) error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS users (
 			id BIGINT NOT NULL AUTO_INCREMENT,
@@ -228,6 +228,8 @@ func Migrate(db *sql.DB) error {
 			storage_section VARCHAR(16) NOT NULL DEFAULT 'TEMP',
 			unit_label VARCHAR(32) DEFAULT NULL,
 			document_note TEXT DEFAULT NULL,
+			import_key VARCHAR(80) DEFAULT NULL,
+			import_payload_hash CHAR(64) DEFAULT NULL,
 			status VARCHAR(32) NOT NULL DEFAULT 'CONFIRMED',
 			tracking_status VARCHAR(32) NOT NULL DEFAULT 'SCHEDULED',
 			confirmed_at TIMESTAMP NULL DEFAULT NULL,
@@ -242,6 +244,7 @@ func Migrate(db *sql.DB) error {
 			KEY idx_inbound_documents_location_id (location_id),
 			KEY idx_inbound_documents_expected_arrival_date (expected_arrival_date),
 			KEY idx_inbound_documents_container_no (container_no),
+			UNIQUE KEY uq_inbound_documents_import_key (import_key),
 			CONSTRAINT fk_inbound_documents_customer
 				FOREIGN KEY (customer_id) REFERENCES customers (id),
 			CONSTRAINT fk_inbound_documents_location
@@ -255,6 +258,8 @@ func Migrate(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_inbound_documents_expected_arrival_date ON inbound_documents (expected_arrival_date)`,
 		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS actual_arrival_date DATE DEFAULT NULL AFTER expected_arrival_date`,
 		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS container_type VARCHAR(32) NOT NULL DEFAULT 'NORMAL' AFTER container_no`,
+		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS import_key VARCHAR(80) DEFAULT NULL AFTER document_note`,
+		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS import_payload_hash CHAR(64) DEFAULT NULL AFTER import_key`,
 		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS tracking_status VARCHAR(32) NOT NULL DEFAULT 'SCHEDULED' AFTER status`,
 		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMP NULL DEFAULT NULL AFTER status`,
 		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS posted_at TIMESTAMP NULL DEFAULT NULL AFTER confirmed_at`,
@@ -645,6 +650,13 @@ func Migrate(db *sql.DB) error {
 			CONSTRAINT fk_stock_ledger_location
 				FOREIGN KEY (location_id) REFERENCES storage_locations (id)
 		)`,
+		// Older installations may already have stock_ledger without the pallet
+		// linkage columns. Add them before the lifecycle-event backfill reads them.
+		// They are nullable intentionally so historical aggregate ledger rows remain
+		// migratable while the system moves toward a container-centric ledger.
+		`ALTER TABLE stock_ledger ADD COLUMN IF NOT EXISTS pallet_id BIGINT DEFAULT NULL AFTER occurred_at`,
+		`ALTER TABLE stock_ledger ADD COLUMN IF NOT EXISTS pallet_item_id BIGINT DEFAULT NULL AFTER pallet_id`,
+		`ALTER TABLE stock_ledger ADD COLUMN IF NOT EXISTS sku_master_id BIGINT DEFAULT NULL AFTER pallet_item_id`,
 		`CREATE TABLE IF NOT EXISTS container_lifecycle_events (
 			id BIGINT NOT NULL AUTO_INCREMENT,
 			stock_ledger_id BIGINT DEFAULT NULL,
@@ -1137,6 +1149,14 @@ func Migrate(db *sql.DB) error {
 	for _, statement := range statements {
 		if _, err := db.Exec(statement); err != nil {
 			return fmt.Errorf("apply migration %q: %w", statement, err)
+		}
+	}
+
+	if hasIndex, err := indexExists(db, "inbound_documents", "uq_inbound_documents_import_key"); err != nil {
+		return fmt.Errorf("check inbound bulk import idempotency index: %w", err)
+	} else if !hasIndex {
+		if _, err := db.Exec(`ALTER TABLE inbound_documents ADD UNIQUE INDEX uq_inbound_documents_import_key (import_key)`); err != nil {
+			return fmt.Errorf("add inbound bulk import idempotency index: %w", err)
 		}
 	}
 

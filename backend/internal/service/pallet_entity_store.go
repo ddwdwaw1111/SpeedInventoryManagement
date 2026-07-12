@@ -192,6 +192,10 @@ func palletCodeForTransferSplit(parentPalletID int64, transferLineID int64, sequ
 }
 
 func (s *Store) createPalletTx(ctx context.Context, tx *sql.Tx, input createPalletInput) (palletRecord, error) {
+	sectionID, err := resolveStorageSectionIDTx(ctx, tx, input.CurrentLocationID, input.CurrentStorageSection)
+	if err != nil {
+		return palletRecord{}, err
+	}
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO pallets (
 			parent_pallet_id,
@@ -203,10 +207,11 @@ func (s *Store) createPalletTx(ctx context.Context, tx *sql.Tx, input createPall
 			customer_id,
 			sku_master_id,
 			current_location_id,
+			current_section_id,
 			current_storage_section,
 			current_container_no,
 			status
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		nullableInt64(input.ParentPalletID),
 		strings.TrimSpace(input.PalletCode),
@@ -217,6 +222,7 @@ func (s *Store) createPalletTx(ctx context.Context, tx *sql.Tx, input createPall
 		input.CustomerID,
 		input.SKUMasterID,
 		input.CurrentLocationID,
+		sectionID,
 		fallbackSection(input.CurrentStorageSection),
 		strings.TrimSpace(input.CurrentContainerNo),
 		firstNonEmpty(strings.TrimSpace(input.Status), PalletStatusOpen),

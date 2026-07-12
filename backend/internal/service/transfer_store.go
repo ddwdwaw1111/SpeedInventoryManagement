@@ -344,6 +344,11 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 
 		palletSplitSequence := 0
 		for _, palletConsumption := range palletConsumptions {
+			afterSourcePalletQty, err := s.loadPalletQuantityTx(ctx, tx, palletConsumption.PalletID)
+			if err != nil {
+				return InventoryTransfer{}, err
+			}
+			sourcePalletChange := resolvePalletCountTransition(afterSourcePalletQty+palletConsumption.Quantity, afterSourcePalletQty)
 			if err := s.createPalletLocationEventTx(ctx, tx, createPalletLocationEventInput{
 				PalletID:         palletConsumption.PalletID,
 				ContainerVisitID: palletConsumption.ContainerVisitID,
@@ -353,6 +358,7 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 				ContainerNo:      firstNonEmpty(palletConsumption.ContainerNo, sourceItem.ContainerNo),
 				EventType:        PalletEventTransferOut,
 				QuantityDelta:    -palletConsumption.Quantity,
+				PalletDelta:      sourcePalletChange,
 				EventTime:        actualTransferredAt,
 			}); err != nil {
 				return InventoryTransfer{}, err
@@ -367,6 +373,7 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 				LocationID:          palletConsumption.LocationID,
 				StorageSection:      palletConsumption.StorageSection,
 				QuantityChange:      -palletConsumption.Quantity,
+				PalletChange:        sourcePalletChange,
 				SourceDocumentType:  StockLedgerSourceTransfer,
 				SourceDocumentID:    transferID,
 				SourceLineID:        lineID,
@@ -415,6 +422,7 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 				LocationID:          line.ToLocationID,
 				StorageSection:      toSection,
 				QuantityChange:      palletConsumption.Quantity,
+				PalletChange:        1,
 				SourceDocumentType:  StockLedgerSourceTransfer,
 				SourceDocumentID:    transferID,
 				SourceLineID:        lineID,
@@ -435,6 +443,7 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 				ContainerNo:      childPallet.CurrentContainerNo,
 				EventType:        PalletEventTransferIn,
 				QuantityDelta:    palletConsumption.Quantity,
+				PalletDelta:      1,
 				EventTime:        actualTransferredAt,
 			}); err != nil {
 				return InventoryTransfer{}, err

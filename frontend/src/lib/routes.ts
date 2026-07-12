@@ -14,7 +14,6 @@ export type PageKey =
   | "container-lifecycle"
   | "customers"
   | "audit-logs"
-  | "pallet-trace"
   | "user-management"
   | "inventory-summary"
   | "warehouse-map"
@@ -45,7 +44,6 @@ export const pagePathMap: Record<PageKey, string> = {
   "container-lifecycle": "/container-lifecycle",
   customers: "/customers",
   "audit-logs": "/audit-logs",
-  "pallet-trace": "/pallets",
   "user-management": "/user-management",
   "inventory-summary": "/inventory-summary",
   "warehouse-map": "/warehouse-map",

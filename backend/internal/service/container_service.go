@@ -199,7 +199,7 @@ func (s *ContainerService) GetLifecycle(ctx context.Context, input GetContainerL
 		return ContainerLifecycle{}, err
 	}
 
-	summaries := buildContainerSummaries(containers, packingLists, items, lifecycleEvents, pallets)
+	summaries := buildContainerSummaries(containers, packingLists, items, lifecycleEvents)
 	summary, found := summaries[containerSummaryKey(input.CustomerID, containerNo)]
 	if !found {
 		return ContainerLifecycle{}, ErrNotFound
@@ -244,12 +244,7 @@ func (s *ContainerService) loadContainerSummaries(ctx context.Context, customerI
 		return nil, err
 	}
 
-	pallets, err := s.repo.ListPallets(ctx, ContainerLifecycleLoadLimit, ListPalletFilters{CustomerID: customerID})
-	if err != nil {
-		return nil, err
-	}
-
-	summariesByContainer := buildContainerSummaries(containerRecords, packingLists, items, lifecycleEvents, pallets)
+	summariesByContainer := buildContainerSummaries(containerRecords, packingLists, items, lifecycleEvents)
 	summaries := make([]ContainerSummary, 0, len(summariesByContainer))
 	for _, summary := range summariesByContainer {
 		summaries = append(summaries, summary)
@@ -351,7 +346,7 @@ type containerSummaryAccumulator struct {
 	warehouseSet     map[string]struct{}
 	pickingOrderRefs map[string]struct{}
 	transferRefs     map[string]struct{}
-	palletIDs        map[int64]struct{}
+	palletCount      int
 }
 
 func buildContainerSummaries(
@@ -359,7 +354,6 @@ func buildContainerSummaries(
 	packingLists []InboundDocument,
 	items []Item,
 	lifecycleEvents []ContainerLifecycleEvent,
-	pallets []PalletTrace,
 ) map[string]ContainerSummary {
 	accumulators := make(map[string]*containerSummaryAccumulator)
 	getAccumulator := func(customerID int64, customerName string, containerNo string) *containerSummaryAccumulator {
@@ -381,7 +375,6 @@ func buildContainerSummaries(
 			warehouseSet:     make(map[string]struct{}),
 			pickingOrderRefs: make(map[string]struct{}),
 			transferRefs:     make(map[string]struct{}),
-			palletIDs:        make(map[int64]struct{}),
 		}
 		accumulators[key] = accumulator
 		return accumulator
@@ -435,6 +428,7 @@ func buildContainerSummaries(
 		}
 		accumulator.summary.CurrentQty += item.Quantity
 		accumulator.summary.AvailableQty += item.AvailableQty
+		accumulator.palletCount += item.Pallets
 		accumulator.addWarehouse(item.LocationName)
 		accumulator.setLastActivity(&item.UpdatedAt)
 	}
@@ -466,20 +460,6 @@ func buildContainerSummaries(
 		accumulator.setLastActivity(lifecycleEventActivityTime(event))
 	}
 
-	for _, pallet := range pallets {
-		accumulator := getAccumulator(pallet.CustomerID, pallet.CustomerName, pallet.CurrentContainerNo)
-		if accumulator == nil {
-			continue
-		}
-		if accumulator.summary.CustomerID == 0 {
-			accumulator.summary.CustomerID = pallet.CustomerID
-			accumulator.summary.CustomerName = pallet.CustomerName
-		}
-		accumulator.addWarehouse(pallet.CurrentLocationName)
-		accumulator.palletIDs[pallet.ID] = struct{}{}
-		accumulator.setLastActivity(&pallet.UpdatedAt)
-	}
-
 	summaries := make(map[string]ContainerSummary, len(accumulators))
 	for key, accumulator := range accumulators {
 		summary := accumulator.summary
@@ -487,7 +467,7 @@ func buildContainerSummaries(
 		summary.OutboundOrderCount = len(accumulator.pickingOrderRefs)
 		summary.PickingOrderRefs = containerSortedStringSet(accumulator.pickingOrderRefs)
 		summary.TransferCount = len(accumulator.transferRefs)
-		summary.PalletCount = len(accumulator.palletIDs)
+		summary.PalletCount = accumulator.palletCount
 		if summary.ShippedQty < 0 {
 			summary.ShippedQty = 0
 		}

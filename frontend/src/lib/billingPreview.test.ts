@@ -175,7 +175,18 @@ describe("buildBillingPreview", () => {
             grossWeightKgs: 0,
             lineNote: "",
             pickPallets: [],
-            pickAllocations: [],
+			pickAllocations: [{
+				id: 1,
+				lineId: 200,
+				itemNumber: "ITM-1",
+				locationId: 1,
+				locationName: "NJ",
+				storageSection: "A-01",
+				containerNo: "CONT-001",
+				allocatedQty: 100,
+				pallets: 1,
+				createdAt: "2026-04-03T08:00:00Z"
+			}],
             createdAt: "2026-04-03T08:00:00Z"
           }
         ]
@@ -191,15 +202,21 @@ describe("buildBillingPreview", () => {
       palletLocationEvents: events,
       inboundDocuments,
       outboundDocuments,
-      rates: DEFAULT_BILLING_RATES
+		rates: { ...DEFAULT_BILLING_RATES, outboundFeePerPallet: 12 }
     });
 
     expect(preview.summary.palletDays).toBe(2);
     expect(preview.summary.storageAmount).toBe(0);
     expect(preview.summary.inboundAmount).toBe(450);
     expect(preview.summary.wrappingAmount).toBe(15);
-    expect(preview.summary.outboundAmount).toBe(0);
-    expect(preview.summary.grandTotal).toBe(465);
+	expect(preview.summary.outboundAmount).toBe(12);
+	expect(preview.summary.grandTotal).toBe(477);
+	expect(preview.invoiceLines.find((line) => line.chargeType === "OUTBOUND")).toMatchObject({
+		containerNo: "CONT-001",
+		quantity: 1,
+		unitRate: 12,
+		amount: 12
+	});
     expect(preview.dailyBalanceRows.slice(0, 4)).toEqual([
       { date: "2026-04-01", palletCount: 1 },
       { date: "2026-04-02", palletCount: 1 },
@@ -207,6 +224,65 @@ describe("buildBillingPreview", () => {
       { date: "2026-04-04", palletCount: 0 }
     ]);
   });
+
+	it("calculates partial-container storage from container pallet deltas without pallet entities", () => {
+		const baseEvent = {
+			stockLedgerId: 1,
+			customerId: 1,
+			customerName: "Acme",
+			locationId: 1,
+			locationName: "NJ",
+			storageSection: "A-01",
+			containerNo: "CONT-PARTIAL",
+			quantityDelta: 0,
+			palletId: 0,
+			palletItemId: 0,
+			skuMasterId: 11,
+			sourceDocumentType: "INBOUND",
+			sourceDocumentId: 10,
+			sourceLineId: 100,
+			packingListNo: "",
+			orderRef: "",
+			itemNumber: "ITEM-1",
+			description: "Widget",
+			expectedQty: 0,
+			receivedQty: 0,
+			pallets: 0,
+			documentNote: "",
+			reason: "",
+			referenceCode: "",
+			createdAt: "2026-04-01T09:00:00Z"
+		};
+		const preview = buildBillingPreview({
+			startDate: "2026-04-01",
+			endDate: "2026-04-04",
+			customerId: 1,
+			customers,
+			pallets: [],
+			palletLocationEvents: [],
+			containerLifecycleEvents: [
+				{ ...baseEvent, id: 1, eventType: "RECEIVE", eventTime: "2026-04-01T09:00:00Z", palletDelta: 3 },
+				{ ...baseEvent, id: 2, eventType: "SHIP", eventTime: "2026-04-03T10:00:00Z", palletDelta: -1, sourceDocumentType: "OUTBOUND" }
+			],
+			inboundDocuments: [],
+			outboundDocuments: [],
+			normalPalletGracePeriodEnabled: false,
+			rates: DEFAULT_BILLING_RATES
+		});
+
+		expect(preview.storageRows).toHaveLength(1);
+		expect(preview.storageRows[0]).toMatchObject({
+			containerNo: "CONT-PARTIAL",
+			palletsTracked: 3,
+			palletDays: 10,
+			billablePalletDays: 10,
+			amount: 10
+		});
+		expect(preview.storageRows[0].segments.map((segment) => [segment.dayEndPallets, segment.billedDays])).toEqual([
+			[3, 2],
+			[2, 2]
+		]);
+	});
 
   it("builds storage segments when pallet counts change inside the billing period", () => {
     const pallets: PalletTrace[] = Array.from({ length: 10 }, (_, index) => {

@@ -22,23 +22,3 @@ func TestLoadPrefersExplicitR2Endpoint(t *testing.T) {
 		t.Fatalf("unexpected R2 endpoint %q", cfg.R2.Endpoint)
 	}
 }
-
-func TestProductionDisablesStartupDatabaseMaintenanceByDefault(t *testing.T) {
-	t.Setenv("APP_ENV", "production")
-	t.Setenv("STARTUP_DB_MAINTENANCE", "")
-
-	cfg := Load()
-	if cfg.StartupDBMaintenance {
-		t.Fatal("expected production startup database maintenance to be disabled")
-	}
-}
-
-func TestDevelopmentKeepsStartupDatabaseMaintenanceEnabledByDefault(t *testing.T) {
-	t.Setenv("APP_ENV", "development")
-	t.Setenv("STARTUP_DB_MAINTENANCE", "")
-
-	cfg := Load()
-	if !cfg.StartupDBMaintenance {
-		t.Fatal("expected development startup database maintenance to remain enabled")
-	}
-}

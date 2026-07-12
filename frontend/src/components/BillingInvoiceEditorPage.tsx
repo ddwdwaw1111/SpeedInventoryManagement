@@ -396,30 +396,43 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
     (row.segment.discountAmount ?? 0) > 0 || (row.segment.freePalletDays ?? 0) > 0
   );
   const totalsLabelColSpan = showStorageDiscountColumn ? 10 : 9;
-  const exportColumns = buildBillingInvoiceExportColumns(invoice);
+  const exportColumns = buildBillingTemplateSummaryColumns();
 
   function handleExportExcel({ title, columns }: { title: string; columns: ExcelExportColumn[] }) {
     if (!invoice) {
       return;
     }
 
-    const rows = buildBillingInvoiceExportRows(invoice, resolvedTimeZone);
+    const rows = buildBillingTemplateSummaryRows(invoice);
+    const storageDetailRows = buildBillingTemplateStorageRows(invoice);
 
     downloadExcelWorkbook({
-      title,
-      sheetName: "Billing Invoice",
+      title: `Warehouse Invoice\n${invoice.header.sellerName} | ${invoice.invoiceNo}\n${invoice.customerNameSnapshot} | ${invoice.periodStart} to ${invoice.periodEnd}`,
+      sheetName: "Invoice",
       fileName: title,
       columns,
-        rows,
-        summaryRows: [
+      rows,
+      summaryRows: [
           ...(invoiceDisplayTotals.subtotal !== invoiceDisplayTotals.grandTotal
           ? [{ label: "Subtotal", value: invoiceDisplayTotals.subtotal, numberFormat: "currency" as const }]
           : []),
         ...(showInvoiceDiscount
           ? [{ label: "Discount", value: invoiceDisplayTotals.discountTotal, numberFormat: "currency" as const }]
           : []),
-        { label: "Grand Total", value: invoiceDisplayTotals.grandTotal, numberFormat: "currency", bold: true }
-      ]
+        { label: "Total Fee", value: invoiceDisplayTotals.grandTotal, numberFormat: "currency", bold: true }
+      ],
+      additionalSheets: [{
+        title: `Storage Billing Period: ${invoice.periodStart} to ${invoice.periodEnd}`,
+        sheetName: "Storage Fee",
+        columns: buildBillingTemplateStorageColumns(),
+        rows: storageDetailRows,
+        summaryRows: [{
+          label: "Total",
+          value: storageDetailRows.reduce((sum, row) => sum + Number(row.storageFee || 0), 0),
+          numberFormat: "currency",
+          bold: true
+        }]
+      }]
     });
     setIsExportDialogOpen(false);
   }
@@ -1054,18 +1067,6 @@ function chargeTypeLabel(chargeType: string, t: (key: string) => string) {
   }
 }
 
-function chargeTypeExportLabel(chargeType: string) {
-  switch (chargeType) {
-    case "INBOUND": return "Inbound Charges";
-    case "WRAPPING": return "Wrapping Charges";
-    case "STORAGE": return "Storage Charges";
-    case "OUTBOUND": return "Outbound Charges";
-    case "DISCOUNT": return "Discount";
-    case "MANUAL": return "Manual Charge";
-    default: return chargeType;
-  }
-}
-
 function invoiceTypeLabel(invoiceType: BillingInvoice["invoiceType"], t: (key: string) => string) {
   switch (invoiceType) {
     case "STORAGE_SETTLEMENT":
@@ -1082,103 +1083,126 @@ function containerTypeLabel(containerType: ContainerType, t: (key: string) => st
     : t("billingContainerTypeNormal");
 }
 
-function buildBillingInvoiceExportColumns(invoice: BillingInvoice): ExcelExportColumn[] {
-  const includeLineDiscountColumn = hasInvoiceStorageDiscount(invoice);
-  const includeSegmentColumns = hasInvoiceStorageSegments(invoice);
-  const includeSegmentDiscountColumns = hasInvoiceStorageSegmentDiscount(invoice);
-  const base: ExcelExportColumn[] = [
-    { key: "rowType", label: "Row Type" },
-    { key: "chargeType", label: "Charge Type" },
-    { key: "description", label: "Description" },
-    { key: "reference", label: "Reference" },
-    { key: "containerNo", label: "Container No." },
-    { key: "warehouse", label: "Warehouse" },
-    { key: "occurredOn", label: "Occurred On" },
-    { key: "quantity", label: "Quantity", numberFormat: "number" },
-    { key: "unitRate", label: "Unit Rate", numberFormat: "currency" },
-    ...(includeLineDiscountColumn
-      ? [{ key: "discountAmount", label: "Discount", numberFormat: "currency" as const }]
-      : []),
-    { key: "amount", label: "Amount", numberFormat: "currency" },
-    { key: "sourceType", label: "Source Type" },
-    { key: "notes", label: "Notes" }
+function buildBillingTemplateSummaryColumns(): ExcelExportColumn[] {
+  return [
+    { key: "chargeType", label: "Warehouse Charges Summary" },
+    { key: "unitRate", label: "Unit Price", numberFormat: "currency" },
+    { key: "quantity", label: "Qty", numberFormat: "number" },
+    { key: "currency", label: "Currency" },
+    { key: "amount", label: "Confirmed Amount", numberFormat: "currency" }
   ];
-
-  if (includeSegmentColumns) {
-    return [
-      ...base,
-      { key: "segmentStart", label: "Segment Start" },
-      { key: "segmentEnd", label: "Segment End" },
-      { key: "dayEndPallets", label: "Day-End Pallets", numberFormat: "number" },
-      { key: "billedDays", label: "Billed Days", numberFormat: "number" },
-      { key: "segmentPalletDays", label: "Pallet-Days", numberFormat: "number" },
-      ...(includeSegmentDiscountColumns
-        ? [{ key: "segmentDiscountAmount", label: "Discount", numberFormat: "currency" as const }]
-        : []),
-      { key: "segmentAmount", label: "Storage Charges", numberFormat: "currency" }
-    ];
-  }
-
-  return base;
 }
 
-function buildBillingInvoiceExportRows(
-  invoice: BillingInvoice,
-  timeZone: string
-): Array<Record<string, ExcelExportCell>> {
-  const visibleLines = filterVisibleInvoiceLines(invoice.lines);
-  const rows: Array<Record<string, ExcelExportCell>> = visibleLines.map((line) => ({
-    rowType: "Invoice Line",
-    chargeType: chargeTypeExportLabel(line.chargeType),
-    description: line.description || "-",
-    reference: line.reference || "-",
-    containerNo: line.containerNo || "-",
-    warehouse: line.warehouse || "-",
-    occurredOn: line.occurredOn ? formatDateTimeValue(line.occurredOn, timeZone, { dateStyle: "medium" }) : "-",
-    quantity: line.quantity,
-    unitRate: line.unitRate,
-    amount: line.amount,
-    ...(line.details?.kind === "STORAGE_CONTAINER_SUMMARY" && (line.details.discountAmount ?? 0) > 0
-      ? { discountAmount: -Math.abs(line.details.discountAmount ?? 0) }
-      : {}),
-    sourceType: line.sourceType === "AUTO" ? "Auto" : "Manual",
-    notes: line.notes || "-"
-  }));
+function buildBillingTemplateSummaryRows(invoice: BillingInvoice): Array<Record<string, ExcelExportCell>> {
+  const grouped = new Map<string, { quantity: number; amount: number; rates: Set<number> }>();
+  for (const line of filterVisibleInvoiceLines(invoice.lines)) {
+    const current = grouped.get(line.chargeType) ?? { quantity: 0, amount: 0, rates: new Set<number>() };
+    current.quantity += line.quantity;
+    current.amount += line.amount;
+    current.rates.add(line.unitRate);
+    grouped.set(line.chargeType, current);
+  }
 
-  if (hasInvoiceStorageSegments(invoice)) {
-    for (const line of visibleLines) {
-      if (!line.details || line.details.kind !== "STORAGE_CONTAINER_SUMMARY") {
-        continue;
-      }
-      for (const segment of line.details.segments) {
-        rows.push({
-          rowType: "Storage Segment",
-          chargeType: chargeTypeExportLabel(line.chargeType),
-          description: line.description || "-",
-          reference: line.reference || "-",
-          containerNo: line.containerNo || "-",
-          warehouse: line.details.warehousesTouched.join(", ") || line.warehouse || "-",
-          occurredOn: segment.endDate,
-          quantity: segment.palletDays,
-          unitRate: segment.palletDays > 0 ? segment.amount / segment.palletDays : 0,
-          amount: segment.amount,
-          sourceType: line.sourceType === "AUTO" ? "Auto" : "Manual",
-          notes: `${segment.dayEndPallets} day-end pallets`,
-          segmentStart: segment.startDate,
-          segmentEnd: segment.endDate,
-          dayEndPallets: segment.dayEndPallets,
-          billedDays: segment.billedDays,
-          segmentPalletDays: segment.palletDays,
-          ...((segment.discountAmount ?? 0) > 0
-            ? { segmentDiscountAmount: -Math.abs(segment.discountAmount ?? 0) }
-            : {}),
-          segmentAmount: segment.amount
-        });
-      }
+  return [...grouped.entries()].map(([chargeType, group]) => ({
+    chargeType: invoiceChargeTypeLabel(chargeType),
+    unitRate: group.rates.size === 1 ? [...group.rates][0] : "Multiple",
+    quantity: group.quantity,
+    currency: invoice.currencyCode,
+    amount: group.amount
+  }));
+}
+
+function invoiceChargeTypeLabel(chargeType: string) {
+  switch (chargeType) {
+    case "INBOUND": return "Inbound Fee";
+    case "WRAPPING": return "Wrapping Fee";
+    case "STORAGE": return "Storage Fee";
+    case "OUTBOUND": return "Outbound Fee";
+    case "DISCOUNT": return "Discount";
+    case "MANUAL": return "Manual Charge";
+    default: return chargeType;
+  }
+}
+
+function buildBillingTemplateStorageColumns(): ExcelExportColumn[] {
+  return [
+    { key: "billableStartDate", label: "Billable Start Date" },
+    { key: "containerNo", label: "Container No." },
+    { key: "openingPallets", label: "Pallets on hand at start of billing period", numberFormat: "number" },
+    { key: "outboundPallets", label: "Outbound Pallets During Period", numberFormat: "number" },
+    { key: "closingPallets", label: "Pallets on hand at end of billing period", numberFormat: "number" },
+    { key: "outboundDates", label: "Outbound Date" },
+    { key: "palletDays", label: "Pallet-days", numberFormat: "number" },
+    { key: "storageFee", label: "Storage Fee", numberFormat: "currency" }
+  ];
+}
+
+function buildBillingTemplateStorageRows(invoice: BillingInvoice): Array<Record<string, ExcelExportCell>> {
+  return filterVisibleInvoiceLines(invoice.lines).flatMap((line) => {
+    if (!line.details || line.details.kind !== "STORAGE_CONTAINER_SUMMARY") {
+      return [];
+    }
+    const balance = summarizeBillingPeriodPalletBalance(
+      line.details.segments,
+      invoice.periodStart,
+      invoice.periodEnd
+    );
+    return [{
+      billableStartDate: line.details.segments[0]?.startDate ?? invoice.periodStart,
+      containerNo: line.containerNo || "-",
+      openingPallets: balance.openingPallets,
+      outboundPallets: balance.outboundPallets,
+      closingPallets: balance.closingPallets,
+      outboundDates: balance.outboundDates.join(", ") || "-",
+      palletDays: line.details.palletDays,
+      storageFee: line.amount
+    }];
+  });
+}
+
+function summarizeBillingPeriodPalletBalance(
+  segments: BillingStorageSegmentDetail[],
+  periodStart: string,
+  periodEnd: string
+) {
+  const balances = new Map<string, number>();
+  for (const segment of segments) {
+    for (const date of enumerateIsoDates(segment.startDate, segment.endDate)) {
+      balances.set(date, segment.dayEndPallets);
     }
   }
 
-  return rows;
+  const dates = enumerateIsoDates(periodStart, periodEnd);
+  const outboundDates: string[] = [];
+  let outboundPallets = 0;
+  let previousBalance = balances.get(periodStart) ?? 0;
+  for (const date of dates.slice(1)) {
+    const currentBalance = balances.get(date) ?? 0;
+    if (currentBalance < previousBalance) {
+      const shipped = previousBalance - currentBalance;
+      outboundPallets += shipped;
+      outboundDates.push(`${date} (-${shipped})`);
+    }
+    previousBalance = currentBalance;
+  }
+
+  return {
+    openingPallets: balances.get(periodStart) ?? 0,
+    closingPallets: balances.get(periodEnd) ?? 0,
+    outboundPallets,
+    outboundDates
+  };
+}
+
+function enumerateIsoDates(startDate: string, endDate: string) {
+  const dates: string[] = [];
+  const cursor = new Date(`${startDate}T00:00:00Z`);
+  const end = new Date(`${endDate}T00:00:00Z`);
+  while (!Number.isNaN(cursor.getTime()) && cursor <= end) {
+    dates.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return dates;
 }
 
 function filterVisibleInvoiceLines(lines: BillingInvoiceLineData[]) {
@@ -1199,19 +1223,8 @@ function buildInvoiceStorageSegmentRows(lines: BillingInvoiceLineData[]): Invoic
   });
 }
 
-function hasInvoiceStorageSegments(invoice: BillingInvoice) {
-  return invoice.lines.some((line) => line.details?.kind === "STORAGE_CONTAINER_SUMMARY" && line.details.segments.length > 0);
-}
-
 function hasInvoiceStorageDiscount(invoice: BillingInvoice) {
   return invoice.lines.some((line) => getInvoiceLineStorageDiscount(line) > 0);
-}
-
-function hasInvoiceStorageSegmentDiscount(invoice: BillingInvoice) {
-  return invoice.lines.some((line) =>
-    line.details?.kind === "STORAGE_CONTAINER_SUMMARY"
-    && line.details.segments.some((segment) => (segment.discountAmount ?? 0) > 0 || (segment.freePalletDays ?? 0) > 0)
-  );
 }
 
 function billingStatusLabel(status: string, t: (key: string) => string) {

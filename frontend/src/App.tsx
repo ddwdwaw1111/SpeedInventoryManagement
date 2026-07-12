@@ -529,8 +529,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
       return;
     }
     if (
-      (activePage === "audit-logs" && !canViewAuditLogs) ||
-      activePage === "pallet-trace" ||
+	  (activePage === "audit-logs" && !canViewAuditLogs) ||
       (activePage === "user-management" && !canManageUsers)
     ) {
       handleNavigateToPage("dashboard");

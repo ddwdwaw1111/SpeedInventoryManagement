@@ -114,8 +114,13 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml ps
 docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f
 ```
 
-The API runs database migrations on every startup, including production.
-Production skips the separate draft-reservation repair operation by default.
+The API checks and applies versioned database migrations on every startup,
+including production. Applied migrations are recorded in `schema_migrations`
+and are not executed again. `database/schema.sql` is only the MariaDB container
+bootstrap used before the API starts; the Go migration registry is the schema
+source of truth.
+There is no environment flag that skips migrations, and no separate startup
+database-maintenance mode.
 
 ### 6. Open the app
 

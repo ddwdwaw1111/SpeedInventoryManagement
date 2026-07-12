@@ -16,6 +16,14 @@ export type ExcelExportSummaryRow = {
   bold?: boolean;
 };
 
+export type ExcelExportWorksheet = {
+  title: string;
+  sheetName: string;
+  columns: ExcelExportColumn[];
+  rows: Array<Record<string, ExcelExportCell>>;
+  summaryRows?: ExcelExportSummaryRow[];
+};
+
 type ExcelExportOptions = {
   title: string;
   sheetName: string;
@@ -24,6 +32,8 @@ type ExcelExportOptions = {
   rows: Array<Record<string, ExcelExportCell>>;
   /** Optional summary/totals rows displayed below the data with a separator */
   summaryRows?: ExcelExportSummaryRow[];
+  /** Optional worksheets appended after the primary worksheet. */
+  additionalSheets?: ExcelExportWorksheet[];
 };
 
 const XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -122,9 +132,9 @@ export function downloadExcelWorkbook({
   fileName,
   columns,
   rows,
-  summaryRows
+  summaryRows,
+  additionalSheets
 }: ExcelExportOptions) {
-  const safeSheetName = sanitizeSheetName(sheetName);
   const safeFileName = `${sanitizeFileName(fileName)}.xlsx`;
   const exportTimestamp = new Date().toLocaleString("en-US", {
     year: "numeric",
@@ -134,17 +144,23 @@ export function downloadExcelWorkbook({
     minute: "2-digit"
   });
 
-  const worksheetXml = buildWorksheetXml({
-    title,
-    exportTimestamp,
-    columns,
-    rows,
-    summaryRows: summaryRows ?? []
-  });
+  const worksheetInputs: ExcelExportWorksheet[] = [
+    { title, sheetName, columns, rows, summaryRows },
+    ...(additionalSheets ?? [])
+  ];
+  const worksheets = worksheetInputs.map((worksheet, index) => ({
+    sheetName: uniqueSheetName(worksheet.sheetName, index, worksheetInputs),
+    worksheetXml: buildWorksheetXml({
+      title: worksheet.title,
+      exportTimestamp,
+      columns: worksheet.columns,
+      rows: worksheet.rows,
+      summaryRows: worksheet.summaryRows ?? []
+    })
+  }));
   const workbookBytes = buildXlsxArchive({
     title,
-    sheetName: safeSheetName,
-    worksheetXml
+    worksheets
   });
   const workbookBuffer = new ArrayBuffer(workbookBytes.byteLength);
   new Uint8Array(workbookBuffer).set(workbookBytes);
@@ -160,6 +176,18 @@ export function downloadExcelWorkbook({
   anchor.click();
   document.body.removeChild(anchor);
   window.URL.revokeObjectURL(url);
+}
+
+function uniqueSheetName(value: string, index: number, worksheets: ExcelExportWorksheet[]) {
+  const safeName = sanitizeSheetName(value);
+  const duplicateIndex = worksheets.slice(0, index)
+    .filter((worksheet) => sanitizeSheetName(worksheet.sheetName) === safeName)
+    .length;
+  if (duplicateIndex === 0) {
+    return safeName;
+  }
+  const suffix = ` ${duplicateIndex + 1}`;
+  return `${safeName.slice(0, Math.max(1, 31 - suffix.length))}${suffix}`;
 }
 
 function buildWorksheetXml({
@@ -261,24 +289,24 @@ function buildWorksheetXml({
 
 function buildXlsxArchive({
   title,
-  sheetName,
-  worksheetXml
+  worksheets
 }: {
   title: string;
-  sheetName: string;
-  worksheetXml: string;
+  worksheets: Array<{ sheetName: string; worksheetXml: string }>;
 }) {
   const timestamp = new Date().toISOString();
   const files: Zippable = {
-    "[Content_Types].xml": zipEntry(buildContentTypesXml()),
+    "[Content_Types].xml": zipEntry(buildContentTypesXml(worksheets.length)),
     "_rels/.rels": zipEntry(buildRootRelationshipsXml()),
     "docProps/app.xml": zipEntry(buildAppPropertiesXml()),
     "docProps/core.xml": zipEntry(buildCorePropertiesXml(title, timestamp)),
-    "xl/workbook.xml": zipEntry(buildWorkbookXml(sheetName)),
-    "xl/_rels/workbook.xml.rels": zipEntry(buildWorkbookRelationshipsXml()),
-    "xl/styles.xml": zipEntry(buildStylesXml()),
-    "xl/worksheets/sheet1.xml": zipEntry(worksheetXml)
+    "xl/workbook.xml": zipEntry(buildWorkbookXml(worksheets.map((worksheet) => worksheet.sheetName))),
+    "xl/_rels/workbook.xml.rels": zipEntry(buildWorkbookRelationshipsXml(worksheets.length)),
+    "xl/styles.xml": zipEntry(buildStylesXml())
   };
+  worksheets.forEach((worksheet, index) => {
+    files[`xl/worksheets/sheet${index + 1}.xml`] = zipEntry(worksheet.worksheetXml);
+  });
   return zipSync(files);
 }
 
@@ -327,7 +355,10 @@ function columnName(columnNumber: number) {
   return name;
 }
 
-function buildContentTypesXml() {
+function buildContentTypesXml(worksheetCount: number) {
+  const worksheetOverrides = Array.from({ length: Math.max(worksheetCount, 1) }, (_, index) =>
+    `<Override PartName="/xl/worksheets/sheet${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`
+  ).join("\n  ");
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
@@ -335,7 +366,7 @@ function buildContentTypesXml() {
   <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
   <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
   <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
-  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  ${worksheetOverrides}
   <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
 </Types>`;
 }
@@ -349,20 +380,26 @@ function buildRootRelationshipsXml() {
 </Relationships>`;
 }
 
-function buildWorkbookXml(sheetName: string) {
+function buildWorkbookXml(sheetNames: string[]) {
+  const sheets = sheetNames.map((sheetName, index) =>
+    `<sheet name="${escapeXml(sheetName)}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`
+  ).join("\n    ");
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
   <sheets>
-    <sheet name="${escapeXml(sheetName)}" sheetId="1" r:id="rId1"/>
+    ${sheets}
   </sheets>
 </workbook>`;
 }
 
-function buildWorkbookRelationshipsXml() {
+function buildWorkbookRelationshipsXml(worksheetCount: number) {
+  const worksheetRelationships = Array.from({ length: Math.max(worksheetCount, 1) }, (_, index) =>
+    `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`
+  ).join("\n  ");
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
-  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+  ${worksheetRelationships}
+  <Relationship Id="rId${Math.max(worksheetCount, 1) + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 </Relationships>`;
 }
 

@@ -8,32 +8,39 @@ import (
 	"strings"
 )
 
-func (s *Store) ListSKUMasters(ctx context.Context, search string) ([]SKUMaster, error) {
+func (s *Store) ListSKUMasters(ctx context.Context, search string, customerIDs ...int64) ([]SKUMaster, error) {
+	customerID := int64(0)
+	if len(customerIDs) > 0 {
+		customerID = customerIDs[0]
+	}
 	query := `
 		SELECT
-			id,
-			COALESCE(item_number, '') AS item_number,
-			sku,
-			name,
-			category,
-			COALESCE(description, '') AS description,
-			unit,
-			reorder_level,
-			default_units_per_pallet,
-			created_at,
-			updated_at
-		FROM sku_master
+			sm.id,
+			CASE WHEN ? > 0 THEN COALESCE(cic.item_number, '') ELSE COALESCE(sm.item_number, '') END AS item_number,
+			sm.sku,
+			sm.name,
+			sm.category,
+			COALESCE(sm.description, '') AS description,
+			sm.unit,
+			sm.reorder_level,
+			sm.default_units_per_pallet,
+			sm.created_at,
+			sm.updated_at
+		FROM sku_master sm
+		LEFT JOIN customer_item_catalog cic
+			ON cic.sku_master_id = sm.id AND cic.customer_id = ?
 		WHERE 1 = 1
 	`
 
-	args := make([]any, 0)
+	args := []any{customerID, customerID}
 	if trimmedSearch := strings.TrimSpace(search); trimmedSearch != "" {
 		likeValue := "%" + trimmedSearch + "%"
-		query += " AND (item_number LIKE ? OR sku LIKE ? OR name LIKE ? OR description LIKE ? OR category LIKE ?)"
+		query += " AND (CASE WHEN ? > 0 THEN COALESCE(cic.item_number, '') ELSE COALESCE(sm.item_number, '') END LIKE ? OR sm.sku LIKE ? OR sm.name LIKE ? OR sm.description LIKE ? OR sm.category LIKE ?)"
+		args = append(args, customerID)
 		args = append(args, likeValue, likeValue, likeValue, likeValue, likeValue)
 	}
 
-	query += " ORDER BY updated_at DESC, sku ASC"
+	query += " ORDER BY sm.updated_at DESC, sm.sku ASC"
 
 	masters := make([]SKUMaster, 0)
 	if err := s.db.SelectContext(ctx, &masters, query, args...); err != nil {

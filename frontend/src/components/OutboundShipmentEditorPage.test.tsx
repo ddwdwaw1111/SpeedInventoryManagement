@@ -86,10 +86,22 @@ async function selectContainerSource(lineIndex: number, containerNo: string, war
   await waitFor(() => expect(getQuantityInputs()[lineIndex]).not.toBeDisabled());
 }
 
-function setLineValues(lineIndex: number, quantity: number, pallets: number) {
+function setLineQuantity(lineIndex: number, quantity: number) {
   fireEvent.change(getQuantityInputs()[lineIndex], { target: { value: String(quantity) } });
+}
+
+function setLinePallets(lineIndex: number, pallets: number) {
   fireEvent.change(getPalletInputs()[lineIndex], { target: { value: String(pallets) } });
 }
+
+const palletProfile = (ctnPerPallet: number, palletCount: number) => ({
+  ctnPerPallet,
+  palletCount,
+  availablePallets: palletCount,
+  allocatedPallets: 0,
+  damagedPallets: 0,
+  holdPallets: 0
+});
 
 async function submitReviewedDraft() {
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
@@ -110,10 +122,20 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
 
   it("saves a container allocation without exposing or submitting pallet entity IDs", async () => {
     mockedApi.createOutboundDocument.mockResolvedValue(createOutboundDocument({ id: 99, status: "DRAFT" }));
-    const { onBackToList } = renderEditor();
+    const { onBackToList } = renderEditor({
+      items: [createItem({
+        id: 1,
+        quantity: 10,
+        availableQty: 10,
+        pallets: 3,
+        containerNo: "GCXU5817233",
+        palletProfiles: [palletProfile(2, 1), palletProfile(3, 2)]
+      })]
+    });
 
     await selectContainerSource(0, "GCXU5817233");
-    setLineValues(0, 5, 2);
+    setLineQuantity(0, 5);
+    setLinePallets(0, 2);
     await submitReviewedDraft();
 
     await waitFor(() => expect(mockedApi.createOutboundDocument).toHaveBeenCalledTimes(1));
@@ -146,10 +168,19 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
 
   it("keeps outbound quantity and pallet count independent from SKU pallet defaults", async () => {
     mockedApi.createOutboundDocument.mockResolvedValue(createOutboundDocument({ id: 100, status: "DRAFT" }));
-    renderEditor({ skuMasters: [createSkuMaster({ defaultUnitsPerPallet: 2 })] });
+    renderEditor({
+      skuMasters: [createSkuMaster({ defaultUnitsPerPallet: 2 })],
+      items: [createItem({
+        quantity: 9,
+        availableQty: 9,
+        pallets: 3,
+        palletProfiles: [palletProfile(3, 3)]
+      })]
+    });
 
     await selectContainerSource(0, "GCXU5817233");
-    setLineValues(0, 9, 3);
+    setLineQuantity(0, 9);
+    setLinePallets(0, 3);
     await submitReviewedDraft();
 
     await waitFor(() => expect(mockedApi.createOutboundDocument).toHaveBeenCalledTimes(1));
@@ -160,16 +191,18 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
     mockedApi.createOutboundDocument.mockResolvedValue(createOutboundDocument({ id: 101, status: "DRAFT" }));
     renderEditor({
       items: [
-        createItem({ id: 1, quantity: 10, availableQty: 10, pallets: 4, containerNo: "GCXU5817233" }),
-        createItem({ id: 2, quantity: 12, availableQty: 12, pallets: 5, containerNo: "OOLU1234567" })
+        createItem({ id: 1, quantity: 10, availableQty: 10, pallets: 5, containerNo: "GCXU5817233", palletProfiles: [palletProfile(2, 5)] }),
+        createItem({ id: 2, quantity: 12, availableQty: 12, pallets: 2, containerNo: "OOLU1234567", palletProfiles: [palletProfile(6, 2)] })
       ]
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Add Outbound Line" }));
     await selectContainerSource(0, "GCXU5817233");
-    setLineValues(0, 4, 2);
+    setLineQuantity(0, 4);
+    setLinePallets(0, 2);
     await selectContainerSource(1, "OOLU1234567");
-    setLineValues(1, 6, 1);
+    setLineQuantity(1, 6);
+    setLinePallets(1, 1);
     await submitReviewedDraft();
 
     await waitFor(() => expect(mockedApi.createOutboundDocument).toHaveBeenCalledTimes(1));
@@ -186,28 +219,62 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
     expect(screen.queryByText(/PLT-/)).not.toBeInTheDocument();
   });
 
-  it("requires a positive pallet count before review", async () => {
-    renderEditor();
+  it("allows Qty and Pallets that do not match a per-pallet CTN profile", async () => {
+    mockedApi.createOutboundDocument.mockResolvedValue(createOutboundDocument({ id: 102, status: "DRAFT" }));
+    renderEditor({
+      items: [createItem({
+        quantity: 9,
+        availableQty: 9,
+        pallets: 3,
+        palletProfiles: [palletProfile(3, 3)]
+      })]
+    });
     await selectContainerSource(0, "GCXU5817233");
     fireEvent.change(getQuantityInputs()[0], { target: { value: "5" } });
+    setLinePallets(0, 2);
+    await submitReviewedDraft();
 
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await screen.findByText("Pick Allocations");
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-
-    expect(screen.getByText("Enter a shipped pallet count between 1 and the outbound quantity for every Container allocation.")).toBeInTheDocument();
-    expect(screen.queryByTestId("shipment-final-summary")).not.toBeInTheDocument();
+    await waitFor(() => expect(mockedApi.createOutboundDocument).toHaveBeenCalledTimes(1));
+    expect(mockedApi.createOutboundDocument.mock.calls[0][0].lines[0]).toMatchObject({
+      quantity: 5,
+      pallets: 2,
+      pickAllocations: [{ allocatedQty: 5, pallets: 2 }]
+    });
   });
 
-  it("rejects a pallet count greater than the shipped quantity", async () => {
-    renderEditor();
+  it("keeps Qty and Pallets as independent editable inputs", async () => {
+    renderEditor({
+      items: [createItem({
+        quantity: 8,
+        availableQty: 8,
+        pallets: 3,
+        palletProfiles: [palletProfile(2, 1), palletProfile(3, 2)]
+      })]
+    });
     await selectContainerSource(0, "GCXU5817233");
-    setLineValues(0, 2, 3);
+    setLineQuantity(0, 5);
 
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(getPalletInputs()[0]).toHaveValue(null);
+    expect(getPalletInputs()[0]).not.toHaveAttribute("readonly");
+    setLinePallets(0, 2);
+    expect(getPalletInputs()[0]).toHaveValue(2);
+    setLineQuantity(0, 6);
+    expect(getPalletInputs()[0]).toHaveValue(2);
+  });
 
-    expect(screen.getByText("Enter a shipped pallet count between 1 and the outbound quantity for every Container allocation.")).toBeInTheDocument();
+  it("caps pallet input at the selected container balance", async () => {
+    renderEditor({
+      items: [createItem({
+        quantity: 10,
+        availableQty: 10,
+        pallets: 2
+      })]
+    });
+    await selectContainerSource(0, "GCXU5817233");
+    setLineQuantity(0, 1);
+    setLinePallets(0, 3);
+
+    expect(getPalletInputs()[0]).toHaveValue(2);
   });
 
   it("hydrates an existing allocation by container and preserves its declared pallets", async () => {

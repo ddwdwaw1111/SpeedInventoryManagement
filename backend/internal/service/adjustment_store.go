@@ -348,6 +348,12 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 			deltaSign = -1
 		}
 		for _, palletAdjustment := range palletAdjustments {
+			signedQuantityChange := deltaSign * palletAdjustment.Quantity
+			afterPalletQty, err := s.loadPalletQuantityTx(ctx, tx, palletAdjustment.PalletID)
+			if err != nil {
+				return InventoryAdjustment{}, err
+			}
+			beforePalletQty := afterPalletQty - signedQuantityChange
 			if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
 				EventType:           StockLedgerEventAdjust,
 				PalletID:            palletAdjustment.PalletID,
@@ -356,7 +362,8 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 				CustomerID:          palletAdjustment.CustomerID,
 				LocationID:          palletAdjustment.LocationID,
 				StorageSection:      palletAdjustment.StorageSection,
-				QuantityChange:      deltaSign * palletAdjustment.Quantity,
+				QuantityChange:      signedQuantityChange,
+				PalletChange:        resolvePalletCountTransition(beforePalletQty, afterPalletQty),
 				OccurredAt:          actualAdjustedAt,
 				SourceDocumentType:  StockLedgerSourceAdjustment,
 				SourceDocumentID:    adjustmentID,

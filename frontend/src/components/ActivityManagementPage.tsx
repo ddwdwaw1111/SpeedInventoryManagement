@@ -6,6 +6,7 @@ import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
 import PictureAsPdfOutlinedIcon from "@mui/icons-material/PictureAsPdfOutlined";
+import UploadFileOutlinedIcon from "@mui/icons-material/UploadFileOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, Drawer, IconButton } from "@mui/material";
@@ -53,6 +54,7 @@ import {
 import { ExportExcelDialog } from "./ExportExcelDialog";
 import { InlineAlert, useConfirmDialog, useFeedbackToast } from "./Feedback";
 import { InlineLoadingIndicator } from "./InlineLoadingIndicator";
+import { InboundBulkImportDialog } from "./InboundBulkImportDialog";
 import { OutboundPickPlanPanel } from "./OutboundPickPlanPanel";
 import { SearchSubmitField } from "./SearchSubmitField";
 import { buildWorkspaceGridSlots, WorkspaceDrawerLoadingState, WorkspacePanelHeader } from "./WorkspacePanelChrome";
@@ -605,6 +607,7 @@ export function ActivityManagementPage({
   const [expandedPalletBreakdowns, setExpandedPalletBreakdowns] = useState<Record<string, boolean>>({});
   const [expandedOutboundPickPlans, setExpandedOutboundPickPlans] = useState<Record<string, boolean>>({});
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
+  const [isBulkInboundImportOpen, setIsBulkInboundImportOpen] = useState(false);
   const [optimisticInboundDocuments, setOptimisticInboundDocuments] = useState<InboundDocument[]>([]);
   const [optimisticOutboundDocuments, setOptimisticOutboundDocuments] = useState<OutboundDocument[]>([]);
   const [filteredInboundDocuments, setFilteredInboundDocuments] = useState<InboundDocument[]>([]);
@@ -2541,9 +2544,16 @@ export function ActivityManagementPage({
                     {t("exportExcel")}
                   </Button>
                   {canManage ? (
-                    <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={() => void openCreateModal()}>
-                      {mode === "IN" ? t("newInbound") : t("newOutbound")}
-                    </Button>
+                    <>
+                      {mode === "IN" ? (
+                        <Button variant="outlined" startIcon={<UploadFileOutlinedIcon />} onClick={() => setIsBulkInboundImportOpen(true)}>
+                          {t("bulkInboundExcel")}
+                        </Button>
+                      ) : null}
+                      <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={() => void openCreateModal()}>
+                        {mode === "IN" ? t("newInbound") : t("newOutbound")}
+                      </Button>
+                    </>
                   ) : null}
                   <Button variant="outlined" disabled>
                     {mode === "IN" ? t("documentsView") : t("packingListsView")}
@@ -2620,6 +2630,19 @@ export function ActivityManagementPage({
             onClose={() => setIsExportDialogOpen(false)}
             onExport={handleExport}
           />
+          {mode === "IN" ? (
+            <InboundBulkImportDialog
+              open={isBulkInboundImportOpen}
+              customers={customers}
+              locations={locations}
+              initialCustomerId={selectedCustomerId === "all" ? undefined : Number(selectedCustomerId)}
+              onClose={() => setIsBulkInboundImportOpen(false)}
+              onImported={async () => {
+                setSelectedStatus("DRAFT");
+                await onRefresh();
+              }}
+            />
+          ) : null}
         </main>
       ) : null}
       {feedbackToast}

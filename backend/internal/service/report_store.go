@@ -628,21 +628,19 @@ func (s *Store) loadSKUFlowCurrentInventory(ctx context.Context, filters SKUFlow
 	}
 	query := `
 		SELECT
-			COALESCE(SUM(pi.quantity), 0) AS quantity,
-			COUNT(DISTINCT CASE WHEN pi.quantity > 0 THEN p.id END) AS pallets
-		FROM pallet_items pi
-		JOIN pallets p ON p.id = pi.pallet_id
-		WHERE pi.sku_master_id = ?
-			AND pi.quantity > 0
-			AND p.status <> ?
+			COALESCE(SUM(i.quantity), 0) AS quantity,
+			COALESCE(SUM(i.pallets), 0) AS pallets
+		FROM inventory_items i
+		WHERE i.sku_master_id = ?
+			AND i.quantity > 0
 	`
-	args := []any{filters.SKUMasterID, PalletStatusCancelled}
+	args := []any{filters.SKUMasterID}
 	if filters.CustomerID > 0 {
-		query += " AND p.customer_id = ?"
+		query += " AND i.customer_id = ?"
 		args = append(args, filters.CustomerID)
 	}
 	if filters.LocationID > 0 {
-		query += " AND p.current_location_id = ?"
+		query += " AND i.location_id = ?"
 		args = append(args, filters.LocationID)
 	}
 
@@ -677,14 +675,14 @@ func (s *Store) loadSKUFlowLedgerRows(ctx context.Context, filters SKUFlowReport
 			sl.out_date,
 			sl.created_at
 		FROM stock_ledger sl
-		JOIN pallets p ON p.id = sl.pallet_id
+		LEFT JOIN pallets p ON p.id = sl.pallet_id
 		LEFT JOIN pallet_items pi ON pi.id = sl.pallet_item_id
 		JOIN sku_master sm ON sm.id = COALESCE(sl.sku_master_id, pi.sku_master_id, p.sku_master_id)
 		JOIN customers c ON c.id = sl.customer_id
 		JOIN storage_locations l ON l.id = sl.location_id
 		LEFT JOIN outbound_documents odoc
 			ON sl.source_document_type = 'OUTBOUND' AND sl.source_document_id = odoc.id
-		WHERE p.status <> ?
+		WHERE (p.id IS NULL OR p.status <> ?)
 			AND sm.id = ?
 			AND sl.event_type IN ('RECEIVE', 'SHIP')
 			AND sl.quantity_change <> 0

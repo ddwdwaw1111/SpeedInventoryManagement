@@ -60,7 +60,13 @@ func (s *Store) CreateLocation(ctx context.Context, input CreateLocationInput) (
 		return Location{}, fmt.Errorf("marshal location layout blocks: %w", err)
 	}
 
-	result, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return Location{}, fmt.Errorf("begin create location tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx, `
 		INSERT INTO storage_locations (name, address, description, capacity, section_count, section_names_json, layout_json)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`,
@@ -79,6 +85,12 @@ func (s *Store) CreateLocation(ctx context.Context, input CreateLocationInput) (
 	locationID, err := result.LastInsertId()
 	if err != nil {
 		return Location{}, fmt.Errorf("resolve location id: %w", err)
+	}
+	if err := syncStorageSectionsTx(ctx, tx, locationID, input.LayoutBlocks); err != nil {
+		return Location{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Location{}, fmt.Errorf("commit create location: %w", err)
 	}
 
 	return s.getLocation(ctx, locationID)
@@ -150,6 +162,9 @@ func (s *Store) UpdateLocation(ctx context.Context, locationID int64, input Crea
 	}
 	if rowsAffected == 0 {
 		return Location{}, ErrNotFound
+	}
+	if err := syncStorageSectionsTx(ctx, tx, locationID, input.LayoutBlocks); err != nil {
+		return Location{}, err
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -312,16 +327,91 @@ func updateLiveSectionNameTx(ctx context.Context, tx *sqlx.Tx, locationID int64,
 		return mapDBError(fmt.Errorf("rename pallet section %s -> %s: %w", from, to, err))
 	}
 
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE outbound_container_allocations
+		SET storage_section = ?
+		WHERE location_id = ?
+		  AND COALESCE(NULLIF(storage_section, ''), ?) = ?
+	`, to, locationID, DefaultStorageSection, from); err != nil {
+		return mapDBError(fmt.Errorf("rename outbound allocation section %s -> %s: %w", from, to, err))
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE storage_sections
+		SET name = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE location_id = ? AND name = ?
+	`, to, locationID, from); err != nil {
+		return mapDBError(fmt.Errorf("rename stable storage section %s -> %s: %w", from, to, err))
+	}
+
 	return nil
+}
+
+func syncStorageSectionsTx(ctx context.Context, tx *sqlx.Tx, locationID int64, blocks []StorageLayoutBlock) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE storage_sections SET is_active = FALSE WHERE location_id = ?`, locationID); err != nil {
+		return mapDBError(fmt.Errorf("deactivate storage sections: %w", err))
+	}
+	for _, block := range blocks {
+		sectionType := ""
+		sectionName := ""
+		switch block.Type {
+		case StorageLayoutBlockTypeTemporary:
+			sectionType = "TEMPORARY"
+			sectionName = DefaultStorageSection
+		case StorageLayoutBlockTypeSection:
+			sectionType = "SECTION"
+			sectionName = normalizeStorageSection(block.Name)
+		default:
+			continue
+		}
+		externalKey := strings.TrimSpace(block.ID)
+		if externalKey == "" {
+			externalKey = "section-" + strings.ToLower(sectionName)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO storage_sections (location_id, external_key, name, section_type, is_active)
+			VALUES (?, ?, ?, ?, TRUE)
+			ON DUPLICATE KEY UPDATE
+				name = VALUES(name),
+				section_type = VALUES(section_type),
+				is_active = TRUE,
+				updated_at = CURRENT_TIMESTAMP
+		`, locationID, externalKey, sectionName, sectionType); err != nil {
+			return mapDBError(fmt.Errorf("sync storage section %s: %w", sectionName, err))
+		}
+	}
+	return nil
+}
+
+type storageSectionQueryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func resolveStorageSectionIDTx(ctx context.Context, queryer storageSectionQueryer, locationID int64, sectionName string) (int64, error) {
+	var sectionID int64
+	err := queryer.QueryRowContext(ctx, `
+		SELECT id
+		FROM storage_sections
+		WHERE location_id = ? AND name = ? AND is_active = TRUE
+		LIMIT 1
+	`, locationID, normalizeStorageSection(sectionName)).Scan(&sectionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("%w: storage section %s does not exist in this warehouse", ErrInvalidInput, normalizeStorageSection(sectionName))
+	}
+	if err != nil {
+		return 0, fmt.Errorf("resolve storage section id: %w", err)
+	}
+	return sectionID, nil
 }
 
 func sanitizeLocationInput(input CreateLocationInput) CreateLocationInput {
 	input.Name = strings.TrimSpace(input.Name)
 	input.Address = strings.TrimSpace(input.Address)
 	input.Description = strings.TrimSpace(input.Description)
-	input.LayoutBlocks = sanitizeLayoutBlocks(input.LayoutBlocks)
 	if len(input.LayoutBlocks) == 0 {
 		input.LayoutBlocks = buildDefaultLayoutBlocks(input.SectionNames)
+	} else {
+		input.LayoutBlocks = sanitizeLayoutBlocks(input.LayoutBlocks)
 	}
 	input.SectionNames = deriveSectionNamesFromLayout(input.LayoutBlocks)
 	return input

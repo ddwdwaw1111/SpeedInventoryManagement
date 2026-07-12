@@ -7,6 +7,7 @@ import type {
   AddBillingInvoiceLinePayload,
   UpdateBillingInvoiceLinePayload,
   ContainerLifecycle,
+	ContainerLifecycleEvent,
   ContainerPayload,
   ContainerPickupAssignment,
   ContainerPickupAssignmentPayload,
@@ -31,6 +32,9 @@ import type {
   InventoryTransferPayload,
   InboundDocument,
   InboundDocumentPayload,
+  InboundBulkImportCommitPayload,
+  InboundBulkImportCommitResponse,
+  InboundBulkImportPreview,
   UpdateInboundDocumentContainerTypePayload,
   UpdateInboundDocumentNotePayload,
   InboundPackingListImportPreview,
@@ -746,6 +750,31 @@ export const api = {
     return request<InboundPackingListImportPreview>("/inbound-documents/import-preview", {
       method: "POST",
       body: formData
+    });
+  },
+
+	getContainerLifecycleEvents(limit = 2000, containerNo = "", customerId?: number) {
+		const params = new URLSearchParams({ limit: String(limit) });
+		if (containerNo.trim()) params.set("containerNo", containerNo.trim());
+		if (customerId && customerId > 0) params.set("customerId", String(customerId));
+		return request<ContainerLifecycleEvent[]>(`/container-lifecycle-events?${params.toString()}`);
+	},
+
+  previewInboundBulkImport(file: File, customerId: number) {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("customerId", String(customerId));
+
+    return request<InboundBulkImportPreview>("/inbound-documents/bulk-import-preview", {
+      method: "POST",
+      body: formData
+    });
+  },
+
+  commitInboundBulkImport(payload: InboundBulkImportCommitPayload) {
+    return request<InboundBulkImportCommitResponse>("/inbound-documents/bulk-import-commit", {
+      method: "POST",
+      body: JSON.stringify(payload)
     });
   },
 

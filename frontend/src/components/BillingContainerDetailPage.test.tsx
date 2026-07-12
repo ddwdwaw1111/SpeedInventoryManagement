@@ -6,16 +6,18 @@ import { renderWithProviders } from "../test/renderWithProviders";
 import { createCustomer, createLocation } from "../test/fixtures";
 import { BillingContainerDetailPage } from "./BillingContainerDetailPage";
 
-const { getPallets, getPalletLocationEvents } = vi.hoisted(() => ({
+const { getPallets, getPalletLocationEvents, getContainerLifecycleEvents } = vi.hoisted(() => ({
 	getPallets: vi.fn(),
-	getPalletLocationEvents: vi.fn()
+	getPalletLocationEvents: vi.fn(),
+	getContainerLifecycleEvents: vi.fn()
 }));
 
 vi.mock("../lib/api", () => ({
 	ApiError: class ApiError extends Error {},
 	api: {
 		getPallets,
-		getPalletLocationEvents
+		getPalletLocationEvents,
+		getContainerLifecycleEvents
 	}
 }));
 
@@ -23,6 +25,15 @@ describe("BillingContainerDetailPage", () => {
 	beforeEach(() => {
 		getPallets.mockReset();
 		getPalletLocationEvents.mockReset();
+		getContainerLifecycleEvents.mockReset();
+		getContainerLifecycleEvents.mockImplementation(async () => {
+			const events = await getPalletLocationEvents();
+			return events.map((event: Record<string, unknown>) => ({
+				...event,
+				stockLedgerId: event.id,
+				eventType: event.eventType === "RECEIVED" ? "RECEIVE" : event.eventType === "SHIPPED" ? "SHIP" : event.eventType
+			}));
+		});
 		window.localStorage.clear();
 		window.sessionStorage.clear();
 		window.localStorage.setItem("sim-timezone", "UTC");
@@ -159,11 +170,14 @@ describe("BillingContainerDetailPage", () => {
 			/>
 		);
 
-		const timelineTable = await screen.findByRole("table", { name: "Pallet Change Timeline" });
-		expect(getPalletLocationEvents).toHaveBeenCalledWith(50000, "GCXU5817233");
-		expect(within(timelineTable).getAllByText("PLT-001")).toHaveLength(3);
-		expect(within(timelineTable).queryByText("PLT-APR")).not.toBeInTheDocument();
-		expect(within(timelineTable).queryByText("PLT-OTHER")).not.toBeInTheDocument();
+		const timelineTable = await screen.findByRole("table", { name: "Container Change Timeline" });
+		expect(getContainerLifecycleEvents).toHaveBeenCalledWith(50000, "GCXU5817233", undefined);
+		expect(within(timelineTable).getAllByRole("row")).toHaveLength(4);
+		expect(within(timelineTable).getByText("RECEIVE")).toBeInTheDocument();
+		expect(within(timelineTable).getByText("TRANSFER")).toBeInTheDocument();
+		expect(within(timelineTable).getByText("SHIP")).toBeInTheDocument();
+		expect(within(timelineTable).queryByText("+99")).not.toBeInTheDocument();
+		expect(within(timelineTable).queryByText("+5")).not.toBeInTheDocument();
 		expect(within(timelineTable).getAllByText("+10").length).toBeGreaterThan(0);
 		expect(within(timelineTable).getAllByText("+6").length).toBeGreaterThan(0);
 		expect(within(timelineTable).getByText("-1")).toBeInTheDocument();
@@ -212,10 +226,9 @@ describe("BillingContainerDetailPage", () => {
 			/>
 		);
 
-		const timelineTable = await screen.findByRole("table", { name: "Pallet Change Timeline" });
-		expect(within(timelineTable).getByText("PLT-021")).toBeInTheDocument();
-		expect(within(timelineTable).getByText("RECEIVED")).toBeInTheDocument();
-		expect(within(timelineTable).queryByText("OUTBOUND")).not.toBeInTheDocument();
+		const timelineTable = await screen.findByRole("table", { name: "Container Change Timeline" });
+		expect(within(timelineTable).getByText("RECEIVE")).toBeInTheDocument();
+		expect(within(timelineTable).queryByText("SHIP")).not.toBeInTheDocument();
 	});
 
 	it("ignores a stale workspace grace-period setting when the stored context does not match the route", async () => {

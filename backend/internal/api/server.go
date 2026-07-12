@@ -546,6 +546,33 @@ func (s *Server) handleListPalletLocationEvents(c *gin.Context) {
 	writeJSON(c, http.StatusOK, events)
 }
 
+func (s *Server) handleListContainerLifecycleEvents(c *gin.Context) {
+	limit := 2000
+	if value := strings.TrimSpace(c.Query("limit")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			writeError(c, http.StatusBadRequest, "limit must be a number")
+			return
+		}
+		limit = parsed
+	}
+
+	customerID, err := parseOptionalInt64Query(c, "customerId", "customerId must be a number")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	events, err := s.store.ListContainerLifecycleEvents(c.Request.Context(), limit, service.ContainerLifecycleEventFilters{
+		CustomerID:  customerID,
+		ContainerNo: c.Query("containerNo"),
+	})
+	if err != nil {
+		writeServerError(c, err)
+		return
+	}
+	writeJSON(c, http.StatusOK, events)
+}
+
 func (s *Server) handleListOutboundDocuments(c *gin.Context) {
 	limit := 100
 	if value := strings.TrimSpace(c.Query("limit")); value != "" {

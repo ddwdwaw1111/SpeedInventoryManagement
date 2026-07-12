@@ -73,6 +73,14 @@ describe("downloadExcelWorkbook", () => {
       ],
       summaryRows: [
         { label: "Total", value: 123.45, numberFormat: "currency", bold: true }
+      ],
+      additionalSheets: [
+        {
+          title: "Storage Billing Period: 2026-03-01 to 2026-03-31",
+          sheetName: "Storage Fee",
+          columns: [{ key: "containerNo", label: "Container No." }],
+          rows: [{ containerNo: "CONT-001" }]
+        }
       ]
     });
 
@@ -92,9 +100,11 @@ describe("downloadExcelWorkbook", () => {
     const workbookFiles = unzipSync(workbookBytes);
     const workbookXml = readZipText(workbookFiles, "xl/workbook.xml");
     const worksheetXml = readZipText(workbookFiles, "xl/worksheets/sheet1.xml");
+    const storageWorksheetXml = readZipText(workbookFiles, "xl/worksheets/sheet2.xml");
     const stylesXml = readZipText(workbookFiles, "xl/styles.xml");
 
     expect(workbookXml).toContain('sheet name="Inventory Receipts"');
+    expect(workbookXml).toContain('sheet name="Storage Fee"');
     expect(worksheetXml).toContain("Inventory &amp; Receipts");
     expect(worksheetXml).toContain("<t>SKU</t>");
     expect(worksheetXml).toContain("<t>Container &lt;A&gt;</t>");
@@ -103,6 +113,8 @@ describe("downloadExcelWorkbook", () => {
     expect(worksheetXml).toContain("<v>123.45</v>");
     expect(worksheetXml).toContain("<t></t>");
     expect(worksheetXml).toContain("<mergeCells");
+    expect(storageWorksheetXml).toContain("Storage Billing Period: 2026-03-01 to 2026-03-31");
+    expect(storageWorksheetXml).toContain("CONT-001");
     expect(stylesXml).toContain('formatCode="&quot;$&quot;#,##0.00"');
   });
 });

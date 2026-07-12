@@ -17,7 +17,7 @@ import { getErrorMessage } from "../lib/errors";
 import { formatMoney, formatNumber, formatSignedNumber } from "../lib/formatters";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
-import type { Customer, InboundDocument, Location, OutboundDocument, PalletLocationEvent, PalletTrace } from "../lib/types";
+import type { ContainerLifecycleEvent, Customer, InboundDocument, Location, OutboundDocument } from "../lib/types";
 import { WorkspacePanelHeader, WorkspaceTableEmptyState } from "./WorkspacePanelChrome";
 
 type BillingContainerDetailPageProps = {
@@ -37,8 +37,6 @@ type BillingContainerDetailPageProps = {
 
 type ContainerTimelineRow = {
 	id: string;
-	palletId: number;
-	palletCode: string;
 	eventType: string;
 	locationLabel: string;
 	quantityDelta: number;
@@ -68,8 +66,7 @@ export function BillingContainerDetailPage({
 	const selectedWarehouse = warehouseLocationId === "all"
 		? null
 		: locations.find((location) => location.id === warehouseLocationId) ?? null;
-	const [pallets, setPallets] = useState<PalletTrace[]>([]);
-	const [palletLocationEvents, setPalletLocationEvents] = useState<PalletLocationEvent[]>([]);
+	const [containerLifecycleEvents, setContainerLifecycleEvents] = useState<ContainerLifecycleEvent[]>([]);
 	const [isLoading, setIsLoading] = useState(true);
 	const [errorMessage, setErrorMessage] = useState("");
 
@@ -97,8 +94,7 @@ export function BillingContainerDetailPage({
 		let active = true;
 
 		if (!normalizedContainerNo) {
-			setPallets([]);
-			setPalletLocationEvents([]);
+			setContainerLifecycleEvents([]);
 			setIsLoading(false);
 			setErrorMessage("");
 			return () => {
@@ -110,15 +106,11 @@ export function BillingContainerDetailPage({
 			setIsLoading(true);
 			setErrorMessage("");
 			try {
-				const [nextPallets, nextEvents] = await Promise.all([
-					api.getPallets(50000),
-					api.getPalletLocationEvents(50000, normalizedContainerNo)
-				]);
+				const nextContainerEvents = await api.getContainerLifecycleEvents(50000, normalizedContainerNo, customerId === "all" ? undefined : customerId);
 				if (!active) {
 					return;
 				}
-				setPallets(nextPallets);
-				setPalletLocationEvents(nextEvents);
+				setContainerLifecycleEvents(nextContainerEvents);
 			} catch (error) {
 				if (!active) {
 					return;
@@ -142,15 +134,16 @@ export function BillingContainerDetailPage({
 		endDate,
 		customerId,
 		customers,
-		pallets,
-		palletLocationEvents,
+		pallets: [],
+		palletLocationEvents: [],
+		containerLifecycleEvents,
 		inboundDocuments,
 		outboundDocuments,
 		locationId: warehouseLocationId,
 		containerType: activeContainerType,
 		normalPalletGracePeriodEnabled: activeNormalPalletGracePeriodEnabled,
 		rates: activeRates
-	}), [activeContainerType, activeNormalPalletGracePeriodEnabled, activeRates, customerId, customers, endDate, inboundDocuments, outboundDocuments, palletLocationEvents, pallets, startDate, warehouseLocationId]);
+	}), [activeContainerType, activeNormalPalletGracePeriodEnabled, activeRates, containerLifecycleEvents, customerId, customers, endDate, inboundDocuments, outboundDocuments, startDate, warehouseLocationId]);
 
 	const containerInvoiceLines = useMemo(
 		() => billingPreview.invoiceLines.filter((line) => normalizeContainerNo(line.containerNo) === normalizedContainerNo),
@@ -162,13 +155,13 @@ export function BillingContainerDetailPage({
 	);
 	const timelineRows = useMemo(
 		() => buildContainerTimelineRows(
-			palletLocationEvents,
+			containerLifecycleEvents,
 			normalizedContainerNo,
 			startDate,
 			endDate,
 			warehouseLocationId
 		),
-		[endDate, normalizedContainerNo, palletLocationEvents, startDate, warehouseLocationId]
+		[containerLifecycleEvents, endDate, normalizedContainerNo, startDate, warehouseLocationId]
 	);
 	const references = useMemo(
 		() => uniqueStrings(containerInvoiceLines.map((line) => line.reference).filter(Boolean)),
@@ -402,8 +395,7 @@ export function BillingContainerDetailPage({
 										<thead>
 											<tr>
 												<th>{t("activityDate")}</th>
-												<th>{t("palletCode")}</th>
-												<th>{t("billingEventType")}</th>
+								<th>{t("billingEventType")}</th>
 												<th>{t("currentStorage")}</th>
 												<th>{t("billingQuantityDelta")}</th>
 												<th>{t("billingPalletDelta")}</th>
@@ -415,8 +407,7 @@ export function BillingContainerDetailPage({
 											{timelineRows.map((row) => (
 												<tr key={row.id}>
 													<td className="cell--mono">{formatDateTimeValue(row.eventTime, resolvedTimeZone, { dateStyle: "medium", timeStyle: "short" })}</td>
-													<td className="cell--mono">{row.palletCode || `#${row.palletId}`}</td>
-													<td>{row.eventType}</td>
+									<td>{row.eventType}</td>
 													<td>{row.locationLabel}</td>
 													<td className="cell--mono">{formatSignedNumber(row.quantityDelta)}</td>
 													<td className="cell--mono">{formatSignedNumber(row.palletDelta)}</td>
@@ -473,7 +464,7 @@ export function BillingContainerDetailPage({
 }
 
 function buildContainerTimelineRows(
-	events: PalletLocationEvent[],
+	events: ContainerLifecycleEvent[],
 	containerNo: string,
 	startDate: string,
 	endDate: string,
@@ -484,9 +475,7 @@ function buildContainerTimelineRows(
 		.filter((event) => warehouseLocationId === "all" || event.locationId === warehouseLocationId)
 		.filter((event) => isWithinDateRange(event.eventTime, startDate, endDate))
 		.map((event) => ({
-			id: `ple-${event.id}`,
-			palletId: event.palletId,
-			palletCode: event.palletCode,
+			id: `cle-${event.id}`,
 			eventType: event.eventType,
 			locationLabel: summarizeLocation(event.locationName, event.storageSection),
 			quantityDelta: event.quantityDelta,
@@ -510,8 +499,6 @@ function buildContainerTimelineRows(
 		runningPalletDelta += event.palletDelta;
 		return {
 			id: event.id,
-			palletId: event.palletId,
-			palletCode: event.palletCode,
 			eventType: event.eventType,
 			locationLabel: event.locationLabel,
 			quantityDelta: event.quantityDelta,

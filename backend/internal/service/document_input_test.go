@@ -193,7 +193,7 @@ func TestValidateOutboundDocumentInput(t *testing.T) {
 	}
 }
 
-func TestConfirmedOutboundKeepsQuantityAndPalletCountIndependentByContainer(t *testing.T) {
+func TestConfirmedOutboundAcceptsIndependentQtyAndPalletCountWhenAllocationMatches(t *testing.T) {
 	input := CreateOutboundDocumentInput{
 		Status:         DocumentStatusConfirmed,
 		TrackingStatus: OutboundTrackingShipped,
@@ -220,7 +220,7 @@ func TestConfirmedOutboundKeepsQuantityAndPalletCountIndependentByContainer(t *t
 
 	input.Lines[0].PickAllocations[0].Pallets = 2
 	if err := validateOutboundDocumentInput(input); err == nil || !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("expected mismatched allocation pallets to be invalid, got %v", err)
+		t.Fatalf("expected mismatched declared and allocation pallet counts to be rejected, got %v", err)
 	}
 }
 

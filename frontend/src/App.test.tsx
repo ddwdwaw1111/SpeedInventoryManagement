@@ -42,6 +42,7 @@ const { ApiError, apiMocks, portalApiMocks } = vi.hoisted(() => {
       logout: vi.fn(),
       getProfile: vi.fn(),
       getInventory: vi.fn(),
+      getContainers: vi.fn(),
       getPackingLists: vi.fn(),
       getPickingOrders: vi.fn()
     }
@@ -109,6 +110,7 @@ describe("App role routing", () => {
     vi.clearAllMocks();
     window.history.pushState({}, "", "/dashboard");
     portalApiMocks.getInventory.mockResolvedValue([]);
+    portalApiMocks.getContainers.mockResolvedValue([]);
     portalApiMocks.getPackingLists.mockResolvedValue([]);
     portalApiMocks.getProfile.mockResolvedValue(createCustomer({ id: 99, name: "Customer Portal Co" }));
     portalApiMocks.getPickingOrders.mockResolvedValue([]);
@@ -157,6 +159,7 @@ describe("App role routing", () => {
     expect(screen.queryByRole("button", { name: /^Shipments$/i })).not.toBeInTheDocument();
     await waitFor(() => {
       expect(portalApiMocks.getInventory).toHaveBeenCalled();
+      expect(portalApiMocks.getContainers).toHaveBeenCalled();
       expect(portalApiMocks.getPackingLists).toHaveBeenCalled();
       expect(portalApiMocks.getPickingOrders).toHaveBeenCalled();
     });
@@ -189,6 +192,7 @@ describe("App role routing", () => {
       expect(apiMocks[name]).toHaveBeenCalled();
     }
     expect(portalApiMocks.getInventory).not.toHaveBeenCalled();
+    expect(portalApiMocks.getContainers).not.toHaveBeenCalled();
     expect(portalApiMocks.getPackingLists).not.toHaveBeenCalled();
     expect(portalApiMocks.getPickingOrders).not.toHaveBeenCalled();
   });

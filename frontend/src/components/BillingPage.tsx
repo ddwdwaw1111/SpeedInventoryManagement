@@ -62,14 +62,13 @@ import type {
   BillingInvoice,
   BillingInvoiceStatus,
   BillingInvoiceType,
+	ContainerLifecycleEvent,
   ContainerType,
   CreateBillingInvoicePayload,
   Customer,
   InboundDocument,
   Location,
   OutboundDocument,
-  PalletLocationEvent,
-  PalletTrace,
   UserRole
 } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
@@ -136,8 +135,7 @@ export function BillingPage({
   const [normalPalletGracePeriodEnabled, setNormalPalletGracePeriodEnabled] = useState(true);
   const [workspaceMode, setWorkspaceMode] = useState<BillingWorkspaceMode>("OVERVIEW");
   const [rates, setRates] = useState<BillingRates>(DEFAULT_BILLING_RATES);
-  const [pallets, setPallets] = useState<PalletTrace[]>([]);
-  const [palletLocationEvents, setPalletLocationEvents] = useState<PalletLocationEvent[]>([]);
+	const [containerLifecycleEvents, setContainerLifecycleEvents] = useState<ContainerLifecycleEvent[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const [invoices, setInvoices] = useState<BillingInvoice[]>([]);
@@ -158,15 +156,11 @@ export function BillingPage({
       setIsLoading(true);
       setErrorMessage("");
       try {
-        const [nextPallets, nextEvents] = await Promise.all([
-          api.getPallets(50000),
-          api.getPalletLocationEvents(50000)
-        ]);
+		const nextContainerEvents = await api.getContainerLifecycleEvents(50000);
         if (!active) {
           return;
         }
-        setPallets(nextPallets);
-        setPalletLocationEvents(nextEvents);
+		setContainerLifecycleEvents(nextContainerEvents);
       } catch (error) {
         if (!active) {
           return;
@@ -316,15 +310,16 @@ export function BillingPage({
     endDate: selectedEndDate,
     customerId,
     customers,
-    pallets,
-    palletLocationEvents,
+		pallets: [],
+		palletLocationEvents: [],
+	containerLifecycleEvents,
     inboundDocuments,
     outboundDocuments,
     locationId: warehouseLocationId,
     containerType: selectedContainerType,
     normalPalletGracePeriodEnabled,
     rates
-  }), [customerId, customers, inboundDocuments, normalPalletGracePeriodEnabled, outboundDocuments, palletLocationEvents, pallets, rates, selectedContainerType, selectedEndDate, selectedStartDate, warehouseLocationId, workspaceMode]);
+	}), [containerLifecycleEvents, customerId, customers, inboundDocuments, normalPalletGracePeriodEnabled, outboundDocuments, rates, selectedContainerType, selectedEndDate, selectedStartDate, warehouseLocationId, workspaceMode]);
 
   const previousPeriodRange = useMemo(
     () => computePreviousPeriodRange(selectedStartDate, selectedEndDate),
@@ -337,8 +332,9 @@ export function BillingPage({
       endDate: previousPeriodRange.endDate,
       customerId,
       customers,
-      pallets,
-      palletLocationEvents,
+		pallets: [],
+		palletLocationEvents: [],
+	  containerLifecycleEvents,
       inboundDocuments,
       outboundDocuments,
       locationId: warehouseLocationId,
@@ -346,7 +342,7 @@ export function BillingPage({
       normalPalletGracePeriodEnabled,
       rates
     });
-  }, [customerId, customers, inboundDocuments, normalPalletGracePeriodEnabled, outboundDocuments, palletLocationEvents, pallets, previousPeriodRange, rates, selectedContainerType, warehouseLocationId]);
+	}, [containerLifecycleEvents, customerId, customers, inboundDocuments, normalPalletGracePeriodEnabled, outboundDocuments, previousPeriodRange, rates, selectedContainerType, warehouseLocationId]);
   const containerSummaryRows = useMemo(
     () => buildBillingContainerSummaryRows(billingPreview.invoiceLines, billingPreview.storageRows),
     [billingPreview.invoiceLines, billingPreview.storageRows]
@@ -519,9 +515,8 @@ export function BillingPage({
 
   async function handleRefreshBillingData() {
     await runBusyAction("refresh", async () => {
-      const [nextPallets, nextEvents] = await Promise.all([api.getPallets(50000), api.getPalletLocationEvents(50000)]);
-      setPallets(nextPallets);
-      setPalletLocationEvents(nextEvents);
+	  const nextContainerEvents = await api.getContainerLifecycleEvents(50000);
+	  setContainerLifecycleEvents(nextContainerEvents);
       setErrorMessage("");
     }).catch((error) => {
       setErrorMessage(getErrorMessage(error, t("couldNotLoadReport")));

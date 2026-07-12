@@ -83,6 +83,7 @@ export function createItem(overrides: Partial<Item> = {}): Item {
     storageSection: "TEMP",
     deliveryDate: ISO_DATE,
     containerNo: "GCXU5817233",
+    containerType: "NORMAL",
     lastRestockedAt: ISO_TIMESTAMP,
     createdAt: ISO_TIMESTAMP,
     updatedAt: ISO_TIMESTAMP,

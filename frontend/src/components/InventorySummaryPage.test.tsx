@@ -274,7 +274,7 @@ describe("InventorySummaryPage", () => {
     });
   });
 
-  it("filters summary rows by selected container type using pallet metadata", async () => {
+  it("filters summary rows by the container aggregate type", async () => {
     mockedApi.getPallets.mockResolvedValue([
       {
         id: 701,
@@ -328,8 +328,8 @@ describe("InventorySummaryPage", () => {
       <InventorySummaryPage
         {...defaultProps({
           items: [
-            createItem({ id: 1, skuMasterId: 1, sku: "SKU-NORMAL", itemNumber: "ITEM-N", containerNo: "CONT-N" }),
-            createItem({ id: 2, skuMasterId: 2, sku: "SKU-TRANSFER", itemNumber: "ITEM-T", containerNo: "CONT-T" })
+            createItem({ id: 1, skuMasterId: 1, sku: "SKU-NORMAL", itemNumber: "ITEM-N", containerNo: "CONT-N", containerType: "NORMAL" }),
+            createItem({ id: 2, skuMasterId: 2, sku: "SKU-TRANSFER", itemNumber: "ITEM-T", containerNo: "CONT-T", containerType: "WEST_COAST_TRANSFER" })
           ]
         })}
       />
@@ -410,7 +410,8 @@ describe("InventorySummaryPage", () => {
               locationId: 1,
               locationName: "NJ",
               storageSection: "TEMP",
-              containerNo: "GCXU5817233"
+              containerNo: "GCXU5817233",
+              pallets: 2
             })
           ]
         })}
@@ -523,7 +524,8 @@ describe("InventorySummaryPage", () => {
               locationId: 1,
               locationName: "NJ",
               storageSection: "TEMP",
-              containerNo: "GCXU5817233"
+              containerNo: "GCXU5817233",
+              pallets: 2
             })
           ]
         })}

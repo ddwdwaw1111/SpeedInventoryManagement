@@ -306,6 +306,7 @@ func (s *Store) CreateCycleCount(ctx context.Context, input CreateCycleCountInpu
 					return CycleCount{}, err
 				}
 				beforePalletQty := afterPalletQty - signedQuantityChange
+				palletChange := resolvePalletCountTransition(beforePalletQty, afterPalletQty)
 				if err := s.createPalletLocationEventTx(ctx, tx, createPalletLocationEventInput{
 					PalletID:         palletVariance.PalletID,
 					ContainerVisitID: palletVariance.ContainerVisitID,
@@ -315,7 +316,7 @@ func (s *Store) CreateCycleCount(ctx context.Context, input CreateCycleCountInpu
 					ContainerNo:      palletVariance.ContainerNo,
 					EventType:        PalletEventCount,
 					QuantityDelta:    signedQuantityChange,
-					PalletDelta:      resolvePalletCountTransition(beforePalletQty, afterPalletQty),
+					PalletDelta:      palletChange,
 					EventTime:        &countOccurredAt,
 				}); err != nil {
 					return CycleCount{}, err
@@ -330,6 +331,7 @@ func (s *Store) CreateCycleCount(ctx context.Context, input CreateCycleCountInpu
 					LocationID:          palletVariance.LocationID,
 					StorageSection:      palletVariance.StorageSection,
 					QuantityChange:      signedQuantityChange,
+					PalletChange:        palletChange,
 					SourceDocumentType:  StockLedgerSourceCycleCount,
 					SourceDocumentID:    countID,
 					SourceLineID:        lineID,

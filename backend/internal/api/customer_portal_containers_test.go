@@ -29,6 +29,7 @@ func TestBuildCustomerPortalContainerSummariesNetsReversals(t *testing.T) {
 			ContainerNo:  "CNT-REV",
 			Quantity:     10,
 			AvailableQty: 10,
+			Pallets:      3,
 			UpdatedAt:    now,
 		}},
 		[]service.ContainerLifecycleEvent{
@@ -61,7 +62,6 @@ func TestBuildCustomerPortalContainerSummariesNetsReversals(t *testing.T) {
 				CreatedAt:          now,
 			},
 		},
-		nil,
 	)
 
 	summary := summaries["CNT-REV"]
@@ -70,6 +70,9 @@ func TestBuildCustomerPortalContainerSummariesNetsReversals(t *testing.T) {
 	}
 	if summary.Status != "IN_STOCK" {
 		t.Fatalf("expected reversed shipment with current stock to remain in stock, got %q", summary.Status)
+	}
+	if summary.PalletCount != 3 {
+		t.Fatalf("expected pallet count from aggregate inventory, got %d", summary.PalletCount)
 	}
 }
 
@@ -105,7 +108,7 @@ func TestBuildCustomerPortalContainerSummariesCountsTransferDocumentOnce(t *test
 			SourceLineID:       120,
 			CreatedAt:          now,
 		},
-	}, nil)
+	})
 
 	if got := summaries["CNT-MOVE"].TransferCount; got != 1 {
 		t.Fatalf("expected transfer out/in pair from one transfer document to count once, got %d", got)
@@ -139,7 +142,6 @@ func TestBuildCustomerPortalContainerSummariesSeparatesDepletedFromShipped(t *te
 			QuantityDelta: -10,
 			CreatedAt:     now,
 		}},
-		nil,
 	)
 
 	summary := summaries["CNT-ADJ"]

@@ -1,3 +1,8 @@
+-- Bootstrap schema for first-time container initialization only.
+-- The authoritative, versioned application schema is maintained by
+-- backend/internal/database/migration_runner.go and migrate.go. The API must
+-- start successfully before this database is considered ready for use.
+
 CREATE DATABASE IF NOT EXISTS speed_inventory_management
   CHARACTER SET utf8mb4
   COLLATE utf8mb4_unicode_ci;

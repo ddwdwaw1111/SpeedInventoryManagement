@@ -1,6 +1,6 @@
 import { parseDateLikeValue, startOfLocalDay, toIsoDateString } from "./dates";
 import { formatMoney } from "./formatters";
-import type { ContainerType, Customer, InboundDocument, OutboundDocument, PalletLocationEvent, PalletTrace } from "./types";
+import type { ContainerLifecycleEvent, ContainerType, Customer, InboundDocument, OutboundDocument, PalletLocationEvent, PalletTrace } from "./types";
 
 export type BillingRates = {
   inboundContainerFee: number;
@@ -101,6 +101,7 @@ type BuildBillingPreviewInput = {
   customers: Customer[];
   pallets: PalletTrace[];
   palletLocationEvents: PalletLocationEvent[];
+	containerLifecycleEvents?: ContainerLifecycleEvent[];
   inboundDocuments: InboundDocument[];
   outboundDocuments: OutboundDocument[];
   rates: BillingRates;
@@ -152,19 +153,38 @@ export function buildBillingPreview(input: BuildBillingPreviewInput): BillingPre
     input.locationId,
     billingRange
   );
-  const { storageRows, storageLines, dailyBalanceRows } = buildStorageCharges(
-    input.pallets,
-    input.palletLocationEvents,
-    input.customerId,
-    input.locationId,
-    input.containerType,
-    input.normalPalletGracePeriodEnabled ?? true,
-    input.rates,
-    billingRange,
-    rangeDays
-  );
+	const outboundLines = buildOutboundInvoiceLines(
+		input.outboundDocuments,
+		input.customerId,
+		input.locationId,
+		input.rates,
+		billingRange
+	);
+	const { storageRows, storageLines, dailyBalanceRows } = input.containerLifecycleEvents?.length
+		? buildContainerLifecycleStorageCharges(
+			input.containerLifecycleEvents,
+			input.inboundDocuments,
+			input.customerId,
+			input.locationId,
+			input.containerType,
+			input.normalPalletGracePeriodEnabled ?? true,
+			input.rates,
+			billingRange,
+			rangeDays
+		)
+		: buildStorageCharges(
+			input.pallets,
+			input.palletLocationEvents,
+			input.customerId,
+			input.locationId,
+			input.containerType,
+			input.normalPalletGracePeriodEnabled ?? true,
+			input.rates,
+			billingRange,
+			rangeDays
+		);
 
-  const invoiceLines = [...inboundLines, ...storageLines]
+  const invoiceLines = [...inboundLines, ...storageLines, ...outboundLines]
     .sort(compareInvoiceLines);
 
   const summary: BillingPreviewSummary = {
@@ -179,10 +199,10 @@ export function buildBillingPreview(input: BuildBillingPreviewInput): BillingPre
     storageGrossAmount: roundCurrency(storageRows.reduce((total, row) => total + row.grossAmount, 0)),
     storageDiscountAmount: roundCurrency(storageRows.reduce((total, row) => total + row.discountAmount, 0)),
     storageAmount: roundCurrency(storageRows.reduce((total, row) => total + row.amount, 0)),
-    outboundAmount: 0,
+		outboundAmount: roundCurrency(outboundLines.reduce((total, line) => total + line.amount, 0)),
     grandTotal: 0
   };
-  summary.grandTotal = roundCurrency(summary.inboundAmount + summary.wrappingAmount + summary.storageAmount);
+	summary.grandTotal = roundCurrency(summary.inboundAmount + summary.wrappingAmount + summary.storageAmount + summary.outboundAmount);
 
   return {
     startDate: billingRange.startDate,
@@ -372,6 +392,65 @@ function countShippedPallets(
   return totalShippedPallets;
 }
 
+function buildOutboundInvoiceLines(
+	outboundDocuments: OutboundDocument[],
+	customerId: number | "all",
+	locationId: number | "all" | undefined,
+	rates: BillingRates,
+	billingRange: BillingRange
+) {
+	const lines: BillingInvoiceLine[] = [];
+	for (const document of outboundDocuments) {
+		if (!belongsToCustomer(document.customerId, customerId) || !isBillableDocument(document.status)) {
+			continue;
+		}
+		const occurredOn = resolveOutboundBillingDate(document);
+		if (!isWithinRange(occurredOn, billingRange)) {
+			continue;
+		}
+
+		const groups = new Map<string, { containerNo: string; warehouseSummary: string; pallets: number }>();
+		for (const documentLine of document.lines) {
+			if (locationId && locationId !== "all" && documentLine.locationId !== locationId) {
+				continue;
+			}
+			for (const allocation of documentLine.pickAllocations) {
+				if (locationId && locationId !== "all" && allocation.locationId !== locationId) {
+					continue;
+				}
+				const containerNo = normalizeContainerNo(allocation.containerNo);
+				const warehouseSummary = allocation.locationName || documentLine.locationName || "-";
+				const key = `${containerNo}|${allocation.locationId || documentLine.locationId}`;
+				const group = groups.get(key) ?? { containerNo, warehouseSummary, pallets: 0 };
+				group.pallets += Math.max(0, allocation.pallets ?? 0);
+				groups.set(key, group);
+			}
+		}
+
+		for (const [key, group] of groups) {
+			if (group.pallets <= 0) {
+				continue;
+			}
+			const shipmentReference = document.packingListNo || document.orderRef || String(document.id);
+			lines.push({
+				id: `outbound-${document.id}-${key}`,
+				customerId: document.customerId,
+				customerName: document.customerName,
+				chargeType: "OUTBOUND",
+				reference: `Shipment ${shipmentReference} | ${group.containerNo}`,
+				containerNo: group.containerNo,
+				warehouseSummary: group.warehouseSummary,
+				occurredOn,
+				quantity: group.pallets,
+				unitRate: rates.outboundFeePerPallet,
+				amount: roundCurrency(group.pallets * rates.outboundFeePerPallet),
+				meta: `${group.pallets} shipped pallets`
+			});
+		}
+	}
+	return lines;
+}
+
 function buildStorageCharges(
   pallets: PalletTrace[],
   palletLocationEvents: PalletLocationEvent[],
@@ -548,6 +627,150 @@ function buildStorageCharges(
   }
 
   return { storageRows, storageLines, dailyBalanceRows };
+}
+
+function buildContainerLifecycleStorageCharges(
+	events: ContainerLifecycleEvent[],
+	inboundDocuments: InboundDocument[],
+	customerId: number | "all",
+	locationId: number | "all" | undefined,
+	containerType: ContainerType | "all" | undefined,
+	normalPalletGracePeriodEnabled: boolean,
+	rates: BillingRates,
+	billingRange: BillingRange,
+	rangeDays: number
+) {
+	const normalizedRates = normalizeBillingRates(rates);
+	const typeByContainer = new Map<string, ContainerType>();
+	for (const document of inboundDocuments) {
+		typeByContainer.set(
+			`${document.customerId}|${normalizeContainerNo(document.containerNo)}`,
+			normalizeContainerTypeValue(document.containerType)
+		);
+	}
+
+	type Group = {
+		customerId: number;
+		customerName: string;
+		containerNo: string;
+		containerType: ContainerType;
+		events: Array<ContainerLifecycleEvent & { parsedAt: Date }>;
+	};
+	const groups = new Map<string, Group>();
+	for (const event of events) {
+		if (!belongsToCustomer(event.customerId, customerId) || !event.palletDelta) continue;
+		const parsedAt = parseDateLikeValue(event.eventTime);
+		if (!parsedAt || parsedAt >= billingRange.endExclusive) continue;
+		const containerNo = normalizeContainerNo(event.containerNo);
+		const resolvedType = typeByContainer.get(`${event.customerId}|${containerNo}`) ?? "NORMAL";
+		if (containerType && containerType !== "all" && resolvedType !== containerType) continue;
+		const key = `${event.customerId}|${resolvedType}|${containerNo}`;
+		const group = groups.get(key) ?? {
+			customerId: event.customerId,
+			customerName: event.customerName,
+			containerNo,
+			containerType: resolvedType,
+			events: []
+		};
+		group.events.push({ ...event, parsedAt });
+		groups.set(key, group);
+	}
+
+	const totalDailyBalance = new Map<string, number>();
+	const storageRows: BillingStorageRow[] = [];
+	for (const group of groups.values()) {
+		group.events.sort((left, right) => left.parsedAt.getTime() - right.parsedAt.getTime() || left.id - right.id);
+		const balancesByLocation = new Map<number, number>();
+		const locationNames = new Map<number, string>();
+		const dailyBalanceMap = new Map<string, number>();
+		const freeDailyBalanceMap = new Map<string, number>();
+		const warehousesTouched = new Set<string>();
+		const firstPositiveEvent = group.events.find((event) => event.palletDelta > 0)?.parsedAt ?? null;
+		const graceDays = resolveStorageGraceDays(group.containerType, normalPalletGracePeriodEnabled);
+		let eventIndex = 0;
+		let palletDays = 0;
+		let freePalletDays = 0;
+		let maximumPallets = 0;
+
+		for (let dayCursor = new Date(billingRange.start); dayCursor < billingRange.endExclusive; dayCursor = shiftDay(dayCursor, 1)) {
+			const nextDay = shiftDay(dayCursor, 1);
+			while (eventIndex < group.events.length && group.events[eventIndex].parsedAt < nextDay) {
+				const event = group.events[eventIndex];
+				const nextBalance = Math.max(0, (balancesByLocation.get(event.locationId) ?? 0) + event.palletDelta);
+				balancesByLocation.set(event.locationId, nextBalance);
+				locationNames.set(event.locationId, event.locationName || `Warehouse #${event.locationId}`);
+				eventIndex += 1;
+			}
+
+			let dayEndPallets = 0;
+			for (const [eventLocationId, balance] of balancesByLocation) {
+				if (balance <= 0 || (locationId && locationId !== "all" && eventLocationId !== locationId)) continue;
+				dayEndPallets += balance;
+				warehousesTouched.add(locationNames.get(eventLocationId) ?? `Warehouse #${eventLocationId}`);
+			}
+			if (dayEndPallets <= 0) continue;
+
+			const dayKey = toIsoDateString(dayCursor);
+			const graceEnd = firstPositiveEvent ? shiftDay(firstPositiveEvent, graceDays) : null;
+			const isGraceDay = graceDays > 0 && graceEnd !== null && dayCursor < graceEnd;
+			dailyBalanceMap.set(dayKey, dayEndPallets);
+			totalDailyBalance.set(dayKey, (totalDailyBalance.get(dayKey) ?? 0) + dayEndPallets);
+			palletDays += dayEndPallets;
+			maximumPallets = Math.max(maximumPallets, dayEndPallets);
+			if (isGraceDay) {
+				freeDailyBalanceMap.set(dayKey, dayEndPallets);
+				freePalletDays += dayEndPallets;
+			}
+		}
+
+		if (palletDays <= 0) continue;
+		const storageRatePerDay = resolveStorageRatePerDay(group.containerType, normalizedRates);
+		const segments = buildStorageSegments(dailyBalanceMap, freeDailyBalanceMap, billingRange, storageRatePerDay);
+		const grossAmount = roundCurrency(palletDays * storageRatePerDay);
+		const discountAmount = roundCurrency(freePalletDays * storageRatePerDay);
+		storageRows.push({
+			customerId: group.customerId,
+			customerName: group.customerName,
+			containerNo: group.containerNo,
+			containerType: group.containerType,
+			locationId: locationId && locationId !== "all" ? locationId : null,
+			locationName: [...warehousesTouched].sort().join(", "),
+			warehousesTouched: [...warehousesTouched].sort(),
+			palletsTracked: maximumPallets,
+			palletDays,
+			freePalletDays,
+			billablePalletDays: palletDays - freePalletDays,
+			averageDailyPallets: roundQuantity(palletDays / rangeDays),
+			firstActivityAt: segments[0]?.startDate ?? null,
+			lastActivityAt: segments[segments.length - 1]?.endDate ?? null,
+			grossAmount,
+			discountAmount,
+			amount: roundCurrency(grossAmount - discountAmount),
+			segments
+		});
+	}
+
+	storageRows.sort((left, right) => left.customerName.localeCompare(right.customerName) || left.containerNo.localeCompare(right.containerNo));
+	const storageLines = storageRows.map((row) => ({
+		id: `storage-${row.customerId}-${row.containerType}-${row.containerNo}`,
+		customerId: row.customerId,
+		customerName: row.customerName,
+		chargeType: "STORAGE" as const,
+		reference: `Storage | ${row.containerNo}`,
+		containerNo: row.containerNo,
+		warehouseSummary: row.warehousesTouched.join(", ") || "-",
+		occurredOn: row.lastActivityAt,
+		quantity: row.billablePalletDays,
+		unitRate: roundCurrency(resolveStorageRatePerDay(row.containerType, normalizedRates)),
+		amount: row.amount,
+		meta: buildStorageLineMeta(row)
+	}));
+	const dailyBalanceRows: BillingDailyBalanceRow[] = [];
+	for (let dayCursor = new Date(billingRange.start); dayCursor < billingRange.endExclusive; dayCursor = shiftDay(dayCursor, 1)) {
+		const date = toIsoDateString(dayCursor);
+		dailyBalanceRows.push({ date, palletCount: totalDailyBalance.get(date) ?? 0 });
+	}
+	return { storageRows, storageLines, dailyBalanceRows };
 }
 
 function buildStorageLineMeta(row: BillingStorageRow) {

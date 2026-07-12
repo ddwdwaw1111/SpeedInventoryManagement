@@ -196,6 +196,7 @@ type OutboundPalletCandidate = {
   description: string;
   unit: string;
   availableQty: number;
+  profileBacked: boolean;
   actualArrivalDate: string | null;
   createdAt: string;
 };
@@ -543,7 +544,7 @@ export function OutboundShipmentEditorPage({
       sourceKey: nextSource.sourceKey,
       sourceSearch: formatOutboundSourceOptionLabel(nextSource),
       unitLabel: nextSource.unit?.toUpperCase() || currentLine.unitLabel || "PCS",
-      pallets: currentLine.pallets,
+	  pallets: currentLine.pallets,
       palletsDetailCtns: "",
       pickPallets: nextPickPallets,
       pickPalletsTouched: false
@@ -665,6 +666,21 @@ export function OutboundShipmentEditorPage({
     }));
   }
 
+  function updateBatchOutboundLinePallets(lineID: string, nextPallets: number) {
+    setBatchOutboundLines((current) => current.map((line) => {
+      if (line.id !== lineID) {
+        return line;
+      }
+      const selectedSource = findOutboundSourceOption(selectableOutboundSources, line.sourceKey);
+      return {
+        ...line,
+        pallets: nextPallets,
+        pickPallets: buildAutoOutboundPalletSelections(line.quantity, selectedSource?.candidates ?? []),
+        pickPalletsTouched: false
+      };
+    }));
+  }
+
   function updateBatchOutboundLinePickPalletQuantity(lineID: string, palletID: number, nextQuantity: number) {
     setBatchOutboundLines((current) => current.map((line) => {
       if (line.id !== lineID) {
@@ -723,7 +739,7 @@ export function OutboundShipmentEditorPage({
         ...line,
         pickPallets: nextPickPallets,
         pickPalletsTouched: false,
-        pallets: nextPalletCount
+        pallets: line.pallets
       };
     }));
     showSuccess(t("autoPickRestoredSuccess", {
@@ -763,8 +779,8 @@ export function OutboundShipmentEditorPage({
       if (validation.hasBlockingStep1) {
         return validation.warehouseMessage || validation.skuMessage || validation.quantityMessage || t("chooseSkuAndQty");
       }
-      if (requireAllocationReady && (line.pallets <= 0 || line.pallets > line.quantity)) {
-        return "Enter a shipped pallet count between 1 and the outbound quantity for every Container allocation.";
+      if (requireAllocationReady && line.pallets <= 0) {
+        return t("outboundPalletCountRequired");
       }
       if (requireAllocationReady && validation.hasBlockingStep2) {
         return validation.pickMessage || validation.quantityMessage || t("pickQtyMustMatchRequired");
@@ -1122,6 +1138,9 @@ export function OutboundShipmentEditorPage({
                         </div>
                         <button className="button button--danger button--small" type="button" onClick={() => removeBatchOutboundLine(line.id)} disabled={isReadOnly || batchOutboundLines.length === 1}>{t("removeLine")}</button>
                       </div>
+                      {outboundWizardStep === 2 && lineValidation.pickMessage ? (
+                        <InlineAlert severity="warning">{lineValidation.pickMessage}</InlineAlert>
+                      ) : null}
                       {outboundWizardStep === 1 ? (
                         <div className="space-y-2.5">
                           <div className="grid gap-2.5">
@@ -1214,12 +1233,15 @@ export function OutboundShipmentEditorPage({
                                 <input
                                   type="number"
                                   min="0"
-                                  max={line.quantity || undefined}
+                                  max={selectedOutboundSource?.palletCount || undefined}
                                   value={numberInputValue(line.pallets)}
-                                  onChange={(event) => updateBatchOutboundLine(line.id, { pallets: Math.max(0, Number(event.target.value || 0)) })}
+                                  onChange={(event) => updateBatchOutboundLinePallets(
+                                    line.id,
+                                    Math.max(0, Math.min(selectedOutboundSource?.palletCount ?? Number.MAX_SAFE_INTEGER, Number(event.target.value || 0)))
+                                  )}
                                   disabled={isOutboundSourceReadOnly || !selectedOutboundSource}
                                   aria-label={`${t("pallets")} #${index + 1}`}
-                                  className="min-h-10 rounded-lg border border-amber-300 bg-white px-3 text-right text-base font-bold text-[#143569] outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-200/60"
+                                  className="min-h-10 rounded-lg border border-amber-300 bg-white px-3 text-right text-base font-bold text-[#143569] outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/30"
                                 />
                                 <div className="mt-1 space-y-0.5 text-xs text-slate-500">
                                   <div className="whitespace-nowrap">{`${t("sourceContainer")}: ${selectedOutboundSource?.candidates[0]?.containerNo || "-"}`}</div>
@@ -1570,10 +1592,16 @@ function buildOutboundLineValidations(
     let quantityMessage = "";
     if (isActive && line.sourceKey.trim() && line.quantity <= 0) {
       quantityMessage = t("outboundQtyRequired");
+    } else if (isActive && line.sourceKey.trim() && line.pallets <= 0) {
+      quantityMessage = t("outboundPalletCountRequired");
     } else if (!skipAvailabilityChecks && selectedSource && line.quantity > selectedSource.availableQty) {
       quantityMessage = t("outboundQtyExceedsStock", {
         sku: selectedSource.sku,
         available: selectedSource.availableQty
+      });
+    } else if (!skipAvailabilityChecks && selectedSource && line.pallets > selectedSource.palletCount) {
+      quantityMessage = t("outboundPalletsExceedsStock", {
+        available: selectedSource.palletCount
       });
     }
     const hasBlockingStep1 = Boolean(warehouseMessage || skuMessage || quantityMessage);
@@ -1797,7 +1825,7 @@ function reserveOutboundLinePalletSelections(
 }
 
 function buildEffectiveOutboundLinePalletSelections(
-  line: Pick<BatchOutboundLineState, "quantity" | "pickPallets" | "pickPalletsTouched">,
+  line: Pick<BatchOutboundLineState, "quantity" | "pallets" | "pickPallets" | "pickPalletsTouched">,
   source: Pick<OutboundSourceOption, "candidates">,
   reservations: Map<number, number>
 ) {
@@ -1830,10 +1858,8 @@ function rebalanceAutoOutboundLineSelections(lines: BatchOutboundLineState[], so
       return line;
     }
 
-    const nextPalletCount = countSelectedOutboundPallets(nextPickPallets);
     if (
       areOutboundLinePalletPicksEqual(line.pickPallets, nextPickPallets)
-      && line.pallets === nextPalletCount
     ) {
       return line;
     }
@@ -1841,7 +1867,6 @@ function rebalanceAutoOutboundLineSelections(lines: BatchOutboundLineState[], so
     changed = true;
     return {
       ...line,
-      pallets: nextPalletCount,
       pickPallets: nextPickPallets
     };
   });
@@ -1936,10 +1961,10 @@ function buildAutoOutboundPalletSelectionsWithReservations(
   if (quantity <= 0) {
     return [];
   }
-
+	const orderedCandidates = [...candidates].sort(compareOutboundPalletCandidates);
   let remainingQty = quantity;
   const selections: OutboundLinePalletPick[] = [];
-  for (const candidate of [...candidates].sort(compareOutboundPalletCandidates)) {
+	for (const candidate of orderedCandidates) {
     if (remainingQty <= 0) {
       break;
     }
@@ -2254,6 +2279,7 @@ function buildPersistedOutboundSourceOptionsFromDocument(
           description: line.description || "",
           unit: (line.unitLabel || skuMasterUnit).toUpperCase(),
           availableQty,
+          profileBacked: false,
           actualArrivalDate: null,
           createdAt: allocation.createdAt || line.createdAt
         }]
@@ -2279,7 +2305,9 @@ export function buildOutboundSourceOptionsFromItems(items: Item[]): OutboundSour
       existing.availableQty += item.availableQty;
       existing.palletCount += Math.max(0, item.pallets);
       existing.containerSummary = `${containerNo} (${existing.availableQty})`;
-      existing.candidates[0].availableQty += item.availableQty;
+      if (existing.candidates[0]) {
+        existing.candidates[0].availableQty += item.availableQty;
+      }
       continue;
     }
 
@@ -2299,6 +2327,7 @@ export function buildOutboundSourceOptionsFromItems(items: Item[]): OutboundSour
         description,
         unit: (item.unit || "PCS").toUpperCase(),
         availableQty: item.availableQty,
+        profileBacked: false,
         actualArrivalDate: item.deliveryDate,
         createdAt: item.createdAt
     };

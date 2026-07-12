@@ -20,7 +20,7 @@ import { buildInventoryActionSourceKey } from "../lib/inventoryActionSources";
 import { useI18n } from "../lib/i18n";
 import { consumePendingInventorySummaryContext } from "../lib/inventorySummaryContext";
 import type { PageKey } from "../lib/routes";
-import { DEFAULT_STORAGE_SECTION, normalizeStorageSection, type ContainerType, type Customer, type Item, type Location, type Movement, type PalletTrace, type UserRole } from "../lib/types";
+import { DEFAULT_STORAGE_SECTION, normalizeStorageSection, type ContainerType, type Customer, type Item, type Location, type Movement, type UserRole } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
 import { buildWorkspaceGridSlots, InventoryViewSwitcher, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
@@ -114,7 +114,6 @@ export function InventorySummaryPage({
   const [selectedContainerType, setSelectedContainerType] = useState<InventorySummaryContainerTypeFilter>("all");
   const [selectedSummaryId, setSelectedSummaryId] = useState<string | null>(null);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
-  const [pallets, setPallets] = useState<PalletTrace[]>([]);
   const deferredSearchTerm = useDeferredValue(searchTerm);
 
   useEffect(() => {
@@ -130,31 +129,7 @@ export function InventorySummaryPage({
     setSelectedSummaryId(null);
   }, []);
 
-  useEffect(() => {
-    let active = true;
-
-    async function loadPallets() {
-      try {
-        const nextPallets = await api.getPallets(50000);
-        if (!active) {
-          return;
-        }
-        setPallets(nextPallets);
-      } catch {
-        if (active) {
-          setPallets([]);
-        }
-      }
-    }
-
-    void loadPallets();
-    return () => {
-      active = false;
-    };
-  }, []);
-
   const normalizedSearch = deferredSearchTerm.trim().toLowerCase();
-  const containerTypeLookup = useMemo(() => buildContainerTypeLookup(pallets), [pallets]);
   const summaryRows = useMemo(
     () => buildInventorySummaryRows(
       items,
@@ -162,10 +137,9 @@ export function InventorySummaryPage({
       normalizedSearch,
       selectedCustomerId,
       selectedLocationId,
-      selectedContainerType,
-      containerTypeLookup
+      selectedContainerType
     ),
-    [items, movements, normalizedSearch, selectedCustomerId, selectedLocationId, selectedContainerType, containerTypeLookup]
+    [items, movements, normalizedSearch, selectedCustomerId, selectedLocationId, selectedContainerType]
   );
   const selectedSummary = useMemo(
     () => summaryRows.find((row) => row.id === selectedSummaryId) ?? null,
@@ -224,11 +198,9 @@ export function InventorySummaryPage({
   const containerBreakdown = useMemo(
     () => buildContainerBreakdown(
       selectedSummary?.containerBalances ?? [],
-      pallets,
-      selectedSummary?.customerId ?? null,
-      selectedSummary?.skuMasterId ?? null
+      selectedSummary?.items ?? []
     ),
-    [pallets, selectedSummary]
+    [selectedSummary]
   );
   const overviewStats = useMemo(() => {
     const totalOnHand = summaryRows.reduce((sum, row) => sum + row.onHand, 0);
@@ -541,8 +513,7 @@ function buildInventorySummaryRows(
   normalizedSearch: string,
   selectedCustomerId: string,
   selectedLocationId: string,
-  selectedContainerType: InventorySummaryContainerTypeFilter,
-  containerTypeLookup: Map<string, ContainerType>
+  selectedContainerType: InventorySummaryContainerTypeFilter
 ) {
   const filteredItems = items.filter((item) => {
     const matchesSearch = normalizedSearch.length === 0
@@ -554,7 +525,7 @@ function buildInventorySummaryRows(
       || item.containerNo.toLowerCase().includes(normalizedSearch);
     const matchesCustomer = selectedCustomerId === "all" || item.customerId === Number(selectedCustomerId);
     const matchesLocation = selectedLocationId === "all" || item.locationId === Number(selectedLocationId);
-    const matchesContainerType = matchesSelectedContainerType(item, selectedContainerType, containerTypeLookup);
+    const matchesContainerType = matchesSelectedContainerType(item, selectedContainerType);
     return matchesSearch && matchesCustomer && matchesLocation && matchesContainerType;
   });
 
@@ -658,26 +629,14 @@ function buildWarehouseBreakdown(containerBalances: ItemContainerBalance[]): War
 
 function buildContainerBreakdown(
   containerBalances: ItemContainerBalance[],
-  pallets: PalletTrace[],
-  customerId: number | null,
-  skuMasterId: number | null
+  items: Item[]
 ): ContainerBreakdownRow[] {
   const rowMap = new Map<string, ContainerBreakdownRow>();
   const palletCountByKey = new Map<string, number>();
 
-  if (customerId !== null && skuMasterId !== null) {
-    for (const pallet of pallets) {
-      if (pallet.customerId !== customerId || pallet.status === "CANCELLED") {
-        continue;
-      }
-      const matchesSku = pallet.contents.some((content) => content.skuMasterId === skuMasterId && content.quantity > 0)
-        || (pallet.skuMasterId === skuMasterId && pallet.contents.length === 0);
-      if (!matchesSku) {
-        continue;
-      }
-      const key = `${pallet.currentLocationId}:${normalizeStorageSection(pallet.currentStorageSection)}:${(pallet.currentContainerNo || "-").trim() || "-"}`;
-      palletCountByKey.set(key, (palletCountByKey.get(key) ?? 0) + 1);
-    }
+  for (const item of items) {
+    const key = `${item.locationId}:${normalizeStorageSection(item.storageSection)}:${item.containerNo.trim() || "-"}`;
+    palletCountByKey.set(key, (palletCountByKey.get(key) ?? 0) + Math.max(0, item.pallets));
   }
 
   for (const balance of containerBalances) {
@@ -745,46 +704,18 @@ function getLatestDate(left: string | null, right: string | null) {
   return rightTime > leftTime ? right : left;
 }
 
-function buildContainerTypeLookup(pallets: PalletTrace[]) {
-  const lookup = new Map<string, ContainerType>();
-
-  for (const pallet of pallets) {
-    if (pallet.status === "CANCELLED") {
-      continue;
-    }
-    const key = buildContainerTypeKey(pallet.customerId, pallet.currentContainerNo || "");
-    if (!key) {
-      continue;
-    }
-    lookup.set(key, pallet.containerType === "WEST_COAST_TRANSFER" ? "WEST_COAST_TRANSFER" : "NORMAL");
-  }
-
-  return lookup;
-}
-
-function buildContainerTypeKey(customerId: number, containerNo: string) {
-  const normalizedContainerNo = containerNo.trim().toUpperCase();
-  if (!normalizedContainerNo) {
-    return "";
-  }
-  return `${customerId}:${normalizedContainerNo}`;
-}
-
 function matchesSelectedContainerType(
-  item: Pick<Item, "customerId" | "containerNo">,
-  selectedContainerType: InventorySummaryContainerTypeFilter,
-  containerTypeLookup: Map<string, ContainerType>
+  item: Pick<Item, "containerNo" | "containerType">,
+  selectedContainerType: InventorySummaryContainerTypeFilter
 ) {
   if (selectedContainerType === "all") {
     return true;
   }
 
-  const key = buildContainerTypeKey(item.customerId, item.containerNo || "");
-  if (!key) {
+  if (!item.containerNo.trim()) {
     return false;
   }
-
-  return containerTypeLookup.get(key) === selectedContainerType;
+  return item.containerType === selectedContainerType;
 }
 
 function containerTypeLabel(containerType: ContainerType, t: (key: string) => string) {
