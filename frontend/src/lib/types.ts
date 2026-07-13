@@ -921,6 +921,90 @@ export type InboundBulkImportCommitResponse = {
   results: InboundBulkImportCommitResult[];
 };
 
+export type OutboundBulkImportIssue = {
+  severity: "ERROR" | "WARNING";
+  code: string;
+  message: string;
+  rowNumber?: number;
+  field?: string;
+  value?: string;
+};
+
+export type OutboundBulkImportLinePreview = {
+  rowNumber: number;
+  warehouse: string;
+  sourceContainer: string;
+  storageSection: string;
+  sku: string;
+  itemNumber: string;
+  quantity: number;
+  pallets: number;
+  lineNote: string;
+};
+
+export type OutboundBulkImportDocumentPreview = {
+  documentKey: string;
+  packingListNo: string;
+  orderRef: string;
+  expectedShipDate: string;
+  actualShipDate: string;
+  shipToName: string;
+  shipToAddress: string;
+  shipToContact: string;
+  carrierName: string;
+  rowNumbers: number[];
+  lines: OutboundBulkImportLinePreview[];
+  input: OutboundDocumentPayload;
+  issues: OutboundBulkImportIssue[];
+  valid: boolean;
+  totalLines: number;
+  totalQty: number;
+  totalPallets: number;
+};
+
+export type OutboundBulkImportPreview = {
+  importId: string;
+  sourceFileName: string;
+  customerId: number;
+  customerName: string;
+  locationCount: number;
+  totalDocuments: number;
+  validDocuments: number;
+  invalidDocuments: number;
+  totalLines: number;
+  documents: OutboundBulkImportDocumentPreview[];
+};
+
+export type OutboundBulkImportRevalidatePayload = {
+  importId: string;
+  sourceFileName: string;
+  customerId: number;
+  documents: OutboundBulkImportDocumentPreview[];
+};
+
+export type OutboundBulkImportCommitPayload = {
+  importId: string;
+  sourceFileName: string;
+  customerId: number;
+  documents: Array<{ documentKey: string; input: OutboundDocumentPayload }>;
+};
+
+export type OutboundBulkImportCommitResult = {
+  documentKey: string;
+  packingListNo: string;
+  success: boolean;
+  document?: OutboundDocument;
+  error?: string;
+};
+
+export type OutboundBulkImportCommitResponse = {
+  sourceFileName: string;
+  totalDocuments: number;
+  createdDocuments: number;
+  failedDocuments: number;
+  results: OutboundBulkImportCommitResult[];
+};
+
 export type InventoryAdjustmentLine = {
   id: number;
   adjustmentId: number;

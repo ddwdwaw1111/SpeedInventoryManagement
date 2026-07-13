@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	mysql "github.com/go-sql-driver/mysql"
@@ -76,7 +77,8 @@ func ensureStorageSections(sectionNames []string) []string {
 }
 
 type Store struct {
-	db *sqlx.DB
+	db                   *sqlx.DB
+	outboundBulkImportMu sync.Mutex
 }
 
 type DashboardData struct {
@@ -804,10 +806,10 @@ func (s *Store) listStockLedgerMovements(ctx context.Context, limit int, filters
 		SELECT
 			MAX(sl.id) AS id,
 			COALESCE(MAX(ii.id), 0) AS item_id,
-			MAX(CASE WHEN sl.source_document_type = 'INBOUND' THEN sl.source_document_id ELSE 0 END) AS inbound_document_id,
-			MAX(CASE WHEN sl.source_document_type = 'INBOUND' THEN sl.source_line_id ELSE 0 END) AS inbound_document_line_id,
-			MAX(CASE WHEN sl.source_document_type = 'OUTBOUND' THEN sl.source_document_id ELSE 0 END) AS outbound_document_id,
-			MAX(CASE WHEN sl.source_document_type = 'OUTBOUND' THEN sl.source_line_id ELSE 0 END) AS outbound_document_line_id,
+			COALESCE(MAX(CASE WHEN sl.source_document_type = 'INBOUND' THEN sl.source_document_id ELSE 0 END), 0) AS inbound_document_id,
+			COALESCE(MAX(CASE WHEN sl.source_document_type = 'INBOUND' THEN sl.source_line_id ELSE 0 END), 0) AS inbound_document_line_id,
+			COALESCE(MAX(CASE WHEN sl.source_document_type = 'OUTBOUND' THEN sl.source_document_id ELSE 0 END), 0) AS outbound_document_id,
+			COALESCE(MAX(CASE WHEN sl.source_document_type = 'OUTBOUND' THEN sl.source_line_id ELSE 0 END), 0) AS outbound_document_line_id,
 			COALESCE(MAX(sl.source_document_type), '') AS source_document_type,
 			COALESCE(MAX(sl.source_document_id), 0) AS source_document_id,
 			COALESCE(MAX(sl.source_line_id), 0) AS source_line_id,
@@ -1142,13 +1144,17 @@ func scanMovement(scanner itemScanner) (Movement, error) {
 	var movement Movement
 	var deliveryDate sql.NullTime
 	var outDate sql.NullTime
+	var inboundDocumentID sql.NullInt64
+	var inboundDocumentLineID sql.NullInt64
+	var outboundDocumentID sql.NullInt64
+	var outboundDocumentLineID sql.NullInt64
 	if err := scanner.Scan(
 		&movement.ID,
 		&movement.ItemID,
-		&movement.InboundDocumentID,
-		&movement.InboundDocumentLineID,
-		&movement.OutboundDocumentID,
-		&movement.OutboundDocumentLineID,
+		&inboundDocumentID,
+		&inboundDocumentLineID,
+		&outboundDocumentID,
+		&outboundDocumentLineID,
 		&movement.SourceDocumentType,
 		&movement.SourceDocumentID,
 		&movement.SourceLineID,
@@ -1190,6 +1196,18 @@ func scanMovement(scanner itemScanner) (Movement, error) {
 	}
 	if outDate.Valid {
 		movement.OutDate = &outDate.Time
+	}
+	if inboundDocumentID.Valid {
+		movement.InboundDocumentID = inboundDocumentID.Int64
+	}
+	if inboundDocumentLineID.Valid {
+		movement.InboundDocumentLineID = inboundDocumentLineID.Int64
+	}
+	if outboundDocumentID.Valid {
+		movement.OutboundDocumentID = outboundDocumentID.Int64
+	}
+	if outboundDocumentLineID.Valid {
+		movement.OutboundDocumentLineID = outboundDocumentLineID.Int64
 	}
 	movement.StorageSection = normalizeStorageSection(movement.StorageSection)
 

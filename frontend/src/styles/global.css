@@ -5769,7 +5769,8 @@ textarea:focus {
 
 .bulk-inbound-edit-grid input,
 .bulk-inbound-edit-grid select,
-.bulk-inbound-line-table input {
+.bulk-inbound-line-table input,
+.bulk-inbound-line-table select {
   min-width: 0;
   height: 34px;
   padding: 0.35rem 0.45rem;
@@ -5783,7 +5784,8 @@ textarea:focus {
 
 .bulk-inbound-edit-grid input:focus,
 .bulk-inbound-edit-grid select:focus,
-.bulk-inbound-line-table input:focus {
+.bulk-inbound-line-table input:focus,
+.bulk-inbound-line-table select:focus {
   border-color: #3976a8;
   outline: 2px solid rgba(57, 118, 168, 0.14);
 }
@@ -5860,7 +5862,8 @@ textarea:focus {
   border-bottom: 0;
 }
 
-.bulk-inbound-line-table input {
+.bulk-inbound-line-table input,
+.bulk-inbound-line-table select {
   width: 112px;
 }
 

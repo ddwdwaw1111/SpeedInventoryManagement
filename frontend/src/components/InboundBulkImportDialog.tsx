@@ -472,6 +472,8 @@ function formatBulkImportIssue(issue: InboundBulkImportIssue, t: (key: string, p
     MISSING_WAREHOUSE: "bulkIssueMissingWarehouse",
     MISSING_ACTUAL_DATE: "bulkIssueMissingActualDate",
     MISSING_SKU: "bulkIssueMissingSku",
+    MISSING_RECEIVED_QTY: "bulkIssueMissingReceivedQty",
+    MISSING_PALLETS: "bulkIssueMissingPallets",
     INVALID_EXPECTED_QTY: "bulkIssueInvalidExpectedQty",
     INVALID_RECEIVED_QTY: "bulkIssueInvalidReceivedQty",
     INVALID_PALLETS: "bulkIssueInvalidPallets",

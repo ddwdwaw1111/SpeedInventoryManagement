@@ -947,13 +947,36 @@ func parseInboundBulkLine(row []string, rowNumber int, columns map[string]int) (
 	if !valid {
 		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "INVALID_EXPECTED_QTY", "Expected Qty must be a non-negative whole number.", rowNumber, bulkFieldExpectedQty, inboundBulkColumnValue(row, columns, bulkFieldExpectedQty)))
 	}
-	line.ReceivedQty, valid = parseInboundBulkNonNegativeInt(inboundBulkColumnValue(row, columns, bulkFieldReceivedQty))
-	if !valid {
-		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "INVALID_RECEIVED_QTY", "Received Qty must be a non-negative whole number.", rowNumber, bulkFieldReceivedQty, inboundBulkColumnValue(row, columns, bulkFieldReceivedQty)))
+	receivedQtyValue := inboundBulkColumnValue(row, columns, bulkFieldReceivedQty)
+	if receivedQtyValue == "" {
+		issues = append(issues, inboundBulkIssue(
+			InboundBulkIssueWarning,
+			"MISSING_RECEIVED_QTY",
+			"Received Qty is blank. Review the actual received quantity before confirming.",
+			rowNumber,
+			bulkFieldReceivedQty,
+			"",
+		))
 	}
-	line.Pallets, valid = parseInboundBulkNonNegativeInt(inboundBulkColumnValue(row, columns, bulkFieldPallets))
+	line.ReceivedQty, valid = parseInboundBulkNonNegativeInt(receivedQtyValue)
 	if !valid {
-		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "INVALID_PALLETS", "Pallets must be a non-negative whole number.", rowNumber, bulkFieldPallets, inboundBulkColumnValue(row, columns, bulkFieldPallets)))
+		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "INVALID_RECEIVED_QTY", "Received Qty must be a non-negative whole number.", rowNumber, bulkFieldReceivedQty, receivedQtyValue))
+	}
+	palletsValue := inboundBulkColumnValue(row, columns, bulkFieldPallets)
+	handlingMode, _ := normalizeInboundBulkHandlingMode(inboundBulkColumnValue(row, columns, bulkFieldHandlingMode))
+	if palletsValue == "" && handlingMode != InboundHandlingModeSealedTransit {
+		issues = append(issues, inboundBulkIssue(
+			InboundBulkIssueWarning,
+			"MISSING_PALLETS",
+			"Pallets is blank. Review the pallet count before confirming.",
+			rowNumber,
+			bulkFieldPallets,
+			"",
+		))
+	}
+	line.Pallets, valid = parseInboundBulkNonNegativeInt(palletsValue)
+	if !valid {
+		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "INVALID_PALLETS", "Pallets must be a non-negative whole number.", rowNumber, bulkFieldPallets, palletsValue))
 	}
 	line.UnitsPerPallet, valid = parseInboundBulkNonNegativeInt(inboundBulkColumnValue(row, columns, bulkFieldUnitsPerPallet))
 	if !valid {
@@ -1106,7 +1129,7 @@ func buildInboundBulkImportPreview(
 				}
 				line.Pallets = 0
 				line.UnitsPerPallet = 0
-			} else if quantity > 0 && line.Pallets == 0 {
+			} else if quantity > 0 && line.Pallets == 0 && !hasInboundBulkIssueAtRow(document.preview.Issues, "MISSING_PALLETS", rowNumber) {
 				document.preview.Issues = append(document.preview.Issues, inboundBulkIssue(
 					InboundBulkIssueWarning,
 					"ZERO_PALLETS",
@@ -1227,6 +1250,15 @@ func inboundBulkIssue(severity string, code string, message string, rowNumber in
 		Field:     field,
 		Value:     strings.TrimSpace(value),
 	}
+}
+
+func hasInboundBulkIssueAtRow(issues []InboundBulkImportIssue, code string, rowNumber int) bool {
+	for _, issue := range issues {
+		if issue.Code == code && issue.RowNumber == rowNumber {
+			return true
+		}
+	}
+	return false
 }
 
 func inboundBulkRowIsEmpty(row []string) bool {

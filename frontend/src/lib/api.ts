@@ -49,6 +49,10 @@ import type {
   OperationsReportGranularity,
   OutboundDocument,
   OutboundDocumentPayload,
+  OutboundBulkImportCommitPayload,
+  OutboundBulkImportCommitResponse,
+  OutboundBulkImportPreview,
+  OutboundBulkImportRevalidatePayload,
   UpdateOutboundDocumentNotePayload,
   SKUMaster,
   SKUMasterPayload,
@@ -730,6 +734,30 @@ export const api = {
 
   revalidateInboundBulkImport(payload: InboundBulkImportRevalidatePayload) {
     return request<InboundBulkImportPreview>("/inbound-documents/bulk-import-revalidate", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  previewOutboundBulkImport(file: File, customerId: number) {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("customerId", String(customerId));
+    return request<OutboundBulkImportPreview>("/outbound-documents/bulk-import-preview", {
+      method: "POST",
+      body: formData
+    });
+  },
+
+  revalidateOutboundBulkImport(payload: OutboundBulkImportRevalidatePayload) {
+    return request<OutboundBulkImportPreview>("/outbound-documents/bulk-import-revalidate", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  commitOutboundBulkImport(payload: OutboundBulkImportCommitPayload) {
+    return request<OutboundBulkImportCommitResponse>("/outbound-documents/bulk-import-commit", {
       method: "POST",
       body: JSON.stringify(payload)
     });

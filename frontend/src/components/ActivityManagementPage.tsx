@@ -64,6 +64,7 @@ import { ExportExcelDialog } from "./ExportExcelDialog";
 import { InlineAlert, useConfirmDialog, useFeedbackToast } from "./Feedback";
 import { InlineLoadingIndicator } from "./InlineLoadingIndicator";
 import { InboundBulkImportDialog } from "./InboundBulkImportDialog";
+import { OutboundBulkImportDialog } from "./OutboundBulkImportDialog";
 import { OutboundPickPlanPanel } from "./OutboundPickPlanPanel";
 import { SearchSubmitField } from "./SearchSubmitField";
 import { buildWorkspaceGridSlots, WorkspaceDrawerLoadingState, WorkspacePanelHeader } from "./WorkspacePanelChrome";
@@ -672,6 +673,7 @@ export function ActivityManagementPage({
   const [expandedOutboundPickPlans, setExpandedOutboundPickPlans] = useState<Record<string, boolean>>({});
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [isBulkInboundImportOpen, setIsBulkInboundImportOpen] = useState(false);
+  const [isBulkOutboundImportOpen, setIsBulkOutboundImportOpen] = useState(false);
   const [bulkInboundStatus, setBulkInboundStatus] = useState<"" | "CONFIRMED" | "DELETED">("");
   const [inboundRowSelectionModel, setInboundRowSelectionModel] = useState<GridRowSelectionModel>({ type: "include", ids: new Set() });
   const [isBulkUpdatingInboundStatus, setIsBulkUpdatingInboundStatus] = useState(false);
@@ -2657,7 +2659,11 @@ export function ActivityManagementPage({
                             {t("bulkInboundExcel")}
                           </Button>
                         </>
-                      ) : null}
+                      ) : (
+                        <Button variant="outlined" startIcon={<UploadFileOutlinedIcon />} onClick={() => setIsBulkOutboundImportOpen(true)}>
+                          {t("bulkInboundExcel")}
+                        </Button>
+                      )}
                       <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={() => void openCreateModal()}>
                         {mode === "IN" ? t("newInbound") : t("newOutbound")}
                       </Button>
@@ -2755,7 +2761,20 @@ export function ActivityManagementPage({
                 await onRefresh();
               }}
             />
-          ) : null}
+          ) : (
+            <OutboundBulkImportDialog
+              open={isBulkOutboundImportOpen}
+              customers={customers}
+              locations={locations}
+              items={items}
+              initialCustomerId={selectedCustomerId === "all" ? undefined : Number(selectedCustomerId)}
+              onClose={() => setIsBulkOutboundImportOpen(false)}
+              onImported={async () => {
+                setSelectedStatus("DRAFT");
+                await onRefresh();
+              }}
+            />
+          )}
         </main>
       ) : null}
       {feedbackToast}

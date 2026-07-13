@@ -309,6 +309,68 @@ func TestParseInboundBulkImportWorkbookRequiresActualArrivalDate(t *testing.T) {
 	}
 }
 
+func TestBuildInboundBulkImportPreviewWarnsWhenReceivedQtyOrPalletsAreBlank(t *testing.T) {
+	data := buildInboundBulkImportWorkbook(t, [][]any{
+		{"CONT-A", "Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-1", "ITEM-1", "First item", 10, "", "", 10, "A", ""},
+	})
+	parsed, err := parseInboundBulkImportWorkbook("receipts.xlsx", data)
+	if err != nil {
+		t.Fatalf("parse workbook: %v", err)
+	}
+
+	preview := buildInboundBulkImportPreview(
+		"receipts.xlsx",
+		Customer{ID: 1, Name: "Customer"},
+		[]Location{{ID: 2, Name: "Warehouse", SectionNames: []string{"A"}}},
+		[]SKUMaster{{ID: 1, SKU: "SKU-1", ItemNumber: "ITEM-1", Description: "First item", DefaultUnitsPerPallet: 10}},
+		map[string]bool{},
+		parsed,
+	)
+
+	issues := preview.Documents[0].Issues
+	if !hasInboundBulkIssue(issues, "MISSING_RECEIVED_QTY", InboundBulkIssueWarning) {
+		t.Fatalf("expected blank received quantity warning: %#v", issues)
+	}
+	if !hasInboundBulkIssue(issues, "MISSING_PALLETS", InboundBulkIssueWarning) {
+		t.Fatalf("expected blank pallet count warning: %#v", issues)
+	}
+	if hasInboundBulkIssue(issues, "ZERO_PALLETS", InboundBulkIssueWarning) {
+		t.Fatalf("blank pallets must not also produce the explicit zero warning: %#v", issues)
+	}
+	if !preview.Documents[0].Valid {
+		t.Fatalf("blank quantity warnings should not block draft creation: %#v", issues)
+	}
+}
+
+func TestParseInboundBulkImportWorkbookDoesNotTreatExplicitZeroAsBlank(t *testing.T) {
+	data := buildInboundBulkImportWorkbook(t, [][]any{
+		{"CONT-A", "Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-1", "ITEM-1", "First item", 10, 0, 0, 10, "A", ""},
+	})
+	documents, err := parseInboundBulkImportWorkbook("receipts.xlsx", data)
+	if err != nil {
+		t.Fatalf("parse workbook: %v", err)
+	}
+
+	issues := documents[0].preview.Issues
+	if hasInboundBulkIssue(issues, "MISSING_RECEIVED_QTY", InboundBulkIssueWarning) || hasInboundBulkIssue(issues, "MISSING_PALLETS", InboundBulkIssueWarning) {
+		t.Fatalf("explicit zero values must remain distinct from blank cells: %#v", issues)
+	}
+}
+
+func TestParseInboundBulkImportWorkbookDoesNotRequirePalletsForSealedTransit(t *testing.T) {
+	data := buildInboundBulkImportWorkbook(t, [][]any{
+		{"CONT-A", "Warehouse", "2026-07-15", "NORMAL", "SEALED_TRANSIT", "SKU-1", "ITEM-1", "First item", 10, 10, "", "", "A", ""},
+	})
+	documents, err := parseInboundBulkImportWorkbook("receipts.xlsx", data)
+	if err != nil {
+		t.Fatalf("parse workbook: %v", err)
+	}
+
+	if hasInboundBulkIssue(documents[0].preview.Issues, "MISSING_PALLETS", InboundBulkIssueWarning) {
+		t.Fatalf("sealed-transit receipts do not require a pallet count: %#v", documents[0].preview.Issues)
+	}
+}
+
 func TestParseInboundBulkImportWorkbookRejectsWarehouseConflictWithinDocument(t *testing.T) {
 	data := buildInboundBulkImportWorkbook(t, [][]any{
 		{"CONT-A", "East Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-1", "ITEM-1", "First item", 10, 0, 1, 10, "A", ""},
