@@ -190,32 +190,34 @@ type CreateSKUMasterInput struct {
 }
 
 type Item struct {
-	ID              int64      `json:"id"`
-	SKUMasterID     int64      `json:"skuMasterId"`
-	ItemNumber      string     `json:"itemNumber"`
-	SKU             string     `json:"sku"`
-	Name            string     `json:"name"`
-	Category        string     `json:"category"`
-	Description     string     `json:"description"`
-	Unit            string     `json:"unit"`
-	Quantity        int        `json:"quantity"`
-	AvailableQty    int        `json:"availableQty"`
-	AllocatedQty    int        `json:"allocatedQty"`
-	DamagedQty      int        `json:"damagedQty"`
-	HoldQty         int        `json:"holdQty"`
-	Pallets         int        `json:"pallets"`
-	ReorderLevel    int        `json:"reorderLevel"`
-	CustomerID      int64      `json:"customerId"`
-	CustomerName    string     `json:"customerName"`
-	LocationID      int64      `json:"locationId"`
-	LocationName    string     `json:"locationName"`
-	StorageSection  string     `json:"storageSection"`
-	DeliveryDate    *time.Time `json:"deliveryDate"`
-	ContainerNo     string     `json:"containerNo"`
-	ContainerType   string     `json:"containerType"`
-	LastRestockedAt *time.Time `json:"lastRestockedAt"`
-	CreatedAt       time.Time  `json:"createdAt"`
-	UpdatedAt       time.Time  `json:"updatedAt"`
+	ID               int64      `json:"id"`
+	SKUMasterID      int64      `json:"skuMasterId"`
+	ItemNumber       string     `json:"itemNumber"`
+	SKU              string     `json:"sku"`
+	Name             string     `json:"name"`
+	Category         string     `json:"category"`
+	Description      string     `json:"description"`
+	Unit             string     `json:"unit"`
+	Quantity         int        `json:"quantity"`
+	AvailableQty     int        `json:"availableQty"`
+	AllocatedQty     int        `json:"allocatedQty"`
+	DamagedQty       int        `json:"damagedQty"`
+	HoldQty          int        `json:"holdQty"`
+	Pallets          int        `json:"pallets"`
+	AvailablePallets int        `json:"availablePallets"`
+	AllocatedPallets int        `json:"allocatedPallets"`
+	ReorderLevel     int        `json:"reorderLevel"`
+	CustomerID       int64      `json:"customerId"`
+	CustomerName     string     `json:"customerName"`
+	LocationID       int64      `json:"locationId"`
+	LocationName     string     `json:"locationName"`
+	StorageSection   string     `json:"storageSection"`
+	DeliveryDate     *time.Time `json:"deliveryDate"`
+	ContainerNo      string     `json:"containerNo"`
+	ContainerType    string     `json:"containerType"`
+	LastRestockedAt  *time.Time `json:"lastRestockedAt"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	UpdatedAt        time.Time  `json:"updatedAt"`
 }
 
 type Movement struct {
@@ -380,6 +382,8 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 			i.damaged_qty,
 			i.hold_qty,
 			i.pallets,
+			GREATEST(i.pallets - i.allocated_pallets, 0) AS available_pallets,
+			i.allocated_pallets,
 			sm.reorder_level,
 			i.customer_id,
 			c.name,
@@ -997,6 +1001,8 @@ func (s *Store) getItem(ctx context.Context, itemID int64) (Item, error) {
 			i.damaged_qty,
 			i.hold_qty,
 			i.pallets,
+			GREATEST(i.pallets - i.allocated_pallets, 0) AS available_pallets,
+			i.allocated_pallets,
 			sm.reorder_level,
 			i.customer_id,
 			c.name,
@@ -1113,6 +1119,8 @@ func scanItem(scanner itemScanner) (Item, error) {
 		&item.DamagedQty,
 		&item.HoldQty,
 		&item.Pallets,
+		&item.AvailablePallets,
+		&item.AllocatedPallets,
 		&item.ReorderLevel,
 		&item.CustomerID,
 		&item.CustomerName,

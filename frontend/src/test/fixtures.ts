@@ -75,6 +75,8 @@ export function createItem(overrides: Partial<Item> = {}): Item {
     damagedQty: 0,
     holdQty: 0,
     pallets: 1,
+    availablePallets: 1,
+    allocatedPallets: 0,
     reorderLevel: 5,
     customerId: 1,
     customerName: "Imperial Bag & Paper",

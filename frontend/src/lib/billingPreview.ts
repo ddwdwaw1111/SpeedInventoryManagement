@@ -394,7 +394,11 @@ function buildOutboundInvoiceLines(
 			if (locationId && locationId !== "all" && documentLine.locationId !== locationId) {
 				continue;
 			}
-			for (const allocation of documentLine.pickAllocations) {
+			const outboundPalletShares = splitOutboundPalletsByQuantity(
+				documentLine.pallets,
+				documentLine.pickAllocations.map((allocation) => allocation.allocatedQty)
+			);
+			for (const [allocationIndex, allocation] of documentLine.pickAllocations.entries()) {
 				if (locationId && locationId !== "all" && allocation.locationId !== locationId) {
 					continue;
 				}
@@ -402,7 +406,7 @@ function buildOutboundInvoiceLines(
 				const warehouseSummary = allocation.locationName || documentLine.locationName || "-";
 				const key = `${containerNo}|${allocation.locationId || documentLine.locationId}`;
 				const group = groups.get(key) ?? { containerNo, warehouseSummary, pallets: 0 };
-				group.pallets += Math.max(0, allocation.pallets ?? 0);
+				group.pallets += outboundPalletShares[allocationIndex] ?? 0;
 				groups.set(key, group);
 			}
 		}
@@ -429,6 +433,29 @@ function buildOutboundInvoiceLines(
 		}
 	}
 	return lines;
+}
+
+function splitOutboundPalletsByQuantity(totalPallets: number, quantities: number[]) {
+	const result = new Array<number>(quantities.length).fill(0);
+	let remainingPallets = Math.max(0, Math.trunc(totalPallets));
+	let remainingQty = quantities.reduce((total, quantity) => total + Math.max(0, quantity), 0);
+	if (remainingPallets === 0 || remainingQty === 0) {
+		return result;
+	}
+
+	for (let index = 0; index < quantities.length; index += 1) {
+		const quantity = Math.max(0, quantities[index] ?? 0);
+		if (quantity === 0) {
+			continue;
+		}
+		const share = index === quantities.length - 1 || remainingQty <= quantity
+			? remainingPallets
+			: Math.min(remainingPallets, Math.round(remainingPallets * quantity / remainingQty));
+		result[index] = share;
+		remainingPallets -= share;
+		remainingQty -= quantity;
+	}
+	return result;
 }
 
 function buildContainerLifecycleStorageCharges(

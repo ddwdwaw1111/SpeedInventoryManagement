@@ -139,6 +139,32 @@ describe("buildBillingPreview", () => {
     expect(preview.invoiceLines.filter((line) => line.chargeType === "INBOUND")[0]?.occurredOn).toBe("2026-03-03");
   });
 
+  it("bills repalletized outbound pallets instead of inventory pallet deductions", () => {
+    const outbound = createOutboundDocument({
+      id: 21,
+      customerId: 1,
+      customerName: "Acme",
+      packingListNo: "PO-21",
+      status: "CONFIRMED",
+      actualShipDate: "2026-03-18",
+      lines: [createOutboundDocumentLine({
+        quantity: 10,
+        pallets: 3,
+        pickAllocations: [
+          createOutboundPickAllocation({ containerNo: "CONT-A", allocatedQty: 6, pallets: 1 }),
+          createOutboundPickAllocation({ containerNo: "CONT-B", allocatedQty: 4, pallets: 1 })
+        ]
+      })]
+    });
+
+    const preview = buildBillingPreview(baseInput({ outboundDocuments: [outbound] }));
+    const outboundLines = preview.invoiceLines.filter((line) => line.chargeType === "OUTBOUND");
+
+    expect(preview.summary.shippedPallets).toBe(3);
+    expect(outboundLines.map((line) => line.quantity)).toEqual([2, 1]);
+    expect(outboundLines.reduce((total, line) => total + line.quantity, 0)).toBe(3);
+  });
+
   it("supports warehouse-scoped settlement without pallet identities", () => {
     const events = [
       lifecycleEvent(1, "2026-03-05T09:00:00Z", 2),

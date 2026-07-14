@@ -52,7 +52,7 @@ type OutboundPickAllocation struct {
 	StorageSection string    `json:"storageSection"`
 	ContainerNo    string    `json:"containerNo"`
 	AllocatedQty   int       `json:"allocatedQty"`
-	Pallets        int       `json:"pallets"`
+	Pallets        int       `json:"pallets"` // Inventory pallets removed from this container balance.
 	CreatedAt      time.Time `json:"createdAt"`
 }
 
@@ -67,7 +67,7 @@ type OutboundDocumentLine struct {
 	SKU               string                   `json:"sku"`
 	Description       string                   `json:"description"`
 	Quantity          int                      `json:"quantity"`
-	Pallets           int                      `json:"pallets"`
+	Pallets           int                      `json:"pallets"` // Repalletized outbound/shipping pallet count.
 	PalletsDetailCtns string                   `json:"palletsDetailCtns"`
 	UnitLabel         string                   `json:"unitLabel"`
 	CartonSizeMM      string                   `json:"cartonSizeMm"`
@@ -1032,9 +1032,6 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 		if len(allocations) == 0 || totalOutboundPickAllocationQuantity(allocations) != lineRow.Quantity {
 			return fmt.Errorf("%w: shipment container allocations must equal outbound quantity", ErrInvalidInput)
 		}
-		if lineRow.Pallets > 0 && totalOutboundPickAllocationPallets(allocations) != lineRow.Pallets {
-			return fmt.Errorf("%w: shipment container allocations must equal outbound pallet count", ErrInvalidInput)
-		}
 		allocationCandidates := toOutboundAllocationCandidatesFromDraftPickAllocations(lockedOutboundSource{}, allocations)
 		netWeightSplits := splitProportionalFloat(lineRow.NetWeightKgs, lineRow.Quantity, allocationCandidates)
 		grossWeightSplits := splitProportionalFloat(lineRow.GrossWeightKgs, lineRow.Quantity, allocationCandidates)
@@ -1319,13 +1316,12 @@ func (s *Store) reserveOutboundLineTx(
 			return err
 		}
 		plannedAllocations = toOutboundPickAllocationsFromCandidates(line, allocations)
+		// Legacy/manual submissions without explicit picks use the declared
+		// outbound pallet count as their inventory deduction fallback.
 		plannedAllocations = assignOutboundPalletsToAllocations(plannedAllocations, line.Pallets)
 	}
 	if totalOutboundPickAllocationQuantity(plannedAllocations) != line.Quantity {
 		return fmt.Errorf("%w: draft pick allocation quantity must equal outbound quantity", ErrInvalidInput)
-	}
-	if line.Pallets > 0 && totalOutboundPickAllocationPallets(plannedAllocations) != line.Pallets {
-		return fmt.Errorf("%w: outbound allocation pallet count must equal the declared outbound pallet count", ErrInvalidInput)
 	}
 	line.PickAllocations = plannedAllocations
 	return nil
@@ -2325,9 +2321,6 @@ func (s *Store) prepareOutboundDraftLineAllocationsTx(
 			return nil, err
 		}
 		line.PickAllocations = toOutboundPickAllocationsFromCandidates(line, allocations)
-		if line.Pallets <= 0 {
-			line.Pallets = totalOutboundPickAllocationPallets(line.PickAllocations)
-		}
 		return allocations, nil
 	}
 
@@ -2624,9 +2617,6 @@ func sanitizeOutboundDocumentInput(input CreateOutboundDocumentInput) CreateOutb
 		if line.CustomerID <= 0 || line.LocationID <= 0 || line.SKUMasterID <= 0 || line.Quantity <= 0 {
 			continue
 		}
-		if line.Pallets <= 0 && len(line.PickAllocations) > 0 {
-			line.Pallets = totalOutboundPickAllocationPallets(line.PickAllocations)
-		}
 		lines = append(lines, line)
 	}
 	input.Lines = lines
@@ -2670,8 +2660,6 @@ func validateOutboundDocumentInput(input CreateOutboundDocumentInput) error {
 			return fmt.Errorf("%w: weights cannot be negative", ErrInvalidInput)
 		case len(line.PickAllocations) > 0 && totalOutboundPickAllocationQuantity(line.PickAllocations) != line.Quantity:
 			return fmt.Errorf("%w: draft pick allocation quantity must equal outbound quantity", ErrInvalidInput)
-		case len(line.PickAllocations) > 0 && line.Pallets > 0 && totalOutboundPickAllocationPallets(line.PickAllocations) != line.Pallets:
-			return fmt.Errorf("%w: outbound allocation pallet count must equal the declared outbound pallet count", ErrInvalidInput)
 		}
 	}
 

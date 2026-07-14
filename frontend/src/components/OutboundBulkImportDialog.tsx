@@ -200,20 +200,18 @@ export function OutboundBulkImportDialog({ open, customers, locations, items, in
             <div className="bulk-inbound-document-list">
               {preview.documents.map((document) => (
                 <details key={document.documentKey} className={`bulk-inbound-document ${document.valid ? "bulk-inbound-document--valid" : "bulk-inbound-document--invalid"}`} open={!document.valid}>
-                  <summary><div className="bulk-inbound-document__identity">{document.valid ? <CheckCircleOutlineRoundedIcon /> : <ErrorOutlineRoundedIcon />}<div><strong>{document.packingListNo || "—"}</strong><span>{t("bulkOutboundRows")} {formatRows(document.rowNumbers)} · {t("bulkOutboundShipDate")} {document.actualShipDate || document.expectedShipDate || "—"}</span></div></div><div className="bulk-inbound-document__totals"><span><strong>{document.totalQty}</strong>{t("quantity")}</span><span><strong>{document.totalPallets}</strong>{t("pallets")}</span><em>{t(document.valid ? "bulkOutboundReady" : "bulkOutboundBlocked")}</em><ExpandMoreRoundedIcon /></div></summary>
+                  <summary><div className="bulk-inbound-document__identity">{document.valid ? <CheckCircleOutlineRoundedIcon /> : <ErrorOutlineRoundedIcon />}<div><strong>{document.pickingOrderNo || "—"}</strong><span>{t("bulkOutboundRows")} {formatRows(document.rowNumbers)} · {t("bulkOutboundShipDate")} {document.actualShipDate || document.expectedShipDate || "—"}</span></div></div><div className="bulk-inbound-document__totals"><span><strong>{document.totalQty}</strong>{t("quantity")}</span><span><strong>{document.totalInventoryPallets}</strong>{t("bulkOutboundInventoryPallets")}</span><span><strong>{document.totalOutboundPallets}</strong>{t("bulkOutboundOutboundPallets")}</span><em>{t(document.valid ? "bulkOutboundReady" : "bulkOutboundBlocked")}</em><ExpandMoreRoundedIcon /></div></summary>
                   <div className="bulk-inbound-document__body">
                     <div className="bulk-inbound-edit-grid">
-                      <label>{t("bulkOutboundPackingListNo")}<input value={document.packingListNo} onChange={(event) => updateDocument(document.documentKey, { packingListNo: event.target.value })} /></label>
-                      <label>{t("bulkOutboundOrderRef")}<input value={document.orderRef} onChange={(event) => updateDocument(document.documentKey, { orderRef: event.target.value })} /></label>
+                      <label>{t("bulkOutboundPickingOrderNo")}<input value={document.pickingOrderNo} onChange={(event) => updateDocument(document.documentKey, { pickingOrderNo: event.target.value })} /></label>
                       <label>{t("bulkOutboundExpectedShipDate")}<input type="date" value={document.expectedShipDate} onChange={(event) => updateDocument(document.documentKey, { expectedShipDate: event.target.value })} /></label>
                       <label>{t("bulkOutboundActualShipDate")}<input type="date" value={document.actualShipDate} onChange={(event) => updateDocument(document.documentKey, { actualShipDate: event.target.value })} /></label>
                       <label>{t("bulkOutboundShipToName")}<input value={document.shipToName} onChange={(event) => updateDocument(document.documentKey, { shipToName: event.target.value })} /></label>
                       <label>{t("bulkOutboundShipToAddress")}<input value={document.shipToAddress} onChange={(event) => updateDocument(document.documentKey, { shipToAddress: event.target.value })} /></label>
                       <label>{t("bulkOutboundShipToContact")}<input value={document.shipToContact} onChange={(event) => updateDocument(document.documentKey, { shipToContact: event.target.value })} /></label>
-                      <label>{t("bulkOutboundCarrier")}<input value={document.carrierName} onChange={(event) => updateDocument(document.documentKey, { carrierName: event.target.value })} /></label>
                     </div>
                     {document.issues.length ? <div className="bulk-inbound-issue-list">{document.issues.map((issue, index) => <div className="bulk-inbound-issue bulk-inbound-issue--error" key={`${issue.code}-${issue.rowNumber}-${index}`}><WarningAmberRoundedIcon /><span>{issue.rowNumber ? `${t("bulkOutboundRow", { row: issue.rowNumber })}: ` : ""}{formatOutboundBulkIssue(issue.code, issue.message, t)}</span></div>)}</div> : null}
-                    <div className="bulk-inbound-table-wrap"><table className="bulk-inbound-line-table"><thead><tr><th>{t("warehouse")}</th><th>{t("bulkOutboundSourceContainer")}</th><th>{t("bulkOutboundSection")}</th><th>SKU</th><th>{t("bulkOutboundItemCodeReference")}</th><th>{t("quantity")}</th><th>{t("pallets")}</th><th>{t("bulkOutboundLineNote")}</th></tr></thead><tbody>
+                    <div className="bulk-inbound-table-wrap"><table className="bulk-inbound-line-table"><thead><tr><th>{t("warehouse")}</th><th>{t("bulkOutboundSourceContainer")}</th><th>{t("bulkOutboundSection")}</th><th>SKU</th><th>{t("bulkOutboundItemCodeReference")}</th><th>{t("quantity")}</th><th>{t("bulkOutboundInventoryPallets")}</th><th>{t("bulkOutboundOutboundPallets")}</th><th>{t("bulkOutboundLineNote")}</th></tr></thead><tbody>
                       {document.lines.map((line, index) => <tr key={`${document.documentKey}-${line.rowNumber}-${index}`}>
                         <td><select value={line.warehouse} onChange={(event) => updateLine(document.documentKey, index, { warehouse: event.target.value })}><option value="">{t("bulkOutboundSelect")}</option>{locations.map((location) => <option key={location.id} value={location.name}>{location.name}</option>)}</select></td>
                         <td><input value={line.sourceContainer} onChange={(event) => updateLine(document.documentKey, index, { sourceContainer: event.target.value })} /></td>
@@ -221,7 +219,8 @@ export function OutboundBulkImportDialog({ open, customers, locations, items, in
                         <td><input value={line.sku} onChange={(event) => updateLine(document.documentKey, index, { sku: event.target.value })} /></td>
                         <td><input value={line.itemNumber} onChange={(event) => updateLine(document.documentKey, index, { itemNumber: event.target.value })} /></td>
                         <td><input type="number" min="1" step="1" value={line.quantity} onChange={(event) => updateLine(document.documentKey, index, { quantity: toNonNegativeWholeNumber(event.target.value) })} /></td>
-                        <td><input type="number" min="0" step="1" value={line.pallets} onChange={(event) => updateLine(document.documentKey, index, { pallets: toNonNegativeWholeNumber(event.target.value) })} /></td>
+                        <td><input type="number" min="0" step="1" value={line.inventoryPallets} onChange={(event) => updateLine(document.documentKey, index, { inventoryPallets: toNonNegativeWholeNumber(event.target.value) })} /></td>
+                        <td><input type="number" min="0" step="1" value={line.outboundPallets} onChange={(event) => updateLine(document.documentKey, index, { outboundPallets: toNonNegativeWholeNumber(event.target.value) })} /></td>
                         <td><input value={line.lineNote} onChange={(event) => updateLine(document.documentKey, index, { lineNote: event.target.value })} /></td>
                       </tr>)}
                     </tbody></table></div>
@@ -232,7 +231,7 @@ export function OutboundBulkImportDialog({ open, customers, locations, items, in
           </div>
         ) : null}
 
-        {step === "RESULT" && result ? <div className="bulk-inbound-result"><div className={`bulk-inbound-result__hero ${result.failedDocuments ? "bulk-inbound-result__hero--partial" : ""}`}>{result.failedDocuments ? <WarningAmberRoundedIcon /> : <CheckCircleOutlineRoundedIcon />}<div><span>{result.sourceFileName}</span><strong>{t("bulkOutboundComplete")}</strong><p>{t("bulkOutboundResultSummary", { created: result.createdDocuments, failed: result.failedDocuments })}</p></div></div><div className="bulk-inbound-result-list">{result.results.map((entry) => <div key={entry.documentKey} className={`bulk-inbound-result-row ${entry.success ? "bulk-inbound-result-row--success" : "bulk-inbound-result-row--failed"}`}>{entry.success ? <CheckCircleOutlineRoundedIcon /> : <ErrorOutlineRoundedIcon />}<div><strong>{entry.packingListNo || entry.documentKey}</strong><span>{entry.success ? t("bulkOutboundDraftCreated", { id: entry.document?.id ?? "—" }) : formatOutboundCommitError(entry.error, t)}</span></div></div>)}</div></div> : null}
+        {step === "RESULT" && result ? <div className="bulk-inbound-result"><div className={`bulk-inbound-result__hero ${result.failedDocuments ? "bulk-inbound-result__hero--partial" : ""}`}>{result.failedDocuments ? <WarningAmberRoundedIcon /> : <CheckCircleOutlineRoundedIcon />}<div><span>{result.sourceFileName}</span><strong>{t("bulkOutboundComplete")}</strong><p>{t("bulkOutboundResultSummary", { created: result.createdDocuments, failed: result.failedDocuments })}</p></div></div><div className="bulk-inbound-result-list">{result.results.map((entry) => <div key={entry.documentKey} className={`bulk-inbound-result-row ${entry.success ? "bulk-inbound-result-row--success" : "bulk-inbound-result-row--failed"}`}>{entry.success ? <CheckCircleOutlineRoundedIcon /> : <ErrorOutlineRoundedIcon />}<div><strong>{entry.pickingOrderNo || entry.documentKey}</strong><span>{entry.success ? t("bulkOutboundDraftCreated", { id: entry.document?.id ?? "—" }) : formatOutboundCommitError(entry.error, t)}</span></div></div>)}</div></div> : null}
       </DialogContent>
       <DialogActions className="bulk-inbound-dialog__actions">
         {step === "UPLOAD" ? <><Button onClick={onClose} disabled={busy}>{t("cancel")}</Button><Button variant="contained" disabled={busy || !file || !customerId} onClick={() => void validateFile()} startIcon={busy ? <InlineLoadingIndicator /> : <CloudUploadOutlinedIcon />}>{busy ? t("bulkOutboundValidating") : t("bulkOutboundPreviewFile")}</Button></> : null}
@@ -257,26 +256,28 @@ type Translate = (key: string, params?: Record<string, string | number>) => stri
 
 function formatOutboundBulkIssue(code: string, fallback: string, t: Translate) {
   const keys: Record<string, string> = {
-    MISSING_PACKING_LIST: "bulkOutboundIssueMissingPackingList",
+    MISSING_PICKING_ORDER: "bulkOutboundIssueMissingPickingOrder",
     INVALID_SHIP_DATE: "bulkOutboundIssueInvalidShipDate",
     INVALID_EXPECTED_SHIP_DATE: "bulkOutboundIssueInvalidExpectedShipDate",
     HEADER_CONFLICT: "bulkOutboundIssueHeaderConflict",
     INVALID_QUANTITY: "bulkOutboundIssueInvalidQuantity",
-    INVALID_PALLETS: "bulkOutboundIssueInvalidPallets",
+    INVALID_INVENTORY_PALLETS: "bulkOutboundIssueInvalidInventoryPallets",
+    INVALID_OUTBOUND_PALLETS: "bulkOutboundIssueInvalidOutboundPallets",
     INVALID_WAREHOUSE: "bulkOutboundIssueInvalidWarehouse",
     INVALID_SKU: "bulkOutboundIssueInvalidSku",
     INSUFFICIENT_STOCK: "bulkOutboundIssueInsufficientStock",
-    DUPLICATE_PACKING_LIST: "bulkOutboundIssueDuplicatePackingList",
-    DUPLICATE_PACKING_LIST_IN_IMPORT: "bulkOutboundIssueDuplicatePackingListInImport"
+    INSUFFICIENT_INVENTORY_PALLETS: "bulkOutboundIssueInsufficientInventoryPallets",
+    DUPLICATE_PICKING_ORDER: "bulkOutboundIssueDuplicatePickingOrder",
+    DUPLICATE_PICKING_ORDER_IN_IMPORT: "bulkOutboundIssueDuplicatePickingOrderInImport"
   };
   return keys[code] ? t(keys[code]) : fallback;
 }
 
 function formatOutboundCommitError(error: string | undefined, t: Translate) {
   const message = error || "";
-  if (message.includes("Packing List No is required")) return t("bulkOutboundIssueMissingPackingList");
-  if (message.includes("duplicate Packing List No in import request")) return t("bulkOutboundIssueDuplicatePackingListInImport");
-  if (message.includes("Packing List No already exists")) return t("bulkOutboundIssueDuplicatePackingList");
+  if (message.includes("Picking Order No is required")) return t("bulkOutboundIssueMissingPickingOrder");
+  if (message.includes("duplicate Picking Order No in import request")) return t("bulkOutboundIssueDuplicatePickingOrderInImport");
+  if (message.includes("Picking Order No already exists")) return t("bulkOutboundIssueDuplicatePickingOrder");
   if (message.toLowerCase().includes("stock")) return t("bulkOutboundIssueInsufficientStock");
   return t("bulkOutboundCommitFailed");
 }

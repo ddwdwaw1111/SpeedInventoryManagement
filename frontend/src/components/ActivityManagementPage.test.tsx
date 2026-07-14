@@ -1003,6 +1003,8 @@ describe("ActivityManagementPage", () => {
             id: 1,
             quantity: 10,
             availableQty: 10,
+            pallets: 2,
+            availablePallets: 2,
             storageSection: "TEMP",
             containerNo: "GCXU5817233"
           })
@@ -1028,6 +1030,7 @@ describe("ActivityManagementPage", () => {
 
     fireEvent.change(outboundLineSelect as HTMLSelectElement, { target: { value: "1|1|1" } });
     fireEvent.change(outboundLineInputs[1] as HTMLInputElement, { target: { value: "5" } });
+    fireEvent.change(outboundLineInputs[2] as HTMLInputElement, { target: { value: "2" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByText("Container Pick Plan")).toBeInTheDocument();
@@ -1056,7 +1059,7 @@ describe("ActivityManagementPage", () => {
             locationId: 1,
             skuMasterId: 1,
             quantity: 5,
-            pallets: 0,
+            pallets: 2,
             palletsDetailCtns: undefined,
             unitLabel: "CTN",
             cartonSizeMm: undefined,
@@ -1070,7 +1073,8 @@ describe("ActivityManagementPage", () => {
                 locationName: "NJ",
                 storageSection: "TEMP",
                 containerNo: "GCXU5817233",
-                allocatedQty: 5
+                allocatedQty: 5,
+                pallets: 2
               }
             ]
           }

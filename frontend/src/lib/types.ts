@@ -288,6 +288,8 @@ export type Item = {
   damagedQty: number;
   holdQty: number;
   pallets: number;
+  availablePallets: number;
+  allocatedPallets: number;
   reorderLevel: number;
   customerId: number;
   customerName: string;
@@ -938,20 +940,19 @@ export type OutboundBulkImportLinePreview = {
   sku: string;
   itemNumber: string;
   quantity: number;
-  pallets: number;
+  inventoryPallets: number;
+  outboundPallets: number;
   lineNote: string;
 };
 
 export type OutboundBulkImportDocumentPreview = {
   documentKey: string;
-  packingListNo: string;
-  orderRef: string;
+  pickingOrderNo: string;
   expectedShipDate: string;
   actualShipDate: string;
   shipToName: string;
   shipToAddress: string;
   shipToContact: string;
-  carrierName: string;
   rowNumbers: number[];
   lines: OutboundBulkImportLinePreview[];
   input: OutboundDocumentPayload;
@@ -959,7 +960,8 @@ export type OutboundBulkImportDocumentPreview = {
   valid: boolean;
   totalLines: number;
   totalQty: number;
-  totalPallets: number;
+  totalInventoryPallets: number;
+  totalOutboundPallets: number;
 };
 
 export type OutboundBulkImportPreview = {
@@ -991,7 +993,7 @@ export type OutboundBulkImportCommitPayload = {
 
 export type OutboundBulkImportCommitResult = {
   documentKey: string;
-  packingListNo: string;
+  pickingOrderNo: string;
   success: boolean;
   document?: OutboundDocument;
   error?: string;

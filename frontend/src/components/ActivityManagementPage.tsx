@@ -2224,7 +2224,7 @@ export function ActivityManagementPage({
             netWeightKgs: line.netWeightKgs,
             grossWeightKgs: line.grossWeightKgs,
             lineNote: line.reason || undefined,
-            pickAllocations: buildDraftOutboundLinePickAllocationPayloads(selectedOutboundSource, previewRows)
+            pickAllocations: buildDraftOutboundLinePickAllocationPayloads(selectedOutboundSource, previewRows, line.pallets)
           };
         })
       };
@@ -4203,19 +4203,26 @@ function buildPreviewPickAllocations(
 
 function buildDraftOutboundLinePickAllocationPayloads(
   source: Pick<OutboundSourceOption, "locationId" | "locationName" | "itemNumber">,
-  previewRows: OutboundAllocationPreviewRow[]
+  previewRows: OutboundAllocationPreviewRow[],
+  inventoryPallets: number
 ) {
   if (previewRows.length === 0) {
     return undefined;
   }
 
-  return previewRows.map((row) => ({
+  const palletShares = splitPreviewPalletsByQuantities(
+    Math.max(0, inventoryPallets || 0),
+    previewRows.map((row) => row.allocatedQty)
+  );
+
+  return previewRows.map((row, index) => ({
     itemNumber: row.itemNumber || source.itemNumber || undefined,
     locationId: source.locationId,
     locationName: row.locationName || source.locationName || undefined,
     storageSection: row.storageSection || undefined,
     containerNo: row.containerNo || undefined,
-    allocatedQty: row.allocatedQty
+    allocatedQty: row.allocatedQty,
+    pallets: palletShares[index] ?? 0
   }));
 }
 

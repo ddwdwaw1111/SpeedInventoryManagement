@@ -40,7 +40,7 @@ describe("OutboundBulkImportDialog", () => {
       totalDocuments: 1,
       createdDocuments: 1,
       failedDocuments: 0,
-      results: [{ documentKey: "PL-100", packingListNo: "PL-100", success: true, document: { id: 99 } }]
+      results: [{ documentKey: "PO-100", pickingOrderNo: "PO-100", success: true, document: { id: 99 } }]
     });
     const onImported = vi.fn();
     const { container } = renderWithProviders(<OutboundBulkImportDialog open customers={[createCustomer()]} locations={[createLocation()]} items={[createItem()]} onClose={vi.fn()} onImported={onImported} />);
@@ -49,7 +49,7 @@ describe("OutboundBulkImportDialog", () => {
     fireEvent.change(container.ownerDocument.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [file] } });
     fireEvent.click(screen.getByRole("button", { name: "Validate workbook" }));
 
-    expect(await screen.findByText("PL-100")).toBeInTheDocument();
+    expect(await screen.findByText("PO-100")).toBeInTheDocument();
     expect(mockedApi.previewOutboundBulkImport).toHaveBeenCalledWith(file, 1);
     fireEvent.change(screen.getByDisplayValue("CONT-A"), { target: { value: "CONT-B" } });
     expect(screen.getByRole("button", { name: "Create 1 drafts" })).toBeDisabled();
@@ -72,7 +72,7 @@ describe("OutboundBulkImportDialog", () => {
     expect(screen.getByRole("button", { name: "Validate workbook" })).toBeDisabled();
   });
 
-  it("normalizes edited Qty and Pallets to whole numbers before revalidation", async () => {
+  it("normalizes Qty, Inventory Pallets, and Outbound Pallets independently before revalidation", async () => {
     mockedApi.previewOutboundBulkImport.mockResolvedValue(createPreview());
     mockedApi.revalidateOutboundBulkImport.mockImplementation(async (payload) => payloadToPreview(payload));
     const { container } = renderWithProviders(<OutboundBulkImportDialog open customers={[createCustomer()]} locations={[createLocation()]} items={[createItem()]} onClose={vi.fn()} onImported={vi.fn()} />);
@@ -81,15 +81,18 @@ describe("OutboundBulkImportDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Validate workbook" }));
 
     const quantityInput = await screen.findByDisplayValue("5");
-    const palletsInput = screen.getByDisplayValue("2");
+    const inventoryPalletsInput = screen.getByDisplayValue("2");
+    const outboundPalletsInput = screen.getByDisplayValue("3");
     fireEvent.change(quantityInput, { target: { value: "1.9" } });
-    fireEvent.change(palletsInput, { target: { value: "3.7" } });
+    fireEvent.change(inventoryPalletsInput, { target: { value: "4.7" } });
+    fireEvent.change(outboundPalletsInput, { target: { value: "6.7" } });
     expect(quantityInput).toHaveValue(1);
-    expect(palletsInput).toHaveValue(3);
+    expect(inventoryPalletsInput).toHaveValue(4);
+    expect(outboundPalletsInput).toHaveValue(6);
     fireEvent.click(screen.getByRole("button", { name: "Revalidate changes" }));
 
     await waitFor(() => expect(mockedApi.revalidateOutboundBulkImport).toHaveBeenCalledWith(expect.objectContaining({
-      documents: [expect.objectContaining({ lines: [expect.objectContaining({ quantity: 1, pallets: 3 })] })]
+      documents: [expect.objectContaining({ lines: [expect.objectContaining({ quantity: 1, inventoryPallets: 4, outboundPallets: 6 })] })]
     })));
   });
 
@@ -126,30 +129,28 @@ function createPreview(): OutboundBulkImportPreview {
     invalidDocuments: 0,
     totalLines: 1,
     documents: [{
-      documentKey: "PL-100",
-      packingListNo: "PL-100",
-      orderRef: "ORDER-1",
+      documentKey: "PO-100",
+      pickingOrderNo: "PO-100",
       expectedShipDate: "2026-07-15",
       actualShipDate: "",
       shipToName: "Buyer",
       shipToAddress: "100 Main St",
       shipToContact: "Dock",
-      carrierName: "Carrier",
       rowNumbers: [4],
-      lines: [{ rowNumber: 4, warehouse: "NJ", sourceContainer: "CONT-A", storageSection: "TEMP", sku: "608333", itemNumber: "608333", quantity: 5, pallets: 2, lineNote: "" }],
+      lines: [{ rowNumber: 4, warehouse: "NJ", sourceContainer: "CONT-A", storageSection: "TEMP", sku: "608333", itemNumber: "608333", quantity: 5, inventoryPallets: 2, outboundPallets: 3, lineNote: "" }],
       input: {
-        packingListNo: "PL-100",
-        orderRef: "ORDER-1",
+        packingListNo: "PO-100",
         expectedShipDate: "2026-07-15",
         status: "DRAFT",
         trackingStatus: "SCHEDULED",
-        lines: [{ customerId: 1, locationId: 1, skuMasterId: 1, quantity: 5, pallets: 2, pickAllocations: [{ locationId: 1, storageSection: "TEMP", containerNo: "CONT-A", allocatedQty: 5, pallets: 2 }] }]
+        lines: [{ customerId: 1, locationId: 1, skuMasterId: 1, quantity: 5, pallets: 3, pickAllocations: [{ locationId: 1, storageSection: "TEMP", containerNo: "CONT-A", allocatedQty: 5, pallets: 2 }] }]
       },
       issues: [],
       valid: true,
       totalLines: 1,
       totalQty: 5,
-      totalPallets: 2
+      totalInventoryPallets: 2,
+      totalOutboundPallets: 3
     }]
   };
 }

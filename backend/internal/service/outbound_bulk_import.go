@@ -20,21 +20,20 @@ const (
 )
 
 const (
-	outboundBulkPackingListNo    = "packingListNo"
-	outboundBulkOrderRef         = "orderRef"
+	outboundBulkPickingOrderNo   = "pickingOrderNo"
 	outboundBulkExpectedShipDate = "expectedShipDate"
 	outboundBulkActualShipDate   = "actualShipDate"
 	outboundBulkShipToName       = "shipToName"
 	outboundBulkShipToAddress    = "shipToAddress"
 	outboundBulkShipToContact    = "shipToContact"
-	outboundBulkCarrierName      = "carrierName"
 	outboundBulkWarehouse        = "warehouse"
 	outboundBulkSourceContainer  = "sourceContainer"
 	outboundBulkStorageSection   = "storageSection"
 	outboundBulkSKU              = "sku"
 	outboundBulkItemNumber       = "itemNumber"
 	outboundBulkQuantity         = "quantity"
-	outboundBulkPallets          = "pallets"
+	outboundBulkInventoryPallets = "inventoryPallets"
+	outboundBulkOutboundPallets  = "outboundPallets"
 	outboundBulkLineNote         = "lineNote"
 )
 
@@ -48,35 +47,35 @@ type OutboundBulkImportIssue struct {
 }
 
 type OutboundBulkImportLinePreview struct {
-	RowNumber       int    `json:"rowNumber"`
-	Warehouse       string `json:"warehouse"`
-	SourceContainer string `json:"sourceContainer"`
-	StorageSection  string `json:"storageSection"`
-	SKU             string `json:"sku"`
-	ItemNumber      string `json:"itemNumber"`
-	Quantity        int    `json:"quantity"`
-	Pallets         int    `json:"pallets"`
-	LineNote        string `json:"lineNote"`
+	RowNumber        int    `json:"rowNumber"`
+	Warehouse        string `json:"warehouse"`
+	SourceContainer  string `json:"sourceContainer"`
+	StorageSection   string `json:"storageSection"`
+	SKU              string `json:"sku"`
+	ItemNumber       string `json:"itemNumber"`
+	Quantity         int    `json:"quantity"`
+	InventoryPallets int    `json:"inventoryPallets"` // Pallets deducted from the selected container inventory.
+	OutboundPallets  int    `json:"outboundPallets"`  // Pallets after repalletization, persisted on the shipment line.
+	LineNote         string `json:"lineNote"`
 }
 
 type OutboundBulkImportDocumentPreview struct {
-	DocumentKey      string                          `json:"documentKey"`
-	PackingListNo    string                          `json:"packingListNo"`
-	OrderRef         string                          `json:"orderRef"`
-	ExpectedShipDate string                          `json:"expectedShipDate"`
-	ActualShipDate   string                          `json:"actualShipDate"`
-	ShipToName       string                          `json:"shipToName"`
-	ShipToAddress    string                          `json:"shipToAddress"`
-	ShipToContact    string                          `json:"shipToContact"`
-	CarrierName      string                          `json:"carrierName"`
-	RowNumbers       []int                           `json:"rowNumbers"`
-	Lines            []OutboundBulkImportLinePreview `json:"lines"`
-	Input            CreateOutboundDocumentInput     `json:"input"`
-	Issues           []OutboundBulkImportIssue       `json:"issues"`
-	Valid            bool                            `json:"valid"`
-	TotalLines       int                             `json:"totalLines"`
-	TotalQty         int                             `json:"totalQty"`
-	TotalPallets     int                             `json:"totalPallets"`
+	DocumentKey           string                          `json:"documentKey"`
+	PickingOrderNo        string                          `json:"pickingOrderNo"`
+	ExpectedShipDate      string                          `json:"expectedShipDate"`
+	ActualShipDate        string                          `json:"actualShipDate"`
+	ShipToName            string                          `json:"shipToName"`
+	ShipToAddress         string                          `json:"shipToAddress"`
+	ShipToContact         string                          `json:"shipToContact"`
+	RowNumbers            []int                           `json:"rowNumbers"`
+	Lines                 []OutboundBulkImportLinePreview `json:"lines"`
+	Input                 CreateOutboundDocumentInput     `json:"input"`
+	Issues                []OutboundBulkImportIssue       `json:"issues"`
+	Valid                 bool                            `json:"valid"`
+	TotalLines            int                             `json:"totalLines"`
+	TotalQty              int                             `json:"totalQty"`
+	TotalInventoryPallets int                             `json:"totalInventoryPallets"`
+	TotalOutboundPallets  int                             `json:"totalOutboundPallets"`
 }
 
 type OutboundBulkImportPreview struct {
@@ -112,11 +111,11 @@ type OutboundBulkImportCommitInput struct {
 }
 
 type OutboundBulkImportCommitResult struct {
-	DocumentKey   string            `json:"documentKey"`
-	PackingListNo string            `json:"packingListNo"`
-	Success       bool              `json:"success"`
-	Document      *OutboundDocument `json:"document,omitempty"`
-	Error         string            `json:"error,omitempty"`
+	DocumentKey    string            `json:"documentKey"`
+	PickingOrderNo string            `json:"pickingOrderNo"`
+	Success        bool              `json:"success"`
+	Document       *OutboundDocument `json:"document,omitempty"`
+	Error          string            `json:"error,omitempty"`
 }
 
 type OutboundBulkImportCommitResponse struct {
@@ -175,7 +174,8 @@ func (s *Store) RevalidateOutboundBulkImport(ctx context.Context, input Outbound
 		document.Valid = false
 		document.TotalLines = 0
 		document.TotalQty = 0
-		document.TotalPallets = 0
+		document.TotalInventoryPallets = 0
+		document.TotalOutboundPallets = 0
 		for lineIndex := range document.Lines {
 			line := &document.Lines[lineIndex]
 			if line.RowNumber <= 0 {
@@ -214,7 +214,7 @@ func (s *Store) CreateOutboundDocumentsBulkDraft(ctx context.Context, input Outb
 		}
 	}
 	// Serialize the existence check and create sequence so concurrent bulk
-	// commits cannot both create the same customer/Packing List draft.
+	// commits cannot both create the same customer/Picking Order draft.
 	s.outboundBulkImportMu.Lock()
 	defer s.outboundBulkImportMu.Unlock()
 
@@ -225,21 +225,23 @@ func (s *Store) CreateOutboundDocumentsBulkDraft(ctx context.Context, input Outb
 	}
 	seen := make(map[string]bool)
 	for index, entry := range input.Documents {
-		packingListNo := strings.TrimSpace(strings.ToUpper(entry.Input.PackingListNo))
-		result := OutboundBulkImportCommitResult{DocumentKey: entry.DocumentKey, PackingListNo: packingListNo}
-		if packingListNo == "" {
-			result.Error = "Packing List No is required"
-		} else if seen[packingListNo] {
-			result.Error = "duplicate Packing List No in import request"
-		} else if exists, err := s.outboundPackingListExists(ctx, input.CustomerID, packingListNo); err != nil {
+		pickingOrderNo := strings.TrimSpace(strings.ToUpper(entry.Input.PackingListNo))
+		result := OutboundBulkImportCommitResult{DocumentKey: entry.DocumentKey, PickingOrderNo: pickingOrderNo}
+		if pickingOrderNo == "" {
+			result.Error = "Picking Order No is required"
+		} else if seen[pickingOrderNo] {
+			result.Error = "duplicate Picking Order No in import request"
+		} else if exists, err := s.outboundPickingOrderExists(ctx, input.CustomerID, pickingOrderNo); err != nil {
 			return OutboundBulkImportCommitResponse{}, err
 		} else if exists {
-			result.Error = "Packing List No already exists"
+			result.Error = "Picking Order No already exists"
 		}
-		seen[packingListNo] = true
+		seen[pickingOrderNo] = true
 		if result.Error == "" {
 			documentInput := entry.Input
-			documentInput.PackingListNo = packingListNo
+			documentInput.PackingListNo = pickingOrderNo
+			documentInput.OrderRef = ""
+			documentInput.CarrierName = ""
 			documentInput.Status = DocumentStatusDraft
 			documentInput.TrackingStatus = OutboundTrackingScheduled
 			for lineIndex := range documentInput.Lines {
@@ -296,8 +298,8 @@ func parseOutboundBulkImportWorkbook(data []byte) ([]OutboundBulkImportDocumentP
 			return nil, fmt.Errorf("the workbook exceeds the import limits")
 		}
 		rowNumber := rowIndex + 1
-		packingListNo := strings.TrimSpace(strings.ToUpper(inboundBulkColumnValue(row, columns, outboundBulkPackingListNo)))
-		groupKey := packingListNo
+		pickingOrderNo := strings.TrimSpace(strings.ToUpper(inboundBulkColumnValue(row, columns, outboundBulkPickingOrderNo)))
+		groupKey := pickingOrderNo
 		if groupKey == "" {
 			groupKey = fmt.Sprintf("ROW-%d", rowNumber)
 		}
@@ -307,13 +309,12 @@ func parseOutboundBulkImportWorkbook(data []byte) ([]OutboundBulkImportDocumentP
 				return nil, fmt.Errorf("the workbook exceeds the %d shipment limit", MaxOutboundBulkImportDocuments)
 			}
 			document := OutboundBulkImportDocumentPreview{
-				DocumentKey: fmt.Sprintf("ROW-%d", rowNumber), PackingListNo: packingListNo,
-				OrderRef:      strings.TrimSpace(inboundBulkColumnValue(row, columns, outboundBulkOrderRef)),
-				ShipToName:    strings.TrimSpace(inboundBulkColumnValue(row, columns, outboundBulkShipToName)),
-				ShipToAddress: strings.TrimSpace(inboundBulkColumnValue(row, columns, outboundBulkShipToAddress)),
-				ShipToContact: strings.TrimSpace(inboundBulkColumnValue(row, columns, outboundBulkShipToContact)),
-				CarrierName:   strings.TrimSpace(inboundBulkColumnValue(row, columns, outboundBulkCarrierName)),
-				RowNumbers:    []int{rowNumber}, Lines: make([]OutboundBulkImportLinePreview, 0), Issues: make([]OutboundBulkImportIssue, 0),
+				DocumentKey:    fmt.Sprintf("ROW-%d", rowNumber),
+				PickingOrderNo: pickingOrderNo,
+				ShipToName:     strings.TrimSpace(inboundBulkColumnValue(row, columns, outboundBulkShipToName)),
+				ShipToAddress:  strings.TrimSpace(inboundBulkColumnValue(row, columns, outboundBulkShipToAddress)),
+				ShipToContact:  strings.TrimSpace(inboundBulkColumnValue(row, columns, outboundBulkShipToContact)),
+				RowNumbers:     []int{rowNumber}, Lines: make([]OutboundBulkImportLinePreview, 0), Issues: make([]OutboundBulkImportIssue, 0),
 			}
 			document.ExpectedShipDate, _ = normalizeInboundBulkDate(inboundBulkColumnValue(row, columns, outboundBulkExpectedShipDate))
 			document.ActualShipDate, _ = normalizeInboundBulkDate(inboundBulkColumnValue(row, columns, outboundBulkActualShipDate))
@@ -325,8 +326,8 @@ func parseOutboundBulkImportWorkbook(data []byte) ([]OutboundBulkImportDocumentP
 			validateOutboundBulkHeaderConsistency(&documents[index], row, rowNumber, columns)
 		}
 		document := &documents[index]
-		if packingListNo == "" {
-			document.Issues = append(document.Issues, outboundBulkIssue("MISSING_PACKING_LIST", "Packing List No is required.", rowNumber, outboundBulkPackingListNo, ""))
+		if pickingOrderNo == "" {
+			document.Issues = append(document.Issues, outboundBulkIssue("MISSING_PICKING_ORDER", "Picking Order No is required.", rowNumber, outboundBulkPickingOrderNo, ""))
 		}
 		dateValue := inboundBulkColumnValue(row, columns, outboundBulkActualShipDate)
 		if _, valid := normalizeInboundBulkDate(dateValue); !valid {
@@ -347,7 +348,7 @@ func parseOutboundBulkImportWorkbook(data []byte) ([]OutboundBulkImportDocumentP
 }
 
 func findOutboundBulkHeader(rows [][]string) (int, map[string]int, error) {
-	required := []string{outboundBulkPackingListNo, outboundBulkWarehouse, outboundBulkSKU, outboundBulkQuantity, outboundBulkPallets}
+	required := []string{outboundBulkPickingOrderNo, outboundBulkWarehouse, outboundBulkSKU, outboundBulkQuantity, outboundBulkInventoryPallets, outboundBulkOutboundPallets}
 	for rowIndex := 0; rowIndex < len(rows) && rowIndex < 20; rowIndex++ {
 		columns := make(map[string]int)
 		for columnIndex, value := range rows[rowIndex] {
@@ -370,18 +371,18 @@ func findOutboundBulkHeader(rows [][]string) (int, map[string]int, error) {
 
 func canonicalOutboundBulkHeader(value string) string {
 	aliases := map[string]string{
-		"PACKINGLISTNO": outboundBulkPackingListNo, "PACKINGLISTNUMBER": outboundBulkPackingListNo,
-		"ORDERREF": outboundBulkOrderRef, "ORDERREFERENCE": outboundBulkOrderRef,
+		"PICKINGORDERNO": outboundBulkPickingOrderNo, "PICKINGORDERNUMBER": outboundBulkPickingOrderNo,
 		"EXPECTEDSHIPDATE": outboundBulkExpectedShipDate,
 		"ACTUALSHIPDATE":   outboundBulkActualShipDate, "SHIPDATE": outboundBulkActualShipDate,
 		"SHIPTONAME": outboundBulkShipToName, "SHIPTOADDRESS": outboundBulkShipToAddress,
-		"SHIPTOCONTACT": outboundBulkShipToContact, "CARRIER": outboundBulkCarrierName, "CARRIERNAME": outboundBulkCarrierName,
-		"WAREHOUSE": outboundBulkWarehouse, "LOCATION": outboundBulkWarehouse,
+		"SHIPTOCONTACT": outboundBulkShipToContact,
+		"WAREHOUSE":     outboundBulkWarehouse, "LOCATION": outboundBulkWarehouse,
 		"SOURCECONTAINER": outboundBulkSourceContainer, "CONTAINERNO": outboundBulkSourceContainer,
 		"STORAGESECTION": outboundBulkStorageSection, "SECTION": outboundBulkStorageSection,
 		"SKU": outboundBulkSKU, "ITEMCODE": outboundBulkItemNumber, "ITEMNUMBER": outboundBulkItemNumber,
 		"QTY": outboundBulkQuantity, "QUANTITY": outboundBulkQuantity,
-		"PALLETS": outboundBulkPallets, "PALLETCOUNT": outboundBulkPallets,
+		"INVENTORYPALLETS": outboundBulkInventoryPallets, "INVENTORYPALLETCOUNT": outboundBulkInventoryPallets,
+		"OUTBOUNDPALLETS": outboundBulkOutboundPallets, "OUTBOUNDPALLETCOUNT": outboundBulkOutboundPallets,
 		"LINENOTE": outboundBulkLineNote,
 	}
 	return aliases[normalizeInboundBulkHeader(value)]
@@ -403,9 +404,15 @@ func parseOutboundBulkLine(row []string, rowNumber int, columns map[string]int) 
 	if !valid || line.Quantity <= 0 {
 		issues = append(issues, outboundBulkIssue("INVALID_QUANTITY", "Qty must be a positive whole number.", rowNumber, outboundBulkQuantity, inboundBulkColumnValue(row, columns, outboundBulkQuantity)))
 	}
-	line.Pallets, valid = parseInboundBulkNonNegativeInt(inboundBulkColumnValue(row, columns, outboundBulkPallets))
-	if !valid {
-		issues = append(issues, outboundBulkIssue("INVALID_PALLETS", "Pallets must be a non-negative whole number.", rowNumber, outboundBulkPallets, inboundBulkColumnValue(row, columns, outboundBulkPallets)))
+	inventoryPalletsValue := inboundBulkColumnValue(row, columns, outboundBulkInventoryPallets)
+	line.InventoryPallets, valid = parseInboundBulkNonNegativeInt(inventoryPalletsValue)
+	if inventoryPalletsValue == "" || !valid {
+		issues = append(issues, outboundBulkIssue("INVALID_INVENTORY_PALLETS", "Inventory Pallets must be a non-negative whole number.", rowNumber, outboundBulkInventoryPallets, inboundBulkColumnValue(row, columns, outboundBulkInventoryPallets)))
+	}
+	outboundPalletsValue := inboundBulkColumnValue(row, columns, outboundBulkOutboundPallets)
+	line.OutboundPallets, valid = parseInboundBulkNonNegativeInt(outboundPalletsValue)
+	if outboundPalletsValue == "" || !valid {
+		issues = append(issues, outboundBulkIssue("INVALID_OUTBOUND_PALLETS", "Outbound Pallets must be a non-negative whole number.", rowNumber, outboundBulkOutboundPallets, inboundBulkColumnValue(row, columns, outboundBulkOutboundPallets)))
 	}
 	return line, issues
 }
@@ -415,9 +422,8 @@ func validateOutboundBulkHeaderConsistency(document *OutboundBulkImportDocumentP
 		field   string
 		current *string
 	}{
-		{outboundBulkOrderRef, &document.OrderRef}, {outboundBulkShipToName, &document.ShipToName},
+		{outboundBulkShipToName, &document.ShipToName},
 		{outboundBulkShipToAddress, &document.ShipToAddress}, {outboundBulkShipToContact, &document.ShipToContact},
-		{outboundBulkCarrierName, &document.CarrierName},
 	}
 	for _, value := range values {
 		next := strings.TrimSpace(inboundBulkColumnValue(row, columns, value.field))
@@ -429,7 +435,7 @@ func validateOutboundBulkHeaderConsistency(document *OutboundBulkImportDocumentP
 			continue
 		}
 		if next != *value.current {
-			document.Issues = append(document.Issues, outboundBulkIssue("HEADER_CONFLICT", "Rows in the same Packing List have conflicting document values.", rowNumber, value.field, next))
+			document.Issues = append(document.Issues, outboundBulkIssue("HEADER_CONFLICT", "Rows in the same Picking Order have conflicting document values.", rowNumber, value.field, next))
 		}
 	}
 	dates := []struct {
@@ -454,7 +460,7 @@ func validateOutboundBulkHeaderConsistency(document *OutboundBulkImportDocumentP
 			continue
 		}
 		if next != *date.current {
-			document.Issues = append(document.Issues, outboundBulkIssue("HEADER_CONFLICT", fmt.Sprintf("Rows in the same Packing List have conflicting %s values.", date.label), rowNumber, date.field, next))
+			document.Issues = append(document.Issues, outboundBulkIssue("HEADER_CONFLICT", fmt.Sprintf("Rows in the same Picking Order have conflicting %s values.", date.label), rowNumber, date.field, next))
 		}
 	}
 }
@@ -485,31 +491,28 @@ func (s *Store) buildOutboundBulkImportPreview(ctx context.Context, fileName str
 	for _, master := range masters {
 		mastersBySKU[normalizeOutboundBulkValue(master.SKU)] = master
 	}
-	remaining := make(map[int64]int)
-	for _, item := range items {
-		remaining[item.ID] = item.AvailableQty
-	}
+	remaining, remainingPallets := initializeOutboundBulkBalances(items)
 	usedLocations := make(map[int64]bool)
 	preview := OutboundBulkImportPreview{SourceFileName: strings.TrimSpace(filepath.Base(fileName)), CustomerID: customerID, CustomerName: customer.Name, Documents: make([]OutboundBulkImportDocumentPreview, 0, len(documents))}
-	packingListCounts := make(map[string]int)
+	pickingOrderCounts := make(map[string]int)
 	for _, document := range documents {
-		if key := normalizeOutboundBulkValue(document.PackingListNo); key != "" {
-			packingListCounts[key]++
+		if key := normalizeOutboundBulkValue(document.PickingOrderNo); key != "" {
+			pickingOrderCounts[key]++
 		}
 	}
 
 	for documentIndex := range documents {
 		document := documents[documentIndex]
-		document.PackingListNo = strings.TrimSpace(strings.ToUpper(document.PackingListNo))
-		if document.PackingListNo == "" {
-			document.Issues = append(document.Issues, outboundBulkIssue("MISSING_PACKING_LIST", "Packing List No is required.", firstInboundBulkRowNumber(document.RowNumbers), outboundBulkPackingListNo, ""))
-		} else if packingListCounts[document.PackingListNo] > 1 {
-			document.Issues = append(document.Issues, outboundBulkIssue("DUPLICATE_PACKING_LIST_IN_IMPORT", "Packing List No is used by more than one edited shipment.", firstInboundBulkRowNumber(document.RowNumbers), outboundBulkPackingListNo, document.PackingListNo))
+		document.PickingOrderNo = strings.TrimSpace(strings.ToUpper(document.PickingOrderNo))
+		if document.PickingOrderNo == "" {
+			document.Issues = append(document.Issues, outboundBulkIssue("MISSING_PICKING_ORDER", "Picking Order No is required.", firstInboundBulkRowNumber(document.RowNumbers), outboundBulkPickingOrderNo, ""))
+		} else if pickingOrderCounts[document.PickingOrderNo] > 1 {
+			document.Issues = append(document.Issues, outboundBulkIssue("DUPLICATE_PICKING_ORDER_IN_IMPORT", "Picking Order No is used by more than one edited shipment.", firstInboundBulkRowNumber(document.RowNumbers), outboundBulkPickingOrderNo, document.PickingOrderNo))
 		}
-		if exists, lookupErr := s.outboundPackingListExists(ctx, customerID, document.PackingListNo); lookupErr != nil {
+		if exists, lookupErr := s.outboundPickingOrderExists(ctx, customerID, document.PickingOrderNo); lookupErr != nil {
 			return OutboundBulkImportPreview{}, lookupErr
 		} else if exists {
-			document.Issues = append(document.Issues, outboundBulkIssue("DUPLICATE_PACKING_LIST", "Packing List No already exists.", firstInboundBulkRowNumber(document.RowNumbers), outboundBulkPackingListNo, document.PackingListNo))
+			document.Issues = append(document.Issues, outboundBulkIssue("DUPLICATE_PICKING_ORDER", "Picking Order No already exists.", firstInboundBulkRowNumber(document.RowNumbers), outboundBulkPickingOrderNo, document.PickingOrderNo))
 		}
 		if normalized, valid := normalizeInboundBulkDate(document.ActualShipDate); !valid {
 			document.Issues = append(document.Issues, outboundBulkIssue("INVALID_SHIP_DATE", "Actual Ship Date must use YYYY-MM-DD.", firstInboundBulkRowNumber(document.RowNumbers), outboundBulkActualShipDate, document.ActualShipDate))
@@ -522,14 +525,18 @@ func (s *Store) buildOutboundBulkImportPreview(ctx context.Context, fileName str
 			document.ExpectedShipDate = normalized
 		}
 		document.Input = CreateOutboundDocumentInput{
-			PackingListNo: document.PackingListNo, OrderRef: strings.TrimSpace(document.OrderRef), ExpectedShipDate: document.ExpectedShipDate, ActualShipDate: document.ActualShipDate,
+			PackingListNo: document.PickingOrderNo, ExpectedShipDate: document.ExpectedShipDate, ActualShipDate: document.ActualShipDate,
 			ShipToName: strings.TrimSpace(document.ShipToName), ShipToAddress: strings.TrimSpace(document.ShipToAddress),
-			ShipToContact: strings.TrimSpace(document.ShipToContact), CarrierName: strings.TrimSpace(document.CarrierName),
-			Status: DocumentStatusDraft, TrackingStatus: OutboundTrackingScheduled, Lines: make([]CreateOutboundDocumentLineInput, 0, len(document.Lines)),
+			ShipToContact: strings.TrimSpace(document.ShipToContact),
+			Status:        DocumentStatusDraft, TrackingStatus: OutboundTrackingScheduled, Lines: make([]CreateOutboundDocumentLineInput, 0, len(document.Lines)),
 		}
 		documentRemaining := make(map[int64]int, len(remaining))
 		for itemID, quantity := range remaining {
 			documentRemaining[itemID] = quantity
+		}
+		documentRemainingPallets := make(map[int64]int, len(remainingPallets))
+		for itemID, pallets := range remainingPallets {
+			documentRemainingPallets[itemID] = pallets
 		}
 		for lineIndex := range document.Lines {
 			line := &document.Lines[lineIndex]
@@ -541,8 +548,11 @@ func (s *Store) buildOutboundBulkImportPreview(ctx context.Context, fileName str
 			if line.Quantity <= 0 {
 				document.Issues = append(document.Issues, outboundBulkIssue("INVALID_QUANTITY", "Qty must be greater than zero.", line.RowNumber, outboundBulkQuantity, fmt.Sprint(line.Quantity)))
 			}
-			if line.Pallets < 0 {
-				document.Issues = append(document.Issues, outboundBulkIssue("INVALID_PALLETS", "Pallets cannot be negative.", line.RowNumber, outboundBulkPallets, fmt.Sprint(line.Pallets)))
+			if line.InventoryPallets < 0 {
+				document.Issues = append(document.Issues, outboundBulkIssue("INVALID_INVENTORY_PALLETS", "Inventory Pallets cannot be negative.", line.RowNumber, outboundBulkInventoryPallets, fmt.Sprint(line.InventoryPallets)))
+			}
+			if line.OutboundPallets < 0 {
+				document.Issues = append(document.Issues, outboundBulkIssue("INVALID_OUTBOUND_PALLETS", "Outbound Pallets cannot be negative.", line.RowNumber, outboundBulkOutboundPallets, fmt.Sprint(line.OutboundPallets)))
 			}
 			location, locationExists := locationsByName[normalizeOutboundBulkValue(line.Warehouse)]
 			if !locationExists {
@@ -573,41 +583,36 @@ func (s *Store) buildOutboundBulkImportPreview(ctx context.Context, fileName str
 				candidates = append(candidates, item)
 			}
 			sortOutboundBulkCandidates(candidates)
-			need := line.Quantity
-			allocations := make([]OutboundPickAllocation, 0)
-			for _, item := range candidates {
-				qty := documentRemaining[item.ID]
-				if qty > need {
-					qty = need
-				}
-				if qty <= 0 {
-					continue
-				}
-				documentRemaining[item.ID] -= qty
-				need -= qty
-				if line.SourceContainer != "" || line.StorageSection != "" {
-					allocationPallets := 0
-					if len(allocations) == 0 {
-						allocationPallets = line.Pallets
-					}
-					allocations = append(allocations, OutboundPickAllocation{ItemNumber: item.ItemNumber, LocationID: item.LocationID, LocationName: item.LocationName, StorageSection: fallbackSection(item.StorageSection), ContainerNo: item.ContainerNo, AllocatedQty: qty, Pallets: allocationPallets})
-				}
-				if need == 0 {
-					break
-				}
-			}
-			if need > 0 {
+			selectedAllocations, stockAvailable, palletsAvailable := selectOutboundBulkAllocations(
+				candidates,
+				line.Quantity,
+				line.InventoryPallets,
+				documentRemaining,
+				documentRemainingPallets,
+			)
+			if !stockAvailable {
 				document.Issues = append(document.Issues, outboundBulkIssue("INSUFFICIENT_STOCK", "Available stock is insufficient for this row and earlier rows in the workbook.", line.RowNumber, outboundBulkQuantity, fmt.Sprint(line.Quantity)))
 				continue
 			}
-			document.Input.Lines = append(document.Input.Lines, CreateOutboundDocumentLineInput{CustomerID: customerID, LocationID: location.ID, SKUMasterID: master.ID, Quantity: line.Quantity, Pallets: line.Pallets, UnitLabel: firstNonEmpty(master.Unit, "PCS"), LineNote: strings.TrimSpace(line.LineNote), PickAllocations: allocations})
+			if !palletsAvailable {
+				document.Issues = append(document.Issues, outboundBulkIssue("INSUFFICIENT_INVENTORY_PALLETS", "Available inventory pallets are insufficient for this row and earlier rows in the workbook.", line.RowNumber, outboundBulkInventoryPallets, fmt.Sprint(line.InventoryPallets)))
+				continue
+			}
+			allocations, palletsAvailable := assignOutboundBulkInventoryPallets(selectedAllocations, line.InventoryPallets, documentRemainingPallets)
+			if !palletsAvailable {
+				document.Issues = append(document.Issues, outboundBulkIssue("INSUFFICIENT_INVENTORY_PALLETS", "Available inventory pallets are insufficient for this row and earlier rows in the workbook.", line.RowNumber, outboundBulkInventoryPallets, fmt.Sprint(line.InventoryPallets)))
+				continue
+			}
+			document.Input.Lines = append(document.Input.Lines, CreateOutboundDocumentLineInput{CustomerID: customerID, LocationID: location.ID, SKUMasterID: master.ID, Quantity: line.Quantity, Pallets: line.OutboundPallets, UnitLabel: firstNonEmpty(master.Unit, "PCS"), LineNote: strings.TrimSpace(line.LineNote), PickAllocations: allocations})
 			document.TotalQty += line.Quantity
-			document.TotalPallets += line.Pallets
+			document.TotalInventoryPallets += line.InventoryPallets
+			document.TotalOutboundPallets += line.OutboundPallets
 		}
 		document.TotalLines = len(document.Lines)
 		document.Valid = !outboundBulkHasErrors(document.Issues) && len(document.Input.Lines) == len(document.Lines) && len(document.Lines) > 0
 		if document.Valid {
 			remaining = documentRemaining
+			remainingPallets = documentRemainingPallets
 		}
 		preview.TotalLines += document.TotalLines
 		if document.Valid {
@@ -620,6 +625,16 @@ func (s *Store) buildOutboundBulkImportPreview(ctx context.Context, fileName str
 	preview.TotalDocuments = len(preview.Documents)
 	preview.LocationCount = len(usedLocations)
 	return preview, nil
+}
+
+func initializeOutboundBulkBalances(items []Item) (map[int64]int, map[int64]int) {
+	remainingQty := make(map[int64]int, len(items))
+	remainingPallets := make(map[int64]int, len(items))
+	for _, item := range items {
+		remainingQty[item.ID] = maxInt(item.AvailableQty, 0)
+		remainingPallets[item.ID] = maxInt(item.AvailablePallets, 0)
+	}
+	return remainingQty, remainingPallets
 }
 
 func resolveOutboundBulkMaster(
@@ -635,6 +650,132 @@ func resolveOutboundBulkMaster(
 		return SKUMaster{}, "INVALID_SKU", "SKU is required; Item Code is reference-only."
 	}
 	return SKUMaster{}, "INVALID_SKU", "SKU does not exist for this customer."
+}
+
+type outboundBulkSelectedAllocation struct {
+	ItemID     int64
+	Allocation OutboundPickAllocation
+}
+
+func selectOutboundBulkAllocations(
+	candidates []Item,
+	requestedQty int,
+	requestedPallets int,
+	remainingQtyByItemID map[int64]int,
+	remainingPalletsByItemID map[int64]int,
+) ([]outboundBulkSelectedAllocation, bool, bool) {
+	if requestedQty <= 0 {
+		return nil, true, requestedPallets == 0
+	}
+
+	totalQty := 0
+	for _, item := range candidates {
+		totalQty += maxInt(remainingQtyByItemID[item.ID], 0)
+	}
+	if totalQty < requestedQty {
+		return nil, false, false
+	}
+
+	type palletSource struct {
+		candidateIndex int
+		available      int
+	}
+	palletSources := make([]palletSource, 0, len(candidates))
+	for index, item := range candidates {
+		palletSources = append(palletSources, palletSource{
+			candidateIndex: index,
+			available:      maxInt(remainingPalletsByItemID[item.ID], 0),
+		})
+	}
+	sort.SliceStable(palletSources, func(i, j int) bool {
+		return palletSources[i].available > palletSources[j].available
+	})
+
+	maxPalletSources := min(requestedQty, len(palletSources))
+	availableFromSelectableSources := 0
+	for index := 0; index < maxPalletSources; index++ {
+		availableFromSelectableSources += palletSources[index].available
+	}
+	if requestedPallets < 0 || requestedPallets > availableFromSelectableSources {
+		return nil, true, false
+	}
+
+	selectedQty := make([]int, len(candidates))
+	coveredPallets := 0
+	for index := 0; index < maxPalletSources && coveredPallets < requestedPallets; index++ {
+		source := palletSources[index]
+		if source.available <= 0 {
+			continue
+		}
+		selectedQty[source.candidateIndex] = 1
+		coveredPallets += source.available
+	}
+
+	remainingRequestedQty := requestedQty
+	for _, quantity := range selectedQty {
+		remainingRequestedQty -= quantity
+	}
+	for index, item := range candidates {
+		if remainingRequestedQty == 0 {
+			break
+		}
+		available := maxInt(remainingQtyByItemID[item.ID]-selectedQty[index], 0)
+		assigned := min(available, remainingRequestedQty)
+		selectedQty[index] += assigned
+		remainingRequestedQty -= assigned
+	}
+	if remainingRequestedQty > 0 {
+		return nil, false, false
+	}
+
+	selected := make([]outboundBulkSelectedAllocation, 0, len(candidates))
+	for index, item := range candidates {
+		quantity := selectedQty[index]
+		if quantity <= 0 {
+			continue
+		}
+		remainingQtyByItemID[item.ID] -= quantity
+		selected = append(selected, outboundBulkSelectedAllocation{
+			ItemID: item.ID,
+			Allocation: OutboundPickAllocation{
+				ItemNumber: item.ItemNumber, LocationID: item.LocationID, LocationName: item.LocationName,
+				StorageSection: fallbackSection(item.StorageSection), ContainerNo: item.ContainerNo, AllocatedQty: quantity,
+			},
+		})
+	}
+	return selected, true, true
+}
+
+func assignOutboundBulkInventoryPallets(
+	selected []outboundBulkSelectedAllocation,
+	requestedPallets int,
+	remainingByItemID map[int64]int,
+) ([]OutboundPickAllocation, bool) {
+	allocations := make([]OutboundPickAllocation, len(selected))
+	availablePallets := 0
+	for index, selectedAllocation := range selected {
+		allocations[index] = selectedAllocation.Allocation
+		availablePallets += maxInt(remainingByItemID[selectedAllocation.ItemID], 0)
+	}
+	if requestedPallets < 0 || requestedPallets > availablePallets {
+		return allocations, false
+	}
+
+	remainingRequested := requestedPallets
+	for index, selectedAllocation := range selected {
+		if remainingRequested == 0 {
+			break
+		}
+		available := maxInt(remainingByItemID[selectedAllocation.ItemID], 0)
+		assigned := available
+		if assigned > remainingRequested {
+			assigned = remainingRequested
+		}
+		allocations[index].Pallets = assigned
+		remainingByItemID[selectedAllocation.ItemID] = available - assigned
+		remainingRequested -= assigned
+	}
+	return allocations, remainingRequested == 0
 }
 
 func sortOutboundBulkCandidates(candidates []Item) {
@@ -663,13 +804,15 @@ func sortOutboundBulkCandidates(candidates []Item) {
 	})
 }
 
-func (s *Store) outboundPackingListExists(ctx context.Context, customerID int64, packingListNo string) (bool, error) {
-	if customerID <= 0 || strings.TrimSpace(packingListNo) == "" {
+func (s *Store) outboundPickingOrderExists(ctx context.Context, customerID int64, pickingOrderNo string) (bool, error) {
+	if customerID <= 0 || strings.TrimSpace(pickingOrderNo) == "" {
 		return false, nil
 	}
 	var count int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM outbound_documents WHERE customer_id = ? AND cancelled_at IS NULL AND archived_at IS NULL AND UPPER(TRIM(COALESCE(packing_list_no, ''))) = UPPER(TRIM(?))`, customerID, packingListNo).Scan(&count); err != nil {
-		return false, fmt.Errorf("check outbound packing list: %w", err)
+	// packing_list_no remains the compatibility storage column for the
+	// user-facing Picking Order No.; no schema migration is required.
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM outbound_documents WHERE customer_id = ? AND cancelled_at IS NULL AND archived_at IS NULL AND UPPER(TRIM(COALESCE(packing_list_no, ''))) = UPPER(TRIM(?))`, customerID, pickingOrderNo).Scan(&count); err != nil {
+		return false, fmt.Errorf("check outbound picking order: %w", err)
 	}
 	return count > 0, nil
 }

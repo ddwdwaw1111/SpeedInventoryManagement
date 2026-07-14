@@ -185,7 +185,7 @@ func TestValidateOutboundDocumentInput(t *testing.T) {
 	}
 }
 
-func TestConfirmedOutboundAcceptsIndependentQtyAndPalletCountWhenAllocationMatches(t *testing.T) {
+func TestConfirmedOutboundAcceptsIndependentInventoryAndOutboundPalletCounts(t *testing.T) {
 	input := CreateOutboundDocumentInput{
 		Status:         DocumentStatusConfirmed,
 		TrackingStatus: OutboundTrackingShipped,
@@ -195,20 +195,20 @@ func TestConfirmedOutboundAcceptsIndependentQtyAndPalletCountWhenAllocationMatch
 				LocationID:  2,
 				SKUMasterID: 3,
 				Quantity:    10,
-				Pallets:     3,
+				Pallets:     4,
 				PickAllocations: []OutboundPickAllocation{
-					{LocationID: 2, StorageSection: "TEMP", ContainerNo: "CONT-A", AllocatedQty: 10, Pallets: 3},
+					{LocationID: 2, StorageSection: "TEMP", ContainerNo: "CONT-A", AllocatedQty: 10, Pallets: 2},
 				},
 			},
 		},
 	}
 
 	if err := validateOutboundDocumentInput(input); err != nil {
-		t.Fatalf("expected independent outbound quantity and pallet count to be valid, got %v", err)
+		t.Fatalf("expected inventory and outbound pallet counts to be independent, got %v", err)
 	}
-	input.Lines[0].PickAllocations[0].Pallets = 2
-	if err := validateOutboundDocumentInput(input); err == nil || !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("expected mismatched declared and allocation pallet counts to be rejected, got %v", err)
+	normalized := sanitizeOutboundDocumentInput(input)
+	if normalized.Lines[0].Pallets != 4 || normalized.Lines[0].PickAllocations[0].Pallets != 2 {
+		t.Fatalf("sanitization coupled inventory and outbound pallets: %#v", normalized.Lines[0])
 	}
 }
 
