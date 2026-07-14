@@ -38,12 +38,18 @@ const (
 )
 
 type OutboundBulkImportIssue struct {
-	Severity  string `json:"severity"`
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	RowNumber int    `json:"rowNumber,omitempty"`
-	Field     string `json:"field,omitempty"`
-	Value     string `json:"value,omitempty"`
+	Severity        string `json:"severity"`
+	Code            string `json:"code"`
+	Message         string `json:"message"`
+	RowNumber       int    `json:"rowNumber,omitempty"`
+	Field           string `json:"field,omitempty"`
+	Value           string `json:"value,omitempty"`
+	SKU             string `json:"sku,omitempty"`
+	Warehouse       string `json:"warehouse,omitempty"`
+	SourceContainer string `json:"sourceContainer,omitempty"`
+	StorageSection  string `json:"storageSection,omitempty"`
+	RequestedQty    int    `json:"requestedQty,omitempty"`
+	AvailableQty    int    `json:"availableQty"`
 }
 
 type OutboundBulkImportLinePreview struct {
@@ -591,7 +597,7 @@ func (s *Store) buildOutboundBulkImportPreview(ctx context.Context, fileName str
 				documentRemainingPallets,
 			)
 			if !stockAvailable {
-				document.Issues = append(document.Issues, outboundBulkIssue("INSUFFICIENT_STOCK", "Available stock is insufficient for this row and earlier rows in the workbook.", line.RowNumber, outboundBulkQuantity, fmt.Sprint(line.Quantity)))
+				document.Issues = append(document.Issues, outboundBulkInsufficientStockIssue(*line, totalOutboundBulkAvailableQuantity(candidates, documentRemaining)))
 				continue
 			}
 			if !palletsAvailable {
@@ -657,6 +663,31 @@ type outboundBulkSelectedAllocation struct {
 	Allocation OutboundPickAllocation
 }
 
+func outboundBulkInsufficientStockIssue(line OutboundBulkImportLinePreview, availableQty int) OutboundBulkImportIssue {
+	issue := outboundBulkIssue(
+		"INSUFFICIENT_STOCK",
+		fmt.Sprintf("SKU %s has %d CTN available in the selected source scope, but this row requests %d CTN.", line.SKU, availableQty, line.Quantity),
+		line.RowNumber,
+		outboundBulkQuantity,
+		fmt.Sprint(line.Quantity),
+	)
+	issue.SKU = line.SKU
+	issue.Warehouse = line.Warehouse
+	issue.SourceContainer = line.SourceContainer
+	issue.StorageSection = line.StorageSection
+	issue.RequestedQty = line.Quantity
+	issue.AvailableQty = maxInt(availableQty, 0)
+	return issue
+}
+
+func totalOutboundBulkAvailableQuantity(candidates []Item, remainingQtyByItemID map[int64]int) int {
+	total := 0
+	for _, item := range candidates {
+		total += maxInt(remainingQtyByItemID[item.ID], 0)
+	}
+	return total
+}
+
 func selectOutboundBulkAllocations(
 	candidates []Item,
 	requestedQty int,
@@ -668,10 +699,7 @@ func selectOutboundBulkAllocations(
 		return nil, true, requestedPallets == 0
 	}
 
-	totalQty := 0
-	for _, item := range candidates {
-		totalQty += maxInt(remainingQtyByItemID[item.ID], 0)
-	}
+	totalQty := totalOutboundBulkAvailableQuantity(candidates, remainingQtyByItemID)
 	if totalQty < requestedQty {
 		return nil, false, false
 	}

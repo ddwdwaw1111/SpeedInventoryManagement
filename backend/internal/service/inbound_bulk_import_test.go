@@ -389,7 +389,7 @@ func TestParseInboundBulkImportWorkbookRejectsWarehouseConflictWithinDocument(t 
 func TestBuildInboundBulkImportPreviewKeepsIndependentPalletValuesAndFlagsConflicts(t *testing.T) {
 	data := buildInboundBulkImportWorkbook(t, [][]any{
 		{"CONT-A", "Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-1", "ITEM-1", "", 930, 900, 20, 48, "A", ""},
-		{"CONT-B", "Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-2", "WRONG-CODE", "Known item", 100, 0, 2, 50, "A", ""},
+		{"CONT-B", "Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-2", "ITEM-1", "Known item", 100, 0, 2, 50, "A", ""},
 		{"CONT-B", "Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-3", "ITEM-3", "New item", 40, 0, 1, 40, "A", ""},
 	})
 	parsed, err := parseInboundBulkImportWorkbook("receipts.xlsx", data)
@@ -424,6 +424,14 @@ func TestBuildInboundBulkImportPreviewKeepsIndependentPalletValuesAndFlagsConfli
 	}
 	if !hasInboundBulkIssue(preview.Documents[1].Issues, "SKU_ITEM_CODE_MISMATCH", InboundBulkIssueError) {
 		t.Fatalf("expected SKU/Item Code mismatch error: %#v", preview.Documents[1].Issues)
+	}
+	itemCodeConflict := findInboundBulkIssue(preview.Documents[1].Issues, "ITEM_CODE_SKU_CONFLICT", InboundBulkIssueError)
+	if itemCodeConflict == nil || itemCodeConflict.CurrentSKU != "SKU-2" || itemCodeConflict.CurrentItemCode != "ITEM-1" || itemCodeConflict.ExistingSKU != "SKU-1" {
+		t.Fatalf("expected concrete Item Code conflict context: %#v", itemCodeConflict)
+	}
+	skuMismatch := findInboundBulkIssue(preview.Documents[1].Issues, "SKU_ITEM_CODE_MISMATCH", InboundBulkIssueError)
+	if skuMismatch == nil || skuMismatch.CurrentSKU != "SKU-2" || skuMismatch.CurrentItemCode != "ITEM-1" || skuMismatch.ExistingItemCode != "ITEM-2" {
+		t.Fatalf("expected concrete SKU mismatch context: %#v", skuMismatch)
 	}
 }
 
@@ -522,10 +530,15 @@ func buildInboundBulkImportWorkbook(t *testing.T, dataRows [][]any) []byte {
 }
 
 func hasInboundBulkIssue(issues []InboundBulkImportIssue, code string, severity string) bool {
+	return findInboundBulkIssue(issues, code, severity) != nil
+}
+
+func findInboundBulkIssue(issues []InboundBulkImportIssue, code string, severity string) *InboundBulkImportIssue {
 	for _, issue := range issues {
 		if issue.Code == code && issue.Severity == severity {
-			return true
+			matched := issue
+			return &matched
 		}
 	}
-	return false
+	return nil
 }

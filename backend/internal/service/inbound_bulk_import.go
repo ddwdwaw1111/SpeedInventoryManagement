@@ -51,12 +51,16 @@ const (
 )
 
 type InboundBulkImportIssue struct {
-	Severity  string `json:"severity"`
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	RowNumber int    `json:"rowNumber,omitempty"`
-	Field     string `json:"field,omitempty"`
-	Value     string `json:"value,omitempty"`
+	Severity         string `json:"severity"`
+	Code             string `json:"code"`
+	Message          string `json:"message"`
+	RowNumber        int    `json:"rowNumber,omitempty"`
+	Field            string `json:"field,omitempty"`
+	Value            string `json:"value,omitempty"`
+	CurrentSKU       string `json:"currentSku,omitempty"`
+	CurrentItemCode  string `json:"currentItemCode,omitempty"`
+	ExistingSKU      string `json:"existingSku,omitempty"`
+	ExistingItemCode string `json:"existingItemCode,omitempty"`
 }
 
 type InboundBulkImportDocumentPreview struct {
@@ -1063,28 +1067,36 @@ func buildInboundBulkImportPreview(
 
 			master, skuExists := skuBySKU[line.SKU]
 			if itemMaster, itemExists := skuByItemNumber[line.ItemNumber]; line.ItemNumber != "" && itemExists && itemMaster.SKU != line.SKU {
-				document.preview.Issues = append(document.preview.Issues, inboundBulkIssue(
+				issue := inboundBulkIssue(
 					InboundBulkIssueError,
 					"ITEM_CODE_SKU_CONFLICT",
 					fmt.Sprintf("Item Code %s is already linked to SKU %s.", line.ItemNumber, itemMaster.SKU),
 					rowNumber,
 					bulkFieldItemNumber,
 					line.ItemNumber,
-				))
+				)
+				issue.CurrentSKU = line.SKU
+				issue.CurrentItemCode = line.ItemNumber
+				issue.ExistingSKU = itemMaster.SKU
+				document.preview.Issues = append(document.preview.Issues, issue)
 			}
 			if skuExists {
 				masterItemNumber := strings.TrimSpace(strings.ToUpper(master.ItemNumber))
 				if line.ItemNumber == "" {
 					line.ItemNumber = masterItemNumber
 				} else if masterItemNumber != "" && line.ItemNumber != masterItemNumber {
-					document.preview.Issues = append(document.preview.Issues, inboundBulkIssue(
+					issue := inboundBulkIssue(
 						InboundBulkIssueError,
 						"SKU_ITEM_CODE_MISMATCH",
 						fmt.Sprintf("SKU %s already uses Item Code %s.", line.SKU, masterItemNumber),
 						rowNumber,
 						bulkFieldItemNumber,
 						line.ItemNumber,
-					))
+					)
+					issue.CurrentSKU = line.SKU
+					issue.CurrentItemCode = line.ItemNumber
+					issue.ExistingItemCode = masterItemNumber
+					document.preview.Issues = append(document.preview.Issues, issue)
 				}
 				if line.Description == "" {
 					line.Description = firstNonEmpty(master.Description, master.Name, master.SKU)

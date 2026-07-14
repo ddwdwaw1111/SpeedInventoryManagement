@@ -210,7 +210,7 @@ export function OutboundBulkImportDialog({ open, customers, locations, items, in
                       <label>{t("bulkOutboundShipToAddress")}<input value={document.shipToAddress} onChange={(event) => updateDocument(document.documentKey, { shipToAddress: event.target.value })} /></label>
                       <label>{t("bulkOutboundShipToContact")}<input value={document.shipToContact} onChange={(event) => updateDocument(document.documentKey, { shipToContact: event.target.value })} /></label>
                     </div>
-                    {document.issues.length ? <div className="bulk-inbound-issue-list">{document.issues.map((issue, index) => <div className="bulk-inbound-issue bulk-inbound-issue--error" key={`${issue.code}-${issue.rowNumber}-${index}`}><WarningAmberRoundedIcon /><span>{issue.rowNumber ? `${t("bulkOutboundRow", { row: issue.rowNumber })}: ` : ""}{formatOutboundBulkIssue(issue.code, issue.message, t)}</span></div>)}</div> : null}
+                    {document.issues.length ? <div className="bulk-inbound-issue-list">{document.issues.map((issue, index) => <div className="bulk-inbound-issue bulk-inbound-issue--error" key={`${issue.code}-${issue.rowNumber}-${index}`}><WarningAmberRoundedIcon /><span>{issue.rowNumber ? `${t("bulkOutboundRow", { row: issue.rowNumber })}: ` : ""}{formatOutboundBulkIssue(issue, t)}</span></div>)}</div> : null}
                     <div className="bulk-inbound-table-wrap"><table className="bulk-inbound-line-table"><thead><tr><th>{t("warehouse")}</th><th>{t("bulkOutboundSourceContainer")}</th><th>{t("bulkOutboundSection")}</th><th>SKU</th><th>{t("bulkOutboundItemCodeReference")}</th><th>{t("quantity")}</th><th>{t("bulkOutboundInventoryPallets")}</th><th>{t("bulkOutboundOutboundPallets")}</th><th>{t("bulkOutboundLineNote")}</th></tr></thead><tbody>
                       {document.lines.map((line, index) => <tr key={`${document.documentKey}-${line.rowNumber}-${index}`}>
                         <td><select value={line.warehouse} onChange={(event) => updateLine(document.documentKey, index, { warehouse: event.target.value })}><option value="">{t("bulkOutboundSelect")}</option>{locations.map((location) => <option key={location.id} value={location.name}>{location.name}</option>)}</select></td>
@@ -254,7 +254,17 @@ function toNonNegativeWholeNumber(value: string) {
 
 type Translate = (key: string, params?: Record<string, string | number>) => string;
 
-function formatOutboundBulkIssue(code: string, fallback: string, t: Translate) {
+function formatOutboundBulkIssue(issue: OutboundBulkImportPreview["documents"][number]["issues"][number], t: Translate) {
+  if (issue.code === "INSUFFICIENT_STOCK") {
+    return t("bulkOutboundIssueInsufficientStockDetail", {
+      sku: issue.sku || "—",
+      requestedQty: issue.requestedQty ?? Number(issue.value || 0),
+      availableQty: issue.availableQty ?? 0,
+      warehouse: issue.warehouse || "—",
+      sourceContainer: issue.sourceContainer || t("bulkOutboundAllMatchingContainers"),
+      storageSection: issue.storageSection || t("bulkOutboundAllStorageSections")
+    });
+  }
   const keys: Record<string, string> = {
     MISSING_PICKING_ORDER: "bulkOutboundIssueMissingPickingOrder",
     INVALID_SHIP_DATE: "bulkOutboundIssueInvalidShipDate",
@@ -265,12 +275,11 @@ function formatOutboundBulkIssue(code: string, fallback: string, t: Translate) {
     INVALID_OUTBOUND_PALLETS: "bulkOutboundIssueInvalidOutboundPallets",
     INVALID_WAREHOUSE: "bulkOutboundIssueInvalidWarehouse",
     INVALID_SKU: "bulkOutboundIssueInvalidSku",
-    INSUFFICIENT_STOCK: "bulkOutboundIssueInsufficientStock",
     INSUFFICIENT_INVENTORY_PALLETS: "bulkOutboundIssueInsufficientInventoryPallets",
     DUPLICATE_PICKING_ORDER: "bulkOutboundIssueDuplicatePickingOrder",
     DUPLICATE_PICKING_ORDER_IN_IMPORT: "bulkOutboundIssueDuplicatePickingOrderInImport"
   };
-  return keys[code] ? t(keys[code]) : fallback;
+  return keys[issue.code] ? t(keys[issue.code]) : issue.message;
 }
 
 function formatOutboundCommitError(error: string | undefined, t: Translate) {

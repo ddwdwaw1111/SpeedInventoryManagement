@@ -494,5 +494,11 @@ function formatBulkImportIssue(issue: InboundBulkImportIssue, t: (key: string, p
     EXISTING_CONTAINER: "bulkIssueExistingContainer",
   };
   const key = keys[issue.code];
-  return key ? t(key, { value: issue.value || "—" }) : issue.message;
+  return key ? t(key, {
+    value: issue.value || "—",
+    currentSku: issue.currentSku || "—",
+    currentItemCode: issue.currentItemCode || issue.value || "—",
+    existingSku: issue.existingSku || "—",
+    existingItemCode: issue.existingItemCode || "—"
+  }) : issue.message;
 }

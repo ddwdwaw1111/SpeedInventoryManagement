@@ -145,6 +145,20 @@ func TestSelectOutboundBulkAllocationsUsesLaterContainerForAvailablePallets(t *t
 	}
 }
 
+func TestOutboundBulkInsufficientStockIssueExplainsRequestedAndAvailableScope(t *testing.T) {
+	line := OutboundBulkImportLinePreview{
+		RowNumber: 4, Warehouse: "NJ", SourceContainer: "CONT-A", StorageSection: "A1", SKU: "SKU-1", Quantity: 12,
+	}
+	issue := outboundBulkInsufficientStockIssue(line, 5)
+
+	if issue.Code != "INSUFFICIENT_STOCK" || issue.SKU != "SKU-1" || issue.RequestedQty != 12 || issue.AvailableQty != 5 {
+		t.Fatalf("unexpected stock issue quantities: %#v", issue)
+	}
+	if issue.Warehouse != "NJ" || issue.SourceContainer != "CONT-A" || issue.StorageSection != "A1" {
+		t.Fatalf("stock issue must retain its source scope: %#v", issue)
+	}
+}
+
 func TestAssignOutboundBulkInventoryPalletsKeepsOutboundCountIndependent(t *testing.T) {
 	remaining := map[int64]int{1: 1, 2: 2}
 	allocations, valid := assignOutboundBulkInventoryPallets([]outboundBulkSelectedAllocation{

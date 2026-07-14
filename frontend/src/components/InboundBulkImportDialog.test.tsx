@@ -112,6 +112,52 @@ describe("InboundBulkImportDialog", () => {
     await waitFor(() => expect(mockedApi.commitInboundBulkImport).not.toHaveBeenCalled());
   });
 
+  it("shows the exact SKU and Item Code values involved in catalog conflicts", async () => {
+    const invalidPreview = createPreview();
+    invalidPreview.validDocuments = 0;
+    invalidPreview.invalidDocuments = 1;
+    invalidPreview.documents[0].valid = false;
+    invalidPreview.documents[0].input.lines[0].sku = "SKU-2";
+    invalidPreview.documents[0].input.lines[0].itemNumber = "ITEM-1";
+    invalidPreview.documents[0].issues = [
+      {
+        severity: "ERROR",
+        code: "ITEM_CODE_SKU_CONFLICT",
+        message: "Item Code ITEM-1 is already linked to SKU SKU-1.",
+        rowNumber: 4,
+        currentSku: "SKU-2",
+        currentItemCode: "ITEM-1",
+        existingSku: "SKU-1"
+      },
+      {
+        severity: "ERROR",
+        code: "SKU_ITEM_CODE_MISMATCH",
+        message: "SKU SKU-2 already uses Item Code ITEM-2.",
+        rowNumber: 4,
+        currentSku: "SKU-2",
+        currentItemCode: "ITEM-1",
+        existingItemCode: "ITEM-2"
+      }
+    ];
+    mockedApi.previewInboundBulkImport.mockResolvedValue(invalidPreview);
+
+    const { container } = renderWithProviders(
+      <InboundBulkImportDialog
+        open
+        customers={[createCustomer()]}
+        locations={[createLocation()]}
+        onClose={vi.fn()}
+        onImported={vi.fn()}
+      />
+    );
+    const input = container.ownerDocument.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(["workbook"], "receipts.xlsx")] } });
+    fireEvent.click(screen.getByRole("button", { name: "Validate workbook" }));
+
+    expect(await screen.findByText(/Item Code ITEM-1 is assigned to SKU SKU-1, not the SKU SKU-2 entered on this row/)).toBeInTheDocument();
+    expect(screen.getByText(/SKU SKU-2 is assigned Item Code ITEM-2, but this row contains ITEM-1/)).toBeInTheDocument();
+  });
+
   it("allows preview edits and requires backend revalidation before import", async () => {
     const initialPreview = createPreview();
     initialPreview.validDocuments = 0;

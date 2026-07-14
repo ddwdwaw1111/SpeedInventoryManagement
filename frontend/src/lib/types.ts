@@ -857,6 +857,10 @@ export type InboundBulkImportIssue = {
   rowNumber?: number;
   field?: string;
   value?: string;
+  currentSku?: string;
+  currentItemCode?: string;
+  existingSku?: string;
+  existingItemCode?: string;
 };
 
 export type InboundBulkImportDocumentPreview = {
@@ -930,6 +934,12 @@ export type OutboundBulkImportIssue = {
   rowNumber?: number;
   field?: string;
   value?: string;
+  sku?: string;
+  warehouse?: string;
+  sourceContainer?: string;
+  storageSection?: string;
+  requestedQty?: number;
+  availableQty?: number;
 };
 
 export type OutboundBulkImportLinePreview = {

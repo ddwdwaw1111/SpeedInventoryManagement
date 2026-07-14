@@ -102,7 +102,18 @@ describe("OutboundBulkImportDialog", () => {
     preview.validDocuments = 0;
     preview.invalidDocuments = 1;
     preview.documents[0].valid = false;
-    preview.documents[0].issues = [{ severity: "ERROR", code: "INSUFFICIENT_STOCK", message: "Available stock is insufficient.", rowNumber: 4 }];
+    preview.documents[0].issues = [{
+      severity: "ERROR",
+      code: "INSUFFICIENT_STOCK",
+      message: "Available stock is insufficient.",
+      rowNumber: 4,
+      sku: "608333",
+      warehouse: "NJ",
+      sourceContainer: "CONT-A",
+      storageSection: "TEMP",
+      requestedQty: 5,
+      availableQty: 2
+    }];
     mockedApi.previewOutboundBulkImport.mockResolvedValue(preview);
     const { container } = renderWithProviders(<OutboundBulkImportDialog open customers={[createCustomer()]} locations={[createLocation()]} items={[createItem()]} onClose={vi.fn()} onImported={vi.fn()} />);
 
@@ -112,7 +123,8 @@ describe("OutboundBulkImportDialog", () => {
     fireEvent.change(fileInput, { target: { files: [new File(["workbook"], "shipments.xlsx")] } });
     fireEvent.click(screen.getByRole("button", { name: "校验工作簿" }));
 
-    expect(await screen.findByText(/当前行和工作簿前序行使用的可用库存不足/)).toBeInTheDocument();
+    expect(await screen.findByText(/SKU“608333”.*仅有 2 CTN 可用，但本行需要 5 CTN/)).toBeInTheDocument();
+    expect(screen.getByText(/筛选范围：仓库“NJ”.*来源货柜“CONT-A”.*库区“TEMP”/)).toBeInTheDocument();
     expect(screen.getByText("Item Code（仅供参考）")).toBeInTheDocument();
   });
 });
