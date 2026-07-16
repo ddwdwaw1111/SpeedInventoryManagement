@@ -250,7 +250,7 @@ func TestBuildOutboundBulkMainWarehousePlanTransfersRemoteAllocations(t *testing
 		Lines: []CreateOutboundDocumentLineInput{{
 			CustomerID: 1, LocationID: 9, SKUMasterID: 7, Quantity: 8, Pallets: 3,
 			PickAllocations: []OutboundPickAllocation{
-				{LocationID: 9, LocationName: "Overflow", StorageSection: "A1", ContainerNo: "CONT-A", AllocatedQty: 5, Pallets: 2},
+				{LocationID: 9, LocationName: "Overflow", StorageSection: "A1", ContainerNo: "CONT-A", AllocatedQty: 5, Pallets: 2, AutoTransferToMain: true},
 				{LocationID: 3, LocationName: "308 Herrod Blvd", StorageSection: "B2", ContainerNo: "CONT-B", AllocatedQty: 3, Pallets: 1},
 			},
 		}},
@@ -272,6 +272,9 @@ func TestBuildOutboundBulkMainWarehousePlanTransfersRemoteAllocations(t *testing
 		if allocation.LocationID != 3 || allocation.LocationName != "308 Herrod Blvd" {
 			t.Fatalf("expected rewritten 308 allocation, got %#v", allocation)
 		}
+	}
+	if input.Lines[0].PickAllocations[0].AutoTransferToMain {
+		t.Fatal("expected the pending transfer marker to be cleared after staging")
 	}
 	if input.Lines[0].PickAllocations[0].StorageSection != DefaultStorageSection || input.Lines[0].PickAllocations[1].StorageSection != "B2" {
 		t.Fatalf("expected only transferred stock to stage in TEMP, got %#v", input.Lines[0].PickAllocations)

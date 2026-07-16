@@ -13,6 +13,7 @@ const (
 	ContainerStatusPickupAssigned   = "PICKUP_ASSIGNED"
 	ContainerStatusPickedUp         = "PICKED_UP"
 	ContainerStatusCorrected        = "CORRECTED"
+	ContainerStatusVoided           = "VOIDED"
 
 	LifecycleEventVisibilityCustomer = "CUSTOMER"
 	LifecycleEventVisibilityInternal = "INTERNAL"
@@ -292,12 +293,15 @@ func (s *Store) ListContainerRecords(ctx context.Context, limit int, filters Con
 	}
 	if filters.OperationalOnly {
 		whereClauses = append(whereClauses,
-			"UPPER(TRIM(cn.status)) <> 'CORRECTED'",
+			"UPPER(TRIM(cn.status)) NOT IN ('CORRECTED', 'VOIDED')",
 			`NOT EXISTS (
 				SELECT 1
 				FROM inbound_documents source_d
 				WHERE source_d.id = cn.inbound_document_id
-				  AND source_d.corrected_at IS NOT NULL
+				  AND (
+					source_d.corrected_at IS NOT NULL
+					OR UPPER(TRIM(source_d.status)) IN ('DELETED', 'CANCELLED')
+				  )
 			)`,
 		)
 	}
@@ -369,12 +373,15 @@ func (s *Store) getContainerByNo(ctx context.Context, customerID int64, containe
 	}
 	if operationalOnly {
 		whereClauses = append(whereClauses,
-			"UPPER(TRIM(cn.status)) <> 'CORRECTED'",
+			"UPPER(TRIM(cn.status)) NOT IN ('CORRECTED', 'VOIDED')",
 			`NOT EXISTS (
 				SELECT 1
 				FROM inbound_documents source_d
 				WHERE source_d.id = cn.inbound_document_id
-				  AND source_d.corrected_at IS NOT NULL
+				  AND (
+					source_d.corrected_at IS NOT NULL
+					OR UPPER(TRIM(source_d.status)) IN ('DELETED', 'CANCELLED')
+				  )
 			)`,
 		)
 	}

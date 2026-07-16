@@ -56,7 +56,7 @@ describe("OutboundBulkImportDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Revalidate changes" }));
     await waitFor(() => expect(mockedApi.revalidateOutboundBulkImport).toHaveBeenCalled());
     fireEvent.click(await screen.findByRole("button", { name: "Create 1 drafts" }));
-    await screen.findByText("Draft shipment #99 created after 1 automatic transfer line(s)");
+    await screen.findByText("Draft shipment #99 created with 1 pending automatic transfer line(s)");
     expect(onImported).toHaveBeenCalledTimes(1);
   });
 
@@ -70,6 +70,20 @@ describe("OutboundBulkImportDialog", () => {
     fireEvent.change(fileInput, { target: { files: [new File(["invalid"], "shipments.csv")] } });
     expect(screen.getByText("Please select an .xlsx workbook.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Validate workbook" })).toBeDisabled();
+  });
+
+  it("renders a valid preview when the API returns a null issue list", async () => {
+    const preview = createPreview();
+    preview.documents[0].issues = null as unknown as OutboundBulkImportPreview["documents"][number]["issues"];
+    mockedApi.previewOutboundBulkImport.mockResolvedValue(preview);
+    const { container } = renderWithProviders(<OutboundBulkImportDialog open customers={[createCustomer()]} locations={[createLocation()]} items={[createItem()]} onClose={vi.fn()} onImported={vi.fn()} />);
+
+    const fileInput = container.ownerDocument.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [new File(["workbook"], "shipments.xlsx")] } });
+    fireEvent.click(screen.getByRole("button", { name: "Validate workbook" }));
+
+    expect(await screen.findByText("PO-100")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create 1 drafts" })).toBeEnabled();
   });
 
   it("normalizes Qty, Inventory Pallets, and Outbound Pallets independently before revalidation", async () => {

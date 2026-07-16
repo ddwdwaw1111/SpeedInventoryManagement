@@ -44,16 +44,17 @@ type OutboundDocument struct {
 }
 
 type OutboundPickAllocation struct {
-	ID             int64     `json:"id"`
-	LineID         int64     `json:"lineId"`
-	ItemNumber     string    `json:"itemNumber"`
-	LocationID     int64     `json:"locationId"`
-	LocationName   string    `json:"locationName"`
-	StorageSection string    `json:"storageSection"`
-	ContainerNo    string    `json:"containerNo"`
-	AllocatedQty   int       `json:"allocatedQty"`
-	Pallets        int       `json:"pallets"` // Inventory pallets removed from this container balance.
-	CreatedAt      time.Time `json:"createdAt"`
+	ID                 int64     `json:"id"`
+	LineID             int64     `json:"lineId"`
+	ItemNumber         string    `json:"itemNumber"`
+	LocationID         int64     `json:"locationId"`
+	LocationName       string    `json:"locationName"`
+	StorageSection     string    `json:"storageSection"`
+	ContainerNo        string    `json:"containerNo"`
+	AllocatedQty       int       `json:"allocatedQty"`
+	Pallets            int       `json:"pallets"` // Inventory pallets removed from this container balance.
+	AutoTransferToMain bool      `json:"autoTransferToMain,omitempty"`
+	CreatedAt          time.Time `json:"createdAt"`
 }
 
 type OutboundDocumentLine struct {
@@ -200,21 +201,22 @@ type lockedOutboundSource struct {
 }
 
 type outboundAllocationCandidate struct {
-	BucketKey      string
-	SKUMasterID    int64
-	CustomerID     int64
-	ItemNumber     string
-	LocationID     int64
-	LocationName   string
-	StorageSection string
-	ContainerNo    string
-	SKU            string
-	Description    string
-	Unit           string
-	AvailableQty   int
-	AllocatedQty   int
-	Pallets        int
-	SortAt         time.Time
+	BucketKey          string
+	SKUMasterID        int64
+	CustomerID         int64
+	ItemNumber         string
+	LocationID         int64
+	LocationName       string
+	StorageSection     string
+	ContainerNo        string
+	SKU                string
+	Description        string
+	Unit               string
+	AvailableQty       int
+	AllocatedQty       int
+	Pallets            int
+	AutoTransferToMain bool
+	SortAt             time.Time
 }
 
 type outboundAllocationReservationState struct {
@@ -678,6 +680,15 @@ func (s *Store) UpdateOutboundDocument(ctx context.Context, documentID int64, in
 	if err != nil {
 		return OutboundDocument{}, err
 	}
+	preserveMainWarehouseTransfer := outboundLineRowsHavePendingMainWarehouseTransfer(existingLineRows)
+	var mainOutboundLocationID int64
+	if preserveMainWarehouseTransfer {
+		mainLocation, err := resolveMainOutboundLocationTx(ctx, tx)
+		if err != nil {
+			return OutboundDocument{}, err
+		}
+		mainOutboundLocationID = mainLocation.ID
+	}
 	if outboundTrackingRequiresActiveReservation(existingTrackingStatus) {
 		if err := s.releaseOutboundDocumentReservationsTx(ctx, tx, existingLineRows); err != nil {
 			return OutboundDocument{}, err
@@ -705,8 +716,18 @@ func (s *Store) UpdateOutboundDocument(ctx context.Context, documentID int64, in
 		} else if customerID != lockedSource.CustomerID {
 			return OutboundDocument{}, fmt.Errorf("%w: all outbound lines must belong to the same customer", ErrInvalidInput)
 		}
-		if _, err := s.prepareOutboundDraftLineAllocationsTx(ctx, tx, lockedSource, line, reservationState); err != nil {
+		allocations, err := s.prepareOutboundDraftLineAllocationsTx(ctx, tx, lockedSource, line, reservationState)
+		if err != nil {
 			return OutboundDocument{}, err
+		}
+		if preserveMainWarehouseTransfer {
+			if len(line.PickAllocations) == 0 {
+				line.PickAllocations = toOutboundPickAllocationsFromCandidates(line, allocations)
+			}
+			for allocationIndex := range line.PickAllocations {
+				allocation := &line.PickAllocations[allocationIndex]
+				allocation.AutoTransferToMain = firstNonZeroInt64(allocation.LocationID, line.LocationID) != mainOutboundLocationID
+			}
 		}
 	}
 
@@ -779,6 +800,17 @@ func (s *Store) UpdateOutboundDocument(ctx context.Context, documentID int64, in
 	}
 
 	return s.getOutboundDocument(ctx, documentID)
+}
+
+func outboundLineRowsHavePendingMainWarehouseTransfer(lineRows []outboundDocumentLineRow) bool {
+	for _, lineRow := range lineRows {
+		for _, allocation := range decodeOutboundPickAllocationsOrEmpty(lineRow.PickAllocationsJSON) {
+			if allocation.AutoTransferToMain {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Store) UpdateOutboundDocumentNote(ctx context.Context, documentID int64, input UpdateOutboundDocumentNoteInput) (OutboundDocument, error) {
@@ -1021,7 +1053,17 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 	if len(lineRows) == 0 {
 		return fmt.Errorf("%w: outbound document must contain at least one line", ErrInvalidInput)
 	}
-	if !outboundTrackingRequiresActiveReservation(currentTrackingStatus) {
+	lineRows, autoTransferred, err := s.stageOutboundDraftAtMainWarehouseTx(
+		ctx,
+		tx,
+		documentRow,
+		lineRows,
+		outboundTrackingRequiresActiveReservation(currentTrackingStatus),
+	)
+	if err != nil {
+		return err
+	}
+	if autoTransferred || !outboundTrackingRequiresActiveReservation(currentTrackingStatus) {
 		lineRows, err = s.reserveOutboundDocumentLinesTx(ctx, tx, documentRow.CustomerID, lineRows)
 		if err != nil {
 			return err
@@ -1160,6 +1202,119 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 	}
 
 	return nil
+}
+
+func (s *Store) stageOutboundDraftAtMainWarehouseTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	document outboundDocumentRow,
+	lineRows []outboundDocumentLineRow,
+	hasActiveReservation bool,
+) ([]outboundDocumentLineRow, bool, error) {
+	input := CreateOutboundDocumentInput{
+		PackingListNo: document.PackingListNo,
+		Lines:         make([]CreateOutboundDocumentLineInput, 0, len(lineRows)),
+	}
+	if document.ExpectedShipDate != nil {
+		input.ExpectedShipDate = document.ExpectedShipDate.UTC().Format(time.RFC3339)
+	}
+	if document.ActualShipDate != nil {
+		input.ActualShipDate = document.ActualShipDate.UTC().Format(time.RFC3339)
+	}
+	for _, lineRow := range lineRows {
+		input.Lines = append(input.Lines, outboundLineInputFromRow(document.CustomerID, lineRow))
+	}
+	if !hasPendingOutboundMainWarehouseTransfer(input) {
+		return lineRows, false, nil
+	}
+
+	mainLocation, err := resolveMainOutboundLocationTx(ctx, tx)
+	if err != nil {
+		return nil, false, err
+	}
+	if countOutboundAllocationsOutsideLocation(input, mainLocation.ID) == 0 {
+		return lineRows, false, nil
+	}
+
+	plannedInput, transferInput, err := buildOutboundBulkMainWarehousePlan(input, mainLocation)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(transferInput.Lines) == 0 {
+		return lineRows, false, nil
+	}
+	if hasActiveReservation {
+		if err := s.releaseOutboundDocumentReservationsTx(ctx, tx, lineRows); err != nil {
+			return nil, false, err
+		}
+	}
+
+	transferInput = sanitizeInventoryTransferInput(transferInput)
+	if err := validateInventoryTransferInput(transferInput); err != nil {
+		return nil, false, err
+	}
+	transferTime, err := parseOptionalDateTime(transferInput.ActualTransferredAt)
+	if err != nil {
+		return nil, false, err
+	}
+	if _, err := s.createInventoryTransferTx(ctx, tx, transferInput, transferTime); err != nil {
+		return nil, false, err
+	}
+
+	for index := range lineRows {
+		lineInput := plannedInput.Lines[index]
+		lineRow := &lineRows[index]
+		locationName := lineRow.LocationName
+		storageSection := fallbackSection(lineRow.StorageSection)
+		if lineInput.LocationID == mainLocation.ID {
+			locationName = mainLocation.Name
+		}
+		if len(lineInput.PickAllocations) > 0 {
+			storageSection = fallbackSection(lineInput.PickAllocations[0].StorageSection)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE outbound_document_lines
+			SET
+				location_id = ?,
+				location_name_snapshot = ?,
+				storage_section = ?,
+				pick_allocations_json = ?
+			WHERE id = ?
+		`,
+			lineInput.LocationID,
+			locationName,
+			storageSection,
+			nullableString(mustEncodeOutboundPickAllocations(lineInput.PickAllocations)),
+			lineRow.ID,
+		); err != nil {
+			return nil, false, mapDBError(fmt.Errorf("stage outbound line at main warehouse: %w", err))
+		}
+		lineRow.LocationID = lineInput.LocationID
+		lineRow.LocationName = locationName
+		lineRow.StorageSection = storageSection
+		lineRow.PickAllocationsJSON = mustEncodeOutboundPickAllocations(lineInput.PickAllocations)
+	}
+	return lineRows, true, nil
+}
+
+func resolveMainOutboundLocationTx(ctx context.Context, tx *sql.Tx) (Location, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id, name FROM storage_locations ORDER BY name ASC`)
+	if err != nil {
+		return Location{}, fmt.Errorf("load main outbound warehouse: %w", err)
+	}
+	defer rows.Close()
+	locations := make([]Location, 0)
+	for rows.Next() {
+		var location Location
+		if err := rows.Scan(&location.ID, &location.Name); err != nil {
+			return Location{}, fmt.Errorf("scan main outbound warehouse: %w", err)
+		}
+		locations = append(locations, location)
+	}
+	if err := rows.Err(); err != nil {
+		return Location{}, fmt.Errorf("iterate main outbound warehouses: %w", err)
+	}
+	return resolveMainOutboundLocation(locations)
 }
 
 func (s *Store) CancelOutboundDocument(ctx context.Context, documentID int64) (OutboundDocument, error) {
@@ -2409,6 +2564,7 @@ func (s *Store) resolveOutboundDraftBucketAllocationsTx(
 		candidate.ContainerNo = containerNo
 		candidate.ItemNumber = firstNonEmpty(strings.TrimSpace(draftAllocation.ItemNumber), candidate.ItemNumber, source.ItemNumber)
 		candidate.Pallets = draftAllocation.Pallets
+		candidate.AutoTransferToMain = draftAllocation.AutoTransferToMain
 
 		allocations = append(allocations, candidate)
 		reservationState.ByBucketKey[bucketKey] += draftAllocation.AllocatedQty
@@ -2722,16 +2878,17 @@ func normalizeOutboundPickAllocations(entries []OutboundPickAllocation) []Outbou
 	}
 
 	type groupedAllocation struct {
-		ID             int64
-		LineID         int64
-		ItemNumber     string
-		LocationID     int64
-		LocationName   string
-		StorageSection string
-		ContainerNo    string
-		AllocatedQty   int
-		Pallets        int
-		CreatedAt      time.Time
+		ID                 int64
+		LineID             int64
+		ItemNumber         string
+		LocationID         int64
+		LocationName       string
+		StorageSection     string
+		ContainerNo        string
+		AllocatedQty       int
+		Pallets            int
+		AutoTransferToMain bool
+		CreatedAt          time.Time
 	}
 
 	order := make([]string, 0, len(entries))
@@ -2746,22 +2903,23 @@ func normalizeOutboundPickAllocations(entries []OutboundPickAllocation) []Outbou
 		storageSection := fallbackSection(entry.StorageSection)
 		containerNo := strings.TrimSpace(entry.ContainerNo)
 		itemNumber := strings.TrimSpace(entry.ItemNumber)
-		key := fmt.Sprintf("%d|%s|%s|%s", locationID, storageSection, containerNo, itemNumber)
+		key := fmt.Sprintf("%d|%s|%s|%s|%t", locationID, storageSection, containerNo, itemNumber, entry.AutoTransferToMain)
 
 		existing, exists := grouped[key]
 		if !exists {
 			order = append(order, key)
 			grouped[key] = &groupedAllocation{
-				ID:             entry.ID,
-				LineID:         entry.LineID,
-				ItemNumber:     itemNumber,
-				LocationID:     locationID,
-				LocationName:   strings.TrimSpace(entry.LocationName),
-				StorageSection: storageSection,
-				ContainerNo:    containerNo,
-				AllocatedQty:   allocatedQty,
-				Pallets:        maxInt(entry.Pallets, 0),
-				CreatedAt:      entry.CreatedAt,
+				ID:                 entry.ID,
+				LineID:             entry.LineID,
+				ItemNumber:         itemNumber,
+				LocationID:         locationID,
+				LocationName:       strings.TrimSpace(entry.LocationName),
+				StorageSection:     storageSection,
+				ContainerNo:        containerNo,
+				AllocatedQty:       allocatedQty,
+				Pallets:            maxInt(entry.Pallets, 0),
+				AutoTransferToMain: entry.AutoTransferToMain,
+				CreatedAt:          entry.CreatedAt,
 			}
 			continue
 		}
@@ -2789,16 +2947,17 @@ func normalizeOutboundPickAllocations(entries []OutboundPickAllocation) []Outbou
 			continue
 		}
 		normalized = append(normalized, OutboundPickAllocation{
-			ID:             entry.ID,
-			LineID:         entry.LineID,
-			ItemNumber:     entry.ItemNumber,
-			LocationID:     entry.LocationID,
-			LocationName:   entry.LocationName,
-			StorageSection: entry.StorageSection,
-			ContainerNo:    entry.ContainerNo,
-			AllocatedQty:   entry.AllocatedQty,
-			Pallets:        maxInt(entry.Pallets, 0),
-			CreatedAt:      entry.CreatedAt,
+			ID:                 entry.ID,
+			LineID:             entry.LineID,
+			ItemNumber:         entry.ItemNumber,
+			LocationID:         entry.LocationID,
+			LocationName:       entry.LocationName,
+			StorageSection:     entry.StorageSection,
+			ContainerNo:        entry.ContainerNo,
+			AllocatedQty:       entry.AllocatedQty,
+			Pallets:            maxInt(entry.Pallets, 0),
+			AutoTransferToMain: entry.AutoTransferToMain,
+			CreatedAt:          entry.CreatedAt,
 		})
 	}
 	return normalized
@@ -2865,19 +3024,20 @@ func toOutboundAllocationCandidatesFromDraftPickAllocations(source lockedOutboun
 	allocations := make([]outboundAllocationCandidate, 0, len(entries))
 	for _, entry := range normalizeOutboundPickAllocations(entries) {
 		allocations = append(allocations, outboundAllocationCandidate{
-			BucketKey:      outboundAllocationBucketKey(source.CustomerID, firstNonZeroInt64(entry.LocationID, source.LocationID), source.SKUMasterID, entry.StorageSection, entry.ContainerNo),
-			SKUMasterID:    source.SKUMasterID,
-			CustomerID:     source.CustomerID,
-			ItemNumber:     firstNonEmpty(strings.TrimSpace(entry.ItemNumber), source.ItemNumber),
-			LocationID:     firstNonZeroInt64(entry.LocationID, source.LocationID),
-			LocationName:   firstNonEmpty(strings.TrimSpace(entry.LocationName), source.LocationName),
-			StorageSection: fallbackSection(entry.StorageSection),
-			ContainerNo:    strings.TrimSpace(entry.ContainerNo),
-			SKU:            source.SKU,
-			Description:    source.Description,
-			Unit:           source.Unit,
-			AllocatedQty:   entry.AllocatedQty,
-			Pallets:        maxInt(entry.Pallets, 0),
+			BucketKey:          outboundAllocationBucketKey(source.CustomerID, firstNonZeroInt64(entry.LocationID, source.LocationID), source.SKUMasterID, entry.StorageSection, entry.ContainerNo),
+			SKUMasterID:        source.SKUMasterID,
+			CustomerID:         source.CustomerID,
+			ItemNumber:         firstNonEmpty(strings.TrimSpace(entry.ItemNumber), source.ItemNumber),
+			LocationID:         firstNonZeroInt64(entry.LocationID, source.LocationID),
+			LocationName:       firstNonEmpty(strings.TrimSpace(entry.LocationName), source.LocationName),
+			StorageSection:     fallbackSection(entry.StorageSection),
+			ContainerNo:        strings.TrimSpace(entry.ContainerNo),
+			SKU:                source.SKU,
+			Description:        source.Description,
+			Unit:               source.Unit,
+			AllocatedQty:       entry.AllocatedQty,
+			Pallets:            maxInt(entry.Pallets, 0),
+			AutoTransferToMain: entry.AutoTransferToMain,
 		})
 	}
 	return allocations
@@ -2891,14 +3051,15 @@ func toOutboundPickAllocationsFromCandidates(line *CreateOutboundDocumentLineInp
 			continue
 		}
 		pickAllocations = append(pickAllocations, OutboundPickAllocation{
-			ItemNumber:     firstNonEmpty(strings.TrimSpace(allocation.ItemNumber)),
-			LocationID:     allocation.LocationID,
-			LocationName:   allocation.LocationName,
-			StorageSection: fallbackSection(allocation.StorageSection),
-			ContainerNo:    strings.TrimSpace(allocation.ContainerNo),
-			AllocatedQty:   allocation.AllocatedQty,
-			Pallets:        maxInt(allocation.Pallets, 0),
-			CreatedAt:      createdAt,
+			ItemNumber:         firstNonEmpty(strings.TrimSpace(allocation.ItemNumber)),
+			LocationID:         allocation.LocationID,
+			LocationName:       allocation.LocationName,
+			StorageSection:     fallbackSection(allocation.StorageSection),
+			ContainerNo:        strings.TrimSpace(allocation.ContainerNo),
+			AllocatedQty:       allocation.AllocatedQty,
+			Pallets:            maxInt(allocation.Pallets, 0),
+			AutoTransferToMain: allocation.AutoTransferToMain,
+			CreatedAt:          createdAt,
 		})
 	}
 	if line == nil {

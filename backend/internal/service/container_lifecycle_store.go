@@ -70,7 +70,10 @@ func (s *Store) ListContainerLifecycleEvents(ctx context.Context, limit int, fil
 			FROM inbound_documents source_d
 			WHERE UPPER(TRIM(cle.source_document_type)) = 'INBOUND'
 			  AND source_d.id = cle.source_document_id
-			  AND source_d.corrected_at IS NOT NULL
+			  AND (
+				source_d.corrected_at IS NOT NULL
+				OR UPPER(TRIM(source_d.status)) IN ('DELETED', 'CANCELLED')
+			  )
 		)`)
 	}
 

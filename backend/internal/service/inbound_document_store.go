@@ -1398,6 +1398,9 @@ func (s *Store) deleteInboundDocumentTx(ctx context.Context, tx *sql.Tx, documen
 			return time.Time{}, err
 		}
 	}
+	if err := reconcileDeletedInboundContainerTx(ctx, tx, documentRow, deletedAt); err != nil {
+		return time.Time{}, err
+	}
 	if documentRow.CorrectsDocumentID != nil {
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE inbound_documents
@@ -1425,6 +1428,83 @@ func (s *Store) deleteInboundDocumentTx(ctx context.Context, tx *sql.Tx, documen
 		return time.Time{}, mapDBError(fmt.Errorf("mark inbound document deleted: %w", err))
 	}
 	return deletedAt, nil
+}
+
+func reconcileDeletedInboundContainerTx(ctx context.Context, tx *sql.Tx, document inboundDocumentRow, deletedAt time.Time) error {
+	containerNo := normalizeContainerNo(document.ContainerNo)
+	if containerNo == "" {
+		return nil
+	}
+	repointResult, err := tx.ExecContext(ctx, `
+		UPDATE containers
+		SET
+			inbound_document_id = (
+				SELECT MAX(replacement.id)
+				FROM inbound_documents replacement
+				WHERE replacement.customer_id = containers.customer_id
+				  AND UPPER(TRIM(replacement.container_no)) = UPPER(TRIM(containers.container_no))
+				  AND replacement.id <> ?
+				  AND UPPER(TRIM(replacement.status)) = ?
+				  AND replacement.corrected_at IS NULL
+			),
+			updated_at = CURRENT_TIMESTAMP
+		WHERE customer_id = ?
+		  AND inbound_document_id = ?
+		  AND UPPER(TRIM(container_no)) = ?
+	`,
+		document.ID,
+		DocumentStatusConfirmed,
+		document.CustomerID,
+		document.ID,
+		containerNo,
+	)
+	if err != nil {
+		return mapDBError(fmt.Errorf("repoint deleted inbound container receipt: %w", err))
+	}
+	repointedContainers, err := repointResult.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("count repointed inbound containers: %w", err)
+	}
+	if repointedContainers == 0 {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE containers
+		SET
+			status = ?,
+			tracking_status = ?,
+			last_event_at = GREATEST(COALESCE(last_event_at, ?), ?),
+			updated_at = CURRENT_TIMESTAMP
+		WHERE customer_id = ?
+		  AND UPPER(TRIM(container_no)) = ?
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM inventory_items remaining
+			WHERE remaining.container_id = containers.id
+			  AND (remaining.quantity > 0 OR remaining.pallets > 0)
+		  )
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM inbound_documents remaining_receipt
+			WHERE remaining_receipt.customer_id = containers.customer_id
+			  AND UPPER(TRIM(remaining_receipt.container_no)) = UPPER(TRIM(containers.container_no))
+			  AND remaining_receipt.id <> ?
+			  AND UPPER(TRIM(remaining_receipt.status)) = ?
+			  AND remaining_receipt.corrected_at IS NULL
+		  )
+	`,
+		ContainerStatusVoided,
+		ContainerStatusVoided,
+		deletedAt,
+		deletedAt,
+		document.CustomerID,
+		containerNo,
+		document.ID,
+		DocumentStatusConfirmed,
+	); err != nil {
+		return mapDBError(fmt.Errorf("void deleted inbound container: %w", err))
+	}
+	return nil
 }
 
 func (s *Store) ArchiveInboundDocument(ctx context.Context, documentID int64) (InboundDocument, error) {
@@ -2278,7 +2358,7 @@ func (s *Store) syncInboundItemSnapshotTx(ctx context.Context, tx *sql.Tx, itemI
 func sanitizeInboundDocumentInput(input CreateInboundDocumentInput) CreateInboundDocumentInput {
 	input.ExpectedArrivalDate = strings.TrimSpace(input.ExpectedArrivalDate)
 	input.ActualArrivalDate = strings.TrimSpace(input.ActualArrivalDate)
-	input.ContainerNo = strings.TrimSpace(strings.ToUpper(input.ContainerNo))
+	input.ContainerNo = normalizeInboundContainerNo(input.ContainerNo, input.ActualArrivalDate)
 	input.ContainerType = strings.TrimSpace(strings.ToUpper(input.ContainerType))
 	input.HandlingMode = strings.TrimSpace(strings.ToUpper(input.HandlingMode))
 	input.StorageSection = fallbackSection(strings.TrimSpace(strings.ToUpper(input.StorageSection)))
@@ -2317,6 +2397,23 @@ func sanitizeInboundDocumentInput(input CreateInboundDocumentInput) CreateInboun
 	}
 	input.Lines = lines
 	return input
+}
+
+// normalizeInboundContainerNo removes the legacy date suffix used by some
+// historical import workbooks to distinguish multiple receipts for one
+// physical container. The suffix is removed only when it exactly matches the
+// receipt's actual arrival date, so ordinary container numbers remain intact.
+func normalizeInboundContainerNo(value string, actualArrivalDate string) string {
+	normalized := normalizeContainerNo(value)
+	arrivalDate, err := time.Parse(time.DateOnly, strings.TrimSpace(actualArrivalDate))
+	if err != nil {
+		return normalized
+	}
+	suffix := "-" + arrivalDate.Format("20060102")
+	if len(normalized) <= len(suffix) || !strings.HasSuffix(normalized, suffix) {
+		return normalized
+	}
+	return strings.TrimSuffix(normalized, suffix)
 }
 
 func validateInboundDocumentInput(input CreateInboundDocumentInput) error {

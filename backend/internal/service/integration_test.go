@@ -1570,6 +1570,16 @@ func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 	if cancelled.Status != DocumentStatusDeleted {
 		t.Fatalf("expected deleted inbound status, got %q", cancelled.Status)
 	}
+	voidedContainer, err := store.GetContainerByNo(ctx, customer.ID, original.ContainerNo)
+	if err != nil {
+		t.Fatalf("load container after deleting inbound receipt: %v", err)
+	}
+	if voidedContainer.Status != ContainerStatusVoided || voidedContainer.TrackingStatus != ContainerStatusVoided {
+		t.Fatalf("expected deleted receipt container to be voided, got %#v", voidedContainer)
+	}
+	if _, err := store.GetOperationalContainerByNo(ctx, customer.ID, original.ContainerNo); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected voided container to disappear from operational lookup, got %v", err)
+	}
 
 	// Deleted receipts remain in the audit tables but disappear from operational lists.
 	inboundDocuments, err := store.ListInboundDocuments(ctx, 20)
@@ -2964,7 +2974,7 @@ func TestOutboundAutoContainerAllocationIntegration(t *testing.T) {
 	}
 }
 
-func TestBulkOutboundTransfersRemoteStockTo308BeforeCreatingDraftIntegration(t *testing.T) {
+func TestBulkOutboundFindsRemoteContainerAndTransfersWhenDraftConfirmedIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
@@ -2987,23 +2997,45 @@ func TestBulkOutboundTransfersRemoteStockTo308BeforeCreatingDraftIntegration(t *
 	}); err != nil {
 		t.Fatalf("seed remote inbound stock: %v", err)
 	}
-	sourceItem := mustFindItemByContainer(t, ctx, store, sourceLocation.ID, DefaultStorageSection, containerNo, item.SKU)
+	pickingOrderNo := "PO-BULK-308-" + suffix
+	preview, err := store.buildOutboundBulkImportPreview(ctx, "bulk-308.xlsx", customer.ID, []OutboundBulkImportDocumentPreview{{
+		DocumentKey:    "ROW-2",
+		PickingOrderNo: pickingOrderNo,
+		ActualShipDate: "2026-07-15",
+		RowNumbers:     []int{2},
+		Lines: []OutboundBulkImportLinePreview{{
+			RowNumber:        2,
+			Warehouse:        mainLocation.Name,
+			SourceContainer:  containerNo,
+			StorageSection:   DefaultStorageSection,
+			SKU:              item.SKU,
+			Quantity:         4,
+			InventoryPallets: 1,
+			OutboundPallets:  3,
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("preview remote inventory for warehouse 308: %v", err)
+	}
+	if preview.ValidDocuments != 1 || len(preview.Documents) != 1 || !preview.Documents[0].Valid {
+		t.Fatalf("expected remote container to produce a valid 308 preview: %#v", preview)
+	}
+	previewDocument := preview.Documents[0]
+	if previewDocument.TransferLines != 1 || !previewDocument.Lines[0].RequiresTransfer || len(previewDocument.Input.Lines) != 1 {
+		t.Fatalf("expected preview to mark one pending automatic transfer: %#v", previewDocument)
+	}
+	previewAllocation := previewDocument.Input.Lines[0].PickAllocations[0]
+	if previewAllocation.LocationID != sourceLocation.ID || !previewAllocation.AutoTransferToMain {
+		t.Fatalf("expected preview to retain and mark the actual remote allocation: %#v", previewAllocation)
+	}
 
 	response, err := store.CreateOutboundDocumentsBulkDraft(ctx, OutboundBulkImportCommitInput{
 		ImportID:       "0123456789abcdef0123456789abcdef",
 		SourceFileName: "bulk-308.xlsx",
 		CustomerID:     customer.ID,
 		Documents: []OutboundBulkImportCommitDocument{{
-			DocumentKey: "ROW-2",
-			Input: CreateOutboundDocumentInput{
-				PackingListNo: "PO-BULK-308-" + suffix, ExpectedShipDate: "2026-07-15", Status: DocumentStatusDraft, TrackingStatus: OutboundTrackingScheduled,
-				Lines: []CreateOutboundDocumentLineInput{{
-					CustomerID: customer.ID, LocationID: sourceLocation.ID, SKUMasterID: sourceItem.SKUMasterID, Quantity: 4, Pallets: 3,
-					PickAllocations: []OutboundPickAllocation{{
-						LocationID: sourceLocation.ID, LocationName: sourceLocation.Name, StorageSection: DefaultStorageSection, ContainerNo: containerNo, AllocatedQty: 4, Pallets: 1,
-					}},
-				}},
-			},
+			DocumentKey: previewDocument.DocumentKey,
+			Input:       previewDocument.Input,
 		}},
 	})
 	if err != nil {
@@ -3013,24 +3045,66 @@ func TestBulkOutboundTransfersRemoteStockTo308BeforeCreatingDraftIntegration(t *
 		t.Fatalf("unexpected bulk outbound response: %#v", response)
 	}
 	document := response.Results[0].Document
-	if document == nil || len(document.Lines) != 1 || document.Lines[0].LocationID != mainLocation.ID || len(document.Lines[0].PickAllocations) != 1 {
-		t.Fatalf("expected draft allocated from warehouse 308: %#v", document)
+	if document == nil || len(document.Lines) != 1 || document.Lines[0].LocationID != sourceLocation.ID || len(document.Lines[0].PickAllocations) != 1 {
+		t.Fatalf("expected draft to retain its actual remote source: %#v", document)
 	}
 	allocation := document.Lines[0].PickAllocations[0]
-	if allocation.LocationID != mainLocation.ID || allocation.StorageSection != DefaultStorageSection || allocation.ContainerNo != containerNo {
-		t.Fatalf("unexpected rewritten outbound allocation: %#v", allocation)
+	if allocation.LocationID != sourceLocation.ID || allocation.ContainerNo != containerNo || !allocation.AutoTransferToMain {
+		t.Fatalf("unexpected pending remote outbound allocation: %#v", allocation)
 	}
 
+	editedInput := previewDocument.Input
+	editedInput.Lines[0].PickAllocations[0].AutoTransferToMain = false
+	editedDocument, err := store.UpdateOutboundDocument(ctx, document.ID, editedInput)
+	if err != nil {
+		t.Fatalf("save edited bulk outbound draft without transfer marker: %v", err)
+	}
+	if len(editedDocument.Lines) != 1 || len(editedDocument.Lines[0].PickAllocations) != 1 || !editedDocument.Lines[0].PickAllocations[0].AutoTransferToMain {
+		t.Fatalf("expected draft edit to preserve the pending automatic transfer: %#v", editedDocument)
+	}
+	document = &editedDocument
+
 	remainingSource := mustFindItemByContainer(t, ctx, store, sourceLocation.ID, DefaultStorageSection, containerNo, item.SKU)
-	if remainingSource.Quantity != 6 || remainingSource.Pallets != 1 {
-		t.Fatalf("expected source balance 6 CTN / 1 pallet, got %d / %d", remainingSource.Quantity, remainingSource.Pallets)
+	if remainingSource.Quantity != 10 || remainingSource.Pallets != 2 {
+		t.Fatalf("expected draft creation to leave source balance at 10 CTN / 2 pallets, got %d / %d", remainingSource.Quantity, remainingSource.Pallets)
 	}
-	mainStock := mustFindItemByContainer(t, ctx, store, mainLocation.ID, DefaultStorageSection, containerNo, item.SKU)
-	if mainStock.Quantity != 4 || mainStock.Pallets != 1 {
-		t.Fatalf("expected staged 308 balance 4 CTN / 1 pallet, got %d / %d", mainStock.Quantity, mainStock.Pallets)
+	if _, err := store.UpdateOutboundDocumentTrackingStatus(ctx, document.ID, OutboundTrackingPicking); err != nil {
+		t.Fatalf("reserve remote inventory before confirmation: %v", err)
 	}
-	if _, err := store.ConfirmOutboundDocument(ctx, document.ID); err != nil {
+	var transferCountBeforeConfirm int
+	if err := store.db.GetContext(ctx, &transferCountBeforeConfirm, `
+		SELECT COUNT(*) FROM inventory_transfers WHERE notes LIKE ?
+	`, "%"+pickingOrderNo+"%"); err != nil {
+		t.Fatalf("count transfers before confirmation: %v", err)
+	}
+	if transferCountBeforeConfirm != 0 {
+		t.Fatalf("expected no automatic transfer before confirmation, got %d", transferCountBeforeConfirm)
+	}
+
+	confirmed, err := store.ConfirmOutboundDocument(ctx, document.ID)
+	if err != nil {
 		t.Fatalf("confirm warehouse 308 outbound draft: %v", err)
+	}
+	if len(confirmed.Lines) != 1 || confirmed.Lines[0].LocationID != mainLocation.ID || len(confirmed.Lines[0].PickAllocations) != 1 {
+		t.Fatalf("expected confirmed outbound to ship from warehouse 308: %#v", confirmed)
+	}
+	confirmedAllocation := confirmed.Lines[0].PickAllocations[0]
+	if confirmedAllocation.LocationID != mainLocation.ID || confirmedAllocation.AutoTransferToMain {
+		t.Fatalf("expected confirmed allocation to be staged at 308 with no pending marker: %#v", confirmedAllocation)
+	}
+
+	remainingSource = mustFindItemByContainer(t, ctx, store, sourceLocation.ID, DefaultStorageSection, containerNo, item.SKU)
+	if remainingSource.Quantity != 6 || remainingSource.Pallets != 1 {
+		t.Fatalf("expected confirmation to transfer and ship 4 CTN / 1 pallet, got source balance %d / %d", remainingSource.Quantity, remainingSource.Pallets)
+	}
+	var transferCountAfterConfirm int
+	if err := store.db.GetContext(ctx, &transferCountAfterConfirm, `
+		SELECT COUNT(*) FROM inventory_transfers WHERE notes LIKE ?
+	`, "%"+pickingOrderNo+"%"); err != nil {
+		t.Fatalf("count transfers after confirmation: %v", err)
+	}
+	if transferCountAfterConfirm != 1 {
+		t.Fatalf("expected one automatic transfer during confirmation, got %d", transferCountAfterConfirm)
 	}
 }
 

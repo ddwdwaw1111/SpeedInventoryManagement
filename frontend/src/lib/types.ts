@@ -617,6 +617,7 @@ export type OutboundPickAllocation = {
   containerNo: string;
   allocatedQty: number;
   pallets?: number;
+  autoTransferToMain?: boolean;
   createdAt: string;
 };
 
@@ -640,6 +641,7 @@ export type OutboundPickAllocationPayload = {
   containerNo?: string;
   allocatedQty: number;
   pallets?: number;
+  autoTransferToMain?: boolean;
 };
 
 export type OutboundDocument = {

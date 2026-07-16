@@ -80,7 +80,7 @@ export function OutboundBulkImportDialog({ open, customers, locations, items, in
     setBusy(true);
     setError("");
     try {
-      setPreview(await api.previewOutboundBulkImport(file, Number(customerId)));
+      setPreview(normalizeOutboundBulkImportPreview(await api.previewOutboundBulkImport(file, Number(customerId))));
       setChanged(false);
       setStep("PREVIEW");
     } catch (nextError) {
@@ -114,12 +114,12 @@ export function OutboundBulkImportDialog({ open, customers, locations, items, in
     setBusy(true);
     setError("");
     try {
-      setPreview(await api.revalidateOutboundBulkImport({
+      setPreview(normalizeOutboundBulkImportPreview(await api.revalidateOutboundBulkImport({
         importId: preview.importId,
         sourceFileName: preview.sourceFileName,
         customerId: preview.customerId,
         documents: preview.documents
-      }));
+      })));
       setChanged(false);
     } catch (nextError) {
       setError(localizeOutboundRequestError(nextError, "bulkOutboundRevalidateFailed", language, t));
@@ -242,6 +242,22 @@ export function OutboundBulkImportDialog({ open, customers, locations, items, in
       </DialogActions>
     </Dialog>
   );
+}
+
+function normalizeOutboundBulkImportPreview(preview: OutboundBulkImportPreview): OutboundBulkImportPreview {
+  return {
+    ...preview,
+    documents: (Array.isArray(preview.documents) ? preview.documents : []).map((document) => ({
+      ...document,
+      rowNumbers: Array.isArray(document.rowNumbers) ? document.rowNumbers : [],
+      lines: Array.isArray(document.lines) ? document.lines : [],
+      issues: Array.isArray(document.issues) ? document.issues : [],
+      input: {
+        ...document.input,
+        lines: Array.isArray(document.input?.lines) ? document.input.lines : []
+      }
+    }))
+  };
 }
 
 function formatRows(rows: number[]) {

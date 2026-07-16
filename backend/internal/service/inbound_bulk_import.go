@@ -216,7 +216,7 @@ func (s *Store) RevalidateInboundBulkImport(ctx context.Context, input InboundBu
 		}
 		parsedDocuments = append(parsedDocuments, document)
 	}
-	markDuplicateInboundBulkContainers(parsedDocuments)
+	markDuplicateInboundBulkReceipts(parsedDocuments)
 
 	preview, err := s.buildInboundBulkImportPreview(ctx, input.SourceFileName, input.CustomerID, parsedDocuments)
 	if err != nil {
@@ -288,11 +288,17 @@ func (s *Store) CreateInboundDocumentsBulkDraft(ctx context.Context, input Inbou
 		TotalDocuments: len(input.Documents),
 		Results:        make([]InboundBulkImportCommitResult, 0, len(input.Documents)),
 	}
-	seenContainerNos := make(map[string]struct{}, len(input.Documents))
+	seenReceiptIdentities := make(map[string]struct{}, len(input.Documents))
+	seenDocumentKeys := make(map[string]struct{}, len(input.Documents))
 
 	for index, entry := range input.Documents {
-		containerNo := strings.TrimSpace(strings.ToUpper(entry.Input.ContainerNo))
-		documentKey := containerNo
+		documentInput := entry.Input
+		documentInput.ContainerNo = normalizeInboundContainerNo(documentInput.ContainerNo, documentInput.ActualArrivalDate)
+		containerNo := documentInput.ContainerNo
+		documentKey := strings.TrimSpace(entry.DocumentKey)
+		if documentKey == "" {
+			documentKey = inboundBulkReceiptIdentity(containerNo, documentInput.ActualArrivalDate)
+		}
 		if documentKey == "" {
 			documentKey = fmt.Sprintf("ROW-%d", index+1)
 		}
@@ -301,25 +307,32 @@ func (s *Store) CreateInboundDocumentsBulkDraft(ctx context.Context, input Inbou
 			ContainerNo: containerNo,
 		}
 
-		documentInput := entry.Input
 		documentInput.CustomerID = input.CustomerID
 		documentInput.Status = DocumentStatusDraft
 		documentInput.TrackingStatus = InboundTrackingScheduled
 		documentInput.UnitLabel = "CTN"
-		documentInput.ContainerNo = strings.TrimSpace(strings.ToUpper(documentInput.ContainerNo))
 		if documentInput.ContainerNo == "" {
 			result.Error = "container number is required"
 			response.FailedDocuments++
 			response.Results = append(response.Results, result)
 			continue
 		}
-		if _, exists := seenContainerNos[documentInput.ContainerNo]; exists {
-			result.Error = "duplicate Container No in import request"
+		receiptIdentity := inboundBulkReceiptIdentity(documentInput.ContainerNo, documentInput.ActualArrivalDate)
+		if _, exists := seenReceiptIdentities[receiptIdentity]; exists {
+			result.Error = "duplicate Container No and Actual Arrival Date in import request"
 			response.FailedDocuments++
 			response.Results = append(response.Results, result)
 			continue
 		}
-		seenContainerNos[documentInput.ContainerNo] = struct{}{}
+		seenReceiptIdentities[receiptIdentity] = struct{}{}
+		normalizedDocumentKey := strings.ToUpper(documentKey)
+		if _, exists := seenDocumentKeys[normalizedDocumentKey]; exists {
+			result.Error = "duplicate receipt key in import request"
+			response.FailedDocuments++
+			response.Results = append(response.Results, result)
+			continue
+		}
+		seenDocumentKeys[normalizedDocumentKey] = struct{}{}
 		if documentInput.LocationID <= 0 {
 			result.Error = "warehouse is required"
 			response.FailedDocuments++
@@ -464,7 +477,7 @@ func parsedInboundBulkDocumentFromInput(
 	locationsByID map[int64]Location,
 ) parsedInboundBulkDocument {
 	input := entry.Input
-	input.ContainerNo = strings.TrimSpace(strings.ToUpper(input.ContainerNo))
+	input.ContainerNo = normalizeInboundContainerNo(input.ContainerNo, input.ActualArrivalDate)
 	input.ActualArrivalDate = strings.TrimSpace(input.ActualArrivalDate)
 	containerType, validContainerType := normalizeInboundBulkContainerType(input.ContainerType)
 	handlingMode, validHandlingMode := normalizeInboundBulkHandlingMode(input.HandlingMode)
@@ -560,29 +573,42 @@ func parsedInboundBulkDocumentFromInput(
 	}
 }
 
-func markDuplicateInboundBulkContainers(documents []parsedInboundBulkDocument) {
-	indexesByContainer := make(map[string][]int)
+func markDuplicateInboundBulkReceipts(documents []parsedInboundBulkDocument) {
+	indexesByReceipt := make(map[string][]int)
 	for index := range documents {
-		containerNo := strings.TrimSpace(strings.ToUpper(documents[index].preview.Input.ContainerNo))
-		if containerNo != "" {
-			indexesByContainer[containerNo] = append(indexesByContainer[containerNo], index)
+		input := documents[index].preview.Input
+		receiptIdentity := inboundBulkReceiptIdentity(input.ContainerNo, input.ActualArrivalDate)
+		if receiptIdentity != "" {
+			indexesByReceipt[receiptIdentity] = append(indexesByReceipt[receiptIdentity], index)
 		}
 	}
-	for containerNo, indexes := range indexesByContainer {
+	for _, indexes := range indexesByReceipt {
 		if len(indexes) < 2 {
 			continue
 		}
 		for _, index := range indexes {
 			documents[index].preview.Issues = append(documents[index].preview.Issues, inboundBulkIssue(
 				InboundBulkIssueError,
-				"DUPLICATE_CONTAINER_IN_PREVIEW",
-				"Each receipt in the preview must use a unique Container No.",
+				"DUPLICATE_RECEIPT_IN_PREVIEW",
+				"Each receipt in the preview must use a unique Container No and Actual Arrival Date combination.",
 				firstInboundBulkRowNumber(documents[index].preview.RowNumbers),
 				bulkFieldContainerNo,
-				containerNo,
+				documents[index].preview.Input.ContainerNo,
 			))
 		}
 	}
+}
+
+func inboundBulkReceiptIdentity(containerNo string, actualArrivalDate string) string {
+	normalizedContainerNo := normalizeInboundContainerNo(containerNo, actualArrivalDate)
+	if normalizedContainerNo == "" {
+		return ""
+	}
+	normalizedDate, valid := normalizeInboundBulkDate(actualArrivalDate)
+	if !valid || normalizedDate == "" {
+		return normalizedContainerNo
+	}
+	return normalizedContainerNo + " @ " + normalizedDate
 }
 
 func (s *Store) getInboundBulkImportRecord(ctx context.Context, importKey string) (inboundBulkImportRecord, bool, error) {
@@ -721,7 +747,7 @@ func parseInboundBulkImportWorkbook(fileName string, data []byte) ([]parsedInbou
 		}
 		rowNumber := rowIndex + 1
 		headerValues, headerIssues := parseInboundBulkHeaderValues(row, rowNumber, columns)
-		documentKey := headerValues.ContainerNo
+		documentKey := inboundBulkReceiptIdentity(headerValues.ContainerNo, headerValues.ActualArrivalDate)
 		if documentKey == "" {
 			documentKey = fmt.Sprintf("ROW-%d", rowNumber)
 		}
@@ -869,9 +895,6 @@ func inboundBulkTemplateHeader(field string) string {
 func parseInboundBulkHeaderValues(row []string, rowNumber int, columns map[string]int) (inboundBulkHeaderValues, []InboundBulkImportIssue) {
 	issues := make([]InboundBulkImportIssue, 0)
 	containerNo := strings.TrimSpace(strings.ToUpper(inboundBulkColumnValue(row, columns, bulkFieldContainerNo)))
-	if containerNo == "" {
-		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "MISSING_CONTAINER_NO", "Container No is required.", rowNumber, bulkFieldContainerNo, ""))
-	}
 	warehouse := strings.TrimSpace(strings.ToUpper(inboundBulkColumnValue(row, columns, bulkFieldWarehouse)))
 	if warehouse == "" {
 		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "MISSING_WAREHOUSE", "Warehouse is required.", rowNumber, bulkFieldWarehouse, ""))
@@ -881,6 +904,10 @@ func parseInboundBulkHeaderValues(row []string, rowNumber int, columns map[strin
 		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "INVALID_ACTUAL_DATE", "Actual Arrival Date must use YYYY-MM-DD.", rowNumber, bulkFieldActualArrivalDate, inboundBulkColumnValue(row, columns, bulkFieldActualArrivalDate)))
 	} else if actualDate == "" {
 		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "MISSING_ACTUAL_DATE", "Actual Arrival Date is required.", rowNumber, bulkFieldActualArrivalDate, ""))
+	}
+	containerNo = normalizeInboundContainerNo(containerNo, actualDate)
+	if containerNo == "" {
+		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "MISSING_CONTAINER_NO", "Container No is required.", rowNumber, bulkFieldContainerNo, ""))
 	}
 	containerType, validContainerType := normalizeInboundBulkContainerType(inboundBulkColumnValue(row, columns, bulkFieldContainerType))
 	if !validContainerType {
@@ -1163,7 +1190,7 @@ func buildInboundBulkImportPreview(
 			document.preview.Issues = append(document.preview.Issues, inboundBulkIssue(
 				InboundBulkIssueWarning,
 				"EXISTING_CONTAINER",
-				"An active receipt already uses this Container No.",
+				"This container already exists. The new receipt will add inventory to the same container record.",
 				0,
 				bulkFieldContainerNo,
 				containerNo,

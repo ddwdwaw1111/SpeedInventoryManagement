@@ -42,6 +42,18 @@ func TestInboundBulkImportKeysAreStableAndPayloadSensitive(t *testing.T) {
 	}
 }
 
+func TestNormalizeInboundContainerNoRemovesMatchingLegacyArrivalSuffix(t *testing.T) {
+	if got := normalizeInboundContainerNo(" shya1120-3608-20260115 ", "2026-01-15"); got != "SHYA1120-3608" {
+		t.Fatalf("expected matching arrival suffix to be removed, got %q", got)
+	}
+	if got := normalizeInboundContainerNo("SHYA1120-3608-20260115", "2026-01-16"); got != "SHYA1120-3608-20260115" {
+		t.Fatalf("non-matching date suffix must remain unchanged, got %q", got)
+	}
+	if got := normalizeInboundContainerNo("SHYA1120-3608", "2026-01-15"); got != "SHYA1120-3608" {
+		t.Fatalf("ordinary container number must remain unchanged, got %q", got)
+	}
+}
+
 func TestBulkImportedHistoricalReceiptUsesActualArrivalDateForLedgerIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
@@ -266,7 +278,106 @@ func TestCreateInboundDocumentsBulkDraftIsIdempotentIntegration(t *testing.T) {
 	}
 }
 
-func TestParseInboundBulkImportWorkbookGroupsRowsByContainerNo(t *testing.T) {
+func TestBulkInboundAllowsMultipleReceiptsForOneContainerIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+	containerNo := "SHARED-CONT-" + suffix
+
+	customer, err := store.CreateCustomer(ctx, CreateCustomerInput{Name: "Shared Container Bulk Customer " + suffix})
+	if err != nil {
+		t.Fatalf("create customer: %v", err)
+	}
+	location, err := store.CreateLocation(ctx, CreateLocationInput{Name: "Shared Container Bulk Warehouse " + suffix, Address: "Test Address", Capacity: 1000, SectionNames: []string{DefaultStorageSection}})
+	if err != nil {
+		t.Fatalf("create location: %v", err)
+	}
+
+	result, err := store.CreateInboundDocumentsBulkDraft(ctx, InboundBulkImportCommitInput{
+		ImportID:       "fedcba9876543210fedcba9876543210",
+		SourceFileName: "shared-container-receipts.xlsx",
+		CustomerID:     customer.ID,
+		Documents: []InboundBulkImportCommitDocument{
+			{
+				DocumentKey: inboundBulkReceiptIdentity(containerNo, "2026-01-15"),
+				Input: CreateInboundDocumentInput{
+					LocationID: location.ID, ContainerNo: containerNo + "-20260115", ActualArrivalDate: "2026-01-15", HandlingMode: InboundHandlingModePalletized,
+					Lines: []CreateInboundDocumentLineInput{{SKU: "SHARED-SKU-" + suffix, Description: "Shared container item", ReceivedQty: 10, Pallets: 2, StorageSection: DefaultStorageSection}},
+				},
+			},
+			{
+				DocumentKey: inboundBulkReceiptIdentity(containerNo, "2026-01-16"),
+				Input: CreateInboundDocumentInput{
+					LocationID: location.ID, ContainerNo: containerNo + "-20260116", ActualArrivalDate: "2026-01-16", HandlingMode: InboundHandlingModePalletized,
+					Lines: []CreateInboundDocumentLineInput{{SKU: "SHARED-SKU-" + suffix, Description: "Shared container item", ReceivedQty: 5, Pallets: 1, StorageSection: DefaultStorageSection}},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create shared-container receipts: %v", err)
+	}
+	if result.CreatedDocuments != 2 || result.FailedDocuments != 0 {
+		t.Fatalf("expected two receipt drafts, got %#v", result)
+	}
+	confirmedReceiptIDs := make([]int64, 0, len(result.Results))
+	for _, entry := range result.Results {
+		if entry.Document == nil {
+			t.Fatalf("missing created receipt: %#v", entry)
+		}
+		if entry.Document.ContainerNo != containerNo {
+			t.Fatalf("expected canonical container number %q, got %q", containerNo, entry.Document.ContainerNo)
+		}
+		if _, err := store.ConfirmInboundDocument(ctx, entry.Document.ID); err != nil {
+			t.Fatalf("confirm receipt %d: %v", entry.Document.ID, err)
+		}
+		confirmedReceiptIDs = append(confirmedReceiptIDs, entry.Document.ID)
+	}
+
+	var receiptCount, containerCount, visitCount int
+	if err := store.db.GetContext(ctx, &receiptCount, `SELECT COUNT(*) FROM inbound_documents WHERE customer_id = ? AND container_no = ?`, customer.ID, containerNo); err != nil {
+		t.Fatalf("count receipts: %v", err)
+	}
+	if err := store.db.GetContext(ctx, &containerCount, `SELECT COUNT(*) FROM containers WHERE customer_id = ? AND container_no = ?`, customer.ID, containerNo); err != nil {
+		t.Fatalf("count container records: %v", err)
+	}
+	if err := store.db.GetContext(ctx, &visitCount, `SELECT COUNT(*) FROM container_visits WHERE customer_id = ? AND container_no = ?`, customer.ID, containerNo); err != nil {
+		t.Fatalf("count container visits: %v", err)
+	}
+	if receiptCount != 2 || containerCount != 1 || visitCount != 2 {
+		t.Fatalf("expected 2 receipts, 1 container, and 2 visits; got receipts=%d containers=%d visits=%d", receiptCount, containerCount, visitCount)
+	}
+
+	var balance struct {
+		Quantity int `db:"quantity"`
+		Pallets  int `db:"pallets"`
+	}
+	if err := store.db.GetContext(ctx, &balance, `SELECT quantity, pallets FROM inventory_items WHERE customer_id = ? AND container_no = ?`, customer.ID, containerNo); err != nil {
+		t.Fatalf("load shared container balance: %v", err)
+	}
+	if balance.Quantity != 15 || balance.Pallets != 3 {
+		t.Fatalf("expected combined balance 15 qty / 3 pallets, got %#v", balance)
+	}
+
+	if _, err := store.CancelInboundDocument(ctx, confirmedReceiptIDs[1]); err != nil {
+		t.Fatalf("delete latest shared-container receipt: %v", err)
+	}
+	operationalContainer, err := store.GetOperationalContainerByNo(ctx, customer.ID, containerNo)
+	if err != nil {
+		t.Fatalf("load shared container after deleting latest receipt: %v", err)
+	}
+	if operationalContainer.InboundDocumentID != confirmedReceiptIDs[0] {
+		t.Fatalf("expected container to inherit prior receipt %d, got %#v", confirmedReceiptIDs[0], operationalContainer)
+	}
+	if err := store.db.GetContext(ctx, &balance, `SELECT quantity, pallets FROM inventory_items WHERE customer_id = ? AND container_no = ?`, customer.ID, containerNo); err != nil {
+		t.Fatalf("load shared container balance after deleting latest receipt: %v", err)
+	}
+	if balance.Quantity != 10 || balance.Pallets != 2 {
+		t.Fatalf("expected prior receipt balance 10 qty / 2 pallets, got %#v", balance)
+	}
+}
+
+func TestParseInboundBulkImportWorkbookGroupsRowsByContainerAndArrivalDate(t *testing.T) {
 	data := buildInboundBulkImportWorkbook(t, [][]any{
 		{"CONT-A", "Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-1", "ITEM-1", "First item", 930, 900, 20, 48, "A", ""},
 		{"CONT-A", "Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-2", "ITEM-2", "Second item", 100, 0, 3, 32, "A", "Inspect wrap"},
@@ -281,7 +392,7 @@ func TestParseInboundBulkImportWorkbookGroupsRowsByContainerNo(t *testing.T) {
 		t.Fatalf("expected 2 grouped documents, got %d", len(documents))
 	}
 	first := documents[0].preview
-	if first.DocumentKey != "CONT-A" || first.Input.ContainerNo != "CONT-A" || first.LocationName != "WAREHOUSE" {
+	if first.DocumentKey != "CONT-A @ 2026-07-15" || first.Input.ContainerNo != "CONT-A" || first.LocationName != "WAREHOUSE" {
 		t.Fatalf("unexpected first document: %#v", first)
 	}
 	if first.Input.ActualArrivalDate != "2026-07-15" || first.Input.ExpectedArrivalDate != "" || first.Input.DocumentNote != "" {
@@ -292,6 +403,30 @@ func TestParseInboundBulkImportWorkbookGroupsRowsByContainerNo(t *testing.T) {
 	}
 	if first.Input.Lines[0].ExpectedQty != 930 || first.Input.Lines[0].ReceivedQty != 900 || first.Input.Lines[0].Pallets != 20 || first.Input.Lines[0].UnitsPerPallet != 48 {
 		t.Fatalf("quantity and pallet fields were not preserved independently: %#v", first.Input.Lines[0])
+	}
+}
+
+func TestParseInboundBulkImportWorkbookCreatesSeparateReceiptsForRepeatedContainer(t *testing.T) {
+	data := buildInboundBulkImportWorkbook(t, [][]any{
+		{"SHYA1120-3608-20260115", "Warehouse", "2026-01-15", "NORMAL", "PALLETIZED", "SKU-1", "ITEM-1", "First receipt", 10, 10, 2, 5, "A", ""},
+		{"SHYA1120-3608-20260116", "Warehouse", "2026-01-16", "NORMAL", "PALLETIZED", "SKU-1", "ITEM-1", "Second receipt", 5, 5, 1, 5, "A", ""},
+		{"SHYA1120-3608-20260130", "Warehouse", "2026-01-30", "NORMAL", "PALLETIZED", "SKU-2", "ITEM-2", "Third receipt", 8, 8, 1, 8, "A", ""},
+	})
+
+	documents, err := parseInboundBulkImportWorkbook("receipts.xlsx", data)
+	if err != nil {
+		t.Fatalf("parse workbook: %v", err)
+	}
+	if len(documents) != 3 {
+		t.Fatalf("expected three receipts, got %d", len(documents))
+	}
+	for _, document := range documents {
+		if document.preview.Input.ContainerNo != "SHYA1120-3608" {
+			t.Fatalf("expected canonical physical container, got %#v", document.preview)
+		}
+	}
+	if documents[0].preview.DocumentKey == documents[1].preview.DocumentKey || documents[1].preview.DocumentKey == documents[2].preview.DocumentKey {
+		t.Fatalf("receipt dates must produce distinct document keys: %#v", documents)
 	}
 }
 
