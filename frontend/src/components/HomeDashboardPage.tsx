@@ -127,7 +127,7 @@ export function HomeDashboardPage({
 
   const summaryCards = useMemo<SummaryCard[]>(() => {
     const onHandUnits = items.reduce((sum, item) => sum + item.quantity, 0);
-    const activePositions = items.filter((item) => item.quantity > 0).length;
+    const activePositions = items.filter((item) => item.quantity > 0 || item.pallets > 0).length;
     const scheduledReceipts = inboundDocuments.filter((document) => normalizeDocumentStatus(document.status) === "DRAFT").length;
     const arrivedReceipts = inboundDocuments.filter((document) => normalizeInboundTrackingStatus(document.trackingStatus, document.status) === "ARRIVED").length;
     const receivingReceipts = inboundDocuments.filter((document) => normalizeInboundTrackingStatus(document.trackingStatus, document.status) === "RECEIVING").length;

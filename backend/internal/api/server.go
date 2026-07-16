@@ -850,13 +850,20 @@ func (s *Server) handleUpdateInboundDocument(c *gin.Context) {
 		return
 	}
 
-	s.writeAuditLog(c, "UPDATE", "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), "Updated inbound document", map[string]any{
-		"containerNo":   document.ContainerNo,
-		"customer":      document.CustomerName,
-		"location":      document.LocationName,
-		"status":        document.Status,
-		"totalLines":    document.TotalLines,
-		"totalReceived": document.TotalReceivedQty,
+	auditAction := "UPDATE"
+	auditMessage := "Updated inbound document"
+	if document.CorrectsDocumentID != nil && strings.EqualFold(document.Status, service.DocumentStatusConfirmed) {
+		auditAction = "CONFIRM_CORRECTION"
+		auditMessage = "Confirmed inbound correction and reversed source receipt"
+	}
+	s.writeAuditLog(c, auditAction, "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), auditMessage, map[string]any{
+		"containerNo":        document.ContainerNo,
+		"customer":           document.CustomerName,
+		"location":           document.LocationName,
+		"status":             document.Status,
+		"totalLines":         document.TotalLines,
+		"totalReceived":      document.TotalReceivedQty,
+		"correctsDocumentId": document.CorrectsDocumentID,
 	})
 
 	writeJSON(c, http.StatusOK, document)
@@ -932,12 +939,19 @@ func (s *Server) handleConfirmInboundDocument(c *gin.Context) {
 		return
 	}
 
-	s.writeAuditLog(c, "CONFIRM", "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), "Confirmed inbound document", map[string]any{
-		"containerNo":   document.ContainerNo,
-		"status":        document.Status,
-		"confirmedAt":   document.ConfirmedAt,
-		"totalLines":    document.TotalLines,
-		"totalExpected": document.TotalExpectedQty,
+	auditAction := "CONFIRM"
+	auditMessage := "Confirmed inbound document"
+	if document.CorrectsDocumentID != nil {
+		auditAction = "CONFIRM_CORRECTION"
+		auditMessage = "Confirmed inbound correction and reversed source receipt"
+	}
+	s.writeAuditLog(c, auditAction, "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), auditMessage, map[string]any{
+		"containerNo":        document.ContainerNo,
+		"status":             document.Status,
+		"confirmedAt":        document.ConfirmedAt,
+		"totalLines":         document.TotalLines,
+		"totalExpected":      document.TotalExpectedQty,
+		"correctsDocumentId": document.CorrectsDocumentID,
 	})
 
 	writeJSON(c, http.StatusOK, document)
@@ -1052,6 +1066,31 @@ func (s *Server) handleCopyInboundDocument(c *gin.Context) {
 		"trackingStatus":   document.TrackingStatus,
 		"totalLines":       document.TotalLines,
 		"totalExpected":    document.TotalExpectedQty,
+	})
+
+	writeJSON(c, http.StatusCreated, document)
+}
+
+func (s *Server) handleCreateInboundCorrectionDraft(c *gin.Context) {
+	documentID, err := parseIDParam(c, "id")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	document, err := s.store.CreateInboundCorrectionDraft(c.Request.Context(), documentID)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	s.writeAuditLog(c, "CORRECT", "inbound_document", documentID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", documentID)), "Created inbound correction draft", map[string]any{
+		"sourceDocumentId":     documentID,
+		"correctionDocumentId": document.ID,
+		"containerNo":          document.ContainerNo,
+		"status":               document.Status,
+		"totalLines":           document.TotalLines,
+		"totalReceived":        document.TotalReceivedQty,
 	})
 
 	writeJSON(c, http.StatusCreated, document)

@@ -1,4 +1,5 @@
 import { parseDateLikeValue, startOfLocalDay, toIsoDateString } from "./dates";
+import { isOperationalInboundDocument } from "./documentTracking";
 import { formatMoney } from "./formatters";
 import type { ContainerLifecycleEvent, ContainerType, Customer, InboundDocument, OutboundDocument } from "./types";
 
@@ -288,6 +289,9 @@ function buildInboundInvoiceLines(
     if (!isBillableDocument(document.status)) {
       continue;
     }
+    if (!isOperationalInboundDocument(document)) {
+      continue;
+    }
 
     const occurredOn = resolveInboundBillingDate(document);
     if (!isWithinRange(occurredOn, billingRange)) {
@@ -472,6 +476,7 @@ function buildContainerLifecycleStorageCharges(
 	const normalizedRates = normalizeBillingRates(rates);
 	const typeByContainer = new Map<string, ContainerType>();
 	for (const document of inboundDocuments) {
+		if (!isOperationalInboundDocument(document)) continue;
 		typeByContainer.set(
 			`${document.customerId}|${normalizeContainerNo(document.containerNo)}`,
 			normalizeContainerTypeValue(document.containerType)

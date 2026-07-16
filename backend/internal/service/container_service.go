@@ -50,8 +50,9 @@ type ListContainersInput struct {
 }
 
 type GetContainerLifecycleInput struct {
-	CustomerID  int64
-	ContainerNo string
+	CustomerID      int64
+	ContainerNo     string
+	OperationalOnly bool
 }
 
 type containerRepository interface {
@@ -62,6 +63,7 @@ type containerRepository interface {
 	GetOutboundDocumentForCustomer(context.Context, int64, int64) (OutboundDocument, error)
 	ListContainerRecords(context.Context, int, ContainerFilters) ([]Container, error)
 	GetContainerByNo(context.Context, int64, string) (Container, error)
+	GetOperationalContainerByNo(context.Context, int64, string) (Container, error)
 	CreateContainer(context.Context, CreateContainerInput) (Container, error)
 	CreateContainerTrackingEvent(context.Context, CreateContainerTrackingEventInput) (ContainerTrackingEvent, error)
 	CreateContainerPickupAssignment(context.Context, CreateContainerPickupAssignmentInput) (ContainerPickupAssignment, error)
@@ -95,7 +97,6 @@ func (s *ContainerService) ListContainers(ctx context.Context, input ListContain
 	if err != nil {
 		return nil, err
 	}
-
 	search := strings.TrimSpace(strings.ToLower(input.Search))
 	filtered := make([]ContainerSummary, 0, len(summaries))
 	for _, summary := range summaries {
@@ -115,18 +116,24 @@ func (s *ContainerService) GetLifecycle(ctx context.Context, input GetContainerL
 	if input.CustomerID <= 0 || containerNo == "" {
 		return ContainerLifecycle{}, ErrInvalidInput
 	}
-	container, err := s.repo.GetContainerByNo(ctx, input.CustomerID, containerNo)
+	var containers []Container
+	var containerPtr *Container
+	var container Container
+	var err error
+	if input.OperationalOnly {
+		container, err = s.repo.GetOperationalContainerByNo(ctx, input.CustomerID, containerNo)
+	} else {
+		container, err = s.repo.GetContainerByNo(ctx, input.CustomerID, containerNo)
+	}
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return ContainerLifecycle{}, err
 	}
-	var containers []Container
-	var containerPtr *Container
 	if err == nil {
 		containers = []Container{container}
 		containerPtr = &container
 	}
 
-	packingLists, err := s.loadPackingListsForContainer(ctx, input.CustomerID, containerNo)
+	packingLists, err := s.loadPackingListsForContainer(ctx, input.CustomerID, containerNo, input.OperationalOnly)
 	if err != nil {
 		return ContainerLifecycle{}, err
 	}
@@ -137,8 +144,9 @@ func (s *ContainerService) GetLifecycle(ctx context.Context, input GetContainerL
 	items = filterItemsByContainer(items, containerNo)
 
 	lifecycleEvents, err := s.repo.ListContainerLifecycleEvents(ctx, ContainerLifecycleLoadLimit, ContainerLifecycleEventFilters{
-		CustomerID:  input.CustomerID,
-		ContainerNo: containerNo,
+		CustomerID:      input.CustomerID,
+		ContainerNo:     containerNo,
+		OperationalOnly: input.OperationalOnly,
 	})
 	if err != nil {
 		return ContainerLifecycle{}, err
@@ -189,25 +197,31 @@ func (s *ContainerService) GetLifecycle(ctx context.Context, input GetContainerL
 }
 
 func (s *ContainerService) loadContainerSummaries(ctx context.Context, customerID int64) ([]ContainerSummary, error) {
-	containerRecords, err := s.repo.ListContainerRecords(ctx, ContainerLifecycleLoadLimit, ContainerFilters{CustomerID: customerID})
-	if err != nil {
-		return nil, err
-	}
-
-	packingLists, err := s.repo.ListInboundDocumentsFiltered(ctx, ContainerLifecycleLoadLimit, InboundDocumentFilters{
-		ArchiveScope: DocumentArchiveScopeAll,
-		CustomerID:   customerID,
+	containerRecords, err := s.repo.ListContainerRecords(ctx, ContainerLifecycleLoadLimit, ContainerFilters{
+		CustomerID:      customerID,
+		OperationalOnly: true,
 	})
 	if err != nil {
 		return nil, err
 	}
 
+	packingLists, err := s.repo.ListInboundDocumentsFiltered(ctx, ContainerLifecycleLoadLimit, InboundDocumentFilters{
+		ArchiveScope:    DocumentArchiveScopeAll,
+		CustomerID:      customerID,
+		OperationalOnly: true,
+	})
+	if err != nil {
+		return nil, err
+	}
 	items, err := s.repo.ListItems(ctx, ItemFilters{CustomerID: customerID})
 	if err != nil {
 		return nil, err
 	}
 
-	lifecycleEvents, err := s.repo.ListContainerLifecycleEvents(ctx, ContainerLifecycleLoadLimit, ContainerLifecycleEventFilters{CustomerID: customerID})
+	lifecycleEvents, err := s.repo.ListContainerLifecycleEvents(ctx, ContainerLifecycleLoadLimit, ContainerLifecycleEventFilters{
+		CustomerID:      customerID,
+		OperationalOnly: true,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -237,11 +251,12 @@ func (s *ContainerService) loadContainerSummaries(ctx context.Context, customerI
 	return summaries, nil
 }
 
-func (s *ContainerService) loadPackingListsForContainer(ctx context.Context, customerID int64, containerNo string) ([]InboundDocument, error) {
+func (s *ContainerService) loadPackingListsForContainer(ctx context.Context, customerID int64, containerNo string, operationalOnly bool) ([]InboundDocument, error) {
 	documents, err := s.repo.ListInboundDocumentsFiltered(ctx, ContainerLifecycleLoadLimit, InboundDocumentFilters{
-		ArchiveScope: DocumentArchiveScopeAll,
-		CustomerID:   customerID,
-		Search:       containerNo,
+		ArchiveScope:    DocumentArchiveScopeAll,
+		CustomerID:      customerID,
+		Search:          containerNo,
+		OperationalOnly: operationalOnly,
 	})
 	if err != nil {
 		return nil, err

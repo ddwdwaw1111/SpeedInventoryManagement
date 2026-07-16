@@ -70,7 +70,7 @@ func (s *Server) handleUploadDocumentAttachment(c *gin.Context, documentType str
 		writeError(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := s.store.EnsureDocumentExists(c.Request.Context(), documentType, documentID); err != nil {
+	if err := s.store.EnsureDocumentAttachmentMutable(c.Request.Context(), documentType, documentID); err != nil {
 		writeDomainError(c, err)
 		return
 	}

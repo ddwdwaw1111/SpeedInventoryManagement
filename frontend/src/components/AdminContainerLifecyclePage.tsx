@@ -1183,6 +1183,7 @@ function DocumentActions<TDocument extends InboundDocument | OutboundDocument>({
                   await onUpload?.(document, file, displayName);
                 }}
                 onGetDownloadUrl={onGetDownloadUrl}
+                canDeleteAttachment={(attachment) => attachment.documentId === document.id}
                 onDelete={onDeleteAttachment ? async (attachment) => {
                   if (!onDeleteAttachment) {
                     return;

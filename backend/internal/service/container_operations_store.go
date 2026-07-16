@@ -12,6 +12,7 @@ const (
 	ContainerStatusTrackingReceived = "TRACKING_RECEIVED"
 	ContainerStatusPickupAssigned   = "PICKUP_ASSIGNED"
 	ContainerStatusPickedUp         = "PICKED_UP"
+	ContainerStatusCorrected        = "CORRECTED"
 
 	LifecycleEventVisibilityCustomer = "CUSTOMER"
 	LifecycleEventVisibilityInternal = "INTERNAL"
@@ -51,8 +52,9 @@ type CreateContainerInput struct {
 }
 
 type ContainerFilters struct {
-	CustomerID int64
-	Search     string
+	CustomerID      int64
+	Search          string
+	OperationalOnly bool
 }
 
 type CreateContainerTrackingEventInput struct {
@@ -288,6 +290,17 @@ func (s *Store) ListContainerRecords(ctx context.Context, limit int, filters Con
 		whereClauses = append(whereClauses, "cn.customer_id = ?")
 		args = append(args, filters.CustomerID)
 	}
+	if filters.OperationalOnly {
+		whereClauses = append(whereClauses,
+			"UPPER(TRIM(cn.status)) <> 'CORRECTED'",
+			`NOT EXISTS (
+				SELECT 1
+				FROM inbound_documents source_d
+				WHERE source_d.id = cn.inbound_document_id
+				  AND source_d.corrected_at IS NOT NULL
+			)`,
+		)
+	}
 	if search := strings.TrimSpace(strings.ToLower(filters.Search)); search != "" {
 		whereClauses = append(whereClauses, `(LOWER(cn.container_no) LIKE ? OR LOWER(c.name) LIKE ? OR LOWER(COALESCE(l.name, '')) LIKE ?)`)
 		like := "%" + search + "%"
@@ -336,6 +349,14 @@ func (s *Store) ListContainerRecords(ctx context.Context, limit int, filters Con
 }
 
 func (s *Store) GetContainerByNo(ctx context.Context, customerID int64, containerNo string) (Container, error) {
+	return s.getContainerByNo(ctx, customerID, containerNo, false)
+}
+
+func (s *Store) GetOperationalContainerByNo(ctx context.Context, customerID int64, containerNo string) (Container, error) {
+	return s.getContainerByNo(ctx, customerID, containerNo, true)
+}
+
+func (s *Store) getContainerByNo(ctx context.Context, customerID int64, containerNo string, operationalOnly bool) (Container, error) {
 	normalized := normalizeContainerNo(containerNo)
 	if normalized == "" {
 		return Container{}, ErrInvalidInput
@@ -345,6 +366,17 @@ func (s *Store) GetContainerByNo(ctx context.Context, customerID int64, containe
 	if customerID > 0 {
 		whereClauses = append(whereClauses, "cn.customer_id = ?")
 		args = append(args, customerID)
+	}
+	if operationalOnly {
+		whereClauses = append(whereClauses,
+			"UPPER(TRIM(cn.status)) <> 'CORRECTED'",
+			`NOT EXISTS (
+				SELECT 1
+				FROM inbound_documents source_d
+				WHERE source_d.id = cn.inbound_document_id
+				  AND source_d.corrected_at IS NOT NULL
+			)`,
+		)
 	}
 	query := fmt.Sprintf(`
 		SELECT

@@ -27,6 +27,7 @@ type DocumentAttachmentsPanelProps = {
   onUpload?: (file: File, displayName: string) => Promise<void>;
   onGetDownloadUrl: (attachment: DocumentAttachment) => Promise<string>;
   onDelete?: (attachment: DocumentAttachment) => Promise<void>;
+  canDeleteAttachment?: (attachment: DocumentAttachment) => boolean;
 };
 
 type AttachmentPreviewState = {
@@ -47,7 +48,8 @@ export function DocumentAttachmentsPanel({
   onPendingAttachmentsChange,
   onUpload,
   onGetDownloadUrl,
-  onDelete
+  onDelete,
+  canDeleteAttachment = () => true
 }: DocumentAttachmentsPanelProps) {
   const { t } = useI18n();
   const { confirm, confirmationDialog } = useConfirmDialog();
@@ -323,7 +325,7 @@ export function DocumentAttachmentsPanel({
                 >
                   {busyKey === `open-${attachment.id}` ? <InlineLoadingIndicator /> : <OpenInNewRoundedIcon fontSize="small" />}
                 </button>
-                {onDelete ? (
+                {onDelete && canDeleteAttachment(attachment) ? (
                   <button
                     className="button button--danger button--small"
                     type="button"

@@ -32,6 +32,7 @@ import {
   formatOutboundTrackingStatusLabel,
   getInboundTrackingAction,
   getOutboundTrackingAction,
+  isOperationalInboundDocument,
   normalizeDocumentStatus,
   normalizeInboundTrackingStatus as normalizeInboundTrackingStatusValue,
   normalizeOutboundTrackingStatus as normalizeOutboundTrackingStatusValue
@@ -1257,6 +1258,7 @@ export function ActivityManagementPage({
 
     return liveInboundDocuments.filter((document) => {
       if (normalizeDocumentStatus(document.status) === "DELETED") return false;
+      if (!isOperationalInboundDocument(document)) return false;
       const matchesSearch = inboundDocumentMatchesSearch(document, normalizedDocumentSearch);
       const matchesCustomer = selectedCustomerId === "all" || document.customerId === Number(selectedCustomerId);
       const matchesLocation = selectedLocationId === "all" || document.locationId === Number(selectedLocationId);
@@ -1311,8 +1313,8 @@ export function ActivityManagementPage({
   const overviewStats = useMemo(() => {
     if (mode === "IN") {
       const scheduled = inboundDocumentRows.filter((document) => normalizeDocumentStatus(document.status) === "DRAFT").length;
-      const confirmed = inboundDocumentRows.filter((document) => normalizeDocumentStatus(document.status) === "CONFIRMED").length;
-      const totalQty = inboundDocumentRows.reduce((sum, document) => sum + document.totalReceivedQty, 0);
+      const confirmed = inboundDocumentRows.filter((document) => normalizeDocumentStatus(document.status) === "CONFIRMED" && !document.correctedAt).length;
+      const totalQty = inboundDocumentRows.reduce((sum, document) => sum + (document.correctedAt ? 0 : document.totalReceivedQty), 0);
       return [
         { label: t("allRows"), value: summaryNumberFormatter.format(inboundDocumentRows.length), meta: t("inbound") },
         { label: t("received"), value: summaryNumberFormatter.format(totalQty), meta: t("units") },
@@ -1340,7 +1342,7 @@ export function ActivityManagementPage({
     { field: "totalLines", headerName: t("totalLines"), minWidth: 100, type: "number" },
     { field: "totalExpectedQty", headerName: t("expectedQty"), minWidth: 120, type: "number" },
     { field: "totalReceivedQty", headerName: t("received"), minWidth: 110, type: "number" },
-    { field: "status", headerName: t("status"), minWidth: 120, renderCell: (params) => renderDocumentStatus(params.row.status, params.row.archivedAt, t) },
+    { field: "status", headerName: t("status"), minWidth: 150, renderCell: (params) => renderInboundDocumentStatus(params.row, t) },
     {
       field: "actions",
       headerName: t("actions"),
@@ -1372,7 +1374,7 @@ export function ActivityManagementPage({
                 }]
                 : [])]
               : []),
-            ...(canManage
+            ...(canManage && !params.row.correctsDocumentId && !params.row.correctedByDocumentId && !params.row.correctedAt
               ? [{
                 key: "copy",
                 label: normalizeDocumentStatus(params.row.status) === "CONFIRMED" ? t("reEnterReceipt") : t("copyReceipt"),
@@ -2594,7 +2596,7 @@ export function ActivityManagementPage({
           totalExpectedQty: document.totalExpectedQty,
           totalReceivedQty: document.totalReceivedQty,
           trackingStatus: formatInboundTrackingStatusLabel(document.trackingStatus, document.status, t),
-          status: document.status
+          status: document.correctedAt ? t("corrected") : document.correctedByDocumentId ? t("correctionPendingShort") : document.status
         }))
       });
     } else {
@@ -2712,7 +2714,7 @@ export function ActivityManagementPage({
                   disableRowSelectionExcludeModel
                   rowSelectionModel={inboundRowSelectionModel}
                   onRowSelectionModelChange={handleInboundRowSelectionChange}
-                  isRowSelectable={(params) => !params.row.archivedAt && ["DRAFT", "CONFIRMED"].includes(normalizeDocumentStatus(params.row.status))}
+                  isRowSelectable={(params) => !params.row.archivedAt && !params.row.correctedAt && !params.row.correctedByDocumentId && ["DRAFT", "CONFIRMED"].includes(normalizeDocumentStatus(params.row.status))}
                   pageSizeOptions={[10, 20, 50]}
                   disableRowSelectionOnClick
                   initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
@@ -2830,7 +2832,7 @@ export function ActivityManagementPage({
                     {t("convertToPalletized")}
                   </Button>
                   ) : null}
-                {canManage ? (
+                {canManage && !selectedInboundDocument.correctsDocumentId && !selectedInboundDocument.correctedByDocumentId && !selectedInboundDocument.correctedAt ? (
                   <Button
                     variant="outlined"
                     startIcon={isSelectedInboundCopyBusy ? <InlineLoadingIndicator /> : <ContentCopyOutlinedIcon />}
@@ -2863,7 +2865,12 @@ export function ActivityManagementPage({
                 >
                   {t("downloadReceivingCountSheet")}
                 </Button>
-                {canManage && !selectedInboundDocument.archivedAt && normalizeDocumentStatus(selectedInboundDocument.status) !== "DELETED" ? (
+                {canManage
+                && !selectedInboundDocument.archivedAt
+                && !selectedInboundDocument.correctedAt
+                && !selectedInboundDocument.correctedByDocumentId
+                && !(selectedInboundDocument.correctsDocumentId && normalizeDocumentStatus(selectedInboundDocument.status) === "CONFIRMED")
+                && normalizeDocumentStatus(selectedInboundDocument.status) !== "DELETED" ? (
                   <Button
                     variant="outlined"
                     color="error"
@@ -2879,7 +2886,7 @@ export function ActivityManagementPage({
 
               <div className="document-drawer__status-bar">
                 <div className="document-drawer__status-main">
-                  {renderDocumentStatus(selectedInboundDocument.status, selectedInboundDocument.archivedAt, t)}
+                  {renderInboundDocumentStatus(selectedInboundDocument, t)}
                 </div>
                 <div className="document-drawer__status-stat">
                   <strong>{selectedInboundDocument.totalLines}</strong>
@@ -4049,8 +4056,22 @@ function summarizeInboundDocumentSections(document: InboundDocument) {
   return sections.join(", ");
 }
 
-function canArchiveInboundDocument(document: Pick<InboundDocument, "status" | "archivedAt">) {
-  return !document.archivedAt && normalizeDocumentStatus(document.status) !== "CONFIRMED";
+function canArchiveInboundDocument(document: Pick<InboundDocument, "status" | "archivedAt" | "correctsDocumentId" | "correctedByDocumentId" | "correctedAt">) {
+  return !document.archivedAt
+    && !document.correctsDocumentId
+    && !document.correctedByDocumentId
+    && !document.correctedAt
+    && normalizeDocumentStatus(document.status) !== "CONFIRMED";
+}
+
+function renderInboundDocumentStatus(document: InboundDocument, t: (key: string) => string) {
+  if (document.correctedAt) {
+    return <Chip label={t("corrected")} color="warning" size="small" variant="outlined" />;
+  }
+  if (document.correctedByDocumentId) {
+    return <Chip label={t("correctionPendingShort")} color="info" size="small" variant="outlined" />;
+  }
+  return renderDocumentStatus(document.status, document.archivedAt, t);
 }
 
 function renderDocumentStatus(status: string, archivedAt: string | null | undefined, t: (key: string) => string) {

@@ -417,7 +417,9 @@ describe("CustomerPortalPage", () => {
         locationId: isCalifornia ? 22 : 11,
         locationName: isCalifornia ? "CA" : "NJ",
         availableQty: isCalifornia ? 0 : itemNo,
-        quantity: itemNo
+        quantity: itemNo,
+        pallets: 0,
+        availablePallets: 0
       });
     });
     getInventory.mockResolvedValue(inventoryRows);

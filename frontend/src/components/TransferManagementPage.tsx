@@ -2,30 +2,23 @@ import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOu
 import CloseIcon from "@mui/icons-material/Close";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
-import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, Drawer, IconButton } from "@mui/material";
+import { useEffect, useMemo, useState } from "react";
+import { Box, Button, Chip, Drawer, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
-import { api } from "../lib/api";
 import { setPendingAllActivityContext } from "../lib/allActivityContext";
-import { formatDateTimeValue, toIsoDateTimeString } from "../lib/dates";
+import { formatDateTimeValue } from "../lib/dates";
 import { consumePendingInventoryActionContext } from "../lib/inventoryActionContext";
-import { buildInventoryActionSourceOptions } from "../lib/inventoryActionSources";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type { PageKey } from "../lib/routes";
 import {
-  DEFAULT_STORAGE_SECTION,
-  buildInventoryProjectionKey,
-  getLocationSectionOptions,
-  normalizeStorageSection,
-  toInventoryProjectionRef,
   type InventoryTransfer,
   type Item,
   type Location,
   type UserRole
 } from "../lib/types";
-import { InlineAlert, useFeedbackToast } from "./Feedback";
+import { ContainerTransferDialog } from "./ContainerTransferDialog";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots, WorkspaceDrawerLoadingState, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
@@ -40,42 +33,8 @@ type TransferManagementPageProps = {
   onNavigate: (page: PageKey) => void;
 };
 
-type TransferFormState = {
-  transferNo: string;
-  actualTransferredAt: string;
-  notes: string;
-};
-
-type TransferLineFormState = {
-  id: string;
-  sourceBucketKey: string;
-  quantity: number;
-  pallets: number;
-  toLocationId: string;
-  toStorageSection: string;
-  lineNote: string;
-};
-
-const emptyTransferForm: TransferFormState = {
-  transferNo: "",
-  actualTransferredAt: "",
-  notes: ""
-};
-const EMPTY_ITEMS: Item[] = [];
 const summaryNumberFormatter = new Intl.NumberFormat("en-US");
 const TRANSFER_COLUMN_ORDER_PREFERENCE_KEY = "transfers.column-order";
-
-function createTransferLine(): TransferLineFormState {
-  return {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    sourceBucketKey: "",
-    quantity: 0,
-    pallets: 0,
-    toLocationId: "",
-    toStorageSection: DEFAULT_STORAGE_SECTION,
-    lineNote: ""
-  };
-}
 
 export function TransferManagementPage({
   transfers,
@@ -88,34 +47,20 @@ export function TransferManagementPage({
 }: TransferManagementPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
-  const { showSuccess, showError, feedbackToast } = useFeedbackToast();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
   const canConfigureColumns = currentUserRole === "admin";
   const pageDescription = t("transfersDesc");
   const permissionNotice = canManage ? "" : t("readOnlyModeNotice");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedTransferId, setSelectedTransferId] = useState<number | null>(null);
-  const [form, setForm] = useState<TransferFormState>(emptyTransferForm);
-  const [lines, setLines] = useState<TransferLineFormState[]>([createTransferLine()]);
-  const [selectedSourceKey, setSelectedSourceKey] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const [dialogInitialSourceKey, setDialogInitialSourceKey] = useState("");
+  const [dialogPreferredContainerNo, setDialogPreferredContainerNo] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [hasProcessedLaunchContext, setHasProcessedLaunchContext] = useState(false);
   const selectedTransfer = useMemo(
     () => transfers.find((transfer) => transfer.id === selectedTransferId) ?? null,
     [transfers, selectedTransferId]
   );
-  const availableSourceItems = useMemo(() => items.filter((item) => item.availableQty > 0), [items]);
-  const transferSourceOptions = useMemo(
-    () => buildInventoryActionSourceOptions(availableSourceItems),
-    [availableSourceItems]
-  );
-  const selectedSourceOption = useMemo(
-    () => transferSourceOptions.find((option) => option.key === selectedSourceKey) ?? null,
-    [transferSourceOptions, selectedSourceKey]
-  );
-  const selectableSourceItems = selectedSourceOption?.items ?? EMPTY_ITEMS;
-
   useEffect(() => {
     if (selectedTransferId !== null && !selectedTransfer) {
       setSelectedTransferId(null);
@@ -123,19 +68,7 @@ export function TransferManagementPage({
   }, [selectedTransfer, selectedTransferId]);
 
   useEffect(() => {
-    const onlyBucketKey = selectableSourceItems.length === 1
-      ? buildInventoryProjectionKey(toInventoryProjectionRef(selectableSourceItems[0]!))
-      : null;
-    setLines((current) => current.map((line) => {
-      if (selectableSourceItems.some((item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.sourceBucketKey)) {
-        return line;
-      }
-      return { ...line, sourceBucketKey: onlyBucketKey ?? "" };
-    }));
-  }, [selectableSourceItems]);
-
-  useEffect(() => {
-    if (hasProcessedLaunchContext || !canManage || transferSourceOptions.length === 0) {
+    if (hasProcessedLaunchContext || !canManage || !items.some((item) => item.availableQty > 0)) {
       return;
     }
 
@@ -145,8 +78,8 @@ export function TransferManagementPage({
       return;
     }
 
-    openCreateModal(pendingContext.sourceKey ?? "");
-  }, [canManage, hasProcessedLaunchContext, transferSourceOptions]);
+    openCreateModal(pendingContext.sourceKey ?? "", pendingContext.containerNo ?? "");
+  }, [canManage, hasProcessedLaunchContext, items]);
 
   const baseColumns = useMemo<GridColDef<InventoryTransfer>[]>(() => [
     { field: "transferNo", headerName: t("transferNo"), minWidth: 180, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.transferNo}</span> },
@@ -235,90 +168,19 @@ export function TransferManagementPage({
     ];
   }, [transfers, t]);
 
-  function openCreateModal(initialSourceKey = "") {
+  function openCreateModal(initialSourceKey = "", preferredContainerNo = "") {
     if (!canManage) {
       return;
     }
-    setForm(emptyTransferForm);
-    setLines([createTransferLine()]);
-    setSelectedSourceKey(initialSourceKey);
-    setErrorMessage("");
+    setDialogInitialSourceKey(initialSourceKey);
+    setDialogPreferredContainerNo(preferredContainerNo);
     setIsModalOpen(true);
   }
 
   function closeCreateModal() {
     setIsModalOpen(false);
-    setSubmitting(false);
-    setErrorMessage("");
-    setSelectedSourceKey("");
-    setForm(emptyTransferForm);
-    setLines([createTransferLine()]);
-  }
-
-  function addLine() {
-    setLines((current) => [...current, createTransferLine()]);
-  }
-
-  function removeLine(lineId: string) {
-    setLines((current) => current.length === 1 ? current : current.filter((line) => line.id !== lineId));
-  }
-
-  function updateLine(lineId: string, patch: Partial<TransferLineFormState>) {
-    setLines((current) => current.map((line) => line.id === lineId ? { ...line, ...patch } : line));
-  }
-
-  function showActionError(error: unknown, fallbackMessage: string) {
-    const message = error instanceof Error ? error.message : fallbackMessage;
-    setErrorMessage(message);
-    showError(message);
-  }
-
-  const hasQtyOverflow = lines.some((line) => {
-    const item = selectableSourceItems.find(
-      (i) => buildInventoryProjectionKey(toInventoryProjectionRef(i)) === line.sourceBucketKey
-    );
-    return item !== undefined && (line.quantity > item.availableQty || line.pallets > item.pallets);
-  });
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (hasQtyOverflow) return;
-    setSubmitting(true);
-    setErrorMessage("");
-
-    try {
-      await api.createInventoryTransfer({
-        transferNo: form.transferNo || undefined,
-        actualTransferredAt: toIsoDateTimeString(form.actualTransferredAt),
-        notes: form.notes || undefined,
-        lines: lines
-          .map((line) => {
-            const selectedItem = selectableSourceItems.find(
-              (item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.sourceBucketKey
-            );
-            if (!selectedItem || Number(line.toLocationId) <= 0 || line.quantity <= 0) {
-              return null;
-            }
-
-            return {
-              ...toInventoryProjectionRef(selectedItem),
-              quantity: line.quantity,
-              pallets: line.pallets,
-              toLocationId: Number(line.toLocationId),
-              toStorageSection: line.toStorageSection || undefined,
-              lineNote: line.lineNote || undefined
-            };
-          })
-          .filter((line): line is NonNullable<typeof line> => line !== null)
-      });
-      closeCreateModal();
-      await onRefresh();
-      showSuccess(t("transferSavedSuccess"));
-    } catch (error) {
-      showActionError(error, t("couldNotSaveTransfer"));
-    } finally {
-      setSubmitting(false);
-    }
+    setDialogInitialSourceKey("");
+    setDialogPreferredContainerNo("");
   }
 
   return (
@@ -370,7 +232,6 @@ export function TransferManagementPage({
         </div>
       </section>
       {columnOrderDialog}
-      {feedbackToast}
 
       <Drawer
         anchor="right"
@@ -474,132 +335,16 @@ export function TransferManagementPage({
         ) : isLoading ? <WorkspaceDrawerLoadingState /> : null}
       </Drawer>
 
-      <Dialog
+      <ContainerTransferDialog
         open={isModalOpen}
-        onClose={(_, reason) => {
-          if (reason === "backdropClick") return;
-          closeCreateModal();
-        }}
-        fullWidth
-        maxWidth="lg"
-      >
-        <DialogTitle sx={{ pb: 1 }}>
-          {t("addTransfer")}
-          <IconButton aria-label={t("close")} onClick={closeCreateModal} sx={{ position: "absolute", right: 16, top: 16 }}>
-            <CloseIcon fontSize="small" />
-          </IconButton>
-        </DialogTitle>
-        <DialogContent dividers>
-          {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
-          <form className="sheet-form" onSubmit={handleSubmit}>
-            <label>{t("transferNo")}<input value={form.transferNo} onChange={(event) => setForm((current) => ({ ...current, transferNo: event.target.value }))} placeholder={t("autoGeneratedOptional")} /></label>
-            <label>{t("actualTransferredAt")}<input type="datetime-local" value={form.actualTransferredAt} onChange={(event) => setForm((current) => ({ ...current, actualTransferredAt: event.target.value }))} /></label>
-            <label className="sheet-form__wide">{t("notes")}<input value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} placeholder={t("transferNotesPlaceholder")} /></label>
-            <label className="sheet-form__wide">
-              {t("sku")}
-              <select value={selectedSourceKey} onChange={(event) => setSelectedSourceKey(event.target.value)}>
-                <option value="">{t("selectSkuForInventoryAction")}</option>
-                {transferSourceOptions.map((source) => (
-                  <option key={source.key} value={source.key}>
-                    {`${source.customerName} | ${t("itemNumber")}: ${source.itemNumber || "-"} | ${source.sku} - ${source.description} (${t("onHand")}: ${source.totalOnHand})`}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {selectedSourceOption ? (
-              <div className="sheet-note sheet-note--readonly sheet-form__wide">
-                {`${selectedSourceOption.customerName} | ${t("itemNumber")}: ${selectedSourceOption.itemNumber || "-"} | ${selectedSourceOption.sku} | ${selectedSourceOption.description} | ${t("onHand")}: ${selectedSourceOption.totalOnHand} | ${t("availableQty")}: ${selectedSourceOption.totalAvailable} | ${t("warehouseCount")}: ${selectedSourceOption.warehouseCount} | ${t("containerCount")}: ${selectedSourceOption.containerCount}`}
-              </div>
-            ) : (
-              <InlineAlert severity="info" className="sheet-form__wide">
-                {t("selectSkuBeforeInventoryAction")}
-              </InlineAlert>
-            )}
-
-            <div className="sheet-form__wide">
-              <div className="batch-lines__toolbar">
-                <strong>{t("transferLines")}</strong>
-                <Button size="small" variant="outlined" type="button" onClick={addLine} disabled={!selectedSourceOption}>{t("addLine")}</Button>
-              </div>
-              <div className="batch-lines">
-                {lines.map((line, index) => {
-                  const selectedItem = selectableSourceItems.find(
-                    (item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.sourceBucketKey
-                  );
-                  const destinationLocation = locations.find((location) => location.id === Number(line.toLocationId));
-                  const sectionOptions = getLocationSectionOptions(destinationLocation);
-
-                  return (
-                    <div className="batch-line-card" key={line.id}>
-                      <div className="batch-line-card__header">
-                        <div className="batch-line-card__title">
-                          <strong>{t("transferLine")} #{index + 1}</strong>
-                        </div>
-                        <button className="button button--danger button--small" type="button" onClick={() => removeLine(line.id)} disabled={lines.length === 1}>{t("removeLine")}</button>
-                      </div>
-                      <div className="batch-line-grid">
-                        <label className="batch-line-grid__description">
-                          {t("sourceStockRow")}
-                          <select value={line.sourceBucketKey} onChange={(event) => updateLine(line.id, { sourceBucketKey: event.target.value })}>
-                            <option value="">{selectedSourceOption ? t("selectStockRow") : t("selectSkuForInventoryAction")}</option>
-                            {selectableSourceItems.map((item) => (
-                              <option key={buildInventoryProjectionKey(toInventoryProjectionRef(item))} value={buildInventoryProjectionKey(toInventoryProjectionRef(item))}>
-                                {`${item.locationName} / ${normalizeStorageSection(item.storageSection)} | ${t("containerNo")}: ${item.containerNo || "-"} | ${item.sku} - ${displayDescription(item)} (${t("availableQty")}: ${item.availableQty})`}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label>{t("availableQty")}<input value={selectedItem ? String(selectedItem.availableQty) : ""} readOnly /></label>
-                        <label>{t("pallets")}<input value={selectedItem ? String(selectedItem.pallets) : ""} readOnly /></label>
-                        <label>
-                          {t("transferQty")}
-                          <input type="number" min="0" value={numberInputValue(line.quantity)} onChange={(event) => updateLine(line.id, { quantity: Math.max(0, Number(event.target.value || 0)) })} />
-                          {selectedItem && line.quantity > selectedItem.availableQty && (
-                            <small style={{ color: "#b76857", display: "block", marginTop: 2, fontWeight: 600 }}>
-                              {t("transferQtyExceedsAvailable", { available: String(selectedItem.availableQty) })}
-                            </small>
-                          )}
-                          {selectedItem && line.quantity > 0 && line.quantity <= selectedItem.availableQty && (
-                            <small style={{ color: "#6c757d", display: "block", marginTop: 2 }}>
-                              {t("remainingAfterTransfer")}: {selectedItem.availableQty - line.quantity}
-                            </small>
-                          )}
-                        </label>
-                        <label>
-                          {t("pallets")}
-                          <input type="number" min="0" value={numberInputValue(line.pallets)} onChange={(event) => updateLine(line.id, { pallets: Math.max(0, Number(event.target.value || 0)) })} />
-                          {selectedItem && line.pallets > selectedItem.pallets ? (
-                            <small style={{ color: "#b76857", display: "block", marginTop: 2, fontWeight: 600 }}>
-                              {`${t("pallets")}: ${selectedItem.pallets}`}
-                            </small>
-                          ) : null}
-                        </label>
-                        <label>{t("destinationStorage")}<select value={line.toLocationId} onChange={(event) => updateLine(line.id, { toLocationId: event.target.value, toStorageSection: getLocationSectionOptions(locations.find((location) => location.id === Number(event.target.value)))[0] || DEFAULT_STORAGE_SECTION })}><option value="">{t("selectStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
-                        <label>{t("toSection")}<select value={line.toStorageSection} onChange={(event) => updateLine(line.id, { toStorageSection: event.target.value })}>{sectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}</select></label>
-                        <label className="batch-line-grid__detail">{t("internalNotes")}<input value={line.lineNote} onChange={(event) => updateLine(line.id, { lineNote: event.target.value })} placeholder={t("transferLineNotePlaceholder")} /></label>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="sheet-form__actions sheet-form__wide">
-              <button className="button button--primary" type="submit" disabled={submitting || hasQtyOverflow}>{submitting ? t("saving") : t("saveTransfer")}</button>
-              <button className="button button--ghost" type="button" onClick={closeCreateModal}>{t("cancel")}</button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
+        items={items}
+        locations={locations}
+        initialSourceKey={dialogInitialSourceKey}
+        preferredContainerNo={dialogPreferredContainerNo}
+        onClose={closeCreateModal}
+        onSaved={onRefresh}
+      />
 
     </main>
   );
-}
-
-function displayDescription(item: Pick<Item, "description" | "name">) {
-  return item.description || item.name;
-}
-
-function numberInputValue(value: number) {
-  return value === 0 ? "" : String(value);
 }

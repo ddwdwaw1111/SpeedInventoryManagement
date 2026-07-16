@@ -631,7 +631,7 @@ func (s *Store) loadSKUFlowCurrentInventory(ctx context.Context, filters SKUFlow
 			COALESCE(SUM(i.pallets), 0) AS pallets
 		FROM inventory_items i
 		WHERE i.sku_master_id = ?
-			AND i.quantity > 0
+			AND (i.quantity > 0 OR i.pallets > 0)
 	`
 	args := []any{filters.SKUMasterID}
 	if filters.CustomerID > 0 {

@@ -26,11 +26,12 @@ func (s *Server) handleCustomerPortalPackingLists(c *gin.Context) {
 	}
 
 	documents, err := s.store.ListInboundDocumentsFiltered(c.Request.Context(), limit, service.InboundDocumentFilters{
-		ArchiveScope:   service.DocumentArchiveScopeAll,
-		Search:         strings.TrimSpace(c.Query("search")),
-		CustomerID:     customerID,
-		Status:         strings.TrimSpace(c.Query("status")),
-		TrackingStatus: strings.TrimSpace(c.Query("trackingStatus")),
+		ArchiveScope:    service.DocumentArchiveScopeAll,
+		Search:          strings.TrimSpace(c.Query("search")),
+		CustomerID:      customerID,
+		Status:          strings.TrimSpace(c.Query("status")),
+		TrackingStatus:  strings.TrimSpace(c.Query("trackingStatus")),
+		OperationalOnly: true,
 	})
 	if err != nil {
 		writeServerError(c, err)

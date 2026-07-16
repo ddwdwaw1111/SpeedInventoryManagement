@@ -134,8 +134,9 @@ func (s *Server) handleV2CustomerPortalContainerLifecycle(c *gin.Context) {
 	}
 
 	lifecycle, err := app.Container.GetLifecycle(c.Request.Context(), service.GetContainerLifecycleInput{
-		CustomerID:  customerID,
-		ContainerNo: c.Param("containerNo"),
+		CustomerID:      customerID,
+		ContainerNo:     c.Param("containerNo"),
+		OperationalOnly: true,
 	})
 	if err != nil {
 		writeDomainError(c, err)

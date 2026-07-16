@@ -124,8 +124,9 @@ func (s *Server) handleCustomerPortalContainerLifecycle(c *gin.Context) {
 	}
 
 	lifecycleEvents, err := s.store.ListContainerLifecycleEvents(c.Request.Context(), customerPortalContainerLoadLimit, service.ContainerLifecycleEventFilters{
-		CustomerID:  customerID,
-		ContainerNo: containerNo,
+		CustomerID:      customerID,
+		ContainerNo:     containerNo,
+		OperationalOnly: true,
 	})
 	if err != nil {
 		writeServerError(c, err)
@@ -156,8 +157,9 @@ func (s *Server) handleCustomerPortalContainerLifecycle(c *gin.Context) {
 
 func (s *Server) loadCustomerPortalContainerSummaries(ctx context.Context, customerID int64) ([]customerPortalContainerSummary, error) {
 	packingLists, err := s.store.ListInboundDocumentsFiltered(ctx, customerPortalContainerLoadLimit, service.InboundDocumentFilters{
-		ArchiveScope: service.DocumentArchiveScopeAll,
-		CustomerID:   customerID,
+		ArchiveScope:    service.DocumentArchiveScopeAll,
+		CustomerID:      customerID,
+		OperationalOnly: true,
 	})
 	if err != nil {
 		return nil, err
@@ -168,7 +170,10 @@ func (s *Server) loadCustomerPortalContainerSummaries(ctx context.Context, custo
 		return nil, err
 	}
 
-	lifecycleEvents, err := s.store.ListContainerLifecycleEvents(ctx, customerPortalContainerLoadLimit, service.ContainerLifecycleEventFilters{CustomerID: customerID})
+	lifecycleEvents, err := s.store.ListContainerLifecycleEvents(ctx, customerPortalContainerLoadLimit, service.ContainerLifecycleEventFilters{
+		CustomerID:      customerID,
+		OperationalOnly: true,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -200,9 +205,10 @@ func (s *Server) loadCustomerPortalContainerSummaries(ctx context.Context, custo
 
 func (s *Server) loadCustomerPortalPackingListsForContainer(ctx context.Context, customerID int64, containerNo string) ([]service.InboundDocument, error) {
 	documents, err := s.store.ListInboundDocumentsFiltered(ctx, customerPortalContainerLoadLimit, service.InboundDocumentFilters{
-		ArchiveScope: service.DocumentArchiveScopeAll,
-		CustomerID:   customerID,
-		Search:       containerNo,
+		ArchiveScope:    service.DocumentArchiveScopeAll,
+		CustomerID:      customerID,
+		Search:          containerNo,
+		OperationalOnly: true,
 	})
 	if err != nil {
 		return nil, err

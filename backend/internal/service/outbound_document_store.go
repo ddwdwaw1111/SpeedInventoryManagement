@@ -517,9 +517,31 @@ func (s *Store) CreateOutboundDocument(ctx context.Context, input CreateOutbound
 	}
 	defer tx.Rollback()
 
+	documentID, err := s.createOutboundDocumentTx(ctx, tx, input, expectedShipDate, actualShipDate, requestedStatus, requestedTrackingStatus)
+	if err != nil {
+		return OutboundDocument{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return OutboundDocument{}, fmt.Errorf("commit outbound document: %w", err)
+	}
+
+	return s.getOutboundDocument(ctx, documentID)
+}
+
+func (s *Store) createOutboundDocumentTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	input CreateOutboundDocumentInput,
+	expectedShipDate *time.Time,
+	actualShipDate *time.Time,
+	requestedStatus string,
+	requestedTrackingStatus string,
+) (int64, error) {
 	lockedSources := make(map[string]lockedOutboundSource)
 	reservationState := newOutboundAllocationReservationState()
 	var customerID int64
+	var err error
 
 	for lineIndex := range input.Lines {
 		line := &input.Lines[lineIndex]
@@ -528,7 +550,7 @@ func (s *Store) CreateOutboundDocument(ctx context.Context, input CreateOutbound
 		if !exists {
 			lockedSource, err = s.loadLockedOutboundSourceTx(ctx, tx, line.CustomerID, line.LocationID, line.SKUMasterID)
 			if err != nil {
-				return OutboundDocument{}, err
+				return 0, err
 			}
 			lockedSources[sourceKey] = lockedSource
 		}
@@ -536,10 +558,10 @@ func (s *Store) CreateOutboundDocument(ctx context.Context, input CreateOutbound
 		if customerID == 0 {
 			customerID = lockedSource.CustomerID
 		} else if customerID != lockedSource.CustomerID {
-			return OutboundDocument{}, fmt.Errorf("%w: all outbound lines must belong to the same customer", ErrInvalidInput)
+			return 0, fmt.Errorf("%w: all outbound lines must belong to the same customer", ErrInvalidInput)
 		}
 		if _, err := s.prepareOutboundDraftLineAllocationsTx(ctx, tx, lockedSource, line, reservationState); err != nil {
-			return OutboundDocument{}, err
+			return 0, err
 		}
 	}
 
@@ -580,32 +602,28 @@ func (s *Store) CreateOutboundDocument(ctx context.Context, input CreateOutbound
 		requestedTrackingStatus,
 	)
 	if err != nil {
-		return OutboundDocument{}, mapDBError(fmt.Errorf("create outbound document: %w", err))
+		return 0, mapDBError(fmt.Errorf("create outbound document: %w", err))
 	}
 
 	documentID, err := result.LastInsertId()
 	if err != nil {
-		return OutboundDocument{}, fmt.Errorf("resolve outbound document id: %w", err)
+		return 0, fmt.Errorf("resolve outbound document id: %w", err)
 	}
 
 	if err := s.insertOutboundDocumentLinesTx(ctx, tx, documentID, input, lockedSources); err != nil {
-		return OutboundDocument{}, err
+		return 0, err
 	}
 
 	switch requestedStatus {
 	case DocumentStatusConfirmed:
 		if err := s.confirmOutboundDocumentTx(ctx, tx, documentID, requestedTrackingStatus); err != nil {
-			return OutboundDocument{}, err
+			return 0, err
 		}
 	case DocumentStatusDraft:
 		// Draft documents keep stock unchanged until confirmed.
 	}
 
-	if err := tx.Commit(); err != nil {
-		return OutboundDocument{}, fmt.Errorf("commit outbound document: %w", err)
-	}
-
-	return s.getOutboundDocument(ctx, documentID)
+	return documentID, nil
 }
 
 func (s *Store) UpdateOutboundDocument(ctx context.Context, documentID int64, input CreateOutboundDocumentInput) (OutboundDocument, error) {

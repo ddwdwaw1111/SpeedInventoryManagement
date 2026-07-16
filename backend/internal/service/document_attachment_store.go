@@ -75,9 +75,6 @@ func (s *Store) CreateDocumentAttachment(ctx context.Context, input CreateDocume
 	if input.DocumentType == "" || input.DocumentID <= 0 {
 		return DocumentAttachment{}, fmt.Errorf("%w: document reference is required", ErrInvalidInput)
 	}
-	if err := s.ensureDocumentExists(ctx, input.DocumentType, input.DocumentID); err != nil {
-		return DocumentAttachment{}, err
-	}
 	if input.DisplayName == "" {
 		input.DisplayName = input.OriginalFileName
 	}
@@ -94,7 +91,16 @@ func (s *Store) CreateDocumentAttachment(ctx context.Context, input CreateDocume
 		return DocumentAttachment{}, fmt.Errorf("%w: file is empty", ErrInvalidInput)
 	}
 
-	result, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return DocumentAttachment{}, fmt.Errorf("begin document attachment transaction: %w", err)
+	}
+	defer tx.Rollback()
+	if err := ensureDocumentAttachmentMutableTx(ctx, tx, input.DocumentType, input.DocumentID); err != nil {
+		return DocumentAttachment{}, err
+	}
+
+	result, err := tx.ExecContext(ctx, `
 		INSERT INTO document_attachments (
 			document_type,
 			document_id,
@@ -127,6 +133,9 @@ func (s *Store) CreateDocumentAttachment(ctx context.Context, input CreateDocume
 	attachmentID, err := result.LastInsertId()
 	if err != nil {
 		return DocumentAttachment{}, fmt.Errorf("read document attachment id: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return DocumentAttachment{}, fmt.Errorf("commit document attachment: %w", err)
 	}
 
 	return s.GetDocumentAttachment(ctx, input.DocumentType, input.DocumentID, attachmentID)
@@ -239,7 +248,16 @@ func (s *Store) MarkDocumentAttachmentDeleted(ctx context.Context, documentType 
 		return ErrNotFound
 	}
 
-	result, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin document attachment delete transaction: %w", err)
+	}
+	defer tx.Rollback()
+	if err := ensureDocumentAttachmentMutableTx(ctx, tx, documentType, documentID); err != nil {
+		return err
+	}
+
+	result, err := tx.ExecContext(ctx, `
 		UPDATE document_attachments
 		SET deleted_at = CURRENT_TIMESTAMP
 		WHERE id = ?
@@ -256,6 +274,9 @@ func (s *Store) MarkDocumentAttachmentDeleted(ctx context.Context, documentType 
 	}
 	if affected == 0 {
 		return ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit document attachment delete: %w", err)
 	}
 	return nil
 }
@@ -284,6 +305,67 @@ func markDocumentAttachmentsDeletedForDocument(ctx context.Context, executor doc
 
 func (s *Store) EnsureDocumentExists(ctx context.Context, documentType string, documentID int64) error {
 	return s.ensureDocumentExists(ctx, documentType, documentID)
+}
+
+func (s *Store) EnsureDocumentAttachmentMutable(ctx context.Context, documentType string, documentID int64) error {
+	documentType = normalizeDocumentAttachmentType(documentType)
+	if documentType == "" || documentID <= 0 {
+		return ErrNotFound
+	}
+	if documentType != DocumentAttachmentInbound {
+		return s.ensureDocumentExists(ctx, documentType, documentID)
+	}
+
+	var correctedByDocumentID sql.NullInt64
+	var correctedAt sql.NullTime
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT corrected_by_document_id, corrected_at
+		FROM inbound_documents
+		WHERE id = ?
+	`, documentID).Scan(&correctedByDocumentID, &correctedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("check inbound attachment mutability: %w", err)
+	}
+	return validateInboundCorrectionSourceMutable(correctedByDocumentID.Valid, correctedAt.Valid)
+}
+
+func ensureDocumentAttachmentMutableTx(ctx context.Context, tx *sql.Tx, documentType string, documentID int64) error {
+	documentType = normalizeDocumentAttachmentType(documentType)
+	if documentType == "" || documentID <= 0 {
+		return ErrNotFound
+	}
+	if documentType == DocumentAttachmentInbound {
+		var correctedByDocumentID sql.NullInt64
+		var correctedAt sql.NullTime
+		if err := tx.QueryRowContext(ctx, `
+			SELECT corrected_by_document_id, corrected_at
+			FROM inbound_documents
+			WHERE id = ?
+			FOR UPDATE
+		`, documentID).Scan(&correctedByDocumentID, &correctedAt); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			return fmt.Errorf("lock inbound attachment document: %w", err)
+		}
+		return validateInboundCorrectionSourceMutable(correctedByDocumentID.Valid, correctedAt.Valid)
+	}
+
+	var id int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT id
+		FROM outbound_documents
+		WHERE id = ?
+		FOR UPDATE
+	`, documentID).Scan(&id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("lock outbound attachment document: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) ensureDocumentExists(ctx context.Context, documentType string, documentID int64) error {

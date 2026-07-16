@@ -31,6 +31,7 @@ import { setPendingActivityManagementLaunchContext } from "./lib/activityManagem
 import { setPendingInboundReceiptEditorLaunchContext, type InboundReceiptEditorLaunchContext } from "./lib/inboundReceiptEditorLaunchContext";
 import { setPendingOutboundShipmentEditorLaunchContext, type OutboundShipmentEditorLaunchContext } from "./lib/outboundShipmentEditorLaunchContext";
 import { useI18n } from "./lib/i18n";
+import { isOperationalInboundDocument } from "./lib/documentTracking";
 import { useSettings } from "./lib/settings";
 import { NavigationSidebar } from "./shared/NavigationSidebar";
 import {
@@ -241,7 +242,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
   const [errorMessage, setErrorMessage] = useState("");
   const [embeddedComposer, setEmbeddedComposer] = useState<{ mode: "IN" | "OUT"; date: string } | null>(null);
   const activeInboundDocuments = useMemo(
-    () => inboundDocuments.filter((document) => !document.archivedAt),
+    () => inboundDocuments.filter((document) => !document.archivedAt && isOperationalInboundDocument(document)),
     [inboundDocuments]
   );
   const activeOutboundDocuments = useMemo(
@@ -783,9 +784,12 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
             {activePage === "inbound-detail" ? (
               renderWithSuspense(<InboundDetailPage
                 document={selectedInboundDetailDocument}
+                items={items}
                 currentUserRole={currentUser.role}
                 isLoading={isLoading}
+                onRefresh={() => loadAppData(false)}
                 onNavigate={handleNavigateToPage}
+                onOpenInboundDetail={handleNavigateToInboundDetail}
                 onOpenReceiptEditor={handleNavigateToReceiptEditor}
               />)
             ) : null}

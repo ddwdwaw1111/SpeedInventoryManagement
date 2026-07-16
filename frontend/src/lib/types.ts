@@ -748,6 +748,9 @@ export type InboundDocument = {
   confirmedAt: string | null;
   deletedAt: string | null;
   archivedAt: string | null;
+  correctsDocumentId: number | null;
+  correctedByDocumentId: number | null;
+  correctedAt: string | null;
   totalLines: number;
   totalExpectedQty: number;
   totalReceivedQty: number;
@@ -953,6 +956,8 @@ export type OutboundBulkImportLinePreview = {
   inventoryPallets: number;
   outboundPallets: number;
   lineNote: string;
+  requiresTransfer: boolean;
+  outboundWarehouse: string;
 };
 
 export type OutboundBulkImportDocumentPreview = {
@@ -972,6 +977,7 @@ export type OutboundBulkImportDocumentPreview = {
   totalQty: number;
   totalInventoryPallets: number;
   totalOutboundPallets: number;
+  transferLines: number;
 };
 
 export type OutboundBulkImportPreview = {
@@ -979,6 +985,7 @@ export type OutboundBulkImportPreview = {
   sourceFileName: string;
   customerId: number;
   customerName: string;
+  mainWarehouse: string;
   locationCount: number;
   totalDocuments: number;
   validDocuments: number;
@@ -1006,6 +1013,7 @@ export type OutboundBulkImportCommitResult = {
   pickingOrderNo: string;
   success: boolean;
   document?: OutboundDocument;
+  transferLines: number;
   error?: string;
 };
 
@@ -1059,8 +1067,10 @@ export type InventoryAdjustmentLinePayload = {
   storageSection: string;
   containerNo: string;
   skuMasterId: number;
-  adjustQty: number;
-  adjustPallets: number;
+  adjustQty?: number;
+  adjustPallets?: number;
+  finalQty?: number;
+  finalPallets?: number;
   lineNote?: string;
 };
 
@@ -1124,7 +1134,14 @@ export type InventoryTransferPayload = {
   transferNo?: string;
   actualTransferredAt?: string;
   notes?: string;
-  lines: InventoryTransferLinePayload[];
+  lines?: InventoryTransferLinePayload[];
+  entireContainer?: {
+    customerId: number;
+    locationId: number;
+    containerNo: string;
+    toLocationId: number;
+    toStorageSection?: string;
+  };
 };
 
 export type CycleCountLine = {

@@ -237,6 +237,9 @@ func applyBaselineSchemaMigration(db *sql.DB) error {
 			cancel_note TEXT DEFAULT NULL,
 			cancelled_at TIMESTAMP NULL DEFAULT NULL,
 			archived_at TIMESTAMP NULL DEFAULT NULL,
+			corrects_document_id BIGINT DEFAULT NULL,
+			corrected_by_document_id BIGINT DEFAULT NULL,
+			corrected_at TIMESTAMP NULL DEFAULT NULL,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			PRIMARY KEY (id),
@@ -244,6 +247,8 @@ func applyBaselineSchemaMigration(db *sql.DB) error {
 			KEY idx_inbound_documents_location_id (location_id),
 			KEY idx_inbound_documents_expected_arrival_date (expected_arrival_date),
 			KEY idx_inbound_documents_container_no (container_no),
+			KEY idx_inbound_documents_corrects_document_id (corrects_document_id),
+			KEY idx_inbound_documents_corrected_by_document_id (corrected_by_document_id),
 			UNIQUE KEY uq_inbound_documents_import_key (import_key),
 			CONSTRAINT fk_inbound_documents_customer
 				FOREIGN KEY (customer_id) REFERENCES customers (id),
@@ -266,6 +271,11 @@ func applyBaselineSchemaMigration(db *sql.DB) error {
 		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS cancel_note TEXT DEFAULT NULL AFTER posted_at`,
 		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP NULL DEFAULT NULL AFTER cancel_note`,
 		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP NULL DEFAULT NULL AFTER cancelled_at`,
+		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS corrects_document_id BIGINT DEFAULT NULL AFTER archived_at`,
+		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS corrected_by_document_id BIGINT DEFAULT NULL AFTER corrects_document_id`,
+		`ALTER TABLE inbound_documents ADD COLUMN IF NOT EXISTS corrected_at TIMESTAMP NULL DEFAULT NULL AFTER corrected_by_document_id`,
+		`CREATE INDEX IF NOT EXISTS idx_inbound_documents_corrects_document_id ON inbound_documents (corrects_document_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_inbound_documents_corrected_by_document_id ON inbound_documents (corrected_by_document_id)`,
 		`UPDATE inbound_documents
 			SET
 				confirmed_at = COALESCE(confirmed_at, posted_at, created_at),

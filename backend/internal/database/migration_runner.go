@@ -62,6 +62,12 @@ var schemaMigrations = []schemaMigration{
 		Revision: "2026-07-11.2",
 		Apply:    applyRemovePalletEntitiesMigration,
 	},
+	{
+		Version:  8,
+		Name:     "inbound_correction_workflow",
+		Revision: "2026-07-15.1",
+		Apply:    applyInboundCorrectionWorkflowMigration,
+	},
 }
 
 // Migrate applies each schema migration exactly once. MariaDB DDL auto-commits,

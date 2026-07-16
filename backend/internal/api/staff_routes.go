@@ -57,6 +57,7 @@ func (s *Server) registerStaffRoutes(protected gin.IRouter) {
 	operator.POST("/inbound-documents/:id/tracking-status", s.handleUpdateInboundDocumentTrackingStatus)
 	operator.POST("/inbound-documents/:id/cancel", s.handleCancelInboundDocument)
 	operator.POST("/inbound-documents/:id/copy", s.handleCopyInboundDocument)
+	operator.POST("/inbound-documents/:id/correction-draft", s.handleCreateInboundCorrectionDraft)
 	operator.POST("/inbound-documents/:id/attachments", s.handleUploadInboundDocumentAttachment)
 	operator.DELETE("/inbound-documents/:id/attachments/:attachmentId", s.handleDeleteInboundDocumentAttachment)
 	operator.POST("/adjustments", s.handleCreateInventoryAdjustment)

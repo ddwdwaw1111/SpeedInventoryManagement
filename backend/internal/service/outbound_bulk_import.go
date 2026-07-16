@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/xuri/excelize/v2"
 )
@@ -17,6 +18,7 @@ const (
 	MaxOutboundBulkImportCommitBodySize = 20 << 20
 	MaxOutboundBulkImportRows           = 5000
 	MaxOutboundBulkImportDocuments      = 500
+	MainOutboundWarehouseCode           = "308"
 )
 
 const (
@@ -53,16 +55,18 @@ type OutboundBulkImportIssue struct {
 }
 
 type OutboundBulkImportLinePreview struct {
-	RowNumber        int    `json:"rowNumber"`
-	Warehouse        string `json:"warehouse"`
-	SourceContainer  string `json:"sourceContainer"`
-	StorageSection   string `json:"storageSection"`
-	SKU              string `json:"sku"`
-	ItemNumber       string `json:"itemNumber"`
-	Quantity         int    `json:"quantity"`
-	InventoryPallets int    `json:"inventoryPallets"` // Pallets deducted from the selected container inventory.
-	OutboundPallets  int    `json:"outboundPallets"`  // Pallets after repalletization, persisted on the shipment line.
-	LineNote         string `json:"lineNote"`
+	RowNumber         int    `json:"rowNumber"`
+	Warehouse         string `json:"warehouse"`
+	SourceContainer   string `json:"sourceContainer"`
+	StorageSection    string `json:"storageSection"`
+	SKU               string `json:"sku"`
+	ItemNumber        string `json:"itemNumber"`
+	Quantity          int    `json:"quantity"`
+	InventoryPallets  int    `json:"inventoryPallets"` // Pallets deducted from the selected container inventory.
+	OutboundPallets   int    `json:"outboundPallets"`  // Pallets after repalletization, persisted on the shipment line.
+	LineNote          string `json:"lineNote"`
+	RequiresTransfer  bool   `json:"requiresTransfer"`
+	OutboundWarehouse string `json:"outboundWarehouse"`
 }
 
 type OutboundBulkImportDocumentPreview struct {
@@ -82,6 +86,7 @@ type OutboundBulkImportDocumentPreview struct {
 	TotalQty              int                             `json:"totalQty"`
 	TotalInventoryPallets int                             `json:"totalInventoryPallets"`
 	TotalOutboundPallets  int                             `json:"totalOutboundPallets"`
+	TransferLines         int                             `json:"transferLines"`
 }
 
 type OutboundBulkImportPreview struct {
@@ -89,6 +94,7 @@ type OutboundBulkImportPreview struct {
 	SourceFileName   string                              `json:"sourceFileName"`
 	CustomerID       int64                               `json:"customerId"`
 	CustomerName     string                              `json:"customerName"`
+	MainWarehouse    string                              `json:"mainWarehouse"`
 	LocationCount    int                                 `json:"locationCount"`
 	TotalDocuments   int                                 `json:"totalDocuments"`
 	ValidDocuments   int                                 `json:"validDocuments"`
@@ -121,6 +127,7 @@ type OutboundBulkImportCommitResult struct {
 	PickingOrderNo string            `json:"pickingOrderNo"`
 	Success        bool              `json:"success"`
 	Document       *OutboundDocument `json:"document,omitempty"`
+	TransferLines  int               `json:"transferLines"`
 	Error          string            `json:"error,omitempty"`
 }
 
@@ -182,8 +189,11 @@ func (s *Store) RevalidateOutboundBulkImport(ctx context.Context, input Outbound
 		document.TotalQty = 0
 		document.TotalInventoryPallets = 0
 		document.TotalOutboundPallets = 0
+		document.TransferLines = 0
 		for lineIndex := range document.Lines {
 			line := &document.Lines[lineIndex]
+			line.RequiresTransfer = false
+			line.OutboundWarehouse = ""
 			if line.RowNumber <= 0 {
 				line.RowNumber = lineIndex + 2
 			}
@@ -218,6 +228,14 @@ func (s *Store) CreateOutboundDocumentsBulkDraft(ctx context.Context, input Outb
 		if totalLines > MaxOutboundBulkImportRows {
 			return OutboundBulkImportCommitResponse{}, fmt.Errorf("%w: no more than %d shipment lines can be imported", ErrInvalidInput, MaxOutboundBulkImportRows)
 		}
+	}
+	locations, err := s.ListLocations(ctx)
+	if err != nil {
+		return OutboundBulkImportCommitResponse{}, err
+	}
+	mainLocation, err := resolveMainOutboundLocation(locations)
+	if err != nil {
+		return OutboundBulkImportCommitResponse{}, err
 	}
 	// Serialize the existence check and create sequence so concurrent bulk
 	// commits cannot both create the same customer/Picking Order draft.
@@ -256,11 +274,12 @@ func (s *Store) CreateOutboundDocumentsBulkDraft(ctx context.Context, input Outb
 			}
 			if len(documentInput.Lines) == 0 {
 				result.Error = "at least one outbound line is required"
-			} else if document, err := s.CreateOutboundDocument(ctx, documentInput); err != nil {
+			} else if document, transferLines, err := s.createOutboundBulkDraftWithTransfers(ctx, documentInput, mainLocation); err != nil {
 				result.Error = err.Error()
 			} else {
 				result.Success = true
 				result.Document = &document
+				result.TransferLines = transferLines
 				response.CreatedDocuments++
 			}
 		}
@@ -273,6 +292,123 @@ func (s *Store) CreateOutboundDocumentsBulkDraft(ctx context.Context, input Outb
 		response.Results = append(response.Results, result)
 	}
 	return response, nil
+}
+
+func (s *Store) createOutboundBulkDraftWithTransfers(
+	ctx context.Context,
+	input CreateOutboundDocumentInput,
+	mainLocation Location,
+) (OutboundDocument, int, error) {
+	input = sanitizeOutboundDocumentInput(input)
+	if err := validateOutboundDocumentInput(input); err != nil {
+		return OutboundDocument{}, 0, err
+	}
+	expectedShipDate, err := parseOptionalDate(input.ExpectedShipDate)
+	if err != nil {
+		return OutboundDocument{}, 0, err
+	}
+	actualShipDate, err := parseOptionalDate(input.ActualShipDate)
+	if err != nil {
+		return OutboundDocument{}, 0, err
+	}
+	if expectedShipDate == nil {
+		now := time.Now().UTC()
+		expectedShipDate = &now
+	}
+	requestedStatus := coalesceDocumentStatus(input.Status)
+	requestedTrackingStatus := coalesceOutboundTrackingStatus(input.TrackingStatus, requestedStatus)
+	if requestedStatus == DocumentStatusDraft {
+		requestedTrackingStatus = OutboundTrackingScheduled
+	}
+
+	input, transferInput, err := buildOutboundBulkMainWarehousePlan(input, mainLocation)
+	if err != nil {
+		return OutboundDocument{}, 0, err
+	}
+	var transferTime *time.Time
+	if len(transferInput.Lines) > 0 {
+		transferInput = sanitizeInventoryTransferInput(transferInput)
+		if err := validateInventoryTransferInput(transferInput); err != nil {
+			return OutboundDocument{}, 0, err
+		}
+		transferTime, err = parseOptionalDateTime(transferInput.ActualTransferredAt)
+		if err != nil {
+			return OutboundDocument{}, 0, err
+		}
+	}
+
+	var documentID int64
+	err = retryDeadlockedDatabaseTransaction(ctx, func() error {
+		tx, beginErr := s.db.BeginTx(ctx, nil)
+		if beginErr != nil {
+			return fmt.Errorf("begin bulk outbound transaction: %w", beginErr)
+		}
+		defer tx.Rollback()
+		if len(transferInput.Lines) > 0 {
+			if _, transferErr := s.createInventoryTransferTx(ctx, tx, transferInput, transferTime); transferErr != nil {
+				return transferErr
+			}
+		}
+		createdID, createErr := s.createOutboundDocumentTx(ctx, tx, input, expectedShipDate, actualShipDate, requestedStatus, requestedTrackingStatus)
+		if createErr != nil {
+			return createErr
+		}
+		if commitErr := tx.Commit(); commitErr != nil {
+			return fmt.Errorf("commit bulk outbound transaction: %w", commitErr)
+		}
+		documentID = createdID
+		return nil
+	})
+	if err != nil {
+		return OutboundDocument{}, 0, err
+	}
+	document, err := s.getOutboundDocument(ctx, documentID)
+	return document, len(transferInput.Lines), err
+}
+
+func buildOutboundBulkMainWarehousePlan(
+	input CreateOutboundDocumentInput,
+	mainLocation Location,
+) (CreateOutboundDocumentInput, CreateInventoryTransferInput, error) {
+	transferToken, err := newInboundBulkImportID()
+	if err != nil {
+		return CreateOutboundDocumentInput{}, CreateInventoryTransferInput{}, fmt.Errorf("generate bulk outbound transfer number: %w", err)
+	}
+	transferInput := CreateInventoryTransferInput{
+		TransferNo:          "TRN-BULK-" + strings.ToUpper(transferToken),
+		ActualTransferredAt: firstNonEmpty(input.ActualShipDate, input.ExpectedShipDate),
+		Notes:               fmt.Sprintf("Automatic transfer to %s for bulk outbound %s", mainLocation.Name, input.PackingListNo),
+		Lines:               make([]CreateInventoryTransferLineInput, 0),
+	}
+	for lineIndex := range input.Lines {
+		line := &input.Lines[lineIndex]
+		if len(line.PickAllocations) == 0 {
+			return CreateOutboundDocumentInput{}, CreateInventoryTransferInput{}, fmt.Errorf("%w: bulk outbound lines require explicit container allocations", ErrInvalidInput)
+		}
+		for allocationIndex := range line.PickAllocations {
+			allocation := &line.PickAllocations[allocationIndex]
+			sourceLocationID := firstNonZeroInt64(allocation.LocationID, line.LocationID)
+			if sourceLocationID != mainLocation.ID {
+				transferInput.Lines = append(transferInput.Lines, CreateInventoryTransferLineInput{
+					CustomerID:       line.CustomerID,
+					LocationID:       sourceLocationID,
+					StorageSection:   fallbackSection(allocation.StorageSection),
+					ContainerNo:      allocation.ContainerNo,
+					SKUMasterID:      line.SKUMasterID,
+					Quantity:         allocation.AllocatedQty,
+					Pallets:          allocation.Pallets,
+					ToLocationID:     mainLocation.ID,
+					ToStorageSection: DefaultStorageSection,
+					LineNote:         fmt.Sprintf("Bulk outbound %s", input.PackingListNo),
+				})
+				allocation.StorageSection = DefaultStorageSection
+			}
+			allocation.LocationID = mainLocation.ID
+			allocation.LocationName = mainLocation.Name
+		}
+		line.LocationID = mainLocation.ID
+	}
+	return input, transferInput, nil
 }
 
 func parseOutboundBulkImportWorkbook(data []byte) ([]OutboundBulkImportDocumentPreview, error) {
@@ -480,6 +616,10 @@ func (s *Store) buildOutboundBulkImportPreview(ctx context.Context, fileName str
 	if err != nil {
 		return OutboundBulkImportPreview{}, err
 	}
+	mainLocation, err := resolveMainOutboundLocation(locations)
+	if err != nil {
+		return OutboundBulkImportPreview{}, err
+	}
 	masters, err := s.ListSKUMasters(ctx, "", customerID)
 	if err != nil {
 		return OutboundBulkImportPreview{}, err
@@ -499,7 +639,7 @@ func (s *Store) buildOutboundBulkImportPreview(ctx context.Context, fileName str
 	}
 	remaining, remainingPallets := initializeOutboundBulkBalances(items)
 	usedLocations := make(map[int64]bool)
-	preview := OutboundBulkImportPreview{SourceFileName: strings.TrimSpace(filepath.Base(fileName)), CustomerID: customerID, CustomerName: customer.Name, Documents: make([]OutboundBulkImportDocumentPreview, 0, len(documents))}
+	preview := OutboundBulkImportPreview{SourceFileName: strings.TrimSpace(filepath.Base(fileName)), CustomerID: customerID, CustomerName: customer.Name, MainWarehouse: mainLocation.Name, Documents: make([]OutboundBulkImportDocumentPreview, 0, len(documents))}
 	pickingOrderCounts := make(map[string]int)
 	for _, document := range documents {
 		if key := normalizeOutboundBulkValue(document.PickingOrderNo); key != "" {
@@ -566,6 +706,8 @@ func (s *Store) buildOutboundBulkImportPreview(ctx context.Context, fileName str
 				continue
 			}
 			usedLocations[location.ID] = true
+			line.RequiresTransfer = location.ID != mainLocation.ID
+			line.OutboundWarehouse = mainLocation.Name
 			master, issueCode, issueMessage := resolveOutboundBulkMaster(*line, mastersBySKU)
 			if issueCode != "" {
 				document.Issues = append(document.Issues, outboundBulkIssue(issueCode, issueMessage, line.RowNumber, outboundBulkSKU, line.SKU))
@@ -608,6 +750,9 @@ func (s *Store) buildOutboundBulkImportPreview(ctx context.Context, fileName str
 			if !palletsAvailable {
 				document.Issues = append(document.Issues, outboundBulkIssue("INSUFFICIENT_INVENTORY_PALLETS", "Available inventory pallets are insufficient for this row and earlier rows in the workbook.", line.RowNumber, outboundBulkInventoryPallets, fmt.Sprint(line.InventoryPallets)))
 				continue
+			}
+			if line.RequiresTransfer {
+				document.TransferLines += len(allocations)
 			}
 			document.Input.Lines = append(document.Input.Lines, CreateOutboundDocumentLineInput{CustomerID: customerID, LocationID: location.ID, SKUMasterID: master.ID, Quantity: line.Quantity, Pallets: line.OutboundPallets, UnitLabel: firstNonEmpty(master.Unit, "PCS"), LineNote: strings.TrimSpace(line.LineNote), PickAllocations: allocations})
 			document.TotalQty += line.Quantity
@@ -860,6 +1005,31 @@ func outboundBulkHasErrors(issues []OutboundBulkImportIssue) bool {
 
 func normalizeOutboundBulkValue(value string) string {
 	return strings.TrimSpace(strings.ToUpper(value))
+}
+
+func resolveMainOutboundLocation(locations []Location) (Location, error) {
+	matching := make([]Location, 0, 1)
+	for _, location := range locations {
+		name := normalizeOutboundBulkValue(location.Name)
+		if name == MainOutboundWarehouseCode || isOutboundWarehouseCodePrefix(name, MainOutboundWarehouseCode) {
+			matching = append(matching, location)
+		}
+	}
+	if len(matching) == 0 {
+		return Location{}, fmt.Errorf("%w: main outbound warehouse %s was not found", ErrInvalidInput, MainOutboundWarehouseCode)
+	}
+	if len(matching) > 1 {
+		return Location{}, fmt.Errorf("%w: more than one warehouse uses main outbound code %s", ErrInvalidInput, MainOutboundWarehouseCode)
+	}
+	return matching[0], nil
+}
+
+func isOutboundWarehouseCodePrefix(name string, code string) bool {
+	if !strings.HasPrefix(name, code) || len(name) <= len(code) {
+		return false
+	}
+	next := name[len(code)]
+	return next < '0' || next > '9'
 }
 
 func containsInt(values []int, target int) bool {

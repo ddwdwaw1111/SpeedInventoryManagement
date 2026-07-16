@@ -170,6 +170,9 @@ CREATE TABLE IF NOT EXISTS inbound_documents (
   cancel_note TEXT DEFAULT NULL,
   cancelled_at TIMESTAMP NULL DEFAULT NULL,
   archived_at TIMESTAMP NULL DEFAULT NULL,
+  corrects_document_id BIGINT DEFAULT NULL,
+  corrected_by_document_id BIGINT DEFAULT NULL,
+  corrected_at TIMESTAMP NULL DEFAULT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
@@ -177,6 +180,8 @@ CREATE TABLE IF NOT EXISTS inbound_documents (
   KEY idx_inbound_documents_location_id (location_id),
   KEY idx_inbound_documents_expected_arrival_date (expected_arrival_date),
   KEY idx_inbound_documents_container_no (container_no),
+  KEY idx_inbound_documents_corrects_document_id (corrects_document_id),
+  KEY idx_inbound_documents_corrected_by_document_id (corrected_by_document_id),
   CONSTRAINT fk_inbound_documents_customer
     FOREIGN KEY (customer_id) REFERENCES customers (id),
   CONSTRAINT fk_inbound_documents_location

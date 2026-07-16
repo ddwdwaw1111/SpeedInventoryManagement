@@ -40,7 +40,7 @@ describe("OutboundBulkImportDialog", () => {
       totalDocuments: 1,
       createdDocuments: 1,
       failedDocuments: 0,
-      results: [{ documentKey: "PO-100", pickingOrderNo: "PO-100", success: true, document: { id: 99 } }]
+      results: [{ documentKey: "PO-100", pickingOrderNo: "PO-100", success: true, document: { id: 99 }, transferLines: 1 }]
     });
     const onImported = vi.fn();
     const { container } = renderWithProviders(<OutboundBulkImportDialog open customers={[createCustomer()]} locations={[createLocation()]} items={[createItem()]} onClose={vi.fn()} onImported={onImported} />);
@@ -56,7 +56,7 @@ describe("OutboundBulkImportDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Revalidate changes" }));
     await waitFor(() => expect(mockedApi.revalidateOutboundBulkImport).toHaveBeenCalled());
     fireEvent.click(await screen.findByRole("button", { name: "Create 1 drafts" }));
-    await screen.findByText("Draft shipment #99 created");
+    await screen.findByText("Draft shipment #99 created after 1 automatic transfer line(s)");
     expect(onImported).toHaveBeenCalledTimes(1);
   });
 
@@ -135,6 +135,7 @@ function createPreview(): OutboundBulkImportPreview {
     sourceFileName: "shipments.xlsx",
     customerId: 1,
     customerName: "Imperial Bag & Paper",
+    mainWarehouse: "308 Herrod Blvd",
     locationCount: 1,
     totalDocuments: 1,
     validDocuments: 1,
@@ -149,7 +150,7 @@ function createPreview(): OutboundBulkImportPreview {
       shipToAddress: "100 Main St",
       shipToContact: "Dock",
       rowNumbers: [4],
-      lines: [{ rowNumber: 4, warehouse: "NJ", sourceContainer: "CONT-A", storageSection: "TEMP", sku: "608333", itemNumber: "608333", quantity: 5, inventoryPallets: 2, outboundPallets: 3, lineNote: "" }],
+      lines: [{ rowNumber: 4, warehouse: "NJ", sourceContainer: "CONT-A", storageSection: "TEMP", sku: "608333", itemNumber: "608333", quantity: 5, inventoryPallets: 2, outboundPallets: 3, lineNote: "", requiresTransfer: true, outboundWarehouse: "308 Herrod Blvd" }],
       input: {
         packingListNo: "PO-100",
         expectedShipDate: "2026-07-15",
@@ -162,7 +163,8 @@ function createPreview(): OutboundBulkImportPreview {
       totalLines: 1,
       totalQty: 5,
       totalInventoryPallets: 2,
-      totalOutboundPallets: 3
+      totalOutboundPallets: 3,
+      transferLines: 1
     }]
   };
 }

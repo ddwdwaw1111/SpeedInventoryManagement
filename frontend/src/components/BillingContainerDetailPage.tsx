@@ -13,6 +13,7 @@ import {
 	type BillingStorageRow
 } from "../lib/billingPreview";
 import { formatDateTimeValue, parseDateLikeValue } from "../lib/dates";
+import { isOperationalInboundDocument } from "../lib/documentTracking";
 import { getErrorMessage } from "../lib/errors";
 import { formatMoney, formatNumber, formatSignedNumber } from "../lib/formatters";
 import { useI18n } from "../lib/i18n";
@@ -179,7 +180,7 @@ export function BillingContainerDetailPage({
 		if (containerStorageRow) {
 			return containerStorageRow.containerType;
 		}
-		const inboundMatch = inboundDocuments.find((document) => normalizeContainerNo(document.containerNo) === normalizedContainerNo);
+		const inboundMatch = inboundDocuments.find((document) => isOperationalInboundDocument(document) && normalizeContainerNo(document.containerNo) === normalizedContainerNo);
 		if (inboundMatch?.containerType === "WEST_COAST_TRANSFER") {
 			return "WEST_COAST_TRANSFER" as const;
 		}

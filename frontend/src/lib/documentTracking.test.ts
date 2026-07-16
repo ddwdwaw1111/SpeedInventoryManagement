@@ -9,6 +9,7 @@ import {
   getOutboundTrackingProgress,
   getOutboundTrackingTone,
   getOutboundWorkflowState,
+  isOperationalInboundDocument,
   normalizeInboundTrackingStatus,
   normalizeOutboundTrackingStatus
 } from "./documentTracking";
@@ -68,5 +69,12 @@ describe("document tracking helpers", () => {
       activeIndex: -1,
       progress: 0
     });
+  });
+
+  it("keeps pending correction drafts out of operational views", () => {
+    expect(isOperationalInboundDocument({ status: "DRAFT" })).toBe(true);
+    expect(isOperationalInboundDocument({ status: "DRAFT", correctsDocumentId: 12 })).toBe(false);
+    expect(isOperationalInboundDocument({ status: "CONFIRMED", correctsDocumentId: 12 })).toBe(true);
+    expect(isOperationalInboundDocument({ status: "CONFIRMED", correctedAt: "2026-07-15T10:00:00Z" })).toBe(false);
   });
 });

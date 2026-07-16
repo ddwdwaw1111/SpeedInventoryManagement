@@ -5,7 +5,7 @@ import OutboxOutlinedIcon from "@mui/icons-material/OutboxOutlined";
 import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
 import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
 import { Chip } from "@mui/material";
-import { type ReactNode, useMemo } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 
 import { setPendingAllActivityContext } from "../lib/allActivityContext";
 import {
@@ -21,6 +21,8 @@ import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type { PageKey } from "../lib/routes";
 import type { Item, Location, Movement, UserRole } from "../lib/types";
+import { ContainerAdjustmentDialog } from "./ContainerAdjustmentDialog";
+import { ContainerTransferDialog } from "./ContainerTransferDialog";
 import { WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type ContainerDetailPageProps = {
@@ -44,6 +46,7 @@ export function ContainerDetailPage({
   locations,
   currentUserRole,
   isLoading,
+  onRefresh,
   onNavigate,
   onOpenContainerLifecycle,
   onBackToList
@@ -52,6 +55,8 @@ export function ContainerDetailPage({
   const { resolvedTimeZone } = useSettings();
   const normalizedContainerNo = normalizeContainerNumber(containerNo);
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
+  const [isQuickAdjustmentOpen, setIsQuickAdjustmentOpen] = useState(false);
+  const [isQuickTransferOpen, setIsQuickTransferOpen] = useState(false);
   const containers = useMemo(() => buildAllContainerContentsRows(items, movements, locations), [items, locations, movements]);
   const container = useMemo(
     () => containers.find((candidate) => candidate.containerNo === normalizedContainerNo) ?? null,
@@ -69,7 +74,7 @@ export function ContainerDetailPage({
     ? buildInventoryActionSourceKey(container.items[0].customerId, container.items[0].sku)
     : undefined;
 
-  function openOperation(page: "adjustments" | "transfers" | "cycle-counts") {
+  function openOperation(page: "cycle-counts") {
     setPendingInventoryActionContext(page, {
       sourceKey,
       containerNo: normalizedContainerNo
@@ -117,8 +122,8 @@ export function ContainerDetailPage({
 
           {canManage && container?.rowCount ? (
             <div className="mt-4 flex flex-wrap gap-2">
-              <ActionButton icon={<TuneOutlinedIcon sx={{ fontSize: 15 }} />} label={t("addAdjustment")} onClick={() => openOperation("adjustments")} />
-              <ActionButton icon={<OutboxOutlinedIcon sx={{ fontSize: 15 }} />} label={t("addTransfer")} onClick={() => openOperation("transfers")} />
+              <ActionButton icon={<TuneOutlinedIcon sx={{ fontSize: 15 }} />} label={t("quickAdjustment")} onClick={() => setIsQuickAdjustmentOpen(true)} />
+              <ActionButton icon={<OutboxOutlinedIcon sx={{ fontSize: 15 }} />} label={t("quickTransfer")} onClick={() => setIsQuickTransferOpen(true)} />
               <ActionButton icon={<FactCheckOutlinedIcon sx={{ fontSize: 15 }} />} label={t("addCycleCount")} onClick={() => openOperation("cycle-counts")} />
             </div>
           ) : null}
@@ -160,6 +165,27 @@ export function ContainerDetailPage({
           {container ? <div className="grid gap-2 border-t border-slate-100 p-4 text-xs text-slate-500 md:grid-cols-2"><span>{t("containerReceivedAt")}: {formatContainerTimelineValue(container.receivedAt, resolvedTimeZone)}</span><span>{t("containerShippedAt")}: {formatContainerTimelineValue(container.shippedAt, resolvedTimeZone, t("containerNotShipped"))}</span></div> : null}
         </section>
       </div>
+
+      <ContainerAdjustmentDialog
+        open={isQuickAdjustmentOpen}
+        items={items}
+        preferredContainerNo={normalizedContainerNo}
+        containerFilter={normalizedContainerNo}
+        quickMode
+        onClose={() => setIsQuickAdjustmentOpen(false)}
+        onSaved={onRefresh}
+      />
+
+      <ContainerTransferDialog
+        open={isQuickTransferOpen}
+        items={items}
+        locations={locations}
+        preferredContainerNo={normalizedContainerNo}
+        containerFilter={normalizedContainerNo}
+        quickMode
+        onClose={() => setIsQuickTransferOpen(false)}
+        onSaved={onRefresh}
+      />
     </main>
   );
 }

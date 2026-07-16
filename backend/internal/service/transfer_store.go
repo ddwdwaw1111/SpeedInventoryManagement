@@ -3,12 +3,16 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	mysql "github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
 )
+
+const inventoryTransferTransactionAttempts = 3
 
 type InventoryTransfer struct {
 	ID                  int64                   `json:"id"`
@@ -46,10 +50,19 @@ type InventoryTransferLine struct {
 }
 
 type CreateInventoryTransferInput struct {
-	TransferNo          string                             `json:"transferNo"`
-	ActualTransferredAt string                             `json:"actualTransferredAt"`
-	Notes               string                             `json:"notes"`
-	Lines               []CreateInventoryTransferLineInput `json:"lines"`
+	TransferNo          string                              `json:"transferNo"`
+	ActualTransferredAt string                              `json:"actualTransferredAt"`
+	Notes               string                              `json:"notes"`
+	Lines               []CreateInventoryTransferLineInput  `json:"lines"`
+	EntireContainer     *CreateEntireContainerTransferInput `json:"entireContainer"`
+}
+
+type CreateEntireContainerTransferInput struct {
+	CustomerID       int64  `json:"customerId"`
+	LocationID       int64  `json:"locationId"`
+	ContainerNo      string `json:"containerNo"`
+	ToLocationID     int64  `json:"toLocationId"`
+	ToStorageSection string `json:"toStorageSection"`
 }
 
 type CreateInventoryTransferLineInput struct {
@@ -247,12 +260,96 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 		return InventoryTransfer{}, err
 	}
 
+	committedTransfer, err := retryInventoryTransferTransaction(ctx, func() (InventoryTransfer, error) {
+		return s.createInventoryTransferTransaction(ctx, input, actualTransferredAt)
+	})
+	if err != nil {
+		return InventoryTransfer{}, err
+	}
+	return s.getInventoryTransfer(ctx, committedTransfer.ID)
+}
+
+func retryInventoryTransferTransaction(
+	ctx context.Context,
+	operation func() (InventoryTransfer, error),
+) (InventoryTransfer, error) {
+	var transfer InventoryTransfer
+	err := retryDeadlockedDatabaseTransaction(ctx, func() error {
+		var operationErr error
+		transfer, operationErr = operation()
+		return operationErr
+	})
+	return transfer, err
+}
+
+func retryDeadlockedDatabaseTransaction(ctx context.Context, operation func() error) error {
+	var lastErr error
+	for attempt := 1; attempt <= inventoryTransferTransactionAttempts; attempt++ {
+		err := operation()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if !isInventoryTransferDeadlock(err) || attempt == inventoryTransferTransactionAttempts {
+			return err
+		}
+
+		retryDelay := time.Duration(attempt) * 10 * time.Millisecond
+		timer := time.NewTimer(retryDelay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return fmt.Errorf("retry database transaction: %w", ctx.Err())
+		case <-timer.C:
+		}
+	}
+	return lastErr
+}
+
+func isInventoryTransferDeadlock(err error) bool {
+	var mysqlErr *mysql.MySQLError
+	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1213
+}
+
+func (s *Store) createInventoryTransferTransaction(
+	ctx context.Context,
+	input CreateInventoryTransferInput,
+	actualTransferredAt *time.Time,
+) (InventoryTransfer, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return InventoryTransfer{}, fmt.Errorf("begin transfer transaction: %w", err)
 	}
 	defer tx.Rollback()
+	if input.EntireContainer != nil {
+		input.Lines, err = s.buildEntireContainerTransferLinesTx(ctx, tx, *input.EntireContainer)
+		if err != nil {
+			return InventoryTransfer{}, err
+		}
+	}
+	transfer, err := s.createInventoryTransferTx(ctx, tx, input, actualTransferredAt)
+	if err != nil {
+		return InventoryTransfer{}, err
+	}
 
+	if err := tx.Commit(); err != nil {
+		return InventoryTransfer{}, fmt.Errorf("commit transfer: %w", err)
+	}
+
+	return transfer, nil
+}
+
+func (s *Store) createInventoryTransferTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	input CreateInventoryTransferInput,
+	actualTransferredAt *time.Time,
+) (InventoryTransfer, error) {
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO inventory_transfers (
 			transfer_no,
@@ -395,11 +492,7 @@ func (s *Store) CreateInventoryTransfer(ctx context.Context, input CreateInvento
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		return InventoryTransfer{}, fmt.Errorf("commit transfer: %w", err)
-	}
-
-	return s.getInventoryTransfer(ctx, transferID)
+	return InventoryTransfer{ID: transferID}, nil
 }
 
 func (s *Store) getInventoryTransfer(ctx context.Context, transferID int64) (InventoryTransfer, error) {
@@ -540,6 +633,10 @@ func (s *Store) loadLockedTransferItem(ctx context.Context, tx *sql.Tx, bucket i
 		return lockedTransferItem{}, err
 	}
 
+	return lockedTransferItemFromProjection(projection), nil
+}
+
+func lockedTransferItemFromProjection(projection inventoryProjection) lockedTransferItem {
 	return lockedTransferItem{
 		ItemID:           projection.ItemID,
 		SKUMasterID:      projection.SKUMasterID,
@@ -559,7 +656,93 @@ func (s *Store) loadLockedTransferItem(ctx context.Context, tx *sql.Tx, bucket i
 		AvailableQty:     projection.AvailableQty,
 		Pallets:          projection.Pallets,
 		AvailablePallets: maxInt(projection.Pallets-projection.AllocatedPallets, 0),
-	}, nil
+	}
+}
+
+func (s *Store) buildEntireContainerTransferLinesTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	input CreateEntireContainerTransferInput,
+) ([]CreateInventoryTransferLineInput, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id
+		FROM inventory_items
+		WHERE customer_id = ?
+			AND location_id = ?
+			AND UPPER(TRIM(COALESCE(container_no, ''))) = ?
+			AND (quantity > 0 OR pallets > 0)
+		ORDER BY id ASC
+		FOR UPDATE
+	`, input.CustomerID, input.LocationID, input.ContainerNo)
+	if err != nil {
+		return nil, fmt.Errorf("lock entire container inventory: %w", err)
+	}
+	itemIDs := make([]int64, 0)
+	for rows.Next() {
+		var itemID int64
+		if err := rows.Scan(&itemID); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan entire container inventory: %w", err)
+		}
+		itemIDs = append(itemIDs, itemID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("iterate entire container inventory: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close entire container inventory rows: %w", err)
+	}
+	if len(itemIDs) == 0 {
+		return nil, fmt.Errorf("%w: container has no inventory at the selected storage", ErrInvalidInput)
+	}
+
+	lines := make([]CreateInventoryTransferLineInput, 0, len(itemIDs))
+	for _, itemID := range itemIDs {
+		projection, err := s.loadInventoryProjectionTx(ctx, tx, itemID)
+		if err != nil {
+			return nil, err
+		}
+		item := lockedTransferItemFromProjection(projection)
+		if item.AvailableQty != item.Quantity || item.AvailablePallets != item.Pallets {
+			return nil, fmt.Errorf("%w: entire container transfer requires all inventory to be available", ErrReservedStock)
+		}
+		toSection := fallbackSection(input.ToStorageSection)
+		if item.LocationID == input.ToLocationID && fallbackSection(item.StorageSection) == toSection {
+			return nil, fmt.Errorf("%w: source and destination cannot be the same stock position", ErrInvalidInput)
+		}
+		if err := s.ensureTransferDestinationProjectionItem(ctx, tx, item, input.ToLocationID, toSection); err != nil {
+			return nil, err
+		}
+		lines = append(lines, CreateInventoryTransferLineInput{
+			CustomerID:       item.CustomerID,
+			LocationID:       item.LocationID,
+			StorageSection:   item.StorageSection,
+			ContainerNo:      item.ContainerNo,
+			SKUMasterID:      item.SKUMasterID,
+			Quantity:         item.Quantity,
+			Pallets:          item.Pallets,
+			ToLocationID:     input.ToLocationID,
+			ToStorageSection: input.ToStorageSection,
+		})
+	}
+
+	// Keep the same lock order as adjustments, outbound posting, and partial
+	// transfers: lock every affected inventory projection before the container.
+	// The main transfer loop reuses these locks when it posts the ledger entries.
+	var containerID int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT id
+		FROM containers
+		WHERE customer_id = ? AND UPPER(TRIM(container_no)) = ?
+		FOR UPDATE
+	`, input.CustomerID, input.ContainerNo).Scan(&containerID); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("%w: container not found", ErrInvalidInput)
+		}
+		return nil, fmt.Errorf("lock transfer container: %w", err)
+	}
+	return lines, nil
 }
 
 func (s *Store) getTransferLocationName(ctx context.Context, tx *sql.Tx, locationID int64) (string, error) {
@@ -637,6 +820,10 @@ func sanitizeInventoryTransferInput(input CreateInventoryTransferInput) CreateIn
 	input.TransferNo = strings.TrimSpace(strings.ToUpper(input.TransferNo))
 	input.ActualTransferredAt = strings.TrimSpace(input.ActualTransferredAt)
 	input.Notes = strings.TrimSpace(input.Notes)
+	if input.EntireContainer != nil {
+		input.EntireContainer.ContainerNo = normalizeContainerNo(input.EntireContainer.ContainerNo)
+		input.EntireContainer.ToStorageSection = fallbackSection(strings.TrimSpace(strings.ToUpper(input.EntireContainer.ToStorageSection)))
+	}
 
 	lines := make([]CreateInventoryTransferLineInput, 0, len(input.Lines))
 	for _, line := range input.Lines {
@@ -644,7 +831,7 @@ func sanitizeInventoryTransferInput(input CreateInventoryTransferInput) CreateIn
 		line.ContainerNo = strings.TrimSpace(strings.ToUpper(line.ContainerNo))
 		line.ToStorageSection = fallbackSection(strings.TrimSpace(strings.ToUpper(line.ToStorageSection)))
 		line.LineNote = strings.TrimSpace(line.LineNote)
-		if line.CustomerID <= 0 || line.LocationID <= 0 || line.SKUMasterID <= 0 || line.Quantity <= 0 || line.Pallets < 0 || line.ToLocationID <= 0 {
+		if line.CustomerID <= 0 || line.LocationID <= 0 || line.SKUMasterID <= 0 || line.Quantity < 0 || line.Pallets < 0 || (line.Quantity == 0 && line.Pallets == 0) || line.ToLocationID <= 0 {
 			continue
 		}
 		lines = append(lines, line)
@@ -654,6 +841,22 @@ func sanitizeInventoryTransferInput(input CreateInventoryTransferInput) CreateIn
 }
 
 func validateInventoryTransferInput(input CreateInventoryTransferInput) error {
+	if input.EntireContainer != nil {
+		if len(input.Lines) != 0 {
+			return fmt.Errorf("%w: entire container transfer cannot include explicit lines", ErrInvalidInput)
+		}
+		switch {
+		case input.EntireContainer.CustomerID <= 0:
+			return fmt.Errorf("%w: customer is required", ErrInvalidInput)
+		case input.EntireContainer.LocationID <= 0:
+			return fmt.Errorf("%w: source storage is required", ErrInvalidInput)
+		case input.EntireContainer.ContainerNo == "":
+			return fmt.Errorf("%w: container is required", ErrInvalidInput)
+		case input.EntireContainer.ToLocationID <= 0:
+			return fmt.Errorf("%w: destination storage is required", ErrInvalidInput)
+		}
+		return nil
+	}
 	if len(input.Lines) == 0 {
 		return fmt.Errorf("%w: at least one transfer line is required", ErrInvalidInput)
 	}
@@ -666,8 +869,12 @@ func validateInventoryTransferInput(input CreateInventoryTransferInput) error {
 			return fmt.Errorf("%w: source storage is required", ErrInvalidInput)
 		case line.SKUMasterID <= 0:
 			return fmt.Errorf("%w: sku is required", ErrInvalidInput)
-		case line.Quantity <= 0:
-			return fmt.Errorf("%w: transfer quantity must be greater than zero", ErrInvalidInput)
+		case line.Quantity < 0:
+			return fmt.Errorf("%w: transfer quantity cannot be negative", ErrInvalidInput)
+		case line.Pallets < 0:
+			return fmt.Errorf("%w: transfer pallets cannot be negative", ErrInvalidInput)
+		case line.Quantity == 0 && line.Pallets == 0:
+			return fmt.Errorf("%w: transfer quantity or pallets must be greater than zero", ErrInvalidInput)
 		case line.ToLocationID <= 0:
 			return fmt.Errorf("%w: destination storage is required", ErrInvalidInput)
 		}

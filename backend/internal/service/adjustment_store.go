@@ -62,6 +62,8 @@ type CreateInventoryAdjustmentLineInput struct {
 	SKUMasterID    int64  `json:"skuMasterId"`
 	AdjustQty      int    `json:"adjustQty"`
 	AdjustPallets  int    `json:"adjustPallets"`
+	FinalQty       *int   `json:"finalQty"`
+	FinalPallets   *int   `json:"finalPallets"`
 	LineNote       string `json:"lineNote"`
 }
 
@@ -271,7 +273,8 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 		return InventoryAdjustment{}, fmt.Errorf("resolve adjustment id: %w", err)
 	}
 
-	for index, line := range input.Lines {
+	createdLineCount := 0
+	for _, line := range input.Lines {
 		bucket := inventorySourceBucket{
 			SKUMasterID:    line.SKUMasterID,
 			CustomerID:     line.CustomerID,
@@ -284,11 +287,22 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 			return InventoryAdjustment{}, err
 		}
 
-		afterQty := lockedItem.Quantity + line.AdjustQty
+		adjustQty := line.AdjustQty
+		adjustPallets := line.AdjustPallets
+		afterQty := lockedItem.Quantity + adjustQty
+		afterPallets := lockedItem.Pallets + adjustPallets
+		if line.FinalQty != nil && line.FinalPallets != nil {
+			afterQty = *line.FinalQty
+			afterPallets = *line.FinalPallets
+			adjustQty = afterQty - lockedItem.Quantity
+			adjustPallets = afterPallets - lockedItem.Pallets
+		}
+		if adjustQty == 0 && adjustPallets == 0 {
+			continue
+		}
 		if afterQty < lockedItem.AllocatedQty+lockedItem.DamagedQty+lockedItem.HoldQty {
 			return InventoryAdjustment{}, ErrInsufficientStock
 		}
-		afterPallets := lockedItem.Pallets + line.AdjustPallets
 		if afterPallets < lockedItem.AllocatedPallets {
 			return InventoryAdjustment{}, ErrInsufficientStock
 		}
@@ -324,13 +338,13 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 			lockedItem.SKU,
 			nullableString(lockedItem.Description),
 			lockedItem.Quantity,
-			line.AdjustQty,
+			adjustQty,
 			afterQty,
 			lockedItem.Pallets,
-			line.AdjustPallets,
+			adjustPallets,
 			afterPallets,
 			nullableString(line.LineNote),
-			index+1,
+			createdLineCount+1,
 		)
 		if err != nil {
 			return InventoryAdjustment{}, mapDBError(fmt.Errorf("create adjustment line: %w", err))
@@ -349,8 +363,8 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 			CustomerID:          lockedItem.CustomerID,
 			LocationID:          lockedItem.LocationID,
 			StorageSection:      lockedItem.StorageSection,
-			QuantityChange:      line.AdjustQty,
-			PalletChange:        float64(line.AdjustPallets),
+			QuantityChange:      adjustQty,
+			PalletChange:        float64(adjustPallets),
 			OccurredAt:          actualAdjustedAt,
 			SourceDocumentType:  StockLedgerSourceAdjustment,
 			SourceDocumentID:    adjustmentID,
@@ -363,6 +377,10 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 		}); err != nil {
 			return InventoryAdjustment{}, err
 		}
+		createdLineCount++
+	}
+	if createdLineCount == 0 {
+		return InventoryAdjustment{}, fmt.Errorf("%w: final balances already match the current inventory", ErrInvalidInput)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -574,7 +592,8 @@ func sanitizeInventoryAdjustmentInput(input CreateInventoryAdjustmentInput) Crea
 		line.StorageSection = normalizeStorageSection(line.StorageSection)
 		line.ContainerNo = strings.TrimSpace(strings.ToUpper(line.ContainerNo))
 		line.LineNote = strings.TrimSpace(line.LineNote)
-		if line.CustomerID <= 0 || line.LocationID <= 0 || line.SKUMasterID <= 0 || (line.AdjustQty == 0 && line.AdjustPallets == 0) {
+		hasFinalBalance := line.FinalQty != nil || line.FinalPallets != nil
+		if line.CustomerID <= 0 || line.LocationID <= 0 || line.SKUMasterID <= 0 || (!hasFinalBalance && line.AdjustQty == 0 && line.AdjustPallets == 0) {
 			continue
 		}
 		lines = append(lines, line)
@@ -592,6 +611,8 @@ func validateInventoryAdjustmentInput(input CreateInventoryAdjustmentInput) erro
 	}
 
 	for _, line := range input.Lines {
+		hasFinalQty := line.FinalQty != nil
+		hasFinalPallets := line.FinalPallets != nil
 		switch {
 		case line.CustomerID <= 0:
 			return fmt.Errorf("%w: customer is required", ErrInvalidInput)
@@ -599,7 +620,13 @@ func validateInventoryAdjustmentInput(input CreateInventoryAdjustmentInput) erro
 			return fmt.Errorf("%w: storage is required", ErrInvalidInput)
 		case line.SKUMasterID <= 0:
 			return fmt.Errorf("%w: sku is required", ErrInvalidInput)
-		case line.AdjustQty == 0 && line.AdjustPallets == 0:
+		case hasFinalQty != hasFinalPallets:
+			return fmt.Errorf("%w: final quantity and final pallets must be provided together", ErrInvalidInput)
+		case hasFinalQty && (line.AdjustQty != 0 || line.AdjustPallets != 0):
+			return fmt.Errorf("%w: final balances cannot be combined with adjustment deltas", ErrInvalidInput)
+		case hasFinalQty && (*line.FinalQty < 0 || *line.FinalPallets < 0):
+			return fmt.Errorf("%w: final quantity and final pallets cannot be negative", ErrInvalidInput)
+		case !hasFinalQty && line.AdjustQty == 0 && line.AdjustPallets == 0:
 			return fmt.Errorf("%w: quantity or pallet adjustment is required", ErrInvalidInput)
 		}
 	}

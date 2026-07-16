@@ -38,7 +38,7 @@ export function CustomerPortalInventoryPage({
   const [pageSize, setPageSize] = useState(PAGE_SIZE_OPTIONS[0]);
   const [page, setPage] = useState(1);
   const visibleInventory = useMemo(
-    () => inventory.filter((item) => item.availableQty > 0 || item.quantity > 0),
+    () => inventory.filter((item) => item.availableQty > 0 || item.quantity > 0 || item.availablePallets > 0 || item.pallets > 0),
     [inventory]
   );
   const warehouseOptions = useMemo(() => {
@@ -59,11 +59,11 @@ export function CustomerPortalInventoryPage({
     }
     switch (availabilityFilter) {
       case "available":
-        return item.availableQty > 0;
+        return item.availableQty > 0 || item.availablePallets > 0;
       case "on-hand":
-        return item.quantity > 0;
+        return item.quantity > 0 || item.pallets > 0;
       case "not-available":
-        return item.quantity > 0 && item.availableQty <= 0;
+        return (item.quantity > 0 || item.pallets > 0) && item.availableQty <= 0 && item.availablePallets <= 0;
       default:
         return true;
     }

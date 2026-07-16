@@ -3,7 +3,10 @@ import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
 import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
+import PublishedWithChangesOutlinedIcon from "@mui/icons-material/PublishedWithChangesOutlined";
+import TuneRoundedIcon from "@mui/icons-material/TuneRounded";
 import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
+import { Dialog, DialogActions, DialogContent, DialogTitle } from "@mui/material";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { api } from "../lib/api";
@@ -18,16 +21,20 @@ import { getErrorMessage } from "../lib/errors";
 import type { InboundReceiptEditorLaunchContext } from "../lib/inboundReceiptEditorLaunchContext";
 import { useI18n } from "../lib/i18n";
 import type { PageKey } from "../lib/routes";
-import type { DocumentAttachment, InboundDocument, InboundDocumentLine, UserRole } from "../lib/types";
+import type { DocumentAttachment, InboundDocument, InboundDocumentLine, Item, UserRole } from "../lib/types";
+import { ContainerAdjustmentDialog } from "./ContainerAdjustmentDialog";
 import { DocumentAttachmentsPanel } from "./DocumentAttachmentsPanel";
 import { useFeedbackToast } from "./Feedback";
 import { WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type InboundDetailPageProps = {
   document: InboundDocument | null;
+  items: Item[];
   currentUserRole: UserRole;
   isLoading: boolean;
+  onRefresh: () => Promise<void>;
   onNavigate: (page: PageKey) => void;
+  onOpenInboundDetail: (documentId: number) => void;
   onOpenReceiptEditor: (documentId?: number | null, context?: InboundReceiptEditorLaunchContext) => void;
 };
 
@@ -44,9 +51,12 @@ type InboundDetailTab = "details" | "attachments";
 
 export function InboundDetailPage({
   document,
+  items,
   currentUserRole,
   isLoading,
+  onRefresh,
   onNavigate,
+  onOpenInboundDetail,
   onOpenReceiptEditor
 }: InboundDetailPageProps) {
   const { t } = useI18n();
@@ -56,6 +66,9 @@ export function InboundDetailPage({
   const [savedContainerTypeValue, setSavedContainerTypeValue] = useState<"NORMAL" | "WEST_COAST_TRANSFER">("NORMAL");
   const [isSavingContainerType, setIsSavingContainerType] = useState(false);
   const [activeDetailTab, setActiveDetailTab] = useState<InboundDetailTab>("details");
+  const [isCorrectionDialogOpen, setIsCorrectionDialogOpen] = useState(false);
+  const [isCreatingCorrection, setIsCreatingCorrection] = useState(false);
+  const [isAdjustmentOpen, setIsAdjustmentOpen] = useState(false);
   const dateFormatter = useMemo(
     () => new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }),
     []
@@ -119,6 +132,25 @@ export function InboundDetailPage({
     }
   }
 
+  async function handleCreateCorrectionDraft() {
+    if (!document?.id || isCreatingCorrection) {
+      return;
+    }
+
+    setIsCreatingCorrection(true);
+    try {
+      const correctionDraft = await api.createInboundCorrectionDraft(document.id);
+      await onRefresh();
+      setIsCorrectionDialogOpen(false);
+      showSuccess(t("correctionDraftCreatedSuccess"));
+      onOpenReceiptEditor(correctionDraft.id);
+    } catch (error) {
+      showError(getErrorMessage(error, t("couldNotCreateCorrectionDraft")));
+    } finally {
+      setIsCreatingCorrection(false);
+    }
+  }
+
   async function handleSaveContainerType() {
     if (!document?.id) {
       return;
@@ -148,6 +180,13 @@ export function InboundDetailPage({
     && !document?.archivedAt
     && normalizeDocumentStatus(document?.status ?? "") === "DRAFT"
     && document?.handlingMode === "SEALED_TRANSIT";
+  const normalizedDocumentStatus = normalizeDocumentStatus(document?.status ?? "");
+  const canCorrectReceipt = canManage
+    && normalizedDocumentStatus === "CONFIRMED"
+    && !document?.archivedAt
+    && !document?.correctedAt
+    && !document?.correctedByDocumentId;
+  const canAdjustReceivedBalance = canCorrectReceipt && Boolean(document?.containerNo.trim());
 
   return (
     <main className="workspace-main">
@@ -199,7 +238,7 @@ export function InboundDetailPage({
                   {t("convertToPalletized")}
                 </button>
               ) : null}
-              {canManage && normalizeDocumentStatus(document?.status ?? "") === "DRAFT" ? (
+              {canManage && normalizedDocumentStatus === "DRAFT" ? (
                 <button
                   type="button"
                   onClick={() => onOpenReceiptEditor(document?.id ?? null)}
@@ -210,7 +249,37 @@ export function InboundDetailPage({
                   {t("editDraft")}
                 </button>
               ) : null}
-              {canManage && normalizeDocumentStatus(document?.status ?? "") === "CONFIRMED" ? (
+              {canAdjustReceivedBalance ? (
+                <button
+                  type="button"
+                  onClick={() => setIsAdjustmentOpen(true)}
+                  className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#143569] ring-1 ring-slate-200 transition hover:bg-slate-50"
+                >
+                  <TuneRoundedIcon sx={{ fontSize: 18 }} />
+                  {t("adjustReceivedBalance")}
+                </button>
+              ) : null}
+              {canCorrectReceipt ? (
+                <button
+                  type="button"
+                  onClick={() => setIsCorrectionDialogOpen(true)}
+                  className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-semibold text-slate-950 shadow-[0_10px_22px_rgba(245,158,11,0.22)] transition hover:bg-amber-400"
+                >
+                  <PublishedWithChangesOutlinedIcon sx={{ fontSize: 18 }} />
+                  {t("correctReceipt")}
+                </button>
+              ) : null}
+              {canManage && document?.correctedByDocumentId && !document.correctedAt ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenReceiptEditor(document.correctedByDocumentId)}
+                  className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-semibold text-slate-950 shadow-[0_10px_22px_rgba(245,158,11,0.22)] transition hover:bg-amber-400"
+                >
+                  <PublishedWithChangesOutlinedIcon sx={{ fontSize: 18 }} />
+                  {t("openCorrectionDraft")}
+                </button>
+              ) : null}
+              {canManage && normalizedDocumentStatus === "CONFIRMED" && !document?.correctedAt && !document?.correctedByDocumentId ? (
                 <button
                   type="button"
                   onClick={() => void handleCopyReceipt()}
@@ -223,6 +292,29 @@ export function InboundDetailPage({
               ) : null}
             </div>
           </div>
+
+          {document?.correctedAt ? (
+            <div className="mt-5 flex flex-col gap-3 rounded-[18px] border border-amber-300/80 bg-amber-50 px-4 py-3 text-amber-950 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <strong className="text-sm">{t("receiptCorrectionCompleted")}</strong>
+                <p className="mt-1 text-xs text-amber-800">{t("receiptCorrectionCompletedDesc", { id: document.correctedByDocumentId ?? "-" })}</p>
+              </div>
+              {document.correctedByDocumentId ? <button type="button" className="rounded-xl bg-white px-3 py-2 text-sm font-semibold text-amber-900 ring-1 ring-amber-200" onClick={() => onOpenInboundDetail(document.correctedByDocumentId!)}>{t("openCorrectedReceipt")}</button> : null}
+            </div>
+          ) : document?.correctedByDocumentId ? (
+            <div className="mt-5 flex flex-col gap-3 rounded-[18px] border border-blue-200 bg-blue-50 px-4 py-3 text-[#143569] sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <strong className="text-sm">{t("receiptCorrectionPending")}</strong>
+                <p className="mt-1 text-xs text-blue-800">{t("receiptCorrectionPendingDesc", { id: document.correctedByDocumentId })}</p>
+              </div>
+              <button type="button" className="rounded-xl bg-white px-3 py-2 text-sm font-semibold text-[#143569] ring-1 ring-blue-200" onClick={() => onOpenReceiptEditor(document.correctedByDocumentId!)}>{t("openCorrectionDraft")}</button>
+            </div>
+          ) : document?.correctsDocumentId ? (
+            <div className="mt-5 rounded-[18px] border border-blue-200 bg-blue-50 px-4 py-3 text-[#143569]">
+              <strong className="text-sm">{t("correctionReceiptLabel", { id: document.correctsDocumentId })}</strong>
+              <p className="mt-1 text-xs text-blue-800">{normalizedDocumentStatus === "DRAFT" ? t("correctionDraftInventoryNotice") : t("correctionReceiptConfirmedNotice")}</p>
+            </div>
+          ) : null}
 
           <div className="mt-5 rounded-[22px] border border-slate-200/80 bg-white/95 p-4 shadow-[0_16px_32px_rgba(15,23,42,0.04)]">
             {isLoading ? (
@@ -460,7 +552,7 @@ export function InboundDetailPage({
                 <DetailStatRow label={t("trackingStatus")} value={document ? formatInboundTrackingStatusLabel(document.trackingStatus, document.status, t) : "-"} />
                 <DetailStatRow label={t("documentNotes")} value={document?.documentNote || "-"} multiline />
               </div>
-              {canManage && document ? (
+              {canManage && document && !document.correctedAt && !document.correctedByDocumentId ? (
                 <div className="mt-4 rounded-[18px] border border-white/10 bg-white/10 px-3 py-3">
                   <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-100/75">{t("billingContainerType")}</div>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -494,6 +586,38 @@ export function InboundDetailPage({
         )}
       </div>
       {feedbackToast}
+      <Dialog open={isCorrectionDialogOpen} onClose={() => { if (!isCreatingCorrection) setIsCorrectionDialogOpen(false); }} fullWidth maxWidth="sm">
+        <DialogTitle>{t("correctReceiptTitle")}</DialogTitle>
+        <DialogContent dividers>
+          <div className="space-y-4">
+            <p className="text-sm leading-6 text-slate-600">{t("correctReceiptDesc")}</p>
+            <div className="grid gap-2">
+              {[t("correctionStepCopy"), t("correctionStepEdit"), t("correctionStepConfirm")].map((step, index) => (
+                <div key={step} className="flex items-start gap-3 rounded-[14px] border border-slate-200 bg-slate-50 px-3 py-3">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#143569] text-xs font-bold text-white">{index + 1}</span>
+                  <span className="pt-1 text-sm font-semibold text-slate-700">{step}</span>
+                </div>
+              ))}
+            </div>
+            <div className="rounded-[14px] border border-amber-200 bg-amber-50 px-3 py-3 text-sm leading-6 text-amber-900">{t("correctionStockSafetyNotice")}</div>
+          </div>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 2 }}>
+          <button type="button" className="button button--ghost" disabled={isCreatingCorrection} onClick={() => setIsCorrectionDialogOpen(false)}>{t("cancel")}</button>
+          <button type="button" className="button button--primary" disabled={isCreatingCorrection} onClick={() => void handleCreateCorrectionDraft()}>{isCreatingCorrection ? t("creatingCorrectionDraft") : t("createCorrectionDraft")}</button>
+        </DialogActions>
+      </Dialog>
+      <ContainerAdjustmentDialog
+        open={isAdjustmentOpen}
+        items={items}
+        preferredContainerNo={document?.containerNo ?? ""}
+        initialSourceKey={document?.lines[0] ? `${document.customerId}:${document.lines[0].sku.trim().toUpperCase()}` : ""}
+        initialReasonCode="INBOUND_CORRECTION"
+        containerFilter={document?.containerNo ?? ""}
+        quickMode
+        onClose={() => setIsAdjustmentOpen(false)}
+        onSaved={onRefresh}
+      />
     </main>
   );
 }
@@ -581,6 +705,15 @@ function buildActivityLog(document: InboundDocument, t: Translate): ActivityEven
       detail: t("inboundDetailEventConfirmedDesc", { qty: document.totalReceivedQty }),
       timestamp: document.confirmedAt,
       tone: "emerald"
+    });
+  }
+  if (document.correctedAt) {
+    events.push({
+      key: "corrected",
+      label: t("inboundDetailEventCorrected"),
+      detail: t("inboundDetailEventCorrectedDesc", { id: document.correctedByDocumentId ?? "-" }),
+      timestamp: document.correctedAt,
+      tone: "amber"
     });
   }
   if (document.deletedAt) {

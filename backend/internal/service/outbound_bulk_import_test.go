@@ -220,6 +220,64 @@ func TestResolveOutboundBulkMasterTreatsItemCodeAsReferenceOnly(t *testing.T) {
 	}
 }
 
+func TestResolveMainOutboundLocationUsesWarehouse308(t *testing.T) {
+	location, err := resolveMainOutboundLocation([]Location{
+		{ID: 1, Name: "NJ Overflow"},
+		{ID: 2, Name: "308 Herrod Blvd"},
+	})
+	if err != nil {
+		t.Fatalf("resolve main outbound warehouse: %v", err)
+	}
+	if location.ID != 2 {
+		t.Fatalf("expected warehouse 308, got %#v", location)
+	}
+}
+
+func TestResolveMainOutboundLocationRejectsAmbiguous308Warehouses(t *testing.T) {
+	_, err := resolveMainOutboundLocation([]Location{
+		{ID: 1, Name: "308 Herrod Blvd"},
+		{ID: 2, Name: "308 Overflow"},
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ambiguous warehouse configuration error, got %v", err)
+	}
+}
+
+func TestBuildOutboundBulkMainWarehousePlanTransfersRemoteAllocations(t *testing.T) {
+	input, transfer, err := buildOutboundBulkMainWarehousePlan(CreateOutboundDocumentInput{
+		PackingListNo:    "PO-308",
+		ExpectedShipDate: "2026-07-15",
+		Lines: []CreateOutboundDocumentLineInput{{
+			CustomerID: 1, LocationID: 9, SKUMasterID: 7, Quantity: 8, Pallets: 3,
+			PickAllocations: []OutboundPickAllocation{
+				{LocationID: 9, LocationName: "Overflow", StorageSection: "A1", ContainerNo: "CONT-A", AllocatedQty: 5, Pallets: 2},
+				{LocationID: 3, LocationName: "308 Herrod Blvd", StorageSection: "B2", ContainerNo: "CONT-B", AllocatedQty: 3, Pallets: 1},
+			},
+		}},
+	}, Location{ID: 3, Name: "308 Herrod Blvd"})
+	if err != nil {
+		t.Fatalf("build main warehouse plan: %v", err)
+	}
+	if len(transfer.Lines) != 1 {
+		t.Fatalf("expected only the remote allocation to transfer, got %#v", transfer.Lines)
+	}
+	line := transfer.Lines[0]
+	if line.LocationID != 9 || line.ToLocationID != 3 || line.Quantity != 5 || line.Pallets != 2 || line.ToStorageSection != DefaultStorageSection {
+		t.Fatalf("unexpected transfer line: %#v", line)
+	}
+	if input.Lines[0].LocationID != 3 {
+		t.Fatalf("expected outbound line to use warehouse 308, got %#v", input.Lines[0])
+	}
+	for _, allocation := range input.Lines[0].PickAllocations {
+		if allocation.LocationID != 3 || allocation.LocationName != "308 Herrod Blvd" {
+			t.Fatalf("expected rewritten 308 allocation, got %#v", allocation)
+		}
+	}
+	if input.Lines[0].PickAllocations[0].StorageSection != DefaultStorageSection || input.Lines[0].PickAllocations[1].StorageSection != "B2" {
+		t.Fatalf("expected only transferred stock to stage in TEMP, got %#v", input.Lines[0].PickAllocations)
+	}
+}
+
 func TestSortOutboundBulkCandidatesMatchesOutboundFIFO(t *testing.T) {
 	createdAt := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 	firstDelivery := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)

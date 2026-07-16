@@ -31,6 +31,17 @@ export function normalizeDocumentStatus(status?: string | null) {
   return (status || "").trim().toUpperCase();
 }
 
+type InboundOperationalFields = {
+  status: string;
+  correctedAt?: string | null;
+  correctsDocumentId?: number | null;
+};
+
+export function isOperationalInboundDocument(document: InboundOperationalFields) {
+  if (document.correctedAt) return false;
+  return !(document.correctsDocumentId && normalizeDocumentStatus(document.status) === "DRAFT");
+}
+
 export function normalizeInboundTrackingStatus(trackingStatus?: string | null, documentStatus?: string | null): InboundTrackingStatus {
   if (normalizeDocumentStatus(documentStatus) === "CONFIRMED") {
     return "RECEIVED";

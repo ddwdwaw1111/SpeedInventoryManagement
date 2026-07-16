@@ -125,8 +125,8 @@ export function InboundReceiptEditorPage({
   const batchCustomer = customers.find((customer) => customer.id === Number(batchForm.customerId));
   const batchSectionOptions = useMemo(() => getLocationSectionOptions(batchLocation), [batchLocation]);
   const inboundContainerWarnings = useMemo(
-    () => buildInboundContainerWarnings(batchForm.containerNo, inboundDocuments, document?.id ?? null),
-    [batchForm.containerNo, document?.id, inboundDocuments]
+    () => buildInboundContainerWarnings(batchForm.containerNo, inboundDocuments, document?.id ?? null, document?.correctsDocumentId ?? null),
+    [batchForm.containerNo, document?.correctsDocumentId, document?.id, inboundDocuments]
   );
   const validBatchInboundLines = useMemo(
     () => batchLines.filter((line) => line.sku.trim() && (line.receivedQty > 0 || line.expectedQty > 0)),
@@ -744,6 +744,12 @@ export function InboundReceiptEditorPage({
           {isEditingConfirmedInbound ? (
             <InlineAlert severity="warning">{t("confirmedReceiptImmutableNotice")}</InlineAlert>
           ) : null}
+          {document?.correctsDocumentId ? (
+            <InlineAlert severity="info">
+              <strong>{t("correctionReceiptLabel", { id: document.correctsDocumentId })}</strong>
+              <div>{isEditingConfirmedInbound ? t("correctionReceiptConfirmedNotice") : t("correctionDraftInventoryNotice")}</div>
+            </InlineAlert>
+          ) : null}
           {inboundEditorIntent === "convert-sealed-transit" ? (
             <InlineAlert severity="info">{t("convertToPalletizedNotice")}</InlineAlert>
           ) : null}
@@ -810,6 +816,7 @@ export function InboundReceiptEditorPage({
               onUpload={handleUploadInboundAttachment}
               onGetDownloadUrl={getInboundAttachmentDownloadUrl}
               onDelete={canManage ? handleDeleteInboundAttachment : undefined}
+              canDeleteAttachment={(attachment) => attachment.documentId === document?.id}
             />
 
             {inboundWizardStep === 1 ? (
@@ -1525,7 +1532,8 @@ function getContainerSimilarity(left: string, right: string) {
 function buildInboundContainerWarnings(
   containerNo: string,
   inboundDocuments: InboundDocument[],
-  editingInboundDocumentId: number | null
+  editingInboundDocumentId: number | null,
+  correctionSourceDocumentId: number | null
 ) {
   const normalizedValue = normalizeContainerNo(containerNo);
   if (!normalizedValue) {
@@ -1534,6 +1542,7 @@ function buildInboundContainerWarnings(
 
   const candidateDocuments = inboundDocuments.filter((document) =>
     document.id !== editingInboundDocumentId
+    && document.id !== correctionSourceDocumentId
     && normalizeDocumentStatus(document.status) !== "DELETED"
     && normalizeContainerNo(document.containerNo)
   );

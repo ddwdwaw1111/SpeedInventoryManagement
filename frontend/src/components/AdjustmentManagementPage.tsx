@@ -2,27 +2,22 @@ import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOu
 import CloseIcon from "@mui/icons-material/Close";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
-import { Box, Button, Chip, Dialog, DialogContent, DialogTitle, Drawer, IconButton } from "@mui/material";
+import { useEffect, useMemo, useState } from "react";
+import { Box, Button, Chip, Drawer, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 
-import { api } from "../lib/api";
 import { setPendingAllActivityContext } from "../lib/allActivityContext";
-import { formatDateTimeValue, toIsoDateTimeString } from "../lib/dates";
+import { formatDateTimeValue } from "../lib/dates";
 import { consumePendingInventoryActionContext, type InventoryActionContext } from "../lib/inventoryActionContext";
-import { buildInventoryActionSourceOptions } from "../lib/inventoryActionSources";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type { PageKey } from "../lib/routes";
 import {
-  buildInventoryProjectionKey,
-  normalizeStorageSection,
-  toInventoryProjectionRef,
   type InventoryAdjustment,
   type Item,
   type UserRole
 } from "../lib/types";
-import { InlineAlert, useFeedbackToast } from "./Feedback";
+import { ContainerAdjustmentDialog } from "./ContainerAdjustmentDialog";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots, WorkspaceDrawerLoadingState, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
@@ -36,43 +31,8 @@ type AdjustmentManagementPageProps = {
   onNavigate: (page: PageKey) => void;
 };
 
-type AdjustmentFormState = {
-  adjustmentNo: string;
-  reasonCode: string;
-  actualAdjustedAt: string;
-  notes: string;
-};
-
-type AdjustmentLineFormState = {
-  id: string;
-  bucketKey: string;
-  adjustQty: number;
-  adjustPallets: number;
-  lineNote: string;
-};
-
-const emptyAdjustmentForm: AdjustmentFormState = {
-  adjustmentNo: "",
-  reasonCode: "",
-  actualAdjustedAt: "",
-  notes: ""
-};
 const summaryNumberFormatter = new Intl.NumberFormat("en-US");
-const EMPTY_ITEMS: Item[] = [];
 const ADJUSTMENT_COLUMN_ORDER_PREFERENCE_KEY = "adjustments.column-order";
-
-function createAdjustmentLine(
-  patch: Partial<Omit<AdjustmentLineFormState, "id">> = {}
-): AdjustmentLineFormState {
-  return {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    bucketKey: "",
-    adjustQty: 0,
-    adjustPallets: 0,
-    lineNote: "",
-    ...patch
-  };
-}
 
 export function AdjustmentManagementPage({
   adjustments,
@@ -84,50 +44,20 @@ export function AdjustmentManagementPage({
 }: AdjustmentManagementPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
-  const { showSuccess, showError, feedbackToast } = useFeedbackToast();
   const canManage = currentUserRole === "admin" || currentUserRole === "operator";
   const canConfigureColumns = currentUserRole === "admin";
   const pageDescription = t("adjustmentsDesc");
   const permissionNotice = canManage ? "" : t("readOnlyModeNotice");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedAdjustmentId, setSelectedAdjustmentId] = useState<number | null>(null);
-  const [form, setForm] = useState<AdjustmentFormState>(emptyAdjustmentForm);
-  const [lines, setLines] = useState<AdjustmentLineFormState[]>([createAdjustmentLine()]);
-  const [selectedSourceKey, setSelectedSourceKey] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const [dialogInitialSourceKey, setDialogInitialSourceKey] = useState("");
+  const [dialogPreferredContainerNo, setDialogPreferredContainerNo] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [hasProcessedLaunchContext, setHasProcessedLaunchContext] = useState(false);
   const selectedAdjustment = useMemo(
     () => adjustments.find((adjustment) => adjustment.id === selectedAdjustmentId) ?? null,
     [adjustments, selectedAdjustmentId]
   );
-  const adjustmentSourceOptions = useMemo(
-    () => buildInventoryActionSourceOptions(items),
-    [items]
-  );
-  const selectedSourceOption = useMemo(
-    () => adjustmentSourceOptions.find((option) => option.key === selectedSourceKey) ?? null,
-    [adjustmentSourceOptions, selectedSourceKey]
-  );
-  const selectableAdjustmentItems = selectedSourceOption?.items ?? EMPTY_ITEMS;
-  const canSubmitAdjustmentDraft = useMemo(() => {
-    if (submitting) {
-      return false;
-    }
-
-    let hasPreparedLine = false;
-    for (const line of lines) {
-      const selectedItem = selectableAdjustmentItems.find(
-        (item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.bucketKey
-      );
-      if (!selectedItem || (line.adjustQty === 0 && line.adjustPallets === 0)) {
-        continue;
-      }
-      hasPreparedLine = true;
-    }
-
-    return hasPreparedLine;
-  }, [lines, selectableAdjustmentItems, submitting]);
 
   useEffect(() => {
     if (selectedAdjustmentId !== null && !selectedAdjustment) {
@@ -136,22 +66,7 @@ export function AdjustmentManagementPage({
   }, [selectedAdjustment, selectedAdjustmentId]);
 
   useEffect(() => {
-    const onlyBucketKey = selectableAdjustmentItems.length === 1
-      ? buildInventoryProjectionKey(toInventoryProjectionRef(selectableAdjustmentItems[0]!))
-      : null;
-    setLines((current) => current.map((line) => {
-      const nextBucketKey = selectableAdjustmentItems.some((item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.bucketKey)
-        ? line.bucketKey
-        : onlyBucketKey ?? "";
-      return {
-        ...line,
-        bucketKey: nextBucketKey
-      };
-    }));
-  }, [selectableAdjustmentItems]);
-
-  useEffect(() => {
-    if (hasProcessedLaunchContext || !canManage || adjustmentSourceOptions.length === 0) {
+    if (hasProcessedLaunchContext || !canManage || items.length === 0) {
       return;
     }
 
@@ -162,7 +77,7 @@ export function AdjustmentManagementPage({
     }
 
     openCreateModal(pendingContext);
-  }, [adjustmentSourceOptions, canManage, hasProcessedLaunchContext]);
+  }, [canManage, hasProcessedLaunchContext, items]);
 
   const baseColumns = useMemo<GridColDef<InventoryAdjustment>[]>(() => [
     { field: "adjustmentNo", headerName: t("adjustmentNo"), minWidth: 180, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.adjustmentNo}</span> },
@@ -275,95 +190,21 @@ export function AdjustmentManagementPage({
     ];
   }, [adjustments, t]);
 
-  function showActionError(error: unknown, fallbackMessage: string) {
-    const message = error instanceof Error ? error.message : fallbackMessage;
-    setErrorMessage(message);
-    showError(message);
-  }
-
   function openCreateModal(initialContext: InventoryActionContext | null = null) {
     if (!canManage) {
       return;
     }
-    const initialSourceKey = initialContext?.sourceKey ?? "";
-    const initialSourceOption = initialSourceKey
-      ? adjustmentSourceOptions.find((option) => option.key === initialSourceKey) ?? null
-      : null;
-    const initialBucketKey = initialSourceOption
-      ? resolveAdjustmentLaunchBucketKey(initialSourceOption.items, initialContext)
-      : "";
-
-    setForm(emptyAdjustmentForm);
-    setLines([createAdjustmentLine({ bucketKey: initialBucketKey })]);
-    setSelectedSourceKey(initialSourceKey);
+    setDialogInitialSourceKey(initialContext?.sourceKey ?? "");
+    setDialogPreferredContainerNo(initialContext?.containerNo ?? "");
     setErrorMessage("");
     setIsModalOpen(true);
   }
 
   function closeCreateModal() {
     setIsModalOpen(false);
-    setSubmitting(false);
     setErrorMessage("");
-    setSelectedSourceKey("");
-    setForm(emptyAdjustmentForm);
-    setLines([createAdjustmentLine()]);
-  }
-
-  function addLine() {
-    setLines((current) => [...current, createAdjustmentLine()]);
-  }
-
-  function removeLine(lineId: string) {
-    setLines((current) => current.length === 1 ? current : current.filter((line) => line.id !== lineId));
-  }
-
-  function updateLine(lineId: string, patch: Partial<AdjustmentLineFormState>) {
-    setLines((current) => current.map((line) => line.id === lineId ? { ...line, ...patch } : line));
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSubmitting(true);
-    setErrorMessage("");
-
-    try {
-      const preparedLines = lines
-        .map((line) => {
-          const selectedItem = selectableAdjustmentItems.find(
-            (item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.bucketKey
-          );
-          if (!selectedItem || (line.adjustQty === 0 && line.adjustPallets === 0)) {
-            return null;
-          }
-
-          return {
-            ...toInventoryProjectionRef(selectedItem),
-            adjustQty: line.adjustQty,
-            adjustPallets: line.adjustPallets,
-            lineNote: line.lineNote || undefined
-          };
-        })
-        .filter((line): line is NonNullable<typeof line> => line !== null);
-
-      if (preparedLines.length === 0) {
-        throw new Error(t("adjustmentRequireLine"));
-      }
-
-      await api.createInventoryAdjustment({
-        adjustmentNo: form.adjustmentNo || undefined,
-        reasonCode: form.reasonCode,
-        actualAdjustedAt: toIsoDateTimeString(form.actualAdjustedAt),
-        notes: form.notes || undefined,
-        lines: preparedLines
-      });
-      closeCreateModal();
-      await onRefresh();
-      showSuccess(t("adjustmentSavedSuccess"));
-    } catch (error) {
-      showActionError(error, t("couldNotSaveAdjustment"));
-    } finally {
-      setSubmitting(false);
-    }
+    setDialogInitialSourceKey("");
+    setDialogPreferredContainerNo("");
   }
 
   return (
@@ -415,7 +256,6 @@ export function AdjustmentManagementPage({
         </div>
       </section>
       {columnOrderDialog}
-      {feedbackToast}
 
       <Drawer
         anchor="right"
@@ -519,183 +359,17 @@ export function AdjustmentManagementPage({
         ) : isLoading ? <WorkspaceDrawerLoadingState /> : null}
       </Drawer>
 
-      <Dialog
+      <ContainerAdjustmentDialog
         open={isModalOpen}
-        onClose={(_, reason) => {
-          if (reason === "backdropClick") return;
-          closeCreateModal();
-        }}
-        fullWidth
-        maxWidth="lg"
-      >
-        <DialogTitle sx={{ pb: 1 }}>
-          {t("addAdjustment")}
-          <IconButton aria-label={t("close")} onClick={closeCreateModal} sx={{ position: "absolute", right: 16, top: 16 }}>
-            <CloseIcon fontSize="small" />
-          </IconButton>
-        </DialogTitle>
-        <DialogContent dividers>
-          {errorMessage ? <InlineAlert>{errorMessage}</InlineAlert> : null}
-          <form className="sheet-form" onSubmit={handleSubmit}>
-            <label>{t("adjustmentNo")}<input value={form.adjustmentNo} onChange={(event) => setForm((current) => ({ ...current, adjustmentNo: event.target.value }))} placeholder={t("autoGeneratedOptional")} /></label>
-            <label>
-              {t("reasonCode")}
-              <input
-                value={form.reasonCode}
-                onChange={(event) => setForm((current) => ({ ...current, reasonCode: event.target.value }))}
-                list="reason-code-presets"
-                placeholder="COUNT_GAIN / COUNT_LOSS / DAMAGE / CORRECTION"
-                required
-              />
-              <datalist id="reason-code-presets">
-                <option value="COUNT_GAIN" />
-                <option value="COUNT_LOSS" />
-                <option value="DAMAGE" />
-                <option value="CORRECTION" />
-                <option value="WRITE_OFF" />
-                <option value="RETURN" />
-              </datalist>
-            </label>
-            <label>{t("actualAdjustedAt")}<input type="datetime-local" value={form.actualAdjustedAt} onChange={(event) => setForm((current) => ({ ...current, actualAdjustedAt: event.target.value }))} /></label>
-            <label className="sheet-form__wide">{t("notes")}<input value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} placeholder={t("adjustmentNotesPlaceholder")} /></label>
-            <label className="sheet-form__wide">
-              {t("sku")}
-              <select value={selectedSourceKey} onChange={(event) => setSelectedSourceKey(event.target.value)}>
-                <option value="">{t("selectSkuForInventoryAction")}</option>
-                {adjustmentSourceOptions.map((source) => (
-                  <option key={source.key} value={source.key}>
-                    {`${source.customerName} | ${t("itemNumber")}: ${source.itemNumber || "-"} | ${source.sku} - ${source.description} (${t("onHand")}: ${source.totalOnHand})`}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {selectedSourceOption ? (
-              <div className="sheet-note sheet-note--readonly sheet-form__wide">
-                {`${selectedSourceOption.customerName} | ${t("itemNumber")}: ${selectedSourceOption.itemNumber || "-"} | ${selectedSourceOption.sku} | ${selectedSourceOption.description} | ${t("onHand")}: ${selectedSourceOption.totalOnHand} | ${t("availableQty")}: ${selectedSourceOption.totalAvailable} | ${t("warehouseCount")}: ${selectedSourceOption.warehouseCount} | ${t("containerCount")}: ${selectedSourceOption.containerCount}`}
-              </div>
-            ) : (
-              <InlineAlert severity="info" className="sheet-form__wide">
-                {t("selectSkuBeforeInventoryAction")}
-              </InlineAlert>
-            )}
-            <div className="sheet-form__wide">
-              <div className="batch-lines__toolbar">
-                <strong>{t("adjustmentLines")}</strong>
-                <Button size="small" variant="outlined" type="button" onClick={addLine} disabled={!selectedSourceOption}>{t("addLine")}</Button>
-              </div>
-              <div className="batch-lines">
-                {lines.map((line, index) => {
-                  const selectedItem = selectableAdjustmentItems.find(
-                    (item) => buildInventoryProjectionKey(toInventoryProjectionRef(item)) === line.bucketKey
-                  );
-                  const afterQty = (selectedItem?.quantity ?? 0) + line.adjustQty;
-                  const afterPallets = (selectedItem?.pallets ?? 0) + line.adjustPallets;
-
-                  return (
-                    <div className="batch-line-card" key={line.id}>
-                      <div className="batch-line-card__header">
-                        <div className="batch-line-card__title">
-                          <strong>{t("adjustmentLine")} #{index + 1}</strong>
-                        </div>
-                        <button className="button button--danger button--small" type="button" onClick={() => removeLine(line.id)} disabled={lines.length === 1}>{t("removeLine")}</button>
-                      </div>
-                      <div className="batch-line-grid">
-                        <label className="batch-line-grid__description">
-                          {t("stockRow")}
-                          <select
-                            value={line.bucketKey}
-                            onChange={(event) => updateLine(line.id, { bucketKey: event.target.value })}
-                          >
-                            <option value="">{selectedSourceOption ? t("selectStockRow") : t("selectSkuForInventoryAction")}</option>
-                            {selectableAdjustmentItems.map((item) => (
-                              <option key={buildInventoryProjectionKey(toInventoryProjectionRef(item))} value={buildInventoryProjectionKey(toInventoryProjectionRef(item))}>
-                                {`${item.locationName} / ${normalizeStorageSection(item.storageSection)} | ${t("containerNo")}: ${item.containerNo || "-"} | ${item.sku} - ${displayDescription(item)} (${t("onHand")}: ${item.quantity})`}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label>{t("onHand")}<input value={selectedItem ? String(selectedItem.quantity) : ""} readOnly /></label>
-                        <label>{t("pallets")}<input value={selectedItem ? String(selectedItem.pallets) : ""} readOnly /></label>
-                        <label>
-                          {t("adjustQty")}
-                          <input
-                            type="number"
-                            value={numberInputValue(line.adjustQty)}
-                            disabled={!selectedItem}
-                            onChange={(event) => updateLine(line.id, { adjustQty: Number(event.target.value || 0) })}
-                          />
-                        </label>
-                        <label>
-                          {`${t("adjustment")} (${t("pallets")})`}
-                          <input
-                            type="number"
-                            value={numberInputValue(line.adjustPallets)}
-                            disabled={!selectedItem}
-                            onChange={(event) => updateLine(line.id, { adjustPallets: Number(event.target.value || 0) })}
-                          />
-                        </label>
-                        <label>
-                          {t("afterQty")}
-                          <input
-                            value={selectedItem ? String(afterQty) : ""}
-                            readOnly
-                            style={{ color: selectedItem && afterQty < 0 ? "#b76857" : undefined, fontWeight: selectedItem && afterQty < 0 ? 700 : undefined }}
-                          />
-                          {selectedItem && afterQty < 0 && (
-                            <small style={{ color: "#b76857", display: "block", marginTop: 2 }}>{t("afterQtyNegativeWarning")}</small>
-                          )}
-                        </label>
-                        <label>
-                          {`${t("afterQty")} (${t("pallets")})`}
-                          <input
-                            value={selectedItem ? String(afterPallets) : ""}
-                            readOnly
-                            style={{ color: selectedItem && afterPallets < 0 ? "#b76857" : undefined, fontWeight: selectedItem && afterPallets < 0 ? 700 : undefined }}
-                          />
-                        </label>
-                        <label className="batch-line-grid__detail">{t("internalNotes")}<input value={line.lineNote} onChange={(event) => updateLine(line.id, { lineNote: event.target.value })} placeholder={t("adjustmentLineNotePlaceholder")} /></label>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="sheet-form__actions sheet-form__wide">
-              <button className="button button--primary" type="submit" disabled={!canSubmitAdjustmentDraft}>{submitting ? t("saving") : t("saveAdjustment")}</button>
-              <button className="button button--ghost" type="button" onClick={closeCreateModal}>{t("cancel")}</button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
+        items={items}
+        initialSourceKey={dialogInitialSourceKey}
+        preferredContainerNo={dialogPreferredContainerNo}
+        onClose={closeCreateModal}
+        onSaved={onRefresh}
+      />
 
     </main>
   );
-}
-
-function displayDescription(item: Pick<Item, "description" | "name">) {
-  return item.description || item.name;
-}
-
-function resolveAdjustmentLaunchBucketKey(items: Item[], context: InventoryActionContext | null) {
-  if (items.length === 1) {
-    return buildInventoryProjectionKey(toInventoryProjectionRef(items[0]!));
-  }
-
-  if (!context?.containerNo) {
-    return "";
-  }
-
-  const matchedItem = items.find((item) => normalizeContainerNumber(item.containerNo) === context.containerNo);
-  return matchedItem ? buildInventoryProjectionKey(toInventoryProjectionRef(matchedItem)) : "";
-}
-
-function normalizeContainerNumber(value: string) {
-  return value.trim().toUpperCase();
-}
-
-function numberInputValue(value: number) {
-  return value === 0 ? "" : String(value);
 }
 
 function formatSignedNumber(value: number) {

@@ -341,7 +341,7 @@ func (s *Store) GetDashboard(ctx context.Context) (DashboardData, error) {
 			0 AS low_stock_items,
 			COUNT(DISTINCT i.location_id) AS locations_in_use
 		FROM inventory_items i
-		WHERE i.quantity > 0
+		WHERE (i.quantity > 0 OR i.pallets > 0)
 	`
 
 	if err := s.db.QueryRowContext(ctx, query).Scan(
@@ -404,7 +404,7 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 		LEFT JOIN containers cn
 			ON cn.customer_id = i.customer_id
 			AND UPPER(TRIM(cn.container_no)) = UPPER(TRIM(COALESCE(i.container_no, '')))
-		WHERE i.quantity > 0
+		WHERE (i.quantity > 0 OR i.pallets > 0)
 	`
 
 	args := make([]any, 0)

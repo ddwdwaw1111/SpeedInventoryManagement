@@ -14,31 +14,34 @@ import (
 )
 
 type InboundDocument struct {
-	ID                  int64                 `json:"id"`
-	CustomerID          int64                 `json:"customerId"`
-	CustomerName        string                `json:"customerName"`
-	LocationID          int64                 `json:"locationId"`
-	LocationName        string                `json:"locationName"`
-	ExpectedArrivalDate *time.Time            `json:"expectedArrivalDate"`
-	ActualArrivalDate   *time.Time            `json:"actualArrivalDate"`
-	ContainerNo         string                `json:"containerNo"`
-	ContainerType       string                `json:"containerType"`
-	HandlingMode        string                `json:"handlingMode"`
-	StorageSection      string                `json:"storageSection"`
-	UnitLabel           string                `json:"unitLabel"`
-	DocumentNote        string                `json:"documentNote"`
-	Status              string                `json:"status"`
-	TrackingStatus      string                `json:"trackingStatus"`
-	ConfirmedAt         *time.Time            `json:"confirmedAt"`
-	DeletedAt           *time.Time            `json:"deletedAt"`
-	ArchivedAt          *time.Time            `json:"archivedAt"`
-	TotalLines          int                   `json:"totalLines"`
-	TotalExpectedQty    int                   `json:"totalExpectedQty"`
-	TotalReceivedQty    int                   `json:"totalReceivedQty"`
-	CreatedAt           time.Time             `json:"createdAt"`
-	UpdatedAt           time.Time             `json:"updatedAt"`
-	Lines               []InboundDocumentLine `json:"lines"`
-	Attachments         []DocumentAttachment  `json:"attachments"`
+	ID                    int64                 `json:"id"`
+	CustomerID            int64                 `json:"customerId"`
+	CustomerName          string                `json:"customerName"`
+	LocationID            int64                 `json:"locationId"`
+	LocationName          string                `json:"locationName"`
+	ExpectedArrivalDate   *time.Time            `json:"expectedArrivalDate"`
+	ActualArrivalDate     *time.Time            `json:"actualArrivalDate"`
+	ContainerNo           string                `json:"containerNo"`
+	ContainerType         string                `json:"containerType"`
+	HandlingMode          string                `json:"handlingMode"`
+	StorageSection        string                `json:"storageSection"`
+	UnitLabel             string                `json:"unitLabel"`
+	DocumentNote          string                `json:"documentNote"`
+	Status                string                `json:"status"`
+	TrackingStatus        string                `json:"trackingStatus"`
+	ConfirmedAt           *time.Time            `json:"confirmedAt"`
+	DeletedAt             *time.Time            `json:"deletedAt"`
+	ArchivedAt            *time.Time            `json:"archivedAt"`
+	CorrectsDocumentID    *int64                `json:"correctsDocumentId"`
+	CorrectedByDocumentID *int64                `json:"correctedByDocumentId"`
+	CorrectedAt           *time.Time            `json:"correctedAt"`
+	TotalLines            int                   `json:"totalLines"`
+	TotalExpectedQty      int                   `json:"totalExpectedQty"`
+	TotalReceivedQty      int                   `json:"totalReceivedQty"`
+	CreatedAt             time.Time             `json:"createdAt"`
+	UpdatedAt             time.Time             `json:"updatedAt"`
+	Lines                 []InboundDocumentLine `json:"lines"`
+	Attachments           []DocumentAttachment  `json:"attachments"`
 }
 
 type InboundDocumentLine struct {
@@ -106,26 +109,29 @@ type CreateInboundDocumentLineInput struct {
 }
 
 type inboundDocumentRow struct {
-	ID                  int64      `db:"id"`
-	CustomerID          int64      `db:"customer_id"`
-	CustomerName        string     `db:"customer_name"`
-	LocationID          int64      `db:"location_id"`
-	LocationName        string     `db:"location_name"`
-	ExpectedArrivalDate *time.Time `db:"expected_arrival_date"`
-	ActualArrivalDate   *time.Time `db:"actual_arrival_date"`
-	ContainerNo         string     `db:"container_no"`
-	ContainerType       string     `db:"container_type"`
-	HandlingMode        string     `db:"handling_mode"`
-	StorageSection      string     `db:"storage_section"`
-	UnitLabel           string     `db:"unit_label"`
-	DocumentNote        string     `db:"document_note"`
-	Status              string     `db:"status"`
-	TrackingStatus      string     `db:"tracking_status"`
-	ConfirmedAt         *time.Time `db:"confirmed_at"`
-	DeletedAt           *time.Time `db:"cancelled_at"`
-	ArchivedAt          *time.Time `db:"archived_at"`
-	CreatedAt           time.Time  `db:"created_at"`
-	UpdatedAt           time.Time  `db:"updated_at"`
+	ID                    int64      `db:"id"`
+	CustomerID            int64      `db:"customer_id"`
+	CustomerName          string     `db:"customer_name"`
+	LocationID            int64      `db:"location_id"`
+	LocationName          string     `db:"location_name"`
+	ExpectedArrivalDate   *time.Time `db:"expected_arrival_date"`
+	ActualArrivalDate     *time.Time `db:"actual_arrival_date"`
+	ContainerNo           string     `db:"container_no"`
+	ContainerType         string     `db:"container_type"`
+	HandlingMode          string     `db:"handling_mode"`
+	StorageSection        string     `db:"storage_section"`
+	UnitLabel             string     `db:"unit_label"`
+	DocumentNote          string     `db:"document_note"`
+	Status                string     `db:"status"`
+	TrackingStatus        string     `db:"tracking_status"`
+	ConfirmedAt           *time.Time `db:"confirmed_at"`
+	DeletedAt             *time.Time `db:"cancelled_at"`
+	ArchivedAt            *time.Time `db:"archived_at"`
+	CorrectsDocumentID    *int64     `db:"corrects_document_id"`
+	CorrectedByDocumentID *int64     `db:"corrected_by_document_id"`
+	CorrectedAt           *time.Time `db:"corrected_at"`
+	CreatedAt             time.Time  `db:"created_at"`
+	UpdatedAt             time.Time  `db:"updated_at"`
 }
 
 type inboundDocumentLineRow struct {
@@ -148,12 +154,13 @@ type inboundDocumentLineRow struct {
 }
 
 type InboundDocumentFilters struct {
-	ArchiveScope   string
-	Search         string
-	CustomerID     int64
-	LocationID     int64
-	Status         string
-	TrackingStatus string
+	ArchiveScope    string
+	Search          string
+	CustomerID      int64
+	LocationID      int64
+	Status          string
+	TrackingStatus  string
+	OperationalOnly bool
 }
 
 func (s *Store) ListInboundDocuments(ctx context.Context, limit int, archiveScope ...string) ([]InboundDocument, error) {
@@ -174,6 +181,12 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 		"UPPER(TRIM(d.status)) NOT IN ('DELETED', 'CANCELLED')",
 	}
 	args := make([]any, 0, 16)
+	if filters.OperationalOnly {
+		whereClauses = append(whereClauses,
+			"d.corrected_at IS NULL",
+			"NOT (d.corrects_document_id IS NOT NULL AND UPPER(TRIM(d.status)) = 'DRAFT')",
+		)
+	}
 	if filters.CustomerID > 0 {
 		whereClauses = append(whereClauses, "d.customer_id = ?")
 		args = append(args, filters.CustomerID)
@@ -246,6 +259,9 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 			d.confirmed_at,
 			d.cancelled_at,
 			d.archived_at,
+			d.corrects_document_id,
+			d.corrected_by_document_id,
+			d.corrected_at,
 			d.created_at,
 			d.updated_at
 		FROM inbound_documents d
@@ -266,28 +282,31 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 	documentsByID := make(map[int64]*InboundDocument, len(documentRows))
 	for _, row := range documentRows {
 		document := InboundDocument{
-			ID:                  row.ID,
-			CustomerID:          row.CustomerID,
-			CustomerName:        row.CustomerName,
-			LocationID:          row.LocationID,
-			LocationName:        row.LocationName,
-			ExpectedArrivalDate: row.ExpectedArrivalDate,
-			ActualArrivalDate:   row.ActualArrivalDate,
-			ContainerNo:         row.ContainerNo,
-			ContainerType:       coalesceContainerType(row.ContainerType),
-			HandlingMode:        coalesceInboundHandlingMode(row.HandlingMode),
-			StorageSection:      fallbackSection(row.StorageSection),
-			UnitLabel:           row.UnitLabel,
-			DocumentNote:        row.DocumentNote,
-			Status:              normalizeDocumentStatus(row.Status),
-			TrackingStatus:      normalizeInboundTrackingStatus(row.TrackingStatus, row.Status),
-			ConfirmedAt:         row.ConfirmedAt,
-			DeletedAt:           row.DeletedAt,
-			ArchivedAt:          row.ArchivedAt,
-			CreatedAt:           row.CreatedAt,
-			UpdatedAt:           row.UpdatedAt,
-			Lines:               make([]InboundDocumentLine, 0),
-			Attachments:         make([]DocumentAttachment, 0),
+			ID:                    row.ID,
+			CustomerID:            row.CustomerID,
+			CustomerName:          row.CustomerName,
+			LocationID:            row.LocationID,
+			LocationName:          row.LocationName,
+			ExpectedArrivalDate:   row.ExpectedArrivalDate,
+			ActualArrivalDate:     row.ActualArrivalDate,
+			ContainerNo:           row.ContainerNo,
+			ContainerType:         coalesceContainerType(row.ContainerType),
+			HandlingMode:          coalesceInboundHandlingMode(row.HandlingMode),
+			StorageSection:        fallbackSection(row.StorageSection),
+			UnitLabel:             row.UnitLabel,
+			DocumentNote:          row.DocumentNote,
+			Status:                normalizeDocumentStatus(row.Status),
+			TrackingStatus:        normalizeInboundTrackingStatus(row.TrackingStatus, row.Status),
+			ConfirmedAt:           row.ConfirmedAt,
+			DeletedAt:             row.DeletedAt,
+			ArchivedAt:            row.ArchivedAt,
+			CorrectsDocumentID:    row.CorrectsDocumentID,
+			CorrectedByDocumentID: row.CorrectedByDocumentID,
+			CorrectedAt:           row.CorrectedAt,
+			CreatedAt:             row.CreatedAt,
+			UpdatedAt:             row.UpdatedAt,
+			Lines:                 make([]InboundDocumentLine, 0),
+			Attachments:           make([]DocumentAttachment, 0),
 		}
 		documents = append(documents, document)
 		documentIDs = append(documentIDs, row.ID)
@@ -360,11 +379,7 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 		document.TotalReceivedQty += lineRow.ReceivedQty
 	}
 
-	if err := s.attachDocumentAttachments(ctx, DocumentAttachmentInbound, documentIDs, func(documentID int64, attachments []DocumentAttachment) {
-		if document := documentsByID[documentID]; document != nil {
-			document.Attachments = attachments
-		}
-	}); err != nil {
+	if err := s.attachInboundDocumentAttachments(ctx, documentsByID); err != nil {
 		return nil, err
 	}
 
@@ -567,7 +582,11 @@ func (s *Store) UpdateInboundDocumentNote(ctx context.Context, documentID int64,
 	}
 	defer tx.Rollback()
 
-	if _, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID); err != nil {
+	documentRow, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+	if err := validateInboundDocumentCorrectionSourceMutable(documentRow); err != nil {
 		return InboundDocument{}, err
 	}
 
@@ -603,7 +622,11 @@ func (s *Store) UpdateInboundDocumentContainerType(ctx context.Context, document
 	}
 	defer tx.Rollback()
 
-	if _, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID); err != nil {
+	documentRow, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+	if err := validateInboundDocumentCorrectionSourceMutable(documentRow); err != nil {
 		return InboundDocument{}, err
 	}
 
@@ -639,6 +662,20 @@ func (s *Store) UpdateInboundDocumentContainerType(ctx context.Context, document
 	}
 
 	return s.getInboundDocument(ctx, documentID)
+}
+
+func validateInboundDocumentCorrectionSourceMutable(documentRow inboundDocumentRow) error {
+	return validateInboundCorrectionSourceMutable(documentRow.CorrectedByDocumentID != nil, documentRow.CorrectedAt != nil)
+}
+
+func validateInboundCorrectionSourceMutable(hasCorrectionDraft bool, hasBeenCorrected bool) error {
+	if hasBeenCorrected {
+		return fmt.Errorf("%w: corrected receipt is read-only; edit the active correction receipt instead", ErrInvalidInput)
+	}
+	if hasCorrectionDraft {
+		return fmt.Errorf("%w: receipt has an open correction draft; edit the correction draft instead", ErrInvalidInput)
+	}
+	return nil
 }
 
 func (s *Store) updateDraftInboundDocumentTx(
@@ -931,6 +968,44 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 		return err
 	}
 	confirmedAt := time.Now().UTC()
+	correctedSourceDocumentID := int64(0)
+	if documentRow.CorrectsDocumentID != nil {
+		correctedSource, err := s.loadInboundDocumentForUpdateTx(ctx, tx, *documentRow.CorrectsDocumentID)
+		if err != nil {
+			return err
+		}
+		if normalizeDocumentStatus(correctedSource.Status) != DocumentStatusConfirmed || correctedSource.CorrectedAt != nil {
+			return fmt.Errorf("%w: source receipt is no longer available for correction", ErrInvalidInput)
+		}
+		if correctedSource.CorrectedByDocumentID == nil || *correctedSource.CorrectedByDocumentID != documentID {
+			return fmt.Errorf("%w: correction draft is not linked to the source receipt", ErrInvalidInput)
+		}
+		if err := s.ensureInboundCorrectionHasNoLaterContainerActivityTx(ctx, tx, correctedSource, true); err != nil {
+			return err
+		}
+		correctionReversalAt := firstNonEmptyTime(
+			correctedSource.ActualArrivalDate,
+			correctedSource.ConfirmedAt,
+			correctedSource.ExpectedArrivalDate,
+			&confirmedAt,
+		)
+		if err := s.reverseConfirmedInboundInventoryTx(
+			ctx,
+			tx,
+			correctedSource,
+			*correctionReversalAt,
+			fmt.Sprintf("Inbound receipt corrected by receipt #%d", documentID),
+		); err != nil {
+			return err
+		}
+		if err := retireCorrectedSourceContainerTx(ctx, tx, correctedSource, documentRow, confirmedAt); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM container_visits WHERE inbound_document_id = ?`, correctedSource.ID); err != nil {
+			return mapDBError(fmt.Errorf("replace corrected inbound container visit: %w", err))
+		}
+		correctedSourceDocumentID = correctedSource.ID
+	}
 	documentRow.ConfirmedAt = &confirmedAt
 	if _, err := ensureContainerVisitForInboundDocumentTx(ctx, tx, documentRow); err != nil {
 		return err
@@ -1033,6 +1108,23 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 			return mapDBError(fmt.Errorf("sync container visit after inbound confirmation: %w", err))
 		}
 	}
+	if correctedSourceDocumentID > 0 {
+		result, err := tx.ExecContext(ctx, `
+			UPDATE inbound_documents
+			SET corrected_at = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ? AND corrected_by_document_id = ? AND corrected_at IS NULL
+		`, confirmedAt, correctedSourceDocumentID, documentID)
+		if err != nil {
+			return mapDBError(fmt.Errorf("complete inbound correction link: %w", err))
+		}
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("resolve completed inbound correction link: %w", err)
+		}
+		if rowsAffected != 1 {
+			return fmt.Errorf("%w: source receipt correction state changed", ErrInvalidInput)
+		}
+	}
 
 	return nil
 }
@@ -1048,7 +1140,7 @@ type inboundReceiptBalanceRow struct {
 	Description    string
 }
 
-func (s *Store) reverseConfirmedInboundInventoryTx(ctx context.Context, tx *sql.Tx, documentRow inboundDocumentRow, reversedAt time.Time) error {
+func (s *Store) reverseConfirmedInboundInventoryTx(ctx context.Context, tx *sql.Tx, documentRow inboundDocumentRow, reversedAt time.Time, reason string) error {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT
 			COALESCE(sl.sku_master_id, 0),
@@ -1098,6 +1190,10 @@ func (s *Store) reverseConfirmedInboundInventoryTx(ctx context.Context, tx *sql.
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterate confirmed receipt balances: %w", err)
 	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "Inbound receipt reversed"
+	}
 
 	for _, balance := range balances {
 		var available struct {
@@ -1138,10 +1234,119 @@ func (s *Store) reverseConfirmedInboundInventoryTx(ctx context.Context, tx *sql.
 			ContainerNo:         balance.ContainerNo,
 			ItemNumber:          balance.ItemNumber,
 			DescriptionSnapshot: balance.Description,
-			Reason:              "Inbound receipt cancelled",
+			Reason:              reason,
 		}); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (s *Store) ensureInboundCorrectionHasNoLaterContainerActivityTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	documentRow inboundDocumentRow,
+	lockInventory bool,
+) error {
+	containerNo := normalizeContainerNo(documentRow.ContainerNo)
+	if containerNo == "" {
+		return fmt.Errorf("%w: container number is required for receipt correction; use manual inventory adjustments instead", ErrInvalidInput)
+	}
+
+	if lockInventory {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT id
+			FROM inventory_items
+			WHERE customer_id = ?
+			  AND UPPER(TRIM(COALESCE(container_no, ''))) = ?
+			ORDER BY id ASC
+			FOR UPDATE
+		`, documentRow.CustomerID, containerNo)
+		if err != nil {
+			return mapDBError(fmt.Errorf("lock corrected container inventory: %w", err))
+		}
+		for rows.Next() {
+			var itemID int64
+			if err := rows.Scan(&itemID); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan corrected container inventory lock: %w", err)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return fmt.Errorf("iterate corrected container inventory locks: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("close corrected container inventory locks: %w", err)
+		}
+	}
+
+	var lastReceiptLedgerID sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT MAX(id)
+		FROM stock_ledger
+		WHERE source_document_type = ?
+		  AND source_document_id = ?
+		  AND event_type = ?
+	`, StockLedgerSourceInbound, documentRow.ID, StockLedgerEventReceive).Scan(&lastReceiptLedgerID); err != nil {
+		return mapDBError(fmt.Errorf("load corrected receipt activity boundary: %w", err))
+	}
+	if !lastReceiptLedgerID.Valid || lastReceiptLedgerID.Int64 <= 0 {
+		return fmt.Errorf("%w: receipt inventory history is incomplete", ErrInvalidInput)
+	}
+
+	var hasLaterActivity bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM stock_ledger later
+			WHERE later.id > ?
+			  AND later.customer_id = ?
+			  AND UPPER(TRIM(COALESCE(later.container_no_snapshot, ''))) = ?
+		)
+	`, lastReceiptLedgerID.Int64, documentRow.CustomerID, containerNo).Scan(&hasLaterActivity); err != nil {
+		return mapDBError(fmt.Errorf("check corrected container activity: %w", err))
+	}
+	if hasLaterActivity {
+		return fmt.Errorf("%w: container has later inventory activity; manually correct this receipt and every later activity instead of using automatic receipt correction", ErrInvalidInput)
+	}
+	return nil
+}
+
+func retireCorrectedSourceContainerTx(ctx context.Context, tx *sql.Tx, source inboundDocumentRow, replacement inboundDocumentRow, correctedAt time.Time) error {
+	sourceContainerNo := normalizeContainerNo(source.ContainerNo)
+	replacementContainerNo := normalizeContainerNo(replacement.ContainerNo)
+	if sourceContainerNo == "" || (source.CustomerID == replacement.CustomerID && sourceContainerNo == replacementContainerNo) {
+		return nil
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE containers
+		SET
+			status = ?,
+			tracking_status = ?,
+			last_event_at = GREATEST(COALESCE(last_event_at, ?), ?),
+			updated_at = CURRENT_TIMESTAMP
+		WHERE customer_id = ?
+		  AND UPPER(TRIM(container_no)) = ?
+		  AND inbound_document_id = ?
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM inventory_items remaining
+			WHERE remaining.customer_id = containers.customer_id
+			  AND UPPER(TRIM(remaining.container_no)) = UPPER(TRIM(containers.container_no))
+			  AND (remaining.quantity > 0 OR remaining.pallets > 0)
+		  )
+	`,
+		ContainerStatusCorrected,
+		ContainerStatusCorrected,
+		correctedAt,
+		correctedAt,
+		source.CustomerID,
+		sourceContainerNo,
+		source.ID,
+	); err != nil {
+		return mapDBError(fmt.Errorf("retire corrected source container: %w", err))
 	}
 	return nil
 }
@@ -1174,11 +1379,32 @@ func (s *Store) deleteInboundDocumentTx(ctx context.Context, tx *sql.Tx, documen
 	if status == DocumentStatusDeleted {
 		return time.Time{}, fmt.Errorf("%w: inbound document is already deleted", ErrInvalidInput)
 	}
+	if documentRow.CorrectedAt != nil {
+		return time.Time{}, fmt.Errorf("%w: corrected receipt must remain available for audit", ErrInvalidInput)
+	}
+	if documentRow.CorrectedByDocumentID != nil {
+		return time.Time{}, fmt.Errorf("%w: receipt has an open correction draft", ErrInvalidInput)
+	}
+	if documentRow.CorrectsDocumentID != nil && status == DocumentStatusConfirmed {
+		return time.Time{}, fmt.Errorf("%w: confirmed correction receipts must be corrected with a new draft", ErrInvalidInput)
+	}
 
 	deletedAt := time.Now().UTC()
 	if status == DocumentStatusConfirmed {
-		if err := s.reverseConfirmedInboundInventoryTx(ctx, tx, documentRow, deletedAt); err != nil {
+		if err := s.ensureInboundCorrectionHasNoLaterContainerActivityTx(ctx, tx, documentRow, true); err != nil {
 			return time.Time{}, err
+		}
+		if err := s.reverseConfirmedInboundInventoryTx(ctx, tx, documentRow, deletedAt, "Inbound receipt deleted"); err != nil {
+			return time.Time{}, err
+		}
+	}
+	if documentRow.CorrectsDocumentID != nil {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE inbound_documents
+			SET corrected_by_document_id = NULL, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ? AND corrected_by_document_id = ? AND corrected_at IS NULL
+		`, *documentRow.CorrectsDocumentID, documentID); err != nil {
+			return time.Time{}, mapDBError(fmt.Errorf("release inbound correction draft: %w", err))
 		}
 	}
 	if err := markDocumentAttachmentsDeletedForDocument(ctx, tx, DocumentAttachmentInbound, documentID); err != nil {
@@ -1215,6 +1441,9 @@ func (s *Store) ArchiveInboundDocument(ctx context.Context, documentID int64) (I
 	if documentRow.ArchivedAt != nil {
 		return InboundDocument{}, fmt.Errorf("%w: receipt is already archived", ErrInvalidInput)
 	}
+	if documentRow.CorrectsDocumentID != nil || documentRow.CorrectedByDocumentID != nil || documentRow.CorrectedAt != nil {
+		return InboundDocument{}, fmt.Errorf("%w: receipts in a correction workflow cannot be archived", ErrInvalidInput)
+	}
 	if normalizeDocumentStatus(documentRow.Status) == DocumentStatusConfirmed {
 		return InboundDocument{}, fmt.Errorf("%w: confirmed receipts cannot be archived", ErrInvalidInput)
 	}
@@ -1250,8 +1479,74 @@ func (s *Store) CopyInboundDocument(ctx context.Context, documentID int64) (Inbo
 	if err != nil {
 		return InboundDocument{}, err
 	}
+	newDocumentID, err := s.cloneInboundDocumentTx(ctx, tx, documentRow, lineRows, nil)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return InboundDocument{}, fmt.Errorf("commit inbound copy: %w", err)
+	}
+
+	return s.getInboundDocument(ctx, newDocumentID)
+}
+
+func (s *Store) CreateInboundCorrectionDraft(ctx context.Context, documentID int64) (InboundDocument, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return InboundDocument{}, fmt.Errorf("begin inbound correction transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	documentRow, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+	if normalizeDocumentStatus(documentRow.Status) != DocumentStatusConfirmed {
+		return InboundDocument{}, fmt.Errorf("%w: only confirmed receipts can be corrected", ErrInvalidInput)
+	}
+	if documentRow.CorrectedAt != nil {
+		return InboundDocument{}, fmt.Errorf("%w: receipt has already been corrected", ErrInvalidInput)
+	}
+	if documentRow.CorrectedByDocumentID != nil {
+		return InboundDocument{}, fmt.Errorf("%w: receipt already has an open correction draft", ErrInvalidInput)
+	}
+	if err := s.ensureInboundCorrectionHasNoLaterContainerActivityTx(ctx, tx, documentRow, false); err != nil {
+		return InboundDocument{}, err
+	}
+
+	lineRows, err := s.loadInboundDocumentLinesTx(ctx, tx, documentID)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+	newDocumentID, err := s.cloneInboundDocumentTx(ctx, tx, documentRow, lineRows, &documentID)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE inbound_documents
+		SET corrected_by_document_id = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, newDocumentID, documentID); err != nil {
+		return InboundDocument{}, mapDBError(fmt.Errorf("link inbound correction draft: %w", err))
+	}
+
+	if err := tx.Commit(); err != nil {
+		return InboundDocument{}, fmt.Errorf("commit inbound correction draft: %w", err)
+	}
+
+	return s.getInboundDocument(ctx, newDocumentID)
+}
+
+func (s *Store) cloneInboundDocumentTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	documentRow inboundDocumentRow,
+	lineRows []inboundDocumentLineRow,
+	correctsDocumentID *int64,
+) (int64, error) {
 	if len(lineRows) == 0 {
-		return InboundDocument{}, fmt.Errorf("%w: receipt must contain at least one line", ErrInvalidInput)
+		return 0, fmt.Errorf("%w: receipt must contain at least one line", ErrInvalidInput)
 	}
 
 	result, err := tx.ExecContext(ctx, `
@@ -1272,8 +1567,11 @@ func (s *Store) CopyInboundDocument(ctx context.Context, documentID int64) (Inbo
 			posted_at,
 			cancel_note,
 			cancelled_at,
-			archived_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL)
+			archived_at,
+			corrects_document_id,
+			corrected_by_document_id,
+			corrected_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, NULL, NULL)
 	`,
 		documentRow.CustomerID,
 		documentRow.LocationID,
@@ -1287,14 +1585,15 @@ func (s *Store) CopyInboundDocument(ctx context.Context, documentID int64) (Inbo
 		nullableString(documentRow.DocumentNote),
 		DocumentStatusDraft,
 		InboundTrackingScheduled,
+		nullableInt64Ptr(correctsDocumentID),
 	)
 	if err != nil {
-		return InboundDocument{}, mapDBError(fmt.Errorf("copy inbound document: %w", err))
+		return 0, mapDBError(fmt.Errorf("clone inbound document: %w", err))
 	}
 
 	newDocumentID, err := result.LastInsertId()
 	if err != nil {
-		return InboundDocument{}, fmt.Errorf("resolve copied inbound document id: %w", err)
+		return 0, fmt.Errorf("resolve cloned inbound document id: %w", err)
 	}
 
 	for index, lineRow := range lineRows {
@@ -1331,15 +1630,10 @@ func (s *Store) CopyInboundDocument(ctx context.Context, documentID int64) (Inbo
 			nullableString(lineRow.LineNote),
 			index+1,
 		); err != nil {
-			return InboundDocument{}, mapDBError(fmt.Errorf("copy inbound document line: %w", err))
+			return 0, mapDBError(fmt.Errorf("clone inbound document line: %w", err))
 		}
 	}
-
-	if err := tx.Commit(); err != nil {
-		return InboundDocument{}, fmt.Errorf("commit inbound copy: %w", err)
-	}
-
-	return s.getInboundDocument(ctx, newDocumentID)
+	return newDocumentID, nil
 }
 
 func (s *Store) loadInboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx, documentID int64) (inboundDocumentRow, error) {
@@ -1364,6 +1658,9 @@ func (s *Store) loadInboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx, 
 			d.confirmed_at,
 			d.cancelled_at,
 			d.archived_at,
+			d.corrects_document_id,
+			d.corrected_by_document_id,
+			d.corrected_at,
 			d.created_at,
 			d.updated_at
 		FROM inbound_documents d
@@ -1390,6 +1687,9 @@ func (s *Store) loadInboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx, 
 		&documentRow.ConfirmedAt,
 		&documentRow.DeletedAt,
 		&documentRow.ArchivedAt,
+		&documentRow.CorrectsDocumentID,
+		&documentRow.CorrectedByDocumentID,
+		&documentRow.CorrectedAt,
 		&documentRow.CreatedAt,
 		&documentRow.UpdatedAt,
 	); err != nil {
@@ -1484,14 +1784,62 @@ func (s *Store) GetInboundDocumentForCustomer(ctx context.Context, documentID in
 	if documentID <= 0 || customerID <= 0 {
 		return InboundDocument{}, ErrNotFound
 	}
-	document, err := s.getInboundDocument(ctx, documentID)
-	if err != nil {
-		return InboundDocument{}, err
+
+	activeDocumentID := documentID
+	visited := make(map[int64]bool)
+	for activeDocumentID > 0 && !visited[activeDocumentID] {
+		visited[activeDocumentID] = true
+
+		var row struct {
+			CustomerID            int64
+			Status                string
+			CorrectsDocumentID    sql.NullInt64
+			CorrectedByDocumentID sql.NullInt64
+			CorrectedAt           sql.NullTime
+		}
+		if err := s.db.QueryRowContext(ctx, `
+			SELECT
+				customer_id,
+				status,
+				corrects_document_id,
+				corrected_by_document_id,
+				corrected_at
+			FROM inbound_documents
+			WHERE id = ?
+		`, activeDocumentID).Scan(
+			&row.CustomerID,
+			&row.Status,
+			&row.CorrectsDocumentID,
+			&row.CorrectedByDocumentID,
+			&row.CorrectedAt,
+		); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return InboundDocument{}, ErrNotFound
+			}
+			return InboundDocument{}, fmt.Errorf("resolve active customer inbound document: %w", err)
+		}
+
+		status := normalizeDocumentStatus(row.Status)
+		if status == DocumentStatusDeleted || status == "CANCELLED" {
+			return InboundDocument{}, ErrNotFound
+		}
+		if row.CustomerID != customerID {
+			return InboundDocument{}, ErrNotFound
+		}
+		if row.CorrectedAt.Valid {
+			if !row.CorrectedByDocumentID.Valid || row.CorrectedByDocumentID.Int64 <= 0 {
+				return InboundDocument{}, ErrNotFound
+			}
+			activeDocumentID = row.CorrectedByDocumentID.Int64
+			continue
+		}
+		if row.CorrectsDocumentID.Valid && status == DocumentStatusDraft {
+			return InboundDocument{}, ErrNotFound
+		}
+		return s.getInboundDocument(ctx, activeDocumentID)
 	}
-	if document.CustomerID != customerID {
-		return InboundDocument{}, ErrNotFound
-	}
-	return document, nil
+
+	return InboundDocument{}, ErrNotFound
 }
 
 func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int64, includeArchived bool) ([]InboundDocument, error) {
@@ -1524,6 +1872,9 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 			d.confirmed_at,
 			d.cancelled_at,
 			d.archived_at,
+			d.corrects_document_id,
+			d.corrected_by_document_id,
+			d.corrected_at,
 			d.created_at,
 			d.updated_at
 		FROM inbound_documents d
@@ -1549,28 +1900,31 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 	documentsByID := make(map[int64]*InboundDocument, len(documentRows))
 	for _, row := range documentRows {
 		document := InboundDocument{
-			ID:                  row.ID,
-			CustomerID:          row.CustomerID,
-			CustomerName:        row.CustomerName,
-			LocationID:          row.LocationID,
-			LocationName:        row.LocationName,
-			ExpectedArrivalDate: row.ExpectedArrivalDate,
-			ActualArrivalDate:   row.ActualArrivalDate,
-			ContainerNo:         row.ContainerNo,
-			ContainerType:       coalesceContainerType(row.ContainerType),
-			HandlingMode:        coalesceInboundHandlingMode(row.HandlingMode),
-			StorageSection:      fallbackSection(row.StorageSection),
-			UnitLabel:           row.UnitLabel,
-			DocumentNote:        row.DocumentNote,
-			Status:              normalizeDocumentStatus(row.Status),
-			TrackingStatus:      normalizeInboundTrackingStatus(row.TrackingStatus, row.Status),
-			ConfirmedAt:         row.ConfirmedAt,
-			DeletedAt:           row.DeletedAt,
-			ArchivedAt:          row.ArchivedAt,
-			CreatedAt:           row.CreatedAt,
-			UpdatedAt:           row.UpdatedAt,
-			Lines:               make([]InboundDocumentLine, 0),
-			Attachments:         make([]DocumentAttachment, 0),
+			ID:                    row.ID,
+			CustomerID:            row.CustomerID,
+			CustomerName:          row.CustomerName,
+			LocationID:            row.LocationID,
+			LocationName:          row.LocationName,
+			ExpectedArrivalDate:   row.ExpectedArrivalDate,
+			ActualArrivalDate:     row.ActualArrivalDate,
+			ContainerNo:           row.ContainerNo,
+			ContainerType:         coalesceContainerType(row.ContainerType),
+			HandlingMode:          coalesceInboundHandlingMode(row.HandlingMode),
+			StorageSection:        fallbackSection(row.StorageSection),
+			UnitLabel:             row.UnitLabel,
+			DocumentNote:          row.DocumentNote,
+			Status:                normalizeDocumentStatus(row.Status),
+			TrackingStatus:        normalizeInboundTrackingStatus(row.TrackingStatus, row.Status),
+			ConfirmedAt:           row.ConfirmedAt,
+			DeletedAt:             row.DeletedAt,
+			ArchivedAt:            row.ArchivedAt,
+			CorrectsDocumentID:    row.CorrectsDocumentID,
+			CorrectedByDocumentID: row.CorrectedByDocumentID,
+			CorrectedAt:           row.CorrectedAt,
+			CreatedAt:             row.CreatedAt,
+			UpdatedAt:             row.UpdatedAt,
+			Lines:                 make([]InboundDocumentLine, 0),
+			Attachments:           make([]DocumentAttachment, 0),
 		}
 		documents = append(documents, document)
 		documentsByID[row.ID] = &documents[len(documents)-1]
@@ -1643,15 +1997,104 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 		document.TotalReceivedQty += lineRow.ReceivedQty
 	}
 
-	if err := s.attachDocumentAttachments(ctx, DocumentAttachmentInbound, documentIDs, func(documentID int64, attachments []DocumentAttachment) {
-		if document := documentsByID[documentID]; document != nil {
-			document.Attachments = attachments
-		}
-	}); err != nil {
+	if err := s.attachInboundDocumentAttachments(ctx, documentsByID); err != nil {
 		return nil, err
 	}
 
 	return documents, nil
+}
+
+type inboundCorrectionParentRow struct {
+	ID                 int64  `db:"id"`
+	CustomerID         int64  `db:"customer_id"`
+	CorrectsDocumentID *int64 `db:"corrects_document_id"`
+}
+
+func (s *Store) attachInboundDocumentAttachments(ctx context.Context, documentsByID map[int64]*InboundDocument) error {
+	if len(documentsByID) == 0 {
+		return nil
+	}
+
+	parentByID := make(map[int64]int64)
+	customerByID := make(map[int64]int64, len(documentsByID))
+	knownRelationships := make(map[int64]bool, len(documentsByID))
+	allDocumentIDs := make(map[int64]bool, len(documentsByID))
+	frontier := make([]int64, 0)
+	for documentID, document := range documentsByID {
+		customerByID[documentID] = document.CustomerID
+		knownRelationships[documentID] = true
+		allDocumentIDs[documentID] = true
+		if document.CorrectsDocumentID != nil {
+			parentByID[documentID] = *document.CorrectsDocumentID
+			frontier = append(frontier, *document.CorrectsDocumentID)
+		}
+	}
+
+	for len(frontier) > 0 {
+		queryIDs := make([]int64, 0, len(frontier))
+		for _, documentID := range frontier {
+			allDocumentIDs[documentID] = true
+			if knownRelationships[documentID] {
+				continue
+			}
+			knownRelationships[documentID] = true
+			queryIDs = append(queryIDs, documentID)
+		}
+		if len(queryIDs) == 0 {
+			break
+		}
+
+		query, args, err := sqlx.In(`
+			SELECT id, customer_id, corrects_document_id
+			FROM inbound_documents
+			WHERE id IN (?)
+		`, queryIDs)
+		if err != nil {
+			return fmt.Errorf("build inbound correction attachment query: %w", err)
+		}
+		rows := make([]inboundCorrectionParentRow, 0, len(queryIDs))
+		if err := s.db.SelectContext(ctx, &rows, s.db.Rebind(query), args...); err != nil {
+			return fmt.Errorf("load inbound correction attachment chain: %w", err)
+		}
+
+		frontier = frontier[:0]
+		for _, row := range rows {
+			customerByID[row.ID] = row.CustomerID
+			if row.CorrectsDocumentID == nil {
+				continue
+			}
+			parentByID[row.ID] = *row.CorrectsDocumentID
+			frontier = append(frontier, *row.CorrectsDocumentID)
+		}
+	}
+
+	attachmentDocumentIDs := make([]int64, 0, len(allDocumentIDs))
+	for documentID := range allDocumentIDs {
+		attachmentDocumentIDs = append(attachmentDocumentIDs, documentID)
+	}
+	attachmentsByDocumentID, err := s.ListDocumentAttachmentsForDocuments(ctx, DocumentAttachmentInbound, attachmentDocumentIDs)
+	if err != nil {
+		return err
+	}
+
+	for documentID, document := range documentsByID {
+		attachments := make([]DocumentAttachment, 0)
+		visited := make(map[int64]bool)
+		for currentID := documentID; currentID > 0 && !visited[currentID]; {
+			visited[currentID] = true
+			attachments = append(attachments, attachmentsByDocumentID[currentID]...)
+			parentID, ok := parentByID[currentID]
+			if !ok {
+				break
+			}
+			if customerByID[parentID] != document.CustomerID {
+				break
+			}
+			currentID = parentID
+		}
+		document.Attachments = attachments
+	}
+	return nil
 }
 
 func (s *Store) upsertInboundLineItemCodesTx(ctx context.Context, tx *sql.Tx, input CreateInboundDocumentInput) error {

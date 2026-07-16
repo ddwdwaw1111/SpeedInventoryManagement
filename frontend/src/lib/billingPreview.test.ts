@@ -139,6 +139,36 @@ describe("buildBillingPreview", () => {
     expect(preview.invoiceLines.filter((line) => line.chargeType === "INBOUND")[0]?.occurredOn).toBe("2026-03-03");
   });
 
+  it("bills the confirmed correction instead of the reversed original receipt", () => {
+    const original = createInboundDocument({
+      id: 10,
+      customerId: 1,
+      customerName: "Acme",
+      containerNo: "GCXU5050505",
+      status: "CONFIRMED",
+      actualArrivalDate: "2026-03-03",
+      correctedByDocumentId: 11,
+      correctedAt: "2026-03-04T10:00:00Z",
+      lines: [createInboundDocumentLine({ pallets: 3 })]
+    });
+    const correction = createInboundDocument({
+      id: 11,
+      customerId: 1,
+      customerName: "Acme",
+      containerNo: "GCXU5050505",
+      status: "CONFIRMED",
+      actualArrivalDate: "2026-03-03",
+      correctsDocumentId: 10,
+      lines: [createInboundDocumentLine({ pallets: 2 })]
+    });
+
+    const preview = buildBillingPreview(baseInput({ inboundDocuments: [original, correction] }));
+
+    expect(preview.summary.receivedContainers).toBe(1);
+    expect(preview.summary.receivedPallets).toBe(2);
+    expect(preview.invoiceLines.filter((line) => line.chargeType === "INBOUND").map((line) => line.id)).toEqual(["inbound-11"]);
+  });
+
   it("bills repalletized outbound pallets instead of inventory pallet deductions", () => {
     const outbound = createOutboundDocument({
       id: 21,

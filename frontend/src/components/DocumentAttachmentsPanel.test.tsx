@@ -138,4 +138,18 @@ describe("DocumentAttachmentsPanel", () => {
       expect(onDelete).toHaveBeenCalledWith(savedAttachment);
     });
   });
+
+  it("keeps inherited attachment references read-only", () => {
+    renderWithProviders(
+      <DocumentAttachmentsPanel
+        attachments={[savedAttachment]}
+        onGetDownloadUrl={async () => ""}
+        onDelete={vi.fn()}
+        canDeleteAttachment={() => false}
+      />
+    );
+
+    expect(screen.getByText("Signed Packing List")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /remove file/i })).not.toBeInTheDocument();
+  });
 });
