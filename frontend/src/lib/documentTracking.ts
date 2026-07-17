@@ -33,13 +33,11 @@ export function normalizeDocumentStatus(status?: string | null) {
 
 type InboundOperationalFields = {
   status: string;
-  correctedAt?: string | null;
-  correctsDocumentId?: number | null;
 };
 
 export function isOperationalInboundDocument(document: InboundOperationalFields) {
-  if (document.correctedAt) return false;
-  return !(document.correctsDocumentId && normalizeDocumentStatus(document.status) === "DRAFT");
+  const status = normalizeDocumentStatus(document.status);
+  return status !== "DELETED" && status !== "CANCELLED";
 }
 
 export function normalizeInboundTrackingStatus(trackingStatus?: string | null, documentStatus?: string | null): InboundTrackingStatus {

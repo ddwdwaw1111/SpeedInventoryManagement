@@ -292,6 +292,10 @@ func TestBulkInboundAllowsMultipleReceiptsForOneContainerIntegration(t *testing.
 	if err != nil {
 		t.Fatalf("create location: %v", err)
 	}
+	secondLocation, err := store.CreateLocation(ctx, CreateLocationInput{Name: "Shared Container Bulk Overflow " + suffix, Address: "Overflow Address", Capacity: 1000, SectionNames: []string{DefaultStorageSection}})
+	if err != nil {
+		t.Fatalf("create second location: %v", err)
+	}
 
 	result, err := store.CreateInboundDocumentsBulkDraft(ctx, InboundBulkImportCommitInput{
 		ImportID:       "fedcba9876543210fedcba9876543210",
@@ -308,7 +312,7 @@ func TestBulkInboundAllowsMultipleReceiptsForOneContainerIntegration(t *testing.
 			{
 				DocumentKey: inboundBulkReceiptIdentity(containerNo, "2026-01-16"),
 				Input: CreateInboundDocumentInput{
-					LocationID: location.ID, ContainerNo: containerNo + "-20260116", ActualArrivalDate: "2026-01-16", HandlingMode: InboundHandlingModePalletized,
+					LocationID: secondLocation.ID, ContainerNo: containerNo + "-20260116", ActualArrivalDate: "2026-01-16", HandlingMode: InboundHandlingModePalletized,
 					Lines: []CreateInboundDocumentLineInput{{SKU: "SHARED-SKU-" + suffix, Description: "Shared container item", ReceivedQty: 5, Pallets: 1, StorageSection: DefaultStorageSection}},
 				},
 			},
@@ -352,7 +356,7 @@ func TestBulkInboundAllowsMultipleReceiptsForOneContainerIntegration(t *testing.
 		Quantity int `db:"quantity"`
 		Pallets  int `db:"pallets"`
 	}
-	if err := store.db.GetContext(ctx, &balance, `SELECT quantity, pallets FROM inventory_items WHERE customer_id = ? AND container_no = ?`, customer.ID, containerNo); err != nil {
+	if err := store.db.GetContext(ctx, &balance, `SELECT COALESCE(SUM(quantity), 0) AS quantity, COALESCE(SUM(pallets), 0) AS pallets FROM inventory_items WHERE customer_id = ? AND container_no = ?`, customer.ID, containerNo); err != nil {
 		t.Fatalf("load shared container balance: %v", err)
 	}
 	if balance.Quantity != 15 || balance.Pallets != 3 {
@@ -369,11 +373,31 @@ func TestBulkInboundAllowsMultipleReceiptsForOneContainerIntegration(t *testing.
 	if operationalContainer.InboundDocumentID != confirmedReceiptIDs[0] {
 		t.Fatalf("expected container to inherit prior receipt %d, got %#v", confirmedReceiptIDs[0], operationalContainer)
 	}
-	if err := store.db.GetContext(ctx, &balance, `SELECT quantity, pallets FROM inventory_items WHERE customer_id = ? AND container_no = ?`, customer.ID, containerNo); err != nil {
+	if operationalContainer.LocationID != location.ID {
+		t.Fatalf("expected container location to follow remaining inventory at %d, got %#v", location.ID, operationalContainer)
+	}
+	if err := store.db.GetContext(ctx, &balance, `SELECT COALESCE(SUM(quantity), 0) AS quantity, COALESCE(SUM(pallets), 0) AS pallets FROM inventory_items WHERE customer_id = ? AND container_no = ?`, customer.ID, containerNo); err != nil {
 		t.Fatalf("load shared container balance after deleting latest receipt: %v", err)
 	}
 	if balance.Quantity != 10 || balance.Pallets != 2 {
 		t.Fatalf("expected prior receipt balance 10 qty / 2 pallets, got %#v", balance)
+	}
+
+	if _, err := store.CancelInboundDocument(ctx, confirmedReceiptIDs[0]); err != nil {
+		t.Fatalf("delete prior receipt after later receipt was fully reversed: %v", err)
+	}
+	if err := store.db.GetContext(ctx, &balance, `SELECT COALESCE(SUM(quantity), 0) AS quantity, COALESCE(SUM(pallets), 0) AS pallets FROM inventory_items WHERE customer_id = ? AND container_no = ?`, customer.ID, containerNo); err != nil {
+		t.Fatalf("load shared container balance after sequential deletion: %v", err)
+	}
+	if balance.Quantity != 0 || balance.Pallets != 0 {
+		t.Fatalf("expected sequential receipt deletion to clear inventory, got %#v", balance)
+	}
+	var containerStatus string
+	if err := store.db.GetContext(ctx, &containerStatus, `SELECT status FROM containers WHERE customer_id = ? AND container_no = ?`, customer.ID, containerNo); err != nil {
+		t.Fatalf("load shared container status after sequential deletion: %v", err)
+	}
+	if containerStatus != ContainerStatusVoided {
+		t.Fatalf("expected sequentially deleted container to be voided, got %q", containerStatus)
 	}
 }
 

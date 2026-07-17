@@ -12,7 +12,6 @@ const (
 	ContainerStatusTrackingReceived = "TRACKING_RECEIVED"
 	ContainerStatusPickupAssigned   = "PICKUP_ASSIGNED"
 	ContainerStatusPickedUp         = "PICKED_UP"
-	ContainerStatusCorrected        = "CORRECTED"
 	ContainerStatusVoided           = "VOIDED"
 
 	LifecycleEventVisibilityCustomer = "CUSTOMER"

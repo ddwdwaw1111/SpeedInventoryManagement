@@ -750,9 +750,6 @@ export type InboundDocument = {
   confirmedAt: string | null;
   deletedAt: string | null;
   archivedAt: string | null;
-  correctsDocumentId: number | null;
-  correctedByDocumentId: number | null;
-  correctedAt: string | null;
   totalLines: number;
   totalExpectedQty: number;
   totalReceivedQty: number;

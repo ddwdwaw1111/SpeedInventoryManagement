@@ -308,27 +308,7 @@ func (s *Store) EnsureDocumentExists(ctx context.Context, documentType string, d
 }
 
 func (s *Store) EnsureDocumentAttachmentMutable(ctx context.Context, documentType string, documentID int64) error {
-	documentType = normalizeDocumentAttachmentType(documentType)
-	if documentType == "" || documentID <= 0 {
-		return ErrNotFound
-	}
-	if documentType != DocumentAttachmentInbound {
-		return s.ensureDocumentExists(ctx, documentType, documentID)
-	}
-
-	var correctedByDocumentID sql.NullInt64
-	var correctedAt sql.NullTime
-	if err := s.db.QueryRowContext(ctx, `
-		SELECT corrected_by_document_id, corrected_at
-		FROM inbound_documents
-		WHERE id = ?
-	`, documentID).Scan(&correctedByDocumentID, &correctedAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
-		return fmt.Errorf("check inbound attachment mutability: %w", err)
-	}
-	return validateInboundCorrectionSourceMutable(correctedByDocumentID.Valid, correctedAt.Valid)
+	return s.ensureDocumentExists(ctx, documentType, documentID)
 }
 
 func ensureDocumentAttachmentMutableTx(ctx context.Context, tx *sql.Tx, documentType string, documentID int64) error {
@@ -337,20 +317,19 @@ func ensureDocumentAttachmentMutableTx(ctx context.Context, tx *sql.Tx, document
 		return ErrNotFound
 	}
 	if documentType == DocumentAttachmentInbound {
-		var correctedByDocumentID sql.NullInt64
-		var correctedAt sql.NullTime
+		var id int64
 		if err := tx.QueryRowContext(ctx, `
-			SELECT corrected_by_document_id, corrected_at
+			SELECT id
 			FROM inbound_documents
 			WHERE id = ?
 			FOR UPDATE
-		`, documentID).Scan(&correctedByDocumentID, &correctedAt); err != nil {
+		`, documentID).Scan(&id); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrNotFound
 			}
 			return fmt.Errorf("lock inbound attachment document: %w", err)
 		}
-		return validateInboundCorrectionSourceMutable(correctedByDocumentID.Valid, correctedAt.Valid)
+		return nil
 	}
 
 	var id int64

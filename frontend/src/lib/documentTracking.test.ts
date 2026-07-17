@@ -71,10 +71,9 @@ describe("document tracking helpers", () => {
     });
   });
 
-  it("keeps pending correction drafts out of operational views", () => {
+  it("keeps deleted receipts out of operational views", () => {
     expect(isOperationalInboundDocument({ status: "DRAFT" })).toBe(true);
-    expect(isOperationalInboundDocument({ status: "DRAFT", correctsDocumentId: 12 })).toBe(false);
-    expect(isOperationalInboundDocument({ status: "CONFIRMED", correctsDocumentId: 12 })).toBe(true);
-    expect(isOperationalInboundDocument({ status: "CONFIRMED", correctedAt: "2026-07-15T10:00:00Z" })).toBe(false);
+    expect(isOperationalInboundDocument({ status: "CONFIRMED" })).toBe(true);
+    expect(isOperationalInboundDocument({ status: "DELETED" })).toBe(false);
   });
 });

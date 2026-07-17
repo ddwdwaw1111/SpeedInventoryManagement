@@ -258,481 +258,29 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 		t.Fatalf("expected on-hand 10 after reversal, got %d", itemAfterReversal.Quantity)
 	}
 
-	if _, err := store.CancelInboundDocument(ctx, inbound.ID); err == nil || !strings.Contains(err.Error(), "container has later inventory activity") {
-		t.Fatalf("expected inbound deletion to require manual correction after outbound activity, got %v", err)
+	deletedInbound, err := store.CancelInboundDocument(ctx, inbound.ID)
+	if err != nil {
+		t.Fatalf("delete inbound document after outbound reversal: %v", err)
 	}
 
-	itemAfterBlockedInboundDeletion := mustFindItemByID(t, ctx, store, itemAfterInbound.ID)
-	if itemAfterBlockedInboundDeletion.Quantity != 10 {
-		t.Fatalf("expected blocked inbound deletion to preserve on-hand 10, got %d", itemAfterBlockedInboundDeletion.Quantity)
+	itemAfterInboundDeletion := mustFindItemByID(t, ctx, store, itemAfterInbound.ID)
+	if itemAfterInboundDeletion.Quantity != 0 {
+		t.Fatalf("expected inbound deletion to reverse on-hand inventory, got %d", itemAfterInboundDeletion.Quantity)
 	}
-	inboundAfterBlockedDeletion, err := store.getInboundDocument(ctx, inbound.ID)
-	if err != nil {
-		t.Fatalf("reload inbound after blocked deletion: %v", err)
-	}
-	if !strings.EqualFold(inboundAfterBlockedDeletion.Status, DocumentStatusConfirmed) {
-		t.Fatalf("expected blocked inbound deletion to keep confirmed status, got %q", inboundAfterBlockedDeletion.Status)
+	if !strings.EqualFold(deletedInbound.Status, DocumentStatusDeleted) {
+		t.Fatalf("expected deleted inbound status, got %q", deletedInbound.Status)
 	}
 }
 
-func TestInboundCorrectionDraftReversesAndRepostsAtomicallyIntegration(t *testing.T) {
+func TestInboundDeletionRejectsInventoryThatWasShippedAndReplenishedIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
 
-	customer := mustCreateCustomer(t, ctx, store, "Correction Customer-"+suffix)
-	location := mustCreateLocation(t, ctx, store, "Correction Warehouse-"+suffix)
-	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-CORR-"+suffix, 0)
-	containerNo := "CORR-" + suffix
-
-	original, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:          customer.ID,
-		LocationID:          location.ID,
-		ExpectedArrivalDate: "2026-06-15",
-		ActualArrivalDate:   "2026-06-15",
-		ContainerNo:         containerNo,
-		ContainerType:       "NORMAL",
-		HandlingMode:        InboundHandlingModePalletized,
-		StorageSection:      DefaultStorageSection,
-		UnitLabel:           "CTN",
-		Status:              DocumentStatusDraft,
-		Lines: []CreateInboundDocumentLineInput{{
-			SKU:            item.SKU,
-			Description:    item.Description,
-			ExpectedQty:    10,
-			ReceivedQty:    10,
-			Pallets:        2,
-			StorageSection: DefaultStorageSection,
-		}},
-	})
-	if err != nil {
-		t.Fatalf("create original inbound receipt: %v", err)
-	}
-	original, err = store.ConfirmInboundDocument(ctx, original.ID)
-	if err != nil {
-		t.Fatalf("confirm original inbound receipt: %v", err)
-	}
-	originalAttachment, err := store.CreateDocumentAttachment(ctx, CreateDocumentAttachmentInput{
-		DocumentType:     DocumentAttachmentInbound,
-		DocumentID:       original.ID,
-		DisplayName:      "Original receipt attachment",
-		OriginalFileName: "original.pdf",
-		StorageProvider:  "r2",
-		StorageBucket:    "speedwin-uploads",
-		StorageKey:       "documents/inbound/correction-source-" + suffix + ".pdf",
-		ContentType:      "application/pdf",
-		SizeBytes:        10,
-	})
-	if err != nil {
-		t.Fatalf("create original receipt attachment: %v", err)
-	}
-
-	correctionDraft, err := store.CreateInboundCorrectionDraft(ctx, original.ID)
-	if err != nil {
-		t.Fatalf("create inbound correction draft: %v", err)
-	}
-	if correctionDraft.CorrectsDocumentID == nil || *correctionDraft.CorrectsDocumentID != original.ID {
-		t.Fatalf("expected correction draft to reference original receipt %d, got %v", original.ID, correctionDraft.CorrectsDocumentID)
-	}
-	if len(correctionDraft.Attachments) != 1 || correctionDraft.Attachments[0].ID != originalAttachment.ID || correctionDraft.Attachments[0].DocumentID != original.ID {
-		t.Fatalf("expected correction draft to inherit the original attachment reference, got %+v", correctionDraft.Attachments)
-	}
-	if _, err := store.UpdateInboundDocumentNote(ctx, original.ID, UpdateInboundDocumentNoteInput{DocumentNote: "stale source edit"}); err == nil {
-		t.Fatal("expected source receipt note update to be rejected while correction draft is open")
-	}
-	if _, err := store.UpdateInboundDocumentContainerType(ctx, original.ID, UpdateInboundDocumentContainerTypeInput{ContainerType: ContainerTypeWestCoastTransfer}); err == nil {
-		t.Fatal("expected source receipt container type update to be rejected while correction draft is open")
-	}
-	if err := store.MarkDocumentAttachmentDeleted(ctx, DocumentAttachmentInbound, original.ID, originalAttachment.ID); err == nil {
-		t.Fatal("expected inherited source attachment deletion to be rejected while correction draft is open")
-	}
-	originalWithDraft, err := store.getInboundDocument(ctx, original.ID)
-	if err != nil {
-		t.Fatalf("reload original receipt with correction draft: %v", err)
-	}
-	if originalWithDraft.CorrectedByDocumentID == nil || *originalWithDraft.CorrectedByDocumentID != correctionDraft.ID {
-		t.Fatalf("expected original receipt to reference correction draft %d, got %v", correctionDraft.ID, originalWithDraft.CorrectedByDocumentID)
-	}
-	if originalWithDraft.CorrectedAt != nil {
-		t.Fatalf("expected original receipt to remain active while correction is a draft")
-	}
-	operationalWhileDraft, err := store.ListInboundDocumentsFiltered(ctx, 10, InboundDocumentFilters{
-		ArchiveScope:    DocumentArchiveScopeAll,
-		CustomerID:      customer.ID,
-		OperationalOnly: true,
-	})
-	if err != nil {
-		t.Fatalf("list operational receipts while correction is a draft: %v", err)
-	}
-	foundOriginalWhileDraft := false
-	foundCorrectionWhileDraft := false
-	for _, document := range operationalWhileDraft {
-		foundOriginalWhileDraft = foundOriginalWhileDraft || document.ID == original.ID
-		foundCorrectionWhileDraft = foundCorrectionWhileDraft || document.ID == correctionDraft.ID
-	}
-	if !foundOriginalWhileDraft || foundCorrectionWhileDraft {
-		t.Fatalf("expected only original receipt in operational results while correction is a draft")
-	}
-	itemWhileDraft := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerNo, item.SKU)
-	if itemWhileDraft.Quantity != 10 || itemWhileDraft.Pallets != 2 {
-		t.Fatalf("expected inventory to remain 10 qty / 2 pallets while correction is draft, got %d / %d", itemWhileDraft.Quantity, itemWhileDraft.Pallets)
-	}
-
-	correctedContainerNo := containerNo + "-FIXED"
-	correctionDraft, err = store.UpdateInboundDocument(ctx, correctionDraft.ID, CreateInboundDocumentInput{
-		CustomerID:          customer.ID,
-		LocationID:          location.ID,
-		ExpectedArrivalDate: "2026-06-15",
-		ActualArrivalDate:   "2026-06-15",
-		ContainerNo:         correctedContainerNo,
-		ContainerType:       "NORMAL",
-		HandlingMode:        InboundHandlingModePalletized,
-		StorageSection:      DefaultStorageSection,
-		UnitLabel:           "CTN",
-		Status:              DocumentStatusDraft,
-		Lines: []CreateInboundDocumentLineInput{{
-			SKU:            item.SKU,
-			Description:    item.Description,
-			ExpectedQty:    8,
-			ReceivedQty:    8,
-			Pallets:        1,
-			StorageSection: DefaultStorageSection,
-		}},
-	})
-	if err != nil {
-		t.Fatalf("update inbound correction draft: %v", err)
-	}
-	correction, err := store.ConfirmInboundDocument(ctx, correctionDraft.ID)
-	if err != nil {
-		t.Fatalf("confirm inbound correction: %v", err)
-	}
-	if correction.CorrectsDocumentID == nil || *correction.CorrectsDocumentID != original.ID {
-		t.Fatalf("expected confirmed correction to retain source receipt link")
-	}
-
-	correctedOriginal, err := store.getInboundDocument(ctx, original.ID)
-	if err != nil {
-		t.Fatalf("reload corrected original receipt: %v", err)
-	}
-	if correctedOriginal.CorrectedAt == nil {
-		t.Fatalf("expected original receipt to be marked corrected")
-	}
-	itemAfterCorrection := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, correctedContainerNo, item.SKU)
-	if itemAfterCorrection.Quantity != 8 || itemAfterCorrection.Pallets != 1 {
-		t.Fatalf("expected corrected inventory 8 qty / 1 pallet, got %d / %d", itemAfterCorrection.Quantity, itemAfterCorrection.Pallets)
-	}
-	assertItemHiddenByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerNo, item.SKU)
-
-	oldContainer, err := store.GetContainerByNo(ctx, customer.ID, containerNo)
-	if err != nil {
-		t.Fatalf("load corrected source container: %v", err)
-	}
-	if oldContainer.Status != ContainerStatusCorrected {
-		t.Fatalf("expected old container status %s, got %s", ContainerStatusCorrected, oldContainer.Status)
-	}
-	containerSummaries, err := NewContainerService(store).ListContainers(ctx, ListContainersInput{CustomerID: customer.ID})
-	if err != nil {
-		t.Fatalf("list operational containers after correction: %v", err)
-	}
-	foundOldContainer := false
-	foundCorrectedContainer := false
-	for _, summary := range containerSummaries {
-		foundOldContainer = foundOldContainer || summary.ContainerNo == containerNo
-		foundCorrectedContainer = foundCorrectedContainer || summary.ContainerNo == correctedContainerNo
-	}
-	if foundOldContainer || !foundCorrectedContainer {
-		t.Fatalf("expected operational container list to replace %s with %s", containerNo, correctedContainerNo)
-	}
-	if _, err := NewContainerService(store).GetLifecycle(ctx, GetContainerLifecycleInput{
-		CustomerID:      customer.ID,
-		ContainerNo:     containerNo,
-		OperationalOnly: true,
-	}); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("expected corrected source container to be hidden from customer lifecycle, got %v", err)
-	}
-	auditLifecycle, err := NewContainerService(store).GetLifecycle(ctx, GetContainerLifecycleInput{
-		CustomerID:  customer.ID,
-		ContainerNo: containerNo,
-	})
-	if err != nil {
-		t.Fatalf("load corrected source lifecycle for staff audit: %v", err)
-	}
-	if len(auditLifecycle.LifecycleEvents) == 0 {
-		t.Fatal("expected staff audit lifecycle to retain corrected source events")
-	}
-	foundOriginalPackingList := false
-	for _, document := range auditLifecycle.PackingLists {
-		if document.ID == original.ID {
-			foundOriginalPackingList = true
-			break
-		}
-	}
-	if !foundOriginalPackingList {
-		t.Fatalf("expected staff audit lifecycle to retain corrected source receipt %d", original.ID)
-	}
-
-	auditEvents, err := store.ListContainerLifecycleEvents(ctx, 20, ContainerLifecycleEventFilters{
-		CustomerID:  customer.ID,
-		ContainerNo: containerNo,
-	})
-	if err != nil {
-		t.Fatalf("list corrected source lifecycle audit: %v", err)
-	}
-	var originalReceiveAt *time.Time
-	var originalReversalAt *time.Time
-	for index := range auditEvents {
-		event := &auditEvents[index]
-		if event.SourceDocumentType != StockLedgerSourceInbound || event.SourceDocumentID != original.ID {
-			continue
-		}
-		if event.EventType == StockLedgerEventReceive && event.QuantityDelta == 10 {
-			originalReceiveAt = &event.EventTime
-		}
-		if event.EventType == StockLedgerEventAdjust && event.QuantityDelta == -10 {
-			originalReversalAt = &event.EventTime
-		}
-	}
-	if originalReceiveAt == nil || originalReversalAt == nil || !originalReceiveAt.Equal(*originalReversalAt) {
-		t.Fatalf("expected corrected source receipt and reversal to share the same effective timestamp")
-	}
-	operationalOldEvents, err := store.ListContainerLifecycleEvents(ctx, 20, ContainerLifecycleEventFilters{
-		CustomerID:      customer.ID,
-		ContainerNo:     containerNo,
-		OperationalOnly: true,
-	})
-	if err != nil {
-		t.Fatalf("list operational corrected source lifecycle: %v", err)
-	}
-	if len(operationalOldEvents) != 0 {
-		t.Fatalf("expected corrected source lifecycle to be hidden from operational results, got %d events", len(operationalOldEvents))
-	}
-	operationalAfterConfirmation, err := store.ListInboundDocumentsFiltered(ctx, 10, InboundDocumentFilters{
-		ArchiveScope:    DocumentArchiveScopeAll,
-		CustomerID:      customer.ID,
-		OperationalOnly: true,
-	})
-	if err != nil {
-		t.Fatalf("list operational receipts after correction: %v", err)
-	}
-	foundOriginalAfterConfirmation := false
-	foundCorrectionAfterConfirmation := false
-	for _, document := range operationalAfterConfirmation {
-		foundOriginalAfterConfirmation = foundOriginalAfterConfirmation || document.ID == original.ID
-		foundCorrectionAfterConfirmation = foundCorrectionAfterConfirmation || document.ID == correction.ID
-	}
-	if foundOriginalAfterConfirmation || !foundCorrectionAfterConfirmation {
-		t.Fatalf("expected confirmed correction to replace original receipt in operational results")
-	}
-	if _, err := store.CancelInboundDocument(ctx, original.ID); err == nil {
-		t.Fatalf("expected corrected original receipt deletion to be blocked")
-	}
-	if _, err := store.CreateInboundCorrectionDraft(ctx, original.ID); err == nil {
-		t.Fatalf("expected a second correction draft for the corrected original to be blocked")
-	}
-
-	reusedContainerReceipt, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:        customer.ID,
-		LocationID:        location.ID,
-		ActualArrivalDate: "2026-07-01",
-		ContainerNo:       containerNo,
-		HandlingMode:      InboundHandlingModePalletized,
-		StorageSection:    DefaultStorageSection,
-		Status:            DocumentStatusConfirmed,
-		Lines: []CreateInboundDocumentLineInput{{
-			SKU:            item.SKU,
-			Description:    item.Description,
-			ExpectedQty:    3,
-			ReceivedQty:    3,
-			Pallets:        1,
-			StorageSection: DefaultStorageSection,
-		}},
-	})
-	if err != nil {
-		t.Fatalf("receive reused corrected container: %v", err)
-	}
-	reusedContainer, err := store.GetContainerByNo(ctx, customer.ID, containerNo)
-	if err != nil {
-		t.Fatalf("load reused corrected container: %v", err)
-	}
-	if reusedContainer.InboundDocumentID != reusedContainerReceipt.ID || reusedContainer.Status != "IN_STOCK" || reusedContainer.TrackingStatus != "RECEIVED" {
-		t.Fatalf("expected reused container to reactivate for receipt %d, got %+v", reusedContainerReceipt.ID, reusedContainer)
-	}
-}
-
-func TestInboundCorrectionCustomerAccessRespectsTenantBoundaryIntegration(t *testing.T) {
-	store := newIntegrationStore(t)
-	ctx := context.Background()
-	suffix := integrationSuffix()
-
-	formerCustomer := mustCreateCustomer(t, ctx, store, "Correction Former Customer-"+suffix)
-	activeCustomer := mustCreateCustomer(t, ctx, store, "Correction Active Customer-"+suffix)
-	location := mustCreateLocation(t, ctx, store, "Correction Customer Warehouse-"+suffix)
-	item := mustCreateItem(t, ctx, store, formerCustomer.ID, location.ID, "SKU-CORR-CUSTOMER-"+suffix, 0)
-
-	original, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:        formerCustomer.ID,
-		LocationID:        location.ID,
-		ActualArrivalDate: "2026-06-15",
-		ContainerNo:       "CORR-CUSTOMER-" + suffix,
-		HandlingMode:      InboundHandlingModePalletized,
-		StorageSection:    DefaultStorageSection,
-		Status:            DocumentStatusConfirmed,
-		Lines: []CreateInboundDocumentLineInput{{
-			SKU:            item.SKU,
-			Description:    item.Description,
-			ExpectedQty:    5,
-			ReceivedQty:    5,
-			Pallets:        1,
-			StorageSection: DefaultStorageSection,
-		}},
-	})
-	if err != nil {
-		t.Fatalf("create original customer receipt: %v", err)
-	}
-	attachment, err := store.CreateDocumentAttachment(ctx, CreateDocumentAttachmentInput{
-		DocumentType:     DocumentAttachmentInbound,
-		DocumentID:       original.ID,
-		DisplayName:      "Inherited customer attachment",
-		OriginalFileName: "customer-receipt.pdf",
-		StorageProvider:  "r2",
-		StorageBucket:    "speedwin-uploads",
-		StorageKey:       "documents/inbound/customer-correction-" + suffix + ".pdf",
-		ContentType:      "application/pdf",
-		SizeBytes:        10,
-	})
-	if err != nil {
-		t.Fatalf("create customer correction attachment: %v", err)
-	}
-
-	correctionDraft, err := store.CreateInboundCorrectionDraft(ctx, original.ID)
-	if err != nil {
-		t.Fatalf("create customer correction draft: %v", err)
-	}
-	correctionDraft, err = store.UpdateInboundDocument(ctx, correctionDraft.ID, CreateInboundDocumentInput{
-		CustomerID:        activeCustomer.ID,
-		LocationID:        location.ID,
-		ActualArrivalDate: "2026-06-15",
-		ContainerNo:       "CORR-CUSTOMER-FIXED-" + suffix,
-		HandlingMode:      InboundHandlingModePalletized,
-		StorageSection:    DefaultStorageSection,
-		Status:            DocumentStatusDraft,
-		Lines: []CreateInboundDocumentLineInput{{
-			SKU:            item.SKU,
-			Description:    item.Description,
-			ExpectedQty:    5,
-			ReceivedQty:    5,
-			Pallets:        1,
-			StorageSection: DefaultStorageSection,
-		}},
-	})
-	if err != nil {
-		t.Fatalf("move correction receipt to active customer: %v", err)
-	}
-	correction, err := store.ConfirmInboundDocument(ctx, correctionDraft.ID)
-	if err != nil {
-		t.Fatalf("confirm customer correction receipt: %v", err)
-	}
-
-	if len(correction.Attachments) != 0 {
-		t.Fatalf("expected cross-customer correction not to inherit source attachments, got %+v", correction.Attachments)
-	}
-	if _, err := store.GetInboundDocumentForCustomer(ctx, original.ID, activeCustomer.ID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("expected active customer source access to be denied at the tenant boundary, got %v", err)
-	}
-	resolved, err := store.GetInboundDocumentForCustomer(ctx, correction.ID, activeCustomer.ID)
-	if err != nil {
-		t.Fatalf("authorize corrected receipt for active customer: %v", err)
-	}
-	if resolved.ID != correction.ID {
-		t.Fatalf("expected corrected receipt %d, got %d", correction.ID, resolved.ID)
-	}
-	if len(resolved.Attachments) != 0 {
-		t.Fatalf("expected active customer not to receive former customer attachments, got %+v", resolved.Attachments)
-	}
-	if _, err := store.GetInboundDocumentForCustomer(ctx, original.ID, formerCustomer.ID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("expected former customer source access to be denied, got %v", err)
-	}
-	originalForAudit, err := store.getInboundDocument(ctx, original.ID)
-	if err != nil {
-		t.Fatalf("load original receipt for staff audit: %v", err)
-	}
-	if len(originalForAudit.Attachments) != 1 || originalForAudit.Attachments[0].ID != attachment.ID {
-		t.Fatalf("expected original attachment to remain on its source receipt, got %+v", originalForAudit.Attachments)
-	}
-}
-
-func TestInboundCorrectionRejectsAnyLaterContainerActivityIntegration(t *testing.T) {
-	store := newIntegrationStore(t)
-	ctx := context.Background()
-	suffix := integrationSuffix()
-
-	customer := mustCreateCustomer(t, ctx, store, "Correction Shared Container Customer-"+suffix)
-	originalLocation := mustCreateLocation(t, ctx, store, "Correction Shared Container Origin-"+suffix)
-	laterLocation := mustCreateLocation(t, ctx, store, "Correction Shared Container Current-"+suffix)
-	item := mustCreateItem(t, ctx, store, customer.ID, originalLocation.ID, "SKU-CORR-SHARED-"+suffix, 0)
-	containerNo := "CORR-SHARED-" + suffix
-
-	createConfirmedReceipt := func(locationID int64, receivedQty int, pallets int) InboundDocument {
-		t.Helper()
-		document, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-			CustomerID:        customer.ID,
-			LocationID:        locationID,
-			ActualArrivalDate: "2026-06-15",
-			ContainerNo:       containerNo,
-			HandlingMode:      InboundHandlingModePalletized,
-			StorageSection:    DefaultStorageSection,
-			Status:            DocumentStatusConfirmed,
-			Lines: []CreateInboundDocumentLineInput{{
-				SKU:            item.SKU,
-				Description:    item.Description,
-				ExpectedQty:    receivedQty,
-				ReceivedQty:    receivedQty,
-				Pallets:        pallets,
-				StorageSection: DefaultStorageSection,
-			}},
-		})
-		if err != nil {
-			t.Fatalf("create confirmed shared-container receipt: %v", err)
-		}
-		return document
-	}
-
-	original := createConfirmedReceipt(originalLocation.ID, 10, 2)
-	correctionDraft, err := store.CreateInboundCorrectionDraft(ctx, original.ID)
-	if err != nil {
-		t.Fatalf("create correction draft before later container activity: %v", err)
-	}
-
-	createConfirmedReceipt(laterLocation.ID, 5, 1)
-	if _, err := store.ConfirmInboundDocument(ctx, correctionDraft.ID); err == nil || !strings.Contains(err.Error(), "container has later inventory activity") {
-		t.Fatalf("expected confirmation to require manual correction of later container activity, got %v", err)
-	}
-
-	if _, err := store.CancelInboundDocument(ctx, correctionDraft.ID); err != nil {
-		t.Fatalf("delete blocked correction draft: %v", err)
-	}
-	if _, err := store.CreateInboundCorrectionDraft(ctx, original.ID); err == nil || !strings.Contains(err.Error(), "container has later inventory activity") {
-		t.Fatalf("expected correction draft creation to reject existing later container activity, got %v", err)
-	}
-
-	originalAfterFailure, err := store.getInboundDocument(ctx, original.ID)
-	if err != nil {
-		t.Fatalf("reload original after blocked correction: %v", err)
-	}
-	if originalAfterFailure.CorrectedAt != nil || originalAfterFailure.CorrectedByDocumentID != nil {
-		t.Fatalf("expected blocked correction to leave original active without an open draft")
-	}
-}
-
-func TestInboundCorrectionRejectsInventoryThatWasShippedAndReplenishedIntegration(t *testing.T) {
-	store := newIntegrationStore(t)
-	ctx := context.Background()
-	suffix := integrationSuffix()
-
-	customer := mustCreateCustomer(t, ctx, store, "Correction Provenance Customer-"+suffix)
-	location := mustCreateLocation(t, ctx, store, "Correction Provenance Warehouse-"+suffix)
-	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-CORR-PROV-"+suffix, 0)
-	containerNo := "CORR-PROV-" + suffix
+	customer := mustCreateCustomer(t, ctx, store, "Deletion Provenance Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "Deletion Provenance Warehouse-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-DELETE-PROV-"+suffix, 0)
+	containerNo := "DELETE-PROV-" + suffix
 
 	createAndConfirmReceipt := func(actualArrivalDate string) InboundDocument {
 		t.Helper()
@@ -768,7 +316,7 @@ func TestInboundCorrectionRejectsInventoryThatWasShippedAndReplenishedIntegratio
 	original := createAndConfirmReceipt("2026-06-15")
 	receivedItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerNo, item.SKU)
 	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
-		PackingListNo:  "PICK-CORR-PROV-" + suffix,
+		PackingListNo:  "PICK-DELETE-PROV-" + suffix,
 		ActualShipDate: "2026-06-16",
 		Status:         DocumentStatusDraft,
 		Lines: []CreateOutboundDocumentLineInput{{
@@ -793,26 +341,153 @@ func TestInboundCorrectionRejectsInventoryThatWasShippedAndReplenishedIntegratio
 		t.Fatalf("expected replenished inventory 10 qty / 2 pallets, got %d / %d", replenishedItem.Quantity, replenishedItem.Pallets)
 	}
 
-	if _, err := store.CreateInboundCorrectionDraft(ctx, original.ID); err == nil || !strings.Contains(err.Error(), "container has later inventory activity") {
-		t.Fatalf("expected correction draft to reject shipped-and-replenished container activity, got %v", err)
-	}
 	if _, err := store.CancelInboundDocument(ctx, original.ID); err == nil || !strings.Contains(err.Error(), "container has later inventory activity") {
-		t.Fatalf("expected confirmed receipt deletion to reject shipped-and-replenished container activity, got %v", err)
+		t.Fatalf("expected deletion to reject shipped-and-replenished container activity, got %v", err)
 	}
 
 	unchangedItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerNo, item.SKU)
 	if unchangedItem.Quantity != 10 || unchangedItem.Pallets != 2 {
-		t.Fatalf("expected failed correction to preserve replenished inventory, got %d / %d", unchangedItem.Quantity, unchangedItem.Pallets)
+		t.Fatalf("expected failed deletion to preserve replenished inventory, got %d / %d", unchangedItem.Quantity, unchangedItem.Pallets)
 	}
 	originalAfterFailure, err := store.getInboundDocument(ctx, original.ID)
 	if err != nil {
-		t.Fatalf("reload original after failed correction: %v", err)
-	}
-	if originalAfterFailure.CorrectedAt != nil {
-		t.Fatalf("expected failed correction to leave original receipt uncorrected")
+		t.Fatalf("reload original after failed deletion: %v", err)
 	}
 	if normalizeDocumentStatus(originalAfterFailure.Status) != DocumentStatusConfirmed {
 		t.Fatalf("expected failed deletion to leave original receipt confirmed, got %s", originalAfterFailure.Status)
+	}
+}
+
+func TestInboundDocumentListHidesLegacyCorrectedSourceIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+	customer := mustCreateCustomer(t, ctx, store, "Legacy Correction Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "Legacy Correction Warehouse-"+suffix)
+
+	createReceipt := func(containerNo string) InboundDocument {
+		t.Helper()
+		receipt, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+			CustomerID:        customer.ID,
+			LocationID:        location.ID,
+			ActualArrivalDate: "2026-07-15",
+			ContainerNo:       containerNo,
+			HandlingMode:      InboundHandlingModePalletized,
+			Status:            DocumentStatusDraft,
+			Lines: []CreateInboundDocumentLineInput{{
+				SKU:            "LEGACY-CORRECTION-SKU-" + suffix,
+				Description:    "Legacy corrected source filter",
+				ReceivedQty:    1,
+				Pallets:        1,
+				StorageSection: DefaultStorageSection,
+			}},
+		})
+		if err != nil {
+			t.Fatalf("create legacy correction receipt: %v", err)
+		}
+		return receipt
+	}
+
+	original := createReceipt("LEGACY-CORRECTION-ORIGINAL-" + suffix)
+	replacement := createReceipt("LEGACY-CORRECTION-REPLACEMENT-" + suffix)
+	if _, err := store.db.ExecContext(ctx, `
+		UPDATE inbound_documents
+		SET corrected_by_document_id = ?, corrected_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, replacement.ID, original.ID); err != nil {
+		t.Fatalf("mark legacy original corrected: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `
+		UPDATE inbound_documents
+		SET corrects_document_id = ?
+		WHERE id = ?
+	`, original.ID, replacement.ID); err != nil {
+		t.Fatalf("link legacy replacement: %v", err)
+	}
+
+	documents, err := store.ListInboundDocuments(ctx, 20, DocumentArchiveScopeAll)
+	if err != nil {
+		t.Fatalf("list receipts with legacy correction rows: %v", err)
+	}
+	for _, document := range documents {
+		if document.ID == original.ID {
+			t.Fatalf("legacy corrected source %d must not be listed or billed", original.ID)
+		}
+	}
+	foundReplacement := false
+	for _, document := range documents {
+		if document.ID == replacement.ID {
+			foundReplacement = true
+			break
+		}
+	}
+	if !foundReplacement {
+		t.Fatalf("expected legacy replacement %d to remain visible", replacement.ID)
+	}
+}
+
+func TestLegacyInboundCorrectionDraftCannotBeConfirmedButCanBeDeletedIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+	customer := mustCreateCustomer(t, ctx, store, "Legacy Draft Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "Legacy Draft Warehouse-"+suffix)
+	containerNo := "LEGACY-DRAFT-" + suffix
+	sku := "LEGACY-DRAFT-SKU-" + suffix
+
+	createReceipt := func(status string) InboundDocument {
+		t.Helper()
+		receipt, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+			CustomerID:        customer.ID,
+			LocationID:        location.ID,
+			ActualArrivalDate: "2026-07-15",
+			ContainerNo:       containerNo,
+			HandlingMode:      InboundHandlingModePalletized,
+			Status:            status,
+			Lines: []CreateInboundDocumentLineInput{{
+				SKU:            sku,
+				Description:    "Legacy linked draft item",
+				ReceivedQty:    10,
+				Pallets:        2,
+				StorageSection: DefaultStorageSection,
+			}},
+		})
+		if err != nil {
+			t.Fatalf("create legacy linked receipt: %v", err)
+		}
+		return receipt
+	}
+
+	original := createReceipt(DocumentStatusConfirmed)
+	draft := createReceipt(DocumentStatusDraft)
+	if _, err := store.db.ExecContext(ctx, `
+		UPDATE inbound_documents
+		SET corrected_by_document_id = ?
+		WHERE id = ?
+	`, draft.ID, original.ID); err != nil {
+		t.Fatalf("link legacy source receipt: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `
+		UPDATE inbound_documents
+		SET corrects_document_id = ?
+		WHERE id = ?
+	`, original.ID, draft.ID); err != nil {
+		t.Fatalf("link legacy correction draft: %v", err)
+	}
+
+	if _, err := store.ConfirmInboundDocument(ctx, draft.ID); err == nil || !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "legacy correction drafts cannot be confirmed") {
+		t.Fatalf("expected legacy correction draft confirmation to be rejected, got %v", err)
+	}
+	item := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerNo, sku)
+	if item.Quantity != 10 || item.Pallets != 2 {
+		t.Fatalf("expected rejected legacy draft to preserve original inventory, got %d / %d", item.Quantity, item.Pallets)
+	}
+	deleted, err := store.CancelInboundDocument(ctx, draft.ID)
+	if err != nil {
+		t.Fatalf("delete legacy correction draft: %v", err)
+	}
+	if deleted.Status != DocumentStatusDeleted {
+		t.Fatalf("expected legacy correction draft to remain deletable, got %#v", deleted)
 	}
 }
 
@@ -1386,7 +1061,7 @@ func TestConfirmedInboundDocumentRemainsImmutableAfterPartialConsumptionIntegrat
 		StorageSection:      DefaultStorageSection,
 		UnitLabel:           "CTN",
 		Status:              DocumentStatusConfirmed,
-		DocumentNote:        "Metadata only correction",
+		DocumentNote:        "Metadata only update",
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:               item.SKU,
 			Description:       item.Description,
@@ -1395,7 +1070,7 @@ func TestConfirmedInboundDocumentRemainsImmutableAfterPartialConsumptionIntegrat
 			StorageSection:    DefaultStorageSection,
 			Pallets:           2,
 			PalletsDetailCtns: "2*5",
-			LineNote:          "Metadata correction",
+			LineNote:          "Metadata update",
 		}},
 	})
 	if err == nil || !errors.Is(err, ErrInvalidInput) {
@@ -1747,6 +1422,71 @@ func TestBulkUpdateInboundDocumentStatusIntegration(t *testing.T) {
 		if document.Status != DocumentStatusDeleted || document.DeletedAt == nil {
 			t.Fatalf("expected soft-deleted receipt, got %#v", document)
 		}
+	}
+}
+
+func TestBulkDeleteAllowsSelectedLaterReceiptsFromSameContainerIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+	customer := mustCreateCustomer(t, ctx, store, "Bulk Delete Provenance Customer "+suffix)
+	location := mustCreateLocation(t, ctx, store, "Bulk Delete Provenance Warehouse "+suffix)
+	containerNo := "BULK-DELETE-PROV-" + suffix
+	sku := "BULK-DELETE-PROV-SKU-" + suffix
+
+	documentIDs := make([]int64, 0, 2)
+	for index, quantity := range []int{10, 5} {
+		document, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+			CustomerID:        customer.ID,
+			LocationID:        location.ID,
+			ContainerNo:       containerNo,
+			ActualArrivalDate: fmt.Sprintf("2026-07-%02d", index+12),
+			Status:            DocumentStatusDraft,
+			HandlingMode:      InboundHandlingModePalletized,
+			Lines: []CreateInboundDocumentLineInput{{
+				SKU:            sku,
+				Description:    "Bulk delete provenance item",
+				ReceivedQty:    quantity,
+				Pallets:        1,
+				StorageSection: DefaultStorageSection,
+			}},
+		})
+		if err != nil {
+			t.Fatalf("create same-container receipt %d: %v", index+1, err)
+		}
+		documentIDs = append(documentIDs, document.ID)
+	}
+
+	if _, err := store.BulkUpdateInboundDocumentStatus(ctx, BulkUpdateInboundDocumentStatusInput{
+		DocumentIDs: documentIDs,
+		Status:      DocumentStatusConfirmed,
+	}); err != nil {
+		t.Fatalf("bulk confirm same-container receipts: %v", err)
+	}
+	deleted, err := store.BulkUpdateInboundDocumentStatus(ctx, BulkUpdateInboundDocumentStatusInput{
+		DocumentIDs: documentIDs,
+		Status:      DocumentStatusDeleted,
+	})
+	if err != nil {
+		t.Fatalf("bulk delete selected same-container receipts: %v", err)
+	}
+	if deleted.UpdatedDocuments != len(documentIDs) {
+		t.Fatalf("expected %d deleted receipts, got %#v", len(documentIDs), deleted)
+	}
+
+	var remaining struct {
+		Quantity int `db:"quantity"`
+		Pallets  int `db:"pallets"`
+	}
+	if err := store.db.GetContext(ctx, &remaining, `
+		SELECT COALESCE(SUM(quantity), 0) AS quantity, COALESCE(SUM(pallets), 0) AS pallets
+		FROM inventory_items
+		WHERE customer_id = ? AND container_no = ?
+	`, customer.ID, containerNo); err != nil {
+		t.Fatalf("load inventory after bulk deletion: %v", err)
+	}
+	if remaining.Quantity != 0 || remaining.Pallets != 0 {
+		t.Fatalf("expected same-container bulk deletion to clear inventory, got %#v", remaining)
 	}
 }
 

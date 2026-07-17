@@ -51,16 +51,6 @@ describe("api document list queries", () => {
     }));
   });
 
-  it("creates a correction draft from the confirmed receipt endpoint", async () => {
-    fetchMock.mockResolvedValue(mockJsonResponse({ id: 22, status: "DRAFT", correctsDocumentId: 11 }));
-
-    await api.createInboundCorrectionDraft(11);
-
-    const [requestUrl, options] = fetchMock.mock.calls[0];
-    expect(new URL(String(requestUrl)).pathname).toBe("/api/inbound-documents/11/correction-draft");
-    expect(options).toEqual(expect.objectContaining({ method: "POST" }));
-  });
-
   it("keeps the legacy outbound archive scope argument", async () => {
     await api.getOutboundDocuments(300, "all");
 

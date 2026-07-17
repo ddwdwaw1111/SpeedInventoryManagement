@@ -822,12 +822,6 @@ export const api = {
     });
   },
 
-  createInboundCorrectionDraft(documentId: number) {
-    return request<InboundDocument>(`/inbound-documents/${documentId}/correction-draft`, {
-      method: "POST"
-    });
-  },
-
   uploadInboundDocumentAttachment(documentId: number, file: File, displayName: string) {
     const formData = new FormData();
     formData.append("file", file);
