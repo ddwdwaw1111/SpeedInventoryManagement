@@ -182,6 +182,25 @@ func (s *Store) createStockLedgerEntryTx(ctx context.Context, tx *sql.Tx, input 
 	if input.CustomerID <= 0 || input.LocationID <= 0 {
 		return 0, fmt.Errorf("%w: invalid stock ledger input", ErrInvalidInput)
 	}
+	input.PalletChange = resolveStockLedgerPalletChange(input)
+	effectiveAt := time.Now().UTC()
+	if input.OccurredAt != nil {
+		effectiveAt = *input.OccurredAt
+	} else if input.DeliveryDate != nil {
+		effectiveAt = *input.DeliveryDate
+	} else if input.OutDate != nil {
+		effectiveAt = *input.OutDate
+	}
+	if input.PalletChange != 0 {
+		if err := ensureBillingSourceMutationsAllowedTx(ctx, tx, billingSourceMutationScope{
+			CustomerID:  input.CustomerID,
+			OccurredAt:  effectiveAt,
+			LocationIDs: []int64{input.LocationID},
+			ContainerNo: input.ContainerNo,
+		}); err != nil {
+			return 0, err
+		}
+	}
 	if input.SectionID <= 0 {
 		sectionID, sectionErr := resolveStorageSectionIDTx(ctx, tx, input.LocationID, input.StorageSection)
 		if sectionErr != nil {
@@ -194,7 +213,6 @@ func (s *Store) createStockLedgerEntryTx(ctx context.Context, tx *sql.Tx, input 
 		return 0, err
 	}
 	input.ContainerID = firstNonZeroInt64(input.ContainerID, containerID)
-	input.PalletChange = resolveStockLedgerPalletChange(input)
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO stock_ledger (
 			event_type,
@@ -279,6 +297,9 @@ func (s *Store) createStockLedgerEntryTx(ctx context.Context, tx *sql.Tx, input 
 	if err := s.applyContainerInventoryLedgerDeltaTx(ctx, tx, input); err != nil {
 		return 0, err
 	}
+	if err := s.recomputeContainerProjectionTx(ctx, tx, input.ContainerID); err != nil {
+		return 0, err
+	}
 	return stockLedgerID, nil
 }
 
@@ -295,8 +316,6 @@ func ensureContainerForStockLedgerTx(ctx context.Context, tx *sql.Tx, input crea
 	if strings.EqualFold(input.SourceDocumentType, StockLedgerSourceInbound) && isReceive {
 		inboundDocumentID = input.SourceDocumentID
 	}
-	updatesContainerLocation := isReceive ||
-		strings.EqualFold(input.EventType, StockLedgerEventTransferIn)
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO containers (
 			customer_id,
@@ -312,11 +331,8 @@ func ensureContainerForStockLedgerTx(ctx context.Context, tx *sql.Tx, input crea
 		ON DUPLICATE KEY UPDATE
 			id = LAST_INSERT_ID(id),
 			inbound_document_id = COALESCE(VALUES(inbound_document_id), inbound_document_id),
-			location_id = CASE WHEN ? THEN VALUES(location_id) ELSE location_id END,
-			status = CASE WHEN ? THEN VALUES(status) ELSE status END,
-			tracking_status = CASE WHEN ? THEN VALUES(tracking_status) ELSE tracking_status END,
 			last_event_at = GREATEST(COALESCE(last_event_at, VALUES(last_event_at)), VALUES(last_event_at))
-	`, input.CustomerID, nullableInt64(inboundDocumentID), input.LocationID, containerNo, nullableTime(resolveContainerLifecycleEventTime(input)), updatesContainerLocation, isReceive, isReceive)
+	`, input.CustomerID, nullableInt64(inboundDocumentID), input.LocationID, containerNo, nullableTime(resolveContainerLifecycleEventTime(input)))
 	if err != nil {
 		return 0, mapDBError(fmt.Errorf("ensure stock ledger container: %w", err))
 	}
@@ -325,6 +341,104 @@ func ensureContainerForStockLedgerTx(ctx context.Context, tx *sql.Tx, input crea
 		return 0, fmt.Errorf("resolve stock ledger container id: %w", err)
 	}
 	return containerID, nil
+}
+
+type containerProjectionBalance struct {
+	ActiveItemCount          int
+	ActiveLocationCount      int
+	ActiveLocationID         sql.NullInt64
+	NetOutboundQuantityDelta int64
+	NetOutboundPalletDelta   float64
+}
+
+func (s *Store) recomputeContainerProjectionTx(ctx context.Context, tx *sql.Tx, containerID int64) error {
+	if containerID <= 0 {
+		return nil
+	}
+
+	var customerID int64
+	var containerNo string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT customer_id, container_no
+		FROM containers
+		WHERE id = ?
+		FOR UPDATE
+	`, containerID).Scan(&customerID, &containerNo); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("%w: stock ledger container does not exist", ErrInvalidInput)
+		}
+		return mapDBError(fmt.Errorf("lock stock ledger container projection: %w", err))
+	}
+	containerNo = normalizeContainerNo(containerNo)
+
+	var balance containerProjectionBalance
+	if err := tx.QueryRowContext(ctx, `
+		SELECT
+			COUNT(*),
+			COUNT(DISTINCT location_id),
+			MIN(location_id)
+		FROM inventory_items
+		WHERE customer_id = ?
+		  AND UPPER(TRIM(container_no)) = ?
+		  AND (quantity > 0 OR pallets > 0)
+	`, customerID, containerNo).Scan(
+		&balance.ActiveItemCount,
+		&balance.ActiveLocationCount,
+		&balance.ActiveLocationID,
+	); err != nil {
+		return mapDBError(fmt.Errorf("load container inventory projection balance: %w", err))
+	}
+
+	if err := tx.QueryRowContext(ctx, `
+		SELECT
+			COALESCE(SUM(quantity_change), 0),
+			COALESCE(SUM(pallet_change), 0)
+		FROM stock_ledger
+		WHERE customer_id = ?
+		  AND UPPER(TRIM(COALESCE(container_no_snapshot, ''))) = ?
+		  AND UPPER(TRIM(COALESCE(source_document_type, ''))) = ?
+		  AND UPPER(TRIM(event_type)) IN (?, ?)
+	`, customerID, containerNo, StockLedgerSourceOutbound, StockLedgerEventShip, StockLedgerEventReversal).Scan(
+		&balance.NetOutboundQuantityDelta,
+		&balance.NetOutboundPalletDelta,
+	); err != nil {
+		return mapDBError(fmt.Errorf("load container outbound projection balance: %w", err))
+	}
+
+	var locationID any
+	if balance.ActiveLocationCount == 1 && balance.ActiveLocationID.Valid {
+		locationID = balance.ActiveLocationID.Int64
+	}
+	status := resolveContainerInventoryStatus(
+		balance.ActiveItemCount > 0,
+		balance.NetOutboundQuantityDelta,
+		balance.NetOutboundPalletDelta,
+	)
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE containers
+		SET
+			location_id = ?,
+			status = ?,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, locationID, status, containerID); err != nil {
+		return mapDBError(fmt.Errorf("update container inventory projection: %w", err))
+	}
+	return nil
+}
+
+func resolveContainerInventoryStatus(hasActiveInventory bool, netOutboundQuantityDelta int64, netOutboundPalletDelta float64) string {
+	hasUnreversedOutbound := netOutboundQuantityDelta < 0 || netOutboundPalletDelta < -0.000001
+	if hasActiveInventory && hasUnreversedOutbound {
+		return ContainerStatusPartiallyOutbound
+	}
+	if hasActiveInventory {
+		return ContainerStatusInStock
+	}
+	if hasUnreversedOutbound {
+		return ContainerStatusShipped
+	}
+	return ContainerStatusDepleted
 }
 
 func resolveStockLedgerPalletChange(input createStockLedgerInput) float64 {

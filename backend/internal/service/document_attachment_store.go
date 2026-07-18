@@ -308,7 +308,26 @@ func (s *Store) EnsureDocumentExists(ctx context.Context, documentType string, d
 }
 
 func (s *Store) EnsureDocumentAttachmentMutable(ctx context.Context, documentType string, documentID int64) error {
-	return s.ensureDocumentExists(ctx, documentType, documentID)
+	documentType = normalizeDocumentAttachmentType(documentType)
+	if documentType == "" || documentID <= 0 {
+		return ErrNotFound
+	}
+
+	tableName := "outbound_documents"
+	if documentType == DocumentAttachmentInbound {
+		tableName = "inbound_documents"
+	}
+	var status string
+	if err := s.db.QueryRowxContext(ctx, fmt.Sprintf("SELECT status FROM %s WHERE id = ?", tableName), documentID).Scan(&status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("check attachment document status: %w", err)
+	}
+	if normalizeDocumentStatus(status) == DocumentStatusDeleted {
+		return fmt.Errorf("%w: deleted document cannot modify attachments", ErrInvalidInput)
+	}
+	return nil
 }
 
 func ensureDocumentAttachmentMutableTx(ctx context.Context, tx *sql.Tx, documentType string, documentID int64) error {
@@ -317,32 +336,38 @@ func ensureDocumentAttachmentMutableTx(ctx context.Context, tx *sql.Tx, document
 		return ErrNotFound
 	}
 	if documentType == DocumentAttachmentInbound {
-		var id int64
+		var status string
 		if err := tx.QueryRowContext(ctx, `
-			SELECT id
+			SELECT status
 			FROM inbound_documents
 			WHERE id = ?
 			FOR UPDATE
-		`, documentID).Scan(&id); err != nil {
+		`, documentID).Scan(&status); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrNotFound
 			}
 			return fmt.Errorf("lock inbound attachment document: %w", err)
 		}
+		if normalizeDocumentStatus(status) == DocumentStatusDeleted {
+			return fmt.Errorf("%w: deleted document cannot modify attachments", ErrInvalidInput)
+		}
 		return nil
 	}
 
-	var id int64
+	var status string
 	if err := tx.QueryRowContext(ctx, `
-		SELECT id
+		SELECT status
 		FROM outbound_documents
 		WHERE id = ?
 		FOR UPDATE
-	`, documentID).Scan(&id); err != nil {
+	`, documentID).Scan(&status); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
 		return fmt.Errorf("lock outbound attachment document: %w", err)
+	}
+	if normalizeDocumentStatus(status) == DocumentStatusDeleted {
+		return fmt.Errorf("%w: deleted document cannot modify attachments", ErrInvalidInput)
 	}
 	return nil
 }

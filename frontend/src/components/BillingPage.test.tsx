@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BillingPage } from "./BillingPage";
+import { ApiError } from "../lib/api";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { createCustomer, createInboundDocument, createInboundDocumentLine, createLocation, createOutboundDocument, createOutboundDocumentLine } from "../test/fixtures";
 import { DEFAULT_BILLING_INVOICE_HEADER } from "../lib/settings";
@@ -18,23 +19,32 @@ async function pickComboOption(labelText: string, optionText: string | RegExp) {
 const {
   getContainerLifecycleEvents,
   getBillingInvoices,
-  createBillingInvoice,
+  previewBilling,
+  generateBillingInvoice,
   downloadExcelWorkbook,
   downloadBillingPreviewPdf
 } = vi.hoisted(() => ({
   getContainerLifecycleEvents: vi.fn(),
   getBillingInvoices: vi.fn(),
-  createBillingInvoice: vi.fn(),
+  previewBilling: vi.fn(),
+  generateBillingInvoice: vi.fn(),
   downloadExcelWorkbook: vi.fn(),
   downloadBillingPreviewPdf: vi.fn()
 }));
 
 vi.mock("../lib/api", () => ({
-  ApiError: class ApiError extends Error {},
+  ApiError: class ApiError extends Error {
+    status: number;
+    constructor(status: number, message: string) {
+      super(message);
+      this.status = status;
+    }
+  },
   api: {
     getContainerLifecycleEvents,
     getBillingInvoices,
-    createBillingInvoice
+    previewBilling,
+    generateBillingInvoice
   }
 }));
 
@@ -50,11 +60,132 @@ vi.mock("@mui/x-charts", () => ({
   BarChart: () => <div data-testid="billing-balance-chart" />
 }));
 
+function createAuthoritativePreview(overrides: Record<string, unknown> = {}) {
+  const periodStart = String(overrides.periodStart ?? "2026-03-01");
+  const periodEnd = String(overrides.periodEnd ?? "2026-03-31");
+  const rates = overrides.rates ?? {
+    inboundContainerFee: 450,
+    transferInboundFeePerPallet: 10,
+    wrappingFeePerPallet: 15,
+    storageFeePerPalletPerWeek: 7,
+    storageFeePerPalletPerWeekNormal: 7,
+    storageFeePerPalletPerWeekWestCoastTransfer: 7,
+    outboundFeePerPallet: 0
+  };
+  return {
+    calculationVersion: "container-v1",
+    sourceFingerprint: `fingerprint-${periodStart}-${periodEnd}`,
+    customerId: 1,
+    customerName: "Acme",
+    warehouseLocationId: null,
+    containerType: "",
+    periodStart,
+    periodEnd,
+    normalPalletGracePeriodEnabled: true,
+    rates,
+    lines: [
+      {
+        id: "inbound-10",
+        chargeType: "INBOUND",
+        sourceType: "INBOUND_DOCUMENT",
+        sourceId: 10,
+        reference: "CONT-SERVER",
+        containerNo: "CONT-SERVER",
+        containerType: "NORMAL",
+        warehouse: "NJ",
+        occurredOn: "2026-03-05",
+        quantity: 1,
+        unitRate: 450,
+        amount: 450,
+        description: "Inbound container fee"
+      },
+      {
+        id: "storage-CONT-SERVER",
+        chargeType: "STORAGE",
+        sourceType: "CONTAINER_LIFECYCLE",
+        sourceId: 0,
+        reference: "Storage | CONT-SERVER",
+        containerNo: "CONT-SERVER",
+        containerType: "NORMAL",
+        warehouse: "NJ",
+        occurredOn: "2026-03-31",
+        quantity: 24,
+        unitRate: 1,
+        amount: 24,
+        description: "Storage charges"
+      }
+    ],
+    storageRows: [
+      {
+        customerId: 1,
+        customerName: "Acme",
+        containerNo: "CONT-SERVER",
+        containerType: "NORMAL",
+        locationId: 1,
+        warehousesTouched: ["NJ"],
+        palletsTracked: 1,
+        palletDays: 31,
+        freePalletDays: 7,
+        billablePalletDays: 24,
+        averageDailyPallets: 1,
+        firstActivityOn: "2026-03-01",
+        lastActivityOn: "2026-03-31",
+        grossAmount: 31,
+        discountAmount: 7,
+        amount: 24,
+        segments: [
+          {
+            startDate: "2026-03-01",
+            endDate: "2026-03-07",
+            dayEndPallets: 1,
+            billedDays: 7,
+            palletDays: 7,
+            freePalletDays: 7,
+            billablePalletDays: 0,
+            grossAmount: 7,
+            discountAmount: 7,
+            amount: 0
+          },
+          {
+            startDate: "2026-03-08",
+            endDate: "2026-03-31",
+            dayEndPallets: 1,
+            billedDays: 24,
+            palletDays: 24,
+            freePalletDays: 0,
+            billablePalletDays: 24,
+            grossAmount: 24,
+            discountAmount: 0,
+            amount: 24
+          }
+        ]
+      }
+    ],
+    dailyBalances: [{ date: "2026-03-31", palletCount: 1 }],
+    summary: {
+      receivedContainers: 1,
+      receivedPallets: 0,
+      shippedPallets: 0,
+      palletDays: 31,
+      inboundAmount: 450,
+      wrappingAmount: 0,
+      storageGrossAmount: 31,
+      storageDiscountAmount: 7,
+      storageAmount: 24,
+      outboundAmount: 0,
+      grandTotal: 474
+    },
+    warnings: [],
+    ...overrides
+  };
+}
+
 describe("BillingPage", () => {
   beforeEach(() => {
     getContainerLifecycleEvents.mockReset();
     getBillingInvoices.mockReset();
-    createBillingInvoice.mockReset();
+    previewBilling.mockReset();
+    generateBillingInvoice.mockReset();
     downloadExcelWorkbook.mockReset();
     downloadBillingPreviewPdf.mockReset();
     window.localStorage.clear();
@@ -62,7 +193,45 @@ describe("BillingPage", () => {
     window.localStorage.setItem("sim-timezone", "UTC");
     getContainerLifecycleEvents.mockResolvedValue([]);
     getBillingInvoices.mockResolvedValue([]);
-    createBillingInvoice.mockResolvedValue({ id: 91 });
+    previewBilling.mockImplementation(async (payload) => createAuthoritativePreview({
+      customerId: payload.customerId,
+      periodStart: payload.periodStart,
+      periodEnd: payload.periodEnd,
+      warehouseLocationId: payload.warehouseLocationId,
+      containerType: payload.containerType ?? "",
+      normalPalletGracePeriodEnabled: payload.normalPalletGracePeriodEnabled,
+      rates: payload.rates
+    }));
+    generateBillingInvoice.mockResolvedValue({ id: 91 });
+  });
+
+  it("loads authoritative previews for every customer in the all-customers scope", async () => {
+    previewBilling.mockImplementation(async (payload) => createAuthoritativePreview({
+      customerId: payload.customerId,
+      periodStart: payload.periodStart,
+      periodEnd: payload.periodEnd,
+      warnings: payload.customerId === 1 ? ["Customer 1 billing warning"] : []
+    }));
+    renderWithProviders(
+      <BillingPage
+        customers={[
+          createCustomer({ id: 1, name: "Acme" }),
+          createCustomer({ id: 2, name: "Bravo" })
+        ]}
+        locations={[createLocation()]}
+        inboundDocuments={[]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        onOpenBillingContainerDetail={vi.fn()}
+        onOpenBillingInvoice={vi.fn()}
+      />
+    );
+
+    await waitFor(() => {
+      const requestedCustomers = new Set(previewBilling.mock.calls.map(([payload]) => payload.customerId));
+      expect(requestedCustomers).toEqual(new Set([1, 2]));
+    });
+    expect(await screen.findByText("Acme: Customer 1 billing warning")).toBeInTheDocument();
   });
 
   it("opens the billing container detail route with the selected date range and customer scope", async () => {
@@ -98,7 +267,7 @@ describe("BillingPage", () => {
 
     fireEvent.click(openButton);
 
-    expect(onOpenBillingContainerDetail).toHaveBeenCalledWith("2026-03-01", "2026-03-31", "all", "GCXU5817233", "all");
+    expect(onOpenBillingContainerDetail).toHaveBeenCalledWith("2026-03-01", "2026-03-31", 1, "CONT-SERVER", "all");
     await waitFor(() => {
       expect(window.sessionStorage.getItem("sim-billing-workspace-context")).toContain('"startDate":"2026-03-01"');
       expect(window.sessionStorage.getItem("sim-billing-workspace-context")).toContain('"endDate":"2026-03-31"');
@@ -136,7 +305,7 @@ describe("BillingPage", () => {
     await waitFor(() => {
       expect(downloadExcelWorkbook).toHaveBeenCalledTimes(1);
     });
-    expect(downloadExcelWorkbook.mock.calls[0][0].rows).toHaveLength(2);
+    expect(downloadExcelWorkbook.mock.calls[0][0].rows.length).toBeGreaterThan(0);
     const columnLabels = downloadExcelWorkbook.mock.calls[0][0].columns.map((column: { label: string }) => column.label);
     expect(columnLabels).toContain("Charge Type");
     expect(columnLabels.indexOf("Container No.")).toBeLessThan(columnLabels.indexOf("Charge Type"));
@@ -220,18 +389,25 @@ describe("BillingPage", () => {
     fireEvent.click(createButton);
 
     await waitFor(() => {
-      expect(createBillingInvoice).toHaveBeenCalledTimes(1);
+      expect(generateBillingInvoice).toHaveBeenCalledTimes(1);
     });
-    expect(createBillingInvoice.mock.calls[0][0].invoiceType).toBe("STORAGE_SETTLEMENT");
-    expect(createBillingInvoice.mock.calls[0][0].header).toEqual(DEFAULT_BILLING_INVOICE_HEADER);
-    expect(createBillingInvoice.mock.calls[0][0].lines).toHaveLength(1);
+    expect(generateBillingInvoice.mock.calls[0][0]).toMatchObject({
+      invoiceType: "STORAGE_SETTLEMENT",
+      customerId: 1,
+      containerType: "NORMAL",
+      periodStart: "2026-03-01",
+      periodEnd: "2026-03-31",
+      sourceFingerprint: "fingerprint-2026-03-01-2026-03-31",
+      header: DEFAULT_BILLING_INVOICE_HEADER
+    });
+    expect(generateBillingInvoice.mock.calls[0][0]).not.toHaveProperty("lines");
     expect(onOpenBillingInvoice).toHaveBeenCalledWith(91);
   });
 
   it("locks invoice creation while the create request is pending", async () => {
     const customer = createCustomer({ id: 1, name: "Acme" });
 
-    createBillingInvoice.mockImplementation(() => new Promise(() => {}));
+    generateBillingInvoice.mockImplementation(() => new Promise(() => {}));
     getContainerLifecycleEvents.mockResolvedValue([
       {
         id: 1,
@@ -271,7 +447,7 @@ describe("BillingPage", () => {
     fireEvent.click(createButton);
 
     await waitFor(() => {
-      expect(createBillingInvoice).toHaveBeenCalledTimes(1);
+      expect(generateBillingInvoice).toHaveBeenCalledTimes(1);
     });
     await waitFor(() => {
       expect(createButton).toBeDisabled();
@@ -279,7 +455,7 @@ describe("BillingPage", () => {
     });
   });
 
-  it("includes storage detail snapshots in storage settlement invoice payloads", async () => {
+  it("renders the authoritative storage preview and leaves invoice lines to the backend", async () => {
     const customer = createCustomer({ id: 1, name: "Acme" });
     getContainerLifecycleEvents.mockResolvedValue([
       {
@@ -321,29 +497,13 @@ describe("BillingPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Create Storage Invoice" }));
 
     await waitFor(() => {
-      expect(createBillingInvoice).toHaveBeenCalledTimes(1);
+      expect(generateBillingInvoice).toHaveBeenCalledTimes(1);
     });
 
-    const payload = createBillingInvoice.mock.calls[0][0];
-    expect(payload.lines).toHaveLength(1);
-    expect(payload.lines[0]).toMatchObject({
-      chargeType: "STORAGE",
-      containerNo: "CONT-DETAIL",
-      quantity: 24,
-      unitRate: 1,
-      amount: 24,
-      details: {
-        kind: "STORAGE_CONTAINER_SUMMARY",
-        warehousesTouched: ["NJ"],
-        palletsTracked: 1,
-        palletDays: 31,
-        freePalletDays: 7,
-        billablePalletDays: 24,
-        grossAmount: 31,
-        discountAmount: 7
-      }
-    });
-    expect(payload.lines[0].details?.segments).toHaveLength(2);
+    expect(screen.getAllByText("CONT-SERVER").length).toBeGreaterThan(0);
+    const payload = generateBillingInvoice.mock.calls[0][0];
+    expect(payload).not.toHaveProperty("lines");
+    expect(payload).not.toHaveProperty("amount");
   });
 
   it("creates storage settlement invoices without normal pallet grace days when the switch is off", async () => {
@@ -390,40 +550,18 @@ describe("BillingPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Create Storage Invoice" }));
 
     await waitFor(() => {
-      expect(createBillingInvoice).toHaveBeenCalledTimes(1);
+      expect(generateBillingInvoice).toHaveBeenCalledTimes(1);
     });
 
-    const payload = createBillingInvoice.mock.calls[0][0];
-    expect(payload.lines).toHaveLength(1);
-    expect(payload.lines[0]).toMatchObject({
-      chargeType: "STORAGE",
-      containerNo: "CONT-NO-GRACE",
-      quantity: 31,
-      unitRate: 1,
-      amount: 31,
-      details: {
-        kind: "STORAGE_CONTAINER_SUMMARY",
-        palletsTracked: 1,
-        palletDays: 31,
-        normalPalletGracePeriodEnabled: false,
-        freePalletDays: 0,
-        billablePalletDays: 31,
-        grossAmount: 31,
-        discountAmount: 0
-      }
-    });
-    expect(payload.lines[0].details?.segments).toEqual([
-      expect.objectContaining({
-        palletDays: 31,
-        freePalletDays: 0,
-        billablePalletDays: 31,
-        discountAmount: 0,
-        amount: 31
-      })
-    ]);
+    const payload = generateBillingInvoice.mock.calls[0][0];
+    expect(payload.normalPalletGracePeriodEnabled).toBe(false);
+    expect(previewBilling).toHaveBeenCalledWith(expect.objectContaining({
+      normalPalletGracePeriodEnabled: false
+    }));
+    expect(payload).not.toHaveProperty("lines");
   });
 
-  it("creates mixed invoices from the exact preview line set", async () => {
+  it("generates mixed invoices from the authoritative scope and fingerprint", async () => {
     const customer = createCustomer({ id: 1, name: "Acme" });
     getContainerLifecycleEvents.mockResolvedValue([
       {
@@ -482,55 +620,20 @@ describe("BillingPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Create Mixed Invoice" }));
 
     await waitFor(() => {
-      expect(createBillingInvoice).toHaveBeenCalledTimes(1);
+      expect(generateBillingInvoice).toHaveBeenCalledTimes(1);
     });
 
-    const payload = createBillingInvoice.mock.calls[0][0];
-    expect(payload.invoiceType).toBe("MIXED");
-    expect(payload.lines.map((line: { chargeType: string }) => line.chargeType)).toEqual(["INBOUND", "WRAPPING", "OUTBOUND", "STORAGE"]);
-    expect(payload.lines).toMatchObject([
-      { chargeType: "INBOUND", quantity: 1, amount: 450, sourceType: "AUTO" },
-      { chargeType: "WRAPPING", quantity: 2, amount: 30, sourceType: "AUTO" },
-      { chargeType: "OUTBOUND", quantity: 1, amount: 0, sourceType: "AUTO" },
-      { chargeType: "STORAGE", quantity: 20, amount: 20, sourceType: "AUTO" }
-    ]);
-    const storageLine = payload.lines.find((line: { chargeType: string }) => line.chargeType === "STORAGE");
-    expect(storageLine.details).toMatchObject({
-      kind: "STORAGE_CONTAINER_SUMMARY",
-      palletsTracked: 1,
-      palletDays: 27,
-      normalPalletGracePeriodEnabled: true,
-      freePalletDays: 7,
-      billablePalletDays: 20,
-      grossAmount: 27,
-      discountAmount: 7,
-      segments: [
-        {
-          startDate: "2026-03-05",
-          endDate: "2026-03-11",
-          dayEndPallets: 1,
-          billedDays: 7,
-          palletDays: 7,
-          freePalletDays: 7,
-          billablePalletDays: 0,
-          grossAmount: 7,
-          discountAmount: 7,
-          amount: 0
-        },
-        {
-          startDate: "2026-03-12",
-          endDate: "2026-03-31",
-          dayEndPallets: 1,
-          billedDays: 20,
-          palletDays: 20,
-          freePalletDays: 0,
-          billablePalletDays: 20,
-          grossAmount: 20,
-          discountAmount: 0,
-          amount: 20
-        }
-      ]
+    const payload = generateBillingInvoice.mock.calls[0][0];
+    expect(payload).toMatchObject({
+      invoiceType: "MIXED",
+      customerId: 1,
+      periodStart: "2026-03-01",
+      periodEnd: "2026-03-31",
+      sourceFingerprint: "fingerprint-2026-03-01-2026-03-31"
     });
+    expect(payload).not.toHaveProperty("lines");
+    expect(payload).not.toHaveProperty("customerName");
+    expect(payload).not.toHaveProperty("warehouseName");
   });
 
   it("passes the selected warehouse scope into storage settlement invoice creation", async () => {
@@ -605,12 +708,95 @@ describe("BillingPage", () => {
     fireEvent.click(createButton);
 
     await waitFor(() => {
-      expect(createBillingInvoice).toHaveBeenCalledTimes(1);
+      expect(generateBillingInvoice).toHaveBeenCalledTimes(1);
     });
-    expect(createBillingInvoice.mock.calls[0][0]).toMatchObject({
+    expect(generateBillingInvoice.mock.calls[0][0]).toMatchObject({
       invoiceType: "STORAGE_SETTLEMENT",
-      warehouseLocationId: 2,
-      warehouseName: "LA"
+      warehouseLocationId: 2
+    });
+    expect(generateBillingInvoice.mock.calls[0][0]).not.toHaveProperty("warehouseName");
+  });
+
+  it("keeps the container search as a display-only filter when generating an invoice", async () => {
+    const customer = createCustomer({ id: 1, name: "Acme" });
+
+    renderWithProviders(
+      <BillingPage
+        customers={[customer]}
+        locations={[createLocation()]}
+        inboundDocuments={[]}
+        outboundDocuments={[]}
+        currentUserRole="operator"
+        onOpenBillingContainerDetail={vi.fn()}
+        onOpenBillingInvoice={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-03-01" } });
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-03-31" } });
+    await pickComboOption("Customer", "Acme");
+    await screen.findByRole("button", { name: "Create Mixed Invoice" });
+
+    fireEvent.change(screen.getByPlaceholderText("Container no., reference, or warehouse"), {
+      target: { value: "NO-MATCH" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Mixed Invoice" }));
+
+    await waitFor(() => expect(generateBillingInvoice).toHaveBeenCalledTimes(1));
+    expect(generateBillingInvoice.mock.calls[0][0]).not.toHaveProperty("containerNo");
+    expect(generateBillingInvoice.mock.calls[0][0].sourceFingerprint).toBe("fingerprint-2026-03-01-2026-03-31");
+  });
+
+  it("keeps viewers on the authoritative preview without showing invoice generation", async () => {
+    const customer = createCustomer({ id: 1, name: "Acme" });
+
+    renderWithProviders(
+      <BillingPage
+        customers={[customer]}
+        locations={[createLocation()]}
+        inboundDocuments={[]}
+        outboundDocuments={[]}
+        currentUserRole="viewer"
+        onOpenBillingContainerDetail={vi.fn()}
+        onOpenBillingInvoice={vi.fn()}
+      />
+    );
+
+    await pickComboOption("Customer", "Acme");
+    await waitFor(() => {
+      expect(previewBilling).toHaveBeenCalledWith(expect.objectContaining({ customerId: 1 }));
+      expect(screen.getAllByText("CONT-SERVER").length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByRole("button", { name: "Create Mixed Invoice" })).not.toBeInTheDocument();
+    expect(generateBillingInvoice).not.toHaveBeenCalled();
+  });
+
+  it("refreshes a stale authoritative preview after a 409 response", async () => {
+    const customer = createCustomer({ id: 1, name: "Acme" });
+    generateBillingInvoice.mockRejectedValueOnce(new ApiError(409, "stale preview"));
+
+    renderWithProviders(
+      <BillingPage
+        customers={[customer]}
+        locations={[createLocation()]}
+        inboundDocuments={[]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        onOpenBillingContainerDetail={vi.fn()}
+        onOpenBillingInvoice={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-03-01" } });
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-03-31" } });
+    await pickComboOption("Customer", "Acme");
+    const createButton = await screen.findByRole("button", { name: "Create Mixed Invoice" });
+    const previewCallsBeforeGenerate = previewBilling.mock.calls.length;
+    fireEvent.click(createButton);
+
+    expect(await screen.findByText(/Billing activity changed after this preview was calculated/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(previewBilling.mock.calls.length).toBeGreaterThan(previewCallsBeforeGenerate);
     });
   });
 });

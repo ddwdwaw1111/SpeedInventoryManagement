@@ -60,10 +60,12 @@ func TestSanitizeInboundDocumentInput(t *testing.T) {
 
 func TestValidateInboundDocumentInput(t *testing.T) {
 	validInput := CreateInboundDocumentInput{
-		CustomerID: 1,
-		LocationID: 2,
+		CustomerID:     1,
+		LocationID:     2,
+		Status:         DocumentStatusConfirmed,
+		TrackingStatus: InboundTrackingReceived,
 		Lines: []CreateInboundDocumentLineInput{
-			{SKU: "SKU-1", ExpectedQty: 10, Pallets: 1},
+			{SKU: "SKU-1", ExpectedQty: 10, ReceivedQty: 7, Pallets: 3},
 		},
 	}
 
@@ -89,27 +91,34 @@ func TestValidateInboundDocumentInput(t *testing.T) {
 
 func TestConfirmedInboundKeepsQuantityAndPalletCountIndependent(t *testing.T) {
 	input := CreateInboundDocumentInput{
-		CustomerID:     1,
-		LocationID:     2,
-		HandlingMode:   InboundHandlingModePalletized,
-		Status:         DocumentStatusConfirmed,
-		TrackingStatus: InboundTrackingReceived,
+		CustomerID:        1,
+		LocationID:        2,
+		ActualArrivalDate: "2026-07-17",
+		HandlingMode:      InboundHandlingModePalletized,
+		Status:            DocumentStatusConfirmed,
+		TrackingStatus:    InboundTrackingReceived,
 		Lines: []CreateInboundDocumentLineInput{
-			{SKU: "SKU-1", ExpectedQty: 10, ReceivedQty: 10, Pallets: 3, UnitsPerPallet: 4},
+			{
+				SKU: "SKU-1", ExpectedQty: 10, ReceivedQty: 10, Pallets: 12, UnitsPerPallet: 4,
+				PalletBreakdown: []InboundPalletBreakdown{{Quantity: 3}, {Quantity: 2}},
+			},
 		},
 	}
 
 	if err := validateInboundDocumentInput(input); err != nil {
 		t.Fatalf("expected independent inbound quantity and pallet count to be valid, got %v", err)
 	}
-	if len(input.Lines[0].PalletBreakdown) != 0 {
-		t.Fatal("expected no pallet breakdown to be required")
-	}
-
 	input.Lines[0].Pallets = 0
 	if err := validateInboundDocumentInput(input); err == nil || !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("expected confirmed receipt without pallets to be invalid, got %v", err)
 	}
+
+	input.Lines[0].Pallets = 12
+	input.Lines[0].ReceivedQty = 0
+	if err := validateInboundDocumentInput(input); err == nil || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected confirmed receipt without received qty to be invalid, got %v", err)
+	}
+
 }
 
 func TestSanitizeOutboundDocumentInput(t *testing.T) {

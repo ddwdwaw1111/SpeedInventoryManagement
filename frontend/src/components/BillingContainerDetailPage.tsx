@@ -6,9 +6,11 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { readBillingWorkspaceContext } from "../lib/billingWorkspaceContext";
 import {
-	buildBillingPreview,
 	DEFAULT_BILLING_RATES,
+	mapAuthoritativeBillingPreview,
+	mergeBillingPreviews,
 	type BillingInvoiceLine,
+	type BillingPreview,
 	type BillingRates,
 	type BillingStorageRow
 } from "../lib/billingPreview";
@@ -33,7 +35,7 @@ type BillingContainerDetailPageProps = {
 	inboundDocuments: InboundDocument[];
 	outboundDocuments: OutboundDocument[];
 	onBackToBilling: () => void;
-	onOpenContainerDetail: (containerNo: string) => void;
+	onOpenContainerDetail: (containerNo: string, customerId?: number | null) => void;
 };
 
 type ContainerTimelineRow = {
@@ -57,7 +59,6 @@ export function BillingContainerDetailPage({
 	customers,
 	locations,
 	inboundDocuments,
-	outboundDocuments,
 	onBackToBilling,
 	onOpenContainerDetail
 }: BillingContainerDetailPageProps) {
@@ -68,6 +69,7 @@ export function BillingContainerDetailPage({
 		? null
 		: locations.find((location) => location.id === warehouseLocationId) ?? null;
 	const [containerLifecycleEvents, setContainerLifecycleEvents] = useState<ContainerLifecycleEvent[]>([]);
+	const [authoritativePreview, setAuthoritativePreview] = useState<BillingPreview | null>(null);
 	const [isLoading, setIsLoading] = useState(true);
 	const [errorMessage, setErrorMessage] = useState("");
 
@@ -96,6 +98,7 @@ export function BillingContainerDetailPage({
 
 		if (!normalizedContainerNo) {
 			setContainerLifecycleEvents([]);
+			setAuthoritativePreview(null);
 			setIsLoading(false);
 			setErrorMessage("");
 			return () => {
@@ -106,12 +109,43 @@ export function BillingContainerDetailPage({
 		async function loadDetailData() {
 			setIsLoading(true);
 			setErrorMessage("");
+			setAuthoritativePreview(null);
 			try {
-				const nextContainerEvents = await api.getContainerLifecycleEvents(50000, normalizedContainerNo, customerId === "all" ? undefined : customerId);
+				const previewCustomerIds = customerId === "all" ? customers.map((customer) => customer.id) : [customerId];
+				const previewPromise = Promise.all(previewCustomerIds.map((previewCustomerId) => api.previewBilling({
+						customerId: previewCustomerId,
+						...(warehouseLocationId === "all" ? {} : { warehouseLocationId }),
+						...(activeContainerType === "all" ? {} : { containerType: activeContainerType }),
+						periodStart: startDate,
+						periodEnd: endDate,
+						normalPalletGracePeriodEnabled: activeNormalPalletGracePeriodEnabled,
+						rates: {
+							inboundContainerFee: activeRates.inboundContainerFee,
+							transferInboundFeePerPallet: activeRates.transferInboundFeePerPallet,
+							wrappingFeePerPallet: activeRates.wrappingFeePerPallet,
+							storageFeePerPalletPerWeek: activeRates.storageFeePerPalletPerWeek,
+							storageFeePerPalletPerWeekNormal: activeRates.storageFeePerPalletPerWeekNormal,
+							storageFeePerPalletPerWeekWestCoastTransfer: activeRates.storageFeePerPalletPerWeekWestCoastTransfer,
+							outboundFeePerPallet: activeRates.outboundFeePerPallet
+						}
+					})));
+				const [nextContainerEvents, nextAuthoritativeResults] = await Promise.all([
+					api.getContainerLifecycleEvents(50000, normalizedContainerNo, customerId === "all" ? undefined : customerId),
+					previewPromise
+				]);
 				if (!active) {
 					return;
 				}
 				setContainerLifecycleEvents(nextContainerEvents);
+				const mappedPreviews = nextAuthoritativeResults.map(mapAuthoritativeBillingPreview);
+				setAuthoritativePreview(customerId === "all"
+					? mergeBillingPreviews(mappedPreviews, {
+						startDate,
+						endDate,
+						customerId: "all",
+						customerName: t("allCustomers")
+					})
+					: mappedPreviews[0] ?? null);
 			} catch (error) {
 				if (!active) {
 					return;
@@ -128,21 +162,30 @@ export function BillingContainerDetailPage({
 		return () => {
 			active = false;
 		};
-	}, [normalizedContainerNo, routeKey, t]);
-
-	const billingPreview = useMemo(() => buildBillingPreview({
-		startDate,
-		endDate,
+	}, [
+		activeContainerType,
+		activeNormalPalletGracePeriodEnabled,
+		activeRates,
 		customerId,
 		customers,
-		containerLifecycleEvents,
-		inboundDocuments,
-		outboundDocuments,
-		locationId: warehouseLocationId,
-		containerType: activeContainerType,
-		normalPalletGracePeriodEnabled: activeNormalPalletGracePeriodEnabled,
-		rates: activeRates
-	}), [activeContainerType, activeNormalPalletGracePeriodEnabled, activeRates, containerLifecycleEvents, customerId, customers, endDate, inboundDocuments, outboundDocuments, startDate, warehouseLocationId]);
+		endDate,
+		normalizedContainerNo,
+		routeKey,
+		startDate,
+		t,
+		warehouseLocationId
+	]);
+
+	const billingPreview = useMemo(() => {
+		return authoritativePreview ?? mergeBillingPreviews([], {
+			startDate,
+			endDate,
+			customerId,
+			customerName: customerId === "all"
+				? t("allCustomers")
+				: customers.find((customer) => customer.id === customerId)?.name ?? ""
+		});
+	}, [authoritativePreview, customerId, customers, endDate, startDate, t]);
 
 	const containerInvoiceLines = useMemo(
 		() => billingPreview.invoiceLines.filter((line) => normalizeContainerNo(line.containerNo) === normalizedContainerNo),
@@ -201,7 +244,12 @@ export function BillingContainerDetailPage({
 				{t("billingPage")}
 			</Button>
 			{isNavigableContainerNo(normalizedContainerNo) ? (
-				<Button size="small" variant="text" startIcon={<OpenInNewRoundedIcon fontSize="small" />} onClick={() => onOpenContainerDetail(normalizedContainerNo)}>
+				<Button
+					size="small"
+					variant="text"
+					startIcon={<OpenInNewRoundedIcon fontSize="small" />}
+					onClick={() => onOpenContainerDetail(normalizedContainerNo, customerId === "all" ? null : customerId)}
+				>
 					{t("viewContainerDetail")}
 				</Button>
 			) : null}

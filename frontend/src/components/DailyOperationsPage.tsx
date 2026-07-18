@@ -108,7 +108,7 @@ export function DailyOperationsPage({
           code: document.containerNo || `RCV-${document.id}`,
           counterpart: document.customerName || "-",
           warehouse: `${document.locationName}${document.storageSection ? ` / ${document.storageSection}` : ""}`,
-          dateLabel: formatDateValue(document.expectedArrivalDate || activeDate, shortDateFormatter),
+          dateLabel: formatDateValue(document.actualArrivalDate || document.expectedArrivalDate || activeDate, shortDateFormatter),
           trackingLabel: formatInboundTrackingStatusLabel(document.trackingStatus, document.status, t),
           metaLabel: t("dailyOperationsReceiptMeta", {
             lines: document.totalLines,
@@ -661,7 +661,7 @@ function getDocumentTime(value: string) {
 }
 
 function getInboundDateKey(document: InboundDocument) {
-  return getDateKey(document.expectedArrivalDate || document.createdAt);
+  return getDateKey(document.actualArrivalDate || document.expectedArrivalDate || document.createdAt);
 }
 
 function getOutboundDateKey(document: OutboundDocument) {

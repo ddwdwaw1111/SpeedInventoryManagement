@@ -37,16 +37,18 @@ import {
   Typography
 } from "@mui/material";
 import { BarChart } from "@mui/x-charts";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import { waitForNextPaint } from "../lib/asyncUi";
 import { setBillingWorkspaceContext } from "../lib/billingWorkspaceContext";
 import {
-  buildBillingPreview,
   DEFAULT_BILLING_RATES,
   getCurrentBillingDateRange,
+  mapAuthoritativeBillingPreview,
+  mergeBillingPreviews,
   type BillingInvoiceLine,
+  type BillingPreview,
   type BillingRates,
   type BillingStorageRow,
   type BillingStorageSegment
@@ -62,10 +64,12 @@ import type {
   BillingInvoice,
   BillingInvoiceStatus,
   BillingInvoiceType,
-	ContainerLifecycleEvent,
+  BillingPreviewPayload,
+  BillingPreviewResult,
+  BillingRatesSnapshot,
   ContainerType,
-  CreateBillingInvoicePayload,
   Customer,
+  GenerateBillingInvoicePayload,
   InboundDocument,
   Location,
   OutboundDocument,
@@ -119,8 +123,6 @@ const BILLING_EXPORT_SHEET_NAME = "Billing Preview";
 export function BillingPage({
   customers,
   locations,
-  inboundDocuments,
-  outboundDocuments,
   currentUserRole,
   onOpenBillingContainerDetail,
   onOpenBillingInvoice
@@ -135,8 +137,13 @@ export function BillingPage({
   const [normalPalletGracePeriodEnabled, setNormalPalletGracePeriodEnabled] = useState(true);
   const [workspaceMode, setWorkspaceMode] = useState<BillingWorkspaceMode>("OVERVIEW");
   const [rates, setRates] = useState<BillingRates>(DEFAULT_BILLING_RATES);
-	const [containerLifecycleEvents, setContainerLifecycleEvents] = useState<ContainerLifecycleEvent[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [authoritativePreview, setAuthoritativePreview] = useState<BillingPreviewResult | null>(null);
+  const [authoritativePreviousPreview, setAuthoritativePreviousPreview] = useState<BillingPreviewResult | null>(null);
+  const [authoritativeAllPreview, setAuthoritativeAllPreview] = useState<BillingPreview | null>(null);
+  const [authoritativeAllPreviousPreview, setAuthoritativeAllPreviousPreview] = useState<BillingPreview | null>(null);
+  const [isAuthoritativePreviewLoading, setIsAuthoritativePreviewLoading] = useState(true);
+  const [authoritativePreviewReloadKey, setAuthoritativePreviewReloadKey] = useState(0);
+  const preserveStaleMessageOnNextPreview = useRef(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [invoices, setInvoices] = useState<BillingInvoice[]>([]);
   const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
@@ -149,36 +156,6 @@ export function BillingPage({
   const [isRateDrawerOpen, setIsRateDrawerOpen] = useState(false);
   const [busyActionKey, setBusyActionKey] = useState<string | null>(null);
 
-  useEffect(() => {
-    let active = true;
-
-    async function loadBillingData() {
-      setIsLoading(true);
-      setErrorMessage("");
-      try {
-		const nextContainerEvents = await api.getContainerLifecycleEvents(50000);
-        if (!active) {
-          return;
-        }
-		setContainerLifecycleEvents(nextContainerEvents);
-      } catch (error) {
-        if (!active) {
-          return;
-        }
-        setErrorMessage(getErrorMessage(error, t("couldNotLoadReport")));
-      } finally {
-        if (active) {
-          setIsLoading(false);
-        }
-      }
-    }
-
-    void loadBillingData();
-    return () => {
-      active = false;
-    };
-  }, [t]);
-
   const customerId = selectedCustomerId === "all" ? "all" : Number(selectedCustomerId);
   const warehouseLocationId = selectedWarehouseLocationId === "all" ? "all" : Number(selectedWarehouseLocationId);
   const selectedWarehouse = warehouseLocationId === "all"
@@ -187,6 +164,115 @@ export function BillingPage({
   const selectedStorageRatePerWeek = selectedContainerType === "WEST_COAST_TRANSFER"
     ? rates.storageFeePerPalletPerWeekWestCoastTransfer
     : rates.storageFeePerPalletPerWeekNormal;
+  const billingRatesSnapshot = useMemo<BillingRatesSnapshot>(() => ({
+    inboundContainerFee: rates.inboundContainerFee,
+    transferInboundFeePerPallet: rates.transferInboundFeePerPallet,
+    wrappingFeePerPallet: rates.wrappingFeePerPallet,
+    storageFeePerPalletPerWeek: rates.storageFeePerPalletPerWeek,
+    storageFeePerPalletPerWeekNormal: rates.storageFeePerPalletPerWeekNormal,
+    storageFeePerPalletPerWeekWestCoastTransfer: rates.storageFeePerPalletPerWeekWestCoastTransfer,
+    outboundFeePerPallet: rates.outboundFeePerPallet
+  }), [rates]);
+  const previousPeriodRange = useMemo(
+    () => computePreviousPeriodRange(selectedStartDate, selectedEndDate),
+    [selectedEndDate, selectedStartDate]
+  );
+  const authoritativePreviewScopePayload = useMemo<Omit<BillingPreviewPayload, "customerId">>(() => ({
+      ...(warehouseLocationId === "all" ? {} : { warehouseLocationId }),
+      ...(selectedContainerType === "all" ? {} : { containerType: selectedContainerType }),
+      periodStart: selectedStartDate,
+      periodEnd: selectedEndDate,
+      normalPalletGracePeriodEnabled,
+      rates: billingRatesSnapshot
+  }), [billingRatesSnapshot, normalPalletGracePeriodEnabled, selectedContainerType, selectedEndDate, selectedStartDate, warehouseLocationId]);
+  const authoritativePreviewPayload = useMemo<BillingPreviewPayload | null>(() => customerId === "all"
+    ? null
+    : { customerId, ...authoritativePreviewScopePayload }, [authoritativePreviewScopePayload, customerId]);
+
+  useEffect(() => {
+    let active = true;
+    setAuthoritativePreview(null);
+    setAuthoritativePreviousPreview(null);
+    setAuthoritativeAllPreview(null);
+    setAuthoritativeAllPreviousPreview(null);
+    setIsAuthoritativePreviewLoading(true);
+
+    const scopedCustomerIds = customerId === "all" ? customers.map((customer) => customer.id) : [customerId];
+    const currentPayloads = scopedCustomerIds.map((scopedCustomerId): BillingPreviewPayload => ({
+      customerId: scopedCustomerId,
+      ...authoritativePreviewScopePayload
+    }));
+
+    if (currentPayloads.length === 0) {
+      setAuthoritativeAllPreview(mergeBillingPreviews([], {
+        startDate: selectedStartDate,
+        endDate: selectedEndDate,
+        customerId: "all",
+        customerName: t("allCustomers")
+      }));
+      setIsAuthoritativePreviewLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+
+    async function loadAuthoritativePreviews() {
+      try {
+        const [currentResults, previousResults] = await Promise.all([
+          Promise.all(currentPayloads.map((payload) => api.previewBilling(payload))),
+          previousPeriodRange
+            ? Promise.all(currentPayloads.map((payload) => api.previewBilling({
+                ...payload,
+                periodStart: previousPeriodRange.startDate,
+                periodEnd: previousPeriodRange.endDate
+              }))).catch(() => null)
+            : Promise.resolve(null)
+        ]);
+        if (!active) {
+          return;
+        }
+        if (customerId === "all") {
+          setAuthoritativeAllPreview(mergeBillingPreviews(currentResults.map(mapAuthoritativeBillingPreview), {
+            startDate: selectedStartDate,
+            endDate: selectedEndDate,
+            customerId: "all",
+            customerName: t("allCustomers")
+          }));
+          setAuthoritativeAllPreviousPreview(previousResults && previousPeriodRange
+            ? mergeBillingPreviews(previousResults.map(mapAuthoritativeBillingPreview), {
+                startDate: previousPeriodRange.startDate,
+                endDate: previousPeriodRange.endDate,
+                customerId: "all",
+                customerName: t("allCustomers")
+              })
+            : null);
+        } else {
+          setAuthoritativePreview(currentResults[0] ?? null);
+          setAuthoritativePreviousPreview(previousResults?.[0] ?? null);
+        }
+        if (preserveStaleMessageOnNextPreview.current) {
+          preserveStaleMessageOnNextPreview.current = false;
+        } else {
+          setErrorMessage("");
+        }
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setErrorMessage(getErrorMessage(error, t("billingAuthoritativePreviewError")));
+      } finally {
+        if (active) {
+          setIsAuthoritativePreviewLoading(false);
+        }
+      }
+    }
+
+    void loadAuthoritativePreviews();
+    return () => {
+      active = false;
+    };
+  }, [authoritativePreviewReloadKey, authoritativePreviewScopePayload, customerId, customers, previousPeriodRange, selectedEndDate, selectedStartDate, t]);
+
   useEffect(() => {
     setBillingWorkspaceContext({
       startDate: selectedStartDate,
@@ -234,37 +320,12 @@ export function BillingPage({
   }
 
   async function handleCreateInvoice() {
-    if (customerId === "all") {
+    const canGenerateInvoices = currentUserRole === "admin" || currentUserRole === "operator";
+    if (customerId === "all" || !canGenerateInvoices || !authoritativePreview || !authoritativePreviewPayload) {
       return;
     }
 
-    const selectedCustomer = customers.find((c) => c.id === customerId);
-    const customerName = selectedCustomer?.name ?? billingPreview.customerName;
     const invoiceType: BillingInvoiceType = workspaceMode === "STORAGE_SETTLEMENT" ? "STORAGE_SETTLEMENT" : "MIXED";
-    const lines = invoiceType === "STORAGE_SETTLEMENT"
-      ? buildStorageSettlementInvoiceLines(storageSettlementRows, normalPalletGracePeriodEnabled)
-      : activeInvoiceLines.map((line) => {
-          const storageRow = line.chargeType === "STORAGE" ? storageRowsByInvoiceLineId.get(line.id) : undefined;
-          return {
-            chargeType: line.chargeType,
-            description: line.meta || chargeTypeDescription(line.chargeType),
-            reference: line.reference,
-            containerNo: line.containerNo,
-            warehouse: line.warehouseSummary,
-            occurredOn: line.occurredOn ?? undefined,
-            quantity: line.quantity,
-            unitRate: line.unitRate,
-            amount: line.amount,
-            sourceType: "AUTO",
-            ...(storageRow
-              ? { details: buildStorageInvoiceLineDetails(storageRow, normalPalletGracePeriodEnabled) }
-              : {})
-          };
-        });
-
-    if (lines.length === 0) {
-      return;
-    }
 
     if (invoiceType === "STORAGE_SETTLEMENT" && existingStorageSettlementInvoice) {
       setErrorMessage(t("billingStorageSettlementDuplicateError"));
@@ -275,70 +336,49 @@ export function BillingPage({
     setErrorMessage("");
     try {
       await waitForNextPaint();
-      const payload: CreateBillingInvoicePayload = {
+      const payload: GenerateBillingInvoicePayload = {
+        ...authoritativePreviewPayload,
         invoiceType,
-        customerId,
-        customerName,
-        warehouseLocationId: invoiceType === "STORAGE_SETTLEMENT" && warehouseLocationId !== "all" ? warehouseLocationId : null,
-        warehouseName: invoiceType === "STORAGE_SETTLEMENT" ? selectedWarehouse?.name ?? "" : "",
-        containerType: invoiceType === "STORAGE_SETTLEMENT" && selectedContainerType !== "all" ? selectedContainerType : null,
-        periodStart: selectedStartDate,
-        periodEnd: selectedEndDate,
-        rates: {
-          inboundContainerFee: rates.inboundContainerFee,
-          transferInboundFeePerPallet: rates.transferInboundFeePerPallet,
-          wrappingFeePerPallet: rates.wrappingFeePerPallet,
-          storageFeePerPalletPerWeek: rates.storageFeePerPalletPerWeek,
-          storageFeePerPalletPerWeekNormal: rates.storageFeePerPalletPerWeekNormal,
-          storageFeePerPalletPerWeekWestCoastTransfer: rates.storageFeePerPalletPerWeekWestCoastTransfer,
-          outboundFeePerPallet: rates.outboundFeePerPallet,
-        },
         header: billingInvoiceHeaderDefaults,
-        lines
+        sourceFingerprint: authoritativePreview.sourceFingerprint
       };
-      const created = await api.createBillingInvoice(payload);
+      const created = await api.generateBillingInvoice(payload);
       onOpenBillingInvoice(created.id);
     } catch (error) {
-      setErrorMessage(getErrorMessage(error, "Could not create invoice."));
+      if (error instanceof ApiError && error.status === 409) {
+        setErrorMessage(t("billingPreviewStaleError"));
+        preserveStaleMessageOnNextPreview.current = true;
+        setAuthoritativePreview(null);
+        setAuthoritativePreviousPreview(null);
+        setAuthoritativePreviewReloadKey((current) => current + 1);
+      } else {
+        setErrorMessage(getErrorMessage(error, t("billingGenerateInvoiceError")));
+      }
     } finally {
       setIsCreatingInvoice(false);
     }
   }
 
-  const billingPreview = useMemo(() => buildBillingPreview({
-    startDate: selectedStartDate,
-    endDate: selectedEndDate,
-    customerId,
-    customers,
-    containerLifecycleEvents,
-    inboundDocuments,
-    outboundDocuments,
-    locationId: warehouseLocationId,
-    containerType: selectedContainerType,
-    normalPalletGracePeriodEnabled,
-    rates
-	}), [containerLifecycleEvents, customerId, customers, inboundDocuments, normalPalletGracePeriodEnabled, outboundDocuments, rates, selectedContainerType, selectedEndDate, selectedStartDate, warehouseLocationId, workspaceMode]);
+  const billingPreview = useMemo<BillingPreview>(() => {
+    if (customerId === "all") {
+      return authoritativeAllPreview ?? mergeBillingPreviews([], {
+        startDate: selectedStartDate,
+        endDate: selectedEndDate,
+        customerId: "all",
+        customerName: t("allCustomers")
+      });
+    }
+    return authoritativePreview
+      ? mapAuthoritativeBillingPreview(authoritativePreview)
+      : buildEmptyBillingPreview(selectedStartDate, selectedEndDate, customerId, customers);
+  }, [authoritativeAllPreview, authoritativePreview, customerId, customers, selectedEndDate, selectedStartDate, t]);
 
-  const previousPeriodRange = useMemo(
-    () => computePreviousPeriodRange(selectedStartDate, selectedEndDate),
-    [selectedEndDate, selectedStartDate]
-  );
   const previousPeriodPreview = useMemo(() => {
-    if (!previousPeriodRange) return null;
-    return buildBillingPreview({
-      startDate: previousPeriodRange.startDate,
-      endDate: previousPeriodRange.endDate,
-      customerId,
-      customers,
-      containerLifecycleEvents,
-      inboundDocuments,
-      outboundDocuments,
-      locationId: warehouseLocationId,
-      containerType: selectedContainerType,
-      normalPalletGracePeriodEnabled,
-      rates
-    });
-	}, [containerLifecycleEvents, customerId, customers, inboundDocuments, normalPalletGracePeriodEnabled, outboundDocuments, previousPeriodRange, rates, selectedContainerType, warehouseLocationId]);
+    if (customerId === "all") {
+      return authoritativeAllPreviousPreview;
+    }
+    return authoritativePreviousPreview ? mapAuthoritativeBillingPreview(authoritativePreviousPreview) : null;
+  }, [authoritativeAllPreviousPreview, authoritativePreviousPreview, customerId]);
   const containerSummaryRows = useMemo(
     () => buildBillingContainerSummaryRows(billingPreview.invoiceLines, billingPreview.storageRows),
     [billingPreview.invoiceLines, billingPreview.storageRows]
@@ -356,14 +396,6 @@ export function BillingPage({
     [storageSettlementRows]
   );
 
-  const storageRowsByInvoiceLineId = useMemo(() => {
-    const rowsById = new Map<string, BillingStorageRow>();
-    for (const row of billingPreview.storageRows) {
-      rowsById.set(buildStorageInvoiceLineId(row), row);
-    }
-    return rowsById;
-  }, [billingPreview.storageRows]);
-
   const activeInvoiceLines = useMemo(() => {
     const filter = containerNoFilter.trim().toUpperCase();
     if (!filter) return billingPreview.invoiceLines;
@@ -376,10 +408,6 @@ export function BillingPage({
     return containerSummaryRows.filter((row) => row.containerNo.toUpperCase().includes(filter));
   }, [containerSummaryRows, containerNoFilter]);
 
-  const activeGrandTotal = useMemo(
-    () => activeInvoiceLines.reduce((sum, line) => sum + line.amount, 0),
-    [activeInvoiceLines]
-  );
   const storageSettlementTotal = useMemo(
     () => storageSettlementRows.reduce((sum, row) => sum + row.amount, 0),
     [storageSettlementRows]
@@ -433,11 +461,18 @@ export function BillingPage({
         ) ?? null,
     [customerId, invoices, selectedContainerType, selectedEndDate, selectedStartDate, warehouseLocationId]
   );
-  const canCreateMixedInvoice = customerId !== "all" && activeInvoiceLines.length > 0;
-  const canCreateStorageInvoice =
+  const canGenerateInvoices = currentUserRole === "admin" || currentUserRole === "operator";
+  const canCreateMixedInvoice =
+    canGenerateInvoices &&
     customerId !== "all" &&
+    authoritativePreview !== null &&
+    billingPreview.invoiceLines.length > 0;
+  const canCreateStorageInvoice =
+    canGenerateInvoices &&
+    customerId !== "all" &&
+    authoritativePreview !== null &&
     selectedContainerType !== "all" &&
-    storageSettlementRows.length > 0 &&
+    billingPreview.storageRows.length > 0 &&
     existingStorageSettlementInvoice === null;
   const canCreateInvoice = workspaceMode === "STORAGE_SETTLEMENT" ? canCreateStorageInvoice : canCreateMixedInvoice;
   const hasBillablePreview = workspaceMode === "STORAGE_SETTLEMENT"
@@ -511,8 +546,7 @@ export function BillingPage({
 
   async function handleRefreshBillingData() {
     await runBusyAction("refresh", async () => {
-	  const nextContainerEvents = await api.getContainerLifecycleEvents(50000);
-	  setContainerLifecycleEvents(nextContainerEvents);
+      setAuthoritativePreviewReloadKey((current) => current + 1);
       setErrorMessage("");
     }).catch((error) => {
       setErrorMessage(getErrorMessage(error, t("couldNotLoadReport")));
@@ -619,7 +653,12 @@ export function BillingPage({
             title={tabTitle}
             description={tabDescription}
             errorMessage={errorMessage}
-            notices={isCreateTab ? [<span key="assumption">{t("billingDayEndNotice")}</span>] : []}
+            notices={isCreateTab ? [
+              <span key="assumption">{t("billingDayEndNotice")}</span>,
+              ...(billingPreview.warnings ?? []).map((warning, index) => (
+                <span key={`billing-warning-${index}`}>{warning}</span>
+              ))
+            ] : []}
             actions={rateActions}
           />
         </div>
@@ -931,7 +970,7 @@ export function BillingPage({
         )}
 
         {/* ── Create Invoice CTA ── */}
-        {workspaceMode === "STORAGE_SETTLEMENT" && existingStorageSettlementInvoice && customerId !== "all" && (
+        {canGenerateInvoices && workspaceMode === "STORAGE_SETTLEMENT" && existingStorageSettlementInvoice && customerId !== "all" && (
           <div className="billing-cta-banner" style={{ margin: "0 1rem 1rem", padding: "1rem 1.25rem", background: "rgba(211,47,47,0.06)", borderRadius: "var(--radius-md)", border: "1px solid rgba(211,47,47,0.16)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
             <div>
               <strong style={{ fontSize: "0.938rem" }}>{t("billingStorageSettlementDuplicateTitle")}</strong>
@@ -949,7 +988,7 @@ export function BillingPage({
           </div>
         )}
 
-        {customerId !== "all" && (
+        {canGenerateInvoices && customerId !== "all" && (
           <div className="billing-cta-banner" style={{ margin: "0 1rem 1rem", padding: "1rem 1.25rem", background: canCreateInvoice ? "rgba(39, 76, 119, 0.06)" : "rgba(0,0,0,0.02)", borderRadius: "var(--radius-md)", border: canCreateInvoice ? "1px solid rgba(39, 76, 119, 0.15)" : "1px dashed var(--gray-4)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
             <div>
               <strong style={{ fontSize: "0.938rem" }}>
@@ -960,8 +999,8 @@ export function BillingPage({
               {canCreateInvoice && (
                 <div style={{ fontSize: "0.813rem", color: "var(--ink-soft)", marginTop: "0.25rem", display: "flex", alignItems: "center", flexWrap: "wrap", gap: "0.375rem" }}>
                   {workspaceMode === "STORAGE_SETTLEMENT"
-                    ? `${billingPreview.storageRows.length} ${t("billingStorageContainers").toLowerCase()} · ${formatNumber(storageSettlementTrackedPallets)} ${t("billingTrackedPallets").toLowerCase()} · ${formatMoney(storageSettlementTotal)}`
-                    : `${activeInvoiceLines.length} ${t("billingLineCount").toLowerCase()} · ${formatMoney(activeGrandTotal)}`}
+                    ? `${billingPreview.storageRows.length} ${t("billingStorageContainers").toLowerCase()} · ${formatNumber(billingPreview.storageRows.reduce((sum, row) => sum + row.palletsTracked, 0))} ${t("billingTrackedPallets").toLowerCase()} · ${formatMoney(billingPreview.summary.storageAmount)}`
+                    : `${billingPreview.invoiceLines.length} ${t("billingLineCount").toLowerCase()} · ${formatMoney(billingPreview.summary.grandTotal)}`}
                   {warehouseLocationId !== "all" && (
                     <span style={{ background: "rgba(39,76,119,0.08)", borderRadius: "var(--radius-sm)", padding: "0 0.4rem", fontSize: "0.75rem" }}>
                       {selectedWarehouse?.name ?? t("billingAllWarehouses")}
@@ -970,11 +1009,6 @@ export function BillingPage({
                   {selectedContainerType !== "all" && (
                     <span style={{ background: "rgba(39,76,119,0.08)", borderRadius: "var(--radius-sm)", padding: "0 0.4rem", fontSize: "0.75rem" }}>
                       {containerTypeLabel(selectedContainerType, t)}
-                    </span>
-                  )}
-                  {containerNoFilter.trim() && (
-                    <span style={{ background: "rgba(39,76,119,0.12)", borderRadius: "var(--radius-sm)", padding: "0 0.4rem", fontSize: "0.75rem", fontFamily: "monospace", letterSpacing: "0.03em" }}>
-                      {containerNoFilter.trim().toUpperCase()}
                     </span>
                   )}
                 </div>
@@ -1138,7 +1172,7 @@ export function BillingPage({
                                 onOpenBillingContainerDetail(
                                   billingPreview.startDate,
                                   billingPreview.endDate,
-                                  customerId,
+                                  row.customerId,
                                   row.containerNo,
                                   warehouseLocationId
                                 );
@@ -1188,7 +1222,7 @@ export function BillingPage({
                                 onOpenBillingContainerDetail(
                                   billingPreview.startDate,
                                   billingPreview.endDate,
-                                  customerId,
+                                  row.customerId,
                                   row.containerNo,
                                   warehouseLocationId
                                 );
@@ -1217,7 +1251,7 @@ export function BillingPage({
                   <h3>{t("dailyPalletBalance")}</h3>
                   <p>{t("dailyPalletBalanceDesc")}</p>
                 </div>
-                {isLoading ? (
+                {isAuthoritativePreviewLoading ? (
                   <div className="empty-state">{t("loadingRecords")}</div>
                 ) : billingPreview.dailyBalanceRows.some((row) => row.palletCount > 0) ? (
                   <div className="report-chart-wrap">
@@ -1575,16 +1609,6 @@ function invoiceStatusColor(status: BillingInvoiceStatus): "default" | "primary"
   }
 }
 
-function chargeTypeDescription(chargeType: string): string {
-  switch (chargeType) {
-    case "INBOUND": return "Inbound container fee";
-    case "WRAPPING": return "Wrapping fee";
-    case "STORAGE": return "Storage charges";
-    case "OUTBOUND": return "Outbound fee";
-    default: return chargeType;
-  }
-}
-
 function chargeTypeExportLabel(chargeType: string): string {
   switch (chargeType) {
     case "INBOUND": return "Inbound Charges";
@@ -1603,58 +1627,6 @@ function invoiceTypeLabel(invoiceType: BillingInvoiceType, t: (key: string) => s
     default:
       return t("billingInvoiceTypeMixed");
   }
-}
-
-function buildStorageSettlementInvoiceLines(
-  storageRows: BillingStorageRow[],
-  normalPalletGracePeriodEnabled: boolean
-): CreateBillingInvoicePayload["lines"] {
-  return storageRows.map((row) => ({
-    chargeType: "STORAGE",
-    description: `Storage settlement for ${row.containerNo}`,
-    reference: `Storage | ${row.containerNo}`,
-    containerNo: row.containerNo,
-    warehouse: row.locationName || row.warehousesTouched.join(", "),
-    occurredOn: trimDateValue(row.lastActivityAt ?? row.firstActivityAt),
-    quantity: row.billablePalletDays,
-    unitRate: row.billablePalletDays > 0 ? row.amount / row.billablePalletDays : 0,
-    amount: row.amount,
-    notes: buildStorageSettlementNotes(row),
-    sourceType: "AUTO",
-    details: buildStorageInvoiceLineDetails(row, normalPalletGracePeriodEnabled)
-  }));
-}
-
-function buildStorageInvoiceLineDetails(row: BillingStorageRow, normalPalletGracePeriodEnabled: boolean): NonNullable<CreateBillingInvoicePayload["lines"][number]["details"]> {
-  return {
-    kind: "STORAGE_CONTAINER_SUMMARY",
-    warehouseLocationId: row.locationId,
-    warehouseName: row.locationName || undefined,
-    warehousesTouched: row.warehousesTouched,
-    palletsTracked: row.palletsTracked,
-    palletDays: row.palletDays,
-    normalPalletGracePeriodEnabled,
-    freePalletDays: row.freePalletDays,
-    billablePalletDays: row.billablePalletDays,
-    grossAmount: row.grossAmount,
-    discountAmount: row.discountAmount,
-    segments: row.segments.map((segment) => ({
-      startDate: segment.startDate,
-      endDate: segment.endDate,
-      dayEndPallets: segment.dayEndPallets,
-      billedDays: segment.billedDays,
-      palletDays: segment.palletDays,
-      freePalletDays: segment.freePalletDays,
-      billablePalletDays: segment.billablePalletDays,
-      grossAmount: segment.grossAmount,
-      discountAmount: segment.discountAmount,
-      amount: segment.amount
-    }))
-  };
-}
-
-function buildStorageInvoiceLineId(row: BillingStorageRow) {
-  return `storage-${row.customerId}-${row.containerType}-${row.containerNo}`;
 }
 
 function flattenBillingStorageSegmentDisplayRows(storageRows: BillingStorageRow[]): BillingStorageSegmentDisplayRow[] {
@@ -1896,20 +1868,34 @@ function containerTypeExportLabel(containerType: ContainerType) {
   return containerType === "WEST_COAST_TRANSFER" ? "Transfer" : "Normal";
 }
 
-function buildStorageSettlementNotes(row: BillingStorageRow) {
-  const parts = [
-    containerTypeExportLabel(row.containerType),
-    `${row.palletsTracked} pallets tracked across ${row.warehousesTouched.length} warehouse(s)`
-  ];
-
-  if (row.freePalletDays > 0) {
-    parts.push(`${row.freePalletDays} free pallet-days`);
-  }
-  if (row.discountAmount > 0) {
-    parts.push(`grace discount -${formatMoney(row.discountAmount)}`);
-  }
-
-  return parts.join(" | ");
+function buildEmptyBillingPreview(
+  startDate: string,
+  endDate: string,
+  customerId: number,
+  customers: Customer[]
+): BillingPreview {
+  return {
+    startDate,
+    endDate,
+    customerId,
+    customerName: customers.find((customer) => customer.id === customerId)?.name ?? "",
+    invoiceLines: [],
+    storageRows: [],
+    dailyBalanceRows: [],
+    summary: {
+      receivedContainers: 0,
+      receivedPallets: 0,
+      shippedPallets: 0,
+      palletDays: 0,
+      inboundAmount: 0,
+      wrappingAmount: 0,
+      storageGrossAmount: 0,
+      storageDiscountAmount: 0,
+      storageAmount: 0,
+      outboundAmount: 0,
+      grandTotal: 0
+    }
+  };
 }
 
 function toLocalDate(value: string): Date | null {

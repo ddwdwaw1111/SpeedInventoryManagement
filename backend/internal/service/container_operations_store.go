@@ -3,16 +3,21 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 )
 
 const (
-	ContainerStatusTrackingReceived = "TRACKING_RECEIVED"
-	ContainerStatusPickupAssigned   = "PICKUP_ASSIGNED"
-	ContainerStatusPickedUp         = "PICKED_UP"
-	ContainerStatusVoided           = "VOIDED"
+	ContainerStatusTrackingReceived  = "TRACKING_RECEIVED"
+	ContainerStatusPickupAssigned    = "PICKUP_ASSIGNED"
+	ContainerStatusPickedUp          = "PICKED_UP"
+	ContainerStatusInStock           = "IN_STOCK"
+	ContainerStatusPartiallyOutbound = "PARTIALLY_OUTBOUND"
+	ContainerStatusShipped           = "SHIPPED"
+	ContainerStatusDepleted          = "DEPLETED"
+	ContainerStatusVoided            = "VOIDED"
 
 	LifecycleEventVisibilityCustomer = "CUSTOMER"
 	LifecycleEventVisibilityInternal = "INTERNAL"
@@ -49,6 +54,16 @@ type CreateContainerInput struct {
 	Status            string `json:"status"`
 	TrackingStatus    string `json:"trackingStatus"`
 	LastEventAt       string `json:"lastEventAt"`
+}
+
+// UpdateContainerMetadataInput is intentionally limited to descriptive
+// container metadata. Inventory-derived location/status and tracking-event
+// fields must be changed through their own workflows.
+type UpdateContainerMetadataInput struct {
+	CustomerID    int64  `json:"customerId"`
+	ContainerNo   string `json:"-"`
+	ContainerType string `json:"containerType"`
+	HandlingMode  string `json:"handlingMode"`
 }
 
 type ContainerFilters struct {
@@ -230,7 +245,64 @@ func (s *Store) CreateContainer(ctx context.Context, input CreateContainerInput)
 	status := firstNonEmpty(statusInput, ContainerStatusTrackingReceived)
 	trackingStatus := firstNonEmpty(trackingStatusInput, status)
 
-	result, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Container{}, fmt.Errorf("begin container create transaction: %w", err)
+	}
+	defer tx.Rollback()
+	if err := lockBillingSourceCustomersTx(ctx, tx, []int64{customerID}); err != nil {
+		return Container{}, err
+	}
+	requestedContainerType := firstNonEmpty(containerTypeInput, ContainerTypeNormal)
+	var existingContainerID int64
+	var existingContainerType string
+	existingErr := tx.QueryRowContext(ctx, `
+		SELECT id, COALESCE(NULLIF(UPPER(TRIM(container_type)), ''), ?)
+		FROM containers
+		WHERE customer_id = ?
+		  AND UPPER(TRIM(container_no)) = ?
+		LIMIT 1
+		FOR UPDATE
+	`, ContainerTypeNormal, customerID, containerNo).Scan(&existingContainerID, &existingContainerType)
+	if existingErr != nil && !errors.Is(existingErr, sql.ErrNoRows) {
+		return Container{}, fmt.Errorf("load existing container before create: %w", existingErr)
+	}
+	if errors.Is(existingErr, sql.ErrNoRows) {
+		inferredContainerType := ContainerTypeNormal
+		var receiptContainerType string
+		receiptErr := tx.QueryRowContext(ctx, `
+			SELECT COALESCE(NULLIF(UPPER(TRIM(container_type)), ''), ?)
+			FROM inbound_documents
+			WHERE customer_id = ?
+			  AND UPPER(TRIM(COALESCE(container_no, ''))) = ?
+			  AND UPPER(TRIM(status)) IN ('CONFIRMED', 'POSTED')
+			  AND cancelled_at IS NULL
+			  AND corrected_at IS NULL
+			ORDER BY COALESCE(actual_arrival_date, DATE(confirmed_at), DATE(created_at), expected_arrival_date), id
+			LIMIT 1
+			FOR UPDATE
+		`, ContainerTypeNormal, customerID, containerNo).Scan(&receiptContainerType)
+		if receiptErr == nil {
+			inferredContainerType = receiptContainerType
+			if containerTypeInput == "" {
+				requestedContainerType = inferredContainerType
+			}
+		} else if !errors.Is(receiptErr, sql.ErrNoRows) {
+			return Container{}, fmt.Errorf("load historical container type before create: %w", receiptErr)
+		}
+		if err := ensureContainerBillingTypeMutationAllowedTx(
+			ctx,
+			tx,
+			customerID,
+			containerNo,
+			inferredContainerType,
+			requestedContainerType,
+		); err != nil {
+			return Container{}, err
+		}
+	}
+
+	result, err := tx.ExecContext(ctx, `
 		INSERT INTO containers (
 			customer_id,
 			inbound_document_id,
@@ -244,11 +316,6 @@ func (s *Store) CreateContainer(ctx context.Context, input CreateContainerInput)
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			id = LAST_INSERT_ID(id),
-			inbound_document_id = COALESCE(VALUES(inbound_document_id), inbound_document_id),
-			location_id = COALESCE(VALUES(location_id), location_id),
-			container_type = COALESCE(NULLIF(?, ''), container_type),
-			handling_mode = COALESCE(NULLIF(?, ''), handling_mode),
-			status = COALESCE(NULLIF(?, ''), status),
 			tracking_status = COALESCE(NULLIF(?, ''), tracking_status),
 			last_event_at = CASE
 				WHEN VALUES(last_event_at) IS NULL THEN last_event_at
@@ -260,14 +327,11 @@ func (s *Store) CreateContainer(ctx context.Context, input CreateContainerInput)
 		nullableInt64(input.InboundDocumentID),
 		nullableInt64(input.LocationID),
 		containerNo,
-		firstNonEmpty(containerTypeInput, ContainerTypeNormal),
+		requestedContainerType,
 		firstNonEmpty(handlingModeInput, InboundHandlingModePalletized),
 		status,
 		trackingStatus,
 		nullableTime(lastEventAt),
-		containerTypeInput,
-		handlingModeInput,
-		statusInput,
 		trackingStatusInput,
 	)
 	if err != nil {
@@ -277,7 +341,191 @@ func (s *Store) CreateContainer(ctx context.Context, input CreateContainerInput)
 	if err != nil {
 		return Container{}, fmt.Errorf("resolve container id: %w", err)
 	}
+	if err := tx.Commit(); err != nil {
+		return Container{}, fmt.Errorf("commit container create: %w", err)
+	}
 	return s.getContainerByID(ctx, containerID)
+}
+
+func (s *Store) UpdateContainerMetadata(ctx context.Context, input UpdateContainerMetadataInput) (Container, error) {
+	input.ContainerNo = normalizeContainerNo(input.ContainerNo)
+	input.ContainerType = normalizeContainerType(input.ContainerType)
+	input.HandlingMode = normalizeInboundHandlingMode(input.HandlingMode)
+	if input.CustomerID <= 0 || input.ContainerNo == "" {
+		return Container{}, ErrInvalidInput
+	}
+	if err := validateContainerType(input.ContainerType); err != nil {
+		return Container{}, err
+	}
+	switch input.HandlingMode {
+	case InboundHandlingModePalletized, InboundHandlingModeSealedTransit:
+	default:
+		return Container{}, fmt.Errorf("%w: invalid inbound handling mode", ErrInvalidInput)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Container{}, fmt.Errorf("begin container metadata update: %w", err)
+	}
+	defer tx.Rollback()
+	if err := lockBillingSourceCustomersTx(ctx, tx, []int64{input.CustomerID}); err != nil {
+		return Container{}, err
+	}
+
+	var containerID int64
+	var currentContainerType string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT id, COALESCE(NULLIF(UPPER(TRIM(container_type)), ''), ?)
+		FROM containers
+		WHERE customer_id = ?
+		  AND UPPER(TRIM(container_no)) = ?
+		LIMIT 1
+		FOR UPDATE
+	`, ContainerTypeNormal, input.CustomerID, input.ContainerNo).Scan(&containerID, &currentContainerType); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Container{}, ErrNotFound
+		}
+		return Container{}, fmt.Errorf("load container for metadata update: %w", err)
+	}
+	if err := ensureContainerBillingTypeMutationAllowedTx(
+		ctx,
+		tx,
+		input.CustomerID,
+		input.ContainerNo,
+		currentContainerType,
+		input.ContainerType,
+	); err != nil {
+		return Container{}, err
+	}
+
+	if err := updateContainerTypeForIdentityTx(ctx, tx, input.CustomerID, input.ContainerNo, input.ContainerType); err != nil {
+		return Container{}, err
+	}
+	if err := updateContainerHandlingModeForIdentityTx(ctx, tx, input.CustomerID, input.ContainerNo, input.HandlingMode); err != nil {
+		return Container{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Container{}, fmt.Errorf("commit container metadata update: %w", err)
+	}
+	return s.getContainerByID(ctx, containerID)
+}
+
+func updateContainerTypeForIdentityTx(ctx context.Context, tx *sql.Tx, customerID int64, containerNo string, containerType string) error {
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE inbound_documents
+		SET
+			container_type = ?,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE customer_id = ?
+		  AND UPPER(TRIM(COALESCE(container_no, ''))) = ?
+		  AND UPPER(TRIM(status)) NOT IN ('DELETED', 'CANCELLED')
+		  AND corrected_at IS NULL
+	`, containerType, customerID, containerNo); err != nil {
+		return mapDBError(fmt.Errorf("update shared inbound container type: %w", err))
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE container_visits cv
+		JOIN inbound_documents d ON d.id = cv.inbound_document_id
+		SET
+			cv.container_type = ?,
+			cv.updated_at = CURRENT_TIMESTAMP
+		WHERE d.customer_id = ?
+		  AND UPPER(TRIM(COALESCE(d.container_no, ''))) = ?
+		  AND UPPER(TRIM(d.status)) NOT IN ('DELETED', 'CANCELLED')
+		  AND d.corrected_at IS NULL
+	`, containerType, customerID, containerNo); err != nil {
+		return mapDBError(fmt.Errorf("sync shared inbound container visit type: %w", err))
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE containers
+		SET
+			container_type = ?,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE customer_id = ?
+		  AND UPPER(TRIM(container_no)) = ?
+	`, containerType, customerID, containerNo); err != nil {
+		return mapDBError(fmt.Errorf("sync shared container type: %w", err))
+	}
+	return nil
+}
+
+func updateContainerHandlingModeForIdentityTx(ctx context.Context, tx *sql.Tx, customerID int64, containerNo string, handlingMode string) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, COALESCE(NULLIF(UPPER(TRIM(handling_mode)), ''), ?)
+		FROM inbound_documents
+		WHERE customer_id = ?
+		  AND UPPER(TRIM(COALESCE(container_no, ''))) = ?
+		  AND UPPER(TRIM(status)) IN (?, ?)
+		  AND corrected_at IS NULL
+		ORDER BY id
+		FOR UPDATE
+	`, InboundHandlingModePalletized, customerID, containerNo, DocumentStatusConfirmed, DocumentStatusPosted)
+	if err != nil {
+		return mapDBError(fmt.Errorf("load confirmed receipt handling modes: %w", err))
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var receiptID int64
+		var establishedMode string
+		if err := rows.Scan(&receiptID, &establishedMode); err != nil {
+			return fmt.Errorf("scan confirmed receipt handling mode: %w", err)
+		}
+		if coalesceInboundHandlingMode(establishedMode) != handlingMode {
+			return fmt.Errorf(
+				"%w: confirmed receipt %d establishes container %s handling mode as %s; it cannot be changed to %s",
+				ErrInvalidInput,
+				receiptID,
+				containerNo,
+				coalesceInboundHandlingMode(establishedMode),
+				handlingMode,
+			)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate confirmed receipt handling modes: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close confirmed receipt handling modes: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE inbound_documents
+		SET
+			handling_mode = ?,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE customer_id = ?
+		  AND UPPER(TRIM(COALESCE(container_no, ''))) = ?
+		  AND UPPER(TRIM(status)) NOT IN ('DELETED', 'CANCELLED')
+		  AND corrected_at IS NULL
+	`, handlingMode, customerID, containerNo); err != nil {
+		return mapDBError(fmt.Errorf("update shared inbound handling mode: %w", err))
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE container_visits cv
+		JOIN inbound_documents d ON d.id = cv.inbound_document_id
+		SET
+			cv.handling_mode = ?,
+			cv.updated_at = CURRENT_TIMESTAMP
+		WHERE d.customer_id = ?
+		  AND UPPER(TRIM(COALESCE(d.container_no, ''))) = ?
+		  AND UPPER(TRIM(d.status)) NOT IN ('DELETED', 'CANCELLED')
+		  AND d.corrected_at IS NULL
+	`, handlingMode, customerID, containerNo); err != nil {
+		return mapDBError(fmt.Errorf("sync shared inbound container visit handling mode: %w", err))
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE containers
+		SET
+			handling_mode = ?,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE customer_id = ?
+		  AND UPPER(TRIM(container_no)) = ?
+	`, handlingMode, customerID, containerNo); err != nil {
+		return mapDBError(fmt.Errorf("update container handling mode: %w", err))
+	}
+	return nil
 }
 
 func (s *Store) ListContainerRecords(ctx context.Context, limit int, filters ContainerFilters) ([]Container, error) {

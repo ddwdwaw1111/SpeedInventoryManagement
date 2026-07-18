@@ -95,6 +95,27 @@ func (s *Server) handleV2CreateContainer(c *gin.Context) {
 	writeJSON(c, http.StatusCreated, container)
 }
 
+func (s *Server) handleV2UpdateContainerMetadata(c *gin.Context) {
+	var input service.UpdateContainerMetadataInput
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	input.ContainerNo = c.Param("containerNo")
+	container, err := s.appServices().Container.UpdateMetadata(c.Request.Context(), input)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+	s.writeAuditLog(c, "UPDATE", "container", container.ID, container.ContainerNo, "Updated container metadata", map[string]any{
+		"customerId":    container.CustomerID,
+		"containerNo":   container.ContainerNo,
+		"containerType": container.ContainerType,
+		"handlingMode":  container.HandlingMode,
+	})
+	writeJSON(c, http.StatusOK, container)
+}
+
 func (s *Server) handleV2CustomerPortalContainers(c *gin.Context) {
 	customerID, ok := customerIDFromContext(c)
 	if !ok {

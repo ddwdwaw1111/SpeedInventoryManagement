@@ -684,8 +684,9 @@ func (s *Server) handleCancelOutboundDocument(c *gin.Context) {
 	}
 	s.deleteDocumentAttachmentObjectsAfterCancel(service.DocumentAttachmentOutbound, documentID, attachments)
 
-	s.writeAuditLog(c, "DELETE", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Deleted outbound document and all related records", map[string]any{
+	s.writeAuditLog(c, "DELETE", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Cancelled outbound document and reversed its inventory movement", map[string]any{
 		"packingListNo": document.PackingListNo,
+		"cancelledAt":   document.DeletedAt,
 	})
 
 	c.Status(http.StatusNoContent)

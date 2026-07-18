@@ -3,8 +3,11 @@ import type {
   AuthResponse,
   BillingInvoice,
   BillingInvoiceSettings,
+  BillingPreviewPayload,
+  BillingPreviewResult,
   BulkUpdateInboundDocumentStatusResponse,
   CreateBillingInvoicePayload,
+  GenerateBillingInvoicePayload,
   AddBillingInvoiceLinePayload,
   UpdateBillingInvoiceLinePayload,
   ContainerLifecycle,
@@ -15,6 +18,7 @@ import type {
   ContainerRecord,
   ContainerTrackingEvent,
   ContainerTrackingEventPayload,
+  UpdateContainerMetadataPayload,
   CustomerPortalContainerLifecycle,
   CustomerPortalContainerSummary,
   CycleCount,
@@ -490,6 +494,13 @@ export const api = {
     });
   },
 
+  updateV2ContainerMetadata(containerNo: string, payload: UpdateContainerMetadataPayload) {
+    return request<ContainerRecord>(`/v2/containers/${encodeURIComponent(containerNo)}/metadata`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    });
+  },
+
   createV2ContainerTrackingEvent(containerNo: string, payload: ContainerTrackingEventPayload) {
     return request<ContainerTrackingEvent>(`/v2/containers/${encodeURIComponent(containerNo)}/tracking-events`, {
       method: "POST",
@@ -877,6 +888,20 @@ export const api = {
   },
 
   // --- Billing Invoices ---
+
+  previewBilling(payload: BillingPreviewPayload) {
+    return request<BillingPreviewResult>("/billing/preview", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  generateBillingInvoice(payload: GenerateBillingInvoicePayload) {
+    return request<BillingInvoice>("/billing/invoices/generate", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
 
   getBillingInvoices(customerId?: number, status?: string, invoiceType?: string) {
     const params = new URLSearchParams();

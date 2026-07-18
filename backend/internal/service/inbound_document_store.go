@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"sort"
 	"strings"
 	"time"
@@ -255,7 +254,7 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 		JOIN customers c ON c.id = d.customer_id
 		JOIN storage_locations l ON l.id = d.location_id
 		WHERE %s
-		ORDER BY COALESCE(d.expected_arrival_date, d.created_at) DESC, d.id DESC
+		ORDER BY COALESCE(d.actual_arrival_date, DATE(d.confirmed_at), DATE(d.created_at), d.expected_arrival_date) DESC, d.id DESC
 		LIMIT ?
 	`, strings.Join(whereClauses, " AND ")), args...); err != nil {
 		return nil, fmt.Errorf("load inbound documents: %w", err)
@@ -384,10 +383,6 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 	if err != nil {
 		return InboundDocument{}, err
 	}
-	if expectedArrivalDate == nil {
-		now := time.Now().UTC()
-		expectedArrivalDate = &now
-	}
 	requestedStatus := coalesceDocumentStatus(input.Status)
 	requestedTrackingStatus := coalesceInboundTrackingStatus(input.TrackingStatus, requestedStatus)
 
@@ -396,6 +391,9 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 		return InboundDocument{}, fmt.Errorf("begin inbound document transaction: %w", err)
 	}
 	defer tx.Rollback()
+	if err := lockBillingSourceCustomersTx(ctx, tx, []int64{input.CustomerID}); err != nil {
+		return InboundDocument{}, err
+	}
 	if err := s.upsertInboundLineItemCodesTx(ctx, tx, input); err != nil {
 		return InboundDocument{}, err
 	}
@@ -519,10 +517,6 @@ func (s *Store) UpdateInboundDocument(ctx context.Context, documentID int64, inp
 	if err != nil {
 		return InboundDocument{}, err
 	}
-	if expectedArrivalDate == nil {
-		now := time.Now().UTC()
-		expectedArrivalDate = &now
-	}
 	requestedStatus := coalesceDocumentStatus(input.Status)
 	requestedTrackingStatus := coalesceInboundTrackingStatus(input.TrackingStatus, requestedStatus)
 
@@ -531,6 +525,13 @@ func (s *Store) UpdateInboundDocument(ctx context.Context, documentID int64, inp
 		return InboundDocument{}, fmt.Errorf("begin inbound update transaction: %w", err)
 	}
 	defer tx.Rollback()
+	existingCustomerID, err := loadInboundDocumentCustomerIDTx(ctx, tx, documentID)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+	if err := lockBillingSourceCustomersTx(ctx, tx, []int64{existingCustomerID, input.CustomerID}); err != nil {
+		return InboundDocument{}, err
+	}
 
 	documentRow, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID)
 	if err != nil {
@@ -600,35 +601,56 @@ func (s *Store) UpdateInboundDocumentContainerType(ctx context.Context, document
 		return InboundDocument{}, fmt.Errorf("begin inbound container type update transaction: %w", err)
 	}
 	defer tx.Rollback()
-
-	if _, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID); err != nil {
+	customerID, err := loadInboundDocumentCustomerIDTx(ctx, tx, documentID)
+	if err != nil {
 		return InboundDocument{}, err
 	}
-	nextContainerType := coalesceContainerType(input.ContainerType)
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE inbound_documents
-		SET
-			container_type = ?,
-			updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`,
-		nextContainerType,
-		documentID,
-	); err != nil {
-		return InboundDocument{}, mapDBError(fmt.Errorf("update inbound document container type: %w", err))
+	if err := lockBillingSourceCustomersTx(ctx, tx, []int64{customerID}); err != nil {
+		return InboundDocument{}, err
 	}
 
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE container_visits
-		SET
-			container_type = ?,
-			updated_at = CURRENT_TIMESTAMP
-		WHERE inbound_document_id = ?
-	`,
+	documentRow, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+	if normalizeDocumentStatus(documentRow.Status) == DocumentStatusDeleted {
+		return InboundDocument{}, fmt.Errorf("%w: deleted receipt cannot change container type", ErrInvalidInput)
+	}
+	nextContainerType := coalesceContainerType(input.ContainerType)
+	containerNo := normalizeContainerNo(documentRow.ContainerNo)
+	if err := ensureContainerBillingTypeMutationAllowedTx(
+		ctx,
+		tx,
+		documentRow.CustomerID,
+		containerNo,
+		documentRow.ContainerType,
 		nextContainerType,
-		documentID,
 	); err != nil {
-		return InboundDocument{}, mapDBError(fmt.Errorf("sync inbound container visit container type: %w", err))
+		return InboundDocument{}, err
+	}
+	if containerNo == "" {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE inbound_documents
+			SET
+				container_type = ?,
+				updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`, nextContainerType, documentID); err != nil {
+			return InboundDocument{}, mapDBError(fmt.Errorf("update inbound document container type: %w", err))
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE container_visits
+			SET
+				container_type = ?,
+				updated_at = CURRENT_TIMESTAMP
+			WHERE inbound_document_id = ?
+		`, nextContainerType, documentID); err != nil {
+			return InboundDocument{}, mapDBError(fmt.Errorf("sync inbound container visit container type: %w", err))
+		}
+	} else {
+		if err := updateContainerTypeForIdentityTx(ctx, tx, documentRow.CustomerID, containerNo, nextContainerType); err != nil {
+			return InboundDocument{}, err
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -756,6 +778,13 @@ func (s *Store) ConfirmInboundDocument(ctx context.Context, documentID int64) (I
 		return InboundDocument{}, fmt.Errorf("begin inbound confirm transaction: %w", err)
 	}
 	defer tx.Rollback()
+	customerID, err := loadInboundDocumentCustomerIDTx(ctx, tx, documentID)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+	if err := lockBillingSourceCustomersTx(ctx, tx, []int64{customerID}); err != nil {
+		return InboundDocument{}, err
+	}
 
 	documentRow, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID)
 	if err != nil {
@@ -818,6 +847,17 @@ func (s *Store) BulkUpdateInboundDocumentStatus(ctx context.Context, input BulkU
 		return BulkUpdateInboundDocumentStatusResponse{}, fmt.Errorf("begin inbound bulk status transaction: %w", err)
 	}
 	defer tx.Rollback()
+	customerIDs := make([]int64, 0, len(documentIDs))
+	for _, documentID := range documentIDs {
+		customerID, err := loadInboundDocumentCustomerIDTx(ctx, tx, documentID)
+		if err != nil {
+			return BulkUpdateInboundDocumentStatusResponse{}, fmt.Errorf("load receipt %d customer: %w", documentID, err)
+		}
+		customerIDs = append(customerIDs, customerID)
+	}
+	if err := lockBillingSourceCustomersTx(ctx, tx, customerIDs); err != nil {
+		return BulkUpdateInboundDocumentStatusResponse{}, err
+	}
 
 	var deletionRows []inboundDocumentRow
 	if targetStatus == DocumentStatusDeleted {
@@ -832,14 +872,6 @@ func (s *Store) BulkUpdateInboundDocumentStatus(ctx context.Context, input BulkU
 			}
 			deletionRows = append(deletionRows, documentRow)
 		}
-		for _, documentRow := range deletionRows {
-			if normalizeDocumentStatus(documentRow.Status) != DocumentStatusConfirmed {
-				continue
-			}
-			if err := s.validateInboundReceiptDeletionProvenanceTx(ctx, tx, documentRow, documentIDs); err != nil {
-				return BulkUpdateInboundDocumentStatusResponse{}, fmt.Errorf("delete receipt %d: %w", documentRow.ID, err)
-			}
-		}
 	}
 
 	for _, documentID := range documentIDs {
@@ -850,7 +882,7 @@ func (s *Store) BulkUpdateInboundDocumentStatus(ctx context.Context, input BulkU
 		}
 	}
 	for _, documentRow := range deletionRows {
-		if _, err := s.deleteLoadedInboundDocumentTx(ctx, tx, documentRow); err != nil {
+		if _, err := s.deleteInboundDocumentCascadeTx(ctx, tx, documentRow.ID, true); err != nil {
 			return BulkUpdateInboundDocumentStatusResponse{}, fmt.Errorf("delete receipt %d: %w", documentRow.ID, err)
 		}
 	}
@@ -880,6 +912,13 @@ func (s *Store) UpdateInboundDocumentTrackingStatus(ctx context.Context, documen
 		return InboundDocument{}, fmt.Errorf("begin inbound tracking transition: %w", err)
 	}
 	defer tx.Rollback()
+	customerID, err := loadInboundDocumentCustomerIDTx(ctx, tx, documentID)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+	if err := lockBillingSourceCustomersTx(ctx, tx, []int64{customerID}); err != nil {
+		return InboundDocument{}, err
+	}
 
 	documentRow, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID)
 	if err != nil {
@@ -956,7 +995,8 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 	if isLegacyCorrectionDraft {
 		return fmt.Errorf("%w: legacy correction drafts cannot be confirmed; delete this draft and create a new receipt", ErrInvalidInput)
 	}
-	if coalesceInboundHandlingMode(documentRow.HandlingMode) == InboundHandlingModeSealedTransit {
+	handlingMode := coalesceInboundHandlingMode(documentRow.HandlingMode)
+	if handlingMode == InboundHandlingModeSealedTransit {
 		return fmt.Errorf("%w: sealed transit receipts must be converted to palletized before confirmation", ErrInvalidInput)
 	}
 
@@ -964,21 +1004,53 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 	if err != nil {
 		return err
 	}
+	if len(lineRows) == 0 {
+		return fmt.Errorf("%w: receipt must contain at least one line before confirmation", ErrInvalidInput)
+	}
+	for _, lineRow := range lineRows {
+		if lineRow.ReceivedQty <= 0 {
+			return fmt.Errorf(
+				"%w: confirmed receipt line %s requires a received quantity greater than zero",
+				ErrInvalidInput,
+				firstNonEmpty(lineRow.SKUSnapshot, fmt.Sprintf("#%d", lineRow.ID)),
+			)
+		}
+		if handlingMode == InboundHandlingModePalletized && lineRow.Pallets <= 0 {
+			return fmt.Errorf(
+				"%w: confirmed palletized receipt line %s requires a pallet count greater than zero",
+				ErrInvalidInput,
+				firstNonEmpty(lineRow.SKUSnapshot, fmt.Sprintf("#%d", lineRow.ID)),
+			)
+		}
+	}
 	confirmedAt := time.Now().UTC()
 	documentRow.ConfirmedAt = &confirmedAt
+	receivedAt := firstNonEmptyTime(documentRow.ActualArrivalDate, &confirmedAt)
+	if err := ensureBillingSourceMutationsAllowedTx(ctx, tx, billingSourceMutationScope{
+		CustomerID:    documentRow.CustomerID,
+		OccurredAt:    *receivedAt,
+		LocationIDs:   []int64{documentRow.LocationID},
+		ContainerNo:   documentRow.ContainerNo,
+		ContainerType: documentRow.ContainerType,
+	}); err != nil {
+		return err
+	}
+	if err := ensureInboundContainerMetadataConsistencyTx(ctx, tx, documentRow); err != nil {
+		return err
+	}
 	if _, err := ensureContainerVisitForInboundDocumentTx(ctx, tx, documentRow); err != nil {
 		return err
 	}
 
 	for _, lineRow := range lineRows {
 		itemID, itemDescription, err := s.findOrCreateInboundItem(ctx, tx, CreateInboundDocumentInput{
-			CustomerID:          documentRow.CustomerID,
-			LocationID:          documentRow.LocationID,
-			ExpectedArrivalDate: safeDateInput(documentRow.ExpectedArrivalDate),
-			ContainerNo:         documentRow.ContainerNo,
-			StorageSection:      documentRow.StorageSection,
-			UnitLabel:           documentRow.UnitLabel,
-			DocumentNote:        documentRow.DocumentNote,
+			CustomerID:        documentRow.CustomerID,
+			LocationID:        documentRow.LocationID,
+			ActualArrivalDate: safeDateInput(documentRow.ActualArrivalDate),
+			ContainerNo:       documentRow.ContainerNo,
+			StorageSection:    documentRow.StorageSection,
+			UnitLabel:         documentRow.UnitLabel,
+			DocumentNote:      documentRow.DocumentNote,
 		}, CreateInboundDocumentLineInput{
 			SKU:               lineRow.SKUSnapshot,
 			Description:       lineRow.DescriptionSnapshot,
@@ -989,7 +1061,7 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 			PalletsDetailCtns: lineRow.PalletsDetailCtns,
 			StorageSection:    lineRow.StorageSection,
 			LineNote:          lineRow.LineNote,
-		}, documentRow.ExpectedArrivalDate)
+		}, receivedAt)
 		if err != nil {
 			return err
 		}
@@ -998,12 +1070,12 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 			return err
 		}
 
-		receivedQty := lineRow.receivedOrExpectedQty()
+		receivedQty := lineRow.ReceivedQty
 		lotSection := fallbackSection(firstNonEmpty(lineRow.StorageSection, documentRow.StorageSection))
 		lotContainer := documentRow.ContainerNo
 		if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
 			EventType:           StockLedgerEventReceive,
-			OccurredAt:          firstNonEmptyTime(documentRow.ActualArrivalDate, &confirmedAt),
+			OccurredAt:          receivedAt,
 			SKUMasterID:         skuMasterID,
 			CustomerID:          documentRow.CustomerID,
 			LocationID:          documentRow.LocationID,
@@ -1014,7 +1086,7 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 			SourceDocumentID:    documentID,
 			SourceLineID:        lineRow.ID,
 			ContainerNo:         lotContainer,
-			DeliveryDate:        firstNonEmptyTime(documentRow.ActualArrivalDate, documentRow.ExpectedArrivalDate),
+			DeliveryDate:        receivedAt,
 			ItemNumber:          firstNonEmpty(lineRow.ItemNumber, lineRow.SKUSnapshot),
 			DescriptionSnapshot: itemDescription,
 			ExpectedQty:         lineRow.ExpectedQty,
@@ -1058,7 +1130,7 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 			documentRow.CustomerID,
 			documentRow.LocationID,
 			nullableString(documentRow.ContainerNo),
-			nullableTime(firstNonEmptyTime(documentRow.ActualArrivalDate, documentRow.ExpectedArrivalDate)),
+			nullableTime(documentRow.ActualArrivalDate),
 			nullableTime(&confirmedAt),
 			InboundHandlingModePalletized,
 			ContainerVisitStatusOpen,
@@ -1066,6 +1138,111 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 		); err != nil {
 			return mapDBError(fmt.Errorf("sync container visit after inbound confirmation: %w", err))
 		}
+	}
+	return nil
+}
+
+func ensureInboundContainerMetadataConsistencyTx(ctx context.Context, tx *sql.Tx, document inboundDocumentRow) error {
+	containerNo := normalizeContainerNo(document.ContainerNo)
+	if containerNo == "" {
+		return nil
+	}
+
+	containerType := coalesceContainerType(document.ContainerType)
+	handlingMode := coalesceInboundHandlingMode(document.HandlingMode)
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO containers (
+			customer_id,
+			inbound_document_id,
+			location_id,
+			container_no,
+			container_type,
+			handling_mode,
+			status,
+			tracking_status,
+			last_event_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+		ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)
+	`,
+		document.CustomerID,
+		document.ID,
+		document.LocationID,
+		containerNo,
+		containerType,
+		handlingMode,
+		ContainerStatusInStock,
+		InboundTrackingReceived,
+		nullableTime(document.ActualArrivalDate),
+	); err != nil {
+		return mapDBError(fmt.Errorf("lock confirmed inbound container type: %w", err))
+	}
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT
+			id,
+			COALESCE(NULLIF(UPPER(TRIM(container_type)), ''), ?),
+			COALESCE(NULLIF(UPPER(TRIM(handling_mode)), ''), ?)
+		FROM inbound_documents
+		WHERE customer_id = ?
+		  AND UPPER(TRIM(COALESCE(container_no, ''))) = ?
+		  AND id <> ?
+		  AND UPPER(TRIM(status)) IN (?, ?)
+		  AND corrected_at IS NULL
+		ORDER BY id
+		FOR UPDATE
+	`, ContainerTypeNormal, InboundHandlingModePalletized, document.CustomerID, containerNo, document.ID, DocumentStatusConfirmed, DocumentStatusPosted)
+	if err != nil {
+		return mapDBError(fmt.Errorf("load confirmed receipt container metadata: %w", err))
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var receiptID int64
+		var establishedType string
+		var establishedHandlingMode string
+		if err := rows.Scan(&receiptID, &establishedType, &establishedHandlingMode); err != nil {
+			return fmt.Errorf("scan confirmed receipt container metadata: %w", err)
+		}
+		if coalesceContainerType(establishedType) != containerType {
+			return fmt.Errorf(
+				"%w: container %s is already established as %s by confirmed receipt %d; receipt %d cannot use %s",
+				ErrInvalidInput,
+				containerNo,
+				coalesceContainerType(establishedType),
+				receiptID,
+				document.ID,
+				containerType,
+			)
+		}
+		if coalesceInboundHandlingMode(establishedHandlingMode) != handlingMode {
+			return fmt.Errorf(
+				"%w: container %s handling mode is already established as %s by confirmed receipt %d; receipt %d cannot use %s",
+				ErrInvalidInput,
+				containerNo,
+				coalesceInboundHandlingMode(establishedHandlingMode),
+				receiptID,
+				document.ID,
+				handlingMode,
+			)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate confirmed receipt container metadata: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close confirmed receipt container metadata: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE containers
+		SET
+			container_type = ?,
+			handling_mode = ?,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE customer_id = ?
+		  AND UPPER(TRIM(container_no)) = ?
+	`, containerType, handlingMode, document.CustomerID, containerNo); err != nil {
+		return mapDBError(fmt.Errorf("sync confirmed inbound container metadata: %w", err))
 	}
 	return nil
 }
@@ -1189,6 +1366,13 @@ func (s *Store) CancelInboundDocument(ctx context.Context, documentID int64) (In
 		return InboundDocument{}, fmt.Errorf("begin inbound cancel transaction: %w", err)
 	}
 	defer tx.Rollback()
+	customerID, err := loadInboundDocumentCustomerIDTx(ctx, tx, documentID)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+	if err := lockBillingSourceCustomersTx(ctx, tx, []int64{customerID}); err != nil {
+		return InboundDocument{}, err
+	}
 
 	if _, err := s.deleteInboundDocumentTx(ctx, tx, documentID); err != nil {
 		return InboundDocument{}, err
@@ -1202,237 +1386,278 @@ func (s *Store) CancelInboundDocument(ctx context.Context, documentID int64) (In
 }
 
 func (s *Store) deleteInboundDocumentTx(ctx context.Context, tx *sql.Tx, documentID int64) (time.Time, error) {
+	return s.deleteInboundDocumentCascadeTx(ctx, tx, documentID, false)
+}
+
+func (s *Store) deleteInboundDocumentCascadeTx(ctx context.Context, tx *sql.Tx, documentID int64, allowAlreadyDeleted bool) (time.Time, error) {
 	documentRow, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID)
 	if err != nil {
 		return time.Time{}, err
 	}
+	if normalizeDocumentStatus(documentRow.Status) == DocumentStatusDeleted {
+		if allowAlreadyDeleted {
+			if documentRow.DeletedAt != nil {
+				return *documentRow.DeletedAt, nil
+			}
+			return documentRow.UpdatedAt, nil
+		}
+		return time.Time{}, fmt.Errorf("%w: inbound document is already deleted", ErrInvalidInput)
+	}
 	if normalizeDocumentStatus(documentRow.Status) == DocumentStatusConfirmed {
-		if err := s.validateInboundReceiptDeletionProvenanceTx(ctx, tx, documentRow, nil); err != nil {
+		if err := s.deleteLaterInboundReceiptActivityTx(ctx, tx, documentRow); err != nil {
 			return time.Time{}, err
 		}
 	}
 	return s.deleteLoadedInboundDocumentTx(ctx, tx, documentRow)
 }
 
-func (s *Store) validateInboundReceiptDeletionProvenanceTx(
-	ctx context.Context,
-	tx *sql.Tx,
-	documentRow inboundDocumentRow,
-	allowedLaterInboundDocumentIDs []int64,
-) error {
+type inboundDeletionCascadeSource struct {
+	SourceType       string
+	SourceDocumentID int64
+	LastLedgerID     int64
+}
+
+func (s *Store) deleteLaterInboundReceiptActivityTx(ctx context.Context, tx *sql.Tx, documentRow inboundDocumentRow) error {
 	containerNo := normalizeContainerNo(documentRow.ContainerNo)
 	if containerNo == "" {
-		return fmt.Errorf("%w: confirmed receipt has no container number, so its inventory source cannot be verified for deletion", ErrInvalidInput)
-	}
-	var containerID int64
-	if err := tx.QueryRowContext(ctx, `
-		SELECT id
-		FROM containers
-		WHERE customer_id = ?
-		  AND UPPER(TRIM(container_no)) = ?
-		FOR UPDATE
-	`, documentRow.CustomerID, containerNo).Scan(&containerID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("%w: receipt container history is incomplete, so its inventory source cannot be verified for deletion", ErrInvalidInput)
-		}
-		return mapDBError(fmt.Errorf("lock receipt container for deletion: %w", err))
+		return nil
 	}
 
-	rows, err := tx.QueryContext(ctx, `
-		SELECT id
-		FROM inventory_items
-		WHERE customer_id = ?
-		  AND UPPER(TRIM(container_no)) = ?
-		ORDER BY id
-		FOR UPDATE
-	`, documentRow.CustomerID, containerNo)
-	if err != nil {
-		return mapDBError(fmt.Errorf("lock receipt container inventory for deletion: %w", err))
-	}
-	for rows.Next() {
-		var inventoryItemID int64
-		if err := rows.Scan(&inventoryItemID); err != nil {
-			rows.Close()
-			return fmt.Errorf("scan locked receipt container inventory: %w", err)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return fmt.Errorf("iterate locked receipt container inventory: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("close locked receipt container inventory: %w", err)
-	}
-
-	var lastReceiptLedgerID sql.NullInt64
+	var receiptBoundary sql.NullInt64
 	if err := tx.QueryRowContext(ctx, `
 		SELECT MAX(id)
 		FROM stock_ledger
 		WHERE source_document_type = ?
 		  AND source_document_id = ?
 		  AND event_type = ?
-	`, StockLedgerSourceInbound, documentRow.ID, StockLedgerEventReceive).Scan(&lastReceiptLedgerID); err != nil {
-		return mapDBError(fmt.Errorf("load receipt inventory history boundary for deletion: %w", err))
+	`, StockLedgerSourceInbound, documentRow.ID, StockLedgerEventReceive).Scan(&receiptBoundary); err != nil {
+		return mapDBError(fmt.Errorf("load receipt cascade boundary: %w", err))
 	}
-	if !lastReceiptLedgerID.Valid || lastReceiptLedgerID.Int64 <= 0 {
-		return fmt.Errorf("%w: receipt inventory history is incomplete, so its inventory source cannot be verified for deletion", ErrInvalidInput)
+	if !receiptBoundary.Valid || receiptBoundary.Int64 <= 0 {
+		return nil
 	}
 
-	type laterActivity struct {
-		EventType        string
-		SourceType       string
-		SourceDocumentID int64
-		SKUMasterID      int64
-		LocationID       int64
-		StorageSection   string
-		QuantityChange   int
-		PalletChange     float64
-	}
-	activityRows, err := tx.QueryContext(ctx, `
+	rows, err := tx.QueryContext(ctx, `
 		SELECT
-			UPPER(TRIM(COALESCE(event_type, ''))),
 			UPPER(TRIM(COALESCE(source_document_type, ''))),
 			COALESCE(source_document_id, 0),
-			COALESCE(sku_master_id, 0),
-			location_id,
-			COALESCE(NULLIF(storage_section, ''), 'TEMP'),
-			quantity_change,
-			pallet_change
+			MAX(id)
 		FROM stock_ledger
 		WHERE id > ?
 		  AND customer_id = ?
 		  AND UPPER(TRIM(COALESCE(container_no_snapshot, ''))) = ?
-		ORDER BY id
-	`, lastReceiptLedgerID.Int64, documentRow.CustomerID, containerNo)
+		  AND UPPER(TRIM(COALESCE(source_document_type, ''))) <> 'CASCADE_DELETE'
+		GROUP BY
+			UPPER(TRIM(COALESCE(source_document_type, ''))),
+			COALESCE(source_document_id, 0)
+		ORDER BY MAX(id) DESC
+	`, receiptBoundary.Int64, documentRow.CustomerID, containerNo)
 	if err != nil {
-		return mapDBError(fmt.Errorf("load later receipt container activity: %w", err))
+		return mapDBError(fmt.Errorf("load receipt cascade activity: %w", err))
 	}
-	activities := make([]laterActivity, 0)
-	for activityRows.Next() {
-		var activity laterActivity
-		if err := activityRows.Scan(
-			&activity.EventType,
-			&activity.SourceType,
-			&activity.SourceDocumentID,
-			&activity.SKUMasterID,
-			&activity.LocationID,
-			&activity.StorageSection,
-			&activity.QuantityChange,
-			&activity.PalletChange,
-		); err != nil {
-			activityRows.Close()
-			return fmt.Errorf("scan later receipt container activity: %w", err)
+	sources := make([]inboundDeletionCascadeSource, 0)
+	for rows.Next() {
+		var source inboundDeletionCascadeSource
+		if err := rows.Scan(&source.SourceType, &source.SourceDocumentID, &source.LastLedgerID); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan receipt cascade activity: %w", err)
 		}
-		activities = append(activities, activity)
+		sources = append(sources, source)
 	}
-	if err := activityRows.Err(); err != nil {
-		activityRows.Close()
-		return fmt.Errorf("iterate later receipt container activity: %w", err)
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate receipt cascade activity: %w", err)
 	}
-	if err := activityRows.Close(); err != nil {
-		return fmt.Errorf("close later receipt container activity: %w", err)
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close receipt cascade activity: %w", err)
 	}
-	if len(activities) == 0 {
+
+	for _, source := range sources {
+		if source.SourceType == StockLedgerSourceInbound && source.SourceDocumentID == documentRow.ID {
+			continue
+		}
+		switch source.SourceType {
+		case StockLedgerSourceInbound:
+			if source.SourceDocumentID <= 0 {
+				continue
+			}
+			laterReceipt, err := s.loadInboundDocumentForUpdateTx(ctx, tx, source.SourceDocumentID)
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if normalizeDocumentStatus(laterReceipt.Status) == DocumentStatusDeleted {
+				continue
+			}
+			if _, err := s.deleteLoadedInboundDocumentTx(ctx, tx, laterReceipt); err != nil {
+				return fmt.Errorf("cascade delete later receipt %d: %w", laterReceipt.ID, err)
+			}
+		case StockLedgerSourceOutbound:
+			if source.SourceDocumentID <= 0 {
+				continue
+			}
+			outboundRow, err := s.loadOutboundDocumentForUpdateTx(ctx, tx, source.SourceDocumentID)
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if normalizeDocumentStatus(outboundRow.Status) == DocumentStatusDeleted {
+				continue
+			}
+			if _, err := s.cancelLoadedOutboundDocumentTx(ctx, tx, outboundRow); err != nil {
+				return fmt.Errorf("cascade delete related outbound document %d: %w", outboundRow.ID, err)
+			}
+		case StockLedgerSourceAdjustment, StockLedgerSourceTransfer, StockLedgerSourceCycleCount:
+			if source.SourceDocumentID <= 0 {
+				continue
+			}
+			if err := s.reverseAndDeleteRelatedInventorySourceTx(ctx, tx, source.SourceType, source.SourceDocumentID); err != nil {
+				return err
+			}
+		default:
+			if err := s.reverseUnownedLaterContainerActivityTx(
+				ctx, tx, receiptBoundary.Int64, documentRow.CustomerID, containerNo, source.SourceType, source.SourceDocumentID,
+			); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+type inboundCascadeLedgerBalance struct {
+	SKUMasterID    int64
+	CustomerID     int64
+	LocationID     int64
+	StorageSection string
+	ContainerNo    string
+	Quantity       int
+	Pallets        float64
+	ItemNumber     string
+	Description    string
+}
+
+func (s *Store) reverseAndDeleteRelatedInventorySourceTx(ctx context.Context, tx *sql.Tx, sourceType string, sourceDocumentID int64) error {
+	if err := s.reverseRelatedLedgerBalancesTx(ctx, tx, `
+		WHERE UPPER(TRIM(COALESCE(source_document_type, ''))) = ?
+		  AND COALESCE(source_document_id, 0) = ?
+	`, sourceType, sourceDocumentID); err != nil {
+		return err
+	}
+
+	var tableName string
+	switch sourceType {
+	case StockLedgerSourceAdjustment:
+		tableName = "inventory_adjustments"
+	case StockLedgerSourceTransfer:
+		tableName = "inventory_transfers"
+	case StockLedgerSourceCycleCount:
+		tableName = "cycle_counts"
+	default:
 		return nil
 	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE id = ?", tableName), sourceDocumentID); err != nil {
+		return mapDBError(fmt.Errorf("delete related %s document %d: %w", strings.ToLower(sourceType), sourceDocumentID, err))
+	}
+	return nil
+}
 
-	allowedSelectedReceipts := make(map[int64]bool, len(allowedLaterInboundDocumentIDs))
-	for _, documentID := range allowedLaterInboundDocumentIDs {
-		allowedSelectedReceipts[documentID] = true
+func (s *Store) reverseUnownedLaterContainerActivityTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	receiptBoundary int64,
+	customerID int64,
+	containerNo string,
+	sourceType string,
+	sourceDocumentID int64,
+) error {
+	return s.reverseRelatedLedgerBalancesTx(ctx, tx, `
+		WHERE id > ?
+		  AND customer_id = ?
+		  AND UPPER(TRIM(COALESCE(container_no_snapshot, ''))) = ?
+		  AND UPPER(TRIM(COALESCE(source_document_type, ''))) = ?
+		  AND COALESCE(source_document_id, 0) = ?
+	`, receiptBoundary, customerID, containerNo, sourceType, sourceDocumentID)
+}
+
+func (s *Store) reverseRelatedLedgerBalancesTx(ctx context.Context, tx *sql.Tx, whereClause string, args ...any) error {
+	query := `
+		SELECT
+			COALESCE(sku_master_id, 0),
+			customer_id,
+			location_id,
+			COALESCE(NULLIF(storage_section, ''), 'TEMP'),
+			COALESCE(container_no_snapshot, ''),
+			COALESCE(SUM(quantity_change), 0),
+			COALESCE(SUM(pallet_change), 0),
+			COALESCE(MAX(item_number_snapshot), ''),
+			COALESCE(MAX(description_snapshot), '')
+		FROM stock_ledger
+	` + whereClause + `
+		GROUP BY
+			COALESCE(sku_master_id, 0),
+			customer_id,
+			location_id,
+			COALESCE(NULLIF(storage_section, ''), 'TEMP'),
+			COALESCE(container_no_snapshot, '')
+		HAVING COALESCE(SUM(quantity_change), 0) <> 0
+			OR ABS(COALESCE(SUM(pallet_change), 0)) > 0.000001
+	`
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return mapDBError(fmt.Errorf("load related inventory activity balances: %w", err))
 	}
-	inboundSourceIDs := make(map[int64]bool)
-	for _, activity := range activities {
-		if activity.SourceType == StockLedgerSourceInbound && activity.SourceDocumentID > 0 {
-			inboundSourceIDs[activity.SourceDocumentID] = true
+	balances := make([]inboundCascadeLedgerBalance, 0)
+	for rows.Next() {
+		var balance inboundCascadeLedgerBalance
+		if err := rows.Scan(
+			&balance.SKUMasterID,
+			&balance.CustomerID,
+			&balance.LocationID,
+			&balance.StorageSection,
+			&balance.ContainerNo,
+			&balance.Quantity,
+			&balance.Pallets,
+			&balance.ItemNumber,
+			&balance.Description,
+		); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan related inventory activity balance: %w", err)
 		}
+		balances = append(balances, balance)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate related inventory activity balances: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close related inventory activity balances: %w", err)
 	}
 
-	deletedInboundDocuments := make(map[int64]bool)
-	if len(inboundSourceIDs) > 0 {
-		sourceIDs := make([]int64, 0, len(inboundSourceIDs))
-		for sourceID := range inboundSourceIDs {
-			sourceIDs = append(sourceIDs, sourceID)
-		}
-		sort.Slice(sourceIDs, func(left, right int) bool { return sourceIDs[left] < sourceIDs[right] })
-		query, args, err := sqlx.In(`
-			SELECT id
-			FROM inbound_documents
-			WHERE id IN (?)
-			  AND UPPER(TRIM(status)) IN ('DELETED', 'CANCELLED')
-		`, sourceIDs)
-		if err != nil {
-			return fmt.Errorf("build deleted receipt provenance query: %w", err)
-		}
-		deletedRows, err := tx.QueryContext(ctx, s.db.Rebind(query), args...)
-		if err != nil {
-			return mapDBError(fmt.Errorf("load deleted receipt provenance sources: %w", err))
-		}
-		for deletedRows.Next() {
-			var sourceID int64
-			if err := deletedRows.Scan(&sourceID); err != nil {
-				deletedRows.Close()
-				return fmt.Errorf("scan deleted receipt provenance source: %w", err)
-			}
-			deletedInboundDocuments[sourceID] = true
-		}
-		if err := deletedRows.Err(); err != nil {
-			deletedRows.Close()
-			return fmt.Errorf("iterate deleted receipt provenance sources: %w", err)
-		}
-		if err := deletedRows.Close(); err != nil {
-			return fmt.Errorf("close deleted receipt provenance sources: %w", err)
-		}
-	}
-
-	type balanceKey struct {
-		SourceDocumentID int64
-		SKUMasterID      int64
-		LocationID       int64
-		StorageSection   string
-	}
-	type balanceDelta struct {
-		Quantity int
-		Pallets  float64
-	}
-	closedDeletedReceipts := make(map[int64]bool, len(deletedInboundDocuments))
-	for sourceID := range deletedInboundDocuments {
-		closedDeletedReceipts[sourceID] = true
-	}
-	balances := make(map[balanceKey]balanceDelta)
-	for _, activity := range activities {
-		if activity.SourceType != StockLedgerSourceInbound || !deletedInboundDocuments[activity.SourceDocumentID] {
+	for _, balance := range balances {
+		if balance.SKUMasterID <= 0 {
 			continue
 		}
-		if activity.EventType != StockLedgerEventReceive && activity.EventType != StockLedgerEventAdjust {
-			closedDeletedReceipts[activity.SourceDocumentID] = false
+		if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
+			EventType:           StockLedgerEventReversal,
+			SKUMasterID:         balance.SKUMasterID,
+			CustomerID:          balance.CustomerID,
+			LocationID:          balance.LocationID,
+			StorageSection:      balance.StorageSection,
+			QuantityChange:      -balance.Quantity,
+			PalletChange:        -balance.Pallets,
+			SourceDocumentType:  "CASCADE_DELETE",
+			ContainerNo:         balance.ContainerNo,
+			ItemNumber:          balance.ItemNumber,
+			DescriptionSnapshot: balance.Description,
+			Reason:              "Related inventory activity deleted with inbound receipt",
+		}); err != nil {
+			return fmt.Errorf("reverse related inventory activity: %w", err)
 		}
-		key := balanceKey{
-			SourceDocumentID: activity.SourceDocumentID,
-			SKUMasterID:      activity.SKUMasterID,
-			LocationID:       activity.LocationID,
-			StorageSection:   fallbackSection(activity.StorageSection),
-		}
-		balance := balances[key]
-		balance.Quantity += activity.QuantityChange
-		balance.Pallets += activity.PalletChange
-		balances[key] = balance
-	}
-	for key, balance := range balances {
-		if balance.Quantity != 0 || math.Abs(balance.Pallets) > 0.000001 {
-			closedDeletedReceipts[key.SourceDocumentID] = false
-		}
-	}
-
-	for _, activity := range activities {
-		if activity.SourceType == StockLedgerSourceInbound &&
-			activity.EventType == StockLedgerEventReceive &&
-			allowedSelectedReceipts[activity.SourceDocumentID] {
-			continue
-		}
-		if activity.SourceType == StockLedgerSourceInbound && closedDeletedReceipts[activity.SourceDocumentID] {
-			continue
-		}
-		return fmt.Errorf("%w: this container has later inventory activity; delete the relevant later receipts in the same batch, or manually reconcile the later activity before deleting this receipt", ErrInvalidInput)
 	}
 	return nil
 }
@@ -1445,6 +1670,22 @@ func (s *Store) deleteLoadedInboundDocumentTx(ctx context.Context, tx *sql.Tx, d
 
 	deletedAt := time.Now().UTC()
 	if status == DocumentStatusConfirmed {
+		effectiveAt := documentRow.CreatedAt
+		if documentRow.ConfirmedAt != nil {
+			effectiveAt = *documentRow.ConfirmedAt
+		}
+		if documentRow.ActualArrivalDate != nil {
+			effectiveAt = *documentRow.ActualArrivalDate
+		}
+		if err := ensureBillingSourceMutationsAllowedTx(ctx, tx, billingSourceMutationScope{
+			CustomerID:    documentRow.CustomerID,
+			OccurredAt:    effectiveAt,
+			LocationIDs:   []int64{documentRow.LocationID},
+			ContainerNo:   documentRow.ContainerNo,
+			ContainerType: documentRow.ContainerType,
+		}); err != nil {
+			return time.Time{}, err
+		}
 		if err := s.reverseConfirmedInboundInventoryTx(ctx, tx, documentRow, deletedAt, "Inbound receipt deleted"); err != nil {
 			return time.Time{}, err
 		}
@@ -1712,6 +1953,21 @@ func (s *Store) cloneInboundDocumentTx(
 	return newDocumentID, nil
 }
 
+func loadInboundDocumentCustomerIDTx(ctx context.Context, tx *sql.Tx, documentID int64) (int64, error) {
+	var customerID int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT customer_id
+		FROM inbound_documents
+		WHERE id = ?
+	`, documentID).Scan(&customerID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		return 0, fmt.Errorf("load inbound document customer: %w", err)
+	}
+	return customerID, nil
+}
+
 func (s *Store) loadInboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx, documentID int64) (inboundDocumentRow, error) {
 	var documentRow inboundDocumentRow
 	if err := tx.QueryRowContext(ctx, `
@@ -1903,7 +2159,7 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 		JOIN storage_locations l ON l.id = d.location_id
 		WHERE d.id IN (?)
 		%s
-		ORDER BY COALESCE(d.expected_arrival_date, d.created_at) DESC, d.id DESC
+		ORDER BY COALESCE(d.actual_arrival_date, DATE(d.confirmed_at), DATE(d.created_at), d.expected_arrival_date) DESC, d.id DESC
 	`, archiveFilter), documentIDs)
 	if err != nil {
 		return nil, fmt.Errorf("build inbound document query: %w", err)
@@ -2250,9 +2506,6 @@ func sanitizeInboundDocumentInput(input CreateInboundDocumentInput) CreateInboun
 		line.LineNote = strings.TrimSpace(line.LineNote)
 		line.PalletBreakdown = normalizeInboundPalletBreakdown(line.PalletBreakdown)
 		if len(line.PalletBreakdown) > 0 {
-			if line.Pallets <= 0 {
-				line.Pallets = len(line.PalletBreakdown)
-			}
 			line.PalletsDetailCtns = formatInboundPalletBreakdownDetail(line.PalletBreakdown)
 		}
 		if line.SKU == "" {
@@ -2325,18 +2578,10 @@ func validateInboundDocumentInput(input CreateInboundDocumentInput) error {
 			return fmt.Errorf("%w: sealed transit receipts cannot include pallet breakdown", ErrInvalidInput)
 		}
 		if len(line.PalletBreakdown) > 0 {
-			if line.Pallets != len(line.PalletBreakdown) {
-				return fmt.Errorf("%w: pallet breakdown count must match declared pallets", ErrInvalidInput)
-			}
-			totalBreakdownQty := 0
 			for _, breakdown := range line.PalletBreakdown {
 				if breakdown.Quantity <= 0 {
 					return fmt.Errorf("%w: pallet quantities must be greater than zero", ErrInvalidInput)
 				}
-				totalBreakdownQty += breakdown.Quantity
-			}
-			if totalBreakdownQty != line.receivedOrExpectedQty() {
-				return fmt.Errorf("%w: pallet breakdown total must match the inbound line quantity", ErrInvalidInput)
 			}
 		}
 		switch {
@@ -2346,28 +2591,14 @@ func validateInboundDocumentInput(input CreateInboundDocumentInput) error {
 			return fmt.Errorf("%w: quantities cannot be negative", ErrInvalidInput)
 		case line.ExpectedQty == 0 && line.ReceivedQty == 0:
 			return fmt.Errorf("%w: expected or received quantity is required", ErrInvalidInput)
-		case coalescedStatus == DocumentStatusConfirmed && handlingMode == InboundHandlingModePalletized && line.receivedOrExpectedQty() > 0 && line.Pallets <= 0:
+		case coalescedStatus == DocumentStatusConfirmed && line.ReceivedQty <= 0:
+			return fmt.Errorf("%w: confirmed receipts require a received quantity", ErrInvalidInput)
+		case coalescedStatus == DocumentStatusConfirmed && handlingMode == InboundHandlingModePalletized && line.Pallets <= 0:
 			return fmt.Errorf("%w: confirmed palletized receipts require a pallet count", ErrInvalidInput)
-		case coalescedStatus == DocumentStatusConfirmed && line.Pallets > line.receivedOrExpectedQty():
-			return fmt.Errorf("%w: pallets cannot exceed received quantity", ErrInvalidInput)
 		}
 	}
 
 	return nil
-}
-
-func (line CreateInboundDocumentLineInput) receivedOrExpectedQty() int {
-	if line.ReceivedQty > 0 {
-		return line.ReceivedQty
-	}
-	return line.ExpectedQty
-}
-
-func (line inboundDocumentLineRow) receivedOrExpectedQty() int {
-	if line.ReceivedQty > 0 {
-		return line.ReceivedQty
-	}
-	return line.ExpectedQty
 }
 
 func (line inboundDocumentLineRow) palletBreakdown() []InboundPalletBreakdown {

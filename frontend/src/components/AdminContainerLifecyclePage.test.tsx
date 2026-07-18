@@ -1,11 +1,173 @@
-import { describe, expect, it } from "vitest";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ContainerLifecycleEvent, InboundDocument, OutboundDocument } from "../lib/types";
+vi.mock("../lib/api", () => ({
+  api: {
+    getV2Containers: vi.fn(),
+    getV2ContainerLifecycle: vi.fn(),
+    updateV2ContainerMetadata: vi.fn()
+  }
+}));
+
+vi.mock("./ContainerLifecycleView", () => ({
+  ContainerLifecycleView: ({ lifecycle, sidePanel }: { lifecycle: ContainerLifecycle | null; sidePanel?: ReactNode }) => (
+    <div>
+      <div data-testid="receipt-list">
+        {(lifecycle?.packingLists ?? []).map((document) => <span key={document.id}>{document.id}</span>)}
+      </div>
+      {sidePanel}
+    </div>
+  )
+}));
+
+import { api } from "../lib/api";
+import type { ContainerLifecycle, ContainerLifecycleEvent, InboundDocument, OutboundDocument } from "../lib/types";
+import { renderWithProviders } from "../test/renderWithProviders";
+import { createCustomer, createLocation } from "../test/fixtures";
 import {
+  AdminContainerLifecyclePage,
   buildCurrentInventorySkuRows,
   buildOutboundOrderGoodsRows,
   buildReceivingSkuRows
 } from "./AdminContainerLifecyclePage";
+
+const mockedApi = api as unknown as {
+  getV2Containers: ReturnType<typeof vi.fn>;
+  getV2ContainerLifecycle: ReturnType<typeof vi.fn>;
+  updateV2ContainerMetadata: ReturnType<typeof vi.fn>;
+};
+
+beforeEach(() => {
+  mockedApi.getV2Containers.mockReset();
+  mockedApi.getV2ContainerLifecycle.mockReset();
+  mockedApi.updateV2ContainerMetadata.mockReset();
+  mockedApi.getV2Containers.mockResolvedValue([]);
+});
+
+describe("AdminContainerLifecyclePage container metadata", () => {
+  it("does not expose or submit receipt, location, or inventory status projections", async () => {
+    const lifecycle = {
+      container: {
+        inboundDocumentId: 10,
+        locationId: 7,
+        containerType: "WEST_COAST_TRANSFER",
+        handlingMode: "SEALED_TRANSIT",
+        status: "DEPLETED",
+        trackingStatus: "ARRIVED_PORT",
+        lastEventAt: "2026-04-03T14:30:00Z"
+      },
+      summary: {
+        containerNo: "CONT-1",
+        customerId: 1,
+        status: "DEPLETED",
+        lastActivityAt: "2026-04-03T14:30:00Z"
+      },
+      packingLists: [
+        { id: 10, locationId: 7, status: "CONFIRMED", lines: [] },
+        { id: 11, locationId: 8, status: "CONFIRMED", lines: [] }
+      ],
+      pickingOrders: [],
+      movements: [],
+      lifecycleEvents: [],
+      trackingEvents: [],
+      pickupAssignments: [],
+      deliveryEvents: []
+    } as unknown as ContainerLifecycle;
+    mockedApi.getV2ContainerLifecycle.mockResolvedValue(lifecycle);
+    mockedApi.updateV2ContainerMetadata.mockResolvedValue(lifecycle.container);
+
+    renderWithProviders(
+      <AdminContainerLifecyclePage
+        routeScope={{ customerId: 1, containerNo: "CONT-1" }}
+        customers={[createCustomer()]}
+        locations={[createLocation({ id: 7, name: "Warehouse 7" }), createLocation({ id: 8, name: "Warehouse 8" })]}
+        onOpenContainerLifecycle={vi.fn()}
+        onOpenContainerDetail={vi.fn()}
+        onOpenInboundDetail={vi.fn()}
+        onOpenReceiptEditor={vi.fn()}
+        onOpenOutboundDocument={vi.fn()}
+        onOpenShipmentEditor={vi.fn()}
+      />
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("Container Type")).toHaveValue("WEST_COAST_TRANSFER"));
+
+    expect(screen.queryByLabelText("Receipt Detail")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Warehouse")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Status")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Last Activity")).not.toBeInTheDocument();
+    expect(screen.getByTestId("receipt-list").children).toHaveLength(2);
+
+    fireEvent.change(screen.getByLabelText("Container Type"), { target: { value: "NORMAL" } });
+    fireEvent.change(screen.getByLabelText("Handling Mode"), { target: { value: "PALLETIZED" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+
+    await waitFor(() => expect(mockedApi.updateV2ContainerMetadata).toHaveBeenCalledTimes(1));
+    expect(mockedApi.updateV2ContainerMetadata).toHaveBeenCalledWith("CONT-1", {
+      customerId: 1,
+      containerType: "NORMAL",
+      handlingMode: "PALLETIZED"
+    });
+    const payload = mockedApi.updateV2ContainerMetadata.mock.calls[0][1];
+    expect(payload).not.toHaveProperty("inboundDocumentId");
+    expect(payload).not.toHaveProperty("locationId");
+    expect(payload).not.toHaveProperty("status");
+    expect(payload).not.toHaveProperty("trackingStatus");
+    expect(payload).not.toHaveProperty("lastEventAt");
+  });
+
+  it("shows receipt-derived metadata read-only until a container record exists", async () => {
+    const lifecycle = {
+      container: null,
+      summary: {
+        containerNo: "DRAFT-CONT-1",
+        customerId: 1,
+        status: "PENDING",
+        lastActivityAt: "2026-04-03T14:30:00Z"
+      },
+      packingLists: [{
+        id: 20,
+        customerId: 1,
+        locationId: 7,
+        containerNo: "DRAFT-CONT-1",
+        containerType: "WEST_COAST_TRANSFER",
+        handlingMode: "SEALED_TRANSIT",
+        status: "DRAFT",
+        lines: []
+      }],
+      pickingOrders: [],
+      movements: [],
+      lifecycleEvents: [],
+      trackingEvents: [],
+      pickupAssignments: [],
+      deliveryEvents: []
+    } as unknown as ContainerLifecycle;
+    mockedApi.getV2ContainerLifecycle.mockResolvedValue(lifecycle);
+
+    renderWithProviders(
+      <AdminContainerLifecyclePage
+        routeScope={{ customerId: 1, containerNo: "DRAFT-CONT-1" }}
+        customers={[createCustomer()]}
+        locations={[createLocation({ id: 7, name: "Warehouse 7" })]}
+        onOpenContainerLifecycle={vi.fn()}
+        onOpenContainerDetail={vi.fn()}
+        onOpenInboundDetail={vi.fn()}
+        onOpenReceiptEditor={vi.fn()}
+        onOpenOutboundDocument={vi.fn()}
+        onOpenShipmentEditor={vi.fn()}
+      />
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("Container Type")).toHaveValue("WEST_COAST_TRANSFER"));
+    expect(screen.getByLabelText("Container Type")).toBeDisabled();
+    expect(screen.getByLabelText("Handling Mode")).toHaveValue("SEALED_TRANSIT");
+    expect(screen.getByLabelText("Handling Mode")).toBeDisabled();
+    expect(screen.getByText(/metadata becomes editable after a receipt is confirmed/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save Changes" })).not.toBeInTheDocument();
+    expect(mockedApi.updateV2ContainerMetadata).not.toHaveBeenCalled();
+  });
+});
 
 describe("buildReceivingSkuRows", () => {
   it("summarizes expected quantity, received pallets, received quantity, and shortage reason by sku", () => {

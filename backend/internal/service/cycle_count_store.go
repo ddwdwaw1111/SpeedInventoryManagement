@@ -234,6 +234,13 @@ func (s *Store) CreateCycleCount(ctx context.Context, input CreateCycleCountInpu
 		return CycleCount{}, fmt.Errorf("begin cycle count transaction: %w", err)
 	}
 	defer tx.Rollback()
+	customerIDs := make([]int64, 0, len(input.Lines))
+	for _, line := range input.Lines {
+		customerIDs = append(customerIDs, line.CustomerID)
+	}
+	if err := lockBillingSourceCustomersTx(ctx, tx, customerIDs); err != nil {
+		return CycleCount{}, err
+	}
 
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO cycle_counts (

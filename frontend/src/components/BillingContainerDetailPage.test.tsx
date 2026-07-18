@@ -1,19 +1,60 @@
-import { screen, within } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ContainerLifecycleEvent } from "../lib/types";
+import type { BillingPreviewResult, ContainerLifecycleEvent } from "../lib/types";
 import { createCustomer, createLocation } from "../test/fixtures";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { BillingContainerDetailPage } from "./BillingContainerDetailPage";
 
-const { getContainerLifecycleEvents } = vi.hoisted(() => ({
-  getContainerLifecycleEvents: vi.fn()
+const { getContainerLifecycleEvents, previewBilling } = vi.hoisted(() => ({
+  getContainerLifecycleEvents: vi.fn(),
+  previewBilling: vi.fn()
 }));
 
 vi.mock("../lib/api", () => ({
   ApiError: class ApiError extends Error {},
-  api: { getContainerLifecycleEvents }
+  api: { getContainerLifecycleEvents, previewBilling }
 }));
+
+function authoritativePreview(lines: BillingPreviewResult["lines"] = []): BillingPreviewResult {
+  return {
+    calculationVersion: "container-v1",
+    sourceFingerprint: "fingerprint-container-detail",
+    customerId: 1,
+    customerName: "Imperial Bag & Paper",
+    warehouseLocationId: null,
+    containerType: "",
+    periodStart: "2026-03-01",
+    periodEnd: "2026-03-31",
+    normalPalletGracePeriodEnabled: true,
+    rates: {
+      inboundContainerFee: 450,
+      transferInboundFeePerPallet: 10,
+      wrappingFeePerPallet: 15,
+      storageFeePerPalletPerWeek: 7,
+      storageFeePerPalletPerWeekNormal: 7,
+      storageFeePerPalletPerWeekWestCoastTransfer: 7,
+      outboundFeePerPallet: 0
+    },
+    lines,
+    storageRows: [],
+    dailyBalances: [],
+    summary: {
+      receivedContainers: 0,
+      receivedPallets: 0,
+      shippedPallets: 0,
+      palletDays: 0,
+      inboundAmount: 0,
+      wrappingAmount: 0,
+      storageGrossAmount: 0,
+      storageDiscountAmount: 0,
+      storageAmount: 0,
+      outboundAmount: 0,
+      grandTotal: 0
+    },
+    warnings: []
+  };
+}
 
 function event(
   id: number,
@@ -54,13 +95,18 @@ function event(
   };
 }
 
-function renderPage(containerNo: string) {
+function renderPage(
+  containerNo: string,
+  options?: { customerId?: number | "all"; onOpenContainerDetail?: ReturnType<typeof vi.fn> }
+) {
+  const customerId = options?.customerId ?? "all";
+  const onOpenContainerDetail = options?.onOpenContainerDetail ?? vi.fn();
   renderWithProviders(
     <BillingContainerDetailPage
-      routeKey={"/billing/container/2026-03-01/2026-03-31/all/all/" + containerNo}
+      routeKey={`/billing/container/2026-03-01/2026-03-31/${customerId}/all/${containerNo}`}
       startDate="2026-03-01"
       endDate="2026-03-31"
-      customerId="all"
+      customerId={customerId}
       warehouseLocationId="all"
       containerNo={containerNo}
       customers={[createCustomer()]}
@@ -68,14 +114,17 @@ function renderPage(containerNo: string) {
       inboundDocuments={[]}
       outboundDocuments={[]}
       onBackToBilling={vi.fn()}
-      onOpenContainerDetail={vi.fn()}
+      onOpenContainerDetail={onOpenContainerDetail}
     />
   );
+  return { onOpenContainerDetail };
 }
 
 describe("BillingContainerDetailPage", () => {
   beforeEach(() => {
     getContainerLifecycleEvents.mockReset();
+    previewBilling.mockReset();
+    previewBilling.mockResolvedValue(authoritativePreview());
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem("sim-timezone", "UTC");
@@ -116,5 +165,46 @@ describe("BillingContainerDetailPage", () => {
     const timelineTable = await screen.findByRole("table", { name: "Container Change Timeline" });
     expect(within(timelineTable).getByText("RECEIVE")).toBeInTheDocument();
     expect(within(timelineTable).queryByText("SHIP")).not.toBeInTheDocument();
+  });
+
+  it("preserves the billed customer when opening the inventory container detail", async () => {
+    getContainerLifecycleEvents.mockResolvedValue([]);
+    const onOpenContainerDetail = vi.fn();
+    renderPage("GCXU5817233", { customerId: 1, onOpenContainerDetail });
+
+    fireEvent.click(screen.getByRole("button", { name: "View Detail" }));
+
+    expect(onOpenContainerDetail).toHaveBeenCalledWith("GCXU5817233", 1);
+    await screen.findByText("No billing detail found for this container.");
+    expect(getContainerLifecycleEvents).toHaveBeenCalledWith(50000, "GCXU5817233", 1);
+  });
+
+  it("uses the authoritative server preview for a customer-scoped billing detail", async () => {
+    getContainerLifecycleEvents.mockResolvedValue([]);
+    previewBilling.mockResolvedValue(authoritativePreview([{
+      id: "server-inbound-91",
+      chargeType: "INBOUND",
+      sourceType: "INBOUND_DOCUMENT",
+      sourceId: 91,
+      reference: "SERVER-ONLY-REFERENCE",
+      containerNo: "GCXU5817233",
+      containerType: "NORMAL",
+      warehouse: "NJ",
+      occurredOn: "2026-03-05",
+      quantity: 1,
+      unitRate: 450,
+      amount: 450,
+      description: "Inbound container fee"
+    }]));
+
+    renderPage("GCXU5817233", { customerId: 1 });
+
+    const invoiceTable = await screen.findByRole("table", { name: "Invoice Preview" });
+    expect(within(invoiceTable).getByText("SERVER-ONLY-REFERENCE")).toBeInTheDocument();
+    expect(previewBilling).toHaveBeenCalledWith(expect.objectContaining({
+      customerId: 1,
+      periodStart: "2026-03-01",
+      periodEnd: "2026-03-31"
+    }));
   });
 });

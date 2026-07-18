@@ -15,13 +15,14 @@ type WarehouseMapPageProps = {
   items: Item[];
   isLoading: boolean;
   onNavigate: (page: PageKey) => void;
-  onOpenContainerDetail: (containerNo: string) => void;
+  onOpenContainerDetail: (containerNo: string, customerId: number) => void;
 };
 
 type NodeStatus = "normal" | "hold" | "damaged" | "mixed";
 
 type ContainerNode = {
   id: string;
+  customerId: number;
   containerNo: string;
   warehouseId: number;
   warehouseName: string;
@@ -593,7 +594,7 @@ export function WarehouseMapPage({ items, isLoading, onNavigate, onOpenContainer
                             onClick={() => {
                               const normalizedContainerNo = selectedContainer.containerNo.trim();
                               if (normalizedContainerNo) {
-                                onOpenContainerDetail(normalizedContainerNo);
+                                onOpenContainerDetail(normalizedContainerNo, item.customerId);
                                 return;
                               }
 
@@ -640,7 +641,7 @@ function buildWarehouseMap(items: Item[], noContainerLabel: string) {
   for (const item of items) {
     const warehouseId = item.locationId;
     const sectionName = normalizeStorageSection(item.storageSection);
-    const containerNo = item.containerNo?.trim() || noContainerLabel;
+    const containerNo = item.containerNo?.trim().toUpperCase() || noContainerLabel;
     let warehouse = warehouseMap.get(warehouseId);
 
     if (!warehouse) {
@@ -681,10 +682,11 @@ function buildWarehouseMap(items: Item[], noContainerLabel: string) {
       warehouse.sections.push(section);
     }
 
-    let container = section.containers.find((entry) => entry.containerNo === containerNo);
+    let container = section.containers.find((entry) => entry.customerId === item.customerId && entry.containerNo === containerNo);
     if (!container) {
       container = {
-        id: `container-${warehouseId}-${sectionName}-${containerNo}`,
+        id: `container-${warehouseId}-${sectionName}-${item.customerId}-${containerNo}`,
+        customerId: item.customerId,
         containerNo,
         warehouseId,
         warehouseName: warehouse.warehouseName,
@@ -718,7 +720,7 @@ function buildWarehouseMap(items: Item[], noContainerLabel: string) {
               skuCount: new Set(container.items.map((item) => item.sku)).size,
               status: deriveNodeStatus(container.items)
             }))
-            .sort((left, right) => left.containerNo.localeCompare(right.containerNo));
+            .sort((left, right) => left.containerNo.localeCompare(right.containerNo) || left.customerId - right.customerId);
           section.onHand = section.containers.reduce((sum, container) => sum + container.onHand, 0);
           section.availableQty = section.containers.reduce((sum, container) => sum + container.availableQty, 0);
           section.damagedQty = section.containers.reduce((sum, container) => sum + container.damagedQty, 0);

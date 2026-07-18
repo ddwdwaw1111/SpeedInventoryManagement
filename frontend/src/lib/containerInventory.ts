@@ -3,6 +3,7 @@ import { normalizeStorageSection, type Item, type Location, type Movement } from
 
 export type ContainerContentsRow = {
   id: string;
+  customerId: number;
   containerNo: string;
   warehouseSummary: string;
   pickLocationSummary: string;
@@ -49,6 +50,10 @@ const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
 
 export function normalizeContainerNumber(value: string | null | undefined) {
   return (value ?? "").trim().toUpperCase();
+}
+
+export function buildContainerIdentityKey(customerId: number, containerNo: string | null | undefined) {
+  return `${customerId}:${normalizeContainerNumber(containerNo)}`;
 }
 
 export function displayContainerItemDescription(item: Pick<Item, "description" | "name">) {
@@ -101,16 +106,18 @@ export function buildContainerContentsRows(
 
   for (const item of filteredItems) {
     const containerNo = normalizeContainerNumber(item.containerNo);
-    const existing = rowMap.get(containerNo);
-    const timeline = containerMovementSummaryMap.get(containerNo);
+    const identityKey = buildContainerIdentityKey(item.customerId, containerNo);
+    const existing = rowMap.get(identityKey);
+    const timeline = containerMovementSummaryMap.get(identityKey);
     const receiptDate = timeline?.receivedAt ?? getFallbackItemReceivedAt(item);
     const shippedAt = timeline?.shippedAt ?? null;
     const pickLocation = `${item.locationName} / ${normalizeStorageSection(item.storageSection)}`;
     const description = displayContainerItemDescription(item);
 
     if (!existing) {
-      rowMap.set(containerNo, {
-        id: containerNo,
+      rowMap.set(identityKey, {
+        id: identityKey,
+        customerId: item.customerId,
         containerNo,
         warehouseSummary: item.locationName,
         pickLocationSummary: pickLocation,
@@ -169,13 +176,13 @@ export function buildContainerContentsRows(
     }
   }
 
-  for (const [containerNo, summary] of containerMovementSummaryMap.entries()) {
-    if (rowMap.has(containerNo)) {
+  for (const [identityKey, summary] of containerMovementSummaryMap.entries()) {
+    if (rowMap.has(identityKey)) {
       continue;
     }
 
     const matchesSearch = matchesContainerSearch(normalizedSearch, {
-      containerNo,
+      containerNo: summary.containerNo,
       skuValues: [...summary.skuSet],
       itemNumbers: [...summary.itemNumbers],
       descriptions: [...summary.descriptionSet],
@@ -183,16 +190,17 @@ export function buildContainerContentsRows(
       warehouseNames: summary.warehouseNames,
       pickLocations: summary.pickLocations
     });
-    const matchesCustomer = selectedCustomerId === "all" || summary.customerIds.includes(Number(selectedCustomerId));
+    const matchesCustomer = selectedCustomerId === "all" || summary.customerId === Number(selectedCustomerId);
     const matchesLocation = selectedLocationId === "all" || summary.locationIds.includes(Number(selectedLocationId));
 
     if (!matchesSearch || !matchesCustomer || !matchesLocation) {
       continue;
     }
 
-    rowMap.set(containerNo, {
-      id: containerNo,
-      containerNo,
+    rowMap.set(identityKey, {
+      id: identityKey,
+      customerId: summary.customerId,
+      containerNo: summary.containerNo,
       warehouseSummary: summarizeLabels(summary.warehouseNames),
       pickLocationSummary: summarizeLabels(summary.pickLocations, 3),
       customerSummary: summarizeLabels(summary.customerNames),
@@ -233,7 +241,7 @@ export function buildContainerContentsRows(
         return leftHistorical - rightHistorical;
       }
 
-      return left.containerNo.localeCompare(right.containerNo);
+      return left.customerSummary.localeCompare(right.customerSummary) || left.containerNo.localeCompare(right.containerNo);
     });
 }
 
@@ -348,13 +356,15 @@ function summarizeLabels(values: string[], maxVisible = 2) {
 function buildContainerMovementSummaryMap(items: Item[], movements: Movement[], locations: Location[]) {
   const activeContainers = new Set(
     items
-      .map((item) => normalizeContainerNumber(item.containerNo))
-      .filter(Boolean)
+      .filter((item) => Boolean(normalizeContainerNumber(item.containerNo)))
+      .map((item) => buildContainerIdentityKey(item.customerId, item.containerNo))
   );
   const locationNameToId = new Map(
     locations.map((location) => [location.name.trim().toLowerCase(), location.id] as const)
   );
   const draftMap = new Map<string, {
+    customerId: number;
+    containerNo: string;
     receivedAt: string | null;
     lastOutboundAt: string | null;
     hasInboundReceipt: boolean;
@@ -374,7 +384,10 @@ function buildContainerMovementSummaryMap(items: Item[], movements: Movement[], 
       continue;
     }
 
-    const current = draftMap.get(containerNo) ?? {
+    const identityKey = buildContainerIdentityKey(movement.customerId, containerNo);
+    const current = draftMap.get(identityKey) ?? {
+      customerId: movement.customerId,
+      containerNo,
       receivedAt: null,
       lastOutboundAt: null,
       hasInboundReceipt: false,
@@ -428,10 +441,12 @@ function buildContainerMovementSummaryMap(items: Item[], movements: Movement[], 
       current.lastOutboundAt = getLatestDate(current.lastOutboundAt, movementTimestamp);
     }
 
-    draftMap.set(containerNo, current);
+    draftMap.set(identityKey, current);
   }
 
   const timelineMap = new Map<string, {
+    customerId: number;
+    containerNo: string;
     receivedAt: string | null;
     shippedAt: string | null;
     warehouseNames: string[];
@@ -443,10 +458,12 @@ function buildContainerMovementSummaryMap(items: Item[], movements: Movement[], 
     itemNumbers: Set<string>;
     descriptionSet: Set<string>;
   }>();
-  for (const [containerNo, timeline] of draftMap.entries()) {
-    timelineMap.set(containerNo, {
+  for (const [identityKey, timeline] of draftMap.entries()) {
+    timelineMap.set(identityKey, {
+      customerId: timeline.customerId,
+      containerNo: timeline.containerNo,
       receivedAt: timeline.receivedAt,
-      shippedAt: activeContainers.has(containerNo) ? null : timeline.lastOutboundAt,
+      shippedAt: activeContainers.has(identityKey) ? null : timeline.lastOutboundAt,
       warehouseNames: timeline.warehouseNames,
       pickLocations: timeline.pickLocations,
       customerNames: timeline.customerNames,

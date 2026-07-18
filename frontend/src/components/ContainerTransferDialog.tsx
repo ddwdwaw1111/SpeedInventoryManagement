@@ -26,6 +26,7 @@ type ContainerTransferDialogProps = {
   initialSourceKey?: string;
   preferredContainerNo?: string;
   containerFilter?: string;
+  customerIdFilter?: number;
   quickMode?: boolean;
   onClose: () => void;
   onSaved: () => Promise<void> | void;
@@ -147,6 +148,7 @@ export function ContainerTransferDialog({
   initialSourceKey = "",
   preferredContainerNo = "",
   containerFilter = "",
+  customerIdFilter,
   quickMode = false,
   onClose,
   onSaved
@@ -162,7 +164,8 @@ export function ContainerTransferDialog({
   const [errorMessage, setErrorMessage] = useState("");
   const normalizedContainerFilter = containerFilter.trim().toUpperCase();
   const transferContainerOptions = useMemo(() => buildTransferContainerOptions(items)
-    .filter((option) => !normalizedContainerFilter || option.containerNo === normalizedContainerFilter), [items, normalizedContainerFilter]);
+    .filter((option) => (!normalizedContainerFilter || option.containerNo === normalizedContainerFilter)
+      && (!customerIdFilter || option.items[0]?.customerId === customerIdFilter)), [customerIdFilter, items, normalizedContainerFilter]);
   const selectedContainer = useMemo(
     () => transferContainerOptions.find((option) => option.key === selectedContainerKey) ?? null,
     [selectedContainerKey, transferContainerOptions]

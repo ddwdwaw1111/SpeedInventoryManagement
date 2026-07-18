@@ -217,7 +217,7 @@ export function HomeDashboardPage({
         code: document.containerNo || `RCV-${document.id}`,
         counterpart: document.customerName || "-",
         warehouse: `${document.locationName}${document.storageSection ? ` / ${document.storageSection}` : ""}`,
-        dateLabel: formatDashboardDate(document.expectedArrivalDate || document.createdAt),
+        dateLabel: formatDashboardDate(document.actualArrivalDate || document.expectedArrivalDate || document.createdAt),
         trackingLabel: formatInboundTrackingStatusLabel(document.trackingStatus, document.status, t),
         progress: inboundTrackingProgress(document.trackingStatus, document.status),
         badgeTone: trackingTone(inboundTrackingProgress(document.trackingStatus, document.status))
@@ -884,7 +884,7 @@ function buildThroughputPoints(
   }
 
   for (const document of inboundDocuments) {
-    const date = parseDateLikeValue(document.expectedArrivalDate || document.createdAt);
+    const date = parseDateLikeValue(document.actualArrivalDate || document.expectedArrivalDate || document.createdAt);
     if (!date) {
       continue;
     }
@@ -927,7 +927,7 @@ function buildProcessingCalendarDays(
     if (!isDocumentPending(document.status)) {
       continue;
     }
-    const date = parseDateLikeValue(document.expectedArrivalDate || document.createdAt);
+    const date = parseDateLikeValue(document.actualArrivalDate || document.expectedArrivalDate || document.createdAt);
     if (!date) {
       continue;
     }

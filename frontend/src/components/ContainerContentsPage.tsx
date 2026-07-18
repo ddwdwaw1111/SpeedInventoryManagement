@@ -29,7 +29,7 @@ type ContainerContentsPageProps = {
   locations: Location[];
   currentUserRole: UserRole;
   isLoading: boolean;
-  onOpenContainerDetail: (containerNo: string) => void;
+  onOpenContainerDetail: (containerNo: string, customerId: number) => void;
   onOpenContainerLifecycle?: (customerId: number | null, containerNo: string) => void;
   onNavigate: (page: import("../lib/routes").PageKey) => void;
 };
@@ -179,14 +179,14 @@ export function ContainerContentsPage({
       sortable: false,
       filterable: false,
       renderCell: (params) => {
-        const lifecycleCustomerId = params.row.customerIds.length === 1 ? params.row.customerIds[0] : null;
+        const lifecycleCustomerId = params.row.customerId;
         return (
           <div className="flex flex-wrap gap-1">
             <Button
               size="small"
               variant="text"
               startIcon={<OpenInNewRoundedIcon fontSize="small" />}
-              onClick={() => onOpenContainerDetail(params.row.containerNo)}
+              onClick={() => onOpenContainerDetail(params.row.containerNo, params.row.customerId)}
               aria-label={`${t("viewContainerDetail")} ${params.row.containerNo}`}
             >
               {t("viewContainerDetail")}

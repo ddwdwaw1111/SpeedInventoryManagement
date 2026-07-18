@@ -249,6 +249,13 @@ func (s *Store) CreateInventoryAdjustment(ctx context.Context, input CreateInven
 		return InventoryAdjustment{}, fmt.Errorf("begin adjustment transaction: %w", err)
 	}
 	defer tx.Rollback()
+	customerIDs := make([]int64, 0, len(input.Lines))
+	for _, line := range input.Lines {
+		customerIDs = append(customerIDs, line.CustomerID)
+	}
+	if err := lockBillingSourceCustomersTx(ctx, tx, customerIDs); err != nil {
+		return InventoryAdjustment{}, err
+	}
 
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO inventory_adjustments (

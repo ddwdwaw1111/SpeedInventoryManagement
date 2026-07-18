@@ -479,6 +479,9 @@ func (s *Store) CreateItem(ctx context.Context, input CreateItemInput) (Item, er
 		return Item{}, fmt.Errorf("begin item create transaction: %w", err)
 	}
 	defer tx.Rollback()
+	if err := lockBillingSourceCustomersTx(ctx, tx, []int64{input.CustomerID}); err != nil {
+		return Item{}, err
+	}
 
 	skuMasterID, err := s.ensureSKUMaster(ctx, tx, input)
 	if err != nil {
@@ -598,7 +601,7 @@ func (s *Store) UpdateItem(ctx context.Context, itemID int64, input CreateItemIn
 	if err != nil {
 		return Item{}, err
 	}
-	if currentProjection.Quantity > 0 && (previousSKUMasterID != skuMasterID ||
+	if (currentProjection.Quantity > 0 || currentProjection.Pallets > 0) && (previousSKUMasterID != skuMasterID ||
 		currentProjection.CustomerID != input.CustomerID ||
 		currentProjection.LocationID != input.LocationID ||
 		fallbackSection(currentProjection.StorageSection) != fallbackSection(input.StorageSection) ||

@@ -1,7 +1,14 @@
 import { parseDateLikeValue, startOfLocalDay, toIsoDateString } from "./dates";
 import { isOperationalInboundDocument } from "./documentTracking";
 import { formatMoney } from "./formatters";
-import type { ContainerLifecycleEvent, ContainerType, Customer, InboundDocument, OutboundDocument } from "./types";
+import type {
+  BillingPreviewResult,
+  ContainerLifecycleEvent,
+  ContainerType,
+  Customer,
+  InboundDocument,
+  OutboundDocument
+} from "./types";
 
 export type BillingRates = {
   inboundContainerFee: number;
@@ -90,6 +97,7 @@ export type BillingPreview = {
   storageRows: BillingStorageRow[];
   dailyBalanceRows: BillingDailyBalanceRow[];
   summary: BillingPreviewSummary;
+  warnings?: string[];
 };
 
 type BuildBillingPreviewInput = {
@@ -195,6 +203,113 @@ export function buildBillingPreview(input: BuildBillingPreviewInput): BillingPre
     dailyBalanceRows,
     summary
   };
+}
+
+export function mapAuthoritativeBillingPreview(result: BillingPreviewResult): BillingPreview {
+  const storageRows = (result.storageRows ?? []).map((row): BillingStorageRow => {
+    const warehousesTouched = row.warehousesTouched ?? [];
+    return {
+      customerId: row.customerId,
+      customerName: row.customerName,
+      containerNo: row.containerNo,
+      containerType: normalizeContainerType(row.containerType),
+      locationId: row.locationId ?? null,
+      locationName: warehousesTouched.length === 1 ? warehousesTouched[0] : "",
+      warehousesTouched,
+      palletsTracked: row.palletsTracked,
+      palletDays: row.palletDays,
+      freePalletDays: row.freePalletDays,
+      billablePalletDays: row.billablePalletDays,
+      averageDailyPallets: row.averageDailyPallets,
+      firstActivityAt: row.firstActivityOn || null,
+      lastActivityAt: row.lastActivityOn || null,
+      grossAmount: row.grossAmount,
+      discountAmount: row.discountAmount,
+      amount: row.amount,
+      segments: (row.segments ?? []).map((segment) => ({ ...segment }))
+    };
+  });
+
+  return {
+    startDate: result.periodStart,
+    endDate: result.periodEnd,
+    customerId: result.customerId,
+    customerName: result.customerName,
+    invoiceLines: (result.lines ?? []).map((line) => ({
+      id: line.id,
+      customerId: result.customerId,
+      customerName: result.customerName,
+      chargeType: line.chargeType,
+      reference: line.reference,
+      containerNo: line.containerNo,
+      warehouseSummary: line.warehouse,
+      occurredOn: line.occurredOn || null,
+      quantity: line.quantity,
+      unitRate: line.unitRate,
+      amount: line.amount,
+      meta: line.description
+    })),
+    storageRows,
+    dailyBalanceRows: (result.dailyBalances ?? []).map((row) => ({ ...row })),
+    summary: { ...result.summary },
+    warnings: [...(result.warnings ?? [])]
+  };
+}
+
+export function mergeBillingPreviews(
+  previews: BillingPreview[],
+  scope: Pick<BillingPreview, "startDate" | "endDate" | "customerId" | "customerName">
+): BillingPreview {
+  const dailyBalances = new Map<string, number>();
+  const summary = previews.reduce<BillingPreviewSummary>((total, preview) => {
+    for (const row of preview.dailyBalanceRows) {
+      dailyBalances.set(row.date, roundQuantity((dailyBalances.get(row.date) ?? 0) + row.palletCount));
+    }
+    return {
+      receivedContainers: total.receivedContainers + preview.summary.receivedContainers,
+      receivedPallets: roundQuantity(total.receivedPallets + preview.summary.receivedPallets),
+      shippedPallets: roundQuantity(total.shippedPallets + preview.summary.shippedPallets),
+      palletDays: roundQuantity(total.palletDays + preview.summary.palletDays),
+      inboundAmount: roundCurrency(total.inboundAmount + preview.summary.inboundAmount),
+      wrappingAmount: roundCurrency(total.wrappingAmount + preview.summary.wrappingAmount),
+      storageGrossAmount: roundCurrency(total.storageGrossAmount + preview.summary.storageGrossAmount),
+      storageDiscountAmount: roundCurrency(total.storageDiscountAmount + preview.summary.storageDiscountAmount),
+      storageAmount: roundCurrency(total.storageAmount + preview.summary.storageAmount),
+      outboundAmount: roundCurrency(total.outboundAmount + preview.summary.outboundAmount),
+      grandTotal: roundCurrency(total.grandTotal + preview.summary.grandTotal)
+    };
+  }, {
+    receivedContainers: 0,
+    receivedPallets: 0,
+    shippedPallets: 0,
+    palletDays: 0,
+    inboundAmount: 0,
+    wrappingAmount: 0,
+    storageGrossAmount: 0,
+    storageDiscountAmount: 0,
+    storageAmount: 0,
+    outboundAmount: 0,
+    grandTotal: 0
+  });
+
+  return {
+    ...scope,
+    invoiceLines: previews.flatMap((preview) => preview.invoiceLines).sort(compareInvoiceLines),
+    storageRows: previews
+      .flatMap((preview) => preview.storageRows)
+      .sort((left, right) => left.customerName.localeCompare(right.customerName) || left.containerNo.localeCompare(right.containerNo)),
+    dailyBalanceRows: [...dailyBalances.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([date, palletCount]) => ({ date, palletCount })),
+    summary,
+    warnings: [...new Set(previews.flatMap((preview) =>
+      (preview.warnings ?? []).map((warning) => `${preview.customerName}: ${warning}`)
+    ))].sort((left, right) => left.localeCompare(right))
+  };
+}
+
+function normalizeContainerType(value: ContainerType | ""): ContainerType {
+  return value === "WEST_COAST_TRANSFER" ? "WEST_COAST_TRANSFER" : "NORMAL";
 }
 
 export function getCurrentBillingDateRange(now = new Date()) {

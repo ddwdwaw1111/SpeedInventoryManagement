@@ -26,6 +26,7 @@ func (s *Server) registerStaffRoutes(protected gin.IRouter) {
 	staff.GET("/transfers", s.handleListInventoryTransfers)
 	staff.GET("/cycle-counts", s.handleListCycleCounts)
 	staff.GET("/container-lifecycle-events", s.handleListContainerLifecycleEvents)
+	staff.POST("/billing/preview", s.handlePreviewBilling)
 	staff.GET("/billing/invoices", s.handleListBillingInvoices)
 	staff.GET("/billing/invoices/:id", s.handleGetBillingInvoice)
 
@@ -63,6 +64,7 @@ func (s *Server) registerStaffRoutes(protected gin.IRouter) {
 	operator.POST("/transfers", s.handleCreateInventoryTransfer)
 	operator.POST("/cycle-counts", s.handleCreateCycleCount)
 	operator.POST("/billing/invoices", s.handleCreateBillingInvoice)
+	operator.POST("/billing/invoices/generate", s.handleGenerateBillingInvoice)
 	operator.PUT("/billing/invoices/:id", s.handleUpdateBillingInvoice)
 	operator.POST("/billing/invoices/:id/lines", s.handleAddBillingInvoiceLine)
 	operator.PUT("/billing/invoices/:id/lines/:lineId", s.handleUpdateBillingInvoiceLine)

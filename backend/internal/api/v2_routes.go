@@ -17,6 +17,7 @@ func (s *Server) registerV2Routes(protected gin.IRouter) {
 	operator := v2.Group("")
 	operator.Use(s.requireRoles(service.RoleAdmin, service.RoleOperator))
 	operator.POST("/containers", s.handleV2CreateContainer)
+	operator.PUT("/containers/:containerNo/metadata", s.handleV2UpdateContainerMetadata)
 	operator.POST("/containers/:containerNo/tracking-events", s.handleV2CreateContainerTrackingEvent)
 	operator.POST("/containers/:containerNo/pickup-assignments", s.handleV2CreateContainerPickupAssignment)
 	operator.POST("/picking-orders", s.handleV2CreatePickingOrder)

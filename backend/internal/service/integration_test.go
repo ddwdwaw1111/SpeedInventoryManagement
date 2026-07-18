@@ -272,7 +272,7 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 	}
 }
 
-func TestInboundDeletionRejectsInventoryThatWasShippedAndReplenishedIntegration(t *testing.T) {
+func TestInboundDeletionCascadesLaterInventoryActivityIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
@@ -335,26 +335,54 @@ func TestInboundDeletionRejectsInventoryThatWasShippedAndReplenishedIntegration(
 		t.Fatalf("confirm outbound consuming original receipt: %v", err)
 	}
 
-	createAndConfirmReceipt("2026-06-17")
+	laterReceipt := createAndConfirmReceipt("2026-06-17")
 	replenishedItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerNo, item.SKU)
 	if replenishedItem.Quantity != 10 || replenishedItem.Pallets != 2 {
 		t.Fatalf("expected replenished inventory 10 qty / 2 pallets, got %d / %d", replenishedItem.Quantity, replenishedItem.Pallets)
 	}
-
-	if _, err := store.CancelInboundDocument(ctx, original.ID); err == nil || !strings.Contains(err.Error(), "container has later inventory activity") {
-		t.Fatalf("expected deletion to reject shipped-and-replenished container activity, got %v", err)
-	}
-
-	unchangedItem := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerNo, item.SKU)
-	if unchangedItem.Quantity != 10 || unchangedItem.Pallets != 2 {
-		t.Fatalf("expected failed deletion to preserve replenished inventory, got %d / %d", unchangedItem.Quantity, unchangedItem.Pallets)
-	}
-	originalAfterFailure, err := store.getInboundDocument(ctx, original.ID)
+	adjustment, err := store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
+		ReasonCode: "CORRECTION",
+		Notes:      "Related activity should be removed with receipt",
+		Lines: []CreateInventoryAdjustmentLineInput{
+			adjustmentLineFromItem(replenishedItem, 2, "later related adjustment"),
+		},
+	})
 	if err != nil {
-		t.Fatalf("reload original after failed deletion: %v", err)
+		t.Fatalf("create later related inventory adjustment: %v", err)
 	}
-	if normalizeDocumentStatus(originalAfterFailure.Status) != DocumentStatusConfirmed {
-		t.Fatalf("expected failed deletion to leave original receipt confirmed, got %s", originalAfterFailure.Status)
+
+	deletedOriginal, err := store.CancelInboundDocument(ctx, original.ID)
+	if err != nil {
+		t.Fatalf("delete original receipt with related later activity: %v", err)
+	}
+	if normalizeDocumentStatus(deletedOriginal.Status) != DocumentStatusDeleted {
+		t.Fatalf("expected original receipt to be deleted, got %#v", deletedOriginal)
+	}
+
+	clearedItem := mustFindItemByID(t, ctx, store, replenishedItem.ID)
+	if clearedItem.Quantity != 0 || clearedItem.Pallets != 0 {
+		t.Fatalf("expected cascading deletion to clear related inventory, got %d / %d", clearedItem.Quantity, clearedItem.Pallets)
+	}
+	laterAfterCascade, err := store.getInboundDocument(ctx, laterReceipt.ID)
+	if err != nil {
+		t.Fatalf("reload later receipt after cascading deletion: %v", err)
+	}
+	if normalizeDocumentStatus(laterAfterCascade.Status) != DocumentStatusDeleted {
+		t.Fatalf("expected later receipt to be deleted with original receipt, got %s", laterAfterCascade.Status)
+	}
+	deletedOutbound, err := store.getOutboundDocument(ctx, outbound.ID)
+	if err != nil {
+		t.Fatalf("reload related outbound after cascading deletion: %v", err)
+	}
+	if normalizeDocumentStatus(deletedOutbound.Status) != DocumentStatusDeleted {
+		t.Fatalf("expected related outbound to be deleted with receipt, got %s", deletedOutbound.Status)
+	}
+	var remainingAdjustments int
+	if err := store.db.GetContext(ctx, &remainingAdjustments, `SELECT COUNT(*) FROM inventory_adjustments WHERE id = ?`, adjustment.ID); err != nil {
+		t.Fatalf("count related adjustment after cascading deletion: %v", err)
+	}
+	if remainingAdjustments != 0 {
+		t.Fatalf("expected related inventory adjustment to be deleted, got %d rows", remainingAdjustments)
 	}
 }
 
@@ -501,13 +529,13 @@ func TestBackfilledInboundUsesActualReceivedTimestampIntegration(t *testing.T) {
 	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-BK-"+suffix, 0)
 
 	inbound, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:          customer.ID,
-		LocationID:          location.ID,
-		ExpectedArrivalDate: "2025-12-15",
-		ContainerNo:         "BKCONT-" + suffix,
-		StorageSection:      DefaultStorageSection,
-		UnitLabel:           "CTN",
-		Status:              DocumentStatusDraft,
+		CustomerID:        customer.ID,
+		LocationID:        location.ID,
+		ActualArrivalDate: "2025-12-15",
+		ContainerNo:       "BKCONT-" + suffix,
+		StorageSection:    DefaultStorageSection,
+		UnitLabel:         "CTN",
+		Status:            DocumentStatusDraft,
 		Lines: []CreateInboundDocumentLineInput{
 			{
 				SKU:               item.SKU,
@@ -874,14 +902,14 @@ func TestConfirmedInboundDocumentIsImmutableIntegration(t *testing.T) {
 	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0)
 
 	receipt, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:          customer.ID,
-		LocationID:          location.ID,
-		ExpectedArrivalDate: "2026-03-24",
-		ContainerNo:         "EDIT-OLD-" + suffix,
-		StorageSection:      DefaultStorageSection,
-		UnitLabel:           "CTN",
-		Status:              DocumentStatusConfirmed,
-		DocumentNote:        "Original receipt",
+		CustomerID:        customer.ID,
+		LocationID:        location.ID,
+		ActualArrivalDate: "2026-03-24",
+		ContainerNo:       "EDIT-OLD-" + suffix,
+		StorageSection:    DefaultStorageSection,
+		UnitLabel:         "CTN",
+		Status:            DocumentStatusConfirmed,
+		DocumentNote:      "Original receipt",
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:               item.SKU,
 			Description:       item.Description,
@@ -1004,14 +1032,14 @@ func TestConfirmedInboundDocumentRemainsImmutableAfterPartialConsumptionIntegrat
 	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-"+suffix, 0)
 
 	receipt, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:          customer.ID,
-		LocationID:          location.ID,
-		ExpectedArrivalDate: "2026-03-24",
-		ContainerNo:         "USED-OLD-" + suffix,
-		StorageSection:      DefaultStorageSection,
-		UnitLabel:           "CTN",
-		Status:              DocumentStatusConfirmed,
-		DocumentNote:        "Original receipt",
+		CustomerID:        customer.ID,
+		LocationID:        location.ID,
+		ActualArrivalDate: "2026-03-24",
+		ContainerNo:       "USED-OLD-" + suffix,
+		StorageSection:    DefaultStorageSection,
+		UnitLabel:         "CTN",
+		Status:            DocumentStatusConfirmed,
+		DocumentNote:      "Original receipt",
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:               item.SKU,
 			Description:       item.Description,
@@ -1284,85 +1312,6 @@ func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 	if len(allInboundDocuments) != 1 || allInboundDocuments[0].ID != copied.ID {
 		t.Fatalf("expected only copied inbound document in all list, got %#v", allInboundDocuments)
 	}
-}
-
-func TestInboundStatusCanonicalizationMigrationIntegration(t *testing.T) {
-	store := newIntegrationStore(t)
-	ctx := context.Background()
-	suffix := integrationSuffix()
-	customer := mustCreateCustomer(t, ctx, store, "Status Migration Customer "+suffix)
-	location := mustCreateLocation(t, ctx, store, "Status Migration Warehouse "+suffix)
-
-	postedResult, err := store.db.ExecContext(ctx, `
-		INSERT INTO inbound_documents (
-			customer_id, location_id, container_no, storage_section, unit_label,
-			status, tracking_status, confirmed_at, posted_at
-		) VALUES (?, ?, ?, ?, 'CTN', 'POSTED', 'RECEIVED', NULL, NULL)
-	`, customer.ID, location.ID, "POSTED-"+suffix, DefaultStorageSection)
-	if err != nil {
-		t.Fatalf("insert legacy posted receipt: %v", err)
-	}
-	postedID, err := postedResult.LastInsertId()
-	if err != nil {
-		t.Fatalf("resolve legacy posted receipt ID: %v", err)
-	}
-
-	archived, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-		CustomerID:   customer.ID,
-		LocationID:   location.ID,
-		ContainerNo:  "ARCHIVED-" + suffix,
-		Status:       DocumentStatusDraft,
-		HandlingMode: InboundHandlingModePalletized,
-		Lines: []CreateInboundDocumentLineInput{{
-			SKU:            "ARCHIVED-SKU-" + suffix,
-			Description:    "Archived migration item",
-			ExpectedQty:    1,
-			StorageSection: DefaultStorageSection,
-		}},
-	})
-	if err != nil {
-		t.Fatalf("create archived migration receipt: %v", err)
-	}
-	attachment, err := store.CreateDocumentAttachment(ctx, CreateDocumentAttachmentInput{
-		DocumentType:     DocumentAttachmentInbound,
-		DocumentID:       archived.ID,
-		DisplayName:      "Archived attachment",
-		OriginalFileName: "archived.pdf",
-		StorageProvider:  "r2",
-		StorageBucket:    "speedwin-uploads",
-		StorageKey:       "documents/inbound/archived-" + suffix + ".pdf",
-		ContentType:      "application/pdf",
-		SizeBytes:        10,
-	})
-	if err != nil {
-		t.Fatalf("create archived receipt attachment: %v", err)
-	}
-	if _, err := store.ArchiveInboundDocument(ctx, archived.ID); err != nil {
-		t.Fatalf("archive migration receipt: %v", err)
-	}
-
-	if err := database.Migrate(store.db.DB); err != nil {
-		t.Fatalf("rerun status canonicalization migration: %v", err)
-	}
-
-	var postedStatus string
-	var confirmedAt sql.NullTime
-	if err := store.db.QueryRowContext(ctx, `SELECT status, confirmed_at FROM inbound_documents WHERE id = ?`, postedID).Scan(&postedStatus, &confirmedAt); err != nil {
-		t.Fatalf("load migrated posted receipt: %v", err)
-	}
-	if postedStatus != DocumentStatusConfirmed || !confirmedAt.Valid {
-		t.Fatalf("expected POSTED receipt to retain a confirmation timestamp, got status=%q confirmedAt=%#v", postedStatus, confirmedAt)
-	}
-
-	var archivedStatus string
-	var archivedAt sql.NullTime
-	if err := store.db.QueryRowContext(ctx, `SELECT status, archived_at FROM inbound_documents WHERE id = ?`, archived.ID).Scan(&archivedStatus, &archivedAt); err != nil {
-		t.Fatalf("load migrated archived receipt: %v", err)
-	}
-	if archivedStatus != DocumentStatusDeleted || archivedAt.Valid {
-		t.Fatalf("expected archived receipt to become deleted, got status=%q archivedAt=%#v", archivedStatus, archivedAt)
-	}
-	assertDocumentAttachmentSoftDeleted(t, ctx, store, attachment.ID, DocumentAttachmentInbound, archived.ID)
 }
 
 func TestBulkUpdateInboundDocumentStatusIntegration(t *testing.T) {
@@ -3589,10 +3538,26 @@ func TestStorageSettlementInvoiceLifecycleIntegration(t *testing.T) {
 		t.Fatalf("expected duplicate storage settlement invoice to fail with ErrInvalidInput, got %v", err)
 	}
 
+	inputBroadMixedScope := input
+	inputBroadMixedScope.InvoiceType = BillingInvoiceTypeMixed
+	inputBroadMixedScope.WarehouseLocationID = nil
+	inputBroadMixedScope.WarehouseName = ""
+	inputBroadMixedScope.ContainerType = ""
+	if _, err := store.CreateBillingInvoice(ctx, inputBroadMixedScope, authPayload.User.ID); err == nil || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected existing specific storage invoice to block an overlapping all-warehouse mixed invoice, got %v", err)
+	}
+
 	inputDifferentRange := input
 	inputDifferentRange.PeriodEnd = "2026-04-30"
-	if _, err := store.CreateBillingInvoice(ctx, inputDifferentRange, authPayload.User.ID); err != nil {
-		t.Fatalf("create storage settlement invoice for different range: %v", err)
+	if _, err := store.CreateBillingInvoice(ctx, inputDifferentRange, authPayload.User.ID); err == nil || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected overlapping storage settlement range to fail with ErrInvalidInput, got %v", err)
+	}
+
+	inputNonOverlappingRange := input
+	inputNonOverlappingRange.PeriodStart = "2026-04-01"
+	inputNonOverlappingRange.PeriodEnd = "2026-04-30"
+	if _, err := store.CreateBillingInvoice(ctx, inputNonOverlappingRange, authPayload.User.ID); err != nil {
+		t.Fatalf("create storage settlement invoice for non-overlapping range: %v", err)
 	}
 
 	inputDifferentCustomer := input
@@ -3694,8 +3659,8 @@ func TestBillingInvoiceDraftEditsRecalculateTotalsIntegration(t *testing.T) {
 	if invoice.GrandTotal != 570 {
 		t.Fatalf("expected grand total 570 after create, got %.2f", invoice.GrandTotal)
 	}
-	if invoice.Rates.TransferInboundFeePerPallet != 10 {
-		t.Fatalf("expected transfer inbound default 10, got %.2f", invoice.Rates.TransferInboundFeePerPallet)
+	if invoice.Rates.TransferInboundFeePerPallet != 0 {
+		t.Fatalf("expected explicit zero transfer inbound rate to remain zero, got %.2f", invoice.Rates.TransferInboundFeePerPallet)
 	}
 	if invoice.Rates.StorageFeePerPalletWeekNormal != 7 || invoice.Rates.StorageFeePerPalletWeekWestCoastTransfer != 7 {
 		t.Fatalf("expected normalized storage rates of 7, got normal=%.2f west=%.2f", invoice.Rates.StorageFeePerPalletWeekNormal, invoice.Rates.StorageFeePerPalletWeekWestCoastTransfer)

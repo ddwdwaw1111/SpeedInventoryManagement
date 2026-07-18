@@ -114,7 +114,7 @@ describe("ContainerContentsPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "View Detail GCXU5817233" }));
 
-    expect(onOpenContainerDetail).toHaveBeenCalledWith("GCXU5817233");
+    expect(onOpenContainerDetail).toHaveBeenCalledWith("GCXU5817233", 1);
   });
 
   it("shows fully shipped containers from movement history and still offers the secondary detail page", () => {
@@ -168,7 +168,7 @@ describe("ContainerContentsPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "View Detail MRSU6884820" }));
 
-    expect(onOpenContainerDetail).toHaveBeenCalledWith("MRSU6884820");
+    expect(onOpenContainerDetail).toHaveBeenCalledWith("MRSU6884820", 1);
   });
 
   it("loads filtered movement history from the backend when searching historical containers", async () => {
@@ -215,7 +215,7 @@ describe("ContainerContentsPage", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "View Detail OLDU1234567" }));
 
-    expect(onOpenContainerDetail).toHaveBeenCalledWith("OLDU1234567");
+    expect(onOpenContainerDetail).toHaveBeenCalledWith("OLDU1234567", 1);
   });
 
   it("uses actual restock time instead of business receipt date for backfilled containers", () => {
@@ -244,5 +244,39 @@ describe("ContainerContentsPage", () => {
     );
 
     expect(screen.getByText(formatDateTimeValue(actualRecordedAt, "UTC"))).toBeInTheDocument();
+  });
+
+  it("keeps identical container numbers separate for different customers", () => {
+    const onOpenContainerDetail = vi.fn();
+    const sharedContainerNo = "SHARED-CONT-001";
+
+    renderWithProviders(
+      <ContainerContentsPage
+        items={[
+          createItem({ id: 1, customerId: 1, customerName: "Customer Alpha", containerNo: sharedContainerNo, quantity: 5, availableQty: 5 }),
+          createItem({ id: 2, customerId: 2, customerName: "Customer Beta", containerNo: sharedContainerNo, quantity: 9, availableQty: 9 })
+        ]}
+        movements={[
+          createMovement({ id: 1, customerId: 1, customerName: "Customer Alpha", containerNo: sharedContainerNo }),
+          createMovement({ id: 2, customerId: 2, customerName: "Customer Beta", containerNo: sharedContainerNo })
+        ]}
+        customers={[
+          createCustomer({ id: 1, name: "Customer Alpha" }),
+          createCustomer({ id: 2, name: "Customer Beta" })
+        ]}
+        locations={[createLocation()]}
+        currentUserRole="admin"
+        isLoading={false}
+        onOpenContainerDetail={onOpenContainerDetail}
+        onNavigate={vi.fn()}
+      />
+    );
+
+    const detailButtons = screen.getAllByRole("button", { name: `View Detail ${sharedContainerNo}` });
+    expect(detailButtons).toHaveLength(2);
+    fireEvent.click(detailButtons[0]!);
+    fireEvent.click(detailButtons[1]!);
+    expect(onOpenContainerDetail).toHaveBeenNthCalledWith(1, sharedContainerNo, 1);
+    expect(onOpenContainerDetail).toHaveBeenNthCalledWith(2, sharedContainerNo, 2);
   });
 });

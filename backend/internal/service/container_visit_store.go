@@ -60,7 +60,7 @@ func ensureContainerVisitForInboundDocumentTx(ctx context.Context, tx *sql.Tx, d
 		documentRow.CustomerID,
 		documentRow.LocationID,
 		normalizedContainer,
-		nullableTime(firstNonEmptyTime(documentRow.ActualArrivalDate, documentRow.ExpectedArrivalDate)),
+		nullableTime(documentRow.ActualArrivalDate),
 		nullableTime(receivedAt),
 		coalesceContainerType(documentRow.ContainerType),
 		coalesceInboundHandlingMode(documentRow.HandlingMode),

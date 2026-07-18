@@ -20,7 +20,8 @@ const containerNo = "GCXU5817233";
 
 function renderPage(overrides: Partial<ComponentProps<typeof ContainerDetailPage>> = {}) {
   const props: ComponentProps<typeof ContainerDetailPage> = {
-    routeKey: `/container-contents/${containerNo}`,
+    routeKey: `/container-contents/1/${containerNo}`,
+    customerId: 1,
     containerNo,
     items: [createItem({ containerNo, quantity: 24, availableQty: 18, allocatedQty: 6, pallets: 3 })],
     movements: [createMovement({ containerNo, quantityChange: -4, pallets: 1 })],
@@ -146,5 +147,45 @@ describe("ContainerDetailPage", () => {
     expect(screen.queryByRole("button", { name: "Quick Adjustment" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Quick Transfer" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "New Count Sheet" })).not.toBeInTheDocument();
+  });
+
+  it("scopes contents, history, and quick operations by customer identity", () => {
+    renderPage({
+      customerId: 2,
+      routeKey: `/container-contents/2/${containerNo}`,
+      items: [
+        createItem({ id: 1, customerId: 1, customerName: "Customer Alpha", sku: "SKU-C1", itemNumber: "SKU-C1", description: "Customer one goods", containerNo }),
+        createItem({ id: 2, customerId: 2, customerName: "Customer Beta", sku: "SKU-C2", itemNumber: "SKU-C2", description: "Customer two goods", containerNo })
+      ],
+      movements: [
+        createMovement({ id: 1, customerId: 1, customerName: "Customer Alpha", containerNo, description: "Customer one movement" }),
+        createMovement({ id: 2, customerId: 2, customerName: "Customer Beta", containerNo, description: "Customer two movement" })
+      ]
+    });
+
+    expect(screen.getByText("Customer two goods")).toBeInTheDocument();
+    expect(screen.queryByText("Customer one goods")).not.toBeInTheDocument();
+    expect(screen.getByText(/Customer two movement/)).toBeInTheDocument();
+    expect(screen.queryByText(/Customer one movement/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Quick Adjustment" }));
+    expect(screen.getByLabelText("Final Qty - SKU-C2 - TEMP")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Final Qty - SKU-C1 - TEMP")).not.toBeInTheDocument();
+  });
+
+  it("does not resolve an ambiguous legacy container-only route", () => {
+    renderPage({
+      customerId: null,
+      routeKey: `/container-contents/${containerNo}`,
+      items: [
+        createItem({ id: 1, customerId: 1, customerName: "Customer Alpha", description: "Customer one goods", containerNo }),
+        createItem({ id: 2, customerId: 2, customerName: "Customer Beta", description: "Customer two goods", containerNo })
+      ]
+    });
+
+    expect(screen.getByText("No current or historical records matched this container number.")).toBeInTheDocument();
+    expect(screen.queryByText("Customer one goods")).not.toBeInTheDocument();
+    expect(screen.queryByText("Customer two goods")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Quick Adjustment" })).not.toBeInTheDocument();
   });
 });

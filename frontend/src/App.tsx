@@ -37,7 +37,7 @@ import { NavigationSidebar } from "./shared/NavigationSidebar";
 import {
   getBillingContainerDetailFromPath,
   getBillingInvoiceIdFromPath,
-  getContainerDetailContainerNoFromPath,
+  getContainerDetailRouteFromPath,
   getContainerLifecycleScopeFromPath,
   getDailyOperationsDateFromPath,
   getInboundDetailIdFromPath,
@@ -328,8 +328,26 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
     setCurrentPathname(window.location.pathname);
   }
 
-  function handleNavigateToContainerDetail(containerNo: string) {
-    navigateToContainerDetail(setActivePage, containerNo);
+  function handleNavigateToContainerDetail(containerNo: string, customerId?: number | null) {
+    let resolvedCustomerId = customerId && customerId > 0 ? customerId : null;
+    if (!resolvedCustomerId) {
+      const normalizedContainerNo = containerNo.trim().toUpperCase();
+      const matchingCustomerIds = new Set<number>();
+      for (const item of items) {
+        if (item.containerNo.trim().toUpperCase() === normalizedContainerNo && item.customerId > 0) {
+          matchingCustomerIds.add(item.customerId);
+        }
+      }
+      for (const movement of movements) {
+        if (movement.containerNo.trim().toUpperCase() === normalizedContainerNo && movement.customerId > 0) {
+          matchingCustomerIds.add(movement.customerId);
+        }
+      }
+      if (matchingCustomerIds.size === 1) {
+        resolvedCustomerId = [...matchingCustomerIds][0] ?? null;
+      }
+    }
+    navigateToContainerDetail(setActivePage, resolvedCustomerId, containerNo);
     setCurrentPathname(window.location.pathname);
   }
 
@@ -636,7 +654,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
   const selectedInboundDetailId = getInboundDetailIdFromPath(currentPathname);
   const selectedReceiptEditorId = getReceiptEditorIdFromPath(currentPathname);
   const selectedShipmentEditorId = getShipmentEditorIdFromPath(currentPathname);
-  const selectedContainerDetailNo = getContainerDetailContainerNoFromPath(currentPathname);
+  const selectedContainerDetailRoute = getContainerDetailRouteFromPath(currentPathname);
   const selectedContainerLifecycleScope = getContainerLifecycleScopeFromPath(currentPathname);
   const selectedBillingContainerDetail = getBillingContainerDetailFromPath(currentPathname);
   const selectedBillingInvoiceId = getBillingInvoiceIdFromPath(currentPathname);
@@ -838,7 +856,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
               </Suspense>
             ) : null}
             {activePage === "container-contents" ? renderWithSuspense(<ContainerContentsPage items={items} movements={movements} customers={customers} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onOpenContainerDetail={handleNavigateToContainerDetail} onOpenContainerLifecycle={handleNavigateToContainerLifecycle} onNavigate={handleNavigateToPage} />) : null}
-            {activePage === "container-detail" ? renderWithSuspense(<ContainerDetailPage routeKey={currentPathname} containerNo={selectedContainerDetailNo} items={items} movements={movements} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} onOpenContainerLifecycle={handleNavigateToContainerLifecycle} onBackToList={() => handleNavigateToPage("container-contents")} />) : null}
+            {activePage === "container-detail" ? renderWithSuspense(<ContainerDetailPage routeKey={currentPathname} customerId={selectedContainerDetailRoute?.customerId ?? null} containerNo={selectedContainerDetailRoute?.containerNo ?? null} items={items} movements={movements} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} onOpenContainerLifecycle={handleNavigateToContainerLifecycle} onBackToList={() => handleNavigateToPage("container-contents")} />) : null}
             {activePage === "container-lifecycle" ? renderWithSuspense(<AdminContainerLifecyclePage routeScope={selectedContainerLifecycleScope} customers={customers} locations={locations} onOpenContainerLifecycle={handleNavigateToContainerLifecycle} onOpenContainerDetail={handleNavigateToContainerDetail} onOpenInboundDetail={handleNavigateToInboundDetail} onOpenReceiptEditor={handleNavigateToReceiptEditor} onOpenOutboundDocument={handleNavigateToOutboundDocument} onOpenShipmentEditor={handleNavigateToShipmentEditor} />) : null}
             {activePage === "all-activity" ? renderWithSuspense(<AllActivityPage movements={movements} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "customers" ? renderWithSuspense(<CustomerManagementPage customers={customers} items={items} inboundDocuments={activeInboundDocuments} outboundDocuments={activeOutboundDocuments} movements={movements} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} onOpenCustomerPortal={handleNavigateToCustomerPortal} />) : null}

@@ -4,10 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/jmoiron/sqlx"
 )
 
 // --- constants ---
@@ -297,49 +301,70 @@ func (s *Store) GetBillingInvoice(ctx context.Context, invoiceID int64) (Billing
 	return invoice, nil
 }
 
-func (s *Store) CreateBillingInvoice(ctx context.Context, input CreateBillingInvoiceInput, createdByUserID int64) (BillingInvoice, error) {
+type preparedBillingInvoiceCreate struct {
+	invoiceType             string
+	normalizedContainerType string
+	periodStart             time.Time
+	periodEnd               time.Time
+	ratesJSON               string
+	headerJSON              string
+	invoiceNo               string
+	customerName            string
+}
+
+type billingCustomerLockTx interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+type billingSourceMutationScope struct {
+	CustomerID    int64
+	OccurredAt    time.Time
+	LocationIDs   []int64
+	ContainerNo   string
+	ContainerType string
+}
+
+func prepareBillingInvoiceCreate(input CreateBillingInvoiceInput) (preparedBillingInvoiceCreate, error) {
 	if input.CustomerID <= 0 {
-		return BillingInvoice{}, fmt.Errorf("%w: customer is required", ErrInvalidInput)
+		return preparedBillingInvoiceCreate{}, fmt.Errorf("%w: customer is required", ErrInvalidInput)
 	}
 	if input.WarehouseLocationID != nil && *input.WarehouseLocationID <= 0 {
-		return BillingInvoice{}, fmt.Errorf("%w: warehouse scope must be a valid location", ErrInvalidInput)
+		return preparedBillingInvoiceCreate{}, fmt.Errorf("%w: warehouse scope must be a valid location", ErrInvalidInput)
 	}
 	if strings.TrimSpace(input.PeriodStart) == "" || strings.TrimSpace(input.PeriodEnd) == "" {
-		return BillingInvoice{}, fmt.Errorf("%w: billing period start and end are required", ErrInvalidInput)
+		return preparedBillingInvoiceCreate{}, fmt.Errorf("%w: billing period start and end are required", ErrInvalidInput)
 	}
 	invoiceType, err := normalizeBillingInvoiceType(input.InvoiceType, false)
 	if err != nil {
-		return BillingInvoice{}, err
+		return preparedBillingInvoiceCreate{}, err
 	}
 	normalizedContainerType := strings.TrimSpace(strings.ToUpper(input.ContainerType))
-	if invoiceType == BillingInvoiceTypeStorage {
-		if normalizedContainerType == "" {
-			return BillingInvoice{}, fmt.Errorf("%w: container type is required for storage settlement invoices", ErrInvalidInput)
-		}
+	if invoiceType == BillingInvoiceTypeStorage && normalizedContainerType == "" {
+		return preparedBillingInvoiceCreate{}, fmt.Errorf("%w: container type is required for storage settlement invoices", ErrInvalidInput)
+	}
+	if normalizedContainerType != "" {
 		if err := validateContainerType(normalizedContainerType); err != nil {
-			return BillingInvoice{}, err
+			return preparedBillingInvoiceCreate{}, err
 		}
 		normalizedContainerType = coalesceContainerType(normalizedContainerType)
-	} else {
-		normalizedContainerType = ""
 	}
 
 	periodStart, err := parseRequiredDate(input.PeriodStart)
 	if err != nil {
-		return BillingInvoice{}, fmt.Errorf("%w: invalid period start date", ErrInvalidInput)
+		return preparedBillingInvoiceCreate{}, fmt.Errorf("%w: invalid period start date", ErrInvalidInput)
 	}
 	periodEnd, err := parseRequiredDate(input.PeriodEnd)
 	if err != nil {
-		return BillingInvoice{}, fmt.Errorf("%w: invalid period end date", ErrInvalidInput)
+		return preparedBillingInvoiceCreate{}, fmt.Errorf("%w: invalid period end date", ErrInvalidInput)
 	}
 	if periodEnd.Before(periodStart) {
-		return BillingInvoice{}, fmt.Errorf("%w: billing period end must be on or after the start date", ErrInvalidInput)
+		return preparedBillingInvoiceCreate{}, fmt.Errorf("%w: billing period end must be on or after the start date", ErrInvalidInput)
 	}
 
 	normalizedRates := normalizeBillingRatesSnapshot(input.Rates)
 	ratesJSON, err := json.Marshal(normalizedRates)
 	if err != nil {
-		return BillingInvoice{}, fmt.Errorf("marshal rates: %w", err)
+		return preparedBillingInvoiceCreate{}, fmt.Errorf("marshal rates: %w", err)
 	}
 	normalizedHeader := defaultBillingInvoiceHeader()
 	if input.Header != nil {
@@ -347,7 +372,7 @@ func (s *Store) CreateBillingInvoice(ctx context.Context, input CreateBillingInv
 	}
 	headerJSON, err := json.Marshal(normalizedHeader)
 	if err != nil {
-		return BillingInvoice{}, fmt.Errorf("marshal invoice header: %w", err)
+		return preparedBillingInvoiceCreate{}, fmt.Errorf("marshal invoice header: %w", err)
 	}
 
 	invoiceNo := generateBillingInvoiceNo(periodStart, input.CustomerID)
@@ -355,34 +380,285 @@ func (s *Store) CreateBillingInvoice(ctx context.Context, input CreateBillingInv
 	if customerName == "" {
 		customerName = fmt.Sprintf("Customer #%d", input.CustomerID)
 	}
+	return preparedBillingInvoiceCreate{
+		invoiceType: invoiceType, normalizedContainerType: normalizedContainerType,
+		periodStart: periodStart, periodEnd: periodEnd,
+		ratesJSON: string(ratesJSON), headerJSON: string(headerJSON),
+		invoiceNo: invoiceNo, customerName: customerName,
+	}, nil
+}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+func (s *Store) CreateBillingInvoice(ctx context.Context, input CreateBillingInvoiceInput, createdByUserID int64) (BillingInvoice, error) {
+	prepared, err := prepareBillingInvoiceCreate(input)
+	if err != nil {
+		return BillingInvoice{}, err
+	}
+	tx, err := s.db.BeginTxx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return BillingInvoice{}, fmt.Errorf("begin billing invoice transaction: %w", err)
 	}
 	defer tx.Rollback()
+	if err := lockBillingCustomerTx(ctx, tx, input.CustomerID); err != nil {
+		return BillingInvoice{}, err
+	}
+	invoiceID, err := createBillingInvoiceTx(ctx, tx, input, createdByUserID, prepared)
+	if err != nil {
+		return BillingInvoice{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return BillingInvoice{}, fmt.Errorf("commit billing invoice: %w", err)
+	}
+	return s.GetBillingInvoice(ctx, invoiceID)
+}
 
-	if invoiceType == BillingInvoiceTypeStorage {
-		var existingInvoiceID int64
-		err = tx.QueryRowContext(ctx, `
+func lockBillingCustomerTx(ctx context.Context, tx billingCustomerLockTx, customerID int64) error {
+	return lockBillingSourceCustomersTx(ctx, tx, []int64{customerID})
+}
+
+func lockBillingSourceCustomersTx(ctx context.Context, tx billingCustomerLockTx, customerIDs []int64) error {
+	unique := make(map[int64]struct{}, len(customerIDs))
+	ordered := make([]int64, 0, len(customerIDs))
+	for _, customerID := range customerIDs {
+		if customerID <= 0 {
+			return fmt.Errorf("%w: billing source customer is required", ErrInvalidInput)
+		}
+		if _, exists := unique[customerID]; exists {
+			continue
+		}
+		unique[customerID] = struct{}{}
+		ordered = append(ordered, customerID)
+	}
+	sort.Slice(ordered, func(left, right int) bool { return ordered[left] < ordered[right] })
+	for _, customerID := range ordered {
+		var lockedCustomerID int64
+		if err := tx.QueryRowContext(ctx, `
 			SELECT id
+			FROM customers
+			WHERE id = ?
+			FOR UPDATE
+		`, customerID).Scan(&lockedCustomerID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("%w: billing customer was not found", ErrInvalidInput)
+			}
+			return fmt.Errorf("lock billing customer %d: %w", customerID, err)
+		}
+	}
+	return nil
+}
+
+// ensureBillingSourceMutationsAllowedTx protects already-generated invoice
+// scopes from later back-dated operational changes. The invoice lookup is a
+// locking/current read so it still observes an invoice that committed while
+// this transaction was waiting for the shared customer row lock, even under
+// REPEATABLE READ.
+func ensureBillingSourceMutationsAllowedTx(
+	ctx context.Context,
+	tx billingCustomerLockTx,
+	scopes ...billingSourceMutationScope,
+) error {
+	customerIDs := make([]int64, 0, len(scopes))
+	for _, scope := range scopes {
+		customerIDs = append(customerIDs, scope.CustomerID)
+	}
+	if err := lockBillingSourceCustomersTx(ctx, tx, customerIDs); err != nil {
+		return err
+	}
+
+	for _, scope := range scopes {
+		effectiveAt := scope.OccurredAt
+		if effectiveAt.IsZero() {
+			effectiveAt = time.Now().UTC()
+		}
+		containerNo := normalizeContainerNo(scope.ContainerNo)
+		containerType := normalizeContainerType(scope.ContainerType)
+		if containerType == "" && containerNo != "" {
+			var storedContainerType string
+			err := tx.QueryRowContext(ctx, `
+				SELECT COALESCE(NULLIF(UPPER(TRIM(container_type)), ''), ?)
+				FROM containers
+				WHERE customer_id = ?
+				  AND UPPER(TRIM(container_no)) = ?
+				LIMIT 1
+				FOR UPDATE
+			`, ContainerTypeNormal, scope.CustomerID, containerNo).Scan(&storedContainerType)
+			if err == nil {
+				containerType = normalizeContainerType(storedContainerType)
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("resolve billing source container type: %w", err)
+			}
+		}
+		locations := make([]int64, 0, len(scope.LocationIDs))
+		seenLocations := make(map[int64]struct{}, len(scope.LocationIDs))
+		for _, locationID := range scope.LocationIDs {
+			if locationID <= 0 {
+				continue
+			}
+			if _, exists := seenLocations[locationID]; exists {
+				continue
+			}
+			seenLocations[locationID] = struct{}{}
+			locations = append(locations, locationID)
+		}
+		sort.Slice(locations, func(left, right int) bool { return locations[left] < locations[right] })
+
+		query := `
+			SELECT invoice_no
 			FROM billing_invoices
 			WHERE customer_id = ?
-				AND warehouse_location_id <=> ?
-				AND container_type = ?
-				AND period_start = ?
-				AND period_end = ?
-				AND invoice_type = ?
-				AND status <> ?
-			ORDER BY id DESC
-			LIMIT 1
-		`, input.CustomerID, nullableInt64Ptr(input.WarehouseLocationID), normalizedContainerType, periodStart, periodEnd, invoiceType, BillingInvoiceStatusVoid).Scan(&existingInvoiceID)
-		if err != nil && err != sql.ErrNoRows {
-			return BillingInvoice{}, fmt.Errorf("check storage settlement duplicates: %w", err)
+			  AND status <> ?
+			  AND period_end >= ?`
+		args := []any{scope.CustomerID, BillingInvoiceStatusVoid, dateOnly(effectiveAt)}
+		if len(locations) > 0 {
+			placeholders := make([]string, len(locations))
+			for index, locationID := range locations {
+				placeholders[index] = "?"
+				args = append(args, locationID)
+			}
+			query += fmt.Sprintf(" AND (warehouse_location_id IS NULL OR warehouse_location_id IN (%s)", strings.Join(placeholders, ","))
+			if containerNo != "" {
+				query += ` OR EXISTS (
+					SELECT 1
+					FROM billing_invoice_lines source_line
+					WHERE source_line.invoice_id = billing_invoices.id
+					  AND UPPER(TRIM(COALESCE(source_line.container_no, ''))) = ?
+				)`
+				args = append(args, containerNo)
+			}
+			query += ")"
+		} else if containerNo != "" {
+			query += ` AND EXISTS (
+				SELECT 1
+				FROM billing_invoice_lines source_line
+				WHERE source_line.invoice_id = billing_invoices.id
+				  AND UPPER(TRIM(COALESCE(source_line.container_no, ''))) = ?
+			)`
+			args = append(args, containerNo)
 		}
-		if err == nil && existingInvoiceID > 0 {
-			return BillingInvoice{}, fmt.Errorf("%w: a storage settlement invoice already exists for this customer, warehouse scope, container type, and billing period", ErrInvalidInput)
+		if containerType != "" {
+			query += " AND (container_type IS NULL OR UPPER(TRIM(container_type)) = ?)"
+			args = append(args, containerType)
 		}
+		query += " ORDER BY period_end DESC, id DESC LIMIT 1 FOR UPDATE"
+
+		var invoiceNo string
+		err := tx.QueryRowContext(ctx, query, args...).Scan(&invoiceNo)
+		if err == nil {
+			return fmt.Errorf(
+				"%w: billing invoice %s already covers this source date or a later inventory balance; void that invoice before changing operational history",
+				ErrInvalidInput,
+				invoiceNo,
+			)
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("check invoiced billing source scope: %w", err)
+		}
+	}
+	return nil
+}
+
+func ensureContainerBillingTypeMutationAllowedTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	customerID int64,
+	containerNo string,
+	currentType string,
+	nextType string,
+) error {
+	containerNo = normalizeContainerNo(containerNo)
+	currentType = billingPreviewContainerType(currentType)
+	nextType = billingPreviewContainerType(nextType)
+	if containerNo == "" || currentType == nextType {
+		return nil
+	}
+	if err := lockBillingSourceCustomersTx(ctx, tx, []int64{customerID}); err != nil {
+		return err
+	}
+
+	var earliest *time.Time
+	var lifecycleAt time.Time
+	err := tx.QueryRowContext(ctx, `
+		SELECT event_time
+		FROM container_lifecycle_events
+		WHERE customer_id = ?
+		  AND UPPER(TRIM(container_no)) = ?
+		ORDER BY event_time, id
+		LIMIT 1
+		FOR UPDATE
+	`, customerID, containerNo).Scan(&lifecycleAt)
+	if err == nil {
+		earliest = &lifecycleAt
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("load container billing lifecycle for type change: %w", err)
+	}
+
+	var receiptAt time.Time
+	err = tx.QueryRowContext(ctx, `
+		SELECT COALESCE(actual_arrival_date, DATE(confirmed_at), DATE(created_at), expected_arrival_date)
+		FROM inbound_documents
+		WHERE customer_id = ?
+		  AND UPPER(TRIM(COALESCE(container_no, ''))) = ?
+		  AND UPPER(TRIM(status)) IN ('CONFIRMED', 'POSTED')
+		  AND cancelled_at IS NULL
+		  AND corrected_at IS NULL
+		ORDER BY COALESCE(actual_arrival_date, DATE(confirmed_at), DATE(created_at), expected_arrival_date), id
+		LIMIT 1
+		FOR UPDATE
+	`, customerID, containerNo).Scan(&receiptAt)
+	if err == nil {
+		if earliest == nil || receiptAt.Before(*earliest) {
+			earliest = &receiptAt
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("load container billing receipts for type change: %w", err)
+	}
+	if earliest == nil {
+		return nil
+	}
+
+	return ensureBillingSourceMutationsAllowedTx(ctx, tx,
+		billingSourceMutationScope{
+			CustomerID: customerID, OccurredAt: *earliest,
+			ContainerNo: containerNo, ContainerType: currentType,
+		},
+		billingSourceMutationScope{
+			CustomerID: customerID, OccurredAt: *earliest,
+			ContainerNo: containerNo, ContainerType: nextType,
+		},
+	)
+}
+
+func createBillingInvoiceTx(
+	ctx context.Context,
+	tx *sqlx.Tx,
+	input CreateBillingInvoiceInput,
+	createdByUserID int64,
+	prepared preparedBillingInvoiceCreate,
+) (int64, error) {
+	var existingInvoiceID int64
+	warehouseScope := nullableInt64Ptr(input.WarehouseLocationID)
+	containerTypeScope := nullableString(prepared.normalizedContainerType)
+	err := tx.QueryRowContext(ctx, `
+		SELECT id
+		FROM billing_invoices
+		WHERE customer_id = ?
+			AND (warehouse_location_id IS NULL OR ? IS NULL OR warehouse_location_id = ?)
+			AND (container_type IS NULL OR ? IS NULL OR container_type = ?)
+			AND period_start <= ?
+			AND period_end >= ?
+			AND status <> ?
+		ORDER BY id DESC
+		LIMIT 1
+	`, input.CustomerID,
+		warehouseScope, warehouseScope,
+		containerTypeScope, containerTypeScope,
+		prepared.periodEnd, prepared.periodStart,
+		BillingInvoiceStatusVoid,
+	).Scan(&existingInvoiceID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("check billing invoice duplicates: %w", err)
+	}
+	if err == nil && existingInvoiceID > 0 {
+		return 0, fmt.Errorf("%w: a non-void invoice already overlaps this customer, warehouse scope, container type, and billing period", ErrInvalidInput)
 	}
 
 	result, err := tx.ExecContext(ctx, `
@@ -393,18 +669,18 @@ func (s *Store) CreateBillingInvoice(ctx context.Context, input CreateBillingInv
 			subtotal, discount_total, grand_total,
 			status, notes, created_by_user_id
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, 0, 0, 0, ?, ?, ?)
-	`, invoiceNo, invoiceType, input.CustomerID, customerName,
+	`, prepared.invoiceNo, prepared.invoiceType, input.CustomerID, prepared.customerName,
 		nullableInt64Ptr(input.WarehouseLocationID), nullableString(strings.TrimSpace(input.WarehouseName)),
-		nullableString(normalizedContainerType),
-		periodStart, periodEnd, string(ratesJSON), string(headerJSON),
+		nullableString(prepared.normalizedContainerType),
+		prepared.periodStart, prepared.periodEnd, prepared.ratesJSON, prepared.headerJSON,
 		BillingInvoiceStatusDraft, nullableString(strings.TrimSpace(input.Notes)), createdByUserID)
 	if err != nil {
-		return BillingInvoice{}, mapDBError(fmt.Errorf("create billing invoice: %w", err))
+		return 0, mapDBError(fmt.Errorf("create billing invoice: %w", err))
 	}
 
 	invoiceID, err := result.LastInsertId()
 	if err != nil {
-		return BillingInvoice{}, fmt.Errorf("resolve billing invoice id: %w", err)
+		return 0, fmt.Errorf("resolve billing invoice id: %w", err)
 	}
 
 	for index, line := range input.Lines {
@@ -415,7 +691,7 @@ func (s *Store) CreateBillingInvoice(ctx context.Context, input CreateBillingInv
 		occurredOn, _ := parseOptionalDate(line.OccurredOn)
 		detailsJSON, err := normalizeBillingInvoiceLineDetails(line.Details)
 		if err != nil {
-			return BillingInvoice{}, err
+			return 0, err
 		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO billing_invoice_lines (
@@ -439,19 +715,14 @@ func (s *Store) CreateBillingInvoice(ctx context.Context, input CreateBillingInv
 			index+1,
 			nullableJSONString(detailsJSON),
 		); err != nil {
-			return BillingInvoice{}, mapDBError(fmt.Errorf("insert billing invoice line: %w", err))
+			return 0, mapDBError(fmt.Errorf("insert billing invoice line: %w", err))
 		}
 	}
 
-	if err := recalcBillingInvoiceTotalsTx(ctx, tx, invoiceID); err != nil {
-		return BillingInvoice{}, err
+	if err := recalcBillingInvoiceTotalsTx(ctx, tx.Tx, invoiceID); err != nil {
+		return 0, err
 	}
-
-	if err := tx.Commit(); err != nil {
-		return BillingInvoice{}, fmt.Errorf("commit billing invoice: %w", err)
-	}
-
-	return s.GetBillingInvoice(ctx, invoiceID)
+	return invoiceID, nil
 }
 
 func (s *Store) UpdateBillingInvoice(ctx context.Context, invoiceID int64, input UpdateBillingInvoiceInput) (BillingInvoice, error) {
@@ -510,6 +781,9 @@ func (s *Store) AddBillingInvoiceLine(ctx context.Context, invoiceID int64, inpu
 	}
 	if invoice.Status != BillingInvoiceStatusDraft {
 		return BillingInvoice{}, fmt.Errorf("%w: only draft invoices can be edited", ErrInvalidInput)
+	}
+	if isAuthoritativeGeneratedBillingInvoice(invoice) {
+		return BillingInvoice{}, fmt.Errorf("%w: server-generated invoice lines are immutable; delete and regenerate the draft to change calculated charges", ErrInvalidInput)
 	}
 
 	chargeType := strings.TrimSpace(strings.ToUpper(input.ChargeType))
@@ -570,6 +844,9 @@ func (s *Store) UpdateBillingInvoiceLine(ctx context.Context, invoiceID int64, l
 	}
 	if invoice.Status != BillingInvoiceStatusDraft {
 		return BillingInvoice{}, fmt.Errorf("%w: only draft invoices can be edited", ErrInvalidInput)
+	}
+	if isAuthoritativeGeneratedBillingInvoice(invoice) {
+		return BillingInvoice{}, fmt.Errorf("%w: server-generated invoice lines are immutable; delete and regenerate the draft to change calculated charges", ErrInvalidInput)
 	}
 
 	found := false
@@ -642,6 +919,9 @@ func (s *Store) DeleteBillingInvoiceLine(ctx context.Context, invoiceID int64, l
 	if invoice.Status != BillingInvoiceStatusDraft {
 		return BillingInvoice{}, fmt.Errorf("%w: only draft invoices can be edited", ErrInvalidInput)
 	}
+	if isAuthoritativeGeneratedBillingInvoice(invoice) {
+		return BillingInvoice{}, fmt.Errorf("%w: server-generated invoice lines are immutable; delete and regenerate the draft to change calculated charges", ErrInvalidInput)
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -664,6 +944,25 @@ func (s *Store) DeleteBillingInvoiceLine(ctx context.Context, invoiceID int64, l
 	}
 
 	return s.GetBillingInvoice(ctx, invoiceID)
+}
+
+func isAuthoritativeGeneratedBillingInvoice(invoice BillingInvoice) bool {
+	for _, line := range invoice.Lines {
+		if !strings.EqualFold(strings.TrimSpace(line.SourceType), "AUTO") || len(line.Details) == 0 {
+			continue
+		}
+		var provenance struct {
+			CalculationVersion string `json:"calculationVersion"`
+			SourceFingerprint  string `json:"sourceFingerprint"`
+		}
+		if err := json.Unmarshal(line.Details, &provenance); err != nil {
+			continue
+		}
+		if strings.TrimSpace(provenance.CalculationVersion) != "" && strings.TrimSpace(provenance.SourceFingerprint) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) FinalizeBillingInvoice(ctx context.Context, invoiceID int64, userID int64) (BillingInvoice, error) {
@@ -899,9 +1198,6 @@ func nullableInt64Ptr(value *int64) any {
 }
 
 func normalizeBillingRatesSnapshot(rates BillingRatesSnapshot) BillingRatesSnapshot {
-	if rates.TransferInboundFeePerPallet <= 0 {
-		rates.TransferInboundFeePerPallet = 10
-	}
 	if rates.StorageFeePerPalletWeekNormal <= 0 && rates.StorageFeePerPalletWeekWestCoastTransfer <= 0 && rates.StorageFeePerPalletWeek > 0 {
 		rates.StorageFeePerPalletWeekNormal = rates.StorageFeePerPalletWeek
 		rates.StorageFeePerPalletWeekWestCoastTransfer = rates.StorageFeePerPalletWeek

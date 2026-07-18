@@ -176,6 +176,31 @@ func TestAssignOutboundBulkInventoryPalletsKeepsOutboundCountIndependent(t *test
 	}
 }
 
+func TestBuildOutboundBulkDocumentLinesDistributesShippingPalletsAcrossSourceLocations(t *testing.T) {
+	lines := buildOutboundBulkDocumentLines(
+		7,
+		SKUMaster{ID: 11, Unit: "CTN"},
+		OutboundBulkImportLinePreview{OutboundPallets: 7},
+		[]OutboundPickAllocation{
+			{LocationID: 101, ContainerNo: "CONT-A", AllocatedQty: 60},
+			{LocationID: 202, ContainerNo: "CONT-B", AllocatedQty: 40},
+		},
+	)
+
+	if len(lines) != 2 {
+		t.Fatalf("expected one persisted line per source location, got %#v", lines)
+	}
+	if lines[0].Quantity != 60 || lines[0].Pallets != 4 {
+		t.Fatalf("unexpected first source line shipping-pallet share: %#v", lines[0])
+	}
+	if lines[1].Quantity != 40 || lines[1].Pallets != 3 {
+		t.Fatalf("unexpected second source line shipping-pallet share: %#v", lines[1])
+	}
+	if lines[0].Pallets+lines[1].Pallets != 7 {
+		t.Fatalf("shipping-pallet shares must preserve the workbook total: %#v", lines)
+	}
+}
+
 func TestAssignOutboundBulkInventoryPalletsRejectsUnavailableCountWithoutMutation(t *testing.T) {
 	remaining := map[int64]int{1: 1}
 	_, valid := assignOutboundBulkInventoryPallets([]outboundBulkSelectedAllocation{

@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "timezone": "America/New_York",
+  "wechat": {
+    "targetGroup": "YOUR_GROUP_NAME",
+    "accountRoot": "C:\\Users\\YOUR_USER\\Documents\\xwechat_files\\YOUR_ACCOUNT",
+    "attachmentRoot": "C:\\Users\\YOUR_USER\\Documents\\xwechat_files\\YOUR_ACCOUNT\\msg\\file",
+    "readMode": "ui_read_only",
+    "databaseMode": "disabled",
+    "failureMode": "attachments_and_manual_evidence_only"
+  },
+  "formalSources": [],
+  "attachmentExtensions": [
+    ".xlsx",
+    ".xls",
+    ".csv",
+    ".pdf",
+    ".doc",
+    ".docx"
+  ],
+  "logisticsFilenameHints": [
+    "delivery",
+    "packing",
+    "bol",
+    "po#",
+    "po_"
+  ],
+  "customerVisibility": {
+    "warehouseDisclosure": "forbidden",
+    "shipFromName": "YOUR_SHIP_FROM_NAME",
+    "shipFromAddress": "YOUR_SHIP_FROM_ADDRESS",
+    "shipToName": "YOUR_SHIP_TO_NAME",
+    "shipToAddress": "YOUR_SHIP_TO_ADDRESS"
+  },
+  "sender": {
+    "name": "YOUR_NAME",
+    "email": "YOUR_EMAIL",
+    "company": "YOUR_COMPANY",
+    "address": "YOUR_ADDRESS",
+    "telephone": "YOUR_PHONE"
+  },
+  "workflow": {
+    "sendPolicy": "draft_only",
+    "initialCustomerOkIsFinal": false,
+    "tMinusOneReconfirmationRequired": true,
+    "finalReleaseCondition": "customer_second_ok",
+    "packingListRule": "item_number_only",
+    "defaultReportDirectory": "dispatch-assistant/outputs"
+  },
+  "schedule": {
+    "dailyMorning": "06:00",
+    "tMinusOneCheck": "15:00",
+    "weeklyPlan": "Friday 15:30"
+  }
+}

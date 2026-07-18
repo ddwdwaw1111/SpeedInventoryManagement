@@ -326,6 +326,16 @@ func (s *Store) createInventoryTransferTransaction(
 		return InventoryTransfer{}, fmt.Errorf("begin transfer transaction: %w", err)
 	}
 	defer tx.Rollback()
+	customerIDs := make([]int64, 0, len(input.Lines)+1)
+	for _, line := range input.Lines {
+		customerIDs = append(customerIDs, line.CustomerID)
+	}
+	if input.EntireContainer != nil {
+		customerIDs = append(customerIDs, input.EntireContainer.CustomerID)
+	}
+	if err := lockBillingSourceCustomersTx(ctx, tx, customerIDs); err != nil {
+		return InventoryTransfer{}, err
+	}
 	if input.EntireContainer != nil {
 		input.Lines, err = s.buildEntireContainerTransferLinesTx(ctx, tx, *input.EntireContainer)
 		if err != nil {
@@ -768,6 +778,37 @@ func (s *Store) ensureTransferDestinationProjectionItem(
 	toSection string,
 ) error {
 	normalizedToSection := normalizeStorageSection(toSection)
+	sectionID, err := resolveStorageSectionIDTx(ctx, tx, toLocationID, normalizedToSection)
+	if err != nil {
+		return err
+	}
+
+	var containerID sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT container_id
+		FROM inventory_items
+		WHERE id = ?
+	`, sourceItem.ItemID).Scan(&containerID); err != nil {
+		return mapDBError(fmt.Errorf("load transfer source container: %w", err))
+	}
+	if !containerID.Valid {
+		containerNo := normalizeContainerNo(sourceItem.ContainerNo)
+		if containerNo != "" {
+			err := tx.QueryRowContext(ctx, `
+				SELECT id
+				FROM containers
+				WHERE customer_id = ? AND UPPER(TRIM(container_no)) = ?
+				FOR UPDATE
+			`, sourceItem.CustomerID, containerNo).Scan(&containerID)
+			if err != nil && err != sql.ErrNoRows {
+				return mapDBError(fmt.Errorf("load transfer container: %w", err))
+			}
+		}
+	}
+	var persistedContainerID any
+	if containerID.Valid {
+		persistedContainerID = containerID.Int64
+	}
 
 	var destinationItemID int64
 	query := `
@@ -784,8 +825,18 @@ func (s *Store) ensureTransferDestinationProjectionItem(
 		normalizedToSection,
 		strings.TrimSpace(sourceItem.ContainerNo),
 	}
-	err := tx.QueryRowContext(ctx, query, queryArgs...).Scan(&destinationItemID)
+	err = tx.QueryRowContext(ctx, query, queryArgs...).Scan(&destinationItemID)
 	if err == nil {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE inventory_items
+			SET
+				section_id = ?,
+				container_id = COALESCE(?, container_id),
+				updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`, sectionID, persistedContainerID, destinationItemID); err != nil {
+			return mapDBError(fmt.Errorf("sync transfer destination item identifiers: %w", err))
+		}
 		return nil
 	}
 	if err != sql.ErrNoRows {
@@ -796,16 +847,20 @@ func (s *Store) ensureTransferDestinationProjectionItem(
 		INSERT INTO inventory_items (
 			sku_master_id,
 			customer_id,
+			container_id,
 			location_id,
+			section_id,
 			storage_section,
 			delivery_date,
 			container_no,
 			last_restocked_at
-		) VALUES (?, ?, ?, ?, NULL, ?, NULL)
+		) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL)
 	`,
 		sourceItem.SKUMasterID,
 		sourceItem.CustomerID,
+		persistedContainerID,
 		toLocationID,
+		sectionID,
 		normalizedToSection,
 		nullableString(sourceItem.ContainerNo),
 	)

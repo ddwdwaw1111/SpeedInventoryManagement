@@ -27,3 +27,5 @@ coverage/
 exports/
 pickup-container-rows.json
 warehouse-pallet-counts.json
+.codex_tmp/*
+outputs/

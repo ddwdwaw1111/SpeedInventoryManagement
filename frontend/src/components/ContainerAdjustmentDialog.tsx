@@ -23,6 +23,7 @@ type ContainerAdjustmentDialogProps = {
   preferredContainerNo?: string;
   initialReasonCode?: string;
   containerFilter?: string;
+  customerIdFilter?: number;
   quickMode?: boolean;
   onClose: () => void;
   onSaved: () => Promise<void> | void;
@@ -134,6 +135,7 @@ export function ContainerAdjustmentDialog({
   preferredContainerNo = "",
   initialReasonCode = "",
   containerFilter = "",
+  customerIdFilter,
   quickMode = false,
   onClose,
   onSaved
@@ -148,7 +150,8 @@ export function ContainerAdjustmentDialog({
   const [errorMessage, setErrorMessage] = useState("");
   const normalizedContainerFilter = containerFilter.trim().toUpperCase();
   const containerOptions = useMemo(() => buildAdjustmentContainerOptions(items)
-    .filter((option) => !normalizedContainerFilter || option.containerNo === normalizedContainerFilter), [items, normalizedContainerFilter]);
+    .filter((option) => (!normalizedContainerFilter || option.containerNo === normalizedContainerFilter)
+      && (!customerIdFilter || option.items[0]?.customerId === customerIdFilter)), [customerIdFilter, items, normalizedContainerFilter]);
   const selectedContainer = useMemo(
     () => containerOptions.find((option) => option.key === selectedContainerKey) ?? null,
     [containerOptions, selectedContainerKey]

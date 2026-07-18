@@ -213,6 +213,7 @@ type outboundAllocationCandidate struct {
 	Description        string
 	Unit               string
 	AvailableQty       int
+	AvailablePallets   int
 	AllocatedQty       int
 	Pallets            int
 	AutoTransferToMain bool
@@ -220,24 +221,26 @@ type outboundAllocationCandidate struct {
 }
 
 type outboundAllocationReservationState struct {
-	ByBucketKey map[string]int
+	ByBucketKey        map[string]int
+	PalletsByBucketKey map[string]int
 }
 
 type lockedOutboundSourceRow struct {
-	BucketKey      string
-	SKUMasterID    int64
-	CustomerID     int64
-	ItemNumber     string
-	LocationID     int64
-	LocationName   string
-	StorageSection string
-	ContainerNo    string
-	SKU            string
-	Description    string
-	Unit           string
-	AvailableQty   int
-	DeliveryDate   *time.Time
-	CreatedAt      time.Time
+	BucketKey        string
+	SKUMasterID      int64
+	CustomerID       int64
+	ItemNumber       string
+	LocationID       int64
+	LocationName     string
+	StorageSection   string
+	ContainerNo      string
+	SKU              string
+	Description      string
+	Unit             string
+	AvailableQty     int
+	AvailablePallets int
+	DeliveryDate     *time.Time
+	CreatedAt        time.Time
 }
 
 type OutboundDocumentFilters struct {
@@ -262,7 +265,10 @@ func (s *Store) ListOutboundDocumentsFiltered(ctx context.Context, limit int, fi
 		limit = 50
 	}
 
-	whereClauses := []string{buildDocumentArchiveFilterClause("d", filters.ArchiveScope)}
+	whereClauses := []string{
+		buildDocumentArchiveFilterClause("d", filters.ArchiveScope),
+		"UPPER(TRIM(d.status)) NOT IN ('DELETED', 'CANCELLED')",
+	}
 	args := make([]any, 0, 20)
 	if filters.CustomerID > 0 {
 		whereClauses = append(whereClauses, "d.customer_id = ?")
@@ -482,7 +488,7 @@ func (s *Store) GetOutboundDocumentForCustomer(ctx context.Context, documentID i
 	if err != nil {
 		return OutboundDocument{}, err
 	}
-	if document.CustomerID != customerID {
+	if document.CustomerID != customerID || normalizeDocumentStatus(document.Status) == DocumentStatusDeleted {
 		return OutboundDocument{}, ErrNotFound
 	}
 	return document, nil
@@ -518,6 +524,13 @@ func (s *Store) CreateOutboundDocument(ctx context.Context, input CreateOutbound
 		return OutboundDocument{}, fmt.Errorf("begin outbound document transaction: %w", err)
 	}
 	defer tx.Rollback()
+	customerIDs := make([]int64, 0, len(input.Lines))
+	for _, line := range input.Lines {
+		customerIDs = append(customerIDs, line.CustomerID)
+	}
+	if err := lockBillingSourceCustomersTx(ctx, tx, customerIDs); err != nil {
+		return OutboundDocument{}, err
+	}
 
 	documentID, err := s.createOutboundDocumentTx(ctx, tx, input, expectedShipDate, actualShipDate, requestedStatus, requestedTrackingStatus)
 	if err != nil {
@@ -655,6 +668,18 @@ func (s *Store) UpdateOutboundDocument(ctx context.Context, documentID int64, in
 		return OutboundDocument{}, fmt.Errorf("begin outbound update transaction: %w", err)
 	}
 	defer tx.Rollback()
+	existingCustomerID, err := loadOutboundDocumentCustomerIDTx(ctx, tx, documentID)
+	if err != nil {
+		return OutboundDocument{}, err
+	}
+	customerIDs := make([]int64, 0, len(input.Lines)+1)
+	customerIDs = append(customerIDs, existingCustomerID)
+	for _, line := range input.Lines {
+		customerIDs = append(customerIDs, line.CustomerID)
+	}
+	if err := lockBillingSourceCustomersTx(ctx, tx, customerIDs); err != nil {
+		return OutboundDocument{}, err
+	}
 
 	documentRow, err := s.loadOutboundDocumentForUpdateTx(ctx, tx, documentID)
 	if err != nil {
@@ -826,6 +851,9 @@ func (s *Store) UpdateOutboundDocumentNote(ctx context.Context, documentID int64
 	if err != nil {
 		return OutboundDocument{}, err
 	}
+	if normalizeDocumentStatus(documentRow.Status) == DocumentStatusDeleted {
+		return OutboundDocument{}, fmt.Errorf("%w: deleted shipment cannot update its note", ErrInvalidInput)
+	}
 
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE outbound_documents
@@ -941,6 +969,13 @@ func (s *Store) ConfirmOutboundDocument(ctx context.Context, documentID int64) (
 		return OutboundDocument{}, fmt.Errorf("begin outbound confirm transaction: %w", err)
 	}
 	defer tx.Rollback()
+	customerID, err := loadOutboundDocumentCustomerIDTx(ctx, tx, documentID)
+	if err != nil {
+		return OutboundDocument{}, err
+	}
+	if err := lockBillingSourceCustomersTx(ctx, tx, []int64{customerID}); err != nil {
+		return OutboundDocument{}, err
+	}
 
 	documentRow, err := s.loadOutboundDocumentForUpdateTx(ctx, tx, documentID)
 	if err != nil {
@@ -971,6 +1006,13 @@ func (s *Store) UpdateOutboundDocumentTrackingStatus(ctx context.Context, docume
 		return OutboundDocument{}, fmt.Errorf("begin outbound tracking transition: %w", err)
 	}
 	defer tx.Rollback()
+	customerID, err := loadOutboundDocumentCustomerIDTx(ctx, tx, documentID)
+	if err != nil {
+		return OutboundDocument{}, err
+	}
+	if err := lockBillingSourceCustomersTx(ctx, tx, []int64{customerID}); err != nil {
+		return OutboundDocument{}, err
+	}
 
 	documentRow, err := s.loadOutboundDocumentForUpdateTx(ctx, tx, documentID)
 	if err != nil {
@@ -1053,6 +1095,15 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 	if len(lineRows) == 0 {
 		return fmt.Errorf("%w: outbound document must contain at least one line", ErrInvalidInput)
 	}
+	confirmedAt := time.Now().UTC()
+	billingOccurredAt := confirmedAt
+	if documentRow.ActualShipDate != nil {
+		billingOccurredAt = *documentRow.ActualShipDate
+	}
+	billingScopes := outboundBillingMutationScopes(documentRow.CustomerID, billingOccurredAt, lineRows)
+	if err := ensureBillingSourceMutationsAllowedTx(ctx, tx, billingScopes...); err != nil {
+		return err
+	}
 	lineRows, autoTransferred, err := s.stageOutboundDraftAtMainWarehouseTx(
 		ctx,
 		tx,
@@ -1063,14 +1114,18 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 	if err != nil {
 		return err
 	}
+	if autoTransferred {
+		finalBillingScopes := outboundBillingMutationScopes(documentRow.CustomerID, billingOccurredAt, lineRows)
+		if err := ensureBillingSourceMutationsAllowedTx(ctx, tx, finalBillingScopes...); err != nil {
+			return err
+		}
+	}
 	if autoTransferred || !outboundTrackingRequiresActiveReservation(currentTrackingStatus) {
 		lineRows, err = s.reserveOutboundDocumentLinesTx(ctx, tx, documentRow.CustomerID, lineRows)
 		if err != nil {
 			return err
 		}
 	}
-
-	outboundEventTime := firstNonEmptyTime(documentRow.ActualShipDate, documentRow.ConfirmedAt, documentRow.ExpectedShipDate)
 
 	for _, lineRow := range lineRows {
 		allocationRows, err := s.loadOutboundContainerAllocationsForUpdateTx(ctx, tx, lineRow.ID)
@@ -1167,29 +1222,6 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `
-		UPDATE containers c
-		JOIN (
-			SELECT DISTINCT oca.container_id
-			FROM outbound_container_allocations oca
-			JOIN outbound_document_lines odl ON odl.id = oca.outbound_line_id
-			WHERE odl.document_id = ?
-		) shipped ON shipped.container_id = c.id
-		LEFT JOIN (
-			SELECT container_id, SUM(quantity) AS remaining_qty
-			FROM inventory_items
-			WHERE container_id IS NOT NULL
-			GROUP BY container_id
-		) balance ON balance.container_id = c.id
-		SET
-			c.status = CASE WHEN COALESCE(balance.remaining_qty, 0) > 0 THEN 'PARTIALLY_OUTBOUND' ELSE 'DEPLETED' END,
-			c.last_event_at = COALESCE(?, c.last_event_at),
-			c.updated_at = CURRENT_TIMESTAMP
-	`, documentID, nullableTime(outboundEventTime)); err != nil {
-		return mapDBError(fmt.Errorf("update outbound container inventory status: %w", err))
-	}
-
-	confirmedAt := time.Now().UTC()
-	if _, err := tx.ExecContext(ctx, `
 		UPDATE outbound_documents
 		SET
 			status = ?,
@@ -1202,6 +1234,30 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 	}
 
 	return nil
+}
+
+func outboundBillingMutationScopes(customerID int64, occurredAt time.Time, lineRows []outboundDocumentLineRow) []billingSourceMutationScope {
+	scopes := make([]billingSourceMutationScope, 0, len(lineRows))
+	for _, lineRow := range lineRows {
+		allocations := decodeOutboundPickAllocationsOrEmpty(lineRow.PickAllocationsJSON)
+		if len(allocations) == 0 {
+			scopes = append(scopes, billingSourceMutationScope{
+				CustomerID:  customerID,
+				OccurredAt:  occurredAt,
+				LocationIDs: []int64{lineRow.LocationID},
+			})
+			continue
+		}
+		for _, allocation := range allocations {
+			scopes = append(scopes, billingSourceMutationScope{
+				CustomerID:  customerID,
+				OccurredAt:  occurredAt,
+				LocationIDs: []int64{firstNonZeroInt64(allocation.LocationID, lineRow.LocationID)},
+				ContainerNo: allocation.ContainerNo,
+			})
+		}
+	}
+	return scopes
 }
 
 func (s *Store) stageOutboundDraftAtMainWarehouseTx(
@@ -1323,79 +1379,21 @@ func (s *Store) CancelOutboundDocument(ctx context.Context, documentID int64) (O
 		return OutboundDocument{}, fmt.Errorf("begin outbound cancel transaction: %w", err)
 	}
 	defer tx.Rollback()
+	customerID, err := loadOutboundDocumentCustomerIDTx(ctx, tx, documentID)
+	if err != nil {
+		return OutboundDocument{}, err
+	}
+	if err := lockBillingSourceCustomersTx(ctx, tx, []int64{customerID}); err != nil {
+		return OutboundDocument{}, err
+	}
 
 	documentRow, err := s.loadOutboundDocumentForUpdateTx(ctx, tx, documentID)
 	if err != nil {
 		return OutboundDocument{}, err
 	}
-
-	status := normalizeDocumentStatus(documentRow.Status)
-	if status == DocumentStatusDeleted {
-		return OutboundDocument{}, fmt.Errorf("%w: outbound document is already deleted", ErrInvalidInput)
-	}
-
-	deletedAt := time.Now().UTC()
-
-	if status == DocumentStatusConfirmed {
-		lineRows, err := s.loadOutboundDocumentLinesTx(ctx, tx, documentID)
-		if err != nil {
-			return OutboundDocument{}, err
-		}
-
-		for _, lineRow := range lineRows {
-			allocationRows, err := s.loadOutboundContainerAllocationsForUpdateTx(ctx, tx, lineRow.ID)
-			if err != nil {
-				return OutboundDocument{}, err
-			}
-			for _, allocation := range allocationRows {
-				if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
-					EventType:           StockLedgerEventReversal,
-					SKUMasterID:         lineRow.SKUMasterID,
-					CustomerID:          documentRow.CustomerID,
-					LocationID:          allocation.LocationID,
-					StorageSection:      allocation.StorageSection,
-					QuantityChange:      allocation.AllocatedQty,
-					PalletChange:        float64(allocation.AllocatedPallets),
-					SourceDocumentType:  StockLedgerSourceOutbound,
-					SourceDocumentID:    documentID,
-					SourceLineID:        lineRow.ID,
-					ContainerNo:         allocation.ContainerNo,
-					OutDate:             &deletedAt,
-					PackingListNo:       documentRow.PackingListNo,
-					OrderRef:            documentRow.OrderRef,
-					ItemNumber:          lineRow.ItemNumberSnapshot,
-					DescriptionSnapshot: lineRow.DescriptionSnapshot,
-					Pallets:             allocation.AllocatedPallets,
-					Reason:              "Outbound shipment cancelled",
-				}); err != nil {
-					return OutboundDocument{}, err
-				}
-			}
-			if _, err := tx.ExecContext(ctx, `
-				UPDATE outbound_container_allocations
-				SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP
-				WHERE outbound_line_id = ?
-			`, lineRow.ID); err != nil {
-				return OutboundDocument{}, mapDBError(fmt.Errorf("cancel outbound container allocations: %w", err))
-			}
-		}
-	} else if outboundTrackingRequiresActiveReservation(normalizeOutboundTrackingStatus(documentRow.TrackingStatus, documentRow.Status)) {
-		lineRows, err := s.loadOutboundDocumentLinesTx(ctx, tx, documentID)
-		if err != nil {
-			return OutboundDocument{}, err
-		}
-		if err := s.releaseOutboundDocumentReservationsTx(ctx, tx, lineRows); err != nil {
-			return OutboundDocument{}, err
-		}
-	}
-
-	if err := markDocumentAttachmentsDeletedForDocument(ctx, tx, DocumentAttachmentOutbound, documentID); err != nil {
+	deletedAt, err := s.cancelLoadedOutboundDocumentTx(ctx, tx, documentRow)
+	if err != nil {
 		return OutboundDocument{}, err
-	}
-
-	// Delete outbound document (cascades to outbound document lines and container allocations)
-	if _, err := tx.ExecContext(ctx, `DELETE FROM outbound_documents WHERE id = ?`, documentID); err != nil {
-		return OutboundDocument{}, mapDBError(fmt.Errorf("delete outbound document: %w", err))
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -1411,6 +1409,123 @@ func (s *Store) CancelOutboundDocument(ctx context.Context, documentID int64) (O
 		DeletedAt:     &deletedAt,
 		CreatedAt:     documentRow.CreatedAt,
 	}, nil
+}
+
+func (s *Store) cancelLoadedOutboundDocumentTx(ctx context.Context, tx *sql.Tx, documentRow outboundDocumentRow) (time.Time, error) {
+	status := normalizeDocumentStatus(documentRow.Status)
+	if status == DocumentStatusDeleted {
+		return time.Time{}, fmt.Errorf("%w: outbound document is already deleted", ErrInvalidInput)
+	}
+
+	deletedAt := time.Now().UTC()
+
+	if status == DocumentStatusConfirmed {
+		lineRows, err := s.loadOutboundDocumentLinesTx(ctx, tx, documentRow.ID)
+		if err != nil {
+			return time.Time{}, err
+		}
+		allocationsByLine := make(map[int64][]outboundContainerAllocationRow, len(lineRows))
+		billingScopes := make([]billingSourceMutationScope, 0, len(lineRows))
+		for _, lineRow := range lineRows {
+			allocationRows, err := s.loadOutboundContainerAllocationsForUpdateTx(ctx, tx, lineRow.ID)
+			if err != nil {
+				return time.Time{}, err
+			}
+			allocationsByLine[lineRow.ID] = allocationRows
+			if len(allocationRows) == 0 {
+				billingOccurredAt, err := earliestOutboundBillingMutationDateTx(
+					ctx, tx, documentRow, lineRow.ID, lineRow.LocationID, "",
+				)
+				if err != nil {
+					return time.Time{}, err
+				}
+				billingScopes = append(billingScopes, billingSourceMutationScope{
+					CustomerID:  documentRow.CustomerID,
+					OccurredAt:  billingOccurredAt,
+					LocationIDs: []int64{lineRow.LocationID},
+				})
+				continue
+			}
+			for _, allocation := range allocationRows {
+				billingOccurredAt, err := earliestOutboundBillingMutationDateTx(
+					ctx, tx, documentRow, lineRow.ID, allocation.LocationID, allocation.ContainerNo,
+				)
+				if err != nil {
+					return time.Time{}, err
+				}
+				billingScopes = append(billingScopes, billingSourceMutationScope{
+					CustomerID:  documentRow.CustomerID,
+					OccurredAt:  billingOccurredAt,
+					LocationIDs: []int64{allocation.LocationID},
+					ContainerNo: allocation.ContainerNo,
+				})
+			}
+		}
+		if err := ensureBillingSourceMutationsAllowedTx(ctx, tx, billingScopes...); err != nil {
+			return time.Time{}, err
+		}
+
+		for _, lineRow := range lineRows {
+			allocationRows := allocationsByLine[lineRow.ID]
+			for _, allocation := range allocationRows {
+				if err := s.createStockLedgerTx(ctx, tx, createStockLedgerInput{
+					EventType:           StockLedgerEventReversal,
+					SKUMasterID:         lineRow.SKUMasterID,
+					CustomerID:          documentRow.CustomerID,
+					LocationID:          allocation.LocationID,
+					StorageSection:      allocation.StorageSection,
+					QuantityChange:      allocation.AllocatedQty,
+					PalletChange:        float64(allocation.AllocatedPallets),
+					SourceDocumentType:  StockLedgerSourceOutbound,
+					SourceDocumentID:    documentRow.ID,
+					SourceLineID:        lineRow.ID,
+					ContainerNo:         allocation.ContainerNo,
+					OutDate:             &deletedAt,
+					PackingListNo:       documentRow.PackingListNo,
+					OrderRef:            documentRow.OrderRef,
+					ItemNumber:          lineRow.ItemNumberSnapshot,
+					DescriptionSnapshot: lineRow.DescriptionSnapshot,
+					Pallets:             allocation.AllocatedPallets,
+					Reason:              "Outbound shipment cancelled",
+				}); err != nil {
+					return time.Time{}, err
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE outbound_container_allocations
+				SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP
+				WHERE outbound_line_id = ?
+			`, lineRow.ID); err != nil {
+				return time.Time{}, mapDBError(fmt.Errorf("cancel outbound container allocations: %w", err))
+			}
+		}
+	} else if outboundTrackingRequiresActiveReservation(normalizeOutboundTrackingStatus(documentRow.TrackingStatus, documentRow.Status)) {
+		lineRows, err := s.loadOutboundDocumentLinesTx(ctx, tx, documentRow.ID)
+		if err != nil {
+			return time.Time{}, err
+		}
+		if err := s.cancelOutboundDocumentReservationsTx(ctx, tx, lineRows); err != nil {
+			return time.Time{}, err
+		}
+	}
+
+	if err := markDocumentAttachmentsDeletedForDocument(ctx, tx, DocumentAttachmentOutbound, documentRow.ID); err != nil {
+		return time.Time{}, err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE outbound_documents
+		SET
+			status = ?,
+			cancel_note = COALESCE(NULLIF(cancel_note, ''), ?),
+			cancelled_at = ?,
+			archived_at = NULL,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, DocumentStatusDeleted, "Outbound document cancelled", deletedAt, documentRow.ID); err != nil {
+		return time.Time{}, mapDBError(fmt.Errorf("mark outbound document deleted: %w", err))
+	}
+	return deletedAt, nil
 }
 
 func outboundTrackingRequiresActiveReservation(status string) bool {
@@ -1489,9 +1604,6 @@ func (s *Store) reserveOutboundLineTx(
 			return err
 		}
 		plannedAllocations = toOutboundPickAllocationsFromCandidates(line, allocations)
-		// Legacy/manual submissions without explicit picks use the declared
-		// outbound pallet count as their inventory deduction fallback.
-		plannedAllocations = assignOutboundPalletsToAllocations(plannedAllocations, line.Pallets)
 	}
 	if totalOutboundPickAllocationQuantity(plannedAllocations) != line.Quantity {
 		return fmt.Errorf("%w: draft pick allocation quantity must equal outbound quantity", ErrInvalidInput)
@@ -1499,34 +1611,6 @@ func (s *Store) reserveOutboundLineTx(
 	line.PickAllocations = plannedAllocations
 	return nil
 }
-
-func assignOutboundPalletsToAllocations(allocations []OutboundPickAllocation, palletCount int) []OutboundPickAllocation {
-	normalized := normalizeOutboundPickAllocations(allocations)
-	if len(normalized) == 0 || palletCount <= 0 {
-		return normalized
-	}
-	remainingPallets := palletCount
-	remainingQty := totalOutboundPickAllocationQuantity(normalized)
-	for index := range normalized {
-		if index == len(normalized)-1 {
-			normalized[index].Pallets = remainingPallets
-			break
-		}
-		share := 0
-		if remainingQty > 0 {
-			share = int(math.Round(float64(remainingPallets) * float64(normalized[index].AllocatedQty) / float64(remainingQty)))
-		}
-		share = maxInt(0, share)
-		if share > remainingPallets {
-			share = remainingPallets
-		}
-		normalized[index].Pallets = share
-		remainingPallets -= share
-		remainingQty -= normalized[index].AllocatedQty
-	}
-	return normalized
-}
-
 func (s *Store) reserveOutboundDocumentLinesTx(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -1577,6 +1661,22 @@ func (s *Store) releaseOutboundDocumentReservationsTx(ctx context.Context, tx *s
 	return nil
 }
 
+func (s *Store) cancelOutboundDocumentReservationsTx(ctx context.Context, tx *sql.Tx, lineRows []outboundDocumentLineRow) error {
+	for _, lineRow := range lineRows {
+		if err := s.releaseOutboundContainerAllocationBalancesTx(ctx, tx, lineRow.ID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE outbound_container_allocations
+			SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP
+			WHERE outbound_line_id = ?
+		`, lineRow.ID); err != nil {
+			return mapDBError(fmt.Errorf("cancel released container allocations: %w", err))
+		}
+	}
+	return nil
+}
+
 func (s *Store) replaceOutboundContainerAllocationsTx(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -1603,8 +1703,7 @@ func (s *Store) replaceOutboundContainerAllocationsTx(
 				handling_mode, status, tracking_status, last_event_at
 			) VALUES (?, ?, ?, 'NORMAL', 'PALLETIZED', 'IN_STOCK', 'RECEIVED', CURRENT_TIMESTAMP)
 			ON DUPLICATE KEY UPDATE
-				id = LAST_INSERT_ID(id),
-				location_id = VALUES(location_id)
+				id = LAST_INSERT_ID(id)
 		`, customerID, allocation.LocationID, containerNo)
 		if err != nil {
 			return mapDBError(fmt.Errorf("ensure outbound allocation container: %w", err))
@@ -1815,6 +1914,9 @@ func (s *Store) ArchiveOutboundDocument(ctx context.Context, documentID int64) (
 	if err != nil {
 		return OutboundDocument{}, err
 	}
+	if normalizeDocumentStatus(documentRow.Status) == DocumentStatusDeleted {
+		return OutboundDocument{}, fmt.Errorf("%w: deleted shipment cannot be archived", ErrInvalidInput)
+	}
 	if documentRow.ArchivedAt != nil {
 		return OutboundDocument{}, fmt.Errorf("%w: shipment is already archived", ErrInvalidInput)
 	}
@@ -1844,6 +1946,9 @@ func (s *Store) CopyOutboundDocument(ctx context.Context, documentID int64) (Out
 	documentRow, err := s.loadOutboundDocumentForUpdateTx(ctx, tx, documentID)
 	if err != nil {
 		return OutboundDocument{}, err
+	}
+	if normalizeDocumentStatus(documentRow.Status) == DocumentStatusDeleted {
+		return OutboundDocument{}, fmt.Errorf("%w: deleted shipment cannot be copied", ErrInvalidInput)
 	}
 
 	lineRows, err := s.loadOutboundDocumentLinesTx(ctx, tx, documentID)
@@ -1953,6 +2058,21 @@ func (s *Store) CopyOutboundDocument(ctx context.Context, documentID int64) (Out
 	}
 
 	return s.getOutboundDocument(ctx, newDocumentID)
+}
+
+func loadOutboundDocumentCustomerIDTx(ctx context.Context, tx *sql.Tx, documentID int64) (int64, error) {
+	var customerID int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT customer_id
+		FROM outbound_documents
+		WHERE id = ?
+	`, documentID).Scan(&customerID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		return 0, fmt.Errorf("load outbound document customer: %w", err)
+	}
+	return customerID, nil
 }
 
 func (s *Store) loadOutboundDocumentForUpdateTx(ctx context.Context, tx *sql.Tx, documentID int64) (outboundDocumentRow, error) {
@@ -2260,7 +2380,8 @@ func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []in
 
 func newOutboundAllocationReservationState() *outboundAllocationReservationState {
 	return &outboundAllocationReservationState{
-		ByBucketKey: make(map[string]int),
+		ByBucketKey:        make(map[string]int),
+		PalletsByBucketKey: make(map[string]int),
 	}
 }
 
@@ -2361,6 +2482,7 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 				i.quantity - i.allocated_qty - i.damaged_qty - i.hold_qty,
 				0
 			) AS available_qty,
+			GREATEST(i.pallets - i.allocated_pallets, 0) AS available_pallets,
 			i.delivery_date,
 			i.created_at AS sort_at
 		FROM inventory_items i
@@ -2407,6 +2529,7 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 			&row.Description,
 			&row.Unit,
 			&row.AvailableQty,
+			&row.AvailablePallets,
 			&deliveryDate,
 			&row.CreatedAt,
 		); err != nil {
@@ -2440,19 +2563,20 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 			sortTime = *lockedRow.DeliveryDate
 		}
 		candidates = append(candidates, outboundAllocationCandidate{
-			BucketKey:      lockedRow.BucketKey,
-			SKUMasterID:    lockedRow.SKUMasterID,
-			CustomerID:     lockedRow.CustomerID,
-			ItemNumber:     lockedRow.ItemNumber,
-			LocationID:     lockedRow.LocationID,
-			LocationName:   lockedRow.LocationName,
-			StorageSection: fallbackSection(lockedRow.StorageSection),
-			ContainerNo:    lockedRow.ContainerNo,
-			SKU:            lockedRow.SKU,
-			Description:    lockedRow.Description,
-			Unit:           lockedRow.Unit,
-			AvailableQty:   lockedRow.AvailableQty,
-			SortAt:         sortTime,
+			BucketKey:        lockedRow.BucketKey,
+			SKUMasterID:      lockedRow.SKUMasterID,
+			CustomerID:       lockedRow.CustomerID,
+			ItemNumber:       lockedRow.ItemNumber,
+			LocationID:       lockedRow.LocationID,
+			LocationName:     lockedRow.LocationName,
+			StorageSection:   fallbackSection(lockedRow.StorageSection),
+			ContainerNo:      lockedRow.ContainerNo,
+			SKU:              lockedRow.SKU,
+			Description:      lockedRow.Description,
+			Unit:             lockedRow.Unit,
+			AvailableQty:     lockedRow.AvailableQty,
+			AvailablePallets: lockedRow.AvailablePallets,
+			SortAt:           sortTime,
 		})
 	}
 
@@ -2514,6 +2638,12 @@ func (s *Store) resolveOutboundDraftBucketAllocationsTx(
 	if reservationState == nil {
 		reservationState = newOutboundAllocationReservationState()
 	}
+	if reservationState.ByBucketKey == nil {
+		reservationState.ByBucketKey = make(map[string]int)
+	}
+	if reservationState.PalletsByBucketKey == nil {
+		reservationState.PalletsByBucketKey = make(map[string]int)
+	}
 
 	normalizedDraftAllocations := normalizeOutboundPickAllocations(draftAllocations)
 	if totalOutboundPickAllocationQuantity(normalizedDraftAllocations) != requestedQty {
@@ -2532,8 +2662,9 @@ func (s *Store) resolveOutboundDraftBucketAllocationsTx(
 
 	allocations := make([]outboundAllocationCandidate, 0, len(normalizedDraftAllocations))
 	appliedReservations := make([]struct {
-		BucketKey string
-		Allocated int
+		BucketKey        string
+		AllocatedQty     int
+		AllocatedPallets int
 	}, 0, len(normalizedDraftAllocations))
 
 	for _, draftAllocation := range normalizedDraftAllocations {
@@ -2544,15 +2675,18 @@ func (s *Store) resolveOutboundDraftBucketAllocationsTx(
 		candidate, exists := candidateByBucketKey[bucketKey]
 		if !exists {
 			for _, applied := range appliedReservations {
-				reservationState.ByBucketKey[applied.BucketKey] -= applied.Allocated
+				reservationState.ByBucketKey[applied.BucketKey] -= applied.AllocatedQty
+				reservationState.PalletsByBucketKey[applied.BucketKey] -= applied.AllocatedPallets
 			}
 			return nil, ErrInsufficientStock
 		}
 
 		effectiveAvailable := candidate.AvailableQty - reservationState.ByBucketKey[bucketKey]
-		if draftAllocation.AllocatedQty > effectiveAvailable {
+		effectiveAvailablePallets := candidate.AvailablePallets - reservationState.PalletsByBucketKey[bucketKey]
+		if draftAllocation.AllocatedQty > effectiveAvailable || draftAllocation.Pallets > effectiveAvailablePallets {
 			for _, applied := range appliedReservations {
-				reservationState.ByBucketKey[applied.BucketKey] -= applied.Allocated
+				reservationState.ByBucketKey[applied.BucketKey] -= applied.AllocatedQty
+				reservationState.PalletsByBucketKey[applied.BucketKey] -= applied.AllocatedPallets
 			}
 			return nil, ErrInsufficientStock
 		}
@@ -2568,12 +2702,15 @@ func (s *Store) resolveOutboundDraftBucketAllocationsTx(
 
 		allocations = append(allocations, candidate)
 		reservationState.ByBucketKey[bucketKey] += draftAllocation.AllocatedQty
+		reservationState.PalletsByBucketKey[bucketKey] += candidate.Pallets
 		appliedReservations = append(appliedReservations, struct {
-			BucketKey string
-			Allocated int
+			BucketKey        string
+			AllocatedQty     int
+			AllocatedPallets int
 		}{
-			BucketKey: bucketKey,
-			Allocated: draftAllocation.AllocatedQty,
+			BucketKey:        bucketKey,
+			AllocatedQty:     draftAllocation.AllocatedQty,
+			AllocatedPallets: candidate.Pallets,
 		})
 	}
 
@@ -2587,6 +2724,12 @@ func (s *Store) allocateOutboundLineTx(ctx context.Context, tx *sql.Tx, source l
 	if reservationState == nil {
 		reservationState = newOutboundAllocationReservationState()
 	}
+	if reservationState.ByBucketKey == nil {
+		reservationState.ByBucketKey = make(map[string]int)
+	}
+	if reservationState.PalletsByBucketKey == nil {
+		reservationState.PalletsByBucketKey = make(map[string]int)
+	}
 	if requestedQty > source.AvailableQty {
 		return nil, classifyReservedStockConflict(requestedQty, source.Quantity, source.AllocatedQty, source.DamagedQty, source.HoldQty)
 	}
@@ -2599,12 +2742,14 @@ func (s *Store) allocateOutboundLineTx(ctx context.Context, tx *sql.Tx, source l
 	allocations := make([]outboundAllocationCandidate, 0)
 	remainingQty := requestedQty
 	appliedReservations := make([]struct {
-		BucketKey string
-		Allocated int
+		BucketKey        string
+		AllocatedQty     int
+		AllocatedPallets int
 	}, 0)
 
 	for _, candidate := range candidates {
 		effectiveAvailable := candidate.AvailableQty - reservationState.ByBucketKey[candidate.BucketKey]
+		effectiveAvailablePallets := candidate.AvailablePallets - reservationState.PalletsByBucketKey[candidate.BucketKey]
 		if effectiveAvailable <= 0 {
 			continue
 		}
@@ -2618,14 +2763,18 @@ func (s *Store) allocateOutboundLineTx(ctx context.Context, tx *sql.Tx, source l
 		}
 
 		candidate.AllocatedQty = allocatedQty
+		candidate.Pallets = automaticInventoryPalletsForAllocation(effectiveAvailable, effectiveAvailablePallets, allocatedQty)
 		allocations = append(allocations, candidate)
 		reservationState.ByBucketKey[candidate.BucketKey] += allocatedQty
+		reservationState.PalletsByBucketKey[candidate.BucketKey] += candidate.Pallets
 		appliedReservations = append(appliedReservations, struct {
-			BucketKey string
-			Allocated int
+			BucketKey        string
+			AllocatedQty     int
+			AllocatedPallets int
 		}{
-			BucketKey: candidate.BucketKey,
-			Allocated: allocatedQty,
+			BucketKey:        candidate.BucketKey,
+			AllocatedQty:     allocatedQty,
+			AllocatedPallets: candidate.Pallets,
 		})
 		remainingQty -= allocatedQty
 
@@ -2635,12 +2784,31 @@ func (s *Store) allocateOutboundLineTx(ctx context.Context, tx *sql.Tx, source l
 	}
 	if remainingQty > 0 {
 		for _, applied := range appliedReservations {
-			reservationState.ByBucketKey[applied.BucketKey] -= applied.Allocated
+			reservationState.ByBucketKey[applied.BucketKey] -= applied.AllocatedQty
+			reservationState.PalletsByBucketKey[applied.BucketKey] -= applied.AllocatedPallets
 		}
 		return nil, classifyReservedStockConflict(requestedQty, source.Quantity, source.AllocatedQty, source.DamagedQty, source.HoldQty)
 	}
 
 	return allocations, nil
+}
+
+func automaticInventoryPalletsForAllocation(availableQty int, availablePallets int, allocatedQty int) int {
+	if availableQty <= 0 || availablePallets <= 0 || allocatedQty <= 0 {
+		return 0
+	}
+	if allocatedQty >= availableQty {
+		return availablePallets
+	}
+
+	allocatedPallets := int(math.Round(float64(availablePallets) * float64(allocatedQty) / float64(availableQty)))
+	if allocatedPallets < 0 {
+		return 0
+	}
+	if allocatedPallets > availablePallets {
+		return availablePallets
+	}
+	return allocatedPallets
 }
 
 func (s *Store) resolveOutboundLineAllocationsTx(ctx context.Context, tx *sql.Tx, source lockedOutboundSource, requestedQty int, reservationState *outboundAllocationReservationState) ([]outboundAllocationCandidate, error) {
@@ -2845,6 +3013,63 @@ func resolveOutboundLedgerDate(expectedShipDate *time.Time, actualShipDate *time
 		return actualShipDate
 	}
 	return expectedShipDate
+}
+
+// earliestOutboundBillingMutationDateTx resolves the oldest billing source
+// date that cancellation would invalidate for one outbound allocation. The
+// header date drives the outbound fee, while the persisted SHIP date drives
+// the container storage timeline. Historical rows can predate today's header
+// values, so the locking read must be scoped to the exact line/allocation.
+func earliestOutboundBillingMutationDateTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	documentRow outboundDocumentRow,
+	lineID int64,
+	locationID int64,
+	containerNo string,
+) (time.Time, error) {
+	earliest := documentRow.CreatedAt
+	if documentRow.ConfirmedAt != nil {
+		earliest = *documentRow.ConfirmedAt
+	}
+	if documentRow.ActualShipDate != nil {
+		earliest = *documentRow.ActualShipDate
+	}
+	if shipDate := resolveOutboundLedgerDate(documentRow.ExpectedShipDate, documentRow.ActualShipDate); shipDate != nil && shipDate.Before(earliest) {
+		earliest = *shipDate
+	}
+
+	query := `
+		SELECT COALESCE(out_date, occurred_at, created_at)
+		FROM stock_ledger
+		WHERE source_document_type = ?
+		  AND source_document_id = ?
+		  AND source_line_id = ?
+		  AND event_type = ?`
+	args := []any{StockLedgerSourceOutbound, documentRow.ID, lineID, StockLedgerEventShip}
+	if locationID > 0 {
+		query += " AND location_id = ?"
+		args = append(args, locationID)
+	}
+	containerNo = normalizeContainerNo(containerNo)
+	if containerNo != "" {
+		query += " AND UPPER(TRIM(COALESCE(container_no_snapshot, ''))) = ?"
+		args = append(args, containerNo)
+	}
+	query += " ORDER BY COALESCE(out_date, occurred_at, created_at), id LIMIT 1 FOR UPDATE"
+
+	var persistedShipAt time.Time
+	err := tx.QueryRowContext(ctx, query, args...).Scan(&persistedShipAt)
+	if err == nil {
+		if persistedShipAt.Before(earliest) {
+			earliest = persistedShipAt
+		}
+		return earliest, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, fmt.Errorf("load outbound SHIP billing date: %w", err)
+	}
+	return earliest, nil
 }
 
 func appendUniqueJoined(existing string, nextValue string) string {

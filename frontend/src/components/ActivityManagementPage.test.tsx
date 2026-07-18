@@ -344,6 +344,9 @@ describe("ActivityManagementPage", () => {
       />
     );
 
+    const statusFilter = screen.getByLabelText("Status") as HTMLSelectElement;
+    expect([...statusFilter.options].map((option) => option.value)).toEqual(["all", "DRAFT", "CONFIRMED", "ARCHIVED"]);
+
     fireEvent.change(screen.getByLabelText("Customer"), { target: { value: String(customer.id) } });
     fireEvent.change(screen.getByLabelText("Warehouse"), { target: { value: String(location.id) } });
     fireEvent.change(screen.getByLabelText("Status"), { target: { value: "CONFIRMED" } });
@@ -624,8 +627,8 @@ describe("ActivityManagementPage", () => {
       expect(mockedApi.createInboundDocument).toHaveBeenCalledWith({
         customerId: 1,
         locationId: 1,
-        expectedArrivalDate: "2026-03-31",
-        actualArrivalDate: undefined,
+        expectedArrivalDate: undefined,
+        actualArrivalDate: "2026-03-31",
         containerNo: "MSCU1234567",
         containerType: "NORMAL",
         handlingMode: "PALLETIZED",
@@ -704,8 +707,8 @@ describe("ActivityManagementPage", () => {
       expect(mockedApi.createInboundDocument).toHaveBeenCalledWith({
         customerId: 1,
         locationId: 1,
-        expectedArrivalDate: "2026-03-31",
-        actualArrivalDate: undefined,
+        expectedArrivalDate: undefined,
+        actualArrivalDate: "2026-03-31",
         containerNo: "MSCU7654321",
         containerType: "NORMAL",
         handlingMode: "PALLETIZED",
@@ -785,8 +788,8 @@ describe("ActivityManagementPage", () => {
       expect(mockedApi.createInboundDocument).toHaveBeenCalledWith({
         customerId: 1,
         locationId: 1,
-        expectedArrivalDate: "2026-03-31",
-        actualArrivalDate: undefined,
+        expectedArrivalDate: undefined,
+        actualArrivalDate: "2026-03-31",
         containerNo: "MSCU2222222",
         containerType: "NORMAL",
         handlingMode: "PALLETIZED",
@@ -813,6 +816,169 @@ describe("ActivityManagementPage", () => {
     });
 
     expect(onRefresh).toHaveBeenCalled();
+  });
+
+  it("keeps actual and expected arrival dates independent and presents actual first", async () => {
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="IN"
+        items={[]}
+        skuMasters={[]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        movements={[]}
+        inboundDocuments={[]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "New Receipt" }));
+    const dialog = await screen.findByRole("dialog");
+    const dateInputs = dialog.querySelectorAll('.sheet-form input[type="date"]');
+    const actualArrival = screen.getByLabelText("Actual Arrival Date") as HTMLInputElement;
+    const expectedArrival = screen.getByLabelText("Expected Arrival Date") as HTMLInputElement;
+
+    expect(dateInputs[0]).toBe(actualArrival);
+    expect(dateInputs[1]).toBe(expectedArrival);
+    fireEvent.change(actualArrival, { target: { value: "2026-04-03" } });
+    expect(expectedArrival).toHaveValue("");
+    fireEvent.change(expectedArrival, { target: { value: "2026-04-10" } });
+    expect(actualArrival).toHaveValue("2026-04-03");
+  });
+
+  it("treats Item Code as reference text without changing SKU metadata", async () => {
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="IN"
+        items={[]}
+        skuMasters={[
+          createSkuMaster({ sku: "SKU-A", itemNumber: "CODE-A", description: "Description A", defaultUnitsPerPallet: 10 }),
+          createSkuMaster({ id: 2, sku: "SKU-B", itemNumber: "CODE-B", description: "Description B", defaultUnitsPerPallet: 20 })
+        ]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        movements={[]}
+        inboundDocuments={[]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "New Receipt" }));
+    const dialog = await screen.findByRole("dialog");
+    const headerInputs = dialog.querySelectorAll(".sheet-form input");
+    fireEvent.change(headerInputs[0] as HTMLInputElement, { target: { value: "2026-04-01" } });
+    fireEvent.change(headerInputs[2] as HTMLInputElement, { target: { value: "ITEM-CODE-REFERENCE" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(dialog.querySelector(".batch-line-grid--inbound")).not.toBeNull());
+    const lineInputs = dialog.querySelectorAll(".batch-line-grid--inbound input");
+    const skuInput = lineInputs[0] as HTMLInputElement;
+    const itemCodeInput = lineInputs[1] as HTMLInputElement;
+    const descriptionInput = lineInputs[2] as HTMLInputElement;
+    const unitsPerPalletInput = lineInputs[6] as HTMLInputElement;
+
+    fireEvent.change(skuInput, { target: { value: "SKU-A" } });
+    expect(itemCodeInput).toHaveValue("CODE-A");
+    expect(descriptionInput).toHaveValue("Description A");
+    expect(unitsPerPalletInput).toHaveValue(10);
+
+    fireEvent.change(itemCodeInput, { target: { value: "CODE-B" } });
+    expect(skuInput).toHaveValue("SKU-A");
+    expect(descriptionInput).toHaveValue("Description A");
+    expect(unitsPerPalletInput).toHaveValue(10);
+  });
+
+  it("requires explicit received Qty while allowing pallets above Qty and optional CTN per Pallet", async () => {
+    mockedApi.createInboundDocument.mockResolvedValue(undefined);
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="IN"
+        items={[]}
+        skuMasters={[]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        movements={[]}
+        inboundDocuments={[]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "New Receipt" }));
+    const dialog = await screen.findByRole("dialog");
+    const headerInputs = dialog.querySelectorAll(".sheet-form input");
+    fireEvent.change(headerInputs[0] as HTMLInputElement, { target: { value: "2026-04-01" } });
+    fireEvent.change(headerInputs[2] as HTMLInputElement, { target: { value: "CONT-INDEPENDENT" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    let inboundLineInputs = dialog.querySelectorAll(".batch-line-grid--inbound input");
+    fireEvent.change(inboundLineInputs[0] as HTMLInputElement, { target: { value: "SKU-INDEPENDENT" } });
+    fireEvent.change(inboundLineInputs[2] as HTMLInputElement, { target: { value: "Independent quantities" } });
+    fireEvent.change(inboundLineInputs[3] as HTMLInputElement, { target: { value: "10" } });
+    fireEvent.change(inboundLineInputs[5] as HTMLInputElement, { target: { value: "20" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Receipt" }));
+
+    expect(await screen.findByText("Enter Received Qty greater than 0 for every confirmed SKU line.")).toBeInTheDocument();
+    expect(mockedApi.createInboundDocument).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    inboundLineInputs = dialog.querySelectorAll(".batch-line-grid--inbound input");
+    fireEvent.change(inboundLineInputs[4] as HTMLInputElement, { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Receipt" }));
+
+    await waitFor(() => expect(mockedApi.createInboundDocument).toHaveBeenCalledTimes(1));
+    const payload = mockedApi.createInboundDocument.mock.calls[0][0];
+    expect(payload).toMatchObject({
+      expectedArrivalDate: undefined,
+      actualArrivalDate: "2026-04-01",
+      lines: [{ expectedQty: 10, receivedQty: 1, pallets: 20 }]
+    });
+    expect(payload.lines[0]).not.toHaveProperty("unitsPerPallet");
+  });
+
+  it("sorts receipts by actual arrival before expected arrival", async () => {
+    const expectedOnly = createInboundDocument({
+      id: 201,
+      containerNo: "EXPECTED-ONLY",
+      expectedArrivalDate: "2026-04-30",
+      actualArrivalDate: null
+    });
+    const actuallyReceived = createInboundDocument({
+      id: 202,
+      containerNo: "ACTUAL-FIRST",
+      expectedArrivalDate: "2026-04-01",
+      actualArrivalDate: "2026-05-01"
+    });
+    mockedApi.getInboundDocuments.mockResolvedValue([expectedOnly, actuallyReceived]);
+
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="IN"
+        items={[]}
+        skuMasters={[]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        movements={[]}
+        inboundDocuments={[expectedOnly, actuallyReceived]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    await screen.findByText("ACTUAL-FIRST");
+    const gridText = screen.getByTestId("mock-data-grid").textContent || "";
+    expect(gridText.indexOf("ACTUAL-FIRST")).toBeLessThan(gridText.indexOf("EXPECTED-ONLY"));
   });
 
   it("re-enters confirmed receipts by copying them into a new draft", async () => {
@@ -1074,7 +1240,7 @@ describe("ActivityManagementPage", () => {
                 storageSection: "TEMP",
                 containerNo: "GCXU5817233",
                 allocatedQty: 5,
-                pallets: 2
+                pallets: 1
               }
             ]
           }

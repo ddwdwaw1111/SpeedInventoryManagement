@@ -85,6 +85,23 @@ describe("api document list queries", () => {
     expect(requestUrl.searchParams.get("locationId")).toBe("34");
   });
 
+  it("updates only explicit metadata for a customer-scoped container", async () => {
+    const payload = {
+      customerId: 12,
+      containerType: "WEST_COAST_TRANSFER" as const,
+      handlingMode: "PALLETIZED" as const
+    };
+
+    await api.updateV2ContainerMetadata(" CONT/100 ", payload);
+
+    const [requestUrl, options] = fetchMock.mock.calls[0];
+    expect(new URL(String(requestUrl)).pathname).toBe("/api/v2/containers/%20CONT%2F100%20/metadata");
+    expect(options).toEqual(expect.objectContaining({
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }));
+  });
+
   it("serializes customer portal picking order tracking status filters", async () => {
     await api.getCustomerPortalPickingOrders(25, {
       search: " PO-100 ",
@@ -176,5 +193,64 @@ describe("api document list queries", () => {
     expect(requestUrl.searchParams.has("status")).toBe(false);
     expect(requestUrl.searchParams.has("trackingStatus")).toBe(false);
     expect(requestUrl.searchParams.has("search")).toBe(false);
+  });
+
+  it("posts an authoritative billing preview scope", async () => {
+    const payload = {
+      customerId: 12,
+      warehouseLocationId: 34,
+      containerType: "NORMAL" as const,
+      periodStart: "2026-03-01",
+      periodEnd: "2026-03-31",
+      normalPalletGracePeriodEnabled: true,
+      rates: {
+        inboundContainerFee: 450,
+        transferInboundFeePerPallet: 10,
+        wrappingFeePerPallet: 15,
+        storageFeePerPalletPerWeek: 7,
+        storageFeePerPalletPerWeekNormal: 7,
+        storageFeePerPalletPerWeekWestCoastTransfer: 7,
+        outboundFeePerPallet: 0
+      }
+    };
+
+    await api.previewBilling(payload);
+
+    const [requestUrl, options] = fetchMock.mock.calls[0];
+    expect(new URL(String(requestUrl)).pathname).toBe("/api/billing/preview");
+    expect(options).toEqual(expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify(payload)
+    }));
+  });
+
+  it("generates an invoice from scope and fingerprint without client-calculated lines", async () => {
+    const payload = {
+      invoiceType: "MIXED" as const,
+      customerId: 12,
+      periodStart: "2026-03-01",
+      periodEnd: "2026-03-31",
+      normalPalletGracePeriodEnabled: true,
+      rates: {
+        inboundContainerFee: 450,
+        transferInboundFeePerPallet: 10,
+        wrappingFeePerPallet: 15,
+        storageFeePerPalletPerWeek: 7,
+        storageFeePerPalletPerWeekNormal: 7,
+        storageFeePerPalletPerWeekWestCoastTransfer: 7,
+        outboundFeePerPallet: 0
+      },
+      sourceFingerprint: "source-fingerprint"
+    };
+
+    await api.generateBillingInvoice(payload);
+
+    const [requestUrl, options] = fetchMock.mock.calls[0];
+    expect(new URL(String(requestUrl)).pathname).toBe("/api/billing/invoices/generate");
+    expect(options).toEqual(expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify(payload)
+    }));
+    expect(JSON.parse(String(options.body))).not.toHaveProperty("lines");
   });
 });

@@ -415,6 +415,12 @@ export type ContainerPayload = {
   lastEventAt?: string;
 };
 
+export type UpdateContainerMetadataPayload = {
+  customerId: number;
+  containerType: ContainerType;
+  handlingMode: "PALLETIZED" | "SEALED_TRANSIT";
+};
+
 export type ContainerTrackingEvent = {
   id: number;
   containerId: number;
@@ -605,6 +611,7 @@ export type OutboundDocumentLine = {
 export type OutboundLineAllocationSelection = {
   inventoryItemId: number;
   quantity: number;
+  pallets?: number;
 };
 
 export type OutboundPickAllocation = {
@@ -1235,6 +1242,111 @@ export type BillingRatesSnapshot = {
   storageFeePerPalletPerWeekNormal: number;
   storageFeePerPalletPerWeekWestCoastTransfer: number;
   outboundFeePerPallet: number;
+};
+
+export type BillingPreviewPayload = {
+  customerId: number;
+  warehouseLocationId?: number;
+  containerType?: ContainerType;
+  periodStart: string;
+  periodEnd: string;
+  normalPalletGracePeriodEnabled: boolean;
+  rates: BillingRatesSnapshot;
+};
+
+export type BillingPreviewLineData = {
+  id: string;
+  chargeType: "INBOUND" | "WRAPPING" | "STORAGE" | "OUTBOUND";
+  sourceType: string;
+  sourceId: number;
+  sourceLineId?: number;
+  reference: string;
+  containerNo: string;
+  containerType: ContainerType | "";
+  warehouse: string;
+  locationId?: number | null;
+  occurredOn: string;
+  quantity: number;
+  unitRate: number;
+  amount: number;
+  description: string;
+};
+
+export type BillingPreviewStorageSegmentData = {
+  startDate: string;
+  endDate: string;
+  dayEndPallets: number;
+  billedDays: number;
+  palletDays: number;
+  freePalletDays: number;
+  billablePalletDays: number;
+  grossAmount: number;
+  discountAmount: number;
+  amount: number;
+};
+
+export type BillingPreviewStorageRowData = {
+  customerId: number;
+  customerName: string;
+  containerNo: string;
+  containerType: ContainerType | "";
+  locationId?: number | null;
+  warehousesTouched: string[] | null;
+  palletsTracked: number;
+  palletDays: number;
+  freePalletDays: number;
+  billablePalletDays: number;
+  averageDailyPallets: number;
+  firstActivityOn?: string;
+  lastActivityOn?: string;
+  grossAmount: number;
+  discountAmount: number;
+  amount: number;
+  segments: BillingPreviewStorageSegmentData[] | null;
+};
+
+export type BillingPreviewDailyBalanceData = {
+  date: string;
+  palletCount: number;
+};
+
+export type BillingPreviewSummaryData = {
+  receivedContainers: number;
+  receivedPallets: number;
+  shippedPallets: number;
+  palletDays: number;
+  inboundAmount: number;
+  wrappingAmount: number;
+  storageGrossAmount: number;
+  storageDiscountAmount: number;
+  storageAmount: number;
+  outboundAmount: number;
+  grandTotal: number;
+};
+
+export type BillingPreviewResult = {
+  calculationVersion: string;
+  sourceFingerprint: string;
+  customerId: number;
+  customerName: string;
+  warehouseLocationId?: number | null;
+  containerType: ContainerType | "";
+  periodStart: string;
+  periodEnd: string;
+  normalPalletGracePeriodEnabled: boolean;
+  rates: BillingRatesSnapshot;
+  lines: BillingPreviewLineData[] | null;
+  storageRows: BillingPreviewStorageRowData[] | null;
+  dailyBalances: BillingPreviewDailyBalanceData[] | null;
+  summary: BillingPreviewSummaryData;
+  warnings: string[] | null;
+};
+
+export type GenerateBillingInvoicePayload = BillingPreviewPayload & {
+  invoiceType: BillingInvoiceType;
+  header?: BillingInvoiceHeader;
+  notes?: string;
+  sourceFingerprint: string;
 };
 
 export type BillingInvoiceHeader = {

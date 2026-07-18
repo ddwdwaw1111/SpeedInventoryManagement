@@ -27,6 +27,7 @@ import { WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type ContainerDetailPageProps = {
   routeKey: string;
+  customerId: number | null;
   containerNo: string | null;
   items: Item[];
   movements: Movement[];
@@ -40,6 +41,7 @@ type ContainerDetailPageProps = {
 };
 
 export function ContainerDetailPage({
+  customerId,
   containerNo,
   items,
   movements,
@@ -59,17 +61,25 @@ export function ContainerDetailPage({
   const [isQuickTransferOpen, setIsQuickTransferOpen] = useState(false);
   const containers = useMemo(() => buildAllContainerContentsRows(items, movements, locations), [items, locations, movements]);
   const container = useMemo(
-    () => containers.find((candidate) => candidate.containerNo === normalizedContainerNo) ?? null,
-    [containers, normalizedContainerNo]
+    () => {
+      const matches = containers.filter((candidate) => candidate.containerNo === normalizedContainerNo);
+      if (customerId && customerId > 0) {
+        return matches.find((candidate) => candidate.customerId === customerId) ?? null;
+      }
+      return matches.length === 1 ? matches[0] : null;
+    },
+    [containers, customerId, normalizedContainerNo]
   );
   const skuCards = useMemo(() => buildContainerSkuCards(container?.items ?? []), [container?.items]);
   const history = useMemo(
-    () => movements
-      .filter((movement) => normalizeContainerNumber(movement.containerNo) === normalizedContainerNo)
-      .sort((left, right) => movementTime(right) - movementTime(left)),
-    [movements, normalizedContainerNo]
+    () => container
+      ? movements
+          .filter((movement) => movement.customerId === container.customerId && normalizeContainerNumber(movement.containerNo) === normalizedContainerNo)
+          .sort((left, right) => movementTime(right) - movementTime(left))
+      : [],
+    [container, movements, normalizedContainerNo]
   );
-  const customerID = container?.customerIds.length === 1 ? container.customerIds[0] : undefined;
+  const customerID = container?.customerId;
   const sourceKey = container?.items[0]
     ? buildInventoryActionSourceKey(container.items[0].customerId, container.items[0].sku)
     : undefined;
@@ -171,6 +181,7 @@ export function ContainerDetailPage({
         items={items}
         preferredContainerNo={normalizedContainerNo}
         containerFilter={normalizedContainerNo}
+        customerIdFilter={customerID}
         quickMode
         onClose={() => setIsQuickAdjustmentOpen(false)}
         onSaved={onRefresh}
@@ -182,6 +193,7 @@ export function ContainerDetailPage({
         locations={locations}
         preferredContainerNo={normalizedContainerNo}
         containerFilter={normalizedContainerNo}
+        customerIdFilter={customerID}
         quickMode
         onClose={() => setIsQuickTransferOpen(false)}
         onSaved={onRefresh}

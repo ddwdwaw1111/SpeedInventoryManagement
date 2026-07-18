@@ -23,6 +23,7 @@ import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type {
   ContainerLifecycle,
+  ContainerType,
   Customer,
   CustomerPortalContainerSummary,
   DeliveryEventPayload,
@@ -52,7 +53,7 @@ type AdminContainerLifecyclePageProps = {
   customers: Customer[];
   locations: Location[];
   onOpenContainerLifecycle: (customerId: number, containerNo: string) => void;
-  onOpenContainerDetail: (containerNo: string) => void;
+  onOpenContainerDetail: (containerNo: string, customerId: number) => void;
   onOpenInboundDetail: (documentId: number) => void;
   onOpenReceiptEditor: (documentId?: number | null) => void;
   onOpenOutboundDocument: (documentId: number) => void;
@@ -60,13 +61,8 @@ type AdminContainerLifecyclePageProps = {
 };
 
 type ContainerFormState = {
-  inboundDocumentId: string;
-  locationId: string;
-  containerType: string;
-  handlingMode: string;
-  status: string;
-  trackingStatus: string;
-  lastEventAt: string;
+  containerType: ContainerType;
+  handlingMode: "PALLETIZED" | "SEALED_TRANSIT";
 };
 
 type LifecycleVisibilityFormState = {
@@ -171,7 +167,6 @@ const DELIVERY_EVENT_TYPE_OPTIONS: SelectOption[] = [
 export function AdminContainerLifecyclePage({
   routeScope,
   customers,
-  locations,
   onOpenContainerLifecycle,
   onOpenContainerDetail,
   onOpenInboundDetail,
@@ -328,20 +323,14 @@ export function AdminContainerLifecyclePage({
 
   async function handleSaveContainer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!activeCustomerId || !activeContainerNo) {
+    if (!activeCustomerId || !activeContainerNo || !lifecycle?.container) {
       return;
     }
     await runBusyAction("container", async () => {
-      await api.saveV2Container({
+      await api.updateV2ContainerMetadata(activeContainerNo, {
         customerId: activeCustomerId,
-        containerNo: activeContainerNo,
-        inboundDocumentId: parseOptionalPositiveInt(containerForm.inboundDocumentId),
-        locationId: parseOptionalPositiveInt(containerForm.locationId),
-        containerType: containerForm.containerType || undefined,
-        handlingMode: containerForm.handlingMode || undefined,
-        status: containerForm.status || undefined,
-        trackingStatus: containerForm.trackingStatus || undefined,
-        lastEventAt: containerForm.lastEventAt || undefined
+        containerType: containerForm.containerType,
+        handlingMode: containerForm.handlingMode
       });
       showSuccess(t("adminContainerLifecycleSaved"));
       refreshLifecycle();
@@ -641,7 +630,6 @@ export function AdminContainerLifecyclePage({
       trackingForm={trackingForm}
       pickupForm={pickupForm}
       deliveryForm={deliveryForm}
-      locations={locations}
       busyAction={busyAction}
       onContainerFormChange={setContainerForm}
       onTrackingFormChange={setTrackingForm}
@@ -655,7 +643,7 @@ export function AdminContainerLifecyclePage({
       onUploadOutboundDocumentAttachment={handleUploadOutboundDocumentAttachment}
       onDeleteInboundDocumentAttachment={handleDeleteInboundDocumentAttachment}
       onDeleteOutboundDocumentAttachment={handleDeleteOutboundDocumentAttachment}
-      onOpenContainerDetail={() => onOpenContainerDetail(activeContainerNo)}
+      onOpenContainerDetail={() => onOpenContainerDetail(activeContainerNo, activeCustomerId!)}
     />
   ) : null;
 
@@ -692,7 +680,6 @@ function AdminLifecycleNodePanel({
   trackingForm,
   pickupForm,
   deliveryForm,
-  locations,
   busyAction,
   onContainerFormChange,
   onTrackingFormChange,
@@ -714,7 +701,6 @@ function AdminLifecycleNodePanel({
   trackingForm: TrackingFormState;
   pickupForm: PickupFormState;
   deliveryForm: DeliveryFormState;
-  locations: Location[];
   busyAction: string;
   onContainerFormChange: (nextForm: ContainerFormState) => void;
   onTrackingFormChange: (nextForm: TrackingFormState) => void;
@@ -739,8 +725,7 @@ function AdminLifecycleNodePanel({
     [lifecycle.lifecycleEvents, receivingSkuRows]
   );
   const shouldShowContainerForm = !node || node.kind === "container";
-  const selectedLocationID = containerForm.locationId;
-  const locationOptions = buildLocationOptions(locations, selectedLocationID, t);
+  const canEditContainerMetadata = Boolean(lifecycle.container);
   const usesOwnDriver = pickupForm.assignmentType === "OWN_DRIVER";
   const panelTitle = node?.kind === "picking-order" && selectedPickingOrder
     ? getOutboundOrderReference(selectedPickingOrder)
@@ -755,12 +740,10 @@ function AdminLifecycleNodePanel({
         {shouldShowContainerForm ? (
           <form className="grid gap-3" onSubmit={onSaveContainer}>
             <PanelSectionTitle icon={<ContainerIcon className="h-4 w-4" />} title={t("containerStatus")} />
-            <TextInput label={t("inboundDetailPage")} value={containerForm.inboundDocumentId} onChange={(value) => onContainerFormChange({ ...containerForm, inboundDocumentId: value })} />
-            <SelectInput label={t("currentStorage")} value={containerForm.locationId} options={locationOptions} onChange={(value) => onContainerFormChange({ ...containerForm, locationId: value })} />
-            <SelectInput label={t("billingContainerType")} value={containerForm.containerType} options={CONTAINER_TYPE_OPTIONS} onChange={(value) => onContainerFormChange({ ...containerForm, containerType: value })} />
-            <SelectInput label={t("handlingMode")} value={containerForm.handlingMode} options={HANDLING_MODE_OPTIONS} onChange={(value) => onContainerFormChange({ ...containerForm, handlingMode: value })} />
-            <TextInput type="datetime-local" label={t("lastActivity")} value={containerForm.lastEventAt} onChange={(value) => onContainerFormChange({ ...containerForm, lastEventAt: value })} />
-            <Button type="submit" disabled={busyAction === "container"}>{busyAction === "container" ? t("saving") : t("saveChanges")}</Button>
+            <SelectInput disabled={!canEditContainerMetadata} label={t("billingContainerType")} value={containerForm.containerType} options={CONTAINER_TYPE_OPTIONS} onChange={(value) => onContainerFormChange({ ...containerForm, containerType: value as ContainerType })} />
+            <SelectInput disabled={!canEditContainerMetadata} label={t("handlingMode")} value={containerForm.handlingMode} options={HANDLING_MODE_OPTIONS} onChange={(value) => onContainerFormChange({ ...containerForm, handlingMode: value as ContainerFormState["handlingMode"] })} />
+            {!canEditContainerMetadata ? <InlineAlert severity="info">{t("adminContainerMetadataUnavailableUntilConfirmed")}</InlineAlert> : null}
+            {canEditContainerMetadata ? <Button type="submit" disabled={busyAction === "container"}>{busyAction === "container" ? t("saving") : t("saveChanges")}</Button> : null}
             <Button type="button" variant="outline" onClick={onOpenContainerDetail}>
               <ExternalLink className="h-4 w-4" />
               {t("viewContainerDetail")}
@@ -1074,12 +1057,14 @@ function SelectInput({
   label,
   value,
   options,
-  onChange
+  onChange,
+  disabled = false
 }: {
   label: string;
   value: string;
   options: SelectOption[];
   onChange: (value: string) => void;
+  disabled?: boolean;
 }) {
   const { t } = useI18n();
   return (
@@ -1089,6 +1074,7 @@ function SelectInput({
         className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
         value={value}
         onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>
@@ -1098,22 +1084,6 @@ function SelectInput({
       </select>
     </label>
   );
-}
-
-function buildLocationOptions(locations: Location[], currentLocationId: string, t: (key: string) => string): SelectOption[] {
-  const options: SelectOption[] = [
-    { value: "", label: t("selectWarehouse") }
-  ];
-  const seenValues = new Set(options.map((option) => option.value));
-  for (const location of locations) {
-    const value = String(location.id);
-    options.push({ value, label: location.name });
-    seenValues.add(value);
-  }
-  if (currentLocationId && !seenValues.has(currentLocationId)) {
-    options.push({ value: currentLocationId, label: `#${currentLocationId}` });
-  }
-  return options;
 }
 
 function VisibilityFields({
@@ -1337,27 +1307,20 @@ function inventorySkuRowKey(label: string) {
 
 function createEmptyContainerForm(): ContainerFormState {
   return {
-    inboundDocumentId: "",
-    locationId: "",
     containerType: "NORMAL",
-    handlingMode: "PALLETIZED",
-    status: "PENDING",
-    trackingStatus: "TRACKING_RECEIVED",
-    lastEventAt: toDateTimeInputValue(new Date())
+    handlingMode: "PALLETIZED"
   };
 }
 
 function createContainerFormFromLifecycle(lifecycle: ContainerLifecycle): ContainerFormState {
   const container = lifecycle.container;
-  const firstPackingList = lifecycle.packingLists[0];
+  const packingList = lifecycle.packingLists.find((document) => document.containerType || document.handlingMode)
+    ?? lifecycle.packingLists[0];
+  const containerType = container?.containerType || packingList?.containerType;
+  const handlingMode = container?.handlingMode || packingList?.handlingMode;
   return {
-    inboundDocumentId: String(container?.inboundDocumentId || firstPackingList?.id || ""),
-    locationId: String(container?.locationId || firstPackingList?.locationId || ""),
-    containerType: container?.containerType || firstPackingList?.containerType || "NORMAL",
-    handlingMode: container?.handlingMode || firstPackingList?.handlingMode || "PALLETIZED",
-    status: container?.status || lifecycle.summary.status || "PENDING",
-    trackingStatus: container?.trackingStatus || firstPackingList?.trackingStatus || "TRACKING_RECEIVED",
-    lastEventAt: toDateTimeInputValue(container?.lastEventAt || lifecycle.summary.lastActivityAt || new Date())
+    containerType: containerType === "WEST_COAST_TRANSFER" ? "WEST_COAST_TRANSFER" : "NORMAL",
+    handlingMode: handlingMode === "SEALED_TRANSIT" ? "SEALED_TRANSIT" : "PALLETIZED"
   };
 }
 

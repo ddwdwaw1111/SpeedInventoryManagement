@@ -959,26 +959,66 @@ func buildOutboundBulkDocumentLines(
 		allocationsByLocation[locationID] = append(allocationsByLocation[locationID], allocation)
 	}
 
-	lines := make([]CreateOutboundDocumentLineInput, 0, len(locationOrder))
+	quantitiesByLocation := make([]int, 0, len(locationOrder))
 	for _, locationID := range locationOrder {
+		quantitiesByLocation = append(quantitiesByLocation, totalOutboundPickAllocationQuantity(allocationsByLocation[locationID]))
+	}
+	outboundPalletsByLocation := allocateOutboundBulkShippingPallets(previewLine.OutboundPallets, quantitiesByLocation)
+
+	lines := make([]CreateOutboundDocumentLineInput, 0, len(locationOrder))
+	for locationIndex, locationID := range locationOrder {
 		locationAllocations := allocationsByLocation[locationID]
-		quantity := totalOutboundPickAllocationQuantity(locationAllocations)
-		outboundPallets := 0
-		if len(lines) == 0 {
-			outboundPallets = previewLine.OutboundPallets
-		}
 		lines = append(lines, CreateOutboundDocumentLineInput{
 			CustomerID:      customerID,
 			LocationID:      locationID,
 			SKUMasterID:     master.ID,
-			Quantity:        quantity,
-			Pallets:         outboundPallets,
+			Quantity:        quantitiesByLocation[locationIndex],
+			Pallets:         outboundPalletsByLocation[locationIndex],
 			UnitLabel:       firstNonEmpty(master.Unit, "PCS"),
 			LineNote:        strings.TrimSpace(previewLine.LineNote),
 			PickAllocations: locationAllocations,
 		})
 	}
 	return lines
+}
+
+func allocateOutboundBulkShippingPallets(totalPallets int, quantities []int) []int {
+	shares := make([]int, len(quantities))
+	if totalPallets <= 0 || len(quantities) == 0 {
+		return shares
+	}
+
+	totalQuantity := 0
+	for _, quantity := range quantities {
+		totalQuantity += max(quantity, 0)
+	}
+	if totalQuantity <= 0 {
+		return shares
+	}
+
+	type palletRemainder struct {
+		index     int
+		remainder int
+	}
+	remainders := make([]palletRemainder, 0, len(quantities))
+	assigned := 0
+	for index, quantity := range quantities {
+		numerator := totalPallets * max(quantity, 0)
+		shares[index] = numerator / totalQuantity
+		assigned += shares[index]
+		remainders = append(remainders, palletRemainder{index: index, remainder: numerator % totalQuantity})
+	}
+	sort.SliceStable(remainders, func(left, right int) bool {
+		if remainders[left].remainder != remainders[right].remainder {
+			return remainders[left].remainder > remainders[right].remainder
+		}
+		return remainders[left].index < remainders[right].index
+	})
+	for offset := 0; assigned < totalPallets; offset++ {
+		shares[remainders[offset%len(remainders)].index]++
+		assigned++
+	}
+	return shares
 }
 
 func sortOutboundBulkCandidates(candidates []Item) {

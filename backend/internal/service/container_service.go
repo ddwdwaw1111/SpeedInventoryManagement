@@ -65,6 +65,7 @@ type containerRepository interface {
 	GetContainerByNo(context.Context, int64, string) (Container, error)
 	GetOperationalContainerByNo(context.Context, int64, string) (Container, error)
 	CreateContainer(context.Context, CreateContainerInput) (Container, error)
+	UpdateContainerMetadata(context.Context, UpdateContainerMetadataInput) (Container, error)
 	CreateContainerTrackingEvent(context.Context, CreateContainerTrackingEventInput) (ContainerTrackingEvent, error)
 	CreateContainerPickupAssignment(context.Context, CreateContainerPickupAssignmentInput) (ContainerPickupAssignment, error)
 	ListContainerTrackingEvents(context.Context, int, ContainerTrackingEventFilters) ([]ContainerTrackingEvent, error)
@@ -82,6 +83,10 @@ func NewContainerService(repo containerRepository) *ContainerService {
 
 func (s *ContainerService) CreateContainer(ctx context.Context, input CreateContainerInput) (Container, error) {
 	return s.repo.CreateContainer(ctx, input)
+}
+
+func (s *ContainerService) UpdateMetadata(ctx context.Context, input UpdateContainerMetadataInput) (Container, error) {
+	return s.repo.UpdateContainerMetadata(ctx, input)
 }
 
 func (s *ContainerService) CreateTrackingEvent(ctx context.Context, input CreateContainerTrackingEventInput) (ContainerTrackingEvent, error) {
@@ -372,7 +377,7 @@ func buildContainerSummaries(
 			accumulator.summary.CustomerID = container.CustomerID
 			accumulator.summary.CustomerName = container.CustomerName
 		}
-		accumulator.summary.Status = strings.TrimSpace(container.Status)
+		accumulator.summary.Status = normalizeContainerSummaryProjectionStatus(container.Status)
 		if container.LocationName != "" {
 			accumulator.addWarehouse(container.LocationName)
 		}
@@ -454,7 +459,7 @@ func buildContainerSummaries(
 		if summary.ShippedQty < 0 {
 			summary.ShippedQty = 0
 		}
-		if summary.CurrentQty > 0 || summary.ShippedQty > 0 || summary.TotalReceivedQty > 0 || strings.TrimSpace(summary.Status) == "" {
+		if strings.TrimSpace(summary.Status) == "" {
 			summary.Status = containerStatus(summary)
 		}
 		summaries[key] = summary
@@ -565,10 +570,11 @@ func containerSummaryMatchesSearch(summary ContainerSummary, search string) bool
 }
 
 func containerStatus(summary ContainerSummary) string {
-	if summary.CurrentQty > 0 && summary.ShippedQty > 0 {
+	hasActiveInventory := summary.CurrentQty > 0 || summary.PalletCount > 0
+	if hasActiveInventory && summary.ShippedQty > 0 {
 		return "PARTIAL"
 	}
-	if summary.CurrentQty > 0 {
+	if hasActiveInventory {
 		return "IN_STOCK"
 	}
 	if summary.ShippedQty > 0 && (summary.TotalReceivedQty == 0 || summary.ShippedQty >= summary.TotalReceivedQty) {
@@ -578,6 +584,14 @@ func containerStatus(summary ContainerSummary) string {
 		return "DEPLETED"
 	}
 	return "PENDING"
+}
+
+func normalizeContainerSummaryProjectionStatus(value string) string {
+	normalized := strings.ToUpper(strings.TrimSpace(value))
+	if normalized == ContainerStatusPartiallyOutbound {
+		return "PARTIAL"
+	}
+	return normalized
 }
 
 func inboundDocumentActivityTime(document InboundDocument) *time.Time {
