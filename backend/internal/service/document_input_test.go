@@ -109,14 +109,20 @@ func TestConfirmedInboundKeepsQuantityAndPalletCountIndependent(t *testing.T) {
 		t.Fatalf("expected independent inbound quantity and pallet count to be valid, got %v", err)
 	}
 	input.Lines[0].Pallets = 0
-	if err := validateInboundDocumentInput(input); err == nil || !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("expected confirmed receipt without pallets to be invalid, got %v", err)
+	if err := validateInboundDocumentInput(input); err != nil {
+		t.Fatalf("expected confirmed receipt with zero pallets to be valid, got %v", err)
 	}
 
 	input.Lines[0].Pallets = 12
 	input.Lines[0].ReceivedQty = 0
-	if err := validateInboundDocumentInput(input); err == nil || !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("expected confirmed receipt without received qty to be invalid, got %v", err)
+	if err := validateInboundDocumentInput(input); err != nil {
+		t.Fatalf("expected confirmed receipt with zero received qty to be valid, got %v", err)
+	}
+
+	input.Lines[0].ReceivedQty = 10
+	input.Lines[0].UnitsPerPallet = 0
+	if err := validateInboundDocumentInput(input); err != nil {
+		t.Fatalf("expected confirmed receipt with zero CTN per pallet to be valid, got %v", err)
 	}
 
 }
@@ -191,6 +197,44 @@ func TestValidateOutboundDocumentInput(t *testing.T) {
 		if err := validateOutboundDocumentInput(tc); err == nil || !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("expected ErrInvalidInput, got %v for input %#v", err, tc)
 		}
+	}
+}
+
+func TestOutboundPlannedAndActualQuantitiesAreValidatedIndependently(t *testing.T) {
+	draft := CreateOutboundDocumentInput{
+		Status: DocumentStatusDraft,
+		Lines: []CreateOutboundDocumentLineInput{{
+			CustomerID:      1,
+			LocationID:      2,
+			SKUMasterID:     3,
+			PlannedQuantity: 10,
+			ActualQuantity:  0,
+			PickAllocations: []OutboundPickAllocation{{
+				LocationID:     2,
+				StorageSection: "TEMP",
+				ContainerNo:    "CONT-A",
+				AllocatedQty:   10,
+			}},
+		}},
+	}
+	if err := validateOutboundDocumentInput(draft); err != nil {
+		t.Fatalf("expected a plan-only draft to be valid, got %v", err)
+	}
+
+	confirmed := draft
+	confirmed.Status = DocumentStatusConfirmed
+	confirmed.TrackingStatus = OutboundTrackingShipped
+	if err := validateOutboundDocumentInput(confirmed); err == nil || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected confirmed shipment without actual quantity to be invalid, got %v", err)
+	}
+
+	confirmed.Lines[0].ActualQuantity = 6
+	confirmed.Lines[0].PickAllocations[0].AllocatedQty = 6
+	if err := validateOutboundDocumentInput(confirmed); err != nil {
+		t.Fatalf("expected confirmed shipment to allocate the actual quantity, got %v", err)
+	}
+	if outboundLineReservationQuantity(confirmed.Lines[0]) != 6 {
+		t.Fatalf("expected actual quantity to drive allocation after shipping")
 	}
 }
 

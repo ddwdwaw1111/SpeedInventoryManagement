@@ -199,13 +199,15 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 		DocumentNote:     "Outbound integration test",
 		Lines: []CreateOutboundDocumentLineInput{
 			{
-				CustomerID:   itemAfterInbound.CustomerID,
-				LocationID:   itemAfterInbound.LocationID,
-				SKUMasterID:  itemAfterInbound.SKUMasterID,
-				Quantity:     5,
-				Pallets:      1,
-				UnitLabel:    "CTN",
-				CartonSizeMM: "400*300*200",
+				CustomerID:      itemAfterInbound.CustomerID,
+				LocationID:      itemAfterInbound.LocationID,
+				SKUMasterID:     itemAfterInbound.SKUMasterID,
+				Quantity:        5,
+				PlannedQuantity: 8,
+				ActualQuantity:  5,
+				Pallets:         1,
+				UnitLabel:       "CTN",
+				CartonSizeMM:    "400*300*200",
 			},
 		},
 	})
@@ -217,6 +219,12 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 	}
 	if len(outbound.Lines) != 1 {
 		t.Fatalf("expected 1 outbound line, got %d", len(outbound.Lines))
+	}
+	if outbound.Lines[0].PlannedQuantity != 8 || outbound.Lines[0].ActualQuantity != 5 || outbound.Lines[0].Quantity != 5 {
+		t.Fatalf("expected planned 8 and actual 5 to persist independently, got %#v", outbound.Lines[0])
+	}
+	if outbound.TotalPlannedQty != 8 || outbound.TotalActualQty != 5 || outbound.TotalQty != 5 {
+		t.Fatalf("unexpected outbound quantity totals: %#v", outbound)
 	}
 	if len(outbound.Lines[0].PickAllocations) != 0 {
 		t.Fatalf("expected draft outbound document to defer pick allocations, got %d", len(outbound.Lines[0].PickAllocations))
@@ -263,12 +271,126 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 		t.Fatalf("delete inbound document after outbound reversal: %v", err)
 	}
 
-	itemAfterInboundDeletion := mustFindItemByID(t, ctx, store, itemAfterInbound.ID)
-	if itemAfterInboundDeletion.Quantity != 0 {
-		t.Fatalf("expected inbound deletion to reverse on-hand inventory, got %d", itemAfterInboundDeletion.Quantity)
+	if _, err := store.getItem(ctx, itemAfterInbound.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected inbound deletion to remove the empty inventory projection, got %v", err)
 	}
 	if !strings.EqualFold(deletedInbound.Status, DocumentStatusDeleted) {
 		t.Fatalf("expected deleted inbound status, got %q", deletedInbound.Status)
+	}
+	if _, err := store.getInboundDocument(ctx, inbound.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected inbound document to be physically deleted, got %v", err)
+	}
+	var inboundLedgerRows int
+	if err := store.db.GetContext(ctx, &inboundLedgerRows, `
+		SELECT COUNT(*) FROM stock_ledger
+		WHERE source_document_type = ? AND source_document_id = ?
+	`, StockLedgerSourceInbound, inbound.ID); err != nil {
+		t.Fatalf("count deleted inbound ledger rows: %v", err)
+	}
+	if inboundLedgerRows != 0 {
+		t.Fatalf("expected inbound ledger rows to be physically deleted, got %d", inboundLedgerRows)
+	}
+}
+
+func TestHardDeleteMigrationUpgradesSchemaWithoutRewritingOperationalDataIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Hard Delete Migration Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "Hard Delete Migration Warehouse-"+suffix)
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "HARD-DELETE-MIGRATION-"+suffix, 10, DefaultStorageSection)
+	adjustment, err := store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
+		ReasonCode: "CORRECTION",
+		Lines: []CreateInventoryAdjustmentLineInput{
+			adjustmentLineFromItem(item, 2, "simulate legacy cascade"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("create legacy adjustment source: %v", err)
+	}
+
+	tx, err := store.db.DB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin legacy cascade simulation: %v", err)
+	}
+	if err := store.reverseRelatedLedgerBalancesTx(ctx, tx, StockLedgerSourceAdjustment, adjustment.ID, `
+		WHERE source_document_type = ? AND source_document_id = ?
+	`, StockLedgerSourceAdjustment, adjustment.ID); err != nil {
+		tx.Rollback()
+		t.Fatalf("create legacy cascade reversal: %v", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM inventory_adjustments WHERE id = ?`, adjustment.ID); err != nil {
+		tx.Rollback()
+		t.Fatalf("delete legacy adjustment source: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit legacy cascade simulation: %v", err)
+	}
+	legacyLedgerCountQuery := `
+		SELECT COUNT(*)
+		FROM stock_ledger
+		WHERE (source_document_type = ? AND source_document_id = ?)
+		   OR (
+			source_document_type = 'CASCADE_DELETE'
+			AND source_document_id = ?
+			AND reference_code = ?
+		   )
+	`
+	var legacyLedgerRowsBefore int
+	if err := store.db.GetContext(
+		ctx,
+		&legacyLedgerRowsBefore,
+		legacyLedgerCountQuery,
+		StockLedgerSourceAdjustment,
+		adjustment.ID,
+		adjustment.ID,
+		StockLedgerSourceAdjustment,
+	); err != nil {
+		t.Fatalf("count legacy cascade ledger before migration: %v", err)
+	}
+	if legacyLedgerRowsBefore == 0 {
+		t.Fatal("expected legacy operational rows before migration")
+	}
+
+	if _, err := store.db.ExecContext(ctx, `ALTER TABLE outbound_document_lines DROP COLUMN planned_quantity`); err != nil {
+		t.Fatalf("simulate schema before planned quantity migration: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version = 11`); err != nil {
+		t.Fatalf("reset hard-delete migration journal: %v", err)
+	}
+	if err := database.Migrate(store.db.DB); err != nil {
+		t.Fatalf("rerun hard-delete migration: %v", err)
+	}
+
+	var plannedQuantityColumns int
+	if err := store.db.GetContext(ctx, &plannedQuantityColumns, `
+		SELECT COUNT(*)
+		FROM information_schema.COLUMNS
+		WHERE TABLE_SCHEMA = DATABASE()
+		  AND TABLE_NAME = 'outbound_document_lines'
+		  AND COLUMN_NAME = 'planned_quantity'
+	`); err != nil {
+		t.Fatalf("check planned quantity migration: %v", err)
+	}
+	if plannedQuantityColumns != 1 {
+		t.Fatalf("planned quantity migration created %d columns, want 1", plannedQuantityColumns)
+	}
+
+	var legacyLedgerRows int
+	if err := store.db.GetContext(
+		ctx,
+		&legacyLedgerRows,
+		legacyLedgerCountQuery,
+		StockLedgerSourceAdjustment,
+		adjustment.ID,
+		adjustment.ID,
+		StockLedgerSourceAdjustment,
+	); err != nil {
+		t.Fatalf("count legacy cascade ledger after migration: %v", err)
+	}
+	if legacyLedgerRows != legacyLedgerRowsBefore {
+		t.Fatalf("schema migration changed legacy operational rows: before=%d after=%d", legacyLedgerRowsBefore, legacyLedgerRows)
 	}
 }
 
@@ -358,24 +480,18 @@ func TestInboundDeletionCascadesLaterInventoryActivityIntegration(t *testing.T) 
 	if normalizeDocumentStatus(deletedOriginal.Status) != DocumentStatusDeleted {
 		t.Fatalf("expected original receipt to be deleted, got %#v", deletedOriginal)
 	}
+	if _, err := store.getInboundDocument(ctx, original.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected original receipt to be physically deleted, got %v", err)
+	}
 
-	clearedItem := mustFindItemByID(t, ctx, store, replenishedItem.ID)
-	if clearedItem.Quantity != 0 || clearedItem.Pallets != 0 {
-		t.Fatalf("expected cascading deletion to clear related inventory, got %d / %d", clearedItem.Quantity, clearedItem.Pallets)
+	if _, err := store.getItem(ctx, replenishedItem.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected cascading deletion to remove the empty inventory projection, got %v", err)
 	}
-	laterAfterCascade, err := store.getInboundDocument(ctx, laterReceipt.ID)
-	if err != nil {
-		t.Fatalf("reload later receipt after cascading deletion: %v", err)
+	if _, err := store.getInboundDocument(ctx, laterReceipt.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected later receipt to be physically deleted with original receipt, got %v", err)
 	}
-	if normalizeDocumentStatus(laterAfterCascade.Status) != DocumentStatusDeleted {
-		t.Fatalf("expected later receipt to be deleted with original receipt, got %s", laterAfterCascade.Status)
-	}
-	deletedOutbound, err := store.getOutboundDocument(ctx, outbound.ID)
-	if err != nil {
-		t.Fatalf("reload related outbound after cascading deletion: %v", err)
-	}
-	if normalizeDocumentStatus(deletedOutbound.Status) != DocumentStatusDeleted {
-		t.Fatalf("expected related outbound to be deleted with receipt, got %s", deletedOutbound.Status)
+	if _, err := store.getOutboundDocument(ctx, outbound.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected related outbound to be physically deleted with receipt, got %v", err)
 	}
 	var remainingAdjustments int
 	if err := store.db.GetContext(ctx, &remainingAdjustments, `SELECT COUNT(*) FROM inventory_adjustments WHERE id = ?`, adjustment.ID); err != nil {
@@ -1533,7 +1649,7 @@ func TestOutboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 	}
 }
 
-func TestCancelDocumentsSoftDeletesAttachmentsIntegration(t *testing.T) {
+func TestCancelDocumentsQueueAttachmentsForDurableCleanupIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
@@ -1578,7 +1694,7 @@ func TestCancelDocumentsSoftDeletesAttachmentsIntegration(t *testing.T) {
 	if _, err := store.CancelInboundDocument(ctx, inbound.ID); err != nil {
 		t.Fatalf("cancel inbound document: %v", err)
 	}
-	assertDocumentAttachmentSoftDeleted(t, ctx, store, inboundAttachment.ID, DocumentAttachmentInbound, inbound.ID)
+	assertDocumentAttachmentQueuedAndCompletable(t, ctx, store, inboundAttachment.ID, DocumentAttachmentInbound, inbound.ID)
 
 	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
 		PackingListNo:    "ATTACH-OUT-" + suffix,
@@ -1618,7 +1734,7 @@ func TestCancelDocumentsSoftDeletesAttachmentsIntegration(t *testing.T) {
 	if _, err := store.CancelOutboundDocument(ctx, outbound.ID); err != nil {
 		t.Fatalf("cancel outbound document: %v", err)
 	}
-	assertDocumentAttachmentSoftDeleted(t, ctx, store, outboundAttachment.ID, DocumentAttachmentOutbound, outbound.ID)
+	assertDocumentAttachmentQueuedAndCompletable(t, ctx, store, outboundAttachment.ID, DocumentAttachmentOutbound, outbound.ID)
 }
 
 func TestInboundTrackingLifecycleIntegration(t *testing.T) {
@@ -4167,7 +4283,7 @@ func TestBillingInvoicePersistsStorageDetailSnapshotsIntegration(t *testing.T) {
 	}
 }
 
-func assertDocumentAttachmentSoftDeleted(t *testing.T, ctx context.Context, store *Store, attachmentID int64, documentType string, documentID int64) {
+func assertDocumentAttachmentQueuedAndCompletable(t *testing.T, ctx context.Context, store *Store, attachmentID int64, documentType string, documentID int64) {
 	t.Helper()
 
 	attachments, err := store.ListDocumentAttachments(ctx, documentType, documentID)
@@ -4178,16 +4294,41 @@ func assertDocumentAttachmentSoftDeleted(t *testing.T, ctx context.Context, stor
 		t.Fatalf("expected cancelled document attachments to be hidden, got %d", len(attachments))
 	}
 
+	var attachmentCount int
 	var deletedAt sql.NullTime
 	if err := store.db.QueryRowxContext(ctx, `
-		SELECT deleted_at
+		SELECT COUNT(*), MAX(deleted_at)
 		FROM document_attachments
 		WHERE id = ?
-	`, attachmentID).Scan(&deletedAt); err != nil {
-		t.Fatalf("load cancelled document attachment %d: %v", attachmentID, err)
+	`, attachmentID).Scan(&attachmentCount, &deletedAt); err != nil {
+		t.Fatalf("count deleted document attachment %d: %v", attachmentID, err)
 	}
-	if !deletedAt.Valid {
-		t.Fatalf("expected attachment %d to be soft deleted", attachmentID)
+	if attachmentCount != 1 || !deletedAt.Valid {
+		t.Fatalf("expected attachment %d to remain as a durable cleanup record, count=%d deleted_at=%v", attachmentID, attachmentCount, deletedAt)
+	}
+
+	pending, err := store.ListPendingDocumentAttachmentCleanup(ctx, "r2", "speedwin-uploads", attachmentID-1, 10)
+	if err != nil {
+		t.Fatalf("list pending attachment cleanup: %v", err)
+	}
+	found := false
+	for _, attachment := range pending {
+		if attachment.ID == attachmentID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected attachment %d in pending cleanup queue, got %#v", attachmentID, pending)
+	}
+	if err := store.CompleteDocumentAttachmentCleanup(ctx, attachmentID); err != nil {
+		t.Fatalf("complete attachment cleanup: %v", err)
+	}
+	if err := store.db.QueryRowxContext(ctx, `SELECT COUNT(*) FROM document_attachments WHERE id = ?`, attachmentID).Scan(&attachmentCount); err != nil {
+		t.Fatalf("count completed attachment cleanup %d: %v", attachmentID, err)
+	}
+	if attachmentCount != 0 {
+		t.Fatalf("expected attachment %d metadata to be removed after object cleanup, got %d rows", attachmentID, attachmentCount)
 	}
 }
 

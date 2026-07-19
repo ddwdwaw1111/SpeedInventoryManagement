@@ -34,6 +34,8 @@ type OutboundDocument struct {
 	ArchivedAt          *time.Time             `json:"archivedAt"`
 	TotalLines          int                    `json:"totalLines"`
 	TotalQty            int                    `json:"totalQty"`
+	TotalPlannedQty     int                    `json:"totalPlannedQty"`
+	TotalActualQty      int                    `json:"totalActualQty"`
 	TotalNetWeightKgs   float64                `json:"totalNetWeightKgs"`
 	TotalGrossWeightKgs float64                `json:"totalGrossWeightKgs"`
 	Storages            string                 `json:"storages"`
@@ -67,7 +69,9 @@ type OutboundDocumentLine struct {
 	StorageSection    string                   `json:"storageSection"`
 	SKU               string                   `json:"sku"`
 	Description       string                   `json:"description"`
-	Quantity          int                      `json:"quantity"`
+	Quantity          int                      `json:"quantity"` // Deprecated alias for actualQuantity.
+	PlannedQuantity   int                      `json:"plannedQuantity"`
+	ActualQuantity    int                      `json:"actualQuantity"`
 	Pallets           int                      `json:"pallets"` // Repalletized outbound/shipping pallet count.
 	PalletsDetailCtns string                   `json:"palletsDetailCtns"`
 	UnitLabel         string                   `json:"unitLabel"`
@@ -102,7 +106,9 @@ type CreateOutboundDocumentLineInput struct {
 	CustomerID        int64                    `json:"customerId"`
 	LocationID        int64                    `json:"locationId"`
 	SKUMasterID       int64                    `json:"skuMasterId"`
-	Quantity          int                      `json:"quantity"`
+	Quantity          int                      `json:"quantity"` // Backward-compatible alias for actualQuantity.
+	PlannedQuantity   int                      `json:"plannedQuantity"`
+	ActualQuantity    int                      `json:"actualQuantity"`
 	Pallets           int                      `json:"pallets"`
 	PalletsDetailCtns string                   `json:"palletsDetailCtns"`
 	UnitLabel         string                   `json:"unitLabel"`
@@ -146,6 +152,7 @@ type outboundDocumentLineRow struct {
 	SKUSnapshot         string    `db:"sku_snapshot"`
 	DescriptionSnapshot string    `db:"description_snapshot"`
 	Quantity            int       `db:"quantity"`
+	PlannedQuantity     int       `db:"planned_quantity"`
 	Pallets             int       `db:"pallets"`
 	PalletsDetailCtns   string    `db:"pallets_detail_ctns"`
 	UnitLabel           string    `db:"unit_label"`
@@ -402,6 +409,7 @@ func (s *Store) ListOutboundDocumentsFiltered(ctx context.Context, limit int, fi
 			sku_snapshot,
 			COALESCE(description_snapshot, '') AS description_snapshot,
 			quantity,
+			CASE WHEN planned_quantity > 0 THEN planned_quantity ELSE quantity END AS planned_quantity,
 			pallets,
 			COALESCE(pallets_detail_ctns, '') AS pallets_detail_ctns,
 			COALESCE(unit_label, '') AS unit_label,
@@ -441,6 +449,8 @@ func (s *Store) ListOutboundDocumentsFiltered(ctx context.Context, limit int, fi
 			SKU:               lineRow.SKUSnapshot,
 			Description:       lineRow.DescriptionSnapshot,
 			Quantity:          lineRow.Quantity,
+			PlannedQuantity:   lineRow.PlannedQuantity,
+			ActualQuantity:    lineRow.Quantity,
 			Pallets:           lineRow.Pallets,
 			PalletsDetailCtns: lineRow.PalletsDetailCtns,
 			UnitLabel:         lineRow.UnitLabel,
@@ -453,6 +463,8 @@ func (s *Store) ListOutboundDocumentsFiltered(ctx context.Context, limit int, fi
 		})
 		document.TotalLines += 1
 		document.TotalQty += lineRow.Quantity
+		document.TotalPlannedQty += lineRow.PlannedQuantity
+		document.TotalActualQty += lineRow.Quantity
 		document.TotalNetWeightKgs += lineRow.NetWeightKgs
 		document.TotalGrossWeightKgs += lineRow.GrossWeightKgs
 		document.Storages = appendUniqueJoined(document.Storages, fmt.Sprintf("%s / %s", lineRow.LocationName, fallbackSection(lineRow.StorageSection)))
@@ -885,11 +897,12 @@ func (s *Store) UpdateOutboundDocumentNote(ctx context.Context, documentID int64
 func (s *Store) insertOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, documentID int64, input CreateOutboundDocumentInput, lockedSources map[string]lockedOutboundSource) error {
 	reservationState := newOutboundAllocationReservationState()
 	for index, line := range input.Lines {
+		line = normalizeOutboundLineQuantities(line)
 		lockedSource := lockedSources[buildOutboundSourceKey(line.CustomerID, line.LocationID, line.SKUMasterID)]
 		allocations := make([]outboundAllocationCandidate, 0)
 		if len(line.PickAllocations) == 0 {
 			var err error
-			allocations, err = s.resolveOutboundLineAllocationsTx(ctx, tx, lockedSource, line.Quantity, reservationState)
+			allocations, err = s.resolveOutboundLineAllocationsTx(ctx, tx, lockedSource, outboundLineReservationQuantity(line), reservationState)
 			if err != nil {
 				return err
 			}
@@ -921,6 +934,7 @@ func (s *Store) insertOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, d
 				sku_snapshot,
 				description_snapshot,
 				quantity,
+				planned_quantity,
 				pallets,
 				pallets_detail_ctns,
 				unit_label,
@@ -930,7 +944,7 @@ func (s *Store) insertOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, d
 				line_note,
 				pick_allocations_json,
 				sort_order
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			documentID,
 			lockedSource.SKUMasterID,
@@ -940,7 +954,8 @@ func (s *Store) insertOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, d
 			nullableString(lineItemNumber),
 			lockedSource.SKU,
 			nullableString(lockedSource.Description),
-			line.Quantity,
+			line.ActualQuantity,
+			line.PlannedQuantity,
 			line.Pallets,
 			nullableString(line.PalletsDetailCtns),
 			nullableString(firstNonEmpty(line.UnitLabel, strings.ToUpper(lockedSource.Unit), "PCS")),
@@ -998,6 +1013,88 @@ func (s *Store) ConfirmOutboundDocument(ctx context.Context, documentID int64) (
 	}
 
 	return s.getOutboundDocument(ctx, documentID)
+}
+
+const MaxBulkConfirmOutboundDocuments = 100
+
+type BulkConfirmOutboundDocumentsInput struct {
+	DocumentIDs []int64 `json:"documentIds"`
+}
+
+type BulkConfirmOutboundDocumentsResponse struct {
+	UpdatedDocuments int                `json:"updatedDocuments"`
+	Documents        []OutboundDocument `json:"documents"`
+}
+
+func (s *Store) BulkConfirmOutboundDocuments(ctx context.Context, input BulkConfirmOutboundDocumentsInput) (BulkConfirmOutboundDocumentsResponse, error) {
+	if len(input.DocumentIDs) == 0 || len(input.DocumentIDs) > MaxBulkConfirmOutboundDocuments {
+		return BulkConfirmOutboundDocumentsResponse{}, fmt.Errorf("%w: between 1 and %d shipment IDs are required", ErrInvalidInput, MaxBulkConfirmOutboundDocuments)
+	}
+
+	documentIDs := append([]int64(nil), input.DocumentIDs...)
+	sort.Slice(documentIDs, func(left, right int) bool { return documentIDs[left] < documentIDs[right] })
+	for index, documentID := range documentIDs {
+		if documentID <= 0 {
+			return BulkConfirmOutboundDocumentsResponse{}, fmt.Errorf("%w: shipment IDs must be positive", ErrInvalidInput)
+		}
+		if index > 0 && documentID == documentIDs[index-1] {
+			return BulkConfirmOutboundDocumentsResponse{}, fmt.Errorf("%w: duplicate shipment ID %d", ErrInvalidInput, documentID)
+		}
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return BulkConfirmOutboundDocumentsResponse{}, fmt.Errorf("begin outbound bulk confirm transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	customerIDs := make([]int64, 0, len(documentIDs))
+	for _, documentID := range documentIDs {
+		customerID, err := loadOutboundDocumentCustomerIDTx(ctx, tx, documentID)
+		if err != nil {
+			return BulkConfirmOutboundDocumentsResponse{}, fmt.Errorf("load shipment %d customer: %w", documentID, err)
+		}
+		customerIDs = append(customerIDs, customerID)
+	}
+	if err := lockBillingSourceCustomersTx(ctx, tx, customerIDs); err != nil {
+		return BulkConfirmOutboundDocumentsResponse{}, err
+	}
+
+	// Validate every selected document before changing inventory. The same
+	// transaction is then used for every confirmation, so any later stock or
+	// billing failure rolls the whole batch back.
+	for _, documentID := range documentIDs {
+		documentRow, err := s.loadOutboundDocumentForUpdateTx(ctx, tx, documentID)
+		if err != nil {
+			return BulkConfirmOutboundDocumentsResponse{}, fmt.Errorf("load shipment %d for confirmation: %w", documentID, err)
+		}
+		if normalizeDocumentStatus(documentRow.Status) != DocumentStatusDraft {
+			return BulkConfirmOutboundDocumentsResponse{}, fmt.Errorf("%w: shipment %d is not a draft", ErrInvalidInput, documentID)
+		}
+	}
+
+	for _, documentID := range documentIDs {
+		if err := s.confirmOutboundDocumentTx(ctx, tx, documentID); err != nil {
+			return BulkConfirmOutboundDocumentsResponse{}, fmt.Errorf("confirm shipment %d: %w", documentID, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return BulkConfirmOutboundDocumentsResponse{}, fmt.Errorf("commit outbound bulk confirmation: %w", err)
+	}
+
+	response := BulkConfirmOutboundDocumentsResponse{
+		UpdatedDocuments: len(documentIDs),
+		Documents:        make([]OutboundDocument, 0, len(documentIDs)),
+	}
+	for _, documentID := range documentIDs {
+		document, err := s.getOutboundDocument(ctx, documentID)
+		if err != nil {
+			return BulkConfirmOutboundDocumentsResponse{}, err
+		}
+		response.Documents = append(response.Documents, document)
+	}
+	return response, nil
 }
 
 func (s *Store) UpdateOutboundDocumentTrackingStatus(ctx context.Context, documentID int64, trackingStatus string) (OutboundDocument, error) {
@@ -1128,6 +1225,9 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 	}
 
 	for _, lineRow := range lineRows {
+		if lineRow.Quantity <= 0 {
+			return fmt.Errorf("%w: confirmed outbound line %s requires an actual shipped quantity greater than zero", ErrInvalidInput, firstNonEmpty(lineRow.SKUSnapshot, fmt.Sprintf("#%d", lineRow.ID)))
+		}
 		allocationRows, err := s.loadOutboundContainerAllocationsForUpdateTx(ctx, tx, lineRow.ID)
 		if err != nil {
 			return err
@@ -1512,18 +1612,25 @@ func (s *Store) cancelLoadedOutboundDocumentTx(ctx context.Context, tx *sql.Tx, 
 	if err := markDocumentAttachmentsDeletedForDocument(ctx, tx, DocumentAttachmentOutbound, documentRow.ID); err != nil {
 		return time.Time{}, err
 	}
-
+	if _, err := tx.ExecContext(ctx, `DELETE FROM delivery_events WHERE outbound_document_id = ?`, documentRow.ID); err != nil {
+		return time.Time{}, mapDBError(fmt.Errorf("delete outbound delivery events: %w", err))
+	}
+	if err := deleteStockLedgerForDocumentTx(ctx, tx, StockLedgerSourceOutbound, documentRow.ID); err != nil {
+		return time.Time{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `
-		UPDATE outbound_documents
-		SET
-			status = ?,
-			cancel_note = COALESCE(NULLIF(cancel_note, ''), ?),
-			cancelled_at = ?,
-			archived_at = NULL,
-			updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`, DocumentStatusDeleted, "Outbound document cancelled", deletedAt, documentRow.ID); err != nil {
-		return time.Time{}, mapDBError(fmt.Errorf("mark outbound document deleted: %w", err))
+		DELETE allocation
+		FROM outbound_container_allocations allocation
+		JOIN outbound_document_lines line ON line.id = allocation.outbound_line_id
+		WHERE line.document_id = ?
+	`, documentRow.ID); err != nil {
+		return time.Time{}, mapDBError(fmt.Errorf("delete outbound container allocations: %w", err))
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM outbound_document_lines WHERE document_id = ?`, documentRow.ID); err != nil {
+		return time.Time{}, mapDBError(fmt.Errorf("delete outbound document lines: %w", err))
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM outbound_documents WHERE id = ?`, documentRow.ID); err != nil {
+		return time.Time{}, mapDBError(fmt.Errorf("delete outbound document: %w", err))
 	}
 	return deletedAt, nil
 }
@@ -1554,6 +1661,8 @@ func outboundLineInputFromRow(customerID int64, lineRow outboundDocumentLineRow)
 		LocationID:        lineRow.LocationID,
 		SKUMasterID:       lineRow.SKUMasterID,
 		Quantity:          lineRow.Quantity,
+		PlannedQuantity:   lineRow.PlannedQuantity,
+		ActualQuantity:    lineRow.Quantity,
 		Pallets:           lineRow.Pallets,
 		PalletsDetailCtns: lineRow.PalletsDetailCtns,
 		UnitLabel:         lineRow.UnitLabel,
@@ -1599,13 +1708,13 @@ func (s *Store) reserveOutboundLineTx(
 
 	plannedAllocations := normalizeOutboundPickAllocations(line.PickAllocations)
 	if len(plannedAllocations) == 0 {
-		allocations, err := s.resolveOutboundLineAllocationsTx(ctx, tx, source, line.Quantity, newOutboundAllocationReservationState())
+		allocations, err := s.resolveOutboundLineAllocationsTx(ctx, tx, source, outboundLineReservationQuantity(*line), newOutboundAllocationReservationState())
 		if err != nil {
 			return err
 		}
 		plannedAllocations = toOutboundPickAllocationsFromCandidates(line, allocations)
 	}
-	if totalOutboundPickAllocationQuantity(plannedAllocations) != line.Quantity {
+	if totalOutboundPickAllocationQuantity(plannedAllocations) != outboundLineReservationQuantity(*line) {
 		return fmt.Errorf("%w: draft pick allocation quantity must equal outbound quantity", ErrInvalidInput)
 	}
 	line.PickAllocations = plannedAllocations
@@ -2014,6 +2123,7 @@ func (s *Store) CopyOutboundDocument(ctx context.Context, documentID int64) (Out
 				sku_snapshot,
 				description_snapshot,
 				quantity,
+				planned_quantity,
 				pallets,
 				pallets_detail_ctns,
 				unit_label,
@@ -2023,7 +2133,7 @@ func (s *Store) CopyOutboundDocument(ctx context.Context, documentID int64) (Out
 				line_note,
 				pick_allocations_json,
 				sort_order
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			newDocumentID,
 			lineRow.SKUMasterID,
@@ -2034,6 +2144,7 @@ func (s *Store) CopyOutboundDocument(ctx context.Context, documentID int64) (Out
 			lineRow.SKUSnapshot,
 			nullableString(lineRow.DescriptionSnapshot),
 			lineRow.Quantity,
+			lineRow.PlannedQuantity,
 			lineRow.Pallets,
 			nullableString(lineRow.PalletsDetailCtns),
 			nullableString(lineRow.UnitLabel),
@@ -2145,6 +2256,7 @@ func (s *Store) loadOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, doc
 			sku_snapshot,
 			COALESCE(description_snapshot, '') AS description_snapshot,
 			quantity,
+			CASE WHEN planned_quantity > 0 THEN planned_quantity ELSE quantity END AS planned_quantity,
 			pallets,
 			COALESCE(pallets_detail_ctns, '') AS pallets_detail_ctns,
 			COALESCE(unit_label, '') AS unit_label,
@@ -2177,6 +2289,7 @@ func (s *Store) loadOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, doc
 			&lineRow.SKUSnapshot,
 			&lineRow.DescriptionSnapshot,
 			&lineRow.Quantity,
+			&lineRow.PlannedQuantity,
 			&lineRow.Pallets,
 			&lineRow.PalletsDetailCtns,
 			&lineRow.UnitLabel,
@@ -2301,6 +2414,7 @@ func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []in
 			sku_snapshot,
 			COALESCE(description_snapshot, '') AS description_snapshot,
 			quantity,
+			CASE WHEN planned_quantity > 0 THEN planned_quantity ELSE quantity END AS planned_quantity,
 			pallets,
 			COALESCE(pallets_detail_ctns, '') AS pallets_detail_ctns,
 			COALESCE(unit_label, '') AS unit_label,
@@ -2339,6 +2453,8 @@ func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []in
 			SKU:               lineRow.SKUSnapshot,
 			Description:       lineRow.DescriptionSnapshot,
 			Quantity:          lineRow.Quantity,
+			PlannedQuantity:   lineRow.PlannedQuantity,
+			ActualQuantity:    lineRow.Quantity,
 			Pallets:           lineRow.Pallets,
 			PalletsDetailCtns: lineRow.PalletsDetailCtns,
 			UnitLabel:         lineRow.UnitLabel,
@@ -2351,6 +2467,8 @@ func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []in
 		})
 		document.TotalLines += 1
 		document.TotalQty += lineRow.Quantity
+		document.TotalPlannedQty += lineRow.PlannedQuantity
+		document.TotalActualQty += lineRow.Quantity
 		document.TotalNetWeightKgs += lineRow.NetWeightKgs
 		document.TotalGrossWeightKgs += lineRow.GrossWeightKgs
 		document.Storages = appendUniqueJoined(document.Storages, fmt.Sprintf("%s / %s", lineRow.LocationName, fallbackSection(lineRow.StorageSection)))
@@ -2611,9 +2729,10 @@ func (s *Store) prepareOutboundDraftLineAllocationsTx(
 	if line == nil {
 		return nil, fmt.Errorf("%w: outbound line is required", ErrInvalidInput)
 	}
+	requestedQty := outboundLineReservationQuantity(*line)
 
 	if len(line.PickAllocations) > 0 {
-		allocations, err := s.resolveOutboundDraftBucketAllocationsTx(ctx, tx, source, line.Quantity, line.PickAllocations, reservationState)
+		allocations, err := s.resolveOutboundDraftBucketAllocationsTx(ctx, tx, source, requestedQty, line.PickAllocations, reservationState)
 		if err != nil {
 			return nil, err
 		}
@@ -2621,7 +2740,7 @@ func (s *Store) prepareOutboundDraftLineAllocationsTx(
 		return allocations, nil
 	}
 
-	return s.resolveOutboundLineAllocationsTx(ctx, tx, source, line.Quantity, reservationState)
+	return s.resolveOutboundLineAllocationsTx(ctx, tx, source, requestedQty, reservationState)
 }
 
 func (s *Store) resolveOutboundDraftBucketAllocationsTx(
@@ -2951,12 +3070,13 @@ func sanitizeOutboundDocumentInput(input CreateOutboundDocumentInput) CreateOutb
 	input.DocumentNote = strings.TrimSpace(input.DocumentNote)
 	lines := make([]CreateOutboundDocumentLineInput, 0, len(input.Lines))
 	for _, line := range input.Lines {
+		line = normalizeOutboundLineQuantities(line)
 		line.UnitLabel = strings.TrimSpace(strings.ToUpper(line.UnitLabel))
 		line.CartonSizeMM = strings.TrimSpace(line.CartonSizeMM)
 		line.PalletsDetailCtns = strings.TrimSpace(line.PalletsDetailCtns)
 		line.LineNote = strings.TrimSpace(line.LineNote)
 		line.PickAllocations = normalizeOutboundPickAllocations(line.PickAllocations)
-		if line.CustomerID <= 0 || line.LocationID <= 0 || line.SKUMasterID <= 0 || line.Quantity <= 0 {
+		if line.CustomerID <= 0 || line.LocationID <= 0 || line.SKUMasterID <= 0 || (line.PlannedQuantity <= 0 && line.ActualQuantity <= 0) {
 			continue
 		}
 		lines = append(lines, line)
@@ -2987,6 +3107,8 @@ func validateOutboundDocumentInput(input CreateOutboundDocumentInput) error {
 	}
 
 	for _, line := range input.Lines {
+		line = normalizeOutboundLineQuantities(line)
+		reservationQuantity := outboundLineReservationQuantity(line)
 		switch {
 		case line.CustomerID <= 0:
 			return fmt.Errorf("%w: customer is required", ErrInvalidInput)
@@ -2994,18 +3116,45 @@ func validateOutboundDocumentInput(input CreateOutboundDocumentInput) error {
 			return fmt.Errorf("%w: warehouse is required", ErrInvalidInput)
 		case line.SKUMasterID <= 0:
 			return fmt.Errorf("%w: SKU is required", ErrInvalidInput)
-		case line.Quantity <= 0:
-			return fmt.Errorf("%w: outbound quantity must be greater than zero", ErrInvalidInput)
+		case line.PlannedQuantity < 0 || line.ActualQuantity < 0:
+			return fmt.Errorf("%w: planned and actual outbound quantities cannot be negative", ErrInvalidInput)
+		case line.PlannedQuantity == 0 && line.ActualQuantity == 0:
+			return fmt.Errorf("%w: planned or actual outbound quantity must be greater than zero", ErrInvalidInput)
+		case coalescedStatus == DocumentStatusConfirmed && line.ActualQuantity <= 0:
+			return fmt.Errorf("%w: confirmed shipments require an actual shipped quantity greater than zero", ErrInvalidInput)
 		case line.Pallets < 0:
 			return fmt.Errorf("%w: pallets cannot be negative", ErrInvalidInput)
 		case line.NetWeightKgs < 0 || line.GrossWeightKgs < 0:
 			return fmt.Errorf("%w: weights cannot be negative", ErrInvalidInput)
-		case len(line.PickAllocations) > 0 && totalOutboundPickAllocationQuantity(line.PickAllocations) != line.Quantity:
+		case len(line.PickAllocations) > 0 && totalOutboundPickAllocationQuantity(line.PickAllocations) != reservationQuantity:
 			return fmt.Errorf("%w: draft pick allocation quantity must equal outbound quantity", ErrInvalidInput)
 		}
 	}
 
 	return nil
+}
+
+func normalizeOutboundLineQuantities(line CreateOutboundDocumentLineInput) CreateOutboundDocumentLineInput {
+	if line.ActualQuantity == 0 && line.Quantity > 0 {
+		line.ActualQuantity = line.Quantity
+	}
+	if line.Quantity == 0 && line.ActualQuantity > 0 {
+		line.Quantity = line.ActualQuantity
+	}
+	if line.PlannedQuantity == 0 && line.ActualQuantity > 0 {
+		line.PlannedQuantity = line.ActualQuantity
+	}
+	return line
+}
+
+func outboundLineReservationQuantity(line CreateOutboundDocumentLineInput) int {
+	if line.ActualQuantity > 0 {
+		return line.ActualQuantity
+	}
+	if line.Quantity > 0 {
+		return line.Quantity
+	}
+	return line.PlannedQuantity
 }
 
 func resolveOutboundLedgerDate(expectedShipDate *time.Time, actualShipDate *time.Time) *time.Time {

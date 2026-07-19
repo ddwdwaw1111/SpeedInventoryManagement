@@ -417,16 +417,6 @@ export function InboundReceiptEditorPage({
       }
     }
 
-    if (requirePalletReady && batchForm.handlingMode !== "SEALED_TRANSIT") {
-      if (validBatchInboundLines.some((line) => line.receivedQty <= 0)) {
-        return t("confirmedReceiptReceivedQtyRequired");
-      }
-      const invalidPalletLine = validBatchInboundLines.find((line) => line.pallets <= 0);
-      if (invalidPalletLine) {
-        return "Enter a pallet count for every SKU line.";
-      }
-    }
-
     return "";
   }
 
@@ -517,7 +507,7 @@ export function InboundReceiptEditorPage({
             expectedQty: line.expectedQty,
             receivedQty: line.receivedQty,
             pallets: isSealedTransitMode ? 0 : line.pallets,
-            unitsPerPallet: isSealedTransitMode ? undefined : (line.unitsPerPallet || undefined),
+            unitsPerPallet: isSealedTransitMode ? undefined : line.unitsPerPallet,
             palletsDetailCtns: undefined,
             storageSection: normalizeStorageSection(line.storageSection || batchForm.storageSection || batchSectionOptions[0]),
             lineNote: line.lineNote || undefined
@@ -880,7 +870,7 @@ export function InboundReceiptEditorPage({
                                 <td><input type="number" min="0" value={numberInputValue(line.expectedQty)} className={getInvalidInputClassName(hasMissingSkuLine && line.expectedQty <= 0 && line.receivedQty <= 0)} aria-invalid={hasMissingSkuLine && line.expectedQty <= 0 && line.receivedQty <= 0 ? "true" : undefined} onChange={(event) => updateBatchLineExpectedQty(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={isReadOnly} aria-label={`${t("expectedQty")} #${index + 1}`} /></td>
                                 <td><input type="number" min="0" value={numberInputValue(line.receivedQty)} className={getInvalidInputClassName(hasMissingSkuLine && line.expectedQty <= 0 && line.receivedQty <= 0)} aria-invalid={hasMissingSkuLine && line.expectedQty <= 0 && line.receivedQty <= 0 ? "true" : undefined} onChange={(event) => updateBatchLineReceivedQty(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={isReadOnly} aria-label={`${t("received")} #${index + 1}`} /></td>
                                 <td><input type="number" min="0" value={numberInputValue(line.pallets)} onChange={(event) => updateBatchLinePallets(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={isReadOnly || batchForm.handlingMode === "SEALED_TRANSIT"} aria-label={`${t("pallets")} #${index + 1}`} /></td>
-                                <td><input type="number" min="0" value={numberInputValue(line.unitsPerPallet)} onChange={(event) => updateBatchLineUnitsPerPallet(line.id, Math.max(0, Number(event.target.value || 0)))} placeholder={batchSkuMaster?.defaultUnitsPerPallet ? String(batchSkuMaster.defaultUnitsPerPallet) : ""} disabled={isReadOnly || batchForm.handlingMode === "SEALED_TRANSIT"} aria-label={`${t("ctnPerPallet")} #${index + 1}`} /></td>
+                                <td><input type="number" min="0" value={String(line.unitsPerPallet)} onChange={(event) => updateBatchLineUnitsPerPallet(line.id, Math.max(0, Number(event.target.value || 0)))} placeholder={batchSkuMaster?.defaultUnitsPerPallet ? String(batchSkuMaster.defaultUnitsPerPallet) : ""} disabled={isReadOnly || batchForm.handlingMode === "SEALED_TRANSIT"} aria-label={`${t("ctnPerPallet")} #${index + 1}`} /></td>
                                 <td className="inbound-entry-table__note">
                                   <input value={line.lineNote} onChange={(event) => updateBatchLine(line.id, { lineNote: event.target.value })} placeholder={t("inboundLineNotePlaceholder")} disabled={isReadOnly} aria-label={`${t("internalNotes")} #${index + 1}`} />
                                 </td>

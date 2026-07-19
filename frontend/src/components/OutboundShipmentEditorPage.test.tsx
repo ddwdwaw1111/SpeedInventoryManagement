@@ -141,6 +141,8 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
       locationId: 1,
       skuMasterId: 1,
       quantity: 5,
+      plannedQuantity: 5,
+      actualQuantity: 5,
       pallets: 2,
       palletsDetailCtns: undefined,
       unitLabel: "CTN",

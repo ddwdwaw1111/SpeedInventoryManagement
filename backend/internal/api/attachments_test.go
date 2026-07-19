@@ -2,7 +2,6 @@ package api
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -11,7 +10,6 @@ import (
 	"net/textproto"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -145,30 +143,6 @@ func TestDocumentAttachmentJSONOmitsStorageLocation(t *testing.T) {
 	}
 }
 
-func TestDeleteDocumentAttachmentObjectsAfterCancelDeletesOnlyMatchingStorage(t *testing.T) {
-	storage := &recordingAttachmentStorage{provider: "r2", bucket: "speedwin-uploads"}
-	server := &Server{attachmentStorage: storage}
-
-	server.deleteDocumentAttachmentObjectsAfterCancel(service.DocumentAttachmentInbound, 456, []service.DocumentAttachment{
-		{
-			ID:              1,
-			StorageProvider: "r2",
-			StorageBucket:   "speedwin-uploads",
-			StorageKey:      "documents/inbound/456/keep.pdf",
-		},
-		{
-			ID:              2,
-			StorageProvider: "r2",
-			StorageBucket:   "other-bucket",
-			StorageKey:      "documents/inbound/456/skip.pdf",
-		},
-	})
-
-	if len(storage.deletedKeys) != 1 || storage.deletedKeys[0] != "documents/inbound/456/keep.pdf" {
-		t.Fatalf("unexpected deleted keys %#v", storage.deletedKeys)
-	}
-}
-
 type multipartPart struct {
 	name        string
 	value       string
@@ -211,31 +185,4 @@ func newAttachmentUploadContext(t *testing.T, parts []multipartPart) *gin.Contex
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	context.Request = request
 	return context
-}
-
-type recordingAttachmentStorage struct {
-	provider    string
-	bucket      string
-	deletedKeys []string
-}
-
-func (s *recordingAttachmentStorage) Bucket() string {
-	return s.bucket
-}
-
-func (s *recordingAttachmentStorage) Provider() string {
-	return s.provider
-}
-
-func (s *recordingAttachmentStorage) PutObject(_ context.Context, _ string, _ string, _ []byte) error {
-	return nil
-}
-
-func (s *recordingAttachmentStorage) DeleteObject(_ context.Context, key string) error {
-	s.deletedKeys = append(s.deletedKeys, key)
-	return nil
-}
-
-func (s *recordingAttachmentStorage) SignedGetURL(_ string, _ time.Duration) (string, error) {
-	return "", nil
 }

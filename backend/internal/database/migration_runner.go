@@ -68,6 +68,32 @@ var schemaMigrations = []schemaMigration{
 		Revision: "2026-07-15.1",
 		Apply:    applyInboundCorrectionWorkflowMigration,
 	},
+	{
+		Version:  9,
+		Name:     "canonical_container_receipts",
+		Revision: "2026-07-16.1",
+		Apply:    applyPreviouslyDeployedMigration,
+	},
+	{
+		Version:  10,
+		Name:     "active_container_consistency",
+		Revision: "2026-07-16.1",
+		Apply:    applyPreviouslyDeployedMigration,
+	},
+	{
+		Version:  11,
+		Name:     "hard_delete_documents",
+		Revision: "2026-07-18.1",
+		Apply:    applyHardDeleteDocumentsMigration,
+	},
+}
+
+// Versions 9 and 10 were deployed before their source migrations were merged.
+// Keep their original journal identities so existing databases can continue
+// upgrading. Their final schema is already represented by the baseline and the
+// later idempotent migrations.
+func applyPreviouslyDeployedMigration(_ *sql.DB) error {
+	return nil
 }
 
 // Migrate applies each schema migration exactly once. MariaDB DDL auto-commits,

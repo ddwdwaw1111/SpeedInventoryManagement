@@ -686,9 +686,6 @@ func validateAndNormalizeInboundBulkCommitDocument(input CreateInboundDocumentIn
 			if line.Description == "" {
 				line.Description = firstNonEmpty(master.Description, master.Name, master.SKU)
 			}
-			if line.UnitsPerPallet == 0 && master.DefaultUnitsPerPallet > 0 {
-				line.UnitsPerPallet = master.DefaultUnitsPerPallet
-			}
 		} else if line.Description == "" {
 			return CreateInboundDocumentInput{}, fmt.Errorf("%w: new sku %s requires a description", ErrInvalidInput, line.SKU)
 		}
@@ -1128,9 +1125,7 @@ func buildInboundBulkImportPreview(
 				if line.Description == "" {
 					line.Description = firstNonEmpty(master.Description, master.Name, master.SKU)
 				}
-				if line.UnitsPerPallet == 0 && master.DefaultUnitsPerPallet > 0 {
-					line.UnitsPerPallet = master.DefaultUnitsPerPallet
-				} else if line.UnitsPerPallet > 0 && master.DefaultUnitsPerPallet > 0 && line.UnitsPerPallet != master.DefaultUnitsPerPallet {
+				if line.UnitsPerPallet > 0 && master.DefaultUnitsPerPallet > 0 && line.UnitsPerPallet != master.DefaultUnitsPerPallet {
 					document.preview.Issues = append(document.preview.Issues, inboundBulkIssue(
 						InboundBulkIssueWarning,
 						"CTN_PER_PALLET_DEFAULT_MISMATCH",

@@ -2,13 +2,11 @@ package service
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"strings"
 	"testing"
 )
 
-func TestCancelConfirmedOutboundPreservesAuditRecordsIntegration(t *testing.T) {
+func TestCancelConfirmedOutboundHardDeletesRelatedRecordsIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
@@ -57,57 +55,39 @@ func TestCancelConfirmedOutboundPreservesAuditRecordsIntegration(t *testing.T) {
 		t.Fatalf("expected deleted outbound response, got %#v", cancelled)
 	}
 
-	var (
-		storedStatus string
-		cancelNote   string
-		cancelledAt  sql.NullTime
-	)
-	if err := store.db.QueryRowContext(ctx, `
-		SELECT status, COALESCE(cancel_note, ''), cancelled_at
-		FROM outbound_documents
-		WHERE id = ?
-	`, document.ID).Scan(&storedStatus, &cancelNote, &cancelledAt); err != nil {
-		t.Fatalf("load soft-deleted outbound document: %v", err)
+	var documentCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM outbound_documents WHERE id = ?`, document.ID).Scan(&documentCount); err != nil {
+		t.Fatalf("count deleted outbound document: %v", err)
 	}
-	if normalizeDocumentStatus(storedStatus) != DocumentStatusDeleted || !cancelledAt.Valid {
-		t.Fatalf("expected persisted deleted status and cancellation time, got status=%q cancelledAt=%#v", storedStatus, cancelledAt)
-	}
-	if strings.TrimSpace(cancelNote) == "" {
-		t.Fatal("expected cancellation note to be preserved for audit")
+	if documentCount != 0 {
+		t.Fatalf("expected outbound document to be physically deleted, got %d rows", documentCount)
 	}
 
 	var lineCount int
 	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM outbound_document_lines WHERE document_id = ?`, document.ID).Scan(&lineCount); err != nil {
-		t.Fatalf("count preserved outbound lines: %v", err)
+		t.Fatalf("count deleted outbound lines: %v", err)
 	}
-	if lineCount != 1 {
-		t.Fatalf("expected one preserved outbound line, got %d", lineCount)
+	if lineCount != 0 {
+		t.Fatalf("expected outbound lines to be physically deleted, got %d", lineCount)
 	}
 
-	var (
-		allocationCount      int
-		cancelledAllocations int
-	)
+	var allocationCount int
 	if err := store.db.QueryRowContext(ctx, `
-		SELECT COUNT(*), COALESCE(SUM(CASE WHEN status = 'CANCELLED' THEN 1 ELSE 0 END), 0)
+		SELECT COUNT(*)
 		FROM outbound_container_allocations
 		WHERE outbound_line_id = ?
-	`, lineID).Scan(&allocationCount, &cancelledAllocations); err != nil {
-		t.Fatalf("load preserved outbound allocations: %v", err)
+	`, lineID).Scan(&allocationCount); err != nil {
+		t.Fatalf("count deleted outbound allocations: %v", err)
 	}
-	if allocationCount == 0 || cancelledAllocations != allocationCount {
-		t.Fatalf("expected all preserved allocations to be cancelled, got total=%d cancelled=%d", allocationCount, cancelledAllocations)
+	if allocationCount != 0 {
+		t.Fatalf("expected outbound allocations to be physically deleted, got %d", allocationCount)
 	}
 
-	reversalCount := countOutboundReversalsForDocument(t, ctx, store, document.ID)
-	if reversalCount == 0 {
-		t.Fatal("expected confirmed cancellation to write reversal ledger entries")
+	if ledgerCount := countOutboundLedgerRowsForDocument(t, ctx, store, document.ID); ledgerCount != 0 {
+		t.Fatalf("expected outbound stock ledger rows to be physically deleted, got %d", ledgerCount)
 	}
-	if _, err := store.CancelOutboundDocument(ctx, document.ID); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("expected repeat cancellation to fail with ErrInvalidInput, got %v", err)
-	}
-	if afterRepeat := countOutboundReversalsForDocument(t, ctx, store, document.ID); afterRepeat != reversalCount {
-		t.Fatalf("repeat cancellation wrote another reversal: before=%d after=%d", reversalCount, afterRepeat)
+	if _, err := store.CancelOutboundDocument(ctx, document.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected repeat cancellation to fail with ErrNotFound, got %v", err)
 	}
 
 	restored := mustFindItemByID(t, ctx, store, item.ID)
@@ -128,16 +108,16 @@ func TestCancelConfirmedOutboundPreservesAuditRecordsIntegration(t *testing.T) {
 	if _, err := store.GetOutboundDocumentForCustomer(ctx, document.ID, customer.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected customer lookup to hide deleted outbound, got %v", err)
 	}
-	if _, err := store.UpdateOutboundDocumentNote(ctx, document.ID, UpdateOutboundDocumentNoteInput{DocumentNote: "must not change"}); !errors.Is(err, ErrInvalidInput) {
+	if _, err := store.UpdateOutboundDocumentNote(ctx, document.ID, UpdateOutboundDocumentNoteInput{DocumentNote: "must not change"}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected deleted outbound note update to fail, got %v", err)
 	}
-	if _, err := store.ArchiveOutboundDocument(ctx, document.ID); !errors.Is(err, ErrInvalidInput) {
+	if _, err := store.ArchiveOutboundDocument(ctx, document.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected deleted outbound archive to fail, got %v", err)
 	}
-	if _, err := store.CopyOutboundDocument(ctx, document.ID); !errors.Is(err, ErrInvalidInput) {
+	if _, err := store.CopyOutboundDocument(ctx, document.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected deleted outbound copy to fail, got %v", err)
 	}
-	if err := store.EnsureDocumentAttachmentMutable(ctx, DocumentAttachmentOutbound, document.ID); !errors.Is(err, ErrInvalidInput) {
+	if err := store.EnsureDocumentAttachmentMutable(ctx, DocumentAttachmentOutbound, document.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected deleted outbound attachment preflight to fail, got %v", err)
 	}
 	if _, err := store.CreateDocumentAttachment(ctx, CreateDocumentAttachmentInput{
@@ -150,20 +130,16 @@ func TestCancelConfirmedOutboundPreservesAuditRecordsIntegration(t *testing.T) {
 		StorageKey:       "deleted-document.pdf",
 		ContentType:      "application/pdf",
 		SizeBytes:        1,
-	}); !errors.Is(err, ErrInvalidInput) {
+	}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected direct attachment creation on deleted outbound to fail, got %v", err)
 	}
 
-	auditDocument, err := store.getOutboundDocument(ctx, document.ID)
-	if err != nil {
-		t.Fatalf("load soft-deleted outbound through internal audit lookup: %v", err)
-	}
-	if auditDocument.Status != DocumentStatusDeleted || len(auditDocument.Lines) != 1 {
-		t.Fatalf("expected internal audit lookup to retain deleted document and line, got %#v", auditDocument)
+	if _, err := store.getOutboundDocument(ctx, document.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected internal lookup to miss hard-deleted outbound, got %v", err)
 	}
 }
 
-func TestCancelPickingOutboundPreservesCancelledAllocationsIntegration(t *testing.T) {
+func TestCancelPickingOutboundHardDeletesAllocationsIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
@@ -210,19 +186,16 @@ func TestCancelPickingOutboundPreservesCancelledAllocationsIntegration(t *testin
 		t.Fatalf("cancel picking outbound: %v", err)
 	}
 
-	var (
-		allocationCount      int
-		cancelledAllocations int
-	)
+	var allocationCount int
 	if err := store.db.QueryRowContext(ctx, `
-		SELECT COUNT(*), COALESCE(SUM(CASE WHEN status = 'CANCELLED' THEN 1 ELSE 0 END), 0)
+		SELECT COUNT(*)
 		FROM outbound_container_allocations
 		WHERE outbound_line_id = ?
-	`, lineID).Scan(&allocationCount, &cancelledAllocations); err != nil {
-		t.Fatalf("load cancelled picking allocations: %v", err)
+	`, lineID).Scan(&allocationCount); err != nil {
+		t.Fatalf("count deleted picking allocations: %v", err)
 	}
-	if allocationCount == 0 || cancelledAllocations != allocationCount {
-		t.Fatalf("expected cancelled picking allocations to remain for audit, got total=%d cancelled=%d", allocationCount, cancelledAllocations)
+	if allocationCount != 0 {
+		t.Fatalf("expected picking allocations to be physically deleted, got %d", allocationCount)
 	}
 
 	itemAfterCancel := mustFindItemByID(t, ctx, store, item.ID)
@@ -234,12 +207,12 @@ func TestCancelPickingOutboundPreservesCancelledAllocationsIntegration(t *testin
 			itemAfterCancel.AvailableQty,
 		)
 	}
-	if reversals := countOutboundReversalsForDocument(t, ctx, store, document.ID); reversals != 0 {
-		t.Fatalf("expected draft cancellation to avoid inventory reversals, got %d", reversals)
+	if ledgerRows := countOutboundLedgerRowsForDocument(t, ctx, store, document.ID); ledgerRows != 0 {
+		t.Fatalf("expected draft cancellation to leave no inventory ledger rows, got %d", ledgerRows)
 	}
 }
 
-func countOutboundReversalsForDocument(t *testing.T, ctx context.Context, store *Store, documentID int64) int {
+func countOutboundLedgerRowsForDocument(t *testing.T, ctx context.Context, store *Store, documentID int64) int {
 	t.Helper()
 	var count int
 	if err := store.db.QueryRowContext(ctx, `
@@ -247,9 +220,8 @@ func countOutboundReversalsForDocument(t *testing.T, ctx context.Context, store 
 		FROM stock_ledger
 		WHERE source_document_type = ?
 		  AND source_document_id = ?
-		  AND event_type = ?
-	`, StockLedgerSourceOutbound, documentID, StockLedgerEventReversal).Scan(&count); err != nil {
-		t.Fatalf("count outbound reversal entries: %v", err)
+	`, StockLedgerSourceOutbound, documentID).Scan(&count); err != nil {
+		t.Fatalf("count outbound ledger entries: %v", err)
 	}
 	return count
 }

@@ -94,6 +94,7 @@ vi.mock("../lib/api", () => ({
     createOutboundDocument: vi.fn(),
     updateInboundDocument: vi.fn(),
     bulkUpdateInboundDocumentStatus: vi.fn(),
+    bulkConfirmOutboundDocuments: vi.fn(),
     copyInboundDocument: vi.fn()
   }
 }));
@@ -124,6 +125,7 @@ const mockedApi = api as unknown as {
   createOutboundDocument: ReturnType<typeof vi.fn>;
   updateInboundDocument: ReturnType<typeof vi.fn>;
   bulkUpdateInboundDocumentStatus: ReturnType<typeof vi.fn>;
+  bulkConfirmOutboundDocuments: ReturnType<typeof vi.fn>;
   copyInboundDocument: ReturnType<typeof vi.fn>;
 };
 
@@ -135,6 +137,7 @@ describe("ActivityManagementPage", () => {
     mockedApi.createOutboundDocument.mockReset();
     mockedApi.updateInboundDocument.mockReset();
     mockedApi.bulkUpdateInboundDocumentStatus.mockReset();
+    mockedApi.bulkConfirmOutboundDocuments.mockReset();
     mockedApi.copyInboundDocument.mockReset();
     mockedDownloadOutboundPickSheetPdfFromDocument.mockReset();
     mockedApi.getInboundDocuments.mockResolvedValue([]);
@@ -360,6 +363,44 @@ describe("ActivityManagementPage", () => {
       });
     });
     expect(await screen.findByText("PL-FILTER-84")).toBeInTheDocument();
+  });
+
+  it("bulk confirms selected draft shipments", async () => {
+    const first = createOutboundDocument({ id: 31, packingListNo: "PICK-31", status: "DRAFT", trackingStatus: "SCHEDULED" });
+    const second = createOutboundDocument({ id: 32, packingListNo: "PICK-32", status: "DRAFT", trackingStatus: "SCHEDULED" });
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    mockedApi.bulkConfirmOutboundDocuments.mockResolvedValue({
+      updatedDocuments: 2,
+      documents: [
+        { ...first, status: "CONFIRMED", trackingStatus: "SHIPPED" },
+        { ...second, status: "CONFIRMED", trackingStatus: "SHIPPED" }
+      ]
+    });
+
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="OUT"
+        items={[]}
+        skuMasters={[createSkuMaster()]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        movements={[]}
+        inboundDocuments={[]}
+        outboundDocuments={[first, second]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={onRefresh}
+      />
+    );
+
+    fireEvent.click(screen.getByLabelText("Select row 31"));
+    fireEvent.click(screen.getByLabelText("Select row 32"));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm 2 selected" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm Shipment" }));
+
+    await waitFor(() => expect(mockedApi.bulkConfirmOutboundDocuments).toHaveBeenCalledWith([31, 32]));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("Confirmed 2 shipments.")).toBeInTheDocument();
   });
 
   it("shows customer-created draft packing lists in the outbound queue and opens them for warehouse processing", async () => {
@@ -893,7 +934,7 @@ describe("ActivityManagementPage", () => {
     expect(unitsPerPalletInput).toHaveValue(10);
   });
 
-  it("requires explicit received Qty while allowing pallets above Qty and optional CTN per Pallet", async () => {
+  it("allows zero received Qty, pallets, and CTN per Pallet when confirming", async () => {
     mockedApi.createInboundDocument.mockResolvedValue(undefined);
     renderWithProviders(
       <ActivityManagementPage
@@ -922,16 +963,9 @@ describe("ActivityManagementPage", () => {
     fireEvent.change(inboundLineInputs[0] as HTMLInputElement, { target: { value: "SKU-INDEPENDENT" } });
     fireEvent.change(inboundLineInputs[2] as HTMLInputElement, { target: { value: "Independent quantities" } });
     fireEvent.change(inboundLineInputs[3] as HTMLInputElement, { target: { value: "10" } });
-    fireEvent.change(inboundLineInputs[5] as HTMLInputElement, { target: { value: "20" } });
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm Receipt" }));
-
-    expect(await screen.findByText("Enter Received Qty greater than 0 for every confirmed SKU line.")).toBeInTheDocument();
-    expect(mockedApi.createInboundDocument).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
-    inboundLineInputs = dialog.querySelectorAll(".batch-line-grid--inbound input");
-    fireEvent.change(inboundLineInputs[4] as HTMLInputElement, { target: { value: "1" } });
+    fireEvent.change(inboundLineInputs[4] as HTMLInputElement, { target: { value: "0" } });
+    fireEvent.change(inboundLineInputs[5] as HTMLInputElement, { target: { value: "0" } });
+    fireEvent.change(inboundLineInputs[6] as HTMLInputElement, { target: { value: "0" } });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(screen.getByRole("button", { name: "Confirm Receipt" }));
 
@@ -940,9 +974,8 @@ describe("ActivityManagementPage", () => {
     expect(payload).toMatchObject({
       expectedArrivalDate: undefined,
       actualArrivalDate: "2026-04-01",
-      lines: [{ expectedQty: 10, receivedQty: 1, pallets: 20 }]
+      lines: [{ expectedQty: 10, receivedQty: 0, pallets: 0, unitsPerPallet: 0 }]
     });
-    expect(payload.lines[0]).not.toHaveProperty("unitsPerPallet");
   });
 
   it("sorts receipts by actual arrival before expected arrival", async () => {
@@ -1196,7 +1229,8 @@ describe("ActivityManagementPage", () => {
 
     fireEvent.change(outboundLineSelect as HTMLSelectElement, { target: { value: "1|1|1" } });
     fireEvent.change(outboundLineInputs[1] as HTMLInputElement, { target: { value: "5" } });
-    fireEvent.change(outboundLineInputs[2] as HTMLInputElement, { target: { value: "2" } });
+    fireEvent.change(outboundLineInputs[2] as HTMLInputElement, { target: { value: "5" } });
+    fireEvent.change(outboundLineInputs[3] as HTMLInputElement, { target: { value: "2" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByText("Container Pick Plan")).toBeInTheDocument();
@@ -1225,6 +1259,8 @@ describe("ActivityManagementPage", () => {
             locationId: 1,
             skuMasterId: 1,
             quantity: 5,
+            plannedQuantity: 5,
+            actualQuantity: 5,
             pallets: 2,
             palletsDetailCtns: undefined,
             unitLabel: "CTN",

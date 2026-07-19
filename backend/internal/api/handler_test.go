@@ -408,6 +408,7 @@ func TestDocumentStatusRoutesRequireAuth(t *testing.T) {
 		target string
 	}{
 		{name: "confirm outbound", target: "/api/outbound-documents/1/confirm"},
+		{name: "bulk confirm outbound", target: "/api/outbound-documents/bulk-confirm"},
 		{name: "track outbound", target: "/api/outbound-documents/1/tracking-status"},
 		{name: "cancel outbound", target: "/api/outbound-documents/1/cancel"},
 		{name: "confirm inbound", target: "/api/inbound-documents/1/confirm"},

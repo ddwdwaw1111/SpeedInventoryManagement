@@ -896,7 +896,11 @@ func (s *Store) BulkUpdateInboundDocumentStatus(ctx context.Context, input BulkU
 		Status:           targetStatus,
 		Documents:        make([]InboundDocument, 0, len(documentIDs)),
 	}
-	for _, documentID := range documentIDs {
+	for index, documentID := range documentIDs {
+		if targetStatus == DocumentStatusDeleted {
+			response.Documents = append(response.Documents, deletedInboundDocumentFromRow(deletionRows[index], time.Now().UTC()))
+			continue
+		}
 		document, err := s.getInboundDocument(ctx, documentID)
 		if err != nil {
 			return BulkUpdateInboundDocumentStatusResponse{}, err
@@ -1008,18 +1012,20 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 		return fmt.Errorf("%w: receipt must contain at least one line before confirmation", ErrInvalidInput)
 	}
 	for _, lineRow := range lineRows {
-		if lineRow.ReceivedQty <= 0 {
+		if lineRow.ReceivedQty < 0 {
 			return fmt.Errorf(
-				"%w: confirmed receipt line %s requires a received quantity greater than zero",
+				"%w: confirmed receipt line %s for container %s cannot have a negative received quantity",
 				ErrInvalidInput,
 				firstNonEmpty(lineRow.SKUSnapshot, fmt.Sprintf("#%d", lineRow.ID)),
+				firstNonEmpty(strings.TrimSpace(documentRow.ContainerNo), "(blank)"),
 			)
 		}
-		if handlingMode == InboundHandlingModePalletized && lineRow.Pallets <= 0 {
+		if handlingMode == InboundHandlingModePalletized && lineRow.Pallets < 0 {
 			return fmt.Errorf(
-				"%w: confirmed palletized receipt line %s requires a pallet count greater than zero",
+				"%w: confirmed palletized receipt line %s for container %s cannot have a negative pallet count",
 				ErrInvalidInput,
 				firstNonEmpty(lineRow.SKUSnapshot, fmt.Sprintf("#%d", lineRow.ID)),
+				firstNonEmpty(strings.TrimSpace(documentRow.ContainerNo), "(blank)"),
 			)
 		}
 	}
@@ -1303,6 +1309,9 @@ func (s *Store) reverseConfirmedInboundInventoryTx(ctx context.Context, tx *sql.
 		if balance.SKUMasterID <= 0 || balance.Quantity < 0 || balance.Pallets < 0 {
 			return fmt.Errorf("%w: receipt inventory history is incomplete", ErrInvalidInput)
 		}
+		if balance.Quantity == 0 && balance.Pallets == 0 {
+			continue
+		}
 		balances = append(balances, balance)
 	}
 	if err := rows.Err(); err != nil {
@@ -1374,7 +1383,12 @@ func (s *Store) CancelInboundDocument(ctx context.Context, documentID int64) (In
 		return InboundDocument{}, err
 	}
 
-	if _, err := s.deleteInboundDocumentTx(ctx, tx, documentID); err != nil {
+	documentRow, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID)
+	if err != nil {
+		return InboundDocument{}, err
+	}
+	deletedAt, err := s.deleteInboundDocumentTx(ctx, tx, documentID)
+	if err != nil {
 		return InboundDocument{}, err
 	}
 
@@ -1382,7 +1396,31 @@ func (s *Store) CancelInboundDocument(ctx context.Context, documentID int64) (In
 		return InboundDocument{}, fmt.Errorf("commit inbound cancel: %w", err)
 	}
 
-	return s.getInboundDocument(ctx, documentID)
+	return deletedInboundDocumentFromRow(documentRow, deletedAt), nil
+}
+
+func deletedInboundDocumentFromRow(documentRow inboundDocumentRow, deletedAt time.Time) InboundDocument {
+	return InboundDocument{
+		ID:                  documentRow.ID,
+		CustomerID:          documentRow.CustomerID,
+		CustomerName:        documentRow.CustomerName,
+		LocationID:          documentRow.LocationID,
+		LocationName:        documentRow.LocationName,
+		ExpectedArrivalDate: documentRow.ExpectedArrivalDate,
+		ActualArrivalDate:   documentRow.ActualArrivalDate,
+		ContainerNo:         documentRow.ContainerNo,
+		ContainerType:       documentRow.ContainerType,
+		HandlingMode:        documentRow.HandlingMode,
+		StorageSection:      documentRow.StorageSection,
+		UnitLabel:           documentRow.UnitLabel,
+		DocumentNote:        documentRow.DocumentNote,
+		Status:              DocumentStatusDeleted,
+		TrackingStatus:      documentRow.TrackingStatus,
+		ConfirmedAt:         documentRow.ConfirmedAt,
+		DeletedAt:           &deletedAt,
+		CreatedAt:           documentRow.CreatedAt,
+		UpdatedAt:           deletedAt,
+	}
 }
 
 func (s *Store) deleteInboundDocumentTx(ctx context.Context, tx *sql.Tx, documentID int64) (time.Time, error) {
@@ -1391,6 +1429,9 @@ func (s *Store) deleteInboundDocumentTx(ctx context.Context, tx *sql.Tx, documen
 
 func (s *Store) deleteInboundDocumentCascadeTx(ctx context.Context, tx *sql.Tx, documentID int64, allowAlreadyDeleted bool) (time.Time, error) {
 	documentRow, err := s.loadInboundDocumentForUpdateTx(ctx, tx, documentID)
+	if allowAlreadyDeleted && errors.Is(err, ErrNotFound) {
+		return time.Now().UTC(), nil
+	}
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -1542,10 +1583,17 @@ type inboundCascadeLedgerBalance struct {
 }
 
 func (s *Store) reverseAndDeleteRelatedInventorySourceTx(ctx context.Context, tx *sql.Tx, sourceType string, sourceDocumentID int64) error {
-	if err := s.reverseRelatedLedgerBalancesTx(ctx, tx, `
+	whereClause := `
 		WHERE UPPER(TRIM(COALESCE(source_document_type, ''))) = ?
 		  AND COALESCE(source_document_id, 0) = ?
-	`, sourceType, sourceDocumentID); err != nil {
+	`
+	if err := s.reverseRelatedLedgerBalancesTx(ctx, tx, sourceType, sourceDocumentID, whereClause, sourceType, sourceDocumentID); err != nil {
+		return err
+	}
+	if err := deleteRelatedLedgerRowsTx(ctx, tx, whereClause, sourceType, sourceDocumentID); err != nil {
+		return err
+	}
+	if err := deleteCascadeReversalLedgerTx(ctx, tx, sourceType, sourceDocumentID); err != nil {
 		return err
 	}
 
@@ -1575,16 +1623,36 @@ func (s *Store) reverseUnownedLaterContainerActivityTx(
 	sourceType string,
 	sourceDocumentID int64,
 ) error {
-	return s.reverseRelatedLedgerBalancesTx(ctx, tx, `
+	whereClause := `
 		WHERE id > ?
 		  AND customer_id = ?
 		  AND UPPER(TRIM(COALESCE(container_no_snapshot, ''))) = ?
 		  AND UPPER(TRIM(COALESCE(source_document_type, ''))) = ?
 		  AND COALESCE(source_document_id, 0) = ?
-	`, receiptBoundary, customerID, containerNo, sourceType, sourceDocumentID)
+	`
+	if err := s.reverseRelatedLedgerBalancesTx(
+		ctx, tx, sourceType, sourceDocumentID, whereClause,
+		receiptBoundary, customerID, containerNo, sourceType, sourceDocumentID,
+	); err != nil {
+		return err
+	}
+	if err := deleteRelatedLedgerRowsTx(
+		ctx, tx, whereClause,
+		receiptBoundary, customerID, containerNo, sourceType, sourceDocumentID,
+	); err != nil {
+		return err
+	}
+	return deleteCascadeReversalLedgerTx(ctx, tx, sourceType, sourceDocumentID)
 }
 
-func (s *Store) reverseRelatedLedgerBalancesTx(ctx context.Context, tx *sql.Tx, whereClause string, args ...any) error {
+func (s *Store) reverseRelatedLedgerBalancesTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	reversalSourceType string,
+	reversalSourceDocumentID int64,
+	whereClause string,
+	args ...any,
+) error {
 	query := `
 		SELECT
 			COALESCE(sku_master_id, 0),
@@ -1651,13 +1719,34 @@ func (s *Store) reverseRelatedLedgerBalancesTx(ctx context.Context, tx *sql.Tx, 
 			QuantityChange:      -balance.Quantity,
 			PalletChange:        -balance.Pallets,
 			SourceDocumentType:  "CASCADE_DELETE",
+			SourceDocumentID:    reversalSourceDocumentID,
 			ContainerNo:         balance.ContainerNo,
 			ItemNumber:          balance.ItemNumber,
 			DescriptionSnapshot: balance.Description,
 			Reason:              "Related inventory activity deleted with inbound receipt",
+			ReferenceCode:       strings.ToUpper(strings.TrimSpace(reversalSourceType)),
 		}); err != nil {
 			return fmt.Errorf("reverse related inventory activity: %w", err)
 		}
+	}
+	return nil
+}
+
+func deleteRelatedLedgerRowsTx(ctx context.Context, tx *sql.Tx, whereClause string, args ...any) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM stock_ledger `+whereClause, args...); err != nil {
+		return mapDBError(fmt.Errorf("delete related inventory ledger rows: %w", err))
+	}
+	return nil
+}
+
+func deleteCascadeReversalLedgerTx(ctx context.Context, tx *sql.Tx, sourceType string, sourceDocumentID int64) error {
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM stock_ledger
+		WHERE UPPER(TRIM(COALESCE(source_document_type, ''))) = 'CASCADE_DELETE'
+		  AND COALESCE(source_document_id, 0) = ?
+		  AND UPPER(TRIM(COALESCE(reference_code, ''))) = ?
+	`, sourceDocumentID, strings.ToUpper(strings.TrimSpace(sourceType))); err != nil {
+		return mapDBError(fmt.Errorf("delete cascading inventory reversal rows: %w", err))
 	}
 	return nil
 }
@@ -1699,18 +1788,91 @@ func (s *Store) deleteLoadedInboundDocumentTx(ctx context.Context, tx *sql.Tx, d
 	if _, err := tx.ExecContext(ctx, `DELETE FROM container_visits WHERE inbound_document_id = ?`, documentRow.ID); err != nil {
 		return time.Time{}, mapDBError(fmt.Errorf("delete inbound container visit: %w", err))
 	}
+	if err := deleteStockLedgerForDocumentTx(ctx, tx, StockLedgerSourceInbound, documentRow.ID); err != nil {
+		return time.Time{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE inbound_documents
-		SET
-			status = ?,
-			cancelled_at = ?,
-			archived_at = NULL,
-			updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`, DocumentStatusDeleted, deletedAt, documentRow.ID); err != nil {
-		return time.Time{}, mapDBError(fmt.Errorf("mark inbound document deleted: %w", err))
+		SET corrects_document_id = NULL
+		WHERE corrects_document_id = ?
+	`, documentRow.ID); err != nil {
+		return time.Time{}, mapDBError(fmt.Errorf("clear inbound correction source reference: %w", err))
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE inbound_documents
+		SET corrected_by_document_id = NULL, corrected_at = NULL
+		WHERE corrected_by_document_id = ?
+	`, documentRow.ID); err != nil {
+		return time.Time{}, mapDBError(fmt.Errorf("clear inbound correction replacement reference: %w", err))
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM inbound_document_lines WHERE document_id = ?`, documentRow.ID); err != nil {
+		return time.Time{}, mapDBError(fmt.Errorf("delete inbound document lines: %w", err))
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM inbound_documents WHERE id = ?`, documentRow.ID); err != nil {
+		return time.Time{}, mapDBError(fmt.Errorf("delete inbound document: %w", err))
+	}
+	if err := purgeEmptyInboundContainerProjectionTx(ctx, tx, documentRow); err != nil {
+		return time.Time{}, err
 	}
 	return deletedAt, nil
+}
+
+func purgeEmptyInboundContainerProjectionTx(ctx context.Context, tx *sql.Tx, document inboundDocumentRow) error {
+	containerNo := normalizeContainerNo(document.ContainerNo)
+	if containerNo == "" {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM inventory_items
+		WHERE customer_id = ?
+		  AND UPPER(TRIM(container_no)) = ?
+		  AND quantity = 0
+		  AND allocated_qty = 0
+		  AND damaged_qty = 0
+		  AND hold_qty = 0
+		  AND pallets = 0
+		  AND allocated_pallets = 0
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM inbound_documents remaining_receipt
+			WHERE remaining_receipt.customer_id = ?
+			  AND UPPER(TRIM(COALESCE(remaining_receipt.container_no, ''))) = ?
+		  )
+	`, document.CustomerID, containerNo, document.CustomerID, containerNo); err != nil {
+		return mapDBError(fmt.Errorf("delete empty inbound inventory projection: %w", err))
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM containers
+		WHERE customer_id = ?
+		  AND UPPER(TRIM(container_no)) = ?
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM inbound_documents remaining_receipt
+			WHERE remaining_receipt.customer_id = ?
+			  AND UPPER(TRIM(COALESCE(remaining_receipt.container_no, ''))) = ?
+		  )
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM inventory_items remaining_inventory
+			WHERE remaining_inventory.container_id = containers.id
+			   OR (
+				remaining_inventory.customer_id = containers.customer_id
+				AND UPPER(TRIM(remaining_inventory.container_no)) = UPPER(TRIM(containers.container_no))
+			   )
+		  )
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM stock_ledger remaining_ledger
+			WHERE remaining_ledger.container_id = containers.id
+			   OR (
+				remaining_ledger.customer_id = containers.customer_id
+				AND UPPER(TRIM(COALESCE(remaining_ledger.container_no_snapshot, ''))) = UPPER(TRIM(containers.container_no))
+			   )
+		  )
+	`, document.CustomerID, containerNo, document.CustomerID, containerNo); err != nil {
+		return mapDBError(fmt.Errorf("delete empty inbound container projection: %w", err))
+	}
+	return nil
 }
 
 func reconcileDeletedInboundContainerTx(ctx context.Context, tx *sql.Tx, document inboundDocumentRow, deletedAt time.Time) error {
@@ -2591,10 +2753,6 @@ func validateInboundDocumentInput(input CreateInboundDocumentInput) error {
 			return fmt.Errorf("%w: quantities cannot be negative", ErrInvalidInput)
 		case line.ExpectedQty == 0 && line.ReceivedQty == 0:
 			return fmt.Errorf("%w: expected or received quantity is required", ErrInvalidInput)
-		case coalescedStatus == DocumentStatusConfirmed && line.ReceivedQty <= 0:
-			return fmt.Errorf("%w: confirmed receipts require a received quantity", ErrInvalidInput)
-		case coalescedStatus == DocumentStatusConfirmed && handlingMode == InboundHandlingModePalletized && line.Pallets <= 0:
-			return fmt.Errorf("%w: confirmed palletized receipts require a pallet count", ErrInvalidInput)
 		}
 	}
 

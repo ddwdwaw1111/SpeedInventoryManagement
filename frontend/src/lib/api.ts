@@ -5,6 +5,7 @@ import type {
   BillingInvoiceSettings,
   BillingPreviewPayload,
   BillingPreviewResult,
+  BulkConfirmOutboundDocumentsResponse,
   BulkUpdateInboundDocumentStatusResponse,
   CreateBillingInvoicePayload,
   GenerateBillingInvoicePayload,
@@ -622,6 +623,13 @@ export const api = {
   confirmOutboundDocument(documentId: number) {
     return request<OutboundDocument>(`/outbound-documents/${documentId}/confirm`, {
       method: "POST"
+    });
+  },
+
+  bulkConfirmOutboundDocuments(documentIds: number[]) {
+    return request<BulkConfirmOutboundDocumentsResponse>("/outbound-documents/bulk-confirm", {
+      method: "POST",
+      body: JSON.stringify({ documentIds })
     });
   },
 

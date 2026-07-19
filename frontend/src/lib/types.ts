@@ -596,6 +596,8 @@ export type OutboundDocumentLine = {
   sku: string;
   description: string;
   quantity: number;
+  plannedQuantity?: number;
+  actualQuantity?: number;
   pallets: number;
   palletsDetailCtns: string;
   unitLabel: string;
@@ -671,6 +673,8 @@ export type OutboundDocument = {
   archivedAt: string | null;
   totalLines: number;
   totalQty: number;
+  totalPlannedQty?: number;
+  totalActualQty?: number;
   totalNetWeightKgs: number;
   totalGrossWeightKgs: number;
   storages: string;
@@ -684,7 +688,9 @@ export type OutboundDocumentLinePayload = {
   customerId: number;
   locationId: number;
   skuMasterId: number;
-  quantity: number;
+  quantity?: number;
+  plannedQuantity?: number;
+  actualQuantity?: number;
   pallets: number;
   palletsDetailCtns?: string;
   unitLabel?: string;
@@ -770,6 +776,11 @@ export type BulkUpdateInboundDocumentStatusResponse = {
   updatedDocuments: number;
   status: "CONFIRMED" | "DELETED";
   documents: InboundDocument[];
+};
+
+export type BulkConfirmOutboundDocumentsResponse = {
+  updatedDocuments: number;
+  documents: OutboundDocument[];
 };
 
 export type InboundDocumentLinePayload = {
@@ -959,6 +970,8 @@ export type OutboundBulkImportLinePreview = {
   sku: string;
   itemNumber: string;
   quantity: number;
+  plannedQuantity?: number;
+  actualQuantity?: number;
   inventoryPallets: number;
   outboundPallets: number;
   lineNote: string;
@@ -981,6 +994,8 @@ export type OutboundBulkImportDocumentPreview = {
   valid: boolean;
   totalLines: number;
   totalQty: number;
+  totalPlannedQty?: number;
+  totalActualQty?: number;
   totalInventoryPallets: number;
   totalOutboundPallets: number;
   transferLines: number;

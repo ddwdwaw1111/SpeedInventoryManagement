@@ -303,6 +303,72 @@ func markDocumentAttachmentsDeletedForDocument(ctx context.Context, executor doc
 	return nil
 }
 
+func (s *Store) ListPendingDocumentAttachmentCleanup(
+	ctx context.Context,
+	storageProvider string,
+	storageBucket string,
+	afterID int64,
+	limit int,
+) ([]DocumentAttachment, error) {
+	storageProvider = strings.TrimSpace(storageProvider)
+	storageBucket = strings.TrimSpace(storageBucket)
+	if storageProvider == "" || storageBucket == "" {
+		return []DocumentAttachment{}, nil
+	}
+	if afterID < 0 {
+		afterID = 0
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+
+	rows := make([]documentAttachmentRow, 0)
+	if err := s.db.SelectContext(ctx, &rows, `
+		SELECT
+			id,
+			document_type,
+			document_id,
+			display_name,
+			COALESCE(original_file_name, '') AS original_file_name,
+			storage_provider,
+			storage_bucket,
+			storage_key,
+			content_type,
+			size_bytes,
+			COALESCE(uploaded_by_user_id, 0) AS uploaded_by_user_id,
+			created_at
+		FROM document_attachments
+		WHERE deleted_at IS NOT NULL
+			AND storage_provider = ?
+			AND storage_bucket = ?
+			AND id > ?
+		ORDER BY id ASC
+		LIMIT ?
+	`, storageProvider, storageBucket, afterID, limit); err != nil {
+		return nil, fmt.Errorf("load pending document attachment cleanup: %w", err)
+	}
+
+	attachments := make([]DocumentAttachment, 0, len(rows))
+	for _, row := range rows {
+		attachments = append(attachments, documentAttachmentFromRow(row))
+	}
+	return attachments, nil
+}
+
+func (s *Store) CompleteDocumentAttachmentCleanup(ctx context.Context, attachmentID int64) error {
+	if attachmentID <= 0 {
+		return ErrNotFound
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		DELETE FROM document_attachments
+		WHERE id = ?
+			AND deleted_at IS NOT NULL
+	`, attachmentID); err != nil {
+		return fmt.Errorf("complete document attachment cleanup: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) EnsureDocumentExists(ctx context.Context, documentType string, documentID int64) error {
 	return s.ensureDocumentExists(ctx, documentType, documentID)
 }

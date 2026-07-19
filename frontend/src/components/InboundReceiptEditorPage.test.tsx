@@ -97,7 +97,7 @@ describe("InboundReceiptEditorPage", () => {
             expectedQty: 8,
             receivedQty: 8,
             pallets: 0,
-            unitsPerPallet: undefined,
+            unitsPerPallet: 0,
             palletsDetailCtns: undefined,
             storageSection: "TEMP",
             lineNote: undefined
@@ -218,7 +218,7 @@ describe("InboundReceiptEditorPage", () => {
     expect(screen.getByLabelText("CTN / Pallet #1")).toHaveValue(10);
   });
 
-  it("confirms explicit received quantity while keeping pallets independent and CTN per Pallet optional", async () => {
+  it("confirms with zero received quantity, pallets, and CTN per Pallet", async () => {
     mockedApi.createInboundDocument.mockResolvedValue(createInboundDocument({
       id: 101,
       status: "CONFIRMED",
@@ -252,11 +252,12 @@ describe("InboundReceiptEditorPage", () => {
     fireEvent.change(screen.getByLabelText(/SKU.*#1/), { target: { value: "ABC123" } });
     fireEvent.change(screen.getByLabelText("Description #1"), { target: { value: "Sample inbound SKU" } });
     fireEvent.change(screen.getByLabelText(/Expected QTY #1/), { target: { value: "8" } });
-    fireEvent.change(screen.getByLabelText("Received #1"), { target: { value: "5" } });
-    fireEvent.change(screen.getByLabelText("PALLETS #1"), { target: { value: "12" } });
+    fireEvent.change(screen.getByLabelText("Received #1"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("PALLETS #1"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("CTN / Pallet #1"), { target: { value: "0" } });
 
-    expect(screen.getByLabelText("Received #1")).toHaveValue(5);
-    expect(screen.getByLabelText("CTN / Pallet #1")).toHaveValue(null);
+    expect(screen.getByLabelText("Received #1")).toHaveValue(null);
+    expect(screen.getByLabelText("CTN / Pallet #1")).toHaveValue(0);
 
     fireEvent.click(screen.getByRole("button", { name: "Confirm Receipt" }));
 
@@ -266,9 +267,9 @@ describe("InboundReceiptEditorPage", () => {
       sku: "ABC123",
       description: "Sample inbound SKU",
       expectedQty: 8,
-      receivedQty: 5,
-      pallets: 12,
-      unitsPerPallet: undefined,
+      receivedQty: 0,
+      pallets: 0,
+      unitsPerPallet: 0,
       palletsDetailCtns: undefined,
       storageSection: "TEMP",
       lineNote: undefined

@@ -252,6 +252,7 @@ CREATE TABLE IF NOT EXISTS outbound_document_lines (
   sku_snapshot VARCHAR(64) NOT NULL,
   description_snapshot VARCHAR(255) DEFAULT NULL,
   quantity INT NOT NULL DEFAULT 0,
+  planned_quantity INT NOT NULL DEFAULT 0,
   pallets INT NOT NULL DEFAULT 0,
   pallets_detail_ctns VARCHAR(255) DEFAULT NULL,
   pick_pallets_json TEXT DEFAULT NULL,

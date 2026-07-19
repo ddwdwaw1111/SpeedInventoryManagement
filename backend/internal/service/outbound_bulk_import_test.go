@@ -42,6 +42,48 @@ func TestParseOutboundBulkImportWorkbookGroupsPickingOrdersAndKeepsPalletCountsI
 	}
 }
 
+func TestParseOutboundBulkImportWorkbookAllowsPlanOnlyDraftQuantity(t *testing.T) {
+	data := buildOutboundBulkWorkbook(t, [][]any{
+		{"Picking Order No", "Warehouse", "SKU", "Planned Qty", "Actual Qty", "Inventory Pallets", "Outbound Pallets"},
+		{"PO-PLAN", "EAST", "SKU-1", 12, 0, 1, 2},
+	})
+
+	documents, err := parseOutboundBulkImportWorkbook(data)
+	if err != nil {
+		t.Fatalf("parse plan-only outbound workbook: %v", err)
+	}
+	line := documents[0].Lines[0]
+	if line.PlannedQuantity != 12 || line.ActualQuantity != 0 || line.Quantity != 0 {
+		t.Fatalf("expected independent plan-only quantities, got %#v", line)
+	}
+	for _, issue := range documents[0].Issues {
+		if issue.Code == "INVALID_QUANTITY" || issue.Code == "INVALID_PLANNED_QUANTITY" {
+			t.Fatalf("plan-only draft quantity should be valid: %#v", issue)
+		}
+	}
+}
+
+func TestBuildOutboundBulkDocumentLinesKeepsPlannedAndActualQuantitiesSeparate(t *testing.T) {
+	lines := buildOutboundBulkDocumentLines(1, SKUMaster{ID: 2, Unit: "CTN"}, OutboundBulkImportLinePreview{
+		PlannedQuantity: 10,
+		ActualQuantity:  6,
+		OutboundPallets: 2,
+	}, []OutboundPickAllocation{
+		{LocationID: 1, AllocatedQty: 4},
+		{LocationID: 2, AllocatedQty: 2},
+	})
+
+	if len(lines) != 2 {
+		t.Fatalf("expected two location lines, got %#v", lines)
+	}
+	if lines[0].PlannedQuantity+lines[1].PlannedQuantity != 10 || lines[0].ActualQuantity+lines[1].ActualQuantity != 6 {
+		t.Fatalf("planned and actual totals were not preserved independently: %#v", lines)
+	}
+	if lines[0].Quantity != lines[0].ActualQuantity || lines[1].Quantity != lines[1].ActualQuantity {
+		t.Fatalf("legacy quantity must remain an alias of actual quantity: %#v", lines)
+	}
+}
+
 func TestParseOutboundBulkImportWorkbookInheritsBlankDocumentFields(t *testing.T) {
 	data := buildOutboundBulkWorkbook(t, [][]any{
 		{"Picking Order No", "Expected Ship Date", "Ship To Name", "Warehouse", "SKU", "Qty", "Inventory Pallets", "Outbound Pallets"},

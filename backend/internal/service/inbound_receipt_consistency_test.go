@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestConfirmInboundDraftRevalidatesActualReceivedValuesIntegration(t *testing.T) {
+func TestConfirmInboundDraftAllowsZeroReceivedQuantityAndPalletsIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
@@ -33,18 +33,21 @@ func TestConfirmInboundDraftRevalidatesActualReceivedValuesIntegration(t *testin
 		}},
 	})
 	if err != nil {
-		t.Fatalf("create invalid draft receipt: %v", err)
+		t.Fatalf("create zero-quantity draft receipt: %v", err)
 	}
 
-	if _, err := store.ConfirmInboundDocument(ctx, document.ID); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("confirm invalid draft error = %v, want ErrInvalidInput", err)
+	if _, err := store.ConfirmInboundDocument(ctx, document.ID); err != nil {
+		t.Fatalf("confirm zero-quantity draft receipt: %v", err)
 	}
 	reloaded, err := store.getInboundDocument(ctx, document.ID)
 	if err != nil {
-		t.Fatalf("reload rejected draft receipt: %v", err)
+		t.Fatalf("reload confirmed zero-quantity receipt: %v", err)
 	}
-	if reloaded.Status != DocumentStatusDraft {
-		t.Fatalf("rejected receipt status = %q, want DRAFT", reloaded.Status)
+	if reloaded.Status != DocumentStatusConfirmed {
+		t.Fatalf("zero-quantity receipt status = %q, want CONFIRMED", reloaded.Status)
+	}
+	if len(reloaded.Lines) != 1 || reloaded.Lines[0].UnitsPerPallet != 0 {
+		t.Fatalf("zero-quantity receipt CTN per pallet = %#v, want 0", reloaded.Lines)
 	}
 	var receiveLedgerRows int
 	if err := store.db.QueryRowxContext(ctx, `
@@ -54,10 +57,28 @@ func TestConfirmInboundDraftRevalidatesActualReceivedValuesIntegration(t *testin
 		  AND source_document_id = ?
 		  AND event_type = 'RECEIVE'
 	`, document.ID).Scan(&receiveLedgerRows); err != nil {
-		t.Fatalf("count rejected receipt ledger rows: %v", err)
+		t.Fatalf("count zero-quantity receipt ledger rows: %v", err)
+	}
+	if receiveLedgerRows != 1 {
+		t.Fatalf("zero-quantity receipt created %d RECEIVE ledger rows, want 1", receiveLedgerRows)
+	}
+
+	if _, err := store.CancelInboundDocument(ctx, document.ID); err != nil {
+		t.Fatalf("delete confirmed zero-quantity receipt: %v", err)
+	}
+	if _, err := store.getInboundDocument(ctx, document.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("zero-quantity receipt still exists after deletion: %v", err)
+	}
+	if err := store.db.QueryRowxContext(ctx, `
+		SELECT COUNT(*)
+		FROM stock_ledger
+		WHERE source_document_type = 'INBOUND'
+		  AND source_document_id = ?
+	`, document.ID).Scan(&receiveLedgerRows); err != nil {
+		t.Fatalf("count zero-quantity receipt ledger rows after deletion: %v", err)
 	}
 	if receiveLedgerRows != 0 {
-		t.Fatalf("rejected receipt created %d RECEIVE ledger rows", receiveLedgerRows)
+		t.Fatalf("zero-quantity receipt left %d ledger rows after deletion", receiveLedgerRows)
 	}
 }
 

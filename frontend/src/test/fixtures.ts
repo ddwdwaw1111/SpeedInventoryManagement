@@ -206,6 +206,7 @@ export function createOutboundPickAllocation(overrides: Partial<OutboundPickAllo
 }
 
 export function createOutboundDocumentLine(overrides: Partial<OutboundDocumentLine> = {}): OutboundDocumentLine {
+  const quantity = overrides.quantity ?? 5;
   return {
     id: 1,
     documentId: 1,
@@ -216,7 +217,9 @@ export function createOutboundDocumentLine(overrides: Partial<OutboundDocumentLi
     storageSection: "TEMP",
     sku: "608333",
     description: "VB22GC",
-    quantity: 5,
+    quantity,
+    plannedQuantity: overrides.plannedQuantity ?? quantity,
+    actualQuantity: overrides.actualQuantity ?? quantity,
     pallets: 1,
     palletsDetailCtns: "",
     unitLabel: "CTN",
@@ -251,6 +254,8 @@ export function createOutboundDocument(overrides: Partial<OutboundDocument> = {}
     archivedAt: null,
     totalLines: 1,
     totalQty: 5,
+    totalPlannedQty: 5,
+    totalActualQty: 5,
     totalNetWeightKgs: 0,
     totalGrossWeightKgs: 0,
     storages: "NJ / TEMP",

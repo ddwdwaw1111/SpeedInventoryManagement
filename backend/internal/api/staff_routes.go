@@ -36,6 +36,7 @@ func (s *Server) registerStaffRoutes(protected gin.IRouter) {
 	operator.POST("/outbound-documents/bulk-import-preview", s.handlePreviewOutboundBulkImport)
 	operator.POST("/outbound-documents/bulk-import-revalidate", s.handleRevalidateOutboundBulkImport)
 	operator.POST("/outbound-documents/bulk-import-commit", s.handleCommitOutboundBulkImport)
+	operator.POST("/outbound-documents/bulk-confirm", s.handleBulkConfirmOutboundDocuments)
 	operator.PUT("/outbound-documents/:id", s.handleUpdateOutboundDocument)
 	operator.PUT("/outbound-documents/:id/document-note", s.handleUpdateOutboundDocumentNote)
 	operator.POST("/outbound-documents/:id/confirm", s.handleConfirmOutboundDocument)

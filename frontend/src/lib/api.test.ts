@@ -51,6 +51,19 @@ describe("api document list queries", () => {
     }));
   });
 
+  it("posts selected shipment IDs for atomic bulk confirmation", async () => {
+    fetchMock.mockResolvedValue(mockJsonResponse({ updatedDocuments: 2, documents: [] }));
+
+    await api.bulkConfirmOutboundDocuments([21, 22]);
+
+    const [requestUrl, options] = fetchMock.mock.calls[0];
+    expect(new URL(String(requestUrl)).pathname).toBe("/api/outbound-documents/bulk-confirm");
+    expect(options).toEqual(expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ documentIds: [21, 22] })
+    }));
+  });
+
   it("keeps the legacy outbound archive scope argument", async () => {
     await api.getOutboundDocuments(300, "all");
 

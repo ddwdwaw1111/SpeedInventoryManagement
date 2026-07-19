@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -634,6 +635,31 @@ func (s *Server) handleConfirmOutboundDocument(c *gin.Context) {
 	writeJSON(c, http.StatusOK, document)
 }
 
+func (s *Server) handleBulkConfirmOutboundDocuments(c *gin.Context) {
+	var input service.BulkConfirmOutboundDocumentsInput
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	response, err := s.store.BulkConfirmOutboundDocuments(c.Request.Context(), input)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	for _, document := range response.Documents {
+		s.writeAuditLog(c, "CONFIRM", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Bulk confirmed outbound document", map[string]any{
+			"packingListNo": document.PackingListNo,
+			"status":        document.Status,
+			"confirmedAt":   document.ConfirmedAt,
+			"batchSize":     response.UpdatedDocuments,
+		})
+	}
+
+	writeJSON(c, http.StatusOK, response)
+}
+
 func (s *Server) handleUpdateOutboundDocumentTrackingStatus(c *gin.Context) {
 	documentID, err := parseIDParam(c, "id")
 	if err != nil {
@@ -671,18 +697,12 @@ func (s *Server) handleCancelOutboundDocument(c *gin.Context) {
 		return
 	}
 
-	attachments, err := s.store.ListDocumentAttachments(c.Request.Context(), service.DocumentAttachmentOutbound, documentID)
-	if err != nil {
-		writeServerError(c, err)
-		return
-	}
-
 	document, err := s.store.CancelOutboundDocument(c.Request.Context(), documentID)
 	if err != nil {
 		writeDomainError(c, err)
 		return
 	}
-	s.deleteDocumentAttachmentObjectsAfterCancel(service.DocumentAttachmentOutbound, documentID, attachments)
+	s.cleanupPendingDocumentAttachmentObjects(context.Background())
 
 	s.writeAuditLog(c, "DELETE", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Cancelled outbound document and reversed its inventory movement", map[string]any{
 		"packingListNo": document.PackingListNo,
@@ -950,19 +970,6 @@ func (s *Server) handleBulkUpdateInboundDocumentStatus(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	attachmentsByDocumentID := make(map[int64][]service.DocumentAttachment)
-	requestedStatus := strings.TrimSpace(strings.ToUpper(input.Status))
-	if (requestedStatus == service.DocumentStatusDeleted || requestedStatus == "CANCELLED") && len(input.DocumentIDs) <= service.MaxBulkUpdateInboundDocuments {
-		for _, documentID := range input.DocumentIDs {
-			attachments, err := s.store.ListDocumentAttachments(c.Request.Context(), service.DocumentAttachmentInbound, documentID)
-			if err != nil {
-				writeServerError(c, err)
-				return
-			}
-			attachmentsByDocumentID[documentID] = attachments
-		}
-	}
-
 	response, err := s.store.BulkUpdateInboundDocumentStatus(c.Request.Context(), input)
 	if err != nil {
 		writeDomainError(c, err)
@@ -976,9 +983,9 @@ func (s *Server) handleBulkUpdateInboundDocumentStatus(c *gin.Context) {
 			"confirmedAt": document.ConfirmedAt,
 			"batchSize":   response.UpdatedDocuments,
 		})
-		if response.Status == service.DocumentStatusDeleted {
-			s.deleteDocumentAttachmentObjectsAfterCancel(service.DocumentAttachmentInbound, document.ID, attachmentsByDocumentID[document.ID])
-		}
+	}
+	if response.Status == service.DocumentStatusDeleted {
+		s.cleanupPendingDocumentAttachmentObjects(context.Background())
 	}
 
 	writeJSON(c, http.StatusOK, response)
@@ -991,18 +998,12 @@ func (s *Server) handleCancelInboundDocument(c *gin.Context) {
 		return
 	}
 
-	attachments, err := s.store.ListDocumentAttachments(c.Request.Context(), service.DocumentAttachmentInbound, documentID)
-	if err != nil {
-		writeServerError(c, err)
-		return
-	}
-
 	document, err := s.store.CancelInboundDocument(c.Request.Context(), documentID)
 	if err != nil {
 		writeDomainError(c, err)
 		return
 	}
-	s.deleteDocumentAttachmentObjectsAfterCancel(service.DocumentAttachmentInbound, documentID, attachments)
+	s.cleanupPendingDocumentAttachmentObjects(context.Background())
 
 	s.writeAuditLog(c, "DELETE", "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), "Deleted inbound document and all related records", map[string]any{
 		"containerNo": document.ContainerNo,

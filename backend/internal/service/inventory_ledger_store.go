@@ -519,6 +519,20 @@ func (s *Store) createStockLedgerTx(ctx context.Context, tx *sql.Tx, input creat
 	return err
 }
 
+func deleteStockLedgerForDocumentTx(ctx context.Context, tx *sql.Tx, sourceDocumentType string, sourceDocumentID int64) error {
+	if strings.TrimSpace(sourceDocumentType) == "" || sourceDocumentID <= 0 {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM stock_ledger
+		WHERE UPPER(TRIM(COALESCE(source_document_type, ''))) = ?
+			AND source_document_id = ?
+	`, strings.ToUpper(strings.TrimSpace(sourceDocumentType)), sourceDocumentID); err != nil {
+		return mapDBError(fmt.Errorf("delete stock ledger for %s document %d: %w", sourceDocumentType, sourceDocumentID, err))
+	}
+	return nil
+}
+
 func classifyReservedStockConflict(requestedQty int, onHandQty int, allocatedQty int, damagedQty int, holdQty int) error {
 	physicalQty := onHandQty - damagedQty - holdQty
 	if allocatedQty > 0 && requestedQty <= maxInt(physicalQty, 0) {

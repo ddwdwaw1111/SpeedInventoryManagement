@@ -157,7 +157,8 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
           customerId: activeCustomerId,
           locationId: line.locationId,
           skuMasterId: line.skuMasterId,
-          quantity: line.parsedQuantity,
+          plannedQuantity: line.parsedQuantity,
+          actualQuantity: 0,
           pallets: 0,
           unitLabel: line.unitLabel,
           lineNote: line.lineNote

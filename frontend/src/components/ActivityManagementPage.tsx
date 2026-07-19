@@ -78,6 +78,7 @@ type OutboundWizardStep = 1 | 2 | 3;
 type InboundReceiptVariance = "MATCHED" | "SHORT" | "OVER";
 
 const MAX_BULK_INBOUND_STATUS_DOCUMENTS = 100;
+const MAX_BULK_CONFIRM_OUTBOUND_DOCUMENTS = 100;
 
 export function toggleCurrentPageRowSelection(
   currentSelection: GridRowSelectionModel,
@@ -197,6 +198,7 @@ type BatchOutboundFormState = {
 type BatchOutboundLineState = {
   id: string;
   sourceKey: string;
+  plannedQuantity: number;
   quantity: number;
   pallets: number;
   palletsDetailCtns: string;
@@ -333,7 +335,8 @@ const SHIPMENTS_EXPORT_COLUMNS = [
   { key: "shipToName", label: "Ship-to Name" },
   { key: "carrierName", label: "Carrier" },
   { key: "totalLines", label: "Total Lines" },
-  { key: "totalQty", label: "Total Qty" },
+  { key: "totalPlannedQty", label: "Planned Ship Qty" },
+  { key: "totalActualQty", label: "Actual Ship Qty" },
   { key: "totalGrossWeightKgs", label: "Gross Weight (kg)" },
   { key: "trackingStatus", label: "Tracking" },
   { key: "status", label: "Status" }
@@ -370,13 +373,6 @@ function createEmptyBatchInboundLine(defaultStorageSection = DEFAULT_STORAGE_SEC
   };
 }
 
-function getEffectiveInboundUnitsPerPallet(
-  line: Pick<BatchInboundLineState, "unitsPerPallet">,
-  skuMaster?: Pick<SKUMaster, "defaultUnitsPerPallet">
-) {
-  return line.unitsPerPallet > 0 ? line.unitsPerPallet : (skuMaster?.defaultUnitsPerPallet ?? 0);
-}
-
 function createEmptyBatchOutboundForm(expectedShipDate = ""): BatchOutboundFormState {
   return {
     packingListNo: "",
@@ -396,6 +392,7 @@ function createEmptyBatchOutboundLine(): BatchOutboundLineState {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     sourceKey: "",
+    plannedQuantity: 0,
     quantity: 0,
     pallets: 0,
     palletsDetailCtns: "",
@@ -405,6 +402,10 @@ function createEmptyBatchOutboundLine(): BatchOutboundLineState {
     grossWeightKgs: 0,
     reason: ""
   };
+}
+
+function getActivityOutboundFulfillmentQuantity(line: Pick<BatchOutboundLineState, "plannedQuantity" | "quantity">) {
+  return line.quantity > 0 ? line.quantity : line.plannedQuantity;
 }
 
 function normalizeSkuLookupValue(value: string) {
@@ -502,7 +503,9 @@ export function ActivityManagementPage({
   const [isBulkOutboundImportOpen, setIsBulkOutboundImportOpen] = useState(false);
   const [bulkInboundStatus, setBulkInboundStatus] = useState<"" | "CONFIRMED" | "DELETED">("");
   const [inboundRowSelectionModel, setInboundRowSelectionModel] = useState<GridRowSelectionModel>({ type: "include", ids: new Set() });
+  const [outboundRowSelectionModel, setOutboundRowSelectionModel] = useState<GridRowSelectionModel>({ type: "include", ids: new Set() });
   const [isBulkUpdatingInboundStatus, setIsBulkUpdatingInboundStatus] = useState(false);
+  const [isBulkConfirmingOutbound, setIsBulkConfirmingOutbound] = useState(false);
   const [optimisticInboundDocuments, setOptimisticInboundDocuments] = useState<InboundDocument[]>([]);
   const [optimisticOutboundDocuments, setOptimisticOutboundDocuments] = useState<OutboundDocument[]>([]);
   const [filteredInboundDocuments, setFilteredInboundDocuments] = useState<InboundDocument[]>([]);
@@ -534,6 +537,7 @@ export function ActivityManagementPage({
 
   useEffect(() => {
     setInboundRowSelectionModel({ type: "include", ids: new Set() });
+    setOutboundRowSelectionModel({ type: "include", ids: new Set() });
     setBulkInboundStatus("");
     if (mode === "IN") {
       setSelectedStatus((current) => current === "ARCHIVED" ? "all" : current);
@@ -563,6 +567,10 @@ export function ActivityManagementPage({
     const selectedIDs = new Set(Array.from(inboundRowSelectionModel.ids, (id) => Number(id)));
     return liveInboundDocuments.filter((document) => selectedIDs.has(document.id));
   }, [inboundRowSelectionModel, liveInboundDocuments]);
+  const selectedOutboundConfirmDocuments = useMemo(() => {
+    const selectedIDs = new Set(Array.from(outboundRowSelectionModel.ids, (id) => Number(id)));
+    return liveOutboundDocuments.filter((document) => selectedIDs.has(document.id));
+  }, [liveOutboundDocuments, outboundRowSelectionModel]);
   const skuMastersBySku = useMemo(() => new Map(
     skuMasters.map((skuMaster) => [normalizeSkuLookupValue(skuMaster.sku), skuMaster] as const)
   ), [skuMasters]);
@@ -656,6 +664,14 @@ export function ActivityManagementPage({
       return;
     }
     setInboundRowSelectionModel(nextSelection);
+  }
+
+  function handleOutboundRowSelectionChange(nextSelection: GridRowSelectionModel) {
+    if (nextSelection.type !== "include" || nextSelection.ids.size > MAX_BULK_CONFIRM_OUTBOUND_DOCUMENTS) {
+      showActionError(new Error(t("bulkOutboundSelectionLimit", { count: MAX_BULK_CONFIRM_OUTBOUND_DOCUMENTS })), t("bulkOutboundConfirmFailed"));
+      return;
+    }
+    setOutboundRowSelectionModel(nextSelection);
   }
 
   async function runDocumentAction<T>(actionKey: string, action: () => Promise<T>) {
@@ -1245,7 +1261,8 @@ export function ActivityManagementPage({
     { field: "expectedShipDate", headerName: t("expectedShipDate"), minWidth: 140, renderCell: (params) => formatDate(getOutboundExpectedShipDate(params.row)) },
     { field: "actualShipDate", headerName: t("actualShipDate"), minWidth: 140, renderCell: (params) => formatDate(params.row.actualShipDate) },
     { field: "totalLines", headerName: t("totalLines"), minWidth: 100, type: "number" },
-    { field: "totalQty", headerName: t("totalQty"), minWidth: 100, type: "number" },
+    { field: "totalPlannedQty", headerName: t("plannedShipQty"), minWidth: 130, type: "number", renderCell: (params) => params.row.totalPlannedQty ?? params.row.totalQty },
+    { field: "totalActualQty", headerName: t("actualShipQty"), minWidth: 130, type: "number", renderCell: (params) => params.row.totalActualQty ?? params.row.totalQty },
     { field: "totalGrossWeightKgs", headerName: t("grossWeight"), minWidth: 120, type: "number", renderCell: (params) => params.row.totalGrossWeightKgs ? params.row.totalGrossWeightKgs.toFixed(2) : "-" },
     { field: "trackingStatus", headerName: t("trackingStatus"), minWidth: 140, renderCell: (params) => renderOutboundTrackingStatus(params.row.trackingStatus, params.row.status, t) },
     { field: "status", headerName: t("status"), minWidth: 120, renderCell: (params) => renderDocumentStatus(params.row.status, params.row.archivedAt, t) },
@@ -1284,13 +1301,26 @@ export function ActivityManagementPage({
       )
     }
   ], [canManage, t]);
+  const outboundSelectionColumn = useMemo<GridColDef<OutboundDocument>>(() => ({
+    ...GRID_CHECKBOX_SELECTION_COL_DEF,
+    renderHeader: () => (
+      <CurrentPageSelectionHeader
+        selection={outboundRowSelectionModel}
+        maximum={MAX_BULK_CONFIRM_OUTBOUND_DOCUMENTS}
+        ariaLabel={t("selectCurrentPage")}
+        onChange={setOutboundRowSelectionModel}
+        onLimitExceeded={() => showActionError(new Error(t("bulkOutboundSelectionLimit", { count: MAX_BULK_CONFIRM_OUTBOUND_DOCUMENTS })), t("bulkOutboundConfirmFailed"))}
+      />
+    )
+  }), [outboundRowSelectionModel, t]);
 
   const outboundDocumentDetailColumns = useMemo<GridColDef<OutboundDocument["lines"][number]>[]>(() => [
     { field: "itemNumber", headerName: t("itemNumber"), minWidth: 120, renderCell: (params) => <span className="cell--mono">{params.row.itemNumber || "-"}</span> },
     { field: "sku", headerName: t("sku"), minWidth: 110, renderCell: (params) => <span className="cell--mono">{params.row.sku}</span> },
     { field: "description", headerName: t("description"), minWidth: 240, flex: 1.4, renderCell: (params) => params.row.description },
     { field: "locationName", headerName: t("currentStorage"), minWidth: 150, flex: 1, renderCell: (params) => `${params.row.locationName} / ${normalizeStorageSection(params.row.storageSection)}` },
-    { field: "quantity", headerName: t("outQty"), minWidth: 90, type: "number", renderCell: (params) => params.row.quantity || "-" },
+    { field: "plannedQuantity", headerName: t("plannedShipQty"), minWidth: 130, type: "number", renderCell: (params) => params.row.plannedQuantity ?? params.row.quantity },
+    { field: "actualQuantity", headerName: t("actualShipQty"), minWidth: 130, type: "number", renderCell: (params) => params.row.actualQuantity ?? params.row.quantity },
     { field: "pallets", headerName: t("pallets"), minWidth: 90, type: "number", renderCell: (params) => params.row.pallets || "-" },
     { field: "unitLabel", headerName: t("unit"), minWidth: 80, renderCell: (params) => params.row.unitLabel || "-" },
     { field: "cartonSizeMm", headerName: t("cartonSize"), minWidth: 140, renderCell: (params) => <span className="cell--mono">{params.row.cartonSizeMm || "-"}</span> },
@@ -1342,11 +1372,11 @@ export function ActivityManagementPage({
     [batchOutboundLines, selectableOutboundSources]
   );
   const validBatchOutboundLines = useMemo(
-    () => batchOutboundLines.filter((line) => line.sourceKey.trim() !== "" && line.quantity > 0),
+    () => batchOutboundLines.filter((line) => line.sourceKey.trim() !== "" && getActivityOutboundFulfillmentQuantity(line) > 0),
     [batchOutboundLines]
   );
 
-  function validateOutboundDraft(requireAllocationReady: boolean) {
+  function validateOutboundDraft(requireAllocationReady: boolean, requireActualQuantity = false) {
     if (outboundPalletSourceMessage) {
       return outboundPalletSourceMessage;
     }
@@ -1358,6 +1388,9 @@ export function ActivityManagementPage({
       const selectedOutboundSource = findOutboundSourceOption(selectableOutboundSources, line.sourceKey);
       if (!selectedOutboundSource) {
         return t("chooseSkuAndQty");
+      }
+      if (requireActualQuantity && line.quantity <= 0) {
+        return t("actualShipQtyRequired");
       }
 
       if (!requireAllocationReady) {
@@ -1389,7 +1422,7 @@ export function ActivityManagementPage({
     return "";
   }
 
-  function validateInboundDraft(requirePalletReady: boolean, requireReceivedQty = false) {
+  function validateInboundDraft() {
     const headerValidationError = validateInboundHeader();
     if (headerValidationError) {
       return headerValidationError;
@@ -1410,16 +1443,6 @@ export function ActivityManagementPage({
       if (!matchingTemplate && !lineDescription) {
         return t("batchInboundMissingNewSkuDetails", { sku: normalizedSku || "-" });
       }
-      if (requireReceivedQty && line.receivedQty <= 0) {
-        return "Enter Received Qty greater than 0 for every confirmed SKU line.";
-      }
-    }
-
-    if (requirePalletReady && batchForm.handlingMode !== "SEALED_TRANSIT") {
-      const invalidPalletLine = validBatchInboundLines.find((line) => line.pallets <= 0);
-      if (invalidPalletLine) {
-        return "Enter a pallet count greater than 0 for every palletized SKU line.";
-      }
     }
 
     return "";
@@ -1437,7 +1460,7 @@ export function ActivityManagementPage({
       }
     }
     if (nextStep === 3) {
-      const validationError = validateInboundDraft(batchForm.handlingMode !== "SEALED_TRANSIT");
+      const validationError = validateInboundDraft();
       if (validationError) {
         setErrorMessage(validationError);
         return;
@@ -1617,7 +1640,8 @@ export function ActivityManagementPage({
       ? document.lines.map((line) => ({
           id: String(line.id),
           sourceKey: buildOutboundSourceKey(document.customerId, line.locationId, line.skuMasterId),
-          quantity: line.quantity,
+          plannedQuantity: line.plannedQuantity ?? line.quantity,
+          quantity: line.actualQuantity ?? line.quantity,
           pallets: line.pallets || 0,
           palletsDetailCtns: "",
           unitLabel: line.unitLabel || "PCS",
@@ -1773,8 +1797,9 @@ export function ActivityManagementPage({
     const previousSource = findOutboundSourceOption(selectableOutboundSources, currentLine.sourceKey);
     const previousSkuMaster = previousSource ? skuMastersBySku.get(normalizeSkuLookupValue(previousSource.sku)) : undefined;
     const nextSkuMaster = skuMastersBySku.get(normalizeSkuLookupValue(nextSource.sku));
-    const previousAutoPalletPlan = buildAutoPalletPlan(currentLine.quantity, previousSkuMaster?.defaultUnitsPerPallet ?? 0);
-    const nextAutoPalletPlan = buildAutoPalletPlan(currentLine.quantity, nextSkuMaster?.defaultUnitsPerPallet ?? 0);
+    const fulfillmentQuantity = getActivityOutboundFulfillmentQuantity(currentLine);
+    const previousAutoPalletPlan = buildAutoPalletPlan(fulfillmentQuantity, previousSkuMaster?.defaultUnitsPerPallet ?? 0);
+    const nextAutoPalletPlan = buildAutoPalletPlan(fulfillmentQuantity, nextSkuMaster?.defaultUnitsPerPallet ?? 0);
     const shouldRefreshPallets = currentLine.pallets <= 0 || (previousSkuMaster !== undefined && currentLine.pallets === previousAutoPalletPlan.pallets);
     return {
       ...currentLine,
@@ -1802,11 +1827,16 @@ export function ActivityManagementPage({
       const shouldKeepAutoPallets = line.pallets <= 0 || line.pallets === previousAutoPalletPlan.pallets;
       return {
         ...line,
+        plannedQuantity: line.plannedQuantity > 0 ? line.plannedQuantity : nextQuantity,
         quantity: nextQuantity,
         pallets: shouldKeepAutoPallets ? nextAutoPalletPlan.pallets : line.pallets,
         palletsDetailCtns: ""
       };
     }));
+  }
+
+  function updateBatchOutboundLinePlannedQuantity(lineID: string, nextQuantity: number) {
+    updateBatchOutboundLine(lineID, { plannedQuantity: nextQuantity });
   }
 
   async function submitInboundDocument(status: MutableDocumentStatus) {
@@ -1819,10 +1849,7 @@ export function ActivityManagementPage({
       return;
     }
 
-    const validationError = validateInboundDraft(
-      batchForm.handlingMode !== "SEALED_TRANSIT",
-      status === "CONFIRMED" && batchForm.handlingMode !== "SEALED_TRANSIT"
-    );
+    const validationError = validateInboundDraft();
     if (validationError) {
       setErrorMessage(validationError);
       setBatchSubmitting(false);
@@ -1860,8 +1887,6 @@ export function ActivityManagementPage({
           const lineDescription = line.description.trim()
             || displayDescription(matchingTemplate ?? { description: "", name: "" })
             || (matchingSkuMaster ? getSKUMasterDescription(matchingSkuMaster) : "");
-          const effectiveUnitsPerPallet = getEffectiveInboundUnitsPerPallet(line, matchingSkuMaster);
-
           if (!matchingTemplate && !lineDescription) {
             throw new Error(t("batchInboundMissingNewSkuDetails", { sku: normalizedSku || "-" }));
           }
@@ -1877,7 +1902,7 @@ export function ActivityManagementPage({
             expectedQty: line.expectedQty,
             receivedQty: line.receivedQty,
             pallets: isSealedTransitMode ? 0 : line.pallets,
-            ...(effectiveUnitsPerPallet > 0 ? { unitsPerPallet: effectiveUnitsPerPallet } : {}),
+            unitsPerPallet: isSealedTransitMode ? undefined : line.unitsPerPallet,
             palletsDetailCtns: undefined,
             storageSection: normalizeStorageSection(line.storageSection || batchForm.storageSection || batchSectionOptions[0]),
             lineNote: line.lineNote || undefined
@@ -1912,7 +1937,7 @@ export function ActivityManagementPage({
     setBatchSubmitting(true);
     setErrorMessage("");
 
-    const validationError = validateOutboundDraft(true);
+    const validationError = validateOutboundDraft(true, status === "CONFIRMED");
     if (validationError) {
       setErrorMessage(validationError);
       setBatchSubmitting(false);
@@ -1949,6 +1974,8 @@ export function ActivityManagementPage({
             locationId: selectedOutboundSource.locationId,
             skuMasterId: selectedOutboundSource.skuMasterId,
             quantity: line.quantity,
+            plannedQuantity: line.plannedQuantity,
+            actualQuantity: line.quantity,
             pallets: line.pallets,
             palletsDetailCtns: undefined,
             unitLabel: line.unitLabel || selectedOutboundSource.unit.toUpperCase() || "PCS",
@@ -2037,6 +2064,40 @@ export function ActivityManagementPage({
       showActionError(error, t("bulkInboundStatusFailed"));
     } finally {
       setIsBulkUpdatingInboundStatus(false);
+    }
+  }
+
+  async function handleBulkConfirmOutboundDocuments() {
+    if (!canManage || selectedOutboundConfirmDocuments.length === 0) return;
+    if (selectedOutboundConfirmDocuments.some((document) => document.archivedAt || normalizeDocumentStatus(document.status) !== "DRAFT")) {
+      showActionError(new Error(t("bulkOutboundConfirmDraftsOnly")), t("bulkOutboundConfirmFailed"));
+      return;
+    }
+
+    const count = selectedOutboundConfirmDocuments.length;
+    const approved = await confirm({
+      title: t("bulkOutboundConfirmTitle"),
+      message: t("bulkOutboundConfirmPrompt", { count }),
+      confirmLabel: t("confirmShipment"),
+      cancelLabel: t("cancel"),
+      confirmColor: "primary",
+      severity: "info"
+    });
+    if (!approved) return;
+
+    setIsBulkConfirmingOutbound(true);
+    setErrorMessage("");
+    try {
+      const response = await api.bulkConfirmOutboundDocuments(
+        selectedOutboundConfirmDocuments.map((document) => document.id)
+      );
+      setOutboundRowSelectionModel({ type: "include", ids: new Set() });
+      await onRefresh();
+      showActionSuccess(t("bulkOutboundConfirmed", { count: response.updatedDocuments }));
+    } catch (error) {
+      showActionError(error, t("bulkOutboundConfirmFailed"));
+    } finally {
+      setIsBulkConfirmingOutbound(false);
     }
   }
 
@@ -2346,7 +2407,8 @@ export function ActivityManagementPage({
           shipToName: document.shipToName || "-",
           carrierName: document.carrierName || "-",
           totalLines: document.totalLines,
-          totalQty: document.totalQty,
+          totalPlannedQty: document.totalPlannedQty ?? document.totalQty,
+          totalActualQty: document.totalActualQty ?? document.totalQty,
           totalGrossWeightKgs: document.totalGrossWeightKgs ? document.totalGrossWeightKgs.toFixed(2) : "-",
           trackingStatus: formatOutboundTrackingStatusLabel(document.trackingStatus, document.status, t),
           status: document.status
@@ -2393,9 +2455,19 @@ export function ActivityManagementPage({
                           </Button>
                         </>
                       ) : (
-                        <Button variant="outlined" startIcon={<UploadFileOutlinedIcon />} onClick={() => setIsBulkOutboundImportOpen(true)}>
-                          {t("bulkInboundExcel")}
-                        </Button>
+                        <>
+                          <Button
+                            variant="outlined"
+                            startIcon={isBulkConfirmingOutbound ? <InlineLoadingIndicator /> : <CheckCircleOutlineOutlinedIcon />}
+                            onClick={() => void handleBulkConfirmOutboundDocuments()}
+                            disabled={isBulkConfirmingOutbound || selectedOutboundConfirmDocuments.length === 0}
+                          >
+                            {t("bulkOutboundConfirmSelected", { count: selectedOutboundConfirmDocuments.length })}
+                          </Button>
+                          <Button variant="outlined" startIcon={<UploadFileOutlinedIcon />} onClick={() => setIsBulkOutboundImportOpen(true)} disabled={isBulkConfirmingOutbound}>
+                            {t("bulkInboundExcel")}
+                          </Button>
+                        </>
                       )}
                       <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={() => void openCreateModal()}>
                         {mode === "IN" ? t("newInbound") : t("newOutbound")}
@@ -2458,9 +2530,14 @@ export function ActivityManagementPage({
               ) : (
                 <DataGrid
                   rows={outboundDocumentRows}
-                  columns={outboundDocumentColumns}
+                  columns={[outboundSelectionColumn, ...outboundDocumentColumns]}
                   loading={isLoading || isDocumentFilterLoading}
                   pagination
+                  checkboxSelection={canManage}
+                  disableRowSelectionExcludeModel
+                  rowSelectionModel={outboundRowSelectionModel}
+                  onRowSelectionModelChange={handleOutboundRowSelectionChange}
+                  isRowSelectable={(params) => !params.row.archivedAt && normalizeDocumentStatus(params.row.status) === "DRAFT"}
                   pageSizeOptions={[10, 20, 50]}
                   disableRowSelectionOnClick
                   initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
@@ -3103,8 +3180,6 @@ export function ActivityManagementPage({
                     );
                     const batchSkuTemplate = items.find((item) => item.sku.trim().toUpperCase() === normalizedBatchLineSku);
                     const batchSkuMaster = skuMastersBySku.get(normalizedBatchLineSku);
-                    const effectiveUnitsPerPallet = getEffectiveInboundUnitsPerPallet(line, batchSkuMaster);
-
                     return (
                       <div className="batch-line-card" key={line.id} id={`batch-line-${line.id}`}>
                         <div className="batch-line-card__header">
@@ -3123,7 +3198,7 @@ export function ActivityManagementPage({
                           <label>{t("expectedQty")}<input type="number" min="0" value={numberInputValue(line.expectedQty)} onChange={(event) => updateBatchLineExpectedQty(line.id, Math.max(0, Number(event.target.value || 0)))} /></label>
                           <label>{t("received")}<input type="number" min="0" value={numberInputValue(line.receivedQty)} onChange={(event) => updateBatchLineReceivedQty(line.id, Math.max(0, Number(event.target.value || 0)))} /></label>
                           <label>{t("pallets")}<input type="number" min="0" value={numberInputValue(line.pallets)} onChange={(event) => updateBatchLinePallets(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={batchForm.handlingMode === "SEALED_TRANSIT"} /></label>
-                          <label>{t("ctnPerPallet")}<input type="number" min="0" value={numberInputValue(line.unitsPerPallet > 0 ? line.unitsPerPallet : effectiveUnitsPerPallet)} onChange={(event) => updateBatchLineUnitsPerPallet(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={batchForm.handlingMode === "SEALED_TRANSIT"} placeholder={batchSkuMaster?.defaultUnitsPerPallet ? String(batchSkuMaster.defaultUnitsPerPallet) : ""} /></label>
+                          <label>{t("ctnPerPallet")}<input type="number" min="0" value={String(line.unitsPerPallet)} onChange={(event) => updateBatchLineUnitsPerPallet(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={batchForm.handlingMode === "SEALED_TRANSIT"} placeholder={batchSkuMaster?.defaultUnitsPerPallet ? String(batchSkuMaster.defaultUnitsPerPallet) : ""} /></label>
                           <label>{t("storageSection")}<select value={normalizeStorageSection(line.storageSection || batchSectionOptions[0])} onChange={(event) => updateBatchLine(line.id, { storageSection: event.target.value })}>{batchSectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}</select></label>
                         </div>
                         <div className="batch-line-card__meta">
@@ -3392,7 +3467,8 @@ export function ActivityManagementPage({
                             </select>
                           </label>
                           <label>{t("availableQty")}<input value={selectedOutboundSource ? String(selectedOutboundSource.availableQty) : ""} readOnly /></label>
-                          <label>{t("outQty")}<input type="number" min="0" value={numberInputValue(line.quantity)} onChange={(event) => updateBatchOutboundLineQuantity(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={Boolean(outboundPalletSourceMessage)} /></label>
+                          <label>{t("plannedShipQty")}<input type="number" min="0" value={numberInputValue(line.plannedQuantity)} onChange={(event) => updateBatchOutboundLinePlannedQuantity(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={Boolean(outboundPalletSourceMessage)} /></label>
+                          <label>{t("actualShipQty")}<input type="number" min="0" value={numberInputValue(line.quantity)} onChange={(event) => updateBatchOutboundLineQuantity(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={Boolean(outboundPalletSourceMessage)} /></label>
                           <label>{t("pallets")}<input type="number" min="0" value={numberInputValue(line.pallets)} onChange={(event) => updateBatchOutboundLine(line.id, { pallets: Math.max(0, Number(event.target.value || 0)) })} disabled={Boolean(outboundPalletSourceMessage)} /></label>
                           <label>{t("unit")}<input value={line.unitLabel} onChange={(event) => updateBatchOutboundLine(line.id, { unitLabel: event.target.value })} placeholder="PCS" /></label>
                           <label>{t("cartonSize")}<input value={line.cartonSizeMm} onChange={(event) => updateBatchOutboundLine(line.id, { cartonSizeMm: event.target.value })} placeholder="455*330*325" /></label>
@@ -3427,7 +3503,7 @@ export function ActivityManagementPage({
                             availableQtyLabel={t("availableQty")}
                             availableQtyValue={selectedOutboundSource.availableQty}
                             requiredQtyLabel={t("requiredQty")}
-                            requiredQtyValue={line.quantity}
+                            requiredQtyValue={getActivityOutboundFulfillmentQuantity(line)}
                             selectedQtyLabel={t("selectedQty")}
                             selectedQtyValue={outboundAllocationSummary?.allocatedQty ?? 0}
                             remainingQtyLabel={t("remainingQty")}
@@ -3877,7 +3953,8 @@ export function buildPickSheetExportDocument(document: OutboundDocument, sourceO
     document.lines.map((line) => ({
       id: String(line.id),
       sourceKey: buildOutboundSourceKey(document.customerId, line.locationId, line.skuMasterId),
-      quantity: line.quantity,
+      plannedQuantity: line.plannedQuantity ?? line.quantity,
+      quantity: line.actualQuantity ?? line.quantity,
       pallets: Math.max(0, line.pallets || 0),
       palletsDetailCtns: line.palletsDetailCtns || "",
       unitLabel: line.unitLabel || "",
@@ -3942,7 +4019,8 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
   const summaries = new Map<string, OutboundAllocationLineSummary>();
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    if (!line.sourceKey.trim() || line.quantity <= 0) {
+    const fulfillmentQuantity = getActivityOutboundFulfillmentQuantity(line);
+    if (!line.sourceKey.trim() || fulfillmentQuantity <= 0) {
       continue;
     }
 
@@ -3960,13 +4038,13 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
       description: selectedSource.description,
       locationName: selectedSource.locationName,
       storageSection: selectedSource.storageSections[0] || DEFAULT_STORAGE_SECTION,
-      requestedQty: line.quantity,
+      requestedQty: fulfillmentQuantity,
       allocatedQty: 0,
       shortageQty: 0,
       containerCount: 0
     };
 
-    let remainingQty = line.quantity;
+    let remainingQty = fulfillmentQuantity;
     for (const candidate of selectedSource.candidates) {
       const sourceId = candidate.id;
       const effectiveAvailable = candidate.availableQty - (reservedBySourceId.get(sourceId) ?? 0);

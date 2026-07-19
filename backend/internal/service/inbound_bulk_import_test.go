@@ -159,7 +159,7 @@ func TestValidateAndNormalizeInboundBulkCommitDocumentRechecksCurrentMasterData(
 	if err != nil {
 		t.Fatalf("validate current master data: %v", err)
 	}
-	if normalized.ContainerNo != "CONT-A" || normalized.Lines[0].ItemNumber != "ITEM-1" || normalized.Lines[0].Description != "Known item" || normalized.Lines[0].UnitsPerPallet != 48 {
+	if normalized.ContainerNo != "CONT-A" || normalized.Lines[0].ItemNumber != "ITEM-1" || normalized.Lines[0].Description != "Known item" || normalized.Lines[0].UnitsPerPallet != 0 {
 		t.Fatalf("unexpected normalized document: %#v", normalized)
 	}
 	if normalized.Lines[0].ExpectedQty != 930 || normalized.Lines[0].Pallets != 20 {
@@ -392,12 +392,12 @@ func TestBulkInboundAllowsMultipleReceiptsForOneContainerIntegration(t *testing.
 	if balance.Quantity != 0 || balance.Pallets != 0 {
 		t.Fatalf("expected sequential receipt deletion to clear inventory, got %#v", balance)
 	}
-	var containerStatus string
-	if err := store.db.GetContext(ctx, &containerStatus, `SELECT status FROM containers WHERE customer_id = ? AND container_no = ?`, customer.ID, containerNo); err != nil {
-		t.Fatalf("load shared container status after sequential deletion: %v", err)
+	var remainingContainers int
+	if err := store.db.GetContext(ctx, &remainingContainers, `SELECT COUNT(*) FROM containers WHERE customer_id = ? AND container_no = ?`, customer.ID, containerNo); err != nil {
+		t.Fatalf("count shared container after sequential deletion: %v", err)
 	}
-	if containerStatus != ContainerStatusVoided {
-		t.Fatalf("expected sequentially deleted container to be voided, got %q", containerStatus)
+	if remainingContainers != 0 {
+		t.Fatalf("expected sequentially deleted container to be physically removed, got %d rows", remainingContainers)
 	}
 }
 
@@ -503,7 +503,7 @@ func TestBuildInboundBulkImportPreviewWarnsWhenReceivedQtyOrPalletsAreBlank(t *t
 
 func TestParseInboundBulkImportWorkbookDoesNotTreatExplicitZeroAsBlank(t *testing.T) {
 	data := buildInboundBulkImportWorkbook(t, [][]any{
-		{"CONT-A", "Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-1", "ITEM-1", "First item", 10, 0, 0, 10, "A", ""},
+		{"CONT-A", "Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "SKU-1", "ITEM-1", "First item", 10, 0, 0, 0, "A", ""},
 	})
 	documents, err := parseInboundBulkImportWorkbook("receipts.xlsx", data)
 	if err != nil {
@@ -513,6 +513,17 @@ func TestParseInboundBulkImportWorkbookDoesNotTreatExplicitZeroAsBlank(t *testin
 	issues := documents[0].preview.Issues
 	if hasInboundBulkIssue(issues, "MISSING_RECEIVED_QTY", InboundBulkIssueWarning) || hasInboundBulkIssue(issues, "MISSING_PALLETS", InboundBulkIssueWarning) {
 		t.Fatalf("explicit zero values must remain distinct from blank cells: %#v", issues)
+	}
+	preview := buildInboundBulkImportPreview(
+		"receipts.xlsx",
+		Customer{ID: 1, Name: "Customer"},
+		[]Location{{ID: 2, Name: "Warehouse", SectionNames: []string{"A"}}},
+		[]SKUMaster{{ID: 1, SKU: "SKU-1", ItemNumber: "ITEM-1", Description: "First item", DefaultUnitsPerPallet: 48}},
+		map[string]bool{},
+		documents,
+	)
+	if preview.Documents[0].Input.Lines[0].UnitsPerPallet != 0 {
+		t.Fatalf("explicit zero CTN per pallet was replaced by the SKU default: %#v", preview.Documents[0].Input.Lines[0])
 	}
 }
 

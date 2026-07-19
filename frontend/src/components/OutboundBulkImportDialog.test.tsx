@@ -86,7 +86,7 @@ describe("OutboundBulkImportDialog", () => {
     expect(screen.getByRole("button", { name: "Create 1 drafts" })).toBeEnabled();
   });
 
-  it("normalizes Qty, Inventory Pallets, and Outbound Pallets independently before revalidation", async () => {
+  it("normalizes planned, actual, inventory pallet, and outbound pallet quantities independently before revalidation", async () => {
     mockedApi.previewOutboundBulkImport.mockResolvedValue(createPreview());
     mockedApi.revalidateOutboundBulkImport.mockImplementation(async (payload) => payloadToPreview(payload));
     const { container } = renderWithProviders(<OutboundBulkImportDialog open customers={[createCustomer()]} locations={[createLocation()]} items={[createItem()]} onClose={vi.fn()} onImported={vi.fn()} />);
@@ -94,19 +94,22 @@ describe("OutboundBulkImportDialog", () => {
     fireEvent.change(fileInput, { target: { files: [new File(["workbook"], "shipments.xlsx")] } });
     fireEvent.click(screen.getByRole("button", { name: "Validate workbook" }));
 
-    const quantityInput = await screen.findByDisplayValue("5");
+    const plannedQuantityInput = await screen.findByRole("spinbutton", { name: "Planned Ship Qty" });
+    const actualQuantityInput = screen.getByRole("spinbutton", { name: "Actual Ship Qty" });
     const inventoryPalletsInput = screen.getByDisplayValue("2");
     const outboundPalletsInput = screen.getByDisplayValue("3");
-    fireEvent.change(quantityInput, { target: { value: "1.9" } });
+    fireEvent.change(plannedQuantityInput, { target: { value: "7.9" } });
+    fireEvent.change(actualQuantityInput, { target: { value: "1.9" } });
     fireEvent.change(inventoryPalletsInput, { target: { value: "4.7" } });
     fireEvent.change(outboundPalletsInput, { target: { value: "6.7" } });
-    expect(quantityInput).toHaveValue(1);
+    expect(plannedQuantityInput).toHaveValue(7);
+    expect(actualQuantityInput).toHaveValue(1);
     expect(inventoryPalletsInput).toHaveValue(4);
     expect(outboundPalletsInput).toHaveValue(6);
     fireEvent.click(screen.getByRole("button", { name: "Revalidate changes" }));
 
     await waitFor(() => expect(mockedApi.revalidateOutboundBulkImport).toHaveBeenCalledWith(expect.objectContaining({
-      documents: [expect.objectContaining({ lines: [expect.objectContaining({ quantity: 1, inventoryPallets: 4, outboundPallets: 6 })] })]
+      documents: [expect.objectContaining({ lines: [expect.objectContaining({ quantity: 1, plannedQuantity: 7, actualQuantity: 1, inventoryPallets: 4, outboundPallets: 6 })] })]
     })));
   });
 

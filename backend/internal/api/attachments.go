@@ -19,6 +19,7 @@ import (
 )
 
 const attachmentDownloadTTL = 10 * time.Minute
+const attachmentCleanupBatchSize = 100
 
 type AttachmentStorage interface {
 	Bucket() string
@@ -193,9 +194,7 @@ func (s *Server) handleDeleteDocumentAttachment(c *gin.Context, documentType str
 		writeDomainError(c, err)
 		return
 	}
-	if err := s.attachmentStorage.DeleteObject(c.Request.Context(), attachment.StorageKey); err != nil {
-		log.Printf("delete document attachment object failed: document_type=%s document_id=%d attachment_id=%d storage_key=%q error=%v", documentType, documentID, attachmentID, attachment.StorageKey, err)
-	}
+	s.cleanupPendingDocumentAttachmentObjects(context.Background())
 
 	s.writeAuditLog(c, "DETACH", strings.ToLower(documentType)+"_document", documentID, attachment.DisplayName, "Deleted document attachment", map[string]any{
 		"attachmentId": attachment.ID,
@@ -207,18 +206,36 @@ func (s *Server) handleDeleteDocumentAttachment(c *gin.Context, documentType str
 	c.Status(http.StatusNoContent)
 }
 
-func (s *Server) deleteDocumentAttachmentObjectsAfterCancel(documentType string, documentID int64, attachments []service.DocumentAttachment) {
-	if s.attachmentStorage == nil || len(attachments) == 0 {
+func (s *Server) cleanupPendingDocumentAttachmentObjects(ctx context.Context) {
+	if s.attachmentStorage == nil {
 		return
 	}
 
-	for _, attachment := range attachments {
-		if !strings.EqualFold(attachment.StorageProvider, s.attachmentStorage.Provider()) || attachment.StorageBucket != s.attachmentStorage.Bucket() {
-			log.Printf("skip document attachment object cleanup: document_type=%s document_id=%d attachment_id=%d storage_provider=%q storage_bucket=%q", documentType, documentID, attachment.ID, attachment.StorageProvider, attachment.StorageBucket)
-			continue
+	var afterID int64
+	for {
+		attachments, err := s.store.ListPendingDocumentAttachmentCleanup(
+			ctx,
+			s.attachmentStorage.Provider(),
+			s.attachmentStorage.Bucket(),
+			afterID,
+			attachmentCleanupBatchSize,
+		)
+		if err != nil {
+			log.Printf("load pending document attachment cleanup failed: error=%v", err)
+			return
 		}
-		if err := s.attachmentStorage.DeleteObject(context.Background(), attachment.StorageKey); err != nil {
-			log.Printf("delete cancelled document attachment object failed: document_type=%s document_id=%d attachment_id=%d storage_key=%q error=%v", documentType, documentID, attachment.ID, attachment.StorageKey, err)
+		for _, attachment := range attachments {
+			afterID = attachment.ID
+			if err := s.attachmentStorage.DeleteObject(ctx, attachment.StorageKey); err != nil {
+				log.Printf("delete pending document attachment object failed: document_type=%s document_id=%d attachment_id=%d storage_key=%q error=%v", attachment.DocumentType, attachment.DocumentID, attachment.ID, attachment.StorageKey, err)
+				continue
+			}
+			if err := s.store.CompleteDocumentAttachmentCleanup(ctx, attachment.ID); err != nil {
+				log.Printf("complete document attachment cleanup failed: document_type=%s document_id=%d attachment_id=%d storage_key=%q error=%v", attachment.DocumentType, attachment.DocumentID, attachment.ID, attachment.StorageKey, err)
+			}
+		}
+		if len(attachments) < attachmentCleanupBatchSize {
+			return
 		}
 	}
 }

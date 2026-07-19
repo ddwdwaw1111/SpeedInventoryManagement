@@ -43,6 +43,7 @@ type BatchOutboundLineState = {
   locationId: string;
   sourceKey: string;
   sourceSearch: string;
+  plannedQuantity: number;
   quantity: number;
   pallets: number;
   palletsDetailCtns: string;
@@ -367,7 +368,7 @@ export function OutboundShipmentEditorPage({
     [batchOutboundAllocationPreview, batchOutboundLines, outboundLineValidations, outboundShipmentReviewGroups]
   );
   const validBatchOutboundLines = useMemo(
-    () => batchOutboundLines.filter((line) => line.sourceKey.trim() !== "" && line.quantity > 0),
+    () => batchOutboundLines.filter((line) => line.sourceKey.trim() !== "" && getOutboundLineFulfillmentQuantity(line) > 0),
     [batchOutboundLines]
   );
   const isEditingOutboundDraft = normalizeDocumentStatus(document?.status ?? "") === "DRAFT";
@@ -585,7 +586,7 @@ export function OutboundShipmentEditorPage({
       };
     }
 
-    const nextAllocationSelections = buildAutoOutboundPalletSelections(currentLine.quantity, nextSource.candidates);
+    const nextAllocationSelections = buildAutoOutboundPalletSelections(getOutboundLineFulfillmentQuantity(currentLine), nextSource.candidates);
     return {
       ...currentLine,
       locationId: String(nextSource.locationId),
@@ -634,6 +635,7 @@ export function OutboundShipmentEditorPage({
         ...line,
         locationId: normalizedLocationId,
         sourceKey: "",
+        plannedQuantity: 0,
         quantity: 0,
         pallets: 0,
         palletsDetailCtns: "",
@@ -659,6 +661,7 @@ export function OutboundShipmentEditorPage({
           sourceKey: "",
           sourceSearch: "",
           locationId: "",
+          plannedQuantity: 0,
           quantity: 0,
           pallets: 0,
           palletsDetailCtns: "",
@@ -686,6 +689,7 @@ export function OutboundShipmentEditorPage({
         locationId: shouldKeepLocation ? line.locationId : "",
         sourceKey: "",
         sourceSearch: nextSearchValue,
+        plannedQuantity: 0,
         quantity: 0,
         pallets: 0,
         palletsDetailCtns: "",
@@ -707,9 +711,27 @@ export function OutboundShipmentEditorPage({
         : buildAutoOutboundPalletSelections(nextQuantity, selectedSource?.candidates ?? []);
       return {
         ...line,
+        plannedQuantity: line.plannedQuantity > 0 ? line.plannedQuantity : nextQuantity,
         quantity: nextQuantity,
         palletsDetailCtns: "",
         allocationSelections: nextAllocationSelections
+      };
+    }));
+  }
+
+  function updateBatchOutboundLinePlannedQuantity(lineID: string, nextQuantity: number) {
+    setBatchOutboundLines((current) => current.map((line) => {
+      if (line.id !== lineID) {
+        return line;
+      }
+      const selectedSource = findOutboundSourceOption(selectableOutboundSources, line.sourceKey);
+      const fulfillmentQuantity = line.quantity > 0 ? line.quantity : nextQuantity;
+      return {
+        ...line,
+        plannedQuantity: nextQuantity,
+        allocationSelections: line.allocationSelectionsTouched
+          ? line.allocationSelections
+          : buildAutoOutboundPalletSelections(fulfillmentQuantity, selectedSource?.candidates ?? [])
       };
     }));
   }
@@ -814,7 +836,7 @@ export function OutboundShipmentEditorPage({
         return line;
       }
       const selectedSource = findOutboundSourceOption(selectableOutboundSources, line.sourceKey);
-      const nextAllocationSelections = buildAutoOutboundPalletSelections(line.quantity, selectedSource?.candidates ?? []);
+      const nextAllocationSelections = buildAutoOutboundPalletSelections(getOutboundLineFulfillmentQuantity(line), selectedSource?.candidates ?? []);
       nextPalletCount = countSelectedOutboundPallets(nextAllocationSelections);
       nextPickedQty = nextAllocationSelections.reduce((sum, entry) => sum + entry.quantity, 0);
       return {
@@ -844,7 +866,7 @@ export function OutboundShipmentEditorPage({
     showSuccess(t("manualPickSelectionsClearedSuccess"));
   }
 
-  function validateOutboundDraft(requireAllocationReady: boolean) {
+  function validateOutboundDraft(requireAllocationReady: boolean, requireActualQuantity = false) {
     if (outboundPalletSourceMessage) {
       return outboundPalletSourceMessage;
     }
@@ -859,6 +881,9 @@ export function OutboundShipmentEditorPage({
       }
       if (validation.hasBlockingStep1) {
         return validation.warehouseMessage || validation.skuMessage || validation.quantityMessage || t("chooseSkuAndQty");
+      }
+      if (requireActualQuantity && line.quantity <= 0) {
+        return t("actualShipQtyRequired");
       }
       if (requireAllocationReady && line.pallets <= 0) {
         return t("outboundPalletCountRequired");
@@ -916,7 +941,7 @@ export function OutboundShipmentEditorPage({
     setBatchSubmitting(true);
     setErrorMessage("");
 
-    const validationError = validateOutboundDraft(status === "CONFIRMED");
+    const validationError = validateOutboundDraft(status === "CONFIRMED", status === "CONFIRMED");
     if (validationError) {
       setErrorMessage(validationError);
       setBatchSubmitting(false);
@@ -950,6 +975,8 @@ export function OutboundShipmentEditorPage({
             locationId: selectedOutboundSource.locationId,
             skuMasterId: selectedOutboundSource.skuMasterId,
             quantity: line.quantity,
+            plannedQuantity: line.plannedQuantity,
+            actualQuantity: line.quantity,
             pallets: line.pallets,
             palletsDetailCtns: undefined,
             unitLabel: line.unitLabel || selectedOutboundSource.unit.toUpperCase() || "PCS",
@@ -1289,7 +1316,19 @@ export function OutboundShipmentEditorPage({
                                 ) : null}
                               </label>
                               <label className="grid content-start gap-1 text-xs font-semibold text-slate-700">
-                                {t("outQty")}
+                                {t("plannedShipQty")}
+                                <input
+                                  id={`shipment-editor-planned-quantity-${line.id}`}
+                                  type="number"
+                                  min="0"
+                                  value={numberInputValue(line.plannedQuantity)}
+                                  onChange={(event) => updateBatchOutboundLinePlannedQuantity(line.id, Math.max(0, Number(event.target.value || 0)))}
+                                  disabled={isOutboundSourceReadOnly || !selectedOutboundSource}
+                                  className="min-h-10 rounded-xl border border-slate-300/90 bg-white px-3 py-1.5 text-right text-base font-bold text-[#143569] outline-none transition focus:border-[#143569]/60 focus:ring-2 focus:ring-[#143569]/10"
+                                />
+                              </label>
+                              <label className="grid content-start gap-1 text-xs font-semibold text-slate-700">
+                                {t("actualShipQty")}
                                 <input
                                   id={`shipment-editor-quantity-${line.id}`}
                                   type="number"
@@ -1302,7 +1341,7 @@ export function OutboundShipmentEditorPage({
                                   aria-invalid={lineValidation.quantityMessage ? "true" : "false"}
                                   className={`min-h-10 rounded-xl border bg-white px-3 py-1.5 text-right text-base font-bold text-[#143569] outline-none transition focus:border-[#143569]/60 focus:ring-2 focus:ring-[#143569]/10 ${lineValidation.quantityMessage ? "border-amber-400 bg-amber-50/40" : "border-slate-300/90"}`}
                                 />
-                                {lineValidation.quantityMessage || !selectedOutboundSource || line.quantity <= 0 ? (
+                                {lineValidation.quantityMessage || !selectedOutboundSource || getOutboundLineFulfillmentQuantity(line) <= 0 ? (
                                   <span className={`text-xs ${lineValidation.quantityMessage ? "font-semibold text-amber-700" : "text-slate-500"}`}>
                                     {lineValidation.quantityMessage || (selectedOutboundSource
                                       ? `${t("maxLabel")} ${selectedOutboundSource.availableQty} ${lineUnitLabel}`
@@ -1368,7 +1407,7 @@ export function OutboundShipmentEditorPage({
                             </div>
                             <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/70 px-3 py-2.5">
                               <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-emerald-600">{t("selectedQty")}</div>
-                              <div className="mt-1 text-sm font-bold text-emerald-800">{line.quantity} {lineUnitLabel}</div>
+                              <div className="mt-1 text-sm font-bold text-emerald-800">{getOutboundLineFulfillmentQuantity(line)} {lineUnitLabel}</div>
                             </div>
                             <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-2.5">
                               <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-600">{t("shippingPallets")}</div>
@@ -1658,6 +1697,7 @@ function createEmptyBatchOutboundLine(seed?: Partial<BatchOutboundLineState>): B
     locationId: seed?.locationId ?? "",
     sourceKey: seed?.sourceKey ?? "",
     sourceSearch: seed?.sourceSearch ?? "",
+    plannedQuantity: seed?.plannedQuantity ?? seed?.quantity ?? 0,
     quantity: seed?.quantity ?? 0,
     pallets: seed?.pallets ?? 0,
     palletsDetailCtns: seed?.palletsDetailCtns ?? "",
@@ -1683,11 +1723,16 @@ function numberInputValue(value: number) {
   return value === 0 ? "" : String(value);
 }
 
+function getOutboundLineFulfillmentQuantity(line: Pick<BatchOutboundLineState, "plannedQuantity" | "quantity">) {
+  return line.quantity > 0 ? line.quantity : line.plannedQuantity;
+}
+
 function isOutboundLineEmpty(line: BatchOutboundLineState) {
   return (
     line.locationId.trim() === ""
     && line.sourceKey.trim() === ""
     && line.sourceSearch.trim() === ""
+    && line.plannedQuantity <= 0
     && line.quantity <= 0
     && line.pallets <= 0
     && line.reason.trim() === ""
@@ -1723,12 +1768,13 @@ function buildOutboundLineValidations(
     const warehouseMessage = isActive && hasSkuInput && matchingSkuSources.length > 0 && !line.locationId.trim()
       ? t("selectWarehouseAfterSku")
       : "";
+    const fulfillmentQuantity = getOutboundLineFulfillmentQuantity(line);
     let quantityMessage = "";
-    if (isActive && line.sourceKey.trim() && line.quantity <= 0) {
+    if (isActive && line.sourceKey.trim() && fulfillmentQuantity <= 0) {
       quantityMessage = t("outboundQtyRequired");
     } else if (isActive && line.sourceKey.trim() && line.pallets <= 0) {
       quantityMessage = t("outboundPalletCountRequired");
-    } else if (!skipAvailabilityChecks && selectedSource && line.quantity > selectedSource.availableQty) {
+    } else if (!skipAvailabilityChecks && selectedSource && fulfillmentQuantity > selectedSource.availableQty) {
       quantityMessage = t("outboundQtyExceedsStock", {
         sku: selectedSource.sku,
         available: selectedSource.availableQty
@@ -1737,9 +1783,9 @@ function buildOutboundLineValidations(
     const hasBlockingStep1 = Boolean(warehouseMessage || skuMessage || quantityMessage);
 
     let pickMessage = "";
-    if (!skipAvailabilityChecks && !hasBlockingStep1 && selectedSource && line.quantity > 0) {
+    if (!skipAvailabilityChecks && !hasBlockingStep1 && selectedSource && fulfillmentQuantity > 0) {
       const allocatedQty = allocationSummary?.allocatedQty ?? 0;
-      if (allocatedQty !== line.quantity) {
+      if (allocatedQty !== fulfillmentQuantity) {
         pickMessage = (allocationSummary?.shortageQty ?? 0) > 0
           ? t("outboundQtyExceedsStock", {
               sku: selectedSource.sku,
@@ -1786,7 +1832,7 @@ function buildOutboundStepOverview(
   }
 
   const palletCount = lines.reduce((sum, line) => (
-    line.sourceKey.trim() && line.quantity > 0 ? sum + Math.max(0, line.pallets) : sum
+    line.sourceKey.trim() && getOutboundLineFulfillmentQuantity(line) > 0 ? sum + Math.max(0, line.pallets) : sum
   ), 0);
   const reviewStatus: OutboundStepOverview["reviewStatus"] = preview.shortageLineCount > 0
     ? "shortage"
@@ -1814,7 +1860,8 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
   const reservationsBySourceKey = new Map<string, OutboundInventoryReservationMap>();
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    if (!line.sourceKey.trim() || line.quantity <= 0) {
+    const fulfillmentQuantity = getOutboundLineFulfillmentQuantity(line);
+    if (!line.sourceKey.trim() || fulfillmentQuantity <= 0) {
       continue;
     }
 
@@ -1832,7 +1879,7 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
       description: selectedSource.description,
       locationName: selectedSource.locationName,
       storageSection: selectedSource.storageSections[0] || DEFAULT_STORAGE_SECTION,
-      requestedQty: line.quantity,
+      requestedQty: fulfillmentQuantity,
       allocatedQty: 0,
       shortageQty: 0,
       containerCount: 0
@@ -1888,7 +1935,7 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
         .map((row) => row.containerNo || `${row.locationName}/${row.storageSection}`)
     );
     summary.containerCount = containers.size;
-    summary.shortageQty = Math.max(0, line.quantity - summary.allocatedQty);
+    summary.shortageQty = Math.max(0, fulfillmentQuantity - summary.allocatedQty);
     summaries.set(line.id, summary);
   }
 
@@ -1904,7 +1951,7 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
 }
 
 function buildOutboundPickPlanRows(
-  line: Pick<BatchOutboundLineState, "id" | "quantity" | "pallets" | "allocationSelections" | "allocationSelectionsTouched">,
+  line: Pick<BatchOutboundLineState, "id" | "plannedQuantity" | "quantity" | "pallets" | "allocationSelections" | "allocationSelectionsTouched">,
   source: Pick<OutboundSourceOption, "candidates" | "itemNumber" | "sku" | "description">,
   includeAllCandidates: boolean,
   priorReservations?: OutboundInventoryReservationMap
@@ -1971,7 +2018,7 @@ function reserveOutboundLinePalletSelections(
 }
 
 function buildEffectiveOutboundLinePalletSelections(
-  line: Pick<BatchOutboundLineState, "quantity" | "pallets" | "allocationSelections" | "allocationSelectionsTouched">,
+  line: Pick<BatchOutboundLineState, "plannedQuantity" | "quantity" | "pallets" | "allocationSelections" | "allocationSelectionsTouched">,
   source: Pick<OutboundSourceOption, "candidates">,
   reservations: OutboundInventoryReservationMap
 ) {
@@ -1979,7 +2026,7 @@ function buildEffectiveOutboundLinePalletSelections(
   if (line.allocationSelectionsTouched) {
     return normalizedSelections;
   }
-  return buildAutoOutboundPalletSelectionsWithReservations(line.quantity, source.candidates, reservations);
+  return buildAutoOutboundPalletSelectionsWithReservations(getOutboundLineFulfillmentQuantity(line), source.candidates, reservations);
 }
 
 function rebalanceAutoOutboundLineSelections(lines: BatchOutboundLineState[], sourceOptions: OutboundSourceOption[]) {
@@ -2402,6 +2449,7 @@ function getPersistedOutboundLineAllocations(
   if (pickAllocations.length > 0) {
     return pickAllocations;
   }
+  const actualQuantity = line.actualQuantity ?? line.quantity;
   return [{
     id: line.id,
     lineId: line.id,
@@ -2410,7 +2458,7 @@ function getPersistedOutboundLineAllocations(
     locationName: line.locationName,
     storageSection: line.storageSection,
     containerNo: "",
-    allocatedQty: line.quantity,
+    allocatedQty: actualQuantity > 0 ? actualQuantity : (line.plannedQuantity ?? 0),
     pallets: 0,
     createdAt: line.createdAt
   }];
@@ -2657,7 +2705,8 @@ function buildOutboundEditorSourceState({
               locationId: String(line.locationId),
               sourceKey: buildOutboundSourceKey(document.customerId, line.locationId, line.skuMasterId),
               sourceSearch: "",
-              quantity: line.quantity,
+              plannedQuantity: line.plannedQuantity ?? line.quantity,
+              quantity: line.actualQuantity ?? line.quantity,
               pallets: Math.max(0, line.pallets ?? 0),
               palletsDetailCtns: "",
               unitLabel: line.unitLabel || "PCS",
