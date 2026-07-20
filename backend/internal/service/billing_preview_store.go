@@ -392,12 +392,22 @@ func (s *Store) loadBillingPreviewSourcesWithQueryer(
 		SELECT
 			d.id AS document_id,
 			line.id AS line_id,
-			COALESCE(line.sku_master_id, 0) AS sku_master_id,
+			COALESCE((
+				SELECT cle.sku_master_id
+				FROM container_lifecycle_events cle
+				WHERE cle.source_document_type = 'INBOUND'
+				  AND cle.source_document_id = d.id
+				  AND cle.source_line_id = line.id
+				  AND cle.sku_master_id IS NOT NULL
+				ORDER BY cle.id
+				LIMIT 1
+			), sm.id, 0) AS sku_master_id,
 			COALESCE(NULLIF(UPPER(TRIM(line.storage_section)), ''), 'TEMP') AS storage_section,
 			GREATEST(line.received_qty, 0) AS quantity,
 			GREATEST(line.pallets, 0) AS pallets
 		FROM inbound_documents d
 		JOIN inbound_document_lines line ON line.document_id = d.id
+		LEFT JOIN sku_master sm ON sm.sku = line.sku_snapshot
 		WHERE d.customer_id = ?
 		  AND UPPER(TRIM(d.status)) IN ('CONFIRMED', 'POSTED')
 		  AND d.cancelled_at IS NULL

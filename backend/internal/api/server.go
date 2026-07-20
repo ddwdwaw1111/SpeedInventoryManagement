@@ -508,6 +508,20 @@ func (s *Server) handleListOutboundDocuments(c *gin.Context) {
 		}
 		limit = parsed
 	}
+	beforeID, err := parseOptionalInt64Query(c, "beforeId", "beforeId must be a number")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if beforeID < 0 {
+		writeError(c, http.StatusBadRequest, "beforeId must be non-negative")
+		return
+	}
+	exportCursor := strings.EqualFold(strings.TrimSpace(c.Query("exportCursor")), "true")
+	if beforeID > 0 && !exportCursor {
+		writeError(c, http.StatusBadRequest, "beforeId requires exportCursor=true")
+		return
+	}
 
 	customerID, err := parseOptionalInt64Query(c, "customerId", "customerId must be a number")
 	if err != nil {
@@ -523,6 +537,8 @@ func (s *Server) handleListOutboundDocuments(c *gin.Context) {
 
 	documents, err := s.store.ListOutboundDocumentsFiltered(c.Request.Context(), limit, service.OutboundDocumentFilters{
 		ArchiveScope:   strings.TrimSpace(c.Query("archiveScope")),
+		ExportCursor:   exportCursor,
+		BeforeID:       beforeID,
 		Search:         strings.TrimSpace(c.Query("search")),
 		CustomerID:     customerID,
 		LocationID:     locationID,
@@ -779,6 +795,20 @@ func (s *Server) handleListInboundDocuments(c *gin.Context) {
 		}
 		limit = parsed
 	}
+	beforeID, err := parseOptionalInt64Query(c, "beforeId", "beforeId must be a number")
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if beforeID < 0 {
+		writeError(c, http.StatusBadRequest, "beforeId must be non-negative")
+		return
+	}
+	exportCursor := strings.EqualFold(strings.TrimSpace(c.Query("exportCursor")), "true")
+	if beforeID > 0 && !exportCursor {
+		writeError(c, http.StatusBadRequest, "beforeId requires exportCursor=true")
+		return
+	}
 
 	customerID, err := parseOptionalInt64Query(c, "customerId", "customerId must be a number")
 	if err != nil {
@@ -794,6 +824,8 @@ func (s *Server) handleListInboundDocuments(c *gin.Context) {
 
 	documents, err := s.store.ListInboundDocumentsFiltered(c.Request.Context(), limit, service.InboundDocumentFilters{
 		ArchiveScope:   strings.TrimSpace(c.Query("archiveScope")),
+		ExportCursor:   exportCursor,
+		BeforeID:       beforeID,
 		Search:         strings.TrimSpace(c.Query("search")),
 		CustomerID:     customerID,
 		LocationID:     locationID,

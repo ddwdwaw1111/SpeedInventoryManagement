@@ -111,6 +111,8 @@ type DocumentArchiveScope = "active" | "archived" | "all";
 
 type DocumentListQuery = {
   archiveScope?: DocumentArchiveScope;
+  exportCursor?: boolean;
+  beforeId?: number;
   search?: string;
   customerId?: number | "all";
   locationId?: number | "all";
@@ -199,6 +201,13 @@ function buildDocumentListQueryParams(limit: number, archiveScopeOrQuery: Docume
     limit: String(limit),
     archiveScope: query.archiveScope ?? "active"
   });
+
+  if (query.exportCursor) {
+    params.set("exportCursor", "true");
+  }
+  if (query.beforeId && query.beforeId > 0) {
+    params.set("beforeId", String(query.beforeId));
+  }
 
   if (query.customerId && query.customerId !== "all") {
     params.set("customerId", String(query.customerId));

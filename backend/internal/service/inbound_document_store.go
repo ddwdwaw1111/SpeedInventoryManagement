@@ -149,6 +149,8 @@ type inboundDocumentLineRow struct {
 
 type InboundDocumentFilters struct {
 	ArchiveScope    string
+	ExportCursor    bool
+	BeforeID        int64
 	Search          string
 	CustomerID      int64
 	LocationID      int64
@@ -169,13 +171,20 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 	if limit <= 0 {
 		limit = 50
 	}
-
 	whereClauses := []string{
 		buildDocumentArchiveFilterClause("d", filters.ArchiveScope),
 		"UPPER(TRIM(d.status)) NOT IN ('DELETED', 'CANCELLED')",
 		"d.corrected_at IS NULL",
 	}
 	args := make([]any, 0, 16)
+	orderBy := "COALESCE(d.actual_arrival_date, DATE(d.confirmed_at), DATE(d.created_at), d.expected_arrival_date) DESC, d.id DESC"
+	if filters.ExportCursor {
+		orderBy = "d.id DESC"
+		if filters.BeforeID > 0 {
+			whereClauses = append(whereClauses, "d.id < ?")
+			args = append(args, filters.BeforeID)
+		}
+	}
 	if filters.CustomerID > 0 {
 		whereClauses = append(whereClauses, "d.customer_id = ?")
 		args = append(args, filters.CustomerID)
@@ -254,9 +263,9 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 		JOIN customers c ON c.id = d.customer_id
 		JOIN storage_locations l ON l.id = d.location_id
 		WHERE %s
-		ORDER BY COALESCE(d.actual_arrival_date, DATE(d.confirmed_at), DATE(d.created_at), d.expected_arrival_date) DESC, d.id DESC
+		ORDER BY %s
 		LIMIT ?
-	`, strings.Join(whereClauses, " AND ")), args...); err != nil {
+	`, strings.Join(whereClauses, " AND "), orderBy), args...); err != nil {
 		return nil, fmt.Errorf("load inbound documents: %w", err)
 	}
 	if len(documentRows) == 0 {

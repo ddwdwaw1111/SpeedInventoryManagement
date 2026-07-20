@@ -24,7 +24,7 @@ export type ExcelExportWorksheet = {
   summaryRows?: ExcelExportSummaryRow[];
 };
 
-type ExcelExportOptions = {
+export type ExcelExportOptions = {
   title: string;
   sheetName: string;
   fileName: string;
@@ -136,6 +136,26 @@ export function downloadExcelWorkbook({
   additionalSheets
 }: ExcelExportOptions) {
   const safeFileName = `${sanitizeFileName(fileName)}.xlsx`;
+  const workbookBytes = buildExcelWorkbookBytes({
+    title,
+    sheetName,
+    fileName,
+    columns,
+    rows,
+    summaryRows,
+    additionalSheets
+  });
+  downloadBytes(workbookBytes, safeFileName, XLSX_MIME_TYPE);
+}
+
+export function buildExcelWorkbookBytes({
+  title,
+  sheetName,
+  columns,
+  rows,
+  summaryRows,
+  additionalSheets
+}: ExcelExportOptions) {
   const exportTimestamp = new Date().toLocaleString("en-US", {
     year: "numeric",
     month: "short",
@@ -158,20 +178,23 @@ export function downloadExcelWorkbook({
       summaryRows: worksheet.summaryRows ?? []
     })
   }));
-  const workbookBytes = buildXlsxArchive({
+  return buildXlsxArchive({
     title,
     worksheets
   });
-  const workbookBuffer = new ArrayBuffer(workbookBytes.byteLength);
-  new Uint8Array(workbookBuffer).set(workbookBytes);
+}
 
-  const blob = new Blob([workbookBuffer], {
-    type: XLSX_MIME_TYPE
+export function downloadBytes(bytes: Uint8Array, fileName: string, contentType = "application/octet-stream") {
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+
+  const blob = new Blob([buffer], {
+    type: contentType
   });
   const url = window.URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = safeFileName;
+  anchor.download = sanitizeFileName(fileName);
   document.body.appendChild(anchor);
   anchor.click();
   document.body.removeChild(anchor);

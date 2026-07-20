@@ -1,12 +1,16 @@
 import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
+import FolderZipOutlinedIcon from "@mui/icons-material/FolderZipOutlined";
 import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
 import OutboxOutlinedIcon from "@mui/icons-material/OutboxOutlined";
 import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
-import { Button } from "@mui/material";
+import { Alert, Button } from "@mui/material";
 import { useMemo, useState, type ReactNode } from "react";
 
+import { api } from "../lib/api";
 import { formatDateValue } from "../lib/dates";
+import { downloadDocumentMigrationPackage } from "../lib/documentMigrationExport";
 import { downloadExcelWorkbook, type ExcelExportCell, type ExcelExportColumn } from "../lib/excelExport";
+import { getErrorMessage } from "../lib/errors";
 import { useI18n } from "../lib/i18n";
 import { getOutboundExpectedShipDate } from "../lib/outboundDates";
 import type { PageKey } from "../lib/routes";
@@ -33,6 +37,7 @@ type ExportDataset = {
 };
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
+const DOCUMENT_EXPORT_PAGE_SIZE = 500;
 
 const INVENTORY_SUMMARY_EXPORT_COLUMNS = [
   { key: "itemNumber", label: "Item #" },
@@ -110,6 +115,8 @@ export function ExportCenterPage({
 }: ExportCenterPageProps) {
   const { t } = useI18n();
   const [selectedDatasetKey, setSelectedDatasetKey] = useState<string | null>(null);
+  const [isMigrationExporting, setIsMigrationExporting] = useState(false);
+  const [migrationMessage, setMigrationMessage] = useState<{ severity: "success" | "error"; text: string } | null>(null);
 
   const datasets = useMemo<ExportDataset[]>(() => {
     const inventorySummaryRows = buildInventorySummaryExportRows(items);
@@ -192,6 +199,34 @@ export function ExportCenterPage({
     setSelectedDatasetKey(null);
   }
 
+  async function handleMigrationExport() {
+    setIsMigrationExporting(true);
+    setMigrationMessage(null);
+    try {
+      const [allInboundDocuments, allOutboundDocuments] = await Promise.all([
+        loadAllInboundDocuments(),
+        loadAllOutboundDocuments()
+      ]);
+      const summary = downloadDocumentMigrationPackage(allInboundDocuments, allOutboundDocuments);
+      setMigrationMessage({
+        severity: "success",
+        text: t("bulkDocumentExportComplete", {
+          inbound: summary.inboundDocuments,
+          outbound: summary.outboundDocuments,
+          files: summary.workbookCount,
+          skipped: summary.skippedDocuments
+        })
+      });
+    } catch (error) {
+      setMigrationMessage({
+        severity: "error",
+        text: getErrorMessage(error, t("bulkDocumentExportFailed"))
+      });
+    } finally {
+      setIsMigrationExporting(false);
+    }
+  }
+
   return (
     <main className="workspace-main">
       <section className="workbook-panel workbook-panel--full export-center">
@@ -208,7 +243,40 @@ export function ExportCenterPage({
           />
         </div>
 
+        {migrationMessage ? (
+          <Alert
+            severity={migrationMessage.severity}
+            onClose={() => setMigrationMessage(null)}
+            sx={{ mx: 2, mt: 2 }}
+          >
+            {migrationMessage.text}
+          </Alert>
+        ) : null}
+
         <div className="export-center__grid">
+          <article className="export-center__card">
+            <div className="export-center__card-copy">
+              <div className="export-center__card-icon" aria-hidden="true"><FolderZipOutlinedIcon fontSize="small" /></div>
+              <div>
+                <h3>{t("bulkDocumentExportTitle")}</h3>
+                <p>{t("bulkDocumentExportDesc")}</p>
+              </div>
+            </div>
+            <div className="export-center__card-meta">
+              <strong>ZIP</strong>
+              <span>{t("bulkDocumentExportFormat")}</span>
+            </div>
+            <div className="export-center__card-actions">
+              <Button
+                variant="contained"
+                startIcon={<FolderZipOutlinedIcon fontSize="small" />}
+                onClick={() => void handleMigrationExport()}
+                disabled={isMigrationExporting}
+              >
+                {isMigrationExporting ? t("bulkDocumentExportPreparing") : t("bulkDocumentExportAction")}
+              </Button>
+            </div>
+          </article>
           {datasets.map((dataset) => (
             <article className="export-center__card" key={dataset.key}>
               <div className="export-center__card-copy">
@@ -412,4 +480,42 @@ function getLatestDate(left: string | null, right: string | null) {
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US").format(value);
+}
+
+async function loadAllInboundDocuments() {
+  const documents: InboundDocument[] = [];
+  let beforeId: number | undefined;
+  for (;;) {
+    const page = await api.getInboundDocuments(DOCUMENT_EXPORT_PAGE_SIZE, {
+      archiveScope: "all",
+      exportCursor: true,
+      beforeId
+    });
+    documents.push(...page);
+    if (page.length < DOCUMENT_EXPORT_PAGE_SIZE) return documents;
+    beforeId = nextDocumentCursor(page, beforeId);
+  }
+}
+
+async function loadAllOutboundDocuments() {
+  const documents: OutboundDocument[] = [];
+  let beforeId: number | undefined;
+  for (;;) {
+    const page = await api.getOutboundDocuments(DOCUMENT_EXPORT_PAGE_SIZE, {
+      archiveScope: "all",
+      exportCursor: true,
+      beforeId
+    });
+    documents.push(...page);
+    if (page.length < DOCUMENT_EXPORT_PAGE_SIZE) return documents;
+    beforeId = nextDocumentCursor(page, beforeId);
+  }
+}
+
+function nextDocumentCursor<TDocument extends { id: number }>(page: TDocument[], previousCursor?: number) {
+  const nextCursor = page[page.length - 1]?.id ?? 0;
+  if (nextCursor <= 0 || (previousCursor !== undefined && nextCursor >= previousCursor)) {
+    throw new Error("Document export pagination did not advance.");
+  }
+  return nextCursor;
 }
