@@ -47,6 +47,7 @@ type InventorySummaryRow = {
   availableQty: number;
   allocatedQty: number;
   damagedQty: number;
+  pallets: number;
   warehouseCount: number;
   containerCount: number;
   lastReceipt: string | null;
@@ -63,6 +64,7 @@ type WarehouseBreakdownRow = {
   availableQty: number;
   allocatedQty: number;
   damagedQty: number;
+  pallets: number;
   containerCount: number;
   lastReceipt: string | null;
 };
@@ -91,6 +93,7 @@ const INVENTORY_SUMMARY_EXPORT_COLUMNS = [
   { key: "onHand", label: "On Hand" },
   { key: "availableQty", label: "Available Qty" },
   { key: "damagedQty", label: "Damaged Qty" },
+  { key: "pallets", label: "Pallets" },
   { key: "warehouseCount", label: "Warehouse Count" },
   { key: "containerCount", label: "Container Count" },
   { key: "lastReceipt", label: "Last Receipt" }
@@ -170,6 +173,7 @@ export function InventorySummaryPage({
     { field: "onHand", headerName: t("onHand"), minWidth: 110, type: "number" },
     { field: "availableQty", headerName: t("availableQty"), minWidth: 120, type: "number" },
     { field: "damagedQty", headerName: t("damagedQty"), minWidth: 120, type: "number" },
+    { field: "pallets", headerName: t("pallets"), minWidth: 110, type: "number" },
     { field: "warehouseCount", headerName: t("warehouseCount"), minWidth: 120, type: "number" },
     { field: "containerCount", headerName: t("containerCount"), minWidth: 120, type: "number" },
     {
@@ -191,7 +195,10 @@ export function InventorySummaryPage({
   });
 
   const warehouseBreakdown = useMemo(
-    () => buildWarehouseBreakdown(selectedSummary?.containerBalances ?? []),
+    () => buildWarehouseBreakdown(
+      selectedSummary?.containerBalances ?? [],
+      selectedSummary?.items ?? []
+    ),
     [selectedSummary]
   );
 
@@ -205,11 +212,13 @@ export function InventorySummaryPage({
   const overviewStats = useMemo(() => {
     const totalOnHand = summaryRows.reduce((sum, row) => sum + row.onHand, 0);
     const totalAvailable = summaryRows.reduce((sum, row) => sum + row.availableQty, 0);
+    const totalPallets = summaryRows.reduce((sum, row) => sum + row.pallets, 0);
     const totalWarehouses = new Set(summaryRows.flatMap((row) => row.items.map((item) => item.locationId))).size;
     return [
       { label: t("sku"), value: summaryNumberFormatter.format(summaryRows.length), meta: t("allRows") },
       { label: t("onHand"), value: summaryNumberFormatter.format(totalOnHand), meta: t("units") },
       { label: t("availableQty"), value: summaryNumberFormatter.format(totalAvailable), meta: t("units") },
+      { label: t("totalPallets"), value: summaryNumberFormatter.format(totalPallets), meta: t("pallets") },
       { label: t("warehouseCount"), value: summaryNumberFormatter.format(totalWarehouses), meta: t("currentStorage") }
     ];
   }, [summaryRows, t]);
@@ -228,6 +237,7 @@ export function InventorySummaryPage({
         onHand: row.onHand,
         availableQty: row.availableQty,
         damagedQty: row.damagedQty,
+        pallets: row.pallets,
         warehouseCount: row.warehouseCount,
         containerCount: row.containerCount,
         lastReceipt: formatDateValue(row.lastReceipt, dateFormatter)
@@ -421,6 +431,10 @@ export function InventorySummaryPage({
                 <span>{t("availableQty")}</span>
               </div>
               <div className="document-drawer__status-stat">
+                <strong>{selectedSummary.pallets}</strong>
+                <span>{t("pallets")}</span>
+              </div>
+              <div className="document-drawer__status-stat">
                 <strong>{selectedSummary.warehouseCount}</strong>
                 <span>{t("warehouseCount")}</span>
               </div>
@@ -465,6 +479,10 @@ export function InventorySummaryPage({
                     <div className="inventory-summary-drawer__breakdown-metric">
                       <strong>{t("availableQty")}</strong>
                       <span>{row.availableQty}</span>
+                    </div>
+                    <div className="inventory-summary-drawer__breakdown-metric">
+                      <strong>{t("pallets")}</strong>
+                      <span>{row.pallets}</span>
                     </div>
                     <div className="inventory-summary-drawer__breakdown-metric">
                       <strong>{t("containerCount")}</strong>
@@ -550,6 +568,7 @@ function buildInventorySummaryRows(
         availableQty: item.availableQty,
         allocatedQty: item.allocatedQty,
         damagedQty: item.damagedQty,
+        pallets: Math.max(0, item.pallets),
         warehouseCount: 1,
         containerCount: new Set(containerBalances.map((balance) => balance.containerNo || `${balance.locationName}/${normalizeStorageSection(balance.storageSection)}`)).size,
         lastReceipt: receiptDate,
@@ -563,6 +582,7 @@ function buildInventorySummaryRows(
     existing.availableQty += item.availableQty;
     existing.allocatedQty += item.allocatedQty;
     existing.damagedQty += item.damagedQty;
+    existing.pallets += Math.max(0, item.pallets);
     if (!existing.itemNumber && item.itemNumber) {
       existing.itemNumber = item.itemNumber;
     }
@@ -586,8 +606,16 @@ function buildInventorySummaryRows(
     });
 }
 
-function buildWarehouseBreakdown(containerBalances: ItemContainerBalance[]): WarehouseBreakdownRow[] {
+function buildWarehouseBreakdown(containerBalances: ItemContainerBalance[], items: Item[]): WarehouseBreakdownRow[] {
   const rowMap = new Map<number, WarehouseBreakdownRow & { containerSet: Set<string> }>();
+  const palletsByLocation = new Map<number, number>();
+
+  for (const item of items) {
+    palletsByLocation.set(
+      item.locationId,
+      (palletsByLocation.get(item.locationId) ?? 0) + Math.max(0, item.pallets)
+    );
+  }
 
   for (const balance of containerBalances) {
     const existing = rowMap.get(balance.locationId);
@@ -603,6 +631,7 @@ function buildWarehouseBreakdown(containerBalances: ItemContainerBalance[]): War
         availableQty: balance.availableQty,
         allocatedQty: 0,
         damagedQty: 0,
+        pallets: palletsByLocation.get(balance.locationId) ?? 0,
         containerCount: balance.containerNo.trim() ? 1 : 0,
         lastReceipt: receiptDate,
         containerSet: balance.containerNo.trim() ? new Set([balance.containerNo.trim()]) : new Set<string>()

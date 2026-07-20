@@ -119,24 +119,26 @@ describe("InventorySummaryPage", () => {
   // Summary stats strip
   // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-  it("shows correct SKU count and on-hand total in the summary stats strip", () => {
+  it("shows correct SKU, on-hand, and total-pallet values in the summary stats strip", () => {
     const { container } = renderWithProviders(
       <InventorySummaryPage
         {...defaultProps({
           items: [
-            createItem({ id: 1, sku: "SKU-A", quantity: 20, availableQty: 18 }),
-            createItem({ id: 2, sku: "SKU-B", quantity: 10, availableQty: 8 })
+            createItem({ id: 1, sku: "SKU-A", quantity: 20, availableQty: 18, pallets: 2 }),
+            createItem({ id: 2, sku: "SKU-B", quantity: 10, availableQty: 8, pallets: 3 })
           ]
         })}
       />
     );
 
-    // Stat cards are always in order: [SKU count, On Hand, Available Qty, Low Stock, Warehouses]
+    // Stat cards are always in order: [SKU count, On Hand, Available Qty, Total Pallets, Warehouses]
     const statCards = container.querySelectorAll(".workspace-summary-card");
     const skuValue = statCards[0]?.querySelector(".workspace-summary-card__value");
     const onHandValue = statCards[1]?.querySelector(".workspace-summary-card__value");
+    const totalPalletsValue = statCards[3]?.querySelector(".workspace-summary-card__value");
     expect(skuValue?.textContent).toBe("2");  // 2 distinct SKUs
     expect(onHandValue?.textContent).toBe("30"); // 20 + 10
+    expect(totalPalletsValue?.textContent).toBe("5");
   });
 
   it("aggregates items with the same SKU and customer across locations into one summary row", () => {
@@ -159,6 +161,31 @@ describe("InventorySummaryPage", () => {
     expect(within(grid).getByText("25")).toBeInTheDocument();
   });
 
+  it("shows the independently aggregated pallet count in the summary table and drawer", async () => {
+    renderWithProviders(
+      <InventorySummaryPage
+        {...defaultProps({
+          items: [
+            createItem({ id: 1, sku: "WIDGET", locationId: 1, locationName: "NJ", pallets: 2 }),
+            createItem({ id: 2, sku: "WIDGET", locationId: 2, locationName: "LA", pallets: 3 })
+          ]
+        })}
+      />
+    );
+
+    const row = screen.getByTestId("grid-row-1:WIDGET");
+    expect(row.querySelector('[data-field="pallets"]')?.textContent).toBe("5");
+
+    fireEvent.click(row);
+
+    await waitFor(() => {
+      const statusBar = document.querySelector(".document-drawer__status-bar");
+      expect(statusBar).toBeInTheDocument();
+      const palletLabel = within(statusBar as HTMLElement).getByText(/pallets/i);
+      expect(palletLabel.previousElementSibling?.textContent).toBe("5");
+    });
+  });
+
   it("does not expose reorder-level or low-stock controls", () => {
     const { container } = renderWithProviders(
       <InventorySummaryPage
@@ -172,7 +199,7 @@ describe("InventorySummaryPage", () => {
     );
 
     const statCards = container.querySelectorAll(".workspace-summary-card");
-    expect(statCards).toHaveLength(4);
+    expect(statCards).toHaveLength(5);
     expect(screen.queryByText("Low stock")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Stock Health" })).not.toBeInTheDocument();
   });
