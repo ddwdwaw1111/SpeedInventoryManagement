@@ -616,6 +616,7 @@ export type OutboundDocumentLine = {
   grossWeightKgs: number;
   lineNote: string;
   allocationSelections?: OutboundLineAllocationSelection[];
+  hasStoredPickAllocations: boolean;
   pickAllocations: OutboundPickAllocation[];
   createdAt: string;
 };

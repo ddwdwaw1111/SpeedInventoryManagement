@@ -277,6 +277,9 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 	if !strings.EqualFold(outbound.Status, DocumentStatusConfirmed) {
 		t.Fatalf("expected outbound status CONFIRMED, got %q", outbound.Status)
 	}
+	if len(outbound.Lines) != 1 || !outbound.Lines[0].HasPickSnapshot || len(outbound.Lines[0].PickAllocations) == 0 {
+		t.Fatalf("expected confirmed outbound to expose its stored allocation snapshot, got %#v", outbound.Lines)
+	}
 
 	_, err = store.ConfirmOutboundDocument(ctx, outbound.ID)
 	if err == nil {

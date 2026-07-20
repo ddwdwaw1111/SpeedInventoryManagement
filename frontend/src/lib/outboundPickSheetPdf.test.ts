@@ -52,6 +52,7 @@ function createOutboundDocumentFixture(): OutboundDocument {
         netWeightKgs: 60.25,
         grossWeightKgs: 65.5,
         lineNote: "Top priority",
+        hasStoredPickAllocations: true,
         createdAt: "2026-03-24T10:00:00Z",
         pickAllocations: [
           {
@@ -98,6 +99,7 @@ function createOutboundDocumentFixture(): OutboundDocument {
         netWeightKgs: 60.25,
         grossWeightKgs: 65.25,
         lineNote: "",
+        hasStoredPickAllocations: true,
         createdAt: "2026-03-24T10:05:00Z",
         pickAllocations: [
           {

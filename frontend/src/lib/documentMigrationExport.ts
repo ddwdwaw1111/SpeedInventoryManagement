@@ -23,7 +23,6 @@ type MigrationManifestRow = {
   direction: MigrationDirection;
   customer: string;
   sourceState: MigrationSourceState;
-  archived: boolean;
   documentCount: number;
   rowCount: number;
   firstBusinessDate: string;
@@ -89,28 +88,29 @@ export function buildDocumentMigrationPackage(
   const dateToken = formatCompactDate(now);
   return {
     bytes: zipSync(files, { level: 6 }),
-    fileName: `document-bulk-migration-${dateToken}.zip`,
+    fileName: `document-bulk-reimport-${dateToken}.zip`,
     summary
   };
 }
 
 export function buildInboundBulkReimportRows(document: InboundDocument) {
   const actualArrivalDate = inboundBusinessDate(document);
+  const handlingMode = document.handlingMode || "PALLETIZED";
 
   return document.lines.map((line) => ({
     containerNo: document.containerNo,
     warehouse: document.locationName,
     actualArrivalDate,
-    containerType: document.containerType,
-    handlingMode: document.handlingMode,
+    containerType: document.containerType || "NORMAL",
+    handlingMode,
     sku: line.sku,
     itemNumber: line.itemNumber ?? "",
-    description: line.description,
+    description: line.description?.trim() || line.sku,
     expectedQty: line.expectedQty,
     receivedQty: line.receivedQty,
-    pallets: document.handlingMode === "SEALED_TRANSIT" ? 0 : line.pallets,
-    unitsPerPallet: document.handlingMode === "SEALED_TRANSIT" ? 0 : line.unitsPerPallet,
-    storageSection: line.storageSection || document.storageSection,
+    pallets: handlingMode === "SEALED_TRANSIT" ? 0 : line.pallets,
+    unitsPerPallet: handlingMode === "SEALED_TRANSIT" ? 0 : line.unitsPerPallet,
+    storageSection: line.storageSection || document.storageSection || "TEMP",
     lineNote: line.lineNote
   }));
 }
@@ -134,9 +134,10 @@ function addInboundWorkbooks(
   for (const group of groups) {
     const entries: Array<DocumentRows<InboundDocument>> = [];
     for (const document of group.documents) {
+      const compatibilityIssue = inboundBulkReimportIssue(document);
       const rows = buildInboundBulkReimportRows(document);
-      if (!document.containerNo.trim()) {
-        skippedRows.push(["Inbound", document.customerName, `Inbound #${document.id}`, "Container No is empty."]);
+      if (compatibilityIssue) {
+        skippedRows.push(["Inbound", document.customerName, document.containerNo || `Inbound #${document.id}`, compatibilityIssue]);
       } else if (rows.length === 0) {
         skippedRows.push(["Inbound", document.customerName, document.containerNo, "Receipt has no lines."]);
       } else if (rows.length > MAX_ROWS_PER_IMPORT) {
@@ -153,12 +154,11 @@ function addInboundWorkbooks(
     const chunks = chunkDocumentRows(entries);
     chunks.forEach((chunk, index) => {
       const directory = customerDirectories.get(customerKey(group.customerId, group.customerName)) ?? "customer";
-      const stateLabel = migrationGroupLabel(group.sourceState, group.archived);
-      const fileName = `${String(index + 1).padStart(3, "0")}-${stateLabel}.xlsx`;
+      const fileName = `${String(index + 1).padStart(3, "0")}-${group.sourceState}.xlsx`;
       const filePath = `inbound/${directory}/${fileName}`;
       const rows = chunk.flatMap((entry) => entry.rows);
       files[filePath] = buildExcelWorkbookBytes({
-        title: `Inbound Bulk Import — ${group.customerName}`,
+        title: `Inbound Bulk Import - ${group.customerName}`,
         sheetName: "Inbound Receipts",
         fileName,
         columns: INBOUND_BULK_IMPORT_TEMPLATE_COLUMNS,
@@ -184,9 +184,10 @@ function addOutboundWorkbooks(
   for (const group of groups) {
     const entries: Array<DocumentRows<OutboundDocument>> = [];
     for (const document of group.documents) {
+      const compatibilityIssue = outboundBulkReimportIssue(document);
       const rows = buildOutboundBulkReimportRows(document);
-      if (!document.packingListNo.trim()) {
-        skippedRows.push(["Outbound", document.customerName, `Outbound #${document.id}`, "Picking Order No is empty."]);
+      if (compatibilityIssue) {
+        skippedRows.push(["Outbound", document.customerName, document.packingListNo || `Outbound #${document.id}`, compatibilityIssue]);
       } else if (rows.length === 0) {
         skippedRows.push(["Outbound", document.customerName, document.packingListNo, "Shipment has no lines."]);
       } else if (rows.length > MAX_ROWS_PER_IMPORT) {
@@ -203,12 +204,11 @@ function addOutboundWorkbooks(
     const chunks = chunkDocumentRows(entries);
     chunks.forEach((chunk, index) => {
       const directory = customerDirectories.get(customerKey(group.customerId, group.customerName)) ?? "customer";
-      const stateLabel = migrationGroupLabel(group.sourceState, group.archived);
-      const fileName = `${String(index + 1).padStart(3, "0")}-${stateLabel}.xlsx`;
+      const fileName = `${String(index + 1).padStart(3, "0")}-${group.sourceState}.xlsx`;
       const filePath = `outbound/${directory}/${fileName}`;
       const rows = chunk.flatMap((entry) => entry.rows);
       files[filePath] = buildExcelWorkbookBytes({
-        title: `Outbound Bulk Import — ${group.customerName}`,
+        title: `Outbound Bulk Import - ${group.customerName}`,
         sheetName: "Outbound Shipments",
         fileName,
         columns: OUTBOUND_BULK_IMPORT_TEMPLATE_COLUMNS,
@@ -232,10 +232,6 @@ function buildOutboundLineRows(document: OutboundDocument, line: OutboundDocumen
   const outboundPalletShares = actualQuantity > 0
     ? allocateIntegerTotal(Math.max(0, line.pallets), weights)
     : sourceRows.map(() => 0);
-  const hasRecordedInventoryPallets = sourceRows.some((allocation) => allocation.pallets !== undefined);
-  const fallbackInventoryPalletShares = actualQuantity > 0
-    ? allocateIntegerTotal(Math.max(0, line.pallets), weights)
-    : sourceRows.map(() => 0);
 
   return sourceRows.map((allocation, index) => ({
     pickingOrderNo: document.packingListNo,
@@ -251,11 +247,7 @@ function buildOutboundLineRows(document: OutboundDocument, line: OutboundDocumen
     itemNumber: line.itemNumber,
     plannedQuantity: plannedShares[index] ?? 0,
     quantity: actualShares[index] ?? 0,
-    inventoryPallets: actualQuantity === 0
-      ? 0
-      : hasRecordedInventoryPallets
-        ? Math.max(0, allocation.pallets ?? 0)
-        : fallbackInventoryPalletShares[index] ?? 0,
+    inventoryPallets: actualQuantity === 0 ? 0 : Math.max(0, allocation.pallets ?? 0),
     outboundPallets: outboundPalletShares[index] ?? 0,
     lineNote: line.lineNote
   }));
@@ -271,9 +263,53 @@ function fallbackOutboundAllocation(line: OutboundDocumentLine, quantity: number
     storageSection: line.storageSection,
     containerNo: "",
     allocatedQty: quantity,
-    pallets: quantity > 0 ? Math.max(0, line.pallets) : 0,
+    pallets: 0,
     createdAt: line.createdAt
   };
+}
+
+function inboundBulkReimportIssue(document: InboundDocument) {
+  if (!document.containerNo.trim()) return "Container No is empty.";
+  if (!document.locationName.trim()) return "Warehouse is empty.";
+  if (!inboundBusinessDate(document)) return "Actual Arrival Date cannot be derived.";
+  for (const line of document.lines) {
+    if (!line.sku.trim()) return `Inbound line ${line.id} has no SKU.`;
+    if (line.expectedQty < 0 || line.receivedQty < 0 || line.pallets < 0 || line.unitsPerPallet < 0) {
+      return `Inbound line ${line.id} contains a negative quantity or pallet value.`;
+    }
+    if (line.expectedQty === 0 && line.receivedQty === 0) {
+      return `Inbound line ${line.id} has neither Expected Qty nor Received Qty.`;
+    }
+  }
+  return "";
+}
+
+function outboundBulkReimportIssue(document: OutboundDocument) {
+  if (!document.packingListNo.trim()) return "Picking Order No is empty.";
+  for (const line of document.lines) {
+    const actualQuantity = Math.max(0, line.actualQuantity ?? line.quantity);
+    const plannedQuantity = Math.max(0, line.plannedQuantity ?? actualQuantity);
+    if (!line.sku.trim()) return `Outbound line ${line.id} has no SKU.`;
+    if (actualQuantity === 0 && plannedQuantity === 0) {
+      return `Outbound line ${line.id} has neither Planned Qty nor Actual Qty.`;
+    }
+    if (line.pallets < 0) return `Outbound line ${line.id} has a negative outbound pallet count.`;
+    if (!isConfirmed(document.status) || actualQuantity === 0) continue;
+    if (!line.hasStoredPickAllocations) {
+      return `Outbound line ${line.id} is a legacy record without a current source-allocation snapshot.`;
+    }
+    const allocations = (line.pickAllocations ?? []).filter((allocation) => allocation.allocatedQty > 0);
+    if (allocations.length === 0) {
+      return `Outbound line ${line.id} has no source-container allocation.`;
+    }
+    if (allocations.reduce((total, allocation) => total + allocation.allocatedQty, 0) !== actualQuantity) {
+      return `Outbound line ${line.id} source allocations do not equal Actual Qty.`;
+    }
+    if (allocations.some((allocation) => !allocation.containerNo.trim() || !(allocation.locationName || line.locationName).trim())) {
+      return `Outbound line ${line.id} has an incomplete source container or warehouse.`;
+    }
+  }
+  return "";
 }
 
 function allocateIntegerTotal(total: number, weights: number[]) {
@@ -332,24 +368,20 @@ function groupDocuments<TDocument extends {
   customerId: number;
   customerName: string;
   status: string;
-  archivedAt: string | null;
 }>(documents: TDocument[]) {
   const groups = new Map<string, {
     customerId: number;
     customerName: string;
     sourceState: MigrationSourceState;
-    archived: boolean;
     documents: TDocument[];
   }>();
   for (const document of documents) {
-    const sourceState: MigrationSourceState = document.status.trim().toUpperCase() === "CONFIRMED" ? "confirmed" : "draft";
-    const archived = Boolean(document.archivedAt);
-    const key = `${customerKey(document.customerId, document.customerName)}|${sourceState}|${archived}`;
+    const sourceState: MigrationSourceState = isConfirmed(document.status) ? "confirmed" : "draft";
+    const key = `${customerKey(document.customerId, document.customerName)}|${sourceState}`;
     const group = groups.get(key) ?? {
       customerId: document.customerId,
       customerName: document.customerName || "Unnamed Customer",
       sourceState,
-      archived,
       documents: []
     };
     group.documents.push(document);
@@ -358,8 +390,7 @@ function groupDocuments<TDocument extends {
   return [...groups.values()].sort((left, right) => {
     const customerComparison = left.customerName.localeCompare(right.customerName);
     if (customerComparison !== 0) return customerComparison;
-    if (left.sourceState !== right.sourceState) return left.sourceState === "confirmed" ? -1 : 1;
-    return Number(left.archived) - Number(right.archived);
+    return left.sourceState === right.sourceState ? 0 : left.sourceState === "confirmed" ? -1 : 1;
   });
 }
 
@@ -390,7 +421,7 @@ function buildCustomerDirectories(
 function buildManifestRow<TDocument>(
   file: string,
   direction: MigrationDirection,
-  group: { customerName: string; sourceState: MigrationSourceState; archived: boolean },
+  group: { customerName: string; sourceState: MigrationSourceState },
   chunk: Array<DocumentRows<TDocument>>,
   rowCount: number,
   businessDate: (document: TDocument) => string
@@ -401,7 +432,6 @@ function buildManifestRow<TDocument>(
     direction,
     customer: group.customerName,
     sourceState: group.sourceState,
-    archived: group.archived,
     documentCount: chunk.length,
     rowCount,
     firstBusinessDate: dates[0] ?? "",
@@ -411,13 +441,12 @@ function buildManifestRow<TDocument>(
 
 function buildManifestCsv(rows: MigrationManifestRow[]) {
   return buildCsv([
-    ["File", "Direction", "Customer", "Source Status", "Source Archived", "Documents", "Rows", "First Business Date", "Last Business Date"],
+    ["File", "Direction", "Customer", "Source Status", "Documents", "Rows", "First Business Date", "Last Business Date"],
     ...rows.map((row) => [
       row.file,
       row.direction,
       row.customer,
       row.sourceState,
-      row.archived ? "Yes" : "No",
       String(row.documentCount),
       String(row.rowCount),
       row.firstBusinessDate,
@@ -428,7 +457,7 @@ function buildManifestCsv(rows: MigrationManifestRow[]) {
 
 function buildReadme(summary: DocumentMigrationPackageSummary) {
   return [
-    "Speed WMS document bulk migration package",
+    "Speed WMS Bulk Import re-import package",
     "",
     `Included: ${summary.inboundDocuments} inbound receipt(s), ${summary.outboundDocuments} outbound shipment(s), ${summary.workbookCount} workbook(s).`,
     `Skipped: ${summary.skippedDocuments} document(s). See skipped-documents.csv when present.`,
@@ -438,12 +467,12 @@ function buildReadme(summary: DocumentMigrationPackageSummary) {
     "2. Import every workbook under inbound/ first. In Bulk Import, select the customer named in manifest.csv.",
     "3. Workbooks marked confirmed create drafts; review and batch-confirm each workbook before moving to the next one. Leave workbooks marked draft unconfirmed.",
     "4. After all confirmed inbound receipts are posted, import outbound/ workbooks in file/date order and confirm those marked confirmed before continuing.",
-    "5. Workbooks marked archived must be archived manually after their source status has been restored.",
     "",
     "Notes",
     "- Excel files use the current Bulk Import columns and contain no database IDs.",
     "- Attachments, tracking history, document notes, audit logs, and database IDs are not migrated.",
     "- Confirmed documents without an actual date use their original confirmation/effective date. Draft inbound receipts fall back to Expected Arrival Date or source creation date so the workbook remains importable.",
+    "- Legacy outbound records without a current source-allocation snapshot are skipped and listed in skipped-documents.csv.",
     "- Duplicate Container No/date or Picking Order No documents are placed in separate workbooks so Bulk Import does not merge them.",
     "- Each workbook stays within the current 500-document and 5,000-row import limits."
   ].join("\r\n");
@@ -462,10 +491,6 @@ function textZipEntry(value: string): [Uint8Array, ZipOptions] {
 
 function csvCell(value: string) {
   return `"${value.replace(/"/g, '""')}"`;
-}
-
-function migrationGroupLabel(sourceState: MigrationSourceState, archived: boolean) {
-  return `${sourceState}${archived ? "-archived" : ""}`;
 }
 
 function inboundBusinessDate(document: InboundDocument) {
@@ -491,17 +516,7 @@ function outboundActualShipDate(document: OutboundDocument) {
 
 function inboundReceiptIdentity(document: InboundDocument) {
   const businessDate = inboundBusinessDate(document);
-  return `${normalizeLegacyInboundContainerNo(document.containerNo, businessDate)}|${businessDate}`;
-}
-
-function normalizeLegacyInboundContainerNo(containerNo: string, actualArrivalDate: string) {
-  const normalized = containerNo.trim().toUpperCase();
-  const compactDate = actualArrivalDate.replace(/-/g, "");
-  if (!/^\d{8}$/.test(compactDate)) return normalized;
-  const suffix = `-${compactDate}`;
-  return normalized.length > suffix.length && normalized.endsWith(suffix)
-    ? normalized.slice(0, -suffix.length)
-    : normalized;
+  return `${document.containerNo.trim().toUpperCase()}|${businessDate}`;
 }
 
 function compareInboundDocumentsOldestFirst(left: InboundDocument, right: InboundDocument) {

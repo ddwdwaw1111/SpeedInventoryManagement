@@ -241,6 +241,7 @@ export function createOutboundDocumentLine(overrides: Partial<OutboundDocumentLi
     netWeightKgs: 0,
     grossWeightKgs: 0,
     lineNote: "",
+    hasStoredPickAllocations: true,
     pickAllocations: [createOutboundPickAllocation()],
     createdAt: ISO_TIMESTAMP,
     ...overrides

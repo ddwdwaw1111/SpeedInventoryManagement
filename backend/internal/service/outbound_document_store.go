@@ -79,6 +79,7 @@ type OutboundDocumentLine struct {
 	NetWeightKgs      float64                  `json:"netWeightKgs"`
 	GrossWeightKgs    float64                  `json:"grossWeightKgs"`
 	LineNote          string                   `json:"lineNote"`
+	HasPickSnapshot   bool                     `json:"hasStoredPickAllocations"`
 	PickAllocations   []OutboundPickAllocation `json:"pickAllocations"`
 	CreatedAt         time.Time                `json:"createdAt"`
 }
@@ -446,6 +447,7 @@ func (s *Store) ListOutboundDocumentsFiltered(ctx context.Context, limit int, fi
 		if document == nil {
 			continue
 		}
+		storedPickAllocations := decodeOutboundStoredPickAllocationsOrEmpty(lineRow.ID, lineRow.PickAllocationsJSON)
 
 		document.Lines = append(document.Lines, OutboundDocumentLine{
 			ID:                lineRow.ID,
@@ -467,7 +469,8 @@ func (s *Store) ListOutboundDocumentsFiltered(ctx context.Context, limit int, fi
 			NetWeightKgs:      lineRow.NetWeightKgs,
 			GrossWeightKgs:    lineRow.GrossWeightKgs,
 			LineNote:          lineRow.LineNote,
-			PickAllocations:   decodeOutboundDraftPickAllocationsOrEmpty(document.Status, lineRow.ID, lineRow.PickAllocationsJSON),
+			HasPickSnapshot:   len(storedPickAllocations) > 0,
+			PickAllocations:   storedPickAllocations,
 			CreatedAt:         lineRow.CreatedAt,
 		})
 		document.TotalLines += 1
@@ -2512,6 +2515,7 @@ func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []in
 		if document == nil {
 			continue
 		}
+		storedPickAllocations := decodeOutboundStoredPickAllocationsOrEmpty(lineRow.ID, lineRow.PickAllocationsJSON)
 		document.Lines = append(document.Lines, OutboundDocumentLine{
 			ID:                lineRow.ID,
 			DocumentID:        lineRow.DocumentID,
@@ -2532,7 +2536,8 @@ func (s *Store) listOutboundDocumentsByIDs(ctx context.Context, documentIDs []in
 			NetWeightKgs:      lineRow.NetWeightKgs,
 			GrossWeightKgs:    lineRow.GrossWeightKgs,
 			LineNote:          lineRow.LineNote,
-			PickAllocations:   decodeOutboundDraftPickAllocationsOrEmpty(document.Status, lineRow.ID, lineRow.PickAllocationsJSON),
+			HasPickSnapshot:   len(storedPickAllocations) > 0,
+			PickAllocations:   storedPickAllocations,
 			CreatedAt:         lineRow.CreatedAt,
 		})
 		document.TotalLines += 1
@@ -3461,14 +3466,13 @@ func decodeOutboundPickAllocationsOrEmpty(raw string) []OutboundPickAllocation {
 	return normalizeOutboundPickAllocations(entries)
 }
 
-func decodeOutboundDraftPickAllocationsOrEmpty(documentStatus string, lineID int64, raw string) []OutboundPickAllocation {
-	if normalizeDocumentStatus(documentStatus) != DocumentStatusDraft {
-		return []OutboundPickAllocation{}
-	}
-
+func decodeOutboundStoredPickAllocationsOrEmpty(lineID int64, raw string) []OutboundPickAllocation {
 	entries := decodeOutboundPickAllocationsOrEmpty(raw)
 	for index := range entries {
 		entries[index].LineID = lineID
+		if entries[index].ID <= 0 {
+			entries[index].ID = -int64(index + 1)
+		}
 	}
 	return entries
 }

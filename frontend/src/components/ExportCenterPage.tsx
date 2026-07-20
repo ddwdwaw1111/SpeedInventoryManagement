@@ -487,7 +487,6 @@ async function loadAllInboundDocuments() {
   let beforeId: number | undefined;
   for (;;) {
     const page = await api.getInboundDocuments(DOCUMENT_EXPORT_PAGE_SIZE, {
-      archiveScope: "all",
       exportCursor: true,
       beforeId
     });
@@ -502,7 +501,6 @@ async function loadAllOutboundDocuments() {
   let beforeId: number | undefined;
   for (;;) {
     const page = await api.getOutboundDocuments(DOCUMENT_EXPORT_PAGE_SIZE, {
-      archiveScope: "all",
       exportCursor: true,
       beforeId
     });
