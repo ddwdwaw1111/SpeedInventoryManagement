@@ -284,6 +284,16 @@ function formatOutboundBulkIssue(issue: OutboundBulkImportPreview["documents"][n
       storageSection: issue.storageSection || t("bulkOutboundAllStorageSections")
     });
   }
+  if (issue.code === "INSUFFICIENT_INVENTORY_PALLETS") {
+    return t("bulkOutboundIssueInsufficientInventoryPallets", {
+      sku: issue.sku || "—",
+      requestedPallets: issue.requestedPallets ?? Number(issue.value || 0),
+      availablePallets: issue.availablePallets ?? 0,
+      warehouse: issue.warehouse || "—",
+      sourceContainer: issue.sourceContainer || t("bulkOutboundAllMatchingContainers"),
+      storageSection: issue.storageSection || t("bulkOutboundAllStorageSections")
+    });
+  }
   const keys: Record<string, string> = {
     MISSING_PICKING_ORDER: "bulkOutboundIssueMissingPickingOrder",
     INVALID_SHIP_DATE: "bulkOutboundIssueInvalidShipDate",
@@ -295,7 +305,6 @@ function formatOutboundBulkIssue(issue: OutboundBulkImportPreview["documents"][n
     INVALID_OUTBOUND_PALLETS: "bulkOutboundIssueInvalidOutboundPallets",
     INVALID_WAREHOUSE: "bulkOutboundIssueInvalidWarehouse",
     INVALID_SKU: "bulkOutboundIssueInvalidSku",
-    INSUFFICIENT_INVENTORY_PALLETS: "bulkOutboundIssueInsufficientInventoryPallets",
     DUPLICATE_PICKING_ORDER: "bulkOutboundIssueDuplicatePickingOrder",
     DUPLICATE_PICKING_ORDER_IN_IMPORT: "bulkOutboundIssueDuplicatePickingOrderInImport"
   };

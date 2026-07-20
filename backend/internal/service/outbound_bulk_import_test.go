@@ -223,9 +223,12 @@ func TestSelectOutboundBulkAllocationsUsesLaterContainerForAvailablePallets(t *t
 	remainingQty := map[int64]int{1: 10, 2: 10}
 	remainingPallets := map[int64]int{1: 0, 2: 1}
 
-	selected, stockAvailable, palletsAvailable := selectOutboundBulkAllocations(candidates, 5, 1, remainingQty, remainingPallets)
+	selected, stockAvailable, palletsAvailable, availablePallets := selectOutboundBulkAllocations(candidates, 5, 1, remainingQty, remainingPallets)
 	if !stockAvailable || !palletsAvailable {
 		t.Fatalf("expected a feasible quantity and pallet plan, got stock=%v pallets=%v", stockAvailable, palletsAvailable)
+	}
+	if availablePallets != 1 {
+		t.Fatalf("expected one pallet to be available to the row, got %d", availablePallets)
 	}
 	if len(selected) != 2 || selected[0].Allocation.AllocatedQty != 4 || selected[1].Allocation.AllocatedQty != 1 {
 		t.Fatalf("expected FIFO quantity with one unit moved to the pallet-capable container: %#v", selected)
@@ -233,6 +236,20 @@ func TestSelectOutboundBulkAllocationsUsesLaterContainerForAvailablePallets(t *t
 	allocations, valid := assignOutboundBulkInventoryPallets(selected, 1, remainingPallets)
 	if !valid || allocations[0].Pallets != 0 || allocations[1].Pallets != 1 {
 		t.Fatalf("expected the inventory pallet to come from the later container: %#v", allocations)
+	}
+}
+
+func TestOutboundBulkInsufficientPalletsIssueExplainsRequestedAvailableAndScope(t *testing.T) {
+	line := OutboundBulkImportLinePreview{
+		RowNumber: 112, Warehouse: "NJ", SourceContainer: "CONT-A", StorageSection: "TEMP", SKU: "SKU-1", InventoryPallets: 4,
+	}
+	issue := outboundBulkInsufficientPalletsIssue(line, 2)
+
+	if issue.Code != "INSUFFICIENT_INVENTORY_PALLETS" || issue.RequestedPallets != 4 || issue.AvailablePallets != 2 {
+		t.Fatalf("unexpected pallet issue quantities: %#v", issue)
+	}
+	if issue.SKU != "SKU-1" || issue.Warehouse != "NJ" || issue.SourceContainer != "CONT-A" || issue.StorageSection != "TEMP" {
+		t.Fatalf("pallet issue must retain its SKU and source scope: %#v", issue)
 	}
 }
 

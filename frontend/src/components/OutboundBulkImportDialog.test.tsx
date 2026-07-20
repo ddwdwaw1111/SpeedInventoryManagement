@@ -144,6 +144,35 @@ describe("OutboundBulkImportDialog", () => {
     expect(screen.getByText(/筛选范围：仓库“NJ”.*来源货柜“CONT-A”.*库区“TEMP”/)).toBeInTheDocument();
     expect(screen.getByText("Item Code（仅供参考）")).toBeInTheDocument();
   });
+
+  it("explains an insufficient inventory pallet error with values and source scope", async () => {
+    const preview = createPreview();
+    preview.validDocuments = 0;
+    preview.invalidDocuments = 1;
+    preview.documents[0].valid = false;
+    preview.documents[0].issues = [{
+      severity: "ERROR",
+      code: "INSUFFICIENT_INVENTORY_PALLETS",
+      message: "Inventory pallets are insufficient.",
+      rowNumber: 112,
+      sku: "608333",
+      warehouse: "NJ",
+      sourceContainer: "CONT-A",
+      storageSection: "TEMP",
+      requestedPallets: 4,
+      availablePallets: 2
+    }];
+    mockedApi.previewOutboundBulkImport.mockResolvedValue(preview);
+    const { container } = renderWithProviders(<OutboundBulkImportDialog open customers={[createCustomer()]} locations={[createLocation()]} items={[createItem()]} onClose={vi.fn()} onImported={vi.fn()} />);
+
+    const fileInput = container.ownerDocument.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [new File(["workbook"], "shipments.xlsx")] } });
+    fireEvent.click(screen.getByRole("button", { name: "Validate workbook" }));
+
+    expect(await screen.findByText(/Row 112: SKU 608333 can deduct at most 2 inventory pallet\(s\).*Inventory Pallets is 4/)).toBeInTheDocument();
+    expect(screen.getByText(/warehouse NJ, source container CONT-A, storage section TEMP/)).toBeInTheDocument();
+    expect(screen.getByText(/Outbound Pallets is independent and does not affect this check/)).toBeInTheDocument();
+  });
 });
 
 function createPreview(): OutboundBulkImportPreview {

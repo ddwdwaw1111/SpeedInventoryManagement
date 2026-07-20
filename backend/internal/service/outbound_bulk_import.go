@@ -40,18 +40,20 @@ const (
 )
 
 type OutboundBulkImportIssue struct {
-	Severity        string `json:"severity"`
-	Code            string `json:"code"`
-	Message         string `json:"message"`
-	RowNumber       int    `json:"rowNumber,omitempty"`
-	Field           string `json:"field,omitempty"`
-	Value           string `json:"value,omitempty"`
-	SKU             string `json:"sku,omitempty"`
-	Warehouse       string `json:"warehouse,omitempty"`
-	SourceContainer string `json:"sourceContainer,omitempty"`
-	StorageSection  string `json:"storageSection,omitempty"`
-	RequestedQty    int    `json:"requestedQty,omitempty"`
-	AvailableQty    int    `json:"availableQty"`
+	Severity         string `json:"severity"`
+	Code             string `json:"code"`
+	Message          string `json:"message"`
+	RowNumber        int    `json:"rowNumber,omitempty"`
+	Field            string `json:"field,omitempty"`
+	Value            string `json:"value,omitempty"`
+	SKU              string `json:"sku,omitempty"`
+	Warehouse        string `json:"warehouse,omitempty"`
+	SourceContainer  string `json:"sourceContainer,omitempty"`
+	StorageSection   string `json:"storageSection,omitempty"`
+	RequestedQty     int    `json:"requestedQty,omitempty"`
+	AvailableQty     int    `json:"availableQty"`
+	RequestedPallets int    `json:"requestedPallets,omitempty"`
+	AvailablePallets int    `json:"availablePallets"`
 }
 
 type OutboundBulkImportLinePreview struct {
@@ -759,7 +761,7 @@ func (s *Store) buildOutboundBulkImportPreview(ctx context.Context, fileName str
 			if allowMainWarehouseTransfer {
 				prioritizeOutboundBulkMainWarehouseCandidates(candidates, mainLocation.ID)
 			}
-			selectedAllocations, stockAvailable, palletsAvailable := selectOutboundBulkAllocations(
+			selectedAllocations, stockAvailable, palletsAvailable, availablePallets := selectOutboundBulkAllocations(
 				candidates,
 				fulfillmentQuantity,
 				line.InventoryPallets,
@@ -771,12 +773,12 @@ func (s *Store) buildOutboundBulkImportPreview(ctx context.Context, fileName str
 				continue
 			}
 			if !palletsAvailable {
-				document.Issues = append(document.Issues, outboundBulkIssue("INSUFFICIENT_INVENTORY_PALLETS", "Available inventory pallets are insufficient for this row and earlier rows in the workbook.", line.RowNumber, outboundBulkInventoryPallets, fmt.Sprint(line.InventoryPallets)))
+				document.Issues = append(document.Issues, outboundBulkInsufficientPalletsIssue(*line, availablePallets))
 				continue
 			}
 			allocations, palletsAvailable := assignOutboundBulkInventoryPallets(selectedAllocations, line.InventoryPallets, documentRemainingPallets)
 			if !palletsAvailable {
-				document.Issues = append(document.Issues, outboundBulkIssue("INSUFFICIENT_INVENTORY_PALLETS", "Available inventory pallets are insufficient for this row and earlier rows in the workbook.", line.RowNumber, outboundBulkInventoryPallets, fmt.Sprint(line.InventoryPallets)))
+				document.Issues = append(document.Issues, outboundBulkInsufficientPalletsIssue(*line, totalOutboundBulkSelectedAvailablePallets(selectedAllocations, documentRemainingPallets)))
 				continue
 			}
 			line.RequiresTransfer = false
@@ -864,6 +866,23 @@ func outboundBulkInsufficientStockIssue(line OutboundBulkImportLinePreview, avai
 	return issue
 }
 
+func outboundBulkInsufficientPalletsIssue(line OutboundBulkImportLinePreview, availablePallets int) OutboundBulkImportIssue {
+	issue := outboundBulkIssue(
+		"INSUFFICIENT_INVENTORY_PALLETS",
+		fmt.Sprintf("SKU %s can deduct at most %d inventory pallets for this row after earlier workbook rows, but this row requests %d.", line.SKU, availablePallets, line.InventoryPallets),
+		line.RowNumber,
+		outboundBulkInventoryPallets,
+		fmt.Sprint(line.InventoryPallets),
+	)
+	issue.SKU = line.SKU
+	issue.Warehouse = line.Warehouse
+	issue.SourceContainer = line.SourceContainer
+	issue.StorageSection = line.StorageSection
+	issue.RequestedPallets = maxInt(line.InventoryPallets, 0)
+	issue.AvailablePallets = maxInt(availablePallets, 0)
+	return issue
+}
+
 func outboundBulkFulfillmentQuantity(line OutboundBulkImportLinePreview) int {
 	if line.ActualQuantity > 0 {
 		return line.ActualQuantity
@@ -888,14 +907,14 @@ func selectOutboundBulkAllocations(
 	requestedPallets int,
 	remainingQtyByItemID map[int64]int,
 	remainingPalletsByItemID map[int64]int,
-) ([]outboundBulkSelectedAllocation, bool, bool) {
+) ([]outboundBulkSelectedAllocation, bool, bool, int) {
 	if requestedQty <= 0 {
-		return nil, true, requestedPallets == 0
+		return nil, true, requestedPallets == 0, 0
 	}
 
 	totalQty := totalOutboundBulkAvailableQuantity(candidates, remainingQtyByItemID)
 	if totalQty < requestedQty {
-		return nil, false, false
+		return nil, false, false, 0
 	}
 
 	type palletSource struct {
@@ -919,7 +938,7 @@ func selectOutboundBulkAllocations(
 		availableFromSelectableSources += palletSources[index].available
 	}
 	if requestedPallets < 0 || requestedPallets > availableFromSelectableSources {
-		return nil, true, false
+		return nil, true, false, availableFromSelectableSources
 	}
 
 	selectedQty := make([]int, len(candidates))
@@ -947,7 +966,7 @@ func selectOutboundBulkAllocations(
 		remainingRequestedQty -= assigned
 	}
 	if remainingRequestedQty > 0 {
-		return nil, false, false
+		return nil, false, false, availableFromSelectableSources
 	}
 
 	selected := make([]outboundBulkSelectedAllocation, 0, len(candidates))
@@ -965,7 +984,15 @@ func selectOutboundBulkAllocations(
 			},
 		})
 	}
-	return selected, true, true
+	return selected, true, true, availableFromSelectableSources
+}
+
+func totalOutboundBulkSelectedAvailablePallets(selected []outboundBulkSelectedAllocation, remainingByItemID map[int64]int) int {
+	total := 0
+	for _, selectedAllocation := range selected {
+		total += maxInt(remainingByItemID[selectedAllocation.ItemID], 0)
+	}
+	return total
 }
 
 func assignOutboundBulkInventoryPallets(

@@ -971,6 +971,8 @@ export type OutboundBulkImportIssue = {
   storageSection?: string;
   requestedQty?: number;
   availableQty?: number;
+  requestedPallets?: number;
+  availablePallets?: number;
 };
 
 export type OutboundBulkImportLinePreview = {
