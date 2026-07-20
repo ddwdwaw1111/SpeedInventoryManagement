@@ -256,6 +256,16 @@ func (s *Server) handleListSKUMasters(c *gin.Context) {
 	writeJSON(c, http.StatusOK, skuMasters)
 }
 
+func (s *Server) handleListOutboundSourceReferences(c *gin.Context) {
+	references, err := s.store.ListOutboundSourceReferences(c.Request.Context())
+	if err != nil {
+		writeServerError(c, err)
+		return
+	}
+
+	writeJSON(c, http.StatusOK, references)
+}
+
 func (s *Server) handleCreateSKUMaster(c *gin.Context) {
 	var input service.CreateSKUMasterInput
 	if err := bindJSON(c, &input); err != nil {

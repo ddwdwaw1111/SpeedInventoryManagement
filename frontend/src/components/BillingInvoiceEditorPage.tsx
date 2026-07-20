@@ -745,6 +745,14 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
                 <div className="report-bars__labels"><strong>{t("billingStorageRateWestCoast")}</strong></div>
                 <div className="report-bars__value">{formatMoney(invoice.rates.storageFeePerPalletPerWeekWestCoastTransfer)}</div>
               </div>
+              <div className="report-bars__row">
+                <div className="report-bars__labels"><strong>{t("billingExcludeUnderfilledPallets")}</strong></div>
+                <div className="report-bars__value">
+                  {invoice.rates.excludeUnderfilledPallets
+                    ? `${t("yes")} · ${formatNumber(invoice.rates.minimumQtyPerPallet ?? 0)} Qty`
+                    : t("no")}
+                </div>
+              </div>
             </div>
           </article>
         </div>

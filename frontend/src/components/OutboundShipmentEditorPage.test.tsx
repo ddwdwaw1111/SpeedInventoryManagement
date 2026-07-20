@@ -11,7 +11,7 @@ vi.mock("../lib/api", () => ({
 
 import { api } from "../lib/api";
 import { renderWithProviders } from "../test/renderWithProviders";
-import { createItem, createMovement, createOutboundDocument, createOutboundDocumentLine, createSkuMaster } from "../test/fixtures";
+import { createItem, createLocation, createOutboundDocument, createOutboundDocumentLine, createOutboundSourceReference, createSkuMaster } from "../test/fixtures";
 import { OutboundShipmentEditorPage } from "./OutboundShipmentEditorPage";
 
 const mockedApi = api as unknown as {
@@ -25,6 +25,8 @@ function renderEditor(options?: {
   document?: ReturnType<typeof createOutboundDocument> | null;
   items?: ReturnType<typeof createItem>[];
   skuMasters?: ReturnType<typeof createSkuMaster>[];
+  outboundSourceReferences?: ReturnType<typeof createOutboundSourceReference>[];
+  locations?: ReturnType<typeof createLocation>[];
   onRefresh?: ReturnType<typeof vi.fn>;
   onBackToList?: ReturnType<typeof vi.fn>;
   onOpenOutboundDocument?: ReturnType<typeof vi.fn>;
@@ -44,7 +46,8 @@ function renderEditor(options?: {
       document={document}
       items={options?.items ?? [createItem({ id: 1, quantity: 10, availableQty: 10, pallets: 4, containerNo: "GCXU5817233" })]}
       skuMasters={options?.skuMasters ?? [createSkuMaster()]}
-      movements={[createMovement()]}
+      outboundSourceReferences={options?.outboundSourceReferences ?? [createOutboundSourceReference()]}
+      locations={options?.locations ?? [createLocation()]}
       currentUserRole="admin"
       isLoading={false}
       onRefresh={onRefresh as () => Promise<void>}
@@ -67,6 +70,10 @@ function getWarehouseInputs() {
 
 function getQuantityInputs() {
   return Array.from(document.querySelectorAll('input[id^="shipment-editor-quantity-"]')) as HTMLInputElement[];
+}
+
+function getPlannedQuantityInputs() {
+  return Array.from(document.querySelectorAll('input[id^="shipment-editor-planned-quantity-"]')) as HTMLInputElement[];
 }
 
 function getPalletInputs() {
@@ -161,6 +168,134 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
       }]
     });
     expect(onBackToList).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a planned line when actual quantity and shipping pallets are zero", async () => {
+    mockedApi.createOutboundDocument.mockResolvedValue(createOutboundDocument({ id: 100, status: "DRAFT" }));
+    renderEditor({ items: [] });
+
+    expect(document.querySelectorAll('datalist[id^="shipment-editor-sku-options-"] option')).toHaveLength(0);
+    await selectContainerSource(0, "-");
+    fireEvent.change(getPlannedQuantityInputs()[0], { target: { value: "12" } });
+    expect(getPalletInputs()[0]).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByText("Pick Allocations");
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    const lineReview = await screen.findByTestId("shipment-line-review");
+    expect(lineReview).toHaveTextContent("608333");
+    expect(lineReview).toHaveTextContent("Planned Ship Qty: 12");
+    expect(lineReview).toHaveTextContent("Actual Ship Qty: 0");
+    expect(lineReview).toHaveTextContent(/Pallets: 0/i);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /I confirm the Container/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Schedule Shipment" }));
+
+    await waitFor(() => expect(mockedApi.createOutboundDocument).toHaveBeenCalledTimes(1));
+    expect(mockedApi.createOutboundDocument.mock.calls[0][0].lines[0]).toMatchObject({
+      plannedQuantity: 12,
+      actualQuantity: 0,
+      quantity: 0,
+      pallets: 0,
+      pickAllocations: undefined
+    });
+  });
+
+  it("shows planned and actual quantities for a partially fulfilled line", async () => {
+    renderEditor();
+
+    await selectContainerSource(0, "GCXU5817233");
+    fireEvent.change(getPlannedQuantityInputs()[0], { target: { value: "12" } });
+    setLineQuantity(0, 5);
+    setLinePallets(0, 2);
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByText("Pick Allocations");
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    const lineReview = await screen.findByTestId("shipment-line-review");
+    expect(lineReview).toHaveTextContent("608333");
+    expect(lineReview).toHaveTextContent("Planned Ship Qty: 12");
+    expect(lineReview).toHaveTextContent("Actual Ship Qty: 5");
+    expect(lineReview).toHaveTextContent(/Pallets: 2/i);
+  });
+
+  it("clears shipping pallets when actual quantity is reset to zero", async () => {
+    renderEditor();
+
+    await selectContainerSource(0, "GCXU5817233");
+    setLineQuantity(0, 5);
+    setLinePallets(0, 2);
+    setLineQuantity(0, 0);
+
+    expect(getPalletInputs()[0]).toHaveValue(null);
+    expect(getPalletInputs()[0]).toBeDisabled();
+  });
+
+  it("releases manual pick selections when actual quantity is reset to zero", async () => {
+    renderEditor({
+      items: [
+        createItem({ id: 1, quantity: 10, availableQty: 10, pallets: 5, availablePallets: 5, containerNo: "GCXU5817233" }),
+        createItem({ id: 2, quantity: 12, availableQty: 12, pallets: 2, availablePallets: 2, containerNo: "OOLU1234567" })
+      ]
+    });
+
+    await selectContainerSource(0, "GCXU5817233");
+    setLineQuantity(0, 16);
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.change(await screen.findByRole("spinbutton", { name: "Selected Qty GCXU5817233" }), { target: { value: "8" } });
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+
+    setLineQuantity(0, 0);
+    fireEvent.click(screen.getByRole("button", { name: "Add Outbound Line" }));
+    await waitFor(() => expect(getSkuInputs()).toHaveLength(2));
+    await selectContainerSource(1, "GCXU5817233");
+    setLineQuantity(1, 16);
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    const firstContainerSelections = await screen.findAllByRole("spinbutton", { name: "Selected Qty GCXU5817233" });
+    expect(firstContainerSelections).toHaveLength(2);
+    expect(firstContainerSelections[0]).toHaveValue(null);
+    expect(firstContainerSelections[1]).toHaveValue(10);
+  });
+
+  it("does not add unrelated plan-only SKUs for a full live source label", async () => {
+    renderEditor({
+      outboundSourceReferences: [
+        createOutboundSourceReference(),
+        createOutboundSourceReference({
+          skuMasterId: 2,
+          sku: "609999",
+          itemNumber: "ITEM-609999",
+          description: "OTHER ITEM"
+        })
+      ]
+    });
+
+    fireEvent.change(getSkuInputs()[0], { target: { value: sourceLabel("GCXU5817233") } });
+
+    await waitFor(() => {
+      const optionValues = Array.from(
+        document.querySelectorAll('datalist[id^="shipment-editor-sku-options-"] option')
+      ).map((option) => (option as HTMLOptionElement).value);
+      expect(optionValues.some((value) => value.includes("609999"))).toBe(false);
+    });
+  });
+
+  it("allows a positive actual quantity with zero shipping pallets", async () => {
+    mockedApi.createOutboundDocument.mockResolvedValue(createOutboundDocument({ id: 100, status: "DRAFT" }));
+    renderEditor();
+
+    await selectContainerSource(0, "GCXU5817233");
+    setLineQuantity(0, 5);
+    expect(getPalletInputs()[0]).toHaveValue(null);
+    await submitReviewedDraft();
+
+    await waitFor(() => expect(mockedApi.createOutboundDocument).toHaveBeenCalledTimes(1));
+    expect(mockedApi.createOutboundDocument.mock.calls[0][0].lines[0]).toMatchObject({
+      actualQuantity: 5,
+      quantity: 5,
+      pallets: 0
+    });
   });
 
   it("keeps outbound quantity and pallet count independent from SKU pallet defaults", async () => {

@@ -130,3 +130,71 @@ func TestOutboundAutomaticAllocationKeepsShippingPalletsIndependentIntegration(t
 		t.Fatalf("expected the allocation to consume the bucket's 3 inventory pallets, got %#v", confirmed.Lines[0].PickAllocations)
 	}
 }
+
+func TestConfirmedOutboundKeepsPlanOnlyLineWithoutConsumingInventoryIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Plan only customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "Plan only warehouse-"+suffix)
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "PLAN-ONLY-"+suffix, 0, DefaultStorageSection)
+	draft, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo:    "PLAN-ONLY-OUT-" + suffix,
+		ExpectedShipDate: "2026-07-19",
+		Status:           DocumentStatusDraft,
+		Lines: []CreateOutboundDocumentLineInput{{
+			CustomerID:      item.CustomerID,
+			LocationID:      item.LocationID,
+			SKUMasterID:     item.SKUMasterID,
+			PlannedQuantity: 12,
+			ActualQuantity:  0,
+			Pallets:         0,
+			UnitLabel:       "CTN",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create plan-only outbound draft: %v", err)
+	}
+
+	draft, err = store.UpdateOutboundDocument(ctx, draft.ID, CreateOutboundDocumentInput{
+		PackingListNo:    draft.PackingListNo,
+		ExpectedShipDate: "2026-07-19",
+		Status:           DocumentStatusDraft,
+		Lines: []CreateOutboundDocumentLineInput{{
+			CustomerID:      item.CustomerID,
+			LocationID:      item.LocationID,
+			SKUMasterID:     item.SKUMasterID,
+			PlannedQuantity: 13,
+			ActualQuantity:  0,
+			Pallets:         0,
+			UnitLabel:       "CTN",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("update plan-only outbound draft: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `
+		UPDATE outbound_document_lines
+		SET pallets = 4
+		WHERE document_id = ?
+	`, draft.ID); err != nil {
+		t.Fatalf("simulate legacy plan-only pallet count: %v", err)
+	}
+
+	confirmed, err := store.ConfirmOutboundDocument(ctx, draft.ID)
+	if err != nil {
+		t.Fatalf("confirm plan-only outbound: %v", err)
+	}
+	if len(confirmed.Lines) != 1 || confirmed.Lines[0].PlannedQuantity != 13 || confirmed.Lines[0].ActualQuantity != 0 || confirmed.Lines[0].Pallets != 0 {
+		t.Fatalf("expected confirmed plan-versus-actual record, got %#v", confirmed.Lines)
+	}
+	if len(confirmed.Lines[0].PickAllocations) != 0 {
+		t.Fatalf("plan-only line must not have pick allocations: %#v", confirmed.Lines[0].PickAllocations)
+	}
+
+	remaining := mustFindItemByID(t, ctx, store, item.ID)
+	if remaining.Quantity != 0 || remaining.Pallets != 0 || remaining.AllocatedQty != 0 || remaining.AllocatedPallets != 0 {
+		t.Fatalf("plan-only confirmation changed inventory: %#v", remaining)
+	}
+}

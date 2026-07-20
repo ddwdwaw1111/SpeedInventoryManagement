@@ -24,6 +24,245 @@ func TestAllocateBillingPalletsLargestRemainder(t *testing.T) {
 	}
 }
 
+func TestBillingPreviewMinimumQtyRuleUsesQuantityBackedPalletCount(t *testing.T) {
+	rates := BillingRatesSnapshot{ExcludeUnderfilledPallets: true, MinimumQtyPerPallet: 10}
+	tests := []struct {
+		name     string
+		pallets  float64
+		quantity float64
+		want     float64
+	}{
+		{name: "one underfilled pallet is excluded", pallets: 3, quantity: 25, want: 2},
+		{name: "exact threshold is billable", pallets: 3, quantity: 30, want: 3},
+		{name: "quantity cannot create extra pallets", pallets: 2, quantity: 500, want: 2},
+		{name: "zero quantity excludes all pallets", pallets: 2, quantity: 0, want: 0},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := billingPreviewBillablePallets(test.pallets, test.quantity, rates); got != test.want {
+				t.Fatalf("billable pallets: got %v, want %v", got, test.want)
+			}
+		})
+	}
+
+	rates.ExcludeUnderfilledPallets = false
+	if got := billingPreviewBillablePallets(3, 1, rates); got != 3 {
+		t.Fatalf("disabled rule changed the physical pallet count: got %v", got)
+	}
+}
+
+func TestCalculateBillingPreviewMinimumQtyRuleUsesIndependentQuantityBalance(t *testing.T) {
+	graceEnabled := false
+	input, billingRange, grace, err := normalizeBillingPreviewInput(BillingPreviewInput{
+		CustomerID: 1, PeriodStart: "2026-04-01", PeriodEnd: "2026-04-02",
+		NormalPalletGracePeriodEnabled: &graceEnabled,
+		Rates: BillingRatesSnapshot{
+			StorageFeePerPalletWeekNormal: 7,
+			ExcludeUnderfilledPallets:     true,
+			MinimumQtyPerPallet:           10,
+		},
+	})
+	if err != nil {
+		t.Fatalf("normalize input: %v", err)
+	}
+	sources := billingPreviewSources{
+		CustomerName: "Customer",
+		Lifecycle: []billingLifecycleSource{
+			{EventID: 1, LocationID: 1, LocationName: "308", ContainerNo: "CONT-A", EventDate: billingTestDate(2026, 4, 1), QuantityDelta: 25, PalletDelta: 3},
+			{EventID: 2, LocationID: 1, LocationName: "308", ContainerNo: "CONT-A", EventDate: billingTestDate(2026, 4, 2), QuantityDelta: -10, PalletDelta: 0},
+		},
+		ContainerTypes: []billingContainerTypeSource{{ContainerNo: "CONT-A", ContainerType: ContainerTypeNormal}},
+	}
+
+	preview, err := calculateBillingPreview(input, billingRange, grace, sources)
+	if err != nil {
+		t.Fatalf("calculate preview: %v", err)
+	}
+	if len(preview.DailyBalances) != 2 || preview.DailyBalances[0].PalletCount != 2 || preview.DailyBalances[1].PalletCount != 1 {
+		t.Fatalf("unexpected threshold-adjusted daily balances: %#v", preview.DailyBalances)
+	}
+	if len(preview.StorageRows) != 1 || preview.StorageRows[0].PalletDays != 3 {
+		t.Fatalf("unexpected threshold-adjusted storage row: %#v", preview.StorageRows)
+	}
+}
+
+func TestCalculateBillingPreviewMinimumQtyRuleDoesNotPoolDifferentSKUs(t *testing.T) {
+	graceEnabled := false
+	input, billingRange, grace, err := normalizeBillingPreviewInput(BillingPreviewInput{
+		CustomerID: 1, PeriodStart: "2026-04-01", PeriodEnd: "2026-04-01",
+		NormalPalletGracePeriodEnabled: &graceEnabled,
+		Rates: BillingRatesSnapshot{
+			StorageFeePerPalletWeekNormal: 7,
+			ExcludeUnderfilledPallets:     true,
+			MinimumQtyPerPallet:           10,
+		},
+	})
+	if err != nil {
+		t.Fatalf("normalize input: %v", err)
+	}
+	sources := billingPreviewSources{
+		CustomerName: "Customer",
+		Lifecycle: []billingLifecycleSource{
+			{EventID: 1, LocationID: 1, LocationName: "308", StorageSection: "TEMP", SKUMasterID: 1, ContainerNo: "CONT-A", EventDate: billingTestDate(2026, 4, 1), QuantityDelta: 1, PalletDelta: 1},
+			{EventID: 2, LocationID: 1, LocationName: "308", StorageSection: "TEMP", SKUMasterID: 2, ContainerNo: "CONT-A", EventDate: billingTestDate(2026, 4, 1), QuantityDelta: 19, PalletDelta: 1},
+		},
+		ContainerTypes: []billingContainerTypeSource{{ContainerNo: "CONT-A", ContainerType: ContainerTypeNormal}},
+	}
+
+	preview, err := calculateBillingPreview(input, billingRange, grace, sources)
+	if err != nil {
+		t.Fatalf("calculate preview: %v", err)
+	}
+	if len(preview.DailyBalances) != 1 || preview.DailyBalances[0].PalletCount != 1 {
+		t.Fatalf("different SKU quantities were incorrectly pooled: %#v", preview.DailyBalances)
+	}
+}
+
+func TestCalculateBillingPreviewMinimumQtyRuleDoesNotPoolInboundLines(t *testing.T) {
+	graceEnabled := false
+	input, billingRange, grace, err := normalizeBillingPreviewInput(BillingPreviewInput{
+		CustomerID: 1, PeriodStart: "2026-04-01", PeriodEnd: "2026-04-01",
+		NormalPalletGracePeriodEnabled: &graceEnabled,
+		Rates: BillingRatesSnapshot{
+			WrappingFeePerPallet:      10,
+			ExcludeUnderfilledPallets: true,
+			MinimumQtyPerPallet:       10,
+		},
+	})
+	if err != nil {
+		t.Fatalf("normalize input: %v", err)
+	}
+	sources := billingPreviewSources{
+		CustomerName: "Customer",
+		Inbound: []billingInboundSource{{
+			DocumentID: 1, LocationID: 1, LocationName: "308", ContainerNo: "CONT-A",
+			ContainerType: ContainerTypeNormal, OccurredOn: billingTestDate(2026, 4, 1), Pallets: 2,
+		}},
+		InboundLines: []billingInboundLineSource{
+			{DocumentID: 1, LineID: 1, SKUMasterID: 1, Quantity: 1, Pallets: 1},
+			{DocumentID: 1, LineID: 2, SKUMasterID: 2, Quantity: 19, Pallets: 1},
+		},
+	}
+
+	preview, err := calculateBillingPreview(input, billingRange, grace, sources)
+	if err != nil {
+		t.Fatalf("calculate preview: %v", err)
+	}
+	if preview.Summary.ReceivedPallets != 1 || preview.Summary.WrappingAmount != 10 {
+		t.Fatalf("different inbound lines were incorrectly pooled: %#v", preview.Summary)
+	}
+}
+
+func TestCalculateBillingPreviewMinimumQtyRulePoolsDuplicateInboundBucketLines(t *testing.T) {
+	graceEnabled := false
+	input, billingRange, grace, err := normalizeBillingPreviewInput(BillingPreviewInput{
+		CustomerID: 1, PeriodStart: "2026-04-01", PeriodEnd: "2026-04-01",
+		NormalPalletGracePeriodEnabled: &graceEnabled,
+		Rates: BillingRatesSnapshot{
+			WrappingFeePerPallet:      10,
+			ExcludeUnderfilledPallets: true,
+			MinimumQtyPerPallet:       10,
+		},
+	})
+	if err != nil {
+		t.Fatalf("normalize input: %v", err)
+	}
+	sources := billingPreviewSources{
+		CustomerName: "Customer",
+		Inbound: []billingInboundSource{{
+			DocumentID: 1, LocationID: 1, LocationName: "308", ContainerNo: "CONT-A",
+			ContainerType: ContainerTypeNormal, OccurredOn: billingTestDate(2026, 4, 1), Pallets: 2,
+		}},
+		InboundLines: []billingInboundLineSource{
+			{DocumentID: 1, LineID: 1, SKUMasterID: 1, StorageSection: "A", Quantity: 6, Pallets: 1},
+			{DocumentID: 1, LineID: 2, SKUMasterID: 1, StorageSection: "A", Quantity: 6, Pallets: 1},
+		},
+	}
+
+	preview, err := calculateBillingPreview(input, billingRange, grace, sources)
+	if err != nil {
+		t.Fatalf("calculate preview: %v", err)
+	}
+	if preview.Summary.ReceivedPallets != 1 || preview.Summary.WrappingAmount != 10 {
+		t.Fatalf("duplicate inbound bucket lines were not pooled: %#v", preview.Summary)
+	}
+}
+
+func TestCalculateBillingPreviewMinimumQtyRuleDoesNotPoolOutboundStorageSections(t *testing.T) {
+	graceEnabled := false
+	input, billingRange, grace, err := normalizeBillingPreviewInput(BillingPreviewInput{
+		CustomerID: 1, PeriodStart: "2026-04-01", PeriodEnd: "2026-04-01",
+		NormalPalletGracePeriodEnabled: &graceEnabled,
+		Rates: BillingRatesSnapshot{
+			OutboundFeePerPallet:      10,
+			ExcludeUnderfilledPallets: true,
+			MinimumQtyPerPallet:       10,
+		},
+	})
+	if err != nil {
+		t.Fatalf("normalize input: %v", err)
+	}
+	sources := billingPreviewSources{
+		CustomerName: "Customer",
+		OutboundLines: []billingOutboundLineSource{{
+			DocumentID: 21, LineID: 22, PickingNo: "PO-21", LocationID: 1,
+			LocationName: "308", OccurredOn: billingTestDate(2026, 4, 1), Quantity: 20, Pallets: 2,
+		}},
+		Allocations: []billingOutboundAllocationSource{
+			{AllocationID: 31, LineID: 22, ContainerNo: "CONT-A", LocationID: 1, LocationName: "308", StorageSection: "A", AllocatedQty: 1, Status: "SHIPPED"},
+			{AllocationID: 32, LineID: 22, ContainerNo: "CONT-A", LocationID: 1, LocationName: "308", StorageSection: "B", AllocatedQty: 19, Status: "SHIPPED"},
+		},
+		ContainerTypes: []billingContainerTypeSource{{ContainerNo: "CONT-A", ContainerType: ContainerTypeNormal}},
+	}
+
+	preview, err := calculateBillingPreview(input, billingRange, grace, sources)
+	if err != nil {
+		t.Fatalf("calculate preview: %v", err)
+	}
+	if preview.Summary.ShippedPallets != 1 || preview.Summary.OutboundAmount != 10 {
+		t.Fatalf("different storage sections were incorrectly pooled: %#v", preview.Summary)
+	}
+}
+
+func TestCalculateBillingPreviewMinimumQtyRulePoolsZeroPalletOutboundLineQuantity(t *testing.T) {
+	graceEnabled := false
+	input, billingRange, grace, err := normalizeBillingPreviewInput(BillingPreviewInput{
+		CustomerID: 1, PeriodStart: "2026-04-01", PeriodEnd: "2026-04-01",
+		NormalPalletGracePeriodEnabled: &graceEnabled,
+		Rates: BillingRatesSnapshot{
+			OutboundFeePerPallet:      10,
+			ExcludeUnderfilledPallets: true,
+			MinimumQtyPerPallet:       10,
+		},
+	})
+	if err != nil {
+		t.Fatalf("normalize input: %v", err)
+	}
+	sources := billingPreviewSources{
+		CustomerName: "Customer",
+		OutboundLines: []billingOutboundLineSource{
+			{DocumentID: 21, LineID: 22, SKUMasterID: 1, PickingNo: "PO-21", LocationID: 1, LocationName: "308", OccurredOn: billingTestDate(2026, 4, 1), Quantity: 6, Pallets: 0},
+			{DocumentID: 21, LineID: 23, SKUMasterID: 1, PickingNo: "PO-21", LocationID: 1, LocationName: "308", OccurredOn: billingTestDate(2026, 4, 1), Quantity: 6, Pallets: 2},
+		},
+		Allocations: []billingOutboundAllocationSource{
+			{AllocationID: 31, LineID: 22, ContainerNo: "CONT-A", LocationID: 1, LocationName: "308", StorageSection: "A", AllocatedQty: 6, Status: "SHIPPED"},
+			{AllocationID: 32, LineID: 23, ContainerNo: "CONT-A", LocationID: 1, LocationName: "308", StorageSection: "A", AllocatedQty: 6, Status: "SHIPPED"},
+		},
+		ContainerTypes: []billingContainerTypeSource{{ContainerNo: "CONT-A", ContainerType: ContainerTypeNormal}},
+	}
+
+	preview, err := calculateBillingPreview(input, billingRange, grace, sources)
+	if err != nil {
+		t.Fatalf("calculate preview: %v", err)
+	}
+	if preview.Summary.ShippedPallets != 1 || preview.Summary.OutboundAmount != 10 {
+		t.Fatalf("duplicate outbound bucket quantity was not pooled: %#v", preview.Summary)
+	}
+	if len(preview.Lines) != 1 || preview.Lines[0].SourceLineID != 0 {
+		t.Fatalf("pooled outbound charge must not claim one source line: %#v", preview.Lines)
+	}
+}
+
 func TestCalculateBillingPreviewUsesContainerLevelPalletSources(t *testing.T) {
 	graceEnabled := false
 	input, billingRange, grace, err := normalizeBillingPreviewInput(BillingPreviewInput{
@@ -476,6 +715,20 @@ func TestNormalizeBillingPreviewInputRejectsInvalidScope(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected negative billing rate to fail")
+	}
+	_, _, _, err = normalizeBillingPreviewInput(BillingPreviewInput{
+		CustomerID: 1, PeriodStart: "2026-04-01", PeriodEnd: "2026-04-02",
+		Rates: BillingRatesSnapshot{ExcludeUnderfilledPallets: true},
+	})
+	if err == nil {
+		t.Fatal("expected enabled underfilled-pallet exclusion without a positive threshold to fail")
+	}
+	_, _, _, err = normalizeBillingPreviewInput(BillingPreviewInput{
+		CustomerID: 1, PeriodStart: "2026-04-01", PeriodEnd: "2026-04-02",
+		Rates: BillingRatesSnapshot{ExcludeUnderfilledPallets: true, MinimumQtyPerPallet: 16},
+	})
+	if err == nil {
+		t.Fatal("expected minimum qty per pallet above 15 to fail")
 	}
 }
 

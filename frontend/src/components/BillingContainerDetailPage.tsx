@@ -126,7 +126,9 @@ export function BillingContainerDetailPage({
 							storageFeePerPalletPerWeek: activeRates.storageFeePerPalletPerWeek,
 							storageFeePerPalletPerWeekNormal: activeRates.storageFeePerPalletPerWeekNormal,
 							storageFeePerPalletPerWeekWestCoastTransfer: activeRates.storageFeePerPalletPerWeekWestCoastTransfer,
-							outboundFeePerPallet: activeRates.outboundFeePerPallet
+							outboundFeePerPallet: activeRates.outboundFeePerPallet,
+							excludeUnderfilledPallets: activeRates.excludeUnderfilledPallets,
+							minimumQtyPerPallet: activeRates.minimumQtyPerPallet
 						}
 					})));
 				const [nextContainerEvents, nextAuthoritativeResults] = await Promise.all([
@@ -340,11 +342,20 @@ export function BillingContainerDetailPage({
 											value: effectiveContainerType === "WEST_COAST_TRANSFER"
 												? activeRates.storageFeePerPalletPerWeekWestCoastTransfer
 												: activeRates.storageFeePerPalletPerWeekNormal
+										},
+										{
+											label: t("billingExcludeUnderfilledPallets"),
+											value: activeRates.excludeUnderfilledPallets ? activeRates.minimumQtyPerPallet : 0,
+											quantityValue: true
 										}
 									].map((row) => (
 										<div className="report-bars__row" key={row.label}>
 											<div className="report-bars__labels"><strong>{row.label}</strong></div>
-											<div className="report-bars__value">{formatMoney(row.value)}</div>
+											<div className="report-bars__value">
+												{row.quantityValue
+													? (activeRates.excludeUnderfilledPallets ? `${formatNumber(row.value)} Qty` : t("no"))
+													: formatMoney(row.value)}
+											</div>
 										</div>
 									))}
 								</div>

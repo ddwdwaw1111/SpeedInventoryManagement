@@ -209,12 +209,7 @@ func TestOutboundPlannedAndActualQuantitiesAreValidatedIndependently(t *testing.
 			SKUMasterID:     3,
 			PlannedQuantity: 10,
 			ActualQuantity:  0,
-			PickAllocations: []OutboundPickAllocation{{
-				LocationID:     2,
-				StorageSection: "TEMP",
-				ContainerNo:    "CONT-A",
-				AllocatedQty:   10,
-			}},
+			Pallets:         0,
 		}},
 	}
 	if err := validateOutboundDocumentInput(draft); err != nil {
@@ -224,12 +219,26 @@ func TestOutboundPlannedAndActualQuantitiesAreValidatedIndependently(t *testing.
 	confirmed := draft
 	confirmed.Status = DocumentStatusConfirmed
 	confirmed.TrackingStatus = OutboundTrackingShipped
-	if err := validateOutboundDocumentInput(confirmed); err == nil || !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("expected confirmed shipment without actual quantity to be invalid, got %v", err)
+	if err := validateOutboundDocumentInput(confirmed); err != nil {
+		t.Fatalf("expected confirmed shipment to retain a zero-actual plan line, got %v", err)
+	}
+	if outboundLineReservationQuantity(confirmed.Lines[0]) != 0 {
+		t.Fatalf("expected a zero-actual line not to reserve its planned quantity")
 	}
 
+	confirmed.Lines[0].Pallets = 1
+	if err := validateOutboundDocumentInput(confirmed); err == nil || !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected zero actual quantity with non-zero pallets to be invalid, got %v", err)
+	}
+	confirmed.Lines[0].Pallets = 0
+
 	confirmed.Lines[0].ActualQuantity = 6
-	confirmed.Lines[0].PickAllocations[0].AllocatedQty = 6
+	confirmed.Lines[0].PickAllocations = []OutboundPickAllocation{{
+		LocationID:     2,
+		StorageSection: "TEMP",
+		ContainerNo:    "CONT-A",
+		AllocatedQty:   6,
+	}}
 	if err := validateOutboundDocumentInput(confirmed); err != nil {
 		t.Fatalf("expected confirmed shipment to allocate the actual quantity, got %v", err)
 	}
@@ -262,6 +271,11 @@ func TestConfirmedOutboundAcceptsIndependentInventoryAndOutboundPalletCounts(t *
 	normalized := sanitizeOutboundDocumentInput(input)
 	if normalized.Lines[0].Pallets != 4 || normalized.Lines[0].PickAllocations[0].Pallets != 2 {
 		t.Fatalf("sanitization coupled inventory and outbound pallets: %#v", normalized.Lines[0])
+	}
+
+	input.Lines[0].Pallets = 0
+	if err := validateOutboundDocumentInput(input); err != nil {
+		t.Fatalf("expected positive outbound quantity with zero shipping pallets to be valid, got %v", err)
 	}
 }
 

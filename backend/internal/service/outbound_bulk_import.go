@@ -541,6 +541,9 @@ func parseOutboundBulkLine(row []string, rowNumber int, columns map[string]int) 
 	if outboundPalletsValue == "" || !valid {
 		issues = append(issues, outboundBulkIssue("INVALID_OUTBOUND_PALLETS", "Outbound Pallets must be a non-negative whole number.", rowNumber, outboundBulkOutboundPallets, inboundBulkColumnValue(row, columns, outboundBulkOutboundPallets)))
 	}
+	if line.ActualQuantity == 0 && line.OutboundPallets != 0 {
+		issues = append(issues, outboundBulkIssue("INVALID_OUTBOUND_PALLETS", "Outbound Pallets must be zero when Actual Qty is zero.", rowNumber, outboundBulkOutboundPallets, outboundPalletsValue))
+	}
 	return line, issues
 }
 
@@ -609,6 +612,10 @@ func (s *Store) buildOutboundBulkImportPreview(ctx context.Context, fileName str
 	if err != nil {
 		return OutboundBulkImportPreview{}, err
 	}
+	sourceReferences, err := s.ListOutboundSourceReferences(ctx)
+	if err != nil {
+		return OutboundBulkImportPreview{}, err
+	}
 	items, err := s.ListItems(ctx, ItemFilters{CustomerID: customerID})
 	if err != nil {
 		return OutboundBulkImportPreview{}, err
@@ -619,7 +626,16 @@ func (s *Store) buildOutboundBulkImportPreview(ctx context.Context, fileName str
 		locationsByName[normalizeOutboundBulkValue(location.Name)] = location
 	}
 	mastersBySKU := make(map[string]SKUMaster)
+	catalogSKUMasterIDs := make(map[int64]struct{})
+	for _, reference := range sourceReferences {
+		if reference.CustomerID == customerID {
+			catalogSKUMasterIDs[reference.SKUMasterID] = struct{}{}
+		}
+	}
 	for _, master := range masters {
+		if _, exists := catalogSKUMasterIDs[master.ID]; !exists {
+			continue
+		}
 		mastersBySKU[normalizeOutboundBulkValue(master.SKU)] = master
 	}
 	remaining, remainingPallets := initializeOutboundBulkBalances(items)
@@ -694,7 +710,7 @@ func (s *Store) buildOutboundBulkImportPreview(ctx context.Context, fileName str
 				line.PlannedQuantity = line.ActualQuantity
 			}
 			fulfillmentQuantity := outboundBulkFulfillmentQuantity(*line)
-			if line.PlannedQuantity < 0 || line.ActualQuantity < 0 || fulfillmentQuantity <= 0 {
+			if line.PlannedQuantity < 0 || line.ActualQuantity < 0 || (line.PlannedQuantity == 0 && line.ActualQuantity == 0) {
 				document.Issues = append(document.Issues, outboundBulkIssue("INVALID_QUANTITY", "Planned Qty or Actual Qty must be greater than zero and neither may be negative.", line.RowNumber, outboundBulkQuantity, fmt.Sprint(line.ActualQuantity)))
 			}
 			if line.InventoryPallets < 0 {
@@ -702,6 +718,9 @@ func (s *Store) buildOutboundBulkImportPreview(ctx context.Context, fileName str
 			}
 			if line.OutboundPallets < 0 {
 				document.Issues = append(document.Issues, outboundBulkIssue("INVALID_OUTBOUND_PALLETS", "Outbound Pallets cannot be negative.", line.RowNumber, outboundBulkOutboundPallets, fmt.Sprint(line.OutboundPallets)))
+			}
+			if line.ActualQuantity == 0 && line.OutboundPallets != 0 {
+				document.Issues = append(document.Issues, outboundBulkIssue("INVALID_OUTBOUND_PALLETS", "Outbound Pallets must be zero when Actual Qty is zero.", line.RowNumber, outboundBulkOutboundPallets, fmt.Sprint(line.OutboundPallets)))
 			}
 			location, locationExists := locationsByName[normalizeOutboundBulkValue(line.Warehouse)]
 			if !locationExists {
@@ -770,7 +789,7 @@ func (s *Store) buildOutboundBulkImportPreview(ctx context.Context, fileName str
 					document.TransferLines++
 				}
 			}
-			document.Input.Lines = append(document.Input.Lines, buildOutboundBulkDocumentLines(customerID, master, *line, allocations)...)
+			document.Input.Lines = append(document.Input.Lines, buildOutboundBulkDocumentLines(customerID, master, *line, allocations, location.ID)...)
 			resolvedPreviewLines++
 			document.TotalQty += line.Quantity
 			document.TotalPlannedQty += line.PlannedQuantity
@@ -852,7 +871,7 @@ func outboundBulkFulfillmentQuantity(line OutboundBulkImportLinePreview) int {
 	if line.Quantity > 0 {
 		return line.Quantity
 	}
-	return line.PlannedQuantity
+	return 0
 }
 
 func totalOutboundBulkAvailableQuantity(candidates []Item, remainingQtyByItemID map[int64]int) int {
@@ -994,6 +1013,7 @@ func buildOutboundBulkDocumentLines(
 	master SKUMaster,
 	previewLine OutboundBulkImportLinePreview,
 	allocations []OutboundPickAllocation,
+	fallbackLocationID int64,
 ) []CreateOutboundDocumentLineInput {
 	if previewLine.ActualQuantity == 0 && previewLine.Quantity == 0 && previewLine.PlannedQuantity == 0 {
 		previewLine.Quantity = totalOutboundPickAllocationQuantity(allocations)
@@ -1003,6 +1023,20 @@ func buildOutboundBulkDocumentLines(
 	}
 	if previewLine.PlannedQuantity == 0 && previewLine.ActualQuantity > 0 {
 		previewLine.PlannedQuantity = previewLine.ActualQuantity
+	}
+	if previewLine.ActualQuantity == 0 {
+		return []CreateOutboundDocumentLineInput{{
+			CustomerID:      customerID,
+			LocationID:      fallbackLocationID,
+			SKUMasterID:     master.ID,
+			Quantity:        0,
+			PlannedQuantity: previewLine.PlannedQuantity,
+			ActualQuantity:  0,
+			Pallets:         previewLine.OutboundPallets,
+			UnitLabel:       firstNonEmpty(master.Unit, "PCS"),
+			LineNote:        strings.TrimSpace(previewLine.LineNote),
+			PickAllocations: nil,
+		}}
 	}
 	locationOrder := make([]int64, 0)
 	allocationsByLocation := make(map[int64][]OutboundPickAllocation)

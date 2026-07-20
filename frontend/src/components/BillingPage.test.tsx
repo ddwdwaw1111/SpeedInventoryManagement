@@ -561,6 +561,35 @@ describe("BillingPage", () => {
     expect(payload).not.toHaveProperty("lines");
   });
 
+  it("sends the underfilled-pallet rule and threshold to the authoritative preview", async () => {
+    renderWithProviders(
+      <BillingPage
+        customers={[createCustomer({ id: 1, name: "Acme" })]}
+        locations={[createLocation()]}
+        inboundDocuments={[]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        onOpenBillingContainerDetail={vi.fn()}
+        onOpenBillingInvoice={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Rate Card" }));
+    const exclusionSwitch = await screen.findByRole("switch", { name: "Exclude underfilled pallets" });
+    fireEvent.click(exclusionSwitch);
+    expect(screen.getByLabelText("Minimum Qty per Billable Pallet")).toHaveValue(10);
+    fireEvent.change(screen.getByLabelText("Minimum Qty per Billable Pallet"), { target: { value: "40" } });
+
+    await waitFor(() => {
+      expect(previewBilling).toHaveBeenCalledWith(expect.objectContaining({
+        rates: expect.objectContaining({
+          excludeUnderfilledPallets: true,
+          minimumQtyPerPallet: 15
+        })
+      }));
+    });
+  });
+
   it("generates mixed invoices from the authoritative scope and fingerprint", async () => {
     const customer = createCustomer({ id: 1, name: "Acme" });
     getContainerLifecycleEvents.mockResolvedValue([

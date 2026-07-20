@@ -71,7 +71,7 @@ func TestBuildOutboundBulkDocumentLinesKeepsPlannedAndActualQuantitiesSeparate(t
 	}, []OutboundPickAllocation{
 		{LocationID: 1, AllocatedQty: 4},
 		{LocationID: 2, AllocatedQty: 2},
-	})
+	}, 0)
 
 	if len(lines) != 2 {
 		t.Fatalf("expected two location lines, got %#v", lines)
@@ -81,6 +81,25 @@ func TestBuildOutboundBulkDocumentLinesKeepsPlannedAndActualQuantitiesSeparate(t
 	}
 	if lines[0].Quantity != lines[0].ActualQuantity || lines[1].Quantity != lines[1].ActualQuantity {
 		t.Fatalf("legacy quantity must remain an alias of actual quantity: %#v", lines)
+	}
+}
+
+func TestBuildOutboundBulkDocumentLinesKeepsPlanOnlyLineWithoutAllocations(t *testing.T) {
+	lines := buildOutboundBulkDocumentLines(1, SKUMaster{ID: 2, Unit: "CTN"}, OutboundBulkImportLinePreview{
+		PlannedQuantity: 12,
+		ActualQuantity:  0,
+		OutboundPallets: 0,
+	}, nil, 9)
+
+	if len(lines) != 1 {
+		t.Fatalf("expected one plan-only line, got %#v", lines)
+	}
+	line := lines[0]
+	if line.LocationID != 9 || line.PlannedQuantity != 12 || line.ActualQuantity != 0 || line.Quantity != 0 || line.Pallets != 0 {
+		t.Fatalf("expected plan-only quantities and zero pallets to be preserved, got %#v", line)
+	}
+	if len(line.PickAllocations) != 0 {
+		t.Fatalf("plan-only line must not allocate inventory, got %#v", line.PickAllocations)
 	}
 }
 
@@ -166,6 +185,36 @@ func TestParseOutboundBulkImportWorkbookRequiresExplicitPalletValues(t *testing.
 	}
 }
 
+func TestParseOutboundBulkImportWorkbookRequiresZeroOutboundPalletsForZeroActualQty(t *testing.T) {
+	data := buildOutboundBulkWorkbook(t, [][]any{
+		{"Picking Order No", "Warehouse", "SKU", "Planned Qty", "Qty", "Inventory Pallets", "Outbound Pallets"},
+		{"PO-ZERO-VALID", "EAST", "SKU-1", 5, 0, 0, 0},
+		{"PO-ZERO-INVALID", "EAST", "SKU-1", 5, 0, 0, 1},
+	})
+
+	documents, err := parseOutboundBulkImportWorkbook(data)
+	if err != nil {
+		t.Fatalf("parse outbound workbook: %v", err)
+	}
+	if len(documents) != 2 {
+		t.Fatalf("expected two shipments, got %d", len(documents))
+	}
+	for _, issue := range documents[0].Issues {
+		if issue.Code == "INVALID_OUTBOUND_PALLETS" {
+			t.Fatalf("zero outbound pallets must remain valid for a zero-actual plan line: %#v", documents[0].Issues)
+		}
+	}
+	foundInvalidPallets := false
+	for _, issue := range documents[1].Issues {
+		if issue.Code == "INVALID_OUTBOUND_PALLETS" {
+			foundInvalidPallets = true
+		}
+	}
+	if !foundInvalidPallets {
+		t.Fatalf("non-zero outbound pallets must be rejected for a zero-actual plan line: %#v", documents[1].Issues)
+	}
+}
+
 func TestSelectOutboundBulkAllocationsUsesLaterContainerForAvailablePallets(t *testing.T) {
 	candidates := []Item{
 		{ID: 1, ItemNumber: "ITEM-1", ContainerNo: "FIFO-NO-PALLETS", LocationID: 1, LocationName: "EAST", StorageSection: "A1"},
@@ -227,6 +276,7 @@ func TestBuildOutboundBulkDocumentLinesDistributesShippingPalletsAcrossSourceLoc
 			{LocationID: 101, ContainerNo: "CONT-A", AllocatedQty: 60},
 			{LocationID: 202, ContainerNo: "CONT-B", AllocatedQty: 40},
 		},
+		0,
 	)
 
 	if len(lines) != 2 {

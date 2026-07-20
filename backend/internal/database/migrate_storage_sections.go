@@ -57,23 +57,23 @@ func applyStableStorageSectionsMigration(db *sql.DB) error {
 		`ALTER TABLE container_lifecycle_events ADD COLUMN IF NOT EXISTS section_id BIGINT DEFAULT NULL AFTER location_id`,
 		`ALTER TABLE outbound_container_allocations ADD COLUMN IF NOT EXISTS section_id BIGINT DEFAULT NULL AFTER location_id`,
 		`UPDATE inventory_items i
-		JOIN storage_sections ss ON ss.location_id = i.location_id AND ss.name = COALESCE(NULLIF(UPPER(TRIM(i.storage_section)), ''), 'TEMP')
+		JOIN storage_sections ss ON ss.location_id = i.location_id AND BINARY UPPER(TRIM(ss.name)) = BINARY COALESCE(NULLIF(UPPER(TRIM(i.storage_section)), ''), 'TEMP')
 		SET i.section_id = ss.id
 		WHERE i.section_id IS NULL`,
 		`UPDATE pallets p
-		JOIN storage_sections ss ON ss.location_id = p.current_location_id AND ss.name = COALESCE(NULLIF(UPPER(TRIM(p.current_storage_section)), ''), 'TEMP')
+		JOIN storage_sections ss ON ss.location_id = p.current_location_id AND BINARY UPPER(TRIM(ss.name)) = BINARY COALESCE(NULLIF(UPPER(TRIM(p.current_storage_section)), ''), 'TEMP')
 		SET p.current_section_id = ss.id
 		WHERE p.current_section_id IS NULL`,
 		`UPDATE stock_ledger sl
-		JOIN storage_sections ss ON ss.location_id = sl.location_id AND ss.name = COALESCE(NULLIF(UPPER(TRIM(sl.storage_section)), ''), 'TEMP')
+		JOIN storage_sections ss ON ss.location_id = sl.location_id AND BINARY UPPER(TRIM(ss.name)) = BINARY COALESCE(NULLIF(UPPER(TRIM(sl.storage_section)), ''), 'TEMP')
 		SET sl.section_id = ss.id
 		WHERE sl.section_id IS NULL`,
 		`UPDATE container_lifecycle_events cle
-		JOIN storage_sections ss ON ss.location_id = cle.location_id AND ss.name = COALESCE(NULLIF(UPPER(TRIM(cle.storage_section)), ''), 'TEMP')
+		JOIN storage_sections ss ON ss.location_id = cle.location_id AND BINARY UPPER(TRIM(ss.name)) = BINARY COALESCE(NULLIF(UPPER(TRIM(cle.storage_section)), ''), 'TEMP')
 		SET cle.section_id = ss.id
 		WHERE cle.section_id IS NULL`,
 		`UPDATE outbound_container_allocations oca
-		JOIN storage_sections ss ON ss.location_id = oca.location_id AND ss.name = COALESCE(NULLIF(UPPER(TRIM(oca.storage_section)), ''), 'TEMP')
+		JOIN storage_sections ss ON ss.location_id = oca.location_id AND BINARY UPPER(TRIM(ss.name)) = BINARY COALESCE(NULLIF(UPPER(TRIM(oca.storage_section)), ''), 'TEMP')
 		SET oca.section_id = ss.id
 		WHERE oca.section_id IS NULL`,
 	}

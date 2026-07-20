@@ -566,6 +566,7 @@ func (s *Store) createOutboundDocumentTx(
 	requestedTrackingStatus string,
 ) (int64, error) {
 	lockedSources := make(map[string]lockedOutboundSource)
+	inventoryBackedSources := make(map[string]bool)
 	reservationState := newOutboundAllocationReservationState()
 	var customerID int64
 	var err error
@@ -574,8 +575,15 @@ func (s *Store) createOutboundDocumentTx(
 		line := &input.Lines[lineIndex]
 		sourceKey := buildOutboundSourceKey(line.CustomerID, line.LocationID, line.SKUMasterID)
 		lockedSource, exists := lockedSources[sourceKey]
-		if !exists {
+		if outboundLineReservationQuantity(*line) > 0 && (!exists || !inventoryBackedSources[sourceKey]) {
 			lockedSource, err = s.loadLockedOutboundSourceTx(ctx, tx, line.CustomerID, line.LocationID, line.SKUMasterID)
+			if err != nil {
+				return 0, err
+			}
+			lockedSources[sourceKey] = lockedSource
+			inventoryBackedSources[sourceKey] = true
+		} else if !exists {
+			lockedSource, err = s.loadOutboundSourceReferenceTx(ctx, tx, line.CustomerID, line.LocationID, line.SKUMasterID)
 			if err != nil {
 				return 0, err
 			}
@@ -733,6 +741,7 @@ func (s *Store) UpdateOutboundDocument(ctx context.Context, documentID int64, in
 	}
 
 	lockedSources := make(map[string]lockedOutboundSource)
+	inventoryBackedSources := make(map[string]bool)
 	reservationState := newOutboundAllocationReservationState()
 	var customerID int64
 
@@ -740,8 +749,15 @@ func (s *Store) UpdateOutboundDocument(ctx context.Context, documentID int64, in
 		line := &input.Lines[lineIndex]
 		sourceKey := buildOutboundSourceKey(line.CustomerID, line.LocationID, line.SKUMasterID)
 		lockedSource, exists := lockedSources[sourceKey]
-		if !exists {
+		if outboundLineReservationQuantity(*line) > 0 && (!exists || !inventoryBackedSources[sourceKey]) {
 			lockedSource, err = s.loadLockedOutboundSourceTx(ctx, tx, line.CustomerID, line.LocationID, line.SKUMasterID)
+			if err != nil {
+				return OutboundDocument{}, err
+			}
+			lockedSources[sourceKey] = lockedSource
+			inventoryBackedSources[sourceKey] = true
+		} else if !exists {
+			lockedSource, err = s.loadOutboundSourceReferenceTx(ctx, tx, line.CustomerID, line.LocationID, line.SKUMasterID)
 			if err != nil {
 				return OutboundDocument{}, err
 			}
@@ -900,7 +916,7 @@ func (s *Store) insertOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, d
 		line = normalizeOutboundLineQuantities(line)
 		lockedSource := lockedSources[buildOutboundSourceKey(line.CustomerID, line.LocationID, line.SKUMasterID)]
 		allocations := make([]outboundAllocationCandidate, 0)
-		if len(line.PickAllocations) == 0 {
+		if len(line.PickAllocations) == 0 && outboundLineReservationQuantity(line) > 0 {
 			var err error
 			allocations, err = s.resolveOutboundLineAllocationsTx(ctx, tx, lockedSource, outboundLineReservationQuantity(line), reservationState)
 			if err != nil {
@@ -1192,6 +1208,30 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 	if len(lineRows) == 0 {
 		return fmt.Errorf("%w: outbound document must contain at least one line", ErrInvalidInput)
 	}
+	for index := range lineRows {
+		lineRow := &lineRows[index]
+		if lineRow.Quantity != 0 {
+			continue
+		}
+		// Older drafts may have reserved the planned quantity for a zero-actual line.
+		// Allocation rows and inventory balance increments are persisted together, so
+		// release any stale row before confirmation and keep only the plan record.
+		if err := s.releaseOutboundContainerAllocationBalancesTx(ctx, tx, lineRow.ID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM outbound_container_allocations WHERE outbound_line_id = ?`, lineRow.ID); err != nil {
+			return mapDBError(fmt.Errorf("delete planned-only outbound allocations: %w", err))
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE outbound_document_lines
+			SET pallets = 0, pick_allocations_json = NULL
+			WHERE id = ?
+		`, lineRow.ID); err != nil {
+			return mapDBError(fmt.Errorf("clear planned-only outbound allocation snapshot: %w", err))
+		}
+		lineRow.Pallets = 0
+		lineRow.PickAllocationsJSON = ""
+	}
 	confirmedAt := time.Now().UTC()
 	billingOccurredAt := confirmedAt
 	if documentRow.ActualShipDate != nil {
@@ -1225,8 +1265,13 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 	}
 
 	for _, lineRow := range lineRows {
-		if lineRow.Quantity <= 0 {
-			return fmt.Errorf("%w: confirmed outbound line %s requires an actual shipped quantity greater than zero", ErrInvalidInput, firstNonEmpty(lineRow.SKUSnapshot, fmt.Sprintf("#%d", lineRow.ID)))
+		if lineRow.Quantity < 0 {
+			return fmt.Errorf("%w: confirmed outbound line %s cannot have a negative actual shipped quantity", ErrInvalidInput, firstNonEmpty(lineRow.SKUSnapshot, fmt.Sprintf("#%d", lineRow.ID)))
+		}
+		if lineRow.Quantity == 0 {
+			// A planned-only line is retained on the confirmed shipment so plan-versus-actual
+			// reporting remains complete. It has no stock allocation or ledger movement.
+			continue
 		}
 		allocationRows, err := s.loadOutboundContainerAllocationsForUpdateTx(ctx, tx, lineRow.ID)
 		if err != nil {
@@ -1705,16 +1750,21 @@ func (s *Store) reserveOutboundLineTx(
 	if line == nil {
 		return fmt.Errorf("%w: outbound line is required", ErrInvalidInput)
 	}
+	reservationQuantity := outboundLineReservationQuantity(*line)
+	if reservationQuantity == 0 {
+		line.PickAllocations = nil
+		return nil
+	}
 
 	plannedAllocations := normalizeOutboundPickAllocations(line.PickAllocations)
 	if len(plannedAllocations) == 0 {
-		allocations, err := s.resolveOutboundLineAllocationsTx(ctx, tx, source, outboundLineReservationQuantity(*line), newOutboundAllocationReservationState())
+		allocations, err := s.resolveOutboundLineAllocationsTx(ctx, tx, source, reservationQuantity, newOutboundAllocationReservationState())
 		if err != nil {
 			return err
 		}
 		plannedAllocations = toOutboundPickAllocationsFromCandidates(line, allocations)
 	}
-	if totalOutboundPickAllocationQuantity(plannedAllocations) != outboundLineReservationQuantity(*line) {
+	if totalOutboundPickAllocationQuantity(plannedAllocations) != reservationQuantity {
 		return fmt.Errorf("%w: draft pick allocation quantity must equal outbound quantity", ErrInvalidInput)
 	}
 	line.PickAllocations = plannedAllocations
@@ -1729,6 +1779,18 @@ func (s *Store) reserveOutboundDocumentLinesTx(
 	lockedSources := make(map[string]lockedOutboundSource)
 	for index := range lineRows {
 		lineRow := &lineRows[index]
+		lineInput := outboundLineInputFromRow(customerID, *lineRow)
+		if outboundLineReservationQuantity(lineInput) == 0 {
+			lineInput.PickAllocations = nil
+			if err := s.persistOutboundDocumentLineReservationTx(ctx, tx, lineRow.ID, lineInput); err != nil {
+				return nil, err
+			}
+			if err := s.replaceOutboundContainerAllocationsTx(ctx, tx, lineRow.ID, customerID, lineRow.SKUMasterID, nil); err != nil {
+				return nil, err
+			}
+			lineRow.PickAllocationsJSON = mustEncodeOutboundPickAllocations(lineInput.PickAllocations)
+			continue
+		}
 		sourceKey := buildOutboundSourceKey(customerID, lineRow.LocationID, lineRow.SKUMasterID)
 		lockedSource, exists := lockedSources[sourceKey]
 		if !exists {
@@ -1740,7 +1802,6 @@ func (s *Store) reserveOutboundDocumentLinesTx(
 			lockedSources[sourceKey] = lockedSource
 		}
 
-		lineInput := outboundLineInputFromRow(customerID, *lineRow)
 		if err := s.reserveOutboundLineTx(ctx, tx, lockedSource, &lineInput); err != nil {
 			return nil, err
 		}
@@ -2583,6 +2644,43 @@ func (s *Store) loadLockedOutboundSourceTx(ctx context.Context, tx *sql.Tx, cust
 	return source, nil
 }
 
+func (s *Store) loadOutboundSourceReferenceTx(ctx context.Context, tx *sql.Tx, customerID int64, locationID int64, skuMasterID int64) (lockedOutboundSource, error) {
+	var source lockedOutboundSource
+	if err := tx.QueryRowContext(ctx, `
+		SELECT
+			sm.id,
+			c.id,
+			COALESCE(NULLIF(cic.item_number, ''), NULLIF(sm.item_number, ''), '') AS item_number,
+			l.id,
+			l.name,
+			sm.sku,
+			COALESCE(sm.description, sm.name, '') AS description,
+			COALESCE(sm.unit, 'pcs') AS unit
+		FROM sku_master sm
+		JOIN customers c ON c.id = ?
+		JOIN storage_locations l ON l.id = ?
+		JOIN customer_item_catalog cic
+			ON cic.customer_id = c.id
+			AND cic.sku_master_id = sm.id
+		WHERE sm.id = ?
+	`, customerID, locationID, skuMasterID).Scan(
+		&source.SKUMasterID,
+		&source.CustomerID,
+		&source.ItemNumber,
+		&source.LocationID,
+		&source.LocationName,
+		&source.SKU,
+		&source.Description,
+		&source.Unit,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return lockedOutboundSource{}, ErrNotFound
+		}
+		return lockedOutboundSource{}, fmt.Errorf("load outbound source reference: %w", err)
+	}
+	return source, nil
+}
+
 func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx *sql.Tx, source lockedOutboundSource) ([]outboundAllocationCandidate, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT
@@ -2730,6 +2828,10 @@ func (s *Store) prepareOutboundDraftLineAllocationsTx(
 		return nil, fmt.Errorf("%w: outbound line is required", ErrInvalidInput)
 	}
 	requestedQty := outboundLineReservationQuantity(*line)
+	if requestedQty == 0 {
+		line.PickAllocations = nil
+		return nil, nil
+	}
 
 	if len(line.PickAllocations) > 0 {
 		allocations, err := s.resolveOutboundDraftBucketAllocationsTx(ctx, tx, source, requestedQty, line.PickAllocations, reservationState)
@@ -3120,8 +3222,8 @@ func validateOutboundDocumentInput(input CreateOutboundDocumentInput) error {
 			return fmt.Errorf("%w: planned and actual outbound quantities cannot be negative", ErrInvalidInput)
 		case line.PlannedQuantity == 0 && line.ActualQuantity == 0:
 			return fmt.Errorf("%w: planned or actual outbound quantity must be greater than zero", ErrInvalidInput)
-		case coalescedStatus == DocumentStatusConfirmed && line.ActualQuantity <= 0:
-			return fmt.Errorf("%w: confirmed shipments require an actual shipped quantity greater than zero", ErrInvalidInput)
+		case line.ActualQuantity == 0 && line.Pallets != 0:
+			return fmt.Errorf("%w: pallets must be zero when actual outbound quantity is zero", ErrInvalidInput)
 		case line.Pallets < 0:
 			return fmt.Errorf("%w: pallets cannot be negative", ErrInvalidInput)
 		case line.NetWeightKgs < 0 || line.GrossWeightKgs < 0:
@@ -3154,7 +3256,7 @@ func outboundLineReservationQuantity(line CreateOutboundDocumentLineInput) int {
 	if line.Quantity > 0 {
 		return line.Quantity
 	}
-	return line.PlannedQuantity
+	return 0
 }
 
 func resolveOutboundLedgerDate(expectedShipDate *time.Time, actualShipDate *time.Time) *time.Time {

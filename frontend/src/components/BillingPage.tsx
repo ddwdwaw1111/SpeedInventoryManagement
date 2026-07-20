@@ -44,6 +44,7 @@ import { waitForNextPaint } from "../lib/asyncUi";
 import { setBillingWorkspaceContext } from "../lib/billingWorkspaceContext";
 import {
   DEFAULT_BILLING_RATES,
+  MAXIMUM_BILLING_QTY_PER_PALLET,
   getCurrentBillingDateRange,
   mapAuthoritativeBillingPreview,
   mergeBillingPreviews,
@@ -171,7 +172,9 @@ export function BillingPage({
     storageFeePerPalletPerWeek: rates.storageFeePerPalletPerWeek,
     storageFeePerPalletPerWeekNormal: rates.storageFeePerPalletPerWeekNormal,
     storageFeePerPalletPerWeekWestCoastTransfer: rates.storageFeePerPalletPerWeekWestCoastTransfer,
-    outboundFeePerPallet: rates.outboundFeePerPallet
+    outboundFeePerPallet: rates.outboundFeePerPallet,
+    excludeUnderfilledPallets: rates.excludeUnderfilledPallets,
+    minimumQtyPerPallet: rates.minimumQtyPerPallet
   }), [rates]);
   const previousPeriodRange = useMemo(
     () => computePreviousPeriodRange(selectedStartDate, selectedEndDate),
@@ -1409,6 +1412,56 @@ export function BillingPage({
           </Box>
           <Divider />
           <Stack spacing={2} sx={{ overflowY: "auto", pb: 2 }}>
+            <Box
+              sx={{
+                p: 1.5,
+                border: "1px solid",
+                borderColor: rates.excludeUnderfilledPallets ? "primary.main" : "divider",
+                borderRadius: 1.5,
+                bgcolor: rates.excludeUnderfilledPallets ? "action.selected" : "background.paper"
+              }}
+            >
+              <FormControlLabel
+                sx={{ m: 0, alignItems: "center", "& .MuiFormControlLabel-label": { fontSize: "0.875rem", fontWeight: 600 } }}
+                control={(
+                  <Switch
+                    size="small"
+                    checked={rates.excludeUnderfilledPallets}
+                    onChange={(event) => setRates((current) => ({
+                      ...current,
+                      excludeUnderfilledPallets: event.target.checked,
+                      minimumQtyPerPallet: current.minimumQtyPerPallet > 0
+                        ? Math.min(current.minimumQtyPerPallet, MAXIMUM_BILLING_QTY_PER_PALLET)
+                        : DEFAULT_BILLING_RATES.minimumQtyPerPallet
+                    }))}
+                  />
+                )}
+                label={t("billingExcludeUnderfilledPallets")}
+              />
+              <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5, lineHeight: 1.35 }}>
+                {t("billingExcludeUnderfilledPalletsDesc")}
+              </Typography>
+              {rates.excludeUnderfilledPallets && (
+                <TextField
+                  sx={{ mt: 1.5 }}
+                  size="small"
+                  type="number"
+                  label={t("billingMinimumQtyPerPallet")}
+                  value={rates.minimumQtyPerPallet}
+                  onChange={(event) => setRates((current) => ({
+                    ...current,
+                    minimumQtyPerPallet: toBoundedPositiveNumber(
+                      event.target.value,
+                      current.minimumQtyPerPallet,
+                      MAXIMUM_BILLING_QTY_PER_PALLET
+                    )
+                  }))}
+                  inputProps={{ min: 0.01, max: MAXIMUM_BILLING_QTY_PER_PALLET, step: 1 }}
+                  helperText={t("billingMinimumQtyPerPalletDesc")}
+                  fullWidth
+                />
+              )}
+            </Box>
             {[
               { key: "inboundContainerFee", label: t("billingInboundContainerFee"), value: rates.inboundContainerFee, set: (n: number) => setRates((c) => ({ ...c, inboundContainerFee: n })) },
               { key: "transferInboundFeePerPallet", label: t("billingTransferInboundFee"), value: rates.transferInboundFeePerPallet, set: (n: number) => setRates((c) => ({ ...c, transferInboundFeePerPallet: n })) },
@@ -1467,6 +1520,11 @@ function toNumber(value: string) {
     return 0;
   }
   return parsed;
+}
+
+function toBoundedPositiveNumber(value: string, fallback: number, maximum: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, maximum) : fallback;
 }
 
 function buildBillingContainerSummaryRows(invoiceLines: BillingInvoiceLine[], storageRows: BillingStorageRow[]) {

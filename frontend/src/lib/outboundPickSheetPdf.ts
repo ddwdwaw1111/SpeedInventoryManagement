@@ -207,6 +207,9 @@ export function buildPickSheetDocument(document: OutboundDocument): PickSheetDoc
 }
 
 function buildPickSheetRowsForLine(line: OutboundDocument["lines"][number], lineIndex: number): PickSheetRow[] {
+  if (getOutboundLineActualQuantity(line) === 0) {
+    return [];
+  }
   if (line.pickAllocations.length === 0) {
     throw new Error(`Warehouse pick sheet requires stored pick allocations for outbound line ${line.id}.`);
   }
@@ -225,6 +228,10 @@ function buildPickSheetRowsForLine(line: OutboundDocument["lines"][number], line
     quantity: allocation.allocatedQty,
     pallets: Math.max(0, allocation.pallets ?? 0)
   })));
+}
+
+function getOutboundLineActualQuantity(line: Pick<OutboundDocument["lines"][number], "quantity" | "actualQuantity">) {
+  return Math.max(0, line.actualQuantity ?? line.quantity);
 }
 
 function mergePickSheetRowsByContainer(rows: PickSheetRow[]): PickSheetRow[] {

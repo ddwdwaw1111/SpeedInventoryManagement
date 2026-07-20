@@ -57,7 +57,7 @@ import {
   navigateToStorageLocationEditor,
   type PageKey
 } from "./lib/routes";
-import type { AuditLog, Customer, CycleCount, InboundDocument, InventoryAdjustment, InventoryTransfer, Item, Location, LoginPayload, Movement, OutboundDocument, SKUMaster, SignUpPayload, User } from "./lib/types";
+import type { AuditLog, Customer, CycleCount, InboundDocument, InventoryAdjustment, InventoryTransfer, Item, Location, LoginPayload, Movement, OutboundDocument, OutboundSourceReference, SKUMaster, SignUpPayload, User } from "./lib/types";
 
 const ActivityManagementPage = lazy(async () => {
   const module = await import("./components/ActivityManagementPage");
@@ -231,6 +231,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
   const [users, setUsers] = useState<User[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [skuMasters, setSkuMasters] = useState<SKUMaster[]>([]);
+  const [outboundSourceReferences, setOutboundSourceReferences] = useState<OutboundSourceReference[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [movements, setMovements] = useState<Movement[]>([]);
   const [inboundDocuments, setInboundDocuments] = useState<InboundDocument[]>([]);
@@ -407,6 +408,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
       setAuditLogs([]);
       setLocations([]);
       setSkuMasters([]);
+      setOutboundSourceReferences([]);
       setItems([]);
       setMovements([]);
       setInboundDocuments([]);
@@ -422,6 +424,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
         api.getLocations(),
         api.getCustomers(),
         api.getSKUMasters(),
+        api.getOutboundSourceReferences(),
         api.getItems(),
         api.getMovements(20000),
         api.getInboundDocuments(300, "all"),
@@ -438,6 +441,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
         locationsResult,
         customersResult,
         skuMastersResult,
+        outboundSourceReferencesResult,
         itemsResult,
         movementsResult,
         inboundDocumentsResult,
@@ -458,6 +462,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
       if (usersResult.status === "fulfilled") setUsers(usersResult.value);
       if (auditLogsResult.status === "fulfilled") setAuditLogs(auditLogsResult.value);
       if (skuMastersResult.status === "fulfilled") setSkuMasters(skuMastersResult.value);
+      if (outboundSourceReferencesResult.status === "fulfilled") setOutboundSourceReferences(outboundSourceReferencesResult.value);
       if (itemsResult.status === "fulfilled") setItems(itemsResult.value);
       if (movementsResult.status === "fulfilled") setMovements(movementsResult.value);
       if (inboundDocumentsResult.status === "fulfilled") setInboundDocuments(inboundDocumentsResult.value);
@@ -798,7 +803,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
             </div>
           ) : null}
           <div key={activePage} className="workspace-shell__page">
-            {activePage === "inbound-management" ? renderWithSuspense(<ActivityManagementPage mode="IN" items={items} skuMasters={skuMasters} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onOpenInboundDetail={handleNavigateToInboundDetail} onOpenInboundReceiptEditor={handleNavigateToReceiptEditor} />) : null}
+            {activePage === "inbound-management" ? renderWithSuspense(<ActivityManagementPage mode="IN" items={items} skuMasters={skuMasters} outboundSourceReferences={outboundSourceReferences} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onOpenInboundDetail={handleNavigateToInboundDetail} onOpenInboundReceiptEditor={handleNavigateToReceiptEditor} />) : null}
             {activePage === "inbound-detail" ? (
               renderWithSuspense(<InboundDetailPage
                 document={selectedInboundDetailDocument}
@@ -829,7 +834,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
                 onOpenReceiptEditor={handleNavigateToReceiptEditor}
               />)
             ) : null}
-            {activePage === "outbound-management" ? renderWithSuspense(<ActivityManagementPage mode="OUT" items={items} skuMasters={skuMasters} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onOpenOutboundShipmentEditor={handleNavigateToShipmentEditor} />) : null}
+            {activePage === "outbound-management" ? renderWithSuspense(<ActivityManagementPage mode="OUT" items={items} skuMasters={skuMasters} outboundSourceReferences={outboundSourceReferences} locations={locations} customers={customers} movements={movements} inboundDocuments={inboundDocuments} outboundDocuments={outboundDocuments} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onOpenOutboundShipmentEditor={handleNavigateToShipmentEditor} />) : null}
             {activePage === "shipment-editor" ? (
               renderWithSuspense(<OutboundShipmentEditorPage
                 routeKey={currentPathname}
@@ -837,7 +842,8 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
                 document={selectedShipmentEditorDocument}
                 items={items}
                 skuMasters={skuMasters}
-                movements={movements}
+                outboundSourceReferences={outboundSourceReferences}
+                locations={locations}
                 currentUserRole={currentUser.role}
                 isLoading={isLoading}
                 onRefresh={() => loadAppData(false)}
@@ -974,6 +980,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
               mode={embeddedComposer.mode}
               items={items}
               skuMasters={skuMasters}
+              outboundSourceReferences={outboundSourceReferences}
               locations={locations}
               customers={customers}
               movements={movements}

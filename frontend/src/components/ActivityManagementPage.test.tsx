@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockedDownloadOutboundPickSheetPdfFromDocument = vi.fn();
@@ -115,6 +115,7 @@ import {
   createMovement,
   createOutboundDocument,
   createOutboundDocumentLine,
+  createOutboundSourceReference,
   createSkuMaster
 } from "../test/fixtures";
 
@@ -1225,18 +1226,21 @@ describe("ActivityManagementPage", () => {
 
     const dialog = await screen.findByRole("dialog");
     const outboundLineSelect = dialog.querySelector(".batch-line-grid--outbound select");
-    const outboundLineInputs = dialog.querySelectorAll(".batch-line-grid--outbound input");
 
     fireEvent.change(outboundLineSelect as HTMLSelectElement, { target: { value: "1|1|1" } });
-    fireEvent.change(outboundLineInputs[1] as HTMLInputElement, { target: { value: "5" } });
-    fireEvent.change(outboundLineInputs[2] as HTMLInputElement, { target: { value: "5" } });
-    fireEvent.change(outboundLineInputs[3] as HTMLInputElement, { target: { value: "2" } });
+    fireEvent.change(within(dialog).getByLabelText("Planned Ship Qty"), { target: { value: "5" } });
+    fireEvent.change(within(dialog).getByLabelText("Actual Ship Qty"), { target: { value: "5" } });
+    fireEvent.change(within(dialog).getByLabelText(/pallets/i), { target: { value: "2" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByText("Container Pick Plan")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByText("Pick Allocation Preview")).toBeInTheDocument();
+    const lineReview = await screen.findByTestId("batch-outbound-line-review");
+    expect(lineReview).toHaveTextContent("Planned Ship Qty: 5");
+    expect(lineReview).toHaveTextContent("Actual Ship Qty: 5");
+    expect(lineReview).toHaveTextContent(/Pallets: 2/i);
 
     fireEvent.click(screen.getByRole("button", { name: "Schedule Shipment" }));
 
@@ -1287,6 +1291,94 @@ describe("ActivityManagementPage", () => {
     expect(onRefresh).toHaveBeenCalled();
   });
 
+  it("allows a plan-only shipment to be saved when no inventory is currently available", async () => {
+    mockedApi.createOutboundDocument.mockResolvedValue(undefined);
+
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="OUT"
+        items={[]}
+        skuMasters={[]}
+        outboundSourceReferences={[createOutboundSourceReference()]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        movements={[]}
+        inboundDocuments={[]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "New Shipment" }));
+    const dialog = await screen.findByRole("dialog");
+    const outboundLineSelect = dialog.querySelector(".batch-line-grid--outbound select");
+
+    expect(outboundLineSelect?.querySelector('option[value="1|1|1"]')).toBeNull();
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Search Shipment Source #1" }), { target: { value: "608333" } });
+    await waitFor(() => expect(outboundLineSelect?.querySelector('option[value="1|1|1"]')).not.toBeNull());
+    fireEvent.change(outboundLineSelect as HTMLSelectElement, { target: { value: "1|1|1" } });
+    fireEvent.change(within(dialog).getByLabelText("Planned Ship Qty"), { target: { value: "12" } });
+    expect(within(dialog).getByLabelText(/pallets/i)).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Schedule Shipment" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    const lineReview = await screen.findByTestId("batch-outbound-line-review");
+    expect(lineReview).toHaveTextContent("608333");
+    expect(lineReview).toHaveTextContent("Planned Ship Qty: 12");
+    expect(lineReview).toHaveTextContent("Actual Ship Qty: 0");
+    expect(lineReview).toHaveTextContent(/Pallets: 0/i);
+    const finalSubmit = screen.getByRole("button", { name: "Schedule Shipment" });
+    expect(finalSubmit).toBeEnabled();
+    fireEvent.click(finalSubmit);
+
+    await waitFor(() => expect(mockedApi.createOutboundDocument).toHaveBeenCalledTimes(1));
+    expect(mockedApi.createOutboundDocument.mock.calls[0][0].lines[0]).toMatchObject({
+      plannedQuantity: 12,
+      actualQuantity: 0,
+      quantity: 0,
+      pallets: 0,
+      pickAllocations: undefined
+    });
+  });
+
+  it("blocks an unresolved outbound row instead of silently dropping it", async () => {
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="OUT"
+        items={[]}
+        skuMasters={[]}
+        outboundSourceReferences={[createOutboundSourceReference()]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        movements={[]}
+        inboundDocuments={[]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "New Shipment" }));
+    const dialog = await screen.findByRole("dialog");
+    const firstLineSelect = dialog.querySelector(".batch-line-grid--outbound select") as HTMLSelectElement;
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Search Shipment Source #1" }), { target: { value: "608333" } });
+    await waitFor(() => expect(firstLineSelect.querySelector('option[value="1|1|1"]')).not.toBeNull());
+    fireEvent.change(firstLineSelect, { target: { value: "1|1|1" } });
+    fireEvent.change(within(dialog).getByLabelText("Planned Ship Qty"), { target: { value: "12" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add Outbound Line" }));
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Search Shipment Source #2" }), { target: { value: "UNRESOLVED" } });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
+
+    expect(await within(dialog).findByText("Choose a SKU and enter a stock impact quantity.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("textbox", { name: "Search Shipment Source #2" })).toBeInTheDocument();
+    expect(mockedApi.createOutboundDocument).not.toHaveBeenCalled();
+  });
+
   it("hydrates draft pick sheet exports with container rows when the document has no stored pick allocations", async () => {
     const sourceOptions = buildOutboundSourceOptionsFromItems([
       createItem({ id: 511, containerNo: "CONTAINER-1", quantity: 10, availableQty: 10, sku: "011423", itemNumber: "011423", description: "011423" }),
@@ -1316,5 +1408,23 @@ describe("ActivityManagementPage", () => {
       "CONTAINER-1",
       "CONTAINER-2"
     ]);
+  });
+
+  it("does not hydrate plan-only zero-actual lines for draft pick sheets", () => {
+    const document = createOutboundDocument({
+      id: 102,
+      status: "DRAFT",
+      trackingStatus: "SCHEDULED",
+      lines: [createOutboundDocumentLine({
+        id: 502,
+        plannedQuantity: 15,
+        actualQuantity: 0,
+        quantity: 0,
+        pallets: 0,
+        pickAllocations: []
+      })]
+    });
+
+    expect(buildPickSheetExportDocument(document, []).lines[0].pickAllocations).toEqual([]);
   });
 });

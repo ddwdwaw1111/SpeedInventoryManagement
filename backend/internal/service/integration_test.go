@@ -57,6 +57,13 @@ func newIntegrationStore(t *testing.T) *Store {
 	if err := db.Ping(); err != nil {
 		t.Fatalf("ping integration database: %v", err)
 	}
+	var databaseName string
+	if err := db.Get(&databaseName, `SELECT DATABASE()`); err != nil {
+		t.Fatalf("identify integration database: %v", err)
+	}
+	if !isSafeIntegrationDatabaseName(databaseName) {
+		t.Fatalf("refusing to reset non-test database %q; integration database names must end in _test", databaseName)
+	}
 	if err := database.Migrate(db.DB); err != nil {
 		t.Fatalf("migrate integration database: %v", err)
 	}
@@ -67,6 +74,34 @@ func newIntegrationStore(t *testing.T) *Store {
 		t.Fatalf("initialize integration store: %v", err)
 	}
 	return store
+}
+
+func isSafeIntegrationDatabaseName(name string) bool {
+	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(name)), "_test")
+}
+
+func TestIsSafeIntegrationDatabaseName(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name string
+		safe bool
+	}{
+		{name: "speed_inventory_management_test", safe: true},
+		{name: " speed_inventory_codex_test ", safe: true},
+		{name: "SPEED_INVENTORY_TEST", safe: true},
+		{name: "speed_inventory_management", safe: false},
+		{name: "speed_inventory_test_backup", safe: false},
+		{name: "", safe: false},
+	} {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			if actual := isSafeIntegrationDatabaseName(testCase.name); actual != testCase.safe {
+				t.Fatalf("isSafeIntegrationDatabaseName(%q) = %v, want %v", testCase.name, actual, testCase.safe)
+			}
+		})
+	}
 }
 
 func resetIntegrationDatabase(t *testing.T, db *sqlx.DB) {

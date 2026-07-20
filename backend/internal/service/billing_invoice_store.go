@@ -93,6 +93,8 @@ type BillingRatesSnapshot struct {
 	StorageFeePerPalletWeekNormal            float64 `json:"storageFeePerPalletPerWeekNormal"`
 	StorageFeePerPalletWeekWestCoastTransfer float64 `json:"storageFeePerPalletPerWeekWestCoastTransfer"`
 	OutboundFeePerPallet                     float64 `json:"outboundFeePerPallet"`
+	ExcludeUnderfilledPallets                bool    `json:"excludeUnderfilledPallets,omitempty"`
+	MinimumQtyPerPallet                      float64 `json:"minimumQtyPerPallet,omitempty"`
 }
 
 // --- input types ---

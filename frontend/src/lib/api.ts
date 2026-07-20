@@ -54,6 +54,7 @@ import type {
   OperationsReportGranularity,
   OutboundDocument,
   OutboundDocumentPayload,
+  OutboundSourceReference,
   OutboundBulkImportCommitPayload,
   OutboundBulkImportCommitResponse,
   OutboundBulkImportPreview,
@@ -399,6 +400,10 @@ export const api = {
 
     const suffix = params.toString() ? `?${params.toString()}` : "";
     return request<SKUMaster[]>(`/sku-master${suffix}`);
+  },
+
+  getOutboundSourceReferences() {
+    return request<OutboundSourceReference[]>("/outbound-source-references");
   },
 
   createSKUMaster(payload: SKUMasterPayload) {

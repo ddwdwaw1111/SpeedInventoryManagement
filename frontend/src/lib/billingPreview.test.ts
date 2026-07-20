@@ -66,6 +66,50 @@ function baseInput(overrides: Partial<Parameters<typeof buildBillingPreview>[0]>
 }
 
 describe("buildBillingPreview", () => {
+  it("excludes pallets that are not backed by the configured minimum quantity", () => {
+    const events = [
+      lifecycleEvent(1, "2026-03-01T09:00:00Z", 3, { quantityDelta: 25 }),
+      lifecycleEvent(2, "2026-03-02T10:00:00Z", 0, { eventType: "SHIP", quantityDelta: -10 })
+    ];
+
+    const preview = buildBillingPreview(baseInput({
+      startDate: "2026-03-01",
+      endDate: "2026-03-02",
+      containerLifecycleEvents: events,
+      normalPalletGracePeriodEnabled: false,
+      rates: {
+        ...DEFAULT_BILLING_RATES,
+        excludeUnderfilledPallets: true,
+        minimumQtyPerPallet: 10
+      }
+    }));
+
+    expect(preview.dailyBalanceRows).toEqual([
+      { date: "2026-03-01", palletCount: 2 },
+      { date: "2026-03-02", palletCount: 1 }
+    ]);
+    expect(preview.storageRows[0]).toMatchObject({ palletsTracked: 2, palletDays: 3 });
+  });
+
+  it("does not use one SKU's surplus quantity to qualify another SKU's pallet", () => {
+    const preview = buildBillingPreview(baseInput({
+      startDate: "2026-03-01",
+      endDate: "2026-03-01",
+      containerLifecycleEvents: [
+        lifecycleEvent(1, "2026-03-01T09:00:00Z", 1, { skuMasterId: 1, quantityDelta: 1 }),
+        lifecycleEvent(2, "2026-03-01T09:01:00Z", 1, { skuMasterId: 2, quantityDelta: 19 })
+      ],
+      normalPalletGracePeriodEnabled: false,
+      rates: {
+        ...DEFAULT_BILLING_RATES,
+        excludeUnderfilledPallets: true,
+        minimumQtyPerPallet: 10
+      }
+    }));
+
+    expect(preview.dailyBalanceRows).toEqual([{ date: "2026-03-01", palletCount: 1 }]);
+  });
+
   it("calculates container-level pallet-day storage through partial outbound", () => {
     const events = [
       lifecycleEvent(1, "2026-03-03T09:00:00Z", 3),
@@ -163,6 +207,105 @@ describe("buildBillingPreview", () => {
     expect(preview.summary.shippedPallets).toBe(3);
     expect(outboundLines.map((line) => line.quantity)).toEqual([2, 1]);
     expect(outboundLines.reduce((total, line) => total + line.quantity, 0)).toBe(3);
+  });
+
+  it("does not pool outbound quantities across storage sections for the minimum-fill rule", () => {
+    const outbound = createOutboundDocument({
+      id: 22,
+      customerId: 1,
+      customerName: "Acme",
+      packingListNo: "PO-22",
+      status: "CONFIRMED",
+      actualShipDate: "2026-03-18",
+      lines: [createOutboundDocumentLine({
+        quantity: 20,
+        pallets: 2,
+        pickAllocations: [
+          createOutboundPickAllocation({ containerNo: "CONT-A", storageSection: "A", allocatedQty: 1, pallets: 0 }),
+          createOutboundPickAllocation({ containerNo: "CONT-A", storageSection: "B", allocatedQty: 19, pallets: 2 })
+        ]
+      })]
+    });
+
+    const preview = buildBillingPreview(baseInput({
+      outboundDocuments: [outbound],
+      rates: {
+        ...DEFAULT_BILLING_RATES,
+        outboundFeePerPallet: 10,
+        excludeUnderfilledPallets: true,
+        minimumQtyPerPallet: 10
+      }
+    }));
+
+    expect(preview.summary.shippedPallets).toBe(1);
+    expect(preview.summary.outboundAmount).toBe(10);
+  });
+
+  it("pools duplicate inbound lines in the same billing bucket", () => {
+    const inbound = createInboundDocument({
+      id: 23,
+      customerId: 1,
+      customerName: "Acme",
+      containerNo: "CONT-A",
+      status: "CONFIRMED",
+      actualArrivalDate: "2026-03-18",
+      lines: [
+        createInboundDocumentLine({ sku: "SKU-A", storageSection: "A", receivedQty: 6, pallets: 1 }),
+        createInboundDocumentLine({ id: 2, sku: "SKU-A", storageSection: "A", receivedQty: 6, pallets: 1 })
+      ]
+    });
+
+    const preview = buildBillingPreview(baseInput({
+      inboundDocuments: [inbound],
+      rates: {
+        ...DEFAULT_BILLING_RATES,
+        wrappingFeePerPallet: 10,
+        excludeUnderfilledPallets: true,
+        minimumQtyPerPallet: 10
+      }
+    }));
+
+    expect(preview.summary.receivedPallets).toBe(1);
+    expect(preview.summary.wrappingAmount).toBe(10);
+  });
+
+  it("pools duplicate outbound lines in the same billing bucket", () => {
+    const outbound = createOutboundDocument({
+      id: 24,
+      customerId: 1,
+      customerName: "Acme",
+      packingListNo: "PO-24",
+      status: "CONFIRMED",
+      actualShipDate: "2026-03-18",
+      lines: [
+        createOutboundDocumentLine({
+          skuMasterId: 1,
+          quantity: 6,
+          pallets: 1,
+          pickAllocations: [createOutboundPickAllocation({ containerNo: "CONT-A", storageSection: "A", allocatedQty: 6, pallets: 1 })]
+        }),
+        createOutboundDocumentLine({
+          id: 2,
+          skuMasterId: 1,
+          quantity: 6,
+          pallets: 1,
+          pickAllocations: [createOutboundPickAllocation({ id: 2, containerNo: "CONT-A", storageSection: "A", allocatedQty: 6, pallets: 1 })]
+        })
+      ]
+    });
+
+    const preview = buildBillingPreview(baseInput({
+      outboundDocuments: [outbound],
+      rates: {
+        ...DEFAULT_BILLING_RATES,
+        outboundFeePerPallet: 10,
+        excludeUnderfilledPallets: true,
+        minimumQtyPerPallet: 10
+      }
+    }));
+
+    expect(preview.summary.shippedPallets).toBe(1);
+    expect(preview.summary.outboundAmount).toBe(10);
   });
 
   it("supports warehouse-scoped settlement without pallet identities", () => {

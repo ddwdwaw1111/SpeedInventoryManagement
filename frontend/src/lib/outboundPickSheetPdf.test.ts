@@ -512,6 +512,26 @@ describe("buildPickSheetDocument", () => {
 
     expect(() => buildPickSheetDocument(fixture)).toThrow(/stored pick allocations/i);
   });
+
+  it("omits plan-only zero-actual lines without requiring pick allocations", () => {
+    const fixture = createOutboundDocumentFixture();
+    fixture.lines[1] = {
+      ...fixture.lines[1],
+      plannedQuantity: 15,
+      actualQuantity: 0,
+      quantity: 0,
+      pallets: 0,
+      pickAllocations: []
+    };
+
+    const document = buildPickSheetDocument(fixture);
+
+    expect(document.rows).toHaveLength(2);
+    expect(document.rows.every((row) => row.sku === "608333")).toBe(true);
+    expect(document.totalQty).toBe(20);
+    expect(document.totalPallets).toBe(2);
+    expect(document.totalDemandLines).toBe(1);
+  });
 });
 
 describe("buildPickSheetDefinition", () => {

@@ -1,4 +1,4 @@
-import type { BillingRates } from "./billingPreview";
+import { DEFAULT_BILLING_RATES, MAXIMUM_BILLING_QTY_PER_PALLET, type BillingRates } from "./billingPreview";
 
 export type BillingWorkspaceContext = {
 	startDate: string;
@@ -61,7 +61,9 @@ export function readBillingWorkspaceContext(): BillingWorkspaceContext | null {
 				storageFeePerPalletPerWeek: normalizeRate(parsed.rates.storageFeePerPalletPerWeek),
 				storageFeePerPalletPerWeekNormal: normalizeRate(parsed.rates.storageFeePerPalletPerWeekNormal ?? parsed.rates.storageFeePerPalletPerWeek),
 				storageFeePerPalletPerWeekWestCoastTransfer: normalizeRate(parsed.rates.storageFeePerPalletPerWeekWestCoastTransfer ?? parsed.rates.storageFeePerPalletPerWeek),
-				outboundFeePerPallet: normalizeRate(parsed.rates.outboundFeePerPallet)
+				outboundFeePerPallet: normalizeRate(parsed.rates.outboundFeePerPallet),
+				excludeUnderfilledPallets: parsed.rates.excludeUnderfilledPallets === true,
+				minimumQtyPerPallet: normalizePositiveThreshold(parsed.rates.minimumQtyPerPallet)
 			}
 		};
 	} catch {
@@ -75,4 +77,10 @@ export function setBillingWorkspaceContext(context: BillingWorkspaceContext) {
 
 function normalizeRate(value: unknown) {
 	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+function normalizePositiveThreshold(value: unknown) {
+	return typeof value === "number" && Number.isFinite(value) && value > 0
+		? Math.min(value, MAXIMUM_BILLING_QTY_PER_PALLET)
+		: DEFAULT_BILLING_RATES.minimumQtyPerPallet;
 }

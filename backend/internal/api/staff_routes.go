@@ -14,6 +14,7 @@ func (s *Server) registerStaffRoutes(protected gin.IRouter) {
 	staff.GET("/customers", s.handleListCustomers)
 	staff.GET("/locations", s.handleListLocations)
 	staff.GET("/sku-master", s.handleListSKUMasters)
+	staff.GET("/outbound-source-references", s.handleListOutboundSourceReferences)
 	staff.GET("/items", s.handleListItems)
 	staff.GET("/movements", s.handleListMovements)
 	staff.GET("/reports/operations", s.handleOperationsReport)

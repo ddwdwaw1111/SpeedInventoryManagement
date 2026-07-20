@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	BillingPreviewCalculationVersion = "container-v1"
+	BillingPreviewCalculationVersion = "container-v2"
 	BillingChargeInbound             = "INBOUND"
 	BillingChargeWrapping            = "WRAPPING"
 	BillingChargeStorage             = "STORAGE"
@@ -24,6 +24,7 @@ const (
 
 	billingPreviewStorageGraceDays = 7
 	billingPreviewUnassigned       = "UNASSIGNED"
+	billingPreviewMaxQtyPerPallet  = 15
 )
 
 // BillingPreviewInput describes the complete, server-calculated billing scope.
@@ -142,37 +143,52 @@ type billingInboundSource struct {
 	Pallets       float64   `db:"pallets" json:"pallets"`
 }
 
+type billingInboundLineSource struct {
+	DocumentID     int64   `db:"document_id" json:"documentId"`
+	LineID         int64   `db:"line_id" json:"lineId"`
+	SKUMasterID    int64   `db:"sku_master_id" json:"skuMasterId"`
+	StorageSection string  `db:"storage_section" json:"storageSection"`
+	Quantity       float64 `db:"quantity" json:"quantity"`
+	Pallets        float64 `db:"pallets" json:"pallets"`
+}
+
 type billingOutboundLineSource struct {
 	DocumentID   int64     `db:"document_id" json:"documentId"`
 	LineID       int64     `db:"line_id" json:"lineId"`
+	SKUMasterID  int64     `db:"sku_master_id" json:"skuMasterId"`
 	PickingNo    string    `db:"picking_no" json:"pickingNo"`
 	LocationID   int64     `db:"location_id" json:"locationId"`
 	LocationName string    `db:"location_name" json:"locationName"`
 	OccurredOn   time.Time `db:"occurred_on" json:"occurredOn"`
+	Quantity     int       `db:"quantity" json:"quantity"`
 	Pallets      int       `db:"pallets" json:"pallets"`
 }
 
 type billingOutboundAllocationSource struct {
-	AllocationID int64  `db:"allocation_id" json:"allocationId"`
-	LineID       int64  `db:"line_id" json:"lineId"`
-	ContainerNo  string `db:"container_no" json:"containerNo"`
-	LocationID   int64  `db:"location_id" json:"locationId"`
-	LocationName string `db:"location_name" json:"locationName"`
-	AllocatedQty int    `db:"allocated_qty" json:"allocatedQty"`
-	Status       string `db:"status" json:"status"`
+	AllocationID   int64  `db:"allocation_id" json:"allocationId"`
+	LineID         int64  `db:"line_id" json:"lineId"`
+	ContainerNo    string `db:"container_no" json:"containerNo"`
+	LocationID     int64  `db:"location_id" json:"locationId"`
+	LocationName   string `db:"location_name" json:"locationName"`
+	StorageSection string `db:"storage_section" json:"storageSection"`
+	AllocatedQty   int    `db:"allocated_qty" json:"allocatedQty"`
+	Status         string `db:"status" json:"status"`
 }
 
 type billingLifecycleSource struct {
-	EventID      int64     `db:"event_id" json:"eventId"`
-	LocationID   int64     `db:"location_id" json:"locationId"`
-	LocationName string    `db:"location_name" json:"locationName"`
-	ContainerNo  string    `db:"container_no" json:"containerNo"`
-	EventType    string    `db:"event_type" json:"eventType"`
-	EventDate    time.Time `db:"event_date" json:"eventDate"`
-	PalletDelta  float64   `db:"pallet_delta" json:"palletDelta"`
-	SourceType   string    `db:"source_type" json:"sourceType"`
-	SourceID     int64     `db:"source_id" json:"sourceId"`
-	SourceLineID int64     `db:"source_line_id" json:"sourceLineId"`
+	EventID        int64     `db:"event_id" json:"eventId"`
+	LocationID     int64     `db:"location_id" json:"locationId"`
+	LocationName   string    `db:"location_name" json:"locationName"`
+	StorageSection string    `db:"storage_section" json:"storageSection"`
+	ContainerNo    string    `db:"container_no" json:"containerNo"`
+	SKUMasterID    int64     `db:"sku_master_id" json:"skuMasterId"`
+	EventType      string    `db:"event_type" json:"eventType"`
+	EventDate      time.Time `db:"event_date" json:"eventDate"`
+	QuantityDelta  float64   `db:"quantity_delta" json:"quantityDelta"`
+	PalletDelta    float64   `db:"pallet_delta" json:"palletDelta"`
+	SourceType     string    `db:"source_type" json:"sourceType"`
+	SourceID       int64     `db:"source_id" json:"sourceId"`
+	SourceLineID   int64     `db:"source_line_id" json:"sourceLineId"`
 }
 
 type billingContainerTypeSource struct {
@@ -183,6 +199,7 @@ type billingContainerTypeSource struct {
 type billingPreviewSources struct {
 	CustomerName   string                            `json:"customerName"`
 	Inbound        []billingInboundSource            `json:"inbound"`
+	InboundLines   []billingInboundLineSource        `json:"inboundLines"`
 	OutboundLines  []billingOutboundLineSource       `json:"outboundLines"`
 	Allocations    []billingOutboundAllocationSource `json:"allocations"`
 	Lifecycle      []billingLifecycleSource          `json:"lifecycle"`
@@ -291,6 +308,13 @@ func normalizeBillingPreviewRates(rates BillingRatesSnapshot) (BillingRatesSnaps
 		{"normal storage fee", rates.StorageFeePerPalletWeekNormal},
 		{"transfer storage fee", rates.StorageFeePerPalletWeekWestCoastTransfer},
 		{"outbound fee", rates.OutboundFeePerPallet},
+		{"minimum qty per pallet", rates.MinimumQtyPerPallet},
+	}
+	if rates.ExcludeUnderfilledPallets && rates.MinimumQtyPerPallet <= 0 {
+		return BillingRatesSnapshot{}, fmt.Errorf("%w: minimum qty per pallet must be greater than zero when underfilled-pallet exclusion is enabled", ErrInvalidInput)
+	}
+	if rates.MinimumQtyPerPallet > billingPreviewMaxQtyPerPallet {
+		return BillingRatesSnapshot{}, fmt.Errorf("%w: minimum qty per pallet cannot exceed %d", ErrInvalidInput, billingPreviewMaxQtyPerPallet)
 	}
 	for _, value := range values {
 		if math.IsNaN(value.value) || math.IsInf(value.value, 0) || value.value < 0 {
@@ -320,6 +344,7 @@ func (s *Store) loadBillingPreviewSourcesWithQueryer(
 ) (billingPreviewSources, error) {
 	sources := billingPreviewSources{
 		Inbound:        make([]billingInboundSource, 0),
+		InboundLines:   make([]billingInboundLineSource, 0),
 		OutboundLines:  make([]billingOutboundLineSource, 0),
 		Allocations:    make([]billingOutboundAllocationSource, 0),
 		Lifecycle:      make([]billingLifecycleSource, 0),
@@ -363,14 +388,36 @@ func (s *Store) loadBillingPreviewSourcesWithQueryer(
 		return billingPreviewSources{}, fmt.Errorf("load billing inbound sources: %w", err)
 	}
 
+	if err := sqlx.SelectContext(ctx, queryer, &sources.InboundLines, `
+		SELECT
+			d.id AS document_id,
+			line.id AS line_id,
+			COALESCE(line.sku_master_id, 0) AS sku_master_id,
+			COALESCE(NULLIF(UPPER(TRIM(line.storage_section)), ''), 'TEMP') AS storage_section,
+			GREATEST(line.received_qty, 0) AS quantity,
+			GREATEST(line.pallets, 0) AS pallets
+		FROM inbound_documents d
+		JOIN inbound_document_lines line ON line.document_id = d.id
+		WHERE d.customer_id = ?
+		  AND UPPER(TRIM(d.status)) IN ('CONFIRMED', 'POSTED')
+		  AND d.cancelled_at IS NULL
+		  AND d.corrected_at IS NULL
+		  AND COALESCE(d.actual_arrival_date, DATE(d.confirmed_at), DATE(d.created_at), d.expected_arrival_date) < ?
+		ORDER BY d.id, line.sort_order, line.id
+	`, customerID, endExclusive); err != nil {
+		return billingPreviewSources{}, fmt.Errorf("load billing inbound line sources: %w", err)
+	}
+
 	if err := sqlx.SelectContext(ctx, queryer, &sources.OutboundLines, `
 		SELECT
 			d.id AS document_id,
 			line.id AS line_id,
+			COALESCE(line.sku_master_id, 0) AS sku_master_id,
 			COALESCE(NULLIF(TRIM(d.packing_list_no), ''), CAST(d.id AS CHAR)) AS picking_no,
 			line.location_id,
 			COALESCE(NULLIF(line.location_name_snapshot, ''), l.name) AS location_name,
 			COALESCE(d.actual_ship_date, DATE(d.confirmed_at), DATE(d.created_at), d.expected_ship_date) AS occurred_on,
+			GREATEST(line.quantity, 0) AS quantity,
 			GREATEST(line.pallets, 0) AS pallets
 		FROM outbound_documents d
 		JOIN outbound_document_lines line ON line.document_id = d.id
@@ -391,6 +438,7 @@ func (s *Store) loadBillingPreviewSourcesWithQueryer(
 			COALESCE(NULLIF(UPPER(TRIM(c.container_no)), ''), 'UNASSIGNED') AS container_no,
 			oca.location_id,
 			l.name AS location_name,
+			COALESCE(NULLIF(UPPER(TRIM(oca.storage_section)), ''), 'TEMP') AS storage_section,
 			GREATEST(oca.allocated_qty, 0) AS allocated_qty,
 			UPPER(TRIM(oca.status)) AS status
 		FROM outbound_container_allocations oca
@@ -403,7 +451,7 @@ func (s *Store) loadBillingPreviewSourcesWithQueryer(
 		  AND d.cancelled_at IS NULL
 		  AND UPPER(TRIM(oca.status)) IN ('RESERVED', 'SHIPPED')
 		  AND COALESCE(d.actual_ship_date, DATE(d.confirmed_at), DATE(d.created_at), d.expected_ship_date) < ?
-		ORDER BY oca.outbound_line_id, UPPER(TRIM(c.container_no)), oca.location_id, oca.id
+		ORDER BY oca.outbound_line_id, UPPER(TRIM(c.container_no)), oca.location_id, UPPER(TRIM(oca.storage_section)), oca.id
 	`, customerID, endExclusive); err != nil {
 		return billingPreviewSources{}, fmt.Errorf("load billing outbound allocation sources: %w", err)
 	}
@@ -413,9 +461,12 @@ func (s *Store) loadBillingPreviewSourcesWithQueryer(
 			cle.id AS event_id,
 			cle.location_id,
 			l.name AS location_name,
+			COALESCE(NULLIF(UPPER(TRIM(cle.storage_section)), ''), 'TEMP') AS storage_section,
 			COALESCE(NULLIF(UPPER(TRIM(cle.container_no)), ''), 'UNASSIGNED') AS container_no,
+			COALESCE(cle.sku_master_id, 0) AS sku_master_id,
 			UPPER(TRIM(cle.event_type)) AS event_type,
 			DATE(cle.event_time) AS event_date,
+			cle.quantity_delta,
 			cle.pallet_delta,
 			UPPER(TRIM(COALESCE(cle.source_document_type, ''))) AS source_type,
 			COALESCE(cle.source_document_id, 0) AS source_id,
@@ -424,7 +475,7 @@ func (s *Store) loadBillingPreviewSourcesWithQueryer(
 		JOIN storage_locations l ON l.id = cle.location_id
 		WHERE cle.customer_id = ?
 		  AND cle.event_time < ?
-		  AND cle.pallet_delta <> 0
+		  AND (cle.quantity_delta <> 0 OR cle.pallet_delta <> 0)
 		  AND (
 			(
 			  UPPER(TRIM(COALESCE(cle.source_document_type, ''))) = 'INBOUND'
@@ -482,6 +533,35 @@ func calculateBillingPreview(input BillingPreviewInput, billingRange billingPrev
 		containerTypes[billingPreviewContainerNo(source.ContainerNo)] = billingPreviewContainerType(source.ContainerType)
 	}
 	initialNormalReceiptByContainer := initialNormalBillingReceiptIDs(sources.Inbound)
+	type inboundBillingBucket struct {
+		DocumentID     int64
+		SKUMasterID    int64
+		StorageSection string
+	}
+	type inboundBillingBucketTotals struct {
+		Quantity float64
+		Pallets  float64
+	}
+	inboundBuckets := make(map[inboundBillingBucket]inboundBillingBucketTotals)
+	for _, sourceLine := range sources.InboundLines {
+		key := inboundBillingBucket{
+			DocumentID:     sourceLine.DocumentID,
+			SKUMasterID:    sourceLine.SKUMasterID,
+			StorageSection: normalizeStorageSection(sourceLine.StorageSection),
+		}
+		totals := inboundBuckets[key]
+		totals.Quantity += sourceLine.Quantity
+		totals.Pallets += sourceLine.Pallets
+		inboundBuckets[key] = totals
+	}
+	billableInboundPalletsByDocument := make(map[int64]float64)
+	for key, totals := range inboundBuckets {
+		billableInboundPalletsByDocument[key.DocumentID] += billingPreviewBillablePallets(
+			totals.Pallets,
+			totals.Quantity,
+			input.Rates,
+		)
+	}
 
 	lines := make([]BillingPreviewLine, 0)
 	warnings := make([]string, 0)
@@ -494,15 +574,21 @@ func calculateBillingPreview(input BillingPreviewInput, billingRange billingPrev
 		locationID := source.LocationID
 		occurredOn := dateOnly(source.OccurredOn).Format(time.DateOnly)
 		reference := fmt.Sprintf("Receipt %d | %s", source.DocumentID, containerNo)
+		billableReceiptPallets := billingPreviewNonNegative(source.Pallets)
+		if input.Rates.ExcludeUnderfilledPallets {
+			billableReceiptPallets = billingPreviewRoundQuantity(billableInboundPalletsByDocument[source.DocumentID])
+		}
 		if containerType == ContainerTypeWestCoastTransfer {
-			quantity := billingPreviewNonNegative(source.Pallets)
+			if billableReceiptPallets <= 0 {
+				continue
+			}
 			lines = append(lines, BillingPreviewLine{
 				ID: fmt.Sprintf("inbound-%d", source.DocumentID), ChargeType: BillingChargeInbound,
 				SourceType: "INBOUND", SourceID: source.DocumentID, Reference: reference,
 				ContainerNo: containerNo, ContainerType: containerType, Warehouse: source.LocationName,
-				LocationID: &locationID, OccurredOn: occurredOn, Quantity: quantity,
+				LocationID: &locationID, OccurredOn: occurredOn, Quantity: billableReceiptPallets,
 				UnitRate:    input.Rates.TransferInboundFeePerPallet,
-				Amount:      roundCurrencyGo(quantity * input.Rates.TransferInboundFeePerPallet),
+				Amount:      roundCurrencyGo(billableReceiptPallets * input.Rates.TransferInboundFeePerPallet),
 				Description: "Transfer inbound pallets",
 			})
 			continue
@@ -520,15 +606,14 @@ func calculateBillingPreview(input BillingPreviewInput, billingRange billingPrev
 				Description: "Inbound container",
 			})
 		}
-		pallets := billingPreviewNonNegative(source.Pallets)
-		if pallets > 0 {
+		if billableReceiptPallets > 0 {
 			lines = append(lines, BillingPreviewLine{
 				ID: fmt.Sprintf("wrapping-%d", source.DocumentID), ChargeType: BillingChargeWrapping,
 				SourceType: "INBOUND", SourceID: source.DocumentID, Reference: reference,
 				ContainerNo: containerNo, ContainerType: containerType, Warehouse: source.LocationName,
-				LocationID: &locationID, OccurredOn: occurredOn, Quantity: pallets,
+				LocationID: &locationID, OccurredOn: occurredOn, Quantity: billableReceiptPallets,
 				UnitRate:    input.Rates.WrappingFeePerPallet,
-				Amount:      roundCurrencyGo(pallets * input.Rates.WrappingFeePerPallet),
+				Amount:      roundCurrencyGo(billableReceiptPallets * input.Rates.WrappingFeePerPallet),
 				Description: "Pallet wrapping",
 			})
 		}
@@ -538,8 +623,24 @@ func calculateBillingPreview(input BillingPreviewInput, billingRange billingPrev
 	for _, allocation := range sources.Allocations {
 		allocationsByLine[allocation.LineID] = append(allocationsByLine[allocation.LineID], allocation)
 	}
+	type outboundBillingBucket struct {
+		DocumentID     int64
+		SKUMasterID    int64
+		ContainerNo    string
+		LocationID     int64
+		StorageSection string
+	}
+	type outboundBillingBucketTotals struct {
+		SourceLineID int64
+		PickingNo    string
+		LocationName string
+		OccurredOn   time.Time
+		Quantity     int
+		Pallets      int
+	}
+	outboundBuckets := make(map[outboundBillingBucket]outboundBillingBucketTotals)
 	for _, source := range sources.OutboundLines {
-		if !billingPreviewDateInRange(source.OccurredOn, billingRange) || source.Pallets <= 0 {
+		if !billingPreviewDateInRange(source.OccurredOn, billingRange) || (source.Quantity <= 0 && source.Pallets <= 0) {
 			continue
 		}
 		allocatedGroups := groupBillingOutboundAllocations(allocationsByLine[source.LineID])
@@ -550,30 +651,75 @@ func calculateBillingPreview(input BillingPreviewInput, billingRange billingPrev
 			}
 			allocatedGroups = []billingOutboundAllocationGroup{{
 				ContainerNo: billingPreviewUnassigned, LocationID: source.LocationID,
-				LocationName: source.LocationName, AllocatedQty: 1,
+				LocationName: source.LocationName, AllocatedQty: source.Quantity,
 			}}
 			warnings = append(warnings, fmt.Sprintf("Outbound line %d has no source-container allocation; its shipping pallets are shown as UNASSIGNED.", source.LineID))
 		}
 		shares := allocateBillingPalletsLargestRemainder(source.Pallets, allocatedGroups)
 		for index, group := range allocatedGroups {
-			share := shares[index]
 			containerNo := billingPreviewContainerNo(group.ContainerNo)
-			containerType := billingPreviewContainerType(containerTypes[containerNo])
-			if share <= 0 || !billingPreviewMatchesScope(input, group.LocationID, containerType) {
-				continue
+			storageSection := normalizeStorageSection(group.StorageSection)
+			key := outboundBillingBucket{
+				DocumentID: source.DocumentID, SKUMasterID: source.SKUMasterID,
+				ContainerNo: containerNo, LocationID: group.LocationID, StorageSection: storageSection,
 			}
-			locationID := group.LocationID
-			lines = append(lines, BillingPreviewLine{
-				ID:         fmt.Sprintf("outbound-%d-%d-%s-%d", source.DocumentID, source.LineID, containerNo, group.LocationID),
-				ChargeType: BillingChargeOutbound, SourceType: "OUTBOUND", SourceID: source.DocumentID,
-				SourceLineID: source.LineID, Reference: fmt.Sprintf("Picking order %s | %s", source.PickingNo, containerNo),
-				ContainerNo: containerNo, ContainerType: containerType, Warehouse: group.LocationName,
-				LocationID: &locationID, OccurredOn: dateOnly(source.OccurredOn).Format(time.DateOnly),
-				Quantity: float64(share), UnitRate: input.Rates.OutboundFeePerPallet,
-				Amount:      roundCurrencyGo(float64(share) * input.Rates.OutboundFeePerPallet),
-				Description: "Outbound shipping pallets",
-			})
+			totals := outboundBuckets[key]
+			if totals.SourceLineID == 0 {
+				totals.SourceLineID = source.LineID
+			} else if totals.SourceLineID != source.LineID {
+				totals.SourceLineID = -1
+			}
+			totals.PickingNo = source.PickingNo
+			totals.LocationName = group.LocationName
+			totals.OccurredOn = source.OccurredOn
+			totals.Quantity += group.AllocatedQty
+			totals.Pallets += shares[index]
+			outboundBuckets[key] = totals
 		}
+	}
+	outboundBucketKeys := make([]outboundBillingBucket, 0, len(outboundBuckets))
+	for key := range outboundBuckets {
+		outboundBucketKeys = append(outboundBucketKeys, key)
+	}
+	sort.Slice(outboundBucketKeys, func(left, right int) bool {
+		leftKey := outboundBucketKeys[left]
+		rightKey := outboundBucketKeys[right]
+		if leftKey.DocumentID != rightKey.DocumentID {
+			return leftKey.DocumentID < rightKey.DocumentID
+		}
+		if leftKey.SKUMasterID != rightKey.SKUMasterID {
+			return leftKey.SKUMasterID < rightKey.SKUMasterID
+		}
+		if leftKey.ContainerNo != rightKey.ContainerNo {
+			return leftKey.ContainerNo < rightKey.ContainerNo
+		}
+		if leftKey.LocationID != rightKey.LocationID {
+			return leftKey.LocationID < rightKey.LocationID
+		}
+		return leftKey.StorageSection < rightKey.StorageSection
+	})
+	for _, key := range outboundBucketKeys {
+		totals := outboundBuckets[key]
+		containerType := billingPreviewContainerType(containerTypes[key.ContainerNo])
+		billablePallets := billingPreviewBillablePallets(float64(totals.Pallets), float64(totals.Quantity), input.Rates)
+		if billablePallets <= 0 || !billingPreviewMatchesScope(input, key.LocationID, containerType) {
+			continue
+		}
+		sourceLineID := totals.SourceLineID
+		if sourceLineID < 0 {
+			sourceLineID = 0
+		}
+		locationID := key.LocationID
+		lines = append(lines, BillingPreviewLine{
+			ID:         fmt.Sprintf("outbound-%d-%d-%s-%d-%s", key.DocumentID, key.SKUMasterID, key.ContainerNo, key.LocationID, key.StorageSection),
+			ChargeType: BillingChargeOutbound, SourceType: "OUTBOUND", SourceID: key.DocumentID,
+			SourceLineID: sourceLineID, Reference: fmt.Sprintf("Picking order %s | %s", totals.PickingNo, key.ContainerNo),
+			ContainerNo: key.ContainerNo, ContainerType: containerType, Warehouse: totals.LocationName,
+			LocationID: &locationID, OccurredOn: dateOnly(totals.OccurredOn).Format(time.DateOnly),
+			Quantity: billablePallets, UnitRate: input.Rates.OutboundFeePerPallet,
+			Amount:      roundCurrencyGo(billablePallets * input.Rates.OutboundFeePerPallet),
+			Description: "Outbound shipping pallets",
+		})
 	}
 
 	storageRows, storageLines, dailyBalances := calculateBillingStorage(input, billingRange, graceEnabled, sources, containerTypes)
@@ -637,10 +783,11 @@ func initialNormalBillingReceiptIDs(sources []billingInboundSource) map[string]i
 }
 
 type billingOutboundAllocationGroup struct {
-	ContainerNo  string
-	LocationID   int64
-	LocationName string
-	AllocatedQty int
+	ContainerNo    string
+	LocationID     int64
+	LocationName   string
+	StorageSection string
+	AllocatedQty   int
 }
 
 func groupBillingOutboundAllocations(allocations []billingOutboundAllocationSource) []billingOutboundAllocationGroup {
@@ -650,10 +797,14 @@ func groupBillingOutboundAllocations(allocations []billingOutboundAllocationSour
 			continue
 		}
 		containerNo := billingPreviewContainerNo(allocation.ContainerNo)
-		key := fmt.Sprintf("%s|%020d", containerNo, allocation.LocationID)
+		storageSection := normalizeStorageSection(allocation.StorageSection)
+		key := fmt.Sprintf("%s|%020d|%s", containerNo, allocation.LocationID, storageSection)
 		group := groupsByKey[key]
 		if group == nil {
-			group = &billingOutboundAllocationGroup{ContainerNo: containerNo, LocationID: allocation.LocationID, LocationName: allocation.LocationName}
+			group = &billingOutboundAllocationGroup{
+				ContainerNo: containerNo, LocationID: allocation.LocationID,
+				LocationName: allocation.LocationName, StorageSection: storageSection,
+			}
 			groupsByKey[key] = group
 		}
 		group.AllocatedQty += allocation.AllocatedQty
@@ -713,6 +864,12 @@ type billingStorageGroup struct {
 	Events        []billingLifecycleSource
 }
 
+type billingStorageBalanceKey struct {
+	LocationID     int64
+	StorageSection string
+	SKUMasterID    int64
+}
+
 func calculateBillingStorage(
 	input BillingPreviewInput,
 	billingRange billingPreviewRange,
@@ -760,7 +917,8 @@ func calculateBillingStorage(
 			return group.Events[left].EventID < group.Events[right].EventID
 		})
 
-		balancesByLocation := make(map[int64]float64)
+		palletBalancesByPosition := make(map[billingStorageBalanceKey]float64)
+		quantityBalancesByPosition := make(map[billingStorageBalanceKey]float64)
 		locationNames := make(map[int64]string)
 		dailyBalances := make(map[string]float64)
 		freeDailyBalances := make(map[string]float64)
@@ -785,22 +943,35 @@ func calculateBillingStorage(
 		for day := billingRange.Start; day.Before(billingRange.EndExclusive); day = day.AddDate(0, 0, 1) {
 			for eventIndex < len(group.Events) && !dateOnly(group.Events[eventIndex].EventDate).After(day) {
 				event := group.Events[eventIndex]
-				balancesByLocation[event.LocationID] = billingPreviewRoundQuantity(
-					balancesByLocation[event.LocationID] + event.PalletDelta,
+				positionKey := billingStorageBalanceKey{
+					LocationID:     event.LocationID,
+					StorageSection: strings.ToUpper(strings.TrimSpace(event.StorageSection)),
+					SKUMasterID:    event.SKUMasterID,
+				}
+				palletBalancesByPosition[positionKey] = billingPreviewRoundQuantity(
+					palletBalancesByPosition[positionKey] + event.PalletDelta,
+				)
+				quantityBalancesByPosition[positionKey] = billingPreviewRoundQuantity(
+					quantityBalancesByPosition[positionKey] + event.QuantityDelta,
 				)
 				locationNames[event.LocationID] = event.LocationName
 				eventIndex++
 			}
 
 			dayEndPallets := 0.0
-			for locationID, balance := range balancesByLocation {
-				if balance <= 0 || (input.WarehouseLocationID != nil && locationID != *input.WarehouseLocationID) {
+			for positionKey, palletBalance := range palletBalancesByPosition {
+				if palletBalance <= 0 || (input.WarehouseLocationID != nil && positionKey.LocationID != *input.WarehouseLocationID) {
 					continue
 				}
-				dayEndPallets += balance
-				warehouse := strings.TrimSpace(locationNames[locationID])
+				billablePallets := billingPreviewBillablePallets(
+					palletBalance,
+					quantityBalancesByPosition[positionKey],
+					input.Rates,
+				)
+				dayEndPallets += billablePallets
+				warehouse := strings.TrimSpace(locationNames[positionKey.LocationID])
 				if warehouse == "" {
-					warehouse = fmt.Sprintf("Warehouse #%d", locationID)
+					warehouse = fmt.Sprintf("Warehouse #%d", positionKey.LocationID)
 				}
 				warehousesTouched[warehouse] = struct{}{}
 			}
@@ -956,6 +1127,21 @@ func billingPreviewNonNegative(value float64) float64 {
 		return 0
 	}
 	return billingPreviewRoundQuantity(value)
+}
+
+// billingPreviewBillablePallets applies the optional minimum-fill rule without
+// relying on the deprecated pallet-entity model. At a billing bucket level,
+// every billed pallet must be backed by at least MinimumQtyPerPallet units.
+func billingPreviewBillablePallets(pallets, quantity float64, rates BillingRatesSnapshot) float64 {
+	physicalPallets := billingPreviewNonNegative(pallets)
+	if physicalPallets <= 0 || !rates.ExcludeUnderfilledPallets {
+		return physicalPallets
+	}
+	if rates.MinimumQtyPerPallet <= 0 {
+		return physicalPallets
+	}
+	quantityBackedPallets := math.Floor((billingPreviewNonNegative(quantity) + 1e-9) / rates.MinimumQtyPerPallet)
+	return billingPreviewRoundQuantity(math.Min(physicalPallets, quantityBackedPallets))
 }
 
 func billingPreviewRoundQuantity(value float64) float64 {

@@ -1,6 +1,7 @@
 import { parseDateLikeValue, startOfLocalDay, toIsoDateString } from "./dates";
 import { isOperationalInboundDocument } from "./documentTracking";
 import { formatMoney } from "./formatters";
+import { normalizeStorageSection } from "./types";
 import type {
   BillingPreviewResult,
   ContainerLifecycleEvent,
@@ -18,6 +19,8 @@ export type BillingRates = {
   storageFeePerPalletPerWeekNormal: number;
   storageFeePerPalletPerWeekWestCoastTransfer: number;
   outboundFeePerPallet: number;
+  excludeUnderfilledPallets: boolean;
+  minimumQtyPerPallet: number;
 };
 
 export type BillingInvoiceLine = {
@@ -124,6 +127,7 @@ type BillingRange = {
 
 const DEFAULT_UNASSIGNED_CONTAINER = "UNASSIGNED";
 const STORAGE_GRACE_DAYS = 7;
+export const MAXIMUM_BILLING_QTY_PER_PALLET = 15;
 
 export const DEFAULT_BILLING_RATES: BillingRates = {
   inboundContainerFee: 450,
@@ -132,7 +136,9 @@ export const DEFAULT_BILLING_RATES: BillingRates = {
   storageFeePerPalletPerWeek: 7,
   storageFeePerPalletPerWeekNormal: 7,
   storageFeePerPalletPerWeekWestCoastTransfer: 7,
-  outboundFeePerPallet: 0
+  outboundFeePerPallet: 0,
+  excludeUnderfilledPallets: false,
+  minimumQtyPerPallet: 10
 };
 
 export function buildBillingPreview(input: BuildBillingPreviewInput): BillingPreview {
@@ -148,12 +154,6 @@ export function buildBillingPreview(input: BuildBillingPreviewInput): BillingPre
     input.rates,
     billingRange
   );
-  const shippedPallets = countShippedPallets(
-    input.outboundDocuments,
-    input.customerId,
-    input.locationId,
-    billingRange
-  );
 	const outboundLines = buildOutboundInvoiceLines(
 		input.outboundDocuments,
 		input.customerId,
@@ -161,6 +161,7 @@ export function buildBillingPreview(input: BuildBillingPreviewInput): BillingPre
 		input.rates,
 		billingRange
 	);
+	const shippedPallets = outboundLines.reduce((total, line) => total + line.quantity, 0);
 	const { storageRows, storageLines, dailyBalanceRows } = buildContainerLifecycleStorageCharges(
 		input.containerLifecycleEvents ?? [],
 		input.inboundDocuments,
@@ -330,15 +331,28 @@ function normalizeBillingRates(rates: BillingRates): BillingRates {
     return {
       ...rates,
       storageFeePerPalletPerWeekNormal: rates.storageFeePerPalletPerWeek ?? 0,
-      storageFeePerPalletPerWeekWestCoastTransfer: rates.storageFeePerPalletPerWeek ?? 0
+      storageFeePerPalletPerWeekWestCoastTransfer: rates.storageFeePerPalletPerWeek ?? 0,
+      excludeUnderfilledPallets: rates.excludeUnderfilledPallets ?? false,
+      minimumQtyPerPallet: rates.minimumQtyPerPallet ?? DEFAULT_BILLING_RATES.minimumQtyPerPallet
     };
   }
 
   return {
     ...rates,
     transferInboundFeePerPallet: rates.transferInboundFeePerPallet ?? DEFAULT_BILLING_RATES.transferInboundFeePerPallet,
-    storageFeePerPalletPerWeek: rates.storageFeePerPalletPerWeek ?? rates.storageFeePerPalletPerWeekNormal
+    storageFeePerPalletPerWeek: rates.storageFeePerPalletPerWeek ?? rates.storageFeePerPalletPerWeekNormal,
+    excludeUnderfilledPallets: rates.excludeUnderfilledPallets ?? false,
+    minimumQtyPerPallet: rates.minimumQtyPerPallet ?? DEFAULT_BILLING_RATES.minimumQtyPerPallet
   };
+}
+
+function resolveBillablePallets(pallets: number, quantity: number, rates: BillingRates) {
+	const physicalPallets = Math.max(0, pallets);
+	if (!rates.excludeUnderfilledPallets || rates.minimumQtyPerPallet <= 0) {
+		return physicalPallets;
+	}
+	const threshold = Math.min(rates.minimumQtyPerPallet, MAXIMUM_BILLING_QTY_PER_PALLET);
+	return Math.min(physicalPallets, Math.floor((Math.max(0, quantity) + 1e-9) / threshold));
 }
 
 function resolveStorageRatePerDay(containerType: ContainerType, rates: BillingRates) {
@@ -414,11 +428,25 @@ function buildInboundInvoiceLines(
     }
 
     const receivedPallets = document.lines.reduce((total, line) => total + Math.max(line.pallets, 0), 0);
+		const inboundBillingBuckets = new Map<string, { pallets: number; quantity: number }>();
+		for (const line of document.lines) {
+			const key = `${line.sku.trim().toUpperCase()}|${normalizeStorageSection(line.storageSection)}`;
+			const bucket = inboundBillingBuckets.get(key) ?? { pallets: 0, quantity: 0 };
+			bucket.pallets += Math.max(line.pallets, 0);
+			bucket.quantity += Math.max(line.receivedQty, 0);
+			inboundBillingBuckets.set(key, bucket);
+		}
+		const billableReceivedPallets = rates.excludeUnderfilledPallets
+			? [...inboundBillingBuckets.values()].reduce(
+				(total, bucket) => total + resolveBillablePallets(bucket.pallets, bucket.quantity, rates),
+				0
+			)
+			: receivedPallets;
     const documentContainerType = normalizeContainerTypeValue(document.containerType);
     const containerNo = normalizeContainerNo(document.containerNo);
     const warehouseSummary = document.locationName || "-";
     const reference = buildInboundReference(document, containerNo);
-    const inboundCharge = resolveInboundCharge(documentContainerType, rates, receivedPallets);
+    const inboundCharge = resolveInboundCharge(documentContainerType, rates, billableReceivedPallets);
 
     lines.push({
       id: `inbound-${document.id}`,
@@ -435,7 +463,7 @@ function buildInboundInvoiceLines(
       meta: inboundCharge.meta
     });
 
-    if (receivedPallets > 0 && documentContainerType !== "WEST_COAST_TRANSFER") {
+    if (billableReceivedPallets > 0 && documentContainerType !== "WEST_COAST_TRANSFER") {
       lines.push({
         id: `wrapping-${document.id}`,
         customerId: document.customerId,
@@ -445,50 +473,15 @@ function buildInboundInvoiceLines(
         containerNo,
         warehouseSummary,
         occurredOn,
-        quantity: receivedPallets,
+        quantity: billableReceivedPallets,
         unitRate: rates.wrappingFeePerPallet,
-        amount: roundCurrency(receivedPallets * rates.wrappingFeePerPallet),
-        meta: `${receivedPallets} wrapped pallets`
+        amount: roundCurrency(billableReceivedPallets * rates.wrappingFeePerPallet),
+        meta: `${billableReceivedPallets} wrapped pallets`
       });
     }
   }
 
   return lines;
-}
-
-function countShippedPallets(
-  outboundDocuments: OutboundDocument[],
-  customerId: number | "all",
-  locationId: number | "all" | undefined,
-  billingRange: BillingRange
-) {
-  let totalShippedPallets = 0;
-
-  for (const document of outboundDocuments) {
-    if (!belongsToCustomer(document.customerId, customerId)) {
-      continue;
-    }
-    if (!isBillableDocument(document.status)) {
-      continue;
-    }
-
-    const lineScope = locationId && locationId !== "all"
-      ? document.lines.filter((line) => line.locationId === locationId)
-      : document.lines;
-
-    const occurredOn = resolveOutboundBillingDate(document);
-    if (!isWithinRange(occurredOn, billingRange)) {
-      continue;
-    }
-
-    const shippedPallets = lineScope.reduce((total, line) => total + Math.max(line.pallets, 0), 0);
-    if (shippedPallets <= 0) {
-      continue;
-    }
-    totalShippedPallets += shippedPallets;
-  }
-
-  return totalShippedPallets;
 }
 
 function buildOutboundInvoiceLines(
@@ -508,7 +501,7 @@ function buildOutboundInvoiceLines(
 			continue;
 		}
 
-		const groups = new Map<string, { containerNo: string; warehouseSummary: string; pallets: number }>();
+		const groups = new Map<string, { containerNo: string; warehouseSummary: string; pallets: number; quantity: number }>();
 		for (const documentLine of document.lines) {
 			if (locationId && locationId !== "all" && documentLine.locationId !== locationId) {
 				continue;
@@ -523,15 +516,18 @@ function buildOutboundInvoiceLines(
 				}
 				const containerNo = normalizeContainerNo(allocation.containerNo);
 				const warehouseSummary = allocation.locationName || documentLine.locationName || "-";
-				const key = `${containerNo}|${allocation.locationId || documentLine.locationId}`;
-				const group = groups.get(key) ?? { containerNo, warehouseSummary, pallets: 0 };
+				const storageSection = normalizeStorageSection(allocation.storageSection);
+				const key = `${containerNo}|${allocation.locationId || documentLine.locationId}|${storageSection}|${documentLine.skuMasterId}`;
+				const group = groups.get(key) ?? { containerNo, warehouseSummary, pallets: 0, quantity: 0 };
 				group.pallets += outboundPalletShares[allocationIndex] ?? 0;
+				group.quantity += Math.max(0, allocation.allocatedQty);
 				groups.set(key, group);
 			}
 		}
 
 		for (const [key, group] of groups) {
-			if (group.pallets <= 0) {
+			const billablePallets = resolveBillablePallets(group.pallets, group.quantity, rates);
+			if (billablePallets <= 0) {
 				continue;
 			}
 			const shipmentReference = document.packingListNo || document.orderRef || String(document.id);
@@ -544,10 +540,10 @@ function buildOutboundInvoiceLines(
 				containerNo: group.containerNo,
 				warehouseSummary: group.warehouseSummary,
 				occurredOn,
-				quantity: group.pallets,
+				quantity: billablePallets,
 				unitRate: rates.outboundFeePerPallet,
-				amount: roundCurrency(group.pallets * rates.outboundFeePerPallet),
-				meta: `${group.pallets} shipped pallets`
+				amount: roundCurrency(billablePallets * rates.outboundFeePerPallet),
+				meta: `${billablePallets} shipped pallets`
 			});
 		}
 	}
@@ -607,7 +603,7 @@ function buildContainerLifecycleStorageCharges(
 	};
 	const groups = new Map<string, Group>();
 	for (const event of events) {
-		if (!belongsToCustomer(event.customerId, customerId) || !event.palletDelta) continue;
+		if (!belongsToCustomer(event.customerId, customerId) || (!event.palletDelta && !event.quantityDelta)) continue;
 		const parsedAt = parseDateLikeValue(event.eventTime);
 		if (!parsedAt || parsedAt >= billingRange.endExclusive) continue;
 		const containerNo = normalizeContainerNo(event.containerNo);
@@ -629,7 +625,9 @@ function buildContainerLifecycleStorageCharges(
 	const storageRows: BillingStorageRow[] = [];
 	for (const group of groups.values()) {
 		group.events.sort((left, right) => left.parsedAt.getTime() - right.parsedAt.getTime() || left.id - right.id);
-		const balancesByLocation = new Map<number, number>();
+		const palletBalancesByPosition = new Map<string, number>();
+		const quantityBalancesByPosition = new Map<string, number>();
+		const positionLocationIds = new Map<string, number>();
 		const locationNames = new Map<number, string>();
 		const dailyBalanceMap = new Map<string, number>();
 		const freeDailyBalanceMap = new Map<string, number>();
@@ -645,16 +643,29 @@ function buildContainerLifecycleStorageCharges(
 			const nextDay = shiftDay(dayCursor, 1);
 			while (eventIndex < group.events.length && group.events[eventIndex].parsedAt < nextDay) {
 				const event = group.events[eventIndex];
-				const nextBalance = Math.max(0, (balancesByLocation.get(event.locationId) ?? 0) + event.palletDelta);
-				balancesByLocation.set(event.locationId, nextBalance);
+				const positionKey = [
+					event.locationId,
+					(event.storageSection || "TEMP").trim().toUpperCase(),
+					event.skuMasterId || 0
+				].join("|");
+				const nextPalletBalance = (palletBalancesByPosition.get(positionKey) ?? 0) + event.palletDelta;
+				const nextQuantityBalance = (quantityBalancesByPosition.get(positionKey) ?? 0) + event.quantityDelta;
+				palletBalancesByPosition.set(positionKey, nextPalletBalance);
+				quantityBalancesByPosition.set(positionKey, nextQuantityBalance);
+				positionLocationIds.set(positionKey, event.locationId);
 				locationNames.set(event.locationId, event.locationName || `Warehouse #${event.locationId}`);
 				eventIndex += 1;
 			}
 
 			let dayEndPallets = 0;
-			for (const [eventLocationId, balance] of balancesByLocation) {
-				if (balance <= 0 || (locationId && locationId !== "all" && eventLocationId !== locationId)) continue;
-				dayEndPallets += balance;
+			for (const [positionKey, palletBalance] of palletBalancesByPosition) {
+				const eventLocationId = positionLocationIds.get(positionKey) ?? 0;
+				if (palletBalance <= 0 || (locationId && locationId !== "all" && eventLocationId !== locationId)) continue;
+				dayEndPallets += resolveBillablePallets(
+					palletBalance,
+					quantityBalancesByPosition.get(positionKey) ?? 0,
+					normalizedRates
+				);
 				warehousesTouched.add(locationNames.get(eventLocationId) ?? `Warehouse #${eventLocationId}`);
 			}
 			if (dayEndPallets <= 0) continue;

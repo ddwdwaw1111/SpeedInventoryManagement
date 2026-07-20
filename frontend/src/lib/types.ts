@@ -262,6 +262,16 @@ export type SKUMaster = {
   updatedAt: string;
 };
 
+export type OutboundSourceReference = {
+  customerId: number;
+  customerName: string;
+  skuMasterId: number;
+  itemNumber: string;
+  sku: string;
+  description: string;
+  unit: string;
+};
+
 export type SKUMasterPayload = {
   itemNumber: string;
   sku: string;
@@ -1257,6 +1267,8 @@ export type BillingRatesSnapshot = {
   storageFeePerPalletPerWeekNormal: number;
   storageFeePerPalletPerWeekWestCoastTransfer: number;
   outboundFeePerPallet: number;
+  excludeUnderfilledPallets?: boolean;
+  minimumQtyPerPallet?: number;
 };
 
 export type BillingPreviewPayload = {

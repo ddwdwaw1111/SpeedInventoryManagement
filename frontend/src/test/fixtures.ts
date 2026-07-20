@@ -8,6 +8,7 @@ import type {
   OutboundDocument,
   OutboundDocumentLine,
   OutboundPickAllocation,
+  OutboundSourceReference,
   SKUMaster
 } from "../lib/types";
 
@@ -55,6 +56,19 @@ export function createSkuMaster(overrides: Partial<SKUMaster> = {}): SKUMaster {
     defaultUnitsPerPallet: 10,
     createdAt: ISO_TIMESTAMP,
     updatedAt: ISO_TIMESTAMP,
+    ...overrides
+  };
+}
+
+export function createOutboundSourceReference(overrides: Partial<OutboundSourceReference> = {}): OutboundSourceReference {
+  return {
+    customerId: 1,
+    customerName: "Imperial Bag & Paper",
+    skuMasterId: 1,
+    itemNumber: "608333",
+    sku: "608333",
+    description: "VB22GC",
+    unit: "ctn",
     ...overrides
   };
 }
