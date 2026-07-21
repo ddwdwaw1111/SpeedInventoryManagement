@@ -2847,14 +2847,15 @@ func TestBulkOutboundFindsRemoteContainerAndTransfersWhenDraftConfirmedIntegrati
 		ActualShipDate: "2026-07-15",
 		RowNumbers:     []int{2},
 		Lines: []OutboundBulkImportLinePreview{{
-			RowNumber:        2,
-			Warehouse:        mainLocation.Name,
-			SourceContainer:  containerNo,
-			StorageSection:   DefaultStorageSection,
-			SKU:              item.SKU,
-			Quantity:         4,
-			InventoryPallets: 1,
-			OutboundPallets:  3,
+			RowNumber:                 2,
+			Warehouse:                 mainLocation.Name,
+			SourceContainer:           containerNo,
+			StorageSection:            DefaultStorageSection,
+			SKU:                       item.SKU,
+			Quantity:                  4,
+			InventoryPallets:          1,
+			RemainingInventoryPallets: 2,
+			OutboundPallets:           3,
 		}},
 	}})
 	if err != nil {

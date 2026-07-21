@@ -15,7 +15,8 @@ export const OUTBOUND_BULK_IMPORT_TEMPLATE_COLUMNS: ExcelExportColumn[] = [
   { key: "itemNumber", label: "Item Code (Reference)" },
   { key: "plannedQuantity", label: "Planned Qty", numberFormat: "number" },
   { key: "quantity", label: "Actual Qty", numberFormat: "number" },
-  { key: "inventoryPallets", label: "Inventory Pallets", numberFormat: "number" },
+  { key: "inventoryPallets", label: "Inventory Pallets Used", numberFormat: "number" },
+  { key: "remainingInventoryPallets", label: "Remaining Inventory Pallets", numberFormat: "number" },
   { key: "outboundPallets", label: "Outbound Pallets", numberFormat: "number" },
   { key: "lineNote", label: "Line Note" }
 ];
@@ -35,7 +36,9 @@ export function downloadOutboundBulkImportSample(items: Item[], locations: Locat
   const fallbackLocation = locations[0];
   const token = Date.now().toString(36).toUpperCase();
   const shipDate = formatLocalDate(referenceDate);
-  const rows = eligible.length > 0 ? eligible.map((item, index) => ({
+  const rows = eligible.length > 0 ? eligible.map((item, index) => {
+    const quantity = Math.max(1, Math.min(item.availableQty, index === 0 ? 10 : 5));
+    return {
     pickingOrderNo: `SAMPLE-PO-${token}`,
     expectedShipDate: shipDate,
     actualShipDate: "",
@@ -47,12 +50,13 @@ export function downloadOutboundBulkImportSample(items: Item[], locations: Locat
     storageSection: item.storageSection,
     sku: item.sku,
     itemNumber: item.itemNumber,
-    plannedQuantity: Math.max(1, Math.min(item.availableQty, index === 0 ? 10 : 5)),
-    quantity: Math.max(1, Math.min(item.availableQty, index === 0 ? 10 : 5)),
-    inventoryPallets: item.availablePallets > 0 ? 1 : 0,
+    plannedQuantity: quantity,
+    quantity,
+    inventoryPallets: item.pallets > 0 ? 1 : 0,
+    remainingInventoryPallets: quantity >= item.quantity ? 0 : item.pallets,
     outboundPallets: item.pallets > 0 ? 1 : 0,
     lineNote: "Sample outbound line"
-  })) : fallbackLocation ? [{
+  }}) : fallbackLocation ? [{
     pickingOrderNo: `SAMPLE-PO-${token}`,
     expectedShipDate: shipDate,
     actualShipDate: "",
@@ -67,6 +71,7 @@ export function downloadOutboundBulkImportSample(items: Item[], locations: Locat
     plannedQuantity: 10,
     quantity: 10,
     inventoryPallets: 1,
+    remainingInventoryPallets: 1,
     outboundPallets: 1,
     lineNote: "Replace SKU before testing"
   }] : [];

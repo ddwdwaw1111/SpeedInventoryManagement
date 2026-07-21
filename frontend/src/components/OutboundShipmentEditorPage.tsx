@@ -72,8 +72,11 @@ type OutboundAllocationPreviewRow = {
   positionLabel: string;
   availableQty: number;
   availablePallets: number;
+  startingQty: number;
+  startingPallets: number;
   allocatedQty: number;
   pallets: number;
+  remainingPallets: number;
 };
 
 type OutboundAllocationLineSummary = {
@@ -202,6 +205,8 @@ type OutboundInventoryCandidate = {
   unit: string;
   availableQty: number;
   availablePallets: number;
+  onHandQty: number;
+  onHandPallets: number;
   profileBacked: boolean;
   actualArrivalDate: string | null;
   createdAt: string;
@@ -305,7 +310,9 @@ export function OutboundShipmentEditorPage({
             candidates: persistedSource.candidates.map((candidate) => ({
               ...candidate,
               availableQty: 0,
-              availablePallets: 0
+              availablePallets: 0,
+              onHandQty: 0,
+              onHandPallets: 0
             }))
           });
         continue;
@@ -322,7 +329,7 @@ export function OutboundShipmentEditorPage({
         if (!liveCandidate) {
           return shouldRestorePersistedReservations
             ? persistedCandidate
-            : { ...persistedCandidate, availableQty: 0, availablePallets: 0 };
+            : { ...persistedCandidate, availableQty: 0, availablePallets: 0, onHandQty: 0, onHandPallets: 0 };
         }
         return {
           ...liveCandidate,
@@ -782,7 +789,14 @@ export function OutboundShipmentEditorPage({
     }));
   }
 
-  function updateBatchOutboundLineAllocationSelectionQuantity(lineID: string, inventoryItemID: number, nextQuantity: number) {
+  function updateBatchOutboundLineAllocationSelectionQuantity(
+    lineID: string,
+    inventoryItemID: number,
+    nextQuantity: number,
+    availableQuantity: number,
+    startingQuantity: number,
+    startingPallets: number
+  ) {
     setBatchOutboundLines((current) => current.map((line) => {
       if (line.id !== lineID) {
         return line;
@@ -793,7 +807,14 @@ export function OutboundShipmentEditorPage({
         ...(nextQuantity > 0 ? [{
           inventoryItemId: inventoryItemID,
           quantity: nextQuantity,
-          pallets: existingSelection?.pallets ?? 0
+          pallets: existingSelection?.pallets
+            ?? automaticInventoryPalletsForAllocation(availableQuantity, startingPallets, nextQuantity),
+          startingPallets,
+          remainingPallets: nextQuantity >= startingQuantity
+            ? 0
+            : existingSelection && existingSelection.quantity < startingQuantity
+              ? existingSelection.remainingPallets ?? startingPallets
+              : startingPallets
         }] : [])
       ]);
       return {
@@ -820,6 +841,29 @@ export function OutboundShipmentEditorPage({
           {
             ...existingSelection,
             pallets: nextPallets
+          }
+        ]),
+        allocationSelectionsTouched: true
+      };
+    }));
+  }
+
+  function updateBatchOutboundLineAllocationSelectionRemainingPallets(lineID: string, inventoryItemID: number, nextPallets: number) {
+    setBatchOutboundLines((current) => current.map((line) => {
+      if (line.id !== lineID) {
+        return line;
+      }
+      const existingSelection = line.allocationSelections.find((entry) => entry.inventoryItemId === inventoryItemID);
+      if (!existingSelection || existingSelection.quantity <= 0) {
+        return line;
+      }
+      return {
+        ...line,
+        allocationSelections: normalizeOutboundLineAllocationSelections([
+          ...line.allocationSelections.filter((entry) => entry.inventoryItemId !== inventoryItemID),
+          {
+            ...existingSelection,
+            remainingPallets: nextPallets
           }
         ]),
         allocationSelectionsTouched: true
@@ -1446,7 +1490,7 @@ export function OutboundShipmentEditorPage({
                             {outboundPickPlanRows.map((row) => (
                               <div
                                 key={row.id}
-                                className="grid items-end gap-2 border-b border-slate-100 px-3 py-2.5 last:border-b-0 md:grid-cols-[minmax(10rem,1fr)_minmax(7rem,0.5fr)_minmax(7rem,0.5fr)]"
+                                className="grid items-end gap-2 border-b border-slate-100 px-3 py-2.5 last:border-b-0 md:grid-cols-[minmax(10rem,1fr)_minmax(7rem,0.5fr)_minmax(7rem,0.5fr)_minmax(8rem,0.6fr)]"
                               >
                                 <div className="min-w-0">
                                   <div className="font-mono text-sm font-semibold text-[#143569]">{row.containerNo || "-"}</div>
@@ -1467,7 +1511,10 @@ export function OutboundShipmentEditorPage({
                                       updateBatchOutboundLineAllocationSelectionQuantity(
                                         line.id,
                                         row.inventoryItemId,
-                                        Math.max(0, Math.min(row.availableQty, Number(event.target.value || 0)))
+                                        Math.max(0, Math.min(row.availableQty, Number(event.target.value || 0))),
+                                        row.availableQty,
+                                        row.startingQty,
+                                        row.startingPallets
                                       );
                                     }}
                                     disabled={isReadOnly}
@@ -1479,7 +1526,7 @@ export function OutboundShipmentEditorPage({
                                   <input
                                     type="number"
                                     min="0"
-                                    max={row.availablePallets}
+                                    max={row.startingPallets}
                                     value={numberInputValue(row.pallets)}
                                     aria-label={`${t("inventoryPallets")} ${row.containerNo}`}
                                     onChange={(event) => {
@@ -1487,7 +1534,27 @@ export function OutboundShipmentEditorPage({
                                       updateBatchOutboundLineAllocationSelectionPallets(
                                         line.id,
                                         row.inventoryItemId,
-                                        Math.max(0, Math.min(row.availablePallets, Number(event.target.value || 0)))
+                                        Math.max(0, Math.min(row.startingPallets, Number(event.target.value || 0)))
+                                      );
+                                    }}
+                                    disabled={isReadOnly || row.allocatedQty <= 0}
+                                    className="min-h-9 rounded-lg border border-slate-300 bg-white px-2 text-right text-sm font-semibold text-slate-700 disabled:bg-slate-100"
+                                  />
+                                </label>
+                                <label className="grid gap-1 text-xs font-semibold text-slate-600">
+                                  {t("remainingInventoryPallets")}
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max={row.startingPallets}
+                                    value={numberInputValue(row.remainingPallets)}
+                                    aria-label={`${t("remainingInventoryPallets")} ${row.containerNo}`}
+                                    onChange={(event) => {
+                                      startManualOutboundLinePick(line.id);
+                                      updateBatchOutboundLineAllocationSelectionRemainingPallets(
+                                        line.id,
+                                        row.inventoryItemId,
+                                        Math.max(0, Math.min(row.startingPallets, Number(event.target.value || 0)))
                                       );
                                     }}
                                     disabled={isReadOnly || row.allocatedQty <= 0}
@@ -1869,6 +1936,27 @@ function buildOutboundLineValidations(
             })
           : t("pickQtyMustMatchRequired");
       }
+      if (!pickMessage) {
+        const invalidPalletRow = preview.rows.find((row) => {
+          if (row.lineId !== line.id || row.allocatedQty <= 0) {
+            return false;
+          }
+          const releasedPallets = row.startingPallets - row.remainingPallets;
+          const remainingQty = row.startingQty - row.allocatedQty;
+          return row.pallets < 0
+            || row.pallets > row.startingPallets
+            || row.pallets < releasedPallets
+            || (row.startingPallets > 0 && row.pallets === 0)
+            || row.remainingPallets < 0
+            || row.remainingPallets > row.startingPallets
+            || releasedPallets > row.availablePallets
+            || (remainingQty === 0 && row.remainingPallets !== 0)
+            || (remainingQty > 0 && row.remainingPallets === 0);
+        });
+        if (invalidPalletRow) {
+          pickMessage = t("inventoryPalletBalanceInvalid", { container: invalidPalletRow.containerNo || "-" });
+        }
+      }
     }
 
     validations.set(line.id, {
@@ -1975,8 +2063,16 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
       const priorReservation = sourceReservations.get(candidate.inventoryItemId);
       const availableQty = Math.max(0, candidate.availableQty - (priorReservation?.quantity ?? 0));
       const availablePallets = Math.max(0, candidate.availablePallets - (priorReservation?.pallets ?? 0));
+      const startingQty = Math.max(0, candidate.onHandQty - (priorReservation?.quantity ?? 0));
+      const startingPallets = Math.max(0, candidate.onHandPallets - (priorReservation?.pallets ?? 0));
       const allocatedQty = Math.min(requestedQty, availableQty);
-      const allocatedPallets = Math.min(Math.max(0, requestedAllocation?.pallets ?? 0), availablePallets);
+      const allocatedPallets = Math.min(Math.max(0, requestedAllocation?.pallets ?? 0), startingPallets);
+      const remainingPallets = Math.min(startingPallets, Math.max(
+        0,
+        (requestedAllocation?.startingPallets ?? 0) > 0
+          ? requestedAllocation?.remainingPallets ?? startingPallets
+          : startingPallets - (requestedAllocation?.pallets ?? 0)
+      ));
       if (allocatedQty <= 0) {
         continue;
       }
@@ -1995,13 +2091,16 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
         positionLabel: candidate.positionLabel,
         availableQty,
         availablePallets,
+        startingQty,
+        startingPallets,
         allocatedQty,
-        pallets: allocatedPallets
+        pallets: allocatedPallets,
+        remainingPallets
       });
       summary.allocatedQty += allocatedQty;
       sourceReservations.set(candidate.inventoryItemId, {
         quantity: (priorReservation?.quantity ?? 0) + allocatedQty,
-        pallets: (priorReservation?.pallets ?? 0) + allocatedPallets
+        pallets: (priorReservation?.pallets ?? 0) + Math.max(0, startingPallets - remainingPallets)
       });
     }
 
@@ -2046,6 +2145,14 @@ function buildOutboundPickPlanRows(
     const priorReservation = priorReservations?.get(candidate.inventoryItemId);
     const availableQty = Math.max(0, candidate.availableQty - (priorReservation?.quantity ?? 0));
     const availablePallets = Math.max(0, candidate.availablePallets - (priorReservation?.pallets ?? 0));
+    const startingQty = Math.max(0, candidate.onHandQty - (priorReservation?.quantity ?? 0));
+    const startingPallets = Math.max(0, candidate.onHandPallets - (priorReservation?.pallets ?? 0));
+    const remainingPallets = Math.min(startingPallets, Math.max(
+      0,
+      (selectedAllocation?.startingPallets ?? 0) > 0
+        ? selectedAllocation?.remainingPallets ?? startingPallets
+        : startingPallets - (selectedAllocation?.pallets ?? 0)
+    ));
 
     return [{
       id: `${line.id}-${candidate.inventoryItemId}`,
@@ -2061,8 +2168,11 @@ function buildOutboundPickPlanRows(
       positionLabel: candidate.positionLabel,
       availableQty,
       availablePallets,
+      startingQty,
+      startingPallets,
       allocatedQty,
-      pallets: Math.min(Math.max(0, selectedAllocation?.pallets ?? 0), availablePallets)
+      pallets: Math.min(Math.max(0, selectedAllocation?.pallets ?? 0), startingPallets),
+      remainingPallets
     }];
   });
 }
@@ -2088,7 +2198,12 @@ function reserveOutboundLinePalletSelections(
     const current = reservations.get(selection.inventoryItemId);
     reservations.set(selection.inventoryItemId, {
       quantity: (current?.quantity ?? 0) + selection.quantity,
-      pallets: (current?.pallets ?? 0) + Math.max(0, selection.pallets ?? 0)
+      pallets: (current?.pallets ?? 0) + Math.max(
+        0,
+        (selection.startingPallets ?? 0) > 0
+          ? (selection.startingPallets ?? 0) - (selection.remainingPallets ?? selection.startingPallets ?? 0)
+          : selection.pallets ?? 0
+      )
     });
   }
 }
@@ -2181,7 +2296,7 @@ function compareOutboundInventoryCandidates(left: OutboundInventoryCandidate, ri
 }
 
 function normalizeOutboundLineAllocationSelections(entries: OutboundLineAllocationSelection[] | null | undefined) {
-  const normalized = new Map<number, { quantity: number; pallets: number }>();
+  const normalized = new Map<number, { quantity: number; pallets: number; startingPallets: number; remainingPallets: number }>();
   for (const entry of Array.isArray(entries) ? entries : []) {
     if (entry.quantity <= 0) {
       continue;
@@ -2192,13 +2307,17 @@ function normalizeOutboundLineAllocationSelections(entries: OutboundLineAllocati
     const current = normalized.get(entry.inventoryItemId);
     normalized.set(entry.inventoryItemId, {
       quantity: (current?.quantity ?? 0) + entry.quantity,
-      pallets: (current?.pallets ?? 0) + Math.max(0, entry.pallets ?? 0)
+      pallets: (current?.pallets ?? 0) + Math.max(0, entry.pallets ?? 0),
+      startingPallets: Math.max(0, entry.startingPallets ?? current?.startingPallets ?? 0),
+      remainingPallets: Math.max(0, entry.remainingPallets ?? entry.startingPallets ?? current?.remainingPallets ?? current?.startingPallets ?? 0)
     });
   }
   return [...normalized.entries()].map(([inventoryItemId, allocation]) => ({
     inventoryItemId,
     quantity: allocation.quantity,
-    pallets: allocation.pallets
+    pallets: allocation.pallets,
+    startingPallets: allocation.startingPallets,
+    remainingPallets: allocation.remainingPallets
   }));
 }
 
@@ -2227,6 +2346,8 @@ function areOutboundLineAllocationSelectionsEqual(
     entry.inventoryItemId === normalizedRight[index]?.inventoryItemId
     && entry.quantity === normalizedRight[index]?.quantity
     && (entry.pallets ?? 0) === (normalizedRight[index]?.pallets ?? 0)
+    && (entry.startingPallets ?? 0) === (normalizedRight[index]?.startingPallets ?? 0)
+    && (entry.remainingPallets ?? 0) === (normalizedRight[index]?.remainingPallets ?? 0)
   ));
 }
 
@@ -2258,7 +2379,8 @@ function buildAutoOutboundPalletSelectionsWithReservations(
     }
     const reservation = reservations.get(candidate.inventoryItemId);
     const remainingAvailableQty = Math.max(0, candidate.availableQty - (reservation?.quantity ?? 0));
-    const remainingAvailablePallets = Math.max(0, candidate.availablePallets - (reservation?.pallets ?? 0));
+    const startingQty = Math.max(0, candidate.onHandQty - (reservation?.quantity ?? 0));
+    const startingPallets = Math.max(0, candidate.onHandPallets - (reservation?.pallets ?? 0));
     const selectedQty = Math.min(remainingAvailableQty, remainingQty);
     if (selectedQty <= 0) {
       continue;
@@ -2266,7 +2388,9 @@ function buildAutoOutboundPalletSelectionsWithReservations(
     selections.push({
       inventoryItemId: candidate.inventoryItemId,
       quantity: selectedQty,
-      pallets: automaticInventoryPalletsForAllocation(remainingAvailableQty, remainingAvailablePallets, selectedQty)
+      pallets: automaticInventoryPalletsForAllocation(remainingAvailableQty, startingPallets, selectedQty),
+      startingPallets,
+      remainingPallets: selectedQty >= startingQty ? 0 : startingPallets
     });
     remainingQty -= selectedQty;
   }
@@ -2280,7 +2404,7 @@ function automaticInventoryPalletsForAllocation(availableQty: number, availableP
   if (allocatedQty >= availableQty) {
     return availablePallets;
   }
-  return Math.min(availablePallets, Math.round(availablePallets * allocatedQty / availableQty));
+  return Math.min(availablePallets, Math.max(1, Math.ceil(availablePallets * allocatedQty / availableQty)));
 }
 
 function buildOutboundShipmentReviewGroups(rows: OutboundAllocationPreviewRow[]): OutboundShipmentReviewWarehouseGroup[] {
@@ -2510,7 +2634,9 @@ function coalesceOutboundInventoryCandidatesByBucket(candidates: OutboundInvento
     candidatesByBucket.set(bucketKey, {
       ...existing,
       availableQty: existing.availableQty + candidate.availableQty,
-      availablePallets: existing.availablePallets + candidate.availablePallets
+      availablePallets: existing.availablePallets + candidate.availablePallets,
+      onHandQty: existing.onHandQty + candidate.onHandQty,
+      onHandPallets: existing.onHandPallets + candidate.onHandPallets
     });
   }
   return [...candidatesByBucket.values()];
@@ -2639,6 +2765,8 @@ function buildPersistedOutboundSourceOptionsFromDocument(
         unit: (line.unitLabel || skuMasterUnit).toUpperCase(),
         availableQty: Math.max(0, allocation.allocatedQty),
         availablePallets: Math.max(0, allocation.pallets ?? 0),
+        onHandQty: Math.max(0, allocation.allocatedQty),
+        onHandPallets: Math.max(0, allocation.startingPallets ?? allocation.pallets ?? 0),
         profileBacked: false,
         actualArrivalDate: null,
         createdAt: allocation.createdAt || line.createdAt
@@ -2768,6 +2896,8 @@ export function buildOutboundSourceOptionsFromItems(items: Item[]): OutboundSour
       unit: (item.unit || "PCS").toUpperCase(),
       availableQty: item.availableQty,
       availablePallets: Math.max(0, item.availablePallets),
+      onHandQty: Math.max(0, item.quantity ?? 0, item.availableQty + (item.allocatedQty ?? 0)),
+      onHandPallets: Math.max(0, item.pallets ?? 0, item.availablePallets + (item.allocatedPallets ?? 0)),
       profileBacked: false,
       actualArrivalDate: item.deliveryDate,
       createdAt: item.createdAt
@@ -2871,7 +3001,9 @@ function buildOutboundEditorSourceState({
                     : [{
                         inventoryItemId,
                         quantity: allocation.allocatedQty,
-                        pallets: Math.max(0, allocation.pallets ?? 0)
+                        pallets: Math.max(0, allocation.inventoryPalletsUsed ?? allocation.pallets ?? 0),
+                        startingPallets: Math.max(0, allocation.startingPallets ?? 0),
+                        remainingPallets: Math.max(0, allocation.remainingPallets ?? 0)
                       }];
                 })
               ),

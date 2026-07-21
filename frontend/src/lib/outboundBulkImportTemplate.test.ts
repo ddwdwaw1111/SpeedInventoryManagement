@@ -26,7 +26,8 @@ describe("outboundBulkImportTemplate", () => {
     const options = vi.mocked(downloadExcelWorkbook).mock.calls[0]?.[0];
     expect(options?.rows[0]).toMatchObject({
       quantity: 5,
-      inventoryPallets: 0,
+      inventoryPallets: 1,
+      remainingInventoryPallets: 3,
       outboundPallets: 1
     });
   });

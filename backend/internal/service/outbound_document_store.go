@@ -46,17 +46,25 @@ type OutboundDocument struct {
 }
 
 type OutboundPickAllocation struct {
-	ID                 int64     `json:"id"`
-	LineID             int64     `json:"lineId"`
-	ItemNumber         string    `json:"itemNumber"`
-	LocationID         int64     `json:"locationId"`
-	LocationName       string    `json:"locationName"`
-	StorageSection     string    `json:"storageSection"`
-	ContainerNo        string    `json:"containerNo"`
-	AllocatedQty       int       `json:"allocatedQty"`
-	Pallets            int       `json:"pallets"` // Inventory pallets removed from this container balance.
-	AutoTransferToMain bool      `json:"autoTransferToMain,omitempty"`
-	CreatedAt          time.Time `json:"createdAt"`
+	ID                     int64     `json:"id"`
+	LineID                 int64     `json:"lineId"`
+	ItemNumber             string    `json:"itemNumber"`
+	LocationID             int64     `json:"locationId"`
+	LocationName           string    `json:"locationName"`
+	StorageSection         string    `json:"storageSection"`
+	ContainerNo            string    `json:"containerNo"`
+	AllocatedQty           int       `json:"allocatedQty"`
+	Pallets                int       `json:"pallets"` // Physical inventory pallets released; derived from the final balance when provided.
+	InventoryPalletsUsed   int       `json:"inventoryPalletsUsed,omitempty"`
+	StartingPallets        *int      `json:"startingPallets,omitempty"`
+	RemainingPallets       *int      `json:"remainingPallets,omitempty"`
+	SourceLocationID       int64     `json:"sourceLocationId,omitempty"`
+	SourceLocationName     string    `json:"sourceLocationName,omitempty"`
+	SourceStorageSection   string    `json:"sourceStorageSection,omitempty"`
+	SourceStartingPallets  *int      `json:"sourceStartingPallets,omitempty"`
+	SourceRemainingPallets *int      `json:"sourceRemainingPallets,omitempty"`
+	AutoTransferToMain     bool      `json:"autoTransferToMain,omitempty"`
+	CreatedAt              time.Time `json:"createdAt"`
 }
 
 type OutboundDocumentLine struct {
@@ -209,23 +217,33 @@ type lockedOutboundSource struct {
 }
 
 type outboundAllocationCandidate struct {
-	BucketKey          string
-	SKUMasterID        int64
-	CustomerID         int64
-	ItemNumber         string
-	LocationID         int64
-	LocationName       string
-	StorageSection     string
-	ContainerNo        string
-	SKU                string
-	Description        string
-	Unit               string
-	AvailableQty       int
-	AvailablePallets   int
-	AllocatedQty       int
-	Pallets            int
-	AutoTransferToMain bool
-	SortAt             time.Time
+	BucketKey              string
+	SKUMasterID            int64
+	CustomerID             int64
+	ItemNumber             string
+	LocationID             int64
+	LocationName           string
+	StorageSection         string
+	ContainerNo            string
+	SKU                    string
+	Description            string
+	Unit                   string
+	AvailableQty           int
+	AvailablePallets       int
+	OnHandQty              int
+	OnHandPallets          int
+	AllocatedQty           int
+	Pallets                int
+	InventoryPalletsUsed   int
+	StartingPallets        *int
+	RemainingPallets       *int
+	SourceLocationID       int64
+	SourceLocationName     string
+	SourceStorageSection   string
+	SourceStartingPallets  *int
+	SourceRemainingPallets *int
+	AutoTransferToMain     bool
+	SortAt                 time.Time
 }
 
 type outboundAllocationReservationState struct {
@@ -247,6 +265,8 @@ type lockedOutboundSourceRow struct {
 	Unit             string
 	AvailableQty     int
 	AvailablePallets int
+	OnHandQty        int
+	OnHandPallets    int
 	DeliveryDate     *time.Time
 	CreatedAt        time.Time
 }
@@ -519,28 +539,9 @@ func (s *Store) GetOutboundDocumentForCustomer(ctx context.Context, documentID i
 }
 
 func (s *Store) CreateOutboundDocument(ctx context.Context, input CreateOutboundDocumentInput) (OutboundDocument, error) {
-	input = sanitizeOutboundDocumentInput(input)
-	if err := validateOutboundDocumentInput(input); err != nil {
-		return OutboundDocument{}, err
-	}
-
-	expectedShipDateInput := strings.TrimSpace(input.ExpectedShipDate)
-	expectedShipDate, err := parseOptionalDate(expectedShipDateInput)
+	input, expectedShipDate, actualShipDate, requestedStatus, requestedTrackingStatus, err := prepareOutboundDocumentCreation(input)
 	if err != nil {
 		return OutboundDocument{}, err
-	}
-	actualShipDate, err := parseOptionalDate(input.ActualShipDate)
-	if err != nil {
-		return OutboundDocument{}, err
-	}
-	if expectedShipDate == nil {
-		now := time.Now().UTC()
-		expectedShipDate = &now
-	}
-	requestedStatus := coalesceDocumentStatus(input.Status)
-	requestedTrackingStatus := coalesceOutboundTrackingStatus(input.TrackingStatus, requestedStatus)
-	if requestedStatus == DocumentStatusDraft {
-		requestedTrackingStatus = OutboundTrackingScheduled
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -566,6 +567,32 @@ func (s *Store) CreateOutboundDocument(ctx context.Context, input CreateOutbound
 	}
 
 	return s.getOutboundDocument(ctx, documentID)
+}
+
+func prepareOutboundDocumentCreation(input CreateOutboundDocumentInput) (CreateOutboundDocumentInput, *time.Time, *time.Time, string, string, error) {
+	input = sanitizeOutboundDocumentInput(input)
+	if err := validateOutboundDocumentInput(input); err != nil {
+		return CreateOutboundDocumentInput{}, nil, nil, "", "", err
+	}
+
+	expectedShipDate, err := parseOptionalDate(strings.TrimSpace(input.ExpectedShipDate))
+	if err != nil {
+		return CreateOutboundDocumentInput{}, nil, nil, "", "", err
+	}
+	actualShipDate, err := parseOptionalDate(input.ActualShipDate)
+	if err != nil {
+		return CreateOutboundDocumentInput{}, nil, nil, "", "", err
+	}
+	if expectedShipDate == nil {
+		now := time.Now().UTC()
+		expectedShipDate = &now
+	}
+	requestedStatus := coalesceDocumentStatus(input.Status)
+	requestedTrackingStatus := coalesceOutboundTrackingStatus(input.TrackingStatus, requestedStatus)
+	if requestedStatus == DocumentStatusDraft {
+		requestedTrackingStatus = OutboundTrackingScheduled
+	}
+	return input, expectedShipDate, actualShipDate, requestedStatus, requestedTrackingStatus, nil
 }
 
 func (s *Store) createOutboundDocumentTx(
@@ -1289,9 +1316,14 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 		if err != nil {
 			return err
 		}
+		storedAllocations := decodeOutboundPickAllocationsOrEmpty(lineRow.PickAllocationsJSON)
+		storedByBucket := make(map[string]OutboundPickAllocation, len(storedAllocations))
+		for _, storedAllocation := range storedAllocations {
+			storedByBucket[outboundPickAllocationSnapshotKey(storedAllocation.LocationID, storedAllocation.StorageSection, storedAllocation.ContainerNo)] = storedAllocation
+		}
 		allocations := make([]OutboundPickAllocation, 0, len(allocationRows))
 		for _, allocation := range allocationRows {
-			allocations = append(allocations, OutboundPickAllocation{
+			resolved := OutboundPickAllocation{
 				ID:             allocation.ID,
 				LineID:         allocation.OutboundLineID,
 				LocationID:     allocation.LocationID,
@@ -1299,7 +1331,24 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 				ContainerNo:    allocation.ContainerNo,
 				AllocatedQty:   allocation.AllocatedQty,
 				Pallets:        allocation.AllocatedPallets,
-			})
+			}
+			if stored, exists := storedByBucket[outboundPickAllocationSnapshotKey(allocation.LocationID, allocation.StorageSection, allocation.ContainerNo)]; exists {
+				resolved.ItemNumber = stored.ItemNumber
+				resolved.LocationName = stored.LocationName
+				resolved.InventoryPalletsUsed = stored.InventoryPalletsUsed
+				resolved.StartingPallets = cloneIntPointer(stored.StartingPallets)
+				resolved.RemainingPallets = cloneIntPointer(stored.RemainingPallets)
+				resolved.SourceLocationID = stored.SourceLocationID
+				resolved.SourceLocationName = stored.SourceLocationName
+				resolved.SourceStorageSection = stored.SourceStorageSection
+				resolved.SourceStartingPallets = cloneIntPointer(stored.SourceStartingPallets)
+				resolved.SourceRemainingPallets = cloneIntPointer(stored.SourceRemainingPallets)
+				resolved.AutoTransferToMain = stored.AutoTransferToMain
+			}
+			if err := s.validateOutboundFinalPalletBalanceTx(ctx, tx, documentRow.CustomerID, lineRow.SKUMasterID, resolved); err != nil {
+				return err
+			}
+			allocations = append(allocations, resolved)
 		}
 		if len(allocations) == 0 || totalOutboundPickAllocationQuantity(allocations) != lineRow.Quantity {
 			return fmt.Errorf("%w: shipment container allocations must equal outbound quantity", ErrInvalidInput)
@@ -1353,7 +1402,7 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 				OrderRef:            documentRow.OrderRef,
 				ItemNumber:          lineRow.ItemNumberSnapshot,
 				DescriptionSnapshot: lineRow.DescriptionSnapshot,
-				Pallets:             allocation.Pallets,
+				Pallets:             outboundAllocationInventoryPalletsUsed(allocation),
 				PalletsDetailCtns:   lineRow.PalletsDetailCtns,
 				CartonSizeMM:        lineRow.CartonSizeMM,
 				CartonCount:         allocation.AllocatedQty,
@@ -1447,6 +1496,16 @@ func (s *Store) stageOutboundDraftAtMainWarehouseTx(
 	}
 	if countOutboundAllocationsOutsideLocation(input, mainLocation.ID) == 0 {
 		return lineRows, false, nil
+	}
+	for _, line := range input.Lines {
+		for _, allocation := range line.PickAllocations {
+			if !allocation.AutoTransferToMain || firstNonZeroInt64(allocation.LocationID, line.LocationID) == mainLocation.ID {
+				continue
+			}
+			if err := s.validateOutboundFinalPalletBalanceTx(ctx, tx, document.CustomerID, line.SKUMasterID, allocation); err != nil {
+				return nil, false, err
+			}
+		}
 	}
 
 	plannedInput, transferInput, err := buildOutboundBulkMainWarehousePlan(input, mainLocation)
@@ -2713,6 +2772,8 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 				0
 			) AS available_qty,
 			GREATEST(i.pallets - i.allocated_pallets, 0) AS available_pallets,
+			i.quantity AS on_hand_qty,
+			i.pallets AS on_hand_pallets,
 			i.delivery_date,
 			i.created_at AS sort_at
 		FROM inventory_items i
@@ -2760,6 +2821,8 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 			&row.Unit,
 			&row.AvailableQty,
 			&row.AvailablePallets,
+			&row.OnHandQty,
+			&row.OnHandPallets,
 			&deliveryDate,
 			&row.CreatedAt,
 		); err != nil {
@@ -2806,6 +2869,8 @@ func (s *Store) loadLockedOutboundAllocationCandidatesTx(ctx context.Context, tx
 			Unit:             lockedRow.Unit,
 			AvailableQty:     lockedRow.AvailableQty,
 			AvailablePallets: lockedRow.AvailablePallets,
+			OnHandQty:        lockedRow.OnHandQty,
+			OnHandPallets:    lockedRow.OnHandPallets,
 			SortAt:           sortTime,
 		})
 	}
@@ -2933,6 +2998,14 @@ func (s *Store) resolveOutboundDraftBucketAllocationsTx(
 		candidate.ContainerNo = containerNo
 		candidate.ItemNumber = firstNonEmpty(strings.TrimSpace(draftAllocation.ItemNumber), candidate.ItemNumber, source.ItemNumber)
 		candidate.Pallets = draftAllocation.Pallets
+		candidate.InventoryPalletsUsed = draftAllocation.InventoryPalletsUsed
+		candidate.StartingPallets = cloneIntPointer(draftAllocation.StartingPallets)
+		candidate.RemainingPallets = cloneIntPointer(draftAllocation.RemainingPallets)
+		candidate.SourceLocationID = draftAllocation.SourceLocationID
+		candidate.SourceLocationName = draftAllocation.SourceLocationName
+		candidate.SourceStorageSection = draftAllocation.SourceStorageSection
+		candidate.SourceStartingPallets = cloneIntPointer(draftAllocation.SourceStartingPallets)
+		candidate.SourceRemainingPallets = cloneIntPointer(draftAllocation.SourceRemainingPallets)
 		candidate.AutoTransferToMain = draftAllocation.AutoTransferToMain
 
 		allocations = append(allocations, candidate)
@@ -2984,7 +3057,6 @@ func (s *Store) allocateOutboundLineTx(ctx context.Context, tx *sql.Tx, source l
 
 	for _, candidate := range candidates {
 		effectiveAvailable := candidate.AvailableQty - reservationState.ByBucketKey[candidate.BucketKey]
-		effectiveAvailablePallets := candidate.AvailablePallets - reservationState.PalletsByBucketKey[candidate.BucketKey]
 		if effectiveAvailable <= 0 {
 			continue
 		}
@@ -2997,8 +3069,17 @@ func (s *Store) allocateOutboundLineTx(ctx context.Context, tx *sql.Tx, source l
 			continue
 		}
 
+		startingQty := maxInt(candidate.OnHandQty-reservationState.ByBucketKey[candidate.BucketKey], 0)
+		startingPallets := maxInt(candidate.OnHandPallets-reservationState.PalletsByBucketKey[candidate.BucketKey], 0)
+		remainingPallets := startingPallets
+		if allocatedQty >= startingQty {
+			remainingPallets = 0
+		}
 		candidate.AllocatedQty = allocatedQty
-		candidate.Pallets = automaticInventoryPalletsForAllocation(effectiveAvailable, effectiveAvailablePallets, allocatedQty)
+		candidate.Pallets = maxInt(startingPallets-remainingPallets, 0)
+		candidate.InventoryPalletsUsed = automaticInventoryPalletsForAllocation(effectiveAvailable, startingPallets, allocatedQty)
+		candidate.StartingPallets = cloneIntPointer(&startingPallets)
+		candidate.RemainingPallets = cloneIntPointer(&remainingPallets)
 		allocations = append(allocations, candidate)
 		reservationState.ByBucketKey[candidate.BucketKey] += allocatedQty
 		reservationState.PalletsByBucketKey[candidate.BucketKey] += candidate.Pallets
@@ -3036,7 +3117,7 @@ func automaticInventoryPalletsForAllocation(availableQty int, availablePallets i
 		return availablePallets
 	}
 
-	allocatedPallets := int(math.Round(float64(availablePallets) * float64(allocatedQty) / float64(availableQty)))
+	allocatedPallets := int(math.Ceil(float64(availablePallets) * float64(allocatedQty) / float64(availableQty)))
 	if allocatedPallets < 0 {
 		return 0
 	}
@@ -3245,9 +3326,130 @@ func validateOutboundDocumentInput(input CreateOutboundDocumentInput) error {
 		case len(line.PickAllocations) > 0 && totalOutboundPickAllocationQuantity(line.PickAllocations) != reservationQuantity:
 			return fmt.Errorf("%w: draft pick allocation quantity must equal outbound quantity", ErrInvalidInput)
 		}
+		for _, allocation := range line.PickAllocations {
+			if err := validateOutboundFinalPalletAllocation(allocation); err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil
+}
+
+func validateOutboundFinalPalletAllocation(allocation OutboundPickAllocation) error {
+	if allocation.StartingPallets == nil && allocation.RemainingPallets == nil {
+		return nil
+	}
+	containerNo := firstNonEmpty(strings.TrimSpace(allocation.ContainerNo), "selected container")
+	if allocation.StartingPallets == nil || allocation.RemainingPallets == nil {
+		return fmt.Errorf("%w: source container %s requires both starting and remaining inventory pallets", ErrInvalidInput, containerNo)
+	}
+	startingPallets := *allocation.StartingPallets
+	remainingPallets := *allocation.RemainingPallets
+	if startingPallets < 0 || remainingPallets < 0 || remainingPallets > startingPallets {
+		return fmt.Errorf("%w: source container %s remaining inventory pallets must be between 0 and the starting balance of %d", ErrInvalidInput, containerNo, maxInt(startingPallets, 0))
+	}
+	if allocation.Pallets != startingPallets-remainingPallets {
+		return fmt.Errorf("%w: source container %s inventory pallet release must equal starting pallets minus remaining pallets", ErrInvalidInput, containerNo)
+	}
+	if allocation.InventoryPalletsUsed < 0 || allocation.InventoryPalletsUsed > startingPallets {
+		return fmt.Errorf("%w: source container %s inventory pallets used must be between 0 and the starting balance of %d", ErrInvalidInput, containerNo, startingPallets)
+	}
+	releasedPallets := startingPallets - remainingPallets
+	if allocation.InventoryPalletsUsed < releasedPallets {
+		return fmt.Errorf("%w: source container %s inventory pallets used cannot be less than the %d pallet(s) released from inventory", ErrInvalidInput, containerNo, releasedPallets)
+	}
+	if allocation.AllocatedQty > 0 && startingPallets > 0 && allocation.InventoryPalletsUsed == 0 {
+		return fmt.Errorf("%w: source container %s inventory pallets used must be at least 1 when stock is picked from palletized inventory", ErrInvalidInput, containerNo)
+	}
+	return nil
+}
+
+func (s *Store) validateOutboundFinalPalletBalanceTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	customerID int64,
+	skuMasterID int64,
+	allocation OutboundPickAllocation,
+) error {
+	if allocation.StartingPallets == nil && allocation.RemainingPallets == nil {
+		if allocation.SourceLocationID > 0 && allocation.SourceLocationID != allocation.LocationID && allocation.SourceStartingPallets != nil && allocation.SourceRemainingPallets != nil {
+			return nil
+		}
+		return fmt.Errorf(
+			"%w: source container %s requires reviewed Inventory Pallets Used and Remaining Inventory Pallets before confirmation",
+			ErrInvalidInput,
+			firstNonEmpty(normalizeContainerNo(allocation.ContainerNo), "selected container"),
+		)
+	}
+	if err := validateOutboundFinalPalletAllocation(allocation); err != nil {
+		return err
+	}
+	locationID := allocation.LocationID
+	containerNo := normalizeContainerNo(allocation.ContainerNo)
+	rows, err := tx.QueryContext(ctx, `
+		SELECT quantity, pallets
+		FROM inventory_items
+		WHERE customer_id = ?
+		  AND sku_master_id = ?
+		  AND location_id = ?
+		  AND storage_section = ?
+		  AND container_no = ?
+		FOR UPDATE
+	`, customerID, skuMasterID, locationID, fallbackSection(allocation.StorageSection), containerNo)
+	if err != nil {
+		return mapDBError(fmt.Errorf("lock outbound final pallet balance: %w", err))
+	}
+	defer rows.Close()
+	currentQuantity := 0
+	currentPallets := 0
+	matchedRows := 0
+	for rows.Next() {
+		var quantity int
+		var pallets int
+		if err := rows.Scan(&quantity, &pallets); err != nil {
+			return fmt.Errorf("scan outbound final pallet balance: %w", err)
+		}
+		currentQuantity += quantity
+		currentPallets += pallets
+		matchedRows++
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate outbound final pallet balance: %w", err)
+	}
+	if matchedRows == 0 {
+		return ErrInsufficientStock
+	}
+	startingPallets := *allocation.StartingPallets
+	remainingPallets := *allocation.RemainingPallets
+	if currentPallets != startingPallets {
+		return fmt.Errorf("%w: source container %s pallet balance changed from %d to %d; reopen or revalidate the shipment before confirming", ErrInvalidInput, containerNo, startingPallets, currentPallets)
+	}
+	remainingQuantity := currentQuantity - allocation.AllocatedQty
+	if remainingQuantity < 0 {
+		return ErrInsufficientStock
+	}
+	if remainingQuantity == 0 && remainingPallets != 0 {
+		return fmt.Errorf("%w: source container %s will have no quantity left, so remaining inventory pallets must be 0", ErrInvalidInput, containerNo)
+	}
+	if remainingQuantity > 0 && remainingPallets == 0 {
+		return fmt.Errorf("%w: source container %s will still have %d CTN, so remaining inventory pallets must be at least 1", ErrInvalidInput, containerNo, remainingQuantity)
+	}
+	return nil
+}
+
+func outboundPickAllocationSnapshotKey(locationID int64, storageSection string, containerNo string) string {
+	return fmt.Sprintf("%d|%s|%s", locationID, fallbackSection(storageSection), normalizeContainerNo(containerNo))
+}
+
+func outboundAllocationInventoryPalletsUsed(allocation OutboundPickAllocation) int {
+	if allocation.StartingPallets != nil && allocation.RemainingPallets != nil {
+		return maxInt(allocation.InventoryPalletsUsed, 0)
+	}
+	if allocation.InventoryPalletsUsed > 0 {
+		return allocation.InventoryPalletsUsed
+	}
+	return maxInt(allocation.Pallets, 0)
 }
 
 func normalizeOutboundLineQuantities(line CreateOutboundDocumentLineInput) CreateOutboundDocumentLineInput {
@@ -3368,17 +3570,25 @@ func normalizeOutboundPickAllocations(entries []OutboundPickAllocation) []Outbou
 	}
 
 	type groupedAllocation struct {
-		ID                 int64
-		LineID             int64
-		ItemNumber         string
-		LocationID         int64
-		LocationName       string
-		StorageSection     string
-		ContainerNo        string
-		AllocatedQty       int
-		Pallets            int
-		AutoTransferToMain bool
-		CreatedAt          time.Time
+		ID                     int64
+		LineID                 int64
+		ItemNumber             string
+		LocationID             int64
+		LocationName           string
+		StorageSection         string
+		ContainerNo            string
+		AllocatedQty           int
+		Pallets                int
+		InventoryPalletsUsed   int
+		StartingPallets        *int
+		RemainingPallets       *int
+		SourceLocationID       int64
+		SourceLocationName     string
+		SourceStorageSection   string
+		SourceStartingPallets  *int
+		SourceRemainingPallets *int
+		AutoTransferToMain     bool
+		CreatedAt              time.Time
 	}
 
 	order := make([]string, 0, len(entries))
@@ -3394,28 +3604,66 @@ func normalizeOutboundPickAllocations(entries []OutboundPickAllocation) []Outbou
 		containerNo := strings.TrimSpace(entry.ContainerNo)
 		itemNumber := strings.TrimSpace(entry.ItemNumber)
 		key := fmt.Sprintf("%d|%s|%s|%s|%t", locationID, storageSection, containerNo, itemNumber, entry.AutoTransferToMain)
+		pallets := maxInt(entry.Pallets, 0)
+		if entry.StartingPallets != nil && entry.RemainingPallets != nil {
+			pallets = maxInt(*entry.StartingPallets-*entry.RemainingPallets, 0)
+		}
+		inventoryPalletsUsed := maxInt(entry.InventoryPalletsUsed, 0)
+		if entry.StartingPallets == nil && entry.RemainingPallets == nil && inventoryPalletsUsed == 0 {
+			inventoryPalletsUsed = pallets
+		}
 
 		existing, exists := grouped[key]
 		if !exists {
 			order = append(order, key)
 			grouped[key] = &groupedAllocation{
-				ID:                 entry.ID,
-				LineID:             entry.LineID,
-				ItemNumber:         itemNumber,
-				LocationID:         locationID,
-				LocationName:       strings.TrimSpace(entry.LocationName),
-				StorageSection:     storageSection,
-				ContainerNo:        containerNo,
-				AllocatedQty:       allocatedQty,
-				Pallets:            maxInt(entry.Pallets, 0),
-				AutoTransferToMain: entry.AutoTransferToMain,
-				CreatedAt:          entry.CreatedAt,
+				ID:                     entry.ID,
+				LineID:                 entry.LineID,
+				ItemNumber:             itemNumber,
+				LocationID:             locationID,
+				LocationName:           strings.TrimSpace(entry.LocationName),
+				StorageSection:         storageSection,
+				ContainerNo:            containerNo,
+				AllocatedQty:           allocatedQty,
+				Pallets:                pallets,
+				InventoryPalletsUsed:   inventoryPalletsUsed,
+				StartingPallets:        cloneIntPointer(entry.StartingPallets),
+				RemainingPallets:       cloneIntPointer(entry.RemainingPallets),
+				SourceLocationID:       entry.SourceLocationID,
+				SourceLocationName:     strings.TrimSpace(entry.SourceLocationName),
+				SourceStorageSection:   strings.TrimSpace(entry.SourceStorageSection),
+				SourceStartingPallets:  cloneIntPointer(entry.SourceStartingPallets),
+				SourceRemainingPallets: cloneIntPointer(entry.SourceRemainingPallets),
+				AutoTransferToMain:     entry.AutoTransferToMain,
+				CreatedAt:              entry.CreatedAt,
 			}
 			continue
 		}
 
 		existing.AllocatedQty += allocatedQty
-		existing.Pallets += maxInt(entry.Pallets, 0)
+		existing.Pallets += pallets
+		existing.InventoryPalletsUsed += inventoryPalletsUsed
+		if existing.StartingPallets == nil {
+			existing.StartingPallets = cloneIntPointer(entry.StartingPallets)
+		}
+		if existing.RemainingPallets == nil {
+			existing.RemainingPallets = cloneIntPointer(entry.RemainingPallets)
+		}
+		if existing.SourceLocationID == 0 {
+			existing.SourceLocationID = entry.SourceLocationID
+		}
+		if existing.SourceLocationName == "" {
+			existing.SourceLocationName = strings.TrimSpace(entry.SourceLocationName)
+		}
+		if existing.SourceStorageSection == "" {
+			existing.SourceStorageSection = strings.TrimSpace(entry.SourceStorageSection)
+		}
+		if existing.SourceStartingPallets == nil {
+			existing.SourceStartingPallets = cloneIntPointer(entry.SourceStartingPallets)
+		}
+		if existing.SourceRemainingPallets == nil {
+			existing.SourceRemainingPallets = cloneIntPointer(entry.SourceRemainingPallets)
+		}
 		if existing.LocationName == "" {
 			existing.LocationName = strings.TrimSpace(entry.LocationName)
 		}
@@ -3437,20 +3685,36 @@ func normalizeOutboundPickAllocations(entries []OutboundPickAllocation) []Outbou
 			continue
 		}
 		normalized = append(normalized, OutboundPickAllocation{
-			ID:                 entry.ID,
-			LineID:             entry.LineID,
-			ItemNumber:         entry.ItemNumber,
-			LocationID:         entry.LocationID,
-			LocationName:       entry.LocationName,
-			StorageSection:     entry.StorageSection,
-			ContainerNo:        entry.ContainerNo,
-			AllocatedQty:       entry.AllocatedQty,
-			Pallets:            maxInt(entry.Pallets, 0),
-			AutoTransferToMain: entry.AutoTransferToMain,
-			CreatedAt:          entry.CreatedAt,
+			ID:                     entry.ID,
+			LineID:                 entry.LineID,
+			ItemNumber:             entry.ItemNumber,
+			LocationID:             entry.LocationID,
+			LocationName:           entry.LocationName,
+			StorageSection:         entry.StorageSection,
+			ContainerNo:            entry.ContainerNo,
+			AllocatedQty:           entry.AllocatedQty,
+			Pallets:                maxInt(entry.Pallets, 0),
+			InventoryPalletsUsed:   maxInt(entry.InventoryPalletsUsed, 0),
+			StartingPallets:        cloneIntPointer(entry.StartingPallets),
+			RemainingPallets:       cloneIntPointer(entry.RemainingPallets),
+			SourceLocationID:       entry.SourceLocationID,
+			SourceLocationName:     entry.SourceLocationName,
+			SourceStorageSection:   entry.SourceStorageSection,
+			SourceStartingPallets:  cloneIntPointer(entry.SourceStartingPallets),
+			SourceRemainingPallets: cloneIntPointer(entry.SourceRemainingPallets),
+			AutoTransferToMain:     entry.AutoTransferToMain,
+			CreatedAt:              entry.CreatedAt,
 		})
 	}
 	return normalized
+}
+
+func cloneIntPointer(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func decodeOutboundPickAllocationsOrEmpty(raw string) []OutboundPickAllocation {
@@ -3513,20 +3777,28 @@ func toOutboundAllocationCandidatesFromDraftPickAllocations(source lockedOutboun
 	allocations := make([]outboundAllocationCandidate, 0, len(entries))
 	for _, entry := range normalizeOutboundPickAllocations(entries) {
 		allocations = append(allocations, outboundAllocationCandidate{
-			BucketKey:          outboundAllocationBucketKey(source.CustomerID, firstNonZeroInt64(entry.LocationID, source.LocationID), source.SKUMasterID, entry.StorageSection, entry.ContainerNo),
-			SKUMasterID:        source.SKUMasterID,
-			CustomerID:         source.CustomerID,
-			ItemNumber:         firstNonEmpty(strings.TrimSpace(entry.ItemNumber), source.ItemNumber),
-			LocationID:         firstNonZeroInt64(entry.LocationID, source.LocationID),
-			LocationName:       firstNonEmpty(strings.TrimSpace(entry.LocationName), source.LocationName),
-			StorageSection:     fallbackSection(entry.StorageSection),
-			ContainerNo:        strings.TrimSpace(entry.ContainerNo),
-			SKU:                source.SKU,
-			Description:        source.Description,
-			Unit:               source.Unit,
-			AllocatedQty:       entry.AllocatedQty,
-			Pallets:            maxInt(entry.Pallets, 0),
-			AutoTransferToMain: entry.AutoTransferToMain,
+			BucketKey:              outboundAllocationBucketKey(source.CustomerID, firstNonZeroInt64(entry.LocationID, source.LocationID), source.SKUMasterID, entry.StorageSection, entry.ContainerNo),
+			SKUMasterID:            source.SKUMasterID,
+			CustomerID:             source.CustomerID,
+			ItemNumber:             firstNonEmpty(strings.TrimSpace(entry.ItemNumber), source.ItemNumber),
+			LocationID:             firstNonZeroInt64(entry.LocationID, source.LocationID),
+			LocationName:           firstNonEmpty(strings.TrimSpace(entry.LocationName), source.LocationName),
+			StorageSection:         fallbackSection(entry.StorageSection),
+			ContainerNo:            strings.TrimSpace(entry.ContainerNo),
+			SKU:                    source.SKU,
+			Description:            source.Description,
+			Unit:                   source.Unit,
+			AllocatedQty:           entry.AllocatedQty,
+			Pallets:                maxInt(entry.Pallets, 0),
+			InventoryPalletsUsed:   maxInt(entry.InventoryPalletsUsed, 0),
+			StartingPallets:        cloneIntPointer(entry.StartingPallets),
+			RemainingPallets:       cloneIntPointer(entry.RemainingPallets),
+			SourceLocationID:       entry.SourceLocationID,
+			SourceLocationName:     entry.SourceLocationName,
+			SourceStorageSection:   entry.SourceStorageSection,
+			SourceStartingPallets:  cloneIntPointer(entry.SourceStartingPallets),
+			SourceRemainingPallets: cloneIntPointer(entry.SourceRemainingPallets),
+			AutoTransferToMain:     entry.AutoTransferToMain,
 		})
 	}
 	return allocations
@@ -3540,15 +3812,23 @@ func toOutboundPickAllocationsFromCandidates(line *CreateOutboundDocumentLineInp
 			continue
 		}
 		pickAllocations = append(pickAllocations, OutboundPickAllocation{
-			ItemNumber:         firstNonEmpty(strings.TrimSpace(allocation.ItemNumber)),
-			LocationID:         allocation.LocationID,
-			LocationName:       allocation.LocationName,
-			StorageSection:     fallbackSection(allocation.StorageSection),
-			ContainerNo:        strings.TrimSpace(allocation.ContainerNo),
-			AllocatedQty:       allocation.AllocatedQty,
-			Pallets:            maxInt(allocation.Pallets, 0),
-			AutoTransferToMain: allocation.AutoTransferToMain,
-			CreatedAt:          createdAt,
+			ItemNumber:             firstNonEmpty(strings.TrimSpace(allocation.ItemNumber)),
+			LocationID:             allocation.LocationID,
+			LocationName:           allocation.LocationName,
+			StorageSection:         fallbackSection(allocation.StorageSection),
+			ContainerNo:            strings.TrimSpace(allocation.ContainerNo),
+			AllocatedQty:           allocation.AllocatedQty,
+			Pallets:                maxInt(allocation.Pallets, 0),
+			InventoryPalletsUsed:   maxInt(allocation.InventoryPalletsUsed, 0),
+			StartingPallets:        cloneIntPointer(allocation.StartingPallets),
+			RemainingPallets:       cloneIntPointer(allocation.RemainingPallets),
+			SourceLocationID:       allocation.SourceLocationID,
+			SourceLocationName:     allocation.SourceLocationName,
+			SourceStorageSection:   allocation.SourceStorageSection,
+			SourceStartingPallets:  cloneIntPointer(allocation.SourceStartingPallets),
+			SourceRemainingPallets: cloneIntPointer(allocation.SourceRemainingPallets),
+			AutoTransferToMain:     allocation.AutoTransferToMain,
+			CreatedAt:              createdAt,
 		})
 	}
 	if line == nil {

@@ -236,6 +236,8 @@ type OutboundAllocationPreviewRow = {
   positionLabel: string;
   allocatedQty: number;
   pallets: number;
+  startingPallets: number;
+  remainingPallets: number;
 };
 
 type OutboundAllocationLineSummary = {
@@ -299,6 +301,8 @@ type OutboundInventoryCandidate = {
   unit: string;
   availableQty: number;
   availablePallets: number;
+  onHandQty: number;
+  onHandPallets: number;
   actualArrivalDate: string | null;
   createdAt: string;
 };
@@ -1075,6 +1079,13 @@ export function ActivityManagementPage({
       return;
     }
 
+    if (onOpenOutboundShipmentEditor) {
+      const scheduledDate = embeddedComposer.initialDate || "";
+      embeddedComposer.onClose();
+      onOpenOutboundShipmentEditor(null, scheduledDate ? { scheduledDate } : undefined);
+      return;
+    }
+
     if (outboundPalletsLoading) {
       return;
     }
@@ -1100,6 +1111,7 @@ export function ActivityManagementPage({
     isBatchModalOpen,
     locations.length,
     mode,
+    onOpenOutboundShipmentEditor,
     outboundPalletSourceMessage,
     outboundPalletsLoading,
     outboundSourceReferences.length,
@@ -4143,7 +4155,10 @@ function buildPreviewPickAllocations(
     storageSection: row.storageSection || line.storageSection,
     containerNo: row.containerNo || "",
     allocatedQty: row.allocatedQty,
-    pallets: Math.max(0, row.pallets),
+    pallets: Math.max(0, row.startingPallets - row.remainingPallets),
+    inventoryPalletsUsed: Math.max(0, row.pallets),
+    startingPallets: Math.max(0, row.startingPallets),
+    remainingPallets: Math.max(0, row.remainingPallets),
     createdAt: line.createdAt
   }));
 }
@@ -4184,7 +4199,8 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
     for (const candidate of selectedSource.candidates) {
       const sourceId = candidate.id;
       const effectiveAvailable = candidate.availableQty - (reservedBySourceId.get(sourceId) ?? 0);
-      const effectiveAvailablePallets = Math.max(0, candidate.availablePallets - (reservedPalletsBySourceId.get(sourceId) ?? 0));
+      const startingPallets = Math.max(0, candidate.onHandPallets - (reservedPalletsBySourceId.get(sourceId) ?? 0));
+      const startingQty = Math.max(0, candidate.onHandQty - (reservedBySourceId.get(sourceId) ?? 0));
       if (effectiveAvailable <= 0) {
         continue;
       }
@@ -4196,9 +4212,10 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
 
       const allocatedPallets = automaticInventoryPalletsForAllocation(
         effectiveAvailable,
-        effectiveAvailablePallets,
+        startingPallets,
         allocatedQty
       );
+      const remainingPallets = startingQty - allocatedQty > 0 ? startingPallets : 0;
       rows.push({
         id: `${line.id}-${candidate.id}`,
         lineId: line.id,
@@ -4211,10 +4228,12 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
         containerNo: candidate.containerNo || "",
         positionLabel: candidate.positionLabel,
         allocatedQty,
-        pallets: allocatedPallets
+        pallets: allocatedPallets,
+        startingPallets,
+        remainingPallets
       });
       reservedBySourceId.set(sourceId, (reservedBySourceId.get(sourceId) ?? 0) + allocatedQty);
-      reservedPalletsBySourceId.set(sourceId, (reservedPalletsBySourceId.get(sourceId) ?? 0) + allocatedPallets);
+      reservedPalletsBySourceId.set(sourceId, (reservedPalletsBySourceId.get(sourceId) ?? 0) + Math.max(0, startingPallets - remainingPallets));
       summary.allocatedQty += allocatedQty;
       remainingQty -= allocatedQty;
 
@@ -4454,6 +4473,8 @@ export function buildOutboundSourceOptionsFromItems(items: Item[], skuMastersByI
       unit: (item.unit || skuMastersByID.get(item.skuMasterId)?.unit || "PCS").toUpperCase(),
       availableQty: item.availableQty,
       availablePallets: Math.max(0, item.availablePallets),
+      onHandQty: Math.max(0, item.quantity ?? 0, item.availableQty + (item.allocatedQty ?? 0)),
+      onHandPallets: Math.max(0, item.pallets ?? 0, item.availablePallets + (item.allocatedPallets ?? 0)),
       actualArrivalDate: item.deliveryDate,
       createdAt: item.createdAt
     };
@@ -4513,7 +4534,7 @@ function automaticInventoryPalletsForAllocation(availableQty: number, availableP
   if (allocatedQty >= availableQty) {
     return availablePallets;
   }
-  return Math.min(availablePallets, Math.round(availablePallets * allocatedQty / availableQty));
+  return Math.min(availablePallets, Math.max(1, Math.ceil(availablePallets * allocatedQty / availableQty)));
 }
 function consumeHistoryLaunchContext(mode: ActivityMode): ActivityManagementLaunchContext | null {
   const state = window.history.state;

@@ -164,7 +164,10 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
         storageSection: "TEMP",
         containerNo: "GCXU5817233",
         allocatedQty: 5,
-        pallets: 2
+        pallets: 0,
+        inventoryPalletsUsed: 2,
+        startingPallets: 3,
+        remainingPallets: 3
       }]
     });
     expect(onBackToList).toHaveBeenCalledTimes(1);
@@ -342,13 +345,15 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
     const lines = mockedApi.createOutboundDocument.mock.calls[0][0].lines;
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatchObject({ quantity: 16, pallets: 3 });
-    expect(lines[0].pickAllocations.map((allocation: { containerNo: string; allocatedQty: number; pallets: number }) => ({
+    expect(lines[0].pickAllocations.map((allocation: { containerNo: string; allocatedQty: number; pallets: number; inventoryPalletsUsed: number; remainingPallets: number }) => ({
       containerNo: allocation.containerNo,
       allocatedQty: allocation.allocatedQty,
-      pallets: allocation.pallets
+      pallets: allocation.pallets,
+      inventoryPalletsUsed: allocation.inventoryPalletsUsed,
+      remainingPallets: allocation.remainingPallets
     }))).toEqual([
-      { containerNo: "GCXU5817233", allocatedQty: 8, pallets: 5 },
-      { containerNo: "OOLU1234567", allocatedQty: 8, pallets: 1 }
+      { containerNo: "GCXU5817233", allocatedQty: 8, pallets: 0, inventoryPalletsUsed: 5, remainingPallets: 5 },
+      { containerNo: "OOLU1234567", allocatedQty: 8, pallets: 0, inventoryPalletsUsed: 1, remainingPallets: 2 }
     ]);
     expect(screen.queryByText(/PLT-/)).not.toBeInTheDocument();
   });
@@ -372,7 +377,38 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
     expect(mockedApi.createOutboundDocument.mock.calls[0][0].lines[0]).toMatchObject({
       quantity: 5,
       pallets: 2,
-      pickAllocations: [{ allocatedQty: 5, pallets: 2 }]
+      pickAllocations: [{ allocatedQty: 5, pallets: 0, inventoryPalletsUsed: 2, startingPallets: 3, remainingPallets: 3 }]
+    });
+  });
+
+  it("keeps physical pallets when all available quantity is picked but another draft still reserves stock", async () => {
+    mockedApi.createOutboundDocument.mockResolvedValue(createOutboundDocument({ id: 109, status: "DRAFT" }));
+    renderEditor({
+      items: [createItem({
+        quantity: 10,
+        availableQty: 4,
+        allocatedQty: 6,
+        pallets: 1,
+        availablePallets: 1,
+        allocatedPallets: 0
+      })]
+    });
+
+    await selectContainerSource(0, "GCXU5817233");
+    setLineQuantity(0, 4);
+    setLinePallets(0, 1);
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    expect(await screen.findByRole("spinbutton", { name: "Remaining Inventory Pallets GCXU5817233" })).toHaveValue(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /I confirm the Container/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Schedule Shipment" }));
+
+    await waitFor(() => expect(mockedApi.createOutboundDocument).toHaveBeenCalledTimes(1));
+    expect(mockedApi.createOutboundDocument.mock.calls[0][0].lines[0]).toMatchObject({
+      quantity: 4,
+      pickAllocations: [{ allocatedQty: 4, pallets: 0, startingPallets: 1, remainingPallets: 1 }]
     });
   });
 
@@ -426,7 +462,7 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
     setLineQuantity(0, 10);
     setLinePallets(0, 7);
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    const inventoryPalletInput = await screen.findByRole("spinbutton", { name: "Inventory Pallets GCXU5817233" });
+    const inventoryPalletInput = await screen.findByRole("spinbutton", { name: "Inventory Pallets Used GCXU5817233" });
     fireEvent.change(inventoryPalletInput, { target: { value: "8" } });
     expect(inventoryPalletInput).toHaveValue(3);
 
@@ -438,8 +474,31 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
     expect(mockedApi.createOutboundDocument.mock.calls[0][0].lines[0]).toMatchObject({
       quantity: 10,
       pallets: 7,
-      pickAllocations: [{ allocatedQty: 10, pallets: 3 }]
+      pickAllocations: [{ allocatedQty: 10, pallets: 3, inventoryPalletsUsed: 3, startingPallets: 3, remainingPallets: 0 }]
     });
+  });
+
+  it("blocks a pallet release larger than Inventory Pallets Used", async () => {
+    renderEditor({
+      items: [createItem({
+        quantity: 10,
+        availableQty: 10,
+        pallets: 3,
+        availablePallets: 3
+      })]
+    });
+
+    await selectContainerSource(0, "GCXU5817233");
+    setLineQuantity(0, 10);
+    setLinePallets(0, 1);
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    const inventoryPalletInput = await screen.findByRole("spinbutton", { name: "Inventory Pallets Used GCXU5817233" });
+    fireEvent.change(inventoryPalletInput, { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    expect((await screen.findAllByText(/Check Inventory Pallets Used and Remaining Inventory Pallets/i)).length).toBeGreaterThan(0);
+    expect(mockedApi.createOutboundDocument).not.toHaveBeenCalled();
   });
 
   it("hydrates an existing allocation by container and preserves its declared pallets", async () => {
@@ -542,7 +601,7 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
 
     const selectedQtyInputs = await screen.findAllByRole("spinbutton", { name: "Selected Qty GCXU5817233" });
-    const inventoryPalletInputs = screen.getAllByRole("spinbutton", { name: "Inventory Pallets GCXU5817233" });
+    const inventoryPalletInputs = screen.getAllByRole("spinbutton", { name: "Inventory Pallets Used GCXU5817233" });
     expect(selectedQtyInputs).toHaveLength(2);
     expect(selectedQtyInputs.map((input) => input.getAttribute("max"))).toEqual(["100", "95"]);
     expect(selectedQtyInputs.map((input) => (input as HTMLInputElement).value)).toEqual(["5", "5"]);
@@ -590,7 +649,7 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
 
     expect(await screen.findByRole("spinbutton", { name: "Selected Qty GCXU5817233" })).toHaveAttribute("max", "90");
-    expect(screen.getByRole("spinbutton", { name: "Inventory Pallets GCXU5817233" })).toHaveAttribute("max", "8");
+    expect(screen.getByRole("spinbutton", { name: "Inventory Pallets Used GCXU5817233" })).toHaveAttribute("max", "10");
   });
 
   it("keeps persisted draft buckets separate from colliding real inventory IDs", async () => {
@@ -648,7 +707,7 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
     setLinePallets(1, 4);
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    const ooluInventoryPalletInputs = await screen.findAllByRole("spinbutton", { name: "Inventory Pallets OOLU1234567" });
+    const ooluInventoryPalletInputs = await screen.findAllByRole("spinbutton", { name: "Inventory Pallets Used OOLU1234567" });
     const secondLineInventoryPallets = ooluInventoryPalletInputs.find((input) => !(input as HTMLInputElement).disabled);
     expect(secondLineInventoryPallets).toBeDefined();
     expect(secondLineInventoryPallets).toHaveValue(2);
@@ -657,7 +716,7 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
     await waitFor(() => {
       expect(screen.getAllByRole("spinbutton", { name: "Selected Qty OOLU1234567" })
         .some((input) => (input as HTMLInputElement).value === "10")).toBe(true);
-      expect(screen.getAllByRole("spinbutton", { name: "Inventory Pallets OOLU1234567" })
+      expect(screen.getAllByRole("spinbutton", { name: "Inventory Pallets Used OOLU1234567" })
         .some((input) => (input as HTMLInputElement).value === "1")).toBe(true);
     });
   });

@@ -13,6 +13,8 @@ export type OutboundAllocationPayloadRow = {
   containerNo: string;
   allocatedQty: number;
   pallets: number;
+  startingPallets: number;
+  remainingPallets: number;
 };
 
 export function buildOutboundPickAllocationPayloads(
@@ -30,6 +32,9 @@ export function buildOutboundPickAllocationPayloads(
     storageSection: row.storageSection || undefined,
     containerNo: row.containerNo || undefined,
     allocatedQty: Math.max(0, row.allocatedQty),
-    pallets: Math.max(0, row.pallets)
+    pallets: Math.max(0, row.startingPallets - row.remainingPallets),
+    inventoryPalletsUsed: Math.max(0, row.pallets),
+    startingPallets: Math.max(0, row.startingPallets),
+    remainingPallets: Math.max(0, row.remainingPallets)
   }));
 }

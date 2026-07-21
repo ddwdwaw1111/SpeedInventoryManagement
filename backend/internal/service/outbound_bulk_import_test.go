@@ -11,10 +11,10 @@ import (
 
 func TestParseOutboundBulkImportWorkbookGroupsPickingOrdersAndKeepsPalletCountsIndependent(t *testing.T) {
 	data := buildOutboundBulkWorkbook(t, [][]any{
-		{"Picking Order No", "Actual Ship Date", "Warehouse", "Source Container", "Storage Section", "SKU", "Item Code", "Qty", "Inventory Pallets", "Outbound Pallets", "Line Note"},
-		{"PO-100", "2026-07-01", "EAST", "CONT-A", "A1", "SKU-1", "ITEM-1", 25, 2, 3, "first"},
-		{"PO-100", "2026-07-01", "WEST", "CONT-B", "B2", "SKU-2", "ITEM-2", 7, 4, 2, "second"},
-		{"PO-200", "", "EAST", "", "TEMP", "SKU-3", "", 12, 0, 1, "auto allocate"},
+		{"Picking Order No", "Actual Ship Date", "Warehouse", "Source Container", "Storage Section", "SKU", "Item Code", "Qty", "Inventory Pallets Used", "Remaining Inventory Pallets", "Outbound Pallets", "Line Note"},
+		{"PO-100", "2026-07-01", "EAST", "CONT-A", "A1", "SKU-1", "ITEM-1", 25, 2, 1, 3, "first"},
+		{"PO-100", "2026-07-01", "WEST", "CONT-B", "B2", "SKU-2", "ITEM-2", 7, 4, 2, 2, "second"},
+		{"PO-200", "", "EAST", "", "TEMP", "SKU-3", "", 12, 0, 0, 1, "auto allocate"},
 	})
 
 	documents, err := parseOutboundBulkImportWorkbook(data)
@@ -44,8 +44,8 @@ func TestParseOutboundBulkImportWorkbookGroupsPickingOrdersAndKeepsPalletCountsI
 
 func TestParseOutboundBulkImportWorkbookAllowsPlanOnlyDraftQuantity(t *testing.T) {
 	data := buildOutboundBulkWorkbook(t, [][]any{
-		{"Picking Order No", "Warehouse", "SKU", "Planned Qty", "Actual Qty", "Inventory Pallets", "Outbound Pallets"},
-		{"PO-PLAN", "EAST", "SKU-1", 12, 0, 1, 2},
+		{"Picking Order No", "Warehouse", "SKU", "Planned Qty", "Actual Qty", "Inventory Pallets Used", "Remaining Inventory Pallets", "Outbound Pallets"},
+		{"PO-PLAN", "EAST", "SKU-1", 12, 0, 0, 0, 0},
 	})
 
 	documents, err := parseOutboundBulkImportWorkbook(data)
@@ -105,9 +105,9 @@ func TestBuildOutboundBulkDocumentLinesKeepsPlanOnlyLineWithoutAllocations(t *te
 
 func TestParseOutboundBulkImportWorkbookInheritsBlankDocumentFields(t *testing.T) {
 	data := buildOutboundBulkWorkbook(t, [][]any{
-		{"Picking Order No", "Expected Ship Date", "Ship To Name", "Warehouse", "SKU", "Qty", "Inventory Pallets", "Outbound Pallets"},
-		{"PO-100", "2026-07-20", "Buyer", "EAST", "SKU-1", 10, 1, 2},
-		{"PO-100", "", "", "EAST", "SKU-2", 5, 1, 1},
+		{"Picking Order No", "Expected Ship Date", "Ship To Name", "Warehouse", "SKU", "Qty", "Inventory Pallets Used", "Remaining Inventory Pallets", "Outbound Pallets"},
+		{"PO-100", "2026-07-20", "Buyer", "EAST", "SKU-1", 10, 1, 1, 2},
+		{"PO-100", "", "", "EAST", "SKU-2", 5, 1, 1, 1},
 	})
 
 	documents, err := parseOutboundBulkImportWorkbook(data)
@@ -146,6 +146,60 @@ func TestCreateOutboundDocumentsBulkDraftEnforcesLineLimitBeforeDatabaseWork(t *
 	}
 }
 
+func TestCreateOutboundDocumentsBulkDraftRollsBackEarlierDraftsWhenLaterDraftFailsIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+	customer := mustCreateCustomer(t, ctx, store, "Atomic outbound customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, MainOutboundWarehouseCode)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "ATOMIC-OUT-"+suffix, 5)
+
+	firstPickingOrder := "ATOMIC-OUT-A-" + suffix
+	secondPickingOrder := "ATOMIC-OUT-B-" + suffix
+	_, err := store.CreateOutboundDocumentsBulkDraft(ctx, OutboundBulkImportCommitInput{
+		ImportID:       "0123456789abcdef0123456789abcdef",
+		SourceFileName: "atomic-outbound.xlsx",
+		CustomerID:     customer.ID,
+		Documents: []OutboundBulkImportCommitDocument{
+			{
+				DocumentKey: "FIRST",
+				Input: CreateOutboundDocumentInput{
+					PackingListNo: firstPickingOrder,
+					Lines: []CreateOutboundDocumentLineInput{{
+						CustomerID: customer.ID, LocationID: location.ID, SKUMasterID: item.SKUMasterID,
+						Quantity: 1, PlannedQuantity: 1, ActualQuantity: 1, Pallets: 1,
+					}},
+				},
+			},
+			{
+				DocumentKey: "SECOND",
+				Input: CreateOutboundDocumentInput{
+					PackingListNo: secondPickingOrder,
+					Lines: []CreateOutboundDocumentLineInput{{
+						CustomerID: customer.ID, LocationID: location.ID, SKUMasterID: item.SKUMasterID,
+						Quantity: 999, PlannedQuantity: 999, ActualQuantity: 999, Pallets: 1,
+					}},
+				},
+			},
+		},
+	})
+	if !errors.Is(err, ErrInsufficientStock) {
+		t.Fatalf("bulk create error = %v, want ErrInsufficientStock", err)
+	}
+
+	var created int
+	if err := store.db.GetContext(ctx, &created, `
+		SELECT COUNT(*)
+		FROM outbound_documents
+		WHERE packing_list_no IN (?, ?)
+	`, firstPickingOrder, secondPickingOrder); err != nil {
+		t.Fatalf("count atomically rolled back outbound drafts: %v", err)
+	}
+	if created != 0 {
+		t.Fatalf("bulk create left %d draft(s) after a later failure; want 0", created)
+	}
+}
+
 func TestParseOutboundBulkImportWorkbookRequiresStandardColumns(t *testing.T) {
 	data := buildOutboundBulkWorkbook(t, [][]any{
 		{"Picking Order No", "Warehouse", "SKU", "Qty", "Inventory Pallets"},
@@ -159,9 +213,9 @@ func TestParseOutboundBulkImportWorkbookRequiresStandardColumns(t *testing.T) {
 
 func TestParseOutboundBulkImportWorkbookRequiresExplicitPalletValues(t *testing.T) {
 	data := buildOutboundBulkWorkbook(t, [][]any{
-		{"Picking Order No", "Warehouse", "SKU", "Qty", "Inventory Pallets", "Outbound Pallets"},
-		{"PO-BLANK", "EAST", "SKU-1", 5, "", ""},
-		{"PO-ZERO", "EAST", "SKU-1", 5, 0, 0},
+		{"Picking Order No", "Warehouse", "SKU", "Qty", "Inventory Pallets Used", "Remaining Inventory Pallets", "Outbound Pallets"},
+		{"PO-BLANK", "EAST", "SKU-1", 5, "", "", ""},
+		{"PO-ZERO", "EAST", "SKU-1", 5, 0, 0, 0},
 	})
 
 	documents, err := parseOutboundBulkImportWorkbook(data)
@@ -175,7 +229,7 @@ func TestParseOutboundBulkImportWorkbookRequiresExplicitPalletValues(t *testing.
 	for _, issue := range documents[0].Issues {
 		blankIssueCodes[issue.Code] = true
 	}
-	if !blankIssueCodes["INVALID_INVENTORY_PALLETS"] || !blankIssueCodes["INVALID_OUTBOUND_PALLETS"] {
+	if !blankIssueCodes["INVALID_INVENTORY_PALLETS"] || !blankIssueCodes["INVALID_REMAINING_INVENTORY_PALLETS"] || !blankIssueCodes["INVALID_OUTBOUND_PALLETS"] {
 		t.Fatalf("blank pallet values must be reported separately: %#v", documents[0].Issues)
 	}
 	for _, issue := range documents[1].Issues {
@@ -187,9 +241,9 @@ func TestParseOutboundBulkImportWorkbookRequiresExplicitPalletValues(t *testing.
 
 func TestParseOutboundBulkImportWorkbookRequiresZeroOutboundPalletsForZeroActualQty(t *testing.T) {
 	data := buildOutboundBulkWorkbook(t, [][]any{
-		{"Picking Order No", "Warehouse", "SKU", "Planned Qty", "Qty", "Inventory Pallets", "Outbound Pallets"},
-		{"PO-ZERO-VALID", "EAST", "SKU-1", 5, 0, 0, 0},
-		{"PO-ZERO-INVALID", "EAST", "SKU-1", 5, 0, 0, 1},
+		{"Picking Order No", "Warehouse", "SKU", "Planned Qty", "Qty", "Inventory Pallets Used", "Remaining Inventory Pallets", "Outbound Pallets"},
+		{"PO-ZERO-VALID", "EAST", "SKU-1", 5, 0, 0, 0, 0},
+		{"PO-ZERO-INVALID", "EAST", "SKU-1", 5, 0, 0, 0, 1},
 	})
 
 	documents, err := parseOutboundBulkImportWorkbook(data)
@@ -321,7 +375,7 @@ func TestAssignOutboundBulkInventoryPalletsRejectsUnavailableCountWithoutMutatio
 }
 
 func TestInitializeOutboundBulkBalancesExcludesReservedPallets(t *testing.T) {
-	remainingQty, remainingPallets := initializeOutboundBulkBalances([]Item{
+	remainingQty, remainingPallets, physicalQty, physicalPallets := initializeOutboundBulkBalances([]Item{
 		{ID: 1, Quantity: 20, AvailableQty: 12, Pallets: 5, AvailablePallets: 2, AllocatedPallets: 3},
 	})
 
@@ -330,6 +384,9 @@ func TestInitializeOutboundBulkBalancesExcludesReservedPallets(t *testing.T) {
 	}
 	if remainingPallets[1] != 2 {
 		t.Fatalf("reserved pallets must be excluded from the import balance, got %d", remainingPallets[1])
+	}
+	if physicalQty[1] != 20 || physicalPallets[1] != 5 {
+		t.Fatalf("final-balance validation must retain physical inventory totals, got qty=%d pallets=%d", physicalQty[1], physicalPallets[1])
 	}
 }
 
@@ -378,13 +435,15 @@ func TestResolveMainOutboundLocationRejectsAmbiguous308Warehouses(t *testing.T) 
 }
 
 func TestBuildOutboundBulkMainWarehousePlanTransfersRemoteAllocations(t *testing.T) {
+	startingPallets := 2
+	remainingPallets := 1
 	input, transfer, err := buildOutboundBulkMainWarehousePlan(CreateOutboundDocumentInput{
 		PackingListNo:    "PO-308",
 		ExpectedShipDate: "2026-07-15",
 		Lines: []CreateOutboundDocumentLineInput{{
 			CustomerID: 1, LocationID: 9, SKUMasterID: 7, Quantity: 8, Pallets: 3,
 			PickAllocations: []OutboundPickAllocation{
-				{LocationID: 9, LocationName: "Overflow", StorageSection: "A1", ContainerNo: "CONT-A", AllocatedQty: 5, Pallets: 2, AutoTransferToMain: true},
+				{LocationID: 9, LocationName: "Overflow", StorageSection: "A1", ContainerNo: "CONT-A", AllocatedQty: 5, Pallets: 1, InventoryPalletsUsed: 2, StartingPallets: &startingPallets, RemainingPallets: &remainingPallets, AutoTransferToMain: true},
 				{LocationID: 3, LocationName: "308 Herrod Blvd", StorageSection: "B2", ContainerNo: "CONT-B", AllocatedQty: 3, Pallets: 1},
 			},
 		}},
@@ -396,7 +455,7 @@ func TestBuildOutboundBulkMainWarehousePlanTransfersRemoteAllocations(t *testing
 		t.Fatalf("expected only the remote allocation to transfer, got %#v", transfer.Lines)
 	}
 	line := transfer.Lines[0]
-	if line.LocationID != 9 || line.ToLocationID != 3 || line.Quantity != 5 || line.Pallets != 2 || line.ToStorageSection != DefaultStorageSection {
+	if line.LocationID != 9 || line.ToLocationID != 3 || line.Quantity != 5 || line.Pallets != 1 || line.ToStorageSection != DefaultStorageSection {
 		t.Fatalf("unexpected transfer line: %#v", line)
 	}
 	if input.Lines[0].LocationID != 3 {
@@ -409,6 +468,16 @@ func TestBuildOutboundBulkMainWarehousePlanTransfersRemoteAllocations(t *testing
 	}
 	if input.Lines[0].PickAllocations[0].AutoTransferToMain {
 		t.Fatal("expected the pending transfer marker to be cleared after staging")
+	}
+	transferredAllocation := input.Lines[0].PickAllocations[0]
+	if transferredAllocation.SourceLocationID != 9 || transferredAllocation.SourceLocationName != "Overflow" || transferredAllocation.SourceStorageSection != "A1" {
+		t.Fatalf("expected the original source location to remain available for export, got %#v", transferredAllocation)
+	}
+	if transferredAllocation.SourceStartingPallets == nil || *transferredAllocation.SourceStartingPallets != 2 || transferredAllocation.SourceRemainingPallets == nil || *transferredAllocation.SourceRemainingPallets != 1 {
+		t.Fatalf("expected the original pallet balance snapshot to survive staging, got %#v", transferredAllocation)
+	}
+	if transferredAllocation.StartingPallets != nil || transferredAllocation.RemainingPallets != nil {
+		t.Fatalf("temporary 308 allocation must not reuse the remote final-balance snapshot, got %#v", transferredAllocation)
 	}
 	if input.Lines[0].PickAllocations[0].StorageSection != DefaultStorageSection || input.Lines[0].PickAllocations[1].StorageSection != "B2" {
 		t.Fatalf("expected only transferred stock to stage in TEMP, got %#v", input.Lines[0].PickAllocations)

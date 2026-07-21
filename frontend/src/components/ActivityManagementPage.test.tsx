@@ -457,6 +457,34 @@ describe("ActivityManagementPage", () => {
     expect(onOpenOutboundShipmentEditor).toHaveBeenCalledWith(210);
   });
 
+  it("routes the embedded outbound shortcut through the full shipment editor", async () => {
+    const onClose = vi.fn();
+    const onOpenOutboundShipmentEditor = vi.fn();
+
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="OUT"
+        items={[]}
+        skuMasters={[]}
+        outboundSourceReferences={[]}
+        locations={[]}
+        customers={[]}
+        movements={[]}
+        inboundDocuments={[]}
+        outboundDocuments={[]}
+        currentUserRole="operator"
+        isLoading={false}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onOpenOutboundShipmentEditor={onOpenOutboundShipmentEditor}
+        embeddedComposer={{ initialDate: "2026-07-20", onClose }}
+      />
+    );
+
+    await waitFor(() => expect(onOpenOutboundShipmentEditor).toHaveBeenCalledWith(null, { scheduledDate: "2026-07-20" }));
+    expect(onClose).toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: "Create Shipment" })).not.toBeInTheDocument();
+  });
+
   it("loads inbound documents from the backend only after the search is submitted", async () => {
     const fetchedDocument = createInboundDocument({
       id: 43,
@@ -1280,7 +1308,10 @@ describe("ActivityManagementPage", () => {
                 storageSection: "TEMP",
                 containerNo: "GCXU5817233",
                 allocatedQty: 5,
-                pallets: 1
+                pallets: 0,
+                inventoryPalletsUsed: 1,
+                startingPallets: 2,
+                remainingPallets: 2
               }
             ]
           }

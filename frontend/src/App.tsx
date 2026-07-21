@@ -990,6 +990,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
               isLoading={isLoading}
               onRefresh={() => loadAppData(false)}
               onOpenInboundDetail={handleNavigateToInboundDetail}
+              onOpenOutboundShipmentEditor={handleNavigateToShipmentEditor}
               embeddedComposer={{
                 initialDate: embeddedComposer.date,
                 onClose: () => setEmbeddedComposer(null)

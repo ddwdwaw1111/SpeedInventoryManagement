@@ -624,7 +624,9 @@ export type OutboundDocumentLine = {
 export type OutboundLineAllocationSelection = {
   inventoryItemId: number;
   quantity: number;
-  pallets?: number;
+  pallets?: number; // Inventory pallets touched/used while picking.
+  startingPallets?: number; // Physical pallet balance immediately before this pick.
+  remainingPallets?: number; // Physical pallet balance after this pick.
 };
 
 export type OutboundPickAllocation = {
@@ -636,7 +638,15 @@ export type OutboundPickAllocation = {
   storageSection: string;
   containerNo: string;
   allocatedQty: number;
-  pallets?: number;
+  pallets?: number; // Physical pallets released from inventory.
+  inventoryPalletsUsed?: number;
+  startingPallets?: number;
+  remainingPallets?: number;
+  sourceLocationId?: number;
+  sourceLocationName?: string;
+  sourceStorageSection?: string;
+  sourceStartingPallets?: number;
+  sourceRemainingPallets?: number;
   autoTransferToMain?: boolean;
   createdAt: string;
 };
@@ -661,6 +671,14 @@ export type OutboundPickAllocationPayload = {
   containerNo?: string;
   allocatedQty: number;
   pallets?: number;
+  inventoryPalletsUsed?: number;
+  startingPallets?: number;
+  remainingPallets?: number;
+  sourceLocationId?: number;
+  sourceLocationName?: string;
+  sourceStorageSection?: string;
+  sourceStartingPallets?: number;
+  sourceRemainingPallets?: number;
   autoTransferToMain?: boolean;
 };
 
@@ -986,6 +1004,7 @@ export type OutboundBulkImportLinePreview = {
   plannedQuantity?: number;
   actualQuantity?: number;
   inventoryPallets: number;
+  remainingInventoryPallets: number;
   outboundPallets: number;
   lineNote: string;
   requiresTransfer: boolean;

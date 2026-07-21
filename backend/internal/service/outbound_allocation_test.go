@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -50,6 +51,64 @@ func TestAutomaticInventoryPalletsForAllocation(t *testing.T) {
 				t.Fatalf("automatic inventory pallets = %d, want %d", got, test.want)
 			}
 		})
+	}
+}
+
+func TestValidateOutboundFinalPalletAllocationKeepsUsedAndRemainingIndependent(t *testing.T) {
+	starting := 1
+	remaining := 1
+	allocation := OutboundPickAllocation{
+		ContainerNo:          "PARTIAL-CONT",
+		AllocatedQty:         5,
+		Pallets:              0,
+		InventoryPalletsUsed: 1,
+		StartingPallets:      &starting,
+		RemainingPallets:     &remaining,
+	}
+	if err := validateOutboundFinalPalletAllocation(allocation); err != nil {
+		t.Fatalf("partial pick should use one pallet without releasing it: %v", err)
+	}
+
+	allocation.InventoryPalletsUsed = 0
+	if err := validateOutboundFinalPalletAllocation(allocation); err == nil {
+		t.Fatal("palletized stock pick must record at least one inventory pallet used")
+	}
+
+	starting = 5
+	remaining = 2
+	allocation.Pallets = 3
+	allocation.InventoryPalletsUsed = 2
+	if err := validateOutboundFinalPalletAllocation(allocation); err == nil {
+		t.Fatal("inventory pallets used cannot be lower than the physical pallet release")
+	}
+}
+
+func TestValidateOutboundFinalPalletBalanceRejectsUnreviewedAllocation(t *testing.T) {
+	store := &Store{}
+	err := store.validateOutboundFinalPalletBalanceTx(context.Background(), nil, 1, 1, OutboundPickAllocation{
+		LocationID:   9,
+		ContainerNo:  "UNREVIEWED-CONT",
+		AllocatedQty: 2,
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("unreviewed allocation error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestValidateOutboundFinalPalletBalanceAcceptsInternallyStagedTransfer(t *testing.T) {
+	store := &Store{}
+	starting := 2
+	remaining := 1
+	err := store.validateOutboundFinalPalletBalanceTx(context.Background(), nil, 1, 1, OutboundPickAllocation{
+		LocationID:             3,
+		ContainerNo:            "STAGED-CONT",
+		AllocatedQty:           5,
+		SourceLocationID:       9,
+		SourceStartingPallets:  &starting,
+		SourceRemainingPallets: &remaining,
+	})
+	if err != nil {
+		t.Fatalf("internally staged transfer should retain its reviewed source snapshot: %v", err)
 	}
 }
 
@@ -128,6 +187,78 @@ func TestOutboundAutomaticAllocationKeepsShippingPalletsIndependentIntegration(t
 	}
 	if len(confirmed.Lines[0].PickAllocations) != 1 || confirmed.Lines[0].PickAllocations[0].Pallets != 3 {
 		t.Fatalf("expected the allocation to consume the bucket's 3 inventory pallets, got %#v", confirmed.Lines[0].PickAllocations)
+	}
+	allocation := confirmed.Lines[0].PickAllocations[0]
+	if allocation.InventoryPalletsUsed != 3 || allocation.StartingPallets == nil || *allocation.StartingPallets != 3 || allocation.RemainingPallets == nil || *allocation.RemainingPallets != 0 {
+		t.Fatalf("expected automatic allocation to persist reviewed pallet semantics, got %#v", allocation)
+	}
+}
+
+func TestConfirmedPartialOutboundKeepsPhysicalPalletBalanceIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Partial pallet customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "Partial pallet warehouse-"+suffix)
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "PARTIAL-PALLET-"+suffix, 0, DefaultStorageSection)
+	containerNo := "PARTIAL-PALLET-CONT-" + suffix
+
+	if _, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:          customer.ID,
+		LocationID:          location.ID,
+		ExpectedArrivalDate: "2026-07-20",
+		ContainerNo:         containerNo,
+		StorageSection:      DefaultStorageSection,
+		Status:              DocumentStatusConfirmed,
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:            item.SKU,
+			Description:    item.Description,
+			ExpectedQty:    10,
+			ReceivedQty:    10,
+			Pallets:        1,
+			StorageSection: DefaultStorageSection,
+		}},
+	}); err != nil {
+		t.Fatalf("create partial-pallet inbound receipt: %v", err)
+	}
+
+	source := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerNo, item.SKU)
+	startingPallets := 1
+	remainingPallets := 1
+	draft, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PackingListNo:    "PARTIAL-PALLET-OUT-" + suffix,
+		ExpectedShipDate: "2026-07-20",
+		Status:           DocumentStatusDraft,
+		Lines: []CreateOutboundDocumentLineInput{{
+			CustomerID:  source.CustomerID,
+			LocationID:  source.LocationID,
+			SKUMasterID: source.SKUMasterID,
+			Quantity:    5,
+			Pallets:     1,
+			UnitLabel:   "CTN",
+			PickAllocations: []OutboundPickAllocation{{
+				LocationID:           source.LocationID,
+				StorageSection:       source.StorageSection,
+				ContainerNo:          source.ContainerNo,
+				AllocatedQty:         5,
+				Pallets:              0,
+				InventoryPalletsUsed: 1,
+				StartingPallets:      &startingPallets,
+				RemainingPallets:     &remainingPallets,
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create partial-pallet outbound draft: %v", err)
+	}
+	if _, err := store.ConfirmOutboundDocument(ctx, draft.ID); err != nil {
+		t.Fatalf("confirm partial-pallet outbound: %v", err)
+	}
+
+	remaining := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerNo, item.SKU)
+	if remaining.Quantity != 5 || remaining.Pallets != 1 {
+		t.Fatalf("partial pick left inventory qty/pallets = %d/%d, want 5/1", remaining.Quantity, remaining.Pallets)
 	}
 }
 

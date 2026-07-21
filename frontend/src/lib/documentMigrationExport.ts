@@ -240,14 +240,15 @@ function buildOutboundLineRows(document: OutboundDocument, line: OutboundDocumen
     shipToName: document.shipToName,
     shipToAddress: document.shipToAddress,
     shipToContact: document.shipToContact,
-    warehouse: allocation.locationName || line.locationName,
+    warehouse: allocation.sourceLocationName || allocation.locationName || line.locationName,
     sourceContainer: allocation.containerNo,
-    storageSection: allocation.storageSection || line.storageSection,
+    storageSection: allocation.sourceStorageSection || allocation.storageSection || line.storageSection,
     sku: line.sku,
     itemNumber: line.itemNumber,
     plannedQuantity: plannedShares[index] ?? 0,
     quantity: actualShares[index] ?? 0,
-    inventoryPallets: actualQuantity === 0 ? 0 : Math.max(0, allocation.pallets ?? 0),
+    inventoryPallets: actualQuantity === 0 ? 0 : Math.max(0, allocation.inventoryPalletsUsed ?? allocation.pallets ?? 0),
+    remainingInventoryPallets: actualQuantity === 0 ? 0 : Math.max(0, allocation.sourceRemainingPallets ?? allocation.remainingPallets ?? 0),
     outboundPallets: outboundPalletShares[index] ?? 0,
     lineNote: line.lineNote
   }));
