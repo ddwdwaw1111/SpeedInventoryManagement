@@ -1373,7 +1373,7 @@ export function ActivityManagementPage({
       headerName: t("inventoryPallets"),
       minWidth: 170,
       type: "number",
-      renderCell: (params) => params.row.pickAllocations.reduce(
+      valueGetter: (_, row) => row.pickAllocations.reduce(
         (sum, allocation) => sum + Math.max(0, allocation.inventoryPalletsUsed ?? allocation.pallets ?? 0),
         0
       )
