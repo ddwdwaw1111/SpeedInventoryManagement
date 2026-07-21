@@ -221,6 +221,7 @@ type OutboundPickAllocationRow = {
   storageSection: string;
   containerNo: string;
   allocatedQty: number;
+  inventoryPalletsUsed: number;
 };
 
 type OutboundAllocationPreviewRow = {
@@ -1367,7 +1368,17 @@ export function ActivityManagementPage({
     { field: "locationName", headerName: t("currentStorage"), minWidth: 150, flex: 1, renderCell: (params) => `${params.row.locationName} / ${normalizeStorageSection(params.row.storageSection)}` },
     { field: "plannedQuantity", headerName: t("plannedShipQty"), minWidth: 130, type: "number", renderCell: (params) => params.row.plannedQuantity ?? params.row.quantity },
     { field: "actualQuantity", headerName: t("actualShipQty"), minWidth: 130, type: "number", renderCell: (params) => params.row.actualQuantity ?? params.row.quantity },
-    { field: "pallets", headerName: t("pallets"), minWidth: 90, type: "number", renderCell: (params) => params.row.pallets || "-" },
+    {
+      field: "inventoryPalletsUsed",
+      headerName: t("inventoryPallets"),
+      minWidth: 170,
+      type: "number",
+      renderCell: (params) => params.row.pickAllocations.reduce(
+        (sum, allocation) => sum + Math.max(0, allocation.inventoryPalletsUsed ?? allocation.pallets ?? 0),
+        0
+      )
+    },
+    { field: "pallets", headerName: t("outboundPallets"), minWidth: 140, type: "number", renderCell: (params) => params.row.pallets || 0 },
     { field: "unitLabel", headerName: t("unit"), minWidth: 80, renderCell: (params) => params.row.unitLabel || "-" },
     { field: "cartonSizeMm", headerName: t("cartonSize"), minWidth: 140, renderCell: (params) => <span className="cell--mono">{params.row.cartonSizeMm || "-"}</span> },
     { field: "netWeightKgs", headerName: t("netWeight"), minWidth: 100, type: "number", renderCell: (params) => params.row.netWeightKgs ? params.row.netWeightKgs.toFixed(2) : "-" },
@@ -1378,6 +1389,7 @@ export function ActivityManagementPage({
     { field: "locationName", headerName: t("currentStorage"), minWidth: 150, flex: 1, renderCell: (params) => `${params.row.locationName} / ${normalizeStorageSection(params.row.storageSection)}` },
     { field: "containerNo", headerName: t("sourceContainer"), minWidth: 170, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.containerNo || "-"}</span> },
     { field: "allocatedQty", headerName: t("pickQty"), minWidth: 100, type: "number" },
+    { field: "inventoryPalletsUsed", headerName: t("inventoryPallets"), minWidth: 170, type: "number" },
     { field: "itemNumber", headerName: t("itemNumber"), minWidth: 120, renderCell: (params) => <span className="cell--mono">{params.row.itemNumber || "-"}</span> },
     { field: "sku", headerName: t("sku"), minWidth: 110, renderCell: (params) => <span className="cell--mono">{params.row.sku}</span> },
     { field: "description", headerName: t("description"), minWidth: 220, flex: 1.2, renderCell: (params) => params.row.description || "-" }
@@ -1405,7 +1417,8 @@ export function ActivityManagementPage({
         locationName: allocation.locationName,
         storageSection: allocation.storageSection,
         containerNo: allocation.containerNo,
-        allocatedQty: allocation.allocatedQty
+        allocatedQty: allocation.allocatedQty,
+        inventoryPalletsUsed: Math.max(0, allocation.inventoryPalletsUsed ?? allocation.pallets ?? 0)
       }))
     );
   }, [selectedOutboundDocument]);

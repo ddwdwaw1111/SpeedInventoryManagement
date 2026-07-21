@@ -180,6 +180,7 @@ type OutboundStepOverview = {
   shortageQty: number;
   warehouseCount: number;
   containerCount: number;
+  inventoryPalletCount: number;
   palletCount: number;
   reviewStatus: "ready" | "incomplete" | "shortage";
 };
@@ -398,6 +399,9 @@ export function OutboundShipmentEditorPage({
     if (!source) {
       return [];
     }
+    const inventoryPalletsUsed = batchOutboundAllocationPreview.rows
+      .filter((row) => row.lineId === line.id)
+      .reduce((sum, row) => sum + Math.max(0, row.pallets), 0);
     return [{
       id: line.id,
       lineLabel: `#${index + 1}`,
@@ -407,9 +411,10 @@ export function OutboundShipmentEditorPage({
       locationName: source.locationName,
       plannedQuantity: line.plannedQuantity,
       actualQuantity: Math.max(0, line.quantity),
+      inventoryPalletsUsed,
       pallets: Math.max(0, line.pallets)
     }];
-  }), [batchOutboundLines, selectableOutboundSources]);
+  }), [batchOutboundAllocationPreview.rows, batchOutboundLines, selectableOutboundSources]);
   const isEditingOutboundDraft = normalizeDocumentStatus(document?.status ?? "") === "DRAFT";
   const isEditingConfirmedOutbound = normalizeDocumentStatus(document?.status ?? "") === "CONFIRMED";
   const isEditingExistingDocument = Boolean(documentId && document);
@@ -1260,6 +1265,10 @@ export function OutboundShipmentEditorPage({
                     selectedOutboundSource,
                     outboundPickPlanReservationsByLine.get(line.id)
                   );
+                  const lineInventoryPalletsUsed = outboundPickPlanRows.reduce(
+                    (sum, row) => sum + Math.max(0, row.pallets),
+                    0
+                  );
                   const lineValidation = outboundLineValidations.get(line.id) ?? {
                     lineId: line.id,
                     isActive: false,
@@ -1303,7 +1312,7 @@ export function OutboundShipmentEditorPage({
                       {outboundWizardStep === 1 ? (
                         <div className="space-y-2.5">
                           <div className="grid gap-2.5">
-                            <div className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-[minmax(0,1.7fr)_minmax(12rem,0.8fr)_minmax(8.5rem,0.45fr)_minmax(9.5rem,0.4fr)]">
+                            <div className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-[minmax(0,1.7fr)_minmax(12rem,0.8fr)_repeat(4,minmax(8.5rem,0.45fr))]">
                               <label className="grid content-start gap-1 text-xs font-semibold text-slate-700">
                                 {t("sku")}
                                 <input
@@ -1399,8 +1408,22 @@ export function OutboundShipmentEditorPage({
                                   </span>
                                 ) : null}
                               </label>
+                              <label className="grid content-start gap-1 rounded-xl border border-slate-200/80 bg-slate-50/70 px-3 py-2 text-xs font-semibold text-slate-700">
+                                {t("inventoryPallets")}
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={numberInputValue(lineInventoryPalletsUsed)}
+                                  readOnly
+                                  aria-label={`${t("inventoryPallets")} #${index + 1}`}
+                                  className="min-h-10 rounded-lg border border-slate-300 bg-white px-3 text-right text-base font-bold text-[#143569] outline-none"
+                                />
+                                <div className="mt-1 text-xs font-normal text-slate-500">
+                                  {t("inventoryPalletsStepHint")}
+                                </div>
+                              </label>
                               <label className="grid content-start gap-1 rounded-xl border border-amber-300/80 bg-amber-50/70 px-3 py-2 text-xs font-semibold text-slate-700">
-                                {t("shippingPallets")}
+                                {t("outboundPallets")}
                                 <input
                                   type="number"
                                   min="0"
@@ -1410,7 +1433,7 @@ export function OutboundShipmentEditorPage({
                                     Math.max(0, Number(event.target.value || 0))
                                   )}
                                   disabled={isOutboundSourceReadOnly || !selectedOutboundSource || line.quantity <= 0}
-                                  aria-label={`${t("shippingPallets")} #${index + 1}`}
+                                  aria-label={`${t("outboundPallets")} #${index + 1}`}
                                   className="min-h-10 rounded-lg border border-amber-300 bg-white px-3 text-right text-base font-bold text-[#143569] outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/30"
                                 />
                                 <div className="mt-1 space-y-0.5 text-xs text-slate-500">
@@ -1451,17 +1474,21 @@ export function OutboundShipmentEditorPage({
                       ) : null}
                       {outboundWizardStep === 2 && selectedOutboundSource ? (
                         <div className="space-y-2.5">
-                          <div className="grid gap-2.5 md:grid-cols-3">
+                          <div className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-4">
                             <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 px-3 py-2.5">
                               <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{t("sku")}</div>
                               <div className="mt-1 font-mono text-sm font-bold text-slate-700">{selectedOutboundSource.sku}</div>
                             </div>
                             <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/70 px-3 py-2.5">
-                              <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-emerald-600">{t("selectedQty")}</div>
+                              <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-emerald-600">{t("actualShipQty")}</div>
                               <div className="mt-1 text-sm font-bold text-emerald-800">{getOutboundLineFulfillmentQuantity(line)} {lineUnitLabel}</div>
                             </div>
+                            <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 px-3 py-2.5">
+                              <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{t("inventoryPallets")}</div>
+                              <div className="mt-1 text-sm font-bold text-slate-700">{lineInventoryPalletsUsed}</div>
+                            </div>
                             <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-3 py-2.5">
-                              <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-600">{t("shippingPallets")}</div>
+                              <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-600">{t("outboundPallets")}</div>
                               <div className="mt-1 text-sm font-bold text-amber-800">{line.pallets}</div>
                             </div>
                           </div>
@@ -1555,7 +1582,10 @@ export function OutboundShipmentEditorPage({
                     {`${t("containers")}: ${outboundStepOverview.containerCount}`}
                   </span>
                   <span className="rounded-full border border-slate-200/80 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
-                    {`${t("pallets")}: ${outboundStepOverview.palletCount}`}
+                    {`${t("inventoryPallets")}: ${outboundStepOverview.inventoryPalletCount}`}
+                  </span>
+                  <span className="rounded-full border border-amber-200/80 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+                    {`${t("outboundPallets")}: ${outboundStepOverview.palletCount}`}
                   </span>
                   <span className="rounded-full border border-slate-200/80 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
                     {`${t("selectedQty")}: ${outboundStepOverview.totalPickedQty}`}
@@ -1614,9 +1644,9 @@ export function OutboundShipmentEditorPage({
                                             <span
                                               key="pallet-count"
                                               className="rounded-md border border-amber-200/80 bg-amber-50 px-1.5 py-0.5"
-                                              title={`${t("pallets")}: ${palletCount}`}
+                                              title={`${t("inventoryPallets")}: ${palletCount}`}
                                             >
-                                              {`${t("pallets")}: ${palletCount}`}
+                                              {`${t("inventoryPallets")}: ${palletCount}`}
                                             </span>
                                           ))}
                                         </div>
@@ -1643,7 +1673,7 @@ export function OutboundShipmentEditorPage({
                     <div className="batch-line-card">
                       <div className="batch-line-card__header">
                         <div className="batch-line-card__title flex-wrap">
-                          <strong>{`${t("plannedShipQty")} / ${t("actualShipQty")}`}</strong>
+                          <strong>{`${t("plannedShipQty")} / ${t("actualShipQty")} / ${t("inventoryPallets")} / ${t("outboundPallets")}`}</strong>
                         </div>
                       </div>
                       <div className="mt-2 space-y-2">
@@ -1673,7 +1703,10 @@ export function OutboundShipmentEditorPage({
                                   {`${t("actualShipQty")}: ${line.actualQuantity}`}
                                 </span>
                                 <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-slate-700">
-                                  {`${t("pallets")}: ${line.pallets}`}
+                                  {`${t("inventoryPallets")}: ${line.inventoryPalletsUsed}`}
+                                </span>
+                                <span className="rounded-md border border-amber-200/80 bg-amber-50 px-2 py-1 text-amber-700">
+                                  {`${t("outboundPallets")}: ${line.pallets}`}
                                 </span>
                               </div>
                             </div>
@@ -1956,6 +1989,10 @@ function buildOutboundStepOverview(
   const palletCount = lines.reduce((sum, line) => (
     line.sourceKey.trim() && getOutboundLineFulfillmentQuantity(line) > 0 ? sum + Math.max(0, line.pallets) : sum
   ), 0);
+  const inventoryPalletCount = preview.rows.reduce(
+    (sum, row) => sum + Math.max(0, row.pallets),
+    0
+  );
   const reviewStatus: OutboundStepOverview["reviewStatus"] = preview.shortageLineCount > 0
     ? "shortage"
     : readyLines === 0 || preview.totalAllocatedQty !== preview.totalRequestedQty
@@ -1971,6 +2008,7 @@ function buildOutboundStepOverview(
     shortageQty: Math.max(0, preview.totalRequestedQty - preview.totalAllocatedQty),
     warehouseCount: reviewGroups.length,
     containerCount: preview.totalContainerCount,
+    inventoryPalletCount,
     palletCount,
     reviewStatus
   };

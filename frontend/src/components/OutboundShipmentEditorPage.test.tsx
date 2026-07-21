@@ -77,7 +77,7 @@ function getPlannedQuantityInputs() {
 }
 
 function getPalletInputs() {
-  return Array.from(document.querySelectorAll('input[aria-label^="Shipping Pallets #"]')) as HTMLInputElement[];
+  return Array.from(document.querySelectorAll('input[aria-label^="Outbound Pallets #"]')) as HTMLInputElement[];
 }
 
 function sourceLabel(containerNo: string, sku = "608333", description = "VB22GC") {
@@ -140,6 +140,9 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
     await selectContainerSource(0, "GCXU5817233");
     setLineQuantity(0, 5);
     setLinePallets(0, 2);
+
+    expect(screen.getByRole("spinbutton", { name: "Inventory Pallets Used #1" })).toHaveValue(2);
+    expect(screen.getByRole("spinbutton", { name: "Outbound Pallets #1" })).toHaveValue(2);
     await submitReviewedDraft();
 
     await waitFor(() => expect(mockedApi.createOutboundDocument).toHaveBeenCalledTimes(1));
@@ -268,7 +271,8 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
     expect(lineReview).toHaveTextContent("608333");
     expect(lineReview).toHaveTextContent("Planned Ship Qty: 12");
     expect(lineReview).toHaveTextContent("Actual Ship Qty: 5");
-    expect(lineReview).toHaveTextContent(/Pallets: 2/i);
+    expect(lineReview).toHaveTextContent("Inventory Pallets Used: 2");
+    expect(lineReview).toHaveTextContent("Outbound Pallets: 2");
   });
 
   it("clears shipping pallets when actual quantity is reset to zero", async () => {
