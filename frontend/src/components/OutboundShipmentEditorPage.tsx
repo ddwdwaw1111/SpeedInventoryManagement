@@ -7,6 +7,7 @@ import { buildOutboundPickAllocationPayloads } from "../lib/outboundAllocationPa
 import { consumePendingOutboundShipmentEditorLaunchContext, type OutboundShipmentEditorLaunchContext } from "../lib/outboundShipmentEditorLaunchContext";
 import { useI18n } from "../lib/i18n";
 import { getOutboundExpectedShipDate } from "../lib/outboundDates";
+import { formatNumber } from "../lib/formatters";
 import {
   DEFAULT_STORAGE_SECTION,
   getLocationSectionOptions,
@@ -810,11 +811,7 @@ export function OutboundShipmentEditorPage({
           pallets: existingSelection?.pallets
             ?? automaticInventoryPalletsForAllocation(availableQuantity, startingPallets, nextQuantity),
           startingPallets,
-          remainingPallets: nextQuantity >= startingQuantity
-            ? 0
-            : existingSelection && existingSelection.quantity < startingQuantity
-              ? existingSelection.remainingPallets ?? startingPallets
-              : startingPallets
+          remainingPallets: nextQuantity >= startingQuantity ? 0 : startingPallets
         }] : [])
       ]);
       return {
@@ -841,29 +838,6 @@ export function OutboundShipmentEditorPage({
           {
             ...existingSelection,
             pallets: nextPallets
-          }
-        ]),
-        allocationSelectionsTouched: true
-      };
-    }));
-  }
-
-  function updateBatchOutboundLineAllocationSelectionRemainingPallets(lineID: string, inventoryItemID: number, nextPallets: number) {
-    setBatchOutboundLines((current) => current.map((line) => {
-      if (line.id !== lineID) {
-        return line;
-      }
-      const existingSelection = line.allocationSelections.find((entry) => entry.inventoryItemId === inventoryItemID);
-      if (!existingSelection || existingSelection.quantity <= 0) {
-        return line;
-      }
-      return {
-        ...line,
-        allocationSelections: normalizeOutboundLineAllocationSelections([
-          ...line.allocationSelections.filter((entry) => entry.inventoryItemId !== inventoryItemID),
-          {
-            ...existingSelection,
-            remainingPallets: nextPallets
           }
         ]),
         allocationSelectionsTouched: true
@@ -1282,6 +1256,10 @@ export function OutboundShipmentEditorPage({
                         outboundPickPlanReservationsByLine.get(line.id)
                       )
                     : [];
+                  const lineAvailableBalance = getOutboundSourceAvailableBalance(
+                    selectedOutboundSource,
+                    outboundPickPlanReservationsByLine.get(line.id)
+                  );
                   const lineValidation = outboundLineValidations.get(line.id) ?? {
                     lineId: line.id,
                     isActive: false,
@@ -1405,9 +1383,9 @@ export function OutboundShipmentEditorPage({
                                   id={`shipment-editor-quantity-${line.id}`}
                                   type="number"
                                   min="0"
-                                  max={selectedOutboundSource?.availableQty || undefined}
+                                  max={lineAvailableBalance.quantity || undefined}
                                   value={numberInputValue(line.quantity)}
-                                  onChange={(event) => updateBatchOutboundLineQuantity(line.id, Math.max(0, Math.min(selectedOutboundSource?.availableQty ?? Number.MAX_SAFE_INTEGER, Number(event.target.value || 0))))}
+                                  onChange={(event) => updateBatchOutboundLineQuantity(line.id, Math.max(0, Math.min(lineAvailableBalance.quantity, Number(event.target.value || 0))))}
                                   onKeyDown={(event) => handleShipmentLineFieldKeyDown(event, line.id, "quantity")}
                                   disabled={isOutboundSourceReadOnly || !selectedOutboundSource}
                                   aria-invalid={lineValidation.quantityMessage ? "true" : "false"}
@@ -1416,7 +1394,7 @@ export function OutboundShipmentEditorPage({
                                 {lineValidation.quantityMessage || !selectedOutboundSource || getOutboundLineFulfillmentQuantity(line) <= 0 ? (
                                   <span className={`text-xs ${lineValidation.quantityMessage ? "font-semibold text-amber-700" : "text-slate-500"}`}>
                                     {lineValidation.quantityMessage || (selectedOutboundSource
-                                      ? `${t("maxLabel")} ${selectedOutboundSource.availableQty} ${lineUnitLabel}`
+                                      ? `${t("maxLabel")} ${lineAvailableBalance.quantity} ${lineUnitLabel}`
                                       : (lineSourceInputValue.trim() ? t("selectWarehouseAfterSku") : t("selectSkuFirst")))}
                                   </span>
                                 ) : null}
@@ -1436,8 +1414,9 @@ export function OutboundShipmentEditorPage({
                                   className="min-h-10 rounded-lg border border-amber-300 bg-white px-3 text-right text-base font-bold text-[#143569] outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-300/30"
                                 />
                                 <div className="mt-1 space-y-0.5 text-xs text-slate-500">
-                                  <div className="whitespace-nowrap">{`${t("sourceContainer")}: ${selectedOutboundSource?.candidates[0]?.containerNo || "-"}`}</div>
-                                  <div className="whitespace-nowrap">{`${t("availableQty")}: ${selectedOutboundSource?.availableQty ?? 0}`}</div>
+                                  <div className="whitespace-nowrap">{`${t("containers")}: ${selectedOutboundSource?.containerCount ?? 0}`}</div>
+                                  <div className="whitespace-nowrap">{`${t("availableQty")}: ${formatNumber(lineAvailableBalance.quantity)} ${lineUnitLabel}`}</div>
+                                  <div className="whitespace-nowrap">{`${t("availablePallets")}: ${formatNumber(lineAvailableBalance.pallets)}`}</div>
                                   <div className="whitespace-nowrap">{`${t("selectedQty")}: ${outboundAllocationSummary?.allocatedQty ?? 0} ${lineUnitLabel}`}</div>
                                 </div>
                               </label>
@@ -1490,7 +1469,7 @@ export function OutboundShipmentEditorPage({
                             {outboundPickPlanRows.map((row) => (
                               <div
                                 key={row.id}
-                                className="grid items-end gap-2 border-b border-slate-100 px-3 py-2.5 last:border-b-0 md:grid-cols-[minmax(10rem,1fr)_minmax(7rem,0.5fr)_minmax(7rem,0.5fr)_minmax(8rem,0.6fr)]"
+                                className="grid items-end gap-2 border-b border-slate-100 px-3 py-2.5 last:border-b-0 md:grid-cols-[minmax(10rem,1fr)_minmax(7rem,0.5fr)_minmax(7rem,0.5fr)]"
                               >
                                 <div className="min-w-0">
                                   <div className="font-mono text-sm font-semibold text-[#143569]">{row.containerNo || "-"}</div>
@@ -1532,26 +1511,6 @@ export function OutboundShipmentEditorPage({
                                     onChange={(event) => {
                                       startManualOutboundLinePick(line.id);
                                       updateBatchOutboundLineAllocationSelectionPallets(
-                                        line.id,
-                                        row.inventoryItemId,
-                                        Math.max(0, Math.min(row.startingPallets, Number(event.target.value || 0)))
-                                      );
-                                    }}
-                                    disabled={isReadOnly || row.allocatedQty <= 0}
-                                    className="min-h-9 rounded-lg border border-slate-300 bg-white px-2 text-right text-sm font-semibold text-slate-700 disabled:bg-slate-100"
-                                  />
-                                </label>
-                                <label className="grid gap-1 text-xs font-semibold text-slate-600">
-                                  {t("remainingInventoryPallets")}
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    max={row.startingPallets}
-                                    value={numberInputValue(row.remainingPallets)}
-                                    aria-label={`${t("remainingInventoryPallets")} ${row.containerNo}`}
-                                    onChange={(event) => {
-                                      startManualOutboundLinePick(line.id);
-                                      updateBatchOutboundLineAllocationSelectionRemainingPallets(
                                         line.id,
                                         row.inventoryItemId,
                                         Math.max(0, Math.min(row.startingPallets, Number(event.target.value || 0)))
@@ -1945,7 +1904,6 @@ function buildOutboundLineValidations(
           const remainingQty = row.startingQty - row.allocatedQty;
           return row.pallets < 0
             || row.pallets > row.startingPallets
-            || row.pallets < releasedPallets
             || (row.startingPallets > 0 && row.pallets === 0)
             || row.remainingPallets < 0
             || row.remainingPallets > row.startingPallets
@@ -2067,12 +2025,7 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
       const startingPallets = Math.max(0, candidate.onHandPallets - (priorReservation?.pallets ?? 0));
       const allocatedQty = Math.min(requestedQty, availableQty);
       const allocatedPallets = Math.min(Math.max(0, requestedAllocation?.pallets ?? 0), startingPallets);
-      const remainingPallets = Math.min(startingPallets, Math.max(
-        0,
-        (requestedAllocation?.startingPallets ?? 0) > 0
-          ? requestedAllocation?.remainingPallets ?? startingPallets
-          : startingPallets - (requestedAllocation?.pallets ?? 0)
-      ));
+      const remainingPallets = allocatedQty >= startingQty ? 0 : startingPallets;
       if (allocatedQty <= 0) {
         continue;
       }
@@ -2147,12 +2100,7 @@ function buildOutboundPickPlanRows(
     const availablePallets = Math.max(0, candidate.availablePallets - (priorReservation?.pallets ?? 0));
     const startingQty = Math.max(0, candidate.onHandQty - (priorReservation?.quantity ?? 0));
     const startingPallets = Math.max(0, candidate.onHandPallets - (priorReservation?.pallets ?? 0));
-    const remainingPallets = Math.min(startingPallets, Math.max(
-      0,
-      (selectedAllocation?.startingPallets ?? 0) > 0
-        ? selectedAllocation?.remainingPallets ?? startingPallets
-        : startingPallets - (selectedAllocation?.pallets ?? 0)
-    ));
+    const remainingPallets = allocatedQty >= startingQty ? 0 : startingPallets;
 
     return [{
       id: `${line.id}-${candidate.inventoryItemId}`,
@@ -2206,6 +2154,21 @@ function reserveOutboundLinePalletSelections(
       )
     });
   }
+}
+
+function getOutboundSourceAvailableBalance(
+  source: OutboundSourceOption | undefined,
+  priorReservations: OutboundInventoryReservationMap | undefined
+) {
+  if (!source) {
+    return { quantity: 0, pallets: 0 };
+  }
+  return source.candidates.reduce((balance, candidate) => {
+    const reservation = priorReservations?.get(candidate.inventoryItemId);
+    balance.quantity += Math.max(0, candidate.availableQty - (reservation?.quantity ?? 0));
+    balance.pallets += Math.max(0, candidate.availablePallets - (reservation?.pallets ?? 0));
+    return balance;
+  }, { quantity: 0, pallets: 0 });
 }
 
 function buildEffectiveOutboundLinePalletSelections(
@@ -2535,14 +2498,28 @@ function normalizeOutboundSourceSearchValue(value: string) {
 }
 
 function formatOutboundSourceOptionLabel(sourceOption: OutboundSourceOption) {
-  const containerNo = sourceOption.candidates[0]?.containerNo || "-";
-  return `${sourceOption.sku} | ${sourceOption.itemNumber || "-"} | ${sourceOption.customerName} | ${containerNo} | ${sourceOption.description}`;
+  const containerScope = sourceOption.containerCount <= 1
+    ? sourceOption.candidates[0]?.containerNo || "-"
+    : `${sourceOption.containerCount} CONTAINERS`;
+  return `${sourceOption.sku} | ${sourceOption.itemNumber || "-"} | ${sourceOption.customerName} | ${containerScope} | ${sourceOption.description}`;
+}
+
+function formatOutboundCandidateSourceOptionLabel(
+  sourceOption: OutboundSourceOption,
+  candidate: OutboundInventoryCandidate
+) {
+  return `${sourceOption.sku} | ${sourceOption.itemNumber || "-"} | ${sourceOption.customerName} | ${candidate.containerNo || "-"} | ${sourceOption.description}`;
 }
 
 function buildOutboundSkuSearchOptions(sourceOptions: OutboundSourceOption[]) {
   const options = new Set<string>();
   for (const sourceOption of sourceOptions) {
     options.add(formatOutboundSourceOptionLabel(sourceOption));
+    if (sourceOption.containerCount > 1) {
+      for (const candidate of sourceOption.candidates) {
+        options.add(formatOutboundCandidateSourceOptionLabel(sourceOption, candidate));
+      }
+    }
   }
   return [...options].sort((left, right) => left.localeCompare(right));
 }
@@ -2555,6 +2532,9 @@ function getExactOutboundSourceSearchMatches(sourceOptions: OutboundSourceOption
 
   const exactLabelMatches = sourceOptions.filter((sourceOption) => (
     normalizeOutboundSourceSearchValue(formatOutboundSourceOptionLabel(sourceOption)) === normalizedSearchValue
+    || sourceOption.candidates.some((candidate) => (
+      normalizeOutboundSourceSearchValue(formatOutboundCandidateSourceOptionLabel(sourceOption, candidate)) === normalizedSearchValue
+    ))
   ));
   if (exactLabelMatches.length > 0) {
     return exactLabelMatches;
@@ -2591,6 +2571,14 @@ function filterOutboundSourcesBySkuSearch(sourceOptions: OutboundSourceOption[],
     const normalizedLabel = normalizeOutboundSourceSearchValue(formatOutboundSourceOptionLabel(sourceOption));
     return normalizedLabel === normalizedSearchValue
       || normalizedLabel.includes(normalizedSearchValue)
+      || sourceOption.candidates.some((candidate) => {
+        const normalizedCandidateLabel = normalizeOutboundSourceSearchValue(
+          formatOutboundCandidateSourceOptionLabel(sourceOption, candidate)
+        );
+        return normalizedCandidateLabel === normalizedSearchValue
+          || normalizedCandidateLabel.includes(normalizedSearchValue)
+          || normalizeOutboundSourceSearchValue(candidate.containerNo).includes(normalizedSearchValue);
+      })
       || normalizeOutboundSourceSearchValue(sourceOption.sku) === normalizedSearchValue
       || normalizeOutboundSourceSearchValue(sourceOption.itemNumber) === normalizedSearchValue;
   });

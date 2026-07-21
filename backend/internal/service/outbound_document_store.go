@@ -1054,13 +1054,13 @@ func (s *Store) ConfirmOutboundDocument(ctx context.Context, documentID int64) (
 
 	status := normalizeDocumentStatus(documentRow.Status)
 	if status == DocumentStatusDeleted {
-		return OutboundDocument{}, fmt.Errorf("%w: deleted outbound document cannot be confirmed", ErrInvalidInput)
+		return OutboundDocument{}, fmt.Errorf("%w: %s is deleted and cannot be confirmed", ErrInvalidInput, outboundConfirmationReference(documentRow))
 	}
 	if status == DocumentStatusConfirmed {
-		return OutboundDocument{}, fmt.Errorf("%w: outbound document is already confirmed", ErrInvalidInput)
+		return OutboundDocument{}, fmt.Errorf("%w: %s is already confirmed", ErrInvalidInput, outboundConfirmationReference(documentRow))
 	}
 	if err := s.confirmOutboundDocumentTx(ctx, tx, documentID); err != nil {
-		return OutboundDocument{}, err
+		return OutboundDocument{}, fmt.Errorf("confirm %s: %w", outboundConfirmationReference(documentRow), err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -1118,19 +1118,22 @@ func (s *Store) BulkConfirmOutboundDocuments(ctx context.Context, input BulkConf
 	// Validate every selected document before changing inventory. The same
 	// transaction is then used for every confirmation, so any later stock or
 	// billing failure rolls the whole batch back.
+	documentReferences := make(map[int64]string, len(documentIDs))
 	for _, documentID := range documentIDs {
 		documentRow, err := s.loadOutboundDocumentForUpdateTx(ctx, tx, documentID)
 		if err != nil {
 			return BulkConfirmOutboundDocumentsResponse{}, fmt.Errorf("load shipment %d for confirmation: %w", documentID, err)
 		}
+		documentReference := outboundConfirmationReference(documentRow)
+		documentReferences[documentID] = documentReference
 		if normalizeDocumentStatus(documentRow.Status) != DocumentStatusDraft {
-			return BulkConfirmOutboundDocumentsResponse{}, fmt.Errorf("%w: shipment %d is not a draft", ErrInvalidInput, documentID)
+			return BulkConfirmOutboundDocumentsResponse{}, fmt.Errorf("%w: %s is not a draft", ErrInvalidInput, documentReference)
 		}
 	}
 
 	for _, documentID := range documentIDs {
 		if err := s.confirmOutboundDocumentTx(ctx, tx, documentID); err != nil {
-			return BulkConfirmOutboundDocumentsResponse{}, fmt.Errorf("confirm shipment %d: %w", documentID, err)
+			return BulkConfirmOutboundDocumentsResponse{}, fmt.Errorf("confirm %s: %w", documentReferences[documentID], err)
 		}
 	}
 
@@ -1150,6 +1153,13 @@ func (s *Store) BulkConfirmOutboundDocuments(ctx context.Context, input BulkConf
 		response.Documents = append(response.Documents, document)
 	}
 	return response, nil
+}
+
+func outboundConfirmationReference(document outboundDocumentRow) string {
+	if pickingOrderNo := strings.TrimSpace(document.PackingListNo); pickingOrderNo != "" {
+		return "PO " + pickingOrderNo
+	}
+	return fmt.Sprintf("shipment %d", document.ID)
 }
 
 func (s *Store) UpdateOutboundDocumentTrackingStatus(ctx context.Context, documentID int64, trackingStatus string) (OutboundDocument, error) {
@@ -2983,7 +2993,21 @@ func (s *Store) resolveOutboundDraftBucketAllocationsTx(
 
 		effectiveAvailable := candidate.AvailableQty - reservationState.ByBucketKey[bucketKey]
 		effectiveAvailablePallets := candidate.AvailablePallets - reservationState.PalletsByBucketKey[bucketKey]
-		if draftAllocation.AllocatedQty > effectiveAvailable || draftAllocation.Pallets > effectiveAvailablePallets {
+		isStagedWarehouseTransfer := draftAllocation.SourceLocationID > 0 &&
+			draftAllocation.SourceLocationID != locationID &&
+			draftAllocation.StartingPallets == nil &&
+			draftAllocation.RemainingPallets == nil
+		startingPallets := maxInt(candidate.OnHandPallets-reservationState.PalletsByBucketKey[bucketKey], 0)
+		remainingPallets := remainingOutboundInventoryPallets(
+			maxInt(candidate.OnHandQty-reservationState.ByBucketKey[bucketKey], 0),
+			startingPallets,
+			draftAllocation.AllocatedQty,
+		)
+		physicalPalletRelease := draftAllocation.Pallets
+		if !isStagedWarehouseTransfer {
+			physicalPalletRelease = maxInt(startingPallets-remainingPallets, 0)
+		}
+		if draftAllocation.AllocatedQty > effectiveAvailable || physicalPalletRelease > effectiveAvailablePallets {
 			for _, applied := range appliedReservations {
 				reservationState.ByBucketKey[applied.BucketKey] -= applied.AllocatedQty
 				reservationState.PalletsByBucketKey[applied.BucketKey] -= applied.AllocatedPallets
@@ -2997,10 +3021,29 @@ func (s *Store) resolveOutboundDraftBucketAllocationsTx(
 		candidate.StorageSection = storageSection
 		candidate.ContainerNo = containerNo
 		candidate.ItemNumber = firstNonEmpty(strings.TrimSpace(draftAllocation.ItemNumber), candidate.ItemNumber, source.ItemNumber)
-		candidate.Pallets = draftAllocation.Pallets
+		candidate.Pallets = physicalPalletRelease
 		candidate.InventoryPalletsUsed = draftAllocation.InventoryPalletsUsed
-		candidate.StartingPallets = cloneIntPointer(draftAllocation.StartingPallets)
-		candidate.RemainingPallets = cloneIntPointer(draftAllocation.RemainingPallets)
+		if isStagedWarehouseTransfer {
+			candidate.StartingPallets = nil
+			candidate.RemainingPallets = nil
+		} else {
+			candidate.StartingPallets = cloneIntPointer(&startingPallets)
+			candidate.RemainingPallets = cloneIntPointer(&remainingPallets)
+			if err := validateOutboundFinalPalletAllocation(OutboundPickAllocation{
+				ContainerNo:          candidate.ContainerNo,
+				AllocatedQty:         candidate.AllocatedQty,
+				Pallets:              candidate.Pallets,
+				InventoryPalletsUsed: candidate.InventoryPalletsUsed,
+				StartingPallets:      candidate.StartingPallets,
+				RemainingPallets:     candidate.RemainingPallets,
+			}); err != nil {
+				for _, applied := range appliedReservations {
+					reservationState.ByBucketKey[applied.BucketKey] -= applied.AllocatedQty
+					reservationState.PalletsByBucketKey[applied.BucketKey] -= applied.AllocatedPallets
+				}
+				return nil, err
+			}
+		}
 		candidate.SourceLocationID = draftAllocation.SourceLocationID
 		candidate.SourceLocationName = draftAllocation.SourceLocationName
 		candidate.SourceStorageSection = draftAllocation.SourceStorageSection
@@ -3071,10 +3114,7 @@ func (s *Store) allocateOutboundLineTx(ctx context.Context, tx *sql.Tx, source l
 
 		startingQty := maxInt(candidate.OnHandQty-reservationState.ByBucketKey[candidate.BucketKey], 0)
 		startingPallets := maxInt(candidate.OnHandPallets-reservationState.PalletsByBucketKey[candidate.BucketKey], 0)
-		remainingPallets := startingPallets
-		if allocatedQty >= startingQty {
-			remainingPallets = 0
-		}
+		remainingPallets := remainingOutboundInventoryPallets(startingQty, startingPallets, allocatedQty)
 		candidate.AllocatedQty = allocatedQty
 		candidate.Pallets = maxInt(startingPallets-remainingPallets, 0)
 		candidate.InventoryPalletsUsed = automaticInventoryPalletsForAllocation(effectiveAvailable, startingPallets, allocatedQty)
@@ -3125,6 +3165,16 @@ func automaticInventoryPalletsForAllocation(availableQty int, availablePallets i
 		return availablePallets
 	}
 	return allocatedPallets
+}
+
+func remainingOutboundInventoryPallets(startingQty int, startingPallets int, allocatedQty int) int {
+	startingQty = maxInt(startingQty, 0)
+	startingPallets = maxInt(startingPallets, 0)
+	allocatedQty = maxInt(allocatedQty, 0)
+	if allocatedQty >= startingQty {
+		return 0
+	}
+	return startingPallets
 }
 
 func (s *Store) resolveOutboundLineAllocationsTx(ctx context.Context, tx *sql.Tx, source lockedOutboundSource, requestedQty int, reservationState *outboundAllocationReservationState) ([]outboundAllocationCandidate, error) {
@@ -3355,10 +3405,6 @@ func validateOutboundFinalPalletAllocation(allocation OutboundPickAllocation) er
 	if allocation.InventoryPalletsUsed < 0 || allocation.InventoryPalletsUsed > startingPallets {
 		return fmt.Errorf("%w: source container %s inventory pallets used must be between 0 and the starting balance of %d", ErrInvalidInput, containerNo, startingPallets)
 	}
-	releasedPallets := startingPallets - remainingPallets
-	if allocation.InventoryPalletsUsed < releasedPallets {
-		return fmt.Errorf("%w: source container %s inventory pallets used cannot be less than the %d pallet(s) released from inventory", ErrInvalidInput, containerNo, releasedPallets)
-	}
 	if allocation.AllocatedQty > 0 && startingPallets > 0 && allocation.InventoryPalletsUsed == 0 {
 		return fmt.Errorf("%w: source container %s inventory pallets used must be at least 1 when stock is picked from palletized inventory", ErrInvalidInput, containerNo)
 	}
@@ -3377,7 +3423,7 @@ func (s *Store) validateOutboundFinalPalletBalanceTx(
 			return nil
 		}
 		return fmt.Errorf(
-			"%w: source container %s requires reviewed Inventory Pallets Used and Remaining Inventory Pallets before confirmation",
+			"%w: source container %s has no derived pallet-balance snapshot; reopen or revalidate the shipment before confirmation",
 			ErrInvalidInput,
 			firstNonEmpty(normalizeContainerNo(allocation.ContainerNo), "selected container"),
 		)

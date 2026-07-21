@@ -107,7 +107,6 @@ describe("document migration export", () => {
     expect(rows.map((row) => row.inventoryPallets)).toEqual([1, 2]);
     expect(rows.map((row) => row.warehouse)).toEqual(["Overflow", "NJ"]);
     expect(rows.map((row) => row.storageSection)).toEqual(["A1", "TEMP"]);
-    expect(rows.map((row) => row.remainingInventoryPallets)).toEqual([1, 0]);
     expect(rows.map((row) => row.outboundPallets)).toEqual([2, 3]);
   });
 
@@ -222,8 +221,9 @@ describe("document migration export", () => {
     for (const header of ["Container No", "Warehouse", "Actual Arrival Date", "SKU", "Received Qty", "Pallets", "CTN per Pallet"]) {
       expect(inboundSheet).toContain(`<t>${header}</t>`);
     }
-    for (const header of ["Picking Order No", "Source Container", "Actual Qty", "Inventory Pallets Used", "Remaining Inventory Pallets", "Outbound Pallets"]) {
+    for (const header of ["Picking Order No", "Source Container", "Actual Qty", "Inventory Pallets Used", "Outbound Pallets"]) {
       expect(outboundSheet).toContain(`<t>${header}</t>`);
     }
+    expect(outboundSheet).not.toContain("Remaining Inventory Pallets");
   });
 });

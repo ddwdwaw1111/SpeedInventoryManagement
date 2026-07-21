@@ -36,7 +36,6 @@ const (
 	outboundBulkPlannedQuantity  = "plannedQuantity"
 	outboundBulkQuantity         = "quantity"
 	outboundBulkInventoryPallets = "inventoryPallets"
-	outboundBulkRemainingPallets = "remainingInventoryPallets"
 	outboundBulkOutboundPallets  = "outboundPallets"
 	outboundBulkLineNote         = "lineNote"
 )
@@ -59,21 +58,20 @@ type OutboundBulkImportIssue struct {
 }
 
 type OutboundBulkImportLinePreview struct {
-	RowNumber                 int    `json:"rowNumber"`
-	Warehouse                 string `json:"warehouse"`
-	SourceContainer           string `json:"sourceContainer"`
-	StorageSection            string `json:"storageSection"`
-	SKU                       string `json:"sku"`
-	ItemNumber                string `json:"itemNumber"`
-	Quantity                  int    `json:"quantity"` // Backward-compatible alias for actualQuantity.
-	PlannedQuantity           int    `json:"plannedQuantity"`
-	ActualQuantity            int    `json:"actualQuantity"`
-	InventoryPallets          int    `json:"inventoryPallets"`          // Physical warehouse pallets touched/used during picking.
-	RemainingInventoryPallets int    `json:"remainingInventoryPallets"` // Physical pallet balance after this shipment row.
-	OutboundPallets           int    `json:"outboundPallets"`           // Pallets after repalletization, persisted on the shipment line.
-	LineNote                  string `json:"lineNote"`
-	RequiresTransfer          bool   `json:"requiresTransfer"`
-	OutboundWarehouse         string `json:"outboundWarehouse"`
+	RowNumber         int    `json:"rowNumber"`
+	Warehouse         string `json:"warehouse"`
+	SourceContainer   string `json:"sourceContainer"`
+	StorageSection    string `json:"storageSection"`
+	SKU               string `json:"sku"`
+	ItemNumber        string `json:"itemNumber"`
+	Quantity          int    `json:"quantity"` // Backward-compatible alias for actualQuantity.
+	PlannedQuantity   int    `json:"plannedQuantity"`
+	ActualQuantity    int    `json:"actualQuantity"`
+	InventoryPallets  int    `json:"inventoryPallets"` // Physical warehouse pallets touched/used during picking.
+	OutboundPallets   int    `json:"outboundPallets"`  // Pallets after repalletization, persisted on the shipment line.
+	LineNote          string `json:"lineNote"`
+	RequiresTransfer  bool   `json:"requiresTransfer"`
+	OutboundWarehouse string `json:"outboundWarehouse"`
 }
 
 type OutboundBulkImportDocumentPreview struct {
@@ -528,7 +526,7 @@ func parseOutboundBulkImportWorkbook(data []byte) ([]OutboundBulkImportDocumentP
 }
 
 func findOutboundBulkHeader(rows [][]string) (int, map[string]int, error) {
-	required := []string{outboundBulkPickingOrderNo, outboundBulkWarehouse, outboundBulkSKU, outboundBulkQuantity, outboundBulkInventoryPallets, outboundBulkRemainingPallets, outboundBulkOutboundPallets}
+	required := []string{outboundBulkPickingOrderNo, outboundBulkWarehouse, outboundBulkSKU, outboundBulkQuantity, outboundBulkInventoryPallets, outboundBulkOutboundPallets}
 	for rowIndex := 0; rowIndex < len(rows) && rowIndex < 20; rowIndex++ {
 		columns := make(map[string]int)
 		for columnIndex, value := range rows[rowIndex] {
@@ -564,7 +562,6 @@ func canonicalOutboundBulkHeader(value string) string {
 		"ACTUALQTY": outboundBulkQuantity, "ACTUALQUANTITY": outboundBulkQuantity,
 		"QTY": outboundBulkQuantity, "QUANTITY": outboundBulkQuantity,
 		"INVENTORYPALLETS": outboundBulkInventoryPallets, "INVENTORYPALLETSUSED": outboundBulkInventoryPallets, "INVENTORYPALLETCOUNT": outboundBulkInventoryPallets,
-		"REMAININGINVENTORYPALLETS": outboundBulkRemainingPallets, "REMAININGPALLETS": outboundBulkRemainingPallets,
 		"OUTBOUNDPALLETS": outboundBulkOutboundPallets, "OUTBOUNDPALLETCOUNT": outboundBulkOutboundPallets,
 		"LINENOTE": outboundBulkLineNote,
 	}
@@ -609,11 +606,6 @@ func parseOutboundBulkLine(row []string, rowNumber int, columns map[string]int) 
 	line.InventoryPallets, valid = parseInboundBulkNonNegativeInt(inventoryPalletsValue)
 	if inventoryPalletsValue == "" || !valid {
 		issues = append(issues, outboundBulkIssue("INVALID_INVENTORY_PALLETS", "Inventory Pallets Used must be a non-negative whole number.", rowNumber, outboundBulkInventoryPallets, inboundBulkColumnValue(row, columns, outboundBulkInventoryPallets)))
-	}
-	remainingPalletsValue := inboundBulkColumnValue(row, columns, outboundBulkRemainingPallets)
-	line.RemainingInventoryPallets, valid = parseInboundBulkNonNegativeInt(remainingPalletsValue)
-	if remainingPalletsValue == "" || !valid {
-		issues = append(issues, outboundBulkIssue("INVALID_REMAINING_INVENTORY_PALLETS", "Remaining Inventory Pallets must be a non-negative whole number.", rowNumber, outboundBulkRemainingPallets, remainingPalletsValue))
 	}
 	outboundPalletsValue := inboundBulkColumnValue(row, columns, outboundBulkOutboundPallets)
 	line.OutboundPallets, valid = parseInboundBulkNonNegativeInt(outboundPalletsValue)
@@ -803,9 +795,6 @@ func (s *Store) buildOutboundBulkImportPreview(ctx context.Context, fileName str
 			if line.InventoryPallets < 0 {
 				document.Issues = append(document.Issues, outboundBulkIssue("INVALID_INVENTORY_PALLETS", "Inventory Pallets Used cannot be negative.", line.RowNumber, outboundBulkInventoryPallets, fmt.Sprint(line.InventoryPallets)))
 			}
-			if line.RemainingInventoryPallets < 0 {
-				document.Issues = append(document.Issues, outboundBulkIssue("INVALID_REMAINING_INVENTORY_PALLETS", "Remaining Inventory Pallets cannot be negative.", line.RowNumber, outboundBulkRemainingPallets, fmt.Sprint(line.RemainingInventoryPallets)))
-			}
 			if line.OutboundPallets < 0 {
 				document.Issues = append(document.Issues, outboundBulkIssue("INVALID_OUTBOUND_PALLETS", "Outbound Pallets cannot be negative.", line.RowNumber, outboundBulkOutboundPallets, fmt.Sprint(line.OutboundPallets)))
 			}
@@ -876,21 +865,26 @@ func (s *Store) buildOutboundBulkImportPreview(ctx context.Context, fileName str
 			startingPallets := maxInt(documentPhysicalPallets[item.ID], 0)
 			availablePallets := maxInt(documentRemainingPallets[item.ID], 0)
 			remainingQuantity := startingQuantity - fulfillmentQuantity
-			releasedPallets := startingPallets - line.RemainingInventoryPallets
-			if line.InventoryPallets > startingPallets || line.InventoryPallets < releasedPallets || (fulfillmentQuantity > 0 && startingPallets > 0 && line.InventoryPallets == 0) {
-				document.Issues = append(document.Issues, outboundBulkInvalidPalletBalanceIssue(*line, startingPallets, remainingQuantity))
+			remainingPallets := remainingOutboundInventoryPallets(startingQuantity, startingPallets, fulfillmentQuantity)
+			releasedPallets := startingPallets - remainingPallets
+			if line.InventoryPallets > startingPallets {
+				document.Issues = append(document.Issues, outboundBulkInventoryPalletsExceedSourceIssue(*line, startingPallets))
 				continue
 			}
-			if line.RemainingInventoryPallets > startingPallets || releasedPallets < 0 || releasedPallets > availablePallets || (remainingQuantity == 0 && line.RemainingInventoryPallets != 0) || (remainingQuantity > 0 && line.RemainingInventoryPallets == 0) {
-				document.Issues = append(document.Issues, outboundBulkInvalidPalletBalanceIssue(*line, startingPallets, remainingQuantity))
+			if fulfillmentQuantity > 0 && startingPallets > 0 && line.InventoryPallets == 0 {
+				document.Issues = append(document.Issues, outboundBulkInventoryPalletsRequiredIssue(*line, startingPallets))
+				continue
+			}
+			if releasedPallets < 0 || releasedPallets > availablePallets {
+				document.Issues = append(document.Issues, outboundBulkPalletReleaseConflictIssue(*line, releasedPallets, availablePallets))
 				continue
 			}
 			documentRemaining[item.ID] -= fulfillmentQuantity
 			documentRemainingPallets[item.ID] -= releasedPallets
 			documentPhysicalQuantity[item.ID] = remainingQuantity
-			documentPhysicalPallets[item.ID] = line.RemainingInventoryPallets
+			documentPhysicalPallets[item.ID] = remainingPallets
 			startingPalletsSnapshot := startingPallets
-			remainingPalletsSnapshot := line.RemainingInventoryPallets
+			remainingPalletsSnapshot := remainingPallets
 			allocations := []OutboundPickAllocation{{
 				ItemNumber: item.ItemNumber, LocationID: item.LocationID, LocationName: item.LocationName,
 				StorageSection: fallbackSection(item.StorageSection), ContainerNo: item.ContainerNo,
@@ -1006,20 +1000,18 @@ func outboundBulkInsufficientPalletsIssue(line OutboundBulkImportLinePreview, av
 	return issue
 }
 
-func outboundBulkInvalidPalletBalanceIssue(line OutboundBulkImportLinePreview, startingPallets int, remainingQuantity int) OutboundBulkImportIssue {
+func outboundBulkInventoryPalletsExceedSourceIssue(line OutboundBulkImportLinePreview, startingPallets int) OutboundBulkImportIssue {
 	issue := outboundBulkIssue(
-		"INVALID_INVENTORY_PALLET_BALANCE",
+		"INVENTORY_PALLETS_EXCEED_SOURCE",
 		fmt.Sprintf(
-			"Source container %s starts with %d physical pallet(s). This row uses %d pallet(s) and leaves %d pallet(s) while %d CTN remain. Inventory Pallets Used records the pallets touched and cannot be lower than Starting Pallets minus Remaining Inventory Pallets.",
+			"Inventory Pallets Used is %d, but source container %s currently has only %d physical pallet(s).",
+			maxInt(line.InventoryPallets, 0),
 			firstNonEmpty(line.SourceContainer, "(blank)"),
 			maxInt(startingPallets, 0),
-			maxInt(line.InventoryPallets, 0),
-			maxInt(line.RemainingInventoryPallets, 0),
-			maxInt(remainingQuantity, 0),
 		),
 		line.RowNumber,
-		outboundBulkRemainingPallets,
-		fmt.Sprint(line.RemainingInventoryPallets),
+		outboundBulkInventoryPallets,
+		fmt.Sprint(line.InventoryPallets),
 	)
 	issue.SKU = line.SKU
 	issue.Warehouse = line.Warehouse
@@ -1027,6 +1019,39 @@ func outboundBulkInvalidPalletBalanceIssue(line OutboundBulkImportLinePreview, s
 	issue.StorageSection = line.StorageSection
 	issue.RequestedPallets = maxInt(line.InventoryPallets, 0)
 	issue.AvailablePallets = maxInt(startingPallets, 0)
+	return issue
+}
+
+func outboundBulkInventoryPalletsRequiredIssue(line OutboundBulkImportLinePreview, startingPallets int) OutboundBulkImportIssue {
+	issue := outboundBulkInventoryPalletsExceedSourceIssue(line, startingPallets)
+	issue.Code = "INVENTORY_PALLETS_REQUIRED"
+	issue.Message = fmt.Sprintf(
+		"Source container %s currently has %d physical pallet(s). Because this row ships actual quantity, Inventory Pallets Used must record at least 1 pallet touched.",
+		firstNonEmpty(line.SourceContainer, "(blank)"),
+		maxInt(startingPallets, 0),
+	)
+	return issue
+}
+
+func outboundBulkPalletReleaseConflictIssue(line OutboundBulkImportLinePreview, releasedPallets int, availablePallets int) OutboundBulkImportIssue {
+	issue := outboundBulkIssue(
+		"INVENTORY_PALLET_RELEASE_CONFLICT",
+		fmt.Sprintf(
+			"This row depletes source container %s and must release %d physical pallet(s), but only %d pallet(s) are currently unreserved. Check other outbound drafts using this container, then revalidate.",
+			firstNonEmpty(line.SourceContainer, "(blank)"),
+			maxInt(releasedPallets, 0),
+			maxInt(availablePallets, 0),
+		),
+		line.RowNumber,
+		outboundBulkInventoryPallets,
+		fmt.Sprint(line.InventoryPallets),
+	)
+	issue.SKU = line.SKU
+	issue.Warehouse = line.Warehouse
+	issue.SourceContainer = line.SourceContainer
+	issue.StorageSection = line.StorageSection
+	issue.RequestedPallets = maxInt(releasedPallets, 0)
+	issue.AvailablePallets = maxInt(availablePallets, 0)
 	return issue
 }
 

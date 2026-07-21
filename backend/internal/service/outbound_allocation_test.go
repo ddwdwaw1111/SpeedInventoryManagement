@@ -54,6 +54,15 @@ func TestAutomaticInventoryPalletsForAllocation(t *testing.T) {
 	}
 }
 
+func TestRemainingOutboundInventoryPalletsIsDerivedFromFinalQuantity(t *testing.T) {
+	if got := remainingOutboundInventoryPallets(20, 3, 5); got != 3 {
+		t.Fatalf("partial shipment remaining pallets = %d, want the unchanged starting balance 3", got)
+	}
+	if got := remainingOutboundInventoryPallets(20, 3, 20); got != 0 {
+		t.Fatalf("full shipment remaining pallets = %d, want 0", got)
+	}
+}
+
 func TestValidateOutboundFinalPalletAllocationKeepsUsedAndRemainingIndependent(t *testing.T) {
 	starting := 1
 	remaining := 1
@@ -78,8 +87,8 @@ func TestValidateOutboundFinalPalletAllocationKeepsUsedAndRemainingIndependent(t
 	remaining = 2
 	allocation.Pallets = 3
 	allocation.InventoryPalletsUsed = 2
-	if err := validateOutboundFinalPalletAllocation(allocation); err == nil {
-		t.Fatal("inventory pallets used cannot be lower than the physical pallet release")
+	if err := validateOutboundFinalPalletAllocation(allocation); err != nil {
+		t.Fatalf("physical pallet release is bookkeeping and must remain independent from pallets used for this shipment: %v", err)
 	}
 }
 

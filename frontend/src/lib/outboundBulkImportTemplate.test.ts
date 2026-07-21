@@ -27,7 +27,6 @@ describe("outboundBulkImportTemplate", () => {
     expect(options?.rows[0]).toMatchObject({
       quantity: 5,
       inventoryPallets: 1,
-      remainingInventoryPallets: 3,
       outboundPallets: 1
     });
   });

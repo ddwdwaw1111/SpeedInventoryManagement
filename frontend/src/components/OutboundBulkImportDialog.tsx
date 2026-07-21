@@ -212,7 +212,7 @@ export function OutboundBulkImportDialog({ open, customers, locations, items, in
                       <label>{t("bulkOutboundShipToContact")}<input value={document.shipToContact} onChange={(event) => updateDocument(document.documentKey, { shipToContact: event.target.value })} /></label>
                     </div>
                     {document.issues.length ? <div className="bulk-inbound-issue-list">{document.issues.map((issue, index) => <div className="bulk-inbound-issue bulk-inbound-issue--error" key={`${issue.code}-${issue.rowNumber}-${index}`}><WarningAmberRoundedIcon /><span>{issue.rowNumber ? `${t("bulkOutboundRow", { row: issue.rowNumber })}: ` : ""}{formatOutboundBulkIssue(issue, t)}</span></div>)}</div> : null}
-                    <div className="bulk-inbound-table-wrap"><table className="bulk-inbound-line-table"><thead><tr><th>{t("bulkOutboundSourceWarehouse")}</th><th>{t("bulkOutboundOutboundWarehouse")}</th><th>{t("bulkOutboundSourceContainer")}</th><th>{t("bulkOutboundSection")}</th><th>SKU</th><th>{t("bulkOutboundItemCodeReference")}</th><th>{t("plannedShipQty")}</th><th>{t("actualShipQty")}</th><th>{t("bulkOutboundInventoryPallets")}</th><th>{t("bulkOutboundRemainingInventoryPallets")}</th><th>{t("bulkOutboundOutboundPallets")}</th><th>{t("bulkOutboundLineNote")}</th></tr></thead><tbody>
+                    <div className="bulk-inbound-table-wrap"><table className="bulk-inbound-line-table"><thead><tr><th>{t("bulkOutboundSourceWarehouse")}</th><th>{t("bulkOutboundOutboundWarehouse")}</th><th>{t("bulkOutboundSourceContainer")}</th><th>{t("bulkOutboundSection")}</th><th>SKU</th><th>{t("bulkOutboundItemCodeReference")}</th><th>{t("plannedShipQty")}</th><th>{t("actualShipQty")}</th><th>{t("bulkOutboundInventoryPallets")}</th><th>{t("bulkOutboundOutboundPallets")}</th><th>{t("bulkOutboundLineNote")}</th></tr></thead><tbody>
                       {document.lines.map((line, index) => <tr key={`${document.documentKey}-${line.rowNumber}-${index}`}>
                         <td><select value={line.warehouse} onChange={(event) => updateLine(document.documentKey, index, { warehouse: event.target.value })}><option value="">{t("bulkOutboundSelect")}</option>{locations.map((location) => <option key={location.id} value={location.name}>{location.name}</option>)}</select></td>
                         <td><span className={`bulk-outbound-transfer-badge ${line.requiresTransfer ? "bulk-outbound-transfer-badge--required" : ""}`}>{line.requiresTransfer ? t("bulkOutboundTransferToWarehouse", { warehouse: line.outboundWarehouse }) : line.outboundWarehouse}</span></td>
@@ -223,7 +223,6 @@ export function OutboundBulkImportDialog({ open, customers, locations, items, in
                         <td><input aria-label={t("plannedShipQty")} type="number" min="0" step="1" value={line.plannedQuantity ?? line.quantity} onChange={(event) => updateLine(document.documentKey, index, { plannedQuantity: toNonNegativeWholeNumber(event.target.value) })} /></td>
                         <td><input aria-label={t("actualShipQty")} type="number" min="0" step="1" value={line.actualQuantity ?? line.quantity} onChange={(event) => { const actualQuantity = toNonNegativeWholeNumber(event.target.value); updateLine(document.documentKey, index, { quantity: actualQuantity, actualQuantity }); }} /></td>
                         <td><input type="number" min="0" step="1" value={line.inventoryPallets} onChange={(event) => updateLine(document.documentKey, index, { inventoryPallets: toNonNegativeWholeNumber(event.target.value) })} /></td>
-                        <td><input type="number" min="0" step="1" value={line.remainingInventoryPallets} onChange={(event) => updateLine(document.documentKey, index, { remainingInventoryPallets: toNonNegativeWholeNumber(event.target.value) })} /></td>
                         <td><input type="number" min="0" step="1" value={line.outboundPallets} onChange={(event) => updateLine(document.documentKey, index, { outboundPallets: toNonNegativeWholeNumber(event.target.value) })} /></td>
                         <td><input value={line.lineNote} onChange={(event) => updateLine(document.documentKey, index, { lineNote: event.target.value })} /></td>
                       </tr>)}
@@ -252,10 +251,7 @@ function normalizeOutboundBulkImportPreview(preview: OutboundBulkImportPreview):
     documents: (Array.isArray(preview.documents) ? preview.documents : []).map((document) => ({
       ...document,
       rowNumbers: Array.isArray(document.rowNumbers) ? document.rowNumbers : [],
-      lines: (Array.isArray(document.lines) ? document.lines : []).map((line) => ({
-        ...line,
-        remainingInventoryPallets: Math.max(0, line.remainingInventoryPallets ?? 0)
-      })),
+      lines: Array.isArray(document.lines) ? document.lines : [],
       issues: Array.isArray(document.issues) ? document.issues : [],
       input: {
         ...document.input,
@@ -298,6 +294,23 @@ function formatOutboundBulkIssue(issue: OutboundBulkImportPreview["documents"][n
       storageSection: issue.storageSection || t("bulkOutboundAllStorageSections")
     });
   }
+  const palletIssueValues = {
+    container: issue.sourceContainer || t("bulkOutboundAllMatchingContainers"),
+    requestedPallets: issue.requestedPallets ?? Number(issue.value || 0),
+    availablePallets: issue.availablePallets ?? 0
+  };
+  if (issue.code === "INVENTORY_PALLETS_REQUIRED") {
+    return t("bulkOutboundIssueInventoryPalletsRequired", palletIssueValues);
+  }
+  if (issue.code === "INVENTORY_PALLETS_EXCEED_SOURCE") {
+    return t("bulkOutboundIssueInventoryPalletsExceedSource", palletIssueValues);
+  }
+  if (issue.code === "INVENTORY_PALLET_RELEASE_CONFLICT") {
+    return t("bulkOutboundIssueInventoryPalletReleaseConflict", palletIssueValues);
+  }
+  if (issue.code === "INVALID_INVENTORY_PALLET_BALANCE") {
+    return t("bulkOutboundIssueInvalidInventoryPalletBalance", palletIssueValues);
+  }
   const keys: Record<string, string> = {
     MISSING_PICKING_ORDER: "bulkOutboundIssueMissingPickingOrder",
     INVALID_SHIP_DATE: "bulkOutboundIssueInvalidShipDate",
@@ -306,8 +319,6 @@ function formatOutboundBulkIssue(issue: OutboundBulkImportPreview["documents"][n
     INVALID_QUANTITY: "bulkOutboundIssueInvalidQuantity",
     INVALID_PLANNED_QUANTITY: "bulkOutboundIssueInvalidPlannedQuantity",
     INVALID_INVENTORY_PALLETS: "bulkOutboundIssueInvalidInventoryPallets",
-    INVALID_REMAINING_INVENTORY_PALLETS: "bulkOutboundIssueInvalidRemainingInventoryPallets",
-    INVALID_INVENTORY_PALLET_BALANCE: "bulkOutboundIssueInvalidInventoryPalletBalance",
     MISSING_SOURCE_CONTAINER: "bulkOutboundIssueMissingSourceContainer",
     AMBIGUOUS_SOURCE_CONTAINER: "bulkOutboundIssueAmbiguousSourceContainer",
     INVALID_OUTBOUND_PALLETS: "bulkOutboundIssueInvalidOutboundPallets",

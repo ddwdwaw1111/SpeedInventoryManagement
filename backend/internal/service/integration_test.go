@@ -2847,15 +2847,14 @@ func TestBulkOutboundFindsRemoteContainerAndTransfersWhenDraftConfirmedIntegrati
 		ActualShipDate: "2026-07-15",
 		RowNumbers:     []int{2},
 		Lines: []OutboundBulkImportLinePreview{{
-			RowNumber:                 2,
-			Warehouse:                 mainLocation.Name,
-			SourceContainer:           containerNo,
-			StorageSection:            DefaultStorageSection,
-			SKU:                       item.SKU,
-			Quantity:                  4,
-			InventoryPallets:          1,
-			RemainingInventoryPallets: 2,
-			OutboundPallets:           3,
+			RowNumber:        2,
+			Warehouse:        mainLocation.Name,
+			SourceContainer:  containerNo,
+			StorageSection:   DefaultStorageSection,
+			SKU:              item.SKU,
+			Quantity:         4,
+			InventoryPallets: 1,
+			OutboundPallets:  3,
 		}},
 	}})
 	if err != nil {
@@ -2938,8 +2937,8 @@ func TestBulkOutboundFindsRemoteContainerAndTransfersWhenDraftConfirmedIntegrati
 	}
 
 	remainingSource = mustFindItemByContainer(t, ctx, store, sourceLocation.ID, DefaultStorageSection, containerNo, item.SKU)
-	if remainingSource.Quantity != 6 || remainingSource.Pallets != 1 {
-		t.Fatalf("expected confirmation to transfer and ship 4 CTN / 1 pallet, got source balance %d / %d", remainingSource.Quantity, remainingSource.Pallets)
+	if remainingSource.Quantity != 6 || remainingSource.Pallets != 2 {
+		t.Fatalf("expected partial shipment to preserve the source pallet balance, got source balance %d / %d", remainingSource.Quantity, remainingSource.Pallets)
 	}
 	var transferCountAfterConfirm int
 	if err := store.db.GetContext(ctx, &transferCountAfterConfirm, `

@@ -16,7 +16,6 @@ export const OUTBOUND_BULK_IMPORT_TEMPLATE_COLUMNS: ExcelExportColumn[] = [
   { key: "plannedQuantity", label: "Planned Qty", numberFormat: "number" },
   { key: "quantity", label: "Actual Qty", numberFormat: "number" },
   { key: "inventoryPallets", label: "Inventory Pallets Used", numberFormat: "number" },
-  { key: "remainingInventoryPallets", label: "Remaining Inventory Pallets", numberFormat: "number" },
   { key: "outboundPallets", label: "Outbound Pallets", numberFormat: "number" },
   { key: "lineNote", label: "Line Note" }
 ];
@@ -53,7 +52,6 @@ export function downloadOutboundBulkImportSample(items: Item[], locations: Locat
     plannedQuantity: quantity,
     quantity,
     inventoryPallets: item.pallets > 0 ? 1 : 0,
-    remainingInventoryPallets: quantity >= item.quantity ? 0 : item.pallets,
     outboundPallets: item.pallets > 0 ? 1 : 0,
     lineNote: "Sample outbound line"
   }}) : fallbackLocation ? [{
@@ -71,7 +69,6 @@ export function downloadOutboundBulkImportSample(items: Item[], locations: Locat
     plannedQuantity: 10,
     quantity: 10,
     inventoryPallets: 1,
-    remainingInventoryPallets: 1,
     outboundPallets: 1,
     lineNote: "Replace SKU before testing"
   }] : [];

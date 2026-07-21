@@ -173,6 +173,31 @@ describe("OutboundBulkImportDialog", () => {
     expect(screen.getByText(/warehouse NJ, source container CONT-A, storage section TEMP/)).toBeInTheDocument();
     expect(screen.getByText(/Outbound Pallets is independent and does not affect this check/)).toBeInTheDocument();
   });
+
+  it("explains exactly how to correct an inventory-pallet value", async () => {
+    const preview = createPreview();
+    preview.validDocuments = 0;
+    preview.invalidDocuments = 1;
+    preview.documents[0].valid = false;
+    preview.documents[0].issues = [{
+      severity: "ERROR",
+      code: "INVENTORY_PALLETS_EXCEED_SOURCE",
+      message: "Inventory Pallets Used exceeds the source balance.",
+      rowNumber: 72,
+      sourceContainer: "CONT-A",
+      requestedPallets: 4,
+      availablePallets: 2,
+      availableQty: 0
+    }];
+    mockedApi.previewOutboundBulkImport.mockResolvedValue(preview);
+    const { container } = renderWithProviders(<OutboundBulkImportDialog open customers={[createCustomer()]} locations={[createLocation()]} items={[createItem()]} onClose={vi.fn()} onImported={vi.fn()} />);
+
+    const fileInput = container.ownerDocument.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [new File(["workbook"], "shipments.xlsx")] } });
+    fireEvent.click(screen.getByRole("button", { name: "Validate workbook" }));
+
+    expect(await screen.findByText(/Row 72: Inventory Pallets Used is 4.*source container CONT-A.*only 2.*1 to 2/)).toBeInTheDocument();
+  });
 });
 
 function createPreview(): OutboundBulkImportPreview {
@@ -196,7 +221,7 @@ function createPreview(): OutboundBulkImportPreview {
       shipToAddress: "100 Main St",
       shipToContact: "Dock",
       rowNumbers: [4],
-      lines: [{ rowNumber: 4, warehouse: "NJ", sourceContainer: "CONT-A", storageSection: "TEMP", sku: "608333", itemNumber: "608333", quantity: 5, inventoryPallets: 2, remainingInventoryPallets: 1, outboundPallets: 3, lineNote: "", requiresTransfer: true, outboundWarehouse: "308 Herrod Blvd" }],
+      lines: [{ rowNumber: 4, warehouse: "NJ", sourceContainer: "CONT-A", storageSection: "TEMP", sku: "608333", itemNumber: "608333", quantity: 5, inventoryPallets: 2, outboundPallets: 3, lineNote: "", requiresTransfer: true, outboundWarehouse: "308 Herrod Blvd" }],
       input: {
         packingListNo: "PO-100",
         expectedShipDate: "2026-07-15",

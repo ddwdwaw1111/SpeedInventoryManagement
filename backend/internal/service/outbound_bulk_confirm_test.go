@@ -16,6 +16,15 @@ func TestBulkConfirmOutboundDocumentsRejectsDuplicateIDs(t *testing.T) {
 	}
 }
 
+func TestOutboundConfirmationReferencePrefersPickingOrderNumber(t *testing.T) {
+	if got := outboundConfirmationReference(outboundDocumentRow{ID: 5, PackingListNo: " PICK-100 "}); got != "PO PICK-100" {
+		t.Fatalf("confirmation reference = %q, want PO PICK-100", got)
+	}
+	if got := outboundConfirmationReference(outboundDocumentRow{ID: 5}); got != "shipment 5" {
+		t.Fatalf("fallback confirmation reference = %q, want shipment 5", got)
+	}
+}
+
 func TestBulkConfirmOutboundDocumentsRollsBackEntireBatchIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()

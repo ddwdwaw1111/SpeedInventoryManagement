@@ -236,6 +236,7 @@ type OutboundAllocationPreviewRow = {
   positionLabel: string;
   allocatedQty: number;
   pallets: number;
+  startingQty: number;
   startingPallets: number;
   remainingPallets: number;
 };
@@ -4146,21 +4147,24 @@ function buildPreviewPickAllocations(
     return [];
   }
 
-  return previewRows.map((row, index) => ({
-    id: -(index + 1),
-    lineId: line.id,
-    itemNumber: row.itemNumber || line.itemNumber || "",
-    locationId: line.locationId,
-    locationName: row.locationName || line.locationName,
-    storageSection: row.storageSection || line.storageSection,
-    containerNo: row.containerNo || "",
-    allocatedQty: row.allocatedQty,
-    pallets: Math.max(0, row.startingPallets - row.remainingPallets),
-    inventoryPalletsUsed: Math.max(0, row.pallets),
-    startingPallets: Math.max(0, row.startingPallets),
-    remainingPallets: Math.max(0, row.remainingPallets),
-    createdAt: line.createdAt
-  }));
+  return previewRows.map((row, index) => {
+    const remainingPallets = row.allocatedQty >= row.startingQty ? 0 : row.startingPallets;
+    return {
+      id: -(index + 1),
+      lineId: line.id,
+      itemNumber: row.itemNumber || line.itemNumber || "",
+      locationId: line.locationId,
+      locationName: row.locationName || line.locationName,
+      storageSection: row.storageSection || line.storageSection,
+      containerNo: row.containerNo || "",
+      allocatedQty: row.allocatedQty,
+      pallets: Math.max(0, row.startingPallets - remainingPallets),
+      inventoryPalletsUsed: Math.max(0, row.pallets),
+      startingPallets: Math.max(0, row.startingPallets),
+      remainingPallets: Math.max(0, remainingPallets),
+      createdAt: line.createdAt
+    };
+  });
 }
 
 function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceOptions: OutboundSourceOption[]): OutboundAllocationPreviewResult {
@@ -4229,6 +4233,7 @@ function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceO
         positionLabel: candidate.positionLabel,
         allocatedQty,
         pallets: allocatedPallets,
+        startingQty,
         startingPallets,
         remainingPallets
       });

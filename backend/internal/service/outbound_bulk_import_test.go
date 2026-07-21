@@ -11,10 +11,10 @@ import (
 
 func TestParseOutboundBulkImportWorkbookGroupsPickingOrdersAndKeepsPalletCountsIndependent(t *testing.T) {
 	data := buildOutboundBulkWorkbook(t, [][]any{
-		{"Picking Order No", "Actual Ship Date", "Warehouse", "Source Container", "Storage Section", "SKU", "Item Code", "Qty", "Inventory Pallets Used", "Remaining Inventory Pallets", "Outbound Pallets", "Line Note"},
-		{"PO-100", "2026-07-01", "EAST", "CONT-A", "A1", "SKU-1", "ITEM-1", 25, 2, 1, 3, "first"},
-		{"PO-100", "2026-07-01", "WEST", "CONT-B", "B2", "SKU-2", "ITEM-2", 7, 4, 2, 2, "second"},
-		{"PO-200", "", "EAST", "", "TEMP", "SKU-3", "", 12, 0, 0, 1, "auto allocate"},
+		{"Picking Order No", "Actual Ship Date", "Warehouse", "Source Container", "Storage Section", "SKU", "Item Code", "Qty", "Inventory Pallets Used", "Outbound Pallets", "Line Note"},
+		{"PO-100", "2026-07-01", "EAST", "CONT-A", "A1", "SKU-1", "ITEM-1", 25, 2, 3, "first"},
+		{"PO-100", "2026-07-01", "WEST", "CONT-B", "B2", "SKU-2", "ITEM-2", 7, 4, 2, "second"},
+		{"PO-200", "", "EAST", "", "TEMP", "SKU-3", "", 12, 0, 1, "auto allocate"},
 	})
 
 	documents, err := parseOutboundBulkImportWorkbook(data)
@@ -44,8 +44,8 @@ func TestParseOutboundBulkImportWorkbookGroupsPickingOrdersAndKeepsPalletCountsI
 
 func TestParseOutboundBulkImportWorkbookAllowsPlanOnlyDraftQuantity(t *testing.T) {
 	data := buildOutboundBulkWorkbook(t, [][]any{
-		{"Picking Order No", "Warehouse", "SKU", "Planned Qty", "Actual Qty", "Inventory Pallets Used", "Remaining Inventory Pallets", "Outbound Pallets"},
-		{"PO-PLAN", "EAST", "SKU-1", 12, 0, 0, 0, 0},
+		{"Picking Order No", "Warehouse", "SKU", "Planned Qty", "Actual Qty", "Inventory Pallets Used", "Outbound Pallets"},
+		{"PO-PLAN", "EAST", "SKU-1", 12, 0, 0, 0},
 	})
 
 	documents, err := parseOutboundBulkImportWorkbook(data)
@@ -105,9 +105,9 @@ func TestBuildOutboundBulkDocumentLinesKeepsPlanOnlyLineWithoutAllocations(t *te
 
 func TestParseOutboundBulkImportWorkbookInheritsBlankDocumentFields(t *testing.T) {
 	data := buildOutboundBulkWorkbook(t, [][]any{
-		{"Picking Order No", "Expected Ship Date", "Ship To Name", "Warehouse", "SKU", "Qty", "Inventory Pallets Used", "Remaining Inventory Pallets", "Outbound Pallets"},
-		{"PO-100", "2026-07-20", "Buyer", "EAST", "SKU-1", 10, 1, 1, 2},
-		{"PO-100", "", "", "EAST", "SKU-2", 5, 1, 1, 1},
+		{"Picking Order No", "Expected Ship Date", "Ship To Name", "Warehouse", "SKU", "Qty", "Inventory Pallets Used", "Outbound Pallets"},
+		{"PO-100", "2026-07-20", "Buyer", "EAST", "SKU-1", 10, 1, 2},
+		{"PO-100", "", "", "EAST", "SKU-2", 5, 1, 1},
 	})
 
 	documents, err := parseOutboundBulkImportWorkbook(data)
@@ -213,9 +213,9 @@ func TestParseOutboundBulkImportWorkbookRequiresStandardColumns(t *testing.T) {
 
 func TestParseOutboundBulkImportWorkbookRequiresExplicitPalletValues(t *testing.T) {
 	data := buildOutboundBulkWorkbook(t, [][]any{
-		{"Picking Order No", "Warehouse", "SKU", "Qty", "Inventory Pallets Used", "Remaining Inventory Pallets", "Outbound Pallets"},
-		{"PO-BLANK", "EAST", "SKU-1", 5, "", "", ""},
-		{"PO-ZERO", "EAST", "SKU-1", 5, 0, 0, 0},
+		{"Picking Order No", "Warehouse", "SKU", "Qty", "Inventory Pallets Used", "Outbound Pallets"},
+		{"PO-BLANK", "EAST", "SKU-1", 5, "", ""},
+		{"PO-ZERO", "EAST", "SKU-1", 5, 0, 0},
 	})
 
 	documents, err := parseOutboundBulkImportWorkbook(data)
@@ -229,7 +229,7 @@ func TestParseOutboundBulkImportWorkbookRequiresExplicitPalletValues(t *testing.
 	for _, issue := range documents[0].Issues {
 		blankIssueCodes[issue.Code] = true
 	}
-	if !blankIssueCodes["INVALID_INVENTORY_PALLETS"] || !blankIssueCodes["INVALID_REMAINING_INVENTORY_PALLETS"] || !blankIssueCodes["INVALID_OUTBOUND_PALLETS"] {
+	if !blankIssueCodes["INVALID_INVENTORY_PALLETS"] || !blankIssueCodes["INVALID_OUTBOUND_PALLETS"] {
 		t.Fatalf("blank pallet values must be reported separately: %#v", documents[0].Issues)
 	}
 	for _, issue := range documents[1].Issues {
@@ -241,9 +241,9 @@ func TestParseOutboundBulkImportWorkbookRequiresExplicitPalletValues(t *testing.
 
 func TestParseOutboundBulkImportWorkbookRequiresZeroOutboundPalletsForZeroActualQty(t *testing.T) {
 	data := buildOutboundBulkWorkbook(t, [][]any{
-		{"Picking Order No", "Warehouse", "SKU", "Planned Qty", "Qty", "Inventory Pallets Used", "Remaining Inventory Pallets", "Outbound Pallets"},
-		{"PO-ZERO-VALID", "EAST", "SKU-1", 5, 0, 0, 0, 0},
-		{"PO-ZERO-INVALID", "EAST", "SKU-1", 5, 0, 0, 0, 1},
+		{"Picking Order No", "Warehouse", "SKU", "Planned Qty", "Qty", "Inventory Pallets Used", "Outbound Pallets"},
+		{"PO-ZERO-VALID", "EAST", "SKU-1", 5, 0, 0, 0},
+		{"PO-ZERO-INVALID", "EAST", "SKU-1", 5, 0, 0, 1},
 	})
 
 	documents, err := parseOutboundBulkImportWorkbook(data)
@@ -304,6 +304,27 @@ func TestOutboundBulkInsufficientPalletsIssueExplainsRequestedAvailableAndScope(
 	}
 	if issue.SKU != "SKU-1" || issue.Warehouse != "NJ" || issue.SourceContainer != "CONT-A" || issue.StorageSection != "TEMP" {
 		t.Fatalf("pallet issue must retain its SKU and source scope: %#v", issue)
+	}
+}
+
+func TestOutboundBulkPalletBalanceIssuesIdentifyTheExactCorrection(t *testing.T) {
+	line := OutboundBulkImportLinePreview{
+		RowNumber: 72, Warehouse: "NJ", SourceContainer: "CONT-A", StorageSection: "TEMP", SKU: "SKU-1", InventoryPallets: 4,
+	}
+	exceeds := outboundBulkInventoryPalletsExceedSourceIssue(line, 2)
+	if exceeds.Code != "INVENTORY_PALLETS_EXCEED_SOURCE" || exceeds.RequestedPallets != 4 || exceeds.AvailablePallets != 2 {
+		t.Fatalf("unexpected exceeds-source issue: %#v", exceeds)
+	}
+
+	line.InventoryPallets = 0
+	required := outboundBulkInventoryPalletsRequiredIssue(line, 2)
+	if required.Code != "INVENTORY_PALLETS_REQUIRED" || required.AvailablePallets != 2 {
+		t.Fatalf("unexpected required-pallet issue: %#v", required)
+	}
+
+	release := outboundBulkPalletReleaseConflictIssue(line, 3, 1)
+	if release.Code != "INVENTORY_PALLET_RELEASE_CONFLICT" || release.RequestedPallets != 3 || release.AvailablePallets != 1 {
+		t.Fatalf("unexpected pallet-release issue: %#v", release)
 	}
 }
 

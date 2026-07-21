@@ -1004,7 +1004,6 @@ export type OutboundBulkImportLinePreview = {
   plannedQuantity?: number;
   actualQuantity?: number;
   inventoryPallets: number;
-  remainingInventoryPallets: number;
   outboundPallets: number;
   lineNote: string;
   requiresTransfer: boolean;
