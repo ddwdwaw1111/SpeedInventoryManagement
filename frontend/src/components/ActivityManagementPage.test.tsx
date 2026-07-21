@@ -366,15 +366,22 @@ describe("ActivityManagementPage", () => {
     expect(await screen.findByText("PL-FILTER-84")).toBeInTheDocument();
   });
 
-  it("bulk confirms selected draft shipments", async () => {
+  it("bulk confirms selected draft shipments and surfaces reload warnings", async () => {
     const first = createOutboundDocument({ id: 31, packingListNo: "PICK-31", status: "DRAFT", trackingStatus: "SCHEDULED" });
     const second = createOutboundDocument({ id: 32, packingListNo: "PICK-32", status: "DRAFT", trackingStatus: "SCHEDULED" });
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     mockedApi.bulkConfirmOutboundDocuments.mockResolvedValue({
       updatedDocuments: 2,
+      failedDocuments: 0,
+      unprocessedDocuments: 0,
+      interrupted: false,
       documents: [
         { ...first, status: "CONFIRMED", trackingStatus: "SHIPPED" },
         { ...second, status: "CONFIRMED", trackingStatus: "SHIPPED" }
+      ],
+      results: [
+        { documentId: first.id, success: true, warning: "confirmed but reload failed" },
+        { documentId: second.id, success: true }
       ]
     });
 
@@ -401,7 +408,54 @@ describe("ActivityManagementPage", () => {
 
     await waitFor(() => expect(mockedApi.bulkConfirmOutboundDocuments).toHaveBeenCalledWith([31, 32]));
     expect(onRefresh).toHaveBeenCalledTimes(1);
-    expect(await screen.findByText("Confirmed 2 shipments.")).toBeInTheDocument();
+    expect(await screen.findByText("Confirmed 2 shipments. Confirmed shipments not reloaded: 1. Refresh to verify their latest details.")).toBeInTheDocument();
+  });
+
+  it("keeps failed and unprocessed shipments selected after an interrupted bulk confirmation", async () => {
+    const first = createOutboundDocument({ id: 41, packingListNo: "PICK-41", status: "DRAFT", trackingStatus: "SCHEDULED" });
+    const second = createOutboundDocument({ id: 42, packingListNo: "PICK-42", status: "DRAFT", trackingStatus: "SCHEDULED" });
+    const third = createOutboundDocument({ id: 43, packingListNo: "PICK-43", status: "DRAFT", trackingStatus: "SCHEDULED" });
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    mockedApi.bulkConfirmOutboundDocuments.mockResolvedValue({
+      updatedDocuments: 1,
+      failedDocuments: 1,
+      unprocessedDocuments: 1,
+      interrupted: true,
+      interruptionError: "database connection lost",
+      documents: [{ ...first, status: "CONFIRMED", trackingStatus: "SHIPPED" }],
+      results: [
+        { documentId: first.id, success: true },
+        { documentId: second.id, success: false, error: "begin outbound confirm transaction: database connection lost" }
+      ]
+    });
+
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="OUT"
+        items={[]}
+        skuMasters={[createSkuMaster()]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        movements={[]}
+        inboundDocuments={[]}
+        outboundDocuments={[first, second, third]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={onRefresh}
+      />
+    );
+
+    fireEvent.click(screen.getByLabelText("Select row 41"));
+    fireEvent.click(screen.getByLabelText("Select row 42"));
+    fireEvent.click(screen.getByLabelText("Select row 43"));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm 3 selected" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm Shipment" }));
+
+    await waitFor(() => expect(mockedApi.bulkConfirmOutboundDocuments).toHaveBeenCalledWith([41, 42, 43]));
+    expect(await screen.findAllByText(/Confirmed 1 shipments; 1 failed.*database connection lost.*Unattempted shipments: 1/)).not.toHaveLength(0);
+    expect(screen.getByLabelText("Select row 41")).not.toBeChecked();
+    expect(screen.getByLabelText("Select row 42")).toBeChecked();
+    expect(screen.getByLabelText("Select row 43")).toBeChecked();
   });
 
   it("shows customer-created draft packing lists in the outbound queue and opens them for warehouse processing", async () => {

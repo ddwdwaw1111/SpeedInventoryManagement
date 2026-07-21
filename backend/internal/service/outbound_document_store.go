@@ -1034,40 +1034,65 @@ func (s *Store) insertOutboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, d
 }
 
 func (s *Store) ConfirmOutboundDocument(ctx context.Context, documentID int64) (OutboundDocument, error) {
+	if _, err := s.confirmOutboundDocumentTransaction(ctx, documentID); err != nil {
+		return OutboundDocument{}, err
+	}
+	return s.getOutboundDocument(ctx, documentID)
+}
+
+type outboundConfirmationReceipt struct {
+	DocumentID     int64
+	PickingOrderNo string
+}
+
+func (s *Store) confirmOutboundDocumentTransaction(ctx context.Context, documentID int64) (outboundConfirmationReceipt, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return OutboundDocument{}, fmt.Errorf("begin outbound confirm transaction: %w", err)
+		return outboundConfirmationReceipt{}, fmt.Errorf("begin outbound confirm transaction: %w", err)
 	}
 	defer tx.Rollback()
 	customerID, err := loadOutboundDocumentCustomerIDTx(ctx, tx, documentID)
 	if err != nil {
-		return OutboundDocument{}, err
+		return outboundConfirmationReceipt{}, err
 	}
 	if err := lockBillingSourceCustomersTx(ctx, tx, []int64{customerID}); err != nil {
-		return OutboundDocument{}, err
+		return outboundConfirmationReceipt{}, err
 	}
 
 	documentRow, err := s.loadOutboundDocumentForUpdateTx(ctx, tx, documentID)
 	if err != nil {
-		return OutboundDocument{}, err
+		return outboundConfirmationReceipt{}, err
 	}
+	receipt := outboundConfirmationReceipt{DocumentID: documentRow.ID, PickingOrderNo: documentRow.PackingListNo}
 
-	status := normalizeDocumentStatus(documentRow.Status)
-	if status == DocumentStatusDeleted {
-		return OutboundDocument{}, fmt.Errorf("%w: %s is deleted and cannot be confirmed", ErrInvalidInput, outboundConfirmationReference(documentRow))
-	}
-	if status == DocumentStatusConfirmed {
-		return OutboundDocument{}, fmt.Errorf("%w: %s is already confirmed", ErrInvalidInput, outboundConfirmationReference(documentRow))
+	if err := validateOutboundDocumentCanBeConfirmed(documentRow); err != nil {
+		return outboundConfirmationReceipt{}, err
 	}
 	if err := s.confirmOutboundDocumentTx(ctx, tx, documentID); err != nil {
-		return OutboundDocument{}, fmt.Errorf("confirm %s: %w", outboundConfirmationReference(documentRow), err)
+		return outboundConfirmationReceipt{}, fmt.Errorf("confirm %s: %w", outboundConfirmationReference(documentRow), err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return OutboundDocument{}, fmt.Errorf("commit outbound confirm: %w", err)
+		return outboundConfirmationReceipt{}, fmt.Errorf("commit outbound confirm: %w", err)
 	}
+	return receipt, nil
+}
 
-	return s.getOutboundDocument(ctx, documentID)
+func validateOutboundDocumentCanBeConfirmed(documentRow outboundDocumentRow) error {
+	status := normalizeDocumentStatus(documentRow.Status)
+	if status == DocumentStatusDeleted {
+		return fmt.Errorf("%w: %s is deleted and cannot be confirmed", ErrInvalidInput, outboundConfirmationReference(documentRow))
+	}
+	if status == DocumentStatusConfirmed {
+		return fmt.Errorf("%w: %s is already confirmed", ErrInvalidInput, outboundConfirmationReference(documentRow))
+	}
+	if documentRow.ArchivedAt != nil {
+		return fmt.Errorf("%w: %s is archived and cannot be confirmed", ErrInvalidInput, outboundConfirmationReference(documentRow))
+	}
+	if status != DocumentStatusDraft {
+		return fmt.Errorf("%w: %s is not a draft and cannot be confirmed", ErrInvalidInput, outboundConfirmationReference(documentRow))
+	}
+	return nil
 }
 
 const MaxBulkConfirmOutboundDocuments = 100
@@ -1077,8 +1102,22 @@ type BulkConfirmOutboundDocumentsInput struct {
 }
 
 type BulkConfirmOutboundDocumentsResponse struct {
-	UpdatedDocuments int                `json:"updatedDocuments"`
-	Documents        []OutboundDocument `json:"documents"`
+	UpdatedDocuments     int                                 `json:"updatedDocuments"`
+	FailedDocuments      int                                 `json:"failedDocuments"`
+	UnprocessedDocuments int                                 `json:"unprocessedDocuments"`
+	Interrupted          bool                                `json:"interrupted"`
+	InterruptionError    string                              `json:"interruptionError,omitempty"`
+	Documents            []OutboundDocument                  `json:"documents"`
+	Results              []BulkConfirmOutboundDocumentResult `json:"results"`
+}
+
+type BulkConfirmOutboundDocumentResult struct {
+	DocumentID     int64             `json:"documentId"`
+	PickingOrderNo string            `json:"pickingOrderNo,omitempty"`
+	Success        bool              `json:"success"`
+	Document       *OutboundDocument `json:"document,omitempty"`
+	Error          string            `json:"error,omitempty"`
+	Warning        string            `json:"warning,omitempty"`
 }
 
 func (s *Store) BulkConfirmOutboundDocuments(ctx context.Context, input BulkConfirmOutboundDocumentsInput) (BulkConfirmOutboundDocumentsResponse, error) {
@@ -1097,62 +1136,50 @@ func (s *Store) BulkConfirmOutboundDocuments(ctx context.Context, input BulkConf
 		}
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return BulkConfirmOutboundDocumentsResponse{}, fmt.Errorf("begin outbound bulk confirm transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	customerIDs := make([]int64, 0, len(documentIDs))
-	for _, documentID := range documentIDs {
-		customerID, err := loadOutboundDocumentCustomerIDTx(ctx, tx, documentID)
-		if err != nil {
-			return BulkConfirmOutboundDocumentsResponse{}, fmt.Errorf("load shipment %d customer: %w", documentID, err)
-		}
-		customerIDs = append(customerIDs, customerID)
-	}
-	if err := lockBillingSourceCustomersTx(ctx, tx, customerIDs); err != nil {
-		return BulkConfirmOutboundDocumentsResponse{}, err
-	}
-
-	// Validate every selected document before changing inventory. The same
-	// transaction is then used for every confirmation, so any later stock or
-	// billing failure rolls the whole batch back.
-	documentReferences := make(map[int64]string, len(documentIDs))
-	for _, documentID := range documentIDs {
-		documentRow, err := s.loadOutboundDocumentForUpdateTx(ctx, tx, documentID)
-		if err != nil {
-			return BulkConfirmOutboundDocumentsResponse{}, fmt.Errorf("load shipment %d for confirmation: %w", documentID, err)
-		}
-		documentReference := outboundConfirmationReference(documentRow)
-		documentReferences[documentID] = documentReference
-		if normalizeDocumentStatus(documentRow.Status) != DocumentStatusDraft {
-			return BulkConfirmOutboundDocumentsResponse{}, fmt.Errorf("%w: %s is not a draft", ErrInvalidInput, documentReference)
-		}
-	}
-
-	for _, documentID := range documentIDs {
-		if err := s.confirmOutboundDocumentTx(ctx, tx, documentID); err != nil {
-			return BulkConfirmOutboundDocumentsResponse{}, fmt.Errorf("confirm %s: %w", documentReferences[documentID], err)
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return BulkConfirmOutboundDocumentsResponse{}, fmt.Errorf("commit outbound bulk confirmation: %w", err)
-	}
-
 	response := BulkConfirmOutboundDocumentsResponse{
-		UpdatedDocuments: len(documentIDs),
-		Documents:        make([]OutboundDocument, 0, len(documentIDs)),
+		Documents: make([]OutboundDocument, 0, len(documentIDs)),
+		Results:   make([]BulkConfirmOutboundDocumentResult, 0, len(documentIDs)),
 	}
-	for _, documentID := range documentIDs {
-		document, err := s.getOutboundDocument(ctx, documentID)
+	for index, documentID := range documentIDs {
+		receipt, err := s.confirmOutboundDocumentTransaction(ctx, documentID)
 		if err != nil {
-			return BulkConfirmOutboundDocumentsResponse{}, err
+			response.FailedDocuments++
+			response.Results = append(response.Results, BulkConfirmOutboundDocumentResult{
+				DocumentID: documentID,
+				Success:    false,
+				Error:      err.Error(),
+			})
+			if !isExpectedBulkOutboundConfirmationFailure(err) {
+				response.Interrupted = true
+				response.InterruptionError = err.Error()
+				response.UnprocessedDocuments = len(documentIDs) - index - 1
+				break
+			}
+			continue
 		}
-		response.Documents = append(response.Documents, document)
+		response.UpdatedDocuments++
+		result := BulkConfirmOutboundDocumentResult{
+			DocumentID:     receipt.DocumentID,
+			PickingOrderNo: receipt.PickingOrderNo,
+			Success:        true,
+		}
+		if document, err := s.getOutboundDocument(ctx, documentID); err == nil {
+			response.Documents = append(response.Documents, document)
+			confirmedDocument := document
+			result.Document = &confirmedDocument
+		} else {
+			result.Warning = fmt.Sprintf("shipment was confirmed, but the updated document could not be reloaded: %v", err)
+		}
+		response.Results = append(response.Results, result)
 	}
 	return response, nil
+}
+
+func isExpectedBulkOutboundConfirmationFailure(err error) bool {
+	return errors.Is(err, ErrNotFound) ||
+		errors.Is(err, ErrInvalidInput) ||
+		errors.Is(err, ErrInsufficientStock) ||
+		errors.Is(err, ErrReservedStock)
 }
 
 func outboundConfirmationReference(document outboundDocumentRow) string {
@@ -1281,6 +1308,10 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 		lineRow.Pallets = 0
 		lineRow.PickAllocationsJSON = ""
 	}
+	lineRows, err = s.refreshOutboundFinalPalletSnapshotsTx(ctx, tx, documentRow.CustomerID, lineRows)
+	if err != nil {
+		return err
+	}
 	confirmedAt := time.Now().UTC()
 	billingOccurredAt := confirmedAt
 	if documentRow.ActualShipDate != nil {
@@ -1290,12 +1321,13 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 	if err := ensureBillingSourceMutationsAllowedTx(ctx, tx, billingScopes...); err != nil {
 		return err
 	}
+	hadActiveReservation := outboundTrackingRequiresActiveReservation(currentTrackingStatus)
 	lineRows, autoTransferred, err := s.stageOutboundDraftAtMainWarehouseTx(
 		ctx,
 		tx,
 		documentRow,
 		lineRows,
-		outboundTrackingRequiresActiveReservation(currentTrackingStatus),
+		hadActiveReservation,
 	)
 	if err != nil {
 		return err
@@ -1306,11 +1338,14 @@ func (s *Store) confirmOutboundDocumentTx(ctx context.Context, tx *sql.Tx, docum
 			return err
 		}
 	}
-	if autoTransferred || !outboundTrackingRequiresActiveReservation(currentTrackingStatus) {
-		lineRows, err = s.reserveOutboundDocumentLinesTx(ctx, tx, documentRow.CustomerID, lineRows)
-		if err != nil {
+	if hadActiveReservation && !autoTransferred {
+		if err := s.releaseOutboundDocumentReservationsTx(ctx, tx, lineRows); err != nil {
 			return err
 		}
+	}
+	lineRows, err = s.reserveOutboundDocumentLinesTx(ctx, tx, documentRow.CustomerID, lineRows)
+	if err != nil {
+		return err
 	}
 
 	for _, lineRow := range lineRows {
@@ -3409,6 +3444,101 @@ func validateOutboundFinalPalletAllocation(allocation OutboundPickAllocation) er
 		return fmt.Errorf("%w: source container %s inventory pallets used must be at least 1 when stock is picked from palletized inventory", ErrInvalidInput, containerNo)
 	}
 	return nil
+}
+
+type outboundFinalPalletSnapshot struct {
+	Quantity int
+	Pallets  int
+}
+
+func (s *Store) refreshOutboundFinalPalletSnapshotsTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	customerID int64,
+	lineRows []outboundDocumentLineRow,
+) ([]outboundDocumentLineRow, error) {
+	snapshots := make(map[string]outboundFinalPalletSnapshot)
+	for lineIndex := range lineRows {
+		lineRow := &lineRows[lineIndex]
+		allocations := decodeOutboundPickAllocationsOrEmpty(lineRow.PickAllocationsJSON)
+		if len(allocations) == 0 {
+			continue
+		}
+
+		for allocationIndex := range allocations {
+			allocation := &allocations[allocationIndex]
+			locationID := firstNonZeroInt64(allocation.LocationID, lineRow.LocationID)
+			storageSection := fallbackSection(allocation.StorageSection)
+			containerNo := normalizeContainerNo(allocation.ContainerNo)
+			bucketKey := outboundAllocationBucketKey(customerID, locationID, lineRow.SKUMasterID, storageSection, containerNo)
+			snapshot, exists := snapshots[bucketKey]
+			if !exists {
+				rows, err := tx.QueryContext(ctx, `
+					SELECT quantity, pallets
+					FROM inventory_items
+					WHERE customer_id = ?
+					  AND sku_master_id = ?
+					  AND location_id = ?
+					  AND storage_section = ?
+					  AND container_no = ?
+					FOR UPDATE
+				`, customerID, lineRow.SKUMasterID, locationID, storageSection, containerNo)
+				if err != nil {
+					return nil, mapDBError(fmt.Errorf("lock outbound pallet snapshot: %w", err))
+				}
+				matchedRows := 0
+				for rows.Next() {
+					var quantity int
+					var pallets int
+					if err := rows.Scan(&quantity, &pallets); err != nil {
+						rows.Close()
+						return nil, fmt.Errorf("scan outbound pallet snapshot: %w", err)
+					}
+					snapshot.Quantity += quantity
+					snapshot.Pallets += pallets
+					matchedRows++
+				}
+				if err := rows.Err(); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("iterate outbound pallet snapshot: %w", err)
+				}
+				if err := rows.Close(); err != nil {
+					return nil, fmt.Errorf("close outbound pallet snapshot: %w", err)
+				}
+				if matchedRows == 0 {
+					return nil, ErrInsufficientStock
+				}
+			}
+
+			if allocation.AllocatedQty > snapshot.Quantity {
+				return nil, ErrInsufficientStock
+			}
+			startingPallets := maxInt(snapshot.Pallets, 0)
+			remainingQuantity := snapshot.Quantity - allocation.AllocatedQty
+			remainingPallets := remainingOutboundInventoryPallets(snapshot.Quantity, startingPallets, allocation.AllocatedQty)
+			allocation.LocationID = locationID
+			allocation.StorageSection = storageSection
+			allocation.ContainerNo = containerNo
+			allocation.StartingPallets = cloneIntPointer(&startingPallets)
+			allocation.RemainingPallets = cloneIntPointer(&remainingPallets)
+			allocation.Pallets = maxInt(startingPallets-remainingPallets, 0)
+			snapshots[bucketKey] = outboundFinalPalletSnapshot{
+				Quantity: remainingQuantity,
+				Pallets:  remainingPallets,
+			}
+		}
+
+		encodedAllocations := mustEncodeOutboundPickAllocations(allocations)
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE outbound_document_lines
+			SET pick_allocations_json = ?
+			WHERE id = ?
+		`, nullableString(encodedAllocations), lineRow.ID); err != nil {
+			return nil, mapDBError(fmt.Errorf("refresh outbound pallet snapshot: %w", err))
+		}
+		lineRow.PickAllocationsJSON = encodedAllocations
+	}
+	return lineRows, nil
 }
 
 func (s *Store) validateOutboundFinalPalletBalanceTx(

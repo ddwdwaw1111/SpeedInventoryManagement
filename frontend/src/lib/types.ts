@@ -809,7 +809,21 @@ export type BulkUpdateInboundDocumentStatusResponse = {
 
 export type BulkConfirmOutboundDocumentsResponse = {
   updatedDocuments: number;
+  failedDocuments: number;
+  unprocessedDocuments: number;
+  interrupted: boolean;
+  interruptionError?: string;
   documents: OutboundDocument[];
+  results: BulkConfirmOutboundDocumentResult[];
+};
+
+export type BulkConfirmOutboundDocumentResult = {
+  documentId: number;
+  pickingOrderNo?: string;
+  success: boolean;
+  document?: OutboundDocument;
+  error?: string;
+  warning?: string;
 };
 
 export type InboundDocumentLinePayload = {

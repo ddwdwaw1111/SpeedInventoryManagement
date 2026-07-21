@@ -674,12 +674,22 @@ func (s *Server) handleBulkConfirmOutboundDocuments(c *gin.Context) {
 		return
 	}
 
-	for _, document := range response.Documents {
-		s.writeAuditLog(c, "CONFIRM", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Bulk confirmed outbound document", map[string]any{
-			"packingListNo": document.PackingListNo,
-			"status":        document.Status,
-			"confirmedAt":   document.ConfirmedAt,
+	for _, result := range response.Results {
+		if !result.Success {
+			continue
+		}
+		pickingOrderNo := result.PickingOrderNo
+		var confirmedAt any
+		if result.Document != nil {
+			pickingOrderNo = result.Document.PackingListNo
+			confirmedAt = result.Document.ConfirmedAt
+		}
+		s.writeAuditLog(c, "CONFIRM", "outbound_document", result.DocumentID, firstNonEmptyString(pickingOrderNo, fmt.Sprintf("outbound:%d", result.DocumentID)), "Bulk confirmed outbound document", map[string]any{
+			"packingListNo": pickingOrderNo,
+			"status":        service.DocumentStatusConfirmed,
+			"confirmedAt":   confirmedAt,
 			"batchSize":     response.UpdatedDocuments,
+			"reloadWarning": result.Warning,
 		})
 	}
 

@@ -2181,9 +2181,47 @@ export function ActivityManagementPage({
       const response = await api.bulkConfirmOutboundDocuments(
         selectedOutboundConfirmDocuments.map((document) => document.id)
       );
-      setOutboundRowSelectionModel({ type: "include", ids: new Set() });
+      const failedResults = response.results.filter((result) => !result.success);
+      const reloadWarningCount = response.results.filter((result) => result.success && result.warning).length;
+      const successfulDocumentIds = new Set(
+        response.results.filter((result) => result.success).map((result) => result.documentId)
+      );
+      setOutboundRowSelectionModel({
+        type: "include",
+        ids: new Set(
+          selectedOutboundConfirmDocuments
+            .filter((document) => !successfulDocumentIds.has(document.id))
+            .map((document) => document.id)
+        )
+      });
       await onRefresh();
-      showActionSuccess(t("bulkOutboundConfirmed", { count: response.updatedDocuments }));
+      if (failedResults.length === 0) {
+        const messages = [t("bulkOutboundConfirmed", { count: response.updatedDocuments })];
+        if (reloadWarningCount > 0) {
+          messages.push(t("bulkOutboundConfirmReloadWarnings", { count: reloadWarningCount }));
+        }
+        showActionSuccess(messages.join(" "));
+      } else {
+        const visibleFailures = failedResults
+          .slice(0, 3)
+          .map((result) => result.error || t("bulkOutboundConfirmUnknownFailure", { id: result.documentId }));
+        const hiddenFailureCount = Math.max(0, failedResults.length - visibleFailures.length);
+        const failureDetails = [
+          ...visibleFailures,
+          ...(hiddenFailureCount > 0 ? [t("bulkOutboundConfirmMoreFailures", { count: hiddenFailureCount })] : []),
+          ...(response.interrupted
+            ? [t("bulkOutboundConfirmInterrupted", { count: response.unprocessedDocuments })]
+            : []),
+          ...(reloadWarningCount > 0 ? [t("bulkOutboundConfirmReloadWarnings", { count: reloadWarningCount })] : [])
+        ].join(" ");
+        showActionError(
+          new Error(`${t("bulkOutboundConfirmPartial", {
+            success: response.updatedDocuments,
+            failed: response.failedDocuments
+          })} ${failureDetails}`),
+          t("bulkOutboundConfirmFailed")
+        );
+      }
     } catch (error) {
       showActionError(error, t("bulkOutboundConfirmFailed"));
     } finally {

@@ -55,8 +55,8 @@ describe("api document list queries", () => {
     }));
   });
 
-  it("posts selected shipment IDs for atomic bulk confirmation", async () => {
-    fetchMock.mockResolvedValue(mockJsonResponse({ updatedDocuments: 2, documents: [] }));
+  it("posts selected shipment IDs for independent bulk confirmation", async () => {
+    fetchMock.mockResolvedValue(mockJsonResponse({ updatedDocuments: 2, failedDocuments: 0, unprocessedDocuments: 0, interrupted: false, documents: [], results: [] }));
 
     await api.bulkConfirmOutboundDocuments([21, 22]);
 
