@@ -1345,9 +1345,13 @@ export type BillingStorageSegmentDetail = {
 
 export type BillingInvoiceLineDetails = {
   kind: "STORAGE_CONTAINER_SUMMARY";
+  receivedOn?: string;
   warehouseLocationId?: number | null;
   warehouseName?: string;
   warehousesTouched: string[];
+  openingPallets?: number;
+  closingPallets?: number;
+  palletReleaseEvents?: Array<{ date: string; pallets: number }>;
   palletsTracked: number;
   palletDays: number;
   normalPalletGracePeriodEnabled?: boolean;
@@ -1515,6 +1519,28 @@ export type BillingInvoiceLineData = {
   details?: BillingInvoiceLineDetails | null;
 };
 
+export type BillingInvoiceContainerDetailData = {
+  containerNo: string;
+  warehouses: string[];
+  references: string[];
+  inboundUnits: number;
+  wrappingPallets: number;
+  palletsTracked: number;
+  palletDays: number;
+  freePalletDays: number;
+  billablePalletDays: number;
+  outboundPallets: number;
+  inboundAmount: number;
+  wrappingAmount: number;
+  storageGrossAmount: number;
+  storageDiscountAmount: number;
+  storageAmount: number;
+  outboundAmount: number;
+  adjustmentAmount: number;
+  totalAmount: number;
+  lineCount: number;
+};
+
 export type BillingInvoice = {
   id: number;
   invoiceNo: string;
@@ -1543,6 +1569,7 @@ export type BillingInvoice = {
   updatedAt: string;
   lineCount: number;
   lines: BillingInvoiceLineData[];
+  containerDetails?: BillingInvoiceContainerDetailData[];
 };
 
 export type CreateBillingInvoiceLinePayload = {

@@ -13,6 +13,15 @@ import { Button, Chip, Dialog, DialogTitle, DialogContent, DialogActions, Divide
 
 import { api } from "../lib/api";
 import { waitForNextPaint } from "../lib/asyncUi";
+import {
+  resolveBillingInvoiceContainerDetails,
+  sumBillingContainerDetailTotals
+} from "../lib/billingContainerLedger";
+import {
+  buildBillingContainerStatementRows,
+  buildBillingContainerStatements,
+  type BillingContainerStatement
+} from "../lib/billingContainerStatement";
 import { downloadExcelWorkbook, type ExcelExportCell, type ExcelExportColumn } from "../lib/excelExport";
 import { downloadBillingInvoicePdf } from "../lib/billingInvoicePdf";
 import { getErrorMessage } from "../lib/errors";
@@ -389,6 +398,10 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
   const invoiceDisplayTotals = getBillingInvoiceDisplayTotals(invoice);
   const editableHeader = getEditableInvoiceHeader(invoice);
   const visibleInvoiceLines = filterVisibleInvoiceLines(invoice.lines);
+  const invoiceContainerDetails = resolveBillingInvoiceContainerDetails(invoice);
+  const containerStatements = buildBillingContainerStatements(invoice);
+  const containerDetailTotal = sumBillingContainerDetailTotals(invoiceContainerDetails);
+  const containerLedgerReconciles = roundCurrency(containerDetailTotal) === roundCurrency(invoiceDisplayTotals.grandTotal);
   const invoiceStorageSegmentRows = buildInvoiceStorageSegmentRows(visibleInvoiceLines);
   const showInvoiceDiscount = invoiceDisplayTotals.discountTotal !== 0;
   const showStorageDiscountColumn = hasInvoiceStorageDiscount(invoice);
@@ -404,7 +417,13 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
     }
 
     const rows = buildBillingTemplateContainerDetailRows(invoice);
-    const storageDetailRows = buildBillingTemplateStorageRows(invoice);
+    const containerLedgerRows = buildBillingTemplateContainerLedgerRows(containerStatements);
+    const storageDetailRows = buildBillingContainerStatementRows(invoice, containerStatements).map((row) => ({
+      ...row,
+      storageDiscount: row.storageDiscountAmount === null
+        ? null
+        : -Math.abs(row.storageDiscountAmount)
+    }));
 
     downloadExcelWorkbook({
       title: `Warehouse Invoice\n${invoice.header.sellerName} | ${invoice.invoiceNo}\n${invoice.customerNameSnapshot} | ${invoice.periodStart} to ${invoice.periodEnd}`,
@@ -421,18 +440,32 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
           : []),
         { label: "Total Fee", value: invoiceDisplayTotals.grandTotal, numberFormat: "currency", bold: true }
       ],
-      additionalSheets: [{
-        title: `Storage Billing Period: ${invoice.periodStart} to ${invoice.periodEnd}`,
-        sheetName: "Storage Fee",
-        columns: buildBillingTemplateStorageColumns(),
-        rows: storageDetailRows,
-        summaryRows: [{
-          label: "Total",
-          value: storageDetailRows.reduce((sum, row) => sum + Number(row.storageFee || 0), 0),
-          numberFormat: "currency",
-          bold: true
-        }]
-      }]
+      additionalSheets: [
+        {
+          title: `Container Statement: ${invoice.periodStart} to ${invoice.periodEnd}`,
+          sheetName: "Container Ledger",
+          columns: buildBillingTemplateContainerLedgerColumns(),
+          rows: containerLedgerRows,
+          summaryRows: [{
+            label: "Invoice Total",
+            value: containerDetailTotal,
+            numberFormat: "currency",
+            bold: true
+          }]
+        },
+        {
+          title: `Storage Billing Period: ${invoice.periodStart} to ${invoice.periodEnd}`,
+          sheetName: "Storage Fee",
+          columns: buildBillingTemplateStorageColumns(),
+          rows: storageDetailRows,
+          summaryRows: [{
+            label: "Total",
+            value: roundCurrency(containerStatements.reduce((sum, statement) => sum + statement.storageAmount, 0)),
+            numberFormat: "currency",
+            bold: true
+          }]
+        }
+      ]
     });
     setIsExportDialogOpen(false);
   }
@@ -756,6 +789,92 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
             </div>
           </article>
         </div>
+
+        {/* Container billing ledger */}
+        <section className="workbook-panel" style={{ margin: "0 1rem 1rem" }}>
+          <WorkspacePanelHeader
+            title={t("billingContainerLedger")}
+            description={t("billingContainerLedgerDesc")}
+            actions={(
+              <Chip
+                size="small"
+                variant="outlined"
+                color={containerLedgerReconciles ? "success" : "error"}
+                label={containerLedgerReconciles ? t("billingContainerLedgerReconciled") : t("billingContainerLedgerMismatchShort")}
+              />
+            )}
+          />
+          {!containerLedgerReconciles && (
+            <div className="sheet-note" style={{ margin: "0 1rem 1rem", color: "#b42318", borderColor: "rgba(180,35,24,0.35)" }}>
+              {t("billingContainerLedgerMismatch", {
+                containerTotal: formatMoney(containerDetailTotal),
+                invoiceTotal: formatMoney(invoiceDisplayTotals.grandTotal)
+              })}
+            </div>
+          )}
+          {invoiceContainerDetails.length === 0 ? (
+            <WorkspaceTableEmptyState title={t("noBillingData")} description={t("billingContainerLedgerDesc")} />
+          ) : (
+            <div className="sheet-table-wrap">
+              <table className="sheet-table" aria-label={t("billingContainerLedger")}>
+                <thead>
+                  <tr>
+                    <th>{t("billingReceivedOn")}</th>
+                    <th>{t("containerNo")}</th>
+                    <th>{t("currentStorage")}</th>
+                    <th>{t("billingOpeningPallets")}</th>
+                    <th>{t("billingReleasedPallets")}</th>
+                    <th>{t("billingClosingPallets")}</th>
+                    <th>{t("billingReleaseActivity")}</th>
+                    <th>{t("billingStorageCharges")}</th>
+                    <th>{t("billingOtherCharges")}</th>
+                    <th>{t("billingContainerTotal")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {containerStatements.map((detail) => (
+                    <tr key={detail.containerNo || "invoice-level"}>
+                      <td className="cell--mono">{detail.receivedOn || "-"}</td>
+                      <td className="cell--mono"><strong>{detail.containerNo || t("billingInvoiceLevel")}</strong></td>
+                      <td>{detail.warehouses.join(", ") || "-"}</td>
+                      <td className="cell--mono">{formatNumber(detail.openingPallets)}</td>
+                      <td className="cell--mono">{formatNumber(detail.releasedPallets)}</td>
+                      <td className="cell--mono">{formatNumber(detail.closingPallets)}</td>
+                      <td className="cell--mono">
+                        {detail.releaseEvents.length > 0
+                          ? detail.releaseEvents.map((event) => (
+                            <small key={`${event.date}-${event.pallets}`} style={{ display: "block" }}>
+                              {event.date} · {formatNumber(event.pallets)} {t("pallets")}
+                            </small>
+                          ))
+                          : "-"}
+                      </td>
+                      <td className="cell--mono">
+                        <strong>{formatMoney(detail.storageAmount)}</strong>
+                        {detail.billablePalletDays > 0 && <small style={{ display: "block", opacity: 0.7 }}>{formatNumber(detail.billablePalletDays)} {t("palletDays")}</small>}
+                        {detail.storageDiscountAmount > 0 && <div style={{ color: "#d32f2f" }}>{formatDiscountMoney(detail.storageDiscountAmount)}</div>}
+                      </td>
+                      <td className="cell--mono">
+                        <strong>{detail.otherAmount !== 0 ? formatMoney(detail.otherAmount) : "-"}</strong>
+                        {detail.inboundAmount !== 0 && <small style={{ display: "block", opacity: 0.7 }}>{t("billingInboundCharges")}: {formatMoney(detail.inboundAmount)}</small>}
+                        {detail.wrappingAmount !== 0 && <small style={{ display: "block", opacity: 0.7 }}>{t("billingWrappingCharges")}: {formatMoney(detail.wrappingAmount)}</small>}
+                        {detail.outboundAmount !== 0 && <small style={{ display: "block", opacity: 0.7 }}>{t("billingOutboundCharges")}: {formatMoney(detail.outboundAmount)}</small>}
+                        {detail.adjustmentAmount !== 0 && <small style={{ display: "block", opacity: 0.7 }}>{t("billingOtherAdjustments")}: {formatMoney(detail.adjustmentAmount)}</small>}
+                      </td>
+                      <td className="cell--mono"><strong>{formatMoney(detail.totalAmount)}</strong></td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr style={{ fontWeight: 700 }}>
+                    <td colSpan={9} style={{ textAlign: "right" }}>{t("billingGrandTotal")}</td>
+                    <td className="cell--mono">{formatMoney(containerDetailTotal)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </section>
 
         {/* Invoice lines table */}
         <section className="workbook-panel" style={{ margin: "0 1rem 1rem" }}>
@@ -1123,6 +1242,44 @@ function buildBillingTemplateContainerDetailRows(invoice: BillingInvoice): Array
     }));
 }
 
+function buildBillingTemplateContainerLedgerColumns(): ExcelExportColumn[] {
+  return [
+    { key: "receivedOn", label: "Received On" },
+    { key: "containerNo", label: "Container No." },
+    { key: "warehouses", label: "Warehouse" },
+    { key: "openingPallets", label: "Opening Pallets", numberFormat: "number" },
+    { key: "releasedPallets", label: "Inventory Pallets Released", numberFormat: "number" },
+    { key: "closingPallets", label: "Closing Pallets", numberFormat: "number" },
+    { key: "releaseDates", label: "Release Date" },
+    { key: "billablePalletDays", label: "Billable Pallet-Days", numberFormat: "number" },
+    { key: "storageGrossAmount", label: "Gross Storage Fee", numberFormat: "currency" },
+    { key: "storageDiscount", label: "Storage Discount", numberFormat: "currency" },
+    { key: "storageAmount", label: "Storage Fee", numberFormat: "currency" },
+    { key: "otherAmount", label: "Other Fees", numberFormat: "currency" },
+    { key: "totalAmount", label: "Container Total", numberFormat: "currency" }
+  ];
+}
+
+function buildBillingTemplateContainerLedgerRows(
+  details: BillingContainerStatement[]
+): Array<Record<string, ExcelExportCell>> {
+  return details.map((detail) => ({
+    receivedOn: detail.receivedOn || "-",
+    containerNo: detail.containerNo || "Invoice-level",
+    warehouses: detail.warehouses.join(", ") || "-",
+    openingPallets: detail.openingPallets,
+    releasedPallets: detail.releasedPallets,
+    closingPallets: detail.closingPallets,
+    releaseDates: detail.releaseEvents.map((event) => `${event.date} (-${event.pallets})`).join(", ") || "-",
+    billablePalletDays: detail.billablePalletDays,
+    storageGrossAmount: detail.storageGrossAmount,
+    storageDiscount: -Math.abs(detail.storageDiscountAmount),
+    storageAmount: detail.storageAmount,
+    otherAmount: detail.otherAmount,
+    totalAmount: detail.totalAmount
+  }));
+}
+
 function compareBillingInvoiceLinesByContainer(
   left: BillingInvoice["lines"][number],
   right: BillingInvoice["lines"][number]
@@ -1161,83 +1318,22 @@ function invoiceChargeTypeLabel(chargeType: string) {
 
 function buildBillingTemplateStorageColumns(): ExcelExportColumn[] {
   return [
-    { key: "billableStartDate", label: "Billable Start Date" },
+    { key: "receivedOn", label: "Received On" },
     { key: "containerNo", label: "Container No." },
-    { key: "openingPallets", label: "Pallets on hand at start of billing period", numberFormat: "number" },
-    { key: "outboundPallets", label: "Outbound Pallets During Period", numberFormat: "number" },
-    { key: "closingPallets", label: "Pallets on hand at end of billing period", numberFormat: "number" },
-    { key: "outboundDates", label: "Outbound Date" },
-    { key: "palletDays", label: "Pallet-days", numberFormat: "number" },
+    { key: "openingPallets", label: "Opening Pallets", numberFormat: "number" },
+    { key: "releasedPallets", label: "Inventory Pallets Released", numberFormat: "number" },
+    { key: "closingPallets", label: "Closing Pallets", numberFormat: "number" },
+    { key: "releaseDate", label: "Release Date" },
+    { key: "segmentStartDate", label: "Charge Start" },
+    { key: "segmentEndDate", label: "Charge End" },
+    { key: "palletsOnHand", label: "Billable Pallets on Hand", numberFormat: "number" },
+    { key: "palletDays", label: "Pallet-Days", numberFormat: "number" },
+    { key: "freePalletDays", label: "Free Pallet-Days", numberFormat: "number" },
+    { key: "billablePalletDays", label: "Billable Pallet-Days", numberFormat: "number" },
+    { key: "storageGrossAmount", label: "Gross Storage Fee", numberFormat: "currency" },
+    { key: "storageDiscount", label: "Storage Discount", numberFormat: "currency" },
     { key: "storageFee", label: "Storage Fee", numberFormat: "currency" }
   ];
-}
-
-function buildBillingTemplateStorageRows(invoice: BillingInvoice): Array<Record<string, ExcelExportCell>> {
-  return filterVisibleInvoiceLines(invoice.lines).flatMap((line) => {
-    if (!line.details || line.details.kind !== "STORAGE_CONTAINER_SUMMARY") {
-      return [];
-    }
-    const balance = summarizeBillingPeriodPalletBalance(
-      line.details.segments,
-      invoice.periodStart,
-      invoice.periodEnd
-    );
-    return [{
-      billableStartDate: line.details.segments[0]?.startDate ?? invoice.periodStart,
-      containerNo: line.containerNo || "-",
-      openingPallets: balance.openingPallets,
-      outboundPallets: balance.outboundPallets,
-      closingPallets: balance.closingPallets,
-      outboundDates: balance.outboundDates.join(", ") || "-",
-      palletDays: line.details.palletDays,
-      storageFee: line.amount
-    }];
-  });
-}
-
-function summarizeBillingPeriodPalletBalance(
-  segments: BillingStorageSegmentDetail[],
-  periodStart: string,
-  periodEnd: string
-) {
-  const balances = new Map<string, number>();
-  for (const segment of segments) {
-    for (const date of enumerateIsoDates(segment.startDate, segment.endDate)) {
-      balances.set(date, segment.dayEndPallets);
-    }
-  }
-
-  const dates = enumerateIsoDates(periodStart, periodEnd);
-  const outboundDates: string[] = [];
-  let outboundPallets = 0;
-  let previousBalance = balances.get(periodStart) ?? 0;
-  for (const date of dates.slice(1)) {
-    const currentBalance = balances.get(date) ?? 0;
-    if (currentBalance < previousBalance) {
-      const shipped = previousBalance - currentBalance;
-      outboundPallets += shipped;
-      outboundDates.push(`${date} (-${shipped})`);
-    }
-    previousBalance = currentBalance;
-  }
-
-  return {
-    openingPallets: balances.get(periodStart) ?? 0,
-    closingPallets: balances.get(periodEnd) ?? 0,
-    outboundPallets,
-    outboundDates
-  };
-}
-
-function enumerateIsoDates(startDate: string, endDate: string) {
-  const dates: string[] = [];
-  const cursor = new Date(`${startDate}T00:00:00Z`);
-  const end = new Date(`${endDate}T00:00:00Z`);
-  while (!Number.isNaN(cursor.getTime()) && cursor <= end) {
-    dates.push(cursor.toISOString().slice(0, 10));
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-  }
-  return dates;
 }
 
 function filterVisibleInvoiceLines(lines: BillingInvoiceLineData[]) {

@@ -68,7 +68,7 @@ func TestCalculateBillingPreviewMinimumQtyRuleUsesIndependentQuantityBalance(t *
 	sources := billingPreviewSources{
 		CustomerName: "Customer",
 		Lifecycle: []billingLifecycleSource{
-			{EventID: 1, LocationID: 1, LocationName: "308", ContainerNo: "CONT-A", EventDate: billingTestDate(2026, 4, 1), QuantityDelta: 25, PalletDelta: 3},
+			{EventID: 1, LocationID: 1, LocationName: "308", ContainerNo: "CONT-A", EventType: StockLedgerEventReceive, EventDate: billingTestDate(2026, 4, 1), QuantityDelta: 25, PalletDelta: 3},
 			{EventID: 2, LocationID: 1, LocationName: "308", ContainerNo: "CONT-A", EventDate: billingTestDate(2026, 4, 2), QuantityDelta: -10, PalletDelta: 0},
 		},
 		ContainerTypes: []billingContainerTypeSource{{ContainerNo: "CONT-A", ContainerType: ContainerTypeNormal}},
@@ -83,6 +83,147 @@ func TestCalculateBillingPreviewMinimumQtyRuleUsesIndependentQuantityBalance(t *
 	}
 	if len(preview.StorageRows) != 1 || preview.StorageRows[0].PalletDays != 3 {
 		t.Fatalf("unexpected threshold-adjusted storage row: %#v", preview.StorageRows)
+	}
+	storage := preview.StorageRows[0]
+	if storage.ReceivedOn != "2026-04-01" || storage.OpeningPallets != 0 || storage.ClosingPallets != 3 || len(storage.PalletReleaseEvents) != 0 {
+		t.Fatalf("unexpected period boundary snapshot: %#v", storage)
+	}
+}
+
+func TestCalculateBillingStorageKeepsZeroChargePalletAuditSnapshot(t *testing.T) {
+	graceEnabled := false
+	input, billingRange, grace, err := normalizeBillingPreviewInput(BillingPreviewInput{
+		CustomerID: 1, PeriodStart: "2026-04-01", PeriodEnd: "2026-04-01",
+		NormalPalletGracePeriodEnabled: &graceEnabled,
+		Rates:                          BillingRatesSnapshot{StorageFeePerPalletWeekNormal: 7},
+	})
+	if err != nil {
+		t.Fatalf("normalize input: %v", err)
+	}
+	sources := billingPreviewSources{
+		CustomerName: "Customer",
+		Lifecycle: []billingLifecycleSource{
+			{EventID: 1, LocationID: 1, LocationName: "308", ContainerNo: "CONT-A", EventType: StockLedgerEventReceive, EventDate: billingTestDate(2026, 3, 31), QuantityDelta: 10, PalletDelta: 1},
+			{EventID: 2, LocationID: 1, LocationName: "308", ContainerNo: "CONT-A", EventType: StockLedgerEventShip, EventDate: billingTestDate(2026, 4, 1), QuantityDelta: -10, PalletDelta: -1},
+		},
+		ContainerTypes: []billingContainerTypeSource{{ContainerNo: "CONT-A", ContainerType: ContainerTypeNormal}},
+	}
+
+	preview, err := calculateBillingPreview(input, billingRange, grace, sources)
+	if err != nil {
+		t.Fatalf("calculate preview: %v", err)
+	}
+	if len(preview.StorageRows) != 1 {
+		t.Fatalf("zero-charge pallet audit row was dropped: %#v", preview.StorageRows)
+	}
+	storage := preview.StorageRows[0]
+	if storage.PalletDays != 0 || storage.Amount != 0 || storage.OpeningPallets != 1 || storage.ClosingPallets != 0 {
+		t.Fatalf("unexpected zero-charge pallet audit snapshot: %#v", storage)
+	}
+	if len(storage.PalletReleaseEvents) != 1 || storage.PalletReleaseEvents[0].Date != "2026-04-01" || storage.PalletReleaseEvents[0].Pallets != 1 {
+		t.Fatalf("release was not retained in zero-charge snapshot: %#v", storage.PalletReleaseEvents)
+	}
+	if len(preview.Lines) != 1 || preview.Lines[0].ChargeType != BillingChargeStorage || preview.Lines[0].Amount != 0 {
+		t.Fatalf("zero-charge storage snapshot was not persisted as an invoice source line: %#v", preview.Lines)
+	}
+}
+
+func TestCalculateBillingStorageReleaseEventsIgnoreSameDayPositiveActivityAndInternalTransfers(t *testing.T) {
+	graceEnabled := false
+	input, billingRange, grace, err := normalizeBillingPreviewInput(BillingPreviewInput{
+		CustomerID: 1, PeriodStart: "2026-04-01", PeriodEnd: "2026-04-01",
+		NormalPalletGracePeriodEnabled: &graceEnabled,
+		Rates:                          BillingRatesSnapshot{StorageFeePerPalletWeekNormal: 7},
+	})
+	if err != nil {
+		t.Fatalf("normalize input: %v", err)
+	}
+	sources := billingPreviewSources{
+		CustomerName: "Customer",
+		Lifecycle: []billingLifecycleSource{
+			{EventID: 1, LocationID: 1, LocationName: "308", ContainerNo: "CONT-A", EventType: StockLedgerEventReceive, EventDate: billingTestDate(2026, 3, 31), QuantityDelta: 50, PalletDelta: 5},
+			{EventID: 2, LocationID: 1, LocationName: "308", ContainerNo: "CONT-A", EventType: StockLedgerEventShip, EventDate: billingTestDate(2026, 4, 1), QuantityDelta: -20, PalletDelta: -2},
+			{EventID: 3, LocationID: 1, LocationName: "308", ContainerNo: "CONT-A", EventType: StockLedgerEventReceive, EventDate: billingTestDate(2026, 4, 1), QuantityDelta: 20, PalletDelta: 2},
+			{EventID: 4, LocationID: 1, LocationName: "308", ContainerNo: "CONT-A", EventType: StockLedgerEventTransferOut, EventDate: billingTestDate(2026, 4, 1), PalletDelta: -1, SourceType: StockLedgerSourceTransfer, SourceID: 9, SourceLineID: 10},
+			{EventID: 5, LocationID: 2, LocationName: "Other", ContainerNo: "CONT-A", EventType: StockLedgerEventTransferIn, EventDate: billingTestDate(2026, 4, 1), PalletDelta: 1, SourceType: StockLedgerSourceTransfer, SourceID: 9, SourceLineID: 10},
+		},
+		ContainerTypes: []billingContainerTypeSource{{ContainerNo: "CONT-A", ContainerType: ContainerTypeNormal}},
+	}
+
+	preview, err := calculateBillingPreview(input, billingRange, grace, sources)
+	if err != nil {
+		t.Fatalf("calculate preview: %v", err)
+	}
+	if len(preview.StorageRows) != 1 {
+		t.Fatalf("unexpected storage rows: %#v", preview.StorageRows)
+	}
+	storage := preview.StorageRows[0]
+	if storage.OpeningPallets != 5 || storage.ClosingPallets != 5 {
+		t.Fatalf("same-day activity changed the net pallet snapshot: %#v", storage)
+	}
+	if len(storage.PalletReleaseEvents) != 1 || storage.PalletReleaseEvents[0].Pallets != 2 {
+		t.Fatalf("release activity was netted away or included an internal transfer: %#v", storage.PalletReleaseEvents)
+	}
+}
+
+func TestBuildBillingStorageSegmentsReconcilesCurrencyRounding(t *testing.T) {
+	billingRange := billingPreviewRange{
+		Start:        billingTestDate(2026, 6, 1),
+		EndInclusive: billingTestDate(2026, 6, 3),
+		EndExclusive: billingTestDate(2026, 6, 4),
+	}
+	segments := buildBillingStorageSegments(
+		map[string]float64{"2026-06-01": 1, "2026-06-03": 1},
+		map[string]float64{"2026-06-01": 1},
+		billingRange,
+		6.0/7.0,
+	)
+
+	if len(segments) != 2 {
+		t.Fatalf("segment count = %d, want 2: %#v", len(segments), segments)
+	}
+	if segments[0].GrossAmount != 0.86 || segments[1].GrossAmount != 0.85 {
+		t.Fatalf("gross rounding was not allocated deterministically: %#v", segments)
+	}
+	if segments[0].DiscountAmount != 0.86 || segments[1].DiscountAmount != 0 {
+		t.Fatalf("discount rounding was not allocated within segment gross amounts: %#v", segments)
+	}
+	if segments[0].Amount != 0 || segments[1].Amount != 0.85 {
+		t.Fatalf("net segment amounts do not reconcile: %#v", segments)
+	}
+	if roundCurrencyGo(segments[0].GrossAmount+segments[1].GrossAmount) != 1.71 ||
+		roundCurrencyGo(segments[0].DiscountAmount+segments[1].DiscountAmount) != 0.86 ||
+		roundCurrencyGo(segments[0].Amount+segments[1].Amount) != 0.85 {
+		t.Fatalf("segment totals do not match authoritative totals: %#v", segments)
+	}
+}
+
+func TestBuildBillingStorageSegmentsReservesGrossCentsForFullyDiscountedSegment(t *testing.T) {
+	billingRange := billingPreviewRange{
+		Start:        billingTestDate(2026, 6, 1),
+		EndInclusive: billingTestDate(2026, 6, 2),
+		EndExclusive: billingTestDate(2026, 6, 3),
+	}
+	segments := buildBillingStorageSegments(
+		map[string]float64{"2026-06-01": 0.6, "2026-06-02": 0.5},
+		map[string]float64{"2026-06-02": 0.5},
+		billingRange,
+		0.01,
+	)
+
+	if len(segments) != 2 {
+		t.Fatalf("segment count = %d, want 2: %#v", len(segments), segments)
+	}
+	if segments[0].GrossAmount != 0 || segments[0].DiscountAmount != 0 || segments[0].Amount != 0 {
+		t.Fatalf("non-discounted rounding remainder should not consume the discount cent: %#v", segments)
+	}
+	if segments[1].GrossAmount != 0.01 || segments[1].DiscountAmount != 0.01 || segments[1].Amount != 0 {
+		t.Fatalf("fully discounted segment did not retain its gross and discount cent: %#v", segments)
+	}
+	if roundCurrencyGo(segments[0].GrossAmount+segments[1].GrossAmount) != 0.01 ||
+		roundCurrencyGo(segments[0].DiscountAmount+segments[1].DiscountAmount) != 0.01 ||
+		roundCurrencyGo(segments[0].Amount+segments[1].Amount) != 0 {
+		t.Fatalf("segment totals do not match authoritative totals: %#v", segments)
 	}
 }
 

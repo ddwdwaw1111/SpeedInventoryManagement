@@ -28,33 +28,59 @@ const (
 // --- public types ---
 
 type BillingInvoice struct {
-	ID                    int64                `json:"id"`
-	InvoiceNo             string               `json:"invoiceNo"`
-	InvoiceType           string               `json:"invoiceType"`
-	CustomerID            int64                `json:"customerId"`
-	CustomerNameSnapshot  string               `json:"customerNameSnapshot"`
-	WarehouseLocationID   *int64               `json:"warehouseLocationId"`
-	WarehouseNameSnapshot string               `json:"warehouseNameSnapshot"`
-	ContainerType         string               `json:"containerType"`
-	PeriodStart           string               `json:"periodStart"`
-	PeriodEnd             string               `json:"periodEnd"`
-	CurrencyCode          string               `json:"currencyCode"`
-	Rates                 BillingRatesSnapshot `json:"rates"`
-	Header                BillingInvoiceHeader `json:"header"`
-	Subtotal              float64              `json:"subtotal"`
-	DiscountTotal         float64              `json:"discountTotal"`
-	GrandTotal            float64              `json:"grandTotal"`
-	Status                string               `json:"status"`
-	Notes                 string               `json:"notes"`
-	FinalizedAt           *time.Time           `json:"finalizedAt"`
-	FinalizedByUserID     *int64               `json:"finalizedByUserId"`
-	PaidAt                *time.Time           `json:"paidAt"`
-	VoidedAt              *time.Time           `json:"voidedAt"`
-	CreatedByUserID       int64                `json:"createdByUserId"`
-	CreatedAt             time.Time            `json:"createdAt"`
-	UpdatedAt             time.Time            `json:"updatedAt"`
-	LineCount             int                  `json:"lineCount"`
-	Lines                 []BillingInvoiceLine `json:"lines"`
+	ID                    int64                           `json:"id"`
+	InvoiceNo             string                          `json:"invoiceNo"`
+	InvoiceType           string                          `json:"invoiceType"`
+	CustomerID            int64                           `json:"customerId"`
+	CustomerNameSnapshot  string                          `json:"customerNameSnapshot"`
+	WarehouseLocationID   *int64                          `json:"warehouseLocationId"`
+	WarehouseNameSnapshot string                          `json:"warehouseNameSnapshot"`
+	ContainerType         string                          `json:"containerType"`
+	PeriodStart           string                          `json:"periodStart"`
+	PeriodEnd             string                          `json:"periodEnd"`
+	CurrencyCode          string                          `json:"currencyCode"`
+	Rates                 BillingRatesSnapshot            `json:"rates"`
+	Header                BillingInvoiceHeader            `json:"header"`
+	Subtotal              float64                         `json:"subtotal"`
+	DiscountTotal         float64                         `json:"discountTotal"`
+	GrandTotal            float64                         `json:"grandTotal"`
+	Status                string                          `json:"status"`
+	Notes                 string                          `json:"notes"`
+	FinalizedAt           *time.Time                      `json:"finalizedAt"`
+	FinalizedByUserID     *int64                          `json:"finalizedByUserId"`
+	PaidAt                *time.Time                      `json:"paidAt"`
+	VoidedAt              *time.Time                      `json:"voidedAt"`
+	CreatedByUserID       int64                           `json:"createdByUserId"`
+	CreatedAt             time.Time                       `json:"createdAt"`
+	UpdatedAt             time.Time                       `json:"updatedAt"`
+	LineCount             int                             `json:"lineCount"`
+	Lines                 []BillingInvoiceLine            `json:"lines"`
+	ContainerDetails      []BillingInvoiceContainerDetail `json:"containerDetails"`
+}
+
+// BillingInvoiceContainerDetail is a read model built from the persisted
+// invoice-line snapshots. It gives every container an independently
+// reconcilable sub-ledger without introducing a second source of truth.
+type BillingInvoiceContainerDetail struct {
+	ContainerNo           string   `json:"containerNo"`
+	Warehouses            []string `json:"warehouses"`
+	References            []string `json:"references"`
+	InboundUnits          float64  `json:"inboundUnits"`
+	WrappingPallets       float64  `json:"wrappingPallets"`
+	PalletsTracked        float64  `json:"palletsTracked"`
+	PalletDays            float64  `json:"palletDays"`
+	FreePalletDays        float64  `json:"freePalletDays"`
+	BillablePalletDays    float64  `json:"billablePalletDays"`
+	OutboundPallets       float64  `json:"outboundPallets"`
+	InboundAmount         float64  `json:"inboundAmount"`
+	WrappingAmount        float64  `json:"wrappingAmount"`
+	StorageGrossAmount    float64  `json:"storageGrossAmount"`
+	StorageDiscountAmount float64  `json:"storageDiscountAmount"`
+	StorageAmount         float64  `json:"storageAmount"`
+	OutboundAmount        float64  `json:"outboundAmount"`
+	AdjustmentAmount      float64  `json:"adjustmentAmount"`
+	TotalAmount           float64  `json:"totalAmount"`
+	LineCount             int      `json:"lineCount"`
 }
 
 type BillingInvoiceHeader struct {
@@ -255,6 +281,7 @@ func (s *Store) ListBillingInvoices(ctx context.Context, customerID int64, statu
 	for _, row := range rows {
 		invoice := toBillingInvoice(row)
 		invoice.Lines = []BillingInvoiceLine{}
+		invoice.ContainerDetails = []BillingInvoiceContainerDetail{}
 		invoices = append(invoices, invoice)
 	}
 	return invoices, nil
@@ -299,6 +326,7 @@ func (s *Store) GetBillingInvoice(ctx context.Context, invoiceID int64) (Billing
 	for _, lineRow := range lineRows {
 		invoice.Lines = append(invoice.Lines, toBillingInvoiceLine(lineRow))
 	}
+	invoice.ContainerDetails = buildBillingInvoiceContainerDetails(invoice.Lines)
 
 	return invoice, nil
 }
@@ -1165,6 +1193,130 @@ func toBillingInvoiceLine(row billingInvoiceLineRow) BillingInvoiceLine {
 		CreatedAt:   row.CreatedAt.Format(time.RFC3339),
 		Details:     detailsJSON(row.DetailsJSON),
 	}
+}
+
+type billingInvoiceContainerDetailAccumulator struct {
+	detail     BillingInvoiceContainerDetail
+	warehouses map[string]struct{}
+	references map[string]struct{}
+}
+
+type billingInvoiceStorageLineDetails struct {
+	Kind               string  `json:"kind"`
+	PalletsTracked     float64 `json:"palletsTracked"`
+	PalletDays         float64 `json:"palletDays"`
+	FreePalletDays     float64 `json:"freePalletDays"`
+	BillablePalletDays float64 `json:"billablePalletDays"`
+	GrossAmount        float64 `json:"grossAmount"`
+	DiscountAmount     float64 `json:"discountAmount"`
+}
+
+func buildBillingInvoiceContainerDetails(lines []BillingInvoiceLine) []BillingInvoiceContainerDetail {
+	byContainer := make(map[string]*billingInvoiceContainerDetailAccumulator)
+	for _, line := range lines {
+		containerNo := normalizeContainerNo(line.ContainerNo)
+		key := containerNo
+		if key == "" {
+			key = "\x00INVOICE_LEVEL"
+		}
+		entry := byContainer[key]
+		if entry == nil {
+			entry = &billingInvoiceContainerDetailAccumulator{
+				detail:     BillingInvoiceContainerDetail{ContainerNo: containerNo},
+				warehouses: make(map[string]struct{}),
+				references: make(map[string]struct{}),
+			}
+			byContainer[key] = entry
+		}
+
+		if warehouse := strings.TrimSpace(line.Warehouse); warehouse != "" {
+			entry.warehouses[warehouse] = struct{}{}
+		}
+		if reference := strings.TrimSpace(line.Reference); reference != "" {
+			entry.references[reference] = struct{}{}
+		}
+		entry.detail.LineCount++
+		entry.detail.TotalAmount += line.Amount
+
+		switch strings.ToUpper(strings.TrimSpace(line.ChargeType)) {
+		case BillingChargeInbound:
+			entry.detail.InboundUnits += line.Quantity
+			entry.detail.InboundAmount += line.Amount
+		case BillingChargeWrapping:
+			entry.detail.WrappingPallets += line.Quantity
+			entry.detail.WrappingAmount += line.Amount
+		case BillingChargeStorage:
+			entry.detail.StorageAmount += line.Amount
+			storageDetails := billingInvoiceStorageLineDetails{}
+			if len(line.Details) > 0 && json.Unmarshal(line.Details, &storageDetails) == nil && storageDetails.Kind == "STORAGE_CONTAINER_SUMMARY" {
+				palletDays := storageDetails.PalletDays
+				if palletDays == 0 && line.Quantity != 0 {
+					palletDays = line.Quantity
+				}
+				billablePalletDays := storageDetails.BillablePalletDays
+				if billablePalletDays == 0 && line.Quantity != 0 {
+					billablePalletDays = line.Quantity
+				}
+				grossAmount := storageDetails.GrossAmount
+				if grossAmount == 0 && (line.Amount != 0 || storageDetails.DiscountAmount != 0) {
+					grossAmount = line.Amount + storageDetails.DiscountAmount
+				}
+				entry.detail.PalletsTracked = math.Max(entry.detail.PalletsTracked, storageDetails.PalletsTracked)
+				entry.detail.PalletDays += palletDays
+				entry.detail.FreePalletDays += storageDetails.FreePalletDays
+				entry.detail.BillablePalletDays += billablePalletDays
+				entry.detail.StorageGrossAmount += grossAmount
+				entry.detail.StorageDiscountAmount += storageDetails.DiscountAmount
+			} else {
+				entry.detail.BillablePalletDays += line.Quantity
+				entry.detail.PalletDays += line.Quantity
+				entry.detail.StorageGrossAmount += line.Amount
+			}
+		case BillingChargeOutbound:
+			entry.detail.OutboundPallets += line.Quantity
+			entry.detail.OutboundAmount += line.Amount
+		default:
+			entry.detail.AdjustmentAmount += line.Amount
+		}
+	}
+
+	details := make([]BillingInvoiceContainerDetail, 0, len(byContainer))
+	for _, entry := range byContainer {
+		entry.detail.Warehouses = sortedBillingDetailValues(entry.warehouses)
+		entry.detail.References = sortedBillingDetailValues(entry.references)
+		entry.detail.InboundUnits = billingPreviewRoundQuantity(entry.detail.InboundUnits)
+		entry.detail.WrappingPallets = billingPreviewRoundQuantity(entry.detail.WrappingPallets)
+		entry.detail.PalletsTracked = billingPreviewRoundQuantity(entry.detail.PalletsTracked)
+		entry.detail.PalletDays = billingPreviewRoundQuantity(entry.detail.PalletDays)
+		entry.detail.FreePalletDays = billingPreviewRoundQuantity(entry.detail.FreePalletDays)
+		entry.detail.BillablePalletDays = billingPreviewRoundQuantity(entry.detail.BillablePalletDays)
+		entry.detail.OutboundPallets = billingPreviewRoundQuantity(entry.detail.OutboundPallets)
+		entry.detail.InboundAmount = roundCurrencyGo(entry.detail.InboundAmount)
+		entry.detail.WrappingAmount = roundCurrencyGo(entry.detail.WrappingAmount)
+		entry.detail.StorageGrossAmount = roundCurrencyGo(entry.detail.StorageGrossAmount)
+		entry.detail.StorageDiscountAmount = roundCurrencyGo(entry.detail.StorageDiscountAmount)
+		entry.detail.StorageAmount = roundCurrencyGo(entry.detail.StorageAmount)
+		entry.detail.OutboundAmount = roundCurrencyGo(entry.detail.OutboundAmount)
+		entry.detail.AdjustmentAmount = roundCurrencyGo(entry.detail.AdjustmentAmount)
+		entry.detail.TotalAmount = roundCurrencyGo(entry.detail.TotalAmount)
+		details = append(details, entry.detail)
+	}
+	sort.Slice(details, func(left, right int) bool {
+		if details[left].ContainerNo == "" || details[right].ContainerNo == "" {
+			return details[left].ContainerNo != ""
+		}
+		return details[left].ContainerNo < details[right].ContainerNo
+	})
+	return details
+}
+
+func sortedBillingDetailValues(values map[string]struct{}) []string {
+	result := make([]string, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func coalesceNullString(ns sql.NullString) string {

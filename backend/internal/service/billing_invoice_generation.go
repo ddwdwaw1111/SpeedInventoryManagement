@@ -37,9 +37,13 @@ type GenerateBillingInvoiceResult struct {
 
 type billingStorageContainerSummaryDetails struct {
 	Kind                           string                         `json:"kind"`
+	ReceivedOn                     string                         `json:"receivedOn,omitempty"`
 	WarehouseLocationID            *int64                         `json:"warehouseLocationId,omitempty"`
 	WarehouseName                  string                         `json:"warehouseName,omitempty"`
 	WarehousesTouched              []string                       `json:"warehousesTouched"`
+	OpeningPallets                 float64                        `json:"openingPallets"`
+	ClosingPallets                 float64                        `json:"closingPallets"`
+	PalletReleaseEvents            []BillingPreviewPalletRelease  `json:"palletReleaseEvents"`
 	PalletsTracked                 float64                        `json:"palletsTracked"`
 	PalletDays                     float64                        `json:"palletDays"`
 	NormalPalletGracePeriodEnabled bool                           `json:"normalPalletGracePeriodEnabled"`
@@ -179,11 +183,19 @@ func buildAuthoritativeBillingInvoiceLines(invoiceType string, preview BillingPr
 		if invoiceType == BillingInvoiceTypeStorage && previewLine.ChargeType != BillingChargeStorage {
 			continue
 		}
+		containerNo := billingPreviewContainerNo(previewLine.ContainerNo)
+		if containerNo == billingPreviewUnassigned {
+			return nil, fmt.Errorf(
+				"%w: %s cannot be billed by container because its source container is not assigned",
+				ErrInvalidInput,
+				firstNonEmpty(previewLine.Reference, previewLine.Description, "billing line"),
+			)
+		}
 		line := CreateBillingInvoiceLineInput{
 			ChargeType:  previewLine.ChargeType,
 			Description: previewLine.Description,
 			Reference:   previewLine.Reference,
-			ContainerNo: previewLine.ContainerNo,
+			ContainerNo: containerNo,
 			Warehouse:   previewLine.Warehouse,
 			OccurredOn:  previewLine.OccurredOn,
 			Quantity:    previewLine.Quantity,
@@ -208,9 +220,11 @@ func buildAuthoritativeBillingInvoiceLines(invoiceType string, preview BillingPr
 				resolvedWarehouseName = strings.Join(row.WarehousesTouched, ", ")
 			}
 			storageDetailsJSON, err := json.Marshal(billingStorageContainerSummaryDetails{
-				Kind: "STORAGE_CONTAINER_SUMMARY", WarehouseLocationID: row.LocationID,
+				Kind: "STORAGE_CONTAINER_SUMMARY", ReceivedOn: row.ReceivedOn, WarehouseLocationID: row.LocationID,
 				WarehouseName: resolvedWarehouseName, WarehousesTouched: row.WarehousesTouched,
-				PalletsTracked: row.PalletsTracked, PalletDays: row.PalletDays,
+				OpeningPallets: row.OpeningPallets, ClosingPallets: row.ClosingPallets,
+				PalletReleaseEvents: row.PalletReleaseEvents,
+				PalletsTracked:      row.PalletsTracked, PalletDays: row.PalletDays,
 				NormalPalletGracePeriodEnabled: preview.NormalPalletGracePeriodEnabled,
 				FreePalletDays:                 row.FreePalletDays, BillablePalletDays: row.BillablePalletDays,
 				GrossAmount: row.GrossAmount, DiscountAmount: row.DiscountAmount,
@@ -233,6 +247,22 @@ func buildAuthoritativeBillingInvoiceLines(invoiceType string, preview BillingPr
 		}
 		line.Details = detailsJSON
 		lines = append(lines, line)
+	}
+	expectedTotal := preview.Summary.GrandTotal
+	if invoiceType == BillingInvoiceTypeStorage {
+		expectedTotal = preview.Summary.StorageAmount
+	}
+	actualTotal := 0.0
+	for _, line := range lines {
+		actualTotal += line.Amount
+	}
+	if roundCurrencyGo(actualTotal) != roundCurrencyGo(expectedTotal) {
+		return nil, fmt.Errorf(
+			"%w: container billing detail total %.2f does not match invoice total %.2f",
+			ErrInvalidInput,
+			roundCurrencyGo(actualTotal),
+			roundCurrencyGo(expectedTotal),
+		)
 	}
 	return lines, nil
 }

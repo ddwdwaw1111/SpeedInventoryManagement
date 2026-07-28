@@ -191,7 +191,10 @@ func (s *Store) createStockLedgerEntryTx(ctx context.Context, tx *sql.Tx, input 
 	} else if input.OutDate != nil {
 		effectiveAt = *input.OutDate
 	}
-	if input.PalletChange != 0 {
+	// Quantity-only movements can change the billable pallet count when the
+	// underfilled-pallet threshold is enabled, so they must respect the same
+	// generated-invoice freeze as explicit pallet movements.
+	if input.QuantityChange != 0 || input.PalletChange != 0 {
 		if err := ensureBillingSourceMutationsAllowedTx(ctx, tx, billingSourceMutationScope{
 			CustomerID:  input.CustomerID,
 			OccurredAt:  effectiveAt,

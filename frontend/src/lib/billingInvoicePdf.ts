@@ -1,10 +1,19 @@
 import type { Content, CustomTableLayout, Style, TableCell, TDocumentDefinitions, TFontDictionary } from "pdfmake/interfaces";
 
 import { formatDateTimeValue } from "./dates";
+import {
+  buildBillingContainerStatementRows,
+  buildBillingContainerStatements,
+  type BillingContainerStatement
+} from "./billingContainerStatement";
 import { formatDiscountMoney as formatDiscountAmount, formatMoney, formatNumber } from "./formatters";
 import { downloadPdfDefinition } from "./pdfMakeRuntime";
 import { DEFAULT_BILLING_INVOICE_HEADER } from "./settings";
-import type { BillingInvoice, BillingInvoiceLineData, BillingInvoiceType } from "./types";
+import type {
+  BillingInvoice,
+  BillingInvoiceLineData,
+  BillingInvoiceType
+} from "./types";
 
 const BILLING_TABLE_LAYOUT_NAME = "billingInvoiceTable";
 const CJK_FONT_NAME = "NotoSansCJKSC";
@@ -132,12 +141,14 @@ export async function downloadBillingInvoicePdf({ invoice, timeZone }: BillingIn
 
 export function buildBillingInvoicePdfDefinition({ invoice, timeZone }: BillingInvoicePdfInput): TDocumentDefinitions {
   const header = getInvoiceHeader(invoice);
-  const visibleLines = filterVisibleInvoiceLines(invoice.lines);
+  const visibleLines = [...filterVisibleInvoiceLines(invoice.lines)].sort(compareInvoiceLinesByContainer);
   const totals = getBillingInvoiceDisplayTotals(invoice);
   const chargeSummaryRows = buildChargeSummaryRows(visibleLines);
   const discountSourceRows = buildDiscountSourceRows(visibleLines);
   const storageSegmentRows = flattenStorageSettlementSegments(visibleLines);
   const storageSegmentDetailRows = buildStorageSegmentDetailRows(storageSegmentRows);
+  const containerDetails = buildBillingContainerStatements(invoice);
+  const containerStatementRows = buildBillingContainerStatementRows(invoice, containerDetails);
   const invoiceDate = getInvoiceDate(invoice);
   const dueDate = getDueDate(invoiceDate, header.paymentDueDays);
 
@@ -161,11 +172,18 @@ export function buildBillingInvoicePdfDefinition({ invoice, timeZone }: BillingI
       margin: [0, 0, 0, 10]
     },
     { text: "Amount Summary", style: "sectionTitle", margin: [0, 0, 0, 4] },
-    buildAmountSummaryTable(totals, chargeSummaryRows, discountSourceRows, storageSegmentDetailRows)
+    buildAmountSummaryTable(totals, chargeSummaryRows, discountSourceRows, storageSegmentDetailRows),
+    { text: "Container Fee Summary", style: "sectionTitle", margin: [0, 10, 0, 4] },
+    buildContainerFeeSummaryTable(containerDetails)
   ];
 
   if (header.paymentInstructions) {
     content.push({ text: header.paymentInstructions, style: "pageSubtitle", margin: [0, 6, 0, 0] });
+  }
+
+  if (containerStatementRows.some((row) => row.segmentStartDate || row.releaseDate)) {
+    content.push({ text: "Container Storage Detail", style: "sectionTitle", margin: [0, 0, 0, 4], pageBreak: "before" });
+    content.push(buildContainerStorageDetailTable(containerStatementRows));
   }
 
   if (visibleLines.length > 0) {
@@ -322,6 +340,105 @@ function buildAmountSummaryTable(
   };
 }
 
+function buildContainerFeeSummaryTable(details: BillingContainerStatement[]): Content {
+  const body: TableCell[][] = [[
+    headerCell("Received"),
+    headerCell("Container"),
+    headerCell("Opening"),
+    headerCell("Released"),
+    headerCell("Closing"),
+    headerCell("Storage"),
+    headerCell("Other Fees"),
+    headerCell("Total")
+  ]];
+
+  details.forEach((detail, index) => {
+    const storageBasis = detail.billablePalletDays > 0
+      ? `${formatNumber(detail.billablePalletDays)} pallet-days`
+      : "";
+    const storageBreakdown = [
+      storageBasis,
+      detail.storageDiscountAmount > 0 ? `${formatMoney(detail.storageGrossAmount)} gross` : "",
+      detail.storageDiscountAmount > 0 ? `${formatDiscountAmount(detail.storageDiscountAmount)} discount` : ""
+    ].filter(Boolean).join("; ");
+    body.push([
+      bodyCell(detail.receivedOn || "-", "tableCellCenter", index),
+      bodyCell(detail.containerNo || "Invoice-level", "tableCell", index),
+      bodyCell(formatNumber(detail.openingPallets), "tableCellRight", index),
+      bodyCell(formatNumber(detail.releasedPallets), "tableCellRight", index),
+      bodyCell(formatNumber(detail.closingPallets), "tableCellRight", index),
+      bodyCell(`${formatMoney(detail.storageAmount)}${storageBreakdown ? `\n${storageBreakdown}` : ""}`, "tableCellRight", index),
+      bodyCell(detail.otherAmount === 0 ? "-" : formatMoney(detail.otherAmount), "tableCellRight", index),
+      bodyCell(formatMoney(detail.totalAmount), "tableCellRight", index)
+    ]);
+  });
+
+  if (details.length === 0) {
+    body.push([{ text: "No container billing detail", colSpan: 8, alignment: "center" }, {}, {}, {}, {}, {}, {}, {}]);
+  } else {
+    body.push([
+      { text: "Invoice Total", colSpan: 7, style: "tableTotalLabel", alignment: "right" },
+      {}, {}, {}, {}, {}, {},
+      {
+        text: formatMoney(roundCurrency(details.reduce((total, detail) => total + detail.totalAmount, 0))),
+        style: "tableTotalValue"
+      }
+    ]);
+  }
+
+  return {
+    table: {
+      headerRows: 1,
+      dontBreakRows: true,
+      widths: [62, "*", 52, 52, 62, 52, 48, 54],
+      body
+    },
+    layout: BILLING_TABLE_LAYOUT_NAME
+  };
+}
+
+function buildContainerStorageDetailTable(rows: ReturnType<typeof buildBillingContainerStatementRows>): Content {
+  const body: TableCell[][] = [[
+    headerCell("Container"),
+    headerCell("Received"),
+    headerCell("Opening"),
+    headerCell("Released / Date"),
+    headerCell("Closing"),
+    headerCell("Charge Period"),
+    headerCell("Billable Pallet-Days"),
+    headerCell("Storage Fee")
+  ]];
+
+  rows.forEach((row, index) => {
+    const release = row.releasedPallets === null
+      ? "-"
+      : `${formatNumber(row.releasedPallets)}\n${row.releaseDate || "-"}`;
+    const period = row.segmentStartDate
+      ? `${row.segmentStartDate}\nto ${row.segmentEndDate}`
+      : "-";
+    body.push([
+      bodyCell(row.containerNo || "", "tableCell", index),
+      bodyCell(row.receivedOn || "", "tableCellCenter", index),
+      bodyCell(row.openingPallets === null ? "" : formatNumber(row.openingPallets), "tableCellRight", index),
+      bodyCell(release, "tableCellRight", index),
+      bodyCell(row.closingPallets === null ? "" : formatNumber(row.closingPallets), "tableCellRight", index),
+      bodyCell(period, "tableCellCenter", index),
+      bodyCell(row.billablePalletDays === null ? "-" : formatNumber(row.billablePalletDays), "tableCellRight", index),
+      bodyCell(row.storageFee === null ? "-" : formatMoney(row.storageFee), "tableCellRight", index)
+    ]);
+  });
+
+  return {
+    table: {
+      headerRows: 1,
+      dontBreakRows: true,
+      widths: [64, 48, 42, 62, 42, 82, 64, 58],
+      body
+    },
+    layout: BILLING_TABLE_LAYOUT_NAME
+  };
+}
+
 function buildAmountSummaryChargeRows(
   chargeRows: ChargeSummaryRow[],
   segmentRows: StorageSegmentDetailRow[],
@@ -397,11 +514,12 @@ function buildLineDetailTable(lines: BillingInvoiceLineData[], transferInboundFe
       headerRows: 1,
       dontBreakRows: true,
       widths: showDiscountSource
-        ? [18, 45, "*", 55, 42, 58, 44, 52, 76]
-        : [18, 45, "*", 55, 42, 58, 44, 52],
+        ? [16, 58, 42, "*", 50, 40, 50, 40, 48, 64]
+        : [16, 62, 46, "*", 54, 42, 52, 42, 50],
       body: [
         ([
           headerCell("#"),
+          headerCell("Container"),
           headerCell("Charge"),
           headerCell("Description"),
           headerCell("Reference"),
@@ -413,6 +531,7 @@ function buildLineDetailTable(lines: BillingInvoiceLineData[], transferInboundFe
         ]),
         ...rows.map((row, index) => ([
           bodyCell(row.lineNo, "tableCellCenter", index),
+          bodyCell(row.containerNo, "tableCell", index),
           bodyCell(row.charge, "tableCellCenter", index),
           bodyCell(row.description, "tableCell", index),
           bodyCell(row.reference, "tableCell", index),
@@ -450,6 +569,7 @@ type DiscountSourceRow = {
 
 type LineDetailRow = {
   lineNo: string;
+  containerNo: string;
   charge: string;
   description: string;
   reference: string;
@@ -584,9 +704,11 @@ function buildLineDetailRows(lines: BillingInvoiceLineData[], transferInboundFee
   const rows: LineDetailRow[] = [];
 
   filterVisibleInvoiceLines(lines).forEach((line, index) => {
+    const containerNo = line.containerNo.trim().toUpperCase() || "Invoice-level";
     if (line.chargeType === "DISCOUNT") {
       rows.push({
         lineNo: String(index + 1),
+        containerNo,
         charge: "Discount",
         description: line.description || "Invoice discount",
         reference: line.reference || "-",
@@ -602,6 +724,7 @@ function buildLineDetailRows(lines: BillingInvoiceLineData[], transferInboundFee
     const embeddedDiscount = getEmbeddedDiscountAmount(line);
     rows.push({
       lineNo: String(index + 1),
+      containerNo,
       charge: chargeTypeDetailLabel(line.chargeType),
       description: line.description || "-",
       reference: line.reference || "-",
@@ -615,6 +738,7 @@ function buildLineDetailRows(lines: BillingInvoiceLineData[], transferInboundFee
     if (embeddedDiscount > 0) {
       rows.push({
         lineNo: "",
+        containerNo,
         charge: "Discount",
         description: embeddedDiscountDescription(line),
         reference: line.reference || "-",
@@ -628,6 +752,17 @@ function buildLineDetailRows(lines: BillingInvoiceLineData[], transferInboundFee
   });
 
   return rows;
+}
+
+function compareInvoiceLinesByContainer(left: BillingInvoiceLineData, right: BillingInvoiceLineData) {
+  const leftContainer = left.containerNo.trim().toUpperCase();
+  const rightContainer = right.containerNo.trim().toUpperCase();
+  if (!leftContainer || !rightContainer) {
+    if (leftContainer !== rightContainer) return leftContainer ? -1 : 1;
+  }
+  if (leftContainer !== rightContainer) return leftContainer.localeCompare(rightContainer);
+  if (left.sortOrder !== right.sortOrder) return left.sortOrder - right.sortOrder;
+  return left.id - right.id;
 }
 
 function filterVisibleInvoiceLines(lines: BillingInvoiceLineData[]) {

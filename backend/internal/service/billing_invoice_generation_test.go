@@ -27,8 +27,10 @@ func TestBuildAuthoritativeBillingInvoiceLinesFiltersStorageAndAddsDetails(t *te
 			{ID: "outbound", ChargeType: BillingChargeOutbound, ContainerNo: "CONT-A", Amount: 10},
 		},
 		StorageRows: []BillingPreviewStorageRow{{
-			ContainerNo: "CONT-A", LocationID: &locationID, WarehousesTouched: []string{"308"},
-			PalletsTracked: 2, PalletDays: 31, FreePalletDays: 7, BillablePalletDays: 24,
+			ContainerNo: "CONT-A", ReceivedOn: "2026-03-15", LocationID: &locationID, WarehousesTouched: []string{"308"},
+			OpeningPallets: 2, ClosingPallets: 1,
+			PalletReleaseEvents: []BillingPreviewPalletRelease{{Date: "2026-04-15", Pallets: 1}},
+			PalletsTracked:      2, PalletDays: 31, FreePalletDays: 7, BillablePalletDays: 24,
 			GrossAmount: 31, DiscountAmount: 7,
 			Segments: []BillingPreviewStorageSegment{{
 				StartDate: "2026-04-01", EndDate: "2026-04-30", DayEndPallets: 1,
@@ -36,6 +38,7 @@ func TestBuildAuthoritativeBillingInvoiceLinesFiltersStorageAndAddsDetails(t *te
 				GrossAmount: 30, DiscountAmount: 7, Amount: 23,
 			}},
 		}},
+		Summary: BillingPreviewSummary{StorageAmount: 24, GrandTotal: 484},
 	}
 
 	lines, err := buildAuthoritativeBillingInvoiceLines(BillingInvoiceTypeStorage, preview, "308")
@@ -55,6 +58,9 @@ func TestBuildAuthoritativeBillingInvoiceLinesFiltersStorageAndAddsDetails(t *te
 	if details.Kind != "STORAGE_CONTAINER_SUMMARY" || details.PalletDays != 31 || details.BillablePalletDays != 24 {
 		t.Fatalf("unexpected storage detail snapshot: %#v", details)
 	}
+	if details.ReceivedOn != "2026-03-15" || details.OpeningPallets != 2 || details.ClosingPallets != 1 || len(details.PalletReleaseEvents) != 1 {
+		t.Fatalf("period boundary detail snapshot missing: %#v", details)
+	}
 	if details.WarehouseLocationID == nil || *details.WarehouseLocationID != locationID || details.WarehouseName != "308" {
 		t.Fatalf("warehouse snapshot missing from storage details: %#v", details)
 	}
@@ -67,6 +73,81 @@ func TestBuildAuthoritativeBillingInvoiceLinesFiltersStorageAndAddsDetails(t *te
 	}
 	if provenance["sourceId"] != float64(55) || provenance["sourceLineId"] != float64(66) {
 		t.Fatalf("source identifiers missing from line details: %#v", provenance)
+	}
+}
+
+func TestBuildBillingInvoiceContainerDetailsReconcilesEveryInvoiceLine(t *testing.T) {
+	storageDetails, err := json.Marshal(billingStorageContainerSummaryDetails{
+		Kind: "STORAGE_CONTAINER_SUMMARY", PalletsTracked: 4, PalletDays: 40,
+		FreePalletDays: 5, BillablePalletDays: 35, GrossAmount: 40, DiscountAmount: 5,
+	})
+	if err != nil {
+		t.Fatalf("marshal storage details: %v", err)
+	}
+	lines := []BillingInvoiceLine{
+		{ID: 1, ChargeType: BillingChargeInbound, ContainerNo: " cont-a ", Warehouse: "308", Reference: "Receipt 10", Quantity: 1, Amount: 450},
+		{ID: 2, ChargeType: BillingChargeWrapping, ContainerNo: "CONT-A", Warehouse: "308", Reference: "Receipt 10", Quantity: 4, Amount: 60},
+		{ID: 3, ChargeType: BillingChargeStorage, ContainerNo: "CONT-A", Warehouse: "308", Reference: "Storage | CONT-A", Quantity: 35, Amount: 35, Details: storageDetails},
+		{ID: 4, ChargeType: BillingChargeOutbound, ContainerNo: "CONT-A", Warehouse: "308", Reference: "Picking order PO-1", Quantity: 2, Amount: 20},
+		{ID: 5, ChargeType: "DISCOUNT", Amount: -10},
+	}
+
+	details := buildBillingInvoiceContainerDetails(lines)
+	if len(details) != 2 {
+		t.Fatalf("container detail count = %d, want 2: %#v", len(details), details)
+	}
+	container := details[0]
+	if container.ContainerNo != "CONT-A" || container.LineCount != 4 || container.TotalAmount != 565 {
+		t.Fatalf("unexpected container total: %#v", container)
+	}
+	if container.InboundUnits != 1 || container.WrappingPallets != 4 || container.OutboundPallets != 2 {
+		t.Fatalf("unexpected container activity basis: %#v", container)
+	}
+	if container.PalletsTracked != 4 || container.PalletDays != 40 || container.FreePalletDays != 5 || container.BillablePalletDays != 35 {
+		t.Fatalf("unexpected storage basis: %#v", container)
+	}
+	if container.StorageGrossAmount != 40 || container.StorageDiscountAmount != 5 || container.StorageAmount != 35 {
+		t.Fatalf("unexpected storage amounts: %#v", container)
+	}
+	if len(container.Warehouses) != 1 || container.Warehouses[0] != "308" || len(container.References) != 3 {
+		t.Fatalf("container provenance was not deduplicated: %#v", container)
+	}
+	invoiceLevel := details[1]
+	if invoiceLevel.ContainerNo != "" || invoiceLevel.AdjustmentAmount != -10 || invoiceLevel.TotalAmount != -10 {
+		t.Fatalf("invoice-level adjustment was not retained: %#v", invoiceLevel)
+	}
+	combinedTotal := roundCurrencyGo(container.TotalAmount + invoiceLevel.TotalAmount)
+	if combinedTotal != 555 {
+		t.Fatalf("container details do not reconcile: got %.2f, want 555.00", combinedTotal)
+	}
+}
+
+func TestBuildAuthoritativeBillingInvoiceLinesRejectsUnassignedContainer(t *testing.T) {
+	preview := BillingPreviewResult{
+		Lines: []BillingPreviewLine{{
+			ChargeType: BillingChargeOutbound, ContainerNo: billingPreviewUnassigned,
+			Reference: "Picking order PO-7", Amount: 10,
+		}},
+		Summary: BillingPreviewSummary{GrandTotal: 10},
+	}
+
+	_, err := buildAuthoritativeBillingInvoiceLines(BillingInvoiceTypeMixed, preview, "308")
+	if !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "Picking order PO-7") {
+		t.Fatalf("unassigned container error = %v, want a reference-specific invalid input", err)
+	}
+}
+
+func TestBuildAuthoritativeBillingInvoiceLinesRejectsContainerTotalMismatch(t *testing.T) {
+	preview := BillingPreviewResult{
+		Lines: []BillingPreviewLine{{
+			ChargeType: BillingChargeInbound, ContainerNo: "CONT-A", Amount: 450,
+		}},
+		Summary: BillingPreviewSummary{GrandTotal: 451},
+	}
+
+	_, err := buildAuthoritativeBillingInvoiceLines(BillingInvoiceTypeMixed, preview, "308")
+	if !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "does not match invoice total") {
+		t.Fatalf("container total mismatch error = %v", err)
 	}
 }
 
@@ -155,6 +236,9 @@ func TestGenerateAuthoritativeBillingInvoiceIntegration(t *testing.T) {
 	}
 	if inboundLines != 1 || wrappingLines != 2 {
 		t.Fatalf("container 1:N receipts were not billed correctly: inbound=%d wrapping=%d", inboundLines, wrappingLines)
+	}
+	if len(invoice.ContainerDetails) != 1 || invoice.ContainerDetails[0].ContainerNo != containerNo || invoice.ContainerDetails[0].TotalAmount != invoice.GrandTotal {
+		t.Fatalf("generated invoice container ledger does not reconcile: %#v", invoice.ContainerDetails)
 	}
 	_, err = billing.GenerateInvoice(ctx, GenerateBillingInvoiceInput{
 		InvoiceType: BillingInvoiceTypeMixed,

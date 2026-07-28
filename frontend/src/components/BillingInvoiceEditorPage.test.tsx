@@ -166,6 +166,10 @@ describe("BillingInvoiceEditorPage", () => {
     );
 
     expect(await screen.findByText("Storage Settlement")).toBeInTheDocument();
+    const ledger = screen.getByRole("table", { name: "Container Billing Ledger" });
+    expect(within(ledger).getByText("GCXU5817233")).toBeInTheDocument();
+    expect(within(ledger).getByText("Invoice-level")).toBeInTheDocument();
+    expect(within(ledger).queryByText("Reference")).not.toBeInTheDocument();
   });
 
   it("shows storage grace discounts in the discount column and totals", async () => {
@@ -218,6 +222,41 @@ describe("BillingInvoiceEditorPage", () => {
 
     expect(await screen.findAllByText("-$7.00")).not.toHaveLength(0);
     expect(await screen.findAllByText("$140.00")).not.toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Export" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Export Excel/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Download Excel" }));
+
+    await waitFor(() => {
+      expect(downloadExcelWorkbook).toHaveBeenCalledTimes(1);
+    });
+    const exportPayload = downloadExcelWorkbook.mock.calls[0][0];
+    const containerSheet = exportPayload.additionalSheets[0];
+    expect(containerSheet.columns.map((column: { label: string }) => column.label)).toEqual(expect.arrayContaining([
+      "Gross Storage Fee",
+      "Storage Discount",
+      "Storage Fee"
+    ]));
+    expect(containerSheet.rows[0]).toMatchObject({
+      storageGrossAmount: 140,
+      storageDiscount: -7,
+      storageAmount: 133
+    });
+    const storageSheet = exportPayload.additionalSheets[1];
+    expect(storageSheet.columns.map((column: { label: string }) => column.label)).toEqual(expect.arrayContaining([
+      "Pallet-Days",
+      "Free Pallet-Days",
+      "Gross Storage Fee",
+      "Storage Discount",
+      "Storage Fee"
+    ]));
+    expect(storageSheet.rows[0]).toMatchObject({
+      palletDays: 140,
+      freePalletDays: 7,
+      storageGrossAmount: 140,
+      storageDiscount: -7,
+      storageFee: 133
+    });
   });
 
   it("shows storage segment details and hides zero discount columns", async () => {
@@ -285,19 +324,37 @@ describe("BillingInvoiceEditorPage", () => {
     });
     const exportPayload = downloadExcelWorkbook.mock.calls[0][0];
     expect(exportPayload.columns.map((column: { label: string }) => column.label)).not.toContain("Discount");
-    expect(exportPayload.additionalSheets).toHaveLength(1);
-    const storageSheet = exportPayload.additionalSheets[0];
+    expect(exportPayload.additionalSheets).toHaveLength(2);
+    const containerSheet = exportPayload.additionalSheets[0];
+    expect(containerSheet.sheetName).toBe("Container Ledger");
+    expect(containerSheet.columns.map((column: { label: string }) => column.label)).not.toContain("Source References");
+    expect(containerSheet.rows[0]).toMatchObject({
+      containerNo: "GCXU5817233",
+      openingPallets: 10,
+      releasedPallets: 10,
+      closingPallets: 0,
+      releaseDates: "2026-03-15 (-10)",
+      storageAmount: 140,
+      totalAmount: 140
+    });
+    const storageSheet = exportPayload.additionalSheets[1];
     expect(storageSheet.sheetName).toBe("Storage Fee");
-    expect(storageSheet.columns.map((column: { label: string }) => column.label)).toContain("Pallets on hand at start of billing period");
-    expect(storageSheet.columns.map((column: { label: string }) => column.label)).toContain("Pallets on hand at end of billing period");
+    expect(storageSheet.summaryRows[0]).toMatchObject({ label: "Total", value: 140 });
+    expect(storageSheet.rows).toHaveLength(2);
+    expect(storageSheet.columns.map((column: { label: string }) => column.label)).toContain("Opening Pallets");
+    expect(storageSheet.columns.map((column: { label: string }) => column.label)).toContain("Closing Pallets");
     expect(storageSheet.rows[0]).toMatchObject({
       containerNo: "GCXU5817233",
       openingPallets: 10,
-      outboundPallets: 10,
-      closingPallets: 0,
-      outboundDates: "2026-03-15 (-10)",
+      segmentStartDate: "2026-03-01",
+      segmentEndDate: "2026-03-14",
       palletDays: 140,
       storageFee: 140
+    });
+    expect(storageSheet.rows[1]).toMatchObject({
+      releasedPallets: 10,
+      closingPallets: 0,
+      releaseDate: "2026-03-15"
     });
   });
 
@@ -371,7 +428,8 @@ describe("BillingInvoiceEditorPage", () => {
     });
     expect(exportPayload.rows.map((row: { chargeType: string }) => row.chargeType)).toContain("Storage Fee");
     expect(exportPayload.summaryRows.map((row: { label: string }) => row.label)).toContain("Total Fee");
-    expect(exportPayload.additionalSheets[0].sheetName).toBe("Storage Fee");
+    expect(exportPayload.additionalSheets[0].sheetName).toBe("Container Ledger");
+    expect(exportPayload.additionalSheets[1].sheetName).toBe("Storage Fee");
   });
 
   it("groups Excel charge details by container before charge type", async () => {

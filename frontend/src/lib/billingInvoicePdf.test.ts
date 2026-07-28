@@ -264,6 +264,7 @@ describe("buildBillingInvoicePdfDefinition", () => {
     expect(lineDetailTitleIndex).toBeGreaterThan(0);
     expect(content[lineDetailTitleIndex].pageBreak).toBe("before");
     expect(content.slice(0, lineDetailTitleIndex).map((block) => block.text)).toContain("Amount Summary");
+    expect(content.slice(0, lineDetailTitleIndex).map((block) => block.text)).toContain("Container Fee Summary");
     expect(content.slice(0, lineDetailTitleIndex).map((block) => block.text)).not.toContain("Charge Summary");
     expect(content.slice(0, lineDetailTitleIndex).map((block) => block.text)).not.toContain("Discount Sources");
     expect(content.map((block) => block.text)).not.toContain("Storage Segment Detail");
@@ -318,7 +319,7 @@ describe("buildBillingInvoicePdfDefinition", () => {
     expect(JSON.stringify(content)).toContain("Send ACH payment and reference the invoice number.");
   });
 
-  it("annotates discount sources on separate detail rows without container or warehouse columns", () => {
+  it("annotates discount sources and identifies the billed container on every detail row", () => {
     const definition = buildBillingInvoicePdfDefinition({
       invoice: createInvoiceFixture(),
       timeZone: "UTC"
@@ -342,19 +343,141 @@ describe("buildBillingInvoicePdfDefinition", () => {
     const lineDetailTable = content[lineDetailTitleIndex + 1].table.body;
     const lineHeaders = lineDetailTable[0].map((cell: { text: string }) => cell.text);
     expect(lineHeaders).toContain("Discount Source");
-    expect(lineHeaders).not.toContain("Container");
+    expect(lineHeaders).toContain("Container");
     expect(lineHeaders).not.toContain("Warehouse");
-    expect(lineDetailTable[1][5].text).toBe("140 pallet-days");
-    expect(lineDetailTable[1][7].text).toBe("$140.00");
-    expect(lineDetailTable[2][1].text).toBe("Discount");
-    expect(lineDetailTable[2][5].text).toBe("7 free pallet-days");
-    expect(lineDetailTable[2][7].text).toBe("-$7.00");
-    expect(lineDetailTable[2][8].text).toBe("Storage grace period");
-    expect(lineDetailTable[3][1].text).toBe("Discount");
-    expect(lineDetailTable[3][2].text).toBe("Courtesy discount");
-    expect(lineDetailTable[3][7].text).toBe("-$20.00");
-    expect(lineDetailTable[3][8].text).toBe("Manual discount line");
+    expect(lineDetailTable[1][1].text).toBe("GCXU5817233");
+    expect(lineDetailTable[1][6].text).toBe("140 pallet-days");
+    expect(lineDetailTable[1][8].text).toBe("$140.00");
+    expect(lineDetailTable[2][1].text).toBe("GCXU5817233");
+    expect(lineDetailTable[2][2].text).toBe("Discount");
+    expect(lineDetailTable[2][6].text).toBe("7 free pallet-days");
+    expect(lineDetailTable[2][8].text).toBe("-$7.00");
+    expect(lineDetailTable[2][9].text).toBe("Storage grace period");
+    expect(lineDetailTable[3][1].text).toBe("Invoice-level");
+    expect(lineDetailTable[3][2].text).toBe("Discount");
+    expect(lineDetailTable[3][3].text).toBe("Courtesy discount");
+    expect(lineDetailTable[3][8].text).toBe("-$20.00");
+    expect(lineDetailTable[3][9].text).toBe("Manual discount line");
+
+    const containerSummaryTitleIndex = content.findIndex((block) => block.text === "Container Fee Summary");
+    const containerSummaryTable = content[containerSummaryTitleIndex + 1].table.body;
+    expect(containerSummaryTable[0][0].text).toBe("Received");
+    expect(containerSummaryTable[0][1].text).toBe("Container");
+    expect(containerSummaryTable[1][1].text).toBe("GCXU5817233");
+    expect(containerSummaryTable[2][1].text).toBe("Invoice-level");
+    const storageDetailTitleIndex = content.findIndex((block) => block.text === "Container Storage Detail");
+    const storageDetailTable = content[storageDetailTitleIndex + 1].table.body;
+    expect(storageDetailTable[0].map((cell: { text: string }) => cell.text)).toContain("Opening");
+    expect(storageDetailTable[0].map((cell: { text: string }) => cell.text)).toContain("Released / Date");
+    expect(storageDetailTable[1][0].text).toBe("GCXU5817233");
+    expect(storageDetailTable[1][5].text).toBe("2026-03-01\nto 2026-03-14");
     expect(content.findIndex((block) => block.text === "Storage Segment Detail")).toBe(-1);
+  });
+
+  it("shows gross storage and discount for a fully discounted container", () => {
+    const base = createInvoiceFixture();
+    const storageLine = base.lines[0];
+    const definition = buildBillingInvoicePdfDefinition({
+      invoice: {
+        ...base,
+        subtotal: 0,
+        discountTotal: 0,
+        grandTotal: 0,
+        lineCount: 1,
+        lines: [{
+          ...storageLine,
+          quantity: 0,
+          amount: 0,
+          details: {
+            kind: "STORAGE_CONTAINER_SUMMARY",
+            warehousesTouched: ["NJ"],
+            palletsTracked: 1,
+            palletDays: 7,
+            freePalletDays: 7,
+            billablePalletDays: 0,
+            grossAmount: 7,
+            discountAmount: 7,
+            segments: [{
+              startDate: "2026-03-01",
+              endDate: "2026-03-07",
+              dayEndPallets: 1,
+              billedDays: 7,
+              palletDays: 7,
+              freePalletDays: 7,
+              billablePalletDays: 0,
+              grossAmount: 7,
+              discountAmount: 7,
+              amount: 0
+            }]
+          }
+        }]
+      },
+      timeZone: "UTC"
+    });
+
+    const content = definition.content as any[];
+    const containerSummaryTitleIndex = content.findIndex((block) => block.text === "Container Fee Summary");
+    const containerSummaryTable = content[containerSummaryTitleIndex + 1].table.body;
+    expect(containerSummaryTable[1][5].text).toBe("$0.00\n$7.00 gross; -$7.00 discount");
+  });
+
+  it("keeps manual discount references aligned with container-sorted detail rows", () => {
+    const base = createInvoiceFixture();
+    const definition = buildBillingInvoicePdfDefinition({
+      invoice: {
+        ...base,
+        subtotal: 15,
+        discountTotal: -2,
+        grandTotal: 13,
+        lineCount: 3,
+        lines: [
+          {
+            ...base.lines[0],
+            id: 5001,
+            sortOrder: 1,
+            chargeType: "INBOUND",
+            containerNo: "ZZZU9999999",
+            description: "Inbound Z",
+            reference: "",
+            amount: 10,
+            details: null
+          },
+          {
+            ...base.lines[1],
+            id: 5002,
+            sortOrder: 2,
+            description: "Order discount",
+            reference: "",
+            amount: -2
+          },
+          {
+            ...base.lines[0],
+            id: 5003,
+            sortOrder: 3,
+            chargeType: "OUTBOUND",
+            containerNo: "AAAU1111111",
+            description: "Outbound A",
+            reference: "",
+            amount: 5,
+            details: null
+          }
+        ]
+      },
+      timeZone: "UTC"
+    });
+
+    const content = definition.content as any[];
+    const amountSummaryTable = content[3].table.body;
+    const discountSourceRow = amountSummaryTable.find((row: Array<{ text: string }>) =>
+      row[0]?.text === "Discount source" && row[1]?.text.includes("Manual discount line")
+    );
+    expect(discountSourceRow[1].text).toBe("Manual discount line | Line 3 | Order discount");
+
+    const lineDetailTitleIndex = content.findIndex((block) => block.text === "Line Item Detail");
+    const lineDetailTable = content[lineDetailTitleIndex + 1].table.body;
+    const discountDetailRow = lineDetailTable.find((row: Array<{ text: string }>) => row[2]?.text === "Discount");
+    expect(discountDetailRow[0].text).toBe("3");
+    expect(discountDetailRow[1].text).toBe("Invoice-level");
   });
 
   it("aggregates overlapping storage segment dates when container columns are hidden", () => {
@@ -470,9 +593,9 @@ describe("buildBillingInvoicePdfDefinition", () => {
     const lineDetailTitleIndex = content.findIndex((block) => block.text === "Line Item Detail");
     const lineDetailTable = content[lineDetailTitleIndex + 1].table.body;
 
-    expect(lineDetailTable[1][2].text).toBe("22 pallets received");
-    expect(lineDetailTable[1][5].text).toBe("1 container");
-    expect(lineDetailTable[2][2].text).toBe("22 transfer pallets received");
-    expect(lineDetailTable[2][5].text).toBe("22 pallets");
+    expect(lineDetailTable[1][3].text).toBe("22 transfer pallets received");
+    expect(lineDetailTable[1][6].text).toBe("22 pallets");
+    expect(lineDetailTable[2][3].text).toBe("22 pallets received");
+    expect(lineDetailTable[2][6].text).toBe("1 container");
   });
 });
