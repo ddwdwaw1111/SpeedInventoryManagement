@@ -146,6 +146,21 @@ func TestCreateOutboundDocumentsBulkDraftEnforcesLineLimitBeforeDatabaseWork(t *
 	}
 }
 
+func TestCreateOutboundDocumentsBulkDraftRejectsDuplicateDocumentKeysBeforeDatabaseWork(t *testing.T) {
+	store := &Store{}
+	_, err := store.CreateOutboundDocumentsBulkDraft(context.Background(), OutboundBulkImportCommitInput{
+		ImportID:   "0123456789abcdef0123456789abcdef",
+		CustomerID: 1,
+		Documents: []OutboundBulkImportCommitDocument{
+			{DocumentKey: "Row-2"},
+			{DocumentKey: " row-2 "},
+		},
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected duplicate document key validation error, got %v", err)
+	}
+}
+
 func TestCreateOutboundDocumentsBulkDraftRollsBackEarlierDraftsWhenLaterDraftFailsIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()

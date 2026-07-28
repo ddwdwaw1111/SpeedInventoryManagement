@@ -1149,7 +1149,7 @@ func (s *Store) BulkConfirmOutboundDocuments(ctx context.Context, input BulkConf
 				Success:    false,
 				Error:      err.Error(),
 			})
-			if !isExpectedBulkOutboundConfirmationFailure(err) {
+			if !isExpectedBulkOutboundDocumentFailure(err) {
 				response.Interrupted = true
 				response.InterruptionError = err.Error()
 				response.UnprocessedDocuments = len(documentIDs) - index - 1
@@ -1175,7 +1175,7 @@ func (s *Store) BulkConfirmOutboundDocuments(ctx context.Context, input BulkConf
 	return response, nil
 }
 
-func isExpectedBulkOutboundConfirmationFailure(err error) bool {
+func isExpectedBulkOutboundDocumentFailure(err error) bool {
 	return errors.Is(err, ErrNotFound) ||
 		errors.Is(err, ErrInvalidInput) ||
 		errors.Is(err, ErrInsufficientStock) ||
@@ -1634,6 +1634,79 @@ func resolveMainOutboundLocationTx(ctx context.Context, tx *sql.Tx) (Location, e
 	return resolveMainOutboundLocation(locations)
 }
 
+const MaxBulkDeleteOutboundDocuments = 100
+
+type BulkDeleteOutboundDocumentsInput struct {
+	DocumentIDs []int64 `json:"documentIds"`
+}
+
+type BulkDeleteOutboundDocumentsResponse struct {
+	DeletedDocuments     int                                `json:"deletedDocuments"`
+	FailedDocuments      int                                `json:"failedDocuments"`
+	UnprocessedDocuments int                                `json:"unprocessedDocuments"`
+	Interrupted          bool                               `json:"interrupted"`
+	InterruptionError    string                             `json:"interruptionError,omitempty"`
+	Documents            []OutboundDocument                 `json:"documents"`
+	Results              []BulkDeleteOutboundDocumentResult `json:"results"`
+}
+
+type BulkDeleteOutboundDocumentResult struct {
+	DocumentID int64             `json:"documentId"`
+	Success    bool              `json:"success"`
+	Document   *OutboundDocument `json:"document,omitempty"`
+	Error      string            `json:"error,omitempty"`
+}
+
+func (s *Store) BulkDeleteOutboundDocuments(ctx context.Context, input BulkDeleteOutboundDocumentsInput) (BulkDeleteOutboundDocumentsResponse, error) {
+	if len(input.DocumentIDs) == 0 || len(input.DocumentIDs) > MaxBulkDeleteOutboundDocuments {
+		return BulkDeleteOutboundDocumentsResponse{}, fmt.Errorf("%w: between 1 and %d shipment IDs are required", ErrInvalidInput, MaxBulkDeleteOutboundDocuments)
+	}
+
+	documentIDs := append([]int64(nil), input.DocumentIDs...)
+	sort.Slice(documentIDs, func(left, right int) bool { return documentIDs[left] < documentIDs[right] })
+	for index, documentID := range documentIDs {
+		if documentID <= 0 {
+			return BulkDeleteOutboundDocumentsResponse{}, fmt.Errorf("%w: shipment IDs must be positive", ErrInvalidInput)
+		}
+		if index > 0 && documentID == documentIDs[index-1] {
+			return BulkDeleteOutboundDocumentsResponse{}, fmt.Errorf("%w: duplicate shipment ID %d", ErrInvalidInput, documentID)
+		}
+	}
+
+	response := BulkDeleteOutboundDocumentsResponse{
+		Documents: make([]OutboundDocument, 0, len(documentIDs)),
+		Results:   make([]BulkDeleteOutboundDocumentResult, 0, len(documentIDs)),
+	}
+	for index, documentID := range documentIDs {
+		document, err := s.CancelOutboundDocument(ctx, documentID)
+		if err != nil {
+			response.FailedDocuments++
+			response.Results = append(response.Results, BulkDeleteOutboundDocumentResult{
+				DocumentID: documentID,
+				Success:    false,
+				Error:      err.Error(),
+			})
+			if !isExpectedBulkOutboundDocumentFailure(err) {
+				response.Interrupted = true
+				response.InterruptionError = err.Error()
+				response.UnprocessedDocuments = len(documentIDs) - index - 1
+				break
+			}
+			continue
+		}
+
+		response.DeletedDocuments++
+		response.Documents = append(response.Documents, document)
+		deletedDocument := document
+		response.Results = append(response.Results, BulkDeleteOutboundDocumentResult{
+			DocumentID: document.ID,
+			Success:    true,
+			Document:   &deletedDocument,
+		})
+	}
+	return response, nil
+}
+
 func (s *Store) CancelOutboundDocument(ctx context.Context, documentID int64) (OutboundDocument, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1654,11 +1727,11 @@ func (s *Store) CancelOutboundDocument(ctx context.Context, documentID int64) (O
 	}
 	deletedAt, err := s.cancelLoadedOutboundDocumentTx(ctx, tx, documentRow)
 	if err != nil {
-		return OutboundDocument{}, err
+		return OutboundDocument{}, fmt.Errorf("delete %s: %w", outboundConfirmationReference(documentRow), err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return OutboundDocument{}, fmt.Errorf("commit outbound cancel: %w", err)
+		return OutboundDocument{}, fmt.Errorf("commit delete %s: %w", outboundConfirmationReference(documentRow), err)
 	}
 
 	return OutboundDocument{

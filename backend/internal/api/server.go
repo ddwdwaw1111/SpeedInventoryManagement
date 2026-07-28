@@ -696,6 +696,37 @@ func (s *Server) handleBulkConfirmOutboundDocuments(c *gin.Context) {
 	writeJSON(c, http.StatusOK, response)
 }
 
+func (s *Server) handleBulkDeleteOutboundDocuments(c *gin.Context) {
+	var input service.BulkDeleteOutboundDocumentsInput
+	if err := bindJSON(c, &input); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	response, err := s.store.BulkDeleteOutboundDocuments(c.Request.Context(), input)
+	if err != nil {
+		writeDomainError(c, err)
+		return
+	}
+
+	if response.DeletedDocuments > 0 {
+		s.cleanupPendingDocumentAttachmentObjects(context.Background())
+	}
+	for _, result := range response.Results {
+		if !result.Success || result.Document == nil {
+			continue
+		}
+		document := result.Document
+		s.writeAuditLog(c, "DELETE", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Bulk deleted outbound document and reversed its inventory movement", map[string]any{
+			"packingListNo": document.PackingListNo,
+			"deletedAt":     document.DeletedAt,
+			"batchSize":     response.DeletedDocuments,
+		})
+	}
+
+	writeJSON(c, http.StatusOK, response)
+}
+
 func (s *Server) handleUpdateOutboundDocumentTrackingStatus(c *gin.Context) {
 	documentID, err := parseIDParam(c, "id")
 	if err != nil {
@@ -1621,6 +1652,7 @@ func corsMiddleware(frontendOrigin string) gin.HandlerFunc {
 		headers.Set("Access-Control-Allow-Headers", "Content-Type")
 		headers.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		headers.Set("Access-Control-Allow-Credentials", "true")
+		headers.Set("Access-Control-Expose-Headers", "Content-Disposition")
 		if origin != "*" {
 			headers.Add("Vary", "Origin")
 		}

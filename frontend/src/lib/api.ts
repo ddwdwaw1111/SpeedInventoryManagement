@@ -5,7 +5,10 @@ import type {
   BillingInvoiceSettings,
   BillingPreviewPayload,
   BillingPreviewResult,
+  BulkImportBatch,
+  BulkImportType,
   BulkConfirmOutboundDocumentsResponse,
+  BulkDeleteOutboundDocumentsResponse,
   BulkUpdateInboundDocumentStatusResponse,
   CreateBillingInvoicePayload,
   GenerateBillingInvoicePayload,
@@ -191,6 +194,34 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return (await response.json()) as T;
+}
+
+async function requestFile(path: string): Promise<{ blob: Blob; fileName: string }> {
+  const response = await fetch(`${API_BASE_URL}${path}`, { credentials: "include" });
+  if (!response.ok) {
+    let message = `Request failed with status ${response.status}`;
+    try {
+      const errorPayload = (await response.json()) as { error?: string };
+      if (errorPayload.error) message = errorPayload.error;
+    } catch {
+      // Ignore JSON parse errors for non-JSON failure responses.
+    }
+    throw new ApiError(response.status, message);
+  }
+
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  const quotedName = disposition.match(/filename="([^"]+)"/i)?.[1];
+  const plainName = disposition.match(/filename=([^;]+)/i)?.[1]?.trim();
+  let fileName = quotedName || plainName || "bulk-import.xlsx";
+  if (encodedName) {
+    try {
+      fileName = decodeURIComponent(encodedName);
+    } catch {
+      fileName = encodedName;
+    }
+  }
+  return { blob: await response.blob(), fileName };
 }
 
 function buildDocumentListQueryParams(limit: number, archiveScopeOrQuery: DocumentArchiveScope | DocumentListQuery) {
@@ -647,6 +678,13 @@ export const api = {
     });
   },
 
+  bulkDeleteOutboundDocuments(documentIds: number[]) {
+    return request<BulkDeleteOutboundDocumentsResponse>("/outbound-documents/bulk-delete", {
+      method: "POST",
+      body: JSON.stringify({ documentIds })
+    });
+  },
+
   updateOutboundDocumentTrackingStatus(documentId: number, payload: DocumentTrackingStatusPayload) {
     return request<OutboundDocument>(`/outbound-documents/${documentId}/tracking-status`, {
       method: "POST",
@@ -794,6 +832,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     });
+  },
+
+  getBulkImportBatches(importType: BulkImportType, limit = 100, customerId?: number, beforeId?: number) {
+    const params = new URLSearchParams({ importType, limit: String(limit) });
+    if (customerId && customerId > 0) params.set("customerId", String(customerId));
+    if (beforeId && beforeId > 0) params.set("beforeId", String(beforeId));
+    return request<BulkImportBatch[]>(`/bulk-import-batches?${params.toString()}`);
+  },
+
+  downloadBulkImportBatchFile(batchId: number) {
+    return requestFile(`/bulk-import-batches/${batchId}/file`);
   },
 
   updateInboundDocument(documentId: number, payload: InboundDocumentPayload) {

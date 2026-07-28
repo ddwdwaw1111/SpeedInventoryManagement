@@ -21,6 +21,7 @@ import type {
   InboundDocumentLinePayload,
   Location
 } from "../lib/types";
+import { BulkImportHistoryDialog } from "./BulkImportHistoryDialog";
 import { InlineAlert } from "./Feedback";
 import { InlineLoadingIndicator } from "./InlineLoadingIndicator";
 
@@ -57,6 +58,7 @@ export function InboundBulkImportDialog({
   const [errorMessage, setErrorMessage] = useState("");
   const [preview, setPreview] = useState<InboundBulkImportPreview | null>(null);
   const [result, setResult] = useState<InboundBulkImportCommitResponse | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -202,7 +204,7 @@ export function InboundBulkImportDialog({
           input: document.input
         }))
       });
-      setPreview(nextPreview);
+      setPreview({ ...nextPreview, importBatchId: preview.importBatchId });
       setHasPreviewChanges(false);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : t("bulkInboundRevalidateFailed"));
@@ -237,6 +239,7 @@ export function InboundBulkImportDialog({
   }
 
   return (
+    <>
     <Dialog
       open={open}
       onClose={(_, reason) => {
@@ -289,6 +292,7 @@ export function InboundBulkImportDialog({
                 </label>
               </div>
               <InlineAlert severity="info">{t("bulkInboundDraftOnlyNotice")}</InlineAlert>
+              <InlineAlert severity="info">{t("bulkImportRetainedNotice")}</InlineAlert>
               <div className="bulk-inbound-template-card">
                 <DescriptionOutlinedIcon />
                 <div><strong>{t("bulkInboundTemplateTitle")}</strong><span>{t("bulkInboundTemplateHint")}</span></div>
@@ -299,6 +303,7 @@ export function InboundBulkImportDialog({
                   <Button variant="contained" startIcon={<DownloadOutlinedIcon />} onClick={() => downloadInboundBulkImportSample(locations)} disabled={locations.length === 0}>
                     {t("bulkInboundDownloadSampleTemplate")}
                   </Button>
+                  <Button onClick={() => setHistoryOpen(true)}>{t("bulkImportHistory")}</Button>
                 </div>
               </div>
             </section>
@@ -410,6 +415,7 @@ export function InboundBulkImportDialog({
 
         {step === "RESULT" && result ? (
           <div className="bulk-inbound-result">
+            {result.retentionWarning ? <InlineAlert severity="warning">{result.retentionWarning}</InlineAlert> : null}
             <div className={`bulk-inbound-result__hero ${result.failedDocuments > 0 ? "bulk-inbound-result__hero--partial" : ""}`}>
               {result.failedDocuments > 0 ? <WarningAmberRoundedIcon /> : <CheckCircleOutlineRoundedIcon />}
               <div><span>{result.sourceFileName}</span><strong>{result.failedDocuments > 0 ? t("bulkInboundPartialComplete") : t("bulkInboundComplete")}</strong><p>{t("bulkInboundResultSummary", { created: result.createdDocuments, failed: result.failedDocuments })}</p></div>
@@ -447,6 +453,8 @@ export function InboundBulkImportDialog({
         {step === "RESULT" ? <Button variant="contained" onClick={closeDialog}>{t("done")}</Button> : null}
       </DialogActions>
     </Dialog>
+    <BulkImportHistoryDialog open={historyOpen} importType="INBOUND" onClose={() => setHistoryOpen(false)} />
+    </>
   );
 }
 

@@ -97,6 +97,7 @@ type OutboundBulkImportDocumentPreview struct {
 }
 
 type OutboundBulkImportPreview struct {
+	ImportBatchID    int64                               `json:"importBatchId,omitempty"`
 	ImportID         string                              `json:"importId"`
 	SourceFileName   string                              `json:"sourceFileName"`
 	CustomerID       int64                               `json:"customerId"`
@@ -127,6 +128,7 @@ type OutboundBulkImportCommitInput struct {
 	SourceFileName string                             `json:"sourceFileName"`
 	CustomerID     int64                              `json:"customerId"`
 	Documents      []OutboundBulkImportCommitDocument `json:"documents"`
+	ImportBatchID  int64                              `json:"-"`
 }
 
 type OutboundBulkImportCommitResult struct {
@@ -139,11 +141,13 @@ type OutboundBulkImportCommitResult struct {
 }
 
 type OutboundBulkImportCommitResponse struct {
+	ImportBatchID    int64                            `json:"importBatchId,omitempty"`
 	SourceFileName   string                           `json:"sourceFileName"`
 	TotalDocuments   int                              `json:"totalDocuments"`
 	CreatedDocuments int                              `json:"createdDocuments"`
 	FailedDocuments  int                              `json:"failedDocuments"`
 	Results          []OutboundBulkImportCommitResult `json:"results"`
+	RetentionWarning string                           `json:"retentionWarning,omitempty"`
 }
 
 func (s *Store) PreviewOutboundBulkImport(ctx context.Context, fileName string, data []byte, customerID int64) (OutboundBulkImportPreview, error) {
@@ -181,14 +185,15 @@ func (s *Store) RevalidateOutboundBulkImport(ctx context.Context, input Outbound
 	seenDocumentKeys := make(map[string]bool, len(input.Documents))
 	for index, document := range input.Documents {
 		document.DocumentKey = strings.TrimSpace(document.DocumentKey)
-		if document.DocumentKey == "" || seenDocumentKeys[document.DocumentKey] {
+		normalizedDocumentKey := strings.ToUpper(document.DocumentKey)
+		if document.DocumentKey == "" || seenDocumentKeys[normalizedDocumentKey] {
 			baseKey := fmt.Sprintf("DOCUMENT-%d", index+1)
 			document.DocumentKey = baseKey
-			for suffix := 2; seenDocumentKeys[document.DocumentKey]; suffix++ {
+			for suffix := 2; seenDocumentKeys[strings.ToUpper(document.DocumentKey)]; suffix++ {
 				document.DocumentKey = fmt.Sprintf("%s-%d", baseKey, suffix)
 			}
 		}
-		seenDocumentKeys[document.DocumentKey] = true
+		seenDocumentKeys[strings.ToUpper(document.DocumentKey)] = true
 		document.Issues = make([]OutboundBulkImportIssue, 0)
 		document.Input = CreateOutboundDocumentInput{}
 		document.Valid = false
@@ -235,6 +240,20 @@ func (s *Store) CreateOutboundDocumentsBulkDraft(ctx context.Context, input Outb
 		if totalLines > MaxOutboundBulkImportRows {
 			return OutboundBulkImportCommitResponse{}, fmt.Errorf("%w: no more than %d shipment lines can be imported", ErrInvalidInput, MaxOutboundBulkImportRows)
 		}
+	}
+	documentKeys := make([]string, len(input.Documents))
+	seenDocumentKeys := make(map[string]struct{}, len(input.Documents))
+	for index, entry := range input.Documents {
+		documentKey := strings.TrimSpace(entry.DocumentKey)
+		if documentKey == "" {
+			documentKey = fmt.Sprintf("DOCUMENT-%d", index+1)
+		}
+		normalizedDocumentKey := strings.ToUpper(documentKey)
+		if _, exists := seenDocumentKeys[normalizedDocumentKey]; exists {
+			return OutboundBulkImportCommitResponse{}, fmt.Errorf("%w: duplicate document key %q in import request", ErrInvalidInput, documentKey)
+		}
+		seenDocumentKeys[normalizedDocumentKey] = struct{}{}
+		documentKeys[index] = documentKey
 	}
 	locations, err := s.ListLocations(ctx)
 	if err != nil {
@@ -291,12 +310,8 @@ func (s *Store) CreateOutboundDocumentsBulkDraft(ctx context.Context, input Outb
 		if err != nil {
 			return OutboundBulkImportCommitResponse{}, fmt.Errorf("prepare shipment %s: %w", pickingOrderNo, err)
 		}
-		documentKey := strings.TrimSpace(entry.DocumentKey)
-		if documentKey == "" {
-			documentKey = fmt.Sprintf("DOCUMENT-%d", index+1)
-		}
 		preparedDocuments = append(preparedDocuments, preparedBulkOutboundDocument{
-			documentKey:             documentKey,
+			documentKey:             documentKeys[index],
 			pickingOrderNo:          pickingOrderNo,
 			input:                   preparedInput,
 			expectedShipDate:        expectedShipDate,
@@ -330,6 +345,20 @@ func (s *Store) CreateOutboundDocumentsBulkDraft(ctx context.Context, input Outb
 			return OutboundBulkImportCommitResponse{}, fmt.Errorf("create shipment %s: %w", prepared.pickingOrderNo, err)
 		}
 		documentIDs = append(documentIDs, documentID)
+	}
+	if input.ImportBatchID > 0 {
+		records := make([]BulkImportCommitRecord, 0, len(preparedDocuments))
+		for index, prepared := range preparedDocuments {
+			records = append(records, BulkImportCommitRecord{
+				DocumentKey:   prepared.documentKey,
+				DocumentID:    documentIDs[index],
+				ReferenceCode: prepared.pickingOrderNo,
+				Success:       true,
+			})
+		}
+		if err := completeBulkImportBatchTx(ctx, tx, input.ImportBatchID, BulkImportStatusCompleted, len(preparedDocuments), 0, records); err != nil {
+			return OutboundBulkImportCommitResponse{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return OutboundBulkImportCommitResponse{}, fmt.Errorf("commit outbound bulk import: %w", err)

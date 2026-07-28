@@ -231,6 +231,25 @@ describe("buildCurrentInventorySkuRows", () => {
       referenceQuantity: 20
     }]);
   });
+
+  it("uses the lifecycle SKU instead of presenting Item Number as SKU", () => {
+    const lifecycleEvents = [{
+      id: 1,
+      sku: "SKU-A",
+      itemNumber: "ITEM-001",
+      description: "Item A",
+      quantityDelta: 20,
+      palletDelta: 2,
+      receivedQty: 20
+    }] as unknown as ContainerLifecycleEvent[];
+
+    expect(buildCurrentInventorySkuRows(lifecycleEvents, [])).toEqual([{
+      sku: "SKU-A",
+      pallets: 2,
+      quantity: 20,
+      referenceQuantity: 20
+    }]);
+  });
 });
 
 describe("buildOutboundOrderGoodsRows", () => {

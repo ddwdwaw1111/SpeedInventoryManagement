@@ -116,6 +116,8 @@ func resetIntegrationDatabase(t *testing.T, db *sqlx.DB) {
 
 	tables := []string{
 		"audit_logs",
+		"bulk_import_batch_documents",
+		"bulk_import_batches",
 		"customer_item_catalog",
 		"storage_sections",
 		"ui_preferences",

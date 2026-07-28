@@ -20,6 +20,7 @@ import type {
   OutboundBulkImportLinePreview,
   OutboundBulkImportPreview
 } from "../lib/types";
+import { BulkImportHistoryDialog } from "./BulkImportHistoryDialog";
 import { InlineAlert } from "./Feedback";
 import { InlineLoadingIndicator } from "./InlineLoadingIndicator";
 
@@ -45,6 +46,7 @@ export function OutboundBulkImportDialog({ open, customers, locations, items, in
   const [changed, setChanged] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -114,12 +116,13 @@ export function OutboundBulkImportDialog({ open, customers, locations, items, in
     setBusy(true);
     setError("");
     try {
-      setPreview(normalizeOutboundBulkImportPreview(await api.revalidateOutboundBulkImport({
+      const nextPreview = normalizeOutboundBulkImportPreview(await api.revalidateOutboundBulkImport({
         importId: preview.importId,
         sourceFileName: preview.sourceFileName,
         customerId: preview.customerId,
         documents: preview.documents
-      })));
+      }));
+      setPreview({ ...nextPreview, importBatchId: preview.importBatchId });
       setChanged(false);
     } catch (nextError) {
       setError(localizeOutboundRequestError(nextError, "bulkOutboundRevalidateFailed", language, t));
@@ -150,6 +153,7 @@ export function OutboundBulkImportDialog({ open, customers, locations, items, in
   }
 
   return (
+    <>
     <Dialog open={open} onClose={() => { if (!busy) onClose(); }} fullWidth maxWidth={false} PaperProps={{ className: "bulk-inbound-dialog" }}>
       <DialogTitle className="bulk-inbound-dialog__title">
         <div><span>{t("bulkOutboundEyebrow")}</span><strong>{t("bulkOutboundTitle")}</strong></div>
@@ -167,12 +171,14 @@ export function OutboundBulkImportDialog({ open, customers, locations, items, in
               <div className="bulk-inbound-section-heading"><span>01</span><div><strong>{t("bulkOutboundImportContext")}</strong><p>{t("bulkOutboundImportContextHint")}</p></div></div>
               <div className="bulk-inbound-context-grid bulk-inbound-context-grid--single"><label>{t("customer")}<select value={customerId} onChange={(event) => setCustomerId(event.target.value)} disabled={busy}><option value="">{t("selectCustomer")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label></div>
               <InlineAlert severity="info">{t("bulkOutboundDraftOnlyNotice")}</InlineAlert>
+              <InlineAlert severity="info">{t("bulkImportRetainedNotice")}</InlineAlert>
               <div className="bulk-inbound-template-card">
                 <DownloadOutlinedIcon />
                 <div><strong>{t("bulkOutboundTemplateTitle")}</strong><span>{t("bulkOutboundTemplateHint")}</span></div>
                 <div className="bulk-inbound-template-actions">
                   <Button variant="outlined" onClick={downloadOutboundBulkImportTemplate}>{t("bulkOutboundDownloadBlankTemplate")}</Button>
                   <Button variant="contained" onClick={() => downloadOutboundBulkImportSample(items.filter((item) => !customerId || item.customerId === Number(customerId)), locations)}>{t("bulkOutboundDownloadSampleTemplate")}</Button>
+                  <Button onClick={() => setHistoryOpen(true)}>{t("bulkImportHistory")}</Button>
                 </div>
               </div>
             </section>
@@ -235,6 +241,7 @@ export function OutboundBulkImportDialog({ open, customers, locations, items, in
         ) : null}
 
         {step === "RESULT" && result ? <div className="bulk-inbound-result"><div className={`bulk-inbound-result__hero ${result.failedDocuments ? "bulk-inbound-result__hero--partial" : ""}`}>{result.failedDocuments ? <WarningAmberRoundedIcon /> : <CheckCircleOutlineRoundedIcon />}<div><span>{result.sourceFileName}</span><strong>{t("bulkOutboundComplete")}</strong><p>{t("bulkOutboundResultSummary", { created: result.createdDocuments, failed: result.failedDocuments })}</p></div></div><div className="bulk-inbound-result-list">{result.results.map((entry) => <div key={entry.documentKey} className={`bulk-inbound-result-row ${entry.success ? "bulk-inbound-result-row--success" : "bulk-inbound-result-row--failed"}`}>{entry.success ? <CheckCircleOutlineRoundedIcon /> : <ErrorOutlineRoundedIcon />}<div><strong>{entry.pickingOrderNo || entry.documentKey}</strong><span>{entry.success ? entry.transferLines > 0 ? t("bulkOutboundDraftCreatedWithTransfer", { id: entry.document?.id ?? "—", count: entry.transferLines }) : t("bulkOutboundDraftCreated", { id: entry.document?.id ?? "—" }) : formatOutboundCommitError(entry.error, t)}</span></div></div>)}</div></div> : null}
+        {step === "RESULT" && result?.retentionWarning ? <InlineAlert severity="warning">{result.retentionWarning}</InlineAlert> : null}
       </DialogContent>
       <DialogActions className="bulk-inbound-dialog__actions">
         {step === "UPLOAD" ? <><Button onClick={onClose} disabled={busy}>{t("cancel")}</Button><Button variant="contained" disabled={busy || !file || !customerId} onClick={() => void validateFile()} startIcon={busy ? <InlineLoadingIndicator /> : <CloudUploadOutlinedIcon />}>{busy ? t("bulkOutboundValidating") : t("bulkOutboundPreviewFile")}</Button></> : null}
@@ -242,6 +249,8 @@ export function OutboundBulkImportDialog({ open, customers, locations, items, in
         {step === "RESULT" ? <Button variant="contained" onClick={onClose}>{t("done")}</Button> : null}
       </DialogActions>
     </Dialog>
+    <BulkImportHistoryDialog open={historyOpen} importType="OUTBOUND" onClose={() => setHistoryOpen(false)} />
+    </>
   );
 }
 

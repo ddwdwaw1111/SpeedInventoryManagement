@@ -1274,7 +1274,7 @@ export function buildCurrentInventorySkuRows(
   });
 
   lifecycleEvents.forEach((event) => {
-    const sku = event.itemNumber || event.description || "-";
+    const sku = event.sku || event.itemNumber || event.description || "-";
     const labelKey = inventorySkuRowKey(sku);
     const key = aliases.get(labelKey) ?? labelKey;
     const existing = rows.get(key);

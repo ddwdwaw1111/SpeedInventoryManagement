@@ -68,6 +68,48 @@ describe("api document list queries", () => {
     }));
   });
 
+  it("posts selected shipment IDs for independent bulk deletion", async () => {
+    fetchMock.mockResolvedValue(mockJsonResponse({ deletedDocuments: 2, failedDocuments: 0, unprocessedDocuments: 0, interrupted: false, documents: [], results: [] }));
+
+    await api.bulkDeleteOutboundDocuments([31, 32]);
+
+    const [requestUrl, options] = fetchMock.mock.calls[0];
+    expect(new URL(String(requestUrl)).pathname).toBe("/api/outbound-documents/bulk-delete");
+    expect(options).toEqual(expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ documentIds: [31, 32] })
+    }));
+  });
+
+  it("loads retained inbound import batches with customer scope", async () => {
+    await api.getBulkImportBatches("INBOUND", 50, 12, 99);
+
+    const requestUrl = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(requestUrl.pathname).toBe("/api/bulk-import-batches");
+    expect(requestUrl.searchParams.get("importType")).toBe("INBOUND");
+    expect(requestUrl.searchParams.get("limit")).toBe("50");
+    expect(requestUrl.searchParams.get("customerId")).toBe("12");
+    expect(requestUrl.searchParams.get("beforeId")).toBe("99");
+  });
+
+  it("downloads a retained original import file with its server filename", async () => {
+    const blob = new Blob(["xlsx"]);
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "Content-Disposition": `attachment; filename="receipts.xlsx"` }),
+      blob: vi.fn().mockResolvedValue(blob)
+    });
+
+    const result = await api.downloadBulkImportBatchFile(41);
+
+    const [requestUrl, options] = fetchMock.mock.calls[0];
+    expect(new URL(String(requestUrl)).pathname).toBe("/api/bulk-import-batches/41/file");
+    expect(options).toEqual({ credentials: "include" });
+    expect(result.fileName).toBe("receipts.xlsx");
+    expect(result.blob).toBe(blob);
+  });
+
   it("keeps the legacy outbound archive scope argument", async () => {
     await api.getOutboundDocuments(300, "all");
 

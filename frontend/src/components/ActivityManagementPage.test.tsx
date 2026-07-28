@@ -95,6 +95,7 @@ vi.mock("../lib/api", () => ({
     updateInboundDocument: vi.fn(),
     bulkUpdateInboundDocumentStatus: vi.fn(),
     bulkConfirmOutboundDocuments: vi.fn(),
+    bulkDeleteOutboundDocuments: vi.fn(),
     copyInboundDocument: vi.fn()
   }
 }));
@@ -127,6 +128,7 @@ const mockedApi = api as unknown as {
   updateInboundDocument: ReturnType<typeof vi.fn>;
   bulkUpdateInboundDocumentStatus: ReturnType<typeof vi.fn>;
   bulkConfirmOutboundDocuments: ReturnType<typeof vi.fn>;
+  bulkDeleteOutboundDocuments: ReturnType<typeof vi.fn>;
   copyInboundDocument: ReturnType<typeof vi.fn>;
 };
 
@@ -139,6 +141,7 @@ describe("ActivityManagementPage", () => {
     mockedApi.updateInboundDocument.mockReset();
     mockedApi.bulkUpdateInboundDocumentStatus.mockReset();
     mockedApi.bulkConfirmOutboundDocuments.mockReset();
+    mockedApi.bulkDeleteOutboundDocuments.mockReset();
     mockedApi.copyInboundDocument.mockReset();
     mockedDownloadOutboundPickSheetPdfFromDocument.mockReset();
     mockedApi.getInboundDocuments.mockResolvedValue([]);
@@ -456,6 +459,87 @@ describe("ActivityManagementPage", () => {
     expect(screen.getByLabelText("Select row 41")).not.toBeChecked();
     expect(screen.getByLabelText("Select row 42")).toBeChecked();
     expect(screen.getByLabelText("Select row 43")).toBeChecked();
+  });
+
+  it("bulk deletes selected draft and confirmed shipments", async () => {
+    const draft = createOutboundDocument({ id: 51, packingListNo: "PICK-51", status: "DRAFT", trackingStatus: "PICKING" });
+    const confirmed = createOutboundDocument({ id: 52, packingListNo: "PICK-52", status: "CONFIRMED", trackingStatus: "SHIPPED" });
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    mockedApi.bulkDeleteOutboundDocuments.mockResolvedValue({
+      deletedDocuments: 2,
+      failedDocuments: 0,
+      unprocessedDocuments: 0,
+      interrupted: false,
+      documents: [draft, confirmed],
+      results: [
+        { documentId: draft.id, success: true, document: draft },
+        { documentId: confirmed.id, success: true, document: confirmed }
+      ]
+    });
+
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="OUT"
+        items={[]}
+        skuMasters={[createSkuMaster()]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        movements={[]}
+        inboundDocuments={[]}
+        outboundDocuments={[draft, confirmed]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={onRefresh}
+      />
+    );
+
+    fireEvent.click(screen.getByLabelText("Select row 51"));
+    fireEvent.click(screen.getByLabelText("Select row 52"));
+    fireEvent.click(screen.getByRole("button", { name: "Delete 2 selected" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Permanently Delete" }));
+
+    await waitFor(() => expect(mockedApi.bulkDeleteOutboundDocuments).toHaveBeenCalledWith([51, 52]));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("Deleted 2 shipments.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Select row 51")).not.toBeChecked();
+    expect(screen.getByLabelText("Select row 52")).not.toBeChecked();
+  });
+
+  it("reports a refresh warning without claiming a completed bulk deletion failed", async () => {
+    const draft = createOutboundDocument({ id: 53, packingListNo: "PICK-53", status: "DRAFT", trackingStatus: "PICKING" });
+    const onRefresh = vi.fn().mockRejectedValue(new Error("refresh unavailable"));
+    mockedApi.bulkDeleteOutboundDocuments.mockResolvedValue({
+      deletedDocuments: 1,
+      failedDocuments: 0,
+      unprocessedDocuments: 0,
+      interrupted: false,
+      documents: [draft],
+      results: [{ documentId: draft.id, success: true, document: draft }]
+    });
+
+    renderWithProviders(
+      <ActivityManagementPage
+        mode="OUT"
+        items={[]}
+        skuMasters={[createSkuMaster()]}
+        locations={[createLocation()]}
+        customers={[createCustomer()]}
+        movements={[]}
+        inboundDocuments={[]}
+        outboundDocuments={[draft]}
+        currentUserRole="admin"
+        isLoading={false}
+        onRefresh={onRefresh}
+      />
+    );
+
+    fireEvent.click(screen.getByLabelText("Select row 53"));
+    fireEvent.click(screen.getByRole("button", { name: "Delete 1 selected" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Permanently Delete" }));
+
+    await waitFor(() => expect(mockedApi.bulkDeleteOutboundDocuments).toHaveBeenCalledWith([53]));
+    expect(await screen.findAllByText(/Deleted 1 shipments\. The deletion was saved, but the shipment list could not be refreshed\./)).not.toHaveLength(0);
+    expect(screen.queryByText("Could not delete the selected shipments.")).not.toBeInTheDocument();
   });
 
   it("shows customer-created draft packing lists in the outbound queue and opens them for warehouse processing", async () => {

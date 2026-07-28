@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -51,6 +52,21 @@ func TestNormalizeInboundContainerNoRemovesMatchingLegacyArrivalSuffix(t *testin
 	}
 	if got := normalizeInboundContainerNo("SHYA1120-3608", "2026-01-15"); got != "SHYA1120-3608" {
 		t.Fatalf("ordinary container number must remain unchanged, got %q", got)
+	}
+}
+
+func TestCreateInboundDocumentsBulkDraftRejectsDuplicateDocumentKeysBeforeDatabaseWork(t *testing.T) {
+	store := &Store{}
+	_, err := store.CreateInboundDocumentsBulkDraft(context.Background(), InboundBulkImportCommitInput{
+		ImportID:   "0123456789abcdef0123456789abcdef",
+		CustomerID: 1,
+		Documents: []InboundBulkImportCommitDocument{
+			{DocumentKey: "Receipt-1"},
+			{DocumentKey: " receipt-1 "},
+		},
+	})
+	if !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "duplicate receipt key") {
+		t.Fatalf("expected duplicate receipt key validation error, got %v", err)
 	}
 }
 

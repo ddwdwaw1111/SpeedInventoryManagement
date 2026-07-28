@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,20 @@ import (
 
 	"speed-inventory-management/backend/internal/service"
 )
+
+func TestBulkImportFinalizationContextSurvivesRequestCancellation(t *testing.T) {
+	requestContext, cancelRequest := context.WithCancel(context.Background())
+	cancelRequest()
+
+	finalizationContext, cancelFinalization := newBulkImportFinalizationContext(requestContext)
+	defer cancelFinalization()
+	if err := finalizationContext.Err(); err != nil {
+		t.Fatalf("finalization context inherited request cancellation: %v", err)
+	}
+	if _, ok := finalizationContext.Deadline(); !ok {
+		t.Fatal("finalization context must have a bounded deadline")
+	}
+}
 
 func TestPreviewInboundBulkImportRejectsOversizedRequestBeforeParsing(t *testing.T) {
 	gin.SetMode(gin.TestMode)

@@ -77,6 +77,7 @@ type InboundBulkImportDocumentPreview struct {
 }
 
 type InboundBulkImportPreview struct {
+	ImportBatchID    int64                              `json:"importBatchId,omitempty"`
 	ImportID         string                             `json:"importId"`
 	SourceFileName   string                             `json:"sourceFileName"`
 	CustomerID       int64                              `json:"customerId"`
@@ -99,6 +100,7 @@ type InboundBulkImportCommitInput struct {
 	SourceFileName string                            `json:"sourceFileName"`
 	CustomerID     int64                             `json:"customerId"`
 	Documents      []InboundBulkImportCommitDocument `json:"documents"`
+	ImportBatchID  int64                             `json:"-"`
 }
 
 type InboundBulkImportRevalidateDocument struct {
@@ -124,11 +126,13 @@ type InboundBulkImportCommitResult struct {
 }
 
 type InboundBulkImportCommitResponse struct {
+	ImportBatchID    int64                           `json:"importBatchId,omitempty"`
 	SourceFileName   string                          `json:"sourceFileName"`
 	TotalDocuments   int                             `json:"totalDocuments"`
 	CreatedDocuments int                             `json:"createdDocuments"`
 	FailedDocuments  int                             `json:"failedDocuments"`
 	Results          []InboundBulkImportCommitResult `json:"results"`
+	RetentionWarning string                          `json:"retentionWarning,omitempty"`
 }
 
 type parsedInboundBulkDocument struct {
@@ -274,6 +278,24 @@ func (s *Store) CreateInboundDocumentsBulkDraft(ctx context.Context, input Inbou
 			return InboundBulkImportCommitResponse{}, fmt.Errorf("%w: no more than %d receipt lines can be imported at once", ErrInvalidInput, MaxInboundBulkImportRows)
 		}
 	}
+	documentKeys := make([]string, len(input.Documents))
+	seenDocumentKeys := make(map[string]struct{}, len(input.Documents))
+	for index, entry := range input.Documents {
+		containerNo := normalizeInboundContainerNo(entry.Input.ContainerNo, entry.Input.ActualArrivalDate)
+		documentKey := strings.TrimSpace(entry.DocumentKey)
+		if documentKey == "" {
+			documentKey = inboundBulkReceiptIdentity(containerNo, entry.Input.ActualArrivalDate)
+		}
+		if documentKey == "" {
+			documentKey = fmt.Sprintf("ROW-%d", index+1)
+		}
+		normalizedDocumentKey := strings.ToUpper(documentKey)
+		if _, exists := seenDocumentKeys[normalizedDocumentKey]; exists {
+			return InboundBulkImportCommitResponse{}, fmt.Errorf("%w: duplicate receipt key %q in import request", ErrInvalidInput, documentKey)
+		}
+		seenDocumentKeys[normalizedDocumentKey] = struct{}{}
+		documentKeys[index] = documentKey
+	}
 	if _, err := s.getCustomer(ctx, input.CustomerID); err != nil {
 		return InboundBulkImportCommitResponse{}, err
 	}
@@ -289,19 +311,12 @@ func (s *Store) CreateInboundDocumentsBulkDraft(ctx context.Context, input Inbou
 		Results:        make([]InboundBulkImportCommitResult, 0, len(input.Documents)),
 	}
 	seenReceiptIdentities := make(map[string]struct{}, len(input.Documents))
-	seenDocumentKeys := make(map[string]struct{}, len(input.Documents))
 
 	for index, entry := range input.Documents {
 		documentInput := entry.Input
 		documentInput.ContainerNo = normalizeInboundContainerNo(documentInput.ContainerNo, documentInput.ActualArrivalDate)
 		containerNo := documentInput.ContainerNo
-		documentKey := strings.TrimSpace(entry.DocumentKey)
-		if documentKey == "" {
-			documentKey = inboundBulkReceiptIdentity(containerNo, documentInput.ActualArrivalDate)
-		}
-		if documentKey == "" {
-			documentKey = fmt.Sprintf("ROW-%d", index+1)
-		}
+		documentKey := documentKeys[index]
 		result := InboundBulkImportCommitResult{
 			DocumentKey: documentKey,
 			ContainerNo: containerNo,
@@ -325,14 +340,6 @@ func (s *Store) CreateInboundDocumentsBulkDraft(ctx context.Context, input Inbou
 			continue
 		}
 		seenReceiptIdentities[receiptIdentity] = struct{}{}
-		normalizedDocumentKey := strings.ToUpper(documentKey)
-		if _, exists := seenDocumentKeys[normalizedDocumentKey]; exists {
-			result.Error = "duplicate receipt key in import request"
-			response.FailedDocuments++
-			response.Results = append(response.Results, result)
-			continue
-		}
-		seenDocumentKeys[normalizedDocumentKey] = struct{}{}
 		if documentInput.LocationID <= 0 {
 			result.Error = "warehouse is required"
 			response.FailedDocuments++
@@ -387,6 +394,13 @@ func (s *Store) CreateInboundDocumentsBulkDraft(ctx context.Context, input Inbou
 			if err != nil {
 				return InboundBulkImportCommitResponse{}, err
 			}
+			if input.ImportBatchID > 0 {
+				if err := s.RecordBulkImportBatchDocument(ctx, input.ImportBatchID, BulkImportCommitRecord{
+					DocumentKey: documentKey, DocumentID: document.ID, ReferenceCode: document.ContainerNo, Success: true,
+				}); err != nil {
+					return InboundBulkImportCommitResponse{}, err
+				}
+			}
 			result.Success = true
 			result.ContainerNo = document.ContainerNo
 			result.Document = &document
@@ -396,6 +410,8 @@ func (s *Store) CreateInboundDocumentsBulkDraft(ctx context.Context, input Inbou
 		}
 		documentInput.ImportKey = importKey
 		documentInput.ImportPayloadHash = payloadHash
+		documentInput.BulkImportBatchID = input.ImportBatchID
+		documentInput.BulkImportDocumentKey = documentKey
 
 		document, err := s.CreateInboundDocument(ctx, documentInput)
 		if err != nil {
@@ -407,6 +423,13 @@ func (s *Store) CreateInboundDocumentsBulkDraft(ctx context.Context, input Inbou
 				document, lookupErr := s.getInboundDocument(ctx, existing.DocumentID)
 				if lookupErr != nil {
 					return InboundBulkImportCommitResponse{}, lookupErr
+				}
+				if input.ImportBatchID > 0 {
+					if recordErr := s.RecordBulkImportBatchDocument(ctx, input.ImportBatchID, BulkImportCommitRecord{
+						DocumentKey: documentKey, DocumentID: document.ID, ReferenceCode: document.ContainerNo, Success: true,
+					}); recordErr != nil {
+						return InboundBulkImportCommitResponse{}, recordErr
+					}
 				}
 				result.Success = true
 				result.ContainerNo = document.ContainerNo

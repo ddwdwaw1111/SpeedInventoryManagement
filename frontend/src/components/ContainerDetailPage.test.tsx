@@ -59,6 +59,18 @@ describe("ContainerDetailPage", () => {
     expect(screen.queryByText(/PLT-/i)).not.toBeInTheDocument();
   });
 
+  it("shows SKU and Item Number as separate values in contents and history", () => {
+    renderPage({
+      items: [createItem({ containerNo, sku: "SKU-CURRENT", itemNumber: "ITEM-CURRENT" })],
+      movements: [createMovement({ containerNo, sku: "SKU-HISTORY", itemNumber: "ITEM-HISTORY" })]
+    });
+
+    expect(screen.getByText("SKU-CURRENT")).toBeInTheDocument();
+    expect(screen.getByText("ITEM-CURRENT")).toBeInTheDocument();
+    expect(screen.getByText("SKU-HISTORY")).toBeInTheDocument();
+    expect(screen.getByText("ITEM-HISTORY")).toBeInTheDocument();
+  });
+
   it.each([
     ["New Count Sheet", "cycle-counts", "sim-cycle-counts-context"]
   ] as const)("opens %s with the container scope", (buttonName, page, storageKey) => {

@@ -79,7 +79,7 @@ type OutboundWizardStep = 1 | 2 | 3;
 type InboundReceiptVariance = "MATCHED" | "SHORT" | "OVER";
 
 const MAX_BULK_INBOUND_STATUS_DOCUMENTS = 100;
-const MAX_BULK_CONFIRM_OUTBOUND_DOCUMENTS = 100;
+const MAX_BULK_OUTBOUND_ACTION_DOCUMENTS = 100;
 
 export function toggleCurrentPageRowSelection(
   currentSelection: GridRowSelectionModel,
@@ -535,6 +535,7 @@ export function ActivityManagementPage({
   const [outboundRowSelectionModel, setOutboundRowSelectionModel] = useState<GridRowSelectionModel>({ type: "include", ids: new Set() });
   const [isBulkUpdatingInboundStatus, setIsBulkUpdatingInboundStatus] = useState(false);
   const [isBulkConfirmingOutbound, setIsBulkConfirmingOutbound] = useState(false);
+  const [isBulkDeletingOutbound, setIsBulkDeletingOutbound] = useState(false);
   const [optimisticInboundDocuments, setOptimisticInboundDocuments] = useState<InboundDocument[]>([]);
   const [optimisticOutboundDocuments, setOptimisticOutboundDocuments] = useState<OutboundDocument[]>([]);
   const [filteredInboundDocuments, setFilteredInboundDocuments] = useState<InboundDocument[]>([]);
@@ -596,10 +597,13 @@ export function ActivityManagementPage({
     const selectedIDs = new Set(Array.from(inboundRowSelectionModel.ids, (id) => Number(id)));
     return liveInboundDocuments.filter((document) => selectedIDs.has(document.id));
   }, [inboundRowSelectionModel, liveInboundDocuments]);
-  const selectedOutboundConfirmDocuments = useMemo(() => {
+  const selectedOutboundDocuments = useMemo(() => {
     const selectedIDs = new Set(Array.from(outboundRowSelectionModel.ids, (id) => Number(id)));
     return liveOutboundDocuments.filter((document) => selectedIDs.has(document.id));
   }, [liveOutboundDocuments, outboundRowSelectionModel]);
+  const canBulkConfirmSelectedOutbound = selectedOutboundDocuments.length > 0 && selectedOutboundDocuments.every(
+    (document) => !document.archivedAt && normalizeDocumentStatus(document.status) === "DRAFT"
+  );
   const skuMastersBySku = useMemo(() => new Map(
     skuMasters.map((skuMaster) => [normalizeSkuLookupValue(skuMaster.sku), skuMaster] as const)
   ), [skuMasters]);
@@ -696,8 +700,8 @@ export function ActivityManagementPage({
   }
 
   function handleOutboundRowSelectionChange(nextSelection: GridRowSelectionModel) {
-    if (nextSelection.type !== "include" || nextSelection.ids.size > MAX_BULK_CONFIRM_OUTBOUND_DOCUMENTS) {
-      showActionError(new Error(t("bulkOutboundSelectionLimit", { count: MAX_BULK_CONFIRM_OUTBOUND_DOCUMENTS })), t("bulkOutboundConfirmFailed"));
+    if (nextSelection.type !== "include" || nextSelection.ids.size > MAX_BULK_OUTBOUND_ACTION_DOCUMENTS) {
+      showActionError(new Error(t("bulkOutboundSelectionLimit", { count: MAX_BULK_OUTBOUND_ACTION_DOCUMENTS })), t("bulkOutboundConfirmFailed"));
       return;
     }
     setOutboundRowSelectionModel(nextSelection);
@@ -1353,10 +1357,10 @@ export function ActivityManagementPage({
     renderHeader: () => (
       <CurrentPageSelectionHeader
         selection={outboundRowSelectionModel}
-        maximum={MAX_BULK_CONFIRM_OUTBOUND_DOCUMENTS}
+        maximum={MAX_BULK_OUTBOUND_ACTION_DOCUMENTS}
         ariaLabel={t("selectCurrentPage")}
         onChange={setOutboundRowSelectionModel}
-        onLimitExceeded={() => showActionError(new Error(t("bulkOutboundSelectionLimit", { count: MAX_BULK_CONFIRM_OUTBOUND_DOCUMENTS })), t("bulkOutboundConfirmFailed"))}
+        onLimitExceeded={() => showActionError(new Error(t("bulkOutboundSelectionLimit", { count: MAX_BULK_OUTBOUND_ACTION_DOCUMENTS })), t("bulkOutboundConfirmFailed"))}
       />
     )
   }), [outboundRowSelectionModel, t]);
@@ -2158,13 +2162,13 @@ export function ActivityManagementPage({
   }
 
   async function handleBulkConfirmOutboundDocuments() {
-    if (!canManage || selectedOutboundConfirmDocuments.length === 0) return;
-    if (selectedOutboundConfirmDocuments.some((document) => document.archivedAt || normalizeDocumentStatus(document.status) !== "DRAFT")) {
+    if (!canManage || selectedOutboundDocuments.length === 0) return;
+    if (selectedOutboundDocuments.some((document) => document.archivedAt || normalizeDocumentStatus(document.status) !== "DRAFT")) {
       showActionError(new Error(t("bulkOutboundConfirmDraftsOnly")), t("bulkOutboundConfirmFailed"));
       return;
     }
 
-    const count = selectedOutboundConfirmDocuments.length;
+    const count = selectedOutboundDocuments.length;
     const approved = await confirm({
       title: t("bulkOutboundConfirmTitle"),
       message: t("bulkOutboundConfirmPrompt", { count }),
@@ -2179,7 +2183,7 @@ export function ActivityManagementPage({
     setErrorMessage("");
     try {
       const response = await api.bulkConfirmOutboundDocuments(
-        selectedOutboundConfirmDocuments.map((document) => document.id)
+        selectedOutboundDocuments.map((document) => document.id)
       );
       const failedResults = response.results.filter((result) => !result.success);
       const reloadWarningCount = response.results.filter((result) => result.success && result.warning).length;
@@ -2189,7 +2193,7 @@ export function ActivityManagementPage({
       setOutboundRowSelectionModel({
         type: "include",
         ids: new Set(
-          selectedOutboundConfirmDocuments
+          selectedOutboundDocuments
             .filter((document) => !successfulDocumentIds.has(document.id))
             .map((document) => document.id)
         )
@@ -2226,6 +2230,81 @@ export function ActivityManagementPage({
       showActionError(error, t("bulkOutboundConfirmFailed"));
     } finally {
       setIsBulkConfirmingOutbound(false);
+    }
+  }
+
+  async function handleBulkDeleteOutboundDocuments() {
+    if (!canManage || selectedOutboundDocuments.length === 0) return;
+
+    const count = selectedOutboundDocuments.length;
+    const approved = await confirm({
+      title: t("bulkOutboundDeleteTitle"),
+      message: t("bulkOutboundDeletePrompt", { count }),
+      confirmLabel: t("bulkOutboundDeleteConfirm"),
+      cancelLabel: t("cancel"),
+      confirmColor: "error",
+      severity: "warning"
+    });
+    if (!approved) return;
+
+    setIsBulkDeletingOutbound(true);
+    setErrorMessage("");
+    try {
+      const response = await api.bulkDeleteOutboundDocuments(
+        selectedOutboundDocuments.map((document) => document.id)
+      );
+      const failedResults = response.results.filter((result) => !result.success);
+      const successfulDocumentIds = new Set(
+        response.results.filter((result) => result.success).map((result) => result.documentId)
+      );
+      setOutboundRowSelectionModel({
+        type: "include",
+        ids: new Set(
+          selectedOutboundDocuments
+            .filter((document) => !successfulDocumentIds.has(document.id))
+            .map((document) => document.id)
+        )
+      });
+      setSelectedOutboundDocumentId(null);
+      let refreshFailed = false;
+      try {
+        await onRefresh();
+      } catch {
+        refreshFailed = true;
+      }
+      const refreshWarning = refreshFailed ? t("bulkOutboundDeleteRefreshWarning") : "";
+      if (failedResults.length === 0) {
+        const deletedMessage = t("bulkOutboundDeleted", { count: response.deletedDocuments });
+        if (refreshFailed) {
+          showActionError(new Error(`${deletedMessage} ${refreshWarning}`), refreshWarning);
+        } else {
+          showActionSuccess(deletedMessage);
+        }
+      } else {
+        const visibleFailures = failedResults
+          .slice(0, 3)
+          .map((result) => result.error || t("bulkOutboundDeleteUnknownFailure", { id: result.documentId }));
+        const hiddenFailureCount = Math.max(0, failedResults.length - visibleFailures.length);
+        const failureDetails = [
+          ...visibleFailures,
+          ...(hiddenFailureCount > 0 ? [t("bulkOutboundDeleteMoreFailures", { count: hiddenFailureCount })] : []),
+          ...(response.interrupted
+            ? [t("bulkOutboundDeleteInterrupted", { count: response.unprocessedDocuments })]
+            : []),
+          ...(refreshFailed ? [refreshWarning] : [])
+        ].join(" ");
+        showActionError(
+          new Error(`${t("bulkOutboundDeletePartial", {
+            success: response.deletedDocuments,
+            failed: response.failedDocuments
+          })} ${failureDetails}`),
+          t("bulkOutboundDeleteFailed")
+        );
+      }
+    } catch (error) {
+      showActionError(error, t("bulkOutboundDeleteFailed"));
+    } finally {
+      setIsBulkDeletingOutbound(false);
     }
   }
 
@@ -2588,11 +2667,20 @@ export function ActivityManagementPage({
                             variant="outlined"
                             startIcon={isBulkConfirmingOutbound ? <InlineLoadingIndicator /> : <CheckCircleOutlineOutlinedIcon />}
                             onClick={() => void handleBulkConfirmOutboundDocuments()}
-                            disabled={isBulkConfirmingOutbound || selectedOutboundConfirmDocuments.length === 0}
+                            disabled={isBulkConfirmingOutbound || isBulkDeletingOutbound || !canBulkConfirmSelectedOutbound}
                           >
-                            {t("bulkOutboundConfirmSelected", { count: selectedOutboundConfirmDocuments.length })}
+                            {t("bulkOutboundConfirmSelected", { count: selectedOutboundDocuments.length })}
                           </Button>
-                          <Button variant="outlined" startIcon={<UploadFileOutlinedIcon />} onClick={() => setIsBulkOutboundImportOpen(true)} disabled={isBulkConfirmingOutbound}>
+                          <Button
+                            variant="outlined"
+                            color="error"
+                            startIcon={isBulkDeletingOutbound ? <InlineLoadingIndicator /> : <DeleteOutlineOutlinedIcon />}
+                            onClick={() => void handleBulkDeleteOutboundDocuments()}
+                            disabled={isBulkDeletingOutbound || isBulkConfirmingOutbound || selectedOutboundDocuments.length === 0}
+                          >
+                            {t("bulkOutboundDeleteSelected", { count: selectedOutboundDocuments.length })}
+                          </Button>
+                          <Button variant="outlined" startIcon={<UploadFileOutlinedIcon />} onClick={() => setIsBulkOutboundImportOpen(true)} disabled={isBulkConfirmingOutbound || isBulkDeletingOutbound}>
                             {t("bulkInboundExcel")}
                           </Button>
                         </>
@@ -2665,7 +2753,7 @@ export function ActivityManagementPage({
                   disableRowSelectionExcludeModel
                   rowSelectionModel={outboundRowSelectionModel}
                   onRowSelectionModelChange={handleOutboundRowSelectionChange}
-                  isRowSelectable={(params) => !params.row.archivedAt && normalizeDocumentStatus(params.row.status) === "DRAFT"}
+                  isRowSelectable={(params) => !params.row.archivedAt && normalizeDocumentStatus(params.row.status) !== "DELETED"}
                   pageSizeOptions={[10, 20, 50]}
                   disableRowSelectionOnClick
                   initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}

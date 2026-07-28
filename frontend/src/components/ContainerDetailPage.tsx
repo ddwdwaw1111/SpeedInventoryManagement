@@ -145,7 +145,15 @@ export function ContainerDetailPage({
             {container?.items.map((item) => (
               <article key={item.id} className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm">
                 <div className="flex items-start justify-between gap-3">
-                  <div><div className="font-mono text-sm font-bold text-[#12356c]">{item.itemNumber || item.sku}</div><h3 className="mt-1 text-base font-bold text-slate-900">{item.description || item.name}</h3></div>
+                  <div>
+                    <div className="text-xs font-semibold text-slate-500">
+                      {t("sku")}: <span className="font-mono text-sm font-bold text-[#12356c]">{item.sku || "-"}</span>
+                    </div>
+                    <div className="mt-1 text-xs font-semibold text-slate-500">
+                      {t("itemNumber")}: <span className="font-mono text-slate-700">{item.itemNumber || "-"}</span>
+                    </div>
+                    <h3 className="mt-1 text-base font-bold text-slate-900">{item.description || item.name}</h3>
+                  </div>
                   <Chip size="small" label={`${item.pallets} ${t("pallets")}`} color="primary" variant="outlined" />
                 </div>
                 <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
@@ -166,7 +174,14 @@ export function ContainerDetailPage({
             {history.map((movement) => (
               <article key={movement.id} className="grid gap-2 px-4 py-3 md:grid-cols-[150px_1fr_auto] md:items-center">
                 <div><Chip size="small" label={movement.movementType} color={movement.quantityChange < 0 ? "warning" : "success"} variant="outlined" /></div>
-                <div><div className="font-semibold text-slate-900">{movement.itemNumber || movement.sku} · {movement.description}</div><div className="mt-1 text-xs text-slate-500">{movement.locationName} / {movement.storageSection} · {movement.referenceCode || movement.packingListNo || movement.orderRef || "-"}</div></div>
+                <div>
+                  <div className="font-semibold text-slate-900">
+                    {t("sku")}: <span className="font-mono">{movement.sku || "-"}</span> · {movement.description}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {t("itemNumber")}: <span className="font-mono">{movement.itemNumber || "-"}</span> · {movement.locationName} / {movement.storageSection} · {movement.referenceCode || movement.packingListNo || movement.orderRef || "-"}
+                  </div>
+                </div>
                 <div className="text-right"><div className="font-mono font-bold text-slate-900">{signed(movement.quantityChange)} Qty</div><div className="text-xs text-slate-500">{movement.pallets} {t("pallets")} · {formatDateTimeValue(movement.createdAt, resolvedTimeZone)}</div></div>
               </article>
             ))}

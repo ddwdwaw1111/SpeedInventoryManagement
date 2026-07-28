@@ -22,6 +22,7 @@ type ContainerLifecycleEvent struct {
 	QuantityDelta      int       `json:"quantityDelta"`
 	PalletDelta        float64   `json:"palletDelta"`
 	SKUMasterID        int64     `json:"skuMasterId"`
+	SKU                string    `json:"sku"`
 	SourceDocumentType string    `json:"sourceDocumentType"`
 	SourceDocumentID   int64     `json:"sourceDocumentId"`
 	SourceLineID       int64     `json:"sourceLineId"`
@@ -92,6 +93,7 @@ func (s *Store) ListContainerLifecycleEvents(ctx context.Context, limit int, fil
 			cle.quantity_delta,
 			cle.pallet_delta,
 			COALESCE(cle.sku_master_id, 0) AS sku_master_id,
+			COALESCE(sm.sku, '') AS sku,
 			COALESCE(cle.source_document_type, '') AS source_document_type,
 			COALESCE(cle.source_document_id, 0) AS source_document_id,
 			COALESCE(cle.source_line_id, 0) AS source_line_id,
@@ -109,6 +111,7 @@ func (s *Store) ListContainerLifecycleEvents(ctx context.Context, limit int, fil
 		FROM container_lifecycle_events cle
 		JOIN customers c ON c.id = cle.customer_id
 		JOIN storage_locations l ON l.id = cle.location_id
+		LEFT JOIN sku_master sm ON sm.id = cle.sku_master_id
 		WHERE %s
 		ORDER BY cle.event_time DESC, cle.id DESC
 		LIMIT ?
@@ -240,6 +243,7 @@ func scanContainerLifecycleEvent(scanner itemScanner) (ContainerLifecycleEvent, 
 		&event.QuantityDelta,
 		&event.PalletDelta,
 		&event.SKUMasterID,
+		&event.SKU,
 		&event.SourceDocumentType,
 		&event.SourceDocumentID,
 		&event.SourceLineID,

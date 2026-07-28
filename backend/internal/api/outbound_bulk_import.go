@@ -53,11 +53,38 @@ func (s *Server) handlePreviewOutboundBulkImport(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "Excel file exceeds the 10 MB limit")
 		return
 	}
-	preview, err := s.store.PreviewOutboundBulkImport(c.Request.Context(), fileHeader.Filename, data, customerID)
+	batch, err := s.retainBulkImportFile(c, service.BulkImportTypeOutbound, fileHeader.Filename, fileHeader.Header.Get("Content-Type"), data)
 	if err != nil {
 		writeDomainError(c, err)
 		return
 	}
+	preview, err := s.store.PreviewOutboundBulkImport(c.Request.Context(), fileHeader.Filename, data, customerID)
+	if err != nil {
+		_ = s.store.MarkBulkImportBatchPreview(c.Request.Context(), batch.ImportID, service.BulkImportTypeOutbound, customerID, service.BulkImportPreviewSummary{}, err)
+		s.writeAuditLog(c, "UPLOAD", "bulk_import_batch", batch.ID, batch.SourceFileName, "Retained outbound bulk import file; preview failed", map[string]any{
+			"importType": service.BulkImportTypeOutbound,
+			"status":     service.BulkImportStatusPreviewFailed,
+			"error":      err.Error(),
+		})
+		writeDomainError(c, err)
+		return
+	}
+	preview.ImportID = batch.ImportID
+	preview.ImportBatchID = batch.ID
+	if err := s.store.MarkBulkImportBatchPreview(c.Request.Context(), batch.ImportID, service.BulkImportTypeOutbound, customerID, service.BulkImportPreviewSummary{
+		TotalDocuments: preview.TotalDocuments, ValidDocuments: preview.ValidDocuments,
+		InvalidDocuments: preview.InvalidDocuments, TotalLines: preview.TotalLines,
+	}, nil); err != nil {
+		writeDomainError(c, err)
+		return
+	}
+	s.writeAuditLog(c, "UPLOAD", "bulk_import_batch", batch.ID, batch.SourceFileName, "Retained outbound bulk import file and preview record", map[string]any{
+		"importType":       service.BulkImportTypeOutbound,
+		"totalDocuments":   preview.TotalDocuments,
+		"validDocuments":   preview.ValidDocuments,
+		"invalidDocuments": preview.InvalidDocuments,
+		"totalLines":       preview.TotalLines,
+	})
 	writeJSON(c, http.StatusOK, preview)
 }
 
@@ -73,6 +100,13 @@ func (s *Server) handleRevalidateOutboundBulkImport(c *gin.Context) {
 		writeDomainError(c, err)
 		return
 	}
+	if err := s.store.MarkBulkImportBatchPreview(c.Request.Context(), input.ImportID, service.BulkImportTypeOutbound, input.CustomerID, service.BulkImportPreviewSummary{
+		TotalDocuments: preview.TotalDocuments, ValidDocuments: preview.ValidDocuments,
+		InvalidDocuments: preview.InvalidDocuments, TotalLines: preview.TotalLines,
+	}, nil); err != nil {
+		writeDomainError(c, err)
+		return
+	}
 	writeJSON(c, http.StatusOK, preview)
 }
 
@@ -83,11 +117,20 @@ func (s *Server) handleCommitOutboundBulkImport(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	response, err := s.store.CreateOutboundDocumentsBulkDraft(c.Request.Context(), input)
+	batch, err := s.store.MarkBulkImportBatchCommitting(c.Request.Context(), input.ImportID, service.BulkImportTypeOutbound, input.CustomerID)
 	if err != nil {
 		writeDomainError(c, err)
 		return
 	}
+	input.SourceFileName = batch.SourceFileName
+	input.ImportBatchID = batch.ID
+	response, err := s.store.CreateOutboundDocumentsBulkDraft(c.Request.Context(), input)
+	if err != nil {
+		_ = s.markBulkImportBatchFailedAfterRequest(c.Request.Context(), input.ImportID, service.BulkImportTypeOutbound, input.CustomerID, err)
+		writeDomainError(c, err)
+		return
+	}
+	response.ImportBatchID = batch.ID
 	for _, result := range response.Results {
 		if !result.Success || result.Document == nil {
 			continue
@@ -95,6 +138,8 @@ func (s *Server) handleCommitOutboundBulkImport(c *gin.Context) {
 		document := result.Document
 		s.writeAuditLog(c, "BULK_IMPORT", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Imported outbound document draft from Excel", map[string]any{
 			"sourceFileName": input.SourceFileName,
+			"importBatchId":  batch.ID,
+			"importId":       batch.ImportID,
 			"documentKey":    result.DocumentKey,
 			"pickingOrderNo": document.PackingListNo,
 			"customer":       document.CustomerName,
@@ -102,5 +147,10 @@ func (s *Server) handleCommitOutboundBulkImport(c *gin.Context) {
 			"totalLines":     document.TotalLines,
 		})
 	}
+	s.writeAuditLog(c, "COMMIT", "bulk_import_batch", batch.ID, batch.SourceFileName, "Committed retained outbound bulk import batch", map[string]any{
+		"createdDocuments": response.CreatedDocuments,
+		"failedDocuments":  response.FailedDocuments,
+		"retentionWarning": response.RetentionWarning,
+	})
 	writeJSON(c, http.StatusOK, response)
 }

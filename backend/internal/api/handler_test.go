@@ -42,6 +42,24 @@ func TestHandleHealth(t *testing.T) {
 	}
 }
 
+func TestCORSMiddlewareExposesDownloadFileName(t *testing.T) {
+	router := gin.New()
+	router.Use(corsMiddleware("http://localhost:5173"))
+	router.GET("/download", func(c *gin.Context) {
+		c.Header("Content-Disposition", `attachment; filename="receipts.xlsx"`)
+		c.Status(http.StatusNoContent)
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/download", nil)
+	request.Header.Set("Origin", "http://localhost:5173")
+	router.ServeHTTP(recorder, request)
+
+	if actual := recorder.Header().Get("Access-Control-Expose-Headers"); actual != "Content-Disposition" {
+		t.Fatalf("exposed headers = %q, want Content-Disposition", actual)
+	}
+}
+
 func TestHandleMe(t *testing.T) {
 	t.Run("requires auth context", func(t *testing.T) {
 		server := &Server{}

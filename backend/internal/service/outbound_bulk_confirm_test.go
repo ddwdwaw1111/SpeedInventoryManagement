@@ -51,11 +51,11 @@ func TestValidateOutboundDocumentCanBeConfirmedRequiresActiveDraft(t *testing.T)
 
 func TestExpectedBulkOutboundConfirmationFailureClassification(t *testing.T) {
 	for _, expected := range []error{ErrNotFound, ErrInvalidInput, ErrInsufficientStock, ErrReservedStock} {
-		if !isExpectedBulkOutboundConfirmationFailure(fmt.Errorf("confirm shipment: %w", expected)) {
+		if !isExpectedBulkOutboundDocumentFailure(fmt.Errorf("confirm shipment: %w", expected)) {
 			t.Fatalf("expected %v to remain an independent document failure", expected)
 		}
 	}
-	if isExpectedBulkOutboundConfirmationFailure(errors.New("database connection lost")) {
+	if isExpectedBulkOutboundDocumentFailure(errors.New("database connection lost")) {
 		t.Fatal("expected an operational database failure to interrupt the batch")
 	}
 }

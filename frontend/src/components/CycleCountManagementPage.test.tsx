@@ -12,12 +12,12 @@ vi.mock("../lib/api", () => ({
   api: { createCycleCount }
 }));
 
-function renderPage() {
+function renderPage(items = [createItem({ id: 20, containerNo: "CONT-COUNT", quantity: 80, pallets: 6 })]) {
   const onRefresh = vi.fn().mockResolvedValue(undefined);
   renderWithProviders(
     <CycleCountManagementPage
       cycleCounts={[]}
-      items={[createItem({ id: 20, containerNo: "CONT-COUNT", quantity: 80, pallets: 6 })]}
+      items={items}
       currentUserRole="admin"
       isLoading={false}
       onRefresh={onRefresh}
@@ -77,5 +77,21 @@ describe("CycleCountManagementPage", () => {
 
     expect(within(dialog).queryByText(/Create Pallet/i)).not.toBeInTheDocument();
     expect(within(dialog).queryByText(/Pallet Code/i)).not.toBeInTheDocument();
+  });
+
+  it("shows both SKU and Item Number in the inventory source selector", () => {
+    renderPage([createItem({
+      id: 20,
+      containerNo: "CONT-COUNT",
+      sku: "SKU-COUNT",
+      itemNumber: "ITEM-COUNT"
+    })]);
+
+    fireEvent.click(screen.getByRole("button", { name: "New Count Sheet" }));
+    const sourceSelect = within(screen.getByRole("dialog")).getAllByRole("combobox")[0];
+
+    expect(within(sourceSelect).getByRole("option", {
+      name: /SKU-COUNT.*ITEM-COUNT/
+    })).toBeInTheDocument();
   });
 });

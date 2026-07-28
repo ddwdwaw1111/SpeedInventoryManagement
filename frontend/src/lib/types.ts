@@ -579,6 +579,7 @@ export type ContainerLifecycleEvent = {
   quantityDelta: number;
 	palletDelta: number;
   skuMasterId: number;
+  sku?: string;
   sourceDocumentType: string;
   sourceDocumentId: number;
   sourceLineId: number;
@@ -826,6 +827,23 @@ export type BulkConfirmOutboundDocumentResult = {
   warning?: string;
 };
 
+export type BulkDeleteOutboundDocumentsResponse = {
+  deletedDocuments: number;
+  failedDocuments: number;
+  unprocessedDocuments: number;
+  interrupted: boolean;
+  interruptionError?: string;
+  documents: OutboundDocument[];
+  results: BulkDeleteOutboundDocumentResult[];
+};
+
+export type BulkDeleteOutboundDocumentResult = {
+  documentId: number;
+  success: boolean;
+  document?: OutboundDocument;
+  error?: string;
+};
+
 export type InboundDocumentLinePayload = {
   itemNumber?: string;
   sku: string;
@@ -941,6 +959,7 @@ export type InboundBulkImportDocumentPreview = {
 
 export type InboundBulkImportPreview = {
   importId: string;
+  importBatchId?: number;
   sourceFileName: string;
   customerId: number;
   customerName: string;
@@ -983,11 +1002,13 @@ export type InboundBulkImportCommitResult = {
 };
 
 export type InboundBulkImportCommitResponse = {
+  importBatchId?: number;
   sourceFileName: string;
   totalDocuments: number;
   createdDocuments: number;
   failedDocuments: number;
   results: InboundBulkImportCommitResult[];
+  retentionWarning?: string;
 };
 
 export type OutboundBulkImportIssue = {
@@ -1048,6 +1069,7 @@ export type OutboundBulkImportDocumentPreview = {
 
 export type OutboundBulkImportPreview = {
   importId: string;
+  importBatchId?: number;
   sourceFileName: string;
   customerId: number;
   customerName: string;
@@ -1084,11 +1106,53 @@ export type OutboundBulkImportCommitResult = {
 };
 
 export type OutboundBulkImportCommitResponse = {
+  importBatchId?: number;
   sourceFileName: string;
   totalDocuments: number;
   createdDocuments: number;
   failedDocuments: number;
   results: OutboundBulkImportCommitResult[];
+  retentionWarning?: string;
+};
+
+export type BulkImportType = "INBOUND" | "OUTBOUND";
+
+export type BulkImportBatchDocument = {
+  id: number;
+  batchId: number;
+  documentKey: string;
+  documentId: number;
+  referenceCode: string;
+  status: string;
+  errorMessage: string;
+  createdAt: string;
+};
+
+export type BulkImportBatch = {
+  id: number;
+  importId: string;
+  importType: BulkImportType;
+  customerId: number;
+  customerName: string;
+  sourceFileName: string;
+  contentType: string;
+  fileSizeBytes: number;
+  fileSha256: string;
+  status: string;
+  totalDocuments: number;
+  validDocuments: number;
+  invalidDocuments: number;
+  totalLines: number;
+  createdDocuments: number;
+  failedDocuments: number;
+  errorMessage: string;
+  createdByUserId: number;
+  createdByName: string;
+  createdByEmail: string;
+  committedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  documents: BulkImportBatchDocument[];
 };
 
 export type InventoryAdjustmentLine = {

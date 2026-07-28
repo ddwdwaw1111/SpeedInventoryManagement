@@ -65,21 +65,23 @@ type InboundPalletBreakdown struct {
 }
 
 type CreateInboundDocumentInput struct {
-	CustomerID          int64                            `json:"customerId"`
-	LocationID          int64                            `json:"locationId"`
-	ExpectedArrivalDate string                           `json:"expectedArrivalDate"`
-	ActualArrivalDate   string                           `json:"actualArrivalDate"`
-	ContainerNo         string                           `json:"containerNo"`
-	ContainerType       string                           `json:"containerType"`
-	HandlingMode        string                           `json:"handlingMode"`
-	StorageSection      string                           `json:"storageSection"`
-	UnitLabel           string                           `json:"unitLabel"`
-	Status              string                           `json:"status"`
-	TrackingStatus      string                           `json:"trackingStatus"`
-	DocumentNote        string                           `json:"documentNote"`
-	Lines               []CreateInboundDocumentLineInput `json:"lines"`
-	ImportKey           string                           `json:"-"`
-	ImportPayloadHash   string                           `json:"-"`
+	CustomerID            int64                            `json:"customerId"`
+	LocationID            int64                            `json:"locationId"`
+	ExpectedArrivalDate   string                           `json:"expectedArrivalDate"`
+	ActualArrivalDate     string                           `json:"actualArrivalDate"`
+	ContainerNo           string                           `json:"containerNo"`
+	ContainerType         string                           `json:"containerType"`
+	HandlingMode          string                           `json:"handlingMode"`
+	StorageSection        string                           `json:"storageSection"`
+	UnitLabel             string                           `json:"unitLabel"`
+	Status                string                           `json:"status"`
+	TrackingStatus        string                           `json:"trackingStatus"`
+	DocumentNote          string                           `json:"documentNote"`
+	Lines                 []CreateInboundDocumentLineInput `json:"lines"`
+	ImportKey             string                           `json:"-"`
+	ImportPayloadHash     string                           `json:"-"`
+	BulkImportBatchID     int64                            `json:"-"`
+	BulkImportDocumentKey string                           `json:"-"`
 }
 
 type UpdateInboundDocumentNoteInput struct {
@@ -503,6 +505,17 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 		}
 	case DocumentStatusDraft:
 		// Draft documents remain pending until confirmed.
+	}
+
+	if input.BulkImportBatchID > 0 {
+		if err := recordBulkImportBatchDocumentTx(ctx, tx, input.BulkImportBatchID, BulkImportCommitRecord{
+			DocumentKey:   input.BulkImportDocumentKey,
+			DocumentID:    documentID,
+			ReferenceCode: input.ContainerNo,
+			Success:       true,
+		}); err != nil {
+			return InboundDocument{}, err
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
