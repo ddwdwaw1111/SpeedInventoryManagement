@@ -122,6 +122,32 @@ func TestBuildBillingInvoiceContainerDetailsReconcilesEveryInvoiceLine(t *testin
 	}
 }
 
+func TestUnreconciledBillingPalletMovementContainers(t *testing.T) {
+	reconciledDetails, err := json.Marshal(billingStorageContainerSummaryDetails{
+		Kind: "STORAGE_CONTAINER_SUMMARY", OpeningPallets: 10, ClosingPallets: 4,
+		PalletReleaseEvents: []BillingPreviewPalletRelease{{Date: "2026-04-15", Pallets: 6}},
+	})
+	if err != nil {
+		t.Fatalf("marshal reconciled storage details: %v", err)
+	}
+	unreconciledDetails, err := json.Marshal(billingStorageContainerSummaryDetails{
+		Kind: "STORAGE_CONTAINER_SUMMARY", OpeningPallets: 10, ClosingPallets: 2,
+		PalletReleaseEvents: []BillingPreviewPalletRelease{{Date: "2026-04-15", Pallets: 3}},
+	})
+	if err != nil {
+		t.Fatalf("marshal unreconciled storage details: %v", err)
+	}
+
+	containers := unreconciledBillingPalletMovementContainers([]BillingInvoiceLine{
+		{ChargeType: BillingChargeStorage, ContainerNo: "CONT-A", Details: reconciledDetails},
+		{ChargeType: BillingChargeStorage, ContainerNo: " cont-b ", Details: unreconciledDetails},
+	})
+
+	if len(containers) != 1 || containers[0] != "CONT-B" {
+		t.Fatalf("unexpected unreconciled containers: %#v", containers)
+	}
+}
+
 func TestBuildAuthoritativeBillingInvoiceLinesRejectsUnassignedContainer(t *testing.T) {
 	preview := BillingPreviewResult{
 		Lines: []BillingPreviewLine{{

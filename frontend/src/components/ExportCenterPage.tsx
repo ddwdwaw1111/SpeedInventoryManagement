@@ -7,6 +7,7 @@ import { Alert, Button } from "@mui/material";
 import { useMemo, useState, type ReactNode } from "react";
 
 import { api } from "../lib/api";
+import { waitForNextPaint } from "../lib/asyncUi";
 import { formatDateValue } from "../lib/dates";
 import { downloadDocumentMigrationPackage } from "../lib/documentMigrationExport";
 import { downloadExcelWorkbook, type ExcelExportCell, type ExcelExportColumn } from "../lib/excelExport";
@@ -16,6 +17,7 @@ import { getOutboundExpectedShipDate } from "../lib/outboundDates";
 import type { PageKey } from "../lib/routes";
 import { DEFAULT_STORAGE_SECTION, normalizeStorageSection, type InboundDocument, type Item, type OutboundDocument } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
+import { ExportLoadingScreen } from "./ExportLoadingScreen";
 import { WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
 type ExportCenterPageProps = {
@@ -203,6 +205,7 @@ export function ExportCenterPage({
     setIsMigrationExporting(true);
     setMigrationMessage(null);
     try {
+      await waitForNextPaint();
       const [allInboundDocuments, allOutboundDocuments] = await Promise.all([
         loadAllInboundDocuments(),
         loadAllOutboundDocuments()
@@ -312,6 +315,7 @@ export function ExportCenterPage({
         onClose={() => setSelectedDatasetKey(null)}
         onExport={handleExport}
       />
+      <ExportLoadingScreen open={isMigrationExporting} />
     </main>
   );
 }

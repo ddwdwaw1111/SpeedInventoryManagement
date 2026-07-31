@@ -1003,6 +1003,13 @@ func (s *Store) FinalizeBillingInvoice(ctx context.Context, invoiceID int64, use
 	if invoice.Status != BillingInvoiceStatusDraft {
 		return BillingInvoice{}, fmt.Errorf("%w: only draft invoices can be finalized", ErrInvalidInput)
 	}
+	if containers := unreconciledBillingPalletMovementContainers(invoice.Lines); len(containers) > 0 {
+		return BillingInvoice{}, fmt.Errorf(
+			"%w: pallet movement does not reconcile for container(s): %s",
+			ErrInvalidInput,
+			strings.Join(containers, ", "),
+		)
+	}
 
 	now := time.Now().UTC()
 	if _, err := s.db.ExecContext(ctx, `
@@ -1202,13 +1209,49 @@ type billingInvoiceContainerDetailAccumulator struct {
 }
 
 type billingInvoiceStorageLineDetails struct {
-	Kind               string  `json:"kind"`
-	PalletsTracked     float64 `json:"palletsTracked"`
-	PalletDays         float64 `json:"palletDays"`
-	FreePalletDays     float64 `json:"freePalletDays"`
-	BillablePalletDays float64 `json:"billablePalletDays"`
-	GrossAmount        float64 `json:"grossAmount"`
-	DiscountAmount     float64 `json:"discountAmount"`
+	Kind                string                        `json:"kind"`
+	OpeningPallets      float64                       `json:"openingPallets"`
+	ClosingPallets      float64                       `json:"closingPallets"`
+	PalletReleaseEvents []BillingPreviewPalletRelease `json:"palletReleaseEvents"`
+	PalletsTracked      float64                       `json:"palletsTracked"`
+	PalletDays          float64                       `json:"palletDays"`
+	FreePalletDays      float64                       `json:"freePalletDays"`
+	BillablePalletDays  float64                       `json:"billablePalletDays"`
+	GrossAmount         float64                       `json:"grossAmount"`
+	DiscountAmount      float64                       `json:"discountAmount"`
+}
+
+func unreconciledBillingPalletMovementContainers(lines []BillingInvoiceLine) []string {
+	detailsByContainer := make(map[string]billingInvoiceStorageLineDetails)
+	for _, line := range lines {
+		if !strings.EqualFold(strings.TrimSpace(line.ChargeType), BillingChargeStorage) || len(line.Details) == 0 {
+			continue
+		}
+		details := billingInvoiceStorageLineDetails{}
+		if err := json.Unmarshal(line.Details, &details); err != nil || details.Kind != "STORAGE_CONTAINER_SUMMARY" {
+			continue
+		}
+		containerNo := normalizeContainerNo(line.ContainerNo)
+		if containerNo != "" {
+			detailsByContainer[containerNo] = details
+		}
+	}
+
+	containers := make([]string, 0)
+	for containerNo, details := range detailsByContainer {
+		releasedPallets := 0.0
+		for _, event := range details.PalletReleaseEvents {
+			releasedPallets += event.Pallets
+		}
+		impliedReceivedPallets := billingPreviewRoundQuantity(
+			details.ClosingPallets + releasedPallets - details.OpeningPallets,
+		)
+		if impliedReceivedPallets < 0 {
+			containers = append(containers, containerNo)
+		}
+	}
+	sort.Strings(containers)
+	return containers
 }
 
 func buildBillingInvoiceContainerDetails(lines []BillingInvoiceLine) []BillingInvoiceContainerDetail {

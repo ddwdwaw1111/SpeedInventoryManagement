@@ -347,6 +347,31 @@ describe("BillingPage", () => {
     expect(downloadBillingPreviewPdf.mock.calls[0][0].header).toEqual(DEFAULT_BILLING_INVOICE_HEADER);
   });
 
+  it("shows preview PDF export failures and releases the export action", async () => {
+    downloadBillingPreviewPdf.mockRejectedValueOnce(new Error("Preview PDF render failed"));
+    renderWithProviders(
+      <BillingPage
+        customers={[createCustomer()]}
+        locations={[createLocation()]}
+        inboundDocuments={[]}
+        outboundDocuments={[]}
+        currentUserRole="admin"
+        onOpenBillingContainerDetail={vi.fn()}
+        onOpenBillingInvoice={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-03-01" } });
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-03-31" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Export" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Download PDF/i }));
+
+    expect(await screen.findByText("Preview PDF render failed")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Export" })).toBeEnabled();
+    });
+  });
+
   it("creates a storage settlement invoice per customer and period", async () => {
     const onOpenBillingInvoice = vi.fn();
     const customer = createCustomer({ id: 1, name: "Acme" });

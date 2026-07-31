@@ -1937,7 +1937,6 @@ function buildOutboundLineValidations(
           const remainingQty = row.startingQty - row.allocatedQty;
           return row.pallets < 0
             || row.pallets > row.startingPallets
-            || (row.startingPallets > 0 && row.pallets === 0)
             || row.remainingPallets < 0
             || row.remainingPallets > row.startingPallets
             || releasedPallets > row.availablePallets

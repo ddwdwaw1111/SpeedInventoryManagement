@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -331,12 +332,6 @@ func TestOutboundBulkPalletBalanceIssuesIdentifyTheExactCorrection(t *testing.T)
 		t.Fatalf("unexpected exceeds-source issue: %#v", exceeds)
 	}
 
-	line.InventoryPallets = 0
-	required := outboundBulkInventoryPalletsRequiredIssue(line, 2)
-	if required.Code != "INVENTORY_PALLETS_REQUIRED" || required.AvailablePallets != 2 {
-		t.Fatalf("unexpected required-pallet issue: %#v", required)
-	}
-
 	release := outboundBulkPalletReleaseConflictIssue(line, 3, 1)
 	if release.Code != "INVENTORY_PALLET_RELEASE_CONFLICT" || release.RequestedPallets != 3 || release.AvailablePallets != 1 {
 		t.Fatalf("unexpected pallet-release issue: %#v", release)
@@ -517,6 +512,68 @@ func TestBuildOutboundBulkMainWarehousePlanTransfersRemoteAllocations(t *testing
 	}
 	if input.Lines[0].PickAllocations[0].StorageSection != DefaultStorageSection || input.Lines[0].PickAllocations[1].StorageSection != "B2" {
 		t.Fatalf("expected only transferred stock to stage in TEMP, got %#v", input.Lines[0].PickAllocations)
+	}
+	attachOutboundAutoTransferID(&input, 42)
+	if input.Lines[0].PickAllocations[0].SourceTransferID != 42 {
+		t.Fatalf("expected transferred allocation to retain transfer provenance, got %#v", input.Lines[0].PickAllocations[0])
+	}
+	if input.Lines[0].PickAllocations[1].SourceTransferID != 0 {
+		t.Fatalf("expected local allocation to remain unrelated to the transfer, got %#v", input.Lines[0].PickAllocations[1])
+	}
+}
+
+func TestBuildOutboundAutoTransferRollbackInputRestoresOriginalSource(t *testing.T) {
+	allocations := []OutboundPickAllocation{
+		{
+			LocationID:           3,
+			StorageSection:       DefaultStorageSection,
+			ContainerNo:          "CONT-REMOTE",
+			AllocatedQty:         245,
+			Pallets:              0,
+			InventoryPalletsUsed: 1,
+			SourceLocationID:     9,
+			SourceLocationName:   "Overflow",
+			SourceStorageSection: "A1",
+		},
+		{
+			LocationID:     3,
+			StorageSection: "B2",
+			ContainerNo:    "CONT-LOCAL",
+			AllocatedQty:   20,
+			Pallets:        1,
+		},
+	}
+	input := buildOutboundAutoTransferRollbackInput(
+		outboundDocumentRow{ID: 17, PackingListNo: "1842261-7261", CustomerID: 4},
+		[]outboundDocumentLineRow{{
+			SKUMasterID:         11,
+			PickAllocationsJSON: mustEncodeOutboundPickAllocations(allocations),
+		}},
+	)
+
+	if input.TransferNo != "TRN-UNDO-OUT-17" || !strings.Contains(input.Notes, "PO 1842261-7261") {
+		t.Fatalf("unexpected rollback transfer header: %#v", input)
+	}
+	if len(input.Lines) != 1 {
+		t.Fatalf("expected only the automatically transferred allocation to roll back, got %#v", input.Lines)
+	}
+	line := input.Lines[0]
+	if line.LocationID != 3 || line.StorageSection != DefaultStorageSection || line.ToLocationID != 9 || line.ToStorageSection != "A1" {
+		t.Fatalf("expected rollback to move stock from main warehouse to its original source, got %#v", line)
+	}
+	if line.ContainerNo != "CONT-REMOTE" || line.SKUMasterID != 11 || line.Quantity != 245 || line.Pallets != 0 {
+		t.Fatalf("expected rollback to preserve the original quantity and physical pallet delta, got %#v", line)
+	}
+}
+
+func TestNormalizeOutboundPickAllocationsKeepsDifferentTransferSourcesSeparate(t *testing.T) {
+	allocations := normalizeOutboundPickAllocations([]OutboundPickAllocation{
+		{LocationID: 3, StorageSection: DefaultStorageSection, ContainerNo: "CONT-A", ItemNumber: "ITEM-A", AllocatedQty: 4, SourceLocationID: 9, SourceStorageSection: "A1"},
+		{LocationID: 3, StorageSection: DefaultStorageSection, ContainerNo: "CONT-A", ItemNumber: "ITEM-A", AllocatedQty: 6, SourceLocationID: 10, SourceStorageSection: "B1"},
+	})
+
+	if len(allocations) != 2 {
+		t.Fatalf("expected staged allocations from different source warehouses to retain separate provenance, got %#v", allocations)
 	}
 }
 

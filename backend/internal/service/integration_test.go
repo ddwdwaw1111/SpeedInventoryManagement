@@ -2827,6 +2827,7 @@ func TestBulkOutboundFindsRemoteContainerAndTransfersWhenDraftConfirmedIntegrati
 	customer := mustCreateCustomer(t, ctx, store, "Bulk 308 Customer-"+suffix)
 	sourceLocation := mustCreateLocation(t, ctx, store, "Overflow-"+suffix)
 	mainLocation := mustCreateLocation(t, ctx, store, MainOutboundWarehouseCode)
+	laterLocation := mustCreateLocation(t, ctx, store, "Later Activity-"+suffix)
 	item := mustCreateItemWithSection(t, ctx, store, customer.ID, sourceLocation.ID, "SKU-BULK-308-"+suffix, 0, DefaultStorageSection)
 	containerNo := "CONT-BULK-308-" + suffix
 	if _, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
@@ -2937,6 +2938,9 @@ func TestBulkOutboundFindsRemoteContainerAndTransfersWhenDraftConfirmedIntegrati
 	if confirmedAllocation.LocationID != mainLocation.ID || confirmedAllocation.AutoTransferToMain {
 		t.Fatalf("expected confirmed allocation to be staged at 308 with no pending marker: %#v", confirmedAllocation)
 	}
+	if confirmedAllocation.SourceTransferID <= 0 {
+		t.Fatalf("expected confirmed allocation to retain its automatic transfer provenance: %#v", confirmedAllocation)
+	}
 
 	remainingSource = mustFindItemByContainer(t, ctx, store, sourceLocation.ID, DefaultStorageSection, containerNo, item.SKU)
 	if remainingSource.Quantity != 6 || remainingSource.Pallets != 2 {
@@ -2950,6 +2954,88 @@ func TestBulkOutboundFindsRemoteContainerAndTransfersWhenDraftConfirmedIntegrati
 	}
 	if transferCountAfterConfirm != 1 {
 		t.Fatalf("expected one automatic transfer during confirmation, got %d", transferCountAfterConfirm)
+	}
+
+	validationTx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin later-activity validation transaction: %v", err)
+	}
+	if _, err := store.createInventoryTransferTx(ctx, validationTx, CreateInventoryTransferInput{
+		TransferNo: "TRN-LATER-" + suffix,
+		Lines: []CreateInventoryTransferLineInput{{
+			CustomerID:       customer.ID,
+			LocationID:       sourceLocation.ID,
+			StorageSection:   DefaultStorageSection,
+			ContainerNo:      containerNo,
+			SKUMasterID:      item.SKUMasterID,
+			Quantity:         6,
+			Pallets:          2,
+			ToLocationID:     laterLocation.ID,
+			ToStorageSection: DefaultStorageSection,
+		}},
+	}, nil); err != nil {
+		validationTx.Rollback()
+		t.Fatalf("create later source activity: %v", err)
+	}
+	documentRow, err := store.loadOutboundDocumentForUpdateTx(ctx, validationTx, confirmed.ID)
+	if err != nil {
+		validationTx.Rollback()
+		t.Fatalf("load outbound for later-activity validation: %v", err)
+	}
+	lineRows, err := store.loadOutboundDocumentLinesTx(ctx, validationTx, confirmed.ID)
+	if err != nil {
+		validationTx.Rollback()
+		t.Fatalf("load outbound lines for later-activity validation: %v", err)
+	}
+	validationErr := store.ensureOutboundAutoTransferCanBeRolledBackTx(ctx, validationTx, documentRow, lineRows)
+	if !errors.Is(validationErr, ErrInvalidInput) || !strings.Contains(validationErr.Error(), pickingOrderNo) || !strings.Contains(validationErr.Error(), "later inventory activity") {
+		validationTx.Rollback()
+		t.Fatalf("expected deletion to reject later source activity with a clear PO error, got %v", validationErr)
+	}
+	if err := validationTx.Rollback(); err != nil {
+		t.Fatalf("rollback later-activity validation transaction: %v", err)
+	}
+
+	if _, err := store.CancelOutboundDocument(ctx, confirmed.ID); err != nil {
+		t.Fatalf("delete confirmed warehouse 308 outbound: %v", err)
+	}
+	restoredSource := mustFindItemByContainer(t, ctx, store, sourceLocation.ID, DefaultStorageSection, containerNo, item.SKU)
+	if restoredSource.Quantity != 10 || restoredSource.Pallets != 2 {
+		t.Fatalf("expected deletion to restore the original source balance to 10 CTN / 2 pallets, got %d / %d", restoredSource.Quantity, restoredSource.Pallets)
+	}
+	var mainBalance struct {
+		Quantity int `db:"quantity"`
+		Pallets  int `db:"pallets"`
+	}
+	if err := store.db.GetContext(ctx, &mainBalance, `
+		SELECT COALESCE(SUM(quantity), 0) AS quantity, COALESCE(SUM(pallets), 0) AS pallets
+		FROM inventory_items
+		WHERE customer_id = ?
+		  AND sku_master_id = ?
+		  AND location_id = ?
+		  AND storage_section = ?
+		  AND container_no = ?
+	`, customer.ID, item.SKUMasterID, mainLocation.ID, DefaultStorageSection, containerNo); err != nil {
+		t.Fatalf("load main warehouse balance after deletion: %v", err)
+	}
+	if mainBalance.Quantity != 0 || mainBalance.Pallets != 0 {
+		t.Fatalf("expected deletion to leave no phantom main-warehouse balance, got %d CTN / %d pallets", mainBalance.Quantity, mainBalance.Pallets)
+	}
+	var rollbackLineCount int
+	if err := store.db.GetContext(ctx, &rollbackLineCount, `
+		SELECT COUNT(*)
+		FROM inventory_transfer_lines line
+		JOIN inventory_transfers transfer ON transfer.id = line.transfer_id
+		WHERE transfer.transfer_no = ?
+		  AND line.from_location_id = ?
+		  AND line.to_location_id = ?
+		  AND line.quantity = 4
+		  AND line.pallets = 0
+	`, fmt.Sprintf("TRN-UNDO-OUT-%d", confirmed.ID), mainLocation.ID, sourceLocation.ID); err != nil {
+		t.Fatalf("load automatic transfer rollback after deletion: %v", err)
+	}
+	if rollbackLineCount != 1 {
+		t.Fatalf("expected one 4 CTN / 0 pallet rollback to the original warehouse, got %d", rollbackLineCount)
 	}
 }
 

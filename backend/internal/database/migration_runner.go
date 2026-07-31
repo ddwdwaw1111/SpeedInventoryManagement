@@ -86,6 +86,12 @@ var schemaMigrations = []schemaMigration{
 		Revision: "2026-07-18.1",
 		Apply:    applyHardDeleteDocumentsMigration,
 	},
+	{
+		Version:  12,
+		Name:     "bulk_import_retention",
+		Revision: "2026-07-30.1",
+		Apply:    applyBulkImportRetentionMigration,
+	},
 }
 
 // Versions 9 and 10 were deployed before their source migrations were merged.

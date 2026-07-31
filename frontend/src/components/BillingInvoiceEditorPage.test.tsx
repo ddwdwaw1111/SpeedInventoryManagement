@@ -9,13 +9,15 @@ const {
   updateBillingInvoice,
   finalizeBillingInvoice,
   downloadExcelWorkbook,
-  downloadBillingInvoicePdf
+  downloadBillingInvoicePdf,
+  downloadBillingContainerZip
 } = vi.hoisted(() => ({
   getBillingInvoice: vi.fn(),
   updateBillingInvoice: vi.fn(),
   finalizeBillingInvoice: vi.fn(),
   downloadExcelWorkbook: vi.fn(),
-  downloadBillingInvoicePdf: vi.fn()
+  downloadBillingInvoicePdf: vi.fn(),
+  downloadBillingContainerZip: vi.fn()
 }));
 
 vi.mock("../lib/api", () => ({
@@ -39,6 +41,10 @@ vi.mock("../lib/excelExport", () => ({
 
 vi.mock("../lib/billingInvoicePdf", () => ({
   downloadBillingInvoicePdf
+}));
+
+vi.mock("../lib/billingContainerZip", () => ({
+  downloadBillingContainerZip
 }));
 
 const invoiceFixture = {
@@ -145,6 +151,7 @@ describe("BillingInvoiceEditorPage", () => {
     finalizeBillingInvoice.mockReset();
     downloadExcelWorkbook.mockReset();
     downloadBillingInvoicePdf.mockReset();
+    downloadBillingContainerZip.mockReset();
     getBillingInvoice.mockResolvedValue(invoiceFixture);
     updateBillingInvoice.mockResolvedValue(invoiceFixture);
     finalizeBillingInvoice.mockResolvedValue({
@@ -167,8 +174,16 @@ describe("BillingInvoiceEditorPage", () => {
 
     expect(await screen.findByText("Storage Settlement")).toBeInTheDocument();
     const ledger = screen.getByRole("table", { name: "Container Billing Ledger" });
+    expect(ledger).toHaveClass("billing-container-ledger-table");
     expect(within(ledger).getByText("GCXU5817233")).toBeInTheDocument();
     expect(within(ledger).getByText("Invoice-level")).toBeInTheDocument();
+    expect(within(ledger).getByText("Inbound Charges")).toBeInTheDocument();
+    expect(within(ledger).getByText("Wrapping Charges")).toBeInTheDocument();
+    expect(within(ledger).getByText("Outbound Charges")).toBeInTheDocument();
+    expect(within(ledger).getByText("Received Pallets During Period")).toBeInTheDocument();
+    expect(within(ledger).getByText("Gross Storage")).toBeInTheDocument();
+    expect(within(ledger).getByText("Storage Discount")).toBeInTheDocument();
+    expect(within(ledger).getByText("Net Storage")).toBeInTheDocument();
     expect(within(ledger).queryByText("Reference")).not.toBeInTheDocument();
   });
 
@@ -231,11 +246,16 @@ describe("BillingInvoiceEditorPage", () => {
       expect(downloadExcelWorkbook).toHaveBeenCalledTimes(1);
     });
     const exportPayload = downloadExcelWorkbook.mock.calls[0][0];
-    const containerSheet = exportPayload.additionalSheets[0];
+    const containerSheet = exportPayload;
     expect(containerSheet.columns.map((column: { label: string }) => column.label)).toEqual(expect.arrayContaining([
+      "Inbound Fee",
+      "Wrapping Fee",
+      "Outbound Fee",
       "Gross Storage Fee",
       "Storage Discount",
-      "Storage Fee"
+      "Net Storage Fee",
+      "Adjustments",
+      "Container Total"
     ]));
     expect(containerSheet.rows[0]).toMatchObject({
       storageGrossAmount: 140,
@@ -323,10 +343,11 @@ describe("BillingInvoiceEditorPage", () => {
       expect(downloadExcelWorkbook).toHaveBeenCalledTimes(1);
     });
     const exportPayload = downloadExcelWorkbook.mock.calls[0][0];
-    expect(exportPayload.columns.map((column: { label: string }) => column.label)).not.toContain("Discount");
+    expect(exportPayload.columns.map((column: { label: string }) => column.label)).toContain("Storage Discount");
+    expect(exportPayload.additionalSheets[0].columns.map((column: { label: string }) => column.label)).not.toContain("Discount");
     expect(exportPayload.additionalSheets).toHaveLength(2);
-    const containerSheet = exportPayload.additionalSheets[0];
-    expect(containerSheet.sheetName).toBe("Container Ledger");
+    const containerSheet = exportPayload;
+    expect(containerSheet.sheetName).toBe("Container Reconciliation");
     expect(containerSheet.columns.map((column: { label: string }) => column.label)).not.toContain("Source References");
     expect(containerSheet.rows[0]).toMatchObject({
       containerNo: "GCXU5817233",
@@ -395,8 +416,9 @@ describe("BillingInvoiceEditorPage", () => {
       expect(downloadExcelWorkbook).toHaveBeenCalledTimes(1);
     });
     const exportPayload = downloadExcelWorkbook.mock.calls[0][0];
-    expect(exportPayload.rows.map((row: { description: string }) => row.description)).not.toContain("Zero discount");
-    expect(exportPayload.rows.map((row: { chargeType: string }) => row.chargeType)).not.toContain("Discount");
+    const chargeRows = exportPayload.additionalSheets[0].rows;
+    expect(chargeRows.map((row: { description: string }) => row.description)).not.toContain("Zero discount");
+    expect(chargeRows.map((row: { chargeType: string }) => row.chargeType)).not.toContain("Discount");
   });
 
   it("exports the current invoice to Excel", async () => {
@@ -416,19 +438,24 @@ describe("BillingInvoiceEditorPage", () => {
       expect(downloadExcelWorkbook).toHaveBeenCalledTimes(1);
     });
     const exportPayload = downloadExcelWorkbook.mock.calls[0][0];
-    expect(exportPayload.sheetName).toBe("Invoice");
+    expect(exportPayload.sheetName).toBe("Container Reconciliation");
     expect(exportPayload.columns.map((column: { label: string }) => column.label).slice(0, 2)).toEqual([
-      "Container No.",
-      "Charge Type"
+      "Received On",
+      "Container No."
     ]);
     expect(exportPayload.rows[0]).toMatchObject({
+      containerNo: "GCXU5817233",
+      receivedPallets: 0,
+      storageAmount: 140,
+      totalAmount: 140
+    });
+    expect(exportPayload.summaryRows.map((row: { label: string }) => row.label)).toContain("Invoice Total");
+    expect(exportPayload.additionalSheets[0].sheetName).toBe("Charge Lines");
+    expect(exportPayload.additionalSheets[0].rows[0]).toMatchObject({
       containerNo: "GCXU5817233",
       chargeType: "Storage Fee",
       description: "Storage settlement for GCXU5817233"
     });
-    expect(exportPayload.rows.map((row: { chargeType: string }) => row.chargeType)).toContain("Storage Fee");
-    expect(exportPayload.summaryRows.map((row: { label: string }) => row.label)).toContain("Total Fee");
-    expect(exportPayload.additionalSheets[0].sheetName).toBe("Container Ledger");
     expect(exportPayload.additionalSheets[1].sheetName).toBe("Storage Fee");
   });
 
@@ -476,7 +503,7 @@ describe("BillingInvoiceEditorPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Download Excel" }));
 
     await waitFor(() => expect(downloadExcelWorkbook).toHaveBeenCalledTimes(1));
-    const rows = downloadExcelWorkbook.mock.calls[0][0].rows;
+    const rows = downloadExcelWorkbook.mock.calls[0][0].additionalSheets[0].rows;
     expect(rows.map((row: { containerNo: string }) => row.containerNo)).toEqual([
       "AAAU1111111",
       "AAAU1111111",
@@ -505,6 +532,77 @@ describe("BillingInvoiceEditorPage", () => {
       expect(downloadBillingInvoicePdf).toHaveBeenCalledTimes(1);
     });
     expect(downloadBillingInvoicePdf.mock.calls[0][0]).not.toHaveProperty("exportMode");
+  });
+
+  it("shows PDF export failures and releases the export action", async () => {
+    downloadBillingInvoicePdf.mockRejectedValueOnce(new Error("Invoice PDF font unavailable"));
+    renderWithProviders(
+      <BillingInvoiceEditorPage
+        invoiceId={42}
+        currentUserRole="admin"
+        onBackToBilling={vi.fn()}
+      />
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Export" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Download PDF/i }));
+
+    expect(await screen.findByText("Invoice PDF font unavailable")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Export" })).toBeEnabled();
+    });
+  });
+
+  it("exports one PDF and Excel invoice per container as a ZIP", async () => {
+    renderWithProviders(
+      <BillingInvoiceEditorPage
+        invoiceId={42}
+        currentUserRole="admin"
+        onBackToBilling={vi.fn()}
+      />
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Export" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Download Container Invoice ZIP/i }));
+
+    await waitFor(() => {
+      expect(downloadBillingContainerZip).toHaveBeenCalledWith({
+        invoice: invoiceFixture,
+        timeZone: "UTC"
+      });
+    });
+  });
+
+  it("blocks customer PDF exports when pallet movement implies negative received pallets", async () => {
+    const storageLine = invoiceFixture.lines[0];
+    if (!storageLine.details) throw new Error("storage detail fixture is required");
+    getBillingInvoice.mockResolvedValue({
+      ...invoiceFixture,
+      lines: [{
+        ...storageLine,
+        details: {
+          ...storageLine.details,
+          openingPallets: 10,
+          closingPallets: 2,
+          palletReleaseEvents: [{ date: "2026-03-15", pallets: 3 }]
+        }
+      }, invoiceFixture.lines[1]]
+    });
+    renderWithProviders(
+      <BillingInvoiceEditorPage
+        invoiceId={42}
+        currentUserRole="admin"
+        onBackToBilling={vi.fn()}
+      />
+    );
+
+    expect(await screen.findByText(/Pallet movement does not reconcile for GCXU5817233/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Export" }));
+
+    expect(await screen.findByRole("menuitem", { name: /Download PDF/i })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("menuitem", { name: /Download Container Invoice ZIP/i })).toHaveAttribute("aria-disabled", "true");
+    expect(downloadBillingInvoicePdf).not.toHaveBeenCalled();
+    expect(downloadBillingContainerZip).not.toHaveBeenCalled();
   });
 
   it("edits the draft invoice header before finalization", async () => {
@@ -570,5 +668,32 @@ describe("BillingInvoiceEditorPage", () => {
       expect(confirmButton).toBeDisabled();
       expect(confirmButton).toHaveAttribute("aria-busy", "true");
     });
+  });
+
+  it("does not allow an invoice with unreconciled pallet movement to be finalized", async () => {
+    const storageLine = invoiceFixture.lines[0];
+    getBillingInvoice.mockResolvedValue({
+      ...invoiceFixture,
+      lines: [{
+        ...storageLine,
+        details: {
+          ...storageLine.details,
+          openingPallets: 10,
+          closingPallets: 2,
+          palletReleaseEvents: [{ date: "2026-03-15", pallets: 3 }]
+        }
+      }]
+    });
+
+    renderWithProviders(
+      <BillingInvoiceEditorPage
+        invoiceId={42}
+        currentUserRole="admin"
+        onBackToBilling={vi.fn()}
+      />
+    );
+
+    expect(await screen.findByRole("button", { name: "Finalize Invoice" })).toBeDisabled();
+    expect(finalizeBillingInvoice).not.toHaveBeenCalled();
   });
 });

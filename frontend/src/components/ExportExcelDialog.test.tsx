@@ -32,5 +32,6 @@ describe("ExportExcelDialog", () => {
     expect(downloadButton).toBeDisabled();
     expect(downloadButton).toHaveAttribute("aria-busy", "true");
     expect(screen.getByLabelText(/export title/i)).toBeDisabled();
+    expect(screen.getByRole("status", { name: "Preparing your download" })).toBeInTheDocument();
   });
 });

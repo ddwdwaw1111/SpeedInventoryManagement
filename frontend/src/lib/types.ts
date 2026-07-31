@@ -644,6 +644,7 @@ export type OutboundPickAllocation = {
   startingPallets?: number;
   remainingPallets?: number;
   sourceLocationId?: number;
+  sourceTransferId?: number;
   sourceLocationName?: string;
   sourceStorageSection?: string;
   sourceStartingPallets?: number;

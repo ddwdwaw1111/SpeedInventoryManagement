@@ -9,33 +9,35 @@ class ResizeObserverMock {
   disconnect() {}
 }
 
-Object.defineProperty(window, "matchMedia", {
-  writable: true,
-  value: (query: string) => ({
-    matches: false,
-    media: query,
-    onchange: null,
-    addListener() {},
-    removeListener() {},
-    addEventListener() {},
-    removeEventListener() {},
-    dispatchEvent() {
-      return false;
-    }
-  })
-});
+if (typeof window !== "undefined") {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    value: (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener() {},
+      removeListener() {},
+      addEventListener() {},
+      removeEventListener() {},
+      dispatchEvent() {
+        return false;
+      }
+    })
+  });
 
-Object.defineProperty(window, "ResizeObserver", {
-  writable: true,
-  value: ResizeObserverMock
-});
+  Object.defineProperty(window, "ResizeObserver", {
+    writable: true,
+    value: ResizeObserverMock
+  });
 
-Object.defineProperty(window.HTMLElement.prototype, "scrollIntoView", {
-  writable: true,
-  value: () => {}
-});
+  Object.defineProperty(window.HTMLElement.prototype, "scrollIntoView", {
+    writable: true,
+    value: () => {}
+  });
 
-afterEach(() => {
-  cleanup();
-  window.localStorage.clear();
-});
+  afterEach(() => {
+    cleanup();
+    window.localStorage.clear();
+  });
+}

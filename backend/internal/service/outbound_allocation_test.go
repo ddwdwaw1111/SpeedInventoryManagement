@@ -79,8 +79,8 @@ func TestValidateOutboundFinalPalletAllocationKeepsUsedAndRemainingIndependent(t
 	}
 
 	allocation.InventoryPalletsUsed = 0
-	if err := validateOutboundFinalPalletAllocation(allocation); err == nil {
-		t.Fatal("palletized stock pick must record at least one inventory pallet used")
+	if err := validateOutboundFinalPalletAllocation(allocation); err != nil {
+		t.Fatalf("partial-pallet carton pick must allow zero inventory pallets used: %v", err)
 	}
 
 	starting = 5

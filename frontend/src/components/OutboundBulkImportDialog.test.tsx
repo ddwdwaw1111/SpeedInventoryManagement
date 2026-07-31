@@ -106,10 +106,12 @@ describe("OutboundBulkImportDialog", () => {
     expect(actualQuantityInput).toHaveValue(1);
     expect(inventoryPalletsInput).toHaveValue(4);
     expect(outboundPalletsInput).toHaveValue(6);
+    fireEvent.change(inventoryPalletsInput, { target: { value: "0" } });
+    expect(inventoryPalletsInput).toHaveValue(0);
     fireEvent.click(screen.getByRole("button", { name: "Revalidate changes" }));
 
     await waitFor(() => expect(mockedApi.revalidateOutboundBulkImport).toHaveBeenCalledWith(expect.objectContaining({
-      documents: [expect.objectContaining({ lines: [expect.objectContaining({ quantity: 1, plannedQuantity: 7, actualQuantity: 1, inventoryPallets: 4, outboundPallets: 6 })] })]
+      documents: [expect.objectContaining({ lines: [expect.objectContaining({ quantity: 1, plannedQuantity: 7, actualQuantity: 1, inventoryPallets: 0, outboundPallets: 6 })] })]
     })));
   });
 
@@ -196,7 +198,7 @@ describe("OutboundBulkImportDialog", () => {
     fireEvent.change(fileInput, { target: { files: [new File(["workbook"], "shipments.xlsx")] } });
     fireEvent.click(screen.getByRole("button", { name: "Validate workbook" }));
 
-    expect(await screen.findByText(/Row 72: Inventory Pallets Used is 4.*source container CONT-A.*only 2.*1 to 2/)).toBeInTheDocument();
+    expect(await screen.findByText(/Row 72: Inventory Pallets Used is 4.*source container CONT-A.*only 2.*0 to 2/)).toBeInTheDocument();
   });
 });
 

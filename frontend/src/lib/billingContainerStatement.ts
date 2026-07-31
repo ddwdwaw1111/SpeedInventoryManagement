@@ -13,9 +13,12 @@ export type BillingContainerRelease = {
 
 export type BillingContainerStatement = BillingInvoiceContainerDetailData & {
   receivedOn: string;
+  palletMovementAvailable: boolean;
   openingPallets: number;
+  receivedPallets: number;
   closingPallets: number;
   releasedPallets: number;
+  palletMovementReconciles: boolean;
   releaseEvents: BillingContainerRelease[];
   storageSegments: BillingStorageSegmentDetail[];
   otherAmount: number;
@@ -26,6 +29,7 @@ export type BillingContainerStatementRow = {
   containerNo: string;
   warehouses: string;
   openingPallets: number | null;
+  receivedPallets: number | null;
   releasedPallets: number | null;
   closingPallets: number | null;
   releaseDate: string;
@@ -94,18 +98,37 @@ export function buildBillingContainerStatements(invoice: BillingInvoice): Billin
       || inboundDates.get(containerNo)
       || segments[0]?.startDate
       || "";
+    const palletMovementAvailable = source !== undefined;
+    const releasedPallets = roundQuantity(releaseEvents.reduce((sum, event) => sum + event.pallets, 0));
+    const receivedPallets = palletMovementAvailable
+      ? roundQuantity(closingPallets + releasedPallets - openingPallets)
+      : 0;
+    const palletMovementReconciles = !palletMovementAvailable
+      || (
+        receivedPallets >= 0
+        && quantitiesEqual(openingPallets + receivedPallets - releasedPallets, closingPallets)
+      );
 
     return {
       ...detail,
       receivedOn,
+      palletMovementAvailable,
       openingPallets,
+      receivedPallets,
       closingPallets,
-      releasedPallets: roundQuantity(releaseEvents.reduce((sum, event) => sum + event.pallets, 0)),
+      releasedPallets,
+      palletMovementReconciles,
       releaseEvents,
       storageSegments: segments,
       otherAmount: roundCurrency(detail.totalAmount - detail.storageAmount)
     };
-  });
+  }).filter(hasBillingStatementImpact);
+}
+
+export function getUnreconciledBillingPalletMovementContainers(statements: BillingContainerStatement[]) {
+  return statements
+    .filter((statement) => statement.containerNo !== "" && !statement.palletMovementReconciles)
+    .map((statement) => statement.containerNo);
 }
 
 export function buildBillingContainerStatementRows(
@@ -153,9 +176,10 @@ function buildStatementRows(invoice: BillingInvoice, statement: BillingContainer
       receivedOn: first ? statement.receivedOn : "",
       containerNo: first ? (statement.containerNo || "Invoice-level") : "",
       warehouses: first ? (statement.warehouses.join(", ") || "-") : "",
-      openingPallets: first ? statement.openingPallets : null,
+      openingPallets: first && statement.palletMovementAvailable ? statement.openingPallets : null,
+      receivedPallets: first && statement.palletMovementAvailable ? statement.receivedPallets : null,
       releasedPallets: row.release?.pallets ?? null,
-      closingPallets: last ? statement.closingPallets : null,
+      closingPallets: last && statement.palletMovementAvailable ? statement.closingPallets : null,
       releaseDate: row.release?.date ?? "",
       segmentStartDate: segment?.startDate ?? "",
       segmentEndDate: segment?.endDate ?? "",
@@ -232,8 +256,38 @@ function normalizeContainerNo(value: string) {
   return value.trim().toUpperCase();
 }
 
+function hasBillingStatementImpact(statement: BillingContainerStatement) {
+  return [
+    statement.inboundUnits,
+    statement.wrappingPallets,
+    statement.palletsTracked,
+    statement.palletDays,
+    statement.freePalletDays,
+    statement.billablePalletDays,
+    statement.outboundPallets,
+    statement.inboundAmount,
+    statement.wrappingAmount,
+    statement.storageGrossAmount,
+    statement.storageDiscountAmount,
+    statement.storageAmount,
+    statement.outboundAmount,
+    statement.adjustmentAmount,
+    statement.totalAmount,
+    statement.openingPallets,
+    statement.receivedPallets,
+    statement.closingPallets,
+    statement.releasedPallets
+  ].some((value) => !quantitiesEqual(value, 0))
+    || statement.releaseEvents.length > 0
+    || statement.storageSegments.length > 0;
+}
+
 function roundQuantity(value: number) {
   return Math.round(value * 10_000) / 10_000;
+}
+
+function quantitiesEqual(left: number, right: number) {
+  return Math.round(left * 10_000) === Math.round(right * 10_000);
 }
 
 function roundCurrency(value: number) {

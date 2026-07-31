@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildBillingContainerStatementRows,
-  buildBillingContainerStatements
+  buildBillingContainerStatements,
+  getUnreconciledBillingPalletMovementContainers
 } from "./billingContainerStatement";
 import type { BillingInvoice, BillingInvoiceLineData } from "./types";
 
@@ -133,9 +134,12 @@ describe("container billing statement", () => {
     expect(statements[0]).toMatchObject({
       containerNo: "CONT-A",
       receivedOn: "2026-03-16",
+      palletMovementAvailable: true,
       openingPallets: 34,
+      receivedPallets: 0,
       releasedPallets: 30,
       closingPallets: 4,
+      palletMovementReconciles: true,
       storageAmount: 423.43,
       otherAmount: 450,
       totalAmount: 873.43,
@@ -151,6 +155,7 @@ describe("container billing statement", () => {
       receivedOn: "2026-03-16",
       containerNo: "CONT-A",
       openingPallets: 34,
+      receivedPallets: 0,
       segmentStartDate: "2026-06-01",
       segmentEndDate: "2026-06-11",
       palletsOnHand: 34,
@@ -247,10 +252,92 @@ describe("container billing statement", () => {
     expect(rows[0]).toMatchObject({
       containerNo: "CONT-A",
       openingPallets: 1,
+      receivedPallets: 0,
       releasedPallets: 1,
       closingPallets: 0,
       releaseDate: "2026-06-01",
       storageFee: 0
     });
+  });
+
+  it("derives pallets received during the period from the reconciled balances", () => {
+    const value = invoice();
+    const storageLine = value.lines[0];
+    if (!storageLine.details) throw new Error("storage detail fixture is required");
+    value.lines = [{
+      ...storageLine,
+      details: {
+        ...storageLine.details,
+        openingPallets: 2,
+        closingPallets: 5,
+        palletReleaseEvents: [{ date: "2026-06-20", pallets: 1 }]
+      }
+    }];
+
+    const statements = buildBillingContainerStatements(value);
+
+    expect(statements[0]).toMatchObject({
+      openingPallets: 2,
+      receivedPallets: 4,
+      releasedPallets: 1,
+      closingPallets: 5,
+      palletMovementReconciles: true
+    });
+    expect(getUnreconciledBillingPalletMovementContainers(statements)).toEqual([]);
+  });
+
+  it("flags a container when its balances imply a negative received-pallet count", () => {
+    const value = invoice();
+    const storageLine = value.lines[0];
+    if (!storageLine.details) throw new Error("storage detail fixture is required");
+    value.lines = [{
+      ...storageLine,
+      details: {
+        ...storageLine.details,
+        openingPallets: 10,
+        closingPallets: 2,
+        palletReleaseEvents: [{ date: "2026-06-20", pallets: 3 }]
+      }
+    }];
+
+    const statements = buildBillingContainerStatements(value);
+
+    expect(statements[0]).toMatchObject({
+      receivedPallets: -5,
+      palletMovementReconciles: false
+    });
+    expect(getUnreconciledBillingPalletMovementContainers(statements)).toEqual(["CONT-A"]);
+  });
+
+  it("marks pallet movement as unavailable when the invoice has no storage snapshot", () => {
+    const value = invoice();
+    value.lines = [value.lines[1]];
+
+    const statements = buildBillingContainerStatements(value);
+
+    expect(statements[0]).toMatchObject({
+      palletMovementAvailable: false,
+      receivedPallets: 0,
+      palletMovementReconciles: true
+    });
+  });
+
+  it("omits an invoice-level statement created only by a zero-value discount", () => {
+    const value = invoice();
+    value.lines.push(line({
+      id: 3,
+      chargeType: "DISCOUNT",
+      containerNo: "",
+      warehouse: "",
+      quantity: 1,
+      unitRate: 0,
+      amount: 0,
+      details: null
+    }));
+
+    const statements = buildBillingContainerStatements(value);
+
+    expect(statements).toHaveLength(1);
+    expect(statements[0].containerNo).toBe("CONT-A");
   });
 });

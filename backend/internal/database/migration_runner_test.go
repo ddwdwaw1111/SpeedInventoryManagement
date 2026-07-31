@@ -47,3 +47,15 @@ func TestPreviouslyDeployedMigrationChecksumsRemainCompatible(t *testing.T) {
 		}
 	}
 }
+
+func TestBulkImportRetentionHasDedicatedMigration(t *testing.T) {
+	for _, migration := range schemaMigrations {
+		if migration.Version == 12 {
+			if migration.Name != "bulk_import_retention" || migration.Apply == nil {
+				t.Fatalf("unexpected bulk import retention migration: %#v", migration)
+			}
+			return
+		}
+	}
+	t.Fatal("bulk import retention migration is missing")
+}

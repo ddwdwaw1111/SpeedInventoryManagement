@@ -4,6 +4,7 @@ import { Button, Dialog, DialogActions, DialogContent, DialogTitle } from "@mui/
 import { waitForNextPaint } from "../lib/asyncUi";
 import type { ExcelExportColumn } from "../lib/excelExport";
 import { useI18n } from "../lib/i18n";
+import { ExportLoadingScreen } from "./ExportLoadingScreen";
 import { InlineLoadingIndicator } from "./InlineLoadingIndicator";
 
 type ExportExcelDialogColumn = ExcelExportColumn & {
@@ -60,76 +61,79 @@ export function ExportExcelDialog({
   }
 
   return (
-    <Dialog open={open} onClose={isExporting ? undefined : onClose} fullWidth maxWidth="md">
-      <DialogTitle>{t("exportExcel")}</DialogTitle>
-      <DialogContent>
-        <div className="export-dialog__form">
-          <label>
-            {t("exportTitle")}
-            <input
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder={t("exportTitlePlaceholder")}
-              autoFocus
-              disabled={isExporting}
-            />
-          </label>
+    <>
+      <Dialog open={open} onClose={isExporting ? undefined : onClose} fullWidth maxWidth="md">
+        <DialogTitle>{t("exportExcel")}</DialogTitle>
+        <DialogContent>
+          <div className="export-dialog__form">
+            <label>
+              {t("exportTitle")}
+              <input
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder={t("exportTitlePlaceholder")}
+                autoFocus
+                disabled={isExporting}
+              />
+            </label>
 
-          <div className="export-dialog__section">
-            <div className="export-dialog__section-title">{t("exportColumns")}</div>
-            <div className="export-dialog__columns">
-              {columns.map((column) => (
-                <div className="export-dialog__column-row" key={column.key}>
-                  <label className="export-dialog__column-toggle">
+            <div className="export-dialog__section">
+              <div className="export-dialog__section-title">{t("exportColumns")}</div>
+              <div className="export-dialog__columns">
+                {columns.map((column) => (
+                  <div className="export-dialog__column-row" key={column.key}>
+                    <label className="export-dialog__column-toggle">
+                      <input
+                        type="checkbox"
+                        checked={column.enabled}
+                        disabled={isExporting}
+                        onChange={(event) => setColumns((current) => current.map((candidate) => (
+                          candidate.key === column.key
+                            ? { ...candidate, enabled: event.target.checked }
+                            : candidate
+                        )))}
+                      />
+                      <span>{column.key}</span>
+                    </label>
                     <input
-                      type="checkbox"
-                      checked={column.enabled}
+                      value={column.label}
                       disabled={isExporting}
                       onChange={(event) => setColumns((current) => current.map((candidate) => (
                         candidate.key === column.key
-                          ? { ...candidate, enabled: event.target.checked }
+                          ? { ...candidate, label: event.target.value }
                           : candidate
                       )))}
+                      placeholder={t("columnHeader")}
                     />
-                    <span>{column.key}</span>
-                  </label>
-                  <input
-                    value={column.label}
-                    disabled={isExporting}
-                    onChange={(event) => setColumns((current) => current.map((candidate) => (
-                      candidate.key === column.key
-                        ? { ...candidate, label: event.target.value }
-                        : candidate
-                    )))}
-                    placeholder={t("columnHeader")}
-                  />
-                </div>
-              ))}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
-      </DialogContent>
-      <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button variant="text" onClick={onClose} disabled={isExporting}>
-          {t("cancel")}
-        </Button>
-        <Button
-          variant="text"
-          disabled={isExporting}
-          onClick={() => setColumns(defaultColumns.map((column) => ({ ...column, enabled: true })))}
-        >
-          {t("resetDefault")}
-        </Button>
-        <Button
-          variant="contained"
-          disabled={enabledColumns.length === 0 || isExporting}
-          aria-busy={isExporting}
-          onClick={() => void handleExport()}
-        >
-          {isExporting ? <InlineLoadingIndicator className="mr-1" /> : null}
-          {t("downloadExcel")}
-        </Button>
-      </DialogActions>
-    </Dialog>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button variant="text" onClick={onClose} disabled={isExporting}>
+            {t("cancel")}
+          </Button>
+          <Button
+            variant="text"
+            disabled={isExporting}
+            onClick={() => setColumns(defaultColumns.map((column) => ({ ...column, enabled: true })))}
+          >
+            {t("resetDefault")}
+          </Button>
+          <Button
+            variant="contained"
+            disabled={enabledColumns.length === 0 || isExporting}
+            aria-busy={isExporting}
+            onClick={() => void handleExport()}
+          >
+            {isExporting ? <InlineLoadingIndicator className="mr-1" /> : null}
+            {t("downloadExcel")}
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <ExportLoadingScreen open={isExporting} />
+    </>
   );
 }

@@ -308,9 +308,6 @@ function formatOutboundBulkIssue(issue: OutboundBulkImportPreview["documents"][n
     requestedPallets: issue.requestedPallets ?? Number(issue.value || 0),
     availablePallets: issue.availablePallets ?? 0
   };
-  if (issue.code === "INVENTORY_PALLETS_REQUIRED") {
-    return t("bulkOutboundIssueInventoryPalletsRequired", palletIssueValues);
-  }
   if (issue.code === "INVENTORY_PALLETS_EXCEED_SOURCE") {
     return t("bulkOutboundIssueInventoryPalletsExceedSource", palletIssueValues);
   }

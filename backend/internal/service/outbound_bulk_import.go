@@ -67,7 +67,7 @@ type OutboundBulkImportLinePreview struct {
 	Quantity          int    `json:"quantity"` // Backward-compatible alias for actualQuantity.
 	PlannedQuantity   int    `json:"plannedQuantity"`
 	ActualQuantity    int    `json:"actualQuantity"`
-	InventoryPallets  int    `json:"inventoryPallets"` // Physical warehouse pallets touched/used during picking.
+	InventoryPallets  int    `json:"inventoryPallets"` // Inventory pallet units assigned to the pick; may be zero for partial-pallet carton picks.
 	OutboundPallets   int    `json:"outboundPallets"`  // Pallets after repalletization, persisted on the shipment line.
 	LineNote          string `json:"lineNote"`
 	RequiresTransfer  bool   `json:"requiresTransfer"`
@@ -900,10 +900,6 @@ func (s *Store) buildOutboundBulkImportPreview(ctx context.Context, fileName str
 				document.Issues = append(document.Issues, outboundBulkInventoryPalletsExceedSourceIssue(*line, startingPallets))
 				continue
 			}
-			if fulfillmentQuantity > 0 && startingPallets > 0 && line.InventoryPallets == 0 {
-				document.Issues = append(document.Issues, outboundBulkInventoryPalletsRequiredIssue(*line, startingPallets))
-				continue
-			}
 			if releasedPallets < 0 || releasedPallets > availablePallets {
 				document.Issues = append(document.Issues, outboundBulkPalletReleaseConflictIssue(*line, releasedPallets, availablePallets))
 				continue
@@ -1048,17 +1044,6 @@ func outboundBulkInventoryPalletsExceedSourceIssue(line OutboundBulkImportLinePr
 	issue.StorageSection = line.StorageSection
 	issue.RequestedPallets = maxInt(line.InventoryPallets, 0)
 	issue.AvailablePallets = maxInt(startingPallets, 0)
-	return issue
-}
-
-func outboundBulkInventoryPalletsRequiredIssue(line OutboundBulkImportLinePreview, startingPallets int) OutboundBulkImportIssue {
-	issue := outboundBulkInventoryPalletsExceedSourceIssue(line, startingPallets)
-	issue.Code = "INVENTORY_PALLETS_REQUIRED"
-	issue.Message = fmt.Sprintf(
-		"Source container %s currently has %d physical pallet(s). Because this row ships actual quantity, Inventory Pallets Used must record at least 1 pallet touched.",
-		firstNonEmpty(line.SourceContainer, "(blank)"),
-		maxInt(startingPallets, 0),
-	)
 	return issue
 }
 

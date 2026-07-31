@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { strFromU8, unzipSync } from "fflate";
 
-import { downloadExcelWorkbook } from "./excelExport";
+import { buildExcelWorkbookBytes, downloadExcelWorkbook } from "./excelExport";
 
 describe("downloadExcelWorkbook", () => {
   const OriginalBlob = globalThis.Blob;
@@ -116,6 +116,55 @@ describe("downloadExcelWorkbook", () => {
     expect(storageWorksheetXml).toContain("Storage Billing Period: 2026-03-01 to 2026-03-31");
     expect(storageWorksheetXml).toContain("CONT-001");
     expect(stylesXml).toContain('formatCode="&quot;$&quot;#,##0.00"');
+  });
+
+  it("builds a print-ready invoice worksheet without an export footer or logo", () => {
+    const workbookBytes = buildExcelWorkbookBytes({
+      title: "Container Invoice",
+      sheetName: "Container Invoice",
+      fileName: "INV-001-CONT-A",
+      columns: [
+        { key: "item", label: "ITEM" },
+        { key: "description", label: "DESCRIPTION" },
+        { key: "quantity", label: "QTY", numberFormat: "number" },
+        { key: "rate", label: "RATE", numberFormat: "currencyRate" },
+        { key: "amount", label: "AMOUNT", numberFormat: "currency" }
+      ],
+      rows: [{ item: "STORAGE", description: "July storage", quantity: 10, rate: 2.5, amount: 25 }],
+      summaryRows: [
+        { label: "SUBTOTAL", value: 25, numberFormat: "currency", bold: false },
+        { label: "TOTAL", value: 25, numberFormat: "currency", bold: true }
+      ],
+      invoiceHeader: {
+        sellerName: "Speed Inventory Management",
+        subtitle: "Business services invoice",
+        invoiceNo: "INV-001",
+        billTo: "Customer A",
+        invoiceDate: "Jul 30, 2026",
+        dueDate: "Aug 29, 2026",
+        amountDue: 25,
+        containerNo: "CONT-A",
+        billingPeriod: "2026-07-01 to 2026-07-30",
+        receivedOn: "2026-06-15"
+      }
+    });
+
+    const workbookFiles = unzipSync(workbookBytes);
+    const worksheetXml = readZipText(workbookFiles, "xl/worksheets/sheet1.xml");
+    expect(worksheetXml).toContain("Speed Inventory Management");
+    expect(worksheetXml).toContain("Invoice#");
+    expect(worksheetXml).toContain("BILL TO");
+    expect(worksheetXml).toContain("AMOUNT DUE");
+    expect(worksheetXml).toContain("CONT-A");
+    expect(worksheetXml).toContain("RECEIVED");
+    expect(worksheetXml).not.toContain("WAREHOUSE");
+    expect(worksheetXml).toContain("STORAGE");
+    expect(worksheetXml).toContain('orientation="portrait"');
+    expect(worksheetXml).toContain('showGridLines="0"');
+    expect(worksheetXml).not.toContain("Exported ");
+    expect(worksheetXml).not.toContain("picture");
+    expect(worksheetXml).not.toContain("oddFooter");
+    expect(readZipText(workbookFiles, "xl/styles.xml")).toContain('formatCode="&quot;$&quot;#,##0.00######"');
   });
 });
 

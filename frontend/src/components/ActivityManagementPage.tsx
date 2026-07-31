@@ -23,6 +23,7 @@ import {
 } from "@mui/x-data-grid";
 
 import { api } from "../lib/api";
+import { waitForNextPaint } from "../lib/asyncUi";
 import { consumePendingActivityManagementLaunchContext, type ActivityManagementLaunchContext, type InboundLaunchIntent } from "../lib/activityManagementLaunchContext";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { formatContainerDistributionSummary as formatContainerDistributionSummaryValue } from "../lib/containerBalances";
@@ -63,6 +64,7 @@ import {
   type UserRole
 } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
+import { ExportLoadingScreen } from "./ExportLoadingScreen";
 import { InlineAlert, useConfirmDialog, useFeedbackToast } from "./Feedback";
 import { InlineLoadingIndicator } from "./InlineLoadingIndicator";
 import { InboundBulkImportDialog } from "./InboundBulkImportDialog";
@@ -666,6 +668,7 @@ export function ActivityManagementPage({
   const isSelectedOutboundArchiveBusy = Boolean(
     selectedOutboundDocument && documentActionKey === getOutboundDocumentActionKey(selectedOutboundDocument.id, "archive")
   );
+  const isDocumentExporting = documentActionKey?.includes("-download-") ?? false;
   const disableSelectedInboundActions = selectedInboundDrawerBusy || selectedInboundDocumentNoteSaving;
   const disableSelectedOutboundActions = selectedOutboundDrawerBusy || selectedOutboundDocumentNoteSaving;
   const isEditingInboundDraft = normalizeDocumentStatus(editingInboundDocument?.status ?? "") === "DRAFT";
@@ -714,6 +717,9 @@ export function ActivityManagementPage({
 
     setDocumentActionKey(actionKey);
     try {
+      if (actionKey.includes("-download-")) {
+        await waitForNextPaint();
+      }
       return await action();
     } finally {
       setDocumentActionKey((current) => current === actionKey ? null : current);
@@ -2804,6 +2810,7 @@ export function ActivityManagementPage({
         </main>
       ) : null}
       {feedbackToast}
+      <ExportLoadingScreen open={isDocumentExporting} />
 
       {mode === "IN" ? (
         <Drawer

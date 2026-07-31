@@ -561,6 +561,36 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
     });
   });
 
+  it("allows a partial carton pick to use zero inventory pallets", async () => {
+    mockedApi.createOutboundDocument.mockResolvedValue(createOutboundDocument({ id: 111, status: "DRAFT" }));
+    renderEditor({
+      items: [createItem({
+        quantity: 10,
+        availableQty: 10,
+        pallets: 1,
+        availablePallets: 1
+      })]
+    });
+
+    await selectContainerSource(0, "GCXU5817233");
+    setLineQuantity(0, 2);
+    setLinePallets(0, 1);
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    const inventoryPalletInput = await screen.findByRole("spinbutton", { name: "Inventory Pallets Used GCXU5817233" });
+    fireEvent.change(inventoryPalletInput, { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /I confirm the Container/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Schedule Shipment" }));
+
+    await waitFor(() => expect(mockedApi.createOutboundDocument).toHaveBeenCalledTimes(1));
+    expect(mockedApi.createOutboundDocument.mock.calls[0][0].lines[0]).toMatchObject({
+      quantity: 2,
+      pallets: 1,
+      pickAllocations: [{ allocatedQty: 2, pallets: 0, inventoryPalletsUsed: 0, startingPallets: 1, remainingPallets: 1 }]
+    });
+  });
+
   it("hydrates an existing allocation and preserves its declared pallets as inventory pallets used", async () => {
     const draft = createOutboundDocument({
       id: 42,

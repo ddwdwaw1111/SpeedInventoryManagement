@@ -77,6 +77,7 @@ import type {
   UserRole
 } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
+import { ExportLoadingScreen } from "./ExportLoadingScreen";
 import { InlineLoadingIndicator } from "./InlineLoadingIndicator";
 import { WorkspacePanelHeader, WorkspaceTableEmptyState } from "./WorkspacePanelChrome";
 
@@ -305,7 +306,7 @@ export function BillingPage({
   }, [customerId]);
 
   const isRefreshing = busyActionKey === "refresh";
-  const isPreviewPdfBusy = busyActionKey?.startsWith("preview-pdf-") ?? false;
+  const isPreviewPdfBusy = busyActionKey === "preview-pdf";
   const disableHeaderActions = isCreatingInvoice || busyActionKey !== null;
 
   async function runBusyAction<T>(actionKey: string, action: () => Promise<T> | T) {
@@ -558,8 +559,13 @@ export function BillingPage({
 
   async function handleDownloadPdfWithFeedback() {
     setExportMenuAnchor(null);
-    await runBusyAction("preview-pdf", () => {
-      return handleDownloadPdf();
+    await runBusyAction("preview-pdf", async () => {
+      try {
+        setErrorMessage("");
+        await handleDownloadPdf();
+      } catch (error) {
+        setErrorMessage(getErrorMessage(error, t("billingPdfExportError")));
+      }
     });
   }
 
@@ -1390,6 +1396,7 @@ export function BillingPage({
         onClose={() => setIsExportDialogOpen(false)}
         onExport={handleExportExcel}
       />
+      <ExportLoadingScreen open={isPreviewPdfBusy} />
       <Drawer
         anchor="right"
         open={isRateDrawerOpen}
