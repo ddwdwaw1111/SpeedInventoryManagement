@@ -50,28 +50,12 @@ export function buildBillingContainerInvoiceItems(
     amount: statement.outboundAmount
   });
 
-  const storageDiscount = roundCurrency(Math.abs(statement.storageDiscountAmount));
-  const storageGross = roundCurrency(
-    statement.storageGrossAmount !== 0
-      ? statement.storageGrossAmount
-      : statement.storageAmount + storageDiscount
-  );
   addCharge(items, {
     item: "STORAGE",
     description: `${invoice.periodStart} to ${invoice.periodEnd} | ${formatQuantity(statement.billablePalletDays)} billable pallet-days`,
     quantity: statement.billablePalletDays,
-    amount: storageGross
+    amount: statement.storageAmount
   });
-  if (storageDiscount !== 0) {
-    items.push({
-      item: "DISCOUNT",
-      description: "Storage discount applied to this container",
-      quantity: 1,
-      rate: -storageDiscount,
-      amount: -storageDiscount,
-      isDiscount: true
-    });
-  }
   addCharge(items, {
     item: statement.containerNo ? "ADJUSTMENT" : "INVOICE ADJUSTMENT",
     description: statement.containerNo ? "Container-level adjustment" : "Invoice-level adjustment",

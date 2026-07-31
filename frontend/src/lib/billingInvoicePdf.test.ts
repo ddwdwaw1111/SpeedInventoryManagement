@@ -687,11 +687,11 @@ describe("buildBillingContainerReconciliationPdfDefinition", () => {
     const storageRow = feeRows.find((row: Array<{ text: string }>) => row[0]?.text === "STORAGE");
     expect(storageRow[1].text).toContain("133 billable pallet-days");
     expect(storageRow[2].text).toBe("133");
-    expect(storageRow[3].text).toBe("$1.05263158");
-    expect(Math.round(133 * Number(storageRow[3].text.slice(1)) * 100) / 100).toBe(140);
-    expect(storageRow[4].text).toBe("$140.00");
+    expect(storageRow[3].text).toBe("$1.00");
+    expect(Math.round(133 * Number(storageRow[3].text.slice(1)) * 100) / 100).toBe(133);
+    expect(storageRow[4].text).toBe("$133.00");
     const discountRow = feeRows.find((row: Array<{ text: string }>) => row[0]?.text === "DISCOUNT");
-    expect(discountRow[4].text).toBe("-$7.00");
+    expect(discountRow).toBeUndefined();
     expect(feeRows.at(-1)[4].text).toBe("$133.00");
 
     const serialized = JSON.stringify(content);
