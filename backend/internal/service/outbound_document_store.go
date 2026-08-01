@@ -1958,10 +1958,10 @@ func (s *Store) ensureOutboundAutoTransferCanBeRolledBackTx(
 			containerNo := normalizeContainerNo(allocation.ContainerNo)
 			sourceLocation := firstNonEmpty(strings.TrimSpace(allocation.SourceLocationName), fmt.Sprintf("warehouse %d", allocation.SourceLocationID))
 			sourceSection := fallbackSection(allocation.SourceStorageSection)
-			sku := firstNonEmpty(strings.TrimSpace(lineRow.SKUSnapshot), fmt.Sprintf("SKU ID %d", lineRow.SKUMasterID))
+			sku := firstNonEmpty(strings.TrimSpace(lineRow.SKUSnapshot), fmt.Sprintf("UPC ID %d", lineRow.SKUMasterID))
 			if allocation.SourceTransferID <= 0 {
 				return fmt.Errorf(
-					"%w: cannot delete %s because the automatic transfer provenance for container %s / SKU %s from %s, section %s is incomplete; correct this shipment manually",
+					"%w: cannot delete %s because the automatic transfer provenance for container %s / UPC %s from %s, section %s is incomplete; correct this shipment manually",
 					ErrInvalidInput,
 					reference,
 					containerNo,
@@ -1992,7 +1992,7 @@ func (s *Store) ensureOutboundAutoTransferCanBeRolledBackTx(
 			).Scan(&sourceInventoryItemID); err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
 					return fmt.Errorf(
-						"%w: cannot delete %s because the original balance for container %s / SKU %s at %s, section %s is missing; correct this shipment manually",
+						"%w: cannot delete %s because the original balance for container %s / UPC %s at %s, section %s is missing; correct this shipment manually",
 						ErrInvalidInput,
 						reference,
 						containerNo,
@@ -2030,7 +2030,7 @@ func (s *Store) ensureOutboundAutoTransferCanBeRolledBackTx(
 			}
 			if !originalTransferOutLedgerID.Valid || originalTransferOutLedgerID.Int64 <= 0 {
 				return fmt.Errorf(
-					"%w: cannot delete %s because its automatic transfer record for container %s / SKU %s from %s, section %s is missing; correct this shipment manually",
+					"%w: cannot delete %s because its automatic transfer record for container %s / UPC %s from %s, section %s is missing; correct this shipment manually",
 					ErrInvalidInput,
 					reference,
 					containerNo,
@@ -2064,7 +2064,7 @@ func (s *Store) ensureOutboundAutoTransferCanBeRolledBackTx(
 			}
 			if hasLaterActivity != 0 {
 				return fmt.Errorf(
-					"%w: cannot delete %s because container %s / SKU %s at %s, section %s has later inventory activity after its automatic transfer; reverse or correct the later activity first",
+					"%w: cannot delete %s because container %s / UPC %s at %s, section %s has later inventory activity after its automatic transfer; reverse or correct the later activity first",
 					ErrInvalidInput,
 					reference,
 					containerNo,
@@ -3680,7 +3680,7 @@ func validateOutboundDocumentInput(input CreateOutboundDocumentInput) error {
 		case line.LocationID <= 0:
 			return fmt.Errorf("%w: warehouse is required", ErrInvalidInput)
 		case line.SKUMasterID <= 0:
-			return fmt.Errorf("%w: SKU is required", ErrInvalidInput)
+			return fmt.Errorf("%w: UPC is required", ErrInvalidInput)
 		case line.PlannedQuantity < 0 || line.ActualQuantity < 0:
 			return fmt.Errorf("%w: planned and actual outbound quantities cannot be negative", ErrInvalidInput)
 		case line.PlannedQuantity == 0 && line.ActualQuantity == 0:

@@ -160,7 +160,7 @@ const LABELS = {
   warehouse: "Warehouse",
   remarks: "Remarks",
   warehouseCount: "Warehouses",
-  sku: "SKU",
+  sku: "UPC",
   section: "Section",
   containerNo: "Container No.",
   qty: "Qty",

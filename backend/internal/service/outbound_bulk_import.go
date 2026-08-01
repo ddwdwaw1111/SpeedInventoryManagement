@@ -587,7 +587,7 @@ func canonicalOutboundBulkHeader(value string) string {
 		"WAREHOUSE":     outboundBulkWarehouse, "LOCATION": outboundBulkWarehouse,
 		"SOURCECONTAINER": outboundBulkSourceContainer, "CONTAINERNO": outboundBulkSourceContainer,
 		"STORAGESECTION": outboundBulkStorageSection, "SECTION": outboundBulkStorageSection,
-		"SKU": outboundBulkSKU, "ITEMCODE": outboundBulkItemNumber, "ITEMNUMBER": outboundBulkItemNumber,
+		"SKU": outboundBulkSKU, "UPC": outboundBulkSKU, "ITEMCODE": outboundBulkItemNumber, "ITEMNUMBER": outboundBulkItemNumber,
 		"PLANNEDQTY": outboundBulkPlannedQuantity, "PLANNEDQUANTITY": outboundBulkPlannedQuantity,
 		"ACTUALQTY": outboundBulkQuantity, "ACTUALQUANTITY": outboundBulkQuantity,
 		"QTY": outboundBulkQuantity, "QUANTITY": outboundBulkQuantity,
@@ -981,9 +981,9 @@ func resolveOutboundBulkMaster(
 		return skuMaster, "", ""
 	}
 	if sku == "" {
-		return SKUMaster{}, "INVALID_SKU", "SKU is required; Item Code is reference-only."
+		return SKUMaster{}, "INVALID_SKU", "UPC is required; Item Code is reference-only."
 	}
-	return SKUMaster{}, "INVALID_SKU", "SKU does not exist for this customer."
+	return SKUMaster{}, "INVALID_SKU", "UPC does not exist for this customer."
 }
 
 type outboundBulkSelectedAllocation struct {
@@ -995,7 +995,7 @@ func outboundBulkInsufficientStockIssue(line OutboundBulkImportLinePreview, avai
 	requestedQuantity := outboundBulkFulfillmentQuantity(line)
 	issue := outboundBulkIssue(
 		"INSUFFICIENT_STOCK",
-		fmt.Sprintf("SKU %s has %d CTN available in the selected source scope, but this row requests %d CTN.", line.SKU, availableQty, requestedQuantity),
+		fmt.Sprintf("UPC %s has %d CTN available in the selected source scope, but this row requests %d CTN.", line.SKU, availableQty, requestedQuantity),
 		line.RowNumber,
 		outboundBulkQuantity,
 		fmt.Sprint(requestedQuantity),
@@ -1012,7 +1012,7 @@ func outboundBulkInsufficientStockIssue(line OutboundBulkImportLinePreview, avai
 func outboundBulkInsufficientPalletsIssue(line OutboundBulkImportLinePreview, availablePallets int) OutboundBulkImportIssue {
 	issue := outboundBulkIssue(
 		"INSUFFICIENT_INVENTORY_PALLETS",
-		fmt.Sprintf("SKU %s can deduct at most %d inventory pallets for this row after earlier workbook rows, but this row requests %d.", line.SKU, availablePallets, line.InventoryPallets),
+		fmt.Sprintf("UPC %s can deduct at most %d inventory pallets for this row after earlier workbook rows, but this row requests %d.", line.SKU, availablePallets, line.InventoryPallets),
 		line.RowNumber,
 		outboundBulkInventoryPallets,
 		fmt.Sprint(line.InventoryPallets),

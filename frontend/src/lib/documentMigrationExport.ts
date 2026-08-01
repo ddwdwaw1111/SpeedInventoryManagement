@@ -273,7 +273,7 @@ function inboundBulkReimportIssue(document: InboundDocument) {
   if (!document.locationName.trim()) return "Warehouse is empty.";
   if (!inboundBusinessDate(document)) return "Actual Arrival Date cannot be derived.";
   for (const line of document.lines) {
-    if (!line.sku.trim()) return `Inbound line ${line.id} has no SKU.`;
+    if (!line.sku.trim()) return `Inbound line ${line.id} has no UPC.`;
     if (line.expectedQty < 0 || line.receivedQty < 0 || line.pallets < 0 || line.unitsPerPallet < 0) {
       return `Inbound line ${line.id} contains a negative quantity or pallet value.`;
     }
@@ -289,7 +289,7 @@ function outboundBulkReimportIssue(document: OutboundDocument) {
   for (const line of document.lines) {
     const actualQuantity = Math.max(0, line.actualQuantity ?? line.quantity);
     const plannedQuantity = Math.max(0, line.plannedQuantity ?? actualQuantity);
-    if (!line.sku.trim()) return `Outbound line ${line.id} has no SKU.`;
+    if (!line.sku.trim()) return `Outbound line ${line.id} has no UPC.`;
     if (actualQuantity === 0 && plannedQuantity === 0) {
       return `Outbound line ${line.id} has neither Planned Qty nor Actual Qty.`;
     }
@@ -463,7 +463,7 @@ function buildReadme(summary: DocumentMigrationPackageSummary) {
     `Skipped: ${summary.skippedDocuments} document(s). See skipped-documents.csv when present.`,
     "",
     "Import order",
-    "1. Configure matching customers, warehouses, storage sections, and SKU master data in the destination environment.",
+    "1. Configure matching customers, warehouses, storage sections, and UPC master data in the destination environment.",
     "2. Import every workbook under inbound/ first. In Bulk Import, select the customer named in manifest.csv.",
     "3. Workbooks marked confirmed create drafts; review and batch-confirm each workbook before moving to the next one. Leave workbooks marked draft unconfirmed.",
     "4. After all confirmed inbound receipts are posted, import outbound/ workbooks in file/date order and confirm those marked confirmed before continuing.",

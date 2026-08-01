@@ -24,6 +24,12 @@ func (s *Store) ListSKUMasters(ctx context.Context, search string, customerIDs .
 			sm.unit,
 			sm.reorder_level,
 			sm.default_units_per_pallet,
+			sm.carton_gross_weight_kg,
+			sm.carton_length_cm,
+			sm.carton_width_cm,
+			sm.carton_height_cm,
+			sm.outbound_cartons_per_layer,
+			sm.outbound_layer_count,
 			sm.created_at,
 			sm.updated_at
 		FROM sku_master sm
@@ -65,9 +71,15 @@ func (s *Store) CreateSKUMaster(ctx context.Context, input CreateSKUMasterInput)
 			description,
 			unit,
 			reorder_level,
-			default_units_per_pallet
+			default_units_per_pallet,
+			carton_gross_weight_kg,
+			carton_length_cm,
+			carton_width_cm,
+			carton_height_cm,
+			outbound_cartons_per_layer,
+			outbound_layer_count
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		nullableString(input.ItemNumber),
 		input.SKU,
@@ -77,6 +89,12 @@ func (s *Store) CreateSKUMaster(ctx context.Context, input CreateSKUMasterInput)
 		input.Unit,
 		input.ReorderLevel,
 		input.DefaultUnitsPerPallet,
+		input.CartonGrossWeightKg,
+		input.CartonLengthCm,
+		input.CartonWidthCm,
+		input.CartonHeightCm,
+		input.OutboundCartonsPerLayer,
+		input.OutboundLayerCount,
 	)
 	if err != nil {
 		return SKUMaster{}, mapDBError(fmt.Errorf("create sku master: %w", err))
@@ -107,6 +125,12 @@ func (s *Store) UpdateSKUMaster(ctx context.Context, skuMasterID int64, input Cr
 			unit = ?,
 			reorder_level = ?,
 			default_units_per_pallet = ?,
+			carton_gross_weight_kg = ?,
+			carton_length_cm = ?,
+			carton_width_cm = ?,
+			carton_height_cm = ?,
+			outbound_cartons_per_layer = ?,
+			outbound_layer_count = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`,
@@ -118,6 +142,12 @@ func (s *Store) UpdateSKUMaster(ctx context.Context, skuMasterID int64, input Cr
 		input.Unit,
 		input.ReorderLevel,
 		input.DefaultUnitsPerPallet,
+		input.CartonGrossWeightKg,
+		input.CartonLengthCm,
+		input.CartonWidthCm,
+		input.CartonHeightCm,
+		input.OutboundCartonsPerLayer,
+		input.OutboundLayerCount,
 		skuMasterID,
 	)
 	if err != nil {
@@ -143,7 +173,7 @@ func (s *Store) DeleteSKUMaster(ctx context.Context, skuMasterID int64) error {
 		return fmt.Errorf("count linked projection rows for sku master delete: %w", err)
 	}
 	if linkedInventoryCount > 0 {
-		return fmt.Errorf("%w: sku master is linked to inventory rows", ErrInvalidInput)
+		return fmt.Errorf("%w: UPC master is linked to inventory rows", ErrInvalidInput)
 	}
 
 	result, err := s.db.ExecContext(ctx, `DELETE FROM sku_master WHERE id = ?`, skuMasterID)
@@ -175,6 +205,12 @@ func (s *Store) getSKUMaster(ctx context.Context, skuMasterID int64) (SKUMaster,
 			unit,
 			reorder_level,
 			default_units_per_pallet,
+			carton_gross_weight_kg,
+			carton_length_cm,
+			carton_width_cm,
+			carton_height_cm,
+			outbound_cartons_per_layer,
+			outbound_layer_count,
 			created_at,
 			updated_at
 		FROM sku_master
@@ -196,7 +232,6 @@ func sanitizeSKUMasterInput(input CreateSKUMasterInput) CreateSKUMasterInput {
 	input.Category = strings.TrimSpace(input.Category)
 	input.Description = strings.TrimSpace(input.Description)
 	input.Unit = strings.TrimSpace(strings.ToLower(input.Unit))
-
 	if input.Name == "" {
 		input.Name = input.Description
 	}
@@ -213,13 +248,21 @@ func sanitizeSKUMasterInput(input CreateSKUMasterInput) CreateSKUMasterInput {
 func validateSKUMasterInput(input CreateSKUMasterInput) error {
 	switch {
 	case input.SKU == "":
-		return fmt.Errorf("%w: sku is required", ErrInvalidInput)
+		return fmt.Errorf("%w: UPC is required", ErrInvalidInput)
 	case input.Description == "":
 		return fmt.Errorf("%w: description is required", ErrInvalidInput)
 	case input.ReorderLevel < 0:
 		return fmt.Errorf("%w: reorder level cannot be negative", ErrInvalidInput)
 	case input.DefaultUnitsPerPallet < 0:
 		return fmt.Errorf("%w: default units per pallet cannot be negative", ErrInvalidInput)
+	case input.CartonGrossWeightKg < 0:
+		return fmt.Errorf("%w: carton gross weight cannot be negative", ErrInvalidInput)
+	case input.CartonLengthCm < 0 || input.CartonWidthCm < 0 || input.CartonHeightCm < 0:
+		return fmt.Errorf("%w: carton dimensions cannot be negative", ErrInvalidInput)
+	case input.OutboundCartonsPerLayer < 0:
+		return fmt.Errorf("%w: outbound cartons per layer cannot be negative", ErrInvalidInput)
+	case input.OutboundLayerCount < 0:
+		return fmt.Errorf("%w: outbound layer count cannot be negative", ErrInvalidInput)
 	default:
 		return nil
 	}

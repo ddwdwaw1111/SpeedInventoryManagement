@@ -936,7 +936,7 @@ func validateInventoryTransferInput(input CreateInventoryTransferInput) error {
 		case line.LocationID <= 0:
 			return fmt.Errorf("%w: source storage is required", ErrInvalidInput)
 		case line.SKUMasterID <= 0:
-			return fmt.Errorf("%w: sku is required", ErrInvalidInput)
+			return fmt.Errorf("%w: UPC is required", ErrInvalidInput)
 		case line.Quantity < 0:
 			return fmt.Errorf("%w: transfer quantity cannot be negative", ErrInvalidInput)
 		case line.SourcePallets < 0 || line.DestinationPallets < 0:

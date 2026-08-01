@@ -7,7 +7,7 @@ export const INBOUND_BULK_IMPORT_TEMPLATE_COLUMNS: ExcelExportColumn[] = [
   { key: "actualArrivalDate", label: "Actual Arrival Date" },
   { key: "containerType", label: "Container Type" },
   { key: "handlingMode", label: "Handling Mode" },
-  { key: "sku", label: "SKU" },
+  { key: "sku", label: "UPC" },
   { key: "itemNumber", label: "Item Code" },
   { key: "description", label: "Description" },
   { key: "expectedQty", label: "Expected Qty", numberFormat: "number" },
@@ -56,7 +56,7 @@ export function buildInboundBulkImportSampleRows(locations: Location[], referenc
       actualArrivalDate: firstReceiptDate,
       containerType: "NORMAL",
       handlingMode: "PALLETIZED",
-      sku: `SAMPLE-SKU-A1-${token}`,
+      sku: `SAMPLE-UPC-A1-${token}`,
       itemNumber: "",
       description: "Sample cartons A1",
       expectedQty: 100,
@@ -64,7 +64,7 @@ export function buildInboundBulkImportSampleRows(locations: Location[], referenc
       pallets: 4,
       unitsPerPallet: 24,
       storageSection: firstSection,
-      lineNote: "First SKU line in receipt A"
+      lineNote: "First UPC line in receipt A"
     },
     {
       containerNo: `SAMPLE-CONT-A-${token}`,
@@ -72,7 +72,7 @@ export function buildInboundBulkImportSampleRows(locations: Location[], referenc
       actualArrivalDate: firstReceiptDate,
       containerType: "NORMAL",
       handlingMode: "PALLETIZED",
-      sku: `SAMPLE-SKU-A2-${token}`,
+      sku: `SAMPLE-UPC-A2-${token}`,
       itemNumber: "",
       description: "Sample cartons A2",
       expectedQty: 60,
@@ -80,7 +80,7 @@ export function buildInboundBulkImportSampleRows(locations: Location[], referenc
       pallets: 2,
       unitsPerPallet: 30,
       storageSection: firstSection,
-      lineNote: "Second SKU line grouped into receipt A"
+      lineNote: "Second UPC line grouped into receipt A"
     },
     {
       containerNo: `SAMPLE-CONT-B-${token}`,
@@ -88,7 +88,7 @@ export function buildInboundBulkImportSampleRows(locations: Location[], referenc
       actualArrivalDate: secondReceiptDate,
       containerType: "NORMAL",
       handlingMode: "PALLETIZED",
-      sku: `SAMPLE-SKU-B1-${token}`,
+      sku: `SAMPLE-UPC-B1-${token}`,
       itemNumber: "",
       description: "Sample cartons B1",
       expectedQty: 48,

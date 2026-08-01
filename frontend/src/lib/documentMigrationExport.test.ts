@@ -218,7 +218,7 @@ describe("document migration export", () => {
     const outboundWorkbook = unzipSync(files[outboundWorkbookName!]);
     const inboundSheet = strFromU8(inboundWorkbook["xl/worksheets/sheet1.xml"]);
     const outboundSheet = strFromU8(outboundWorkbook["xl/worksheets/sheet1.xml"]);
-    for (const header of ["Container No", "Warehouse", "Actual Arrival Date", "SKU", "Received Qty", "Pallets", "CTN per Pallet"]) {
+    for (const header of ["Container No", "Warehouse", "Actual Arrival Date", "UPC", "Received Qty", "Pallets", "CTN per Pallet"]) {
       expect(inboundSheet).toContain(`<t>${header}</t>`);
     }
     for (const header of ["Picking Order No", "Source Container", "Actual Qty", "Inventory Pallets Used", "Outbound Pallets"]) {

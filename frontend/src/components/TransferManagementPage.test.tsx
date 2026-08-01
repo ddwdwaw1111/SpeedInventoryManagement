@@ -141,7 +141,7 @@ describe("TransferManagementPage", () => {
     expect(onRefresh).toHaveBeenCalled();
   });
 
-  it("submits only selected SKU quantities in partial-container mode", async () => {
+  it("submits only selected UPC quantities in partial-container mode", async () => {
     renderPage();
     const dialog = openTransferDialog();
     const containerSelect = within(dialog).getByLabelText("Container No.") as HTMLSelectElement;
@@ -150,7 +150,7 @@ describe("TransferManagementPage", () => {
     fireEvent.change(within(dialog).getByLabelText("Destination Warehouse"), { target: { value: "2" } });
 
     const firstQty = within(dialog).getByLabelText("Transfer Qty - 608333 - TEMP");
-    const firstPallets = within(dialog).getByLabelText("Transfer Pallets - 608333 - TEMP");
+    const firstPallets = within(dialog).getByLabelText("Source Inventory Pallets Released - 608333 - TEMP");
     const secondQty = within(dialog).getByLabelText("Transfer Qty - SKU-B - A");
     expect(firstQty).toHaveValue(null);
     expect(firstPallets).toHaveValue(null);
@@ -165,7 +165,8 @@ describe("TransferManagementPage", () => {
       expect.objectContaining({
         skuMasterId: 1,
         quantity: 25,
-        pallets: 3,
+        sourcePallets: 3,
+        destinationPallets: 0,
         toLocationId: 2
       })
     ]);
@@ -218,7 +219,7 @@ describe("TransferManagementPage", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: /^Partial Container/ }));
     fireEvent.change(within(dialog).getByLabelText("Destination Warehouse"), { target: { value: "2" } });
 
-    const palletInput = within(dialog).getByLabelText("Transfer Pallets - 608333 - TEMP");
+    const palletInput = within(dialog).getByLabelText("Source Inventory Pallets Released - 608333 - TEMP");
     expect(palletInput).toBeEnabled();
     fireEvent.change(palletInput, { target: { value: "1" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Post Transfer" }));
@@ -227,7 +228,8 @@ describe("TransferManagementPage", () => {
     expect(createInventoryTransfer.mock.calls[0][0].lines).toEqual([
       expect.objectContaining({
         quantity: 0,
-        pallets: 1,
+        sourcePallets: 1,
+        destinationPallets: 0,
         toLocationId: 2
       })
     ]);

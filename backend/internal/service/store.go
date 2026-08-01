@@ -165,28 +165,40 @@ type CreateCustomerInput struct {
 }
 
 type SKUMaster struct {
-	ID                    int64     `db:"id" json:"id"`
-	ItemNumber            string    `db:"item_number" json:"itemNumber"`
-	SKU                   string    `db:"sku" json:"sku"`
-	Name                  string    `db:"name" json:"name"`
-	Category              string    `db:"category" json:"category"`
-	Description           string    `db:"description" json:"description"`
-	Unit                  string    `db:"unit" json:"unit"`
-	ReorderLevel          int       `db:"reorder_level" json:"reorderLevel"`
-	DefaultUnitsPerPallet int       `db:"default_units_per_pallet" json:"defaultUnitsPerPallet"`
-	CreatedAt             time.Time `db:"created_at" json:"createdAt"`
-	UpdatedAt             time.Time `db:"updated_at" json:"updatedAt"`
+	ID                      int64     `db:"id" json:"id"`
+	ItemNumber              string    `db:"item_number" json:"itemNumber"`
+	SKU                     string    `db:"sku" json:"sku"`
+	Name                    string    `db:"name" json:"name"`
+	Category                string    `db:"category" json:"category"`
+	Description             string    `db:"description" json:"description"`
+	Unit                    string    `db:"unit" json:"unit"`
+	ReorderLevel            int       `db:"reorder_level" json:"reorderLevel"`
+	DefaultUnitsPerPallet   int       `db:"default_units_per_pallet" json:"defaultUnitsPerPallet"`
+	CartonGrossWeightKg     float64   `db:"carton_gross_weight_kg" json:"cartonGrossWeightKg"`
+	CartonLengthCm          float64   `db:"carton_length_cm" json:"cartonLengthCm"`
+	CartonWidthCm           float64   `db:"carton_width_cm" json:"cartonWidthCm"`
+	CartonHeightCm          float64   `db:"carton_height_cm" json:"cartonHeightCm"`
+	OutboundCartonsPerLayer int       `db:"outbound_cartons_per_layer" json:"outboundCartonsPerLayer"`
+	OutboundLayerCount      int       `db:"outbound_layer_count" json:"outboundLayerCount"`
+	CreatedAt               time.Time `db:"created_at" json:"createdAt"`
+	UpdatedAt               time.Time `db:"updated_at" json:"updatedAt"`
 }
 
 type CreateSKUMasterInput struct {
-	ItemNumber            string `json:"itemNumber"`
-	SKU                   string `json:"sku"`
-	Name                  string `json:"name"`
-	Category              string `json:"category"`
-	Description           string `json:"description"`
-	Unit                  string `json:"unit"`
-	ReorderLevel          int    `json:"reorderLevel"`
-	DefaultUnitsPerPallet int    `json:"defaultUnitsPerPallet"`
+	ItemNumber              string  `json:"itemNumber"`
+	SKU                     string  `json:"sku"`
+	Name                    string  `json:"name"`
+	Category                string  `json:"category"`
+	Description             string  `json:"description"`
+	Unit                    string  `json:"unit"`
+	ReorderLevel            int     `json:"reorderLevel"`
+	DefaultUnitsPerPallet   int     `json:"defaultUnitsPerPallet"`
+	CartonGrossWeightKg     float64 `json:"cartonGrossWeightKg"`
+	CartonLengthCm          float64 `json:"cartonLengthCm"`
+	CartonWidthCm           float64 `json:"cartonWidthCm"`
+	CartonHeightCm          float64 `json:"cartonHeightCm"`
+	OutboundCartonsPerLayer int     `json:"outboundCartonsPerLayer"`
+	OutboundLayerCount      int     `json:"outboundLayerCount"`
 }
 
 type Item struct {
@@ -1250,7 +1262,7 @@ func sanitizeItemInput(input CreateItemInput) CreateItemInput {
 func validateItemInput(input CreateItemInput) error {
 	switch {
 	case input.SKU == "":
-		return fmt.Errorf("%w: sku is required", ErrInvalidInput)
+		return fmt.Errorf("%w: UPC is required", ErrInvalidInput)
 	case input.Description == "":
 		return fmt.Errorf("%w: description is required", ErrInvalidInput)
 	case input.Quantity < 0:
@@ -1449,7 +1461,7 @@ func (s *Store) ensureSKUMaster(ctx context.Context, tx *sql.Tx, input CreateIte
 		return 0, fmt.Errorf("resolve sku master id: %w", err)
 	}
 	if skuMasterID <= 0 {
-		return 0, fmt.Errorf("%w: sku master id is invalid", ErrInvalidInput)
+		return 0, fmt.Errorf("%w: UPC master id is invalid", ErrInvalidInput)
 	}
 	if err := s.upsertCustomerItemCatalogTx(ctx, tx, input.CustomerID, skuMasterID, input.ItemNumber); err != nil {
 		return 0, err
@@ -1460,7 +1472,7 @@ func (s *Store) ensureSKUMaster(ctx context.Context, tx *sql.Tx, input CreateIte
 
 func (s *Store) upsertCustomerItemCatalogTx(ctx context.Context, tx *sql.Tx, customerID int64, skuMasterID int64, itemNumber string) error {
 	if customerID <= 0 || skuMasterID <= 0 {
-		return fmt.Errorf("%w: customer and SKU are required for item catalog mapping", ErrInvalidInput)
+		return fmt.Errorf("%w: customer and UPC are required for item catalog mapping", ErrInvalidInput)
 	}
 	itemNumber = strings.ToUpper(strings.TrimSpace(itemNumber))
 
@@ -1475,7 +1487,7 @@ func (s *Store) upsertCustomerItemCatalogTx(ctx context.Context, tx *sql.Tx, cus
 		return fmt.Errorf("lock customer item catalog mapping: %w", err)
 	}
 	if existingItemNumber != "" && itemNumber != "" && !strings.EqualFold(existingItemNumber, itemNumber) {
-		return fmt.Errorf("%w: this customer SKU already uses item code %s", ErrInvalidInput, existingItemNumber)
+		return fmt.Errorf("%w: this customer UPC already uses item code %s", ErrInvalidInput, existingItemNumber)
 	}
 
 	if itemNumber != "" {
@@ -1494,7 +1506,7 @@ func (s *Store) upsertCustomerItemCatalogTx(ctx context.Context, tx *sql.Tx, cus
 			return fmt.Errorf("lock customer item code %s: %w", itemNumber, err)
 		}
 		if conflictingSKU != "" {
-			return fmt.Errorf("%w: item code %s already belongs to SKU %s for this customer", ErrInvalidInput, itemNumber, conflictingSKU)
+			return fmt.Errorf("%w: item code %s already belongs to UPC %s for this customer", ErrInvalidInput, itemNumber, conflictingSKU)
 		}
 	}
 

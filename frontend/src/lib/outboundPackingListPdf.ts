@@ -144,7 +144,7 @@ const LABELS = {
   remarks: "Remarks",
   sequence: "SN",
   itemNumber: "Item #",
-  sku: "SKU",
+  sku: "UPC",
   description: "Item Description",
   qty: "Ship Qty",
   pallets: "Pallets",

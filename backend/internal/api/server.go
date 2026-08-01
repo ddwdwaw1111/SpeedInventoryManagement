@@ -279,14 +279,20 @@ func (s *Server) handleCreateSKUMaster(c *gin.Context) {
 		return
 	}
 
-	s.writeAuditLog(c, "CREATE", "sku_master", skuMaster.ID, skuMaster.SKU, "Created SKU master", map[string]any{
-		"itemNumber":            skuMaster.ItemNumber,
-		"sku":                   skuMaster.SKU,
-		"name":                  skuMaster.Name,
-		"category":              skuMaster.Category,
-		"reorderLevel":          skuMaster.ReorderLevel,
-		"defaultUnitsPerPallet": skuMaster.DefaultUnitsPerPallet,
-		"unit":                  skuMaster.Unit,
+	s.writeAuditLog(c, "CREATE", "sku_master", skuMaster.ID, skuMaster.SKU, "Created UPC master", map[string]any{
+		"itemNumber":              skuMaster.ItemNumber,
+		"sku":                     skuMaster.SKU,
+		"name":                    skuMaster.Name,
+		"category":                skuMaster.Category,
+		"reorderLevel":            skuMaster.ReorderLevel,
+		"defaultUnitsPerPallet":   skuMaster.DefaultUnitsPerPallet,
+		"unit":                    skuMaster.Unit,
+		"cartonGrossWeightKg":     skuMaster.CartonGrossWeightKg,
+		"cartonLengthCm":          skuMaster.CartonLengthCm,
+		"cartonWidthCm":           skuMaster.CartonWidthCm,
+		"cartonHeightCm":          skuMaster.CartonHeightCm,
+		"outboundCartonsPerLayer": skuMaster.OutboundCartonsPerLayer,
+		"outboundLayerCount":      skuMaster.OutboundLayerCount,
 	})
 
 	writeJSON(c, http.StatusCreated, skuMaster)
@@ -311,14 +317,20 @@ func (s *Server) handleUpdateSKUMaster(c *gin.Context) {
 		return
 	}
 
-	s.writeAuditLog(c, "UPDATE", "sku_master", skuMaster.ID, skuMaster.SKU, "Updated SKU master", map[string]any{
-		"itemNumber":            skuMaster.ItemNumber,
-		"sku":                   skuMaster.SKU,
-		"name":                  skuMaster.Name,
-		"category":              skuMaster.Category,
-		"reorderLevel":          skuMaster.ReorderLevel,
-		"defaultUnitsPerPallet": skuMaster.DefaultUnitsPerPallet,
-		"unit":                  skuMaster.Unit,
+	s.writeAuditLog(c, "UPDATE", "sku_master", skuMaster.ID, skuMaster.SKU, "Updated UPC master", map[string]any{
+		"itemNumber":              skuMaster.ItemNumber,
+		"sku":                     skuMaster.SKU,
+		"name":                    skuMaster.Name,
+		"category":                skuMaster.Category,
+		"reorderLevel":            skuMaster.ReorderLevel,
+		"defaultUnitsPerPallet":   skuMaster.DefaultUnitsPerPallet,
+		"unit":                    skuMaster.Unit,
+		"cartonGrossWeightKg":     skuMaster.CartonGrossWeightKg,
+		"cartonLengthCm":          skuMaster.CartonLengthCm,
+		"cartonWidthCm":           skuMaster.CartonWidthCm,
+		"cartonHeightCm":          skuMaster.CartonHeightCm,
+		"outboundCartonsPerLayer": skuMaster.OutboundCartonsPerLayer,
+		"outboundLayerCount":      skuMaster.OutboundLayerCount,
 	})
 
 	writeJSON(c, http.StatusOK, skuMaster)
@@ -336,7 +348,7 @@ func (s *Server) handleDeleteSKUMaster(c *gin.Context) {
 		return
 	}
 
-	s.writeAuditLog(c, "DELETE", "sku_master", skuMasterID, fmt.Sprintf("sku_master:%d", skuMasterID), "Deleted SKU master", nil)
+	s.writeAuditLog(c, "DELETE", "sku_master", skuMasterID, fmt.Sprintf("sku_master:%d", skuMasterID), "Deleted UPC master", nil)
 
 	c.Status(http.StatusNoContent)
 }

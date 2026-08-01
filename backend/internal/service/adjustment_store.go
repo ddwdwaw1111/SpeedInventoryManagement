@@ -626,7 +626,7 @@ func validateInventoryAdjustmentInput(input CreateInventoryAdjustmentInput) erro
 		case line.LocationID <= 0:
 			return fmt.Errorf("%w: storage is required", ErrInvalidInput)
 		case line.SKUMasterID <= 0:
-			return fmt.Errorf("%w: sku is required", ErrInvalidInput)
+			return fmt.Errorf("%w: UPC is required", ErrInvalidInput)
 		case hasFinalQty != hasFinalPallets:
 			return fmt.Errorf("%w: final quantity and final pallets must be provided together", ErrInvalidInput)
 		case hasFinalQty && (line.AdjustQty != 0 || line.AdjustPallets != 0):

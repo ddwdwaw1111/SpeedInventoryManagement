@@ -92,7 +92,7 @@ describe("InventorySummaryPage", () => {
     renderWithProviders(<InventorySummaryPage {...defaultProps()} />);
 
     expect(screen.getByRole("heading", { name: "Inventory Summary" })).toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/SKU, description/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/UPC, description/i)).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Customer" })).toBeInTheDocument();
   });
 
@@ -220,7 +220,7 @@ describe("InventorySummaryPage", () => {
       />
     );
 
-    fireEvent.change(screen.getByPlaceholderText(/SKU, description/i), { target: { value: "mango" } });
+    fireEvent.change(screen.getByPlaceholderText(/UPC, description/i), { target: { value: "mango" } });
 
     await waitFor(() => {
       const grid = screen.getByTestId("mock-data-grid");
@@ -243,7 +243,7 @@ describe("InventorySummaryPage", () => {
     );
 
     // Matches by container number
-    fireEvent.change(screen.getByPlaceholderText(/SKU, description/i), { target: { value: "CONT-A" } });
+    fireEvent.change(screen.getByPlaceholderText(/UPC, description/i), { target: { value: "CONT-A" } });
 
     await waitFor(() => {
       const grid = screen.getByTestId("mock-data-grid");
@@ -259,7 +259,7 @@ describe("InventorySummaryPage", () => {
       />
     );
 
-    fireEvent.change(screen.getByPlaceholderText(/SKU, description/i), { target: { value: "ZZZZZZZ" } });
+    fireEvent.change(screen.getByPlaceholderText(/UPC, description/i), { target: { value: "ZZZZZZZ" } });
 
     await waitFor(() => {
       const grid = screen.getByTestId("mock-data-grid");
@@ -340,7 +340,7 @@ describe("InventorySummaryPage", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText(/SKU, description/i)).toHaveValue("WIDGET");
+      expect(screen.getByPlaceholderText(/UPC, description/i)).toHaveValue("WIDGET");
     });
     // Context is consumed once â€” should not be set any more
     expect(window.sessionStorage.getItem("sim-inventory-summary-context")).toBeNull();

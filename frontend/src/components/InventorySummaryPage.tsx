@@ -87,7 +87,7 @@ const INVENTORY_SUMMARY_COLUMN_ORDER_PREFERENCE_KEY = "inventory-summary.column-
 const INVENTORY_SUMMARY_EXPORT_TITLE = "Inventory Summary";
 const INVENTORY_SUMMARY_EXPORT_COLUMNS = [
   { key: "itemNumber", label: "Item #"},
-  { key: "sku", label: "SKU" },
+  { key: "sku", label: "UPC" },
   { key: "description", label: "Description" },
   { key: "customerName", label: "Customer" },
   { key: "onHand", label: "On Hand" },

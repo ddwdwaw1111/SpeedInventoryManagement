@@ -517,7 +517,7 @@ func validateCycleCountInput(input CreateCycleCountInput) error {
 		case line.LocationID <= 0:
 			return fmt.Errorf("%w: storage is required", ErrInvalidInput)
 		case line.SKUMasterID <= 0:
-			return fmt.Errorf("%w: sku is required", ErrInvalidInput)
+			return fmt.Errorf("%w: UPC is required", ErrInvalidInput)
 		case line.CountedQty < 0:
 			return fmt.Errorf("%w: counted quantity cannot be negative", ErrInvalidInput)
 		case line.CountedPallets < 0:

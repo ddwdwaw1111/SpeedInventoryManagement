@@ -543,7 +543,7 @@ func parsedInboundBulkDocumentFromInput(
 
 	lineRows := make([]int, len(input.Lines))
 	if len(input.Lines) == 0 {
-		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "MISSING_SKU", "At least one SKU line is required.", firstRow, bulkFieldSKU, ""))
+		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "MISSING_SKU", "At least one UPC line is required.", firstRow, bulkFieldSKU, ""))
 	}
 	for lineIndex := range input.Lines {
 		rowNumber := firstRow + lineIndex
@@ -558,7 +558,7 @@ func parsedInboundBulkDocumentFromInput(
 		line.StorageSection = fallbackSection(strings.TrimSpace(strings.ToUpper(line.StorageSection)))
 		line.LineNote = strings.TrimSpace(line.LineNote)
 		if line.SKU == "" {
-			issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "MISSING_SKU", "SKU is required.", rowNumber, bulkFieldSKU, ""))
+			issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "MISSING_SKU", "UPC is required.", rowNumber, bulkFieldSKU, ""))
 		}
 		if line.ExpectedQty < 0 {
 			issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "INVALID_EXPECTED_QTY", "Expected Qty must be a non-negative whole number.", rowNumber, bulkFieldExpectedQty, strconv.Itoa(line.ExpectedQty)))
@@ -677,7 +677,7 @@ func validateAndNormalizeInboundBulkCommitDocument(input CreateInboundDocumentIn
 	originalLineCount := len(input.Lines)
 	input = sanitizeInboundDocumentInput(input)
 	if len(input.Lines) != originalLineCount {
-		return CreateInboundDocumentInput{}, fmt.Errorf("%w: every receipt line requires a SKU", ErrInvalidInput)
+		return CreateInboundDocumentInput{}, fmt.Errorf("%w: every receipt line requires a UPC", ErrInvalidInput)
 	}
 	if input.ContainerNo == "" {
 		return CreateInboundDocumentInput{}, fmt.Errorf("%w: container number is required", ErrInvalidInput)
@@ -696,7 +696,7 @@ func validateAndNormalizeInboundBulkCommitDocument(input CreateInboundDocumentIn
 		master, skuExists := validation.skuBySKU[line.SKU]
 		if line.ItemNumber != "" {
 			if itemMaster, itemExists := validation.skuByItemNumber[line.ItemNumber]; itemExists && !strings.EqualFold(itemMaster.SKU, line.SKU) {
-				return CreateInboundDocumentInput{}, fmt.Errorf("%w: item code %s already belongs to sku %s", ErrInvalidInput, line.ItemNumber, itemMaster.SKU)
+				return CreateInboundDocumentInput{}, fmt.Errorf("%w: item code %s already belongs to UPC %s", ErrInvalidInput, line.ItemNumber, itemMaster.SKU)
 			}
 		}
 		if skuExists {
@@ -704,13 +704,13 @@ func validateAndNormalizeInboundBulkCommitDocument(input CreateInboundDocumentIn
 			if line.ItemNumber == "" {
 				line.ItemNumber = masterItemNumber
 			} else if masterItemNumber != "" && line.ItemNumber != masterItemNumber {
-				return CreateInboundDocumentInput{}, fmt.Errorf("%w: sku %s already uses item code %s", ErrInvalidInput, line.SKU, masterItemNumber)
+				return CreateInboundDocumentInput{}, fmt.Errorf("%w: UPC %s already uses item code %s", ErrInvalidInput, line.SKU, masterItemNumber)
 			}
 			if line.Description == "" {
 				line.Description = firstNonEmpty(master.Description, master.Name, master.SKU)
 			}
 		} else if line.Description == "" {
-			return CreateInboundDocumentInput{}, fmt.Errorf("%w: new sku %s requires a description", ErrInvalidInput, line.SKU)
+			return CreateInboundDocumentInput{}, fmt.Errorf("%w: new UPC %s requires a description", ErrInvalidInput, line.SKU)
 		}
 		if coalesceInboundHandlingMode(input.HandlingMode) == InboundHandlingModeSealedTransit {
 			line.Pallets = 0
@@ -864,6 +864,7 @@ func canonicalInboundBulkHeader(value string) string {
 		"CONTAINERTYPE":     bulkFieldContainerType,
 		"HANDLINGMODE":      bulkFieldHandlingMode,
 		"SKU":               bulkFieldSKU,
+		"UPC":               bulkFieldSKU,
 		"ITEMCODE":          bulkFieldItemNumber,
 		"ITEMNUMBER":        bulkFieldItemNumber,
 		"DESCRIPTION":       bulkFieldDescription,
@@ -899,7 +900,7 @@ func inboundBulkTemplateHeader(field string) string {
 		bulkFieldActualArrivalDate: "Actual Arrival Date",
 		bulkFieldContainerType:     "Container Type",
 		bulkFieldHandlingMode:      "Handling Mode",
-		bulkFieldSKU:               "SKU",
+		bulkFieldSKU:               "UPC",
 		bulkFieldItemNumber:        "Item Code",
 		bulkFieldDescription:       "Description",
 		bulkFieldExpectedQty:       "Expected Qty",
@@ -990,7 +991,7 @@ func parseInboundBulkLine(row []string, rowNumber int, columns map[string]int) (
 		LineNote:       strings.TrimSpace(inboundBulkColumnValue(row, columns, bulkFieldLineNote)),
 	}
 	if line.SKU == "" {
-		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "MISSING_SKU", "SKU is required.", rowNumber, bulkFieldSKU, ""))
+		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "MISSING_SKU", "UPC is required.", rowNumber, bulkFieldSKU, ""))
 	}
 
 	var valid bool
@@ -1117,7 +1118,7 @@ func buildInboundBulkImportPreview(
 				issue := inboundBulkIssue(
 					InboundBulkIssueError,
 					"ITEM_CODE_SKU_CONFLICT",
-					fmt.Sprintf("Item Code %s is already linked to SKU %s.", line.ItemNumber, itemMaster.SKU),
+					fmt.Sprintf("Item Code %s is already linked to UPC %s.", line.ItemNumber, itemMaster.SKU),
 					rowNumber,
 					bulkFieldItemNumber,
 					line.ItemNumber,
@@ -1135,7 +1136,7 @@ func buildInboundBulkImportPreview(
 					issue := inboundBulkIssue(
 						InboundBulkIssueError,
 						"SKU_ITEM_CODE_MISMATCH",
-						fmt.Sprintf("SKU %s already uses Item Code %s.", line.SKU, masterItemNumber),
+						fmt.Sprintf("UPC %s already uses Item Code %s.", line.SKU, masterItemNumber),
 						rowNumber,
 						bulkFieldItemNumber,
 						line.ItemNumber,
@@ -1152,7 +1153,7 @@ func buildInboundBulkImportPreview(
 					document.preview.Issues = append(document.preview.Issues, inboundBulkIssue(
 						InboundBulkIssueWarning,
 						"CTN_PER_PALLET_DEFAULT_MISMATCH",
-						fmt.Sprintf("CTN per Pallet differs from the SKU default of %d.", master.DefaultUnitsPerPallet),
+						fmt.Sprintf("CTN per Pallet differs from the UPC default of %d.", master.DefaultUnitsPerPallet),
 						rowNumber,
 						bulkFieldUnitsPerPallet,
 						strconv.Itoa(line.UnitsPerPallet),
@@ -1162,7 +1163,7 @@ func buildInboundBulkImportPreview(
 				document.preview.Issues = append(document.preview.Issues, inboundBulkIssue(
 					InboundBulkIssueError,
 					"NEW_SKU_DESCRIPTION_REQUIRED",
-					fmt.Sprintf("New SKU %s requires a description.", line.SKU),
+					fmt.Sprintf("New UPC %s requires a description.", line.SKU),
 					rowNumber,
 					bulkFieldDescription,
 					line.SKU,

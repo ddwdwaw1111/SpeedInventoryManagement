@@ -954,7 +954,7 @@ function WarehouseSceneBlock({
         <div className={`warehouse-map__label${isSelected ? " warehouse-map__label--active" : ""}`}>
           <strong>{node.title}</strong>
           <span>{node.subtitle}</span>
-          <small>{node.quantity} / {node.skuCount} SKU</small>
+          <small>{node.quantity} / {node.skuCount} UPC</small>
         </div>
       </Html>
     </group>

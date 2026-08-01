@@ -167,7 +167,7 @@ describe("buildInboundReceivingCountSheetDefinition", () => {
 
     const countTable = content.find((block) => {
       const body = (block?.table as { body?: Array<Array<{ text?: string }>> } | undefined)?.body;
-      return body?.[0]?.[0]?.text === "SKU" && body?.[0]?.[1]?.text === "Expected\nQty (CTN)";
+      return body?.[0]?.[0]?.text === "UPC" && body?.[0]?.[1]?.text === "Expected\nQty (CTN)";
     });
     expect(countTable).toBeDefined();
     const countBody = (countTable!.table as { body: Array<Array<{ text?: string; stack?: Array<{ text: string }> }>> }).body;
@@ -204,7 +204,7 @@ describe("buildInboundReceivingCountSheetDefinition", () => {
     expect(serializedContent).not.toContain("\"pageBreak\":\"after\"");
     const countTable = (definition.content as unknown as Array<Record<string, unknown>>).find((block) => {
       const body = (block?.table as { body?: Array<Array<{ text?: string }>> } | undefined)?.body;
-      return body?.[0]?.[0]?.text === "SKU" && body?.[0]?.[1]?.text === "Expected\nQty (CTN)";
+      return body?.[0]?.[0]?.text === "UPC" && body?.[0]?.[1]?.text === "Expected\nQty (CTN)";
     });
     const countBody = (countTable!.table as { body: unknown[] }).body;
     expect(countBody).toHaveLength(42);

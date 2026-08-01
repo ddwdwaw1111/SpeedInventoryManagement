@@ -142,7 +142,7 @@ describe("OutboundBulkImportDialog", () => {
     fireEvent.change(fileInput, { target: { files: [new File(["workbook"], "shipments.xlsx")] } });
     fireEvent.click(screen.getByRole("button", { name: "校验工作簿" }));
 
-    expect(await screen.findByText(/SKU“608333”.*仅有 2 CTN 可用，但本行需要 5 CTN/)).toBeInTheDocument();
+    expect(await screen.findByText(/UPC“608333”.*仅有 2 CTN 可用，但本行需要 5 CTN/)).toBeInTheDocument();
     expect(screen.getByText(/筛选范围：仓库“NJ”.*来源货柜“CONT-A”.*库区“TEMP”/)).toBeInTheDocument();
     expect(screen.getByText("Item Code（仅供参考）")).toBeInTheDocument();
   });
@@ -171,7 +171,7 @@ describe("OutboundBulkImportDialog", () => {
     fireEvent.change(fileInput, { target: { files: [new File(["workbook"], "shipments.xlsx")] } });
     fireEvent.click(screen.getByRole("button", { name: "Validate workbook" }));
 
-    expect(await screen.findByText(/Row 112: SKU 608333 can deduct at most 2 inventory pallet\(s\).*Inventory Pallets is 4/)).toBeInTheDocument();
+    expect(await screen.findByText(/Row 112: UPC 608333 can deduct at most 2 inventory pallet\(s\).*Inventory Pallets is 4/)).toBeInTheDocument();
     expect(screen.getByText(/warehouse NJ, source container CONT-A, storage section TEMP/)).toBeInTheDocument();
     expect(screen.getByText(/Outbound Pallets is independent and does not affect this check/)).toBeInTheDocument();
   });

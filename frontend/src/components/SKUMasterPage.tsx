@@ -30,10 +30,18 @@ type SKUMasterFormState = {
   category: string;
   unit: string;
   defaultUnitsPerPallet: number;
+  cartonGrossWeightKg: number;
+  cartonLengthCm: number;
+  cartonWidthCm: number;
+  cartonHeightCm: number;
+  outboundCartonsPerLayer: number;
+  outboundLayerCount: number;
 };
 const SKU_MASTER_COLUMN_ORDER_PREFERENCE_KEY = "sku-master.column-order";
 
 const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" });
+const measurementFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 3 });
+const volumeFormatter = new Intl.NumberFormat("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
 
 function createEmptyForm(): SKUMasterFormState {
   return {
@@ -42,7 +50,13 @@ function createEmptyForm(): SKUMasterFormState {
     description: "",
     category: "General",
     unit: "pcs",
-    defaultUnitsPerPallet: 0
+    defaultUnitsPerPallet: 0,
+    cartonGrossWeightKg: 0,
+    cartonLengthCm: 0,
+    cartonWidthCm: 0,
+    cartonHeightCm: 0,
+    outboundCartonsPerLayer: 0,
+    outboundLayerCount: 0
   };
 }
 
@@ -107,7 +121,6 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
     loadingTitle: t("loadingRecords"),
     loadingDescription: pageDescription
   });
-
   const baseColumns = useMemo<GridColDef<SKUMaster>[]>(() => [
     {
       field: "itemNumber",
@@ -152,6 +165,52 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
       renderCell: (params) => <span>{String(params.value ?? "").toUpperCase()}</span>
     },
     { field: "defaultUnitsPerPallet", headerName: t("defaultUnitsPerPallet"), minWidth: 170, type: "number", editable: canManage, disableReorder: !canManage },
+    {
+      field: "cartonGrossWeightKg",
+      headerName: t("cartonGrossWeightKg"),
+      minWidth: 190,
+      type: "number",
+      editable: canManage,
+      disableReorder: !canManage,
+      valueFormatter: (value) => formatOptionalMeasurement(value)
+    },
+    {
+      field: "cartonDimensionsCm",
+      headerName: t("cartonDimensionsCm"),
+      minWidth: 210,
+      flex: 1,
+      sortable: false,
+      disableReorder: !canManage,
+      valueGetter: (_, row) => formatCartonDimensions(row)
+    },
+    {
+      field: "cartonVolumeCbm",
+      headerName: t("cartonVolumeCbm"),
+      minWidth: 175,
+      type: "number",
+      sortable: false,
+      disableReorder: !canManage,
+      valueGetter: (_, row) => calculateCartonVolumeCbm(row),
+      valueFormatter: (value) => Number(value) > 0 ? volumeFormatter.format(Number(value)) : "-"
+    },
+    {
+      field: "outboundCartonsPerLayer",
+      headerName: t("outboundCartonsPerLayer"),
+      minWidth: 170,
+      type: "number",
+      editable: canManage,
+      disableReorder: !canManage,
+      valueFormatter: (value) => formatOptionalWholeNumber(value)
+    },
+    {
+      field: "outboundLayerCount",
+      headerName: t("outboundLayerCount"),
+      minWidth: 145,
+      type: "number",
+      editable: canManage,
+      disableReorder: !canManage,
+      valueFormatter: (value) => formatOptionalWholeNumber(value)
+    },
     { field: "updatedAt", headerName: t("updated"), minWidth: 180, flex: 0.9, disableReorder: !canManage, valueFormatter: (value) => formatDateValue(value, dateFormatter) },
     {
       field: "actions",
@@ -213,7 +272,13 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
       description: displayDescription(row),
       category: row.category || "General",
       unit: row.unit || "pcs",
-      defaultUnitsPerPallet: row.defaultUnitsPerPallet || 0
+      defaultUnitsPerPallet: row.defaultUnitsPerPallet || 0,
+      cartonGrossWeightKg: row.cartonGrossWeightKg || 0,
+      cartonLengthCm: row.cartonLengthCm || 0,
+      cartonWidthCm: row.cartonWidthCm || 0,
+      cartonHeightCm: row.cartonHeightCm || 0,
+      outboundCartonsPerLayer: row.outboundCartonsPerLayer || 0,
+      outboundLayerCount: row.outboundLayerCount || 0
     });
     setErrorMessage("");
     setIsModalOpen(true);
@@ -228,7 +293,13 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
       description: displayDescription(row).trim(),
       unit: row.unit.trim() || "pcs",
       reorderLevel: 0,
-      defaultUnitsPerPallet: Math.max(0, Number(row.defaultUnitsPerPallet || 0))
+      defaultUnitsPerPallet: normalizeNonNegativeNumber(row.defaultUnitsPerPallet),
+      cartonGrossWeightKg: normalizeNonNegativeNumber(row.cartonGrossWeightKg),
+      cartonLengthCm: normalizeNonNegativeNumber(row.cartonLengthCm),
+      cartonWidthCm: normalizeNonNegativeNumber(row.cartonWidthCm),
+      cartonHeightCm: normalizeNonNegativeNumber(row.cartonHeightCm),
+      outboundCartonsPerLayer: normalizeNonNegativeInteger(row.outboundCartonsPerLayer),
+      outboundLayerCount: normalizeNonNegativeInteger(row.outboundLayerCount)
     };
   }
 
@@ -329,7 +400,13 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
       description: form.description,
       unit: form.unit,
       reorderLevel: 0,
-      defaultUnitsPerPallet: form.defaultUnitsPerPallet
+      defaultUnitsPerPallet: normalizeNonNegativeNumber(form.defaultUnitsPerPallet),
+      cartonGrossWeightKg: normalizeNonNegativeNumber(form.cartonGrossWeightKg),
+      cartonLengthCm: normalizeNonNegativeNumber(form.cartonLengthCm),
+      cartonWidthCm: normalizeNonNegativeNumber(form.cartonWidthCm),
+      cartonHeightCm: normalizeNonNegativeNumber(form.cartonHeightCm),
+      outboundCartonsPerLayer: normalizeNonNegativeInteger(form.outboundCartonsPerLayer),
+      outboundLayerCount: normalizeNonNegativeInteger(form.outboundLayerCount)
     };
 
     try {
@@ -419,7 +496,7 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
           closeModal();
         }}
         fullWidth
-        maxWidth="sm"
+        maxWidth="md"
       >
         <DialogTitle sx={{ pb: 1 }}>
           {editingId ? t("editSkuMaster") : t("addSkuMaster")}
@@ -436,6 +513,14 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
             <label>{t("category")}<input value={form.category} onChange={(event) => setForm((current) => ({ ...current, category: event.target.value }))} placeholder="General" /></label>
             <label>{t("unit")}<input value={form.unit} onChange={(event) => setForm((current) => ({ ...current, unit: event.target.value }))} placeholder="pcs" /></label>
             <label>{t("defaultUnitsPerPallet")}<input type="number" min="0" value={form.defaultUnitsPerPallet} onChange={(event) => setForm((current) => ({ ...current, defaultUnitsPerPallet: Math.max(0, Number(event.target.value || 0)) }))} placeholder="200" /></label>
+            <div className="sheet-note sheet-note--readonly sheet-form__wide">{t("skuPhysicalProfileHint")}</div>
+            <label>{t("cartonGrossWeightKg")}<input type="number" min="0" step="0.001" value={form.cartonGrossWeightKg} onChange={(event) => setForm((current) => ({ ...current, cartonGrossWeightKg: normalizeNonNegativeNumber(event.target.value) }))} placeholder="12.5" /></label>
+            <label>{t("cartonLengthCm")}<input type="number" min="0" step="0.01" value={form.cartonLengthCm} onChange={(event) => setForm((current) => ({ ...current, cartonLengthCm: normalizeNonNegativeNumber(event.target.value) }))} placeholder="60" /></label>
+            <label>{t("cartonWidthCm")}<input type="number" min="0" step="0.01" value={form.cartonWidthCm} onChange={(event) => setForm((current) => ({ ...current, cartonWidthCm: normalizeNonNegativeNumber(event.target.value) }))} placeholder="40" /></label>
+            <label>{t("cartonHeightCm")}<input type="number" min="0" step="0.01" value={form.cartonHeightCm} onChange={(event) => setForm((current) => ({ ...current, cartonHeightCm: normalizeNonNegativeNumber(event.target.value) }))} placeholder="35" /></label>
+            <label>{t("cartonVolumeCbm")}<input value={formatCartonVolumeCbm(form)} readOnly placeholder="-" /></label>
+            <label>{t("outboundCartonsPerLayer")}<input type="number" min="0" step="1" value={form.outboundCartonsPerLayer} onChange={(event) => setForm((current) => ({ ...current, outboundCartonsPerLayer: normalizeNonNegativeInteger(event.target.value) }))} placeholder="10" /></label>
+            <label>{t("outboundLayerCount")}<input type="number" min="0" step="1" value={form.outboundLayerCount} onChange={(event) => setForm((current) => ({ ...current, outboundLayerCount: normalizeNonNegativeInteger(event.target.value) }))} placeholder="6" /></label>
             <div className="sheet-form__actions sheet-form__wide">
               <button className="button button--primary" type="submit" disabled={isSubmitting}>{isSubmitting ? t("saving") : editingId ? t("updateRow") : t("addRow")}</button>
               <button className="button button--ghost" type="button" onClick={closeModal}>{t("cancel")}</button>
@@ -516,4 +601,45 @@ export function SKUMasterPage({ skuMasters, currentUserRole, isLoading, onRefres
 
 function displayDescription(row: Pick<SKUMaster, "description" | "name">) {
   return row.description || row.name;
+}
+
+function normalizeNonNegativeNumber(value: unknown) {
+  const parsedValue = Number(value);
+  return Number.isFinite(parsedValue) ? Math.max(0, parsedValue) : 0;
+}
+
+function normalizeNonNegativeInteger(value: unknown) {
+  return Math.floor(normalizeNonNegativeNumber(value));
+}
+
+type CartonDimensions = Pick<SKUMaster, "cartonLengthCm" | "cartonWidthCm" | "cartonHeightCm">;
+
+function calculateCartonVolumeCbm(row: CartonDimensions) {
+  const length = normalizeNonNegativeNumber(row.cartonLengthCm);
+  const width = normalizeNonNegativeNumber(row.cartonWidthCm);
+  const height = normalizeNonNegativeNumber(row.cartonHeightCm);
+  if (length === 0 || width === 0 || height === 0) return 0;
+  return (length * width * height) / 1_000_000;
+}
+
+function formatCartonVolumeCbm(row: CartonDimensions) {
+  const volume = calculateCartonVolumeCbm(row);
+  return volume > 0 ? volumeFormatter.format(volume) : "";
+}
+
+function formatCartonDimensions(row: CartonDimensions) {
+  const dimensions = [row.cartonLengthCm, row.cartonWidthCm, row.cartonHeightCm].map((value) => (
+    Number(value) > 0 ? measurementFormatter.format(Number(value)) : "-"
+  ));
+  return dimensions.every((value) => value === "-") ? "-" : `${dimensions.join(" × ")} cm`;
+}
+
+function formatOptionalMeasurement(value: unknown) {
+  const measurement = Number(value);
+  return Number.isFinite(measurement) && measurement > 0 ? measurementFormatter.format(measurement) : "-";
+}
+
+function formatOptionalWholeNumber(value: unknown) {
+  const measurement = normalizeNonNegativeInteger(value);
+  return measurement > 0 ? String(measurement) : "-";
 }

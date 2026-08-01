@@ -54,6 +54,12 @@ export function createSkuMaster(overrides: Partial<SKUMaster> = {}): SKUMaster {
     unit: "ctn",
     reorderLevel: 5,
     defaultUnitsPerPallet: 10,
+    cartonGrossWeightKg: 12.5,
+    cartonLengthCm: 60,
+    cartonWidthCm: 40,
+    cartonHeightCm: 35,
+    outboundCartonsPerLayer: 10,
+    outboundLayerCount: 6,
     createdAt: ISO_TIMESTAMP,
     updatedAt: ISO_TIMESTAMP,
     ...overrides

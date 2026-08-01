@@ -98,6 +98,12 @@ var schemaMigrations = []schemaMigration{
 		Revision: "2026-07-31.1",
 		Apply:    applyTransferLinePalletSidesMigration,
 	},
+	{
+		Version:  14,
+		Name:     "sku_physical_profiles",
+		Revision: "2026-08-01.1",
+		Apply:    applySKUPhysicalProfilesMigration,
+	},
 }
 
 // Versions 9 and 10 were deployed before their source migrations were merged.

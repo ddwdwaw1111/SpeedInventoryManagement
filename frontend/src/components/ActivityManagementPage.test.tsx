@@ -1543,7 +1543,7 @@ describe("ActivityManagementPage", () => {
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Next" }));
 
-    expect(await within(dialog).findByText("Choose a SKU and enter a stock impact quantity.")).toBeInTheDocument();
+    expect(await within(dialog).findByText("Choose a UPC and enter a stock impact quantity.")).toBeInTheDocument();
     expect(within(dialog).getByRole("textbox", { name: "Search Shipment Source #2" })).toBeInTheDocument();
     expect(mockedApi.createOutboundDocument).not.toHaveBeenCalled();
   });

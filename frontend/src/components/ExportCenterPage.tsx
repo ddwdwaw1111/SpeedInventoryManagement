@@ -43,7 +43,7 @@ const DOCUMENT_EXPORT_PAGE_SIZE = 500;
 
 const INVENTORY_SUMMARY_EXPORT_COLUMNS = [
   { key: "itemNumber", label: "Item #" },
-  { key: "sku", label: "SKU" },
+  { key: "sku", label: "UPC" },
   { key: "description", label: "Description" },
   { key: "customerName", label: "Customer" },
   { key: "onHand", label: "On Hand" },
@@ -56,7 +56,7 @@ const INVENTORY_SUMMARY_EXPORT_COLUMNS = [
 
 const INVENTORY_DETAIL_EXPORT_COLUMNS = [
   { key: "itemNumber", label: "Item #" },
-  { key: "sku", label: "SKU" },
+  { key: "sku", label: "UPC" },
   { key: "description", label: "Description" },
   { key: "customerName", label: "Customer" },
   { key: "locationName", label: "Warehouse" },
@@ -71,7 +71,7 @@ const INVENTORY_DETAIL_EXPORT_COLUMNS = [
 const CONTAINER_CONTENTS_EXPORT_COLUMNS = [
   { key: "containerNo", label: "Container No." },
   { key: "itemNumber", label: "Item #" },
-  { key: "sku", label: "SKU" },
+  { key: "sku", label: "UPC" },
   { key: "description", label: "Description" },
   { key: "customerName", label: "Customer" },
   { key: "locationName", label: "Warehouse" },

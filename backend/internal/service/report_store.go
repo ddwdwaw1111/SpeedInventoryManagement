@@ -399,7 +399,7 @@ func normalizeOperationsReportFilters(filters OperationsReportFilters) (Operatio
 
 func normalizeSKUFlowReportFilters(filters SKUFlowReportFilters) (SKUFlowReportFilters, time.Time, time.Time, error) {
 	if filters.SKUMasterID <= 0 {
-		return SKUFlowReportFilters{}, time.Time{}, time.Time{}, fmt.Errorf("%w: skuMasterId is required", ErrInvalidInput)
+		return SKUFlowReportFilters{}, time.Time{}, time.Time{}, fmt.Errorf("%w: UPC selection is required", ErrInvalidInput)
 	}
 
 	normalizedDateFilters, start, end, err := normalizeOperationsReportFilters(OperationsReportFilters{

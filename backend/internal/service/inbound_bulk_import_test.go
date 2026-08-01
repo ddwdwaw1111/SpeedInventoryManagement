@@ -686,14 +686,32 @@ func TestParsedInboundBulkDocumentFromInputPreservesIdentityAndEditedValues(t *t
 	}
 }
 
+func TestParseInboundBulkImportWorkbookAcceptsLegacySKUHeader(t *testing.T) {
+	data := buildInboundBulkImportWorkbookWithIdentifierHeader(t, "SKU", [][]any{
+		{"LEGACY-CONT", "East Warehouse", "2026-07-15", "NORMAL", "PALLETIZED", "LEGACY-UPC", "ITEM-1", "Legacy item", 10, 10, 1, 10, "A", ""},
+	})
+
+	documents, err := parseInboundBulkImportWorkbook("legacy-receipts.xlsx", data)
+	if err != nil {
+		t.Fatalf("parse legacy SKU-header workbook: %v", err)
+	}
+	if len(documents) != 1 || len(documents[0].preview.Input.Lines) != 1 || documents[0].preview.Input.Lines[0].SKU != "LEGACY-UPC" {
+		t.Fatalf("legacy SKU header was not parsed as UPC: %#v", documents)
+	}
+}
+
 func buildInboundBulkImportWorkbook(t *testing.T, dataRows [][]any) []byte {
+	return buildInboundBulkImportWorkbookWithIdentifierHeader(t, "UPC", dataRows)
+}
+
+func buildInboundBulkImportWorkbookWithIdentifierHeader(t *testing.T, identifierHeader string, dataRows [][]any) []byte {
 	t.Helper()
 	workbook := excelize.NewFile()
 	sheet := workbook.GetSheetName(0)
 	rows := [][]any{
 		{"Inbound Receipt Bulk Import Template"},
 		{"Rows with the same Container No are grouped into one receipt"},
-		{"Container No", "Warehouse", "Actual Arrival Date", "Container Type", "Handling Mode", "SKU", "Item Code", "Description", "Expected Qty", "Received Qty", "Pallets", "CTN per Pallet", "Storage Section", "Line Note"},
+		{"Container No", "Warehouse", "Actual Arrival Date", "Container Type", "Handling Mode", identifierHeader, "Item Code", "Description", "Expected Qty", "Received Qty", "Pallets", "CTN per Pallet", "Storage Section", "Line Note"},
 	}
 	rows = append(rows, dataRows...)
 	for index, row := range rows {

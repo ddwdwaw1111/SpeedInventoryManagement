@@ -2508,7 +2508,7 @@ func (s *Store) findOrCreateInboundItem(ctx context.Context, tx *sql.Tx, documen
 	normalizedSection := fallbackSection(firstNonEmpty(line.StorageSection, documentInput.StorageSection))
 	normalizedContainerNo := strings.TrimSpace(documentInput.ContainerNo)
 	if strings.TrimSpace(line.Description) == "" {
-		return 0, "", fmt.Errorf("%w: description is required for new inbound sku rows", ErrInvalidInput)
+		return 0, "", fmt.Errorf("%w: description is required for new inbound UPC rows", ErrInvalidInput)
 	}
 
 	itemInput := sanitizeItemInput(CreateItemInput{
@@ -2770,7 +2770,7 @@ func validateInboundDocumentInput(input CreateInboundDocumentInput) error {
 		}
 		switch {
 		case line.SKU == "":
-			return fmt.Errorf("%w: sku is required", ErrInvalidInput)
+			return fmt.Errorf("%w: UPC is required", ErrInvalidInput)
 		case line.ExpectedQty < 0 || line.ReceivedQty < 0 || line.Pallets < 0:
 			return fmt.Errorf("%w: quantities cannot be negative", ErrInvalidInput)
 		case line.ExpectedQty == 0 && line.ReceivedQty == 0:

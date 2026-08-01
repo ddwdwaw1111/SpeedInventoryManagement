@@ -49,7 +49,7 @@ func TestParseBulkTransferImportWorkbookParsesPartialTransferFields(t *testing.T
 	defer workbook.Close()
 	sheet := workbook.GetSheetName(0)
 	values := [][]string{
-		{"Transfer No", "Transfer Mode", "Transfer Date", "Container No", "From Warehouse", "From Storage Section", "To Warehouse", "To Storage Section", "SKU", "Item Code", "Transfer Qty", "Source Inventory Pallets Released", "Destination Inventory Pallets Created"},
+		{"Transfer No", "Transfer Mode", "Transfer Date", "Container No", "From Warehouse", "From Storage Section", "To Warehouse", "To Storage Section", "UPC", "Item Code", "Transfer Qty", "Source Inventory Pallets Released", "Destination Inventory Pallets Created"},
 		{"MOVE-42", "PARTIAL", "2026-07-31", "MSKU1234567", "Warehouse 99", "TEMP", "Warehouse 308", "TEMP", "SKU-001", "ITEM-001", "245", "0", "1"},
 	}
 	for rowIndex, row := range values {
@@ -81,6 +81,39 @@ func TestParseBulkTransferImportWorkbookParsesPartialTransferFields(t *testing.T
 	}
 	if input.Quantity == nil || *input.Quantity != 245 || input.SourcePallets == nil || *input.SourcePallets != 0 || input.DestinationPallets == nil || *input.DestinationPallets != 1 {
 		t.Fatalf("unexpected parsed partial transfer balances: %#v", input)
+	}
+}
+
+func TestParseBulkTransferImportWorkbookAcceptsLegacySKUHeader(t *testing.T) {
+	workbook := excelize.NewFile()
+	defer workbook.Close()
+	sheet := workbook.GetSheetName(0)
+	values := [][]string{
+		{"Transfer No", "Transfer Mode", "Transfer Date", "Container No", "From Warehouse", "From Storage Section", "To Warehouse", "To Storage Section", "SKU", "Transfer Qty", "Source Inventory Pallets Released", "Destination Inventory Pallets Created"},
+		{"MOVE-LEGACY", "PARTIAL", "2026-07-31", "MSKU1234567", "Warehouse 99", "TEMP", "Warehouse 308", "TEMP", "LEGACY-UPC", "5", "0", "1"},
+	}
+	for rowIndex, row := range values {
+		for columnIndex, value := range row {
+			cell, err := excelize.CoordinatesToCellName(columnIndex+1, rowIndex+1)
+			if err != nil {
+				t.Fatalf("resolve cell: %v", err)
+			}
+			if err := workbook.SetCellValue(sheet, cell, value); err != nil {
+				t.Fatalf("write workbook: %v", err)
+			}
+		}
+	}
+	var buffer bytes.Buffer
+	if err := workbook.Write(&buffer); err != nil {
+		t.Fatalf("encode workbook: %v", err)
+	}
+
+	rows, err := parseBulkTransferImportWorkbook(buffer.Bytes())
+	if err != nil {
+		t.Fatalf("parse legacy SKU-header workbook: %v", err)
+	}
+	if len(rows) != 1 || rows[0].input.SKU != "LEGACY-UPC" {
+		t.Fatalf("legacy SKU header was not parsed as UPC: %#v", rows)
 	}
 }
 

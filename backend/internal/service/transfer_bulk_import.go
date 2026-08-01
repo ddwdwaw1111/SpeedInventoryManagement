@@ -415,7 +415,7 @@ func (s *Store) buildBulkTransferImportCommitInput(
 			return CreateInventoryTransferInput{}, fmt.Errorf("%w: From Warehouse and To Warehouse must be different", ErrInvalidInput)
 		}
 		if row.SKU != "" || row.Quantity != nil || row.SourcePallets != nil || row.DestinationPallets != nil {
-			return CreateInventoryTransferInput{}, fmt.Errorf("%w: full-container transfers must leave SKU, quantity, and pallet fields blank", ErrInvalidInput)
+			return CreateInventoryTransferInput{}, fmt.Errorf("%w: full-container transfers must leave UPC, quantity, and pallet fields blank", ErrInvalidInput)
 		}
 		transferInput.EntireContainer = &CreateEntireContainerTransferInput{
 			CustomerID:       customerID,
@@ -431,7 +431,7 @@ func (s *Store) buildBulkTransferImportCommitInput(
 	for _, commitRow := range group.rows {
 		row := commitRow.Input
 		if normalizeContainerNo(row.ContainerNo) == "" || row.FromLocationID <= 0 || row.ToLocationID <= 0 || normalizeBulkTransferSKU(row.SKU) == "" {
-			return CreateInventoryTransferInput{}, fmt.Errorf("%w: partial transfers require Container No, From Warehouse, To Warehouse, and SKU", ErrInvalidInput)
+			return CreateInventoryTransferInput{}, fmt.Errorf("%w: partial transfers require Container No, From Warehouse, To Warehouse, and UPC", ErrInvalidInput)
 		}
 		if row.FromLocationID == row.ToLocationID {
 			return CreateInventoryTransferInput{}, fmt.Errorf("%w: From Warehouse and To Warehouse must be different", ErrInvalidInput)
@@ -486,7 +486,7 @@ func (s *Store) resolveBulkTransferImportSourceItem(ctx context.Context, custome
 			return item, nil
 		}
 	}
-	return Item{}, fmt.Errorf("%w: container %q has no inventory for SKU %q in source storage section %q", ErrInvalidInput, containerNo, sku, section)
+	return Item{}, fmt.Errorf("%w: container %q has no inventory for UPC %q in source storage section %q", ErrInvalidInput, containerNo, sku, section)
 }
 
 func (s *Store) getRecordedBulkTransfer(ctx context.Context, batchID int64, documentKey string) (InventoryTransfer, bool, error) {
@@ -653,7 +653,7 @@ func (s *Store) buildBulkTransferImportPreview(ctx context.Context, fileName str
 					row.Issues = append(row.Issues, bulkTransferIssue("FULL_TRANSFER_SOURCE_SECTION", "Full-container transfers move every source storage section. Leave From Storage Section blank.", row.RowNumber, transferBulkFieldFromStorageSection, parsed.input.FromStorageSection))
 				}
 				if row.Input.SKU != "" || row.Input.Quantity != nil || row.Input.SourcePallets != nil || row.Input.DestinationPallets != nil {
-					row.Issues = append(row.Issues, bulkTransferIssue("FULL_TRANSFER_LINE_VALUES", "Full-container transfers derive SKU, quantity, and pallet values from current inventory. Leave the line-level fields blank.", row.RowNumber, transferBulkFieldMode, row.Input.TransferMode))
+					row.Issues = append(row.Issues, bulkTransferIssue("FULL_TRANSFER_LINE_VALUES", "Full-container transfers derive UPC, quantity, and pallet values from current inventory. Leave the line-level fields blank.", row.RowNumber, transferBulkFieldMode, row.Input.TransferMode))
 				}
 			} else if mode == transferBulkModePartial {
 				validateBulkTransferPartialRow(&row, availableBySource[from.ID])
@@ -730,7 +730,7 @@ func summarizeBulkTransferInventoryAvailability(items []Item) map[string]bulkTra
 
 func validateBulkTransferPartialRow(row *BulkTransferImportPreviewRow, availability map[string]bulkTransferInventoryAvailability) {
 	if row.Input.SKU == "" {
-		row.Issues = append(row.Issues, bulkTransferIssue("MISSING_SKU", "SKU is required for a partial transfer.", row.RowNumber, transferBulkFieldSKU, ""))
+		row.Issues = append(row.Issues, bulkTransferIssue("MISSING_SKU", "UPC is required for a partial transfer.", row.RowNumber, transferBulkFieldSKU, ""))
 	}
 	if row.Input.Quantity == nil || *row.Input.Quantity <= 0 {
 		row.Issues = append(row.Issues, bulkTransferIssue("INVALID_PARTIAL_QUANTITY", "Transfer Qty is required and must be greater than zero for a partial transfer.", row.RowNumber, transferBulkFieldQuantity, ""))
@@ -747,13 +747,13 @@ func validateBulkTransferPartialRow(row *BulkTransferImportPreviewRow, availabil
 	key := bulkTransferInventoryAvailabilityKey(row.Input.ContainerNo, row.Input.SKU, row.Input.FromStorageSection)
 	available, exists := availability[key]
 	if !exists || available.quantity <= 0 && available.pallets <= 0 {
-		row.Issues = append(row.Issues, bulkTransferIssue("SOURCE_SKU_NOT_FOUND", fmt.Sprintf("Container %q has no available inventory for SKU %q in storage section %q.", row.Input.ContainerNo, row.Input.SKU, row.Input.FromStorageSection), row.RowNumber, transferBulkFieldSKU, row.Input.SKU))
+		row.Issues = append(row.Issues, bulkTransferIssue("SOURCE_SKU_NOT_FOUND", fmt.Sprintf("Container %q has no available inventory for UPC %q in storage section %q.", row.Input.ContainerNo, row.Input.SKU, row.Input.FromStorageSection), row.RowNumber, transferBulkFieldSKU, row.Input.SKU))
 		return
 	}
 	row.TotalQuantity = available.quantity
 	row.TotalPallets = available.pallets
 	if *row.Input.Quantity > available.quantity {
-		row.Issues = append(row.Issues, bulkTransferIssue("INSUFFICIENT_TRANSFER_QTY", fmt.Sprintf("Transfer Qty is %d CTN, but only %d CTN is available for this container/SKU after earlier workbook rows.", *row.Input.Quantity, available.quantity), row.RowNumber, transferBulkFieldQuantity, strconv.Itoa(*row.Input.Quantity)))
+		row.Issues = append(row.Issues, bulkTransferIssue("INSUFFICIENT_TRANSFER_QTY", fmt.Sprintf("Transfer Qty is %d CTN, but only %d CTN is available for this container/UPC after earlier workbook rows.", *row.Input.Quantity, available.quantity), row.RowNumber, transferBulkFieldQuantity, strconv.Itoa(*row.Input.Quantity)))
 	}
 	if *row.Input.SourcePallets > available.pallets {
 		row.Issues = append(row.Issues, bulkTransferIssue("INSUFFICIENT_SOURCE_PALLETS", fmt.Sprintf("Source Inventory Pallets Released is %d, but only %d source pallets are available after earlier workbook rows.", *row.Input.SourcePallets, available.pallets), row.RowNumber, transferBulkFieldSourcePallets, strconv.Itoa(*row.Input.SourcePallets)))
@@ -971,6 +971,7 @@ func canonicalBulkTransferHeader(value string) string {
 		"TOSTORAGESECTION":                   transferBulkFieldToStorageSection,
 		"DESTINATIONSTORAGESECTION":          transferBulkFieldToStorageSection,
 		"SKU":                                transferBulkFieldSKU,
+		"UPC":                                transferBulkFieldSKU,
 		"ITEMCODE":                           transferBulkFieldItemCode,
 		"TRANSFERQTY":                        transferBulkFieldQuantity,
 		"QTY":                                transferBulkFieldQuantity,

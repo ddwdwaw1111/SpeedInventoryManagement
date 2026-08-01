@@ -389,10 +389,10 @@ export function InboundBulkImportDialog({
                     ) : null}
                     <div className="bulk-inbound-table-wrap">
                       <table className="bulk-inbound-line-table">
-                        <thead><tr><th>SKU</th><th>{t("itemCode")}</th><th>{t("description")}</th><th>{t("expectedQty")}</th><th>{t("receivedQty")}</th><th>{t("pallets")}</th><th>{t("ctnPerPallet")}</th><th>{t("storageSection")}</th><th>{t("bulkInboundActions")}</th></tr></thead>
+                        <thead><tr><th>{t("sku")}</th><th>{t("itemCode")}</th><th>{t("description")}</th><th>{t("expectedQty")}</th><th>{t("receivedQty")}</th><th>{t("pallets")}</th><th>{t("ctnPerPallet")}</th><th>{t("storageSection")}</th><th>{t("bulkInboundActions")}</th></tr></thead>
                         <tbody>{document.input.lines.map((line, index) => (
                           <tr key={`${document.documentKey}-${index}`}>
-                            <td><input aria-label={`SKU ${index + 1}`} value={line.sku} onChange={(event) => updateDocumentLine(document.documentKey, index, { sku: event.target.value })} disabled={isBusy} /></td>
+                            <td><input aria-label={`${t("sku")} ${index + 1}`} value={line.sku} onChange={(event) => updateDocumentLine(document.documentKey, index, { sku: event.target.value })} disabled={isBusy} /></td>
                             <td><input aria-label={`${t("itemCode")} ${index + 1}`} value={line.itemNumber || ""} onChange={(event) => updateDocumentLine(document.documentKey, index, { itemNumber: event.target.value })} disabled={isBusy} /></td>
                             <td><input aria-label={`${t("description")} ${index + 1}`} value={line.description || ""} onChange={(event) => updateDocumentLine(document.documentKey, index, { description: event.target.value })} disabled={isBusy} /></td>
                             <td><input aria-label={`${t("expectedQty")} ${index + 1}`} type="number" min="0" value={line.expectedQty} onChange={(event) => updateDocumentLine(document.documentKey, index, { expectedQty: toNonNegativeNumber(event.target.value) })} disabled={isBusy} /></td>

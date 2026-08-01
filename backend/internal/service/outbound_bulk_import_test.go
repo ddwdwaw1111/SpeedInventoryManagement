@@ -12,7 +12,7 @@ import (
 
 func TestParseOutboundBulkImportWorkbookGroupsPickingOrdersAndKeepsPalletCountsIndependent(t *testing.T) {
 	data := buildOutboundBulkWorkbook(t, [][]any{
-		{"Picking Order No", "Actual Ship Date", "Warehouse", "Source Container", "Storage Section", "SKU", "Item Code", "Qty", "Inventory Pallets Used", "Outbound Pallets", "Line Note"},
+		{"Picking Order No", "Actual Ship Date", "Warehouse", "Source Container", "Storage Section", "UPC", "Item Code", "Qty", "Inventory Pallets Used", "Outbound Pallets", "Line Note"},
 		{"PO-100", "2026-07-01", "EAST", "CONT-A", "A1", "SKU-1", "ITEM-1", 25, 2, 3, "first"},
 		{"PO-100", "2026-07-01", "WEST", "CONT-B", "B2", "SKU-2", "ITEM-2", 7, 4, 2, "second"},
 		{"PO-200", "", "EAST", "", "TEMP", "SKU-3", "", 12, 0, 1, "auto allocate"},
@@ -61,6 +61,21 @@ func TestParseOutboundBulkImportWorkbookAllowsPlanOnlyDraftQuantity(t *testing.T
 		if issue.Code == "INVALID_QUANTITY" || issue.Code == "INVALID_PLANNED_QUANTITY" {
 			t.Fatalf("plan-only draft quantity should be valid: %#v", issue)
 		}
+	}
+}
+
+func TestParseOutboundBulkImportWorkbookAcceptsLegacySKUHeader(t *testing.T) {
+	data := buildOutboundBulkWorkbook(t, [][]any{
+		{"Picking Order No", "Warehouse", "SKU", "Actual Qty", "Inventory Pallets Used", "Outbound Pallets"},
+		{"PO-LEGACY", "EAST", "LEGACY-UPC", 5, 0, 1},
+	})
+
+	documents, err := parseOutboundBulkImportWorkbook(data)
+	if err != nil {
+		t.Fatalf("parse legacy SKU-header workbook: %v", err)
+	}
+	if len(documents) != 1 || len(documents[0].Lines) != 1 || documents[0].Lines[0].SKU != "LEGACY-UPC" {
+		t.Fatalf("legacy SKU header was not parsed as UPC: %#v", documents)
 	}
 }
 

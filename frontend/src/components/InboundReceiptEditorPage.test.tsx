@@ -68,7 +68,7 @@ describe("InboundReceiptEditorPage", () => {
     fireEvent.change(screen.getByLabelText("Container No."), { target: { value: "MSCU1234567" } });
     expect(screen.queryByLabelText("Inbound Unit")).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText(/SKU.*#1/), { target: { value: "ABC123" } });
+    fireEvent.change(screen.getByLabelText(/UPC.*#1/), { target: { value: "ABC123" } });
     fireEvent.change(screen.getByLabelText("Item Code #1"), { target: { value: "ITEM-ABC123" } });
     fireEvent.change(screen.getByLabelText("Description #1"), { target: { value: "Sample inbound SKU" } });
     fireEvent.change(screen.getByLabelText(/Expected QTY #1/), { target: { value: "8" } });
@@ -142,7 +142,7 @@ describe("InboundReceiptEditorPage", () => {
     fireEvent.change(screen.getByLabelText("Customer"), { target: { value: "1" } });
     fireEvent.change(screen.getByLabelText("Actual Arrival Date"), { target: { value: "2026-03-31" } });
     fireEvent.change(screen.getByLabelText("Container No."), { target: { value: "MSCU1234567" } });
-    fireEvent.change(screen.getByLabelText(/SKU.*#1/), { target: { value: "ABC123" } });
+    fireEvent.change(screen.getByLabelText(/UPC.*#1/), { target: { value: "ABC123" } });
     fireEvent.change(screen.getByLabelText("Item Code #1"), { target: { value: "ITEM-ABC123" } });
     fireEvent.change(screen.getByLabelText("Description #1"), { target: { value: "Sample inbound SKU" } });
     fireEvent.change(screen.getByLabelText(/Expected QTY #1/), { target: { value: "8" } });
@@ -206,14 +206,14 @@ describe("InboundReceiptEditorPage", () => {
       />
     );
 
-    fireEvent.change(screen.getByLabelText(/SKU.*#1/), { target: { value: "SKU-100" } });
+    fireEvent.change(screen.getByLabelText(/UPC.*#1/), { target: { value: "SKU-100" } });
     expect(screen.getByLabelText("Item Code #1")).toHaveValue("ITEM-100");
     expect(screen.getByLabelText("Description #1")).toHaveValue("Known item");
     expect(screen.getByLabelText("CTN / Pallet #1")).toHaveValue(10);
 
     fireEvent.change(screen.getByLabelText("Item Code #1"), { target: { value: "ITEM-200" } });
 
-    expect(screen.getByLabelText(/SKU.*#1/)).toHaveValue("SKU-100");
+    expect(screen.getByLabelText(/UPC.*#1/)).toHaveValue("SKU-100");
     expect(screen.getByLabelText("Description #1")).toHaveValue("Known item");
     expect(screen.getByLabelText("CTN / Pallet #1")).toHaveValue(10);
   });
@@ -249,7 +249,7 @@ describe("InboundReceiptEditorPage", () => {
     fireEvent.change(screen.getByLabelText("Customer"), { target: { value: "1" } });
     fireEvent.change(screen.getByLabelText("Actual Arrival Date"), { target: { value: "2026-03-31" } });
     fireEvent.change(screen.getByLabelText("Container No."), { target: { value: "MSCU1234567" } });
-    fireEvent.change(screen.getByLabelText(/SKU.*#1/), { target: { value: "ABC123" } });
+    fireEvent.change(screen.getByLabelText(/UPC.*#1/), { target: { value: "ABC123" } });
     fireEvent.change(screen.getByLabelText("Description #1"), { target: { value: "Sample inbound SKU" } });
     fireEvent.change(screen.getByLabelText(/Expected QTY #1/), { target: { value: "8" } });
     fireEvent.change(screen.getByLabelText("Received #1"), { target: { value: "0" } });
@@ -360,7 +360,7 @@ describe("InboundReceiptEditorPage", () => {
     expect(screen.queryByRole("button", { name: "Fill All Received" })).not.toBeInTheDocument();
     expect(document.querySelectorAll("[id^='receipt-editor-line-']")).toHaveLength(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "Add SKU Line" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add UPC Line" }));
 
     expect(document.querySelectorAll("[id^='receipt-editor-line-']")).toHaveLength(2);
   });
@@ -420,14 +420,14 @@ describe("InboundReceiptEditorPage", () => {
     fireEvent.change(screen.getByLabelText("Container No."), { target: { value: "MSCU1234567" } });
     fireEvent.click(screen.getByRole("button", { name: "Save Draft" }));
 
-    expect(await screen.findByText("Add at least one SKU line with an expected or received quantity.")).toBeInTheDocument();
+    expect(await screen.findByText("Add at least one UPC line with an expected or received quantity.")).toBeInTheDocument();
     expect(screen.getByLabelText("Container No.")).not.toHaveClass("inbound-entry-input--invalid");
-    expect(screen.getByLabelText(/SKU.*#1/)).toHaveClass("inbound-entry-input--invalid");
+    expect(screen.getByLabelText(/UPC.*#1/)).toHaveClass("inbound-entry-input--invalid");
     expect(screen.getByLabelText(/Expected QTY #1/)).toHaveClass("inbound-entry-input--invalid");
     expect(screen.getByLabelText("Received #1")).toHaveClass("inbound-entry-input--invalid");
     expect(mockedApi.createInboundDocument).not.toHaveBeenCalled();
 
-    fireEvent.change(screen.getByLabelText(/SKU.*#1/), { target: { value: "ABC123" } });
+    fireEvent.change(screen.getByLabelText(/UPC.*#1/), { target: { value: "ABC123" } });
     fireEvent.change(screen.getByLabelText("Description #1"), { target: { value: "Sample inbound SKU" } });
     fireEvent.change(screen.getByLabelText(/Expected QTY #1/), { target: { value: "8" } });
     fireEvent.change(screen.getByLabelText("Received #1"), { target: { value: "5" } });

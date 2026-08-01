@@ -11,7 +11,7 @@ export const OUTBOUND_BULK_IMPORT_TEMPLATE_COLUMNS: ExcelExportColumn[] = [
   { key: "warehouse", label: "Warehouse" },
   { key: "sourceContainer", label: "Source Container" },
   { key: "storageSection", label: "Storage Section" },
-  { key: "sku", label: "SKU" },
+  { key: "sku", label: "UPC" },
   { key: "itemNumber", label: "Item Code (Reference)" },
   { key: "plannedQuantity", label: "Planned Qty", numberFormat: "number" },
   { key: "quantity", label: "Actual Qty", numberFormat: "number" },
@@ -64,13 +64,13 @@ export function downloadOutboundBulkImportSample(items: Item[], locations: Locat
     warehouse: fallbackLocation.name,
     sourceContainer: "",
     storageSection: fallbackLocation.sectionNames[0] || "TEMP",
-    sku: "REPLACE-WITH-EXISTING-SKU",
+    sku: "REPLACE-WITH-EXISTING-UPC",
     itemNumber: "",
     plannedQuantity: 10,
     quantity: 10,
     inventoryPallets: 1,
     outboundPallets: 1,
-    lineNote: "Replace SKU before testing"
+    lineNote: "Replace UPC before testing"
   }] : [];
   downloadExcelWorkbook({
     title: "Outbound Shipment Bulk Import Sample",

@@ -89,7 +89,7 @@ describe("InboundBulkImportDialog", () => {
     invalidPreview.validDocuments = 0;
     invalidPreview.invalidDocuments = 1;
     invalidPreview.documents[0].valid = false;
-    invalidPreview.documents[0].issues = [{ severity: "ERROR", code: "MISSING_SKU", message: "SKU is required.", rowNumber: 4 }];
+    invalidPreview.documents[0].issues = [{ severity: "ERROR", code: "MISSING_SKU", message: "UPC is required.", rowNumber: 4 }];
     mockedApi.previewInboundBulkImport.mockResolvedValue(invalidPreview);
 
     const { container } = renderWithProviders(
@@ -105,7 +105,7 @@ describe("InboundBulkImportDialog", () => {
     fireEvent.change(input, { target: { files: [new File(["workbook"], "receipts.xlsx")] } });
     fireEvent.click(screen.getByRole("button", { name: "Validate workbook" }));
 
-    await screen.findByText(/SKU is required\./);
+    await screen.findByText(/UPC is required\./);
     const commitButton = screen.getByRole("button", { name: "Create 0 drafts" });
     expect(commitButton).toBeDisabled();
     fireEvent.click(commitButton);
@@ -154,8 +154,8 @@ describe("InboundBulkImportDialog", () => {
     fireEvent.change(input, { target: { files: [new File(["workbook"], "receipts.xlsx")] } });
     fireEvent.click(screen.getByRole("button", { name: "Validate workbook" }));
 
-    expect(await screen.findByText(/Item Code ITEM-1 is assigned to SKU SKU-1, not the SKU SKU-2 entered on this row/)).toBeInTheDocument();
-    expect(screen.getByText(/SKU SKU-2 is assigned Item Code ITEM-2, but this row contains ITEM-1/)).toBeInTheDocument();
+    expect(await screen.findByText(/Item Code ITEM-1 is assigned to UPC SKU-1, not the UPC SKU-2 entered on this row/)).toBeInTheDocument();
+    expect(screen.getByText(/UPC SKU-2 is assigned Item Code ITEM-2, but this row contains ITEM-1/)).toBeInTheDocument();
   });
 
   it("allows preview edits and requires backend revalidation before import", async () => {
@@ -164,7 +164,7 @@ describe("InboundBulkImportDialog", () => {
     initialPreview.invalidDocuments = 1;
     initialPreview.documents[0].valid = false;
     initialPreview.documents[0].input.lines[0].sku = "";
-    initialPreview.documents[0].issues = [{ severity: "ERROR", code: "MISSING_SKU", message: "SKU is required.", rowNumber: 4 }];
+    initialPreview.documents[0].issues = [{ severity: "ERROR", code: "MISSING_SKU", message: "UPC is required.", rowNumber: 4 }];
     const revalidatedPreview = createPreview();
     revalidatedPreview.documents[0].input.lines[0].sku = "SKU-FIXED";
     revalidatedPreview.documents[0].issues = [];
@@ -184,7 +184,7 @@ describe("InboundBulkImportDialog", () => {
     fireEvent.change(fileInput, { target: { files: [new File(["workbook"], "receipts.xlsx")] } });
     fireEvent.click(screen.getByRole("button", { name: "Validate workbook" }));
 
-    const skuInput = await screen.findByRole("textbox", { name: "SKU 1" });
+    const skuInput = await screen.findByRole("textbox", { name: "UPC 1" });
     fireEvent.change(skuInput, { target: { value: "SKU-FIXED" } });
     expect(screen.getByText("Preview data was changed. Revalidate the changes before creating drafts.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create 0 drafts" })).toBeDisabled();

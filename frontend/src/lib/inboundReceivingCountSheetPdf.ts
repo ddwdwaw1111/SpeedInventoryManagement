@@ -144,7 +144,7 @@ const LABELS = {
   containerNo: "Container No.",
   receivedBy: "Recived At",
   totalPallets: "Total Pallets",
-  sku: "SKU",
+  sku: "UPC",
   expectedQty: "Expected\nQty (CTN)",
   actualQty: "Actual\nQty (CTN)",
   expectedPalletQty: "Expected\nPallet Qty",

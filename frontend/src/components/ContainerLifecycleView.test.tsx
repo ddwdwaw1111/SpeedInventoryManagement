@@ -257,7 +257,7 @@ describe("ContainerLifecycleView", () => {
       inboundDiscrepancyDamaged: "Damaged",
       inboundDiscrepancyOverage: "Overage"
     })[key] ?? key)).toBe("Shortage / Damaged");
-    expect(screen.getByText("SKU Count")).toBeInTheDocument();
+    expect(screen.getByText("UPC Count")).toBeInTheDocument();
     expect(screen.getAllByText("Received").length).toBeGreaterThan(0);
     expect(screen.getAllByText("7").length).toBeGreaterThan(0);
     expect(screen.getAllByText("2").length).toBeGreaterThan(0);

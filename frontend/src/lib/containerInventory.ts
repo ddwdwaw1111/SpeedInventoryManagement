@@ -441,7 +441,10 @@ function buildContainerMovementSummaryMap(items: Item[], movements: Movement[], 
     }
 
     if (movement.movementType === "IN") {
-      const inboundTimestamp = movement.deliveryDate || movementTimestamp;
+      // Keep the recorded receipt timestamp when it is available. The delivery
+      // date is a date-only business field and must only be the fallback;
+      // otherwise the container timeline loses its actual receipt time.
+      const inboundTimestamp = movementTimestamp || movement.deliveryDate;
       current.receivedAt = getEarliestDate(current.receivedAt, inboundTimestamp);
       const earliestInboundTimestamp = getEarliestDate(current.originalInboundAt, inboundTimestamp);
       if (earliestInboundTimestamp !== current.originalInboundAt || !current.originalInboundWarehouse) {

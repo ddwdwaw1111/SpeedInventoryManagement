@@ -7,14 +7,20 @@ import (
 
 func TestSanitizeSKUMasterInput(t *testing.T) {
 	input := sanitizeSKUMasterInput(CreateSKUMasterInput{
-		ItemNumber:            " vb22gc ",
-		SKU:                   " abc123 ",
-		Name:                  " ",
-		Category:              " ",
-		Description:           "  kraft bag ",
-		Unit:                  " ctn ",
-		ReorderLevel:          200,
-		DefaultUnitsPerPallet: 200,
+		ItemNumber:              " vb22gc ",
+		SKU:                     " abc123 ",
+		Name:                    " ",
+		Category:                " ",
+		Description:             "  kraft bag ",
+		Unit:                    " ctn ",
+		ReorderLevel:            200,
+		DefaultUnitsPerPallet:   200,
+		CartonGrossWeightKg:     12.345,
+		CartonLengthCm:          60,
+		CartonWidthCm:           40,
+		CartonHeightCm:          35,
+		OutboundCartonsPerLayer: 10,
+		OutboundLayerCount:      6,
 	})
 
 	if input.ItemNumber != "VB22GC" {
@@ -35,6 +41,12 @@ func TestSanitizeSKUMasterInput(t *testing.T) {
 	if input.DefaultUnitsPerPallet != 200 {
 		t.Fatalf("expected default units per pallet to be preserved, got %d", input.DefaultUnitsPerPallet)
 	}
+	if input.CartonGrossWeightKg != 12.345 || input.CartonLengthCm != 60 || input.CartonWidthCm != 40 || input.CartonHeightCm != 35 {
+		t.Fatalf("expected physical profile to be preserved, got %#v", input)
+	}
+	if input.OutboundCartonsPerLayer != 10 || input.OutboundLayerCount != 6 {
+		t.Fatalf("expected outbound pallet pattern to be preserved, got %#v", input)
+	}
 }
 
 func TestValidateSKUMasterInput(t *testing.T) {
@@ -54,6 +66,10 @@ func TestValidateSKUMasterInput(t *testing.T) {
 		{SKU: "ABC123"},
 		{SKU: "ABC123", Description: "kraft bag", ReorderLevel: -1},
 		{SKU: "ABC123", Description: "kraft bag", DefaultUnitsPerPallet: -1},
+		{SKU: "ABC123", Description: "kraft bag", CartonGrossWeightKg: -1},
+		{SKU: "ABC123", Description: "kraft bag", CartonLengthCm: -1},
+		{SKU: "ABC123", Description: "kraft bag", OutboundCartonsPerLayer: -1},
+		{SKU: "ABC123", Description: "kraft bag", OutboundLayerCount: -1},
 	}
 
 	for _, input := range invalidInputs {

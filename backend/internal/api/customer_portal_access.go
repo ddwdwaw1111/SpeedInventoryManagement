@@ -106,7 +106,7 @@ func validateCustomerPortalPickingOrderInventory(input service.CreateOutboundDoc
 			return fmt.Errorf("%w: customer portal lines must belong to the authenticated customer", service.ErrInvalidInput)
 		}
 		if line.SKUMasterID <= 0 || line.LocationID <= 0 || line.Quantity <= 0 {
-			return fmt.Errorf("%w: customer portal lines require sku, warehouse, and quantity", service.ErrInvalidInput)
+			return fmt.Errorf("%w: customer portal lines require UPC, warehouse, and quantity", service.ErrInvalidInput)
 		}
 		key := customerPortalInventoryKey{skuMasterID: line.SKUMasterID, locationID: line.LocationID}
 		requestedByKey[key] += line.Quantity
@@ -115,10 +115,10 @@ func validateCustomerPortalPickingOrderInventory(input service.CreateOutboundDoc
 	for key, requestedQty := range requestedByKey {
 		availableQty := availableByKey[key]
 		if availableQty <= 0 {
-			return fmt.Errorf("%w: requested inventory is not available for skuMasterId %d at location %d", service.ErrInsufficientStock, key.skuMasterID, key.locationID)
+			return fmt.Errorf("%w: requested inventory is not available for UPC record %d at warehouse %d", service.ErrInsufficientStock, key.skuMasterID, key.locationID)
 		}
 		if requestedQty > availableQty {
-			return fmt.Errorf("%w: requested quantity %d exceeds available inventory %d for skuMasterId %d at location %d", service.ErrInsufficientStock, requestedQty, availableQty, key.skuMasterID, key.locationID)
+			return fmt.Errorf("%w: requested quantity %d exceeds available inventory %d for UPC record %d at warehouse %d", service.ErrInsufficientStock, requestedQty, availableQty, key.skuMasterID, key.locationID)
 		}
 	}
 

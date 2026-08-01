@@ -71,3 +71,15 @@ func TestTransferLinePalletSidesHasDedicatedMigration(t *testing.T) {
 	}
 	t.Fatal("transfer pallet-side migration is missing")
 }
+
+func TestSKUPhysicalProfilesHasDedicatedMigration(t *testing.T) {
+	for _, migration := range schemaMigrations {
+		if migration.Version == 14 {
+			if migration.Name != "sku_physical_profiles" || migration.Apply == nil {
+				t.Fatalf("unexpected UPC physical-profile migration: %#v", migration)
+			}
+			return
+		}
+	}
+	t.Fatal("UPC physical-profile migration is missing")
+}

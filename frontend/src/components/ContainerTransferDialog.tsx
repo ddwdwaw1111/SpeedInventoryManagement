@@ -407,7 +407,7 @@ export function ContainerTransferDialog({
                         <strong>{selectedContainer.containerNo || t("unassignedInventory")}</strong>
                         <span>{selectedContainer.customerName}</span>
                         <span>{`${selectedContainer.locationName} / ${selectedContainer.storageSections.join(", ")}`}</span>
-                        <span>{`${selectedContainer.items.length} SKU · ${selectedContainer.totalAvailableQty} QTY · ${selectedContainer.totalAvailablePallets} ${t("pallets")}`}</span>
+                        <span>{`${selectedContainer.items.length} ${t("sku")} · ${selectedContainer.totalAvailableQty} QTY · ${selectedContainer.totalAvailablePallets} ${t("pallets")}`}</span>
                       </div>
                     ) : null}
                   </section>

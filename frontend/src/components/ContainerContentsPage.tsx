@@ -41,7 +41,7 @@ const CONTAINER_CONTENTS_EXPORT_COLUMNS = [
   { key: "originalInboundWarehouse", label: "Original Inbound Warehouse" },
   { key: "currentWarehouse", label: "Current Warehouse" },
   { key: "itemNumber", label: "Item #" },
-  { key: "sku", label: "SKU" },
+  { key: "sku", label: "UPC" },
   { key: "description", label: "Description" },
   { key: "customerName", label: "Customer" },
   { key: "locationName", label: "Warehouse" },

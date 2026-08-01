@@ -575,12 +575,12 @@ describe("buildPickSheetDefinition", () => {
     const content = definition.content as unknown as Array<Record<string, unknown>>;
     const skuHeaderTables = content.filter((block) => {
       const body = (block?.table as { body?: Array<Array<{ text?: string }>> } | undefined)?.body;
-      return body?.[0]?.[0]?.text?.startsWith("SKU: ");
+      return body?.[0]?.[0]?.text?.startsWith("UPC: ");
     });
 
     expect(skuHeaderTables).toHaveLength(1);
     const skuHeaderBody = (skuHeaderTables[0].table as { body: Array<Array<{ text: string }>> }).body;
-    expect(skuHeaderBody[0][0].text).toBe("SKU: 608333");
+    expect(skuHeaderBody[0][0].text).toBe("UPC: 608333");
     expect(skuHeaderBody[0][1].text).toBe("Total Qty: 30");
     expect(skuHeaderBody[0][2].text).toBe("Total Pallet: 3");
     expect(skuHeaderBody[0][3].text).toBe("Warehouses: 2");
@@ -625,7 +625,7 @@ describe("buildPickSheetDefinition", () => {
     expect(metadataBody?.[0]?.[1]?.stack?.[1]?.text).toBe("Handle with care");
 
     const serializedContent = JSON.stringify(content);
-    expect(serializedContent).toContain("SKU: 608333");
+    expect(serializedContent).toContain("UPC: 608333");
     expect(serializedContent).not.toContain("SKU Pick Plan");
     expect(serializedContent).not.toContain("SKU Total:");
     expect(serializedContent).not.toContain("Total Item Qty");
@@ -651,7 +651,7 @@ describe("buildPickSheetDefinition", () => {
 
     const skuHeaderTable = content.find((block) => {
       const body = (block?.table as { body?: Array<Array<{ text?: string }>> } | undefined)?.body;
-      return body?.[0]?.[0]?.text?.includes("SKU: 608333");
+      return body?.[0]?.[0]?.text?.includes("UPC: 608333");
     });
     expect(skuHeaderTable).toBeDefined();
     const skuHeaderBody = (skuHeaderTable!.table as { body: Array<Array<{ text: string }>> }).body;
