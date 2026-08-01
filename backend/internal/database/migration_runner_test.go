@@ -59,3 +59,15 @@ func TestBulkImportRetentionHasDedicatedMigration(t *testing.T) {
 	}
 	t.Fatal("bulk import retention migration is missing")
 }
+
+func TestTransferLinePalletSidesHasDedicatedMigration(t *testing.T) {
+	for _, migration := range schemaMigrations {
+		if migration.Version == 13 {
+			if migration.Name != "transfer_line_pallet_sides" || migration.Apply == nil {
+				t.Fatalf("unexpected transfer pallet-side migration: %#v", migration)
+			}
+			return
+		}
+	}
+	t.Fatal("transfer pallet-side migration is missing")
+}

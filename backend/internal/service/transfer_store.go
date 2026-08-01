@@ -15,18 +15,19 @@ import (
 const inventoryTransferTransactionAttempts = 3
 
 type InventoryTransfer struct {
-	ID                  int64                   `json:"id"`
-	TransferNo          string                  `json:"transferNo"`
-	ActualTransferredAt *time.Time              `json:"actualTransferredAt"`
-	Notes               string                  `json:"notes"`
-	Status              string                  `json:"status"`
-	TotalLines          int                     `json:"totalLines"`
-	TotalQty            int                     `json:"totalQty"`
-	TotalPallets        int                     `json:"totalPallets"`
-	Routes              string                  `json:"routes"`
-	CreatedAt           time.Time               `json:"createdAt"`
-	UpdatedAt           time.Time               `json:"updatedAt"`
-	Lines               []InventoryTransferLine `json:"lines"`
+	ID                      int64                   `json:"id"`
+	TransferNo              string                  `json:"transferNo"`
+	ActualTransferredAt     *time.Time              `json:"actualTransferredAt"`
+	Notes                   string                  `json:"notes"`
+	Status                  string                  `json:"status"`
+	TotalLines              int                     `json:"totalLines"`
+	TotalQty                int                     `json:"totalQty"`
+	TotalSourcePallets      int                     `json:"totalSourcePallets"`
+	TotalDestinationPallets int                     `json:"totalDestinationPallets"`
+	Routes                  string                  `json:"routes"`
+	CreatedAt               time.Time               `json:"createdAt"`
+	UpdatedAt               time.Time               `json:"updatedAt"`
+	Lines                   []InventoryTransferLine `json:"lines"`
 }
 
 type InventoryTransferLine struct {
@@ -44,7 +45,8 @@ type InventoryTransferLine struct {
 	SKU                string    `json:"sku"`
 	Description        string    `json:"description"`
 	Quantity           int       `json:"quantity"`
-	Pallets            int       `json:"pallets"`
+	SourcePallets      int       `json:"sourcePallets"`
+	DestinationPallets int       `json:"destinationPallets"`
 	LineNote           string    `json:"lineNote"`
 	CreatedAt          time.Time `json:"createdAt"`
 }
@@ -66,16 +68,17 @@ type CreateEntireContainerTransferInput struct {
 }
 
 type CreateInventoryTransferLineInput struct {
-	CustomerID       int64  `json:"customerId"`
-	LocationID       int64  `json:"locationId"`
-	StorageSection   string `json:"storageSection"`
-	ContainerNo      string `json:"containerNo"`
-	SKUMasterID      int64  `json:"skuMasterId"`
-	Quantity         int    `json:"quantity"`
-	Pallets          int    `json:"pallets"`
-	ToLocationID     int64  `json:"toLocationId"`
-	ToStorageSection string `json:"toStorageSection"`
-	LineNote         string `json:"lineNote"`
+	CustomerID         int64  `json:"customerId"`
+	LocationID         int64  `json:"locationId"`
+	StorageSection     string `json:"storageSection"`
+	ContainerNo        string `json:"containerNo"`
+	SKUMasterID        int64  `json:"skuMasterId"`
+	Quantity           int    `json:"quantity"`
+	SourcePallets      int    `json:"sourcePallets"`
+	DestinationPallets int    `json:"destinationPallets"`
+	ToLocationID       int64  `json:"toLocationId"`
+	ToStorageSection   string `json:"toStorageSection"`
+	LineNote           string `json:"lineNote"`
 }
 
 type inventoryTransferRow struct {
@@ -103,7 +106,8 @@ type inventoryTransferLineRow struct {
 	SKUSnapshot              string    `db:"sku_snapshot"`
 	DescriptionSnapshot      string    `db:"description_snapshot"`
 	Quantity                 int       `db:"quantity"`
-	Pallets                  int       `db:"pallets"`
+	SourcePallets            int       `db:"source_pallets"`
+	DestinationPallets       int       `db:"destination_pallets"`
 	LineNote                 string    `db:"line_note"`
 	CreatedAt                time.Time `db:"created_at"`
 }
@@ -189,7 +193,8 @@ func (s *Store) ListInventoryTransfers(ctx context.Context, limit int) ([]Invent
 			sku_snapshot,
 			COALESCE(description_snapshot, '') AS description_snapshot,
 			quantity,
-			pallets,
+			COALESCE(source_pallets, 0) AS source_pallets,
+			COALESCE(destination_pallets, 0) AS destination_pallets,
 			COALESCE(line_note, '') AS line_note,
 			created_at
 		FROM inventory_transfer_lines
@@ -225,13 +230,15 @@ func (s *Store) ListInventoryTransfers(ctx context.Context, limit int) ([]Invent
 			SKU:                lineRow.SKUSnapshot,
 			Description:        lineRow.DescriptionSnapshot,
 			Quantity:           lineRow.Quantity,
-			Pallets:            lineRow.Pallets,
+			SourcePallets:      lineRow.SourcePallets,
+			DestinationPallets: lineRow.DestinationPallets,
 			LineNote:           lineRow.LineNote,
 			CreatedAt:          lineRow.CreatedAt,
 		})
 		transfer.TotalLines++
 		transfer.TotalQty += lineRow.Quantity
-		transfer.TotalPallets += lineRow.Pallets
+		transfer.TotalSourcePallets += lineRow.SourcePallets
+		transfer.TotalDestinationPallets += lineRow.DestinationPallets
 		transfer.Routes = appendUniqueJoined(
 			transfer.Routes,
 			fmt.Sprintf(
@@ -400,7 +407,7 @@ func (s *Store) createInventoryTransferTx(
 		if line.Quantity > sourceItem.AvailableQty {
 			return InventoryTransfer{}, ErrInsufficientStock
 		}
-		if line.Pallets > sourceItem.AvailablePallets {
+		if line.SourcePallets > sourceItem.AvailablePallets {
 			return InventoryTransfer{}, ErrInsufficientStock
 		}
 
@@ -428,10 +435,11 @@ func (s *Store) createInventoryTransferTx(
 				sku_snapshot,
 				description_snapshot,
 				quantity,
-				pallets,
+				source_pallets,
+				destination_pallets,
 				line_note,
 				sort_order
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			transferID,
 			sourceItem.CustomerID,
@@ -446,7 +454,8 @@ func (s *Store) createInventoryTransferTx(
 			sourceItem.SKU,
 			nullableString(sourceItem.Description),
 			line.Quantity,
-			line.Pallets,
+			line.SourcePallets,
+			line.DestinationPallets,
 			nullableString(line.LineNote),
 			index+1,
 		)
@@ -468,7 +477,7 @@ func (s *Store) createInventoryTransferTx(
 			LocationID:          sourceItem.LocationID,
 			StorageSection:      sourceItem.StorageSection,
 			QuantityChange:      -line.Quantity,
-			PalletChange:        -float64(line.Pallets),
+			PalletChange:        -float64(line.SourcePallets),
 			SourceDocumentType:  StockLedgerSourceTransfer,
 			SourceDocumentID:    transferID,
 			SourceLineID:        lineID,
@@ -488,7 +497,7 @@ func (s *Store) createInventoryTransferTx(
 			LocationID:          line.ToLocationID,
 			StorageSection:      toSection,
 			QuantityChange:      line.Quantity,
-			PalletChange:        float64(line.Pallets),
+			PalletChange:        float64(line.DestinationPallets),
 			SourceDocumentType:  StockLedgerSourceTransfer,
 			SourceDocumentID:    transferID,
 			SourceLineID:        lineID,
@@ -579,7 +588,8 @@ func (s *Store) listInventoryTransfersByIDs(ctx context.Context, transferIDs []i
 			sku_snapshot,
 			COALESCE(description_snapshot, '') AS description_snapshot,
 			quantity,
-			pallets,
+			COALESCE(source_pallets, 0) AS source_pallets,
+			COALESCE(destination_pallets, 0) AS destination_pallets,
 			COALESCE(line_note, '') AS line_note,
 			created_at
 		FROM inventory_transfer_lines
@@ -615,13 +625,15 @@ func (s *Store) listInventoryTransfersByIDs(ctx context.Context, transferIDs []i
 			SKU:                lineRow.SKUSnapshot,
 			Description:        lineRow.DescriptionSnapshot,
 			Quantity:           lineRow.Quantity,
-			Pallets:            lineRow.Pallets,
+			SourcePallets:      lineRow.SourcePallets,
+			DestinationPallets: lineRow.DestinationPallets,
 			LineNote:           lineRow.LineNote,
 			CreatedAt:          lineRow.CreatedAt,
 		})
 		transfer.TotalLines++
 		transfer.TotalQty += lineRow.Quantity
-		transfer.TotalPallets += lineRow.Pallets
+		transfer.TotalSourcePallets += lineRow.SourcePallets
+		transfer.TotalDestinationPallets += lineRow.DestinationPallets
 		transfer.Routes = appendUniqueJoined(
 			transfer.Routes,
 			fmt.Sprintf(
@@ -725,15 +737,16 @@ func (s *Store) buildEntireContainerTransferLinesTx(
 			return nil, err
 		}
 		lines = append(lines, CreateInventoryTransferLineInput{
-			CustomerID:       item.CustomerID,
-			LocationID:       item.LocationID,
-			StorageSection:   item.StorageSection,
-			ContainerNo:      item.ContainerNo,
-			SKUMasterID:      item.SKUMasterID,
-			Quantity:         item.Quantity,
-			Pallets:          item.Pallets,
-			ToLocationID:     input.ToLocationID,
-			ToStorageSection: input.ToStorageSection,
+			CustomerID:         item.CustomerID,
+			LocationID:         item.LocationID,
+			StorageSection:     item.StorageSection,
+			ContainerNo:        item.ContainerNo,
+			SKUMasterID:        item.SKUMasterID,
+			Quantity:           item.Quantity,
+			SourcePallets:      item.Pallets,
+			DestinationPallets: item.Pallets,
+			ToLocationID:       input.ToLocationID,
+			ToStorageSection:   input.ToStorageSection,
 		})
 	}
 
@@ -886,7 +899,7 @@ func sanitizeInventoryTransferInput(input CreateInventoryTransferInput) CreateIn
 		line.ContainerNo = strings.TrimSpace(strings.ToUpper(line.ContainerNo))
 		line.ToStorageSection = fallbackSection(strings.TrimSpace(strings.ToUpper(line.ToStorageSection)))
 		line.LineNote = strings.TrimSpace(line.LineNote)
-		if line.CustomerID <= 0 || line.LocationID <= 0 || line.SKUMasterID <= 0 || line.Quantity < 0 || line.Pallets < 0 || (line.Quantity == 0 && line.Pallets == 0) || line.ToLocationID <= 0 {
+		if line.CustomerID <= 0 || line.LocationID <= 0 || line.SKUMasterID <= 0 || line.Quantity < 0 || line.SourcePallets < 0 || line.DestinationPallets < 0 || (line.Quantity == 0 && line.SourcePallets == 0 && line.DestinationPallets == 0) || line.ToLocationID <= 0 {
 			continue
 		}
 		lines = append(lines, line)
@@ -926,9 +939,9 @@ func validateInventoryTransferInput(input CreateInventoryTransferInput) error {
 			return fmt.Errorf("%w: sku is required", ErrInvalidInput)
 		case line.Quantity < 0:
 			return fmt.Errorf("%w: transfer quantity cannot be negative", ErrInvalidInput)
-		case line.Pallets < 0:
+		case line.SourcePallets < 0 || line.DestinationPallets < 0:
 			return fmt.Errorf("%w: transfer pallets cannot be negative", ErrInvalidInput)
-		case line.Quantity == 0 && line.Pallets == 0:
+		case line.Quantity == 0 && line.SourcePallets == 0 && line.DestinationPallets == 0:
 			return fmt.Errorf("%w: transfer quantity or pallets must be greater than zero", ErrInvalidInput)
 		case line.ToLocationID <= 0:
 			return fmt.Errorf("%w: destination storage is required", ErrInvalidInput)

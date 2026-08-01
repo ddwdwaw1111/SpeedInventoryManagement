@@ -115,15 +115,16 @@ func TestTransferDestinationIdentifiersAndOutboundAllocationProjectionIntegratio
 	if _, err := store.CreateInventoryTransfer(ctx, CreateInventoryTransferInput{
 		TransferNo: "TRANSFER-PROJECTION-" + suffix,
 		Lines: []CreateInventoryTransferLineInput{{
-			CustomerID:       customer.ID,
-			LocationID:       sourceLocation.ID,
-			StorageSection:   DefaultStorageSection,
-			ContainerNo:      containerNo,
-			SKUMasterID:      sourceItem.SKUMasterID,
-			Quantity:         4,
-			Pallets:          1,
-			ToLocationID:     destinationLocation.ID,
-			ToStorageSection: "B",
+			CustomerID:         customer.ID,
+			LocationID:         sourceLocation.ID,
+			StorageSection:     DefaultStorageSection,
+			ContainerNo:        containerNo,
+			SKUMasterID:        sourceItem.SKUMasterID,
+			Quantity:           4,
+			SourcePallets:      1,
+			DestinationPallets: 1,
+			ToLocationID:       destinationLocation.ID,
+			ToStorageSection:   "B",
 		}},
 	}); err != nil {
 		t.Fatalf("create partial container transfer: %v", err)

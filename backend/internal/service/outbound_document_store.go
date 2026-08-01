@@ -1925,16 +1925,17 @@ func buildOutboundAutoTransferRollbackInput(
 				continue
 			}
 			input.Lines = append(input.Lines, CreateInventoryTransferLineInput{
-				CustomerID:       document.CustomerID,
-				LocationID:       allocation.LocationID,
-				StorageSection:   fallbackSection(allocation.StorageSection),
-				ContainerNo:      allocation.ContainerNo,
-				SKUMasterID:      lineRow.SKUMasterID,
-				Quantity:         allocation.AllocatedQty,
-				Pallets:          maxInt(allocation.Pallets, 0),
-				ToLocationID:     allocation.SourceLocationID,
-				ToStorageSection: fallbackSection(allocation.SourceStorageSection),
-				LineNote:         fmt.Sprintf("Restore automatic transfer for deleted %s", reference),
+				CustomerID:         document.CustomerID,
+				LocationID:         allocation.LocationID,
+				StorageSection:     fallbackSection(allocation.StorageSection),
+				ContainerNo:        allocation.ContainerNo,
+				SKUMasterID:        lineRow.SKUMasterID,
+				Quantity:           allocation.AllocatedQty,
+				SourcePallets:      maxInt(allocation.Pallets, 0),
+				DestinationPallets: maxInt(allocation.Pallets, 0),
+				ToLocationID:       allocation.SourceLocationID,
+				ToStorageSection:   fallbackSection(allocation.SourceStorageSection),
+				LineNote:           fmt.Sprintf("Restore automatic transfer for deleted %s", reference),
 			})
 		}
 	}

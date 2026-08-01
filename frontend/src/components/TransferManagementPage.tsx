@@ -1,6 +1,7 @@
 import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
 import CloseIcon from "@mui/icons-material/Close";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
+import UploadFileOutlinedIcon from "@mui/icons-material/UploadFileOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import { useEffect, useMemo, useState } from "react";
 import { Box, Button, Chip, Drawer, IconButton } from "@mui/material";
@@ -16,9 +17,11 @@ import {
   type InventoryTransfer,
   type Item,
   type Location,
+  type Customer,
   type UserRole
 } from "../lib/types";
 import { ContainerTransferDialog } from "./ContainerTransferDialog";
+import { BulkTransferImportDialog } from "./BulkTransferImportDialog";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots, WorkspaceDrawerLoadingState, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
@@ -27,6 +30,7 @@ type TransferManagementPageProps = {
   transfers: InventoryTransfer[];
   items: Item[];
   locations: Location[];
+  customers: Customer[];
   currentUserRole: UserRole;
   isLoading: boolean;
   onRefresh: () => Promise<void>;
@@ -40,6 +44,7 @@ export function TransferManagementPage({
   transfers,
   items,
   locations,
+  customers,
   currentUserRole,
   isLoading,
   onRefresh,
@@ -52,6 +57,7 @@ export function TransferManagementPage({
   const pageDescription = t("transfersDesc");
   const permissionNotice = canManage ? "" : t("readOnlyModeNotice");
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isBulkImportOpen, setIsBulkImportOpen] = useState(false);
   const [selectedTransferId, setSelectedTransferId] = useState<number | null>(null);
   const [dialogInitialSourceKey, setDialogInitialSourceKey] = useState("");
   const [dialogPreferredContainerNo, setDialogPreferredContainerNo] = useState("");
@@ -92,6 +98,8 @@ export function TransferManagementPage({
     },
     { field: "totalLines", headerName: t("totalLines"), minWidth: 120, type: "number" },
     { field: "totalQty", headerName: t("totalQty"), minWidth: 120, type: "number" },
+    { field: "totalSourcePallets", headerName: t("bulkTransferSourcePallets"), minWidth: 190, type: "number" },
+    { field: "totalDestinationPallets", headerName: t("bulkTransferDestinationPallets"), minWidth: 205, type: "number" },
     { field: "routes", headerName: t("routes"), minWidth: 280, flex: 1.6, renderCell: (params) => params.row.routes || "-" },
     {
       field: "status",
@@ -143,7 +151,8 @@ export function TransferManagementPage({
     { field: "toLocationName", headerName: t("destinationStorage"), minWidth: 170, flex: 1 },
     { field: "toStorageSection", headerName: t("toSection"), minWidth: 110 },
     { field: "quantity", headerName: t("transferQty"), minWidth: 120, type: "number" },
-    { field: "pallets", headerName: t("pallets"), minWidth: 110, type: "number" },
+    { field: "sourcePallets", headerName: t("bulkTransferSourcePallets"), minWidth: 190, type: "number" },
+    { field: "destinationPallets", headerName: t("bulkTransferDestinationPallets"), minWidth: 205, type: "number" },
     { field: "lineNote", headerName: t("internalNotes"), minWidth: 240, flex: 1.3, renderCell: (params) => params.row.lineNote || "-" }
   ], [t]);
   const mainGridSlots = buildWorkspaceGridSlots({
@@ -163,7 +172,8 @@ export function TransferManagementPage({
       { label: t("allRows"), value: summaryNumberFormatter.format(transfers.length), meta: t("transfers") },
       { label: t("totalLines"), value: summaryNumberFormatter.format(transfers.reduce((sum, transfer) => sum + transfer.totalLines, 0)), meta: t("transferLines") },
       { label: t("totalQty"), value: summaryNumberFormatter.format(transfers.reduce((sum, transfer) => sum + transfer.totalQty, 0)), meta: t("units") },
-      { label: t("pallets"), value: summaryNumberFormatter.format(transfers.reduce((sum, transfer) => sum + transfer.totalPallets, 0)), meta: t("transfers") },
+      { label: t("bulkTransferSourcePallets"), value: summaryNumberFormatter.format(transfers.reduce((sum, transfer) => sum + transfer.totalSourcePallets, 0)), meta: t("transfers") },
+      { label: t("bulkTransferDestinationPallets"), value: summaryNumberFormatter.format(transfers.reduce((sum, transfer) => sum + transfer.totalDestinationPallets, 0)), meta: t("transfers") },
       { label: t("routes"), value: summaryNumberFormatter.format(routeCount), meta: t("destinationStorage") }
     ];
   }, [transfers, t]);
@@ -193,9 +203,14 @@ export function TransferManagementPage({
               <div className="sheet-actions">
                 {columnOrderAction}
                 {canManage ? (
-                  <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={() => openCreateModal()}>
-                    {t("addTransfer")}
-                  </Button>
+                  <>
+                    <Button variant="outlined" startIcon={<UploadFileOutlinedIcon />} onClick={() => setIsBulkImportOpen(true)}>
+                      {t("bulkTransferExcel")}
+                    </Button>
+                    <Button variant="contained" startIcon={<AddCircleOutlineOutlinedIcon />} onClick={() => openCreateModal()}>
+                      {t("addTransfer")}
+                    </Button>
+                  </>
                 ) : null}
               </div>
             ) : undefined}
@@ -343,6 +358,14 @@ export function TransferManagementPage({
         preferredContainerNo={dialogPreferredContainerNo}
         onClose={closeCreateModal}
         onSaved={onRefresh}
+      />
+      <BulkTransferImportDialog
+        open={isBulkImportOpen}
+        customers={customers}
+        locations={locations}
+        items={items}
+        onClose={() => setIsBulkImportOpen(false)}
+        onImported={onRefresh}
       />
 
     </main>

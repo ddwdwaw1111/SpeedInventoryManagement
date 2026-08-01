@@ -15,6 +15,7 @@ import (
 const (
 	BulkImportTypeInbound  = "INBOUND"
 	BulkImportTypeOutbound = "OUTBOUND"
+	BulkImportTypeTransfer = "TRANSFER"
 
 	BulkImportStatusUploaded      = "UPLOADED"
 	BulkImportStatusPreviewed     = "PREVIEWED"
@@ -626,6 +627,8 @@ func normalizeBulkImportType(value string) string {
 		return BulkImportTypeInbound
 	case BulkImportTypeOutbound:
 		return BulkImportTypeOutbound
+	case BulkImportTypeTransfer:
+		return BulkImportTypeTransfer
 	default:
 		return ""
 	}

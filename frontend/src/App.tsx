@@ -590,7 +590,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
     { key: "settings", label: t("settings"), description: t("settingsDesc"), icon: <SettingsOutlined fontSize="small" /> }
   ];
   const pageItemMap = new Map(pageItems.map((item) => [item.key, item] as const));
-  const primaryNavKeys: PageKey[] = ["dashboard", "inbound-management", "outbound-management"];
+  const primaryNavKeys: PageKey[] = ["dashboard", "inbound-management", "outbound-management", "transfers"];
   const primaryNavItems = primaryNavKeys
     .map((pageKey) => pageItemMap.get(pageKey))
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
@@ -624,7 +624,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
     "warehouse-map": "inventory-summary",
     "all-activity": "inventory-summary",
     adjustments: "inventory-summary",
-    transfers: "inventory-summary",
+    transfers: "outbound-management",
     "cycle-counts": "inventory-summary",
     "storage-location-editor": "storage-management"
   };
@@ -635,7 +635,6 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
     "container-detail": "inventory",
     "container-lifecycle": "inventory",
     "adjustments": "inventory",
-    "transfers": "inventory",
     "cycle-counts": "inventory",
     "all-activity": "inventory",
     billing: "finance",
@@ -853,7 +852,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
               />)
             ) : null}
             {activePage === "adjustments" ? renderWithSuspense(<AdjustmentManagementPage adjustments={adjustments} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
-            {activePage === "transfers" ? renderWithSuspense(<TransferManagementPage transfers={transfers} items={items} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
+            {activePage === "transfers" ? renderWithSuspense(<TransferManagementPage transfers={transfers} items={items} locations={locations} customers={customers} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "cycle-counts" ? renderWithSuspense(<CycleCountManagementPage cycleCounts={cycleCounts} items={items} currentUserRole={currentUser.role} isLoading={isLoading} onRefresh={() => loadAppData(false)} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "inventory-summary" ? renderWithSuspense(<InventorySummaryPage items={items} movements={movements} customers={customers} locations={locations} currentUserRole={currentUser.role} isLoading={isLoading} onNavigate={handleNavigateToPage} />) : null}
             {activePage === "warehouse-map" ? (

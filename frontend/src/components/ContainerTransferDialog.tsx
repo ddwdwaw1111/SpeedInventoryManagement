@@ -42,7 +42,8 @@ type TransferLineFormState = {
   id: string;
   sourceBucketKey: string;
   quantity: number;
-  pallets: number;
+  sourcePallets: number;
+  destinationPallets: number;
   toLocationId: string;
   toStorageSection: string;
   lineNote: string;
@@ -77,7 +78,8 @@ function createTransferLine(
     id: sourceBucketKey,
     sourceBucketKey,
     quantity: mode === "ENTIRE" ? item.quantity : 0,
-    pallets: mode === "ENTIRE" ? item.pallets : 0,
+    sourcePallets: mode === "ENTIRE" ? item.pallets : 0,
+    destinationPallets: mode === "ENTIRE" ? item.pallets : 0,
     ...destination,
     lineNote: ""
   };
@@ -233,7 +235,8 @@ export function ContainerTransferDialog({
       return {
         ...line,
         quantity: mode === "ENTIRE" ? item?.quantity ?? 0 : 0,
-        pallets: mode === "ENTIRE" ? item?.pallets ?? 0 : 0
+        sourcePallets: mode === "ENTIRE" ? item?.pallets ?? 0 : 0,
+        destinationPallets: mode === "ENTIRE" ? item?.pallets ?? 0 : 0
       };
     }));
   }
@@ -252,9 +255,9 @@ export function ContainerTransferDialog({
 
   const hasQtyOverflow = lines.some((line) => {
     const item = sourceItemsByKey.get(line.sourceBucketKey);
-    return item !== undefined && (line.quantity > item.availableQty || line.pallets > item.availablePallets);
+    return item !== undefined && (line.quantity > item.availableQty || line.sourcePallets > item.availablePallets);
   });
-  const activeLines = lines.filter((line) => line.quantity > 0 || line.pallets > 0);
+  const activeLines = lines.filter((line) => line.quantity > 0 || line.sourcePallets > 0 || line.destinationPallets > 0);
   const canTransferEntireContainer = isEntireContainerTransferable(selectedContainer);
   const hasInvalidEntireMode = transferMode === "ENTIRE" && !canTransferEntireContainer;
   const activeSourceItems = activeLines
@@ -281,7 +284,8 @@ export function ContainerTransferDialog({
     ? locations.filter((location) => getDestinationSections(destinationSourceItems, location).length > 0)
     : locations;
   const totalTransferQty = activeLines.reduce((total, line) => total + line.quantity, 0);
-  const totalTransferPallets = activeLines.reduce((total, line) => total + line.pallets, 0);
+  const totalSourcePallets = activeLines.reduce((total, line) => total + line.sourcePallets, 0);
+  const totalDestinationPallets = activeLines.reduce((total, line) => total + line.destinationPallets, 0);
 
   useEffect(() => {
     if (!hasSameStockPosition) return;
@@ -318,14 +322,15 @@ export function ContainerTransferDialog({
         lines: transferMode === "PARTIAL" ? activeLines
           .map((line) => {
             const selectedItem = sourceItemsByKey.get(line.sourceBucketKey);
-            if (!selectedItem || Number(line.toLocationId) <= 0 || (line.quantity <= 0 && line.pallets <= 0)) {
+            if (!selectedItem || Number(line.toLocationId) <= 0 || (line.quantity <= 0 && line.sourcePallets <= 0 && line.destinationPallets <= 0)) {
               return null;
             }
 
             return {
               ...toInventoryProjectionRef(selectedItem),
               quantity: line.quantity,
-              pallets: line.pallets,
+              sourcePallets: line.sourcePallets,
+              destinationPallets: line.destinationPallets,
               toLocationId: Number(line.toLocationId),
               toStorageSection: line.toStorageSection || undefined,
               lineNote: line.lineNote || undefined
@@ -463,7 +468,8 @@ export function ContainerTransferDialog({
                       </div>
                       <div className="transfer-manifest__totals">
                         <span>{t("transferQty")}<strong>{totalTransferQty}</strong></span>
-                        <span>{t("pallets")}<strong>{totalTransferPallets}</strong></span>
+                        <span>{t("bulkTransferSourcePallets")}<strong>{totalSourcePallets}</strong></span>
+                        <span>{t("bulkTransferDestinationPallets")}<strong>{totalDestinationPallets}</strong></span>
                       </div>
                     </header>
                     <div className="transfer-lines">
@@ -471,11 +477,11 @@ export function ContainerTransferDialog({
                         const selectedItem = sourceItemsByKey.get(line.sourceBucketKey);
                         if (!selectedItem) return null;
                         const qtyOverflow = line.quantity > selectedItem.availableQty;
-                        const palletOverflow = line.pallets > selectedItem.availablePallets;
+                        const sourcePalletOverflow = line.sourcePallets > selectedItem.availablePallets;
                         const sourceSection = normalizeStorageSection(selectedItem.storageSection);
 
                         return (
-                          <article className={`transfer-container-item${line.quantity > 0 || line.pallets > 0 ? " is-selected" : ""}`} key={line.id}>
+                          <article className={`transfer-container-item${line.quantity > 0 || line.sourcePallets > 0 || line.destinationPallets > 0 ? " is-selected" : ""}`} key={line.id}>
                             <header className="transfer-container-item__identity">
                               <div>
                                 <span className="cell--mono">{selectedItem.itemNumber || "-"}</span>
@@ -508,21 +514,32 @@ export function ContainerTransferDialog({
                                       ? `${t("remainingAfterTransfer")}: ${selectedItem.availableQty - line.quantity}`
                                       : t("quantityAndPalletsIndependent")}</small>
                               </div>
-                              <div className={`transfer-amount-field${palletOverflow ? " transfer-amount-field--error" : ""}`}>
-                                <span className="transfer-amount-field__label">{t("transferPallets")}</span>
+                              <div className={`transfer-amount-field${sourcePalletOverflow ? " transfer-amount-field--error" : ""}`}>
+                                <span className="transfer-amount-field__label">{t("bulkTransferSourcePallets")}</span>
                                 {transferMode === "ENTIRE" ? (
-                                  <strong className="transfer-amount-field__locked">{line.pallets}</strong>
+                                  <strong className="transfer-amount-field__locked">{line.sourcePallets}</strong>
                                 ) : (
                                   <div>
-                                    <input aria-label={`${t("transferPallets")} - ${selectedItem.sku} - ${sourceSection}`} id={`transfer-pallets-${line.id}`} type="number" min="0" value={numberInputValue(line.pallets)} disabled={!transferMode || selectedItem.availablePallets <= 0} onChange={(event) => updateLine(line.id, { pallets: Math.max(0, Number(event.target.value || 0)) })} />
-                                    <button aria-label={`${t("allAvailable")} ${t("transferPallets")} - ${selectedItem.sku} - ${sourceSection}`} type="button" disabled={!transferMode || selectedItem.availablePallets <= 0} onClick={() => updateLine(line.id, { pallets: selectedItem.availablePallets })}>{t("allAvailable")}</button>
+                                    <input aria-label={`${t("bulkTransferSourcePallets")} - ${selectedItem.sku} - ${sourceSection}`} id={`transfer-source-pallets-${line.id}`} type="number" min="0" value={numberInputValue(line.sourcePallets)} disabled={!transferMode || selectedItem.availablePallets <= 0} onChange={(event) => updateLine(line.id, { sourcePallets: Math.max(0, Number(event.target.value || 0)) })} />
+                                    <button aria-label={`${t("allAvailable")} ${t("bulkTransferSourcePallets")} - ${selectedItem.sku} - ${sourceSection}`} type="button" disabled={!transferMode || selectedItem.availablePallets <= 0} onClick={() => updateLine(line.id, { sourcePallets: selectedItem.availablePallets })}>{t("allAvailable")}</button>
                                   </div>
                                 )}
                                 <small>{!transferMode
                                   ? t("selectTransferScopeHint")
-                                  : palletOverflow
+                                  : sourcePalletOverflow
                                     ? t("transferPalletsExceedsAvailable", { available: String(selectedItem.availablePallets) })
                                     : t("palletTransferHint")}</small>
+                              </div>
+                              <div className="transfer-amount-field">
+                                <span className="transfer-amount-field__label">{t("bulkTransferDestinationPallets")}</span>
+                                {transferMode === "ENTIRE" ? (
+                                  <strong className="transfer-amount-field__locked">{line.destinationPallets}</strong>
+                                ) : (
+                                  <div>
+                                    <input aria-label={`${t("bulkTransferDestinationPallets")} - ${selectedItem.sku} - ${sourceSection}`} id={`transfer-destination-pallets-${line.id}`} type="number" min="0" value={numberInputValue(line.destinationPallets)} disabled={!transferMode} onChange={(event) => updateLine(line.id, { destinationPallets: Math.max(0, Number(event.target.value || 0)) })} />
+                                  </div>
+                                )}
+                                <small>{!transferMode ? t("selectTransferScopeHint") : t("bulkTransferPalletSidesNotice")}</small>
                               </div>
                             </div>
 
@@ -559,7 +576,11 @@ export function ContainerTransferDialog({
                       ? t("selectTransferScopeHint")
                       : hasIncompleteLines
                         ? t("completeContainerTransferHint")
-                        : t("containerTransferReadyHint", { qty: String(totalTransferQty), pallets: String(totalTransferPallets) })}</small>
+                        : t("containerTransferReadyPalletSidesHint", {
+                          qty: String(totalTransferQty),
+                          sourcePallets: String(totalSourcePallets),
+                          destinationPallets: String(totalDestinationPallets)
+                        })}</small>
               </div>
               <button className="button button--primary" type="submit" disabled={submitting || hasQtyOverflow || hasIncompleteLines || hasSameStockPosition || hasInvalidEntireMode}>{submitting ? t("saving") : t("saveTransfer")}</button>
               <button className="button button--ghost" type="button" onClick={handleClose} disabled={submitting}>{t("cancel")}</button>

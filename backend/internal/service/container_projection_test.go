@@ -103,14 +103,15 @@ func TestContainerProjectionFollowsIndependentBalancesAndLocationsIntegration(t 
 	if _, err := store.CreateInventoryTransfer(ctx, CreateInventoryTransferInput{
 		TransferNo: "PROJECTION-OUT-" + suffix,
 		Lines: []CreateInventoryTransferLineInput{{
-			CustomerID:       customer.ID,
-			LocationID:       primaryLocation.ID,
-			StorageSection:   DefaultStorageSection,
-			ContainerNo:      containerNo,
-			SKUMasterID:      item.SKUMasterID,
-			Pallets:          1,
-			ToLocationID:     secondaryLocation.ID,
-			ToStorageSection: DefaultStorageSection,
+			CustomerID:         customer.ID,
+			LocationID:         primaryLocation.ID,
+			StorageSection:     DefaultStorageSection,
+			ContainerNo:        containerNo,
+			SKUMasterID:        item.SKUMasterID,
+			SourcePallets:      1,
+			DestinationPallets: 1,
+			ToLocationID:       secondaryLocation.ID,
+			ToStorageSection:   DefaultStorageSection,
 		}},
 	}); err != nil {
 		t.Fatalf("split container pallets across warehouses: %v", err)
@@ -124,14 +125,15 @@ func TestContainerProjectionFollowsIndependentBalancesAndLocationsIntegration(t 
 	if _, err := store.CreateInventoryTransfer(ctx, CreateInventoryTransferInput{
 		TransferNo: "PROJECTION-IN-" + suffix,
 		Lines: []CreateInventoryTransferLineInput{{
-			CustomerID:       customer.ID,
-			LocationID:       secondaryLocation.ID,
-			StorageSection:   DefaultStorageSection,
-			ContainerNo:      containerNo,
-			SKUMasterID:      item.SKUMasterID,
-			Pallets:          1,
-			ToLocationID:     primaryLocation.ID,
-			ToStorageSection: DefaultStorageSection,
+			CustomerID:         customer.ID,
+			LocationID:         secondaryLocation.ID,
+			StorageSection:     DefaultStorageSection,
+			ContainerNo:        containerNo,
+			SKUMasterID:        item.SKUMasterID,
+			SourcePallets:      1,
+			DestinationPallets: 1,
+			ToLocationID:       primaryLocation.ID,
+			ToStorageSection:   DefaultStorageSection,
 		}},
 	}); err != nil {
 		t.Fatalf("consolidate container pallets into primary warehouse: %v", err)

@@ -1120,7 +1120,7 @@ export type OutboundBulkImportCommitResponse = {
   retentionWarning?: string;
 };
 
-export type BulkImportType = "INBOUND" | "OUTBOUND";
+export type BulkImportType = "INBOUND" | "OUTBOUND" | "TRANSFER";
 
 export type BulkImportBatchDocument = {
   id: number;
@@ -1232,7 +1232,8 @@ export type InventoryTransferLine = {
   sku: string;
   description: string;
   quantity: number;
-  pallets: number;
+  sourcePallets: number;
+  destinationPallets: number;
   lineNote: string;
   createdAt: string;
 };
@@ -1245,7 +1246,8 @@ export type InventoryTransfer = {
   status: string;
   totalLines: number;
   totalQty: number;
-  totalPallets: number;
+  totalSourcePallets: number;
+  totalDestinationPallets: number;
   routes: string;
   createdAt: string;
   updatedAt: string;
@@ -1259,7 +1261,8 @@ export type InventoryTransferLinePayload = {
   containerNo: string;
   skuMasterId: number;
   quantity: number;
-  pallets: number;
+  sourcePallets: number;
+  destinationPallets: number;
   toLocationId: number;
   toStorageSection?: string;
   lineNote?: string;
@@ -1277,6 +1280,87 @@ export type InventoryTransferPayload = {
     toLocationId: number;
     toStorageSection?: string;
   };
+};
+
+export type BulkTransferImportInput = {
+  transferNo: string;
+  transferMode: "FULL_CONTAINER" | "PARTIAL" | string;
+  transferDate: string;
+  containerNo: string;
+  fromLocationId: number;
+  fromStorageSection: string;
+  toLocationId: number;
+  toStorageSection: string;
+  sku: string;
+  itemCode: string;
+  quantity: number | null;
+  sourcePallets: number | null;
+  destinationPallets: number | null;
+};
+
+export type BulkTransferImportIssue = {
+  severity: string;
+  code: string;
+  message: string;
+  rowNumber?: number;
+  field?: string;
+  value?: string;
+};
+
+export type BulkTransferImportPreviewRow = {
+  documentKey: string;
+  rowNumber: number;
+  fromLocationName: string;
+  toLocationName: string;
+  input: BulkTransferImportInput;
+  totalQuantity: number;
+  totalPallets: number;
+  issues: BulkTransferImportIssue[];
+  valid: boolean;
+};
+
+export type BulkTransferImportPreview = {
+  importId: string;
+  importBatchId?: number;
+  sourceFileName: string;
+  customerId: number;
+  customerName: string;
+  totalTransfers: number;
+  validTransfers: number;
+  invalidTransfers: number;
+  rows: BulkTransferImportPreviewRow[];
+};
+
+export type BulkTransferImportRevalidatePayload = {
+  importId: string;
+  sourceFileName: string;
+  customerId: number;
+  rows: BulkTransferImportPreviewRow[];
+};
+
+export type BulkTransferImportCommitPayload = {
+  importId: string;
+  sourceFileName: string;
+  customerId: number;
+  rows: Array<{ documentKey: string; input: BulkTransferImportInput }>;
+};
+
+export type BulkTransferImportCommitResult = {
+  documentKey: string;
+  containerNo: string;
+  success: boolean;
+  transfer?: InventoryTransfer;
+  error?: string;
+};
+
+export type BulkTransferImportCommitResponse = {
+  importBatchId?: number;
+  sourceFileName: string;
+  totalTransfers: number;
+  createdTransfers: number;
+  failedTransfers: number;
+  results: BulkTransferImportCommitResult[];
+  retentionWarning?: string;
 };
 
 export type CycleCountLine = {

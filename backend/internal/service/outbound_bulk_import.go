@@ -417,16 +417,17 @@ func buildOutboundBulkMainWarehousePlan(
 					allocation.SourceRemainingPallets = cloneIntPointer(allocation.RemainingPallets)
 				}
 				transferInput.Lines = append(transferInput.Lines, CreateInventoryTransferLineInput{
-					CustomerID:       line.CustomerID,
-					LocationID:       sourceLocationID,
-					StorageSection:   fallbackSection(allocation.StorageSection),
-					ContainerNo:      allocation.ContainerNo,
-					SKUMasterID:      line.SKUMasterID,
-					Quantity:         allocation.AllocatedQty,
-					Pallets:          allocation.Pallets,
-					ToLocationID:     mainLocation.ID,
-					ToStorageSection: DefaultStorageSection,
-					LineNote:         fmt.Sprintf("Bulk outbound %s", input.PackingListNo),
+					CustomerID:         line.CustomerID,
+					LocationID:         sourceLocationID,
+					StorageSection:     fallbackSection(allocation.StorageSection),
+					ContainerNo:        allocation.ContainerNo,
+					SKUMasterID:        line.SKUMasterID,
+					Quantity:           allocation.AllocatedQty,
+					SourcePallets:      allocation.Pallets,
+					DestinationPallets: allocation.Pallets,
+					ToLocationID:       mainLocation.ID,
+					ToStorageSection:   DefaultStorageSection,
+					LineNote:           fmt.Sprintf("Bulk outbound %s", input.PackingListNo),
 				})
 				allocation.StorageSection = DefaultStorageSection
 				allocation.LocationID = mainLocation.ID

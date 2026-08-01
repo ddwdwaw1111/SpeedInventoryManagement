@@ -39,6 +39,10 @@ import type {
   InventoryAdjustmentPayload,
   InventoryTransfer,
   InventoryTransferPayload,
+  BulkTransferImportCommitPayload,
+  BulkTransferImportCommitResponse,
+  BulkTransferImportPreview,
+  BulkTransferImportRevalidatePayload,
   InboundDocument,
   InboundDocumentPayload,
   InboundBulkImportCommitPayload,
@@ -942,6 +946,30 @@ export const api = {
 
   createInventoryTransfer(payload: InventoryTransferPayload) {
     return request<InventoryTransfer>("/transfers", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  previewBulkTransferImport(file: File, customerId: number) {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("customerId", String(customerId));
+    return request<BulkTransferImportPreview>("/transfers/bulk-import-preview", {
+      method: "POST",
+      body: formData
+    });
+  },
+
+  revalidateBulkTransferImport(payload: BulkTransferImportRevalidatePayload) {
+    return request<BulkTransferImportPreview>("/transfers/bulk-import-revalidate", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  commitBulkTransferImport(payload: BulkTransferImportCommitPayload) {
+    return request<BulkTransferImportCommitResponse>("/transfers/bulk-import-commit", {
       method: "POST",
       body: JSON.stringify(payload)
     });

@@ -92,6 +92,12 @@ var schemaMigrations = []schemaMigration{
 		Revision: "2026-07-30.1",
 		Apply:    applyBulkImportRetentionMigration,
 	},
+	{
+		Version:  13,
+		Name:     "transfer_line_pallet_sides",
+		Revision: "2026-07-31.1",
+		Apply:    applyTransferLinePalletSidesMigration,
+	},
 }
 
 // Versions 9 and 10 were deployed before their source migrations were merged.

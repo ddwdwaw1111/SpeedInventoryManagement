@@ -486,7 +486,7 @@ func TestBuildOutboundBulkMainWarehousePlanTransfersRemoteAllocations(t *testing
 		t.Fatalf("expected only the remote allocation to transfer, got %#v", transfer.Lines)
 	}
 	line := transfer.Lines[0]
-	if line.LocationID != 9 || line.ToLocationID != 3 || line.Quantity != 5 || line.Pallets != 1 || line.ToStorageSection != DefaultStorageSection {
+	if line.LocationID != 9 || line.ToLocationID != 3 || line.Quantity != 5 || line.SourcePallets != 1 || line.DestinationPallets != 1 || line.ToStorageSection != DefaultStorageSection {
 		t.Fatalf("unexpected transfer line: %#v", line)
 	}
 	if input.Lines[0].LocationID != 3 {
@@ -561,7 +561,7 @@ func TestBuildOutboundAutoTransferRollbackInputRestoresOriginalSource(t *testing
 	if line.LocationID != 3 || line.StorageSection != DefaultStorageSection || line.ToLocationID != 9 || line.ToStorageSection != "A1" {
 		t.Fatalf("expected rollback to move stock from main warehouse to its original source, got %#v", line)
 	}
-	if line.ContainerNo != "CONT-REMOTE" || line.SKUMasterID != 11 || line.Quantity != 245 || line.Pallets != 0 {
+	if line.ContainerNo != "CONT-REMOTE" || line.SKUMasterID != 11 || line.Quantity != 245 || line.SourcePallets != 0 || line.DestinationPallets != 0 {
 		t.Fatalf("expected rollback to preserve the original quantity and physical pallet delta, got %#v", line)
 	}
 }

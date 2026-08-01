@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { renderWithProviders } from "../test/renderWithProviders";
-import { createItem, createLocation } from "../test/fixtures";
+import { createCustomer, createItem, createLocation } from "../test/fixtures";
 import { setPendingInventoryActionContext } from "../lib/inventoryActionContext";
 import { TransferManagementPage } from "./TransferManagementPage";
 
@@ -73,6 +73,7 @@ function renderPage({
       transfers={[]}
       items={items}
       locations={locations}
+      customers={[createCustomer({ id: 1, name: "Test Customer" })]}
       currentUserRole="admin"
       isLoading={false}
       onRefresh={onRefresh}

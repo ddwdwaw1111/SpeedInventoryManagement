@@ -942,21 +942,22 @@ func TestInventoryTransferAllowsPalletOnlyBalanceIntegration(t *testing.T) {
 
 	transfer, err := store.CreateInventoryTransfer(ctx, CreateInventoryTransferInput{
 		Lines: []CreateInventoryTransferLineInput{{
-			CustomerID:       item.CustomerID,
-			LocationID:       item.LocationID,
-			StorageSection:   item.StorageSection,
-			ContainerNo:      item.ContainerNo,
-			SKUMasterID:      item.SKUMasterID,
-			Quantity:         0,
-			Pallets:          1,
-			ToLocationID:     toLocation.ID,
-			ToStorageSection: "B",
+			CustomerID:         item.CustomerID,
+			LocationID:         item.LocationID,
+			StorageSection:     item.StorageSection,
+			ContainerNo:        item.ContainerNo,
+			SKUMasterID:        item.SKUMasterID,
+			Quantity:           0,
+			SourcePallets:      1,
+			DestinationPallets: 1,
+			ToLocationID:       toLocation.ID,
+			ToStorageSection:   "B",
 		}},
 	})
 	if err != nil {
 		t.Fatalf("create pallet-only transfer: %v", err)
 	}
-	if len(transfer.Lines) != 1 || transfer.Lines[0].Quantity != 0 || transfer.Lines[0].Pallets != 1 {
+	if len(transfer.Lines) != 1 || transfer.Lines[0].Quantity != 0 || transfer.Lines[0].SourcePallets != 1 || transfer.Lines[0].DestinationPallets != 1 {
 		t.Fatalf("expected one pallet-only transfer line, got %+v", transfer.Lines)
 	}
 
@@ -2963,15 +2964,16 @@ func TestBulkOutboundFindsRemoteContainerAndTransfersWhenDraftConfirmedIntegrati
 	if _, err := store.createInventoryTransferTx(ctx, validationTx, CreateInventoryTransferInput{
 		TransferNo: "TRN-LATER-" + suffix,
 		Lines: []CreateInventoryTransferLineInput{{
-			CustomerID:       customer.ID,
-			LocationID:       sourceLocation.ID,
-			StorageSection:   DefaultStorageSection,
-			ContainerNo:      containerNo,
-			SKUMasterID:      item.SKUMasterID,
-			Quantity:         6,
-			Pallets:          2,
-			ToLocationID:     laterLocation.ID,
-			ToStorageSection: DefaultStorageSection,
+			CustomerID:         customer.ID,
+			LocationID:         sourceLocation.ID,
+			StorageSection:     DefaultStorageSection,
+			ContainerNo:        containerNo,
+			SKUMasterID:        item.SKUMasterID,
+			Quantity:           6,
+			SourcePallets:      2,
+			DestinationPallets: 2,
+			ToLocationID:       laterLocation.ID,
+			ToStorageSection:   DefaultStorageSection,
 		}},
 	}, nil); err != nil {
 		validationTx.Rollback()
