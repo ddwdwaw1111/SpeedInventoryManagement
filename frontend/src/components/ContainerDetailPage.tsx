@@ -118,11 +118,12 @@ export function ContainerDetailPage({
           />
 
           {container ? (
-            <div className="mt-4 grid gap-2 md:grid-cols-4">
+            <div className="mt-4 grid gap-2 md:grid-cols-3 xl:grid-cols-5">
               <OverviewCard icon={<FactCheckOutlinedIcon sx={{ fontSize: 16 }} />} label={t("skuCount")} value={skuCards.length} meta={t("containerItems")} />
               <OverviewCard icon={<MoveToInboxOutlinedIcon sx={{ fontSize: 16 }} />} label={t("onHand")} value={container.onHand} meta={`${t("availableQty")}: ${container.availableQty}`} />
               <OverviewCard icon={<WarehouseOutlinedIcon sx={{ fontSize: 16 }} />} label={t("pallets")} value={container.palletCount} meta={t("billing")}/>
-              <OverviewCard icon={<TuneOutlinedIcon sx={{ fontSize: 16 }} />} label={t("currentInventoryRows")} value={container.rowCount} meta={container.warehouseSummary || "-"} />
+              <OverviewCard icon={<MoveToInboxOutlinedIcon sx={{ fontSize: 16 }} />} label={t("originalInboundWarehouse")} value={container.originalInboundWarehouse} meta={`${t("currentInventoryRows")}: ${container.rowCount}`} />
+              <OverviewCard icon={<TuneOutlinedIcon sx={{ fontSize: 16 }} />} label={t("currentWarehouse")} value={container.warehouseSummary || "-"} meta={`${t("currentInventoryRows")}: ${container.rowCount}`} />
             </div>
           ) : (
             <div className="mt-4 rounded-xl bg-white/10 px-4 py-4 text-sm text-white/70 ring-1 ring-white/15">
@@ -187,7 +188,7 @@ export function ContainerDetailPage({
             ))}
             {history.length === 0 ? <div className="p-4"><div className="sheet-note sheet-note--readonly">{t("containerDetailNoHistory")}</div></div> : null}
           </div>
-          {container ? <div className="grid gap-2 border-t border-slate-100 p-4 text-xs text-slate-500 md:grid-cols-2"><span>{t("containerReceivedAt")}: {formatContainerTimelineValue(container.receivedAt, resolvedTimeZone)}</span><span>{t("containerShippedAt")}: {formatContainerTimelineValue(container.shippedAt, resolvedTimeZone, t("containerNotShipped"))}</span></div> : null}
+          {container ? <div className="grid gap-2 border-t border-slate-100 p-4 text-xs text-slate-500 md:grid-cols-2 xl:grid-cols-4"><span>{t("originalInboundWarehouse")}: {container.originalInboundWarehouse}</span><span>{t("currentWarehouse")}: {container.warehouseSummary}</span><span>{t("containerReceivedAt")}: {formatContainerTimelineValue(container.receivedAt, resolvedTimeZone)}</span><span>{t("containerShippedAt")}: {formatContainerTimelineValue(container.shippedAt, resolvedTimeZone, t("containerNotShipped"))}</span></div> : null}
         </section>
       </div>
 
@@ -217,8 +218,9 @@ export function ContainerDetailPage({
   );
 }
 
-function OverviewCard({ icon, label, value, meta }: { icon: ReactNode; label: string; value: number; meta: string }) {
-  return <article className="rounded-[14px] bg-white/10 p-3 text-white ring-1 ring-white/15"><div className="flex items-center gap-2 text-xs font-semibold text-white/70">{icon}{label}</div><strong className="mt-2 block text-2xl font-extrabold">{value}</strong><span className="mt-1 block text-xs text-white/60">{meta}</span></article>;
+function OverviewCard({ icon, label, value, meta }: { icon: ReactNode; label: string; value: string | number; meta: string }) {
+  const compactValue = typeof value === "string";
+  return <article className="rounded-[14px] bg-white/10 p-3 text-white ring-1 ring-white/15"><div className="flex items-center gap-2 text-xs font-semibold text-white/70">{icon}{label}</div><strong className={`mt-2 block truncate font-extrabold ${compactValue ? "text-sm" : "text-2xl"}`} title={compactValue ? value : undefined}>{value}</strong><span className="mt-1 block text-xs text-white/60">{meta}</span></article>;
 }
 
 function ActionButton({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {

@@ -38,6 +38,8 @@ const CONTAINER_CONTENTS_MOVEMENT_LOAD_LIMIT = 20000;
 const CONTAINER_CONTENTS_EXPORT_TITLE = "Container Contents";
 const CONTAINER_CONTENTS_EXPORT_COLUMNS = [
   { key: "containerNo", label: "Container No." },
+  { key: "originalInboundWarehouse", label: "Original Inbound Warehouse" },
+  { key: "currentWarehouse", label: "Current Warehouse" },
   { key: "itemNumber", label: "Item #" },
   { key: "sku", label: "SKU" },
   { key: "description", label: "Description" },
@@ -149,7 +151,8 @@ export function ContainerContentsPage({
 
   const baseColumns = useMemo<GridColDef<ContainerContentsRow>[]>(() => [
     { field: "containerNo", headerName: t("containerNo"), minWidth: 180, flex: 0.9, renderCell: (params) => <span className="cell--mono">{params.row.containerNo}</span> },
-    { field: "warehouseSummary", headerName: t("currentStorage"), minWidth: 200, flex: 1.1 },
+    { field: "originalInboundWarehouse", headerName: t("originalInboundWarehouse"), minWidth: 210, flex: 1.1 },
+    { field: "warehouseSummary", headerName: t("currentWarehouse"), minWidth: 200, flex: 1.1 },
     { field: "pickLocationSummary", headerName: t("pickLocations"), minWidth: 210, flex: 1.2 },
     { field: "customerSummary", headerName: t("customer"), minWidth: 190, flex: 1.1 },
     {
@@ -228,6 +231,8 @@ export function ContainerContentsPage({
             })
             .map((item) => ({
               containerNo: row.containerNo,
+              originalInboundWarehouse: row.originalInboundWarehouse,
+              currentWarehouse: row.warehouseSummary,
               itemNumber: item.itemNumber || "-",
               sku: item.sku,
               description: displayContainerItemDescription(item),
@@ -244,6 +249,8 @@ export function ContainerContentsPage({
             }))
         : [{
             containerNo: row.containerNo,
+            originalInboundWarehouse: row.originalInboundWarehouse,
+            currentWarehouse: row.warehouseSummary,
             itemNumber: "-",
             sku: row.contentsPreview,
             description: t("containerHistoryRecord"),

@@ -5,6 +5,7 @@ export type ContainerContentsRow = {
   id: string;
   customerId: number;
   containerNo: string;
+  originalInboundWarehouse: string;
   warehouseSummary: string;
   pickLocationSummary: string;
   customerSummary: string;
@@ -111,6 +112,7 @@ export function buildContainerContentsRows(
     const timeline = containerMovementSummaryMap.get(identityKey);
     const receiptDate = timeline?.receivedAt ?? getFallbackItemReceivedAt(item);
     const shippedAt = timeline?.shippedAt ?? null;
+    const originalInboundWarehouse = timeline?.originalInboundWarehouse ?? "-";
     const pickLocation = `${item.locationName} / ${normalizeStorageSection(item.storageSection)}`;
     const description = displayContainerItemDescription(item);
 
@@ -119,6 +121,7 @@ export function buildContainerContentsRows(
         id: identityKey,
         customerId: item.customerId,
         containerNo,
+        originalInboundWarehouse,
         warehouseSummary: item.locationName,
         pickLocationSummary: pickLocation,
         customerSummary: item.customerName,
@@ -201,6 +204,7 @@ export function buildContainerContentsRows(
       id: identityKey,
       customerId: summary.customerId,
       containerNo: summary.containerNo,
+      originalInboundWarehouse: summary.originalInboundWarehouse,
       warehouseSummary: summarizeLabels(summary.warehouseNames),
       pickLocationSummary: summarizeLabels(summary.pickLocations, 3),
       customerSummary: summarizeLabels(summary.customerNames),
@@ -228,7 +232,7 @@ export function buildContainerContentsRows(
   return [...rowMap.values()]
     .map((row) => ({
       ...row,
-      warehouseSummary: summarizeLabels(row.warehouseNames),
+      warehouseSummary: row.rowCount > 0 ? summarizeLabels(row.warehouseNames) : "-",
       pickLocationSummary: summarizeLabels(row.pickLocations, 3),
       customerSummary: summarizeLabels(row.customerNames),
       skuCount: row.skuSet.size,
@@ -366,6 +370,8 @@ function buildContainerMovementSummaryMap(items: Item[], movements: Movement[], 
     customerId: number;
     containerNo: string;
     receivedAt: string | null;
+    originalInboundAt: string | null;
+    originalInboundWarehouse: string;
     lastOutboundAt: string | null;
     hasInboundReceipt: boolean;
     warehouseNames: string[];
@@ -389,6 +395,8 @@ function buildContainerMovementSummaryMap(items: Item[], movements: Movement[], 
       customerId: movement.customerId,
       containerNo,
       receivedAt: null,
+      originalInboundAt: null,
+      originalInboundWarehouse: "",
       lastOutboundAt: null,
       hasInboundReceipt: false,
       warehouseNames: [],
@@ -433,7 +441,15 @@ function buildContainerMovementSummaryMap(items: Item[], movements: Movement[], 
     }
 
     if (movement.movementType === "IN") {
-      current.receivedAt = getEarliestDate(current.receivedAt, movementTimestamp);
+      const inboundTimestamp = movement.deliveryDate || movementTimestamp;
+      current.receivedAt = getEarliestDate(current.receivedAt, inboundTimestamp);
+      const earliestInboundTimestamp = getEarliestDate(current.originalInboundAt, inboundTimestamp);
+      if (earliestInboundTimestamp !== current.originalInboundAt || !current.originalInboundWarehouse) {
+        current.originalInboundAt = earliestInboundTimestamp;
+        if (locationName) {
+          current.originalInboundWarehouse = locationName;
+        }
+      }
       current.hasInboundReceipt = true;
     } else if (movement.movementType === "TRANSFER_IN" && !current.hasInboundReceipt) {
       current.receivedAt = getEarliestDate(current.receivedAt, movementTimestamp);
@@ -448,6 +464,7 @@ function buildContainerMovementSummaryMap(items: Item[], movements: Movement[], 
     customerId: number;
     containerNo: string;
     receivedAt: string | null;
+    originalInboundWarehouse: string;
     shippedAt: string | null;
     warehouseNames: string[];
     pickLocations: string[];
@@ -463,6 +480,7 @@ function buildContainerMovementSummaryMap(items: Item[], movements: Movement[], 
       customerId: timeline.customerId,
       containerNo: timeline.containerNo,
       receivedAt: timeline.receivedAt,
+      originalInboundWarehouse: timeline.originalInboundWarehouse || "-",
       shippedAt: activeContainers.has(identityKey) ? null : timeline.lastOutboundAt,
       warehouseNames: timeline.warehouseNames,
       pickLocations: timeline.pickLocations,
