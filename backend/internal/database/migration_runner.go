@@ -104,6 +104,12 @@ var schemaMigrations = []schemaMigration{
 		Revision: "2026-08-01.1",
 		Apply:    applySKUPhysicalProfilesMigration,
 	},
+	{
+		Version:  15,
+		Name:     "sku_cubes",
+		Revision: "2026-08-01.1",
+		Apply:    applySKUCubesMigration,
+	},
 }
 
 // Versions 9 and 10 were deployed before their source migrations were merged.

@@ -262,10 +262,8 @@ export type SKUMaster = {
   unit: string;
   reorderLevel: number;
   defaultUnitsPerPallet: number;
-  cartonGrossWeightKg: number;
-  cartonLengthCm: number;
-  cartonWidthCm: number;
-  cartonHeightCm: number;
+  weight: number;
+  cubes: number;
   outboundCartonsPerLayer: number;
   outboundLayerCount: number;
   createdAt: string;
@@ -291,10 +289,8 @@ export type SKUMasterPayload = {
   unit: string;
   reorderLevel: number;
   defaultUnitsPerPallet: number;
-  cartonGrossWeightKg: number;
-  cartonLengthCm: number;
-  cartonWidthCm: number;
-  cartonHeightCm: number;
+  weight: number;
+  cubes: number;
   outboundCartonsPerLayer: number;
   outboundLayerCount: number;
 };

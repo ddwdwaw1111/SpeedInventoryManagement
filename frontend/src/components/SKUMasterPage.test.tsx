@@ -39,7 +39,7 @@ describe("SKUMasterPage", () => {
     updateUIPreference.mockResolvedValue({ value: [] });
   });
 
-  it("saves carton measurements and outbound pallet pattern with a new UPC master", async () => {
+  it("saves weight, cubes, and the outbound pallet pattern with a new UPC master", async () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     renderWithProviders(
       <SKUMasterPage
@@ -56,24 +56,19 @@ describe("SKUMasterPage", () => {
     fireEvent.change(within(dialog).getByLabelText("Item #"), { target: { value: "ITEM-100" } });
     fireEvent.change(within(dialog).getByLabelText("UPC"), { target: { value: "012345678901" } });
     fireEvent.change(within(dialog).getByLabelText("Description"), { target: { value: "Test carton" } });
-    fireEvent.change(within(dialog).getByLabelText("Carton Gross Weight (kg)"), { target: { value: "12.5" } });
-    fireEvent.change(within(dialog).getByLabelText("Length (cm)"), { target: { value: "60" } });
-    fireEvent.change(within(dialog).getByLabelText("Width (cm)"), { target: { value: "40" } });
-    fireEvent.change(within(dialog).getByLabelText("Height (cm)"), { target: { value: "35" } });
+    fireEvent.change(within(dialog).getByLabelText("Weight"), { target: { value: "12.5" } });
+    fireEvent.change(within(dialog).getByLabelText("Cubes"), { target: { value: "0.084" } });
     fireEvent.change(within(dialog).getByLabelText("Cartons per Layer"), { target: { value: "10" } });
     fireEvent.change(within(dialog).getByLabelText("Total Layers"), { target: { value: "6" } });
 
-    expect(within(dialog).getByLabelText("Carton Volume (CBM)")).toHaveValue("0.0840");
     fireEvent.click(within(dialog).getByRole("button", { name: "Add row" }));
 
     await waitFor(() => expect(createSKUMaster).toHaveBeenCalledWith(expect.objectContaining({
       itemNumber: "ITEM-100",
       sku: "012345678901",
       description: "Test carton",
-      cartonGrossWeightKg: 12.5,
-      cartonLengthCm: 60,
-      cartonWidthCm: 40,
-      cartonHeightCm: 35,
+      weight: 12.5,
+      cubes: 0.084,
       outboundCartonsPerLayer: 10,
       outboundLayerCount: 6
     })));

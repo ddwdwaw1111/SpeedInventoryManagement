@@ -174,10 +174,8 @@ type SKUMaster struct {
 	Unit                    string    `db:"unit" json:"unit"`
 	ReorderLevel            int       `db:"reorder_level" json:"reorderLevel"`
 	DefaultUnitsPerPallet   int       `db:"default_units_per_pallet" json:"defaultUnitsPerPallet"`
-	CartonGrossWeightKg     float64   `db:"carton_gross_weight_kg" json:"cartonGrossWeightKg"`
-	CartonLengthCm          float64   `db:"carton_length_cm" json:"cartonLengthCm"`
-	CartonWidthCm           float64   `db:"carton_width_cm" json:"cartonWidthCm"`
-	CartonHeightCm          float64   `db:"carton_height_cm" json:"cartonHeightCm"`
+	Weight                  float64   `db:"carton_gross_weight_kg" json:"weight"`
+	Cubes                   float64   `db:"cubes" json:"cubes"`
 	OutboundCartonsPerLayer int       `db:"outbound_cartons_per_layer" json:"outboundCartonsPerLayer"`
 	OutboundLayerCount      int       `db:"outbound_layer_count" json:"outboundLayerCount"`
 	CreatedAt               time.Time `db:"created_at" json:"createdAt"`
@@ -193,10 +191,8 @@ type CreateSKUMasterInput struct {
 	Unit                    string  `json:"unit"`
 	ReorderLevel            int     `json:"reorderLevel"`
 	DefaultUnitsPerPallet   int     `json:"defaultUnitsPerPallet"`
-	CartonGrossWeightKg     float64 `json:"cartonGrossWeightKg"`
-	CartonLengthCm          float64 `json:"cartonLengthCm"`
-	CartonWidthCm           float64 `json:"cartonWidthCm"`
-	CartonHeightCm          float64 `json:"cartonHeightCm"`
+	Weight                  float64 `json:"weight"`
+	Cubes                   float64 `json:"cubes"`
 	OutboundCartonsPerLayer int     `json:"outboundCartonsPerLayer"`
 	OutboundLayerCount      int     `json:"outboundLayerCount"`
 }

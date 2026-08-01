@@ -25,9 +25,7 @@ func (s *Store) ListSKUMasters(ctx context.Context, search string, customerIDs .
 			sm.reorder_level,
 			sm.default_units_per_pallet,
 			sm.carton_gross_weight_kg,
-			sm.carton_length_cm,
-			sm.carton_width_cm,
-			sm.carton_height_cm,
+			sm.cubes,
 			sm.outbound_cartons_per_layer,
 			sm.outbound_layer_count,
 			sm.created_at,
@@ -73,13 +71,11 @@ func (s *Store) CreateSKUMaster(ctx context.Context, input CreateSKUMasterInput)
 			reorder_level,
 			default_units_per_pallet,
 			carton_gross_weight_kg,
-			carton_length_cm,
-			carton_width_cm,
-			carton_height_cm,
+			cubes,
 			outbound_cartons_per_layer,
 			outbound_layer_count
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		nullableString(input.ItemNumber),
 		input.SKU,
@@ -89,10 +85,8 @@ func (s *Store) CreateSKUMaster(ctx context.Context, input CreateSKUMasterInput)
 		input.Unit,
 		input.ReorderLevel,
 		input.DefaultUnitsPerPallet,
-		input.CartonGrossWeightKg,
-		input.CartonLengthCm,
-		input.CartonWidthCm,
-		input.CartonHeightCm,
+		input.Weight,
+		input.Cubes,
 		input.OutboundCartonsPerLayer,
 		input.OutboundLayerCount,
 	)
@@ -126,9 +120,7 @@ func (s *Store) UpdateSKUMaster(ctx context.Context, skuMasterID int64, input Cr
 			reorder_level = ?,
 			default_units_per_pallet = ?,
 			carton_gross_weight_kg = ?,
-			carton_length_cm = ?,
-			carton_width_cm = ?,
-			carton_height_cm = ?,
+			cubes = ?,
 			outbound_cartons_per_layer = ?,
 			outbound_layer_count = ?,
 			updated_at = CURRENT_TIMESTAMP
@@ -142,10 +134,8 @@ func (s *Store) UpdateSKUMaster(ctx context.Context, skuMasterID int64, input Cr
 		input.Unit,
 		input.ReorderLevel,
 		input.DefaultUnitsPerPallet,
-		input.CartonGrossWeightKg,
-		input.CartonLengthCm,
-		input.CartonWidthCm,
-		input.CartonHeightCm,
+		input.Weight,
+		input.Cubes,
 		input.OutboundCartonsPerLayer,
 		input.OutboundLayerCount,
 		skuMasterID,
@@ -206,9 +196,7 @@ func (s *Store) getSKUMaster(ctx context.Context, skuMasterID int64) (SKUMaster,
 			reorder_level,
 			default_units_per_pallet,
 			carton_gross_weight_kg,
-			carton_length_cm,
-			carton_width_cm,
-			carton_height_cm,
+			cubes,
 			outbound_cartons_per_layer,
 			outbound_layer_count,
 			created_at,
@@ -255,10 +243,10 @@ func validateSKUMasterInput(input CreateSKUMasterInput) error {
 		return fmt.Errorf("%w: reorder level cannot be negative", ErrInvalidInput)
 	case input.DefaultUnitsPerPallet < 0:
 		return fmt.Errorf("%w: default units per pallet cannot be negative", ErrInvalidInput)
-	case input.CartonGrossWeightKg < 0:
-		return fmt.Errorf("%w: carton gross weight cannot be negative", ErrInvalidInput)
-	case input.CartonLengthCm < 0 || input.CartonWidthCm < 0 || input.CartonHeightCm < 0:
-		return fmt.Errorf("%w: carton dimensions cannot be negative", ErrInvalidInput)
+	case input.Weight < 0:
+		return fmt.Errorf("%w: weight cannot be negative", ErrInvalidInput)
+	case input.Cubes < 0:
+		return fmt.Errorf("%w: cubes cannot be negative", ErrInvalidInput)
 	case input.OutboundCartonsPerLayer < 0:
 		return fmt.Errorf("%w: outbound cartons per layer cannot be negative", ErrInvalidInput)
 	case input.OutboundLayerCount < 0:

@@ -83,3 +83,15 @@ func TestSKUPhysicalProfilesHasDedicatedMigration(t *testing.T) {
 	}
 	t.Fatal("UPC physical-profile migration is missing")
 }
+
+func TestSKUCubesHasDedicatedMigration(t *testing.T) {
+	for _, migration := range schemaMigrations {
+		if migration.Version == 15 {
+			if migration.Name != "sku_cubes" || migration.Apply == nil {
+				t.Fatalf("unexpected UPC cubes migration: %#v", migration)
+			}
+			return
+		}
+	}
+	t.Fatal("UPC cubes migration is missing")
+}
