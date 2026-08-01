@@ -61,6 +61,8 @@ type OperationsReportSummary struct {
 	ActiveContainers     int     `json:"activeContainers"`
 	PalletsIn            int     `json:"palletsIn"`
 	PalletsOut           int     `json:"palletsOut"`
+	TransferInPallets    int     `json:"transferInPallets"`
+	TransferOutPallets   int     `json:"transferOutPallets"`
 	NetPalletFlow        int     `json:"netPalletFlow"`
 	ActiveSkuCount       int     `json:"activeSkuCount"`
 	ActiveWarehouseCount int     `json:"activeWarehouseCount"`
@@ -104,6 +106,8 @@ type ReportPalletFlowRow struct {
 	DateKey         string `json:"dateKey"`
 	Inbound         int    `json:"inbound"`
 	Outbound        int    `json:"outbound"`
+	TransferIn      int    `json:"transferIn"`
+	TransferOut     int    `json:"transferOut"`
 	AdjustmentDelta int    `json:"adjustmentDelta"`
 	EndOfDay        int    `json:"endOfDay"`
 }
@@ -232,15 +236,12 @@ type reportSKUSearchLookup struct {
 	Description string `db:"description"`
 }
 
-var reportInboundEvents = map[string]struct{}{
-	StockLedgerEventReceive:    {},
-	StockLedgerEventReversal:   {},
-	StockLedgerEventTransferIn: {},
+var reportReceiptEvents = map[string]struct{}{
+	StockLedgerEventReceive: {},
 }
 
-var reportOutboundEvents = map[string]struct{}{
-	StockLedgerEventShip:        {},
-	StockLedgerEventTransferOut: {},
+var reportShipmentEvents = map[string]struct{}{
+	StockLedgerEventShip: {},
 }
 
 func (s *Store) GetOperationsReport(ctx context.Context, filters OperationsReportFilters) (OperationsReport, error) {
@@ -284,19 +285,27 @@ func (s *Store) GetOperationsReport(ctx context.Context, filters OperationsRepor
 
 	report.Summary.PalletsIn = 0
 	report.Summary.PalletsOut = 0
+	report.Summary.TransferInPallets = 0
+	report.Summary.TransferOutPallets = 0
 	report.Summary.PeakBalance = 0
 	report.Summary.EndingBalance = 0
 	var balanceTotal int
 	for _, row := range report.PalletFlowRows {
 		report.Summary.PalletsIn += row.Inbound
 		report.Summary.PalletsOut += row.Outbound
+		report.Summary.TransferInPallets += row.TransferIn
+		report.Summary.TransferOutPallets += row.TransferOut
 		if row.EndOfDay > report.Summary.PeakBalance {
 			report.Summary.PeakBalance = row.EndOfDay
 		}
 		report.Summary.EndingBalance = row.EndOfDay
 		balanceTotal += row.EndOfDay
 	}
-	report.Summary.NetPalletFlow = report.Summary.PalletsIn - report.Summary.PalletsOut
+	report.Summary.NetPalletFlow = report.Summary.PalletsIn - report.Summary.PalletsOut +
+		report.Summary.TransferInPallets - report.Summary.TransferOutPallets
+	for _, row := range report.PalletFlowRows {
+		report.Summary.NetPalletFlow += row.AdjustmentDelta
+	}
 	if len(report.PalletFlowRows) > 0 {
 		report.Summary.AverageBalance = float64(balanceTotal) / float64(len(report.PalletFlowRows))
 	}
@@ -972,15 +981,25 @@ func buildReportPalletFlowRows(openingBalance int, events []reportLedgerEventRow
 	for _, dayKey := range dayKeys {
 		inboundCount := 0
 		outboundCount := 0
+		transferInCount := 0
+		transferOutCount := 0
 		adjustmentDelta := 0
 		for _, event := range eventsByDay[dayKey] {
 			endingBalance = maxInt(endingBalance+event.PalletChange, 0)
-			if _, isInbound := reportInboundEvents[event.EventType]; isInbound && event.PalletChange > 0 {
+			if _, isReceipt := reportReceiptEvents[event.EventType]; isReceipt && event.PalletChange > 0 {
 				inboundCount += event.PalletChange
 				continue
 			}
-			if _, isOutbound := reportOutboundEvents[event.EventType]; isOutbound && event.PalletChange < 0 {
+			if _, isShipment := reportShipmentEvents[event.EventType]; isShipment && event.PalletChange < 0 {
 				outboundCount += -event.PalletChange
+				continue
+			}
+			if event.EventType == StockLedgerEventTransferIn && event.PalletChange > 0 {
+				transferInCount += event.PalletChange
+				continue
+			}
+			if event.EventType == StockLedgerEventTransferOut && event.PalletChange < 0 {
+				transferOutCount += -event.PalletChange
 				continue
 			}
 			adjustmentDelta += event.PalletChange
@@ -990,6 +1009,8 @@ func buildReportPalletFlowRows(openingBalance int, events []reportLedgerEventRow
 			DateKey:         dayKey,
 			Inbound:         inboundCount,
 			Outbound:        outboundCount,
+			TransferIn:      transferInCount,
+			TransferOut:     transferOutCount,
 			AdjustmentDelta: adjustmentDelta,
 			EndOfDay:        endingBalance,
 		})
@@ -1007,10 +1028,10 @@ func buildReportMovementTrendRows(events []reportLedgerEventRow, granularity str
 		if row.Key == "" {
 			row.Key = bucketKey
 		}
-		if _, ok := reportInboundEvents[event.EventType]; ok && event.QuantityChange > 0 {
+		if _, ok := reportReceiptEvents[event.EventType]; ok && event.QuantityChange > 0 {
 			row.Inbound += event.QuantityChange
 		}
-		if _, ok := reportOutboundEvents[event.EventType]; ok && event.QuantityChange < 0 {
+		if _, ok := reportShipmentEvents[event.EventType]; ok && event.QuantityChange < 0 {
 			row.Outbound += -event.QuantityChange
 		}
 		rowsByKey[bucketKey] = row

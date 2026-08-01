@@ -4,8 +4,11 @@ import { BarChart } from "@mui/x-charts";
 import { InlineAlert } from "./Feedback";
 import { SearchSubmitField } from "./SearchSubmitField";
 import { api } from "../lib/api";
+import { readBillingWorkspaceContext, type BillingWorkspaceContext } from "../lib/billingWorkspaceContext";
+import { DEFAULT_BILLING_RATES } from "../lib/billingPreview";
 import { parseDateValue, startOfLocalDay, toIsoDateString } from "../lib/dates";
 import { getErrorMessage } from "../lib/errors";
+import { formatMoney } from "../lib/formatters";
 import { useI18n } from "../lib/i18n";
 import type {
   Customer,
@@ -25,6 +28,10 @@ type ChartTone = "blue" | "green" | "amber" | "red";
 type BarRow = { label: string; value: number; meta?: string; tone?: ChartTone };
 type TrendRow = { key: string; label: string; inbound: number; outbound: number };
 type PalletFlowRow = OperationsReportPalletFlowRow & { label: string };
+export type DailyStorageRow = PalletFlowRow & {
+  openingBalance: number;
+  storageAmount: number;
+};
 
 const shortDateFormatter = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
 const mediumDateFormatter = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -32,6 +39,7 @@ const monthFormatter = new Intl.DateTimeFormat("en-US", { month: "short", year: 
 const yearFormatter = new Intl.DateTimeFormat("en-US", { year: "numeric" });
 const numberFormatter = new Intl.NumberFormat("en-US");
 const decimalFormatter = new Intl.NumberFormat("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 1 });
+const DEFAULT_REPORT_DAILY_STORAGE_RATE = DEFAULT_BILLING_RATES.storageFeePerPalletPerWeekNormal / 7;
 
 type ReportsPageProps = {
   locations: Location[];
@@ -52,6 +60,9 @@ export function ReportsPage({ locations, customers, skuMasters, isLoading, error
   const [searchTerm, setSearchTerm] = useState("");
   const [submittedSearchTerm, setSubmittedSearchTerm] = useState("");
   const [reportGranularity, setReportGranularity] = useState<ReportGranularity>("day");
+  const [dailyStorageRate, setDailyStorageRate] = useState<number | null>(() => (
+    resolveReportDailyStorageRate(readBillingWorkspaceContext())
+  ));
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [report, setReport] = useState<OperationsReport | null>(null);
   const [isReportLoading, setIsReportLoading] = useState(false);
@@ -239,16 +250,23 @@ export function ReportsPage({ locations, customers, skuMasters, isLoading, error
     () => mapPalletFlowRows(report?.palletFlowRows ?? []),
     [report?.palletFlowRows]
   );
+  const movementTrendGranularity = report?.granularity ?? reportGranularity;
   const movementTrendRows = useMemo(
-    () => mapMovementTrendRows(report?.movementTrendRows ?? [], reportGranularity),
-    [report?.movementTrendRows, reportGranularity]
+    () => mapMovementTrendRows(report?.movementTrendRows ?? [], movementTrendGranularity),
+    [movementTrendGranularity, report?.movementTrendRows]
+  );
+  const dailyStorageRows = useMemo(
+    () => mapDailyStorageRows(palletFlowRows, dailyStorageRate ?? 0),
+    [dailyStorageRate, palletFlowRows]
   );
 
   const summary = report?.summary;
   const onHandUnits = summary?.onHandUnits ?? 0;
   const activeContainers = summary?.activeContainers ?? 0;
-  const palletsIn = summary?.palletsIn ?? 0;
-  const palletsOut = summary?.palletsOut ?? 0;
+  const receivedPallets = summary?.palletsIn ?? 0;
+  const shippedPallets = summary?.palletsOut ?? 0;
+  const transferInPallets = summary?.transferInPallets ?? 0;
+  const transferOutPallets = summary?.transferOutPallets ?? 0;
   const netPalletFlow = summary?.netPalletFlow ?? 0;
   const activeSkuCount = summary?.activeSkuCount ?? 0;
   const activeWarehouseCount = summary?.activeWarehouseCount ?? 0;
@@ -256,7 +274,18 @@ export function ReportsPage({ locations, customers, skuMasters, isLoading, error
   const endingBalance = summary?.endingBalance ?? 0;
   const peakBalance = summary?.peakBalance ?? 0;
   const averageBalance = summary?.averageBalance ?? 0;
-  const advancedFilterCount = Number(normalizedSearch.length > 0) + Number(reportGranularity !== "day");
+  const hasDailyStorageRate = dailyStorageRate !== null;
+  const latestDailyStorageAmount = hasDailyStorageRate
+    ? dailyStorageRows[dailyStorageRows.length - 1]?.storageAmount ?? 0
+    : null;
+  const periodStorageAmount = hasDailyStorageRate
+    ? dailyStorageRows.reduce((total, row) => total + row.storageAmount, 0)
+    : null;
+  const peakDailyStorageAmount = hasDailyStorageRate
+    ? dailyStorageRows.reduce((highest, row) => Math.max(highest, row.storageAmount), 0)
+    : null;
+  const advancedFilterCount = Number(normalizedSearch.length > 0)
+    + Number(reportGranularity !== "day");
   const emptyLabel = isLoading || isReportLoading ? t("loadingRecords") : t("noResults");
   const scopeRangeLabel = formatDateRangeSummary(normalizedDateRange.start, normalizedDateRange.end);
   const skuFlowRangeLabel = formatDateRangeSummary(normalizedSKUFlowDateRange.start, normalizedSKUFlowDateRange.end);
@@ -283,18 +312,24 @@ export function ReportsPage({ locations, customers, skuMasters, isLoading, error
       {reportErrorMessage ? <InlineAlert>{reportErrorMessage}</InlineAlert> : null}
       {skuFlowErrorMessage ? <InlineAlert>{skuFlowErrorMessage}</InlineAlert> : null}
 
-      <section className="workbook-panel workbook-panel--full reports-exec">
+      <section className="workbook-panel workbook-panel--full reports-exec reports-exec--pallet-ledger">
         <ReportTabNav activeTab={activeReportTab} onChange={setActiveReportTab} />
 
         {activeReportTab === "overview" ? (
           <>
-        <header className="reports-exec__hero">
+        <header className="reports-exec__hero reports-exec__hero--ledger">
           <div className="reports-exec__hero-copy">
-            <span className="reports-exec__eyebrow">{t("reportsExecutiveBadge")}</span>
+            <span className="reports-exec__eyebrow">{t("reportsPalletStorageBadge")}</span>
             <h2>{t("reportOverviewTitle")}</h2>
+            <p>{t("reportsPalletStorageSubtitle")}</p>
           </div>
-          <div className="reports-exec__hero-brief">
-            <strong>{t("reportsExecutiveSummaryTitle")}</strong>
+          <div className="reports-exec__hero-brief reports-exec__hero-brief--cost">
+            <span className="reports-exec__hero-metric-label">{t("reportsLatestDailyStorage")}</span>
+            <strong>{formatOptionalMoney(latestDailyStorageAmount)}</strong>
+            <p>{hasDailyStorageRate
+              ? t("reportsDailyStorageRateMeta", { rate: formatMoney(dailyStorageRate) })
+              : t("reportsStorageRateRequired")}
+            </p>
             <div className="reports-exec__hero-pills">
               <span>{t("reportsSelectedPeriod")}: {scopeRangeLabel}</span>
               <span>{t("customer")}: {selectedCustomerName ?? t("allCustomers")}</span>
@@ -330,6 +365,17 @@ export function ReportsPage({ locations, customers, skuMasters, isLoading, error
                   <option key={location.id} value={location.id}>{location.name}</option>
                 ))}
               </select>
+            </label>
+            <label>
+              {t("reportsDailyStorageRate")}
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={dailyStorageRate ?? ""}
+                placeholder={t("reportsStorageRateRequiredShort")}
+                onChange={(event) => setDailyStorageRate(parseOptionalNonNegativeNumber(event.target.value))}
+              />
             </label>
           </div>
 
@@ -376,10 +422,121 @@ export function ReportsPage({ locations, customers, skuMasters, isLoading, error
         </div>
 
         <section className="reports-exec__summary">
-          <SectionHeading title={t("reportsExecutiveSummaryTitle")} />
+          <SectionHeading
+            title={t("reportsPalletStoragePulse")}
+            subtitle={t("reportsPalletStoragePulseDesc")}
+          />
 
-          <div className="reports-exec__kpi-grid">
-            <ExecutiveMetricCard
+          <div className="reports-exec__priority-kpis">
+            <PriorityMetricCard
+              label={t("reportsEndingPallets")}
+              value={formatNumber(endingBalance)}
+              unit={t("pallets")}
+              meta={t("reportsEndingPalletsMeta")}
+              tone="navy"
+            />
+            <PriorityMetricCard
+              label={t("reportsLatestDailyStorage")}
+              value={formatOptionalMoney(latestDailyStorageAmount)}
+              unit={t("reportsPerDay")}
+              meta={t("reportsLatestDailyStorageMeta")}
+              tone="amber"
+            />
+            <PriorityMetricCard
+              label={t("reportsPeriodStorageEstimate")}
+              value={formatOptionalMoney(periodStorageAmount)}
+              unit={t("reportsSelectedPeriod")}
+              meta={t("reportsPeriodStorageEstimateMeta")}
+              tone="green"
+            />
+            <PriorityMetricCard
+              label={t("reportsInsightNetPalletFlow")}
+              value={formatSignedNumber(netPalletFlow)}
+              unit={t("pallets")}
+              meta={t("reportsPalletMovementMeta", {
+                received: formatNumber(receivedPallets),
+                shipped: formatNumber(shippedPallets),
+                transferIn: formatNumber(transferInPallets),
+                transferOut: formatNumber(transferOutPallets)
+              })}
+              tone={netPalletFlow >= 0 ? "green" : "red"}
+            />
+          </div>
+
+          <div className="reports-exec__priority-grid">
+            <ReportCard
+              title={t("dailyPalletFlow")}
+              subtitle={t("dailyPalletFlowDesc")}
+              variant="primary"
+              className="report-card--pallet-flow"
+            >
+              <PalletFlowChart
+                rows={palletFlowRows}
+                emptyLabel={emptyLabel}
+                receivedLabel={t("reportsKpiPalletsIn")}
+                shippedLabel={t("reportsKpiPalletsOut")}
+                transferInLabel={t("reportsTransferInPallets")}
+                transferOutLabel={t("reportsTransferOutPallets")}
+              />
+              <StatStrip
+                stats={[
+                  { label: t("reportsKpiPalletsIn"), value: `${formatNumber(receivedPallets)} ${t("pallets")}` },
+                  { label: t("reportsKpiPalletsOut"), value: `${formatNumber(shippedPallets)} ${t("pallets")}` },
+                  { label: t("reportsTransferInPallets"), value: `${formatNumber(transferInPallets)} ${t("pallets")}` },
+                  { label: t("reportsTransferOutPallets"), value: `${formatNumber(transferOutPallets)} ${t("pallets")}` },
+                  { label: t("reportsNetFlow"), value: `${formatSignedNumber(netPalletFlow)} ${t("pallets")}` }
+                ]}
+              />
+            </ReportCard>
+
+            <ReportCard
+              title={t("reportsDailyStorageCost")}
+              subtitle={hasDailyStorageRate
+                ? t("reportsDailyStorageCostDesc", { rate: formatMoney(dailyStorageRate) })
+                : t("reportsStorageRateRequired")}
+              variant="primary"
+              className="report-card--storage-cost"
+            >
+              <DailyStorageCostChart
+                rows={dailyStorageRows}
+                emptyLabel={emptyLabel}
+                label={t("reportsDailyStorageCost")}
+                isRateConfigured={hasDailyStorageRate}
+                unavailableLabel={t("reportsStorageRateRequired")}
+              />
+              <StatStrip
+                stats={[
+                  { label: t("reportsPeriodStorageEstimate"), value: formatOptionalMoney(periodStorageAmount) },
+                  { label: t("reportsPeakDailyStorage"), value: formatOptionalMoney(peakDailyStorageAmount) },
+                  { label: t("reportsDailyStorageRateShort"), value: formatOptionalMoney(dailyStorageRate) }
+                ]}
+              />
+            </ReportCard>
+          </div>
+
+          <ReportCard
+            title={t("reportsDailyPalletLedger")}
+            subtitle={t("reportsDailyPalletLedgerDesc")}
+            variant="secondary"
+            className="report-card--daily-ledger"
+          >
+            <DailyPalletLedger
+              rows={dailyStorageRows}
+              emptyLabel={emptyLabel}
+              isRateConfigured={hasDailyStorageRate}
+            />
+            <p className="reports-exec__estimate-note">{t("reportsStorageEstimateDisclaimer")}</p>
+          </ReportCard>
+        </section>
+
+        <section className="reports-exec__detail">
+          <SectionHeading
+            title={t("reportsInventoryContextTitle")}
+            subtitle={t("reportsInventoryContextDesc")}
+          />
+
+          <div className="reports-exec__context-strip">
+            <ExecutiveInsightCard
               label={t("reportsKpiOnHandUnits")}
               value={`${formatNumber(onHandUnits)} ${t("units")}`}
               meta={t("reportsKpiOnHandUnitsMeta", {
@@ -388,32 +545,17 @@ export function ReportsPage({ locations, customers, skuMasters, isLoading, error
               })}
               tone="blue"
             />
-            <ExecutiveMetricCard
+            <ExecutiveInsightCard
               label={t("reportsKpiActiveContainers")}
               value={formatNumber(activeContainers)}
               meta={t("reportsKpiActiveContainersMeta")}
               tone="green"
             />
-            <ExecutiveMetricCard
-              label={t("reportsKpiPalletsIn")}
-              value={formatNumber(palletsIn)}
-              meta={t("reportsKpiPalletsInMeta")}
-              tone="green"
-            />
-            <ExecutiveMetricCard
-              label={t("reportsKpiPalletsOut")}
-              value={formatNumber(palletsOut)}
-              meta={t("reportsKpiPalletsOutMeta")}
-              tone="amber"
-            />
-          </div>
-
-          <div className="reports-exec__insight-grid">
             <ExecutiveInsightCard
-              label={t("reportsInsightNetPalletFlow")}
-              value={`${formatSignedNumber(netPalletFlow)} ${t("pallets")}`}
-              meta={t("reportsSelectedPeriod")}
-              tone={netPalletFlow >= 0 ? "green" : "amber"}
+              label={t("reportsPeakBalance")}
+              value={`${formatNumber(peakBalance)} ${t("pallets")}`}
+              meta={`${t("reportsAverageBalance")}: ${formatDecimalNumber(averageBalance)}`}
+              tone="amber"
             />
             <ExecutiveInsightCard
               label={t("reportsInsightLargestWarehouse")}
@@ -425,44 +567,10 @@ export function ReportsPage({ locations, customers, skuMasters, isLoading, error
             />
           </div>
 
-          <div className="reports-exec__primary-grid">
-            <ReportCard title={t("dailyPalletFlow")} variant="primary">
-              <PalletFlowChart
-                rows={palletFlowRows}
-                emptyLabel={emptyLabel}
-                inboundLabel={t("inbound")}
-                outboundLabel={t("outbound")}
-              />
-              <StatStrip
-                stats={[
-                  { label: t("reportsNetFlow"), value: `${formatSignedNumber(netPalletFlow)} ${t("pallets")}` },
-                  { label: t("reportsPeriods"), value: formatNumber(palletFlowRows.length) },
-                  { label: t("reportsEndingBalance"), value: `${formatNumber(endingBalance)} ${t("pallets")}` }
-                ]}
-              />
-            </ReportCard>
-
-            <ReportCard title={t("inventoryByStorage")} variant="primary">
+          <div className="reports-exec__detail-grid reports-exec__detail-grid--supporting">
+            <ReportCard title={t("inventoryByStorage")} variant="secondary">
               <HorizontalBarList rows={locationRows} emptyLabel={emptyLabel} valueSuffix={t("units")} />
             </ReportCard>
-          </div>
-        </section>
-
-        <section className="reports-exec__detail">
-          <SectionHeading title={t("reportsDetailedAnalysisTitle")} />
-
-          <div className="reports-exec__detail-grid">
-            <ReportCard title={t("endOfDayPallets")} variant="secondary">
-              <PalletBalanceChart rows={palletFlowRows} emptyLabel={emptyLabel} balanceLabel={t("dailyPalletBalance")} />
-              <StatStrip
-                stats={[
-                  { label: t("reportsEndingBalance"), value: `${formatNumber(endingBalance)} ${t("pallets")}` },
-                  { label: t("reportsPeakBalance"), value: `${formatNumber(peakBalance)} ${t("pallets")}` },
-                  { label: t("reportsAverageBalance"), value: `${formatDecimalNumber(averageBalance)} ${t("pallets")}` }
-                ]}
-              />
-            </ReportCard>
-
             <ReportCard title={t("topSkuOnHand")} variant="secondary">
               <HorizontalBarList rows={topSkuRows} emptyLabel={emptyLabel} valueSuffix={t("units")} />
             </ReportCard>
@@ -635,6 +743,31 @@ function ExecutiveMetricCard({
   );
 }
 
+function PriorityMetricCard({
+  label,
+  value,
+  unit,
+  meta,
+  tone
+}: {
+  label: string;
+  value: string;
+  unit: string;
+  meta: string;
+  tone: "navy" | "amber" | "green" | "red";
+}) {
+  return (
+    <article className={`reports-priority-card reports-priority-card--${tone}`}>
+      <span className="reports-priority-card__label">{label}</span>
+      <div className="reports-priority-card__value">
+        <strong>{value}</strong>
+        <span>{unit}</span>
+      </div>
+      <small>{meta}</small>
+    </article>
+  );
+}
+
 function ExecutiveInsightCard({
   label,
   value,
@@ -659,15 +792,17 @@ function ReportCard({
   title,
   subtitle,
   variant,
+  className = "",
   children
 }: {
   title: string;
   subtitle?: string;
   variant: "primary" | "secondary";
+  className?: string;
   children: ReactNode;
 }) {
   return (
-    <section className={`report-card report-card--${variant}`}>
+    <section className={`report-card report-card--${variant} ${className}`.trim()}>
       <div className="report-card__header">
         <h3>{title}</h3>
         {subtitle ? <p>{subtitle}</p> : null}
@@ -799,13 +934,17 @@ function HorizontalBarList({
 function PalletFlowChart({
   rows,
   emptyLabel,
-  inboundLabel,
-  outboundLabel
+  receivedLabel,
+  shippedLabel,
+  transferInLabel,
+  transferOutLabel
 }: {
   rows: PalletFlowRow[];
   emptyLabel: string;
-  inboundLabel: string;
-  outboundLabel: string;
+  receivedLabel: string;
+  shippedLabel: string;
+  transferInLabel: string;
+  transferOutLabel: string;
 }) {
   if (rows.length === 0) {
     return <div className="empty-state">{emptyLabel}</div>;
@@ -819,8 +958,10 @@ function PalletFlowChart({
         margin={{ top: 20, bottom: 20, left: 38, right: 18 }}
         xAxis={[{ scaleType: "band", dataKey: "label" }]}
         series={[
-          { dataKey: "inbound", label: inboundLabel, color: "#3c6e71" },
-          { dataKey: "outbound", label: outboundLabel, color: "#b76857" }
+          { dataKey: "inbound", label: receivedLabel, color: "#3c6e71" },
+          { dataKey: "outbound", label: shippedLabel, color: "#b76857" },
+          { dataKey: "transferIn", label: transferInLabel, color: "#4e83b5" },
+          { dataKey: "transferOut", label: transferOutLabel, color: "#9a6b4c" }
         ]}
         grid={{ horizontal: true }}
       />
@@ -828,15 +969,23 @@ function PalletFlowChart({
   );
 }
 
-function PalletBalanceChart({
+function DailyStorageCostChart({
   rows,
   emptyLabel,
-  balanceLabel
+  label,
+  isRateConfigured,
+  unavailableLabel
 }: {
-  rows: PalletFlowRow[];
+  rows: DailyStorageRow[];
   emptyLabel: string;
-  balanceLabel: string;
+  label: string;
+  isRateConfigured: boolean;
+  unavailableLabel: string;
 }) {
+  if (!isRateConfigured) {
+    return <div className="empty-state">{unavailableLabel}</div>;
+  }
+
   if (rows.length === 0) {
     return <div className="empty-state">{emptyLabel}</div>;
   }
@@ -848,9 +997,67 @@ function PalletBalanceChart({
         height={300}
         margin={{ top: 20, bottom: 20, left: 38, right: 18 }}
         xAxis={[{ scaleType: "band", dataKey: "label" }]}
-        series={[{ dataKey: "endOfDay", label: balanceLabel, color: "#274c77" }]}
+        yAxis={[{ valueFormatter: (value: number) => `$${formatNumber(value)}` }]}
+        series={[
+          {
+            dataKey: "storageAmount",
+            label,
+            color: "#d39335",
+            valueFormatter: (value) => formatMoney(Number(value ?? 0))
+          }
+        ]}
         grid={{ horizontal: true }}
       />
+    </div>
+  );
+}
+
+function DailyPalletLedger({
+  rows,
+  emptyLabel,
+  isRateConfigured
+}: {
+  rows: DailyStorageRow[];
+  emptyLabel: string;
+  isRateConfigured: boolean;
+}) {
+  const { t } = useI18n();
+  if (rows.length === 0) {
+    return <div className="empty-state">{emptyLabel}</div>;
+  }
+
+  return (
+    <div className="reports-ledger-wrap">
+      <table className="reports-ledger">
+        <thead>
+          <tr>
+            <th>{t("date")}</th>
+            <th>{t("reportsOpeningPallets")}</th>
+            <th>{t("reportsKpiPalletsIn")}</th>
+            <th>{t("reportsKpiPalletsOut")}</th>
+            <th>{t("reportsTransferInPallets")}</th>
+            <th>{t("reportsTransferOutPallets")}</th>
+            <th>{t("reportsPalletAdjustments")}</th>
+            <th>{t("reportsEndingPallets")}</th>
+            <th>{t("reportsDailyStorageCost")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.dateKey}>
+              <td><strong>{row.label}</strong></td>
+              <td>{formatNumber(row.openingBalance)}</td>
+              <td className="reports-ledger__positive">+{formatNumber(row.inbound)}</td>
+              <td className="reports-ledger__negative">-{formatNumber(row.outbound)}</td>
+              <td className="reports-ledger__transfer-in">+{formatNumber(row.transferIn)}</td>
+              <td className="reports-ledger__transfer-out">-{formatNumber(row.transferOut)}</td>
+              <td>{formatSignedNumber(row.adjustmentDelta)}</td>
+              <td><strong>{formatNumber(row.endOfDay)}</strong></td>
+              <td className="reports-ledger__money"><strong>{isRateConfigured ? formatMoney(row.storageAmount) : "-"}</strong></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -938,11 +1145,50 @@ function normalizeDateRange(startDate: string, endDate: string) {
   return startDate <= endDate ? { start: startDate, end: endDate } : { start: endDate, end: startDate };
 }
 
+function parseOptionalNonNegativeNumber(value: string) {
+  if (value.trim() === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+export function resolveReportDailyStorageRate(context: BillingWorkspaceContext | null) {
+  const normalDailyRate = (context?.rates.storageFeePerPalletPerWeekNormal
+    ?? DEFAULT_BILLING_RATES.storageFeePerPalletPerWeekNormal) / 7;
+  const transferDailyRate = (context?.rates.storageFeePerPalletPerWeekWestCoastTransfer
+    ?? DEFAULT_BILLING_RATES.storageFeePerPalletPerWeekWestCoastTransfer) / 7;
+
+  // Reports aggregates all container types and has no matching type filter.
+  // A rate selected in Billing for one type must not be applied to the other.
+  return normalDailyRate === transferDailyRate ? normalDailyRate : null;
+}
+
 function mapPalletFlowRows(rows: OperationsReportPalletFlowRow[]): PalletFlowRow[] {
   return rows.map((row) => ({
     ...row,
     label: shortDateFormatter.format(parseDateValue(row.dateKey))
   }));
+}
+
+export function mapDailyStorageRows(rows: PalletFlowRow[], dailyStorageRate: number): DailyStorageRow[] {
+  const normalizedRate = Number.isFinite(dailyStorageRate) && dailyStorageRate >= 0 ? dailyStorageRate : 0;
+  let previousEndBalance: number | null = null;
+
+  return rows.map((row) => {
+    const calculatedOpeningBalance = Math.max(
+      row.endOfDay - row.inbound + row.outbound - row.transferIn + row.transferOut - row.adjustmentDelta,
+      0
+    );
+    const openingBalance = previousEndBalance ?? calculatedOpeningBalance;
+    previousEndBalance = row.endOfDay;
+
+    return {
+      ...row,
+      openingBalance,
+      storageAmount: row.endOfDay * normalizedRate
+    };
+  });
 }
 
 function mapMovementTrendRows(rows: OperationsReportMovementTrendRow[], granularity: ReportGranularity): TrendRow[] {
@@ -952,16 +1198,48 @@ function mapMovementTrendRows(rows: OperationsReportMovementTrendRow[], granular
   }));
 }
 
-function formatTrendLabel(key: string, granularity: ReportGranularity) {
-  if (granularity === "year") {
-    return yearFormatter.format(parseDateValue(`${key}-01-01`));
+export function formatTrendLabel(key: string, granularity: ReportGranularity) {
+  const normalizedKey = key.trim();
+  const trendDate = parseTrendDate(normalizedKey, granularity) ?? inferTrendDate(normalizedKey);
+  if (!trendDate) {
+    return normalizedKey || "-";
   }
 
-  if (granularity === "month") {
-    return monthFormatter.format(parseDateValue(`${key}-01`));
-  }
+  return trendDate.formatter.format(trendDate.date);
+}
 
-  return shortDateFormatter.format(parseDateValue(key));
+function parseTrendDate(key: string, granularity: ReportGranularity) {
+  if (granularity === "year" && /^\d{4}$/.test(key)) {
+    return createTrendDate(`${key}-01-01`, yearFormatter);
+  }
+  if (granularity === "month" && /^\d{4}-\d{2}$/.test(key)) {
+    return createTrendDate(`${key}-01`, monthFormatter);
+  }
+  if (granularity === "day" && /^\d{4}-\d{2}-\d{2}$/.test(key)) {
+    return createTrendDate(key, shortDateFormatter);
+  }
+  return null;
+}
+
+function inferTrendDate(key: string) {
+  if (/^\d{4}$/.test(key)) {
+    return createTrendDate(`${key}-01-01`, yearFormatter);
+  }
+  if (/^\d{4}-\d{2}$/.test(key)) {
+    return createTrendDate(`${key}-01`, monthFormatter);
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(key)) {
+    return createTrendDate(key, shortDateFormatter);
+  }
+  return null;
+}
+
+function createTrendDate(value: string, formatter: Intl.DateTimeFormat) {
+  const date = parseDateValue(value);
+  if (Number.isNaN(date.getTime()) || toIsoDateString(date) !== value) {
+    return null;
+  }
+  return { date, formatter };
 }
 
 function formatDateRangeSummary(startDate: string, endDate: string) {
@@ -978,6 +1256,10 @@ function formatNumber(value: number) {
 
 function formatDecimalNumber(value: number) {
   return decimalFormatter.format(value);
+}
+
+function formatOptionalMoney(value: number | null) {
+  return value === null ? "-" : formatMoney(value);
 }
 
 function formatSignedNumber(value: number) {

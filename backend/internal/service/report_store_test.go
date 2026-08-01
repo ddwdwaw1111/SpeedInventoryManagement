@@ -23,6 +23,18 @@ func TestBuildReportPalletFlowRowsUsesLedgerBalances(t *testing.T) {
 			PalletChange:   1,
 		},
 		{
+			BusinessDate:   start,
+			EventType:      StockLedgerEventTransferIn,
+			QuantityChange: 20,
+			PalletChange:   2,
+		},
+		{
+			BusinessDate:   start,
+			EventType:      StockLedgerEventTransferOut,
+			QuantityChange: -20,
+			PalletChange:   -2,
+		},
+		{
 			BusinessDate:   start.AddDate(0, 0, 1),
 			EventType:      StockLedgerEventShip,
 			QuantityChange: -12,
@@ -41,12 +53,12 @@ func TestBuildReportPalletFlowRowsUsesLedgerBalances(t *testing.T) {
 	if len(rows) != 3 {
 		t.Fatalf("expected 3 daily rows, got %d", len(rows))
 	}
-	assertReportPalletFlowRow(t, rows[0], "2026-04-01", 1, 1, 0, 1)
-	assertReportPalletFlowRow(t, rows[1], "2026-04-02", 0, 1, 1, 1)
-	assertReportPalletFlowRow(t, rows[2], "2026-04-03", 0, 0, 0, 1)
+	assertReportPalletFlowRow(t, rows[0], "2026-04-01", 1, 1, 2, 2, 0, 1)
+	assertReportPalletFlowRow(t, rows[1], "2026-04-02", 0, 1, 0, 0, 1, 1)
+	assertReportPalletFlowRow(t, rows[2], "2026-04-03", 0, 0, 0, 0, 0, 1)
 }
 
-func TestBuildReportMovementTrendRowsUsesQuantityMovement(t *testing.T) {
+func TestBuildReportMovementTrendRowsUsesReceiptAndShipmentQuantityOnly(t *testing.T) {
 	start := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
 	events := []reportLedgerEventRow{
 		{
@@ -71,7 +83,7 @@ func TestBuildReportMovementTrendRowsUsesQuantityMovement(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 monthly row, got %d", len(rows))
 	}
-	if rows[0].Key != "2026-04" || rows[0].Inbound != 25 || rows[0].Outbound != 8 {
+	if rows[0].Key != "2026-04" || rows[0].Inbound != 20 || rows[0].Outbound != 8 {
 		t.Fatalf("unexpected monthly trend row: %#v", rows[0])
 	}
 }
@@ -254,6 +266,8 @@ func assertReportPalletFlowRow(
 	dateKey string,
 	inbound int,
 	outbound int,
+	transferIn int,
+	transferOut int,
 	adjustmentDelta int,
 	endOfDay int,
 ) {
@@ -262,14 +276,18 @@ func assertReportPalletFlowRow(
 	if row.DateKey != dateKey ||
 		row.Inbound != inbound ||
 		row.Outbound != outbound ||
+		row.TransferIn != transferIn ||
+		row.TransferOut != transferOut ||
 		row.AdjustmentDelta != adjustmentDelta ||
 		row.EndOfDay != endOfDay {
 		t.Fatalf(
-			"unexpected pallet flow row: got %#v, want date=%s inbound=%d outbound=%d adjustment=%d end=%d",
+			"unexpected pallet flow row: got %#v, want date=%s inbound=%d outbound=%d transferIn=%d transferOut=%d adjustment=%d end=%d",
 			row,
 			dateKey,
 			inbound,
 			outbound,
+			transferIn,
+			transferOut,
 			adjustmentDelta,
 			endOfDay,
 		)

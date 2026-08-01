@@ -16,6 +16,8 @@ export type OperationsReportSummary = {
   activeContainers: number;
   palletsIn: number;
   palletsOut: number;
+  transferInPallets: number;
+  transferOutPallets: number;
   netPalletFlow: number;
   activeSkuCount: number;
   activeWarehouseCount: number;
@@ -48,6 +50,8 @@ export type OperationsReportPalletFlowRow = {
   dateKey: string;
   inbound: number;
   outbound: number;
+  transferIn: number;
+  transferOut: number;
   adjustmentDelta: number;
   endOfDay: number;
 };
