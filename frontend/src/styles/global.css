@@ -4734,6 +4734,7 @@ textarea:focus {
 }
 
 .report-card--pallet-flow,
+.report-card--pallet-balance,
 .report-card--storage-cost,
 .report-card--daily-ledger {
   border-radius: 12px;
@@ -4743,6 +4744,26 @@ textarea:focus {
 
 .report-card--pallet-flow {
   border-top: 4px solid var(--reports-ledger-navy);
+}
+
+.report-card--pallet-balance {
+  min-height: 0;
+  border-top: 4px solid #274c77;
+  background:
+    linear-gradient(180deg, rgba(238, 246, 252, 0.78), #fff 46%),
+    #fff;
+}
+
+.report-chart-wrap--pallet-balance {
+  min-height: 320px;
+}
+
+.report-card--pallet-balance .MuiAreaElement-root {
+  fill-opacity: 0.14;
+}
+
+.report-card--pallet-balance .MuiLineElement-root {
+  stroke-width: 3;
 }
 
 .report-card--storage-cost {

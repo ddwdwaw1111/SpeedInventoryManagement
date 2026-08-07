@@ -29,3 +29,6 @@ pickup-container-rows.json
 warehouse-pallet-counts.json
 .codex_tmp/*
 outputs/
+tmp/*
+backups/*
+.codex-temp/*

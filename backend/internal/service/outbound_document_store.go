@@ -1676,6 +1676,23 @@ type BulkDeleteOutboundDocumentResult struct {
 	Error      string            `json:"error,omitempty"`
 }
 
+type outboundAutoTransferLaterActivityError struct {
+	message string
+}
+
+func (err *outboundAutoTransferLaterActivityError) Error() string {
+	return err.message
+}
+
+func (err *outboundAutoTransferLaterActivityError) Unwrap() error {
+	return ErrInvalidInput
+}
+
+func isOutboundAutoTransferLaterActivityError(err error) bool {
+	var laterActivityErr *outboundAutoTransferLaterActivityError
+	return errors.As(err, &laterActivityErr)
+}
+
 func (s *Store) BulkDeleteOutboundDocuments(ctx context.Context, input BulkDeleteOutboundDocumentsInput) (BulkDeleteOutboundDocumentsResponse, error) {
 	if len(input.DocumentIDs) == 0 || len(input.DocumentIDs) > MaxBulkDeleteOutboundDocuments {
 		return BulkDeleteOutboundDocumentsResponse{}, fmt.Errorf("%w: between 1 and %d shipment IDs are required", ErrInvalidInput, MaxBulkDeleteOutboundDocuments)
@@ -1696,32 +1713,76 @@ func (s *Store) BulkDeleteOutboundDocuments(ctx context.Context, input BulkDelet
 		Documents: make([]OutboundDocument, 0, len(documentIDs)),
 		Results:   make([]BulkDeleteOutboundDocumentResult, 0, len(documentIDs)),
 	}
-	for index, documentID := range documentIDs {
-		document, err := s.CancelOutboundDocument(ctx, documentID)
-		if err != nil {
-			response.FailedDocuments++
-			response.Results = append(response.Results, BulkDeleteOutboundDocumentResult{
-				DocumentID: documentID,
-				Success:    false,
-				Error:      err.Error(),
-			})
-			if !isExpectedBulkOutboundDocumentFailure(err) {
-				response.Interrupted = true
-				response.InterruptionError = err.Error()
-				response.UnprocessedDocuments = len(documentIDs) - index - 1
-				break
+	resultsByDocumentID := make(map[int64]BulkDeleteOutboundDocumentResult, len(documentIDs))
+	deletedDocumentsByID := make(map[int64]OutboundDocument, len(documentIDs))
+	lastDeferredErrors := make(map[int64]error)
+	pendingDocumentIDs := append([]int64(nil), documentIDs...)
+
+	for len(pendingDocumentIDs) > 0 && !response.Interrupted {
+		deferredDocumentIDs := make([]int64, 0)
+		deletedThisPass := 0
+
+		for index, documentID := range pendingDocumentIDs {
+			document, err := s.CancelOutboundDocument(ctx, documentID)
+			if err != nil {
+				if isOutboundAutoTransferLaterActivityError(err) {
+					lastDeferredErrors[documentID] = err
+					deferredDocumentIDs = append(deferredDocumentIDs, documentID)
+					continue
+				}
+
+				resultsByDocumentID[documentID] = BulkDeleteOutboundDocumentResult{
+					DocumentID: documentID,
+					Success:    false,
+					Error:      err.Error(),
+				}
+				response.FailedDocuments++
+				if !isExpectedBulkOutboundDocumentFailure(err) {
+					response.Interrupted = true
+					response.InterruptionError = err.Error()
+					response.UnprocessedDocuments = len(pendingDocumentIDs) - index - 1 + len(deferredDocumentIDs)
+					break
+				}
+				continue
 			}
-			continue
+
+			deletedThisPass++
+			response.DeletedDocuments++
+			deletedDocumentsByID[document.ID] = document
+			deletedDocument := document
+			resultsByDocumentID[document.ID] = BulkDeleteOutboundDocumentResult{
+				DocumentID: document.ID,
+				Success:    true,
+				Document:   &deletedDocument,
+			}
+			delete(lastDeferredErrors, document.ID)
 		}
 
-		response.DeletedDocuments++
-		response.Documents = append(response.Documents, document)
-		deletedDocument := document
-		response.Results = append(response.Results, BulkDeleteOutboundDocumentResult{
-			DocumentID: document.ID,
-			Success:    true,
-			Document:   &deletedDocument,
-		})
+		if response.Interrupted || len(deferredDocumentIDs) == 0 {
+			break
+		}
+		if deletedThisPass == 0 {
+			for _, documentID := range deferredDocumentIDs {
+				err := lastDeferredErrors[documentID]
+				resultsByDocumentID[documentID] = BulkDeleteOutboundDocumentResult{
+					DocumentID: documentID,
+					Success:    false,
+					Error:      err.Error(),
+				}
+				response.FailedDocuments++
+			}
+			break
+		}
+		pendingDocumentIDs = deferredDocumentIDs
+	}
+
+	for _, documentID := range documentIDs {
+		if document, exists := deletedDocumentsByID[documentID]; exists {
+			response.Documents = append(response.Documents, document)
+		}
+		if result, exists := resultsByDocumentID[documentID]; exists {
+			response.Results = append(response.Results, result)
+		}
 	}
 	return response, nil
 }
@@ -1777,10 +1838,11 @@ func (s *Store) cancelLoadedOutboundDocumentTx(ctx context.Context, tx *sql.Tx, 
 		if err != nil {
 			return time.Time{}, err
 		}
-		if err := s.ensureOutboundAutoTransferCanBeRolledBackTx(ctx, tx, documentRow, lineRows); err != nil {
+		skipAutoTransferRollback, err := s.ensureOutboundAutoTransferCanBeRolledBackTx(ctx, tx, documentRow, lineRows)
+		if err != nil {
 			return time.Time{}, err
 		}
-		autoTransferRollback := buildOutboundAutoTransferRollbackInput(documentRow, lineRows)
+		autoTransferRollback := buildOutboundAutoTransferRollbackInput(documentRow, lineRows, skipAutoTransferRollback)
 		allocationsByLine := make(map[int64][]outboundContainerAllocationRow, len(lineRows))
 		billingScopes := make([]billingSourceMutationScope, 0, len(lineRows))
 		for _, lineRow := range lineRows {
@@ -1869,8 +1931,12 @@ func (s *Store) cancelLoadedOutboundDocumentTx(ctx context.Context, tx *sql.Tx, 
 			if err := validateInventoryTransferInput(autoTransferRollback); err != nil {
 				return time.Time{}, fmt.Errorf("prepare automatic transfer rollback: %w", err)
 			}
-			if _, err := s.createInventoryTransferTx(ctx, tx, autoTransferRollback, &deletedAt); err != nil {
+			rollbackTransfer, err := s.createInventoryTransferTx(ctx, tx, autoTransferRollback, &deletedAt)
+			if err != nil {
 				return time.Time{}, fmt.Errorf("rollback automatic warehouse transfer: %w", err)
+			}
+			if err := purgeRolledBackOutboundAutoTransfersTx(ctx, tx, documentRow, lineRows, skipAutoTransferRollback, rollbackTransfer.ID); err != nil {
+				return time.Time{}, err
 			}
 		}
 	} else if outboundTrackingRequiresActiveReservation(normalizeOutboundTrackingStatus(documentRow.TrackingStatus, documentRow.Status)) {
@@ -1912,6 +1978,7 @@ func (s *Store) cancelLoadedOutboundDocumentTx(ctx context.Context, tx *sql.Tx, 
 func buildOutboundAutoTransferRollbackInput(
 	document outboundDocumentRow,
 	lineRows []outboundDocumentLineRow,
+	skipRollback map[string]struct{},
 ) CreateInventoryTransferInput {
 	reference := outboundConfirmationReference(document)
 	input := CreateInventoryTransferInput{
@@ -1922,6 +1989,9 @@ func buildOutboundAutoTransferRollbackInput(
 	for _, lineRow := range lineRows {
 		for _, allocation := range decodeOutboundPickAllocationsOrEmpty(lineRow.PickAllocationsJSON) {
 			if allocation.SourceLocationID <= 0 || allocation.LocationID <= 0 || allocation.SourceLocationID == allocation.LocationID || allocation.AllocatedQty <= 0 {
+				continue
+			}
+			if _, skip := skipRollback[outboundAutoTransferAllocationKey(lineRow.ID, allocation)]; skip {
 				continue
 			}
 			input.Lines = append(input.Lines, CreateInventoryTransferLineInput{
@@ -1942,13 +2012,120 @@ func buildOutboundAutoTransferRollbackInput(
 	return input
 }
 
+func outboundAutoTransferAllocationKey(lineID int64, allocation OutboundPickAllocation) string {
+	return fmt.Sprintf(
+		"%d:%d:%d:%d:%s:%s",
+		lineID,
+		allocation.SourceTransferID,
+		allocation.SourceLocationID,
+		allocation.LocationID,
+		fallbackSection(allocation.SourceStorageSection),
+		normalizeContainerNo(allocation.ContainerNo),
+	)
+}
+
+func purgeRolledBackOutboundAutoTransfersTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	document outboundDocumentRow,
+	lineRows []outboundDocumentLineRow,
+	skipRollback map[string]struct{},
+	rollbackTransferID int64,
+) error {
+	originalTransferIDs := make(map[int64]struct{})
+	for _, lineRow := range lineRows {
+		for _, allocation := range decodeOutboundPickAllocationsOrEmpty(lineRow.PickAllocationsJSON) {
+			if allocation.SourceTransferID <= 0 || allocation.SourceLocationID <= 0 || allocation.LocationID <= 0 {
+				continue
+			}
+			if _, skip := skipRollback[outboundAutoTransferAllocationKey(lineRow.ID, allocation)]; skip {
+				continue
+			}
+			containerNo := normalizeContainerNo(allocation.ContainerNo)
+			sourceSection := fallbackSection(allocation.SourceStorageSection)
+			destinationSection := fallbackSection(allocation.StorageSection)
+			if _, err := tx.ExecContext(ctx, `
+				DELETE FROM stock_ledger
+				WHERE source_document_type = ?
+				  AND source_document_id = ?
+				  AND customer_id = ?
+				  AND sku_master_id = ?
+				  AND UPPER(TRIM(COALESCE(container_no_snapshot, ''))) = ?
+				  AND (
+					(location_id = ? AND storage_section = ?)
+					OR (location_id = ? AND storage_section = ?)
+				  )
+			`,
+				StockLedgerSourceTransfer,
+				allocation.SourceTransferID,
+				document.CustomerID,
+				lineRow.SKUMasterID,
+				containerNo,
+				allocation.SourceLocationID,
+				sourceSection,
+				allocation.LocationID,
+				destinationSection,
+			); err != nil {
+				return mapDBError(fmt.Errorf("delete rolled-back automatic transfer ledger entries %d: %w", allocation.SourceTransferID, err))
+			}
+			if _, err := tx.ExecContext(ctx, `
+				DELETE FROM inventory_transfer_lines
+				WHERE transfer_id = ?
+				  AND customer_id = ?
+				  AND from_location_id = ?
+				  AND from_storage_section = ?
+				  AND to_location_id = ?
+				  AND to_storage_section = ?
+				  AND UPPER(TRIM(container_no)) = ?
+				  AND UPPER(TRIM(sku_snapshot)) = ?
+			`,
+				allocation.SourceTransferID,
+				document.CustomerID,
+				allocation.SourceLocationID,
+				sourceSection,
+				allocation.LocationID,
+				destinationSection,
+				containerNo,
+				strings.ToUpper(strings.TrimSpace(lineRow.SKUSnapshot)),
+			); err != nil {
+				return mapDBError(fmt.Errorf("delete rolled-back automatic transfer line %d: %w", allocation.SourceTransferID, err))
+			}
+			originalTransferIDs[allocation.SourceTransferID] = struct{}{}
+		}
+	}
+
+	for transferID := range originalTransferIDs {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM inventory_transfers
+			WHERE id = ?
+			  AND NOT EXISTS (
+				SELECT 1 FROM inventory_transfer_lines WHERE transfer_id = ?
+			  )
+		`, transferID, transferID); err != nil {
+			return mapDBError(fmt.Errorf("delete empty automatic transfer %d: %w", transferID, err))
+		}
+	}
+
+	if err := deleteStockLedgerForDocumentTx(ctx, tx, StockLedgerSourceTransfer, rollbackTransferID); err != nil {
+		return fmt.Errorf("delete automatic transfer rollback ledger %d: %w", rollbackTransferID, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM inventory_transfer_lines WHERE transfer_id = ?`, rollbackTransferID); err != nil {
+		return mapDBError(fmt.Errorf("delete automatic transfer rollback lines %d: %w", rollbackTransferID, err))
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM inventory_transfers WHERE id = ?`, rollbackTransferID); err != nil {
+		return mapDBError(fmt.Errorf("delete automatic transfer rollback %d: %w", rollbackTransferID, err))
+	}
+	return nil
+}
+
 func (s *Store) ensureOutboundAutoTransferCanBeRolledBackTx(
 	ctx context.Context,
 	tx *sql.Tx,
 	document outboundDocumentRow,
 	lineRows []outboundDocumentLineRow,
-) error {
+) (map[string]struct{}, error) {
 	reference := outboundConfirmationReference(document)
+	skipRollback := make(map[string]struct{})
 	for _, lineRow := range lineRows {
 		for _, allocation := range decodeOutboundPickAllocationsOrEmpty(lineRow.PickAllocationsJSON) {
 			if allocation.SourceLocationID <= 0 || allocation.LocationID <= 0 || allocation.SourceLocationID == allocation.LocationID || allocation.AllocatedQty <= 0 {
@@ -1960,7 +2137,7 @@ func (s *Store) ensureOutboundAutoTransferCanBeRolledBackTx(
 			sourceSection := fallbackSection(allocation.SourceStorageSection)
 			sku := firstNonEmpty(strings.TrimSpace(lineRow.SKUSnapshot), fmt.Sprintf("UPC ID %d", lineRow.SKUMasterID))
 			if allocation.SourceTransferID <= 0 {
-				return fmt.Errorf(
+				return nil, fmt.Errorf(
 					"%w: cannot delete %s because the automatic transfer provenance for container %s / UPC %s from %s, section %s is incomplete; correct this shipment manually",
 					ErrInvalidInput,
 					reference,
@@ -1972,8 +2149,10 @@ func (s *Store) ensureOutboundAutoTransferCanBeRolledBackTx(
 			}
 
 			var sourceInventoryItemID int64
+			var sourceQuantity int
+			var sourcePallets int
 			if err := tx.QueryRowContext(ctx, `
-				SELECT id
+				SELECT id, quantity, pallets
 				FROM inventory_items
 				WHERE customer_id = ?
 				  AND sku_master_id = ?
@@ -1989,9 +2168,9 @@ func (s *Store) ensureOutboundAutoTransferCanBeRolledBackTx(
 				allocation.SourceLocationID,
 				sourceSection,
 				containerNo,
-			).Scan(&sourceInventoryItemID); err != nil {
+			).Scan(&sourceInventoryItemID, &sourceQuantity, &sourcePallets); err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
-					return fmt.Errorf(
+					return nil, fmt.Errorf(
 						"%w: cannot delete %s because the original balance for container %s / UPC %s at %s, section %s is missing; correct this shipment manually",
 						ErrInvalidInput,
 						reference,
@@ -2001,7 +2180,7 @@ func (s *Store) ensureOutboundAutoTransferCanBeRolledBackTx(
 						sourceSection,
 					)
 				}
-				return mapDBError(fmt.Errorf("lock automatic transfer source balance: %w", err))
+				return nil, mapDBError(fmt.Errorf("lock automatic transfer source balance: %w", err))
 			}
 
 			var originalTransferOutLedgerID sql.NullInt64
@@ -2026,10 +2205,10 @@ func (s *Store) ensureOutboundAutoTransferCanBeRolledBackTx(
 				sourceSection,
 				containerNo,
 			).Scan(&originalTransferOutLedgerID); err != nil {
-				return mapDBError(fmt.Errorf("load automatic transfer provenance: %w", err))
+				return nil, mapDBError(fmt.Errorf("load automatic transfer provenance: %w", err))
 			}
 			if !originalTransferOutLedgerID.Valid || originalTransferOutLedgerID.Int64 <= 0 {
-				return fmt.Errorf(
+				return nil, fmt.Errorf(
 					"%w: cannot delete %s because its automatic transfer record for container %s / UPC %s from %s, section %s is missing; correct this shipment manually",
 					ErrInvalidInput,
 					reference,
@@ -2060,22 +2239,74 @@ func (s *Store) ensureOutboundAutoTransferCanBeRolledBackTx(
 				containerNo,
 				originalTransferOutLedgerID.Int64,
 			).Scan(&hasLaterActivity); err != nil {
-				return mapDBError(fmt.Errorf("check activity after automatic transfer: %w", err))
+				return nil, mapDBError(fmt.Errorf("check activity after automatic transfer: %w", err))
 			}
 			if hasLaterActivity != 0 {
-				return fmt.Errorf(
-					"%w: cannot delete %s because container %s / UPC %s at %s, section %s has later inventory activity after its automatic transfer; reverse or correct the later activity first",
-					ErrInvalidInput,
+				var currentContainerLocationID sql.NullInt64
+				currentLocationErr := tx.QueryRowContext(ctx, `
+					SELECT location_id
+					FROM containers
+					WHERE customer_id = ?
+					  AND UPPER(TRIM(container_no)) = ?
+					LIMIT 1
+				`, document.CustomerID, containerNo).Scan(&currentContainerLocationID)
+				if currentLocationErr != nil && !errors.Is(currentLocationErr, sql.ErrNoRows) {
+					return nil, mapDBError(fmt.Errorf("load current container location: %w", currentLocationErr))
+				}
+				var latestActivityMovesToOutboundLocation int
+				if err := tx.QueryRowContext(ctx, `
+					SELECT EXISTS (
+						SELECT 1
+						FROM stock_ledger later
+						JOIN inventory_transfer_lines transfer_line
+						  ON transfer_line.transfer_id = later.source_document_id
+						 AND transfer_line.id = later.source_line_id
+						WHERE later.id = (
+							SELECT MAX(candidate.id)
+							FROM stock_ledger candidate
+							WHERE candidate.customer_id = ?
+							  AND candidate.sku_master_id = ?
+							  AND candidate.location_id = ?
+							  AND candidate.storage_section = ?
+							  AND UPPER(TRIM(COALESCE(candidate.container_no_snapshot, ''))) = ?
+							  AND candidate.id > ?
+						)
+						  AND later.source_document_type = ?
+						  AND later.event_type = ?
+						  AND transfer_line.to_location_id = ?
+					)
+				`,
+					document.CustomerID,
+					lineRow.SKUMasterID,
+					allocation.SourceLocationID,
+					sourceSection,
+					containerNo,
+					originalTransferOutLedgerID.Int64,
+					StockLedgerSourceTransfer,
+					StockLedgerEventTransferOut,
+					allocation.LocationID,
+				).Scan(&latestActivityMovesToOutboundLocation); err != nil {
+					return nil, mapDBError(fmt.Errorf("resolve latest container relocation: %w", err))
+				}
+				if sourceQuantity == 0 && sourcePallets == 0 &&
+					currentContainerLocationID.Valid && currentContainerLocationID.Int64 == allocation.LocationID &&
+					latestActivityMovesToOutboundLocation != 0 {
+					skipRollback[outboundAutoTransferAllocationKey(lineRow.ID, allocation)] = struct{}{}
+					continue
+				}
+				return nil, &outboundAutoTransferLaterActivityError{message: fmt.Sprintf(
+					"%s: cannot delete %s because container %s / UPC %s at %s, section %s has later inventory activity after its automatic transfer; reverse or correct the later activity first",
+					ErrInvalidInput.Error(),
 					reference,
 					containerNo,
 					sku,
 					sourceLocation,
 					sourceSection,
-				)
+				)}
 			}
 		}
 	}
-	return nil
+	return skipRollback, nil
 }
 
 func outboundTrackingRequiresActiveReservation(status string) bool {
@@ -3795,13 +4026,25 @@ func (s *Store) refreshOutboundFinalPalletSnapshotsTx(
 			}
 			startingPallets := maxInt(snapshot.Pallets, 0)
 			remainingQuantity := snapshot.Quantity - allocation.AllocatedQty
-			remainingPallets := remainingOutboundInventoryPallets(snapshot.Quantity, startingPallets, allocation.AllocatedQty)
+			releasedPallets := maxInt(allocation.InventoryPalletsUsed, 0)
+			if allocation.AllocatedQty >= snapshot.Quantity {
+				releasedPallets = startingPallets
+			}
+			if releasedPallets > startingPallets {
+				return nil, fmt.Errorf(
+					"%w: source container %s inventory pallets used must be between 0 and the starting balance of %d",
+					ErrInvalidInput,
+					firstNonEmpty(containerNo, "selected container"),
+					startingPallets,
+				)
+			}
+			remainingPallets := startingPallets - releasedPallets
 			allocation.LocationID = locationID
 			allocation.StorageSection = storageSection
 			allocation.ContainerNo = containerNo
 			allocation.StartingPallets = cloneIntPointer(&startingPallets)
 			allocation.RemainingPallets = cloneIntPointer(&remainingPallets)
-			allocation.Pallets = maxInt(startingPallets-remainingPallets, 0)
+			allocation.Pallets = releasedPallets
 			snapshots[bucketKey] = outboundFinalPalletSnapshot{
 				Quantity: remainingQuantity,
 				Pallets:  remainingPallets,

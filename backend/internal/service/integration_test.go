@@ -2944,8 +2944,8 @@ func TestBulkOutboundFindsRemoteContainerAndTransfersWhenDraftConfirmedIntegrati
 	}
 
 	remainingSource = mustFindItemByContainer(t, ctx, store, sourceLocation.ID, DefaultStorageSection, containerNo, item.SKU)
-	if remainingSource.Quantity != 6 || remainingSource.Pallets != 2 {
-		t.Fatalf("expected partial shipment to preserve the source pallet balance, got source balance %d / %d", remainingSource.Quantity, remainingSource.Pallets)
+	if remainingSource.Quantity != 6 || remainingSource.Pallets != 1 {
+		t.Fatalf("expected partial shipment to deduct the workbook inventory pallet count, got source balance %d / %d", remainingSource.Quantity, remainingSource.Pallets)
 	}
 	var transferCountAfterConfirm int
 	if err := store.db.GetContext(ctx, &transferCountAfterConfirm, `
@@ -2970,8 +2970,8 @@ func TestBulkOutboundFindsRemoteContainerAndTransfersWhenDraftConfirmedIntegrati
 			ContainerNo:        containerNo,
 			SKUMasterID:        item.SKUMasterID,
 			Quantity:           6,
-			SourcePallets:      2,
-			DestinationPallets: 2,
+			SourcePallets:      1,
+			DestinationPallets: 1,
 			ToLocationID:       laterLocation.ID,
 			ToStorageSection:   DefaultStorageSection,
 		}},
@@ -2989,7 +2989,7 @@ func TestBulkOutboundFindsRemoteContainerAndTransfersWhenDraftConfirmedIntegrati
 		validationTx.Rollback()
 		t.Fatalf("load outbound lines for later-activity validation: %v", err)
 	}
-	validationErr := store.ensureOutboundAutoTransferCanBeRolledBackTx(ctx, validationTx, documentRow, lineRows)
+	_, validationErr := store.ensureOutboundAutoTransferCanBeRolledBackTx(ctx, validationTx, documentRow, lineRows)
 	if !errors.Is(validationErr, ErrInvalidInput) || !strings.Contains(validationErr.Error(), pickingOrderNo) || !strings.Contains(validationErr.Error(), "later inventory activity") {
 		validationTx.Rollback()
 		t.Fatalf("expected deletion to reject later source activity with a clear PO error, got %v", validationErr)
@@ -3023,21 +3023,16 @@ func TestBulkOutboundFindsRemoteContainerAndTransfersWhenDraftConfirmedIntegrati
 	if mainBalance.Quantity != 0 || mainBalance.Pallets != 0 {
 		t.Fatalf("expected deletion to leave no phantom main-warehouse balance, got %d CTN / %d pallets", mainBalance.Quantity, mainBalance.Pallets)
 	}
-	var rollbackLineCount int
-	if err := store.db.GetContext(ctx, &rollbackLineCount, `
+	var deletedSystemTransferCount int
+	if err := store.db.GetContext(ctx, &deletedSystemTransferCount, `
 		SELECT COUNT(*)
-		FROM inventory_transfer_lines line
-		JOIN inventory_transfers transfer ON transfer.id = line.transfer_id
-		WHERE transfer.transfer_no = ?
-		  AND line.from_location_id = ?
-		  AND line.to_location_id = ?
-		  AND line.quantity = 4
-		  AND line.pallets = 0
-	`, fmt.Sprintf("TRN-UNDO-OUT-%d", confirmed.ID), mainLocation.ID, sourceLocation.ID); err != nil {
-		t.Fatalf("load automatic transfer rollback after deletion: %v", err)
+		FROM inventory_transfers
+		WHERE id = ? OR transfer_no = ?
+	`, confirmedAllocation.SourceTransferID, fmt.Sprintf("TRN-UNDO-OUT-%d", confirmed.ID)); err != nil {
+		t.Fatalf("check automatic transfer cleanup after deletion: %v", err)
 	}
-	if rollbackLineCount != 1 {
-		t.Fatalf("expected one 4 CTN / 0 pallet rollback to the original warehouse, got %d", rollbackLineCount)
+	if deletedSystemTransferCount != 0 {
+		t.Fatalf("expected the fully rolled-back automatic transfers to be removed, got %d", deletedSystemTransferCount)
 	}
 }
 

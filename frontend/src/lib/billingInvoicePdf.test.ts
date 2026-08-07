@@ -398,9 +398,10 @@ describe("buildBillingInvoicePdfDefinition", () => {
 
     const containerSummaryTable = findSectionTable(content, "Container Reconciliation");
     expect(containerSummaryTable[0][0].text).toBe("Container");
-    expect(containerSummaryTable[0][4].text).toBe("Received\nPallets");
-    expect(containerSummaryTable[0][8].text).toBe("Inbound");
-    expect(containerSummaryTable[0][13].text).toBe("Storage\nNet");
+    expect(containerSummaryTable[0].map((cell: { text: string }) => cell.text)).not.toContain("Warehouse");
+    expect(containerSummaryTable[0][3].text).toBe("Received\nPallets");
+    expect(containerSummaryTable[0][7].text).toBe("Inbound");
+    expect(containerSummaryTable[0][12].text).toBe("Storage\nNet");
     expect(containerSummaryTable[1][0].text).toBe("GCXU5817233");
     expect(containerSummaryTable[2][0].text).toBe("Invoice-level");
     const storageDetailTable = findSectionTable(content, "Container Storage Detail");
@@ -454,9 +455,9 @@ describe("buildBillingInvoicePdfDefinition", () => {
 
     const content = definition.content as any[];
     const containerSummaryTable = findSectionTable(content, "Container Reconciliation");
-    expect(containerSummaryTable[1][11].text).toBe("$7.00");
-    expect(containerSummaryTable[1][12].text).toBe("-$7.00");
-    expect(containerSummaryTable[1][13].text).toBe("-");
+    expect(containerSummaryTable[1][10].text).toBe("$7.00");
+    expect(containerSummaryTable[1][11].text).toBe("-$7.00");
+    expect(containerSummaryTable[1][12].text).toBe("-");
   });
 
   it("keeps manual discount references aligned with container-sorted detail rows", () => {

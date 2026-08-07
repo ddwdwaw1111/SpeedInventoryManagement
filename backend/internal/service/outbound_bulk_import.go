@@ -894,13 +894,16 @@ func (s *Store) buildOutboundBulkImportPreview(ctx context.Context, fileName str
 			startingQuantity := maxInt(documentPhysicalQuantity[item.ID], 0)
 			startingPallets := maxInt(documentPhysicalPallets[item.ID], 0)
 			availablePallets := maxInt(documentRemainingPallets[item.ID], 0)
-			remainingQuantity := startingQuantity - fulfillmentQuantity
-			remainingPallets := remainingOutboundInventoryPallets(startingQuantity, startingPallets, fulfillmentQuantity)
-			releasedPallets := startingPallets - remainingPallets
 			if line.InventoryPallets > startingPallets {
 				document.Issues = append(document.Issues, outboundBulkInventoryPalletsExceedSourceIssue(*line, startingPallets))
 				continue
 			}
+			remainingQuantity := startingQuantity - fulfillmentQuantity
+			releasedPallets := line.InventoryPallets
+			if fulfillmentQuantity >= startingQuantity {
+				releasedPallets = startingPallets
+			}
+			remainingPallets := startingPallets - releasedPallets
 			if releasedPallets < 0 || releasedPallets > availablePallets {
 				document.Issues = append(document.Issues, outboundBulkPalletReleaseConflictIssue(*line, releasedPallets, availablePallets))
 				continue

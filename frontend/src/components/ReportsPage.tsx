@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
-import { BarChart } from "@mui/x-charts";
+import { BarChart, LineChart } from "@mui/x-charts";
 
 import { InlineAlert } from "./Feedback";
 import { SearchSubmitField } from "./SearchSubmitField";
@@ -462,6 +462,27 @@ export function ReportsPage({ locations, customers, skuMasters, isLoading, error
               tone={netPalletFlow >= 0 ? "green" : "red"}
             />
           </div>
+
+          <ReportCard
+            title={t("endOfDayPallets")}
+            subtitle={t("endOfDayPalletsDesc")}
+            variant="primary"
+            className="report-card--pallet-balance"
+          >
+            <DailyPalletBalanceChart
+              rows={palletFlowRows}
+              emptyLabel={emptyLabel}
+              label={t("endOfDayPallets")}
+              unitLabel={t("pallets")}
+            />
+            <StatStrip
+              stats={[
+                { label: t("reportsEndingPallets"), value: `${formatNumber(endingBalance)} ${t("pallets")}` },
+                { label: t("reportsPeakBalance"), value: `${formatNumber(peakBalance)} ${t("pallets")}` },
+                { label: t("reportsAverageBalance"), value: `${formatDecimalNumber(averageBalance)} ${t("pallets")}` }
+              ]}
+            />
+          </ReportCard>
 
           <div className="reports-exec__priority-grid">
             <ReportCard
@@ -963,6 +984,47 @@ function PalletFlowChart({
           { dataKey: "transferIn", label: transferInLabel, color: "#4e83b5" },
           { dataKey: "transferOut", label: transferOutLabel, color: "#9a6b4c" }
         ]}
+        grid={{ horizontal: true }}
+      />
+    </div>
+  );
+}
+
+function DailyPalletBalanceChart({
+  rows,
+  emptyLabel,
+  label,
+  unitLabel
+}: {
+  rows: PalletFlowRow[];
+  emptyLabel: string;
+  label: string;
+  unitLabel: string;
+}) {
+  if (rows.length === 0) {
+    return <div className="empty-state">{emptyLabel}</div>;
+  }
+
+  return (
+    <div className="report-chart-wrap report-chart-wrap--pallet-balance">
+      <LineChart
+        dataset={rows}
+        height={320}
+        margin={{ top: 24, bottom: 20, left: 48, right: 24 }}
+        xAxis={[{ scaleType: "band", dataKey: "label" }]}
+        yAxis={[{
+          min: 0,
+          valueFormatter: (value: number) => formatNumber(value)
+        }]}
+        series={[{
+          dataKey: "endOfDay",
+          label,
+          color: "#274c77",
+          area: true,
+          curve: "monotoneX",
+          showMark: rows.length <= 31,
+          valueFormatter: (value) => `${formatNumber(Number(value ?? 0))} ${unitLabel}`
+        }]}
         grid={{ horizontal: true }}
       />
     </div>

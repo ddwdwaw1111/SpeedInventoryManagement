@@ -712,7 +712,6 @@ function buildContainerReconciliationTable(details: BillingContainerStatement[])
   const body: TableCell[][] = [[
     reconciliationHeaderCell("Container"),
     reconciliationHeaderCell("Received"),
-    reconciliationHeaderCell("Warehouse"),
     reconciliationHeaderCell("Opening"),
     reconciliationHeaderCell("Received\nPallets"),
     reconciliationHeaderCell("Released"),
@@ -732,7 +731,6 @@ function buildContainerReconciliationTable(details: BillingContainerStatement[])
     body.push([
       bodyCell(detail.containerNo || "Invoice-level", "tableCell", index),
       bodyCell(detail.receivedOn || "-", "tableCellCenter", index),
-      bodyCell(detail.warehouses.join(", ") || "-", "tableCell", index),
       bodyCell(detail.palletMovementAvailable ? formatNumber(detail.openingPallets) : "-", "tableCellRight", index),
       bodyCell(detail.palletMovementAvailable ? formatNumber(detail.receivedPallets) : "-", "tableCellRight", index),
       bodyCell(detail.palletMovementAvailable ? formatNumber(detail.releasedPallets) : "-", "tableCellRight", index),
@@ -750,11 +748,11 @@ function buildContainerReconciliationTable(details: BillingContainerStatement[])
   });
 
   if (details.length === 0) {
-    body.push([{ text: "No container billing detail", colSpan: 16, alignment: "center" }, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}]);
+    body.push([{ text: "No container billing detail", colSpan: 15, alignment: "center" }, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}]);
   } else {
     body.push([
-      { text: "Invoice Total", colSpan: 15, style: "tableTotalLabel", alignment: "right" },
-      {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {},
+      { text: "Invoice Total", colSpan: 14, style: "tableTotalLabel", alignment: "right" },
+      {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {},
       {
         text: formatMoney(roundCurrency(details.reduce((total, detail) => total + detail.totalAmount, 0))),
         style: "tableTotalValue"
@@ -766,7 +764,7 @@ function buildContainerReconciliationTable(details: BillingContainerStatement[])
     table: {
       headerRows: 1,
       dontBreakRows: true,
-      widths: [58, 42, 42, 28, 33, 30, 28, 46, 38, 38, 38, 42, 40, 42, 38, 46],
+      widths: [62, 46, 31, 36, 33, 31, 48, 40, 40, 40, 44, 42, 44, 40, 52],
       body
     },
     layout: BILLING_RECONCILIATION_LAYOUT_NAME

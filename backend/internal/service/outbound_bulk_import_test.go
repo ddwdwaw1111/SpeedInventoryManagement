@@ -436,6 +436,69 @@ func TestInitializeOutboundBulkBalancesExcludesReservedPallets(t *testing.T) {
 	}
 }
 
+func TestOutboundBulkPreviewUsesWorkbookInventoryPalletsForPartialPickIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+	customer := mustCreateCustomer(t, ctx, store, "Bulk pallet input customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, MainOutboundWarehouseCode)
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "SKU-BULK-PALLET-"+suffix, 0, DefaultStorageSection)
+	containerNo := "CONT-BULK-PALLET-" + suffix
+	if _, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID: customer.ID, LocationID: location.ID, ExpectedArrivalDate: "2026-07-01",
+		ContainerNo: containerNo, StorageSection: DefaultStorageSection, Status: DocumentStatusConfirmed,
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU: item.SKU, Description: item.Description, ExpectedQty: 661, ReceivedQty: 661,
+			Pallets: 19, StorageSection: DefaultStorageSection,
+		}},
+	}); err != nil {
+		t.Fatalf("seed inbound stock: %v", err)
+	}
+
+	preview, err := store.buildOutboundBulkImportPreview(ctx, "bulk-pallets.xlsx", customer.ID, []OutboundBulkImportDocumentPreview{
+		{
+			DocumentKey: "ROW-2", PickingOrderNo: "PO-PALLET-A-" + suffix, ActualShipDate: "2026-07-02", RowNumbers: []int{2},
+			Lines: []OutboundBulkImportLinePreview{{
+				RowNumber: 2, Warehouse: location.Name, SourceContainer: containerNo, StorageSection: DefaultStorageSection,
+				SKU: item.SKU, Quantity: 419, InventoryPallets: 12, OutboundPallets: 9,
+			}},
+		},
+		{
+			DocumentKey: "ROW-3", PickingOrderNo: "PO-PALLET-B-" + suffix, ActualShipDate: "2026-07-03", RowNumbers: []int{3},
+			Lines: []OutboundBulkImportLinePreview{{
+				RowNumber: 3, Warehouse: location.Name, SourceContainer: containerNo, StorageSection: DefaultStorageSection,
+				SKU: item.SKU, Quantity: 235, InventoryPallets: 6, OutboundPallets: 3,
+			}},
+		},
+		{
+			DocumentKey: "ROW-4", PickingOrderNo: "PO-PALLET-C-" + suffix, ActualShipDate: "2026-07-04", RowNumbers: []int{4},
+			Lines: []OutboundBulkImportLinePreview{{
+				RowNumber: 4, Warehouse: location.Name, SourceContainer: containerNo, StorageSection: DefaultStorageSection,
+				SKU: item.SKU, Quantity: 7, InventoryPallets: 0, OutboundPallets: 1,
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("preview partial outbound pallet deductions: %v", err)
+	}
+	if preview.ValidDocuments != 3 || len(preview.Documents) != 3 {
+		t.Fatalf("expected three valid preview documents: %#v", preview)
+	}
+
+	first := preview.Documents[0].Input.Lines[0].PickAllocations[0]
+	second := preview.Documents[1].Input.Lines[0].PickAllocations[0]
+	third := preview.Documents[2].Input.Lines[0].PickAllocations[0]
+	if first.Pallets != 12 || first.StartingPallets == nil || *first.StartingPallets != 19 || first.RemainingPallets == nil || *first.RemainingPallets != 7 {
+		t.Fatalf("first row did not use the workbook inventory pallet count: %#v", first)
+	}
+	if second.Pallets != 6 || second.StartingPallets == nil || *second.StartingPallets != 7 || second.RemainingPallets == nil || *second.RemainingPallets != 1 {
+		t.Fatalf("second row did not use the workbook inventory pallet count: %#v", second)
+	}
+	if third.Pallets != 1 || third.StartingPallets == nil || *third.StartingPallets != 1 || third.RemainingPallets == nil || *third.RemainingPallets != 0 {
+		t.Fatalf("final row did not release the last pallet with the depleted carton balance: %#v", third)
+	}
+}
+
 func TestResolveOutboundBulkMasterTreatsItemCodeAsReferenceOnly(t *testing.T) {
 	first := SKUMaster{ID: 1, SKU: "SKU-A", ItemNumber: "ITEM-A"}
 	mastersBySKU := map[string]SKUMaster{"SKU-A": first}
@@ -564,6 +627,7 @@ func TestBuildOutboundAutoTransferRollbackInputRestoresOriginalSource(t *testing
 			SKUMasterID:         11,
 			PickAllocationsJSON: mustEncodeOutboundPickAllocations(allocations),
 		}},
+		nil,
 	)
 
 	if input.TransferNo != "TRN-UNDO-OUT-17" || !strings.Contains(input.Notes, "PO 1842261-7261") {
