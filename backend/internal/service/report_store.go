@@ -1028,11 +1028,11 @@ func buildReportMovementTrendRows(events []reportLedgerEventRow, granularity str
 		if row.Key == "" {
 			row.Key = bucketKey
 		}
-		if _, ok := reportReceiptEvents[event.EventType]; ok && event.QuantityChange > 0 {
-			row.Inbound += event.QuantityChange
+		if _, ok := reportReceiptEvents[event.EventType]; ok && event.PalletChange > 0 {
+			row.Inbound += event.PalletChange
 		}
-		if _, ok := reportShipmentEvents[event.EventType]; ok && event.QuantityChange < 0 {
-			row.Outbound += -event.QuantityChange
+		if _, ok := reportShipmentEvents[event.EventType]; ok && event.PalletChange < 0 {
+			row.Outbound += -event.PalletChange
 		}
 		rowsByKey[bucketKey] = row
 	}

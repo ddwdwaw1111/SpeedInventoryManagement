@@ -58,23 +58,26 @@ func TestBuildReportPalletFlowRowsUsesLedgerBalances(t *testing.T) {
 	assertReportPalletFlowRow(t, rows[2], "2026-04-03", 0, 0, 0, 0, 0, 1)
 }
 
-func TestBuildReportMovementTrendRowsUsesReceiptAndShipmentQuantityOnly(t *testing.T) {
+func TestBuildReportMovementTrendRowsUsesReceiptAndShipmentPalletsOnly(t *testing.T) {
 	start := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
 	events := []reportLedgerEventRow{
 		{
 			BusinessDate:   start,
 			EventType:      StockLedgerEventReceive,
 			QuantityChange: 20,
+			PalletChange:   3,
 		},
 		{
 			BusinessDate:   start.AddDate(0, 0, 4),
 			EventType:      StockLedgerEventShip,
 			QuantityChange: -8,
+			PalletChange:   -2,
 		},
 		{
 			BusinessDate:   start.AddDate(0, 0, 9),
 			EventType:      StockLedgerEventTransferIn,
 			QuantityChange: 5,
+			PalletChange:   1,
 		},
 	}
 
@@ -83,7 +86,7 @@ func TestBuildReportMovementTrendRowsUsesReceiptAndShipmentQuantityOnly(t *testi
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 monthly row, got %d", len(rows))
 	}
-	if rows[0].Key != "2026-04" || rows[0].Inbound != 20 || rows[0].Outbound != 8 {
+	if rows[0].Key != "2026-04" || rows[0].Inbound != 3 || rows[0].Outbound != 2 {
 		t.Fatalf("unexpected monthly trend row: %#v", rows[0])
 	}
 }

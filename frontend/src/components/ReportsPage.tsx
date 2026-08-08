@@ -600,8 +600,8 @@ export function ReportsPage({ locations, customers, skuMasters, isLoading, error
               <MovementTrendChart
                 rows={movementTrendRows}
                 emptyLabel={emptyLabel}
-                inboundLabel={t("inbound")}
-                outboundLabel={t("outbound")}
+                inboundLabel={t("reportsKpiPalletsIn")}
+                outboundLabel={t("reportsKpiPalletsOut")}
               />
             </ReportCard>
           </div>
