@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createItem, createLocation, createMovement } from "../test/fixtures";
-import { buildAllContainerContentsRows } from "./containerInventory";
+import { buildAllContainerContentsRows, buildContainerContentsRows } from "./containerInventory";
 
 describe("container inventory identity", () => {
   it("separates inventory and timelines for customers sharing a container number", () => {
@@ -50,5 +50,44 @@ describe("container inventory identity", () => {
       originalInboundWarehouse: "Warehouse 99",
       warehouseSummary: "Warehouse 308"
     });
+  });
+
+  it("uses UPC search to match a container without trimming its other inventory lines", () => {
+    const rows = buildContainerContentsRows(
+      [
+        createItem({ id: 1, skuMasterId: 1, sku: "MATCH-UPC", containerNo: "FULL-CONT", quantity: 80, availableQty: 80, pallets: 2, availablePallets: 2 }),
+        createItem({ id: 2, skuMasterId: 2, sku: "OTHER-UPC", containerNo: "FULL-CONT", quantity: 120, availableQty: 120, pallets: 3, availablePallets: 3 })
+      ],
+      [],
+      [createLocation()],
+      "match-upc",
+      "all",
+      "all"
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.items.map((item) => item.sku).sort()).toEqual(["MATCH-UPC", "OTHER-UPC"]);
+    expect(rows[0]).toMatchObject({ onHand: 200, palletCount: 5, skuCount: 2 });
+  });
+
+  it("keeps the selected warehouse as the inventory scope after a container matches search", () => {
+    const source = createLocation({ id: 1, name: "99" });
+    const destination = createLocation({ id: 2, name: "308" });
+    const rows = buildContainerContentsRows(
+      [
+        createItem({ id: 1, skuMasterId: 1, sku: "MATCH-UPC", containerNo: "SPLIT-CONT", locationId: source.id, locationName: source.name, quantity: 80, availableQty: 80 }),
+        createItem({ id: 2, skuMasterId: 2, sku: "OTHER-UPC", containerNo: "SPLIT-CONT", locationId: source.id, locationName: source.name, quantity: 120, availableQty: 120 }),
+        createItem({ id: 3, skuMasterId: 3, sku: "DEST-UPC", containerNo: "SPLIT-CONT", locationId: destination.id, locationName: destination.name, quantity: 40, availableQty: 40 })
+      ],
+      [],
+      [source, destination],
+      "match-upc",
+      "all",
+      String(source.id)
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.items.map((item) => item.sku).sort()).toEqual(["MATCH-UPC", "OTHER-UPC"]);
+    expect(rows[0]?.items.every((item) => item.locationId === source.id)).toBe(true);
   });
 });

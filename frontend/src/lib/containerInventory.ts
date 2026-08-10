@@ -84,24 +84,46 @@ export function buildContainerContentsRows(
   selectedLocationId: string
 ) {
   const containerMovementSummaryMap = buildContainerMovementSummaryMap(items, movements, locations);
-  const filteredItems = items.filter((item) => {
+  const scopedItems = items.filter((item) => {
     const normalizedContainerNo = normalizeContainerNumber(item.containerNo);
     if (!normalizedContainerNo) {
       return false;
     }
 
-    const matchesSearch = normalizedSearch.length === 0
-      || normalizedContainerNo.toLowerCase().includes(normalizedSearch)
-      || item.sku.toLowerCase().includes(normalizedSearch)
-      || item.itemNumber.toLowerCase().includes(normalizedSearch)
-      || displayContainerItemDescription(item).toLowerCase().includes(normalizedSearch)
-      || item.customerName.toLowerCase().includes(normalizedSearch)
-      || item.locationName.toLowerCase().includes(normalizedSearch)
-      || normalizeStorageSection(item.storageSection).toLowerCase().includes(normalizedSearch);
     const matchesCustomer = selectedCustomerId === "all" || item.customerId === Number(selectedCustomerId);
     const matchesLocation = selectedLocationId === "all" || item.locationId === Number(selectedLocationId);
-    return matchesSearch && matchesCustomer && matchesLocation;
+    return matchesCustomer && matchesLocation;
   });
+
+  // Search determines which containers are visible; it must never trim the
+  // inventory lines inside a matching container. Location/customer filters,
+  // on the other hand, intentionally define the current inventory scope.
+  const matchingContainerKeys = new Set<string>();
+  if (normalizedSearch) {
+    for (const item of scopedItems) {
+      if (matchesCurrentContainerItemSearch(item, normalizedSearch)) {
+        matchingContainerKeys.add(buildContainerIdentityKey(item.customerId, item.containerNo));
+      }
+    }
+    for (const [identityKey, summary] of containerMovementSummaryMap.entries()) {
+      const matchesCustomer = selectedCustomerId === "all" || summary.customerId === Number(selectedCustomerId);
+      const matchesLocation = selectedLocationId === "all" || summary.locationIds.includes(Number(selectedLocationId));
+      if (matchesCustomer && matchesLocation && matchesContainerSearch(normalizedSearch, {
+        containerNo: summary.containerNo,
+        skuValues: [...summary.skuSet],
+        itemNumbers: [...summary.itemNumbers],
+        descriptions: [...summary.descriptionSet],
+        customerNames: summary.customerNames,
+        warehouseNames: summary.warehouseNames,
+        pickLocations: summary.pickLocations
+      })) {
+        matchingContainerKeys.add(identityKey);
+      }
+    }
+  }
+  const filteredItems = normalizedSearch
+    ? scopedItems.filter((item) => matchingContainerKeys.has(buildContainerIdentityKey(item.customerId, item.containerNo)))
+    : scopedItems;
 
   const rowMap = new Map<string, ContainerContentsDraftRow>();
 
@@ -341,6 +363,18 @@ function matchesContainerSearch(
     ...input.warehouseNames,
     ...input.pickLocations
   ].some((value) => value.toLowerCase().includes(normalizedSearch));
+}
+
+function matchesCurrentContainerItemSearch(item: Item, normalizedSearch: string) {
+  return matchesContainerSearch(normalizedSearch, {
+    containerNo: normalizeContainerNumber(item.containerNo),
+    skuValues: [item.sku],
+    itemNumbers: [item.itemNumber],
+    descriptions: [displayContainerItemDescription(item)],
+    customerNames: [item.customerName],
+    warehouseNames: [item.locationName],
+    pickLocations: [`${item.locationName} / ${normalizeStorageSection(item.storageSection)}`]
+  });
 }
 
 function summarizeLabels(values: string[], maxVisible = 2) {

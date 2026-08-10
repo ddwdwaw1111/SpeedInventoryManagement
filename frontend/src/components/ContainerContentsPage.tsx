@@ -1,8 +1,18 @@
 import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
 import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
+import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
 import { useEffect, useMemo, useState } from "react";
-import { Box, Button } from "@mui/material";
-import { DataGrid, type GridColDef } from "@mui/x-data-grid";
+import { Box, Button, Checkbox } from "@mui/material";
+import {
+  DataGrid,
+  GRID_CHECKBOX_SELECTION_COL_DEF,
+  gridPaginatedVisibleSortedGridRowIdsSelector,
+  type GridColDef,
+  type GridRowId,
+  type GridRowSelectionModel,
+  useGridApiContext,
+  useGridSelector
+} from "@mui/x-data-grid";
 
 import { api } from "../lib/api";
 import { consumePendingContainerContentsContext } from "../lib/containerContentsContext";
@@ -18,6 +28,7 @@ import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import { normalizeStorageSection, type Customer, type Item, type Location, type Movement, type UserRole } from "../lib/types";
 import { ExportExcelDialog } from "./ExportExcelDialog";
+import { BulkContainerTransferDialog } from "./BulkContainerTransferDialog";
 import { SearchSubmitField } from "./SearchSubmitField";
 import { buildWorkspaceGridSlots, InventoryViewSwitcher, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
@@ -32,10 +43,12 @@ type ContainerContentsPageProps = {
   onOpenContainerDetail: (containerNo: string, customerId: number) => void;
   onOpenContainerLifecycle?: (customerId: number | null, containerNo: string) => void;
   onNavigate: (page: import("../lib/routes").PageKey) => void;
+  onRefresh?: () => Promise<void> | void;
 };
 const CONTAINER_CONTENTS_COLUMN_ORDER_PREFERENCE_KEY = "container-contents.column-order";
 const CONTAINER_CONTENTS_MOVEMENT_LOAD_LIMIT = 20000;
 const CONTAINER_CONTENTS_EXPORT_TITLE = "Container Contents";
+const MAX_BULK_CONTAINER_TRANSFERS = 100;
 const CONTAINER_CONTENTS_EXPORT_COLUMNS = [
   { key: "containerNo", label: "Container No." },
   { key: "originalInboundWarehouse", label: "Original Inbound Warehouse" },
@@ -64,11 +77,13 @@ export function ContainerContentsPage({
   isLoading,
   onOpenContainerDetail,
   onOpenContainerLifecycle,
-  onNavigate
+  onNavigate,
+  onRefresh = () => undefined
 }: ContainerContentsPageProps) {
   const { t } = useI18n();
   const { resolvedTimeZone } = useSettings();
   const canConfigureColumns = currentUserRole === "admin";
+  const canManage = currentUserRole === "admin" || currentUserRole === "operator";
   const pageDescription = t("containerContentsDesc");
   const [historyMovements, setHistoryMovements] = useState<Movement[]>(movements);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
@@ -78,6 +93,9 @@ export function ContainerContentsPage({
   const [selectedCustomerId, setSelectedCustomerId] = useState("all");
   const [selectedLocationId, setSelectedLocationId] = useState("all");
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
+  const [isBulkTransferOpen, setIsBulkTransferOpen] = useState(false);
+  const [bulkTransferRows, setBulkTransferRows] = useState<ContainerContentsRow[]>([]);
+  const [rowSelectionModel, setRowSelectionModel] = useState<GridRowSelectionModel>({ type: "include", ids: new Set() });
 
   useEffect(() => {
     const context = consumePendingContainerContentsContext();
@@ -142,6 +160,27 @@ export function ContainerContentsPage({
     () => buildContainerContentsRows(items, historyMovements, locations, normalizedSearch, selectedCustomerId, selectedLocationId),
     [historyMovements, items, locations, normalizedSearch, selectedCustomerId, selectedLocationId]
   );
+  const selectedRows = useMemo(() => {
+    const selectedIDs = rowSelectionModel.type === "include" ? rowSelectionModel.ids : new Set<GridRowId>();
+    return rows.filter((row) => selectedIDs.has(row.id));
+  }, [rowSelectionModel, rows]);
+
+  useEffect(() => {
+    setRowSelectionModel({ type: "include", ids: new Set() });
+  }, [normalizedSearch, selectedCustomerId, selectedLocationId]);
+
+  function openBulkTransfer() {
+    // Freeze the visible source scope when the operator opens the dialog. A
+    // later data refresh cannot silently rebind a selected container ID to a
+    // different warehouse or a different set of inventory lines.
+    setBulkTransferRows(selectedRows.map((row) => ({ ...row, items: [...row.items] })));
+    setIsBulkTransferOpen(true);
+  }
+
+  function closeBulkTransfer() {
+    setIsBulkTransferOpen(false);
+    setBulkTransferRows([]);
+  }
   const mainGridSlots = buildWorkspaceGridSlots({
     emptyTitle: t("noResults"),
     emptyDescription: hasActiveFilters ? t("filteredStateHint") : t("emptyStateHint"),
@@ -209,6 +248,18 @@ export function ContainerContentsPage({
       }
     }
   ], [onOpenContainerDetail, onOpenContainerLifecycle, resolvedTimeZone, t]);
+  const selectionColumn = useMemo<GridColDef<ContainerContentsRow>>(() => ({
+    ...GRID_CHECKBOX_SELECTION_COL_DEF,
+    renderHeader: () => (
+      <CurrentPageContainerSelectionHeader
+        selection={rowSelectionModel}
+        maximum={MAX_BULK_CONTAINER_TRANSFERS}
+        ariaLabel={t("selectCurrentPage")}
+        onChange={setRowSelectionModel}
+        onLimitExceeded={() => setErrorMessage(t("bulkContainerSelectionLimit", { count: MAX_BULK_CONTAINER_TRANSFERS }))}
+      />
+    )
+  }), [rowSelectionModel, t]);
   const {
     columns,
     columnOrderAction,
@@ -279,8 +330,19 @@ export function ContainerContentsPage({
 
   function submitSearchTerm() {
     const nextSearchTerm = searchTerm.trim();
+    setRowSelectionModel({ type: "include", ids: new Set() });
     setSearchTerm(nextSearchTerm);
     setSubmittedSearchTerm(nextSearchTerm);
+  }
+
+  function changeCustomerFilter(customerId: string) {
+    setRowSelectionModel({ type: "include", ids: new Set() });
+    setSelectedCustomerId(customerId);
+  }
+
+  function changeLocationFilter(locationId: string) {
+    setRowSelectionModel({ type: "include", ids: new Set() });
+    setSelectedLocationId(locationId);
   }
 
   return (
@@ -300,6 +362,16 @@ export function ContainerContentsPage({
                 >
                   {t("exportExcel")}
                 </Button>
+                {canManage ? (
+                  <Button
+                    variant="contained"
+                    startIcon={<WarehouseOutlinedIcon fontSize="small" />}
+                    onClick={openBulkTransfer}
+                    disabled={selectedRows.length === 0}
+                  >
+                    {t("bulkContainerTransferSelected", { count: selectedRows.length })}
+                  </Button>
+                ) : null}
                 {columnOrderAction}
               </div>
             )}
@@ -313,8 +385,8 @@ export function ContainerContentsPage({
               placeholder={t("containerContentsSearchPlaceholder")}
               submitTitle={`${t("search")} (Enter)`}
             />
-            <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
-            <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
+            <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => changeCustomerFilter(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
+            <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => changeLocationFilter(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
           </div>
         </div>
         <InventoryViewSwitcher activeView="container-contents" onNavigate={onNavigate} />
@@ -323,9 +395,20 @@ export function ContainerContentsPage({
           <Box sx={{ minWidth: 0 }}>
             <DataGrid
               rows={rows}
-              columns={columns}
+              columns={canManage ? [selectionColumn, ...columns] : columns}
               loading={isLoading || isHistoryLoading}
               pagination
+              checkboxSelection={canManage}
+              disableRowSelectionExcludeModel
+              rowSelectionModel={rowSelectionModel}
+              onRowSelectionModelChange={(nextSelection) => {
+                if (nextSelection.type !== "include" || nextSelection.ids.size > MAX_BULK_CONTAINER_TRANSFERS) {
+                  setErrorMessage(t("bulkContainerSelectionLimit", { count: MAX_BULK_CONTAINER_TRANSFERS }));
+                  return;
+                }
+                setRowSelectionModel(nextSelection);
+              }}
+              isRowSelectable={(params) => params.row.items.some((item) => item.quantity > 0 || item.pallets > 0)}
               pageSizeOptions={[10, 25, 50, 100]}
               disableRowSelectionOnClick
               initialState={{ pagination: { paginationModel: { pageSize: 25, page: 0 } } }}
@@ -344,6 +427,54 @@ export function ContainerContentsPage({
         onClose={() => setIsExportDialogOpen(false)}
         onExport={handleExport}
       />
+      <BulkContainerTransferDialog
+        open={isBulkTransferOpen}
+        rows={bulkTransferRows}
+        locations={locations}
+        onClose={closeBulkTransfer}
+        onSaved={async () => {
+          await onRefresh();
+          setRowSelectionModel({ type: "include", ids: new Set() });
+        }}
+      />
     </main>
+  );
+}
+
+function CurrentPageContainerSelectionHeader({
+  selection,
+  maximum,
+  ariaLabel,
+  onChange,
+  onLimitExceeded
+}: {
+  selection: GridRowSelectionModel;
+  maximum: number;
+  ariaLabel: string;
+  onChange: (selection: GridRowSelectionModel) => void;
+  onLimitExceeded: () => void;
+}) {
+  const apiRef = useGridApiContext();
+  const paginatedIDs = useGridSelector(apiRef, gridPaginatedVisibleSortedGridRowIdsSelector);
+  const currentPageIDs = paginatedIDs.filter((id) => apiRef.current.isRowSelectable(id));
+  const selectedCount = currentPageIDs.filter((id) => selection.ids.has(id)).length;
+
+  return (
+    <Checkbox
+      size="small"
+      checked={currentPageIDs.length > 0 && selectedCount === currentPageIDs.length}
+      indeterminate={selectedCount > 0 && selectedCount < currentPageIDs.length}
+      inputProps={{ "aria-label": ariaLabel }}
+      onChange={() => {
+        const nextIDs = new Set(selection.type === "include" ? selection.ids : []);
+        const allCurrentPageSelected = currentPageIDs.length > 0 && currentPageIDs.every((id) => nextIDs.has(id));
+        currentPageIDs.forEach((id) => allCurrentPageSelected ? nextIDs.delete(id) : nextIDs.add(id));
+        if (nextIDs.size > maximum) {
+          onLimitExceeded();
+          return;
+        }
+        onChange({ type: "include", ids: nextIDs });
+      }}
+    />
   );
 }

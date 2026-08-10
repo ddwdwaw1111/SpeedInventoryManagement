@@ -7,17 +7,36 @@ const { getMovements } = vi.hoisted(() => ({
 }));
 
 vi.mock("@mui/x-data-grid", () => ({
+  GRID_CHECKBOX_SELECTION_COL_DEF: { field: "__check__" },
+  gridPaginatedVisibleSortedGridRowIdsSelector: vi.fn(),
+  useGridApiContext: vi.fn(),
+  useGridSelector: vi.fn(),
   DataGrid: ({
     rows = [],
-    columns = []
+    columns = [],
+    checkboxSelection = false,
+    rowSelectionModel,
+    onRowSelectionModelChange
   }: {
     rows?: Array<Record<string, unknown>>;
     columns?: Array<{
       field: string;
       renderCell?: (params: { row: Record<string, unknown>; value: unknown; field: string; id: unknown }) => ReactNode;
     }>;
+    checkboxSelection?: boolean;
+    rowSelectionModel?: { type: "include" | "exclude"; ids: Set<unknown> };
+    onRowSelectionModelChange?: (model: { type: "include" | "exclude"; ids: Set<unknown> }) => void;
   }) => (
     <div data-testid="mock-data-grid">
+      {checkboxSelection && rows[0] ? (
+        <button
+          type="button"
+          aria-label="Select first container row"
+          onClick={() => onRowSelectionModelChange?.({ type: "include", ids: new Set([rows[0]!.id]) })}
+        >
+          {rowSelectionModel?.ids.has(rows[0]!.id) ? "Selected" : "Select"}
+        </button>
+      ) : null}
       {rows.map((row, rowIndex) => (
         <div key={String(row.id ?? rowIndex)}>
           {columns.map((column) => (
@@ -278,5 +297,35 @@ describe("ContainerContentsPage", () => {
     fireEvent.click(detailButtons[1]!);
     expect(onOpenContainerDetail).toHaveBeenNthCalledWith(1, sharedContainerNo, 1);
     expect(onOpenContainerDetail).toHaveBeenNthCalledWith(2, sharedContainerNo, 2);
+  });
+
+  it("clears selected containers when the source warehouse filter changes", async () => {
+    const source = createLocation({ id: 1, name: "99" });
+    const otherSource = createLocation({ id: 2, name: "600" });
+    const containerNo = "MULTI-WAREHOUSE-CONT";
+
+    renderWithProviders(
+      <ContainerContentsPage
+        items={[
+          createItem({ id: 1, containerNo, locationId: source.id, locationName: source.name, quantity: 20, availableQty: 20 }),
+          createItem({ id: 2, skuMasterId: 2, sku: "UPC-2", containerNo, locationId: otherSource.id, locationName: otherSource.name, quantity: 30, availableQty: 30 })
+        ]}
+        movements={[]}
+        customers={[createCustomer()]}
+        locations={[source, otherSource]}
+        currentUserRole="admin"
+        isLoading={false}
+        onOpenContainerDetail={vi.fn()}
+        onNavigate={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Warehouse" }), { target: { value: String(source.id) } });
+    fireEvent.click(screen.getByRole("button", { name: "Select first container row" }));
+    expect(screen.getByRole("button", { name: "Transfer Selected (1)" })).toBeEnabled();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Warehouse" }), { target: { value: String(otherSource.id) } });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Transfer Selected (0)" })).toBeDisabled());
   });
 });

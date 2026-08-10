@@ -8879,3 +8879,103 @@ textarea:focus {
     grid-column: 1 / -1;
   }
 }
+.bulk-container-transfer {
+  display: grid;
+  gap: 18px;
+}
+
+.bulk-container-transfer__route {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid #d8e1ec;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #f8fafc 0%, #edf4f7 100%);
+  color: #264258;
+}
+
+.bulk-container-transfer__route span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 800;
+}
+
+.bulk-container-transfer__fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.bulk-container-transfer label {
+  display: grid;
+  gap: 6px;
+  color: #526273;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.bulk-container-transfer select,
+.bulk-container-transfer input,
+.bulk-container-transfer textarea {
+  min-height: 42px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #fff;
+  padding: 9px 11px;
+  color: #17283a;
+  font: inherit;
+  font-weight: 600;
+}
+
+.bulk-container-transfer textarea {
+  min-height: 76px;
+  resize: vertical;
+}
+
+.bulk-container-transfer__summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.bulk-container-transfer__summary article {
+  padding: 14px;
+  border: 1px solid #dce4ed;
+  border-radius: 13px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(37, 56, 74, 0.06);
+}
+
+.bulk-container-transfer__summary span {
+  display: block;
+  min-height: 30px;
+  color: #738193;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.bulk-container-transfer__summary strong {
+  display: block;
+  margin-top: 5px;
+  color: #18344e;
+  font-size: 24px;
+}
+
+.bulk-container-transfer__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+@media (max-width: 760px) {
+  .bulk-container-transfer__fields,
+  .bulk-container-transfer__summary {
+    grid-template-columns: 1fr 1fr;
+  }
+}
