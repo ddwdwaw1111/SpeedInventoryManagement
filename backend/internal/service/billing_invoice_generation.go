@@ -192,16 +192,19 @@ func buildAuthoritativeBillingInvoiceLines(invoiceType string, preview BillingPr
 			)
 		}
 		line := CreateBillingInvoiceLineInput{
-			ChargeType:  previewLine.ChargeType,
-			Description: previewLine.Description,
-			Reference:   previewLine.Reference,
-			ContainerNo: containerNo,
-			Warehouse:   previewLine.Warehouse,
-			OccurredOn:  previewLine.OccurredOn,
-			Quantity:    previewLine.Quantity,
-			UnitRate:    previewLine.UnitRate,
-			Amount:      previewLine.Amount,
-			SourceType:  "AUTO",
+			ChargeType:         previewLine.ChargeType,
+			Description:        previewLine.Description,
+			Reference:          previewLine.Reference,
+			ContainerNo:        containerNo,
+			Warehouse:          previewLine.Warehouse,
+			OccurredOn:         previewLine.OccurredOn,
+			Quantity:           previewLine.Quantity,
+			UnitRate:           previewLine.UnitRate,
+			Amount:             previewLine.Amount,
+			SourceType:         "AUTO",
+			SourceDocumentType: previewLine.SourceType,
+			SourceDocumentID:   previewLine.SourceID,
+			SourceLineID:       previewLine.SourceLineID,
 		}
 		details := map[string]any{
 			"calculationVersion": preview.CalculationVersion,

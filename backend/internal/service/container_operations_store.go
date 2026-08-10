@@ -28,32 +28,30 @@ const (
 )
 
 type Container struct {
-	ID                int64      `json:"id"`
-	CustomerID        int64      `json:"customerId"`
-	CustomerName      string     `json:"customerName"`
-	InboundDocumentID int64      `json:"inboundDocumentId"`
-	LocationID        int64      `json:"locationId"`
-	LocationName      string     `json:"locationName"`
-	ContainerNo       string     `json:"containerNo"`
-	ContainerType     string     `json:"containerType"`
-	HandlingMode      string     `json:"handlingMode"`
-	Status            string     `json:"status"`
-	TrackingStatus    string     `json:"trackingStatus"`
-	LastEventAt       *time.Time `json:"lastEventAt"`
-	CreatedAt         time.Time  `json:"createdAt"`
-	UpdatedAt         time.Time  `json:"updatedAt"`
+	ID             int64      `json:"id"`
+	CustomerID     int64      `json:"customerId"`
+	CustomerName   string     `json:"customerName"`
+	LocationID     int64      `json:"locationId"`
+	LocationName   string     `json:"locationName"`
+	ContainerNo    string     `json:"containerNo"`
+	ContainerType  string     `json:"containerType"`
+	HandlingMode   string     `json:"handlingMode"`
+	Status         string     `json:"status"`
+	TrackingStatus string     `json:"trackingStatus"`
+	LastEventAt    *time.Time `json:"lastEventAt"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
 }
 
 type CreateContainerInput struct {
-	CustomerID        int64  `json:"customerId"`
-	InboundDocumentID int64  `json:"inboundDocumentId"`
-	LocationID        int64  `json:"locationId"`
-	ContainerNo       string `json:"containerNo"`
-	ContainerType     string `json:"containerType"`
-	HandlingMode      string `json:"handlingMode"`
-	Status            string `json:"status"`
-	TrackingStatus    string `json:"trackingStatus"`
-	LastEventAt       string `json:"lastEventAt"`
+	CustomerID     int64  `json:"customerId"`
+	LocationID     int64  `json:"locationId"`
+	ContainerNo    string `json:"containerNo"`
+	ContainerType  string `json:"containerType"`
+	HandlingMode   string `json:"handlingMode"`
+	Status         string `json:"status"`
+	TrackingStatus string `json:"trackingStatus"`
+	LastEventAt    string `json:"lastEventAt"`
 }
 
 // UpdateContainerMetadataInput is intentionally limited to descriptive
@@ -219,18 +217,6 @@ func (s *Store) CreateContainer(ctx context.Context, input CreateContainerInput)
 	if customerID <= 0 || containerNo == "" {
 		return Container{}, ErrInvalidInput
 	}
-	if input.InboundDocumentID > 0 {
-		document, err := s.getInboundDocument(ctx, input.InboundDocumentID)
-		if err != nil {
-			return Container{}, err
-		}
-		if document.CustomerID != customerID {
-			return Container{}, fmt.Errorf("%w: container inbound document must belong to the same customer", ErrInvalidInput)
-		}
-		if documentContainerNo := normalizeContainerNo(document.ContainerNo); documentContainerNo != "" && documentContainerNo != containerNo {
-			return Container{}, fmt.Errorf("%w: container number must match inbound document container number", ErrInvalidInput)
-		}
-	}
 	lastEventAt, err := parseOptionalDateTime(input.LastEventAt)
 	if err != nil {
 		return Container{}, err
@@ -277,7 +263,6 @@ func (s *Store) CreateContainer(ctx context.Context, input CreateContainerInput)
 			  AND UPPER(TRIM(COALESCE(container_no, ''))) = ?
 			  AND UPPER(TRIM(status)) IN ('CONFIRMED', 'POSTED')
 			  AND cancelled_at IS NULL
-			  AND corrected_at IS NULL
 			ORDER BY COALESCE(actual_arrival_date, DATE(confirmed_at), DATE(created_at), expected_arrival_date), id
 			LIMIT 1
 			FOR UPDATE
@@ -305,7 +290,6 @@ func (s *Store) CreateContainer(ctx context.Context, input CreateContainerInput)
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO containers (
 			customer_id,
-			inbound_document_id,
 			location_id,
 			container_no,
 			container_type,
@@ -313,7 +297,7 @@ func (s *Store) CreateContainer(ctx context.Context, input CreateContainerInput)
 			status,
 			tracking_status,
 			last_event_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			id = LAST_INSERT_ID(id),
 			tracking_status = COALESCE(NULLIF(?, ''), tracking_status),
@@ -324,7 +308,6 @@ func (s *Store) CreateContainer(ctx context.Context, input CreateContainerInput)
 			END
 	`,
 		customerID,
-		nullableInt64(input.InboundDocumentID),
 		nullableInt64(input.LocationID),
 		containerNo,
 		requestedContainerType,
@@ -420,7 +403,6 @@ func updateContainerTypeForIdentityTx(ctx context.Context, tx *sql.Tx, customerI
 		WHERE customer_id = ?
 		  AND UPPER(TRIM(COALESCE(container_no, ''))) = ?
 		  AND UPPER(TRIM(status)) NOT IN ('DELETED', 'CANCELLED')
-		  AND corrected_at IS NULL
 	`, containerType, customerID, containerNo); err != nil {
 		return mapDBError(fmt.Errorf("update shared inbound container type: %w", err))
 	}
@@ -433,7 +415,6 @@ func updateContainerTypeForIdentityTx(ctx context.Context, tx *sql.Tx, customerI
 		WHERE d.customer_id = ?
 		  AND UPPER(TRIM(COALESCE(d.container_no, ''))) = ?
 		  AND UPPER(TRIM(d.status)) NOT IN ('DELETED', 'CANCELLED')
-		  AND d.corrected_at IS NULL
 	`, containerType, customerID, containerNo); err != nil {
 		return mapDBError(fmt.Errorf("sync shared inbound container visit type: %w", err))
 	}
@@ -457,7 +438,6 @@ func updateContainerHandlingModeForIdentityTx(ctx context.Context, tx *sql.Tx, c
 		WHERE customer_id = ?
 		  AND UPPER(TRIM(COALESCE(container_no, ''))) = ?
 		  AND UPPER(TRIM(status)) IN (?, ?)
-		  AND corrected_at IS NULL
 		ORDER BY id
 		FOR UPDATE
 	`, InboundHandlingModePalletized, customerID, containerNo, DocumentStatusConfirmed, DocumentStatusPosted)
@@ -498,7 +478,6 @@ func updateContainerHandlingModeForIdentityTx(ctx context.Context, tx *sql.Tx, c
 		WHERE customer_id = ?
 		  AND UPPER(TRIM(COALESCE(container_no, ''))) = ?
 		  AND UPPER(TRIM(status)) NOT IN ('DELETED', 'CANCELLED')
-		  AND corrected_at IS NULL
 	`, handlingMode, customerID, containerNo); err != nil {
 		return mapDBError(fmt.Errorf("update shared inbound handling mode: %w", err))
 	}
@@ -511,7 +490,6 @@ func updateContainerHandlingModeForIdentityTx(ctx context.Context, tx *sql.Tx, c
 		WHERE d.customer_id = ?
 		  AND UPPER(TRIM(COALESCE(d.container_no, ''))) = ?
 		  AND UPPER(TRIM(d.status)) NOT IN ('DELETED', 'CANCELLED')
-		  AND d.corrected_at IS NULL
 	`, handlingMode, customerID, containerNo); err != nil {
 		return mapDBError(fmt.Errorf("sync shared inbound container visit handling mode: %w", err))
 	}
@@ -540,16 +518,7 @@ func (s *Store) ListContainerRecords(ctx context.Context, limit int, filters Con
 	}
 	if filters.OperationalOnly {
 		whereClauses = append(whereClauses,
-			"UPPER(TRIM(cn.status)) NOT IN ('CORRECTED', 'VOIDED')",
-			`NOT EXISTS (
-				SELECT 1
-				FROM inbound_documents source_d
-				WHERE source_d.id = cn.inbound_document_id
-				  AND (
-					source_d.corrected_at IS NOT NULL
-					OR UPPER(TRIM(source_d.status)) IN ('DELETED', 'CANCELLED')
-				  )
-			)`,
+			"UPPER(TRIM(cn.status)) <> 'VOIDED'",
 		)
 	}
 	if search := strings.TrimSpace(strings.ToLower(filters.Search)); search != "" {
@@ -562,7 +531,6 @@ func (s *Store) ListContainerRecords(ctx context.Context, limit int, filters Con
 			cn.id,
 			cn.customer_id,
 			c.name,
-			COALESCE(cn.inbound_document_id, 0),
 			COALESCE(cn.location_id, 0),
 			COALESCE(l.name, ''),
 			cn.container_no,
@@ -620,16 +588,7 @@ func (s *Store) getContainerByNo(ctx context.Context, customerID int64, containe
 	}
 	if operationalOnly {
 		whereClauses = append(whereClauses,
-			"UPPER(TRIM(cn.status)) NOT IN ('CORRECTED', 'VOIDED')",
-			`NOT EXISTS (
-				SELECT 1
-				FROM inbound_documents source_d
-				WHERE source_d.id = cn.inbound_document_id
-				  AND (
-					source_d.corrected_at IS NOT NULL
-					OR UPPER(TRIM(source_d.status)) IN ('DELETED', 'CANCELLED')
-				  )
-			)`,
+			"UPPER(TRIM(cn.status)) <> 'VOIDED'",
 		)
 	}
 	query := fmt.Sprintf(`
@@ -637,7 +596,6 @@ func (s *Store) getContainerByNo(ctx context.Context, customerID int64, containe
 			cn.id,
 			cn.customer_id,
 			c.name,
-			COALESCE(cn.inbound_document_id, 0),
 			COALESCE(cn.location_id, 0),
 			COALESCE(l.name, ''),
 			cn.container_no,
@@ -1099,7 +1057,6 @@ func (s *Store) getContainerByID(ctx context.Context, containerID int64) (Contai
 			cn.id,
 			cn.customer_id,
 			c.name,
-			COALESCE(cn.inbound_document_id, 0),
 			COALESCE(cn.location_id, 0),
 			COALESCE(l.name, ''),
 			cn.container_no,
@@ -1124,7 +1081,6 @@ func scanContainer(scanner itemScanner) (Container, error) {
 		&container.ID,
 		&container.CustomerID,
 		&container.CustomerName,
-		&container.InboundDocumentID,
 		&container.LocationID,
 		&container.LocationName,
 		&container.ContainerNo,

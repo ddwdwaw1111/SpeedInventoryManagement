@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"testing"
-	"time"
 )
 
 func TestBulkConfirmOutboundDocumentsRejectsDuplicateIDs(t *testing.T) {
@@ -28,13 +27,10 @@ func TestOutboundConfirmationReferencePrefersPickingOrderNumber(t *testing.T) {
 }
 
 func TestValidateOutboundDocumentCanBeConfirmedRequiresActiveDraft(t *testing.T) {
-	now := time.Now().UTC()
 	tests := []struct {
 		name string
 		row  outboundDocumentRow
 	}{
-		{name: "archived draft", row: outboundDocumentRow{ID: 1, PackingListNo: "ARCHIVED-DRAFT", Status: DocumentStatusDraft, ArchivedAt: &now}},
-		{name: "legacy archived status", row: outboundDocumentRow{ID: 2, PackingListNo: "ARCHIVED-STATUS", Status: DocumentStatusArchived}},
 		{name: "unexpected status", row: outboundDocumentRow{ID: 3, PackingListNo: "UNKNOWN-STATUS", Status: "UNKNOWN"}},
 	}
 	for _, test := range tests {

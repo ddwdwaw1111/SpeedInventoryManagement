@@ -165,7 +165,7 @@ export function InboundReceiptEditorPage({
   const isEditingConfirmedInbound = normalizeDocumentStatus(document?.status ?? "") === "CONFIRMED";
   const isEditingExistingDocument = Boolean(documentId && document);
   const isEditorMissing = Boolean(documentId) && !document && !isLoading;
-  const canEditCurrentDocument = !document || (!document.archivedAt && normalizeDocumentStatus(document.status) === "DRAFT");
+  const canEditCurrentDocument = !document || normalizeDocumentStatus(document.status) === "DRAFT";
   const isReadOnly = !canManage || !canEditCurrentDocument;
 
   useEffect(() => {
@@ -704,7 +704,7 @@ export function InboundReceiptEditorPage({
             <DocumentAttachmentsPanel
               attachments={document?.attachments ?? []}
               pendingAttachments={pendingAttachments}
-              disabled={!canManage || Boolean(document?.archivedAt)}
+              disabled={!canManage}
               canUploadNow={Boolean(document?.id)}
               onPendingAttachmentsChange={setPendingAttachments}
               onUpload={handleUploadInboundAttachment}

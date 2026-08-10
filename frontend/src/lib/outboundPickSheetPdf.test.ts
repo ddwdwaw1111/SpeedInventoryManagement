@@ -25,7 +25,6 @@ function createOutboundDocumentFixture(): OutboundDocument {
     trackingStatus: "CONFIRMED",
     confirmedAt: "2026-03-24T12:00:00Z" as unknown as OutboundDocument["confirmedAt"],
     deletedAt: null,
-    archivedAt: null,
     totalLines: 2,
     totalQty: 35,
     totalNetWeightKgs: 120.5,

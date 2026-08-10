@@ -93,22 +93,25 @@ type BillingInvoiceHeader struct {
 }
 
 type BillingInvoiceLine struct {
-	ID          int64           `json:"id"`
-	InvoiceID   int64           `json:"invoiceId"`
-	ChargeType  string          `json:"chargeType"`
-	Description string          `json:"description"`
-	Reference   string          `json:"reference"`
-	ContainerNo string          `json:"containerNo"`
-	Warehouse   string          `json:"warehouse"`
-	OccurredOn  string          `json:"occurredOn"`
-	Quantity    float64         `json:"quantity"`
-	UnitRate    float64         `json:"unitRate"`
-	Amount      float64         `json:"amount"`
-	Notes       string          `json:"notes"`
-	SourceType  string          `json:"sourceType"`
-	SortOrder   int             `json:"sortOrder"`
-	CreatedAt   string          `json:"createdAt"`
-	Details     json.RawMessage `json:"details,omitempty"`
+	ID                 int64           `json:"id"`
+	InvoiceID          int64           `json:"invoiceId"`
+	ChargeType         string          `json:"chargeType"`
+	Description        string          `json:"description"`
+	Reference          string          `json:"reference"`
+	ContainerNo        string          `json:"containerNo"`
+	Warehouse          string          `json:"warehouse"`
+	OccurredOn         string          `json:"occurredOn"`
+	Quantity           float64         `json:"quantity"`
+	UnitRate           float64         `json:"unitRate"`
+	Amount             float64         `json:"amount"`
+	Notes              string          `json:"notes"`
+	SourceType         string          `json:"sourceType"`
+	SourceDocumentType string          `json:"sourceDocumentType"`
+	SourceDocumentID   int64           `json:"sourceDocumentId"`
+	SourceLineID       int64           `json:"sourceLineId"`
+	SortOrder          int             `json:"sortOrder"`
+	CreatedAt          string          `json:"createdAt"`
+	Details            json.RawMessage `json:"details,omitempty"`
 }
 
 type BillingRatesSnapshot struct {
@@ -141,18 +144,21 @@ type CreateBillingInvoiceInput struct {
 }
 
 type CreateBillingInvoiceLineInput struct {
-	ChargeType  string          `json:"chargeType"`
-	Description string          `json:"description"`
-	Reference   string          `json:"reference"`
-	ContainerNo string          `json:"containerNo"`
-	Warehouse   string          `json:"warehouse"`
-	OccurredOn  string          `json:"occurredOn"`
-	Quantity    float64         `json:"quantity"`
-	UnitRate    float64         `json:"unitRate"`
-	Amount      float64         `json:"amount"`
-	Notes       string          `json:"notes"`
-	SourceType  string          `json:"sourceType"`
-	Details     json.RawMessage `json:"details,omitempty"`
+	ChargeType         string          `json:"chargeType"`
+	Description        string          `json:"description"`
+	Reference          string          `json:"reference"`
+	ContainerNo        string          `json:"containerNo"`
+	Warehouse          string          `json:"warehouse"`
+	OccurredOn         string          `json:"occurredOn"`
+	Quantity           float64         `json:"quantity"`
+	UnitRate           float64         `json:"unitRate"`
+	Amount             float64         `json:"amount"`
+	Notes              string          `json:"notes"`
+	SourceType         string          `json:"sourceType"`
+	SourceDocumentType string          `json:"sourceDocumentType,omitempty"`
+	SourceDocumentID   int64           `json:"sourceDocumentId,omitempty"`
+	SourceLineID       int64           `json:"sourceLineId,omitempty"`
+	Details            json.RawMessage `json:"details,omitempty"`
 }
 
 type UpdateBillingInvoiceInput struct {
@@ -219,22 +225,25 @@ type billingInvoiceRow struct {
 }
 
 type billingInvoiceLineRow struct {
-	ID          int64          `db:"id"`
-	InvoiceID   int64          `db:"invoice_id"`
-	ChargeType  string         `db:"charge_type"`
-	Description string         `db:"description"`
-	Reference   sql.NullString `db:"reference"`
-	ContainerNo sql.NullString `db:"container_no"`
-	Warehouse   sql.NullString `db:"warehouse"`
-	OccurredOn  sql.NullTime   `db:"occurred_on"`
-	Quantity    float64        `db:"quantity"`
-	UnitRate    float64        `db:"unit_rate"`
-	Amount      float64        `db:"amount"`
-	Notes       sql.NullString `db:"notes"`
-	SourceType  string         `db:"source_type"`
-	SortOrder   int            `db:"sort_order"`
-	CreatedAt   time.Time      `db:"created_at"`
-	DetailsJSON sql.NullString `db:"details_json"`
+	ID                 int64          `db:"id"`
+	InvoiceID          int64          `db:"invoice_id"`
+	ChargeType         string         `db:"charge_type"`
+	Description        string         `db:"description"`
+	Reference          sql.NullString `db:"reference"`
+	ContainerNo        sql.NullString `db:"container_no"`
+	Warehouse          sql.NullString `db:"warehouse"`
+	OccurredOn         sql.NullTime   `db:"occurred_on"`
+	Quantity           float64        `db:"quantity"`
+	UnitRate           float64        `db:"unit_rate"`
+	Amount             float64        `db:"amount"`
+	Notes              sql.NullString `db:"notes"`
+	SourceType         string         `db:"source_type"`
+	SourceDocumentType sql.NullString `db:"source_document_type"`
+	SourceDocumentID   sql.NullInt64  `db:"source_document_id"`
+	SourceLineID       sql.NullInt64  `db:"source_line_id"`
+	SortOrder          int            `db:"sort_order"`
+	CreatedAt          time.Time      `db:"created_at"`
+	DetailsJSON        sql.NullString `db:"details_json"`
 }
 
 // --- store methods ---
@@ -314,7 +323,8 @@ func (s *Store) GetBillingInvoice(ctx context.Context, invoiceID int64) (Billing
 		SELECT
 			id, invoice_id, charge_type, description, reference,
 			container_no, warehouse, occurred_on, quantity, unit_rate,
-			amount, notes, source_type, sort_order, created_at, details_json
+			amount, notes, source_type, source_document_type, source_document_id,
+			source_line_id, sort_order, created_at, details_json
 		FROM billing_invoice_lines
 		WHERE invoice_id = ?
 		ORDER BY sort_order ASC, id ASC
@@ -629,7 +639,6 @@ func ensureContainerBillingTypeMutationAllowedTx(
 		  AND UPPER(TRIM(COALESCE(container_no, ''))) = ?
 		  AND UPPER(TRIM(status)) IN ('CONFIRMED', 'POSTED')
 		  AND cancelled_at IS NULL
-		  AND corrected_at IS NULL
 		ORDER BY COALESCE(actual_arrival_date, DATE(confirmed_at), DATE(created_at), expected_arrival_date), id
 		LIMIT 1
 		FOR UPDATE
@@ -728,8 +737,9 @@ func createBillingInvoiceTx(
 				invoice_id, charge_type, description, reference,
 				container_no, warehouse, occurred_on,
 				quantity, unit_rate, amount, notes,
-				source_type, sort_order, details_json
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				source_type, source_document_type, source_document_id, source_line_id,
+				sort_order, details_json
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, invoiceID,
 			strings.TrimSpace(strings.ToUpper(line.ChargeType)),
 			strings.TrimSpace(line.Description),
@@ -742,6 +752,9 @@ func createBillingInvoiceTx(
 			roundCurrencyGo(line.Amount),
 			nullableString(strings.TrimSpace(line.Notes)),
 			sourceType,
+			nullableString(strings.TrimSpace(strings.ToUpper(line.SourceDocumentType))),
+			billingNullablePositiveInt64(line.SourceDocumentID),
+			billingNullablePositiveInt64(line.SourceLineID),
 			index+1,
 			nullableJSONString(detailsJSON),
 		); err != nil {
@@ -841,8 +854,9 @@ func (s *Store) AddBillingInvoiceLine(ctx context.Context, invoiceID int64, inpu
 			invoice_id, charge_type, description, reference,
 			container_no, warehouse, occurred_on,
 			quantity, unit_rate, amount, notes,
-			source_type, sort_order, details_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MANUAL', ?, NULL)
+			source_type, source_document_type, source_document_id, source_line_id,
+			sort_order, details_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MANUAL', NULL, NULL, NULL, ?, NULL)
 	`, invoiceID, chargeType,
 		strings.TrimSpace(input.Description),
 		nullableString(strings.TrimSpace(input.Reference)),
@@ -1183,22 +1197,25 @@ func toBillingInvoiceLine(row billingInvoiceLineRow) BillingInvoiceLine {
 		occurredOn = row.OccurredOn.Time.Format(time.DateOnly)
 	}
 	return BillingInvoiceLine{
-		ID:          row.ID,
-		InvoiceID:   row.InvoiceID,
-		ChargeType:  row.ChargeType,
-		Description: row.Description,
-		Reference:   coalesceNullString(row.Reference),
-		ContainerNo: coalesceNullString(row.ContainerNo),
-		Warehouse:   coalesceNullString(row.Warehouse),
-		OccurredOn:  occurredOn,
-		Quantity:    row.Quantity,
-		UnitRate:    row.UnitRate,
-		Amount:      row.Amount,
-		Notes:       coalesceNullString(row.Notes),
-		SourceType:  row.SourceType,
-		SortOrder:   row.SortOrder,
-		CreatedAt:   row.CreatedAt.Format(time.RFC3339),
-		Details:     detailsJSON(row.DetailsJSON),
+		ID:                 row.ID,
+		InvoiceID:          row.InvoiceID,
+		ChargeType:         row.ChargeType,
+		Description:        row.Description,
+		Reference:          coalesceNullString(row.Reference),
+		ContainerNo:        coalesceNullString(row.ContainerNo),
+		Warehouse:          coalesceNullString(row.Warehouse),
+		OccurredOn:         occurredOn,
+		Quantity:           row.Quantity,
+		UnitRate:           row.UnitRate,
+		Amount:             row.Amount,
+		Notes:              coalesceNullString(row.Notes),
+		SourceType:         row.SourceType,
+		SourceDocumentType: coalesceNullString(row.SourceDocumentType),
+		SourceDocumentID:   billingCoalesceNullInt64(row.SourceDocumentID),
+		SourceLineID:       billingCoalesceNullInt64(row.SourceLineID),
+		SortOrder:          row.SortOrder,
+		CreatedAt:          row.CreatedAt.Format(time.RFC3339),
+		Details:            detailsJSON(row.DetailsJSON),
 	}
 }
 
@@ -1367,6 +1384,20 @@ func coalesceNullString(ns sql.NullString) string {
 		return ns.String
 	}
 	return ""
+}
+
+func billingCoalesceNullInt64(value sql.NullInt64) int64 {
+	if value.Valid {
+		return value.Int64
+	}
+	return 0
+}
+
+func billingNullablePositiveInt64(value int64) any {
+	if value <= 0 {
+		return nil
+	}
+	return value
 }
 
 func generateBillingInvoiceNo(periodStart time.Time, customerID int64) string {

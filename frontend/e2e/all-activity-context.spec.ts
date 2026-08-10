@@ -67,7 +67,7 @@ test("inventory summary opens all activity with sku and customer filters applied
   await expect(page).toHaveURL(/\/all-activity$/);
   await expect(page.getByRole("heading", { name: "Inventory Ledger" })).toBeVisible();
   const filterBar = page.locator(".filter-bar");
-  await expect(filterBar.getByLabel("Search")).toHaveValue(item.sku);
+  await expect(filterBar.getByRole("searchbox")).toHaveValue(item.sku);
   await expect(filterBar.getByLabel("Customer")).toHaveValue(String(customer.id));
   await expect(filterBar.getByLabel("Warehouse")).toHaveValue("all");
   await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem("sim-all-activity-context"))).toBeNull();
@@ -141,16 +141,16 @@ test("container detail opens all activity with container, customer, and location
     movements: [targetMovement, wrongLocationMovement, wrongContainerMovement]
   });
 
-  await page.goto(`/container-contents/${item.containerNo}`);
+  await page.goto(`/container-contents/${customer.id}/${item.containerNo}`);
 
   const historySection = page.locator("#section-history");
-  await expect(historySection.getByText("Container Activity History")).toBeVisible();
-  await historySection.getByRole("button", { name: "Inventory Ledger" }).click();
+  await expect(historySection.getByText("History", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Inventory Ledger" }).click();
 
   await expect(page).toHaveURL(/\/all-activity$/);
   await expect(page.getByRole("heading", { name: "Inventory Ledger" })).toBeVisible();
   const filterBar = page.locator(".filter-bar");
-  await expect(filterBar.getByLabel("Search")).toHaveValue(item.containerNo);
+  await expect(filterBar.getByRole("searchbox")).toHaveValue(item.containerNo);
   await expect(filterBar.getByLabel("Customer")).toHaveValue(String(customer.id));
   await expect(filterBar.getByLabel("Warehouse")).toHaveValue(String(location.id));
   await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem("sim-all-activity-context"))).toBeNull();

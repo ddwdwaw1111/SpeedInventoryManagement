@@ -42,8 +42,8 @@ describe("document tracking helpers", () => {
   });
 
   it("supports draft-only action guards for management pages", () => {
-    expect(getInboundTrackingAction({ trackingStatus: "SCHEDULED", status: "ARCHIVED" }, t, { draftOnly: true })).toBeNull();
-    expect(getOutboundTrackingAction({ trackingStatus: "SCHEDULED", status: "ARCHIVED" }, t, { draftOrShippedOnly: true })).toBeNull();
+    expect(getInboundTrackingAction({ trackingStatus: "SCHEDULED", status: "DELETED" }, t, { draftOnly: true })).toBeNull();
+    expect(getOutboundTrackingAction({ trackingStatus: "SCHEDULED", status: "DELETED" }, t, { draftOrShippedOnly: true })).toBeNull();
     expect(getOutboundTrackingAction({ trackingStatus: "SHIPPED", status: "CONFIRMED" }, t, { draftOrShippedOnly: true })).toEqual({
       trackingStatus: "BO_RECEIVED",
       label: "markBoReceived"

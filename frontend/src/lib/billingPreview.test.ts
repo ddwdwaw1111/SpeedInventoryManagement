@@ -1,344 +1,29 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  createCustomer,
-  createInboundDocument,
-  createInboundDocumentLine,
-  createOutboundDocument,
-  createOutboundDocumentLine,
-  createOutboundPickAllocation
-} from "../test/fixtures";
-import { buildBillingPreview, DEFAULT_BILLING_RATES, mapAuthoritativeBillingPreview, mergeBillingPreviews, type BillingPreview } from "./billingPreview";
-import type { BillingPreviewResult, ContainerLifecycleEvent } from "./types";
+  DEFAULT_BILLING_RATES,
+  mapAuthoritativeBillingPreview,
+  mergeBillingPreviews,
+  type BillingPreview
+} from "./billingPreview";
+import type { BillingPreviewResult } from "./types";
 
-const customer = createCustomer({ id: 1, name: "Acme" });
+const emptySummary = {
+  receivedContainers: 0,
+  receivedPallets: 0,
+  shippedPallets: 0,
+  palletDays: 0,
+  inboundAmount: 0,
+  wrappingAmount: 0,
+  storageGrossAmount: 0,
+  storageDiscountAmount: 0,
+  storageAmount: 0,
+  outboundAmount: 0,
+  grandTotal: 0
+};
 
-function lifecycleEvent(
-  id: number,
-  eventTime: string,
-  palletDelta: number,
-  overrides: Partial<ContainerLifecycleEvent> = {}
-): ContainerLifecycleEvent {
-  return {
-    id,
-    stockLedgerId: id,
-    customerId: 1,
-    customerName: "Acme",
-    locationId: 1,
-    locationName: "NJ",
-    storageSection: "TEMP",
-    containerNo: "GCXU5050505",
-    eventType: palletDelta >= 0 ? "RECEIVE" : "SHIP",
-    eventTime,
-    quantityDelta: palletDelta * 100,
-    palletDelta,
-    skuMasterId: 1,
-    sourceDocumentType: palletDelta >= 0 ? "INBOUND" : "OUTBOUND",
-    sourceDocumentId: id,
-    sourceLineId: id,
-    packingListNo: "",
-    orderRef: "",
-    itemNumber: "SKU-A",
-    description: "Widget",
-    expectedQty: 0,
-    receivedQty: 0,
-    pallets: Math.abs(palletDelta),
-    documentNote: "",
-    reason: "",
-    referenceCode: "",
-    createdAt: eventTime,
-    ...overrides
-  };
-}
-
-function baseInput(overrides: Partial<Parameters<typeof buildBillingPreview>[0]> = {}) {
-  return {
-    startDate: "2026-03-01",
-    endDate: "2026-03-31",
-    customerId: 1 as const,
-    customers: [customer],
-    containerLifecycleEvents: [] as ContainerLifecycleEvent[],
-    inboundDocuments: [],
-    outboundDocuments: [],
-    rates: DEFAULT_BILLING_RATES,
-    ...overrides
-  };
-}
-
-describe("buildBillingPreview", () => {
-  it("excludes pallets that are not backed by the configured minimum quantity", () => {
-    const events = [
-      lifecycleEvent(1, "2026-03-01T09:00:00Z", 3, { quantityDelta: 25 }),
-      lifecycleEvent(2, "2026-03-02T10:00:00Z", 0, { eventType: "SHIP", quantityDelta: -10 })
-    ];
-
-    const preview = buildBillingPreview(baseInput({
-      startDate: "2026-03-01",
-      endDate: "2026-03-02",
-      containerLifecycleEvents: events,
-      normalPalletGracePeriodEnabled: false,
-      rates: {
-        ...DEFAULT_BILLING_RATES,
-        excludeUnderfilledPallets: true,
-        minimumQtyPerPallet: 10
-      }
-    }));
-
-    expect(preview.dailyBalanceRows).toEqual([
-      { date: "2026-03-01", palletCount: 2 },
-      { date: "2026-03-02", palletCount: 1 }
-    ]);
-    expect(preview.storageRows[0]).toMatchObject({ palletsTracked: 2, palletDays: 3 });
-  });
-
-  it("does not use one SKU's surplus quantity to qualify another SKU's pallet", () => {
-    const preview = buildBillingPreview(baseInput({
-      startDate: "2026-03-01",
-      endDate: "2026-03-01",
-      containerLifecycleEvents: [
-        lifecycleEvent(1, "2026-03-01T09:00:00Z", 1, { skuMasterId: 1, quantityDelta: 1 }),
-        lifecycleEvent(2, "2026-03-01T09:01:00Z", 1, { skuMasterId: 2, quantityDelta: 19 })
-      ],
-      normalPalletGracePeriodEnabled: false,
-      rates: {
-        ...DEFAULT_BILLING_RATES,
-        excludeUnderfilledPallets: true,
-        minimumQtyPerPallet: 10
-      }
-    }));
-
-    expect(preview.dailyBalanceRows).toEqual([{ date: "2026-03-01", palletCount: 1 }]);
-  });
-
-  it("calculates container-level pallet-day storage through partial outbound", () => {
-    const events = [
-      lifecycleEvent(1, "2026-03-03T09:00:00Z", 3),
-      lifecycleEvent(2, "2026-03-10T10:00:00Z", -1),
-      lifecycleEvent(3, "2026-03-18T14:00:00Z", -1),
-      lifecycleEvent(4, "2026-03-20T11:00:00Z", -1)
-    ];
-
-    const preview = buildBillingPreview(baseInput({
-      containerLifecycleEvents: events,
-      normalPalletGracePeriodEnabled: false
-    }));
-
-    expect(preview.summary.palletDays).toBe(39);
-    expect(preview.summary.storageAmount).toBe(39);
-    expect(preview.storageRows).toHaveLength(1);
-    expect(preview.storageRows[0]).toMatchObject({
-      containerNo: "GCXU5050505",
-      palletsTracked: 3,
-      palletDays: 39,
-      billablePalletDays: 39
-    });
-    expect(preview.storageRows[0]?.segments.map((segment) => segment.dayEndPallets)).toEqual([3, 2, 1]);
-  });
-
-  it("keeps quantity deltas independent from pallet billing deltas", () => {
-    const preview = buildBillingPreview(baseInput({
-      containerLifecycleEvents: [
-        lifecycleEvent(1, "2026-03-03T09:00:00Z", 3, { quantityDelta: 1 }),
-        lifecycleEvent(2, "2026-03-10T10:00:00Z", -1, { quantityDelta: -999 })
-      ],
-      normalPalletGracePeriodEnabled: false
-    }));
-
-    expect(preview.storageRows[0]?.palletDays).toBe(65);
-    expect(preview.storageRows[0]?.palletsTracked).toBe(3);
-  });
-
-  it("uses actual arrival and actual ship dates for document charges", () => {
-    const inbound = createInboundDocument({
-      id: 10,
-      customerId: 1,
-      customerName: "Acme",
-      containerNo: "GCXU5050505",
-      status: "CONFIRMED",
-      expectedArrivalDate: "2026-04-01",
-      actualArrivalDate: "2026-03-03",
-      lines: [createInboundDocumentLine({ pallets: 3 })]
-    });
-    const outbound = createOutboundDocument({
-      id: 20,
-      customerId: 1,
-      customerName: "Acme",
-      status: "CONFIRMED",
-      expectedShipDate: "2026-04-01",
-      actualShipDate: "2026-03-18",
-      lines: [createOutboundDocumentLine({
-        pallets: 2,
-        pickAllocations: [createOutboundPickAllocation({ containerNo: "GCXU5050505", pallets: 2 })]
-      })]
-    });
-
-    const preview = buildBillingPreview(baseInput({
-      inboundDocuments: [inbound],
-      outboundDocuments: [outbound]
-    }));
-
-    expect(preview.summary.receivedContainers).toBe(1);
-    expect(preview.summary.receivedPallets).toBe(3);
-    expect(preview.summary.shippedPallets).toBe(2);
-    expect(preview.invoiceLines.filter((line) => line.chargeType === "INBOUND")[0]?.occurredOn).toBe("2026-03-03");
-  });
-
-  it("bills repalletized outbound pallets instead of inventory pallet deductions", () => {
-    const outbound = createOutboundDocument({
-      id: 21,
-      customerId: 1,
-      customerName: "Acme",
-      packingListNo: "PO-21",
-      status: "CONFIRMED",
-      actualShipDate: "2026-03-18",
-      lines: [createOutboundDocumentLine({
-        quantity: 10,
-        pallets: 3,
-        pickAllocations: [
-          createOutboundPickAllocation({ containerNo: "CONT-A", allocatedQty: 6, pallets: 1 }),
-          createOutboundPickAllocation({ containerNo: "CONT-B", allocatedQty: 4, pallets: 1 })
-        ]
-      })]
-    });
-
-    const preview = buildBillingPreview(baseInput({ outboundDocuments: [outbound] }));
-    const outboundLines = preview.invoiceLines.filter((line) => line.chargeType === "OUTBOUND");
-
-    expect(preview.summary.shippedPallets).toBe(3);
-    expect(outboundLines.map((line) => line.quantity)).toEqual([2, 1]);
-    expect(outboundLines.reduce((total, line) => total + line.quantity, 0)).toBe(3);
-  });
-
-  it("does not pool outbound quantities across storage sections for the minimum-fill rule", () => {
-    const outbound = createOutboundDocument({
-      id: 22,
-      customerId: 1,
-      customerName: "Acme",
-      packingListNo: "PO-22",
-      status: "CONFIRMED",
-      actualShipDate: "2026-03-18",
-      lines: [createOutboundDocumentLine({
-        quantity: 20,
-        pallets: 2,
-        pickAllocations: [
-          createOutboundPickAllocation({ containerNo: "CONT-A", storageSection: "A", allocatedQty: 1, pallets: 0 }),
-          createOutboundPickAllocation({ containerNo: "CONT-A", storageSection: "B", allocatedQty: 19, pallets: 2 })
-        ]
-      })]
-    });
-
-    const preview = buildBillingPreview(baseInput({
-      outboundDocuments: [outbound],
-      rates: {
-        ...DEFAULT_BILLING_RATES,
-        outboundFeePerPallet: 10,
-        excludeUnderfilledPallets: true,
-        minimumQtyPerPallet: 10
-      }
-    }));
-
-    expect(preview.summary.shippedPallets).toBe(1);
-    expect(preview.summary.outboundAmount).toBe(10);
-  });
-
-  it("pools duplicate inbound lines in the same billing bucket", () => {
-    const inbound = createInboundDocument({
-      id: 23,
-      customerId: 1,
-      customerName: "Acme",
-      containerNo: "CONT-A",
-      status: "CONFIRMED",
-      actualArrivalDate: "2026-03-18",
-      lines: [
-        createInboundDocumentLine({ sku: "SKU-A", storageSection: "A", receivedQty: 6, pallets: 1 }),
-        createInboundDocumentLine({ id: 2, sku: "SKU-A", storageSection: "A", receivedQty: 6, pallets: 1 })
-      ]
-    });
-
-    const preview = buildBillingPreview(baseInput({
-      inboundDocuments: [inbound],
-      rates: {
-        ...DEFAULT_BILLING_RATES,
-        wrappingFeePerPallet: 10,
-        excludeUnderfilledPallets: true,
-        minimumQtyPerPallet: 10
-      }
-    }));
-
-    expect(preview.summary.receivedPallets).toBe(1);
-    expect(preview.summary.wrappingAmount).toBe(10);
-  });
-
-  it("pools duplicate outbound lines in the same billing bucket", () => {
-    const outbound = createOutboundDocument({
-      id: 24,
-      customerId: 1,
-      customerName: "Acme",
-      packingListNo: "PO-24",
-      status: "CONFIRMED",
-      actualShipDate: "2026-03-18",
-      lines: [
-        createOutboundDocumentLine({
-          skuMasterId: 1,
-          quantity: 6,
-          pallets: 1,
-          pickAllocations: [createOutboundPickAllocation({ containerNo: "CONT-A", storageSection: "A", allocatedQty: 6, pallets: 1 })]
-        }),
-        createOutboundDocumentLine({
-          id: 2,
-          skuMasterId: 1,
-          quantity: 6,
-          pallets: 1,
-          pickAllocations: [createOutboundPickAllocation({ id: 2, containerNo: "CONT-A", storageSection: "A", allocatedQty: 6, pallets: 1 })]
-        })
-      ]
-    });
-
-    const preview = buildBillingPreview(baseInput({
-      outboundDocuments: [outbound],
-      rates: {
-        ...DEFAULT_BILLING_RATES,
-        outboundFeePerPallet: 10,
-        excludeUnderfilledPallets: true,
-        minimumQtyPerPallet: 10
-      }
-    }));
-
-    expect(preview.summary.shippedPallets).toBe(1);
-    expect(preview.summary.outboundAmount).toBe(10);
-  });
-
-  it("supports warehouse-scoped settlement without pallet identities", () => {
-    const events = [
-      lifecycleEvent(1, "2026-03-05T09:00:00Z", 2),
-      lifecycleEvent(2, "2026-03-05T09:00:00Z", 4, {
-        locationId: 2,
-        locationName: "PA",
-        containerNo: "MSCU1234567"
-      })
-    ];
-
-    const preview = buildBillingPreview(baseInput({
-      locationId: 2,
-      containerLifecycleEvents: events,
-      normalPalletGracePeriodEnabled: false
-    }));
-
-    expect(preview.storageRows).toHaveLength(1);
-    expect(preview.storageRows[0]?.containerNo).toBe("MSCU1234567");
-    expect(preview.storageRows[0]?.palletsTracked).toBe(4);
-    expect(preview.dailyBalanceRows[preview.dailyBalanceRows.length - 1]?.palletCount).toBe(4);
-  });
-
-  it("returns zero storage when no aggregate lifecycle events exist", () => {
-    const preview = buildBillingPreview(baseInput());
-
-    expect(preview.storageRows).toEqual([]);
-    expect(preview.summary.palletDays).toBe(0);
-    expect(preview.summary.storageAmount).toBe(0);
-  });
-
-  it("maps nullable backend collections into a safe empty display preview", () => {
+describe("authoritative billing preview mapping", () => {
+  it("maps nullable backend collections into safe empty display collections", () => {
     const result: BillingPreviewResult = {
       calculationVersion: "container-v1",
       sourceFingerprint: "fingerprint",
@@ -352,19 +37,7 @@ describe("buildBillingPreview", () => {
       lines: null,
       storageRows: null,
       dailyBalances: null,
-      summary: {
-        receivedContainers: 0,
-        receivedPallets: 0,
-        shippedPallets: 0,
-        palletDays: 0,
-        inboundAmount: 0,
-        wrappingAmount: 0,
-        storageGrossAmount: 0,
-        storageDiscountAmount: 0,
-        storageAmount: 0,
-        outboundAmount: 0,
-        grandTotal: 0
-      },
+      summary: emptySummary,
       warnings: null
     };
 
@@ -376,20 +49,7 @@ describe("buildBillingPreview", () => {
     expect(preview.dailyBalanceRows).toEqual([]);
   });
 
-  it("aggregates authoritative customer previews without rebuilding charges from local documents", () => {
-    const emptySummary = {
-      receivedContainers: 0,
-      receivedPallets: 0,
-      shippedPallets: 0,
-      palletDays: 0,
-      inboundAmount: 0,
-      wrappingAmount: 0,
-      storageGrossAmount: 0,
-      storageDiscountAmount: 0,
-      storageAmount: 0,
-      outboundAmount: 0,
-      grandTotal: 0
-    };
+  it("merges backend previews without recalculating charges from frontend documents", () => {
     const first: BillingPreview = {
       startDate: "2026-03-01",
       endDate: "2026-03-31",

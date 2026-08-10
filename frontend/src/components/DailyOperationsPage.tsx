@@ -604,7 +604,7 @@ function MinimalWorkflowStepper({
 
 function isPendingDocument(status: string) {
   const normalizedStatus = normalizeDocumentStatus(status);
-  return normalizedStatus !== "CONFIRMED" && normalizedStatus !== "DELETED" && normalizedStatus !== "ARCHIVED";
+  return normalizedStatus !== "CONFIRMED" && normalizedStatus !== "DELETED";
 }
 
 function summaryToneIconClass(tone: "emerald" | "blue" | "amber" | "slate") {

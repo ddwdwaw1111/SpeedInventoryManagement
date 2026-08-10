@@ -110,6 +110,24 @@ var schemaMigrations = []schemaMigration{
 		Revision: "2026-08-01.1",
 		Apply:    applySKUCubesMigration,
 	},
+	{
+		Version:  16,
+		Name:     "v1_schema_alignment",
+		Revision: "2026-08-10.1",
+		Apply:    applyV1SchemaAlignmentMigration,
+	},
+	{
+		Version:  17,
+		Name:     "billing_line_provenance",
+		Revision: "2026-08-10.1",
+		Apply:    applyBillingLineProvenanceMigration,
+	},
+	{
+		Version:  18,
+		Name:     "stock_ledger_business_date",
+		Revision: "2026-08-10.1",
+		Apply:    applyStockLedgerBusinessDateMigration,
+	},
 }
 
 // Versions 9 and 10 were deployed before their source migrations were merged.

@@ -81,6 +81,7 @@ describe("buildInboundReceivingCountSheetDocument", () => {
   it("can build the count sheet input from an inbound document", () => {
     const input = buildInboundReceivingCountSheetInputFromDocument({
       id: 42,
+      containerId: 7,
       customerId: 1,
       customerName: "Imperial Bag & Paper",
       locationId: 2,
@@ -97,7 +98,6 @@ describe("buildInboundReceivingCountSheetDocument", () => {
       trackingStatus: "SCHEDULED",
       confirmedAt: null,
       deletedAt: null,
-      archivedAt: null,
       totalLines: 1,
       totalExpectedQty: 120,
       totalReceivedQty: 0,

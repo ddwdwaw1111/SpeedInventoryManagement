@@ -1215,10 +1215,14 @@ func applyBaselineSchemaMigration(db *sql.DB) error {
 			notes VARCHAR(255) DEFAULT NULL,
 			details_json JSON DEFAULT NULL,
 			source_type VARCHAR(16) NOT NULL DEFAULT 'AUTO',
+			source_document_type VARCHAR(32) DEFAULT NULL,
+			source_document_id BIGINT DEFAULT NULL,
+			source_line_id BIGINT DEFAULT NULL,
 			sort_order INT NOT NULL DEFAULT 0,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (id),
 			KEY idx_billing_invoice_lines_invoice_id (invoice_id),
+			KEY idx_billing_invoice_lines_source_document (source_document_type, source_document_id, source_line_id),
 			CONSTRAINT fk_billing_invoice_lines_invoice
 				FOREIGN KEY (invoice_id) REFERENCES billing_invoices (id)
 				ON DELETE CASCADE

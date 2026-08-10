@@ -97,9 +97,9 @@ export type SKUFlowReportRow = {
   containerNo: string;
   packingListNo: string;
   orderRef: string;
-  sourceDocumentType: string;
-  sourceDocumentId: number;
-  sourceLineId: number;
+  sourceDocumentType?: string;
+  sourceDocumentId?: number;
+  sourceLineId?: number;
 };
 
 export type SKUFlowReport = {
@@ -401,7 +401,6 @@ export type ContainerRecord = {
   id: number;
   customerId: number;
   customerName: string;
-  inboundDocumentId: number;
   locationId: number;
   locationName: string;
   containerNo: string;
@@ -427,7 +426,6 @@ export type LifecycleDisplayFields = {
 
 export type ContainerPayload = {
   customerId: number;
-  inboundDocumentId?: number;
   locationId?: number;
   containerNo: string;
   containerType?: ContainerType | string;
@@ -713,7 +711,6 @@ export type OutboundDocument = {
   trackingStatus: string;
   confirmedAt: string | null;
   deletedAt: string | null;
-  archivedAt: string | null;
   totalLines: number;
   totalQty: number;
   totalPlannedQty?: number;
@@ -789,6 +786,7 @@ export type InboundPalletBreakdown = {
 
 export type InboundDocument = {
   id: number;
+  containerId: number;
   customerId: number;
   customerName: string;
   locationId: number;
@@ -805,7 +803,6 @@ export type InboundDocument = {
   trackingStatus: string;
   confirmedAt: string | null;
   deletedAt: string | null;
-  archivedAt: string | null;
   totalLines: number;
   totalExpectedQty: number;
   totalReceivedQty: number;
@@ -819,6 +816,42 @@ export type BulkUpdateInboundDocumentStatusResponse = {
   updatedDocuments: number;
   status: "CONFIRMED" | "DELETED";
   documents: InboundDocument[];
+};
+
+export type InboundDeletionDependency = {
+  sourceType: "OUTBOUND" | "TRANSFER" | "ADJUSTMENT" | "CYCLE_COUNT" | "INBOUND" | string;
+  documentId: number;
+  reference: string;
+  activityAt: string | null;
+  lastLedgerId: number;
+  affectedQty: number;
+  affectedPallets: number;
+  affectedContainers?: string[];
+  reversible: boolean;
+  blockingReason?: string;
+  includesTransfer?: boolean;
+};
+
+export type InboundDeletionImpact = {
+  documentId: number;
+  containerNo: string;
+  hasDependencies: boolean;
+  canExecute: boolean;
+  dependencies: InboundDeletionDependency[];
+};
+
+export type InboundDeletionSelection = {
+  sourceType: string;
+  documentId: number;
+  lastLedgerId: number;
+};
+
+export type DeleteInboundWithDependenciesResponse = {
+  documentId: number;
+  containerNo: string;
+  deletedAt: string;
+  deletedDependencies: InboundDeletionDependency[];
+  deletedImplicitDependencies?: InboundDeletionDependency[];
 };
 
 export type BulkConfirmOutboundDocumentsResponse = {
@@ -1611,6 +1644,9 @@ export type BillingInvoiceLineData = {
   amount: number;
   notes: string;
   sourceType: "AUTO" | "MANUAL";
+  sourceDocumentType?: string;
+  sourceDocumentId?: number;
+  sourceLineId?: number;
   sortOrder: number;
   createdAt: string;
   details?: BillingInvoiceLineDetails | null;

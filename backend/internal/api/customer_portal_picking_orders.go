@@ -27,7 +27,6 @@ func (s *Server) handleCustomerPortalPickingOrders(c *gin.Context) {
 	}
 
 	documents, err := s.store.ListOutboundDocumentsFiltered(c.Request.Context(), limit, service.OutboundDocumentFilters{
-		ArchiveScope:   service.DocumentArchiveScopeAll,
 		Search:         strings.TrimSpace(c.Query("search")),
 		CustomerID:     customerID,
 		Status:         strings.TrimSpace(c.Query("status")),

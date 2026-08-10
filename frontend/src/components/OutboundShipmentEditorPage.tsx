@@ -419,7 +419,7 @@ export function OutboundShipmentEditorPage({
   const isEditingConfirmedOutbound = normalizeDocumentStatus(document?.status ?? "") === "CONFIRMED";
   const isEditingExistingDocument = Boolean(documentId && document);
   const isEditorMissing = Boolean(documentId) && !document && !isLoading;
-  const canEditCurrentDocument = !document || (!document.archivedAt && normalizeDocumentStatus(document.status) === "DRAFT");
+  const canEditCurrentDocument = !document || normalizeDocumentStatus(document.status) === "DRAFT";
   const isReadOnly = !canManage || !canEditCurrentDocument;
   const outboundPalletSourceMessage = "";
   const isOutboundSourceReadOnly = isReadOnly || isOutboundSourceBlocked;
@@ -1173,7 +1173,7 @@ export function OutboundShipmentEditorPage({
             <DocumentAttachmentsPanel
               attachments={document?.attachments ?? []}
               pendingAttachments={pendingAttachments}
-              disabled={!canManage || Boolean(document?.archivedAt)}
+              disabled={!canManage}
               canUploadNow={Boolean(document?.id)}
               onPendingAttachmentsChange={setPendingAttachments}
               onUpload={handleUploadOutboundAttachment}

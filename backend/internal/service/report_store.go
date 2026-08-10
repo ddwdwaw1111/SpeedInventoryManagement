@@ -267,18 +267,10 @@ func (s *Store) GetOperationsReport(ctx context.Context, filters OperationsRepor
 	}
 	report.Summary, report.LocationInventoryRows, report.TopSkuRows, report.LowStockRows = buildReportInventorySections(items)
 
-	ledgerEntries, err := s.loadReportLedgerEntries(ctx, normalizedFilters)
+	openingBalances, events, err := s.loadReportLedgerBuckets(ctx, normalizedFilters, start, end)
 	if err != nil {
 		return OperationsReport{}, err
 	}
-	searchLookups := reportSearchLookups{}
-	if normalizedFilters.Search != "" {
-		searchLookups, err = s.loadReportSearchLookups(ctx)
-		if err != nil {
-			return OperationsReport{}, err
-		}
-	}
-	openingBalances, events := buildReportLedgerBuckets(ledgerEntries, searchLookups, normalizedFilters.Search, start, end)
 
 	report.PalletFlowRows = buildReportPalletFlowRows(openingBalances, events, start, end)
 	report.MovementTrendRows = buildReportMovementTrendRows(events, normalizedFilters.Granularity)
@@ -566,47 +558,91 @@ func buildReportInventorySections(items []Item) (OperationsReportSummary, []Repo
 	return summary, locationRows, topSkuRows, lowStockRows
 }
 
-func (s *Store) loadReportLedgerEntries(ctx context.Context, filters OperationsReportFilters) ([]reportLedgerEntry, error) {
-	// Keep the SQL shallow and move report-specific business rules into Go.
-	query := `
-		SELECT
-			sl.id,
-			COALESCE(sl.sku_master_id, 0) AS sku_master_id,
-			sl.customer_id,
-			sl.location_id,
-			COALESCE(NULLIF(sl.storage_section, ''), 'TEMP') AS storage_section,
-			COALESCE(sl.container_no_snapshot, '') AS container_no_snapshot,
-			COALESCE(sl.item_number_snapshot, '') AS item_number_snapshot,
-			COALESCE(sl.description_snapshot, '') AS description_snapshot,
-			COALESCE(sl.packing_list_no, '') AS packing_list_no,
-			COALESCE(sl.order_ref, '') AS order_ref,
-			COALESCE(sl.reference_code, '') AS reference_code,
-			sl.event_type,
-			sl.quantity_change,
-			sl.pallet_change,
-			sl.occurred_at,
-			sl.delivery_date,
-			sl.out_date,
-			sl.created_at
-		FROM stock_ledger sl
-		WHERE 1 = 1
-	`
-	args := make([]any, 0)
+func (s *Store) loadReportLedgerBuckets(
+	ctx context.Context,
+	filters OperationsReportFilters,
+	start time.Time,
+	end time.Time,
+) (int, []reportLedgerEventRow, error) {
+	joins := ""
+	filtersSQL := ""
+	filterArgs := make([]any, 0, 3)
 	if filters.CustomerID > 0 {
-		query += " AND sl.customer_id = ?"
-		args = append(args, filters.CustomerID)
+		filtersSQL += " AND sl.customer_id = ?"
+		filterArgs = append(filterArgs, filters.CustomerID)
 	}
 	if filters.LocationID > 0 {
-		query += " AND sl.location_id = ?"
-		args = append(args, filters.LocationID)
+		filtersSQL += " AND sl.location_id = ?"
+		filterArgs = append(filterArgs, filters.LocationID)
 	}
-	query += " ORDER BY COALESCE(sl.occurred_at, sl.created_at) ASC, sl.id ASC"
+	if search := strings.TrimSpace(filters.Search); search != "" {
+		joins = `
+			LEFT JOIN customers report_customer ON report_customer.id = sl.customer_id
+			LEFT JOIN storage_locations report_location ON report_location.id = sl.location_id
+			LEFT JOIN sku_master report_sku ON report_sku.id = sl.sku_master_id`
+		filtersSQL += ` AND LOWER(CONCAT_WS(' ',
+			COALESCE(sl.item_number_snapshot, ''),
+			COALESCE(report_sku.item_number, ''),
+			COALESCE(report_sku.sku, ''),
+			COALESCE(report_sku.name, ''),
+			COALESCE(sl.description_snapshot, ''),
+			COALESCE(report_sku.description, ''),
+			COALESCE(report_customer.name, ''),
+			COALESCE(sl.container_no_snapshot, ''),
+			COALESCE(report_location.name, ''),
+			COALESCE(sl.storage_section, ''),
+			COALESCE(sl.packing_list_no, ''),
+			COALESCE(sl.order_ref, ''),
+			COALESCE(sl.reference_code, '')
+		)) LIKE ?`
+		filterArgs = append(filterArgs, "%"+strings.ToLower(search)+"%")
+	}
 
-	entries := make([]reportLedgerEntry, 0)
-	if err := s.db.SelectContext(ctx, &entries, s.db.Rebind(query), args...); err != nil {
-		return nil, mapDBError(fmt.Errorf("load report ledger entries: %w", err))
+	openingQuery := fmt.Sprintf(`
+		SELECT COALESCE(SUM(sl.pallet_change), 0)
+		FROM stock_ledger sl
+		%s
+		WHERE sl.business_date < ?%s
+	`, joins, filtersSQL)
+	openingArgs := append([]any{start}, filterArgs...)
+	var opening float64
+	if err := s.db.GetContext(ctx, &opening, s.db.Rebind(openingQuery), openingArgs...); err != nil {
+		return 0, nil, mapDBError(fmt.Errorf("load report opening pallet balance: %w", err))
 	}
-	return entries, nil
+
+	type reportLedgerEventDBRow struct {
+		BusinessDate   time.Time `db:"business_date"`
+		EventType      string    `db:"event_type"`
+		QuantityChange int       `db:"quantity_change"`
+		PalletChange   float64   `db:"pallet_change"`
+	}
+	endExclusive := end.AddDate(0, 0, 1)
+	eventsQuery := fmt.Sprintf(`
+		SELECT
+			sl.business_date,
+			sl.event_type,
+			sl.quantity_change,
+			sl.pallet_change
+		FROM stock_ledger sl
+		%s
+		WHERE sl.business_date >= ? AND sl.business_date < ?%s
+		ORDER BY business_date ASC, sl.id ASC
+	`, joins, filtersSQL)
+	eventArgs := append([]any{start, endExclusive}, filterArgs...)
+	rows := make([]reportLedgerEventDBRow, 0)
+	if err := s.db.SelectContext(ctx, &rows, s.db.Rebind(eventsQuery), eventArgs...); err != nil {
+		return 0, nil, mapDBError(fmt.Errorf("load report period ledger entries: %w", err))
+	}
+	events := make([]reportLedgerEventRow, 0, len(rows))
+	for _, row := range rows {
+		events = append(events, reportLedgerEventRow{
+			BusinessDate:   startOfUTCDate(row.BusinessDate),
+			EventType:      row.EventType,
+			QuantityChange: row.QuantityChange,
+			PalletChange:   int(math.Round(row.PalletChange)),
+		})
+	}
+	return maxInt(int(math.Round(opening)), 0), events, nil
 }
 
 func (s *Store) loadSKUFlowReportSKU(ctx context.Context, skuMasterID int64) (reportSKUSearchLookup, error) {
@@ -720,57 +756,6 @@ func (s *Store) loadSKUFlowLedgerRows(ctx context.Context, filters SKUFlowReport
 		return nil, mapDBError(fmt.Errorf("load sku flow ledger rows: %w", err))
 	}
 	return rows, nil
-}
-
-func (s *Store) loadReportSearchLookups(ctx context.Context) (reportSearchLookups, error) {
-	lookups := reportSearchLookups{
-		customers:  make(map[int64]string),
-		locations:  make(map[int64]string),
-		skuMasters: make(map[int64]reportSKUSearchLookup),
-	}
-
-	customerRows := make([]struct {
-		ID   int64  `db:"id"`
-		Name string `db:"name"`
-	}, 0)
-	if err := s.db.SelectContext(ctx, &customerRows, `SELECT id, name FROM customers`); err != nil {
-		return reportSearchLookups{}, mapDBError(fmt.Errorf("load report customer lookups: %w", err))
-	}
-	for _, row := range customerRows {
-		lookups.customers[row.ID] = row.Name
-	}
-
-	locationRows := make([]struct {
-		ID   int64  `db:"id"`
-		Name string `db:"name"`
-	}, 0)
-	if err := s.db.SelectContext(ctx, &locationRows, `SELECT id, name FROM storage_locations`); err != nil {
-		return reportSearchLookups{}, mapDBError(fmt.Errorf("load report location lookups: %w", err))
-	}
-	for _, row := range locationRows {
-		lookups.locations[row.ID] = row.Name
-	}
-
-	skuRows := make([]struct {
-		ID int64 `db:"id"`
-		reportSKUSearchLookup
-	}, 0)
-	if err := s.db.SelectContext(ctx, &skuRows, `
-		SELECT
-			id,
-			COALESCE(item_number, '') AS item_number,
-			COALESCE(sku, '') AS sku,
-			COALESCE(name, '') AS name,
-			COALESCE(description, '') AS description
-		FROM sku_master
-	`); err != nil {
-		return reportSearchLookups{}, mapDBError(fmt.Errorf("load report sku lookups: %w", err))
-	}
-	for _, row := range skuRows {
-		lookups.skuMasters[row.ID] = row.reportSKUSearchLookup
-	}
-
-	return lookups, nil
 }
 
 func buildReportLedgerBuckets(

@@ -942,8 +942,8 @@ func TestCalculateBillingPreviewIntegration(t *testing.T) {
 	if preview.Summary.ShippedPallets != 2 {
 		t.Fatalf("outbound shipping pallets must remain independent from the one inventory pallet removed: %#v", preview.Summary)
 	}
-	if preview.Summary.PalletDays != 8 {
-		t.Fatalf("storage should use lifecycle pallet deltas (3 + 3 + 2), got %#v", preview.Summary)
+	if preview.Summary.PalletDays != 9 {
+		t.Fatalf("a partially used physical pallet remains in storage (3 + 3 + 3), got %#v", preview.Summary)
 	}
 	for _, line := range preview.Lines {
 		if line.ContainerNo != containerNo {

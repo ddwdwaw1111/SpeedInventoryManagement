@@ -314,15 +314,9 @@ func ensureContainerForStockLedgerTx(ctx context.Context, tx *sql.Tx, input crea
 	if containerNo == "" {
 		return 0, nil
 	}
-	isReceive := strings.EqualFold(input.EventType, StockLedgerEventReceive)
-	inboundDocumentID := int64(0)
-	if strings.EqualFold(input.SourceDocumentType, StockLedgerSourceInbound) && isReceive {
-		inboundDocumentID = input.SourceDocumentID
-	}
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO containers (
 			customer_id,
-			inbound_document_id,
 			location_id,
 			container_no,
 			container_type,
@@ -330,12 +324,11 @@ func ensureContainerForStockLedgerTx(ctx context.Context, tx *sql.Tx, input crea
 			status,
 			tracking_status,
 			last_event_at
-		) VALUES (?, ?, ?, ?, 'NORMAL', 'PALLETIZED', 'IN_STOCK', 'RECEIVED', COALESCE(?, CURRENT_TIMESTAMP))
+		) VALUES (?, ?, ?, 'NORMAL', 'PALLETIZED', 'IN_STOCK', 'RECEIVED', COALESCE(?, CURRENT_TIMESTAMP))
 		ON DUPLICATE KEY UPDATE
 			id = LAST_INSERT_ID(id),
-			inbound_document_id = COALESCE(VALUES(inbound_document_id), inbound_document_id),
 			last_event_at = GREATEST(COALESCE(last_event_at, VALUES(last_event_at)), VALUES(last_event_at))
-	`, input.CustomerID, nullableInt64(inboundDocumentID), input.LocationID, containerNo, nullableTime(resolveContainerLifecycleEventTime(input)))
+	`, input.CustomerID, input.LocationID, containerNo, nullableTime(resolveContainerLifecycleEventTime(input)))
 	if err != nil {
 		return 0, mapDBError(fmt.Errorf("ensure stock ledger container: %w", err))
 	}

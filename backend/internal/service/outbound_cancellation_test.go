@@ -95,10 +95,7 @@ func TestCancelConfirmedOutboundHardDeletesRelatedRecordsIntegration(t *testing.
 		t.Fatalf("expected cancellation to restore 10 qty / 2 pallets, got %d / %d", restored.Quantity, restored.Pallets)
 	}
 
-	visible, err := store.ListOutboundDocumentsFiltered(ctx, 10, OutboundDocumentFilters{
-		ArchiveScope: DocumentArchiveScopeAll,
-		Search:       pickingOrderNo,
-	})
+	visible, err := store.ListOutboundDocumentsFiltered(ctx, 10, OutboundDocumentFilters{Search: pickingOrderNo})
 	if err != nil {
 		t.Fatalf("list outbound documents after cancellation: %v", err)
 	}
@@ -110,9 +107,6 @@ func TestCancelConfirmedOutboundHardDeletesRelatedRecordsIntegration(t *testing.
 	}
 	if _, err := store.UpdateOutboundDocumentNote(ctx, document.ID, UpdateOutboundDocumentNoteInput{DocumentNote: "must not change"}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected deleted outbound note update to fail, got %v", err)
-	}
-	if _, err := store.ArchiveOutboundDocument(ctx, document.ID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("expected deleted outbound archive to fail, got %v", err)
 	}
 	if _, err := store.CopyOutboundDocument(ctx, document.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected deleted outbound copy to fail, got %v", err)

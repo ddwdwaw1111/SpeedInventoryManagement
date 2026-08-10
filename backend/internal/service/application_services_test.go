@@ -66,38 +66,6 @@ func (s failingScanner) Scan(...any) error {
 	return s.err
 }
 
-func TestLegacyInventoryAdapterUsesAggregateInventoryServiceOnce(t *testing.T) {
-	repo := &recordingInventoryMutationRepo{}
-	inventoryMutation := NewInventoryMutationService(repo)
-	adapter := NewLegacyInventoryAdapter(inventoryMutation)
-
-	adjustment, err := adapter.CreateAdjustment(context.Background(), CreateInventoryAdjustmentInput{
-		AdjustmentNo: "ADJ-LEGACY",
-		ReasonCode:   "COUNT",
-		Lines: []CreateInventoryAdjustmentLineInput{{
-			CustomerID:    3,
-			LocationID:    4,
-			ContainerNo:   "CONT-LEGACY",
-			SKUMasterID:   10,
-			AdjustQty:     2,
-			AdjustPallets: 1,
-			LineNote:      "legacy call",
-		}},
-	})
-	if err != nil {
-		t.Fatalf("expected legacy adjustment adapter to succeed, got %v", err)
-	}
-	if adjustment.AdjustmentNo != "ADJ-LEGACY" {
-		t.Fatalf("expected legacy response to preserve adjustment number, got %q", adjustment.AdjustmentNo)
-	}
-	if len(repo.adjustmentInputs) != 1 {
-		t.Fatalf("expected legacy adapter to perform one write through the new facade, got %d", len(repo.adjustmentInputs))
-	}
-	if repo.adjustmentInputs[0].Lines[0].ContainerNo != "CONT-LEGACY" {
-		t.Fatalf("expected legacy adapter to preserve container number, got %#v", repo.adjustmentInputs[0].Lines[0])
-	}
-}
-
 func TestDeliveryServiceMapsBOLCommand(t *testing.T) {
 	repo := &recordingDeliveryRepo{}
 	service := NewDeliveryService(repo)

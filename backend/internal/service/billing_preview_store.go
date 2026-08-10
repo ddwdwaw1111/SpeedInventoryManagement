@@ -383,7 +383,6 @@ func (s *Store) loadBillingPreviewSourcesWithQueryer(
 		WHERE d.customer_id = ?
 		  AND UPPER(TRIM(d.status)) IN ('CONFIRMED', 'POSTED')
 		  AND d.cancelled_at IS NULL
-		  AND d.corrected_at IS NULL
 		  AND COALESCE(d.actual_arrival_date, DATE(d.confirmed_at), DATE(d.created_at), d.expected_arrival_date) < ?
 		GROUP BY
 			d.id,
@@ -420,7 +419,6 @@ func (s *Store) loadBillingPreviewSourcesWithQueryer(
 		WHERE d.customer_id = ?
 		  AND UPPER(TRIM(d.status)) IN ('CONFIRMED', 'POSTED')
 		  AND d.cancelled_at IS NULL
-		  AND d.corrected_at IS NULL
 		  AND COALESCE(d.actual_arrival_date, DATE(d.confirmed_at), DATE(d.created_at), d.expected_arrival_date) < ?
 		ORDER BY d.id, line.sort_order, line.id
 	`, customerID, endExclusive); err != nil {
@@ -505,7 +503,6 @@ func (s *Store) loadBillingPreviewSourcesWithQueryer(
 				  AND source_inbound.customer_id = cle.customer_id
 				  AND UPPER(TRIM(source_inbound.status)) IN ('CONFIRMED', 'POSTED')
 				  AND source_inbound.cancelled_at IS NULL
-				  AND source_inbound.corrected_at IS NULL
 			  )
 			)
 			OR (

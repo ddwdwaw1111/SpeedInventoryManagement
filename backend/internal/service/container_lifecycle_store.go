@@ -65,19 +65,6 @@ func (s *Store) ListContainerLifecycleEvents(ctx context.Context, limit int, fil
 		whereClauses = append(whereClauses, "UPPER(TRIM(cle.container_no)) = ?")
 		args = append(args, containerNo)
 	}
-	if filter.OperationalOnly {
-		whereClauses = append(whereClauses, `NOT EXISTS (
-			SELECT 1
-			FROM inbound_documents source_d
-			WHERE UPPER(TRIM(cle.source_document_type)) = 'INBOUND'
-			  AND source_d.id = cle.source_document_id
-			  AND (
-				source_d.corrected_at IS NOT NULL
-				OR UPPER(TRIM(source_d.status)) IN ('DELETED', 'CANCELLED')
-			  )
-		)`)
-	}
-
 	query := fmt.Sprintf(`
 		SELECT
 			cle.id,

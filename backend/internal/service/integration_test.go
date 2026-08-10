@@ -104,6 +104,57 @@ func TestIsSafeIntegrationDatabaseName(t *testing.T) {
 	}
 }
 
+func TestOperationsReportUsesDatabaseOpeningBalanceAndPeriodRowsIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+	customer := mustCreateCustomer(t, ctx, store, "Report Customer "+suffix)
+	location := mustCreateLocation(t, ctx, store, "Report Warehouse "+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "REPORT-"+suffix, 0)
+
+	for _, row := range []struct {
+		eventType    string
+		businessDate string
+		quantity     int
+		pallets      int
+	}{
+		{StockLedgerEventReceive, "2026-03-31", 50, 5},
+		{StockLedgerEventShip, "2026-04-02", -20, -2},
+		{StockLedgerEventReceive, "2026-05-01", 990, 99},
+	} {
+		if _, err := store.db.ExecContext(ctx, `
+			INSERT INTO stock_ledger (
+				event_type, occurred_at, sku_master_id, customer_id, location_id,
+				storage_section, quantity_change, pallet_change,
+				container_no_snapshot, item_number_snapshot, description_snapshot
+			) VALUES (?, ?, ?, ?, ?, 'TEMP', ?, ?, ?, ?, ?)
+		`, row.eventType, row.businessDate+" 12:00:00", item.SKUMasterID, customer.ID, location.ID,
+			row.quantity, row.pallets, "REPORT-CONT-"+suffix, item.ItemNumber, item.Description); err != nil {
+			t.Fatalf("insert report ledger row: %v", err)
+		}
+	}
+
+	report, err := store.GetOperationsReport(ctx, OperationsReportFilters{
+		StartDate: "2026-04-01", EndDate: "2026-04-03",
+		CustomerID: customer.ID, LocationID: location.ID, Search: item.SKU,
+	})
+	if err != nil {
+		t.Fatalf("load operations report: %v", err)
+	}
+	if len(report.PalletFlowRows) != 3 {
+		t.Fatalf("period row count = %d, want 3", len(report.PalletFlowRows))
+	}
+	if first := report.PalletFlowRows[0]; first.DateKey != "2026-04-01" || first.EndOfDay != 5 {
+		t.Fatalf("opening balance was not carried into the first day: %#v", first)
+	}
+	if second := report.PalletFlowRows[1]; second.Outbound != 2 || second.EndOfDay != 3 {
+		t.Fatalf("period shipment was not applied: %#v", second)
+	}
+	if report.Summary.EndingBalance != 3 || report.Summary.PalletsOut != 2 {
+		t.Fatalf("future ledger activity leaked into report summary: %#v", report.Summary)
+	}
+}
+
 func resetIntegrationDatabase(t *testing.T, db *sqlx.DB) {
 	t.Helper()
 
@@ -332,109 +383,7 @@ func TestDocumentPostingLifecycleIntegration(t *testing.T) {
 	}
 }
 
-func TestHardDeleteMigrationUpgradesSchemaWithoutRewritingOperationalDataIntegration(t *testing.T) {
-	store := newIntegrationStore(t)
-	ctx := context.Background()
-	suffix := integrationSuffix()
-
-	customer := mustCreateCustomer(t, ctx, store, "Hard Delete Migration Customer-"+suffix)
-	location := mustCreateLocation(t, ctx, store, "Hard Delete Migration Warehouse-"+suffix)
-	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "HARD-DELETE-MIGRATION-"+suffix, 10, DefaultStorageSection)
-	adjustment, err := store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
-		ReasonCode: "CORRECTION",
-		Lines: []CreateInventoryAdjustmentLineInput{
-			adjustmentLineFromItem(item, 2, "simulate legacy cascade"),
-		},
-	})
-	if err != nil {
-		t.Fatalf("create legacy adjustment source: %v", err)
-	}
-
-	tx, err := store.db.DB.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatalf("begin legacy cascade simulation: %v", err)
-	}
-	if err := store.reverseRelatedLedgerBalancesTx(ctx, tx, StockLedgerSourceAdjustment, adjustment.ID, `
-		WHERE source_document_type = ? AND source_document_id = ?
-	`, StockLedgerSourceAdjustment, adjustment.ID); err != nil {
-		tx.Rollback()
-		t.Fatalf("create legacy cascade reversal: %v", err)
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM inventory_adjustments WHERE id = ?`, adjustment.ID); err != nil {
-		tx.Rollback()
-		t.Fatalf("delete legacy adjustment source: %v", err)
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatalf("commit legacy cascade simulation: %v", err)
-	}
-	legacyLedgerCountQuery := `
-		SELECT COUNT(*)
-		FROM stock_ledger
-		WHERE (source_document_type = ? AND source_document_id = ?)
-		   OR (
-			source_document_type = 'CASCADE_DELETE'
-			AND source_document_id = ?
-			AND reference_code = ?
-		   )
-	`
-	var legacyLedgerRowsBefore int
-	if err := store.db.GetContext(
-		ctx,
-		&legacyLedgerRowsBefore,
-		legacyLedgerCountQuery,
-		StockLedgerSourceAdjustment,
-		adjustment.ID,
-		adjustment.ID,
-		StockLedgerSourceAdjustment,
-	); err != nil {
-		t.Fatalf("count legacy cascade ledger before migration: %v", err)
-	}
-	if legacyLedgerRowsBefore == 0 {
-		t.Fatal("expected legacy operational rows before migration")
-	}
-
-	if _, err := store.db.ExecContext(ctx, `ALTER TABLE outbound_document_lines DROP COLUMN planned_quantity`); err != nil {
-		t.Fatalf("simulate schema before planned quantity migration: %v", err)
-	}
-	if _, err := store.db.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version = 11`); err != nil {
-		t.Fatalf("reset hard-delete migration journal: %v", err)
-	}
-	if err := database.Migrate(store.db.DB); err != nil {
-		t.Fatalf("rerun hard-delete migration: %v", err)
-	}
-
-	var plannedQuantityColumns int
-	if err := store.db.GetContext(ctx, &plannedQuantityColumns, `
-		SELECT COUNT(*)
-		FROM information_schema.COLUMNS
-		WHERE TABLE_SCHEMA = DATABASE()
-		  AND TABLE_NAME = 'outbound_document_lines'
-		  AND COLUMN_NAME = 'planned_quantity'
-	`); err != nil {
-		t.Fatalf("check planned quantity migration: %v", err)
-	}
-	if plannedQuantityColumns != 1 {
-		t.Fatalf("planned quantity migration created %d columns, want 1", plannedQuantityColumns)
-	}
-
-	var legacyLedgerRows int
-	if err := store.db.GetContext(
-		ctx,
-		&legacyLedgerRows,
-		legacyLedgerCountQuery,
-		StockLedgerSourceAdjustment,
-		adjustment.ID,
-		adjustment.ID,
-		StockLedgerSourceAdjustment,
-	); err != nil {
-		t.Fatalf("count legacy cascade ledger after migration: %v", err)
-	}
-	if legacyLedgerRows != legacyLedgerRowsBefore {
-		t.Fatalf("schema migration changed legacy operational rows: before=%d after=%d", legacyLedgerRowsBefore, legacyLedgerRows)
-	}
-}
-
-func TestInboundDeletionCascadesLaterInventoryActivityIntegration(t *testing.T) {
+func TestInboundDeletionBlocksWhenContainerHasLaterInventoryActivityIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
@@ -513,165 +462,325 @@ func TestInboundDeletionCascadesLaterInventoryActivityIntegration(t *testing.T) 
 		t.Fatalf("create later related inventory adjustment: %v", err)
 	}
 
-	deletedOriginal, err := store.CancelInboundDocument(ctx, original.ID)
-	if err != nil {
-		t.Fatalf("delete original receipt with related later activity: %v", err)
+	if _, err := store.CancelInboundDocument(ctx, original.ID); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected deletion to be blocked by later activity, got %v", err)
 	}
-	if normalizeDocumentStatus(deletedOriginal.Status) != DocumentStatusDeleted {
-		t.Fatalf("expected original receipt to be deleted, got %#v", deletedOriginal)
+	if _, err := store.getInboundDocument(ctx, original.ID); err != nil {
+		t.Fatalf("expected original receipt to remain after blocked deletion: %v", err)
 	}
-	if _, err := store.getInboundDocument(ctx, original.ID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("expected original receipt to be physically deleted, got %v", err)
+	if _, err := store.getItem(ctx, replenishedItem.ID); err != nil {
+		t.Fatalf("expected inventory to remain after blocked deletion: %v", err)
 	}
-
-	if _, err := store.getItem(ctx, replenishedItem.ID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("expected cascading deletion to remove the empty inventory projection, got %v", err)
+	if _, err := store.getInboundDocument(ctx, laterReceipt.ID); err != nil {
+		t.Fatalf("expected later receipt to remain after blocked deletion: %v", err)
 	}
-	if _, err := store.getInboundDocument(ctx, laterReceipt.ID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("expected later receipt to be physically deleted with original receipt, got %v", err)
-	}
-	if _, err := store.getOutboundDocument(ctx, outbound.ID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("expected related outbound to be physically deleted with receipt, got %v", err)
+	if _, err := store.getOutboundDocument(ctx, outbound.ID); err != nil {
+		t.Fatalf("expected related outbound to remain after blocked deletion: %v", err)
 	}
 	var remainingAdjustments int
 	if err := store.db.GetContext(ctx, &remainingAdjustments, `SELECT COUNT(*) FROM inventory_adjustments WHERE id = ?`, adjustment.ID); err != nil {
-		t.Fatalf("count related adjustment after cascading deletion: %v", err)
+		t.Fatalf("count related adjustment after blocked deletion: %v", err)
 	}
-	if remainingAdjustments != 0 {
-		t.Fatalf("expected related inventory adjustment to be deleted, got %d rows", remainingAdjustments)
-	}
-}
-
-func TestInboundDocumentListHidesLegacyCorrectedSourceIntegration(t *testing.T) {
-	store := newIntegrationStore(t)
-	ctx := context.Background()
-	suffix := integrationSuffix()
-	customer := mustCreateCustomer(t, ctx, store, "Legacy Correction Customer-"+suffix)
-	location := mustCreateLocation(t, ctx, store, "Legacy Correction Warehouse-"+suffix)
-
-	createReceipt := func(containerNo string) InboundDocument {
-		t.Helper()
-		receipt, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
-			CustomerID:        customer.ID,
-			LocationID:        location.ID,
-			ActualArrivalDate: "2026-07-15",
-			ContainerNo:       containerNo,
-			HandlingMode:      InboundHandlingModePalletized,
-			Status:            DocumentStatusDraft,
-			Lines: []CreateInboundDocumentLineInput{{
-				SKU:            "LEGACY-CORRECTION-SKU-" + suffix,
-				Description:    "Legacy corrected source filter",
-				ReceivedQty:    1,
-				Pallets:        1,
-				StorageSection: DefaultStorageSection,
-			}},
-		})
-		if err != nil {
-			t.Fatalf("create legacy correction receipt: %v", err)
-		}
-		return receipt
-	}
-
-	original := createReceipt("LEGACY-CORRECTION-ORIGINAL-" + suffix)
-	replacement := createReceipt("LEGACY-CORRECTION-REPLACEMENT-" + suffix)
-	if _, err := store.db.ExecContext(ctx, `
-		UPDATE inbound_documents
-		SET corrected_by_document_id = ?, corrected_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`, replacement.ID, original.ID); err != nil {
-		t.Fatalf("mark legacy original corrected: %v", err)
-	}
-	if _, err := store.db.ExecContext(ctx, `
-		UPDATE inbound_documents
-		SET corrects_document_id = ?
-		WHERE id = ?
-	`, original.ID, replacement.ID); err != nil {
-		t.Fatalf("link legacy replacement: %v", err)
-	}
-
-	documents, err := store.ListInboundDocuments(ctx, 20, DocumentArchiveScopeAll)
-	if err != nil {
-		t.Fatalf("list receipts with legacy correction rows: %v", err)
-	}
-	for _, document := range documents {
-		if document.ID == original.ID {
-			t.Fatalf("legacy corrected source %d must not be listed or billed", original.ID)
-		}
-	}
-	foundReplacement := false
-	for _, document := range documents {
-		if document.ID == replacement.ID {
-			foundReplacement = true
-			break
-		}
-	}
-	if !foundReplacement {
-		t.Fatalf("expected legacy replacement %d to remain visible", replacement.ID)
+	if remainingAdjustments != 1 {
+		t.Fatalf("expected related inventory adjustment to remain, got %d rows", remainingAdjustments)
 	}
 }
 
-func TestLegacyInboundCorrectionDraftCannotBeConfirmedButCanBeDeletedIntegration(t *testing.T) {
+func TestInboundDeletionPlanAtomicallyRollsBackSelectedLaterActivitiesIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
-	customer := mustCreateCustomer(t, ctx, store, "Legacy Draft Customer-"+suffix)
-	location := mustCreateLocation(t, ctx, store, "Legacy Draft Warehouse-"+suffix)
-	containerNo := "LEGACY-DRAFT-" + suffix
-	sku := "LEGACY-DRAFT-SKU-" + suffix
 
-	createReceipt := func(status string) InboundDocument {
-		t.Helper()
+	customer := mustCreateCustomer(t, ctx, store, "Deletion Plan Customer-"+suffix)
+	fromLocation := mustCreateLocation(t, ctx, store, "Deletion Plan Source-"+suffix)
+	toLocation := mustCreateLocation(t, ctx, store, "Deletion Plan Destination-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, fromLocation.ID, "SKU-DELETE-PLAN-"+suffix, 0)
+	containerNo := "DELETE-PLAN-" + suffix
+
+	receipt, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:        customer.ID,
+		LocationID:        fromLocation.ID,
+		ActualArrivalDate: "2026-06-15",
+		ContainerNo:       containerNo,
+		ContainerType:     "NORMAL",
+		HandlingMode:      InboundHandlingModePalletized,
+		StorageSection:    DefaultStorageSection,
+		Status:            DocumentStatusDraft,
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU:            item.SKU,
+			Description:    item.Description,
+			ExpectedQty:    100,
+			ReceivedQty:    100,
+			Pallets:        5,
+			StorageSection: DefaultStorageSection,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create receipt for deletion plan: %v", err)
+	}
+	receipt, err = store.ConfirmInboundDocument(ctx, receipt.ID)
+	if err != nil {
+		t.Fatalf("confirm receipt for deletion plan: %v", err)
+	}
+	receivedItem := mustFindItemByContainer(t, ctx, store, fromLocation.ID, DefaultStorageSection, containerNo, item.SKU)
+
+	transfer, err := store.CreateInventoryTransfer(ctx, CreateInventoryTransferInput{
+		TransferNo: "DELETE-PLAN-TRANSFER-" + suffix,
+		Lines: []CreateInventoryTransferLineInput{
+			transferLineFromItem(receivedItem, 40, toLocation.ID, "B", "later transfer"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("create later transfer: %v", err)
+	}
+	destinationItem := mustFindItemByLocationAndSection(t, ctx, store, toLocation.ID, "B", item.SKU)
+	adjustment, err := store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
+		AdjustmentNo: "DELETE-PLAN-ADJUSTMENT-" + suffix,
+		ReasonCode:   "CORRECTION",
+		Lines: []CreateInventoryAdjustmentLineInput{
+			adjustmentLineFromItem(destinationItem, -10, "later adjustment"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("create later adjustment: %v", err)
+	}
+
+	impact, err := store.PreviewInboundDeletion(ctx, receipt.ID)
+	if err != nil {
+		t.Fatalf("preview inbound deletion: %v", err)
+	}
+	if !impact.CanExecute || len(impact.Dependencies) != 2 {
+		t.Fatalf("unexpected deletion impact: %#v", impact)
+	}
+	selections := make([]InboundDeletionSelection, 0, len(impact.Dependencies))
+	for _, dependency := range impact.Dependencies {
+		selections = append(selections, InboundDeletionSelection{
+			SourceType:   dependency.SourceType,
+			DocumentID:   dependency.DocumentID,
+			LastLedgerID: dependency.LastLedgerID,
+		})
+	}
+	if _, err := store.DeleteInboundWithDependencies(ctx, receipt.ID, DeleteInboundWithDependenciesInput{Dependencies: selections[:1]}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected incomplete selection to be rejected, got %v", err)
+	}
+	if _, err := store.getInboundDocument(ctx, receipt.ID); err != nil {
+		t.Fatalf("receipt changed after rejected deletion plan: %v", err)
+	}
+
+	response, err := store.DeleteInboundWithDependencies(ctx, receipt.ID, DeleteInboundWithDependenciesInput{Dependencies: selections})
+	if err != nil {
+		t.Fatalf("execute inbound deletion plan: %v", err)
+	}
+	if response.DocumentID != receipt.ID || len(response.DeletedDependencies) != 2 {
+		t.Fatalf("unexpected deletion response: %#v", response)
+	}
+	if _, err := store.getInboundDocument(ctx, receipt.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected receipt to be deleted, got %v", err)
+	}
+	if _, err := store.getInventoryTransfer(ctx, transfer.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected transfer to be deleted, got %v", err)
+	}
+	if _, err := store.getInventoryAdjustment(ctx, adjustment.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected adjustment to be deleted, got %v", err)
+	}
+
+	var remainingQty int
+	var remainingPallets int
+	if err := store.db.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(quantity), 0), COALESCE(SUM(pallets), 0)
+		FROM inventory_items
+		WHERE customer_id = ? AND UPPER(TRIM(container_no)) = ?
+	`, customer.ID, normalizeContainerNo(containerNo)).Scan(&remainingQty, &remainingPallets); err != nil {
+		t.Fatalf("load inventory after deletion plan: %v", err)
+	}
+	if remainingQty != 0 || remainingPallets != 0 {
+		t.Fatalf("expected deletion plan to restore zero inventory, got %d qty / %d pallets", remainingQty, remainingPallets)
+	}
+	var remainingLedger int
+	if err := store.db.GetContext(ctx, &remainingLedger, `
+		SELECT COUNT(*)
+		FROM stock_ledger
+		WHERE (source_document_type = ? AND source_document_id = ?)
+		   OR (source_document_type = ? AND source_document_id = ?)
+		   OR (source_document_type = ? AND source_document_id = ?)
+		   OR (source_document_type = ? AND source_document_id = ?)
+	`, StockLedgerSourceInbound, receipt.ID, StockLedgerSourceTransfer, transfer.ID, StockLedgerSourceAdjustment, adjustment.ID, inboundDeletionRollbackSource, receipt.ID); err != nil {
+		t.Fatalf("count ledger after deletion plan: %v", err)
+	}
+	if remainingLedger != 0 {
+		t.Fatalf("expected deletion plan ledger rows to be removed, got %d", remainingLedger)
+	}
+}
+
+func TestInboundDeletionPlanTreatsOutboundAutomaticTransferAsOneApprovedActivityIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Deletion Plan Auto Transfer Customer-"+suffix)
+	sourceLocation := mustCreateLocation(t, ctx, store, "Deletion Plan Overflow-"+suffix)
+	mainLocation := mustCreateLocation(t, ctx, store, MainOutboundWarehouseCode)
+	item := mustCreateItemWithSection(t, ctx, store, customer.ID, sourceLocation.ID, "SKU-DELETE-AUTO-"+suffix, 0, DefaultStorageSection)
+	containerNo := "DELETE-AUTO-" + suffix
+	receipt, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID:        customer.ID,
+		LocationID:        sourceLocation.ID,
+		ActualArrivalDate: "2026-07-01",
+		ContainerNo:       containerNo,
+		StorageSection:    DefaultStorageSection,
+		Status:            DocumentStatusConfirmed,
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU: item.SKU, Description: item.Description, ExpectedQty: 10, ReceivedQty: 10, Pallets: 2, StorageSection: DefaultStorageSection,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create auto-transfer receipt: %v", err)
+	}
+	pickingOrderNo := "PO-DELETE-AUTO-" + suffix
+	preview, err := store.buildOutboundBulkImportPreview(ctx, "delete-auto.xlsx", customer.ID, []OutboundBulkImportDocumentPreview{{
+		DocumentKey:    "ROW-2",
+		PickingOrderNo: pickingOrderNo,
+		ActualShipDate: "2026-07-02",
+		RowNumbers:     []int{2},
+		Lines: []OutboundBulkImportLinePreview{{
+			RowNumber:        2,
+			Warehouse:        mainLocation.Name,
+			SourceContainer:  containerNo,
+			StorageSection:   DefaultStorageSection,
+			SKU:              item.SKU,
+			Quantity:         4,
+			InventoryPallets: 1,
+			OutboundPallets:  3,
+		}},
+	}})
+	if err != nil || preview.ValidDocuments != 1 {
+		t.Fatalf("preview auto-transfer outbound: %#v, %v", preview, err)
+	}
+	commit, err := store.CreateOutboundDocumentsBulkDraft(ctx, OutboundBulkImportCommitInput{
+		ImportID:       "fedcba9876543210fedcba9876543210",
+		SourceFileName: "delete-auto.xlsx",
+		CustomerID:     customer.ID,
+		Documents: []OutboundBulkImportCommitDocument{{
+			DocumentKey: preview.Documents[0].DocumentKey,
+			Input:       preview.Documents[0].Input,
+		}},
+	})
+	if err != nil || len(commit.Results) != 1 || commit.Results[0].Document == nil {
+		t.Fatalf("create auto-transfer outbound draft: %#v, %v", commit, err)
+	}
+	confirmed, err := store.ConfirmOutboundDocument(ctx, commit.Results[0].Document.ID)
+	if err != nil {
+		t.Fatalf("confirm auto-transfer outbound: %v", err)
+	}
+	if len(confirmed.Lines) != 1 || len(confirmed.Lines[0].PickAllocations) != 1 || confirmed.Lines[0].PickAllocations[0].SourceTransferID <= 0 {
+		t.Fatalf("expected confirmed outbound to retain automatic transfer provenance: %#v", confirmed)
+	}
+	autoTransferID := confirmed.Lines[0].PickAllocations[0].SourceTransferID
+
+	impact, err := store.PreviewInboundDeletion(ctx, receipt.ID)
+	if err != nil {
+		t.Fatalf("preview auto-transfer receipt deletion: %v", err)
+	}
+	if len(impact.Dependencies) != 1 || impact.Dependencies[0].SourceType != StockLedgerSourceOutbound || !impact.Dependencies[0].IncludesTransfer {
+		t.Fatalf("expected one outbound dependency covering automatic transfer, got %#v", impact)
+	}
+	dependency := impact.Dependencies[0]
+	deletion, err := store.DeleteInboundWithDependencies(ctx, receipt.ID, DeleteInboundWithDependenciesInput{Dependencies: []InboundDeletionSelection{{
+		SourceType: dependency.SourceType, DocumentID: dependency.DocumentID, LastLedgerID: dependency.LastLedgerID,
+	}}})
+	if err != nil {
+		t.Fatalf("delete receipt with outbound automatic transfer dependency: %v", err)
+	}
+	if len(deletion.DeletedImplicitDependencies) != 1 || deletion.DeletedImplicitDependencies[0].SourceType != StockLedgerSourceTransfer || deletion.DeletedImplicitDependencies[0].DocumentID != autoTransferID {
+		t.Fatalf("expected deleted automatic transfer to be returned for auditing, got %#v", deletion.DeletedImplicitDependencies)
+	}
+	if _, err := store.getOutboundDocument(ctx, confirmed.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected outbound to be deleted, got %v", err)
+	}
+	if _, err := store.getInventoryTransfer(ctx, autoTransferID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected automatic transfer to be deleted, got %v", err)
+	}
+	var remainingQty int
+	var remainingPallets int
+	if err := store.db.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(quantity), 0), COALESCE(SUM(pallets), 0)
+		FROM inventory_items
+		WHERE customer_id = ? AND UPPER(TRIM(container_no)) = ?
+	`, customer.ID, normalizeContainerNo(containerNo)).Scan(&remainingQty, &remainingPallets); err != nil {
+		t.Fatalf("load auto-transfer inventory after deletion: %v", err)
+	}
+	if remainingQty != 0 || remainingPallets != 0 {
+		t.Fatalf("expected zero inventory after deleting receipt chain, got %d qty / %d pallets", remainingQty, remainingPallets)
+	}
+}
+
+func TestInboundDeletionPreviewShowsCompleteMultiContainerDocumentScopeIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+
+	customer := mustCreateCustomer(t, ctx, store, "Deletion Scope Customer-"+suffix)
+	location := mustCreateLocation(t, ctx, store, "Deletion Scope Location-"+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "SKU-DELETE-SCOPE-"+suffix, 0)
+	createReceipt := func(containerNo string, quantity int) InboundDocument {
 		receipt, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
 			CustomerID:        customer.ID,
 			LocationID:        location.ID,
-			ActualArrivalDate: "2026-07-15",
+			ActualArrivalDate: "2026-07-01",
 			ContainerNo:       containerNo,
-			HandlingMode:      InboundHandlingModePalletized,
-			Status:            status,
+			StorageSection:    DefaultStorageSection,
+			Status:            DocumentStatusConfirmed,
 			Lines: []CreateInboundDocumentLineInput{{
-				SKU:            sku,
-				Description:    "Legacy linked draft item",
-				ReceivedQty:    10,
-				Pallets:        2,
-				StorageSection: DefaultStorageSection,
+				SKU: item.SKU, Description: item.Description, ExpectedQty: quantity, ReceivedQty: quantity, Pallets: 2, StorageSection: DefaultStorageSection,
 			}},
 		})
 		if err != nil {
-			t.Fatalf("create legacy linked receipt: %v", err)
+			t.Fatalf("create deletion-scope receipt %s: %v", containerNo, err)
 		}
 		return receipt
 	}
+	containerA := "DELETE-SCOPE-A-" + suffix
+	containerB := "DELETE-SCOPE-B-" + suffix
+	receiptA := createReceipt(containerA, 20)
+	createReceipt(containerB, 30)
+	itemA := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerA, item.SKU)
+	itemB := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerB, item.SKU)
 
-	original := createReceipt(DocumentStatusConfirmed)
-	draft := createReceipt(DocumentStatusDraft)
-	if _, err := store.db.ExecContext(ctx, `
-		UPDATE inbound_documents
-		SET corrected_by_document_id = ?
-		WHERE id = ?
-	`, draft.ID, original.ID); err != nil {
-		t.Fatalf("link legacy source receipt: %v", err)
-	}
-	if _, err := store.db.ExecContext(ctx, `
-		UPDATE inbound_documents
-		SET corrects_document_id = ?
-		WHERE id = ?
-	`, original.ID, draft.ID); err != nil {
-		t.Fatalf("link legacy correction draft: %v", err)
-	}
-
-	if _, err := store.ConfirmInboundDocument(ctx, draft.ID); err == nil || !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "legacy correction drafts cannot be confirmed") {
-		t.Fatalf("expected legacy correction draft confirmation to be rejected, got %v", err)
-	}
-	item := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerNo, sku)
-	if item.Quantity != 10 || item.Pallets != 2 {
-		t.Fatalf("expected rejected legacy draft to preserve original inventory, got %d / %d", item.Quantity, item.Pallets)
-	}
-	deleted, err := store.CancelInboundDocument(ctx, draft.ID)
+	adjustment, err := store.CreateInventoryAdjustment(ctx, CreateInventoryAdjustmentInput{
+		AdjustmentNo: "DELETE-SCOPE-ADJUSTMENT-" + suffix,
+		ReasonCode:   "CORRECTION",
+		Lines: []CreateInventoryAdjustmentLineInput{
+			adjustmentLineFromItem(itemA, 2, "container A correction"),
+			adjustmentLineFromItem(itemB, 3, "container B correction"),
+		},
+	})
 	if err != nil {
-		t.Fatalf("delete legacy correction draft: %v", err)
+		t.Fatalf("create multi-container adjustment: %v", err)
 	}
-	if deleted.Status != DocumentStatusDeleted {
-		t.Fatalf("expected legacy correction draft to remain deletable, got %#v", deleted)
+
+	impact, err := store.PreviewInboundDeletion(ctx, receiptA.ID)
+	if err != nil {
+		t.Fatalf("preview multi-container deletion scope: %v", err)
+	}
+	if len(impact.Dependencies) != 1 {
+		t.Fatalf("expected one adjustment dependency, got %#v", impact.Dependencies)
+	}
+	dependency := impact.Dependencies[0]
+	if dependency.DocumentID != adjustment.ID || dependency.AffectedQty != 5 {
+		t.Fatalf("expected complete adjustment totals in preview, got %#v", dependency)
+	}
+	if len(dependency.AffectedContainers) != 2 || dependency.AffectedContainers[0] != normalizeContainerNo(containerA) || dependency.AffectedContainers[1] != normalizeContainerNo(containerB) {
+		t.Fatalf("expected both affected containers in preview, got %#v", dependency.AffectedContainers)
+	}
+
+	if _, err := store.DeleteInboundWithDependencies(ctx, receiptA.ID, DeleteInboundWithDependenciesInput{Dependencies: []InboundDeletionSelection{{
+		SourceType: dependency.SourceType, DocumentID: dependency.DocumentID, LastLedgerID: dependency.LastLedgerID,
+	}}}); err != nil {
+		t.Fatalf("delete receipt with multi-container dependency: %v", err)
+	}
+	remainingB := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerB, item.SKU)
+	if remainingB.Quantity != 30 {
+		t.Fatalf("expected second container adjustment to be rolled back to 30, got %d", remainingB.Quantity)
 	}
 }
 
@@ -1368,7 +1477,7 @@ func TestCustomerItemCodesAreScopedPerCustomerIntegration(t *testing.T) {
 	}
 }
 
-func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
+func TestInboundDocumentCopyAndDeleteIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
@@ -1385,7 +1494,7 @@ func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 		StorageSection:      DefaultStorageSection,
 		UnitLabel:           "CTN",
 		Status:              DocumentStatusConfirmed,
-		DocumentNote:        "Inbound copy/archive test",
+		DocumentNote:        "Inbound copy/delete test",
 		Lines: []CreateInboundDocumentLineInput{{
 			SKU:               item.SKU,
 			Description:       item.Description,
@@ -1400,10 +1509,6 @@ func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create inbound document: %v", err)
 	}
-	if _, err := store.ArchiveInboundDocument(ctx, original.ID); err == nil {
-		t.Fatal("expected archiving a confirmed inbound document to fail")
-	}
-
 	// Copy the confirmed document before deleting it.
 	copied, err := store.CopyInboundDocument(ctx, original.ID)
 	if err != nil {
@@ -1430,15 +1535,12 @@ func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 	if cancelled.Status != DocumentStatusDeleted {
 		t.Fatalf("expected deleted inbound status, got %q", cancelled.Status)
 	}
-	voidedContainer, err := store.GetContainerByNo(ctx, customer.ID, original.ContainerNo)
+	remainingContainer, err := store.GetContainerByNo(ctx, customer.ID, original.ContainerNo)
 	if err != nil {
 		t.Fatalf("load container after deleting inbound receipt: %v", err)
 	}
-	if voidedContainer.Status != ContainerStatusVoided || voidedContainer.TrackingStatus != ContainerStatusVoided {
-		t.Fatalf("expected deleted receipt container to be voided, got %#v", voidedContainer)
-	}
-	if _, err := store.GetOperationalContainerByNo(ctx, customer.ID, original.ContainerNo); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("expected voided container to disappear from operational lookup, got %v", err)
+	if remainingContainer.Status != ContainerStatusDepleted {
+		t.Fatalf("expected the copied draft's shared container to have no inventory, got %#v", remainingContainer)
 	}
 
 	// Deleted receipts remain in the audit tables but disappear from operational lists.
@@ -1453,22 +1555,6 @@ func TestInboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 		t.Fatalf("expected copied inbound document %d, got %d", copied.ID, inboundDocuments[0].ID)
 	}
 
-	// No fourth archived state remains, and all-scope still excludes deleted records.
-	archivedInboundDocuments, err := store.ListInboundDocuments(ctx, 20, DocumentArchiveScopeArchived)
-	if err != nil {
-		t.Fatalf("list archived inbound documents: %v", err)
-	}
-	if len(archivedInboundDocuments) != 0 {
-		t.Fatalf("expected no archived inbound documents after soft deletion, got %d", len(archivedInboundDocuments))
-	}
-
-	allInboundDocuments, err := store.ListInboundDocuments(ctx, 20, DocumentArchiveScopeAll)
-	if err != nil {
-		t.Fatalf("list all inbound documents: %v", err)
-	}
-	if len(allInboundDocuments) != 1 || allInboundDocuments[0].ID != copied.ID {
-		t.Fatalf("expected only copied inbound document in all list, got %#v", allInboundDocuments)
-	}
 }
 
 func TestBulkUpdateInboundDocumentStatusIntegration(t *testing.T) {
@@ -1596,7 +1682,7 @@ func TestBulkDeleteAllowsSelectedLaterReceiptsFromSameContainerIntegration(t *te
 	}
 }
 
-func TestOutboundDocumentCopyAndArchiveIntegration(t *testing.T) {
+func TestOutboundDocumentCopyAndDeleteIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
@@ -1614,7 +1700,7 @@ func TestOutboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 		ShipToContact:    "Dock 8",
 		CarrierName:      "Local Carrier",
 		Status:           DocumentStatusConfirmed,
-		DocumentNote:     "Outbound copy/archive test",
+		DocumentNote:     "Outbound copy/delete test",
 		Lines: []CreateOutboundDocumentLineInput{{
 			CustomerID:   item.CustomerID,
 			LocationID:   item.LocationID,
@@ -1672,22 +1758,6 @@ func TestOutboundDocumentCopyAndArchiveIntegration(t *testing.T) {
 		t.Fatalf("expected copied outbound document %d in active list, got %d", copied.ID, outboundDocuments[0].ID)
 	}
 
-	// Archived and all-scope lists should have only the copy
-	archivedOutboundDocuments, err := store.ListOutboundDocuments(ctx, 20, DocumentArchiveScopeArchived)
-	if err != nil {
-		t.Fatalf("list archived outbound documents: %v", err)
-	}
-	if len(archivedOutboundDocuments) != 0 {
-		t.Fatalf("expected no archived outbound documents after hard-delete, got %d", len(archivedOutboundDocuments))
-	}
-
-	allOutboundDocuments, err := store.ListOutboundDocuments(ctx, 20, DocumentArchiveScopeAll)
-	if err != nil {
-		t.Fatalf("list all outbound documents: %v", err)
-	}
-	if len(allOutboundDocuments) != 1 {
-		t.Fatalf("expected only copied outbound document in all list, got %d", len(allOutboundDocuments))
-	}
 }
 
 func TestCancelDocumentsQueueAttachmentsForDurableCleanupIntegration(t *testing.T) {
@@ -2763,7 +2833,7 @@ func TestOutboundAutoContainerAllocationIntegration(t *testing.T) {
 	if outbound.Lines[0].PickAllocations[0].ContainerNo != "CONT-A-"+suffix || outbound.Lines[0].PickAllocations[0].AllocatedQty != 1 || outbound.Lines[0].PickAllocations[0].Pallets != 1 {
 		t.Fatalf("expected confirmed first auto allocation CONT-A qty 1, got %+v", outbound.Lines[0].PickAllocations[0])
 	}
-	if outbound.Lines[0].PickAllocations[1].ContainerNo != "CONT-B-"+suffix || outbound.Lines[0].PickAllocations[1].AllocatedQty != 3 || outbound.Lines[0].PickAllocations[1].Pallets != 1 {
+	if outbound.Lines[0].PickAllocations[1].ContainerNo != "CONT-B-"+suffix || outbound.Lines[0].PickAllocations[1].AllocatedQty != 3 || outbound.Lines[0].PickAllocations[1].Pallets != 0 || outbound.Lines[0].PickAllocations[1].InventoryPalletsUsed != 1 {
 		t.Fatalf("expected confirmed second auto allocation CONT-B qty 3, got %+v", outbound.Lines[0].PickAllocations[1])
 	}
 
@@ -2944,8 +3014,8 @@ func TestBulkOutboundFindsRemoteContainerAndTransfersWhenDraftConfirmedIntegrati
 	}
 
 	remainingSource = mustFindItemByContainer(t, ctx, store, sourceLocation.ID, DefaultStorageSection, containerNo, item.SKU)
-	if remainingSource.Quantity != 6 || remainingSource.Pallets != 1 {
-		t.Fatalf("expected partial shipment to deduct the workbook inventory pallet count, got source balance %d / %d", remainingSource.Quantity, remainingSource.Pallets)
+	if remainingSource.Quantity != 6 || remainingSource.Pallets != 2 {
+		t.Fatalf("expected a partial transfer to leave both physical pallets at the source, got source balance %d / %d", remainingSource.Quantity, remainingSource.Pallets)
 	}
 	var transferCountAfterConfirm int
 	if err := store.db.GetContext(ctx, &transferCountAfterConfirm, `
@@ -3097,8 +3167,8 @@ func TestOutboundTracksQtyAndPalletsWithoutPerPalletQuantityIntegration(t *testi
 	}
 
 	itemAfter := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerNo, item.SKU)
-	if itemAfter.Quantity != 5 || itemAfter.Pallets != 0 || itemAfter.AllocatedQty != 0 {
-		t.Fatalf("expected independent balances of 5 CTN and 0 pallets, got quantity=%d pallets=%d allocated=%d", itemAfter.Quantity, itemAfter.Pallets, itemAfter.AllocatedQty)
+	if itemAfter.Quantity != 5 || itemAfter.Pallets != 1 || itemAfter.AllocatedQty != 0 {
+		t.Fatalf("expected the partially used physical pallet to remain with 5 CTN, got quantity=%d pallets=%d allocated=%d", itemAfter.Quantity, itemAfter.Pallets, itemAfter.AllocatedQty)
 	}
 }
 
@@ -3153,12 +3223,12 @@ func TestOutboundPreservesDeclaredPalletCountWithoutChoosingPalletCombinationInt
 	}
 
 	remaining := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, item.ContainerNo, item.SKU)
-	if remaining.Quantity != 6 || remaining.Pallets != 1 {
-		t.Fatalf("expected independent balances of 6 CTN and 1 pallet, got quantity=%d pallets=%d", remaining.Quantity, remaining.Pallets)
+	if remaining.Quantity != 6 || remaining.Pallets != 3 {
+		t.Fatalf("expected outbound pallets to stay independent while all three physical inventory pallets remain, got quantity=%d pallets=%d", remaining.Quantity, remaining.Pallets)
 	}
 }
 
-func TestOutboundRejectsPalletCountAboveContainerBalanceIntegration(t *testing.T) {
+func TestOutboundAllowsRepalletizedCountAboveInventoryPalletBalanceIntegration(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
@@ -3210,13 +3280,13 @@ func TestOutboundRejectsPalletCountAboveContainerBalanceIntegration(t *testing.T
 			}},
 		}},
 	})
-	if !errors.Is(err, ErrInsufficientStock) {
-		t.Fatalf("expected pallet balance validation to return ErrInsufficientStock, got %v", err)
+	if err != nil {
+		t.Fatalf("expected repalletized outbound count to be independent from inventory pallet balance, got %v", err)
 	}
 
 	remaining := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerNo, item.SKU)
-	if remaining.Quantity != 10 || remaining.Pallets != 2 {
-		t.Fatalf("expected rejected outbound to preserve 10 CTN and 2 pallets, got quantity=%d pallets=%d", remaining.Quantity, remaining.Pallets)
+	if remaining.Quantity != 9 || remaining.Pallets != 2 {
+		t.Fatalf("expected 1 CTN shipped while both physical inventory pallets remain, got quantity=%d pallets=%d", remaining.Quantity, remaining.Pallets)
 	}
 }
 

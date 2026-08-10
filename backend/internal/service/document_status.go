@@ -10,11 +10,6 @@ const (
 	DocumentStatusConfirmed = "CONFIRMED"
 	DocumentStatusPosted    = "POSTED"
 	DocumentStatusDeleted   = "DELETED"
-	DocumentStatusArchived  = "ARCHIVED"
-
-	DocumentArchiveScopeActive   = "ACTIVE"
-	DocumentArchiveScopeArchived = "ARCHIVED"
-	DocumentArchiveScopeAll      = "ALL"
 
 	InboundTrackingScheduled         = "SCHEDULED"
 	InboundTrackingArrived           = "ARRIVED"
@@ -76,36 +71,11 @@ func coalesceDocumentStatus(status string) string {
 	return normalized
 }
 
-func normalizeDocumentArchiveScope(raw string) string {
-	switch strings.TrimSpace(strings.ToUpper(raw)) {
-	case DocumentArchiveScopeArchived:
-		return DocumentArchiveScopeArchived
-	case DocumentArchiveScopeAll:
-		return DocumentArchiveScopeAll
-	default:
-		return DocumentArchiveScopeActive
-	}
-}
-
-func buildDocumentArchiveFilterClause(alias string, scope string) string {
-	archiveColumn := fmt.Sprintf("%s.archived_at", alias)
-	switch normalizeDocumentArchiveScope(scope) {
-	case DocumentArchiveScopeArchived:
-		return fmt.Sprintf("%s IS NOT NULL", archiveColumn)
-	case DocumentArchiveScopeAll:
-		return "1 = 1"
-	default:
-		return fmt.Sprintf("%s IS NULL", archiveColumn)
-	}
-}
-
 func buildDocumentStatusFilterClause(alias string, status string) (string, []any) {
 	normalized := normalizeDocumentStatus(status)
 	statusColumn := fmt.Sprintf("UPPER(TRIM(%s.status))", alias)
 	switch normalized {
 	case "":
-		return "", nil
-	case DocumentStatusArchived:
 		return "", nil
 	case DocumentStatusConfirmed:
 		return fmt.Sprintf("%s IN (?, ?)", statusColumn), []any{DocumentStatusConfirmed, DocumentStatusPosted}

@@ -16,8 +16,7 @@ import type {
   OperationsReport,
   OutboundDocument,
   OutboundDocumentPayload,
-  PalletLocationEvent,
-  PalletTrace,
+  SKUMaster,
   UIPreference,
   User
 } from "../../src/lib/types";
@@ -30,10 +29,9 @@ export type MockAppApiOptions = {
   session?: AuthResponse;
   customers?: Customer[];
   locations?: Location[];
+  skuMasters?: SKUMaster[];
   items?: Item[];
   movements?: Movement[];
-  pallets?: PalletTrace[];
-  palletLocationEvents?: PalletLocationEvent[];
   adjustments?: InventoryAdjustment[];
   inboundDocuments?: InboundDocument[];
   outboundDocuments?: OutboundDocument[];
@@ -78,10 +76,9 @@ export async function mockAppApi(page: Page, options: MockAppApiOptions = {}): P
   const session = options.session ?? buildSession();
   const customers = options.customers ?? [buildCustomer()];
   const locations = options.locations ?? [buildLocation()];
+  const skuMasters = options.skuMasters ?? [];
   const items = options.items ?? [];
   const movements = options.movements ?? [];
-  const pallets = options.pallets ?? [];
-  const palletLocationEvents = options.palletLocationEvents ?? [];
   const adjustmentStore = [...(options.adjustments ?? [])];
   const inboundDocumentStore = [...(options.inboundDocuments ?? [])];
   const outboundDocumentStore = [...(options.outboundDocuments ?? [])];
@@ -106,6 +103,9 @@ export async function mockAppApi(page: Page, options: MockAppApiOptions = {}): P
       return json(route, customers);
     }
     if (request.method() === "GET" && apiPath === "/sku-master") {
+      return json(route, skuMasters);
+    }
+    if (request.method() === "GET" && apiPath === "/outbound-source-references") {
       return json(route, []);
     }
     if (request.method() === "GET" && apiPath === "/items") {
@@ -220,7 +220,7 @@ export async function mockAppApi(page: Page, options: MockAppApiOptions = {}): P
     if (request.method() === "POST" && apiPath === "/cycle-counts") {
       const payload = request.postDataJSON() as CycleCountPayload;
       state.postedCycleCounts.push(payload);
-      const createdCycleCount = buildCycleCount(payload, cycleCountStore.length + 1, customers, locations, items, pallets);
+      const createdCycleCount = buildCycleCount(payload, cycleCountStore.length + 1, customers, locations, items);
       cycleCountStore.unshift(createdCycleCount);
       return json(route, createdCycleCount, 201);
     }
@@ -229,22 +229,6 @@ export async function mockAppApi(page: Page, options: MockAppApiOptions = {}): P
     }
     if (request.method() === "GET" && apiPath === "/users") {
       return json(route, [session.user]);
-    }
-    if (request.method() === "GET" && apiPath === "/pallets") {
-      const searchTerm = url.searchParams.get("search") ?? "";
-      const sourceInboundDocumentId = Number(url.searchParams.get("sourceInboundDocumentId") ?? "");
-      const limit = Number(url.searchParams.get("limit") ?? "");
-      const filteredPallets = filterPallets(pallets, {
-        searchTerm,
-        sourceInboundDocumentId: Number.isFinite(sourceInboundDocumentId) ? sourceInboundDocumentId : undefined
-      });
-      const limitedPallets = Number.isFinite(limit) && limit > 0
-        ? filteredPallets.slice(0, limit)
-        : filteredPallets;
-      return json(route, limitedPallets);
-    }
-    if (request.method() === "GET" && apiPath === "/pallet-location-events") {
-      return json(route, palletLocationEvents);
     }
     if (request.method() === "GET" && apiPath.startsWith("/ui-preferences/")) {
       return json(route, buildUIPreference(apiPath.split("/").at(-1) ?? "", null));
@@ -356,6 +340,9 @@ export function buildItem(overrides: Partial<Item> = {}): Item {
     allocatedQty: 0,
     damagedQty: 0,
     holdQty: 0,
+    pallets: 1,
+    availablePallets: 1,
+    allocatedPallets: 0,
     reorderLevel: 5,
     customerId: 1,
     customerName: "Play Customer",
@@ -364,7 +351,29 @@ export function buildItem(overrides: Partial<Item> = {}): Item {
     storageSection: "TEMP",
     deliveryDate: "2026-04-20",
     containerNo: "CONT-PLAY-1",
+    containerType: "NORMAL",
     lastRestockedAt: NOW,
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides
+  };
+}
+
+export function buildSKUMaster(overrides: Partial<SKUMaster> = {}): SKUMaster {
+  return {
+    id: 101,
+    itemNumber: "ITEM-100",
+    sku: "SKU-PLAY",
+    name: "Play SKU",
+    category: "General",
+    description: "Playwright test stock",
+    unit: "CTN",
+    reorderLevel: 0,
+    defaultUnitsPerPallet: 8,
+    weight: 0,
+    cubes: 0,
+    outboundCartonsPerLayer: 0,
+    outboundLayerCount: 0,
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides
@@ -412,110 +421,6 @@ export function buildMovement(overrides: Partial<Movement> = {}): Movement {
   };
 }
 
-export function buildPalletTrace(overrides: Partial<PalletTrace> = {}): PalletTrace {
-  return {
-    id: 501,
-    parentPalletId: 0,
-    palletCode: "PLT-PLAY-001",
-    containerVisitId: 90,
-    sourceInboundDocumentId: 91,
-    sourceInboundLineId: 92,
-    actualArrivalDate: "2026-04-20",
-    containerType: "NORMAL",
-    customerId: 1,
-    customerName: "Play Customer",
-    skuMasterId: 101,
-    sku: "SKU-PLAY",
-    description: "Playwright test stock",
-    currentLocationId: 1,
-    currentLocationName: "NJ Warehouse",
-    currentStorageSection: "TEMP",
-    currentContainerNo: "CONT-PLAY-1",
-    status: "OPEN",
-    createdAt: NOW,
-    updatedAt: NOW,
-    contents: [
-      {
-        id: 601,
-        palletId: 501,
-        skuMasterId: 101,
-        itemNumber: "ITEM-100",
-        sku: "SKU-PLAY",
-        description: "Playwright test stock",
-        quantity: 25,
-        allocatedQty: 0,
-        damagedQty: 0,
-        holdQty: 0,
-        createdAt: NOW,
-        updatedAt: NOW
-      }
-    ],
-    ...overrides
-  };
-}
-
-export function buildPalletLocationEvent(overrides: Partial<PalletLocationEvent> = {}): PalletLocationEvent {
-  return {
-    id: 701,
-    palletId: 501,
-    palletCode: "PLT-PLAY-001",
-    containerVisitId: 90,
-    customerId: 1,
-    customerName: "Play Customer",
-    locationId: 1,
-    locationName: "NJ Warehouse",
-    storageSection: "TEMP",
-    containerNo: "CONT-PLAY-1",
-    eventType: "RECEIVED",
-    quantityDelta: 25,
-    palletDelta: 1,
-    eventTime: NOW,
-    createdAt: NOW,
-    ...overrides
-  };
-}
-
-function filterPallets(
-  pallets: PalletTrace[],
-  filters: {
-    searchTerm?: string;
-    sourceInboundDocumentId?: number;
-  }
-) {
-  const normalizedSearch = filters.searchTerm?.trim().toUpperCase() ?? "";
-  const hasSearch = normalizedSearch.length > 0;
-  const sourceInboundDocumentId = filters.sourceInboundDocumentId && filters.sourceInboundDocumentId > 0
-    ? filters.sourceInboundDocumentId
-    : undefined;
-
-  return pallets.filter((pallet) => {
-    if (sourceInboundDocumentId && pallet.sourceInboundDocumentId !== sourceInboundDocumentId) {
-      return false;
-    }
-
-    if (!hasSearch) {
-      return true;
-    }
-
-    const searchableValues = [
-      pallet.palletCode,
-      pallet.customerName,
-      pallet.sku,
-      pallet.description,
-      pallet.currentLocationName,
-      pallet.currentStorageSection,
-      pallet.currentContainerNo,
-      ...pallet.contents.flatMap((content) => [
-        content.itemNumber,
-        content.sku,
-        content.description
-      ])
-    ];
-
-    return searchableValues.some((value) => normalizeValue(value).includes(normalizedSearch));
-  });
-}
-
 function nextDocumentId(documents: Array<{ id: number }>) {
   return documents.reduce((maxId, document) => Math.max(maxId, document.id), 0) + 1;
 }
@@ -528,7 +433,6 @@ function cloneInboundDocument(document: InboundDocument, id: number): InboundDoc
     trackingStatus: "SCHEDULED",
     confirmedAt: null,
     deletedAt: null,
-    archivedAt: null,
     createdAt: NOW,
     updatedAt: NOW,
     lines: document.lines.map((line, index) => ({
@@ -548,7 +452,6 @@ function cloneOutboundDocument(document: OutboundDocument, id: number): Outbound
     trackingStatus: "SCHEDULED",
     confirmedAt: null,
     deletedAt: null,
-    archivedAt: null,
     createdAt: NOW,
     updatedAt: NOW,
     lines: document.lines.map((line, index) => ({
@@ -687,18 +590,14 @@ function buildCycleCount(
   id: number,
   customers: Customer[],
   locations: Location[],
-  items: Item[],
-  pallets: PalletTrace[]
+  items: Item[]
 ): CycleCount {
   const createdAt = "2026-04-25T11:00:00Z";
   const lines = payload.lines.map((line, index) => {
     const customer = customers.find((entry) => entry.id === line.customerId);
     const location = locations.find((entry) => entry.id === line.locationId);
     const item = findMatchingItem(items, line.customerId, line.locationId, line.storageSection, line.containerNo, line.skuMasterId);
-    const pallet = line.palletId ? pallets.find((entry) => entry.id === line.palletId) : undefined;
-    const systemQty = line.createPallet
-      ? 0
-      : getPalletSkuQuantity(pallet, line.skuMasterId) || item?.quantity || 0;
+    const systemQty = line.createPallet ? 0 : item?.quantity || 0;
     const countedQty = Math.max(0, line.countedQty);
 
     return {
@@ -777,7 +676,6 @@ export function buildInboundDocument(
     trackingStatus: payload.trackingStatus ?? ((payload.status ?? "DRAFT") === "CONFIRMED" ? "RECEIVED" : "SCHEDULED"),
     confirmedAt: (payload.status ?? "DRAFT") === "CONFIRMED" ? createdAt : null,
     deletedAt: null,
-    archivedAt: null,
     totalLines: lines.length,
     totalExpectedQty: lines.reduce((sum, line) => sum + line.expectedQty, 0),
     totalReceivedQty: lines.reduce((sum, line) => sum + line.receivedQty, 0),
@@ -804,16 +702,6 @@ function findMatchingItem(
     && normalizeValue(entry.containerNo) === normalizedContainerNo
     && entry.skuMasterId === skuMasterId
   ));
-}
-
-function getPalletSkuQuantity(pallet: PalletTrace | undefined, skuMasterId: number) {
-  if (!pallet) {
-    return 0;
-  }
-
-  return pallet.contents
-    .filter((content) => content.skuMasterId === skuMasterId)
-    .reduce((sum, content) => sum + Math.max(0, content.quantity), 0);
 }
 
 function normalizeValue(value: string | null | undefined) {
@@ -872,7 +760,6 @@ export function buildOutboundDocument(
     trackingStatus: payload.trackingStatus ?? ((payload.status ?? "DRAFT") === "CONFIRMED" ? "SHIPPED" : "SCHEDULED"),
     confirmedAt: (payload.status ?? "DRAFT") === "CONFIRMED" ? createdAt : null,
     deletedAt: null,
-    archivedAt: null,
     totalLines: lines.length,
     totalQty: lines.reduce((sum, line) => sum + line.quantity, 0),
     totalNetWeightKgs: lines.reduce((sum, line) => sum + line.netWeightKgs, 0),

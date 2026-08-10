@@ -157,7 +157,6 @@ func (s *Server) handleCustomerPortalContainerLifecycle(c *gin.Context) {
 
 func (s *Server) loadCustomerPortalContainerSummaries(ctx context.Context, customerID int64) ([]customerPortalContainerSummary, error) {
 	packingLists, err := s.store.ListInboundDocumentsFiltered(ctx, customerPortalContainerLoadLimit, service.InboundDocumentFilters{
-		ArchiveScope:    service.DocumentArchiveScopeAll,
 		CustomerID:      customerID,
 		OperationalOnly: true,
 	})
@@ -205,7 +204,6 @@ func (s *Server) loadCustomerPortalContainerSummaries(ctx context.Context, custo
 
 func (s *Server) loadCustomerPortalPackingListsForContainer(ctx context.Context, customerID int64, containerNo string) ([]service.InboundDocument, error) {
 	documents, err := s.store.ListInboundDocumentsFiltered(ctx, customerPortalContainerLoadLimit, service.InboundDocumentFilters{
-		ArchiveScope:    service.DocumentArchiveScopeAll,
 		CustomerID:      customerID,
 		Search:          containerNo,
 		OperationalOnly: true,
@@ -246,9 +244,8 @@ func (s *Server) loadCustomerPortalPickingOrdersForContainer(ctx context.Context
 	}
 
 	searchDocuments, err := s.store.ListOutboundDocumentsFiltered(ctx, customerPortalContainerLoadLimit, service.OutboundDocumentFilters{
-		ArchiveScope: service.DocumentArchiveScopeAll,
-		CustomerID:   customerID,
-		Search:       containerNo,
+		CustomerID: customerID,
+		Search:     containerNo,
 	})
 	if err != nil {
 		return nil, err

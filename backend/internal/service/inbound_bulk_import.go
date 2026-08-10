@@ -1275,7 +1275,6 @@ func (s *Store) loadExistingInboundContainerNumbers(ctx context.Context, custome
 		FROM inbound_documents
 		WHERE customer_id = ?
 			AND cancelled_at IS NULL
-			AND archived_at IS NULL
 			AND UPPER(TRIM(container_no)) IN (?)
 	`, customerID, unique)
 	if err != nil {

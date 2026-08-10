@@ -179,6 +179,7 @@ export function createInboundDocumentLine(overrides: Partial<InboundDocumentLine
 export function createInboundDocument(overrides: Partial<InboundDocument> = {}): InboundDocument {
   return {
     id: 1,
+    containerId: 1,
     customerId: 1,
     customerName: "Imperial Bag & Paper",
     locationId: 1,
@@ -195,7 +196,6 @@ export function createInboundDocument(overrides: Partial<InboundDocument> = {}):
     trackingStatus: "SCHEDULED",
     confirmedAt: null,
     deletedAt: null,
-    archivedAt: null,
     totalLines: 1,
     totalExpectedQty: 10,
     totalReceivedQty: 10,
@@ -270,7 +270,6 @@ export function createOutboundDocument(overrides: Partial<OutboundDocument> = {}
     trackingStatus: "SCHEDULED",
     confirmedAt: null,
     deletedAt: null,
-    archivedAt: null,
     totalLines: 1,
     totalQty: 5,
     totalPlannedQty: 5,

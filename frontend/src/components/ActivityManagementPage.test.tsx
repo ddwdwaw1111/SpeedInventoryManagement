@@ -96,6 +96,8 @@ vi.mock("../lib/api", () => ({
     bulkUpdateInboundDocumentStatus: vi.fn(),
     bulkConfirmOutboundDocuments: vi.fn(),
     bulkDeleteOutboundDocuments: vi.fn(),
+    previewInboundDeletion: vi.fn(),
+    deleteInboundWithDependencies: vi.fn(),
     copyInboundDocument: vi.fn()
   }
 }));
@@ -129,6 +131,8 @@ const mockedApi = api as unknown as {
   bulkUpdateInboundDocumentStatus: ReturnType<typeof vi.fn>;
   bulkConfirmOutboundDocuments: ReturnType<typeof vi.fn>;
   bulkDeleteOutboundDocuments: ReturnType<typeof vi.fn>;
+  previewInboundDeletion: ReturnType<typeof vi.fn>;
+  deleteInboundWithDependencies: ReturnType<typeof vi.fn>;
   copyInboundDocument: ReturnType<typeof vi.fn>;
 };
 
@@ -142,6 +146,8 @@ describe("ActivityManagementPage", () => {
     mockedApi.bulkUpdateInboundDocumentStatus.mockReset();
     mockedApi.bulkConfirmOutboundDocuments.mockReset();
     mockedApi.bulkDeleteOutboundDocuments.mockReset();
+    mockedApi.previewInboundDeletion.mockReset();
+    mockedApi.deleteInboundWithDependencies.mockReset();
     mockedApi.copyInboundDocument.mockReset();
     mockedDownloadOutboundPickSheetPdfFromDocument.mockReset();
     mockedApi.getInboundDocuments.mockResolvedValue([]);
@@ -186,7 +192,6 @@ describe("ActivityManagementPage", () => {
 
     await waitFor(() => {
       expect(mockedApi.getInboundDocuments).toHaveBeenLastCalledWith(50000, {
-        archiveScope: "active",
         customerId: customer.id,
         locationId: location.id,
         status: "CONFIRMED"
@@ -352,7 +357,7 @@ describe("ActivityManagementPage", () => {
     );
 
     const statusFilter = screen.getByLabelText("Status") as HTMLSelectElement;
-    expect([...statusFilter.options].map((option) => option.value)).toEqual(["all", "DRAFT", "CONFIRMED", "ARCHIVED"]);
+    expect([...statusFilter.options].map((option) => option.value)).toEqual(["all", "DRAFT", "CONFIRMED"]);
 
     fireEvent.change(screen.getByLabelText("Customer"), { target: { value: String(customer.id) } });
     fireEvent.change(screen.getByLabelText("Warehouse"), { target: { value: String(location.id) } });
@@ -360,7 +365,6 @@ describe("ActivityManagementPage", () => {
 
     await waitFor(() => {
       expect(mockedApi.getOutboundDocuments).toHaveBeenLastCalledWith(50000, {
-        archiveScope: "active",
         customerId: customer.id,
         locationId: location.id,
         status: "CONFIRMED"
@@ -655,7 +659,6 @@ describe("ActivityManagementPage", () => {
 
     await waitFor(() => {
       expect(mockedApi.getInboundDocuments).toHaveBeenLastCalledWith(50000, {
-        archiveScope: "active",
         customerId: undefined,
         locationId: undefined,
         status: undefined,
@@ -696,7 +699,6 @@ describe("ActivityManagementPage", () => {
 
     await waitFor(() => {
       expect(mockedApi.getOutboundDocuments).toHaveBeenLastCalledWith(50000, {
-        archiveScope: "active",
         customerId: undefined,
         locationId: undefined,
         status: undefined,
@@ -741,7 +743,6 @@ describe("ActivityManagementPage", () => {
 
     await waitFor(() => {
       expect(mockedApi.getInboundDocuments).toHaveBeenLastCalledWith(50000, {
-        archiveScope: "active",
         customerId: undefined,
         locationId: undefined,
         status: "CONFIRMED"
@@ -749,44 +750,6 @@ describe("ActivityManagementPage", () => {
     });
     expect(await screen.findByText("FRESH-IN-55")).toBeInTheDocument();
     expect(screen.queryByText("STALE-IN-55")).not.toBeInTheDocument();
-  });
-
-  it("keeps archived documents as an outbound-only filter", async () => {
-    const archivedDocument = createOutboundDocument({
-      id: 64,
-      packingListNo: "ARCHIVED-OUT-64",
-      archivedAt: "2026-03-25T10:00:00Z",
-      status: "CONFIRMED"
-    });
-    mockedApi.getOutboundDocuments.mockResolvedValue([archivedDocument]);
-
-    renderWithProviders(
-      <ActivityManagementPage
-        mode="OUT"
-        items={[]}
-        skuMasters={[]}
-        locations={[createLocation()]}
-        customers={[createCustomer()]}
-        movements={[]}
-        inboundDocuments={[]}
-        outboundDocuments={[]}
-        currentUserRole="admin"
-        isLoading={false}
-        onRefresh={vi.fn().mockResolvedValue(undefined)}
-      />
-    );
-
-    fireEvent.change(screen.getByLabelText("Status"), { target: { value: "ARCHIVED" } });
-
-    await waitFor(() => {
-      expect(mockedApi.getOutboundDocuments).toHaveBeenLastCalledWith(50000, {
-        archiveScope: "archived",
-        customerId: undefined,
-        locationId: undefined,
-        status: undefined
-      });
-    });
-    expect(await screen.findByText("ARCHIVED-OUT-64")).toBeInTheDocument();
   });
 
   it("submits a new inbound receipt from the receipt form flow", async () => {

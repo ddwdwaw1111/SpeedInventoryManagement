@@ -243,11 +243,11 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
   const [errorMessage, setErrorMessage] = useState("");
   const [embeddedComposer, setEmbeddedComposer] = useState<{ mode: "IN" | "OUT"; date: string } | null>(null);
   const activeInboundDocuments = useMemo(
-    () => inboundDocuments.filter((document) => !document.archivedAt && isOperationalInboundDocument(document)),
+    () => inboundDocuments.filter(isOperationalInboundDocument),
     [inboundDocuments]
   );
   const activeOutboundDocuments = useMemo(
-    () => outboundDocuments.filter((document) => !document.archivedAt),
+    () => outboundDocuments,
     [outboundDocuments]
   );
 
@@ -348,6 +348,9 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
         resolvedCustomerId = [...matchingCustomerIds][0] ?? null;
       }
     }
+    if (!resolvedCustomerId) {
+      return;
+    }
     navigateToContainerDetail(setActivePage, resolvedCustomerId, containerNo);
     setCurrentPathname(window.location.pathname);
   }
@@ -427,8 +430,8 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
         api.getOutboundSourceReferences(),
         api.getItems(),
         api.getMovements(20000),
-        api.getInboundDocuments(300, "all"),
-        api.getOutboundDocuments(300, "all"),
+        api.getInboundDocuments(300),
+        api.getOutboundDocuments(300),
         api.getInventoryAdjustments(300),
         api.getInventoryTransfers(300),
         api.getCycleCounts(300),

@@ -1,5 +1,6 @@
 import AttachFileRoundedIcon from "@mui/icons-material/AttachFileRounded";
 import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
+import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import MoveToInboxOutlinedIcon from "@mui/icons-material/MoveToInboxOutlined";
 import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
@@ -22,6 +23,7 @@ import type { PageKey } from "../lib/routes";
 import type { DocumentAttachment, InboundDocument, InboundDocumentLine, Item, UserRole } from "../lib/types";
 import { ContainerAdjustmentDialog } from "./ContainerAdjustmentDialog";
 import { DocumentAttachmentsPanel } from "./DocumentAttachmentsPanel";
+import { InboundDeletionRollbackDialog } from "./InboundDeletionRollbackDialog";
 import { useFeedbackToast } from "./Feedback";
 import { WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
@@ -64,6 +66,7 @@ export function InboundDetailPage({
   const [isSavingContainerType, setIsSavingContainerType] = useState(false);
   const [activeDetailTab, setActiveDetailTab] = useState<InboundDetailTab>("details");
   const [isAdjustmentOpen, setIsAdjustmentOpen] = useState(false);
+  const [isDeletionOpen, setIsDeletionOpen] = useState(false);
   const dateFormatter = useMemo(
     () => new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }),
     []
@@ -153,13 +156,11 @@ export function InboundDetailPage({
 
   const canConvertSealedTransit =
     canManage
-    && !document?.archivedAt
     && normalizeDocumentStatus(document?.status ?? "") === "DRAFT"
     && document?.handlingMode === "SEALED_TRANSIT";
   const normalizedDocumentStatus = normalizeDocumentStatus(document?.status ?? "");
   const canAdjustReceivedBalance = canManage
     && normalizedDocumentStatus === "CONFIRMED"
-    && !document?.archivedAt
     && Boolean(document?.containerNo.trim());
 
   return (
@@ -242,6 +243,17 @@ export function InboundDetailPage({
                 >
                   <ContentCopyOutlinedIcon sx={{ fontSize: 18 }} />
                   {t("reEnterReceipt")}
+                </button>
+              ) : null}
+              {canManage && normalizedDocumentStatus === "CONFIRMED" ? (
+                <button
+                  type="button"
+                  onClick={() => setIsDeletionOpen(true)}
+                  disabled={!document}
+                  className="interactive-button-lift inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-rose-700 ring-1 ring-rose-200 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <DeleteOutlineOutlinedIcon sx={{ fontSize: 18 }} />
+                  {t("cancelReceipt")}
                 </button>
               ) : null}
             </div>
@@ -528,6 +540,16 @@ export function InboundDetailPage({
         onClose={() => setIsAdjustmentOpen(false)}
         onSaved={onRefresh}
       />
+      <InboundDeletionRollbackDialog
+        open={isDeletionOpen}
+        document={document}
+        onClose={() => setIsDeletionOpen(false)}
+        onDeleted={async () => {
+          setIsDeletionOpen(false);
+          await onRefresh();
+          onNavigate("inbound-management");
+        }}
+      />
     </main>
   );
 }
@@ -626,16 +648,6 @@ function buildActivityLog(document: InboundDocument, t: Translate): ActivityEven
       tone: "slate"
     });
   }
-  if (document.archivedAt) {
-    events.push({
-      key: "archived",
-      label: t("inboundDetailEventArchived"),
-      detail: t("archiveReceipt"),
-      timestamp: document.archivedAt,
-      tone: "slate"
-    });
-  }
-
   return events.sort((left, right) => getTime(right.timestamp) - getTime(left.timestamp));
 }
 

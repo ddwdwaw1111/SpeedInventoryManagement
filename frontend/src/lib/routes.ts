@@ -82,7 +82,7 @@ export function getPageFromPath(pathname: string): PageKey {
   if (normalized === "/export-center") return "export-center";
   if (normalized === "/all-activity") return "all-activity";
   if (/^\/container-lifecycle\/\d+\/[^/]+$/.test(normalized) || normalized === "/container-lifecycle") return "container-lifecycle";
-  if (/^\/container-contents\/\d+\/[^/]+$/.test(normalized) || /^\/container-contents\/[^/]+$/.test(normalized)) return "container-detail";
+  if (/^\/container-contents\/\d+\/[^/]+$/.test(normalized)) return "container-detail";
   if (normalized === "/container-contents") return "container-contents";
   if (normalized === "/audit-logs") return "audit-logs";
   if (normalized === "/user-management") return "user-management";
@@ -226,20 +226,14 @@ export function getShipmentEditorIdFromPath(pathname: string) {
   return Number(match[1]);
 }
 
-export function navigateToContainerDetail(setter: (page: PageKey) => void, containerNo: string): void;
-export function navigateToContainerDetail(setter: (page: PageKey) => void, customerId: number | null | undefined, containerNo: string): void;
 export function navigateToContainerDetail(
   setter: (page: PageKey) => void,
-  customerIdOrContainerNo: number | string | null | undefined,
-  maybeContainerNo?: string
+  customerId: number,
+  containerNo: string
 ) {
-  const customerId = typeof customerIdOrContainerNo === "number" ? customerIdOrContainerNo : null;
-  const containerNo = typeof customerIdOrContainerNo === "string" ? customerIdOrContainerNo : maybeContainerNo ?? "";
   const normalizedContainerNo = containerNo.trim().toUpperCase();
   const encodedContainerNo = encodeURIComponent(normalizedContainerNo);
-  const path = customerId && customerId > 0
-    ? `/container-contents/${customerId}/${encodedContainerNo}`
-    : `/container-contents/${encodedContainerNo}`;
+  const path = `/container-contents/${customerId}/${encodedContainerNo}`;
   if (normalizePagePath(window.location.pathname) !== path) {
     window.history.pushState({ page: "container-detail", customerId, containerNo: normalizedContainerNo }, "", path);
   }
@@ -367,19 +361,18 @@ export function getContainerDetailContainerNoFromPath(pathname: string) {
 export function getContainerDetailRouteFromPath(pathname: string) {
   const normalized = normalizePagePath(pathname);
   const scopedMatch = normalized.match(/^\/container-contents\/(\d+)\/([^/]+)$/);
-  const legacyMatch = normalized.match(/^\/container-contents\/([^/]+)$/);
-  if (!scopedMatch && !legacyMatch) {
+  if (!scopedMatch) {
     return null;
   }
 
   try {
-    const customerId = scopedMatch ? Number(scopedMatch[1]) : null;
-    const encodedContainerNo = scopedMatch?.[2] ?? legacyMatch?.[1] ?? "";
+    const customerId = Number(scopedMatch[1]);
+    const encodedContainerNo = scopedMatch[2] ?? "";
     const containerNo = decodeURIComponent(encodedContainerNo).trim().toUpperCase();
-    if (!containerNo || (scopedMatch && (!customerId || customerId <= 0))) {
+    if (!containerNo || !customerId || customerId <= 0) {
       return null;
     }
-    return { customerId, containerNo, isLegacy: !scopedMatch };
+    return { customerId, containerNo };
   } catch {
     return null;
   }

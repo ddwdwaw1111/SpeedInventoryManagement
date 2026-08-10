@@ -367,6 +367,17 @@ func TestBulkInboundAllowsMultipleReceiptsForOneContainerIntegration(t *testing.
 	if receiptCount != 2 || containerCount != 1 || visitCount != 2 {
 		t.Fatalf("expected 2 receipts, 1 container, and 2 visits; got receipts=%d containers=%d visits=%d", receiptCount, containerCount, visitCount)
 	}
+	var linkedContainerCount int
+	if err := store.db.GetContext(ctx, &linkedContainerCount, `
+		SELECT COUNT(DISTINCT container_id)
+		FROM inbound_documents
+		WHERE id IN (?, ?) AND container_id IS NOT NULL
+	`, confirmedReceiptIDs[0], confirmedReceiptIDs[1]); err != nil {
+		t.Fatalf("count receipt container links: %v", err)
+	}
+	if linkedContainerCount != 1 {
+		t.Fatalf("expected both receipts to link to the same container, got %d distinct links", linkedContainerCount)
+	}
 
 	var balance struct {
 		Quantity int `db:"quantity"`
@@ -385,9 +396,6 @@ func TestBulkInboundAllowsMultipleReceiptsForOneContainerIntegration(t *testing.
 	operationalContainer, err := store.GetOperationalContainerByNo(ctx, customer.ID, containerNo)
 	if err != nil {
 		t.Fatalf("load shared container after deleting latest receipt: %v", err)
-	}
-	if operationalContainer.InboundDocumentID != confirmedReceiptIDs[0] {
-		t.Fatalf("expected container to inherit prior receipt %d, got %#v", confirmedReceiptIDs[0], operationalContainer)
 	}
 	if operationalContainer.LocationID != location.ID {
 		t.Fatalf("expected container location to follow remaining inventory at %d, got %#v", location.ID, operationalContainer)

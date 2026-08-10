@@ -1364,7 +1364,7 @@ func (s *Store) outboundPickingOrderExists(ctx context.Context, customerID int64
 	var count int
 	// packing_list_no remains the compatibility storage column for the
 	// user-facing Picking Order No.; no schema migration is required.
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM outbound_documents WHERE customer_id = ? AND cancelled_at IS NULL AND archived_at IS NULL AND UPPER(TRIM(COALESCE(packing_list_no, ''))) = UPPER(TRIM(?))`, customerID, pickingOrderNo).Scan(&count); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM outbound_documents WHERE customer_id = ? AND cancelled_at IS NULL AND UPPER(TRIM(COALESCE(packing_list_no, ''))) = UPPER(TRIM(?))`, customerID, pickingOrderNo).Scan(&count); err != nil {
 		return false, fmt.Errorf("check outbound picking order: %w", err)
 	}
 	return count > 0, nil

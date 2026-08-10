@@ -67,7 +67,6 @@ func TestUpdateContainerMetadataSynchronizesSharedReceiptsAndPreservesInventoryP
 		WHERE customer_id = ?
 		  AND UPPER(TRIM(COALESCE(container_no, ''))) = ?
 		  AND UPPER(TRIM(status)) NOT IN ('DELETED', 'CANCELLED')
-		  AND corrected_at IS NULL
 		  AND container_type = ?
 	`, customer.ID, normalizeContainerNo(containerNo), ContainerTypeWestCoastTransfer).Scan(&receiptCount); err != nil {
 		t.Fatalf("load synchronized receipt types: %v", err)

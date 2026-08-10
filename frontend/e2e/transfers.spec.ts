@@ -19,7 +19,9 @@ test("transfer management posts the selected stock row to the destination wareho
     storageSection: "TEMP",
     containerNo: "CONT-901",
     availableQty: 25,
-    quantity: 25
+    quantity: 25,
+    pallets: 2,
+    availablePallets: 2
   });
   const siblingItem = buildItem({
     id: 2,
@@ -34,7 +36,9 @@ test("transfer management posts the selected stock row to the destination wareho
     storageSection: "A",
     containerNo: "CONT-902",
     availableQty: 12,
-    quantity: 12
+    quantity: 12,
+    pallets: 1,
+    availablePallets: 1
   });
 
   const apiState = await mockAppApi(page, {
@@ -45,19 +49,16 @@ test("transfer management posts the selected stock row to the destination wareho
 
   await page.goto("/transfers");
 
-  await expect(page.getByRole("button", { name: "Inventory Transfer" }).first()).toBeVisible();
-  await page.getByRole("button", { name: "Inventory Transfer" }).first().click();
+  const addTransferButton = page.locator("main").getByRole("button", { name: "Inventory Transfer" });
+  await expect(addTransferButton).toBeVisible();
+  await addTransferButton.click();
 
   const dialog = page.getByRole("dialog");
-  await dialog.locator("select").first().selectOption(`${customer.id}:${sourceItem.sku}`);
-
-  const lineCard = dialog.locator(".batch-line-card").first();
-  await lineCard.getByLabel("Source Inventory Position").selectOption(
-    `${customer.id}:${sourceLocation.id}:${sourceItem.storageSection}:${sourceItem.containerNo}:${sourceItem.skuMasterId}`
-  );
-  await lineCard.getByLabel("Transfer Qty").fill("5");
-  await lineCard.getByLabel("Destination Warehouse").selectOption(String(destinationLocation.id));
-  await lineCard.getByLabel("To Section").selectOption("BULK");
+  await dialog.locator("#transfer-container-select").selectOption(`${customer.id}:${sourceLocation.id}:${sourceItem.containerNo}`);
+  await dialog.getByRole("button", { name: /Partial Container/ }).click();
+  await dialog.locator("#transfer-destination-location").selectOption(String(destinationLocation.id));
+  await dialog.locator("#transfer-destination-section").selectOption("BULK");
+  await dialog.getByRole("spinbutton", { name: `Transfer Qty - ${sourceItem.sku} - ${sourceItem.storageSection}` }).fill("5");
   await dialog.locator('button[type="submit"]').click();
 
   await expect.poll(() => apiState.postedTransfers.length).toBe(1);

@@ -95,3 +95,39 @@ func TestSKUCubesHasDedicatedMigration(t *testing.T) {
 	}
 	t.Fatal("UPC cubes migration is missing")
 }
+
+func TestV1SchemaAlignmentHasDedicatedMigration(t *testing.T) {
+	for _, migration := range schemaMigrations {
+		if migration.Version == 16 {
+			if migration.Name != "v1_schema_alignment" || migration.Apply == nil {
+				t.Fatalf("unexpected v1 schema alignment migration: %#v", migration)
+			}
+			return
+		}
+	}
+	t.Fatal("v1 schema alignment migration is missing")
+}
+
+func TestBillingLineProvenanceHasDedicatedMigration(t *testing.T) {
+	for _, migration := range schemaMigrations {
+		if migration.Version == 17 {
+			if migration.Name != "billing_line_provenance" || migration.Apply == nil {
+				t.Fatalf("unexpected billing line provenance migration: %#v", migration)
+			}
+			return
+		}
+	}
+	t.Fatal("billing line provenance migration is missing")
+}
+
+func TestStockLedgerBusinessDateHasDedicatedMigration(t *testing.T) {
+	for _, migration := range schemaMigrations {
+		if migration.Version == 18 {
+			if migration.Name != "stock_ledger_business_date" || migration.Apply == nil {
+				t.Fatalf("unexpected stock ledger business-date migration: %#v", migration)
+			}
+			return
+		}
+	}
+	t.Fatal("stock ledger business-date migration is missing")
+}

@@ -86,7 +86,7 @@ func TestBulkDeleteOutboundDocumentsReversesConfirmedAndReleasesDraftReservation
 		t.Fatalf("expected draft outbound to be deleted, got %v", err)
 	}
 
-	restored := mustFindItemByID(t, ctx, store, item.ID)
+	restored := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerNo, item.SKU)
 	if restored.Quantity != 10 || restored.Pallets != 2 || restored.AllocatedQty != 0 || restored.AllocatedPallets != 0 {
 		t.Fatalf("expected restored inventory 10 qty / 2 pallets with no reservations, got %+v", restored)
 	}

@@ -21,7 +21,6 @@ describe("api document list queries", () => {
 
   it("serializes inbound document filter query parameters", async () => {
     await api.getInboundDocuments(25, {
-      archiveScope: "archived",
       exportCursor: true,
       beforeId: 500,
       search: " GCXU5817233 ",
@@ -33,7 +32,7 @@ describe("api document list queries", () => {
     const requestUrl = new URL(String(fetchMock.mock.calls[0][0]));
     expect(requestUrl.pathname).toBe("/api/inbound-documents");
     expect(requestUrl.searchParams.get("limit")).toBe("25");
-    expect(requestUrl.searchParams.get("archiveScope")).toBe("archived");
+    expect(requestUrl.searchParams.has("archiveScope")).toBe(false);
     expect(requestUrl.searchParams.get("exportCursor")).toBe("true");
     expect(requestUrl.searchParams.get("beforeId")).toBe("500");
     expect(requestUrl.searchParams.get("customerId")).toBe("12");
@@ -52,6 +51,22 @@ describe("api document list queries", () => {
     expect(options).toEqual(expect.objectContaining({
       method: "POST",
       body: JSON.stringify({ documentIds: [11, 12], status: "CONFIRMED" })
+    }));
+  });
+
+  it("loads and executes a versioned inbound deletion plan", async () => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ documentId: 41, dependencies: [] }));
+    await api.previewInboundDeletion(41);
+    expect(new URL(String(fetchMock.mock.calls[0][0])).pathname).toBe("/api/inbound-documents/41/deletion-impact");
+
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ documentId: 41, deletedDependencies: [] }));
+    const dependencies = [{ sourceType: "OUTBOUND", documentId: 71, lastLedgerId: 901 }];
+    await api.deleteInboundWithDependencies(41, dependencies);
+    const [requestUrl, options] = fetchMock.mock.calls[1];
+    expect(new URL(String(requestUrl)).pathname).toBe("/api/inbound-documents/41/delete-with-dependencies");
+    expect(options).toEqual(expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ dependencies })
     }));
   });
 
@@ -110,13 +125,13 @@ describe("api document list queries", () => {
     expect(result.blob).toBe(blob);
   });
 
-  it("keeps the legacy outbound archive scope argument", async () => {
-    await api.getOutboundDocuments(300, "all");
+  it("loads outbound documents without a retired archive scope", async () => {
+    await api.getOutboundDocuments(300);
 
     const requestUrl = new URL(String(fetchMock.mock.calls[0][0]));
     expect(requestUrl.pathname).toBe("/api/outbound-documents");
     expect(requestUrl.searchParams.get("limit")).toBe("300");
-    expect(requestUrl.searchParams.get("archiveScope")).toBe("all");
+    expect(requestUrl.searchParams.has("archiveScope")).toBe(false);
     expect(requestUrl.searchParams.has("customerId")).toBe(false);
     expect(requestUrl.searchParams.has("locationId")).toBe(false);
     expect(requestUrl.searchParams.has("status")).toBe(false);
@@ -124,7 +139,6 @@ describe("api document list queries", () => {
 
   it("serializes outbound tracking status filters", async () => {
     await api.getOutboundDocuments(50, {
-      archiveScope: "all",
       status: "CONFIRMED",
       trackingStatus: "BO_RECEIVED"
     });
@@ -237,7 +251,6 @@ describe("api document list queries", () => {
 
   it("omits all-valued optional document filters", async () => {
     await api.getInboundDocuments(100, {
-      archiveScope: "active",
       search: "   ",
       customerId: "all",
       locationId: "all",
@@ -246,7 +259,7 @@ describe("api document list queries", () => {
     });
 
     const requestUrl = new URL(String(fetchMock.mock.calls[0][0]));
-    expect(requestUrl.searchParams.get("archiveScope")).toBe("active");
+    expect(requestUrl.searchParams.has("archiveScope")).toBe(false);
     expect(requestUrl.searchParams.has("customerId")).toBe(false);
     expect(requestUrl.searchParams.has("locationId")).toBe(false);
     expect(requestUrl.searchParams.has("status")).toBe(false);

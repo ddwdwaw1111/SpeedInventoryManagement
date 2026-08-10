@@ -1,5 +1,4 @@
 import AddCircleOutlineOutlinedIcon from "@mui/icons-material/AddCircleOutlineOutlined";
-import ArchiveOutlinedIcon from "@mui/icons-material/ArchiveOutlined";
 import CheckCircleOutlineOutlinedIcon from "@mui/icons-material/CheckCircleOutlineOutlined";
 import CloseIcon from "@mui/icons-material/Close";
 import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
@@ -68,17 +67,56 @@ import { ExportLoadingScreen } from "./ExportLoadingScreen";
 import { InlineAlert, useConfirmDialog, useFeedbackToast } from "./Feedback";
 import { InlineLoadingIndicator } from "./InlineLoadingIndicator";
 import { InboundBulkImportDialog } from "./InboundBulkImportDialog";
+import { InboundDeletionRollbackDialog } from "./InboundDeletionRollbackDialog";
 import { OutboundBulkImportDialog } from "./OutboundBulkImportDialog";
 import { OutboundPickPlanPanel } from "./OutboundPickPlanPanel";
 import { SearchSubmitField } from "./SearchSubmitField";
 import { buildWorkspaceGridSlots, WorkspaceDrawerLoadingState, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 
-type ActivityMode = "IN" | "OUT";
+import {
+  buildInboundContainerWarnings,
+  buildOutboundAllocationPreview,
+  buildOutboundSourceKey,
+  buildOutboundSourceOptionsFromItems,
+  buildPersistedOutboundSourceOptionsFromDocument,
+  buildPickSheetExportDocument,
+  buildPlanOnlyOutboundSourceOptionsFromReferences,
+  calculateSuggestedReorderLevel,
+  consumeHistoryLaunchContext,
+  displayDescription,
+  filterActivityOutboundSources,
+  findOutboundSourceOption,
+  formatActivityOutboundSourceSearchLabel,
+  formatContainerDistributionSummary,
+  formatDate,
+  formatDocumentStatusAuditValue,
+  getInboundDocumentActionKey,
+  getInboundReceiptVariance,
+  getInboundReceiptVarianceClassName,
+  getInboundReceiptVarianceLabelKey,
+  getOutboundDocumentActionKey,
+  inboundDocumentMatchesSearch,
+  mergeDocumentsById,
+  normalizeActivityOutboundSourceSearch,
+  normalizeContainerNo,
+  numberInputValue,
+  outboundDocumentMatchesSearch,
+  outboundDocumentLineRequiresPickAllocation,
+  renderDocumentStatus,
+  renderInboundDocumentStatus,
+  renderInboundTrackingStatus,
+  renderOutboundTrackingStatus,
+  summarizeInboundDocumentSections,
+  summarizeOutboundPickAllocations
+} from "./activityManagementHelpers";
+export { buildOutboundSourceOptionsFromItems, buildPickSheetExportDocument } from "./activityManagementHelpers";
+
+export type ActivityMode = "IN" | "OUT";
 type MutableDocumentStatus = "DRAFT" | "CONFIRMED";
 type InboundHandlingMode = "PALLETIZED" | "SEALED_TRANSIT";
 type InboundWizardStep = 1 | 2 | 3;
 type OutboundWizardStep = 1 | 2 | 3;
-type InboundReceiptVariance = "MATCHED" | "SHORT" | "OVER";
+export type InboundReceiptVariance = "MATCHED" | "SHORT" | "OVER";
 
 const MAX_BULK_INBOUND_STATUS_DOCUMENTS = 100;
 const MAX_BULK_OUTBOUND_ACTION_DOCUMENTS = 100;
@@ -199,7 +237,7 @@ type BatchOutboundFormState = {
   documentNote: string;
 };
 
-type BatchOutboundLineState = {
+export type BatchOutboundLineState = {
   id: string;
   sourceKey: string;
   sourceSearch: string;
@@ -226,7 +264,7 @@ type OutboundPickAllocationRow = {
   inventoryPalletsUsed: number;
 };
 
-type OutboundAllocationPreviewRow = {
+export type OutboundAllocationPreviewRow = {
   id: string;
   lineId: string;
   lineLabel: string;
@@ -244,7 +282,7 @@ type OutboundAllocationPreviewRow = {
   remainingPallets: number;
 };
 
-type OutboundAllocationLineSummary = {
+export type OutboundAllocationLineSummary = {
   lineId: string;
   lineLabel: string;
   sourceKey: string;
@@ -259,7 +297,7 @@ type OutboundAllocationLineSummary = {
   containerCount: number;
 };
 
-type OutboundAllocationPreviewResult = {
+export type OutboundAllocationPreviewResult = {
   rows: OutboundAllocationPreviewRow[];
   summaries: Map<string, OutboundAllocationLineSummary>;
   totalRequestedQty: number;
@@ -269,7 +307,7 @@ type OutboundAllocationPreviewResult = {
   shortageLineCount: number;
 };
 
-type OutboundSourceOption = {
+export type OutboundSourceOption = {
   sourceKey: string;
   customerId: number;
   customerName: string;
@@ -288,7 +326,7 @@ type OutboundSourceOption = {
   candidates: OutboundInventoryCandidate[];
 };
 
-type OutboundInventoryCandidate = {
+export type OutboundInventoryCandidate = {
   id: string;
   inventoryItemId: number;
   positionLabel: string;
@@ -311,7 +349,7 @@ type OutboundInventoryCandidate = {
   createdAt: string;
 };
 
-type InboundContainerWarningMatch = {
+export type InboundContainerWarningMatch = {
   documentId: number;
   containerNo: string;
   customerName: string;
@@ -514,6 +552,7 @@ export function ActivityManagementPage({
   const [editingInboundDocumentId, setEditingInboundDocumentId] = useState<number | null>(null);
   const [editingOutboundDocumentId, setEditingOutboundDocumentId] = useState<number | null>(null);
   const [selectedInboundDocumentId, setSelectedInboundDocumentId] = useState<number | null>(null);
+  const [inboundDeletionDocument, setInboundDeletionDocument] = useState<InboundDocument | null>(null);
   const [selectedOutboundDocumentId, setSelectedOutboundDocumentId] = useState<number | null>(null);
   const [selectedInboundDocumentNoteDraft, setSelectedInboundDocumentNoteDraft] = useState("");
   const [selectedInboundDocumentNoteSaving, setSelectedInboundDocumentNoteSaving] = useState(false);
@@ -554,10 +593,9 @@ export function ActivityManagementPage({
   const hasActiveFilters = normalizedDocumentSearch.length > 0 || selectedCustomerId !== "all" || selectedLocationId !== "all" || selectedStatus !== "all";
   const documentFilterQuery = useMemo(() => {
     const query = {
-      archiveScope: selectedStatus === "ARCHIVED" ? "archived" as const : "active" as const,
       customerId: selectedCustomerId === "all" ? undefined : Number(selectedCustomerId),
       locationId: selectedLocationId === "all" ? undefined : Number(selectedLocationId),
-      status: selectedStatus === "all" || selectedStatus === "ARCHIVED" ? undefined : selectedStatus
+      status: selectedStatus === "all" ? undefined : selectedStatus
     };
 
     if (normalizedDocumentSearch.length > 0) {
@@ -571,9 +609,6 @@ export function ActivityManagementPage({
     setInboundRowSelectionModel({ type: "include", ids: new Set() });
     setOutboundRowSelectionModel({ type: "include", ids: new Set() });
     setBulkInboundStatus("");
-    if (mode === "IN") {
-      setSelectedStatus((current) => current === "ARCHIVED" ? "all" : current);
-    }
   }, [mode]);
   const inboundDocumentSource = useMemo(
     () => hasActiveFilters
@@ -604,7 +639,7 @@ export function ActivityManagementPage({
     return liveOutboundDocuments.filter((document) => selectedIDs.has(document.id));
   }, [liveOutboundDocuments, outboundRowSelectionModel]);
   const canBulkConfirmSelectedOutbound = selectedOutboundDocuments.length > 0 && selectedOutboundDocuments.every(
-    (document) => !document.archivedAt && normalizeDocumentStatus(document.status) === "DRAFT"
+    (document) => normalizeDocumentStatus(document.status) === "DRAFT"
   );
   const skuMastersBySku = useMemo(() => new Map(
     skuMasters.map((skuMaster) => [normalizeSkuLookupValue(skuMaster.sku), skuMaster] as const)
@@ -664,9 +699,6 @@ export function ActivityManagementPage({
   );
   const isSelectedOutboundCancelBusy = Boolean(
     selectedOutboundDocument && documentActionKey === getOutboundDocumentActionKey(selectedOutboundDocument.id, "cancel")
-  );
-  const isSelectedOutboundArchiveBusy = Boolean(
-    selectedOutboundDocument && documentActionKey === getOutboundDocumentActionKey(selectedOutboundDocument.id, "archive")
   );
   const isDocumentExporting = documentActionKey?.includes("-download-") ?? false;
   const disableSelectedInboundActions = selectedInboundDrawerBusy || selectedInboundDocumentNoteSaving;
@@ -1159,12 +1191,7 @@ export function ActivityManagementPage({
       const matchesSearch = inboundDocumentMatchesSearch(document, normalizedDocumentSearch);
       const matchesCustomer = selectedCustomerId === "all" || document.customerId === Number(selectedCustomerId);
       const matchesLocation = selectedLocationId === "all" || document.locationId === Number(selectedLocationId);
-      const isArchived = Boolean(document.archivedAt);
-      const matchesStatus = selectedStatus === "ARCHIVED"
-        ? isArchived
-        : selectedStatus === "all"
-          ? !isArchived
-          : !isArchived && normalizeDocumentStatus(document.status) === selectedStatus;
+      const matchesStatus = selectedStatus === "all" || normalizeDocumentStatus(document.status) === selectedStatus;
       return matchesSearch && matchesCustomer && matchesLocation && matchesStatus;
     }).sort((left, right) => {
       const leftDate = left.actualArrivalDate || left.expectedArrivalDate || left.createdAt || "";
@@ -1183,12 +1210,7 @@ export function ActivityManagementPage({
           line.locationId === Number(selectedLocationId)
           || locations.find((location) => location.id === Number(selectedLocationId))?.name === line.locationName
         );
-      const isArchived = Boolean(document.archivedAt);
-      const matchesStatus = selectedStatus === "ARCHIVED"
-        ? isArchived
-        : selectedStatus === "all"
-          ? !isArchived
-          : !isArchived && normalizeDocumentStatus(document.status) === selectedStatus;
+      const matchesStatus = selectedStatus === "all" || normalizeDocumentStatus(document.status) === selectedStatus;
       return matchesSearch && matchesCustomer && matchesLocation && matchesStatus;
     }).sort((left, right) => {
       const leftDate = getOutboundDisplayShipDate(left) ?? "";
@@ -1257,7 +1279,7 @@ export function ActivityManagementPage({
               icon: <VisibilityOutlinedIcon fontSize="small" />,
               onClick: () => onOpenInboundDetail ? onOpenInboundDetail(params.row.id) : setSelectedInboundDocumentId(params.row.id)
             },
-            ...(canManage && !params.row.archivedAt && normalizeDocumentStatus(params.row.status) === "DRAFT"
+            ...(canManage && normalizeDocumentStatus(params.row.status) === "DRAFT"
               ? [{
                 key: "edit",
                 label: t("editDraft"),
@@ -1322,7 +1344,7 @@ export function ActivityManagementPage({
     { field: "totalActualQty", headerName: t("actualShipQty"), minWidth: 130, type: "number", renderCell: (params) => params.row.totalActualQty ?? params.row.totalQty },
     { field: "totalGrossWeightKgs", headerName: t("grossWeight"), minWidth: 120, type: "number", renderCell: (params) => params.row.totalGrossWeightKgs ? params.row.totalGrossWeightKgs.toFixed(2) : "-" },
     { field: "trackingStatus", headerName: t("trackingStatus"), minWidth: 140, renderCell: (params) => renderOutboundTrackingStatus(params.row.trackingStatus, params.row.status, t) },
-    { field: "status", headerName: t("status"), minWidth: 120, renderCell: (params) => renderDocumentStatus(params.row.status, params.row.archivedAt, t) },
+    { field: "status", headerName: t("status"), minWidth: 120, renderCell: (params) => renderDocumentStatus(params.row.status, t) },
     {
       field: "actions",
       headerName: t("actions"),
@@ -1334,7 +1356,7 @@ export function ActivityManagementPage({
           ariaLabel={t("actions")}
           actions={[
             { key: "details", label: t("details"), icon: <VisibilityOutlinedIcon fontSize="small" />, onClick: () => setSelectedOutboundDocumentId(params.row.id) },
-            ...(canManage && !params.row.archivedAt && normalizeDocumentStatus(params.row.status) === "DRAFT"
+            ...(canManage && normalizeDocumentStatus(params.row.status) === "DRAFT"
               ? [{ key: "edit", label: t("editDraft"), icon: <EditOutlinedIcon fontSize="small" />, onClick: () => openEditOutboundDraft(params.row) }]
               : []),
             ...(canManage
@@ -1345,12 +1367,9 @@ export function ActivityManagementPage({
                   onClick: () => void handleCopyOutboundDocument(params.row)
                 }]
               : []),
-            ...(canManage && !params.row.archivedAt
-              ? [{ key: "archive", label: t("archiveShipment"), icon: <ArchiveOutlinedIcon fontSize="small" />, onClick: () => void handleArchiveOutboundDocument(params.row) }]
-              : []),
             { key: "download-pick-sheet", label: t("downloadPickSheet"), icon: <PictureAsPdfOutlinedIcon fontSize="small" />, onClick: () => void handleDownloadPickSheet(params.row) },
             { key: "download-delivery-note", label: t("downloadDeliveryNote"), icon: <PictureAsPdfOutlinedIcon fontSize="small" />, onClick: () => void handleDownloadDeliveryNote(params.row) },
-            ...(canManage && !params.row.archivedAt && params.row.status !== "DELETED"
+            ...(canManage && params.row.status !== "DELETED"
               ? [{ key: "cancel", label: t("cancelShipment"), icon: <DeleteOutlineOutlinedIcon fontSize="small" />, danger: true, onClick: () => void handleCancelOutboundDocument(params.row) }]
               : [])
           ]}
@@ -1674,7 +1693,7 @@ export function ActivityManagementPage({
     options?: { forceHandlingMode?: InboundHandlingMode; intent?: InboundLaunchIntent | null }
   ) {
     const normalizedStatus = normalizeDocumentStatus(document.status);
-    if (!canManage || document.archivedAt || (normalizedStatus !== "DRAFT" && normalizedStatus !== "CONFIRMED")) {
+    if (!canManage || (normalizedStatus !== "DRAFT" && normalizedStatus !== "CONFIRMED")) {
       return;
     }
 
@@ -2169,7 +2188,7 @@ export function ActivityManagementPage({
 
   async function handleBulkConfirmOutboundDocuments() {
     if (!canManage || selectedOutboundDocuments.length === 0) return;
-    if (selectedOutboundDocuments.some((document) => document.archivedAt || normalizeDocumentStatus(document.status) !== "DRAFT")) {
+    if (selectedOutboundDocuments.some((document) => normalizeDocumentStatus(document.status) !== "DRAFT")) {
       showActionError(new Error(t("bulkOutboundConfirmDraftsOnly")), t("bulkOutboundConfirmFailed"));
       return;
     }
@@ -2337,6 +2356,11 @@ export function ActivityManagementPage({
       return;
     }
 
+    if (normalizeDocumentStatus(document.status) === "CONFIRMED") {
+      setInboundDeletionDocument(document);
+      return;
+    }
+
     const documentLabel = document.containerNo || String(document.id);
     if (!(await confirm({
       title: t("cancelReceipt"),
@@ -2358,36 +2382,6 @@ export function ActivityManagementPage({
         showActionSuccess(t("receiptDeletedSuccess"));
       } catch (error) {
         showActionError(error, t("couldNotSaveActivity"));
-      }
-    });
-  }
-
-  async function handleArchiveInboundDocument(document: InboundDocument) {
-    if (!canManage || !canArchiveInboundDocument(document)) {
-      return;
-    }
-
-    const documentLabel = document.containerNo || String(document.id);
-    if (!(await confirm({
-      title: t("archiveReceipt"),
-      message: t("archiveInboundConfirm", { containerNo: documentLabel }),
-      confirmLabel: t("archiveReceipt"),
-      cancelLabel: t("cancel"),
-      confirmColor: "warning",
-      severity: "warning"
-    }))) {
-      return;
-    }
-
-    await runDocumentAction(getInboundDocumentActionKey(document.id, "archive"), async () => {
-      setErrorMessage("");
-      try {
-        await api.archiveInboundDocument(document.id);
-        setSelectedInboundDocumentId(null);
-        await onRefresh();
-        showActionSuccess(t("receiptArchivedSuccess"));
-      } catch (error) {
-        showActionError(error, t("couldNotArchiveDocument"));
       }
     });
   }
@@ -2478,35 +2472,6 @@ export function ActivityManagementPage({
         showActionSuccess(t("shipmentDeletedSuccess"));
       } catch (error) {
         showActionError(error, t("couldNotSaveActivity"));
-      }
-    });
-  }
-
-  async function handleArchiveOutboundDocument(document: OutboundDocument) {
-    if (!canManage) {
-      return;
-    }
-
-    if (!(await confirm({
-      title: t("archiveShipment"),
-      message: t("archiveOutboundConfirm", { packingListNo: document.packingListNo || String(document.id) }),
-      confirmLabel: t("archiveShipment"),
-      cancelLabel: t("cancel"),
-      confirmColor: "warning",
-      severity: "warning"
-    }))) {
-      return;
-    }
-
-    await runDocumentAction(getOutboundDocumentActionKey(document.id, "archive"), async () => {
-      setErrorMessage("");
-      try {
-        await api.archiveOutboundDocument(document.id);
-        setSelectedOutboundDocumentId(null);
-        await onRefresh();
-        showActionSuccess(t("shipmentArchivedSuccess"));
-      } catch (error) {
-        showActionError(error, t("couldNotArchiveDocument"));
       }
     });
   }
@@ -2715,7 +2680,7 @@ export function ActivityManagementPage({
               />
               <label>{t("customer")}<select value={selectedCustomerId} onChange={(event) => setSelectedCustomerId(event.target.value)}><option value="all">{t("allCustomers")}</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
               <label>{t("currentStorage")}<select value={selectedLocationId} onChange={(event) => setSelectedLocationId(event.target.value)}><option value="all">{t("allStorage")}</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
-              <label>{t("status")}<select value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value)}><option value="all">{t("allStatuses")}</option><option value="DRAFT">{t("draft")}</option><option value="CONFIRMED">{t("confirmed")}</option>{mode === "OUT" ? <option value="ARCHIVED">{t("archived")}</option> : null}</select></label>
+              <label>{t("status")}<select value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value)}><option value="all">{t("allStatuses")}</option><option value="DRAFT">{t("draft")}</option><option value="CONFIRMED">{t("confirmed")}</option></select></label>
             </div>
           </div>
           <div className="workspace-summary-strip">
@@ -2739,7 +2704,7 @@ export function ActivityManagementPage({
                   disableRowSelectionExcludeModel
                   rowSelectionModel={inboundRowSelectionModel}
                   onRowSelectionModelChange={handleInboundRowSelectionChange}
-                  isRowSelectable={(params) => !params.row.archivedAt && ["DRAFT", "CONFIRMED"].includes(normalizeDocumentStatus(params.row.status))}
+                  isRowSelectable={(params) => ["DRAFT", "CONFIRMED"].includes(normalizeDocumentStatus(params.row.status))}
                   pageSizeOptions={[10, 20, 50]}
                   disableRowSelectionOnClick
                   initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
@@ -2759,7 +2724,7 @@ export function ActivityManagementPage({
                   disableRowSelectionExcludeModel
                   rowSelectionModel={outboundRowSelectionModel}
                   onRowSelectionModelChange={handleOutboundRowSelectionChange}
-                  isRowSelectable={(params) => !params.row.archivedAt && normalizeDocumentStatus(params.row.status) !== "DELETED"}
+                  isRowSelectable={(params) => normalizeDocumentStatus(params.row.status) !== "DELETED"}
                   pageSizeOptions={[10, 20, 50]}
                   disableRowSelectionOnClick
                   initialState={{ pagination: { paginationModel: { pageSize: 10, page: 0 } } }}
@@ -2829,7 +2794,7 @@ export function ActivityManagementPage({
                   <div className="document-drawer__eyebrow">{t("documentsView")}</div>
                   <h3>{selectedInboundDocument.containerNo || t("containerNo")}</h3>
                   <p>
-                    {[selectedInboundDocument.customerName || "-", formatDate(selectedInboundDocument.actualArrivalDate || selectedInboundDocument.expectedArrivalDate)].filter(Boolean).join(" · ")}
+                    {[selectedInboundDocument.customerName || "-", formatDate(selectedInboundDocument.actualArrivalDate || selectedInboundDocument.expectedArrivalDate)].filter(Boolean).join(" Â· ")}
                   </p>
                 </div>
                 <IconButton aria-label={t("close")} onClick={() => setSelectedInboundDocumentId(null)}>
@@ -2843,13 +2808,12 @@ export function ActivityManagementPage({
                     {t("inboundDetailOpenPage")}
                   </Button>
                 ) : null}
-                {canManage && !selectedInboundDocument.archivedAt && normalizeDocumentStatus(selectedInboundDocument.status) === "DRAFT" ? (
+                {canManage && normalizeDocumentStatus(selectedInboundDocument.status) === "DRAFT" ? (
                   <Button variant="outlined" onClick={() => openEditInboundDocument(selectedInboundDocument)} disabled={disableSelectedInboundActions}>
                     {t("editDraft")}
                   </Button>
                 ) : null}
                 {canManage
-                && !selectedInboundDocument.archivedAt
                 && normalizeDocumentStatus(selectedInboundDocument.status) === "DRAFT"
                 && selectedInboundDocument.handlingMode === "SEALED_TRANSIT" ? (
                   <Button
@@ -2875,7 +2839,6 @@ export function ActivityManagementPage({
                   </Button>
                 ) : null}
                 {canManage
-                && !selectedInboundDocument.archivedAt
                 && normalizeDocumentStatus(selectedInboundDocument.status) === "DRAFT"
                 && selectedInboundDocument.handlingMode !== "SEALED_TRANSIT" ? (
                   <Button
@@ -2897,7 +2860,6 @@ export function ActivityManagementPage({
                   {t("downloadReceivingCountSheet")}
                 </Button>
                 {canManage
-                && !selectedInboundDocument.archivedAt
                 && normalizeDocumentStatus(selectedInboundDocument.status) !== "DELETED" ? (
                   <Button
                     variant="outlined"
@@ -2941,7 +2903,7 @@ export function ActivityManagementPage({
                 </div>
                 <div className="document-drawer__audit-item">
                   <strong>{t("status")}</strong>
-                  <span>{formatDocumentStatusAuditValue(selectedInboundDocument.status, selectedInboundDocument.archivedAt, selectedInboundDocument.deletedAt, resolvedTimeZone, t)}</span>
+                  <span>{formatDocumentStatusAuditValue(selectedInboundDocument.status, selectedInboundDocument.deletedAt, resolvedTimeZone)}</span>
                 </div>
                 <div className="document-drawer__audit-item">
                   <strong>{t("confirmedAt")}</strong>
@@ -3020,7 +2982,7 @@ export function ActivityManagementPage({
                   <div className="document-drawer__eyebrow">{t("packingListsView")}</div>
                   <h3>{selectedOutboundDocument.packingListNo || t("packingListNo")}</h3>
                   <p>
-                    {[selectedOutboundDocument.customerName || "-", formatDate(getOutboundDisplayShipDate(selectedOutboundDocument))].filter(Boolean).join(" · ")}
+                    {[selectedOutboundDocument.customerName || "-", formatDate(getOutboundDisplayShipDate(selectedOutboundDocument))].filter(Boolean).join(" Â· ")}
                   </p>
                 </div>
                 <IconButton aria-label={t("close")} onClick={() => setSelectedOutboundDocumentId(null)}>
@@ -3029,7 +2991,7 @@ export function ActivityManagementPage({
               </div>
 
               <div className="document-drawer__actions">
-                {canManage && !selectedOutboundDocument.archivedAt && normalizeDocumentStatus(selectedOutboundDocument.status) === "DRAFT" ? (
+                {canManage && normalizeDocumentStatus(selectedOutboundDocument.status) === "DRAFT" ? (
                   <Button variant="outlined" onClick={() => openEditOutboundDraft(selectedOutboundDocument)} disabled={disableSelectedOutboundActions}>
                     {t("editDraft")}
                   </Button>
@@ -3045,7 +3007,7 @@ export function ActivityManagementPage({
                     {normalizeDocumentStatus(selectedOutboundDocument.status) === "CONFIRMED" ? t("reEnterShipment") : t("copyShipment")}
                   </Button>
                 ) : null}
-                {canManage && !selectedOutboundDocument.archivedAt && selectedOutboundTrackingAction ? (
+                {canManage && selectedOutboundTrackingAction ? (
                   <Button
                     variant={selectedOutboundTrackingAction.trackingStatus === "SHIPPED" || selectedOutboundTrackingAction.trackingStatus === "BO_RECEIVED" ? "contained" : "outlined"}
                     startIcon={isSelectedOutboundTrackingBusy ? <InlineLoadingIndicator /> : undefined}
@@ -3076,7 +3038,7 @@ export function ActivityManagementPage({
                 >
                   {t("downloadDeliveryNote")}
                 </Button>
-                {canManage && !selectedOutboundDocument.archivedAt && normalizeDocumentStatus(selectedOutboundDocument.status) !== "DELETED" ? (
+                {canManage && normalizeDocumentStatus(selectedOutboundDocument.status) !== "DELETED" ? (
                   <Button
                     variant="outlined"
                     color="error"
@@ -3088,22 +3050,11 @@ export function ActivityManagementPage({
                     {t("cancelShipment")}
                   </Button>
                 ) : null}
-                {canManage && !selectedOutboundDocument.archivedAt ? (
-                  <Button
-                    variant="outlined"
-                    startIcon={isSelectedOutboundArchiveBusy ? <InlineLoadingIndicator /> : <ArchiveOutlinedIcon />}
-                    onClick={() => void handleArchiveOutboundDocument(selectedOutboundDocument)}
-                    disabled={disableSelectedOutboundActions}
-                    aria-busy={isSelectedOutboundArchiveBusy}
-                  >
-                    {t("archiveShipment")}
-                  </Button>
-                ) : null}
               </div>
 
               <div className="document-drawer__status-bar">
                 <div className="document-drawer__status-main">
-                  {renderDocumentStatus(selectedOutboundDocument.status, selectedOutboundDocument.archivedAt, t)}
+                  {renderDocumentStatus(selectedOutboundDocument.status, t)}
                   {renderOutboundTrackingStatus(selectedOutboundDocument.trackingStatus, selectedOutboundDocument.status, t)}
                 </div>
                 <div className="document-drawer__status-stat">
@@ -3146,7 +3097,7 @@ export function ActivityManagementPage({
                 </div>
                 <div className="document-drawer__audit-item">
                   <strong>{t("status")}</strong>
-                  <span>{formatDocumentStatusAuditValue(selectedOutboundDocument.status, selectedOutboundDocument.archivedAt, selectedOutboundDocument.deletedAt, resolvedTimeZone, t)}</span>
+                  <span>{formatDocumentStatusAuditValue(selectedOutboundDocument.status, selectedOutboundDocument.deletedAt, resolvedTimeZone)}</span>
                 </div>
                 <div className="document-drawer__audit-item">
                   <strong>{t("trackingStatus")}</strong>
@@ -3306,7 +3257,7 @@ export function ActivityManagementPage({
                           {inboundContainerWarnings.exact.map((match) => (
                             <div key={`exact-${match.documentId}`} className="sheet-warning-list__item">
                               <span className="cell--mono">{match.containerNo}</span>
-                              <span className="sheet-warning-list__meta">{[match.customerName || "-", match.dateLabel || "-"].join(" · ")}</span>
+                              <span className="sheet-warning-list__meta">{[match.customerName || "-", match.dateLabel || "-"].join(" Â· ")}</span>
                             </div>
                           ))}
                         </div>
@@ -3321,7 +3272,7 @@ export function ActivityManagementPage({
                             <div key={`similar-${match.documentId}`} className="sheet-warning-list__item">
                               <span className="cell--mono">{match.containerNo}</span>
                               <span className="sheet-warning-list__meta">
-                                {[`${Math.round(match.similarity * 100)}%`, match.customerName || "-", match.dateLabel || "-"].join(" · ")}
+                                {[`${Math.round(match.similarity * 100)}%`, match.customerName || "-", match.dateLabel || "-"].join(" Â· ")}
                               </span>
                             </div>
                           ))}
@@ -3361,7 +3312,7 @@ export function ActivityManagementPage({
 
                   {inboundWizardSummary.varianceLines > 0 ? (
                     <InlineAlert severity="warning">
-                      {`${t("receiptVariance")}: ${t("shortReceived")} ${inboundWizardSummary.shortLines} · ${t("overReceived")} ${inboundWizardSummary.overLines}`}
+                      {`${t("receiptVariance")}: ${t("shortReceived")} ${inboundWizardSummary.shortLines} Â· ${t("overReceived")} ${inboundWizardSummary.overLines}`}
                     </InlineAlert>
                   ) : null}
                 </div>
@@ -3478,7 +3429,7 @@ export function ActivityManagementPage({
 
                   {inboundWizardSummary.varianceLines > 0 ? (
                     <InlineAlert severity="warning">
-                      {`${t("receiptVariance")}: ${t("shortReceived")} ${inboundWizardSummary.shortLines} · ${t("overReceived")} ${inboundWizardSummary.overLines}`}
+                      {`${t("receiptVariance")}: ${t("shortReceived")} ${inboundWizardSummary.shortLines} Â· ${t("overReceived")} ${inboundWizardSummary.overLines}`}
                     </InlineAlert>
                   ) : null}
 
@@ -3498,7 +3449,7 @@ export function ActivityManagementPage({
                             batchLocation?.name || "-",
                             batchForm.containerNo.trim() ? batchForm.containerNo.trim().toUpperCase() : "-",
                             batchForm.actualArrivalDate || batchForm.expectedArrivalDate || "-"
-                          ].join(" · ")}
+                          ].join(" Â· ")}
                         </span>
                         <span className="batch-line-card__hint">
                           {batchForm.documentNote.trim() || t("inboundDetailNoLineNote")}
@@ -3533,7 +3484,7 @@ export function ActivityManagementPage({
                                 `${t("received")}: ${line.receivedQty}`,
                                 `${t("pallets")}: ${line.pallets}`,
                                 `${t("storageSection")}: ${normalizeStorageSection(line.storageSection || batchForm.storageSection || DEFAULT_STORAGE_SECTION)}`
-                              ].join(" · ")}
+                              ].join(" Â· ")}
                             </span>
                             <span className="batch-line-card__hint">
                               {line.lineNote.trim() || t("inboundDetailNoLineNote")}
@@ -3846,7 +3797,7 @@ export function ActivityManagementPage({
                                   <div className="text-sm font-semibold text-slate-700">
                                     <span>{`${t("shipmentLine")} ${line.lineLabel}`}</span>
                                     <span className="ml-2 font-mono">{line.sku}</span>
-                                    {line.description ? ` · ${line.description}` : ""}
+                                    {line.description ? ` Â· ${line.description}` : ""}
                                   </div>
                                   <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
                                     <span>{`${t("currentStorage")}: ${line.locationName}`}</span>
@@ -3897,828 +3848,18 @@ export function ActivityManagementPage({
           </DialogContent>
         </Dialog>
       ) : null}
+      <InboundDeletionRollbackDialog
+        open={inboundDeletionDocument !== null}
+        document={inboundDeletionDocument}
+        onClose={() => setInboundDeletionDocument(null)}
+        onDeleted={async () => {
+          setInboundDeletionDocument(null);
+          setSelectedInboundDocumentId(null);
+          await onRefresh();
+          showActionSuccess(t("receiptDeletedSuccess"));
+        }}
+      />
       {confirmationDialog}
     </>
   );
-}
-
-function displayDescription(item: Pick<Item, "description" | "name">) { return item.description || item.name; }
-function formatDate(value: string | null) { return formatDateValue(value, dateFormatter); }
-function numberInputValue(value: number) { return value === 0 ? "" : String(value); }
-function normalizeContainerNo(value: string) { return value.trim().toUpperCase(); }
-
-function levenshteinDistance(left: string, right: string) {
-  if (left === right) return 0;
-  if (left.length === 0) return right.length;
-  if (right.length === 0) return left.length;
-
-  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
-  const current = new Array<number>(right.length + 1);
-
-  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
-    current[0] = leftIndex;
-    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
-      const substitutionCost = left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1;
-      current[rightIndex] = Math.min(
-        current[rightIndex - 1] + 1,
-        previous[rightIndex] + 1,
-        previous[rightIndex - 1] + substitutionCost
-      );
-    }
-    for (let index = 0; index < current.length; index += 1) {
-      previous[index] = current[index];
-    }
-  }
-
-  return previous[right.length];
-}
-
-function getContainerSimilarity(left: string, right: string) {
-  const normalizedLeft = normalizeContainerNo(left);
-  const normalizedRight = normalizeContainerNo(right);
-  if (!normalizedLeft || !normalizedRight) {
-    return 0;
-  }
-  if (normalizedLeft === normalizedRight) {
-    return 1;
-  }
-
-  const maxLength = Math.max(normalizedLeft.length, normalizedRight.length);
-  if (maxLength === 0) {
-    return 1;
-  }
-
-  return 1 - (levenshteinDistance(normalizedLeft, normalizedRight) / maxLength);
-}
-
-function buildInboundContainerWarnings(
-  containerNo: string,
-  inboundDocuments: InboundDocument[],
-  editingInboundDocumentId: number | null
-) {
-  const normalizedValue = normalizeContainerNo(containerNo);
-  if (!normalizedValue) {
-    return { exact: [] as InboundContainerWarningMatch[], similar: [] as InboundContainerWarningMatch[] };
-  }
-
-  const candidateDocuments = inboundDocuments.filter((document) =>
-    document.id !== editingInboundDocumentId
-    && normalizeDocumentStatus(document.status) !== "DELETED"
-    && normalizeContainerNo(document.containerNo)
-  );
-
-  const exact = candidateDocuments
-    .filter((document) => normalizeContainerNo(document.containerNo) === normalizedValue)
-    .map((document) => ({
-      documentId: document.id,
-      containerNo: normalizeContainerNo(document.containerNo),
-      customerName: document.customerName || "-",
-      dateLabel: formatDate(document.actualArrivalDate || document.expectedArrivalDate || document.createdAt || ""),
-      similarity: 1
-    }));
-
-  if (exact.length > 0) {
-    return { exact, similar: [] as InboundContainerWarningMatch[] };
-  }
-
-  if (normalizedValue.length < 6) {
-    return { exact, similar: [] as InboundContainerWarningMatch[] };
-  }
-
-  const uniqueSimilarMatches = new Map<string, InboundContainerWarningMatch>();
-  for (const document of candidateDocuments) {
-    const normalizedCandidate = normalizeContainerNo(document.containerNo);
-    const similarity = getContainerSimilarity(normalizedValue, normalizedCandidate);
-    if (similarity <= 0.9 || normalizedCandidate === normalizedValue) {
-      continue;
-    }
-
-    const existingMatch = uniqueSimilarMatches.get(normalizedCandidate);
-    const nextMatch = {
-      documentId: document.id,
-      containerNo: normalizedCandidate,
-      customerName: document.customerName || "-",
-      dateLabel: formatDate(document.actualArrivalDate || document.expectedArrivalDate || document.createdAt || ""),
-      similarity
-    };
-    if (!existingMatch || nextMatch.similarity > existingMatch.similarity) {
-      uniqueSimilarMatches.set(normalizedCandidate, nextMatch);
-    }
-  }
-
-  const similar = Array.from(uniqueSimilarMatches.values())
-    .sort((left, right) => right.similarity - left.similarity || left.containerNo.localeCompare(right.containerNo))
-    .slice(0, 3);
-
-  return { exact, similar };
-}
-
-function mergeDocumentsById<T extends { id: number }>(primary: T[], extra: T[]) {
-  const merged = new Map<number, T>();
-  for (const document of primary) {
-    merged.set(document.id, document);
-  }
-  for (const document of extra) {
-    if (!document) {
-      continue;
-    }
-    if (!merged.has(document.id)) {
-      merged.set(document.id, document);
-    }
-  }
-  return Array.from(merged.values());
-}
-
-function inboundDocumentMatchesSearch(document: InboundDocument, normalizedSearch: string) {
-  if (normalizedSearch.length === 0) {
-    return true;
-  }
-
-  const searchableFields = [
-    document.containerNo,
-    document.customerName,
-    document.locationName,
-    document.storageSection,
-    document.documentNote,
-    document.status,
-    document.trackingStatus,
-    ...document.lines.flatMap((line) => [
-      line.sku,
-      line.description,
-      line.storageSection,
-      line.palletsDetailCtns,
-      line.lineNote
-    ])
-  ];
-
-  return searchableFields.some((value) => String(value ?? "").toLowerCase().includes(normalizedSearch));
-}
-
-function outboundDocumentMatchesSearch(document: OutboundDocument, normalizedSearch: string) {
-  if (normalizedSearch.length === 0) {
-    return true;
-  }
-
-  const searchableFields = [
-    document.packingListNo,
-    document.orderRef,
-    document.customerName,
-    document.shipToName,
-    document.shipToAddress,
-    document.shipToContact,
-    document.carrierName,
-    document.documentNote,
-    document.status,
-    document.trackingStatus,
-    document.storages,
-    ...document.lines.flatMap((line) => [
-      line.itemNumber,
-      line.locationName,
-      line.storageSection,
-      line.sku,
-      line.description,
-      line.palletsDetailCtns,
-      line.unitLabel,
-      line.cartonSizeMm,
-      line.lineNote,
-      ...line.pickAllocations.flatMap((allocation) => [
-        allocation.itemNumber,
-        allocation.locationName,
-        allocation.storageSection,
-        allocation.containerNo
-      ])
-    ])
-  ];
-
-  return searchableFields.some((value) => String(value ?? "").toLowerCase().includes(normalizedSearch));
-}
-
-function calculateSuggestedReorderLevel(expectedQty: number, receivedQty: number) {
-  const baseQty = receivedQty > 0 ? receivedQty : expectedQty;
-  if (baseQty <= 0) {
-    return 0;
-  }
-  return Math.max(1, Math.ceil(baseQty * 0.2));
-}
-
-function getInboundReceiptVariance(expectedQty: number, receivedQty: number): InboundReceiptVariance {
-  if (expectedQty <= 0 || receivedQty === expectedQty) {
-    return "MATCHED";
-  }
-  if (receivedQty > expectedQty) {
-    return "OVER";
-  }
-  return "SHORT";
-}
-
-function getInboundReceiptVarianceLabelKey(variance: InboundReceiptVariance) {
-  switch (variance) {
-    case "OVER":
-      return "overReceived";
-    case "SHORT":
-      return "shortReceived";
-    default:
-      return "matched";
-  }
-}
-
-function getInboundReceiptVarianceClassName(variance: InboundReceiptVariance) {
-  switch (variance) {
-    case "OVER":
-      return "status-pill--danger";
-    case "SHORT":
-      return "status-pill--alert";
-    default:
-      return "status-pill--ok";
-  }
-}
-
-function summarizeInboundDocumentSections(document: InboundDocument) {
-  const sections = Array.from(new Set(
-    document.lines
-      .map((line) => (line.storageSection || "").trim().toUpperCase())
-      .filter(Boolean)
-  ));
-
-  if (sections.length === 0) {
-    return normalizeStorageSection(document.storageSection);
-  }
-
-  return sections.join(", ");
-}
-
-function canArchiveInboundDocument(document: Pick<InboundDocument, "status" | "archivedAt">) {
-  return !document.archivedAt
-    && normalizeDocumentStatus(document.status) !== "CONFIRMED";
-}
-
-function renderInboundDocumentStatus(document: InboundDocument, t: (key: string) => string) {
-  return renderDocumentStatus(document.status, document.archivedAt, t);
-}
-
-function renderDocumentStatus(status: string, archivedAt: string | null | undefined, t: (key: string) => string) {
-  if (archivedAt) {
-    return <Chip label={t("archived")} color="default" size="small" variant="outlined" />;
-  }
-
-  const normalizedStatus = normalizeDocumentStatus(status);
-
-  if (normalizedStatus === "DELETED") {
-    return <Chip label={t("deleted")} color="error" size="small" />;
-  }
-
-  if (normalizedStatus === "CONFIRMED") {
-    return <Chip label={t("confirmed")} color="success" size="small" />;
-  }
-
-  return <Chip label={t("draft")} color="default" size="small" />;
-}
-
-function formatDocumentStatusAuditValue(
-  status: string,
-  archivedAt: string | null | undefined,
-  deletedAt: string | null | undefined,
-  resolvedTimeZone: string,
-  t: (key: string) => string
-) {
-  if (archivedAt) {
-    return `${t("archived")} | ${formatDateTimeValue(archivedAt, resolvedTimeZone)}`;
-  }
-  if (deletedAt) {
-    return `${status} | ${formatDateTimeValue(deletedAt, resolvedTimeZone)}`;
-  }
-  return status;
-}
-
-function renderInboundTrackingStatus(trackingStatus: string, documentStatus: string, t: (key: string) => string) {
-  const normalizedTrackingStatus = normalizeInboundTrackingStatusValue(trackingStatus, documentStatus);
-  if (normalizedTrackingStatus === "RECEIVED") {
-    return <Chip label={t("receivedTracking")} color="success" size="small" variant="outlined" />;
-  }
-  if (normalizedTrackingStatus === "RECEIVING") {
-    return <Chip label={t("receiving")} color="primary" size="small" variant="outlined" />;
-  }
-  if (normalizedTrackingStatus === "ARRIVED") {
-    return <Chip label={t("arrived")} color="info" size="small" variant="outlined" />;
-  }
-  return <Chip label={t("scheduled")} color="default" size="small" variant="outlined" />;
-}
-
-function renderOutboundTrackingStatus(trackingStatus: string, documentStatus: string, t: (key: string) => string) {
-  const normalizedTrackingStatus = normalizeOutboundTrackingStatusValue(trackingStatus, documentStatus);
-  if (normalizedTrackingStatus === "BO_RECEIVED") {
-    return <Chip label={t("boReceivedTracking")} color="success" size="small" variant="filled" />;
-  }
-  if (normalizedTrackingStatus === "SHIPPED") {
-    return <Chip label={t("shipped")} color="success" size="small" variant="outlined" />;
-  }
-  if (normalizedTrackingStatus === "PACKED") {
-    return <Chip label={t("packed")} color="primary" size="small" variant="outlined" />;
-  }
-  if (normalizedTrackingStatus === "PICKING") {
-    return <Chip label={t("picking")} color="info" size="small" variant="outlined" />;
-  }
-  return <Chip label={t("scheduled")} color="default" size="small" variant="outlined" />;
-}
-
-function getInboundDocumentActionKey(documentId: number, action: string) {
-  return `inbound-${documentId}-${action}`;
-}
-
-function getOutboundDocumentActionKey(documentId: number, action: string) {
-  return `outbound-${documentId}-${action}`;
-}
-
-export function buildPickSheetExportDocument(document: OutboundDocument, sourceOptions: OutboundSourceOption[]): OutboundDocument {
-  if (normalizeDocumentStatus(document.status) !== "DRAFT") {
-    return document;
-  }
-  if (document.lines.every((line) => !outboundDocumentLineRequiresPickAllocation(line) || line.pickAllocations.length > 0)) {
-    return document;
-  }
-
-  const preview = buildOutboundAllocationPreview(
-    document.lines.map((line) => ({
-      id: String(line.id),
-      sourceKey: buildOutboundSourceKey(document.customerId, line.locationId, line.skuMasterId),
-      sourceSearch: "",
-      plannedQuantity: line.plannedQuantity ?? line.quantity,
-      quantity: line.actualQuantity ?? line.quantity,
-      pallets: Math.max(0, line.pallets || 0),
-      palletsDetailCtns: line.palletsDetailCtns || "",
-      unitLabel: line.unitLabel || "",
-      cartonSizeMm: line.cartonSizeMm || "",
-      netWeightKgs: line.netWeightKgs || 0,
-      grossWeightKgs: line.grossWeightKgs || 0,
-      reason: line.lineNote || ""
-    })),
-    sourceOptions
-  );
-
-  const previewRowsByLineId = new Map<string, OutboundAllocationPreviewRow[]>();
-  for (const row of preview.rows) {
-    const existing = previewRowsByLineId.get(row.lineId);
-    if (existing) {
-      existing.push(row);
-      continue;
-    }
-    previewRowsByLineId.set(row.lineId, [row]);
-  }
-
-  return {
-    ...document,
-    lines: document.lines.map((line) => {
-      if (!outboundDocumentLineRequiresPickAllocation(line) || line.pickAllocations.length > 0) {
-        return line;
-      }
-      return {
-        ...line,
-        pickAllocations: buildPreviewPickAllocations(line, previewRowsByLineId.get(String(line.id)) ?? [])
-      };
-    })
-  };
-}
-
-function outboundDocumentLineRequiresPickAllocation(
-  line: Pick<OutboundDocument["lines"][number], "quantity" | "actualQuantity">
-) {
-  return Math.max(0, line.actualQuantity ?? line.quantity) > 0;
-}
-
-function buildPreviewPickAllocations(
-  line: OutboundDocument["lines"][number],
-  previewRows: OutboundAllocationPreviewRow[]
-): OutboundPickAllocation[] {
-  if (previewRows.length === 0) {
-    return [];
-  }
-
-  return previewRows.map((row, index) => {
-    const remainingPallets = row.allocatedQty >= row.startingQty ? 0 : row.startingPallets;
-    return {
-      id: -(index + 1),
-      lineId: line.id,
-      itemNumber: row.itemNumber || line.itemNumber || "",
-      locationId: line.locationId,
-      locationName: row.locationName || line.locationName,
-      storageSection: row.storageSection || line.storageSection,
-      containerNo: row.containerNo || "",
-      allocatedQty: row.allocatedQty,
-      pallets: Math.max(0, row.startingPallets - remainingPallets),
-      inventoryPalletsUsed: Math.max(0, row.pallets),
-      startingPallets: Math.max(0, row.startingPallets),
-      remainingPallets: Math.max(0, remainingPallets),
-      createdAt: line.createdAt
-    };
-  });
-}
-
-function buildOutboundAllocationPreview(lines: BatchOutboundLineState[], sourceOptions: OutboundSourceOption[]): OutboundAllocationPreviewResult {
-  const reservedBySourceId = new Map<string, number>();
-  const reservedPalletsBySourceId = new Map<string, number>();
-  const rows: OutboundAllocationPreviewRow[] = [];
-  const summaries = new Map<string, OutboundAllocationLineSummary>();
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const fulfillmentQuantity = getActivityOutboundFulfillmentQuantity(line);
-    if (!line.sourceKey.trim() || fulfillmentQuantity <= 0) {
-      continue;
-    }
-
-    const selectedSource = findOutboundSourceOption(sourceOptions, line.sourceKey);
-    if (!selectedSource) {
-      continue;
-    }
-
-    const summary: OutboundAllocationLineSummary = {
-      lineId: line.id,
-      lineLabel: `#${index + 1}`,
-      sourceKey: selectedSource.sourceKey,
-      itemNumber: selectedSource.itemNumber || "",
-      sku: selectedSource.sku,
-      description: selectedSource.description,
-      locationName: selectedSource.locationName,
-      storageSection: selectedSource.storageSections[0] || DEFAULT_STORAGE_SECTION,
-      requestedQty: fulfillmentQuantity,
-      allocatedQty: 0,
-      shortageQty: 0,
-      containerCount: 0
-    };
-
-    let remainingQty = fulfillmentQuantity;
-    for (const candidate of selectedSource.candidates) {
-      const sourceId = candidate.id;
-      const effectiveAvailable = candidate.availableQty - (reservedBySourceId.get(sourceId) ?? 0);
-      const startingPallets = Math.max(0, candidate.onHandPallets - (reservedPalletsBySourceId.get(sourceId) ?? 0));
-      const startingQty = Math.max(0, candidate.onHandQty - (reservedBySourceId.get(sourceId) ?? 0));
-      if (effectiveAvailable <= 0) {
-        continue;
-      }
-
-      const allocatedQty = Math.min(effectiveAvailable, remainingQty);
-      if (allocatedQty <= 0) {
-        continue;
-      }
-
-      const allocatedPallets = automaticInventoryPalletsForAllocation(
-        effectiveAvailable,
-        startingPallets,
-        allocatedQty
-      );
-      const remainingPallets = startingQty - allocatedQty > 0 ? startingPallets : 0;
-      rows.push({
-        id: `${line.id}-${candidate.id}`,
-        lineId: line.id,
-        lineLabel: summary.lineLabel,
-        itemNumber: selectedSource.itemNumber || summary.itemNumber,
-        sku: selectedSource.sku,
-        description: selectedSource.description,
-        locationName: candidate.locationName,
-        storageSection: normalizeStorageSection(candidate.storageSection),
-        containerNo: candidate.containerNo || "",
-        positionLabel: candidate.positionLabel,
-        allocatedQty,
-        pallets: allocatedPallets,
-        startingQty,
-        startingPallets,
-        remainingPallets
-      });
-      reservedBySourceId.set(sourceId, (reservedBySourceId.get(sourceId) ?? 0) + allocatedQty);
-      reservedPalletsBySourceId.set(sourceId, (reservedPalletsBySourceId.get(sourceId) ?? 0) + Math.max(0, startingPallets - remainingPallets));
-      summary.allocatedQty += allocatedQty;
-      remainingQty -= allocatedQty;
-
-      if (remainingQty === 0) {
-        break;
-      }
-    }
-
-    const containers = new Set(
-      rows
-        .filter((row) => row.lineLabel === summary.lineLabel)
-        .map((row) => row.containerNo || `${row.locationName}/${row.storageSection}`)
-    );
-    summary.containerCount = containers.size;
-    summary.shortageQty = Math.max(0, remainingQty);
-    summaries.set(line.id, summary);
-  }
-
-  return {
-    rows,
-    summaries,
-    totalRequestedQty: Array.from(summaries.values()).reduce((sum, summary) => sum + summary.requestedQty, 0),
-    totalAllocatedQty: Array.from(summaries.values()).reduce((sum, summary) => sum + summary.allocatedQty, 0),
-    totalContainerCount: new Set(rows.map((row) => row.containerNo || `${row.locationName}/${row.storageSection}`)).size,
-    splitLineCount: Array.from(summaries.values()).filter((summary) => summary.containerCount > 1).length,
-    shortageLineCount: Array.from(summaries.values()).filter((summary) => summary.shortageQty > 0).length
-  };
-}
-
-function compareOutboundInventoryCandidates(left: OutboundInventoryCandidate, right: OutboundInventoryCandidate) {
-  const leftArrival = left.actualArrivalDate || left.createdAt || "";
-  const rightArrival = right.actualArrivalDate || right.createdAt || "";
-  if (!leftArrival && rightArrival) return 1;
-  if (leftArrival && !rightArrival) return -1;
-  if (leftArrival !== rightArrival) return leftArrival.localeCompare(rightArrival);
-  if (left.locationName !== right.locationName) return left.locationName.localeCompare(right.locationName);
-  if (left.storageSection !== right.storageSection) return left.storageSection.localeCompare(right.storageSection);
-  if (left.containerNo !== right.containerNo) return left.containerNo.localeCompare(right.containerNo);
-  return left.positionLabel.localeCompare(right.positionLabel);
-}
-
-function buildOutboundSourceKey(customerId: number, locationId: number, skuMasterId: number) {
-  return `${customerId}|${locationId}|${skuMasterId}`;
-}
-
-function findOutboundSourceOption(sourceOptions: OutboundSourceOption[], sourceKey: string) {
-  const normalizedSourceKey = sourceKey.trim();
-  if (!normalizedSourceKey) {
-    return undefined;
-  }
-  return sourceOptions.find((sourceOption) => sourceOption.sourceKey === normalizedSourceKey);
-}
-
-function summarizeOutboundPickAllocations(document: OutboundDocument | null) {
-  if (!document) {
-    return {
-      totalContainerCount: 0,
-      totalPickRows: 0,
-      splitLineCount: 0
-    };
-  }
-
-  const allAllocations = document.lines.flatMap((line) => line.pickAllocations);
-  return {
-    totalContainerCount: new Set(allAllocations.map((allocation) => allocation.containerNo || `${allocation.locationName}/${normalizeStorageSection(allocation.storageSection)}`)).size,
-    totalPickRows: allAllocations.length,
-    splitLineCount: document.lines.filter((line) => {
-      const containers = new Set(line.pickAllocations.map((allocation) => allocation.containerNo || `${allocation.locationName}/${normalizeStorageSection(allocation.storageSection)}`));
-      return containers.size > 1;
-    }).length
-  };
-}
-
-function buildPersistedOutboundSourceOptionsFromDocument(
-  document: OutboundDocument | null,
-  skuMastersByID: Map<number, SKUMaster>
-) {
-  const persistedSources = new Map<string, OutboundSourceOption>();
-  if (!document) {
-    return persistedSources;
-  }
-
-  for (const line of document.lines) {
-    const sourceKey = buildOutboundSourceKey(document.customerId, line.locationId, line.skuMasterId);
-    if (persistedSources.has(sourceKey)) {
-      continue;
-    }
-
-    const uniqueContainers = new Set(
-      line.pickAllocations.map((allocation) => allocation.containerNo || `${allocation.locationName}/${normalizeStorageSection(allocation.storageSection)}`)
-    );
-    const skuMasterUnit = skuMastersByID.get(line.skuMasterId)?.unit || "PCS";
-    persistedSources.set(sourceKey, {
-      sourceKey,
-      customerId: document.customerId,
-      customerName: document.customerName,
-      locationId: line.locationId,
-      locationName: line.locationName,
-      skuMasterId: line.skuMasterId,
-      sku: line.sku,
-      itemNumber: line.itemNumber || "",
-      description: line.description || "",
-      unit: (line.unitLabel || skuMasterUnit).toUpperCase(),
-      availableQty: 0,
-      palletCount: Math.max(0, line.pallets || 0),
-      storageSections: [normalizeStorageSection(line.storageSection || DEFAULT_STORAGE_SECTION)],
-      containerCount: uniqueContainers.size,
-      containerSummary: formatContainerDistributionSummaryValue(line.pickAllocations.map((allocation) => ({
-        containerNo: allocation.containerNo,
-        availableQty: allocation.allocatedQty,
-        locationName: allocation.locationName,
-        storageSection: allocation.storageSection
-      }))),
-      candidates: []
-    });
-  }
-
-  return persistedSources;
-}
-
-function normalizeActivityOutboundSourceSearch(value: string) {
-  return value.trim().toUpperCase();
-}
-
-function formatActivityOutboundSourceSearchLabel(source: OutboundSourceOption) {
-  return `${source.sku} | ${source.itemNumber || "-"} | ${source.customerName} | ${source.description}`;
-}
-
-function filterActivityOutboundSources(
-  sourceOptions: OutboundSourceOption[],
-  searchValue: string,
-  selectedSourceKey: string
-) {
-  const normalizedSearch = normalizeActivityOutboundSourceSearch(searchValue);
-  if (!normalizedSearch) {
-    return sourceOptions;
-  }
-  return sourceOptions.filter((source) => {
-    if (source.sourceKey === selectedSourceKey) {
-      return true;
-    }
-    const normalizedLabel = normalizeActivityOutboundSourceSearch(formatActivityOutboundSourceSearchLabel(source));
-    return normalizedLabel.includes(normalizedSearch)
-      || normalizeActivityOutboundSourceSearch(source.sku).includes(normalizedSearch)
-      || normalizeActivityOutboundSourceSearch(source.itemNumber).includes(normalizedSearch);
-  });
-}
-
-function buildPlanOnlyOutboundSourceOptionsFromReferences(
-  references: OutboundSourceReference[],
-  locations: Location[],
-  lines: Pick<BatchOutboundLineState, "sourceKey" | "sourceSearch">[]
-) {
-  const sources = new Map<string, OutboundSourceOption>();
-  const locationsByID = new Map(locations.map((location) => [location.id, location] as const));
-  const addSource = (reference: OutboundSourceReference, location: Location) => {
-      const sourceKey = buildOutboundSourceKey(reference.customerId, location.id, reference.skuMasterId);
-      sources.set(sourceKey, {
-        sourceKey,
-        customerId: reference.customerId,
-        customerName: reference.customerName,
-        locationId: location.id,
-        locationName: location.name,
-        skuMasterId: reference.skuMasterId,
-        sku: reference.sku,
-        itemNumber: reference.itemNumber,
-        description: reference.description,
-        unit: (reference.unit || "PCS").toUpperCase(),
-        availableQty: 0,
-        palletCount: 0,
-        storageSections: getLocationSectionOptions(location),
-        containerCount: 0,
-        containerSummary: "",
-        candidates: []
-      });
-  };
-
-  for (const line of lines) {
-    const [selectedCustomerID, selectedLocationID, selectedSKUMasterID] = line.sourceKey
-      .split("|")
-      .map((value) => Number(value));
-    if (selectedCustomerID > 0 && selectedLocationID > 0 && selectedSKUMasterID > 0) {
-      const selectedReference = references.find((reference) => (
-        reference.customerId === selectedCustomerID && reference.skuMasterId === selectedSKUMasterID
-      ));
-      const selectedLocation = locationsByID.get(selectedLocationID);
-      if (selectedReference && selectedLocation) {
-        addSource(selectedReference, selectedLocation);
-      }
-    }
-
-    const normalizedSearch = normalizeActivityOutboundSourceSearch(line.sourceSearch);
-    if (!normalizedSearch) {
-      continue;
-    }
-    const matchingReferences = references.filter((reference) => {
-      const normalizedLabel = normalizeActivityOutboundSourceSearch(
-        `${reference.sku} | ${reference.itemNumber || "-"} | ${reference.customerName} | ${reference.description}`
-      );
-      return normalizedLabel.includes(normalizedSearch)
-        || normalizeActivityOutboundSourceSearch(reference.sku).includes(normalizedSearch)
-        || normalizeActivityOutboundSourceSearch(reference.itemNumber).includes(normalizedSearch);
-    });
-    for (const reference of matchingReferences) {
-      for (const location of locations) {
-        addSource(reference, location);
-      }
-    }
-  }
-
-  return [...sources.values()];
-}
-
-export function buildOutboundSourceOptionsFromItems(items: Item[], skuMastersByID: Map<number, SKUMaster>): OutboundSourceOption[] {
-  const grouped = new Map<string, OutboundSourceOption>();
-  for (const item of items) {
-    if (item.availableQty <= 0 || !item.containerNo.trim()) {
-      continue;
-    }
-    const storageSection = normalizeStorageSection(item.storageSection);
-    const containerNo = item.containerNo.trim().toUpperCase();
-    const sourceKey = buildOutboundSourceKey(item.customerId, item.locationId, item.skuMasterId);
-    const candidate: OutboundInventoryCandidate = {
-      id: `item-${item.id}`,
-      inventoryItemId: item.id,
-      positionLabel: containerNo,
-      customerId: item.customerId,
-      customerName: item.customerName,
-      locationId: item.locationId,
-      locationName: item.locationName,
-      storageSection,
-      containerNo,
-      skuMasterId: item.skuMasterId,
-      sku: item.sku,
-      itemNumber: item.itemNumber || "",
-      description: item.description || item.name || "",
-      unit: (item.unit || skuMastersByID.get(item.skuMasterId)?.unit || "PCS").toUpperCase(),
-      availableQty: item.availableQty,
-      availablePallets: Math.max(0, item.availablePallets),
-      onHandQty: Math.max(0, item.quantity ?? 0, item.availableQty + (item.allocatedQty ?? 0)),
-      onHandPallets: Math.max(0, item.pallets ?? 0, item.availablePallets + (item.allocatedPallets ?? 0)),
-      actualArrivalDate: item.deliveryDate,
-      createdAt: item.createdAt
-    };
-    const existing = grouped.get(sourceKey);
-    if (!existing) {
-      grouped.set(sourceKey, {
-        sourceKey,
-        customerId: item.customerId,
-        customerName: item.customerName,
-        locationId: item.locationId,
-        locationName: item.locationName,
-        skuMasterId: item.skuMasterId,
-        sku: item.sku,
-        itemNumber: item.itemNumber || "",
-        description: item.description || item.name || "",
-        unit: candidate.unit,
-        availableQty: item.availableQty,
-        palletCount: candidate.availablePallets,
-        storageSections: [storageSection],
-        containerCount: 1,
-        containerSummary: "",
-        candidates: [candidate]
-      });
-      continue;
-    }
-    existing.availableQty += item.availableQty;
-    existing.palletCount += candidate.availablePallets;
-    if (!existing.storageSections.includes(storageSection)) {
-      existing.storageSections.push(storageSection);
-    }
-    existing.candidates.push(candidate);
-  }
-
-  return [...grouped.values()].map((source) => {
-    const sortedCandidates = [...source.candidates].sort(compareOutboundInventoryCandidates);
-    return {
-      ...source,
-      storageSections: [...source.storageSections].sort(),
-      containerCount: new Set(sortedCandidates.map((candidate) => candidate.containerNo)).size,
-      containerSummary: formatContainerDistributionSummaryValue(sortedCandidates.map((candidate) => ({
-        containerNo: candidate.containerNo,
-        availableQty: candidate.availableQty,
-        locationName: candidate.locationName,
-        storageSection: candidate.storageSection
-      }))),
-      candidates: sortedCandidates
-    };
-  }).sort((left, right) => left.customerName.localeCompare(right.customerName)
-    || left.locationName.localeCompare(right.locationName)
-    || left.sku.localeCompare(right.sku));
-}
-
-function automaticInventoryPalletsForAllocation(availableQty: number, availablePallets: number, allocatedQty: number) {
-  if (availableQty <= 0 || availablePallets <= 0 || allocatedQty <= 0) {
-    return 0;
-  }
-  if (allocatedQty >= availableQty) {
-    return availablePallets;
-  }
-  return Math.min(availablePallets, Math.max(1, Math.ceil(availablePallets * allocatedQty / availableQty)));
-}
-function consumeHistoryLaunchContext(mode: ActivityMode): ActivityManagementLaunchContext | null {
-  const state = window.history.state;
-  if (!state || typeof state !== "object") {
-    return null;
-  }
-
-  const page = typeof (state as { page?: unknown }).page === "string"
-    ? String((state as { page?: unknown }).page)
-    : "";
-  const documentId = typeof (state as { documentId?: unknown }).documentId === "number"
-    ? Number((state as { documentId?: unknown }).documentId)
-    : 0;
-  const expectedPage = mode === "IN" ? "inbound-management" : "outbound-management";
-
-  if (page !== expectedPage || documentId <= 0) {
-    return null;
-  }
-
-  const nextState = { ...(state as Record<string, unknown>) };
-  delete nextState.documentId;
-  window.history.replaceState(nextState, "", window.location.pathname);
-
-  return { documentId };
-}
-
-function formatContainerDistributionSummary(containers: Map<string, number>) {
-  if (containers.size === 0) {
-    return "";
-  }
-
-  return [...containers.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([containerNo, quantity]) => `${containerNo}:${quantity}`)
-    .join(" · ");
 }

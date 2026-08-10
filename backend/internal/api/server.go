@@ -544,7 +544,6 @@ func (s *Server) handleListOutboundDocuments(c *gin.Context) {
 	}
 
 	documents, err := s.store.ListOutboundDocumentsFiltered(c.Request.Context(), limit, service.OutboundDocumentFilters{
-		ArchiveScope:   strings.TrimSpace(c.Query("archiveScope")),
 		ExportCursor:   exportCursor,
 		BeforeID:       beforeID,
 		Search:         strings.TrimSpace(c.Query("search")),
@@ -568,7 +567,7 @@ func (s *Server) handleCreateOutboundDocument(c *gin.Context) {
 		return
 	}
 
-	document, err := s.appServices().LegacyDocuments.CreateOutboundDocument(c.Request.Context(), input)
+	document, err := s.appServices().PickingOrders.Create(c.Request.Context(), input)
 	if err != nil {
 		writeDomainError(c, err)
 		return
@@ -787,28 +786,6 @@ func (s *Server) handleCancelOutboundDocument(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-func (s *Server) handleArchiveOutboundDocument(c *gin.Context) {
-	documentID, err := parseIDParam(c, "id")
-	if err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	document, err := s.store.ArchiveOutboundDocument(c.Request.Context(), documentID)
-	if err != nil {
-		writeDomainError(c, err)
-		return
-	}
-
-	s.writeAuditLog(c, "ARCHIVE", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Archived outbound document", map[string]any{
-		"packingListNo": document.PackingListNo,
-		"status":        document.Status,
-		"archivedAt":    document.ArchivedAt,
-	})
-
-	writeJSON(c, http.StatusOK, document)
-}
-
 func (s *Server) handleCopyOutboundDocument(c *gin.Context) {
 	documentID, err := parseIDParam(c, "id")
 	if err != nil {
@@ -872,7 +849,6 @@ func (s *Server) handleListInboundDocuments(c *gin.Context) {
 	}
 
 	documents, err := s.store.ListInboundDocumentsFiltered(c.Request.Context(), limit, service.InboundDocumentFilters{
-		ArchiveScope:   strings.TrimSpace(c.Query("archiveScope")),
 		ExportCursor:   exportCursor,
 		BeforeID:       beforeID,
 		Search:         strings.TrimSpace(c.Query("search")),
@@ -896,7 +872,7 @@ func (s *Server) handleCreateInboundDocument(c *gin.Context) {
 		return
 	}
 
-	document, err := s.appServices().LegacyDocuments.CreateInboundDocument(c.Request.Context(), input)
+	document, err := s.appServices().InboundDocuments.Create(c.Request.Context(), input)
 	if err != nil {
 		writeDomainError(c, err)
 		return
@@ -1103,28 +1079,6 @@ func (s *Server) handleCancelInboundDocument(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-func (s *Server) handleArchiveInboundDocument(c *gin.Context) {
-	documentID, err := parseIDParam(c, "id")
-	if err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	document, err := s.store.ArchiveInboundDocument(c.Request.Context(), documentID)
-	if err != nil {
-		writeDomainError(c, err)
-		return
-	}
-
-	s.writeAuditLog(c, "ARCHIVE", "inbound_document", document.ID, firstNonEmptyString(document.ContainerNo, fmt.Sprintf("inbound:%d", document.ID)), "Archived inbound document", map[string]any{
-		"containerNo": document.ContainerNo,
-		"status":      document.Status,
-		"archivedAt":  document.ArchivedAt,
-	})
-
-	writeJSON(c, http.StatusOK, document)
-}
-
 func (s *Server) handleCopyInboundDocument(c *gin.Context) {
 	documentID, err := parseIDParam(c, "id")
 	if err != nil {
@@ -1207,7 +1161,7 @@ func (s *Server) handleCreateInventoryAdjustment(c *gin.Context) {
 		return
 	}
 
-	adjustment, err := s.appServices().LegacyInventory.CreateAdjustment(c.Request.Context(), input)
+	adjustment, err := s.appServices().InventoryMutation.CreateAdjustment(c.Request.Context(), input)
 	if err != nil {
 		writeDomainError(c, err)
 		return
@@ -1249,7 +1203,7 @@ func (s *Server) handleCreateInventoryTransfer(c *gin.Context) {
 		return
 	}
 
-	transfer, err := s.appServices().LegacyInventory.CreateTransfer(c.Request.Context(), input)
+	transfer, err := s.appServices().InventoryMutation.CreateTransfer(c.Request.Context(), input)
 	if err != nil {
 		writeDomainError(c, err)
 		return

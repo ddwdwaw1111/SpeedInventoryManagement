@@ -259,6 +259,12 @@ func TestGenerateAuthoritativeBillingInvoiceIntegration(t *testing.T) {
 		if provenance["calculationVersion"] != BillingPreviewCalculationVersion || provenance["sourceFingerprint"] != preview.SourceFingerprint {
 			t.Fatalf("generated line lost source snapshot provenance: %#v", provenance)
 		}
+		if line.SourceDocumentType == "" {
+			t.Fatalf("generated line lost relational source provenance: %#v", line)
+		}
+		if line.ChargeType != BillingChargeStorage && line.SourceDocumentID <= 0 {
+			t.Fatalf("document charge line must retain its source document id: %#v", line)
+		}
 	}
 	if inboundLines != 1 || wrappingLines != 2 {
 		t.Fatalf("container 1:N receipts were not billed correctly: inbound=%d wrapping=%d", inboundLines, wrappingLines)

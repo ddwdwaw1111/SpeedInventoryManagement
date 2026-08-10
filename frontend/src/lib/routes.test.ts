@@ -17,16 +17,11 @@ describe("container detail routes", () => {
     expect(getPageFromPath(window.location.pathname)).toBe("container-detail");
     expect(getContainerDetailRouteFromPath(window.location.pathname)).toEqual({
       customerId: 42,
-      containerNo: "CONT / 001",
-      isLegacy: false
+      containerNo: "CONT / 001"
     });
   });
 
-  it("parses the legacy container-only route without inventing a customer", () => {
-    expect(getContainerDetailRouteFromPath("/container-contents/SHARED-001")).toEqual({
-      customerId: null,
-      containerNo: "SHARED-001",
-      isLegacy: true
-    });
+  it("rejects an unscoped container route", () => {
+    expect(getContainerDetailRouteFromPath("/container-contents/SHARED-001")).toBeNull();
   });
 });

@@ -211,7 +211,6 @@ func (s *ContainerService) loadContainerSummaries(ctx context.Context, customerI
 	}
 
 	packingLists, err := s.repo.ListInboundDocumentsFiltered(ctx, ContainerLifecycleLoadLimit, InboundDocumentFilters{
-		ArchiveScope:    DocumentArchiveScopeAll,
 		CustomerID:      customerID,
 		OperationalOnly: true,
 	})
@@ -258,7 +257,6 @@ func (s *ContainerService) loadContainerSummaries(ctx context.Context, customerI
 
 func (s *ContainerService) loadPackingListsForContainer(ctx context.Context, customerID int64, containerNo string, operationalOnly bool) ([]InboundDocument, error) {
 	documents, err := s.repo.ListInboundDocumentsFiltered(ctx, ContainerLifecycleLoadLimit, InboundDocumentFilters{
-		ArchiveScope:    DocumentArchiveScopeAll,
 		CustomerID:      customerID,
 		Search:          containerNo,
 		OperationalOnly: operationalOnly,
@@ -301,9 +299,8 @@ func (s *ContainerService) loadPickingOrdersForContainer(ctx context.Context, cu
 	}
 
 	searchDocuments, err := s.repo.ListOutboundDocumentsFiltered(ctx, ContainerLifecycleLoadLimit, OutboundDocumentFilters{
-		ArchiveScope: DocumentArchiveScopeAll,
-		CustomerID:   customerID,
-		Search:       containerNo,
+		CustomerID: customerID,
+		Search:     containerNo,
 	})
 	if err != nil {
 		return nil, err

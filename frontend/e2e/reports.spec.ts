@@ -54,8 +54,9 @@ test("reports page sends backend filters and renders the returned operations sum
   await expect(advancedFilters).toBeVisible();
   await page.getByLabel("Customer").selectOption(String(customer.id));
   await page.getByLabel("Warehouse").selectOption(String(location.id));
-  const searchInput = advancedFilters.getByPlaceholder("SKU, description, container");
+  const searchInput = advancedFilters.getByPlaceholder("UPC, description, container");
   await searchInput.fill("SKU-PLAY");
+  await searchInput.press("Enter");
 
   await expect.poll(() => {
     const lastRequest = apiState.operationsRequests.at(-1);

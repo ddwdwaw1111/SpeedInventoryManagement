@@ -968,7 +968,7 @@ function formatLocalDateString(date: Date) {
 
 function isDocumentPending(status: string) {
   const normalizedStatus = normalizeDocumentStatus(status);
-  return normalizedStatus !== "CONFIRMED" && normalizedStatus !== "DELETED" && normalizedStatus !== "ARCHIVED";
+  return normalizedStatus !== "CONFIRMED" && normalizedStatus !== "DELETED";
 }
 
 function buildRecentActivityEntries(

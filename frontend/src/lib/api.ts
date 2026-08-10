@@ -35,6 +35,7 @@ import type {
   DeliveryEventPayload,
   DocumentAttachment,
   DocumentTrackingStatusPayload,
+  DeleteInboundWithDependenciesResponse,
   InventoryAdjustment,
   InventoryAdjustmentPayload,
   InventoryTransfer,
@@ -44,6 +45,8 @@ import type {
   BulkTransferImportPreview,
   BulkTransferImportRevalidatePayload,
   InboundDocument,
+  InboundDeletionImpact,
+  InboundDeletionSelection,
   InboundDocumentPayload,
   InboundBulkImportCommitPayload,
   InboundBulkImportCommitResponse,
@@ -114,10 +117,7 @@ type MovementQuery = {
   endBefore?: string;
 };
 
-type DocumentArchiveScope = "active" | "archived" | "all";
-
 type DocumentListQuery = {
-  archiveScope?: DocumentArchiveScope;
   exportCursor?: boolean;
   beforeId?: number;
   search?: string;
@@ -228,13 +228,9 @@ async function requestFile(path: string): Promise<{ blob: Blob; fileName: string
   return { blob: await response.blob(), fileName };
 }
 
-function buildDocumentListQueryParams(limit: number, archiveScopeOrQuery: DocumentArchiveScope | DocumentListQuery) {
-  const query = typeof archiveScopeOrQuery === "string"
-    ? { archiveScope: archiveScopeOrQuery }
-    : archiveScopeOrQuery;
+function buildDocumentListQueryParams(limit: number, query: DocumentListQuery) {
   const params = new URLSearchParams({
-    limit: String(limit),
-    archiveScope: query.archiveScope ?? "active"
+    limit: String(limit)
   });
 
   if (query.exportCursor) {
@@ -643,8 +639,8 @@ export const api = {
     return request<Movement[]>(`/movements?${params.toString()}`);
   },
 
-  getOutboundDocuments(limit = 100, archiveScopeOrQuery: DocumentArchiveScope | DocumentListQuery = "active") {
-    const params = buildDocumentListQueryParams(limit, archiveScopeOrQuery);
+  getOutboundDocuments(limit = 100, query: DocumentListQuery = {}) {
+    const params = buildDocumentListQueryParams(limit, query);
     return request<OutboundDocument[]>(`/outbound-documents?${params.toString()}`);
   },
 
@@ -702,12 +698,6 @@ export const api = {
     });
   },
 
-  archiveOutboundDocument(documentId: number) {
-    return request<OutboundDocument>(`/outbound-documents/${documentId}/archive`, {
-      method: "POST"
-    });
-  },
-
   copyOutboundDocument(documentId: number) {
     return request<OutboundDocument>(`/outbound-documents/${documentId}/copy`, {
       method: "POST"
@@ -760,8 +750,8 @@ export const api = {
     });
   },
 
-  getInboundDocuments(limit = 100, archiveScopeOrQuery: DocumentArchiveScope | DocumentListQuery = "active") {
-    const params = buildDocumentListQueryParams(limit, archiveScopeOrQuery);
+  getInboundDocuments(limit = 100, query: DocumentListQuery = {}) {
+    const params = buildDocumentListQueryParams(limit, query);
     return request<InboundDocument[]>(`/inbound-documents?${params.toString()}`);
   },
 
@@ -896,15 +886,20 @@ export const api = {
     });
   },
 
-  archiveInboundDocument(documentId: number) {
-    return request<InboundDocument>(`/inbound-documents/${documentId}/archive`, {
+  copyInboundDocument(documentId: number) {
+    return request<InboundDocument>(`/inbound-documents/${documentId}/copy`, {
       method: "POST"
     });
   },
 
-  copyInboundDocument(documentId: number) {
-    return request<InboundDocument>(`/inbound-documents/${documentId}/copy`, {
-      method: "POST"
+  previewInboundDeletion(documentId: number) {
+    return request<InboundDeletionImpact>(`/inbound-documents/${documentId}/deletion-impact`);
+  },
+
+  deleteInboundWithDependencies(documentId: number, dependencies: InboundDeletionSelection[]) {
+    return request<DeleteInboundWithDependenciesResponse>(`/inbound-documents/${documentId}/delete-with-dependencies`, {
+      method: "POST",
+      body: JSON.stringify({ dependencies })
     });
   },
 

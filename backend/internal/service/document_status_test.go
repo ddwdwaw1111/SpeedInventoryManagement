@@ -33,10 +33,6 @@ func TestBuildDocumentStatusFilterClause(t *testing.T) {
 			wantClause: "UPPER(TRIM(d.status)) = ?",
 			wantArgs:   []any{DocumentStatusDraft},
 		},
-		{
-			name:   "archived is handled by archive scope",
-			status: DocumentStatusArchived,
-		},
 	}
 
 	for _, tc := range testCases {

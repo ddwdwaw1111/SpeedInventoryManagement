@@ -9,12 +9,11 @@ var ErrNotImplemented = errors.New("operation is not implemented yet")
 
 type AppServices struct {
 	Container         *ContainerService
+	InboundDocuments  *InboundDocumentService
 	InventoryMutation *InventoryMutationService
 	PickingOrders     *PickingOrderService
 	Delivery          *DeliveryService
 	Billing           *BillingService
-	LegacyInventory   *LegacyInventoryAdapter
-	LegacyDocuments   *LegacyDocumentAdapter
 }
 
 func NewAppServices(store *Store) *AppServices {
@@ -25,13 +24,28 @@ func NewAppServices(store *Store) *AppServices {
 
 	return &AppServices{
 		Container:         NewContainerService(store),
+		InboundDocuments:  NewInboundDocumentService(store),
 		InventoryMutation: inventoryMutation,
 		PickingOrders:     pickingOrders,
 		Delivery:          delivery,
 		Billing:           billing,
-		LegacyInventory:   NewLegacyInventoryAdapter(inventoryMutation),
-		LegacyDocuments:   NewLegacyDocumentAdapter(pickingOrders, store),
 	}
+}
+
+type inboundDocumentRepository interface {
+	CreateInboundDocument(context.Context, CreateInboundDocumentInput) (InboundDocument, error)
+}
+
+type InboundDocumentService struct {
+	repo inboundDocumentRepository
+}
+
+func NewInboundDocumentService(repo inboundDocumentRepository) *InboundDocumentService {
+	return &InboundDocumentService{repo: repo}
+}
+
+func (s *InboundDocumentService) Create(ctx context.Context, input CreateInboundDocumentInput) (InboundDocument, error) {
+	return s.repo.CreateInboundDocument(ctx, input)
 }
 
 type inventoryMutationRepository interface {
