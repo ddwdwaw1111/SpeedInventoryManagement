@@ -28,6 +28,7 @@ type ChartTone = "blue" | "green" | "amber" | "red";
 type BarRow = { label: string; value: number; meta?: string; tone?: ChartTone };
 type TrendRow = { key: string; label: string; inbound: number; outbound: number };
 type PalletFlowRow = OperationsReportPalletFlowRow & { label: string };
+type SKUFlowTrendRow = { key: string; label: string; inboundQty: number; outboundQty: number };
 export type DailyStorageRow = PalletFlowRow & {
   openingBalance: number;
   storageAmount: number;
@@ -291,6 +292,10 @@ export function ReportsPage({ locations, customers, skuMasters, isLoading, error
   const skuFlowRangeLabel = formatDateRangeSummary(normalizedSKUFlowDateRange.start, normalizedSKUFlowDateRange.end);
   const skuFlowSummary = skuFlowReport?.summary;
   const skuFlowRows = skuFlowReport?.rows ?? [];
+  const skuFlowTrendRows = useMemo(
+    () => mapSKUFlowTrendRows(skuFlowReport?.rows ?? []),
+    [skuFlowReport?.rows]
+  );
   const skuFlowEmptyLabel = skuMasters.length === 0
     ? t("skuFlowNoSku")
     : isSKUFlowLoading
@@ -613,9 +618,11 @@ export function ReportsPage({ locations, customers, skuMasters, isLoading, error
               <div className="reports-exec__hero-copy">
                 <span className="reports-exec__eyebrow">{t("skuFlowBadge")}</span>
                 <h2>{t("skuFlowTitle")}</h2>
+                <p>{t("skuFlowSubtitle")}</p>
               </div>
               <div className="reports-exec__hero-brief">
                 <strong>{selectedSKULabel}</strong>
+                <p>{t("skuFlowBrief")}</p>
                 <div className="reports-exec__hero-pills">
                   <span>{t("reportsSelectedPeriod")}: {skuFlowRangeLabel}</span>
                   <span>{t("sku")}: {skuFlowReport?.sku || selectedSKUMaster?.sku || "-"}</span>
@@ -680,7 +687,7 @@ export function ReportsPage({ locations, customers, skuMasters, isLoading, error
             </div>
 
             <section className="reports-exec__summary">
-              <SectionHeading title={t("skuFlowSummaryTitle")} />
+              <SectionHeading title={t("skuFlowSummaryTitle")} subtitle={t("skuFlowSummaryDesc")} />
 
               <div className="reports-exec__kpi-grid sku-flow-report__kpi-grid">
                 <ExecutiveMetricCard
@@ -715,7 +722,26 @@ export function ReportsPage({ locations, customers, skuMasters, isLoading, error
                 />
               </div>
 
-              <ReportCard title={t("skuFlowMovementDetail")} variant="primary">
+              <ReportCard
+                title={t("skuFlowQuantityTrend")}
+                subtitle={t("skuFlowQuantityTrendDesc")}
+                variant="primary"
+                className="report-card--sku-quantity-trend"
+              >
+                <SKUFlowQuantityTrendChart
+                  rows={skuFlowTrendRows}
+                  emptyLabel={skuFlowEmptyLabel}
+                  inboundLabel={t("skuFlowInboundQty")}
+                  outboundLabel={t("skuFlowOutboundQty")}
+                  unitLabel={t("units")}
+                />
+              </ReportCard>
+
+              <ReportCard
+                title={t("skuFlowMovementDetail")}
+                subtitle={t("skuFlowMovementDetailDesc")}
+                variant="primary"
+              >
                 <SKUFlowReportTable rows={skuFlowRows} emptyLabel={skuFlowEmptyLabel} />
               </ReportCard>
             </section>
@@ -983,6 +1009,51 @@ function PalletFlowChart({
           { dataKey: "outbound", label: shippedLabel, color: "#b76857" },
           { dataKey: "transferIn", label: transferInLabel, color: "#4e83b5" },
           { dataKey: "transferOut", label: transferOutLabel, color: "#9a6b4c" }
+        ]}
+        grid={{ horizontal: true }}
+      />
+    </div>
+  );
+}
+
+function SKUFlowQuantityTrendChart({
+  rows,
+  emptyLabel,
+  inboundLabel,
+  outboundLabel,
+  unitLabel
+}: {
+  rows: SKUFlowTrendRow[];
+  emptyLabel: string;
+  inboundLabel: string;
+  outboundLabel: string;
+  unitLabel: string;
+}) {
+  if (rows.length === 0) {
+    return <div className="empty-state">{emptyLabel}</div>;
+  }
+
+  return (
+    <div className="report-chart-wrap report-chart-wrap--sku-quantity">
+      <BarChart
+        dataset={rows}
+        height={330}
+        margin={{ top: 24, bottom: 20, left: 52, right: 24 }}
+        xAxis={[{ scaleType: "band", dataKey: "label" }]}
+        yAxis={[{ min: 0, valueFormatter: (value: number) => formatNumber(value) }]}
+        series={[
+          {
+            dataKey: "inboundQty",
+            label: inboundLabel,
+            color: "#2f6f5f",
+            valueFormatter: (value) => `${formatNumber(Number(value ?? 0))} ${unitLabel}`
+          },
+          {
+            dataKey: "outboundQty",
+            label: outboundLabel,
+            color: "#b76857",
+            valueFormatter: (value) => `${formatNumber(Number(value ?? 0))} ${unitLabel}`
+          }
         ]}
         grid={{ horizontal: true }}
       />
@@ -1268,6 +1339,32 @@ export function formatTrendLabel(key: string, granularity: ReportGranularity) {
   }
 
   return trendDate.formatter.format(trendDate.date);
+}
+
+export function mapSKUFlowTrendRows(rows: SKUFlowReportRow[]): SKUFlowTrendRow[] {
+  const totalsByDate = new Map<string, SKUFlowTrendRow>();
+
+  for (const row of rows) {
+    const key = row.date.trim();
+    if (!key) {
+      continue;
+    }
+    const trend = totalsByDate.get(key) ?? {
+      key,
+      label: formatTrendLabel(key, "day"),
+      inboundQty: 0,
+      outboundQty: 0
+    };
+    const quantity = Number.isFinite(row.quantity) ? Math.max(0, row.quantity) : 0;
+    if (row.direction === "INBOUND") {
+      trend.inboundQty += quantity;
+    } else if (row.direction === "OUTBOUND") {
+      trend.outboundQty += quantity;
+    }
+    totalsByDate.set(key, trend);
+  }
+
+  return [...totalsByDate.values()].sort((left, right) => left.key.localeCompare(right.key));
 }
 
 function parseTrendDate(key: string, granularity: ReportGranularity) {

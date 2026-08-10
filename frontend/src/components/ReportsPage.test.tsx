@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_BILLING_RATES } from "../lib/billingPreview";
 import type { BillingWorkspaceContext } from "../lib/billingWorkspaceContext";
-import { formatTrendLabel, mapDailyStorageRows, resolveReportDailyStorageRate } from "./ReportsPage";
+import { formatTrendLabel, mapDailyStorageRows, mapSKUFlowTrendRows, resolveReportDailyStorageRate } from "./ReportsPage";
 
 describe("ReportsPage trend labels", () => {
   it("formats valid report bucket keys", () => {
@@ -95,5 +95,32 @@ describe("ReportsPage daily storage rate", () => {
     expect(resolveReportDailyStorageRate(context("all"))).toBeNull();
     expect(resolveReportDailyStorageRate(context("NORMAL"))).toBeNull();
     expect(resolveReportDailyStorageRate(context("WEST_COAST_TRANSFER"))).toBeNull();
+  });
+});
+
+describe("ReportsPage SKU flow trend", () => {
+  it("groups confirmed inbound and outbound quantities by date in chronological order", () => {
+    const baseRow = {
+      eventType: "RECEIVE",
+      pallets: 1,
+      customerName: "Customer",
+      locationName: "308",
+      storageSection: "TEMP",
+      containerNo: "CONT-A",
+      packingListNo: "",
+      orderRef: "",
+      sourceDocumentType: "INBOUND",
+      sourceDocumentId: 1,
+      sourceLineId: 1
+    };
+
+    expect(mapSKUFlowTrendRows([
+      { ...baseRow, direction: "OUTBOUND", eventType: "SHIP", date: "2026-07-02", quantity: 4 },
+      { ...baseRow, direction: "INBOUND", date: "2026-07-01", quantity: 10 },
+      { ...baseRow, direction: "INBOUND", date: "2026-07-02", quantity: 3 }
+    ])).toEqual([
+      { key: "2026-07-01", label: "Jul 1", inboundQty: 10, outboundQty: 0 },
+      { key: "2026-07-02", label: "Jul 2", inboundQty: 3, outboundQty: 4 }
+    ]);
   });
 });
