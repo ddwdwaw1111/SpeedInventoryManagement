@@ -617,11 +617,11 @@ func ensureContainerBillingTypeMutationAllowedTx(
 	var earliest *time.Time
 	var lifecycleAt time.Time
 	err := tx.QueryRowContext(ctx, `
-		SELECT event_time
-		FROM container_lifecycle_events
+		SELECT COALESCE(occurred_at, created_at)
+		FROM stock_ledger
 		WHERE customer_id = ?
-		  AND UPPER(TRIM(container_no)) = ?
-		ORDER BY event_time, id
+		  AND UPPER(TRIM(container_no_snapshot)) = ?
+		ORDER BY COALESCE(occurred_at, created_at), id
 		LIMIT 1
 		FOR UPDATE
 	`, customerID, containerNo).Scan(&lifecycleAt)

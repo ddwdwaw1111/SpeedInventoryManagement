@@ -109,7 +109,7 @@ export function buildInboundBulkReimportRows(document: InboundDocument) {
     expectedQty: line.expectedQty,
     receivedQty: line.receivedQty,
     pallets: handlingMode === "SEALED_TRANSIT" ? 0 : line.pallets,
-    unitsPerPallet: handlingMode === "SEALED_TRANSIT" ? 0 : line.unitsPerPallet,
+    inboundCtnsPerPallet: handlingMode === "SEALED_TRANSIT" ? 0 : line.inboundCtnsPerPallet,
     storageSection: line.storageSection || document.storageSection || "TEMP",
     lineNote: line.lineNote
   }));
@@ -187,15 +187,15 @@ function addOutboundWorkbooks(
       const compatibilityIssue = outboundBulkReimportIssue(document);
       const rows = buildOutboundBulkReimportRows(document);
       if (compatibilityIssue) {
-        skippedRows.push(["Outbound", document.customerName, document.packingListNo || `Outbound #${document.id}`, compatibilityIssue]);
+        skippedRows.push(["Outbound", document.customerName, document.pickingOrderNo || `Outbound #${document.id}`, compatibilityIssue]);
       } else if (rows.length === 0) {
-        skippedRows.push(["Outbound", document.customerName, document.packingListNo, "Shipment has no lines."]);
+        skippedRows.push(["Outbound", document.customerName, document.pickingOrderNo, "Shipment has no lines."]);
       } else if (rows.length > MAX_ROWS_PER_IMPORT) {
-        skippedRows.push(["Outbound", document.customerName, document.packingListNo, `Shipment exceeds ${MAX_ROWS_PER_IMPORT} rows.`]);
+        skippedRows.push(["Outbound", document.customerName, document.pickingOrderNo, `Shipment exceeds ${MAX_ROWS_PER_IMPORT} rows.`]);
       } else {
         entries.push({
           document,
-          identity: document.packingListNo.trim().toUpperCase(),
+          identity: document.pickingOrderNo.trim().toUpperCase(),
           rows
         });
       }
@@ -234,7 +234,7 @@ function buildOutboundLineRows(document: OutboundDocument, line: OutboundDocumen
     : sourceRows.map(() => 0);
 
   return sourceRows.map((allocation, index) => ({
-    pickingOrderNo: document.packingListNo,
+    pickingOrderNo: document.pickingOrderNo,
     expectedShipDate: firstDate(document.expectedShipDate),
     actualShipDate: outboundActualShipDate(document),
     shipToName: document.shipToName,
@@ -274,7 +274,7 @@ function inboundBulkReimportIssue(document: InboundDocument) {
   if (!inboundBusinessDate(document)) return "Actual Arrival Date cannot be derived.";
   for (const line of document.lines) {
     if (!line.sku.trim()) return `Inbound line ${line.id} has no UPC.`;
-    if (line.expectedQty < 0 || line.receivedQty < 0 || line.pallets < 0 || line.unitsPerPallet < 0) {
+    if (line.expectedQty < 0 || line.receivedQty < 0 || line.pallets < 0 || line.inboundCtnsPerPallet < 0) {
       return `Inbound line ${line.id} contains a negative quantity or pallet value.`;
     }
     if (line.expectedQty === 0 && line.receivedQty === 0) {
@@ -285,7 +285,7 @@ function inboundBulkReimportIssue(document: InboundDocument) {
 }
 
 function outboundBulkReimportIssue(document: OutboundDocument) {
-  if (!document.packingListNo.trim()) return "Picking Order No is empty.";
+  if (!document.pickingOrderNo.trim()) return "Picking Order No is empty.";
   for (const line of document.lines) {
     const actualQuantity = Math.max(0, line.actualQuantity ?? line.quantity);
     const plannedQuantity = Math.max(0, line.plannedQuantity ?? actualQuantity);

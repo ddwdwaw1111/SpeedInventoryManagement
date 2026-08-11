@@ -28,7 +28,7 @@ describe("document migration export", () => {
         expectedQty: 20,
         receivedQty: 18,
         pallets: 2,
-        unitsPerPallet: 9,
+        inboundCtnsPerPallet: 9,
         storageSection: "A1"
       })]
     }));
@@ -43,7 +43,7 @@ describe("document migration export", () => {
       expectedQty: 20,
       receivedQty: 18,
       pallets: 2,
-      unitsPerPallet: 9,
+      inboundCtnsPerPallet: 9,
       storageSection: "A1"
     })]);
     expect(rows[0]).not.toHaveProperty("customerId");
@@ -73,7 +73,7 @@ describe("document migration export", () => {
 
   it("preserves outbound source allocations and keeps inventory and shipping pallets independent", () => {
     const rows = buildOutboundBulkReimportRows(createOutboundDocument({
-      packingListNo: "PICK-100",
+      pickingOrderNo: "PICK-100",
       lines: [createOutboundDocumentLine({
         quantity: 10,
         actualQuantity: 10,
@@ -132,7 +132,7 @@ describe("document migration export", () => {
       customerId: 2,
       customerName: "SpeedWin",
       status: "DRAFT",
-      packingListNo: "PICK-3"
+      pickingOrderNo: "PICK-3"
     });
     const deletedShipment = createOutboundDocument({
       id: 4,
@@ -140,7 +140,7 @@ describe("document migration export", () => {
       customerName: "SpeedWin",
       status: "DELETED",
       deletedAt: "2026-04-05T00:00:00Z",
-      packingListNo: "PICK-DELETED"
+      pickingOrderNo: "PICK-DELETED"
     });
 
     const result = buildDocumentMigrationPackage(
@@ -172,7 +172,7 @@ describe("document migration export", () => {
     const legacyDocument = createOutboundDocument({
       id: 10,
       status: "CONFIRMED",
-      packingListNo: "LEGACY-10",
+      pickingOrderNo: "LEGACY-10",
       lines: [createOutboundDocumentLine({
         id: 20,
         documentId: 10,
@@ -204,7 +204,7 @@ describe("document migration export", () => {
     const outbound = createOutboundDocument({
       id: 12,
       customerName: "Able Pack",
-      packingListNo: "PICK-12"
+      pickingOrderNo: "PICK-12"
     });
 
     const result = buildDocumentMigrationPackage([inbound], [outbound], new Date(2026, 3, 30, 12, 0));

@@ -95,7 +95,7 @@ export type SKUFlowReportRow = {
   locationName: string;
   storageSection: string;
   containerNo: string;
-  packingListNo: string;
+  pickingOrderNo: string;
   orderRef: string;
   sourceDocumentType?: string;
   sourceDocumentId?: number;
@@ -261,9 +261,12 @@ export type SKUMaster = {
   description: string;
   unit: string;
   reorderLevel: number;
-  defaultUnitsPerPallet: number;
+  outboundCtnsPerPallet: number;
   weight: number;
   cubes: number;
+  cartonLengthCm: number;
+  cartonWidthCm: number;
+  cartonHeightCm: number;
   outboundCartonsPerLayer: number;
   outboundLayerCount: number;
   createdAt: string;
@@ -288,9 +291,11 @@ export type SKUMasterPayload = {
   description: string;
   unit: string;
   reorderLevel: number;
-  defaultUnitsPerPallet: number;
   weight: number;
   cubes: number;
+  cartonLengthCm: number;
+  cartonWidthCm: number;
+  cartonHeightCm: number;
   outboundCartonsPerLayer: number;
   outboundLayerCount: number;
 };
@@ -377,7 +382,7 @@ export type Movement = {
   quantityChange: number;
   deliveryDate: string | null;
   containerNo: string;
-  packingListNo: string;
+  pickingOrderNo: string;
   orderRef: string;
   itemNumber: string;
   expectedQty: number;
@@ -593,7 +598,7 @@ export type ContainerLifecycleEvent = {
   sourceDocumentType: string;
   sourceDocumentId: number;
   sourceLineId: number;
-  packingListNo: string;
+  pickingOrderNo: string;
   orderRef: string;
   itemNumber: string;
   description: string;
@@ -696,7 +701,7 @@ export type OutboundPickAllocationPayload = {
 
 export type OutboundDocument = {
   id: number;
-  packingListNo: string;
+  pickingOrderNo: string;
   orderRef: string;
   customerId: number;
   customerName: string;
@@ -743,7 +748,7 @@ export type OutboundDocumentLinePayload = {
 };
 
 export type OutboundDocumentPayload = {
-  packingListNo?: string;
+  pickingOrderNo?: string;
   orderRef?: string;
   expectedShipDate?: string;
   actualShipDate?: string;
@@ -772,7 +777,7 @@ export type InboundDocumentLine = {
   expectedQty: number;
   receivedQty: number;
   pallets: number;
-  unitsPerPallet: number;
+  inboundCtnsPerPallet: number;
   palletsDetailCtns: string;
   palletBreakdown?: InboundPalletBreakdown[];
   unitLabel: string;
@@ -898,7 +903,7 @@ export type InboundDocumentLinePayload = {
   expectedQty: number;
   receivedQty: number;
   pallets: number;
-  unitsPerPallet?: number;
+  inboundCtnsPerPallet?: number;
   palletsDetailCtns?: string;
   palletBreakdown?: InboundPalletBreakdown[];
   storageSection?: string;
@@ -1318,6 +1323,11 @@ export type InventoryTransferPayload = {
     customerId: number;
     locationId: number;
     containerNo: string;
+    toLocationId: number;
+    toStorageSection?: string;
+  };
+  entireLocation?: {
+    locationId: number;
     toLocationId: number;
     toStorageSection?: string;
   };

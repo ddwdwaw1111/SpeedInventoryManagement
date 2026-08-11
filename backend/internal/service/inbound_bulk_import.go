@@ -34,20 +34,20 @@ const (
 )
 
 const (
-	bulkFieldContainerNo       = "containerNo"
-	bulkFieldWarehouse         = "warehouse"
-	bulkFieldActualArrivalDate = "actualArrivalDate"
-	bulkFieldContainerType     = "containerType"
-	bulkFieldHandlingMode      = "handlingMode"
-	bulkFieldSKU               = "sku"
-	bulkFieldItemNumber        = "itemNumber"
-	bulkFieldDescription       = "description"
-	bulkFieldExpectedQty       = "expectedQty"
-	bulkFieldReceivedQty       = "receivedQty"
-	bulkFieldPallets           = "pallets"
-	bulkFieldUnitsPerPallet    = "unitsPerPallet"
-	bulkFieldStorageSection    = "storageSection"
-	bulkFieldLineNote          = "lineNote"
+	bulkFieldContainerNo          = "containerNo"
+	bulkFieldWarehouse            = "warehouse"
+	bulkFieldActualArrivalDate    = "actualArrivalDate"
+	bulkFieldContainerType        = "containerType"
+	bulkFieldHandlingMode         = "handlingMode"
+	bulkFieldSKU                  = "sku"
+	bulkFieldItemNumber           = "itemNumber"
+	bulkFieldDescription          = "description"
+	bulkFieldExpectedQty          = "expectedQty"
+	bulkFieldReceivedQty          = "receivedQty"
+	bulkFieldPallets              = "pallets"
+	bulkFieldInboundCtnsPerPallet = "inboundCtnsPerPallet"
+	bulkFieldStorageSection       = "storageSection"
+	bulkFieldLineNote             = "lineNote"
 )
 
 type InboundBulkImportIssue struct {
@@ -569,8 +569,8 @@ func parsedInboundBulkDocumentFromInput(
 		if line.Pallets < 0 {
 			issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "INVALID_PALLETS", "Pallets must be a non-negative whole number.", rowNumber, bulkFieldPallets, strconv.Itoa(line.Pallets)))
 		}
-		if line.UnitsPerPallet < 0 {
-			issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "INVALID_CTN_PER_PALLET", "CTN per Pallet must be a non-negative whole number.", rowNumber, bulkFieldUnitsPerPallet, strconv.Itoa(line.UnitsPerPallet)))
+		if line.InboundCtnsPerPallet < 0 {
+			issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "INVALID_CTN_PER_PALLET", "CTN per Pallet must be a non-negative whole number.", rowNumber, bulkFieldInboundCtnsPerPallet, strconv.Itoa(line.InboundCtnsPerPallet)))
 		}
 		if line.ExpectedQty == 0 && line.ReceivedQty == 0 {
 			issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "QUANTITY_REQUIRED", "Expected Qty or Received Qty is required.", rowNumber, bulkFieldReceivedQty, ""))
@@ -714,7 +714,7 @@ func validateAndNormalizeInboundBulkCommitDocument(input CreateInboundDocumentIn
 		}
 		if coalesceInboundHandlingMode(input.HandlingMode) == InboundHandlingModeSealedTransit {
 			line.Pallets = 0
-			line.UnitsPerPallet = 0
+			line.InboundCtnsPerPallet = 0
 		}
 	}
 	if len(input.Lines) > 0 {
@@ -825,7 +825,7 @@ func findInboundBulkImportHeader(rows [][]string) (int, map[string]int, error) {
 		bulkFieldExpectedQty,
 		bulkFieldReceivedQty,
 		bulkFieldPallets,
-		bulkFieldUnitsPerPallet,
+		bulkFieldInboundCtnsPerPallet,
 	}
 	maxRows := min(len(rows), 20)
 	for rowIndex := 0; rowIndex < maxRows; rowIndex++ {
@@ -875,8 +875,8 @@ func canonicalInboundBulkHeader(value string) string {
 		"PALLETS":           bulkFieldPallets,
 		"PALLETQTY":         bulkFieldPallets,
 		"PALLETCOUNT":       bulkFieldPallets,
-		"CTNPERPALLET":      bulkFieldUnitsPerPallet,
-		"CARTONSPERPALLET":  bulkFieldUnitsPerPallet,
+		"CTNPERPALLET":      bulkFieldInboundCtnsPerPallet,
+		"CARTONSPERPALLET":  bulkFieldInboundCtnsPerPallet,
 		"STORAGESECTION":    bulkFieldStorageSection,
 		"SECTION":           bulkFieldStorageSection,
 		"LINENOTE":          bulkFieldLineNote,
@@ -895,20 +895,20 @@ func normalizeInboundBulkHeader(value string) string {
 
 func inboundBulkTemplateHeader(field string) string {
 	headers := map[string]string{
-		bulkFieldContainerNo:       "Container No",
-		bulkFieldWarehouse:         "Warehouse",
-		bulkFieldActualArrivalDate: "Actual Arrival Date",
-		bulkFieldContainerType:     "Container Type",
-		bulkFieldHandlingMode:      "Handling Mode",
-		bulkFieldSKU:               "UPC",
-		bulkFieldItemNumber:        "Item Code",
-		bulkFieldDescription:       "Description",
-		bulkFieldExpectedQty:       "Expected Qty",
-		bulkFieldReceivedQty:       "Received Qty",
-		bulkFieldPallets:           "Pallets",
-		bulkFieldUnitsPerPallet:    "CTN per Pallet",
-		bulkFieldStorageSection:    "Storage Section",
-		bulkFieldLineNote:          "Line Note",
+		bulkFieldContainerNo:          "Container No",
+		bulkFieldWarehouse:            "Warehouse",
+		bulkFieldActualArrivalDate:    "Actual Arrival Date",
+		bulkFieldContainerType:        "Container Type",
+		bulkFieldHandlingMode:         "Handling Mode",
+		bulkFieldSKU:                  "UPC",
+		bulkFieldItemNumber:           "Item Code",
+		bulkFieldDescription:          "Description",
+		bulkFieldExpectedQty:          "Expected Qty",
+		bulkFieldReceivedQty:          "Received Qty",
+		bulkFieldPallets:              "Pallets",
+		bulkFieldInboundCtnsPerPallet: "CTN per Pallet",
+		bulkFieldStorageSection:       "Storage Section",
+		bulkFieldLineNote:             "Line Note",
 	}
 	return headers[field]
 }
@@ -1030,9 +1030,9 @@ func parseInboundBulkLine(row []string, rowNumber int, columns map[string]int) (
 	if !valid {
 		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "INVALID_PALLETS", "Pallets must be a non-negative whole number.", rowNumber, bulkFieldPallets, palletsValue))
 	}
-	line.UnitsPerPallet, valid = parseInboundBulkNonNegativeInt(inboundBulkColumnValue(row, columns, bulkFieldUnitsPerPallet))
+	line.InboundCtnsPerPallet, valid = parseInboundBulkNonNegativeInt(inboundBulkColumnValue(row, columns, bulkFieldInboundCtnsPerPallet))
 	if !valid {
-		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "INVALID_CTN_PER_PALLET", "CTN per Pallet must be a non-negative whole number.", rowNumber, bulkFieldUnitsPerPallet, inboundBulkColumnValue(row, columns, bulkFieldUnitsPerPallet)))
+		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "INVALID_CTN_PER_PALLET", "CTN per Pallet must be a non-negative whole number.", rowNumber, bulkFieldInboundCtnsPerPallet, inboundBulkColumnValue(row, columns, bulkFieldInboundCtnsPerPallet)))
 	}
 	if line.ExpectedQty == 0 && line.ReceivedQty == 0 {
 		issues = append(issues, inboundBulkIssue(InboundBulkIssueError, "QUANTITY_REQUIRED", "Expected Qty or Received Qty is required.", rowNumber, bulkFieldReceivedQty, ""))
@@ -1149,16 +1149,6 @@ func buildInboundBulkImportPreview(
 				if line.Description == "" {
 					line.Description = firstNonEmpty(master.Description, master.Name, master.SKU)
 				}
-				if line.UnitsPerPallet > 0 && master.DefaultUnitsPerPallet > 0 && line.UnitsPerPallet != master.DefaultUnitsPerPallet {
-					document.preview.Issues = append(document.preview.Issues, inboundBulkIssue(
-						InboundBulkIssueWarning,
-						"CTN_PER_PALLET_DEFAULT_MISMATCH",
-						fmt.Sprintf("CTN per Pallet differs from the UPC default of %d.", master.DefaultUnitsPerPallet),
-						rowNumber,
-						bulkFieldUnitsPerPallet,
-						strconv.Itoa(line.UnitsPerPallet),
-					))
-				}
 			} else if line.SKU != "" && line.Description == "" {
 				document.preview.Issues = append(document.preview.Issues, inboundBulkIssue(
 					InboundBulkIssueError,
@@ -1175,7 +1165,7 @@ func buildInboundBulkImportPreview(
 				quantity = line.ExpectedQty
 			}
 			if document.preview.Input.HandlingMode == InboundHandlingModeSealedTransit {
-				if line.Pallets > 0 || line.UnitsPerPallet > 0 {
+				if line.Pallets > 0 || line.InboundCtnsPerPallet > 0 {
 					document.preview.Issues = append(document.preview.Issues, inboundBulkIssue(
 						InboundBulkIssueWarning,
 						"SEALED_TRANSIT_PALLET_VALUES_IGNORED",
@@ -1186,7 +1176,7 @@ func buildInboundBulkImportPreview(
 					))
 				}
 				line.Pallets = 0
-				line.UnitsPerPallet = 0
+				line.InboundCtnsPerPallet = 0
 			} else if quantity > 0 && line.Pallets == 0 && !hasInboundBulkIssueAtRow(document.preview.Issues, "MISSING_PALLETS", rowNumber) {
 				document.preview.Issues = append(document.preview.Issues, inboundBulkIssue(
 					InboundBulkIssueWarning,

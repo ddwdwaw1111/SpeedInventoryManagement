@@ -10,7 +10,7 @@ import type { OutboundDocument } from "./types";
 function createOutboundDocumentFixture(): OutboundDocument {
   return {
     id: 12,
-    packingListNo: "PL-1001",
+    pickingOrderNo: "PL-1001",
     orderRef: "PO-2002",
     customerId: 7,
     customerName: "Imperial Bag & Paper",

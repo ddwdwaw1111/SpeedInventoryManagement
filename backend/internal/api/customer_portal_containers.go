@@ -519,11 +519,11 @@ func customerPortalLifecycleEventActivityTime(event service.ContainerLifecycleEv
 }
 
 func customerPortalLifecycleEventPickingOrderRef(event service.ContainerLifecycleEvent) string {
-	if strings.TrimSpace(event.PackingListNo) != "" && strings.TrimSpace(event.OrderRef) != "" {
-		return strings.TrimSpace(event.PackingListNo) + " / " + strings.TrimSpace(event.OrderRef)
+	if strings.TrimSpace(event.PickingOrderNo) != "" && strings.TrimSpace(event.OrderRef) != "" {
+		return strings.TrimSpace(event.PickingOrderNo) + " / " + strings.TrimSpace(event.OrderRef)
 	}
-	if strings.TrimSpace(event.PackingListNo) != "" {
-		return strings.TrimSpace(event.PackingListNo)
+	if strings.TrimSpace(event.PickingOrderNo) != "" {
+		return strings.TrimSpace(event.PickingOrderNo)
 	}
 	if strings.TrimSpace(event.OrderRef) != "" {
 		return strings.TrimSpace(event.OrderRef)
@@ -545,11 +545,11 @@ func customerPortalLifecycleEventTransferRef(event service.ContainerLifecycleEve
 }
 
 func customerPortalMovementPickingOrderRef(movement service.Movement) string {
-	if strings.TrimSpace(movement.PackingListNo) != "" && strings.TrimSpace(movement.OrderRef) != "" {
-		return strings.TrimSpace(movement.PackingListNo) + " / " + strings.TrimSpace(movement.OrderRef)
+	if strings.TrimSpace(movement.PickingOrderNo) != "" && strings.TrimSpace(movement.OrderRef) != "" {
+		return strings.TrimSpace(movement.PickingOrderNo) + " / " + strings.TrimSpace(movement.OrderRef)
 	}
-	if strings.TrimSpace(movement.PackingListNo) != "" {
-		return strings.TrimSpace(movement.PackingListNo)
+	if strings.TrimSpace(movement.PickingOrderNo) != "" {
+		return strings.TrimSpace(movement.PickingOrderNo)
 	}
 	if strings.TrimSpace(movement.OrderRef) != "" {
 		return strings.TrimSpace(movement.OrderRef)

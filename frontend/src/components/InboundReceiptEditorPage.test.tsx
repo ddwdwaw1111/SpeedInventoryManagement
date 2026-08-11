@@ -97,7 +97,7 @@ describe("InboundReceiptEditorPage", () => {
             expectedQty: 8,
             receivedQty: 8,
             pallets: 0,
-            unitsPerPallet: 0,
+            inboundCtnsPerPallet: 0,
             palletsDetailCtns: undefined,
             storageSection: "TEMP",
             lineNote: undefined
@@ -162,7 +162,7 @@ describe("InboundReceiptEditorPage", () => {
       expectedQty: 8,
       receivedQty: 8,
       pallets: 3,
-      unitsPerPallet: 4,
+      inboundCtnsPerPallet: 4,
       palletsDetailCtns: undefined,
       storageSection: "TEMP",
       lineNote: undefined
@@ -184,14 +184,14 @@ describe("InboundReceiptEditorPage", () => {
             sku: "SKU-100",
             itemNumber: "ITEM-100",
             description: "Known item",
-            defaultUnitsPerPallet: 10
+            outboundCtnsPerPallet: 10
           }),
           createSkuMaster({
             id: 2,
             sku: "SKU-200",
             itemNumber: "ITEM-200",
             description: "Other item",
-            defaultUnitsPerPallet: 99
+            outboundCtnsPerPallet: 99
           })
         ]}
         locations={[createLocation()]}
@@ -209,13 +209,13 @@ describe("InboundReceiptEditorPage", () => {
     fireEvent.change(screen.getByLabelText(/UPC.*#1/), { target: { value: "SKU-100" } });
     expect(screen.getByLabelText("Item Code #1")).toHaveValue("ITEM-100");
     expect(screen.getByLabelText("Description #1")).toHaveValue("Known item");
-    expect(screen.getByLabelText("CTN / Pallet #1")).toHaveValue(10);
+    expect(screen.getByLabelText("CTN / Pallet #1")).toHaveValue(0);
 
     fireEvent.change(screen.getByLabelText("Item Code #1"), { target: { value: "ITEM-200" } });
 
     expect(screen.getByLabelText(/UPC.*#1/)).toHaveValue("SKU-100");
     expect(screen.getByLabelText("Description #1")).toHaveValue("Known item");
-    expect(screen.getByLabelText("CTN / Pallet #1")).toHaveValue(10);
+    expect(screen.getByLabelText("CTN / Pallet #1")).toHaveValue(0);
   });
 
   it("confirms with zero received quantity, pallets, and CTN per Pallet", async () => {
@@ -269,7 +269,7 @@ describe("InboundReceiptEditorPage", () => {
       expectedQty: 8,
       receivedQty: 0,
       pallets: 0,
-      unitsPerPallet: 0,
+      inboundCtnsPerPallet: 0,
       palletsDetailCtns: undefined,
       storageSection: "TEMP",
       lineNote: undefined
@@ -299,7 +299,7 @@ describe("InboundReceiptEditorPage", () => {
           expectedQty: 5,
           receivedQty: 5,
           pallets: 0,
-          unitsPerPallet: 0,
+          inboundCtnsPerPallet: 0,
           palletsDetailCtns: "",
           palletBreakdown: [],
           palletBreakdownExplicit: false,

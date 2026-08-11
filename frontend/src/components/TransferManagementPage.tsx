@@ -3,6 +3,7 @@ import CloseIcon from "@mui/icons-material/Close";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import UploadFileOutlinedIcon from "@mui/icons-material/UploadFileOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
+import WarehouseOutlinedIcon from "@mui/icons-material/WarehouseOutlined";
 import { useEffect, useMemo, useState } from "react";
 import { Box, Button, Chip, Drawer, IconButton } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
@@ -22,6 +23,7 @@ import {
 } from "../lib/types";
 import { ContainerTransferDialog } from "./ContainerTransferDialog";
 import { BulkTransferImportDialog } from "./BulkTransferImportDialog";
+import { EntireWarehouseTransferDialog } from "./EntireWarehouseTransferDialog";
 import { RowActionsMenu } from "./RowActionsMenu";
 import { buildWorkspaceGridSlots, WorkspaceDrawerLoadingState, WorkspacePanelHeader } from "./WorkspacePanelChrome";
 import { useSharedColumnOrder } from "./useSharedColumnOrder";
@@ -58,6 +60,7 @@ export function TransferManagementPage({
   const permissionNotice = canManage ? "" : t("readOnlyModeNotice");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isBulkImportOpen, setIsBulkImportOpen] = useState(false);
+  const [isEntireWarehouseTransferOpen, setIsEntireWarehouseTransferOpen] = useState(false);
   const [selectedTransferId, setSelectedTransferId] = useState<number | null>(null);
   const [dialogInitialSourceKey, setDialogInitialSourceKey] = useState("");
   const [dialogPreferredContainerNo, setDialogPreferredContainerNo] = useState("");
@@ -204,6 +207,9 @@ export function TransferManagementPage({
                 {columnOrderAction}
                 {canManage ? (
                   <>
+                    <Button variant="outlined" color="warning" startIcon={<WarehouseOutlinedIcon />} onClick={() => setIsEntireWarehouseTransferOpen(true)}>
+                      {t("entireWarehouseTransfer")}
+                    </Button>
                     <Button variant="outlined" startIcon={<UploadFileOutlinedIcon />} onClick={() => setIsBulkImportOpen(true)}>
                       {t("bulkTransferExcel")}
                     </Button>
@@ -366,6 +372,13 @@ export function TransferManagementPage({
         items={items}
         onClose={() => setIsBulkImportOpen(false)}
         onImported={onRefresh}
+      />
+      <EntireWarehouseTransferDialog
+        open={isEntireWarehouseTransferOpen}
+        items={items}
+        locations={locations}
+        onClose={() => setIsEntireWarehouseTransferOpen(false)}
+        onSaved={onRefresh}
       />
 
     </main>

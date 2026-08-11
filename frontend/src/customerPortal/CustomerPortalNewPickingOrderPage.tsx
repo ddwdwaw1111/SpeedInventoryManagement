@@ -25,7 +25,7 @@ export type PickingOrderLineDraft = {
 };
 
 export type PickingOrderFormState = {
-  packingListNo: string;
+  pickingOrderNo: string;
   orderRef: string;
   expectedShipDate: string;
   shipToName: string;
@@ -36,7 +36,7 @@ export type PickingOrderFormState = {
 };
 
 export const emptyPickingOrderForm: PickingOrderFormState = {
-  packingListNo: "",
+  pickingOrderNo: "",
   orderRef: "",
   expectedShipDate: "",
   shipToName: "",
@@ -227,8 +227,8 @@ export function CustomerPortalNewPickingOrderPage({
           </CardHeader>
           <CardContent>
             <div className="grid gap-4 md:grid-cols-3">
-              <Field label={t("packingListNo")}>
-                <Input value={form.packingListNo} onChange={(event) => onFormChange({ packingListNo: event.target.value })} placeholder={t("autoIfBlank")} disabled={isSubmitting} />
+              <Field label={t("pickingOrderNo")}>
+                <Input value={form.pickingOrderNo} onChange={(event) => onFormChange({ pickingOrderNo: event.target.value })} placeholder={t("autoIfBlank")} disabled={isSubmitting} />
               </Field>
               <Field label={t("orderRef")}>
                 <Input value={form.orderRef} onChange={(event) => onFormChange({ orderRef: event.target.value })} disabled={isSubmitting} />

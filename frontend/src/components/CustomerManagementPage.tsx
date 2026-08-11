@@ -494,7 +494,7 @@ export function CustomerManagementPage({
                 {selectedOutboundDocuments.length > 0 ? selectedOutboundDocuments.map((document) => (
                   <div className="document-drawer__list-row" key={document.id}>
                     <div>
-                      <strong>{document.packingListNo || `#${document.id}`}</strong>
+                      <strong>{document.pickingOrderNo || `#${document.id}`}</strong>
                       <span>{document.storages || "-"}</span>
                     </div>
                     <div>

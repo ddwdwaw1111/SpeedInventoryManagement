@@ -28,8 +28,6 @@ LOCAL_ARCHIVE_RETENTION="${LOCAL_ARCHIVE_RETENTION:-2}"
 REMOTE_ARCHIVE_NAME=""
 PROD_COMPOSE_CHANGED=0
 HTTPS_COMPOSE_CHANGED=0
-SCHEMA_CHANGED=0
-SEED_CHANGED=0
 START_PROXY_CHANGED=0
 HTTP_TEMPLATE_CHANGED=0
 HTTPS_TEMPLATE_CHANGED=0
@@ -326,15 +324,13 @@ if [[ "$DEPLOY_AFTER_BUILD" == "true" ]]; then
 
   echo
   echo "==> Creating remote directories"
-  ssh "${ssh_args[@]}" "${SERVER_USER}@${SERVER_HOST}" "mkdir -p ${SERVER_PATH}/database ${SERVER_PATH}/deploy/nginx/templates ${SERVER_PATH}/deploy/nginx ${SERVER_PATH}/archives"
+  ssh "${ssh_args[@]}" "${SERVER_USER}@${SERVER_HOST}" "mkdir -p ${SERVER_PATH}/deploy/nginx/templates ${SERVER_PATH}/deploy/nginx ${SERVER_PATH}/archives"
 
   echo
   echo "==> Uploading archive and deployment files"
   scp "${ssh_args[@]}" "$ARCHIVE_PATH" "${SERVER_USER}@${SERVER_HOST}:${SERVER_PATH}/archives/"
   if upload_if_changed "$ROOT_DIR/docker-compose.prod.yml" "docker-compose.prod.yml"; then PROD_COMPOSE_CHANGED=1; fi
   if upload_if_changed "$ROOT_DIR/docker-compose.https.yml" "docker-compose.https.yml"; then HTTPS_COMPOSE_CHANGED=1; fi
-  if upload_if_changed "$ROOT_DIR/database/schema.sql" "database/schema.sql"; then SCHEMA_CHANGED=1; fi
-  if upload_if_changed "$ROOT_DIR/database/seed.sql" "database/seed.sql"; then SEED_CHANGED=1; fi
   if upload_if_changed "$ROOT_DIR/deploy/nginx/start-proxy.sh" "deploy/nginx/start-proxy.sh"; then START_PROXY_CHANGED=1; fi
   if upload_if_changed "$ROOT_DIR/deploy/nginx/templates/http.conf.template" "deploy/nginx/templates/http.conf.template"; then HTTP_TEMPLATE_CHANGED=1; fi
   if upload_if_changed "$ROOT_DIR/deploy/nginx/templates/https.conf.template" "deploy/nginx/templates/https.conf.template"; then HTTPS_TEMPLATE_CHANGED=1; fi
@@ -344,7 +340,7 @@ if [[ "$DEPLOY_AFTER_BUILD" == "true" ]]; then
 
   echo
   echo "==> Loading images and starting services on remote server"
-  ssh "${ssh_args[@]}" "${SERVER_USER}@${SERVER_HOST}" "cd ${SERVER_PATH} && REMOTE_ARCHIVE_NAME='${REMOTE_ARCHIVE_NAME}' DEPLOY_STACK='${DEPLOY_STACK}' ARCHIVE_RETENTION='${ARCHIVE_RETENTION}' MARIADB_IMAGE='${MARIADB_IMAGE}' BACKEND_IMAGE='${BACKEND_IMAGE}' FRONTEND_IMAGE='${FRONTEND_IMAGE}' PROD_COMPOSE_CHANGED='${PROD_COMPOSE_CHANGED}' HTTPS_COMPOSE_CHANGED='${HTTPS_COMPOSE_CHANGED}' SCHEMA_CHANGED='${SCHEMA_CHANGED}' SEED_CHANGED='${SEED_CHANGED}' START_PROXY_CHANGED='${START_PROXY_CHANGED}' HTTP_TEMPLATE_CHANGED='${HTTP_TEMPLATE_CHANGED}' HTTPS_TEMPLATE_CHANGED='${HTTPS_TEMPLATE_CHANGED}' ENV_FILE_CHANGED='${ENV_FILE_CHANGED}' bash -s" <<'EOF'
+  ssh "${ssh_args[@]}" "${SERVER_USER}@${SERVER_HOST}" "cd ${SERVER_PATH} && REMOTE_ARCHIVE_NAME='${REMOTE_ARCHIVE_NAME}' DEPLOY_STACK='${DEPLOY_STACK}' ARCHIVE_RETENTION='${ARCHIVE_RETENTION}' MARIADB_IMAGE='${MARIADB_IMAGE}' BACKEND_IMAGE='${BACKEND_IMAGE}' FRONTEND_IMAGE='${FRONTEND_IMAGE}' PROD_COMPOSE_CHANGED='${PROD_COMPOSE_CHANGED}' HTTPS_COMPOSE_CHANGED='${HTTPS_COMPOSE_CHANGED}' START_PROXY_CHANGED='${START_PROXY_CHANGED}' HTTP_TEMPLATE_CHANGED='${HTTP_TEMPLATE_CHANGED}' HTTPS_TEMPLATE_CHANGED='${HTTPS_TEMPLATE_CHANGED}' ENV_FILE_CHANGED='${ENV_FILE_CHANGED}' bash -s" <<'EOF'
 set -euo pipefail
 
 mkdir -p ./archives

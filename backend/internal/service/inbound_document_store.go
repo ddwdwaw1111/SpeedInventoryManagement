@@ -13,6 +13,15 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+func firstNonEmptyTime(values ...*time.Time) *time.Time {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
 type InboundDocument struct {
 	ID                  int64                 `json:"id"`
 	ContainerID         int64                 `json:"containerId"`
@@ -42,22 +51,22 @@ type InboundDocument struct {
 }
 
 type InboundDocumentLine struct {
-	ID                int64                    `json:"id"`
-	DocumentID        int64                    `json:"documentId"`
-	ItemNumber        string                   `json:"itemNumber"`
-	SKU               string                   `json:"sku"`
-	Description       string                   `json:"description"`
-	StorageSection    string                   `json:"storageSection"`
-	ReorderLevel      int                      `json:"reorderLevel"`
-	ExpectedQty       int                      `json:"expectedQty"`
-	ReceivedQty       int                      `json:"receivedQty"`
-	Pallets           int                      `json:"pallets"`
-	UnitsPerPallet    int                      `json:"unitsPerPallet"`
-	PalletsDetailCtns string                   `json:"palletsDetailCtns"`
-	PalletBreakdown   []InboundPalletBreakdown `json:"palletBreakdown"`
-	UnitLabel         string                   `json:"unitLabel"`
-	LineNote          string                   `json:"lineNote"`
-	CreatedAt         time.Time                `json:"createdAt"`
+	ID                   int64                    `json:"id"`
+	DocumentID           int64                    `json:"documentId"`
+	ItemNumber           string                   `json:"itemNumber"`
+	SKU                  string                   `json:"sku"`
+	Description          string                   `json:"description"`
+	StorageSection       string                   `json:"storageSection"`
+	ReorderLevel         int                      `json:"reorderLevel"`
+	ExpectedQty          int                      `json:"expectedQty"`
+	ReceivedQty          int                      `json:"receivedQty"`
+	Pallets              int                      `json:"pallets"`
+	InboundCtnsPerPallet int                      `json:"inboundCtnsPerPallet"`
+	PalletsDetailCtns    string                   `json:"palletsDetailCtns"`
+	PalletBreakdown      []InboundPalletBreakdown `json:"palletBreakdown"`
+	UnitLabel            string                   `json:"unitLabel"`
+	LineNote             string                   `json:"lineNote"`
+	CreatedAt            time.Time                `json:"createdAt"`
 }
 
 type InboundPalletBreakdown struct {
@@ -93,18 +102,18 @@ type UpdateInboundDocumentContainerTypeInput struct {
 }
 
 type CreateInboundDocumentLineInput struct {
-	ItemNumber        string                   `json:"itemNumber"`
-	SKU               string                   `json:"sku"`
-	Description       string                   `json:"description"`
-	ReorderLevel      int                      `json:"reorderLevel"`
-	ExpectedQty       int                      `json:"expectedQty"`
-	ReceivedQty       int                      `json:"receivedQty"`
-	Pallets           int                      `json:"pallets"`
-	UnitsPerPallet    int                      `json:"unitsPerPallet"`
-	PalletsDetailCtns string                   `json:"palletsDetailCtns"`
-	PalletBreakdown   []InboundPalletBreakdown `json:"palletBreakdown"`
-	StorageSection    string                   `json:"storageSection"`
-	LineNote          string                   `json:"lineNote"`
+	ItemNumber           string                   `json:"itemNumber"`
+	SKU                  string                   `json:"sku"`
+	Description          string                   `json:"description"`
+	ReorderLevel         int                      `json:"reorderLevel"`
+	ExpectedQty          int                      `json:"expectedQty"`
+	ReceivedQty          int                      `json:"receivedQty"`
+	Pallets              int                      `json:"pallets"`
+	InboundCtnsPerPallet int                      `json:"inboundCtnsPerPallet"`
+	PalletsDetailCtns    string                   `json:"palletsDetailCtns"`
+	PalletBreakdown      []InboundPalletBreakdown `json:"palletBreakdown"`
+	StorageSection       string                   `json:"storageSection"`
+	LineNote             string                   `json:"lineNote"`
 }
 
 type inboundDocumentRow struct {
@@ -131,22 +140,22 @@ type inboundDocumentRow struct {
 }
 
 type inboundDocumentLineRow struct {
-	ID                  int64     `db:"id"`
-	DocumentID          int64     `db:"document_id"`
-	ItemNumber          string    `db:"item_number"`
-	SKUSnapshot         string    `db:"sku_snapshot"`
-	DescriptionSnapshot string    `db:"description_snapshot"`
-	StorageSection      string    `db:"storage_section"`
-	ReorderLevel        int       `db:"reorder_level"`
-	ExpectedQty         int       `db:"expected_qty"`
-	ReceivedQty         int       `db:"received_qty"`
-	Pallets             int       `db:"pallets"`
-	UnitsPerPallet      int       `db:"units_per_pallet"`
-	PalletsDetailCtns   string    `db:"pallets_detail_ctns"`
-	PalletBreakdownJSON string    `db:"pallet_breakdown_json"`
-	UnitLabel           string    `db:"unit_label"`
-	LineNote            string    `db:"line_note"`
-	CreatedAt           time.Time `db:"created_at"`
+	ID                   int64     `db:"id"`
+	DocumentID           int64     `db:"document_id"`
+	ItemNumber           string    `db:"item_number"`
+	SKUSnapshot          string    `db:"sku_snapshot"`
+	DescriptionSnapshot  string    `db:"description_snapshot"`
+	StorageSection       string    `db:"storage_section"`
+	ReorderLevel         int       `db:"reorder_level"`
+	ExpectedQty          int       `db:"expected_qty"`
+	ReceivedQty          int       `db:"received_qty"`
+	Pallets              int       `db:"pallets"`
+	InboundCtnsPerPallet int       `db:"inbound_ctns_per_pallet"`
+	PalletsDetailCtns    string    `db:"pallets_detail_ctns"`
+	PalletBreakdownJSON  string    `db:"pallet_breakdown_json"`
+	UnitLabel            string    `db:"unit_label"`
+	LineNote             string    `db:"line_note"`
+	CreatedAt            time.Time `db:"created_at"`
 }
 
 type InboundDocumentFilters struct {
@@ -305,10 +314,8 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 			id,
 			document_id,
 			COALESCE((
-				SELECT COALESCE(cic.item_number, sm.item_number)
+				SELECT sm.item_number
 				FROM sku_master sm
-				JOIN inbound_documents parent_d ON parent_d.id = il.document_id
-				LEFT JOIN customer_item_catalog cic ON cic.customer_id = parent_d.customer_id AND cic.sku_master_id = sm.id
 				WHERE sm.sku = il.sku_snapshot
 				LIMIT 1
 			), '') AS item_number,
@@ -319,7 +326,7 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 			expected_qty,
 			received_qty,
 			pallets,
-			units_per_pallet,
+			inbound_ctns_per_pallet,
 			COALESCE(pallets_detail_ctns, '') AS pallets_detail_ctns,
 			COALESCE(pallet_breakdown_json, '') AS pallet_breakdown_json,
 			COALESCE(unit_label, '') AS unit_label,
@@ -344,22 +351,22 @@ func (s *Store) ListInboundDocumentsFiltered(ctx context.Context, limit int, fil
 			continue
 		}
 		document.Lines = append(document.Lines, InboundDocumentLine{
-			ID:                lineRow.ID,
-			DocumentID:        lineRow.DocumentID,
-			ItemNumber:        lineRow.ItemNumber,
-			SKU:               lineRow.SKUSnapshot,
-			Description:       lineRow.DescriptionSnapshot,
-			StorageSection:    fallbackSection(lineRow.StorageSection),
-			ReorderLevel:      lineRow.ReorderLevel,
-			ExpectedQty:       lineRow.ExpectedQty,
-			ReceivedQty:       lineRow.ReceivedQty,
-			Pallets:           lineRow.Pallets,
-			UnitsPerPallet:    lineRow.UnitsPerPallet,
-			PalletsDetailCtns: lineRow.PalletsDetailCtns,
-			PalletBreakdown:   decodeInboundPalletBreakdownOrEmpty(lineRow.PalletBreakdownJSON),
-			UnitLabel:         lineRow.UnitLabel,
-			LineNote:          lineRow.LineNote,
-			CreatedAt:         lineRow.CreatedAt,
+			ID:                   lineRow.ID,
+			DocumentID:           lineRow.DocumentID,
+			ItemNumber:           lineRow.ItemNumber,
+			SKU:                  lineRow.SKUSnapshot,
+			Description:          lineRow.DescriptionSnapshot,
+			StorageSection:       fallbackSection(lineRow.StorageSection),
+			ReorderLevel:         lineRow.ReorderLevel,
+			ExpectedQty:          lineRow.ExpectedQty,
+			ReceivedQty:          lineRow.ReceivedQty,
+			Pallets:              lineRow.Pallets,
+			InboundCtnsPerPallet: lineRow.InboundCtnsPerPallet,
+			PalletsDetailCtns:    lineRow.PalletsDetailCtns,
+			PalletBreakdown:      decodeInboundPalletBreakdownOrEmpty(lineRow.PalletBreakdownJSON),
+			UnitLabel:            lineRow.UnitLabel,
+			LineNote:             lineRow.LineNote,
+			CreatedAt:            lineRow.CreatedAt,
 		})
 		document.TotalLines++
 		document.TotalExpectedQty += lineRow.ExpectedQty
@@ -464,7 +471,7 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 				expected_qty,
 				received_qty,
 				pallets,
-				units_per_pallet,
+				inbound_ctns_per_pallet,
 				pallets_detail_ctns,
 				pallet_breakdown_json,
 				unit_label,
@@ -480,7 +487,7 @@ func (s *Store) CreateInboundDocument(ctx context.Context, input CreateInboundDo
 			line.ExpectedQty,
 			line.ReceivedQty,
 			line.Pallets,
-			line.UnitsPerPallet,
+			line.InboundCtnsPerPallet,
 			nullableString(line.PalletsDetailCtns),
 			nullableString(mustEncodeInboundPalletBreakdown(line.PalletBreakdown)),
 			nullableString(firstNonEmpty(input.UnitLabel, "CTN")),
@@ -653,15 +660,6 @@ func (s *Store) UpdateInboundDocumentContainerType(ctx context.Context, document
 		`, nextContainerType, documentID); err != nil {
 			return InboundDocument{}, mapDBError(fmt.Errorf("update inbound document container type: %w", err))
 		}
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE container_visits
-			SET
-				container_type = ?,
-				updated_at = CURRENT_TIMESTAMP
-			WHERE inbound_document_id = ?
-		`, nextContainerType, documentID); err != nil {
-			return InboundDocument{}, mapDBError(fmt.Errorf("sync inbound container visit container type: %w", err))
-		}
 	} else {
 		if err := updateContainerTypeForIdentityTx(ctx, tx, documentRow.CustomerID, containerNo, nextContainerType); err != nil {
 			return InboundDocument{}, err
@@ -751,7 +749,7 @@ func (s *Store) updateDraftInboundDocumentTx(
 				expected_qty,
 				received_qty,
 				pallets,
-				units_per_pallet,
+				inbound_ctns_per_pallet,
 				pallets_detail_ctns,
 				pallet_breakdown_json,
 				unit_label,
@@ -767,7 +765,7 @@ func (s *Store) updateDraftInboundDocumentTx(
 			line.ExpectedQty,
 			line.ReceivedQty,
 			line.Pallets,
-			line.UnitsPerPallet,
+			line.InboundCtnsPerPallet,
 			nullableString(line.PalletsDetailCtns),
 			nullableString(mustEncodeInboundPalletBreakdown(line.PalletBreakdown)),
 			nullableString(firstNonEmpty(input.UnitLabel, "CTN")),
@@ -1084,9 +1082,6 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 	`, nullableInt64(containerID), documentID); err != nil {
 		return mapDBError(fmt.Errorf("link inbound receipt to container: %w", err))
 	}
-	if _, err := ensureContainerVisitForInboundDocumentTx(ctx, tx, documentRow); err != nil {
-		return err
-	}
 
 	for _, lineRow := range lineRows {
 		itemID, itemDescription, err := s.findOrCreateInboundItem(ctx, tx, CreateInboundDocumentInput{
@@ -1159,32 +1154,6 @@ func (s *Store) confirmInboundDocumentTx(ctx context.Context, tx *sql.Tx, docume
 		return mapDBError(fmt.Errorf("mark inbound document confirmed: %w", err))
 	}
 
-	if strings.TrimSpace(documentRow.ContainerNo) != "" {
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE container_visits
-			SET
-				customer_id = ?,
-				location_id = ?,
-				container_no = ?,
-				arrival_date = ?,
-				received_at = ?,
-				handling_mode = ?,
-				status = ?,
-				updated_at = CURRENT_TIMESTAMP
-			WHERE inbound_document_id = ?
-		`,
-			documentRow.CustomerID,
-			documentRow.LocationID,
-			nullableString(documentRow.ContainerNo),
-			nullableTime(documentRow.ActualArrivalDate),
-			nullableTime(&confirmedAt),
-			InboundHandlingModePalletized,
-			ContainerVisitStatusOpen,
-			documentID,
-		); err != nil {
-			return mapDBError(fmt.Errorf("sync container visit after inbound confirmation: %w", err))
-		}
-	}
 	return nil
 }
 
@@ -1571,7 +1540,7 @@ func (s *Store) describeInboundDeletionLaterSourceTx(ctx context.Context, tx *sq
 	}
 	if sourceType == StockLedgerSourceOutbound {
 		var pickingOrderNo string
-		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(packing_list_no, '') FROM outbound_documents WHERE id = ?`, source.SourceDocumentID).Scan(&pickingOrderNo); err == nil && strings.TrimSpace(pickingOrderNo) != "" {
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(picking_order_no, '') FROM outbound_documents WHERE id = ?`, source.SourceDocumentID).Scan(&pickingOrderNo); err == nil && strings.TrimSpace(pickingOrderNo) != "" {
 			return fmt.Sprintf("outbound PO %s", strings.TrimSpace(pickingOrderNo))
 		}
 	}
@@ -1625,9 +1594,6 @@ func (s *Store) deleteLoadedInboundDocumentTx(ctx context.Context, tx *sql.Tx, d
 	}
 	if err := markDocumentAttachmentsDeletedForDocument(ctx, tx, DocumentAttachmentInbound, documentRow.ID); err != nil {
 		return time.Time{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM container_visits WHERE inbound_document_id = ?`, documentRow.ID); err != nil {
-		return time.Time{}, mapDBError(fmt.Errorf("delete inbound container visit: %w", err))
 	}
 	if err := deleteStockLedgerForDocumentTx(ctx, tx, StockLedgerSourceInbound, documentRow.ID); err != nil {
 		return time.Time{}, err
@@ -1808,7 +1774,7 @@ func (s *Store) cloneInboundDocumentTx(
 				expected_qty,
 				received_qty,
 				pallets,
-				units_per_pallet,
+				inbound_ctns_per_pallet,
 				pallets_detail_ctns,
 				pallet_breakdown_json,
 				unit_label,
@@ -1824,7 +1790,7 @@ func (s *Store) cloneInboundDocumentTx(
 			lineRow.ExpectedQty,
 			lineRow.ReceivedQty,
 			lineRow.Pallets,
-			lineRow.UnitsPerPallet,
+			lineRow.InboundCtnsPerPallet,
 			nullableString(lineRow.PalletsDetailCtns),
 			nullableString(lineRow.PalletBreakdownJSON),
 			nullableString(lineRow.UnitLabel),
@@ -1918,10 +1884,8 @@ func (s *Store) loadInboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, docu
 			id,
 			document_id,
 			COALESCE((
-				SELECT COALESCE(cic.item_number, sm.item_number)
+				SELECT sm.item_number
 				FROM sku_master sm
-				JOIN inbound_documents parent_d ON parent_d.id = il.document_id
-				LEFT JOIN customer_item_catalog cic ON cic.customer_id = parent_d.customer_id AND cic.sku_master_id = sm.id
 				WHERE sm.sku = il.sku_snapshot
 				LIMIT 1
 			), '') AS item_number,
@@ -1932,7 +1896,7 @@ func (s *Store) loadInboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, docu
 			expected_qty,
 			received_qty,
 			pallets,
-			units_per_pallet,
+			inbound_ctns_per_pallet,
 			COALESCE(pallets_detail_ctns, '') AS pallets_detail_ctns,
 			COALESCE(pallet_breakdown_json, '') AS pallet_breakdown_json,
 			COALESCE(unit_label, '') AS unit_label,
@@ -1961,7 +1925,7 @@ func (s *Store) loadInboundDocumentLinesTx(ctx context.Context, tx *sql.Tx, docu
 			&lineRow.ExpectedQty,
 			&lineRow.ReceivedQty,
 			&lineRow.Pallets,
-			&lineRow.UnitsPerPallet,
+			&lineRow.InboundCtnsPerPallet,
 			&lineRow.PalletsDetailCtns,
 			&lineRow.PalletBreakdownJSON,
 			&lineRow.UnitLabel,
@@ -2087,10 +2051,8 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 			id,
 			document_id,
 			COALESCE((
-				SELECT COALESCE(cic.item_number, sm.item_number)
+				SELECT sm.item_number
 				FROM sku_master sm
-				JOIN inbound_documents parent_d ON parent_d.id = il.document_id
-				LEFT JOIN customer_item_catalog cic ON cic.customer_id = parent_d.customer_id AND cic.sku_master_id = sm.id
 				WHERE sm.sku = il.sku_snapshot
 				LIMIT 1
 			), '') AS item_number,
@@ -2101,7 +2063,7 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 			expected_qty,
 			received_qty,
 			pallets,
-			units_per_pallet,
+			inbound_ctns_per_pallet,
 			COALESCE(pallets_detail_ctns, '') AS pallets_detail_ctns,
 			COALESCE(pallet_breakdown_json, '') AS pallet_breakdown_json,
 			COALESCE(unit_label, '') AS unit_label,
@@ -2127,22 +2089,22 @@ func (s *Store) listInboundDocumentsByIDs(ctx context.Context, documentIDs []int
 		}
 
 		document.Lines = append(document.Lines, InboundDocumentLine{
-			ID:                lineRow.ID,
-			DocumentID:        lineRow.DocumentID,
-			ItemNumber:        lineRow.ItemNumber,
-			SKU:               lineRow.SKUSnapshot,
-			Description:       lineRow.DescriptionSnapshot,
-			StorageSection:    fallbackSection(lineRow.StorageSection),
-			ReorderLevel:      lineRow.ReorderLevel,
-			ExpectedQty:       lineRow.ExpectedQty,
-			ReceivedQty:       lineRow.ReceivedQty,
-			Pallets:           lineRow.Pallets,
-			UnitsPerPallet:    lineRow.UnitsPerPallet,
-			PalletsDetailCtns: lineRow.PalletsDetailCtns,
-			PalletBreakdown:   decodeInboundPalletBreakdownOrEmpty(lineRow.PalletBreakdownJSON),
-			UnitLabel:         lineRow.UnitLabel,
-			LineNote:          lineRow.LineNote,
-			CreatedAt:         lineRow.CreatedAt,
+			ID:                   lineRow.ID,
+			DocumentID:           lineRow.DocumentID,
+			ItemNumber:           lineRow.ItemNumber,
+			SKU:                  lineRow.SKUSnapshot,
+			Description:          lineRow.DescriptionSnapshot,
+			StorageSection:       fallbackSection(lineRow.StorageSection),
+			ReorderLevel:         lineRow.ReorderLevel,
+			ExpectedQty:          lineRow.ExpectedQty,
+			ReceivedQty:          lineRow.ReceivedQty,
+			Pallets:              lineRow.Pallets,
+			InboundCtnsPerPallet: lineRow.InboundCtnsPerPallet,
+			PalletsDetailCtns:    lineRow.PalletsDetailCtns,
+			PalletBreakdown:      decodeInboundPalletBreakdownOrEmpty(lineRow.PalletBreakdownJSON),
+			UnitLabel:            lineRow.UnitLabel,
+			LineNote:             lineRow.LineNote,
+			CreatedAt:            lineRow.CreatedAt,
 		})
 		document.TotalLines++
 		document.TotalExpectedQty += lineRow.ExpectedQty
@@ -2376,8 +2338,8 @@ func sanitizeInboundDocumentInput(input CreateInboundDocumentInput) CreateInboun
 		// Reorder thresholds are no longer part of the receiving workflow. Keep the
 		// persisted column/API field only for backward compatibility.
 		line.ReorderLevel = 0
-		if line.UnitsPerPallet < 0 {
-			line.UnitsPerPallet = 0
+		if line.InboundCtnsPerPallet < 0 {
+			line.InboundCtnsPerPallet = 0
 		}
 		line.PalletsDetailCtns = strings.TrimSpace(line.PalletsDetailCtns)
 		line.StorageSection = fallbackSection(strings.TrimSpace(strings.ToUpper(line.StorageSection)))

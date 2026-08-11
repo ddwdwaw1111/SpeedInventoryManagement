@@ -281,7 +281,7 @@ func (s *Store) CreateOutboundDocumentsBulkDraft(ctx context.Context, input Outb
 	preparedDocuments := make([]preparedBulkOutboundDocument, 0, len(input.Documents))
 	seen := make(map[string]bool)
 	for index, entry := range input.Documents {
-		pickingOrderNo := strings.TrimSpace(strings.ToUpper(entry.Input.PackingListNo))
+		pickingOrderNo := strings.TrimSpace(strings.ToUpper(entry.Input.PickingOrderNo))
 		if pickingOrderNo == "" {
 			return OutboundBulkImportCommitResponse{}, fmt.Errorf("%w: shipment %d requires a Picking Order No", ErrInvalidInput, index+1)
 		} else if seen[pickingOrderNo] {
@@ -294,7 +294,7 @@ func (s *Store) CreateOutboundDocumentsBulkDraft(ctx context.Context, input Outb
 		seen[pickingOrderNo] = true
 
 		documentInput := entry.Input
-		documentInput.PackingListNo = pickingOrderNo
+		documentInput.PickingOrderNo = pickingOrderNo
 		documentInput.OrderRef = ""
 		documentInput.CarrierName = ""
 		documentInput.Status = DocumentStatusDraft
@@ -397,7 +397,7 @@ func buildOutboundBulkMainWarehousePlan(
 	transferInput := CreateInventoryTransferInput{
 		TransferNo:          "TRN-BULK-" + strings.ToUpper(transferToken),
 		ActualTransferredAt: firstNonEmpty(input.ActualShipDate, input.ExpectedShipDate),
-		Notes:               fmt.Sprintf("Automatic transfer to %s for bulk outbound %s", mainLocation.Name, input.PackingListNo),
+		Notes:               fmt.Sprintf("Automatic transfer to %s for bulk outbound %s", mainLocation.Name, input.PickingOrderNo),
 		Lines:               make([]CreateInventoryTransferLineInput, 0),
 	}
 	for lineIndex := range input.Lines {
@@ -427,7 +427,7 @@ func buildOutboundBulkMainWarehousePlan(
 					DestinationPallets: allocation.Pallets,
 					ToLocationID:       mainLocation.ID,
 					ToStorageSection:   DefaultStorageSection,
-					LineNote:           fmt.Sprintf("Bulk outbound %s", input.PackingListNo),
+					LineNote:           fmt.Sprintf("Bulk outbound %s", input.PickingOrderNo),
 				})
 				allocation.StorageSection = DefaultStorageSection
 				allocation.LocationID = mainLocation.ID
@@ -782,7 +782,7 @@ func (s *Store) buildOutboundBulkImportPreview(ctx context.Context, fileName str
 			document.ExpectedShipDate = normalized
 		}
 		document.Input = CreateOutboundDocumentInput{
-			PackingListNo: document.PickingOrderNo, ExpectedShipDate: document.ExpectedShipDate, ActualShipDate: document.ActualShipDate,
+			PickingOrderNo: document.PickingOrderNo, ExpectedShipDate: document.ExpectedShipDate, ActualShipDate: document.ActualShipDate,
 			ShipToName: strings.TrimSpace(document.ShipToName), ShipToAddress: strings.TrimSpace(document.ShipToAddress),
 			ShipToContact: strings.TrimSpace(document.ShipToContact),
 			Status:        DocumentStatusDraft, TrackingStatus: OutboundTrackingScheduled, Lines: make([]CreateOutboundDocumentLineInput, 0, len(document.Lines)),
@@ -1362,9 +1362,9 @@ func (s *Store) outboundPickingOrderExists(ctx context.Context, customerID int64
 		return false, nil
 	}
 	var count int
-	// packing_list_no remains the compatibility storage column for the
+	// picking_order_no remains the compatibility storage column for the
 	// user-facing Picking Order No.; no schema migration is required.
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM outbound_documents WHERE customer_id = ? AND cancelled_at IS NULL AND UPPER(TRIM(COALESCE(packing_list_no, ''))) = UPPER(TRIM(?))`, customerID, pickingOrderNo).Scan(&count); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM outbound_documents WHERE customer_id = ? AND cancelled_at IS NULL AND UPPER(TRIM(COALESCE(picking_order_no, ''))) = UPPER(TRIM(?))`, customerID, pickingOrderNo).Scan(&count); err != nil {
 		return false, fmt.Errorf("check outbound picking order: %w", err)
 	}
 	return count > 0, nil

@@ -44,7 +44,7 @@ func TestBuildCustomerPortalContainerSummariesNetsReversals(t *testing.T) {
 				QuantityDelta:      -10,
 				SourceDocumentType: service.StockLedgerSourceOutbound,
 				SourceDocumentID:   11,
-				PackingListNo:      "PO-11",
+				PickingOrderNo:     "PO-11",
 				CreatedAt:          now,
 			},
 			{
@@ -58,7 +58,7 @@ func TestBuildCustomerPortalContainerSummariesNetsReversals(t *testing.T) {
 				QuantityDelta:      10,
 				SourceDocumentType: service.StockLedgerSourceOutbound,
 				SourceDocumentID:   11,
-				PackingListNo:      "PO-11",
+				PickingOrderNo:     "PO-11",
 				CreatedAt:          now,
 			},
 		},

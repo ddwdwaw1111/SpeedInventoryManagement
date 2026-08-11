@@ -225,7 +225,7 @@ function createPreview(): OutboundBulkImportPreview {
       rowNumbers: [4],
       lines: [{ rowNumber: 4, warehouse: "NJ", sourceContainer: "CONT-A", storageSection: "TEMP", sku: "608333", itemNumber: "608333", quantity: 5, inventoryPallets: 2, outboundPallets: 3, lineNote: "", requiresTransfer: true, outboundWarehouse: "308 Herrod Blvd" }],
       input: {
-        packingListNo: "PO-100",
+        pickingOrderNo: "PO-100",
         expectedShipDate: "2026-07-15",
         status: "DRAFT",
         trackingStatus: "SCHEDULED",

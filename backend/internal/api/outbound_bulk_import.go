@@ -136,12 +136,12 @@ func (s *Server) handleCommitOutboundBulkImport(c *gin.Context) {
 			continue
 		}
 		document := result.Document
-		s.writeAuditLog(c, "BULK_IMPORT", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Imported outbound document draft from Excel", map[string]any{
+		s.writeAuditLog(c, "BULK_IMPORT", "outbound_document", document.ID, firstNonEmptyString(document.PickingOrderNo, fmt.Sprintf("outbound:%d", document.ID)), "Imported outbound document draft from Excel", map[string]any{
 			"sourceFileName": input.SourceFileName,
 			"importBatchId":  batch.ID,
 			"importId":       batch.ImportID,
 			"documentKey":    result.DocumentKey,
-			"pickingOrderNo": document.PackingListNo,
+			"pickingOrderNo": document.PickingOrderNo,
 			"customer":       document.CustomerName,
 			"status":         document.Status,
 			"totalLines":     document.TotalLines,

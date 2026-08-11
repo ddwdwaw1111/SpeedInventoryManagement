@@ -233,7 +233,7 @@ function createPreview(): InboundBulkImportPreview {
           expectedQty: 930,
           receivedQty: 900,
           pallets: 20,
-          unitsPerPallet: 48,
+          inboundCtnsPerPallet: 48,
           storageSection: "A"
         }]
       },

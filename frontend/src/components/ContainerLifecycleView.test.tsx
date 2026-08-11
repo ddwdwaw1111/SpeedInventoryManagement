@@ -364,7 +364,7 @@ describe("ContainerLifecycleView", () => {
           pickingOrders: [
             {
               id: 20,
-              packingListNo: "PO-1",
+              pickingOrderNo: "PO-1",
               orderRef: "",
               expectedShipDate: null,
               status: "CONFIRMED",
@@ -373,7 +373,7 @@ describe("ContainerLifecycleView", () => {
             },
             {
               id: 21,
-              packingListNo: "PO-2",
+              pickingOrderNo: "PO-2",
               orderRef: "",
               expectedShipDate: null,
               status: "CONFIRMED",
@@ -420,7 +420,7 @@ describe("ContainerLifecycleView", () => {
           pickingOrders: [
             {
               id: 20,
-              packingListNo: "PO-88",
+              pickingOrderNo: "PO-88",
               orderRef: "",
               expectedShipDate: null,
               status: "CONFIRMED",
@@ -636,7 +636,7 @@ describe("ContainerLifecycleView", () => {
         pickingOrders: [
           {
             id: 20,
-            packingListNo: "PO-1",
+            pickingOrderNo: "PO-1",
             orderRef: "",
             expectedShipDate: null,
             status: "CONFIRMED",
@@ -645,7 +645,7 @@ describe("ContainerLifecycleView", () => {
           },
           {
             id: 21,
-            packingListNo: "PO-2",
+            pickingOrderNo: "PO-2",
             orderRef: "",
             expectedShipDate: null,
             status: "CONFIRMED",
@@ -729,7 +729,7 @@ describe("ContainerLifecycleView", () => {
         pickingOrders: [
           {
             id: 20,
-            packingListNo: "PO-1",
+            pickingOrderNo: "PO-1",
             orderRef: "",
             expectedShipDate: null,
             status: "CONFIRMED",
@@ -765,7 +765,7 @@ describe("ContainerLifecycleView", () => {
   it("centers stacked outbound orders around the inventory row", () => {
     const pickingOrders = Array.from({ length: 5 }, (_, index) => ({
       id: 30 + index,
-      packingListNo: `PO-${index + 1}`,
+      pickingOrderNo: `PO-${index + 1}`,
       orderRef: "",
       expectedShipDate: null,
       status: "CONFIRMED",
@@ -787,7 +787,7 @@ describe("ContainerLifecycleView", () => {
           availableQty: 0,
           shippedQty: 50,
           outboundOrderCount: 5,
-          pickingOrderRefs: pickingOrders.map((document) => document.packingListNo),
+          pickingOrderRefs: pickingOrders.map((document) => document.pickingOrderNo),
           transferCount: 0,
           palletCount: 0,
           status: "SHIPPED",

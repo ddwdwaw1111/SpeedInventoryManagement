@@ -42,7 +42,7 @@ type createStockLedgerInput struct {
 	ContainerNo         string
 	DeliveryDate        *time.Time
 	OutDate             *time.Time
-	PackingListNo       string
+	PickingOrderNo      string
 	OrderRef            string
 	ItemNumber          string
 	DescriptionSnapshot string
@@ -234,7 +234,7 @@ func (s *Store) createStockLedgerEntryTx(ctx context.Context, tx *sql.Tx, input 
 			container_no_snapshot,
 			delivery_date,
 			out_date,
-			packing_list_no,
+			picking_order_no,
 			order_ref,
 			item_number_snapshot,
 			description_snapshot,
@@ -254,7 +254,7 @@ func (s *Store) createStockLedgerEntryTx(ctx context.Context, tx *sql.Tx, input 
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		firstNonEmpty(input.EventType, StockLedgerEventReceive),
-		nullableTime(input.OccurredAt),
+		nullableTime(resolveStockLedgerEventTime(input)),
 		nullableInt64(input.SKUMasterID),
 		input.CustomerID,
 		nullableInt64(input.ContainerID),
@@ -269,7 +269,7 @@ func (s *Store) createStockLedgerEntryTx(ctx context.Context, tx *sql.Tx, input 
 		strings.TrimSpace(input.ContainerNo),
 		nullableTime(input.DeliveryDate),
 		nullableTime(input.OutDate),
-		nullableString(input.PackingListNo),
+		nullableString(input.PickingOrderNo),
 		nullableString(input.OrderRef),
 		nullableString(input.ItemNumber),
 		nullableString(input.DescriptionSnapshot),
@@ -294,9 +294,6 @@ func (s *Store) createStockLedgerEntryTx(ctx context.Context, tx *sql.Tx, input 
 	if err != nil {
 		return 0, fmt.Errorf("resolve stock ledger id: %w", err)
 	}
-	if err := s.createContainerLifecycleEventTx(ctx, tx, stockLedgerID, input); err != nil {
-		return 0, err
-	}
 	if err := s.applyContainerInventoryLedgerDeltaTx(ctx, tx, input); err != nil {
 		return 0, err
 	}
@@ -304,6 +301,19 @@ func (s *Store) createStockLedgerEntryTx(ctx context.Context, tx *sql.Tx, input 
 		return 0, err
 	}
 	return stockLedgerID, nil
+}
+
+func resolveStockLedgerEventTime(input createStockLedgerInput) *time.Time {
+	if input.OccurredAt != nil {
+		return input.OccurredAt
+	}
+	if input.EventType == StockLedgerEventReceive {
+		return input.DeliveryDate
+	}
+	if input.EventType == StockLedgerEventShip || input.EventType == StockLedgerEventReversal {
+		return input.OutDate
+	}
+	return nil
 }
 
 func ensureContainerForStockLedgerTx(ctx context.Context, tx *sql.Tx, input createStockLedgerInput) (int64, error) {
@@ -328,7 +338,7 @@ func ensureContainerForStockLedgerTx(ctx context.Context, tx *sql.Tx, input crea
 		ON DUPLICATE KEY UPDATE
 			id = LAST_INSERT_ID(id),
 			last_event_at = GREATEST(COALESCE(last_event_at, VALUES(last_event_at)), VALUES(last_event_at))
-	`, input.CustomerID, input.LocationID, containerNo, nullableTime(resolveContainerLifecycleEventTime(input)))
+	`, input.CustomerID, input.LocationID, containerNo, nullableTime(resolveStockLedgerEventTime(input)))
 	if err != nil {
 		return 0, mapDBError(fmt.Errorf("ensure stock ledger container: %w", err))
 	}

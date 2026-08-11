@@ -180,7 +180,7 @@ export function ContainerDetailPage({
                     {t("sku")}: <span className="font-mono">{movement.sku || "-"}</span> · {movement.description}
                   </div>
                   <div className="mt-1 text-xs text-slate-500">
-                    {t("itemNumber")}: <span className="font-mono">{movement.itemNumber || "-"}</span> · {movement.locationName} / {movement.storageSection} · {movement.referenceCode || movement.packingListNo || movement.orderRef || "-"}
+                    {t("itemNumber")}: <span className="font-mono">{movement.itemNumber || "-"}</span> · {movement.locationName} / {movement.storageSection} · {movement.referenceCode || movement.pickingOrderNo || movement.orderRef || "-"}
                   </div>
                 </div>
                 <div className="text-right"><div className="font-mono font-bold text-slate-900">{signed(movement.quantityChange)} Qty</div><div className="text-xs text-slate-500">{movement.pallets} {t("pallets")} · {formatDateTimeValue(movement.createdAt, resolvedTimeZone)}</div></div>

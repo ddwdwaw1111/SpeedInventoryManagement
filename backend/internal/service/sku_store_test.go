@@ -14,9 +14,11 @@ func TestSanitizeSKUMasterInput(t *testing.T) {
 		Description:             "  kraft bag ",
 		Unit:                    " ctn ",
 		ReorderLevel:            200,
-		DefaultUnitsPerPallet:   200,
 		Weight:                  12.345,
 		Cubes:                   0.084,
+		CartonLengthCM:          60,
+		CartonWidthCM:           40,
+		CartonHeightCM:          35,
 		OutboundCartonsPerLayer: 10,
 		OutboundLayerCount:      6,
 	})
@@ -36,9 +38,6 @@ func TestSanitizeSKUMasterInput(t *testing.T) {
 	if input.Unit != "ctn" {
 		t.Fatalf("expected normalized unit, got %q", input.Unit)
 	}
-	if input.DefaultUnitsPerPallet != 200 {
-		t.Fatalf("expected default units per pallet to be preserved, got %d", input.DefaultUnitsPerPallet)
-	}
 	if input.Weight != 12.345 || input.Cubes != 0.084 {
 		t.Fatalf("expected physical profile to be preserved, got %#v", input)
 	}
@@ -49,10 +48,9 @@ func TestSanitizeSKUMasterInput(t *testing.T) {
 
 func TestValidateSKUMasterInput(t *testing.T) {
 	validInput := CreateSKUMasterInput{
-		SKU:                   "ABC123",
-		Description:           "kraft bag",
-		ReorderLevel:          200,
-		DefaultUnitsPerPallet: 200,
+		SKU:          "ABC123",
+		Description:  "kraft bag",
+		ReorderLevel: 200,
 	}
 
 	if err := validateSKUMasterInput(validInput); err != nil {
@@ -63,9 +61,9 @@ func TestValidateSKUMasterInput(t *testing.T) {
 		{Description: "kraft bag"},
 		{SKU: "ABC123"},
 		{SKU: "ABC123", Description: "kraft bag", ReorderLevel: -1},
-		{SKU: "ABC123", Description: "kraft bag", DefaultUnitsPerPallet: -1},
 		{SKU: "ABC123", Description: "kraft bag", Weight: -1},
 		{SKU: "ABC123", Description: "kraft bag", Cubes: -1},
+		{SKU: "ABC123", Description: "kraft bag", CartonLengthCM: -1},
 		{SKU: "ABC123", Description: "kraft bag", OutboundCartonsPerLayer: -1},
 		{SKU: "ABC123", Description: "kraft bag", OutboundLayerCount: -1},
 	}

@@ -57,12 +57,19 @@ type CreateInventoryTransferInput struct {
 	Notes               string                              `json:"notes"`
 	Lines               []CreateInventoryTransferLineInput  `json:"lines"`
 	EntireContainer     *CreateEntireContainerTransferInput `json:"entireContainer"`
+	EntireLocation      *CreateEntireLocationTransferInput  `json:"entireLocation"`
 }
 
 type CreateEntireContainerTransferInput struct {
 	CustomerID       int64  `json:"customerId"`
 	LocationID       int64  `json:"locationId"`
 	ContainerNo      string `json:"containerNo"`
+	ToLocationID     int64  `json:"toLocationId"`
+	ToStorageSection string `json:"toStorageSection"`
+}
+
+type CreateEntireLocationTransferInput struct {
+	LocationID       int64  `json:"locationId"`
 	ToLocationID     int64  `json:"toLocationId"`
 	ToStorageSection string `json:"toStorageSection"`
 }
@@ -340,12 +347,32 @@ func (s *Store) createInventoryTransferTransaction(
 	if input.EntireContainer != nil {
 		customerIDs = append(customerIDs, input.EntireContainer.CustomerID)
 	}
+	if input.EntireLocation != nil {
+		locationCustomerIDs, err := s.listEntireLocationCustomerIDsTx(ctx, tx, input.EntireLocation.LocationID)
+		if err != nil {
+			return InventoryTransfer{}, err
+		}
+		customerIDs = append(customerIDs, locationCustomerIDs...)
+	}
 	if err := lockBillingSourceCustomersTx(ctx, tx, customerIDs); err != nil {
 		return InventoryTransfer{}, err
 	}
 	if input.EntireContainer != nil {
 		input.Lines, err = s.buildEntireContainerTransferLinesTx(ctx, tx, *input.EntireContainer)
 		if err != nil {
+			return InventoryTransfer{}, err
+		}
+	}
+	if input.EntireLocation != nil {
+		input.Lines, err = s.buildEntireLocationTransferLinesTx(ctx, tx, *input.EntireLocation)
+		if err != nil {
+			return InventoryTransfer{}, err
+		}
+		lineCustomerIDs := make([]int64, 0, len(input.Lines))
+		for _, line := range input.Lines {
+			lineCustomerIDs = append(lineCustomerIDs, line.CustomerID)
+		}
+		if err := lockBillingSourceCustomersTx(ctx, tx, lineCustomerIDs); err != nil {
 			return InventoryTransfer{}, err
 		}
 	}
@@ -768,6 +795,115 @@ func (s *Store) buildEntireContainerTransferLinesTx(
 	return lines, nil
 }
 
+func (s *Store) listEntireLocationCustomerIDsTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	locationID int64,
+) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT DISTINCT customer_id
+		FROM inventory_items
+		WHERE location_id = ?
+			AND (quantity > 0 OR pallets > 0)
+		ORDER BY customer_id ASC
+	`, locationID)
+	if err != nil {
+		return nil, fmt.Errorf("load whole-warehouse customers: %w", err)
+	}
+	defer rows.Close()
+
+	customerIDs := make([]int64, 0)
+	for rows.Next() {
+		var customerID int64
+		if err := rows.Scan(&customerID); err != nil {
+			return nil, fmt.Errorf("scan whole-warehouse customer: %w", err)
+		}
+		customerIDs = append(customerIDs, customerID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate whole-warehouse customers: %w", err)
+	}
+	return customerIDs, nil
+}
+
+func (s *Store) buildEntireLocationTransferLinesTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	input CreateEntireLocationTransferInput,
+) ([]CreateInventoryTransferLineInput, error) {
+	if _, err := s.getTransferLocationName(ctx, tx, input.LocationID); err != nil {
+		return nil, fmt.Errorf("load source warehouse: %w", err)
+	}
+	if _, err := s.getTransferLocationName(ctx, tx, input.ToLocationID); err != nil {
+		return nil, err
+	}
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id
+		FROM inventory_items
+		WHERE location_id = ?
+			AND (quantity > 0 OR pallets > 0)
+		ORDER BY id ASC
+		FOR UPDATE
+	`, input.LocationID)
+	if err != nil {
+		return nil, fmt.Errorf("lock whole-warehouse inventory: %w", err)
+	}
+	itemIDs := make([]int64, 0)
+	for rows.Next() {
+		var itemID int64
+		if err := rows.Scan(&itemID); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan whole-warehouse inventory: %w", err)
+		}
+		itemIDs = append(itemIDs, itemID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("iterate whole-warehouse inventory: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close whole-warehouse inventory rows: %w", err)
+	}
+	if len(itemIDs) == 0 {
+		return nil, fmt.Errorf("%w: source warehouse has no inventory to transfer", ErrInvalidInput)
+	}
+
+	toSection := fallbackSection(input.ToStorageSection)
+	lines := make([]CreateInventoryTransferLineInput, 0, len(itemIDs))
+	for _, itemID := range itemIDs {
+		projection, err := s.loadInventoryProjectionTx(ctx, tx, itemID)
+		if err != nil {
+			return nil, err
+		}
+		item := lockedTransferItemFromProjection(projection)
+		if item.AvailableQty != item.Quantity || item.AvailablePallets != item.Pallets {
+			return nil, fmt.Errorf(
+				"%w: cannot move the entire warehouse because container %s / UPC %s has allocated, damaged, or held inventory",
+				ErrReservedStock,
+				firstNonEmpty(item.ContainerNo, "UNASSIGNED"),
+				item.SKU,
+			)
+		}
+		if err := s.ensureTransferDestinationProjectionItem(ctx, tx, item, input.ToLocationID, toSection); err != nil {
+			return nil, err
+		}
+		lines = append(lines, CreateInventoryTransferLineInput{
+			CustomerID:         item.CustomerID,
+			LocationID:         item.LocationID,
+			StorageSection:     item.StorageSection,
+			ContainerNo:        item.ContainerNo,
+			SKUMasterID:        item.SKUMasterID,
+			Quantity:           item.Quantity,
+			SourcePallets:      item.Pallets,
+			DestinationPallets: item.Pallets,
+			ToLocationID:       input.ToLocationID,
+			ToStorageSection:   toSection,
+		})
+	}
+	return lines, nil
+}
+
 func (s *Store) getTransferLocationName(ctx context.Context, tx *sql.Tx, locationID int64) (string, error) {
 	var locationName string
 	if err := tx.QueryRowContext(ctx, `
@@ -892,6 +1028,9 @@ func sanitizeInventoryTransferInput(input CreateInventoryTransferInput) CreateIn
 		input.EntireContainer.ContainerNo = normalizeContainerNo(input.EntireContainer.ContainerNo)
 		input.EntireContainer.ToStorageSection = fallbackSection(strings.TrimSpace(strings.ToUpper(input.EntireContainer.ToStorageSection)))
 	}
+	if input.EntireLocation != nil {
+		input.EntireLocation.ToStorageSection = fallbackSection(strings.TrimSpace(strings.ToUpper(input.EntireLocation.ToStorageSection)))
+	}
 
 	lines := make([]CreateInventoryTransferLineInput, 0, len(input.Lines))
 	for _, line := range input.Lines {
@@ -909,10 +1048,31 @@ func sanitizeInventoryTransferInput(input CreateInventoryTransferInput) CreateIn
 }
 
 func validateInventoryTransferInput(input CreateInventoryTransferInput) error {
+	modeCount := 0
 	if input.EntireContainer != nil {
-		if len(input.Lines) != 0 {
-			return fmt.Errorf("%w: entire container transfer cannot include explicit lines", ErrInvalidInput)
+		modeCount++
+	}
+	if input.EntireLocation != nil {
+		modeCount++
+	}
+	if len(input.Lines) > 0 {
+		modeCount++
+	}
+	if modeCount > 1 {
+		return fmt.Errorf("%w: choose only one transfer mode", ErrInvalidInput)
+	}
+	if input.EntireLocation != nil {
+		switch {
+		case input.EntireLocation.LocationID <= 0:
+			return fmt.Errorf("%w: source warehouse is required", ErrInvalidInput)
+		case input.EntireLocation.ToLocationID <= 0:
+			return fmt.Errorf("%w: destination warehouse is required", ErrInvalidInput)
+		case input.EntireLocation.LocationID == input.EntireLocation.ToLocationID:
+			return fmt.Errorf("%w: source and destination warehouses must be different", ErrInvalidInput)
 		}
+		return nil
+	}
+	if input.EntireContainer != nil {
 		switch {
 		case input.EntireContainer.CustomerID <= 0:
 			return fmt.Errorf("%w: customer is required", ErrInvalidInput)

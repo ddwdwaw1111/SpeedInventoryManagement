@@ -407,18 +407,6 @@ func updateContainerTypeForIdentityTx(ctx context.Context, tx *sql.Tx, customerI
 		return mapDBError(fmt.Errorf("update shared inbound container type: %w", err))
 	}
 	if _, err := tx.ExecContext(ctx, `
-		UPDATE container_visits cv
-		JOIN inbound_documents d ON d.id = cv.inbound_document_id
-		SET
-			cv.container_type = ?,
-			cv.updated_at = CURRENT_TIMESTAMP
-		WHERE d.customer_id = ?
-		  AND UPPER(TRIM(COALESCE(d.container_no, ''))) = ?
-		  AND UPPER(TRIM(d.status)) NOT IN ('DELETED', 'CANCELLED')
-	`, containerType, customerID, containerNo); err != nil {
-		return mapDBError(fmt.Errorf("sync shared inbound container visit type: %w", err))
-	}
-	if _, err := tx.ExecContext(ctx, `
 		UPDATE containers
 		SET
 			container_type = ?,
@@ -480,18 +468,6 @@ func updateContainerHandlingModeForIdentityTx(ctx context.Context, tx *sql.Tx, c
 		  AND UPPER(TRIM(status)) NOT IN ('DELETED', 'CANCELLED')
 	`, handlingMode, customerID, containerNo); err != nil {
 		return mapDBError(fmt.Errorf("update shared inbound handling mode: %w", err))
-	}
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE container_visits cv
-		JOIN inbound_documents d ON d.id = cv.inbound_document_id
-		SET
-			cv.handling_mode = ?,
-			cv.updated_at = CURRENT_TIMESTAMP
-		WHERE d.customer_id = ?
-		  AND UPPER(TRIM(COALESCE(d.container_no, ''))) = ?
-		  AND UPPER(TRIM(d.status)) NOT IN ('DELETED', 'CANCELLED')
-	`, handlingMode, customerID, containerNo); err != nil {
-		return mapDBError(fmt.Errorf("sync shared inbound container visit handling mode: %w", err))
 	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE containers

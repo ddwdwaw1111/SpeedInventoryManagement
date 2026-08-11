@@ -15,8 +15,6 @@ services:
       retries: 10
     volumes:
       - mariadb_data:/var/lib/mysql
-      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
-      - ./database/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
 
   backend:
     build:

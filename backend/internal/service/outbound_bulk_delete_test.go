@@ -42,8 +42,8 @@ func TestBulkDeleteOutboundDocumentsReversesConfirmedAndReleasesDraftReservation
 	}
 
 	confirmed, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
-		PackingListNo: "BULK-DELETE-CONFIRMED-" + suffix,
-		Status:        DocumentStatusConfirmed,
+		PickingOrderNo: "BULK-DELETE-CONFIRMED-" + suffix,
+		Status:         DocumentStatusConfirmed,
 		Lines: []CreateOutboundDocumentLineInput{{
 			CustomerID: customer.ID, LocationID: location.ID, SKUMasterID: item.SKUMasterID,
 			Quantity: 4, Pallets: 1, UnitLabel: "CTN",
@@ -53,8 +53,8 @@ func TestBulkDeleteOutboundDocumentsReversesConfirmedAndReleasesDraftReservation
 		t.Fatalf("create confirmed outbound for bulk deletion: %v", err)
 	}
 	draft, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
-		PackingListNo: "BULK-DELETE-DRAFT-" + suffix,
-		Status:        DocumentStatusDraft,
+		PickingOrderNo: "BULK-DELETE-DRAFT-" + suffix,
+		Status:         DocumentStatusDraft,
 		Lines: []CreateOutboundDocumentLineInput{{
 			CustomerID: customer.ID, LocationID: location.ID, SKUMasterID: item.SKUMasterID,
 			Quantity: 2, Pallets: 1, UnitLabel: "CTN",

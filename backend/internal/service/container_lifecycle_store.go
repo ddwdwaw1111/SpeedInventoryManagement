@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -26,7 +25,7 @@ type ContainerLifecycleEvent struct {
 	SourceDocumentType string    `json:"sourceDocumentType"`
 	SourceDocumentID   int64     `json:"sourceDocumentId"`
 	SourceLineID       int64     `json:"sourceLineId"`
-	PackingListNo      string    `json:"packingListNo"`
+	PickingOrderNo     string    `json:"pickingOrderNo"`
 	OrderRef           string    `json:"orderRef"`
 	ItemNumber         string    `json:"itemNumber"`
 	Description        string    `json:"description"`
@@ -58,49 +57,51 @@ func (s *Store) ListContainerLifecycleEvents(ctx context.Context, limit int, fil
 	whereClauses := []string{"1 = 1"}
 	args := make([]any, 0)
 	if filter.CustomerID > 0 {
-		whereClauses = append(whereClauses, "cle.customer_id = ?")
+		whereClauses = append(whereClauses, "sl.customer_id = ?")
 		args = append(args, filter.CustomerID)
 	}
 	if containerNo := strings.TrimSpace(strings.ToUpper(filter.ContainerNo)); containerNo != "" {
-		whereClauses = append(whereClauses, "UPPER(TRIM(cle.container_no)) = ?")
+		whereClauses = append(whereClauses, "UPPER(TRIM(sl.container_no_snapshot)) = ?")
 		args = append(args, containerNo)
 	}
 	query := fmt.Sprintf(`
 		SELECT
-			cle.id,
-			COALESCE(cle.stock_ledger_id, 0) AS stock_ledger_id,
-			cle.customer_id,
+			sl.id,
+			sl.id AS stock_ledger_id,
+			sl.customer_id,
 			c.name AS customer_name,
-			cle.location_id,
+			sl.location_id,
 			l.name AS location_name,
-			COALESCE(NULLIF(cle.storage_section, ''), 'TEMP') AS storage_section,
-			COALESCE(cle.container_no, '') AS container_no,
-			cle.event_type,
-			cle.event_time,
-			cle.quantity_delta,
-			cle.pallet_delta,
-			COALESCE(cle.sku_master_id, 0) AS sku_master_id,
+			COALESCE(NULLIF(sl.storage_section, ''), 'TEMP') AS storage_section,
+			COALESCE(sl.container_no_snapshot, '') AS container_no,
+			sl.event_type,
+			COALESCE(sl.occurred_at, sl.created_at) AS event_time,
+			sl.quantity_change,
+			sl.pallet_change,
+			COALESCE(sl.sku_master_id, 0) AS sku_master_id,
 			COALESCE(sm.sku, '') AS sku,
-			COALESCE(cle.source_document_type, '') AS source_document_type,
-			COALESCE(cle.source_document_id, 0) AS source_document_id,
-			COALESCE(cle.source_line_id, 0) AS source_line_id,
-			COALESCE(cle.packing_list_no, '') AS packing_list_no,
-			COALESCE(cle.order_ref, '') AS order_ref,
-			COALESCE(cle.item_number_snapshot, '') AS item_number,
-			COALESCE(cle.description_snapshot, '') AS description,
-			cle.expected_qty,
-			cle.received_qty,
-			cle.pallets,
-			COALESCE(cle.document_note, '') AS document_note,
-			COALESCE(cle.reason, '') AS reason,
-			COALESCE(cle.reference_code, '') AS reference_code,
-			cle.created_at
-		FROM container_lifecycle_events cle
-		JOIN customers c ON c.id = cle.customer_id
-		JOIN storage_locations l ON l.id = cle.location_id
-		LEFT JOIN sku_master sm ON sm.id = cle.sku_master_id
+			COALESCE(sl.source_document_type, '') AS source_document_type,
+			COALESCE(sl.source_document_id, 0) AS source_document_id,
+			COALESCE(sl.source_line_id, 0) AS source_line_id,
+			COALESCE(odoc.picking_order_no, '') AS picking_order_no,
+			COALESCE(odoc.order_ref, '') AS order_ref,
+			COALESCE(sl.item_number_snapshot, '') AS item_number,
+			COALESCE(sl.description_snapshot, '') AS description,
+			sl.expected_qty,
+			sl.received_qty,
+			sl.pallets,
+			COALESCE(sl.document_note, '') AS document_note,
+			COALESCE(sl.reason, '') AS reason,
+			COALESCE(sl.reference_code, '') AS reference_code,
+			sl.created_at
+		FROM stock_ledger sl
+		JOIN customers c ON c.id = sl.customer_id
+		JOIN storage_locations l ON l.id = sl.location_id
+		LEFT JOIN sku_master sm ON sm.id = sl.sku_master_id
+		LEFT JOIN outbound_documents odoc
+			ON sl.source_document_type = 'OUTBOUND' AND sl.source_document_id = odoc.id
 		WHERE %s
-		ORDER BY cle.event_time DESC, cle.id DESC
+		ORDER BY COALESCE(sl.occurred_at, sl.created_at) DESC, sl.id DESC
 		LIMIT ?
 	`, strings.Join(whereClauses, "\n\t\tAND "))
 	args = append(args, limit)
@@ -125,95 +126,6 @@ func (s *Store) ListContainerLifecycleEvents(ctx context.Context, limit int, fil
 	return events, nil
 }
 
-func (s *Store) createContainerLifecycleEventTx(ctx context.Context, tx *sql.Tx, stockLedgerID int64, input createStockLedgerInput) error {
-	containerNo := strings.TrimSpace(input.ContainerNo)
-	if stockLedgerID <= 0 || containerNo == "" {
-		return nil
-	}
-
-	_, err := tx.ExecContext(ctx, `
-		INSERT INTO container_lifecycle_events (
-			stock_ledger_id,
-			customer_id,
-			location_id,
-			section_id,
-			storage_section,
-			container_no,
-			event_type,
-			event_time,
-			quantity_delta,
-			pallet_delta,
-			sku_master_id,
-			source_document_type,
-			source_document_id,
-			source_line_id,
-			packing_list_no,
-			order_ref,
-			item_number_snapshot,
-			description_snapshot,
-			expected_qty,
-			received_qty,
-			pallets,
-			document_note,
-			reason,
-			reference_code
-		) VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE
-			customer_id = VALUES(customer_id),
-			location_id = VALUES(location_id),
-			section_id = VALUES(section_id),
-			storage_section = VALUES(storage_section),
-			container_no = VALUES(container_no),
-			event_type = VALUES(event_type),
-			event_time = VALUES(event_time),
-			quantity_delta = VALUES(quantity_delta),
-			pallet_delta = VALUES(pallet_delta),
-			sku_master_id = VALUES(sku_master_id),
-			source_document_type = VALUES(source_document_type),
-			source_document_id = VALUES(source_document_id),
-			source_line_id = VALUES(source_line_id),
-			packing_list_no = VALUES(packing_list_no),
-			order_ref = VALUES(order_ref),
-			item_number_snapshot = VALUES(item_number_snapshot),
-			description_snapshot = VALUES(description_snapshot),
-			expected_qty = VALUES(expected_qty),
-			received_qty = VALUES(received_qty),
-			pallets = VALUES(pallets),
-			document_note = VALUES(document_note),
-			reason = VALUES(reason),
-			reference_code = VALUES(reference_code)
-	`,
-		stockLedgerID,
-		input.CustomerID,
-		input.LocationID,
-		nullableInt64(input.SectionID),
-		fallbackSection(input.StorageSection),
-		containerNo,
-		firstNonEmpty(input.EventType, StockLedgerEventReceive),
-		nullableTime(resolveContainerLifecycleEventTime(input)),
-		input.QuantityChange,
-		input.PalletChange,
-		nullableInt64(input.SKUMasterID),
-		nullableString(input.SourceDocumentType),
-		nullableInt64(input.SourceDocumentID),
-		nullableInt64(input.SourceLineID),
-		nullableString(input.PackingListNo),
-		nullableString(input.OrderRef),
-		nullableString(input.ItemNumber),
-		nullableString(input.DescriptionSnapshot),
-		input.ExpectedQty,
-		input.ReceivedQty,
-		input.Pallets,
-		nullableString(input.DocumentNote),
-		nullableString(input.Reason),
-		nullableString(input.ReferenceCode),
-	)
-	if err != nil {
-		return mapDBError(fmt.Errorf("create container lifecycle event: %w", err))
-	}
-	return nil
-}
-
 func scanContainerLifecycleEvent(scanner itemScanner) (ContainerLifecycleEvent, error) {
 	var event ContainerLifecycleEvent
 	if err := scanner.Scan(
@@ -234,7 +146,7 @@ func scanContainerLifecycleEvent(scanner itemScanner) (ContainerLifecycleEvent, 
 		&event.SourceDocumentType,
 		&event.SourceDocumentID,
 		&event.SourceLineID,
-		&event.PackingListNo,
+		&event.PickingOrderNo,
 		&event.OrderRef,
 		&event.ItemNumber,
 		&event.Description,
@@ -251,18 +163,4 @@ func scanContainerLifecycleEvent(scanner itemScanner) (ContainerLifecycleEvent, 
 	event.StorageSection = normalizeStorageSection(event.StorageSection)
 	event.ContainerNo = strings.TrimSpace(event.ContainerNo)
 	return event, nil
-}
-
-func resolveContainerLifecycleEventTime(input createStockLedgerInput) *time.Time {
-	if input.OccurredAt != nil {
-		return input.OccurredAt
-	}
-	switch firstNonEmpty(input.EventType, StockLedgerEventReceive) {
-	case StockLedgerEventReceive:
-		return input.DeliveryDate
-	case StockLedgerEventShip, StockLedgerEventReversal:
-		return input.OutDate
-	default:
-		return nil
-	}
 }

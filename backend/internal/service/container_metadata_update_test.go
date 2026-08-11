@@ -75,21 +75,6 @@ func TestUpdateContainerMetadataSynchronizesSharedReceiptsAndPreservesInventoryP
 		t.Fatalf("synchronized receipt count = %d, want 2", receiptCount)
 	}
 
-	var visitCount int
-	if err := store.db.QueryRowxContext(ctx, `
-		SELECT COUNT(*)
-		FROM container_visits cv
-		JOIN inbound_documents d ON d.id = cv.inbound_document_id
-		WHERE d.customer_id = ?
-		  AND UPPER(TRIM(COALESCE(d.container_no, ''))) = ?
-		  AND cv.container_type = ?
-	`, customer.ID, normalizeContainerNo(containerNo), ContainerTypeWestCoastTransfer).Scan(&visitCount); err != nil {
-		t.Fatalf("load synchronized container visit types: %v", err)
-	}
-	if visitCount != 2 {
-		t.Fatalf("synchronized visit count = %d, want 2", visitCount)
-	}
-
 	if _, err := store.UpdateContainerMetadata(ctx, UpdateContainerMetadataInput{
 		CustomerID:    customer.ID,
 		ContainerNo:   containerNo,

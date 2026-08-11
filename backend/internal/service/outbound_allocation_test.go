@@ -11,12 +11,12 @@ func TestOutboundBillingMutationScopesUseFinalPickAllocationLocation(t *testing.
 	occurredAt := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
 	scopes := outboundBillingMutationScopes(41, occurredAt, []outboundDocumentLineRow{{
 		LocationID: 12,
-		PickAllocationsJSON: mustEncodeOutboundPickAllocations([]OutboundPickAllocation{{
+		PickAllocations: []OutboundPickAllocation{{
 			LocationID:     308,
 			StorageSection: DefaultStorageSection,
 			ContainerNo:    "FINAL-308-CONT",
 			AllocatedQty:   5,
-		}}),
+		}},
 	}})
 
 	if len(scopes) != 1 {
@@ -40,6 +40,7 @@ func TestAutomaticInventoryPalletsForAllocation(t *testing.T) {
 	}{
 		{name: "full bucket keeps actual pallet balance", availableQty: 20, availablePallets: 3, allocatedQty: 20, want: 3},
 		{name: "partial bucket uses its inventory balance", availableQty: 9, availablePallets: 3, allocatedQty: 3, want: 1},
+		{name: "partial carton pick keeps the last pallet with remaining cartons", availableQty: 5, availablePallets: 1, allocatedQty: 1, want: 0},
 		{name: "zero pallet bucket stays zero", availableQty: 9, availablePallets: 0, allocatedQty: 9, want: 0},
 		{name: "empty allocation stays zero", availableQty: 9, availablePallets: 3, allocatedQty: 0, want: 0},
 	}
@@ -54,16 +55,7 @@ func TestAutomaticInventoryPalletsForAllocation(t *testing.T) {
 	}
 }
 
-func TestRemainingOutboundInventoryPalletsIsDerivedFromFinalQuantity(t *testing.T) {
-	if got := remainingOutboundInventoryPallets(20, 3, 5); got != 3 {
-		t.Fatalf("partial shipment remaining pallets = %d, want the unchanged starting balance 3", got)
-	}
-	if got := remainingOutboundInventoryPallets(20, 3, 20); got != 0 {
-		t.Fatalf("full shipment remaining pallets = %d, want 0", got)
-	}
-}
-
-func TestValidateOutboundFinalPalletAllocationKeepsUsedAndRemainingIndependent(t *testing.T) {
+func TestValidateOutboundFinalPalletAllocationChecksInventoryPalletRange(t *testing.T) {
 	starting := 1
 	remaining := 1
 	allocation := OutboundPickAllocation{
@@ -75,7 +67,7 @@ func TestValidateOutboundFinalPalletAllocationKeepsUsedAndRemainingIndependent(t
 		RemainingPallets:     &remaining,
 	}
 	if err := validateOutboundFinalPalletAllocation(allocation); err != nil {
-		t.Fatalf("partial pick should use one pallet without releasing it: %v", err)
+		t.Fatalf("stale remaining snapshots are re-derived at confirmation: %v", err)
 	}
 
 	allocation.InventoryPalletsUsed = 0
@@ -85,10 +77,13 @@ func TestValidateOutboundFinalPalletAllocationKeepsUsedAndRemainingIndependent(t
 
 	starting = 5
 	remaining = 2
-	allocation.Pallets = 3
 	allocation.InventoryPalletsUsed = 2
 	if err := validateOutboundFinalPalletAllocation(allocation); err != nil {
-		t.Fatalf("physical pallet release is bookkeeping and must remain independent from pallets used for this shipment: %v", err)
+		t.Fatalf("inventory pallet count inside the starting balance should validate: %v", err)
+	}
+	allocation.InventoryPalletsUsed = 6
+	if err := validateOutboundFinalPalletAllocation(allocation); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("inventory pallet count above the starting balance should fail, got %v", err)
 	}
 }
 
@@ -171,7 +166,7 @@ func TestOutboundAutomaticAllocationKeepsShippingPalletsIndependentIntegration(t
 
 	source := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerNo, item.SKU)
 	draft, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
-		PackingListNo:    "AUTO-PALLET-OUT-" + suffix,
+		PickingOrderNo:   "AUTO-PALLET-OUT-" + suffix,
 		ExpectedShipDate: "2026-07-17",
 		Status:           DocumentStatusDraft,
 		Lines: []CreateOutboundDocumentLineInput{{
@@ -194,7 +189,7 @@ func TestOutboundAutomaticAllocationKeepsShippingPalletsIndependentIntegration(t
 	if len(confirmed.Lines) != 1 || confirmed.Lines[0].Pallets != 7 {
 		t.Fatalf("expected shipping pallet count 7 to remain on the outbound line, got %#v", confirmed.Lines)
 	}
-	if len(confirmed.Lines[0].PickAllocations) != 1 || confirmed.Lines[0].PickAllocations[0].Pallets != 3 {
+	if len(confirmed.Lines[0].PickAllocations) != 1 || confirmed.Lines[0].PickAllocations[0].Pallets != 0 {
 		t.Fatalf("expected the allocation to consume the bucket's 3 inventory pallets, got %#v", confirmed.Lines[0].PickAllocations)
 	}
 	allocation := confirmed.Lines[0].PickAllocations[0]
@@ -236,7 +231,7 @@ func TestConfirmedPartialOutboundKeepsPhysicalPalletBalanceIntegration(t *testin
 	startingPallets := 1
 	remainingPallets := 1
 	draft, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
-		PackingListNo:    "PARTIAL-PALLET-OUT-" + suffix,
+		PickingOrderNo:   "PARTIAL-PALLET-OUT-" + suffix,
 		ExpectedShipDate: "2026-07-20",
 		Status:           DocumentStatusDraft,
 		Lines: []CreateOutboundDocumentLineInput{{
@@ -252,7 +247,7 @@ func TestConfirmedPartialOutboundKeepsPhysicalPalletBalanceIntegration(t *testin
 				ContainerNo:          source.ContainerNo,
 				AllocatedQty:         5,
 				Pallets:              0,
-				InventoryPalletsUsed: 1,
+				InventoryPalletsUsed: 0,
 				StartingPallets:      &startingPallets,
 				RemainingPallets:     &remainingPallets,
 			}},
@@ -280,7 +275,7 @@ func TestConfirmedOutboundKeepsPlanOnlyLineWithoutConsumingInventoryIntegration(
 	location := mustCreateLocation(t, ctx, store, "Plan only warehouse-"+suffix)
 	item := mustCreateItemWithSection(t, ctx, store, customer.ID, location.ID, "PLAN-ONLY-"+suffix, 0, DefaultStorageSection)
 	draft, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
-		PackingListNo:    "PLAN-ONLY-OUT-" + suffix,
+		PickingOrderNo:   "PLAN-ONLY-OUT-" + suffix,
 		ExpectedShipDate: "2026-07-19",
 		Status:           DocumentStatusDraft,
 		Lines: []CreateOutboundDocumentLineInput{{
@@ -298,7 +293,7 @@ func TestConfirmedOutboundKeepsPlanOnlyLineWithoutConsumingInventoryIntegration(
 	}
 
 	draft, err = store.UpdateOutboundDocument(ctx, draft.ID, CreateOutboundDocumentInput{
-		PackingListNo:    draft.PackingListNo,
+		PickingOrderNo:   draft.PickingOrderNo,
 		ExpectedShipDate: "2026-07-19",
 		Status:           DocumentStatusDraft,
 		Lines: []CreateOutboundDocumentLineInput{{

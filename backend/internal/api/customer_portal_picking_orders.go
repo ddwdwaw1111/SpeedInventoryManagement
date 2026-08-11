@@ -70,9 +70,9 @@ func (s *Server) handleCustomerPortalCreatePickingOrder(c *gin.Context) {
 		return
 	}
 
-	s.writeAuditLog(c, "CREATE", "customer_portal_picking_order", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Customer created picking order", map[string]any{
+	s.writeAuditLog(c, "CREATE", "customer_portal_picking_order", document.ID, firstNonEmptyString(document.PickingOrderNo, fmt.Sprintf("outbound:%d", document.ID)), "Customer created picking order", map[string]any{
 		"customerId":     customerID,
-		"packingListNo":  document.PackingListNo,
+		"pickingOrderNo": document.PickingOrderNo,
 		"orderRef":       document.OrderRef,
 		"trackingStatus": document.TrackingStatus,
 		"totalLines":     document.TotalLines,

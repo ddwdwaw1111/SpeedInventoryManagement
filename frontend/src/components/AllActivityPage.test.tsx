@@ -165,7 +165,7 @@ function createMovement(overrides: Partial<Movement> = {}): Movement {
     quantityChange: 10,
     deliveryDate: "2026-04-10T00:00:00Z",
     containerNo: "CONT-A",
-    packingListNo: "",
+    pickingOrderNo: "",
     orderRef: "",
     itemNumber: "ITEM-1",
     expectedQty: 10,

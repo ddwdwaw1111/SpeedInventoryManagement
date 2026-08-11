@@ -119,7 +119,7 @@ export function AllActivityPage({ movements, customers, locations, currentUserRo
         movement.locationName,
         movement.storageSection,
         movement.containerNo,
-        movement.packingListNo,
+        movement.pickingOrderNo,
         movement.orderRef,
         movement.itemNumber,
         movement.referenceCode,
@@ -222,7 +222,7 @@ export function AllActivityPage({ movements, customers, locations, currentUserRo
       )
     },
     { field: "containerNo", headerName: t("containerNo"), minWidth: 170, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.containerNo || "-"}</span> },
-    { field: "packingListNo", headerName: t("packingListNo"), minWidth: 170, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.packingListNo || "-"}</span> },
+    { field: "pickingOrderNo", headerName: t("pickingOrderNo"), minWidth: 170, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.pickingOrderNo || "-"}</span> },
     { field: "orderRef", headerName: t("orderRef"), minWidth: 150, flex: 0.9, renderCell: (params) => <span className="cell--mono">{params.row.orderRef || "-"}</span> },
     { field: "referenceCode", headerName: t("reference"), minWidth: 150, flex: 0.9, renderCell: (params) => <span className="cell--mono">{params.row.referenceCode || "-"}</span> },
     { field: "reason", headerName: t("notes"), minWidth: 260, flex: 1.4, renderCell: (params) => params.row.reason || "-" },
@@ -361,8 +361,8 @@ export function AllActivityPage({ movements, customers, locations, currentUserRo
                 <span className="cell--mono">{selectedMovement.containerNo || "-"}</span>
               </div>
               <div className="sheet-note">
-                <strong>{t("packingListNo")}</strong><br />
-                <span className="cell--mono">{selectedMovement.packingListNo || "-"}</span>
+                <strong>{t("pickingOrderNo")}</strong><br />
+                <span className="cell--mono">{selectedMovement.pickingOrderNo || "-"}</span>
               </div>
               <div className="sheet-note">
                 <strong>{t("reference")}</strong><br />

@@ -56,7 +56,7 @@ type BatchInboundLineState = {
   expectedQty: number;
   receivedQty: number;
   pallets: number;
-  unitsPerPallet: number;
+  inboundCtnsPerPallet: number;
   palletsDetailCtns: string;
   palletBreakdown: BatchInboundPalletBreakdownState[];
   palletBreakdownExplicit: boolean;
@@ -346,7 +346,7 @@ export function InboundReceiptEditorPage({
         itemNumber: shouldRefreshItemNumber ? nextSkuMaster.itemNumber : line.itemNumber,
         description: shouldRefreshDescription ? nextDescription : line.description,
         storageSection: normalizeStorageSection(line.storageSection || batchForm.storageSection || batchSectionOptions[0]),
-        unitsPerPallet: line.unitsPerPallet > 0 ? line.unitsPerPallet : Math.max(0, nextSkuMaster.defaultUnitsPerPallet || 0)
+		inboundCtnsPerPallet: line.inboundCtnsPerPallet
       };
     }));
   }
@@ -371,8 +371,8 @@ export function InboundReceiptEditorPage({
     updateBatchLine(lineID, { pallets: nextPallets });
   }
 
-  function updateBatchLineUnitsPerPallet(lineID: string, nextUnitsPerPallet: number) {
-    updateBatchLine(lineID, { unitsPerPallet: Math.max(0, nextUnitsPerPallet) });
+  function updateBatchLineInboundCtnsPerPallet(lineID: string, nextInboundCtnsPerPallet: number) {
+    updateBatchLine(lineID, { inboundCtnsPerPallet: Math.max(0, nextInboundCtnsPerPallet) });
   }
 
   function validateInboundHeader(requireActualArrivalDate = false) {
@@ -507,7 +507,7 @@ export function InboundReceiptEditorPage({
             expectedQty: line.expectedQty,
             receivedQty: line.receivedQty,
             pallets: isSealedTransitMode ? 0 : line.pallets,
-            unitsPerPallet: isSealedTransitMode ? undefined : line.unitsPerPallet,
+            inboundCtnsPerPallet: isSealedTransitMode ? undefined : line.inboundCtnsPerPallet,
             palletsDetailCtns: undefined,
             storageSection: normalizeStorageSection(line.storageSection || batchForm.storageSection || batchSectionOptions[0]),
             lineNote: line.lineNote || undefined
@@ -870,7 +870,7 @@ export function InboundReceiptEditorPage({
                                 <td><input type="number" min="0" value={numberInputValue(line.expectedQty)} className={getInvalidInputClassName(hasMissingSkuLine && line.expectedQty <= 0 && line.receivedQty <= 0)} aria-invalid={hasMissingSkuLine && line.expectedQty <= 0 && line.receivedQty <= 0 ? "true" : undefined} onChange={(event) => updateBatchLineExpectedQty(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={isReadOnly} aria-label={`${t("expectedQty")} #${index + 1}`} /></td>
                                 <td><input type="number" min="0" value={numberInputValue(line.receivedQty)} className={getInvalidInputClassName(hasMissingSkuLine && line.expectedQty <= 0 && line.receivedQty <= 0)} aria-invalid={hasMissingSkuLine && line.expectedQty <= 0 && line.receivedQty <= 0 ? "true" : undefined} onChange={(event) => updateBatchLineReceivedQty(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={isReadOnly} aria-label={`${t("received")} #${index + 1}`} /></td>
                                 <td><input type="number" min="0" value={numberInputValue(line.pallets)} onChange={(event) => updateBatchLinePallets(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={isReadOnly || batchForm.handlingMode === "SEALED_TRANSIT"} aria-label={`${t("pallets")} #${index + 1}`} /></td>
-                                <td><input type="number" min="0" value={String(line.unitsPerPallet)} onChange={(event) => updateBatchLineUnitsPerPallet(line.id, Math.max(0, Number(event.target.value || 0)))} placeholder={batchSkuMaster?.defaultUnitsPerPallet ? String(batchSkuMaster.defaultUnitsPerPallet) : ""} disabled={isReadOnly || batchForm.handlingMode === "SEALED_TRANSIT"} aria-label={`${t("ctnPerPallet")} #${index + 1}`} /></td>
+                                <td><input type="number" min="0" value={String(line.inboundCtnsPerPallet)} onChange={(event) => updateBatchLineInboundCtnsPerPallet(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={isReadOnly || batchForm.handlingMode === "SEALED_TRANSIT"} aria-label={`${t("ctnPerPallet")} #${index + 1}`} /></td>
                                 <td className="inbound-entry-table__note">
                                   <input value={line.lineNote} onChange={(event) => updateBatchLine(line.id, { lineNote: event.target.value })} placeholder={t("inboundLineNotePlaceholder")} disabled={isReadOnly} aria-label={`${t("internalNotes")} #${index + 1}`} />
                                 </td>
@@ -1005,7 +1005,7 @@ export function InboundReceiptEditorPage({
                               `${t("expectedQty")}: ${line.expectedQty}`,
                               `${t("received")}: ${line.receivedQty}`,
                               `${t("pallets")}: ${line.pallets}`,
-                              `${t("ctnPerPallet")}: ${line.unitsPerPallet || "-"}`,
+                              `${t("ctnPerPallet")}: ${line.inboundCtnsPerPallet || "-"}`,
                               `${t("storageSection")}: ${normalizeStorageSection(line.storageSection || batchForm.storageSection || DEFAULT_STORAGE_SECTION)}`
                             ].join(" · ")}
                           </span>
@@ -1096,7 +1096,7 @@ function buildInboundEditorSourceState({
           expectedQty: line.expectedQty,
           receivedQty: line.receivedQty,
           pallets: line.pallets,
-          unitsPerPallet: line.unitsPerPallet || 0,
+          inboundCtnsPerPallet: line.inboundCtnsPerPallet || 0,
           palletsDetailCtns: line.palletsDetailCtns || "",
           ...hydrateInboundPalletBreakdown(
             line.receivedQty,
@@ -1135,7 +1135,7 @@ function createEmptyBatchInboundLine(defaultStorageSection = DEFAULT_STORAGE_SEC
     expectedQty: 0,
     receivedQty: 0,
     pallets: 0,
-    unitsPerPallet: 0,
+    inboundCtnsPerPallet: 0,
     palletsDetailCtns: "",
     palletBreakdown: [],
     palletBreakdownExplicit: false,

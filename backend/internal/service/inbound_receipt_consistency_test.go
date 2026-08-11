@@ -46,7 +46,7 @@ func TestConfirmInboundDraftAllowsZeroReceivedQuantityAndPalletsIntegration(t *t
 	if reloaded.Status != DocumentStatusConfirmed {
 		t.Fatalf("zero-quantity receipt status = %q, want CONFIRMED", reloaded.Status)
 	}
-	if len(reloaded.Lines) != 1 || reloaded.Lines[0].UnitsPerPallet != 0 {
+	if len(reloaded.Lines) != 1 || reloaded.Lines[0].InboundCtnsPerPallet != 0 {
 		t.Fatalf("zero-quantity receipt CTN per pallet = %#v, want 0", reloaded.Lines)
 	}
 	var receiveLedgerRows int
@@ -101,13 +101,13 @@ func TestConfirmedInboundUsesActualReceivedValuesIndependentlyIntegration(t *tes
 		StorageSection:    DefaultStorageSection,
 		Status:            DocumentStatusConfirmed,
 		Lines: []CreateInboundDocumentLineInput{{
-			SKU:            item.SKU,
-			Description:    item.Description,
-			ExpectedQty:    99,
-			ReceivedQty:    4,
-			Pallets:        7,
-			UnitsPerPallet: 30,
-			StorageSection: DefaultStorageSection,
+			SKU:                  item.SKU,
+			Description:          item.Description,
+			ExpectedQty:          99,
+			ReceivedQty:          4,
+			Pallets:              7,
+			InboundCtnsPerPallet: 30,
+			StorageSection:       DefaultStorageSection,
 			PalletBreakdown: []InboundPalletBreakdown{
 				{Quantity: 3},
 				{Quantity: 1},

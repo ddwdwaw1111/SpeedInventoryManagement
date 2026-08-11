@@ -116,15 +116,9 @@ ssh -i ~/.ssh/oracle-prod.key ubuntu@129.213.52.3
 tail -n 80 /home/ubuntu/SpeedInventoryManagement/logs/cert-renew.log
 ```
 
-## Data Migration
+## Database Bootstrap
 
-Export from the local Docker MariaDB, upload to the server, back up the remote database, then import:
-
-```bash
-bash scripts/migrate_local_data_to_server.sh
-bash scripts/migrate_local_data_to_server.sh --local-db-container speed-inventory-db
-bash scripts/migrate_local_data_to_server.sh --server-host 129.213.52.3 --ssh-key ~/.ssh/oracle-prod.key
-```
+Do not copy a legacy database between environments. Start an empty MariaDB database and let the backend apply the checked-in v1 baseline. Move business documents between environments through the application's inbound/outbound export and bulk-import workflows.
 
 ## Seed Default Admin
 

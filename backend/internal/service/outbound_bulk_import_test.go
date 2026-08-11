@@ -152,8 +152,8 @@ func TestCreateOutboundDocumentsBulkDraftEnforcesLineLimitBeforeDatabaseWork(t *
 		Documents: []OutboundBulkImportCommitDocument{{
 			DocumentKey: "ROW-2",
 			Input: CreateOutboundDocumentInput{
-				PackingListNo: "PO-100",
-				Lines:         make([]CreateOutboundDocumentLineInput, MaxOutboundBulkImportRows+1),
+				PickingOrderNo: "PO-100",
+				Lines:          make([]CreateOutboundDocumentLineInput, MaxOutboundBulkImportRows+1),
 			},
 		}},
 	})
@@ -195,7 +195,7 @@ func TestCreateOutboundDocumentsBulkDraftRollsBackEarlierDraftsWhenLaterDraftFai
 			{
 				DocumentKey: "FIRST",
 				Input: CreateOutboundDocumentInput{
-					PackingListNo: firstPickingOrder,
+					PickingOrderNo: firstPickingOrder,
 					Lines: []CreateOutboundDocumentLineInput{{
 						CustomerID: customer.ID, LocationID: location.ID, SKUMasterID: item.SKUMasterID,
 						Quantity: 1, PlannedQuantity: 1, ActualQuantity: 1, Pallets: 1,
@@ -205,7 +205,7 @@ func TestCreateOutboundDocumentsBulkDraftRollsBackEarlierDraftsWhenLaterDraftFai
 			{
 				DocumentKey: "SECOND",
 				Input: CreateOutboundDocumentInput{
-					PackingListNo: secondPickingOrder,
+					PickingOrderNo: secondPickingOrder,
 					Lines: []CreateOutboundDocumentLineInput{{
 						CustomerID: customer.ID, LocationID: location.ID, SKUMasterID: item.SKUMasterID,
 						Quantity: 999, PlannedQuantity: 999, ActualQuantity: 999, Pallets: 1,
@@ -222,7 +222,7 @@ func TestCreateOutboundDocumentsBulkDraftRollsBackEarlierDraftsWhenLaterDraftFai
 	if err := store.db.GetContext(ctx, &created, `
 		SELECT COUNT(*)
 		FROM outbound_documents
-		WHERE packing_list_no IN (?, ?)
+		WHERE picking_order_no IN (?, ?)
 	`, firstPickingOrder, secondPickingOrder); err != nil {
 		t.Fatalf("count atomically rolled back outbound drafts: %v", err)
 	}
@@ -547,7 +547,7 @@ func TestBuildOutboundBulkMainWarehousePlanTransfersRemoteAllocations(t *testing
 	startingPallets := 2
 	remainingPallets := 1
 	input, transfer, err := buildOutboundBulkMainWarehousePlan(CreateOutboundDocumentInput{
-		PackingListNo:    "PO-308",
+		PickingOrderNo:   "PO-308",
 		ExpectedShipDate: "2026-07-15",
 		Lines: []CreateOutboundDocumentLineInput{{
 			CustomerID: 1, LocationID: 9, SKUMasterID: 7, Quantity: 8, Pallets: 3,
@@ -622,10 +622,10 @@ func TestBuildOutboundAutoTransferRollbackInputRestoresOriginalSource(t *testing
 		},
 	}
 	input := buildOutboundAutoTransferRollbackInput(
-		outboundDocumentRow{ID: 17, PackingListNo: "1842261-7261", CustomerID: 4},
+		outboundDocumentRow{ID: 17, PickingOrderNo: "1842261-7261", CustomerID: 4},
 		[]outboundDocumentLineRow{{
-			SKUMasterID:         11,
-			PickAllocationsJSON: mustEncodeOutboundPickAllocations(allocations),
+			SKUMasterID:     11,
+			PickAllocations: allocations,
 		}},
 		nil,
 	)
@@ -640,7 +640,7 @@ func TestBuildOutboundAutoTransferRollbackInputRestoresOriginalSource(t *testing
 	if line.LocationID != 3 || line.StorageSection != DefaultStorageSection || line.ToLocationID != 9 || line.ToStorageSection != "A1" {
 		t.Fatalf("expected rollback to move stock from main warehouse to its original source, got %#v", line)
 	}
-	if line.ContainerNo != "CONT-REMOTE" || line.SKUMasterID != 11 || line.Quantity != 245 || line.SourcePallets != 0 || line.DestinationPallets != 0 {
+	if line.ContainerNo != "CONT-REMOTE" || line.SKUMasterID != 11 || line.Quantity != 245 || line.SourcePallets != 1 || line.DestinationPallets != 1 {
 		t.Fatalf("expected rollback to preserve the original quantity and physical pallet delta, got %#v", line)
 	}
 }

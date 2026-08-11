@@ -129,7 +129,7 @@ export function DailyOperationsPage({
           ...getOutboundWorkflowState(document, t),
           rowKey: `outbound-${document.id}`,
           id: document.id,
-          code: document.packingListNo || `SHP-${document.id}`,
+          code: document.pickingOrderNo || `SHP-${document.id}`,
           counterpart: document.shipToName || document.customerName || "-",
           warehouse: document.storages || "-",
           dateLabel: formatDateValue(getOutboundScheduledShipDate(document) || activeDate, shortDateFormatter),

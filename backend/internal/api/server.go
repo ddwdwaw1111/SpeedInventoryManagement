@@ -285,10 +285,13 @@ func (s *Server) handleCreateSKUMaster(c *gin.Context) {
 		"name":                    skuMaster.Name,
 		"category":                skuMaster.Category,
 		"reorderLevel":            skuMaster.ReorderLevel,
-		"defaultUnitsPerPallet":   skuMaster.DefaultUnitsPerPallet,
+		"outboundCtnsPerPallet":   skuMaster.OutboundCtnsPerPallet,
 		"unit":                    skuMaster.Unit,
 		"weight":                  skuMaster.Weight,
 		"cubes":                   skuMaster.Cubes,
+		"cartonLengthCm":          skuMaster.CartonLengthCM,
+		"cartonWidthCm":           skuMaster.CartonWidthCM,
+		"cartonHeightCm":          skuMaster.CartonHeightCM,
 		"outboundCartonsPerLayer": skuMaster.OutboundCartonsPerLayer,
 		"outboundLayerCount":      skuMaster.OutboundLayerCount,
 	})
@@ -321,10 +324,13 @@ func (s *Server) handleUpdateSKUMaster(c *gin.Context) {
 		"name":                    skuMaster.Name,
 		"category":                skuMaster.Category,
 		"reorderLevel":            skuMaster.ReorderLevel,
-		"defaultUnitsPerPallet":   skuMaster.DefaultUnitsPerPallet,
+		"outboundCtnsPerPallet":   skuMaster.OutboundCtnsPerPallet,
 		"unit":                    skuMaster.Unit,
 		"weight":                  skuMaster.Weight,
 		"cubes":                   skuMaster.Cubes,
+		"cartonLengthCm":          skuMaster.CartonLengthCM,
+		"cartonWidthCm":           skuMaster.CartonWidthCM,
+		"cartonHeightCm":          skuMaster.CartonHeightCM,
 		"outboundCartonsPerLayer": skuMaster.OutboundCartonsPerLayer,
 		"outboundLayerCount":      skuMaster.OutboundLayerCount,
 	})
@@ -573,14 +579,14 @@ func (s *Server) handleCreateOutboundDocument(c *gin.Context) {
 		return
 	}
 
-	s.writeAuditLog(c, "CREATE", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Created outbound document", map[string]any{
-		"packingListNo": document.PackingListNo,
-		"customer":      document.CustomerName,
-		"status":        document.Status,
-		"shipToName":    document.ShipToName,
-		"carrierName":   document.CarrierName,
-		"totalLines":    document.TotalLines,
-		"totalQty":      document.TotalQty,
+	s.writeAuditLog(c, "CREATE", "outbound_document", document.ID, firstNonEmptyString(document.PickingOrderNo, fmt.Sprintf("outbound:%d", document.ID)), "Created outbound document", map[string]any{
+		"pickingOrderNo": document.PickingOrderNo,
+		"customer":       document.CustomerName,
+		"status":         document.Status,
+		"shipToName":     document.ShipToName,
+		"carrierName":    document.CarrierName,
+		"totalLines":     document.TotalLines,
+		"totalQty":       document.TotalQty,
 	})
 
 	writeJSON(c, http.StatusCreated, document)
@@ -605,14 +611,14 @@ func (s *Server) handleUpdateOutboundDocument(c *gin.Context) {
 		return
 	}
 
-	s.writeAuditLog(c, "UPDATE", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Updated outbound draft", map[string]any{
-		"packingListNo": document.PackingListNo,
-		"customer":      document.CustomerName,
-		"status":        document.Status,
-		"shipToName":    document.ShipToName,
-		"carrierName":   document.CarrierName,
-		"totalLines":    document.TotalLines,
-		"totalQty":      document.TotalQty,
+	s.writeAuditLog(c, "UPDATE", "outbound_document", document.ID, firstNonEmptyString(document.PickingOrderNo, fmt.Sprintf("outbound:%d", document.ID)), "Updated outbound draft", map[string]any{
+		"pickingOrderNo": document.PickingOrderNo,
+		"customer":       document.CustomerName,
+		"status":         document.Status,
+		"shipToName":     document.ShipToName,
+		"carrierName":    document.CarrierName,
+		"totalLines":     document.TotalLines,
+		"totalQty":       document.TotalQty,
 	})
 
 	writeJSON(c, http.StatusOK, document)
@@ -637,10 +643,10 @@ func (s *Server) handleUpdateOutboundDocumentNote(c *gin.Context) {
 		return
 	}
 
-	s.writeAuditLog(c, "ANNOTATE", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Updated outbound document note", map[string]any{
-		"packingListNo": document.PackingListNo,
-		"status":        document.Status,
-		"documentNote":  document.DocumentNote,
+	s.writeAuditLog(c, "ANNOTATE", "outbound_document", document.ID, firstNonEmptyString(document.PickingOrderNo, fmt.Sprintf("outbound:%d", document.ID)), "Updated outbound document note", map[string]any{
+		"pickingOrderNo": document.PickingOrderNo,
+		"status":         document.Status,
+		"documentNote":   document.DocumentNote,
 	})
 
 	writeJSON(c, http.StatusOK, document)
@@ -659,10 +665,10 @@ func (s *Server) handleConfirmOutboundDocument(c *gin.Context) {
 		return
 	}
 
-	s.writeAuditLog(c, "CONFIRM", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Confirmed outbound document", map[string]any{
-		"packingListNo": document.PackingListNo,
-		"status":        document.Status,
-		"confirmedAt":   document.ConfirmedAt,
+	s.writeAuditLog(c, "CONFIRM", "outbound_document", document.ID, firstNonEmptyString(document.PickingOrderNo, fmt.Sprintf("outbound:%d", document.ID)), "Confirmed outbound document", map[string]any{
+		"pickingOrderNo": document.PickingOrderNo,
+		"status":         document.Status,
+		"confirmedAt":    document.ConfirmedAt,
 	})
 
 	writeJSON(c, http.StatusOK, document)
@@ -688,15 +694,15 @@ func (s *Server) handleBulkConfirmOutboundDocuments(c *gin.Context) {
 		pickingOrderNo := result.PickingOrderNo
 		var confirmedAt any
 		if result.Document != nil {
-			pickingOrderNo = result.Document.PackingListNo
+			pickingOrderNo = result.Document.PickingOrderNo
 			confirmedAt = result.Document.ConfirmedAt
 		}
 		s.writeAuditLog(c, "CONFIRM", "outbound_document", result.DocumentID, firstNonEmptyString(pickingOrderNo, fmt.Sprintf("outbound:%d", result.DocumentID)), "Bulk confirmed outbound document", map[string]any{
-			"packingListNo": pickingOrderNo,
-			"status":        service.DocumentStatusConfirmed,
-			"confirmedAt":   confirmedAt,
-			"batchSize":     response.UpdatedDocuments,
-			"reloadWarning": result.Warning,
+			"pickingOrderNo": pickingOrderNo,
+			"status":         service.DocumentStatusConfirmed,
+			"confirmedAt":    confirmedAt,
+			"batchSize":      response.UpdatedDocuments,
+			"reloadWarning":  result.Warning,
 		})
 	}
 
@@ -724,10 +730,10 @@ func (s *Server) handleBulkDeleteOutboundDocuments(c *gin.Context) {
 			continue
 		}
 		document := result.Document
-		s.writeAuditLog(c, "DELETE", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Bulk deleted outbound document and reversed its inventory movement", map[string]any{
-			"packingListNo": document.PackingListNo,
-			"deletedAt":     document.DeletedAt,
-			"batchSize":     response.DeletedDocuments,
+		s.writeAuditLog(c, "DELETE", "outbound_document", document.ID, firstNonEmptyString(document.PickingOrderNo, fmt.Sprintf("outbound:%d", document.ID)), "Bulk deleted outbound document and reversed its inventory movement", map[string]any{
+			"pickingOrderNo": document.PickingOrderNo,
+			"deletedAt":      document.DeletedAt,
+			"batchSize":      response.DeletedDocuments,
 		})
 	}
 
@@ -753,8 +759,8 @@ func (s *Server) handleUpdateOutboundDocumentTrackingStatus(c *gin.Context) {
 		return
 	}
 
-	s.writeAuditLog(c, "TRACK", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Updated outbound tracking status", map[string]any{
-		"packingListNo":  document.PackingListNo,
+	s.writeAuditLog(c, "TRACK", "outbound_document", document.ID, firstNonEmptyString(document.PickingOrderNo, fmt.Sprintf("outbound:%d", document.ID)), "Updated outbound tracking status", map[string]any{
+		"pickingOrderNo": document.PickingOrderNo,
 		"status":         document.Status,
 		"trackingStatus": document.TrackingStatus,
 		"confirmedAt":    document.ConfirmedAt,
@@ -778,9 +784,9 @@ func (s *Server) handleCancelOutboundDocument(c *gin.Context) {
 	}
 	s.cleanupPendingDocumentAttachmentObjects(context.Background())
 
-	s.writeAuditLog(c, "DELETE", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Cancelled outbound document and reversed its inventory movement", map[string]any{
-		"packingListNo": document.PackingListNo,
-		"cancelledAt":   document.DeletedAt,
+	s.writeAuditLog(c, "DELETE", "outbound_document", document.ID, firstNonEmptyString(document.PickingOrderNo, fmt.Sprintf("outbound:%d", document.ID)), "Cancelled outbound document and reversed its inventory movement", map[string]any{
+		"pickingOrderNo": document.PickingOrderNo,
+		"cancelledAt":    document.DeletedAt,
 	})
 
 	c.Status(http.StatusNoContent)
@@ -799,9 +805,9 @@ func (s *Server) handleCopyOutboundDocument(c *gin.Context) {
 		return
 	}
 
-	s.writeAuditLog(c, "COPY", "outbound_document", document.ID, firstNonEmptyString(document.PackingListNo, fmt.Sprintf("outbound:%d", document.ID)), "Copied outbound document into draft", map[string]any{
+	s.writeAuditLog(c, "COPY", "outbound_document", document.ID, firstNonEmptyString(document.PickingOrderNo, fmt.Sprintf("outbound:%d", document.ID)), "Copied outbound document into draft", map[string]any{
 		"sourceDocumentId": documentID,
-		"packingListNo":    document.PackingListNo,
+		"pickingOrderNo":   document.PickingOrderNo,
 		"status":           document.Status,
 		"trackingStatus":   document.TrackingStatus,
 		"totalLines":       document.TotalLines,

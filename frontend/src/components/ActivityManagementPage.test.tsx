@@ -327,7 +327,7 @@ describe("ActivityManagementPage", () => {
     const location = createLocation({ id: 2, name: "LA" });
     const fetchedDocument = createOutboundDocument({
       id: 84,
-      packingListNo: "PL-FILTER-84",
+      pickingOrderNo: "PL-FILTER-84",
       customerId: customer.id,
       customerName: customer.name,
       status: "CONFIRMED",
@@ -374,8 +374,8 @@ describe("ActivityManagementPage", () => {
   });
 
   it("bulk confirms selected draft shipments and surfaces reload warnings", async () => {
-    const first = createOutboundDocument({ id: 31, packingListNo: "PICK-31", status: "DRAFT", trackingStatus: "SCHEDULED" });
-    const second = createOutboundDocument({ id: 32, packingListNo: "PICK-32", status: "DRAFT", trackingStatus: "SCHEDULED" });
+    const first = createOutboundDocument({ id: 31, pickingOrderNo: "PICK-31", status: "DRAFT", trackingStatus: "SCHEDULED" });
+    const second = createOutboundDocument({ id: 32, pickingOrderNo: "PICK-32", status: "DRAFT", trackingStatus: "SCHEDULED" });
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     mockedApi.bulkConfirmOutboundDocuments.mockResolvedValue({
       updatedDocuments: 2,
@@ -419,9 +419,9 @@ describe("ActivityManagementPage", () => {
   });
 
   it("keeps failed and unprocessed shipments selected after an interrupted bulk confirmation", async () => {
-    const first = createOutboundDocument({ id: 41, packingListNo: "PICK-41", status: "DRAFT", trackingStatus: "SCHEDULED" });
-    const second = createOutboundDocument({ id: 42, packingListNo: "PICK-42", status: "DRAFT", trackingStatus: "SCHEDULED" });
-    const third = createOutboundDocument({ id: 43, packingListNo: "PICK-43", status: "DRAFT", trackingStatus: "SCHEDULED" });
+    const first = createOutboundDocument({ id: 41, pickingOrderNo: "PICK-41", status: "DRAFT", trackingStatus: "SCHEDULED" });
+    const second = createOutboundDocument({ id: 42, pickingOrderNo: "PICK-42", status: "DRAFT", trackingStatus: "SCHEDULED" });
+    const third = createOutboundDocument({ id: 43, pickingOrderNo: "PICK-43", status: "DRAFT", trackingStatus: "SCHEDULED" });
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     mockedApi.bulkConfirmOutboundDocuments.mockResolvedValue({
       updatedDocuments: 1,
@@ -466,8 +466,8 @@ describe("ActivityManagementPage", () => {
   });
 
   it("bulk deletes selected draft and confirmed shipments", async () => {
-    const draft = createOutboundDocument({ id: 51, packingListNo: "PICK-51", status: "DRAFT", trackingStatus: "PICKING" });
-    const confirmed = createOutboundDocument({ id: 52, packingListNo: "PICK-52", status: "CONFIRMED", trackingStatus: "SHIPPED" });
+    const draft = createOutboundDocument({ id: 51, pickingOrderNo: "PICK-51", status: "DRAFT", trackingStatus: "PICKING" });
+    const confirmed = createOutboundDocument({ id: 52, pickingOrderNo: "PICK-52", status: "CONFIRMED", trackingStatus: "SHIPPED" });
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     mockedApi.bulkDeleteOutboundDocuments.mockResolvedValue({
       deletedDocuments: 2,
@@ -510,7 +510,7 @@ describe("ActivityManagementPage", () => {
   });
 
   it("reports a refresh warning without claiming a completed bulk deletion failed", async () => {
-    const draft = createOutboundDocument({ id: 53, packingListNo: "PICK-53", status: "DRAFT", trackingStatus: "PICKING" });
+    const draft = createOutboundDocument({ id: 53, pickingOrderNo: "PICK-53", status: "DRAFT", trackingStatus: "PICKING" });
     const onRefresh = vi.fn().mockRejectedValue(new Error("refresh unavailable"));
     mockedApi.bulkDeleteOutboundDocuments.mockResolvedValue({
       deletedDocuments: 1,
@@ -552,7 +552,7 @@ describe("ActivityManagementPage", () => {
     const location = createLocation({ id: 4, name: "NJ Dock" });
     const customerPortalDocument = createOutboundDocument({
       id: 210,
-      packingListNo: "PL-CUSTOMER-210",
+      pickingOrderNo: "PL-CUSTOMER-210",
       orderRef: "SO-CUSTOMER-210",
       customerId: customer.id,
       customerName: customer.name,
@@ -671,7 +671,7 @@ describe("ActivityManagementPage", () => {
   it("loads outbound documents from the backend when the search icon is clicked", async () => {
     const fetchedDocument = createOutboundDocument({
       id: 85,
-      packingListNo: "PL-SEARCH-85",
+      pickingOrderNo: "PL-SEARCH-85",
       lines: [createOutboundDocumentLine({ documentId: 85, sku: "FIND-OUT-85" })]
     });
     mockedApi.getOutboundDocuments.mockResolvedValue([fetchedDocument]);
@@ -816,7 +816,7 @@ describe("ActivityManagementPage", () => {
             expectedQty: 8,
             receivedQty: 8,
             pallets: 3,
-            unitsPerPallet: 4,
+            inboundCtnsPerPallet: 4,
             palletsDetailCtns: undefined,
             storageSection: "TEMP",
             lineNote: undefined
@@ -828,7 +828,7 @@ describe("ActivityManagementPage", () => {
     expect(onRefresh).toHaveBeenCalled();
   });
 
-  it("keeps the declared pallet count independent from default CTN per Pallet", async () => {
+  it("does not copy the outbound palletization rule into inbound CTN per Pallet", async () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined);
 
     mockedApi.createInboundDocument.mockResolvedValue(undefined);
@@ -843,7 +843,7 @@ describe("ActivityManagementPage", () => {
           itemNumber: "ABC123",
           name: "ABC123",
           description: "Sample inbound SKU",
-          defaultUnitsPerPallet: 100,
+          outboundCtnsPerPallet: 100,
           reorderLevel: 2
         })]}
         locations={[createLocation()]}
@@ -896,7 +896,7 @@ describe("ActivityManagementPage", () => {
             expectedQty: 1024,
             receivedQty: 1024,
             pallets: 3,
-            unitsPerPallet: 100,
+            inboundCtnsPerPallet: 0,
             palletsDetailCtns: undefined,
             storageSection: "TEMP",
             lineNote: undefined
@@ -923,7 +923,7 @@ describe("ActivityManagementPage", () => {
           itemNumber: "011424",
           name: "011424",
           description: "Manual pallet SKU",
-          defaultUnitsPerPallet: 0,
+          outboundCtnsPerPallet: 0,
           reorderLevel: 2
         })]}
         locations={[createLocation()]}
@@ -977,7 +977,7 @@ describe("ActivityManagementPage", () => {
             expectedQty: 1024,
             receivedQty: 1024,
             pallets: 7,
-            unitsPerPallet: 100,
+            inboundCtnsPerPallet: 100,
             palletsDetailCtns: undefined,
             storageSection: "TEMP",
             lineNote: undefined
@@ -1026,8 +1026,8 @@ describe("ActivityManagementPage", () => {
         mode="IN"
         items={[]}
         skuMasters={[
-          createSkuMaster({ sku: "SKU-A", itemNumber: "CODE-A", description: "Description A", defaultUnitsPerPallet: 10 }),
-          createSkuMaster({ id: 2, sku: "SKU-B", itemNumber: "CODE-B", description: "Description B", defaultUnitsPerPallet: 20 })
+          createSkuMaster({ sku: "SKU-A", itemNumber: "CODE-A", description: "Description A", outboundCtnsPerPallet: 10 }),
+          createSkuMaster({ id: 2, sku: "SKU-B", itemNumber: "CODE-B", description: "Description B", outboundCtnsPerPallet: 20 })
         ]}
         locations={[createLocation()]}
         customers={[createCustomer()]}
@@ -1051,17 +1051,17 @@ describe("ActivityManagementPage", () => {
     const skuInput = lineInputs[0] as HTMLInputElement;
     const itemCodeInput = lineInputs[1] as HTMLInputElement;
     const descriptionInput = lineInputs[2] as HTMLInputElement;
-    const unitsPerPalletInput = lineInputs[6] as HTMLInputElement;
+    const inboundCtnsPerPalletInput = lineInputs[6] as HTMLInputElement;
 
     fireEvent.change(skuInput, { target: { value: "SKU-A" } });
     expect(itemCodeInput).toHaveValue("CODE-A");
     expect(descriptionInput).toHaveValue("Description A");
-    expect(unitsPerPalletInput).toHaveValue(10);
+    expect(inboundCtnsPerPalletInput).toHaveValue(0);
 
     fireEvent.change(itemCodeInput, { target: { value: "CODE-B" } });
     expect(skuInput).toHaveValue("SKU-A");
     expect(descriptionInput).toHaveValue("Description A");
-    expect(unitsPerPalletInput).toHaveValue(10);
+    expect(inboundCtnsPerPalletInput).toHaveValue(0);
   });
 
   it("allows zero received Qty, pallets, and CTN per Pallet when confirming", async () => {
@@ -1104,7 +1104,7 @@ describe("ActivityManagementPage", () => {
     expect(payload).toMatchObject({
       expectedArrivalDate: undefined,
       actualArrivalDate: "2026-04-01",
-      lines: [{ expectedQty: 10, receivedQty: 0, pallets: 0, unitsPerPallet: 0 }]
+      lines: [{ expectedQty: 10, receivedQty: 0, pallets: 0, inboundCtnsPerPallet: 0 }]
     });
   });
 
@@ -1375,7 +1375,7 @@ describe("ActivityManagementPage", () => {
 
     await waitFor(() => {
       expect(mockedApi.createOutboundDocument).toHaveBeenCalledWith({
-        packingListNo: undefined,
+        pickingOrderNo: undefined,
         orderRef: undefined,
         expectedShipDate: undefined,
         actualShipDate: undefined,

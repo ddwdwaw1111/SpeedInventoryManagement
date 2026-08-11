@@ -102,13 +102,13 @@ func TestBulkImportedHistoricalReceiptUsesActualArrivalDateForLedgerIntegration(
 				ActualArrivalDate: historicalDate,
 				HandlingMode:      InboundHandlingModePalletized,
 				Lines: []CreateInboundDocumentLineInput{{
-					SKU:            "HIST-SKU-" + suffix,
-					Description:    "Historical imported cartons",
-					ExpectedQty:    10,
-					ReceivedQty:    10,
-					Pallets:        2,
-					UnitsPerPallet: 5,
-					StorageSection: DefaultStorageSection,
+					SKU:                  "HIST-SKU-" + suffix,
+					Description:          "Historical imported cartons",
+					ExpectedQty:          10,
+					ReceivedQty:          10,
+					Pallets:              2,
+					InboundCtnsPerPallet: 5,
+					StorageSection:       DefaultStorageSection,
 				}},
 			},
 		}},
@@ -142,10 +142,9 @@ func TestBulkImportedHistoricalReceiptUsesActualArrivalDateForLedgerIntegration(
 
 	var lifecycleDate time.Time
 	if err := store.db.GetContext(ctx, &lifecycleDate, `
-		SELECT MIN(cle.event_time)
-		FROM container_lifecycle_events cle
-		JOIN stock_ledger sl ON sl.id = cle.stock_ledger_id
-		WHERE sl.source_document_type = 'INBOUND' AND sl.source_document_id = ?
+		SELECT MIN(COALESCE(occurred_at, created_at))
+		FROM stock_ledger
+		WHERE source_document_type = 'INBOUND' AND source_document_id = ?
 	`, documentID); err != nil {
 		t.Fatalf("load historical container lifecycle date: %v", err)
 	}
@@ -157,7 +156,7 @@ func TestBulkImportedHistoricalReceiptUsesActualArrivalDateForLedgerIntegration(
 func TestValidateAndNormalizeInboundBulkCommitDocumentRechecksCurrentMasterData(t *testing.T) {
 	validation := newInboundBulkValidationContext(
 		Location{ID: 2, SectionNames: []string{"A"}},
-		[]SKUMaster{{SKU: "SKU-1", ItemNumber: "ITEM-1", Description: "Known item", DefaultUnitsPerPallet: 48}},
+		[]SKUMaster{{SKU: "SKU-1", ItemNumber: "ITEM-1", Description: "Known item", OutboundCtnsPerPallet: 48}},
 	)
 	input := CreateInboundDocumentInput{
 		CustomerID:          1,
@@ -175,7 +174,7 @@ func TestValidateAndNormalizeInboundBulkCommitDocumentRechecksCurrentMasterData(
 	if err != nil {
 		t.Fatalf("validate current master data: %v", err)
 	}
-	if normalized.ContainerNo != "CONT-A" || normalized.Lines[0].ItemNumber != "ITEM-1" || normalized.Lines[0].Description != "Known item" || normalized.Lines[0].UnitsPerPallet != 0 {
+	if normalized.ContainerNo != "CONT-A" || normalized.Lines[0].ItemNumber != "ITEM-1" || normalized.Lines[0].Description != "Known item" || normalized.Lines[0].InboundCtnsPerPallet != 0 {
 		t.Fatalf("unexpected normalized document: %#v", normalized)
 	}
 	if normalized.Lines[0].ExpectedQty != 930 || normalized.Lines[0].Pallets != 20 {
@@ -229,13 +228,13 @@ func TestCreateInboundDocumentsBulkDraftIsIdempotentIntegration(t *testing.T) {
 					ActualArrivalDate: "2026-07-15",
 					HandlingMode:      InboundHandlingModePalletized,
 					Lines: []CreateInboundDocumentLineInput{{
-						SKU:            "SKU-A-" + suffix,
-						ItemNumber:     "ITEM-A-" + suffix,
-						Description:    "Imported item A",
-						ExpectedQty:    10,
-						Pallets:        2,
-						UnitsPerPallet: 6,
-						StorageSection: DefaultStorageSection,
+						SKU:                  "SKU-A-" + suffix,
+						ItemNumber:           "ITEM-A-" + suffix,
+						Description:          "Imported item A",
+						ExpectedQty:          10,
+						Pallets:              2,
+						InboundCtnsPerPallet: 6,
+						StorageSection:       DefaultStorageSection,
 					}},
 				},
 			},
@@ -247,13 +246,13 @@ func TestCreateInboundDocumentsBulkDraftIsIdempotentIntegration(t *testing.T) {
 					ActualArrivalDate: "2026-07-16",
 					HandlingMode:      InboundHandlingModePalletized,
 					Lines: []CreateInboundDocumentLineInput{{
-						SKU:            "SKU-B-" + suffix,
-						ItemNumber:     "ITEM-B-" + suffix,
-						Description:    "Imported item B",
-						ExpectedQty:    20,
-						Pallets:        4,
-						UnitsPerPallet: 5,
-						StorageSection: DefaultStorageSection,
+						SKU:                  "SKU-B-" + suffix,
+						ItemNumber:           "ITEM-B-" + suffix,
+						Description:          "Imported item B",
+						ExpectedQty:          20,
+						Pallets:              4,
+						InboundCtnsPerPallet: 5,
+						StorageSection:       DefaultStorageSection,
 					}},
 				},
 			},
@@ -354,18 +353,15 @@ func TestBulkInboundAllowsMultipleReceiptsForOneContainerIntegration(t *testing.
 		confirmedReceiptIDs = append(confirmedReceiptIDs, entry.Document.ID)
 	}
 
-	var receiptCount, containerCount, visitCount int
+	var receiptCount, containerCount int
 	if err := store.db.GetContext(ctx, &receiptCount, `SELECT COUNT(*) FROM inbound_documents WHERE customer_id = ? AND container_no = ?`, customer.ID, containerNo); err != nil {
 		t.Fatalf("count receipts: %v", err)
 	}
 	if err := store.db.GetContext(ctx, &containerCount, `SELECT COUNT(*) FROM containers WHERE customer_id = ? AND container_no = ?`, customer.ID, containerNo); err != nil {
 		t.Fatalf("count container records: %v", err)
 	}
-	if err := store.db.GetContext(ctx, &visitCount, `SELECT COUNT(*) FROM container_visits WHERE customer_id = ? AND container_no = ?`, customer.ID, containerNo); err != nil {
-		t.Fatalf("count container visits: %v", err)
-	}
-	if receiptCount != 2 || containerCount != 1 || visitCount != 2 {
-		t.Fatalf("expected 2 receipts, 1 container, and 2 visits; got receipts=%d containers=%d visits=%d", receiptCount, containerCount, visitCount)
+	if receiptCount != 2 || containerCount != 1 {
+		t.Fatalf("expected 2 receipts and 1 container; got receipts=%d containers=%d", receiptCount, containerCount)
 	}
 	var linkedContainerCount int
 	if err := store.db.GetContext(ctx, &linkedContainerCount, `
@@ -449,7 +445,7 @@ func TestParseInboundBulkImportWorkbookGroupsRowsByContainerAndArrivalDate(t *te
 	if len(first.Input.Lines) != 2 {
 		t.Fatalf("expected 2 receipt lines, got %d", len(first.Input.Lines))
 	}
-	if first.Input.Lines[0].ExpectedQty != 930 || first.Input.Lines[0].ReceivedQty != 900 || first.Input.Lines[0].Pallets != 20 || first.Input.Lines[0].UnitsPerPallet != 48 {
+	if first.Input.Lines[0].ExpectedQty != 930 || first.Input.Lines[0].ReceivedQty != 900 || first.Input.Lines[0].Pallets != 20 || first.Input.Lines[0].InboundCtnsPerPallet != 48 {
 		t.Fatalf("quantity and pallet fields were not preserved independently: %#v", first.Input.Lines[0])
 	}
 }
@@ -505,7 +501,7 @@ func TestBuildInboundBulkImportPreviewWarnsWhenReceivedQtyOrPalletsAreBlank(t *t
 		"receipts.xlsx",
 		Customer{ID: 1, Name: "Customer"},
 		[]Location{{ID: 2, Name: "Warehouse", SectionNames: []string{"A"}}},
-		[]SKUMaster{{ID: 1, SKU: "SKU-1", ItemNumber: "ITEM-1", Description: "First item", DefaultUnitsPerPallet: 10}},
+		[]SKUMaster{{ID: 1, SKU: "SKU-1", ItemNumber: "ITEM-1", Description: "First item", OutboundCtnsPerPallet: 10}},
 		map[string]bool{},
 		parsed,
 	)
@@ -542,11 +538,11 @@ func TestParseInboundBulkImportWorkbookDoesNotTreatExplicitZeroAsBlank(t *testin
 		"receipts.xlsx",
 		Customer{ID: 1, Name: "Customer"},
 		[]Location{{ID: 2, Name: "Warehouse", SectionNames: []string{"A"}}},
-		[]SKUMaster{{ID: 1, SKU: "SKU-1", ItemNumber: "ITEM-1", Description: "First item", DefaultUnitsPerPallet: 48}},
+		[]SKUMaster{{ID: 1, SKU: "SKU-1", ItemNumber: "ITEM-1", Description: "First item", OutboundCtnsPerPallet: 48}},
 		map[string]bool{},
 		documents,
 	)
-	if preview.Documents[0].Input.Lines[0].UnitsPerPallet != 0 {
+	if preview.Documents[0].Input.Lines[0].InboundCtnsPerPallet != 0 {
 		t.Fatalf("explicit zero CTN per pallet was replaced by the SKU default: %#v", preview.Documents[0].Input.Lines[0])
 	}
 }
@@ -596,8 +592,8 @@ func TestBuildInboundBulkImportPreviewKeepsIndependentPalletValuesAndFlagsConfli
 		Customer{ID: 1, Name: "Customer"},
 		[]Location{{ID: 2, Name: "Warehouse", SectionNames: []string{"A"}}},
 		[]SKUMaster{
-			{ID: 1, SKU: "SKU-1", ItemNumber: "ITEM-1", Description: "Known one", DefaultUnitsPerPallet: 48},
-			{ID: 2, SKU: "SKU-2", ItemNumber: "ITEM-2", Description: "Known two", DefaultUnitsPerPallet: 50},
+			{ID: 1, SKU: "SKU-1", ItemNumber: "ITEM-1", Description: "Known one", OutboundCtnsPerPallet: 48},
+			{ID: 2, SKU: "SKU-2", ItemNumber: "ITEM-2", Description: "Known two", OutboundCtnsPerPallet: 50},
 		},
 		map[string]bool{"CONT-A": true},
 		parsed,
@@ -610,7 +606,7 @@ func TestBuildInboundBulkImportPreviewKeepsIndependentPalletValuesAndFlagsConfli
 	if !first.Valid {
 		t.Fatalf("expected independent quantity/pallet values to remain valid: %#v", first.Issues)
 	}
-	if first.TotalReceivedQty != 900 || first.TotalPallets != 20 || first.Input.Lines[0].UnitsPerPallet != 48 {
+	if first.TotalReceivedQty != 900 || first.TotalPallets != 20 || first.Input.Lines[0].InboundCtnsPerPallet != 48 {
 		t.Fatalf("unexpected independent totals: %#v", first)
 	}
 	if !hasInboundBulkIssue(first.Issues, "EXISTING_CONTAINER", InboundBulkIssueWarning) {

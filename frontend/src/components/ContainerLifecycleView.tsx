@@ -308,7 +308,7 @@ export function ContainerLifecycleView({
                 <TableBody>
                   {lifecycle.pickingOrders.map((document) => (
                     <TableRow key={document.id}>
-                      <TableCell className="font-semibold text-slate-950">{document.packingListNo || `#${document.id}`}</TableCell>
+                      <TableCell className="font-semibold text-slate-950">{document.pickingOrderNo || `#${document.id}`}</TableCell>
                       <TableCell>{document.orderRef || "-"}</TableCell>
                       <TableCell><Badge variant="secondary">{t(document.status.toLowerCase())}</Badge></TableCell>
                       <TableCell>{getOutboundContainerQuantity(document, containerNo)}</TableCell>
@@ -462,7 +462,7 @@ export function buildLifecycleFlow(
   const shouldShowTrackingNode = interactive || trackingEvents.length > 0;
   const shouldShowPickupNode = interactive || pickupAssignments.length > 0;
   const pickingOrderRefs = lifecycle.pickingOrders.length > 0
-    ? lifecycle.pickingOrders.map((document) => document.packingListNo || document.orderRef || `#${document.id}`)
+    ? lifecycle.pickingOrders.map((document) => document.pickingOrderNo || document.orderRef || `#${document.id}`)
     : lifecycle.summary.pickingOrderRefs;
   const hasPickingOrders = pickingOrderRefs.length > 0;
   const visibleOrderRefs = hasPickingOrders ? pickingOrderRefs.slice(0, 5) : [];
@@ -843,7 +843,7 @@ function formatOutboundNodeTitle(
   if (!document) {
     return fallbackRef;
   }
-  const reference = document.packingListNo || document.orderRef || fallbackRef || `#${document.id}`;
+  const reference = document.pickingOrderNo || document.orderRef || fallbackRef || `#${document.id}`;
   const goodsSummary = formatOutboundContainerGoodsSummary(document, containerNo);
   return goodsSummary ? `${reference}: ${goodsSummary}` : reference;
 }
@@ -932,7 +932,7 @@ function buildAttachedDocumentNodeAction(
         <FlowNodeContent
           icon={<ClipboardList className="h-4 w-4" />}
           eyebrow={t("customerPortalLifecycleDocuments")}
-          title={outboundDocument.packingListNo || outboundDocument.orderRef || `#${outboundDocument.id}`}
+          title={outboundDocument.pickingOrderNo || outboundDocument.orderRef || `#${outboundDocument.id}`}
           lines={[
             t("customerPortalPickingOrders"),
             `${attachmentCount} ${t("files")}`

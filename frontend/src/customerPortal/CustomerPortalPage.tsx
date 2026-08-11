@@ -145,7 +145,7 @@ export function CustomerPortalPage({ activeSection, currentUser, onSectionChange
       }
 
       const payload: OutboundDocumentPayload = {
-        packingListNo: form.packingListNo,
+        pickingOrderNo: form.pickingOrderNo,
         orderRef: form.orderRef,
         expectedShipDate: form.expectedShipDate,
         shipToName: form.shipToName,

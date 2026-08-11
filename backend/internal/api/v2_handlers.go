@@ -13,7 +13,7 @@ import (
 
 type v2PickingOrderResponse struct {
 	ID             int64     `json:"id"`
-	PackingListNo  string    `json:"packingListNo"`
+	PickingOrderNo string    `json:"pickingOrderNo"`
 	OrderRef       string    `json:"orderRef"`
 	CustomerID     int64     `json:"customerId"`
 	CustomerName   string    `json:"customerName"`
@@ -215,7 +215,7 @@ func (s *Server) handleV2CreatePickingOrder(c *gin.Context) {
 	}
 	writeJSON(c, http.StatusCreated, v2PickingOrderResponse{
 		ID:             document.ID,
-		PackingListNo:  document.PackingListNo,
+		PickingOrderNo: document.PickingOrderNo,
 		OrderRef:       document.OrderRef,
 		CustomerID:     document.CustomerID,
 		CustomerName:   document.CustomerName,

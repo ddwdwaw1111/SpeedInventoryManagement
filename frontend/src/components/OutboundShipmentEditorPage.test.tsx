@@ -357,7 +357,7 @@ describe("OutboundShipmentEditorPage container-centric flow", () => {
   it("keeps outbound quantity and pallet count independent from SKU pallet defaults", async () => {
     mockedApi.createOutboundDocument.mockResolvedValue(createOutboundDocument({ id: 100, status: "DRAFT" }));
     renderEditor({
-      skuMasters: [createSkuMaster({ defaultUnitsPerPallet: 2 })],
+      skuMasters: [createSkuMaster({ outboundCtnsPerPallet: 2 })],
       items: [createItem({
         quantity: 9,
         availableQty: 9,

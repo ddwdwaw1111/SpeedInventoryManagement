@@ -910,7 +910,7 @@ func TestCalculateBillingPreviewIntegration(t *testing.T) {
 	}
 	stock := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerNo, item.SKU)
 	_, err = store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
-		PackingListNo: "PO-" + suffix, ActualShipDate: "2026-04-03", Status: DocumentStatusConfirmed,
+		PickingOrderNo: "PO-" + suffix, ActualShipDate: "2026-04-03", Status: DocumentStatusConfirmed,
 		Lines: []CreateOutboundDocumentLineInput{{
 			CustomerID: customer.ID, LocationID: location.ID, SKUMasterID: stock.SKUMasterID,
 			Quantity: 4, Pallets: 2,
@@ -949,6 +949,103 @@ func TestCalculateBillingPreviewIntegration(t *testing.T) {
 		if line.ContainerNo != containerNo {
 			t.Fatalf("unexpected or missing container on billing line %#v", line)
 		}
+	}
+}
+
+func TestBackdatedOutboundUsesActualShipDateAndInventoryPalletsUsedIntegration(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	suffix := integrationSuffix()
+	customer := mustCreateCustomer(t, ctx, store, "Backdated Billing "+suffix)
+	location := mustCreateLocation(t, ctx, store, "308 "+suffix)
+	item := mustCreateItem(t, ctx, store, customer.ID, location.ID, "BACKDATED-"+suffix, 0)
+	containerNo := "BACKDATED-CONT-" + suffix
+
+	if _, err := store.CreateInboundDocument(ctx, CreateInboundDocumentInput{
+		CustomerID: customer.ID, LocationID: location.ID,
+		ActualArrivalDate: "2026-06-01", ContainerNo: containerNo,
+		ContainerType: ContainerTypeNormal, StorageSection: DefaultStorageSection,
+		Status: DocumentStatusConfirmed,
+		Lines: []CreateInboundDocumentLineInput{{
+			SKU: item.SKU, Description: item.Description, ExpectedQty: 100, ReceivedQty: 100,
+			Pallets: 10, StorageSection: DefaultStorageSection,
+		}},
+	}); err != nil {
+		t.Fatalf("create confirmed inbound: %v", err)
+	}
+	stock := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerNo, item.SKU)
+	outbound, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
+		PickingOrderNo: "PO-BACKDATED-" + suffix, ActualShipDate: "2026-07-08", Status: DocumentStatusConfirmed,
+		Lines: []CreateOutboundDocumentLineInput{{
+			CustomerID: customer.ID, LocationID: location.ID, SKUMasterID: stock.SKUMasterID,
+			Quantity: 20, Pallets: 5,
+			PickAllocations: []OutboundPickAllocation{{
+				LocationID: location.ID, StorageSection: DefaultStorageSection,
+				ContainerNo: containerNo, AllocatedQty: 20, InventoryPalletsUsed: 3,
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create backdated confirmed outbound: %v", err)
+	}
+
+	remaining := mustFindItemByContainer(t, ctx, store, location.ID, DefaultStorageSection, containerNo, item.SKU)
+	if remaining.Quantity != 80 || remaining.Pallets != 7 || remaining.AllocatedPallets != 0 {
+		t.Fatalf("expected inventory balance 80 CTN / 7 pallets with no pallet reservation, got %d / %d / allocated %d", remaining.Quantity, remaining.Pallets, remaining.AllocatedPallets)
+	}
+
+	var ledger struct {
+		OccurredAt   time.Time `db:"occurred_at"`
+		OutDate      time.Time `db:"out_date"`
+		PalletChange float64   `db:"pallet_change"`
+		Pallets      int       `db:"pallets"`
+	}
+	if err := store.db.GetContext(ctx, &ledger, `
+		SELECT occurred_at, out_date, pallet_change, pallets
+		FROM stock_ledger
+		WHERE source_document_type = 'OUTBOUND' AND source_document_id = ? AND event_type = 'SHIP'
+	`, outbound.ID); err != nil {
+		t.Fatalf("load backdated outbound ledger: %v", err)
+	}
+	wantShipDate := billingTestDate(2026, time.July, 8)
+	if !dateOnly(ledger.OccurredAt).Equal(wantShipDate) || !dateOnly(ledger.OutDate).Equal(wantShipDate) {
+		t.Fatalf("expected ledger business date 2026-07-08, got occurred=%s out=%s", ledger.OccurredAt, ledger.OutDate)
+	}
+	if ledger.PalletChange != -3 || ledger.Pallets != 3 {
+		t.Fatalf("expected Inventory Pallets Used to drive ledger -3/3, got %v/%d", ledger.PalletChange, ledger.Pallets)
+	}
+
+	var allocation struct {
+		AllocatedPallets     int `db:"allocated_pallets"`
+		InventoryPalletsUsed int `db:"inventory_pallets_used"`
+		ShippedPallets       int `db:"shipped_pallets"`
+	}
+	if err := store.db.GetContext(ctx, &allocation, `
+		SELECT allocated_pallets, inventory_pallets_used, shipped_pallets
+		FROM outbound_container_allocations
+		WHERE outbound_line_id = ?
+	`, outbound.Lines[0].ID); err != nil {
+		t.Fatalf("load outbound pallet allocation: %v", err)
+	}
+	if allocation.AllocatedPallets != 0 || allocation.InventoryPalletsUsed != 3 || allocation.ShippedPallets != 0 {
+		t.Fatalf("expected allocated pallets unused and inventory pallets canonical, got %#v", allocation)
+	}
+
+	graceEnabled := false
+	preview, err := store.CalculateBillingPreview(ctx, BillingPreviewInput{
+		CustomerID: customer.ID, PeriodStart: "2026-07-01", PeriodEnd: "2026-07-15",
+		NormalPalletGracePeriodEnabled: &graceEnabled,
+		Rates:                          BillingRatesSnapshot{StorageFeePerPalletWeekNormal: 7},
+	})
+	if err != nil {
+		t.Fatalf("calculate backdated billing preview: %v", err)
+	}
+	if len(preview.StorageRows) != 1 {
+		t.Fatalf("expected one storage row, got %#v", preview.StorageRows)
+	}
+	row := preview.StorageRows[0]
+	if row.OpeningPallets != 10 || row.ClosingPallets != 7 || row.PalletDays != 126 || len(row.PalletReleaseEvents) != 1 || row.PalletReleaseEvents[0].Pallets != 3 {
+		t.Fatalf("expected July storage 10 opening / 3 released / 7 closing / 126 pallet-days, got %#v", row)
 	}
 }
 

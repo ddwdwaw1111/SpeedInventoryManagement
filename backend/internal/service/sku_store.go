@@ -9,38 +9,34 @@ import (
 )
 
 func (s *Store) ListSKUMasters(ctx context.Context, search string, customerIDs ...int64) ([]SKUMaster, error) {
-	customerID := int64(0)
-	if len(customerIDs) > 0 {
-		customerID = customerIDs[0]
-	}
 	query := `
 		SELECT
 			sm.id,
-			CASE WHEN ? > 0 THEN COALESCE(cic.item_number, '') ELSE COALESCE(sm.item_number, '') END AS item_number,
+			COALESCE(sm.item_number, '') AS item_number,
 			sm.sku,
 			sm.name,
 			sm.category,
 			COALESCE(sm.description, '') AS description,
 			sm.unit,
 			sm.reorder_level,
-			sm.default_units_per_pallet,
+			(sm.outbound_cartons_per_layer * sm.outbound_layer_count) AS outbound_ctns_per_pallet,
 			sm.carton_gross_weight_kg,
 			sm.cubes,
+			sm.carton_length_cm,
+			sm.carton_width_cm,
+			sm.carton_height_cm,
 			sm.outbound_cartons_per_layer,
 			sm.outbound_layer_count,
 			sm.created_at,
 			sm.updated_at
 		FROM sku_master sm
-		LEFT JOIN customer_item_catalog cic
-			ON cic.sku_master_id = sm.id AND cic.customer_id = ?
 		WHERE 1 = 1
 	`
 
-	args := []any{customerID, customerID}
+	args := make([]any, 0)
 	if trimmedSearch := strings.TrimSpace(search); trimmedSearch != "" {
 		likeValue := "%" + trimmedSearch + "%"
-		query += " AND (CASE WHEN ? > 0 THEN COALESCE(cic.item_number, '') ELSE COALESCE(sm.item_number, '') END LIKE ? OR sm.sku LIKE ? OR sm.name LIKE ? OR sm.description LIKE ? OR sm.category LIKE ?)"
-		args = append(args, customerID)
+		query += " AND (COALESCE(sm.item_number, '') LIKE ? OR sm.sku LIKE ? OR sm.name LIKE ? OR sm.description LIKE ? OR sm.category LIKE ?)"
 		args = append(args, likeValue, likeValue, likeValue, likeValue, likeValue)
 	}
 
@@ -69,13 +65,15 @@ func (s *Store) CreateSKUMaster(ctx context.Context, input CreateSKUMasterInput)
 			description,
 			unit,
 			reorder_level,
-			default_units_per_pallet,
 			carton_gross_weight_kg,
 			cubes,
+			carton_length_cm,
+			carton_width_cm,
+			carton_height_cm,
 			outbound_cartons_per_layer,
 			outbound_layer_count
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		nullableString(input.ItemNumber),
 		input.SKU,
@@ -84,9 +82,11 @@ func (s *Store) CreateSKUMaster(ctx context.Context, input CreateSKUMasterInput)
 		input.Description,
 		input.Unit,
 		input.ReorderLevel,
-		input.DefaultUnitsPerPallet,
 		input.Weight,
 		input.Cubes,
+		input.CartonLengthCM,
+		input.CartonWidthCM,
+		input.CartonHeightCM,
 		input.OutboundCartonsPerLayer,
 		input.OutboundLayerCount,
 	)
@@ -118,9 +118,11 @@ func (s *Store) UpdateSKUMaster(ctx context.Context, skuMasterID int64, input Cr
 			description = ?,
 			unit = ?,
 			reorder_level = ?,
-			default_units_per_pallet = ?,
 			carton_gross_weight_kg = ?,
 			cubes = ?,
+			carton_length_cm = ?,
+			carton_width_cm = ?,
+			carton_height_cm = ?,
 			outbound_cartons_per_layer = ?,
 			outbound_layer_count = ?,
 			updated_at = CURRENT_TIMESTAMP
@@ -133,9 +135,11 @@ func (s *Store) UpdateSKUMaster(ctx context.Context, skuMasterID int64, input Cr
 		input.Description,
 		input.Unit,
 		input.ReorderLevel,
-		input.DefaultUnitsPerPallet,
 		input.Weight,
 		input.Cubes,
+		input.CartonLengthCM,
+		input.CartonWidthCM,
+		input.CartonHeightCM,
 		input.OutboundCartonsPerLayer,
 		input.OutboundLayerCount,
 		skuMasterID,
@@ -194,9 +198,12 @@ func (s *Store) getSKUMaster(ctx context.Context, skuMasterID int64) (SKUMaster,
 			COALESCE(description, '') AS description,
 			unit,
 			reorder_level,
-			default_units_per_pallet,
+			(outbound_cartons_per_layer * outbound_layer_count) AS outbound_ctns_per_pallet,
 			carton_gross_weight_kg,
 			cubes,
+			carton_length_cm,
+			carton_width_cm,
+			carton_height_cm,
 			outbound_cartons_per_layer,
 			outbound_layer_count,
 			created_at,
@@ -241,12 +248,12 @@ func validateSKUMasterInput(input CreateSKUMasterInput) error {
 		return fmt.Errorf("%w: description is required", ErrInvalidInput)
 	case input.ReorderLevel < 0:
 		return fmt.Errorf("%w: reorder level cannot be negative", ErrInvalidInput)
-	case input.DefaultUnitsPerPallet < 0:
-		return fmt.Errorf("%w: default units per pallet cannot be negative", ErrInvalidInput)
 	case input.Weight < 0:
 		return fmt.Errorf("%w: weight cannot be negative", ErrInvalidInput)
 	case input.Cubes < 0:
 		return fmt.Errorf("%w: cubes cannot be negative", ErrInvalidInput)
+	case input.CartonLengthCM < 0 || input.CartonWidthCM < 0 || input.CartonHeightCM < 0:
+		return fmt.Errorf("%w: carton dimensions cannot be negative", ErrInvalidInput)
 	case input.OutboundCartonsPerLayer < 0:
 		return fmt.Errorf("%w: outbound cartons per layer cannot be negative", ErrInvalidInput)
 	case input.OutboundLayerCount < 0:

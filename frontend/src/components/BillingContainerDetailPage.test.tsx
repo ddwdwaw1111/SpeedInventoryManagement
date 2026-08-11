@@ -81,7 +81,7 @@ function event(
     sourceDocumentType: eventType === "RECEIVE" ? "INBOUND" : "OUTBOUND",
     sourceDocumentId: id,
     sourceLineId: id,
-    packingListNo: "",
+    pickingOrderNo: "",
     orderRef: "",
     itemNumber: "608333",
     description: "VB22GC",

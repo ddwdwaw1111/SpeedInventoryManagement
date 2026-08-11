@@ -13,7 +13,7 @@ export const INBOUND_BULK_IMPORT_TEMPLATE_COLUMNS: ExcelExportColumn[] = [
   { key: "expectedQty", label: "Expected Qty", numberFormat: "number" },
   { key: "receivedQty", label: "Received Qty", numberFormat: "number" },
   { key: "pallets", label: "Pallets", numberFormat: "number" },
-  { key: "unitsPerPallet", label: "CTN per Pallet", numberFormat: "number" },
+  { key: "inboundCtnsPerPallet", label: "CTN per Pallet", numberFormat: "number" },
   { key: "storageSection", label: "Storage Section" },
   { key: "lineNote", label: "Line Note" }
 ];
@@ -62,7 +62,7 @@ export function buildInboundBulkImportSampleRows(locations: Location[], referenc
       expectedQty: 100,
       receivedQty: 96,
       pallets: 4,
-      unitsPerPallet: 24,
+      inboundCtnsPerPallet: 24,
       storageSection: firstSection,
       lineNote: "First UPC line in receipt A"
     },
@@ -78,7 +78,7 @@ export function buildInboundBulkImportSampleRows(locations: Location[], referenc
       expectedQty: 60,
       receivedQty: 60,
       pallets: 2,
-      unitsPerPallet: 30,
+      inboundCtnsPerPallet: 30,
       storageSection: firstSection,
       lineNote: "Second UPC line grouped into receipt A"
     },
@@ -94,7 +94,7 @@ export function buildInboundBulkImportSampleRows(locations: Location[], referenc
       expectedQty: 48,
       receivedQty: 48,
       pallets: 3,
-      unitsPerPallet: 16,
+      inboundCtnsPerPallet: 16,
       storageSection: secondSection,
       lineNote: "Receipt B demonstrates another warehouse"
     }

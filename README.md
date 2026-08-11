@@ -116,9 +116,8 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f
 
 The API checks and applies versioned database migrations on every startup,
 including production. Applied migrations are recorded in `schema_migrations`
-and are not executed again. `database/schema.sql` is only the MariaDB container
-bootstrap used before the API starts; the Go migration registry is the schema
-source of truth.
+and are not executed again. The Go migration registry is the single schema
+source of truth; MariaDB init scripts are not used.
 There is no environment flag that skips migrations, and no separate startup
 database-maintenance mode.
 
@@ -338,13 +337,9 @@ This writes a server-side cron job that runs every day at `03:17`, executes
 
 ### Database
 
-1. Start MariaDB locally.
-2. Run the scripts in this order:
-
-```sql
-SOURCE database/schema.sql;
-SOURCE database/seed.sql;
-```
+1. Start an empty MariaDB database locally.
+2. Start the backend. It creates the v1 schema and local administrator through
+   the same startup migration used by Docker and production.
 
 ### Backend
 

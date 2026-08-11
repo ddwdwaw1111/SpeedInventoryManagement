@@ -920,7 +920,7 @@ function SKUFlowReportTable({ rows, emptyLabel }: { rows: SKUFlowReportRow[]; em
               </td>
               <td>{row.containerNo || "-"}</td>
               <td>
-                <strong>{firstNonEmptyText(row.packingListNo, row.orderRef, "-")}</strong>
+                <strong>{firstNonEmptyText(row.pickingOrderNo, row.orderRef, "-")}</strong>
                 <span className="sheet-table__subtle">
                   {row.sourceDocumentType ? `${row.sourceDocumentType} #${row.sourceDocumentId || "-"}` : "-"}
                 </span>

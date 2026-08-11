@@ -95,7 +95,7 @@ const styles: Record<string, Style> = {
 type DeliveryNoteDocument = {
   fileName: string;
   rows: DeliveryNoteRow[];
-  packingListNo: string;
+  pickingOrderNo: string;
   orderRef: string;
   customerSummary: string;
   shipToName: string;
@@ -131,7 +131,7 @@ type DeliveryNoteRow = {
 const LABELS = {
   title: "Delivery Note",
   printedAt: "Printed At",
-  packingListNo: "Picking Order No.",
+  pickingOrderNo: "Picking Order No.",
   orderRef: "Order No.",
   customer: "Customer",
   shipToName: "Ship-to Name",
@@ -171,9 +171,9 @@ export function downloadOutboundPackingListPdfFromDocument(document: OutboundDoc
 
 export function buildDeliveryNoteDocumentFromDocument(document: OutboundDocument): DeliveryNoteDocument {
   return {
-    fileName: `delivery-note-${sanitizeFileName(document.packingListNo || `outbound-${document.id}`)}.pdf`,
+    fileName: `delivery-note-${sanitizeFileName(document.pickingOrderNo || `outbound-${document.id}`)}.pdf`,
     rows: document.lines.map((line) => toDeliveryNoteRowFromLine(line, document)),
-    packingListNo: document.packingListNo || `OUT-${document.id}`,
+    pickingOrderNo: document.pickingOrderNo || `OUT-${document.id}`,
     orderRef: safeValue(document.orderRef),
     customerSummary: safeValue(document.customerName),
     shipToName: safeValue(document.shipToName),
@@ -232,7 +232,7 @@ export function buildDeliveryNoteDefinition(document: DeliveryNoteDocument): TDo
         widths: ["*", "*", "*", "*"],
         body: [
           [
-            metaBlock(LABELS.packingListNo, document.packingListNo),
+            metaBlock(LABELS.pickingOrderNo, document.pickingOrderNo),
             metaBlock(LABELS.orderRef, document.orderRef || LABELS.empty),
             metaBlock(LABELS.customer, document.customerSummary || LABELS.empty),
             metaBlock(LABELS.actualShipDate, formatDateLabel(document.actualShipDate))
@@ -284,7 +284,7 @@ export function buildDeliveryNoteDefinition(document: DeliveryNoteDocument): TDo
     pageOrientation: "landscape",
     pageMargins: [16, 12, 16, 12],
     info: {
-      title: `${LABELS.title} ${document.packingListNo}`,
+      title: `${LABELS.title} ${document.pickingOrderNo}`,
       subject: LABELS.subject,
       author: "Speed Inventory Management"
     },

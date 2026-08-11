@@ -220,12 +220,12 @@ type BatchInboundLineState = {
   expectedQty: number;
   receivedQty: number;
   pallets: number;
-  unitsPerPallet: number;
+  inboundCtnsPerPallet: number;
   lineNote: string;
 };
 
 type BatchOutboundFormState = {
-  packingListNo: string;
+  pickingOrderNo: string;
   orderRef: string;
   expectedShipDate: string;
   actualShipDate: string;
@@ -375,7 +375,7 @@ const RECEIPTS_EXPORT_COLUMNS = [
   { key: "status", label: "Status" }
 ] as const;
 const SHIPMENTS_EXPORT_COLUMNS = [
-  { key: "packingListNo", label: "Picking Order No." },
+  { key: "pickingOrderNo", label: "Picking Order No." },
   { key: "orderRef", label: "Order Ref." },
   { key: "customerName", label: "Customer" },
   { key: "storages", label: "Warehouse" },
@@ -417,14 +417,14 @@ function createEmptyBatchInboundLine(defaultStorageSection = DEFAULT_STORAGE_SEC
     expectedQty: 0,
     receivedQty: 0,
     pallets: 0,
-    unitsPerPallet: 0,
+    inboundCtnsPerPallet: 0,
     lineNote: ""
   };
 }
 
 function createEmptyBatchOutboundForm(expectedShipDate = ""): BatchOutboundFormState {
   return {
-    packingListNo: "",
+    pickingOrderNo: "",
     orderRef: "",
     expectedShipDate,
     actualShipDate: "",
@@ -488,13 +488,13 @@ function getSKUMasterDescription(skuMaster: Pick<SKUMaster, "description" | "nam
   return skuMaster.description || skuMaster.name;
 }
 
-function buildAutoPalletPlan(totalQty: number, unitsPerPallet: number) {
-  if (totalQty <= 0 || unitsPerPallet <= 0) {
+function buildAutoPalletPlan(totalQty: number, inboundCtnsPerPallet: number) {
+  if (totalQty <= 0 || inboundCtnsPerPallet <= 0) {
     return { pallets: 0, detail: "" };
   }
 
-  const fullPallets = Math.floor(totalQty / unitsPerPallet);
-  const remainder = totalQty % unitsPerPallet;
+  const fullPallets = Math.floor(totalQty / inboundCtnsPerPallet);
+  const remainder = totalQty % inboundCtnsPerPallet;
   const pallets = fullPallets + (remainder > 0 ? 1 : 0);
 
   if (fullPallets === 0) {
@@ -504,13 +504,13 @@ function buildAutoPalletPlan(totalQty: number, unitsPerPallet: number) {
   if (remainder === 0) {
     return {
       pallets,
-      detail: `${pallets}*${unitsPerPallet}`
+      detail: `${pallets}*${inboundCtnsPerPallet}`
     };
   }
 
   return {
     pallets,
-    detail: `${fullPallets}*${unitsPerPallet}+1*${remainder}`
+    detail: `${fullPallets}*${inboundCtnsPerPallet}+1*${remainder}`
   };
 }
 
@@ -1333,7 +1333,7 @@ export function ActivityManagementPage({
   ], [t]);
 
   const outboundDocumentColumns = useMemo<GridColDef<OutboundDocument>[]>(() => [
-    { field: "packingListNo", headerName: t("packingListNo"), minWidth: 170, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.packingListNo || "-"}</span> },
+    { field: "pickingOrderNo", headerName: t("pickingOrderNo"), minWidth: 170, flex: 1, renderCell: (params) => <span className="cell--mono">{params.row.pickingOrderNo || "-"}</span> },
     { field: "orderRef", headerName: t("orderRef"), minWidth: 140, renderCell: (params) => <span className="cell--mono">{params.row.orderRef || "-"}</span> },
     { field: "customerName", headerName: t("customer"), minWidth: 180, flex: 1, renderCell: (params) => params.row.customerName || "-" },
     { field: "storages", headerName: t("currentStorage"), minWidth: 180, flex: 1, renderCell: (params) => params.row.storages || "-" },
@@ -1734,7 +1734,7 @@ export function ActivityManagementPage({
             expectedQty: line.expectedQty,
             receivedQty: line.receivedQty,
             pallets: line.pallets,
-            unitsPerPallet: line.unitsPerPallet || 0,
+            inboundCtnsPerPallet: line.inboundCtnsPerPallet || 0,
             lineNote: line.lineNote || ""
           }))
         : [createEmptyBatchInboundLine(normalizeStorageSection(document.storageSection))]
@@ -1773,7 +1773,7 @@ export function ActivityManagementPage({
     setEditingOutboundDocumentId(document.id);
     setEditingInboundDocumentId(null);
     setBatchOutboundForm({
-      packingListNo: document.packingListNo || "",
+      pickingOrderNo: document.pickingOrderNo || "",
       orderRef: document.orderRef || "",
       expectedShipDate: getOutboundExpectedShipDate(document)?.slice(0, 10) ?? "",
       actualShipDate: document.actualShipDate ? document.actualShipDate.slice(0, 10) : "",
@@ -1863,7 +1863,7 @@ export function ActivityManagementPage({
         description: shouldRefreshDescription ? nextDescription : line.description,
         storageSection: normalizeStorageSection(line.storageSection || batchForm.storageSection || batchSectionOptions[0]),
         reorderLevel: 0,
-        unitsPerPallet: line.unitsPerPallet > 0 ? line.unitsPerPallet : Math.max(0, nextSkuMaster.defaultUnitsPerPallet || 0)
+		inboundCtnsPerPallet: line.inboundCtnsPerPallet
       };
     }));
   }
@@ -1888,8 +1888,8 @@ export function ActivityManagementPage({
     updateBatchLine(lineID, { pallets: nextPallets });
   }
 
-  function updateBatchLineUnitsPerPallet(lineID: string, nextUnitsPerPallet: number) {
-    updateBatchLine(lineID, { unitsPerPallet: Math.max(0, nextUnitsPerPallet) });
+  function updateBatchLineInboundCtnsPerPallet(lineID: string, nextInboundCtnsPerPallet: number) {
+    updateBatchLine(lineID, { inboundCtnsPerPallet: Math.max(0, nextInboundCtnsPerPallet) });
   }
 
   function addBatchOutboundLine(count = batchOutboundLineAddCount) {
@@ -1916,8 +1916,8 @@ export function ActivityManagementPage({
     const previousSkuMaster = previousSource ? skuMastersBySku.get(normalizeSkuLookupValue(previousSource.sku)) : undefined;
     const nextSkuMaster = skuMastersBySku.get(normalizeSkuLookupValue(nextSource.sku));
     const fulfillmentQuantity = getActivityOutboundFulfillmentQuantity(currentLine);
-    const previousAutoPalletPlan = buildAutoPalletPlan(fulfillmentQuantity, previousSkuMaster?.defaultUnitsPerPallet ?? 0);
-    const nextAutoPalletPlan = buildAutoPalletPlan(fulfillmentQuantity, nextSkuMaster?.defaultUnitsPerPallet ?? 0);
+    const previousAutoPalletPlan = buildAutoPalletPlan(fulfillmentQuantity, previousSkuMaster?.outboundCtnsPerPallet ?? 0);
+    const nextAutoPalletPlan = buildAutoPalletPlan(fulfillmentQuantity, nextSkuMaster?.outboundCtnsPerPallet ?? 0);
     const shouldRefreshPallets = currentLine.pallets <= 0 || (previousSkuMaster !== undefined && currentLine.pallets === previousAutoPalletPlan.pallets);
     return {
       ...currentLine,
@@ -1941,8 +1941,8 @@ export function ActivityManagementPage({
 
       const selectedSource = findOutboundSourceOption(selectableOutboundSources, line.sourceKey);
       const skuMaster = selectedSource ? skuMastersBySku.get(normalizeSkuLookupValue(selectedSource.sku)) : undefined;
-      const previousAutoPalletPlan = buildAutoPalletPlan(line.quantity, skuMaster?.defaultUnitsPerPallet ?? 0);
-      const nextAutoPalletPlan = buildAutoPalletPlan(nextQuantity, skuMaster?.defaultUnitsPerPallet ?? 0);
+      const previousAutoPalletPlan = buildAutoPalletPlan(line.quantity, skuMaster?.outboundCtnsPerPallet ?? 0);
+      const nextAutoPalletPlan = buildAutoPalletPlan(nextQuantity, skuMaster?.outboundCtnsPerPallet ?? 0);
       const shouldKeepAutoPallets = line.pallets <= 0 || line.pallets === previousAutoPalletPlan.pallets;
       return {
         ...line,
@@ -2021,7 +2021,7 @@ export function ActivityManagementPage({
             expectedQty: line.expectedQty,
             receivedQty: line.receivedQty,
             pallets: isSealedTransitMode ? 0 : line.pallets,
-            unitsPerPallet: isSealedTransitMode ? undefined : line.unitsPerPallet,
+            inboundCtnsPerPallet: isSealedTransitMode ? undefined : line.inboundCtnsPerPallet,
             palletsDetailCtns: undefined,
             storageSection: normalizeStorageSection(line.storageSection || batchForm.storageSection || batchSectionOptions[0]),
             lineNote: line.lineNote || undefined
@@ -2068,7 +2068,7 @@ export function ActivityManagementPage({
         ? liveOutboundDocuments.find((document) => document.id === editingOutboundDocumentId)
         : null;
       const payload: OutboundDocumentPayload = {
-        packingListNo: batchOutboundForm.packingListNo || undefined,
+        pickingOrderNo: batchOutboundForm.pickingOrderNo || undefined,
         orderRef: batchOutboundForm.orderRef || undefined,
         expectedShipDate: batchOutboundForm.expectedShipDate || undefined,
         actualShipDate: batchOutboundForm.actualShipDate || undefined,
@@ -2454,7 +2454,7 @@ export function ActivityManagementPage({
 
     if (!(await confirm({
       title: t("cancelShipment"),
-      message: t("cancelOutboundConfirm", { packingListNo: document.packingListNo || String(document.id) }),
+      message: t("cancelOutboundConfirm", { pickingOrderNo: document.pickingOrderNo || String(document.id) }),
       confirmLabel: t("cancelShipment"),
       cancelLabel: t("cancel"),
       confirmColor: "warning",
@@ -2576,7 +2576,7 @@ export function ActivityManagementPage({
         fileName: title,
         columns,
         rows: outboundDocumentRows.map((document) => ({
-          packingListNo: document.packingListNo || "-",
+          pickingOrderNo: document.pickingOrderNo || "-",
           orderRef: document.orderRef || "-",
           customerName: document.customerName || "-",
           storages: document.storages || "-",
@@ -2980,7 +2980,7 @@ export function ActivityManagementPage({
               <div className="document-drawer__header">
                 <div>
                   <div className="document-drawer__eyebrow">{t("packingListsView")}</div>
-                  <h3>{selectedOutboundDocument.packingListNo || t("packingListNo")}</h3>
+                  <h3>{selectedOutboundDocument.pickingOrderNo || t("pickingOrderNo")}</h3>
                   <p>
                     {[selectedOutboundDocument.customerName || "-", formatDate(getOutboundDisplayShipDate(selectedOutboundDocument))].filter(Boolean).join(" Â· ")}
                   </p>
@@ -3372,7 +3372,7 @@ export function ActivityManagementPage({
                           <label>{t("expectedQty")}<input type="number" min="0" value={numberInputValue(line.expectedQty)} onChange={(event) => updateBatchLineExpectedQty(line.id, Math.max(0, Number(event.target.value || 0)))} /></label>
                           <label>{t("received")}<input type="number" min="0" value={numberInputValue(line.receivedQty)} onChange={(event) => updateBatchLineReceivedQty(line.id, Math.max(0, Number(event.target.value || 0)))} /></label>
                           <label>{t("pallets")}<input type="number" min="0" value={numberInputValue(line.pallets)} onChange={(event) => updateBatchLinePallets(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={batchForm.handlingMode === "SEALED_TRANSIT"} /></label>
-                          <label>{t("ctnPerPallet")}<input type="number" min="0" value={String(line.unitsPerPallet)} onChange={(event) => updateBatchLineUnitsPerPallet(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={batchForm.handlingMode === "SEALED_TRANSIT"} placeholder={batchSkuMaster?.defaultUnitsPerPallet ? String(batchSkuMaster.defaultUnitsPerPallet) : ""} /></label>
+						  <label>{t("ctnPerPallet")}<input type="number" min="0" value={String(line.inboundCtnsPerPallet)} onChange={(event) => updateBatchLineInboundCtnsPerPallet(line.id, Math.max(0, Number(event.target.value || 0)))} disabled={batchForm.handlingMode === "SEALED_TRANSIT"} /></label>
                           <label>{t("storageSection")}<select value={normalizeStorageSection(line.storageSection || batchSectionOptions[0])} onChange={(event) => updateBatchLine(line.id, { storageSection: event.target.value })}>{batchSectionOptions.map((section) => <option key={section} value={section}>{section}</option>)}</select></label>
                         </div>
                         <div className="batch-line-card__meta">
@@ -3550,7 +3550,7 @@ export function ActivityManagementPage({
 
                 {outboundWizardStep === 1 ? (
                 <div className="sheet-form sheet-form--compact">
-                  <label>{t("packingListNo")}<input value={batchOutboundForm.packingListNo} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, packingListNo: event.target.value }))} placeholder="TGCUS180265" /></label>
+                  <label>{t("pickingOrderNo")}<input value={batchOutboundForm.pickingOrderNo} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, pickingOrderNo: event.target.value }))} placeholder="TGCUS180265" /></label>
                   <label>{t("orderRef")}<input value={batchOutboundForm.orderRef} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, orderRef: event.target.value }))} placeholder="J73504" /></label>
                   <label>{t("expectedShipDate")}<input type="date" value={batchOutboundForm.expectedShipDate} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, expectedShipDate: event.target.value }))} /></label>
                   <label>{t("actualShipDate")}<input type="date" value={batchOutboundForm.actualShipDate} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, actualShipDate: event.target.value }))} /></label>

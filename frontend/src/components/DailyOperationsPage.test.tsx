@@ -83,7 +83,7 @@ describe("DailyOperationsPage", () => {
             expectedShipDate: "2026-03-24",
             status: "DRAFT",
             trackingStatus: "PACKED",
-            packingListNo: "PL-00021"
+            pickingOrderNo: "PL-00021"
           })
         ]}
         currentUserRole="admin"

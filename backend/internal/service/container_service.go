@@ -627,11 +627,11 @@ func lifecycleEventActivityTime(event ContainerLifecycleEvent) *time.Time {
 }
 
 func lifecycleEventPickingOrderRef(event ContainerLifecycleEvent) string {
-	if strings.TrimSpace(event.PackingListNo) != "" && strings.TrimSpace(event.OrderRef) != "" {
-		return strings.TrimSpace(event.PackingListNo) + " / " + strings.TrimSpace(event.OrderRef)
+	if strings.TrimSpace(event.PickingOrderNo) != "" && strings.TrimSpace(event.OrderRef) != "" {
+		return strings.TrimSpace(event.PickingOrderNo) + " / " + strings.TrimSpace(event.OrderRef)
 	}
-	if strings.TrimSpace(event.PackingListNo) != "" {
-		return strings.TrimSpace(event.PackingListNo)
+	if strings.TrimSpace(event.PickingOrderNo) != "" {
+		return strings.TrimSpace(event.PickingOrderNo)
 	}
 	if strings.TrimSpace(event.OrderRef) != "" {
 		return strings.TrimSpace(event.OrderRef)

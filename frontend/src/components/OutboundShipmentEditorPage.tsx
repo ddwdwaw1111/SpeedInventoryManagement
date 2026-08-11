@@ -30,7 +30,7 @@ import { WorkspacePanelHeader } from "./WorkspacePanelChrome";
 type OutboundWizardStep = 1 | 2 | 3;
 
 type BatchOutboundFormState = {
-  packingListNo: string;
+  pickingOrderNo: string;
   orderRef: string;
   expectedShipDate: string;
   actualShipDate: string;
@@ -1001,7 +1001,7 @@ export function OutboundShipmentEditorPage({
 
     try {
       const payload: OutboundDocumentPayload = {
-        packingListNo: batchOutboundForm.packingListNo || undefined,
+        pickingOrderNo: batchOutboundForm.pickingOrderNo || undefined,
         orderRef: batchOutboundForm.orderRef || undefined,
         expectedShipDate: batchOutboundForm.expectedShipDate || undefined,
         actualShipDate: batchOutboundForm.actualShipDate || undefined,
@@ -1183,7 +1183,7 @@ export function OutboundShipmentEditorPage({
 
             {outboundWizardStep === 1 ? (
               <div className="sheet-form sheet-form--compact">
-                <label>{t("packingListNo")}<input value={batchOutboundForm.packingListNo} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, packingListNo: event.target.value }))} placeholder="TGCUS180265" disabled={isReadOnly} /></label>
+                <label>{t("pickingOrderNo")}<input value={batchOutboundForm.pickingOrderNo} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, pickingOrderNo: event.target.value }))} placeholder="TGCUS180265" disabled={isReadOnly} /></label>
                 <label>{t("orderRef")}<input value={batchOutboundForm.orderRef} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, orderRef: event.target.value }))} placeholder="J73504" disabled={isReadOnly} /></label>
                 <label>{t("expectedShipDate")}<input type="date" value={batchOutboundForm.expectedShipDate} onChange={(event) => setBatchOutboundForm((current) => ({ ...current, expectedShipDate: event.target.value }))} disabled={isReadOnly} /></label>
                 <label>{t("actualShipDate")}<input type="date" value={batchOutboundForm.actualShipDate} onChange={(event) => {
@@ -1769,7 +1769,7 @@ export function OutboundShipmentEditorPage({
 
 function createEmptyBatchOutboundForm(expectedShipDate = ""): BatchOutboundFormState {
   return {
-    packingListNo: "",
+    pickingOrderNo: "",
     orderRef: "",
     expectedShipDate,
     actualShipDate: "",
@@ -2988,7 +2988,7 @@ function buildOutboundEditorSourceState({
     const persistedCandidateIDs = buildPersistedOutboundCandidateIDs(document);
     return {
       form: {
-        packingListNo: document.packingListNo || "",
+        pickingOrderNo: document.pickingOrderNo || "",
         orderRef: document.orderRef || "",
         expectedShipDate: getOutboundExpectedShipDate(document)?.slice(0, 10) ?? "",
         actualShipDate: document.actualShipDate ? document.actualShipDate.slice(0, 10) : "",

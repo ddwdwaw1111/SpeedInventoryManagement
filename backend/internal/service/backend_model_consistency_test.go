@@ -170,8 +170,8 @@ func TestTransferDestinationIdentifiersAndOutboundAllocationProjectionIntegratio
 
 	destinationItem := mustFindItemByContainer(t, ctx, store, destinationLocation.ID, "B", containerNo, item.SKU)
 	if _, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
-		PackingListNo: "TRANSFER-PROJECTION-OUT-" + suffix,
-		Status:        DocumentStatusDraft,
+		PickingOrderNo: "TRANSFER-PROJECTION-OUT-" + suffix,
+		Status:         DocumentStatusDraft,
 		Lines: []CreateOutboundDocumentLineInput{{
 			CustomerID:  customer.ID,
 			LocationID:  destinationLocation.ID,
@@ -357,7 +357,6 @@ func TestConfirmedInboundSynchronizesCanonicalContainerHandlingModeIntegration(t
 	}
 
 	var receiptCount int
-	var visitCount int
 	if err := store.db.QueryRowxContext(ctx, `
 		SELECT COUNT(*)
 		FROM inbound_documents
@@ -368,17 +367,8 @@ func TestConfirmedInboundSynchronizesCanonicalContainerHandlingModeIntegration(t
 	`, customer.ID, normalizeContainerNo(containerNo), DocumentStatusConfirmed, InboundHandlingModePalletized).Scan(&receiptCount); err != nil {
 		t.Fatalf("load confirmed palletized receipts: %v", err)
 	}
-	if err := store.db.QueryRowxContext(ctx, `
-		SELECT COUNT(*)
-		FROM container_visits
-		WHERE customer_id = ?
-		  AND UPPER(TRIM(container_no)) = ?
-		  AND handling_mode = ?
-	`, customer.ID, normalizeContainerNo(containerNo), InboundHandlingModePalletized).Scan(&visitCount); err != nil {
-		t.Fatalf("load palletized container visits: %v", err)
-	}
-	if receiptCount != 2 || visitCount != 2 {
-		t.Fatalf("shared container receipts/visits = %d/%d, want 2/2", receiptCount, visitCount)
+	if receiptCount != 2 {
+		t.Fatalf("shared container receipts = %d, want 2", receiptCount)
 	}
 }
 

@@ -233,7 +233,7 @@ export function HomeDashboardPage({
       .slice(0, 6)
       .map((document) => ({
         id: `outbound-${document.id}`,
-        code: document.packingListNo || `SHP-${document.id}`,
+        code: document.pickingOrderNo || `SHP-${document.id}`,
         counterpart: document.shipToName || document.customerName || "-",
         warehouse: document.storages || "-",
         dateLabel: formatDashboardDate(getOutboundDisplayShipDate(document) || document.createdAt),
@@ -998,7 +998,7 @@ function buildRecentActivityEntries(
     entries.push({
       id: `outbound-${document.id}`,
       title: `${t("outbound")} · ${formatOutboundTrackingStatusLabel(document.trackingStatus, document.status, t)}`,
-      description: [document.packingListNo || `SHP-${document.id}`, document.shipToName || document.customerName || "-", document.storages || "-"].filter(Boolean).join(" / "),
+      description: [document.pickingOrderNo || `SHP-${document.id}`, document.shipToName || document.customerName || "-", document.storages || "-"].filter(Boolean).join(" / "),
       timeLabel: formatRelativeTime(timestamp),
       tone: toneFromProgress(outboundTrackingProgress(document.trackingStatus, document.status)),
       timestamp

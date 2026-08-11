@@ -141,6 +141,49 @@ describe("TransferManagementPage", () => {
     expect(onRefresh).toHaveBeenCalled();
   });
 
+  it("moves every current balance in a warehouse through the server-expanded atomic mode", async () => {
+    const { onRefresh } = renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Move Entire Warehouse" }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Source Warehouse"), { target: { value: "1" } });
+    fireEvent.change(within(dialog).getByLabelText("Destination Warehouse"), { target: { value: "2" } });
+
+    expect(within(dialog).getByText("124")).toBeInTheDocument();
+    expect(within(dialog).getByText("11")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Move Entire Warehouse" }));
+
+    await waitFor(() => expect(createInventoryTransfer).toHaveBeenCalledTimes(1));
+    expect(createInventoryTransfer.mock.calls[0][0]).toMatchObject({
+      entireLocation: {
+        locationId: 1,
+        toLocationId: 2,
+        toStorageSection: "TEMP"
+      }
+    });
+    expect(createInventoryTransfer.mock.calls[0][0].lines).toBeUndefined();
+    expect(onRefresh).toHaveBeenCalled();
+  });
+
+  it("blocks the whole-warehouse action when any source balance is unavailable", () => {
+    const items = buildDefaultItems();
+    items[0] = createItem({
+      ...items[0],
+      allocatedQty: 1,
+      availableQty: 99
+    });
+    renderPage({ items });
+
+    fireEvent.click(screen.getByRole("button", { name: "Move Entire Warehouse" }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Source Warehouse"), { target: { value: "1" } });
+    fireEvent.change(within(dialog).getByLabelText("Destination Warehouse"), { target: { value: "2" } });
+
+    expect(within(dialog).getByText(/1 inventory row\(s\) cannot move/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Move Entire Warehouse" })).toBeDisabled();
+    expect(createInventoryTransfer).not.toHaveBeenCalled();
+  });
+
   it("submits only selected UPC quantities in partial-container mode", async () => {
     renderPage();
     const dialog = openTransferDialog();

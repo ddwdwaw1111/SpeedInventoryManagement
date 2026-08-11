@@ -173,9 +173,12 @@ type SKUMaster struct {
 	Description             string    `db:"description" json:"description"`
 	Unit                    string    `db:"unit" json:"unit"`
 	ReorderLevel            int       `db:"reorder_level" json:"reorderLevel"`
-	DefaultUnitsPerPallet   int       `db:"default_units_per_pallet" json:"defaultUnitsPerPallet"`
+	OutboundCtnsPerPallet   int       `db:"outbound_ctns_per_pallet" json:"outboundCtnsPerPallet"`
 	Weight                  float64   `db:"carton_gross_weight_kg" json:"weight"`
 	Cubes                   float64   `db:"cubes" json:"cubes"`
+	CartonLengthCM          float64   `db:"carton_length_cm" json:"cartonLengthCm"`
+	CartonWidthCM           float64   `db:"carton_width_cm" json:"cartonWidthCm"`
+	CartonHeightCM          float64   `db:"carton_height_cm" json:"cartonHeightCm"`
 	OutboundCartonsPerLayer int       `db:"outbound_cartons_per_layer" json:"outboundCartonsPerLayer"`
 	OutboundLayerCount      int       `db:"outbound_layer_count" json:"outboundLayerCount"`
 	CreatedAt               time.Time `db:"created_at" json:"createdAt"`
@@ -190,9 +193,11 @@ type CreateSKUMasterInput struct {
 	Description             string  `json:"description"`
 	Unit                    string  `json:"unit"`
 	ReorderLevel            int     `json:"reorderLevel"`
-	DefaultUnitsPerPallet   int     `json:"defaultUnitsPerPallet"`
 	Weight                  float64 `json:"weight"`
 	Cubes                   float64 `json:"cubes"`
+	CartonLengthCM          float64 `json:"cartonLengthCm"`
+	CartonWidthCM           float64 `json:"cartonWidthCm"`
+	CartonHeightCM          float64 `json:"cartonHeightCm"`
 	OutboundCartonsPerLayer int     `json:"outboundCartonsPerLayer"`
 	OutboundLayerCount      int     `json:"outboundLayerCount"`
 }
@@ -249,7 +254,7 @@ type Movement struct {
 	QuantityChange         int        `json:"quantityChange"`
 	DeliveryDate           *time.Time `json:"deliveryDate"`
 	ContainerNo            string     `json:"containerNo"`
-	PackingListNo          string     `json:"packingListNo"`
+	PickingOrderNo         string     `json:"pickingOrderNo"`
 	OrderRef               string     `json:"orderRef"`
 	ItemNumber             string     `json:"itemNumber"`
 	ExpectedQty            int        `json:"expectedQty"`
@@ -316,7 +321,7 @@ type CreateMovementInput struct {
 	StorageSection    string  `json:"storageSection"`
 	DeliveryDate      string  `json:"deliveryDate"`
 	ContainerNo       string  `json:"containerNo"`
-	PackingListNo     string  `json:"packingListNo"`
+	PickingOrderNo    string  `json:"pickingOrderNo"`
 	OrderRef          string  `json:"orderRef"`
 	ItemNumber        string  `json:"itemNumber"`
 	ExpectedQty       int     `json:"expectedQty"`
@@ -375,7 +380,7 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 		SELECT
 			i.id,
 			i.sku_master_id,
-			COALESCE(cic.item_number, sm.item_number, ''),
+			COALESCE(sm.item_number, ''),
 			sm.sku,
 			sm.name,
 			sm.category,
@@ -406,7 +411,6 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 			i.updated_at
 		FROM inventory_items i
 		JOIN sku_master sm ON sm.id = i.sku_master_id
-		LEFT JOIN customer_item_catalog cic ON cic.customer_id = i.customer_id AND cic.sku_master_id = i.sku_master_id
 		JOIN customers c ON c.id = i.customer_id
 		JOIN storage_locations l ON l.id = i.location_id
 		LEFT JOIN containers cn
@@ -418,7 +422,7 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 	args := make([]any, 0)
 	if search := strings.TrimSpace(filters.Search); search != "" {
 		likeValue := "%" + search + "%"
-		query += " AND (COALESCE(cic.item_number, sm.item_number, '') LIKE ? OR sm.sku LIKE ? OR sm.name LIKE ? OR sm.description LIKE ? OR sm.category LIKE ? OR c.name LIKE ? OR COALESCE(i.container_no, '') LIKE ?)"
+		query += " AND (COALESCE(sm.item_number, '') LIKE ? OR sm.sku LIKE ? OR sm.name LIKE ? OR sm.description LIKE ? OR sm.category LIKE ? OR c.name LIKE ? OR COALESCE(i.container_no, '') LIKE ?)"
 		args = append(args, likeValue, likeValue, likeValue, likeValue, likeValue, likeValue)
 		args = append(args, likeValue)
 	}
@@ -744,7 +748,7 @@ func (s *Store) listStockLedgerMovements(ctx context.Context, limit int, filters
 				OR LOWER(COALESCE(l.name, '')) LIKE ?
 				OR LOWER(COALESCE(NULLIF(sl.storage_section, ''), 'TEMP')) LIKE ?
 				OR LOWER(COALESCE(NULLIF(sl.container_no_snapshot, ''), idoc.container_no, '')) LIKE ?
-				OR LOWER(COALESCE(NULLIF(sl.packing_list_no, ''), odoc.packing_list_no, '')) LIKE ?
+				OR LOWER(COALESCE(NULLIF(sl.picking_order_no, ''), odoc.picking_order_no, '')) LIKE ?
 				OR LOWER(COALESCE(NULLIF(sl.order_ref, ''), odoc.order_ref, '')) LIKE ?
 				OR LOWER(COALESCE(NULLIF(sl.item_number_snapshot, ''), sm.item_number, '')) LIKE ?
 				OR LOWER(COALESCE(sl.reference_code, '')) LIKE ?
@@ -857,10 +861,10 @@ func (s *Store) listStockLedgerMovements(ctx context.Context, limit int, filters
 			END) AS delivery_date,
 			COALESCE(MAX(NULLIF(sl.container_no_snapshot, '')), MAX(NULLIF(idoc.container_no, '')), '') AS container_no,
 			COALESCE(
-				MAX(NULLIF(sl.packing_list_no, '')),
-				MAX(NULLIF(odoc.packing_list_no, '')),
+				MAX(NULLIF(sl.picking_order_no, '')),
+				MAX(NULLIF(odoc.picking_order_no, '')),
 				''
-			) AS packing_list_no,
+			) AS picking_order_no,
 			COALESCE(
 				MAX(NULLIF(sl.order_ref, '')),
 				MAX(NULLIF(odoc.order_ref, '')),
@@ -997,7 +1001,7 @@ func (s *Store) getItem(ctx context.Context, itemID int64) (Item, error) {
 		SELECT
 			i.id,
 			i.sku_master_id,
-			COALESCE(cic.item_number, sm.item_number, ''),
+			COALESCE(sm.item_number, ''),
 			sm.sku,
 			sm.name,
 			sm.category,
@@ -1030,7 +1034,6 @@ func (s *Store) getItem(ctx context.Context, itemID int64) (Item, error) {
 		JOIN customers c ON c.id = i.customer_id
 		JOIN storage_locations l ON l.id = i.location_id
 		JOIN sku_master sm ON sm.id = i.sku_master_id
-		LEFT JOIN customer_item_catalog cic ON cic.customer_id = i.customer_id AND cic.sku_master_id = i.sku_master_id
 		LEFT JOIN containers cn
 			ON cn.customer_id = i.customer_id
 			AND UPPER(TRIM(cn.container_no)) = UPPER(TRIM(COALESCE(i.container_no, '')))
@@ -1188,7 +1191,7 @@ func scanMovement(scanner itemScanner) (Movement, error) {
 		&movement.QuantityChange,
 		&deliveryDate,
 		&movement.ContainerNo,
-		&movement.PackingListNo,
+		&movement.PickingOrderNo,
 		&movement.OrderRef,
 		&movement.ItemNumber,
 		&movement.ExpectedQty,
@@ -1283,7 +1286,7 @@ func validateItemInput(input CreateItemInput) error {
 func sanitizeMovementInput(input CreateMovementInput) CreateMovementInput {
 	input.MovementType = strings.TrimSpace(strings.ToUpper(input.MovementType))
 	input.ContainerNo = strings.TrimSpace(strings.ToUpper(input.ContainerNo))
-	input.PackingListNo = strings.TrimSpace(strings.ToUpper(input.PackingListNo))
+	input.PickingOrderNo = strings.TrimSpace(strings.ToUpper(input.PickingOrderNo))
 	input.OrderRef = strings.TrimSpace(strings.ToUpper(input.OrderRef))
 	input.ItemNumber = strings.TrimSpace(strings.ToUpper(input.ItemNumber))
 	input.StorageSection = normalizeStorageSection(input.StorageSection)
@@ -1459,62 +1462,58 @@ func (s *Store) ensureSKUMaster(ctx context.Context, tx *sql.Tx, input CreateIte
 	if skuMasterID <= 0 {
 		return 0, fmt.Errorf("%w: UPC master id is invalid", ErrInvalidInput)
 	}
-	if err := s.upsertCustomerItemCatalogTx(ctx, tx, input.CustomerID, skuMasterID, input.ItemNumber); err != nil {
+	if err := s.validateAndSetSKUItemCodeTx(ctx, tx, skuMasterID, input.ItemNumber); err != nil {
 		return 0, err
 	}
 
 	return skuMasterID, nil
 }
 
-func (s *Store) upsertCustomerItemCatalogTx(ctx context.Context, tx *sql.Tx, customerID int64, skuMasterID int64, itemNumber string) error {
-	if customerID <= 0 || skuMasterID <= 0 {
-		return fmt.Errorf("%w: customer and UPC are required for item catalog mapping", ErrInvalidInput)
+func (s *Store) validateAndSetSKUItemCodeTx(ctx context.Context, tx *sql.Tx, skuMasterID int64, itemNumber string) error {
+	if skuMasterID <= 0 {
+		return fmt.Errorf("%w: UPC is required for item code mapping", ErrInvalidInput)
 	}
 	itemNumber = strings.ToUpper(strings.TrimSpace(itemNumber))
 
 	var existingItemNumber string
 	err := tx.QueryRowContext(ctx, `
 		SELECT COALESCE(item_number, '')
-		FROM customer_item_catalog
-		WHERE customer_id = ? AND sku_master_id = ?
+		FROM sku_master
+		WHERE id = ?
 		FOR UPDATE
-	`, customerID, skuMasterID).Scan(&existingItemNumber)
+	`, skuMasterID).Scan(&existingItemNumber)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("lock customer item catalog mapping: %w", err)
 	}
 	if existingItemNumber != "" && itemNumber != "" && !strings.EqualFold(existingItemNumber, itemNumber) {
-		return fmt.Errorf("%w: this customer UPC already uses item code %s", ErrInvalidInput, existingItemNumber)
+		return fmt.Errorf("%w: UPC already uses item code %s; change the incoming Item Code to %s, or update the UPC master first", ErrInvalidInput, existingItemNumber, existingItemNumber)
 	}
 
 	if itemNumber != "" {
 		var conflictingSKU string
 		err = tx.QueryRowContext(ctx, `
 			SELECT sm.sku
-			FROM customer_item_catalog cic
-			JOIN sku_master sm ON sm.id = cic.sku_master_id
-			WHERE cic.customer_id = ?
-				AND UPPER(TRIM(cic.item_number)) = ?
-				AND cic.sku_master_id <> ?
+			FROM sku_master sm
+			WHERE UPPER(TRIM(COALESCE(sm.item_number, ''))) = ?
+				AND sm.id <> ?
 			LIMIT 1
 			FOR UPDATE
-		`, customerID, itemNumber, skuMasterID).Scan(&conflictingSKU)
+		`, itemNumber, skuMasterID).Scan(&conflictingSKU)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("lock customer item code %s: %w", itemNumber, err)
 		}
 		if conflictingSKU != "" {
-			return fmt.Errorf("%w: item code %s already belongs to UPC %s for this customer", ErrInvalidInput, itemNumber, conflictingSKU)
+			return fmt.Errorf("%w: Item Code %s already belongs to UPC %s; change this row's Item Code or select UPC %s", ErrInvalidInput, itemNumber, conflictingSKU, conflictingSKU)
 		}
 	}
 
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO customer_item_catalog (customer_id, sku_master_id, item_number)
-		VALUES (?, ?, ?)
-		ON DUPLICATE KEY UPDATE
-			item_number = COALESCE(customer_item_catalog.item_number, VALUES(item_number)),
-			updated_at = CURRENT_TIMESTAMP
-	`, customerID, skuMasterID, nullableString(itemNumber))
+		UPDATE sku_master
+		SET item_number = COALESCE(NULLIF(item_number, ''), ?), updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, nullableString(itemNumber), skuMasterID)
 	if err != nil {
-		return mapDBError(fmt.Errorf("upsert customer item catalog: %w", err))
+		return mapDBError(fmt.Errorf("update UPC item code: %w", err))
 	}
 	return nil
 }

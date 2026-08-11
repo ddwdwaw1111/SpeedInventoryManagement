@@ -1,133 +1,57 @@
 package database
 
 import (
-	"fmt"
+	"strings"
 	"testing"
 )
 
 func TestMigrationChecksumIsStableAndRevisionSensitive(t *testing.T) {
-	migration := schemaMigration{Version: 2, Name: "container_balances", Revision: "1"}
+	migration := schemaMigration{Version: 1, Name: "v1", Revision: "1"}
 	first := migrationChecksum(migration)
 	second := migrationChecksum(migration)
 	if first != second || len(first) != 64 {
 		t.Fatalf("expected stable sha256 checksum, got %q and %q", first, second)
 	}
-
 	migration.Revision = "2"
 	if first == migrationChecksum(migration) {
 		t.Fatal("changing a migration revision must change its checksum")
 	}
 }
 
-func TestPreviouslyDeployedMigrationChecksumsRemainCompatible(t *testing.T) {
-	expectedChecksums := map[int64]string{
-		9:  "f802a3e95c7517a4d721de3d0d20de479ee351dc4daac93571f5e6c3c9f7812a",
-		10: "ee31edf6871fe2406c8e517148d7f3540cd92b96e8baf1c39833826cd40646d6",
+func TestV1UsesOneCleanBaselineMigration(t *testing.T) {
+	if len(schemaMigrations) != 1 {
+		t.Fatalf("expected one pre-production baseline migration, got %d", len(schemaMigrations))
 	}
-
-	for version, expectedChecksum := range expectedChecksums {
-		var found *schemaMigration
-		for index := range schemaMigrations {
-			if schemaMigrations[index].Version == version {
-				found = &schemaMigrations[index]
-				break
-			}
-		}
-		if found == nil {
-			t.Fatalf("migration %d is missing", version)
-		}
-		if actualChecksum := migrationChecksum(*found); actualChecksum != expectedChecksum {
-			t.Fatalf(
-				"migration %d checksum = %s, want deployed checksum %s (%s)",
-				version,
-				actualChecksum,
-				expectedChecksum,
-				fmt.Sprintf("%s/%s", found.Name, found.Revision),
-			)
-		}
+	migration := schemaMigrations[0]
+	if migration.Version != 1 || migration.Name != "v1_container_centric_baseline" || migration.Apply == nil {
+		t.Fatalf("unexpected v1 baseline migration: %#v", migration)
 	}
 }
 
-func TestBulkImportRetentionHasDedicatedMigration(t *testing.T) {
-	for _, migration := range schemaMigrations {
-		if migration.Version == 12 {
-			if migration.Name != "bulk_import_retention" || migration.Apply == nil {
-				t.Fatalf("unexpected bulk import retention migration: %#v", migration)
-			}
-			return
+func TestV1SchemaContainsOnlyCurrentContainerCentricStructures(t *testing.T) {
+	for _, required := range []string{
+		"`expected_qty`",
+		"`inbound_ctns_per_pallet`",
+		"`carton_length_cm`",
+		"`carton_width_cm`",
+		"`carton_height_cm`",
+		"`outbound_cartons_per_layer`",
+		"`outbound_layer_count`",
+		"CREATE TABLE IF NOT EXISTS `outbound_container_allocations`",
+	} {
+		if !strings.Contains(v1Schema, required) {
+			t.Fatalf("v1 schema is missing %s", required)
 		}
 	}
-	t.Fatal("bulk import retention migration is missing")
-}
-
-func TestTransferLinePalletSidesHasDedicatedMigration(t *testing.T) {
-	for _, migration := range schemaMigrations {
-		if migration.Version == 13 {
-			if migration.Name != "transfer_line_pallet_sides" || migration.Apply == nil {
-				t.Fatalf("unexpected transfer pallet-side migration: %#v", migration)
-			}
-			return
+	for _, legacy := range []string{
+		"container_lifecycle_events",
+		"container_visits",
+		"customer_item_catalog",
+		"pick_allocations_json",
+		"pallet_items",
+	} {
+		if strings.Contains(v1Schema, legacy) {
+			t.Fatalf("v1 schema still contains legacy structure %s", legacy)
 		}
 	}
-	t.Fatal("transfer pallet-side migration is missing")
-}
-
-func TestSKUPhysicalProfilesHasDedicatedMigration(t *testing.T) {
-	for _, migration := range schemaMigrations {
-		if migration.Version == 14 {
-			if migration.Name != "sku_physical_profiles" || migration.Apply == nil {
-				t.Fatalf("unexpected UPC physical-profile migration: %#v", migration)
-			}
-			return
-		}
-	}
-	t.Fatal("UPC physical-profile migration is missing")
-}
-
-func TestSKUCubesHasDedicatedMigration(t *testing.T) {
-	for _, migration := range schemaMigrations {
-		if migration.Version == 15 {
-			if migration.Name != "sku_cubes" || migration.Apply == nil {
-				t.Fatalf("unexpected UPC cubes migration: %#v", migration)
-			}
-			return
-		}
-	}
-	t.Fatal("UPC cubes migration is missing")
-}
-
-func TestV1SchemaAlignmentHasDedicatedMigration(t *testing.T) {
-	for _, migration := range schemaMigrations {
-		if migration.Version == 16 {
-			if migration.Name != "v1_schema_alignment" || migration.Apply == nil {
-				t.Fatalf("unexpected v1 schema alignment migration: %#v", migration)
-			}
-			return
-		}
-	}
-	t.Fatal("v1 schema alignment migration is missing")
-}
-
-func TestBillingLineProvenanceHasDedicatedMigration(t *testing.T) {
-	for _, migration := range schemaMigrations {
-		if migration.Version == 17 {
-			if migration.Name != "billing_line_provenance" || migration.Apply == nil {
-				t.Fatalf("unexpected billing line provenance migration: %#v", migration)
-			}
-			return
-		}
-	}
-	t.Fatal("billing line provenance migration is missing")
-}
-
-func TestStockLedgerBusinessDateHasDedicatedMigration(t *testing.T) {
-	for _, migration := range schemaMigrations {
-		if migration.Version == 18 {
-			if migration.Name != "stock_ledger_business_date" || migration.Apply == nil {
-				t.Fatalf("unexpected stock ledger business-date migration: %#v", migration)
-			}
-			return
-		}
-	}
-	t.Fatal("stock ledger business-date migration is missing")
 }

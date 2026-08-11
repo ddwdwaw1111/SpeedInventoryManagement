@@ -1224,7 +1224,7 @@ function appendUniqueText(current: string, next: string) {
 }
 
 function getOutboundOrderReference(document: OutboundDocument) {
-  return document.packingListNo || document.orderRef || `#${document.id}`;
+  return document.pickingOrderNo || document.orderRef || `#${document.id}`;
 }
 
 export function buildOutboundOrderGoodsRows(document: OutboundDocument | undefined, containerNo: string): OutboundOrderGoodsRow[] {

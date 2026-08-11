@@ -113,7 +113,7 @@ describe("buildInboundReceivingCountSheetDocument", () => {
         expectedQty: 120,
         receivedQty: 0,
         pallets: 4,
-        unitsPerPallet: 0,
+        inboundCtnsPerPallet: 0,
         palletsDetailCtns: "4 pallets on dock",
         unitLabel: "CTN",
         lineNote: "",

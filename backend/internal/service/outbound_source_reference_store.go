@@ -21,17 +21,16 @@ func (s *Store) ListOutboundSourceReferences(ctx context.Context) ([]OutboundSou
 	references := make([]OutboundSourceReference, 0)
 	if err := s.db.SelectContext(ctx, &references, `
 		SELECT
-			cic.customer_id,
+			c.id AS customer_id,
 			c.name AS customer_name,
-			cic.sku_master_id,
-			COALESCE(cic.item_number, sm.item_number, '') AS item_number,
+			sm.id AS sku_master_id,
+			COALESCE(sm.item_number, '') AS item_number,
 			sm.sku,
 			COALESCE(NULLIF(sm.description, ''), sm.name, '') AS description,
 			COALESCE(NULLIF(sm.unit, ''), 'PCS') AS unit
-		FROM customer_item_catalog cic
-		JOIN customers c ON c.id = cic.customer_id
-		JOIN sku_master sm ON sm.id = cic.sku_master_id
-		ORDER BY c.name, sm.sku, cic.id
+		FROM customers c
+		CROSS JOIN sku_master sm
+		ORDER BY c.name, sm.sku, sm.id
 	`); err != nil {
 		return nil, fmt.Errorf("load outbound source references: %w", err)
 	}

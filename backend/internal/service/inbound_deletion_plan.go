@@ -338,7 +338,7 @@ func (s *Store) buildInboundDeletionImpactTx(
 			return InboundDeletionImpact{}, err
 		}
 		for _, line := range lineRows {
-			for _, allocation := range decodeOutboundPickAllocationsOrEmpty(line.PickAllocationsJSON) {
+			for _, allocation := range line.PickAllocations {
 				if allocation.SourceTransferID > 0 {
 					coveredTransferIDs[allocation.SourceTransferID] = struct{}{}
 					group.CoveredTransfers[allocation.SourceTransferID] = struct{}{}
@@ -467,7 +467,7 @@ func (s *Store) describeInboundDeletionDependencyTx(
 	var status string
 	switch group.SourceType {
 	case StockLedgerSourceOutbound:
-		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(packing_list_no, ''), status FROM outbound_documents WHERE id = ?`, group.DocumentID).Scan(&dependency.Reference, &status); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(picking_order_no, ''), status FROM outbound_documents WHERE id = ?`, group.DocumentID).Scan(&dependency.Reference, &status); err != nil {
 			return missingInboundDeletionDependency(group, "outbound shipment no longer exists", err)
 		}
 	case StockLedgerSourceTransfer:
@@ -579,7 +579,7 @@ func (s *Store) inboundDeletionCoveredSourcesTx(
 			return nil, err
 		}
 		for _, line := range lineRows {
-			for _, allocation := range decodeOutboundPickAllocationsOrEmpty(line.PickAllocationsJSON) {
+			for _, allocation := range line.PickAllocations {
 				if allocation.SourceTransferID > 0 {
 					sources[inboundDeletionSourceKey{SourceType: StockLedgerSourceTransfer, DocumentID: allocation.SourceTransferID}] = struct{}{}
 				}
@@ -850,9 +850,6 @@ func (s *Store) hardDeleteInboundDependencyTx(ctx context.Context, tx *sql.Tx, s
 func (s *Store) hardDeleteInboundDocumentArtifactsTx(ctx context.Context, tx *sql.Tx, document inboundDocumentRow) error {
 	if err := markDocumentAttachmentsDeletedForDocument(ctx, tx, DocumentAttachmentInbound, document.ID); err != nil {
 		return err
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM container_visits WHERE inbound_document_id = ?`, document.ID); err != nil {
-		return mapDBError(fmt.Errorf("delete inbound container visit: %w", err))
 	}
 	if err := deleteStockLedgerForDocumentTx(ctx, tx, StockLedgerSourceInbound, document.ID); err != nil {
 		return err

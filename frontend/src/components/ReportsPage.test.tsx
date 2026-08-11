@@ -107,7 +107,7 @@ describe("ReportsPage SKU flow trend", () => {
       locationName: "308",
       storageSection: "TEMP",
       containerNo: "CONT-A",
-      packingListNo: "",
+      pickingOrderNo: "",
       orderRef: "",
       sourceDocumentType: "INBOUND",
       sourceDocumentId: 1,

@@ -95,7 +95,7 @@ const RECEIPTS_EXPORT_COLUMNS = [
 ] as const;
 
 const SHIPMENTS_EXPORT_COLUMNS = [
-  { key: "packingListNo", label: "Picking Order No." },
+  { key: "pickingOrderNo", label: "Picking Order No." },
   { key: "orderRef", label: "Order Ref." },
   { key: "customerName", label: "Customer" },
   { key: "storages", label: "Warehouse" },
@@ -447,7 +447,7 @@ function buildReceiptExportRows(inboundDocuments: InboundDocument[]) {
 
 function buildShipmentExportRows(outboundDocuments: OutboundDocument[]) {
   return outboundDocuments.map((document) => ({
-    packingListNo: document.packingListNo || "-",
+    pickingOrderNo: document.pickingOrderNo || "-",
     orderRef: document.orderRef || "-",
     customerName: document.customerName || "-",
     storages: document.storages || "-",

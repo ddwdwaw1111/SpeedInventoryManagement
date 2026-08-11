@@ -128,7 +128,7 @@ export function CustomerPortalPickingOrdersPage({
         <Table aria-label={t("customerPortalPickingOrders")} aria-busy={loading}>
           <TableHeader>
             <TableRow>
-              <TableHead>{t("packingListNo")}</TableHead>
+              <TableHead>{t("pickingOrderNo")}</TableHead>
               <TableHead>{t("orderRef")}</TableHead>
               <TableHead>{t("trackingStatus")}</TableHead>
               <TableHead>{t("customerPortalCompletionStatus")}</TableHead>
@@ -155,7 +155,7 @@ export function CustomerPortalPickingOrdersPage({
               return (
                 <TableRow key={document.id} className={selectedPickingOrderId === document.id ? "bg-slate-50" : undefined}>
                   <TableCell>
-                    <span className="font-semibold text-slate-950">{document.packingListNo || `#${document.id}`}</span>
+                    <span className="font-semibold text-slate-950">{document.pickingOrderNo || `#${document.id}`}</span>
                     <span className="mt-1 block text-xs text-slate-500">Customer Picking Order</span>
                   </TableCell>
                   <TableCell>{document.orderRef || "-"}</TableCell>
@@ -176,7 +176,7 @@ export function CustomerPortalPickingOrdersPage({
                       size="sm"
                       type="button"
                       onClick={() => onOpenDetail(document.id)}
-                      aria-label={`${t("details")} ${document.packingListNo || `#${document.id}`}`}
+                      aria-label={`${t("details")} ${document.pickingOrderNo || `#${document.id}`}`}
                     >
                       {t("details")}
                     </Button>

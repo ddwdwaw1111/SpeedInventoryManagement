@@ -72,7 +72,7 @@ func TestSanitizeMovementInput(t *testing.T) {
 	input := sanitizeMovementInput(CreateMovementInput{
 		MovementType:   " out ",
 		ContainerNo:    " mrku123 ",
-		PackingListNo:  " pl-001 ",
+		PickingOrderNo: " pl-001 ",
 		OrderRef:       " so-123 ",
 		ItemNumber:     " item-1 ",
 		StorageSection: " b ",
@@ -87,8 +87,8 @@ func TestSanitizeMovementInput(t *testing.T) {
 	if input.ContainerNo != "MRKU123" {
 		t.Fatalf("expected uppercase container number, got %q", input.ContainerNo)
 	}
-	if input.PackingListNo != "PL-001" {
-		t.Fatalf("expected uppercase packing list number, got %q", input.PackingListNo)
+	if input.PickingOrderNo != "PL-001" {
+		t.Fatalf("expected uppercase packing list number, got %q", input.PickingOrderNo)
 	}
 	if input.StorageSection != "B" {
 		t.Fatalf("expected uppercase storage section, got %q", input.StorageSection)

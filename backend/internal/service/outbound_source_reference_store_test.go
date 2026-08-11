@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"testing"
 )
 
@@ -30,7 +29,7 @@ func TestListOutboundSourceReferencesIncludesZeroStockCatalogEntry(t *testing.T)
 	t.Fatalf("zero-stock catalog entry was omitted: customer=%d skuMaster=%d references=%#v", customer.ID, item.SKUMasterID, references)
 }
 
-func TestLoadOutboundSourceReferenceRejectsSKUOutsideCustomerCatalog(t *testing.T) {
+func TestLoadOutboundSourceReferenceAllowsGlobalUPCForCustomer(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	suffix := integrationSuffix()
@@ -45,8 +44,11 @@ func TestLoadOutboundSourceReferenceRejectsSKUOutsideCustomerCatalog(t *testing.
 	}
 	defer tx.Rollback()
 
-	_, err = store.loadOutboundSourceReferenceTx(ctx, tx, requestCustomer.ID, location.ID, foreignItem.SKUMasterID)
-	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("expected SKU outside the customer's catalog to be rejected, got %v", err)
+	reference, err := store.loadOutboundSourceReferenceTx(ctx, tx, requestCustomer.ID, location.ID, foreignItem.SKUMasterID)
+	if err != nil {
+		t.Fatalf("load global UPC reference: %v", err)
+	}
+	if reference.CustomerID != requestCustomer.ID || reference.SKUMasterID != foreignItem.SKUMasterID {
+		t.Fatalf("unexpected global UPC reference: %#v", reference)
 	}
 }

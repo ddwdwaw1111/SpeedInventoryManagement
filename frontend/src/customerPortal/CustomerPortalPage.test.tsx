@@ -159,7 +159,7 @@ describe("CustomerPortalPage", () => {
     getPickingOrders.mockResolvedValue([
       createOutboundDocument({
         id: 42,
-        packingListNo: "PL-CUST-42",
+        pickingOrderNo: "PL-CUST-42",
         attachments: [
           {
             id: 9,
@@ -176,7 +176,7 @@ describe("CustomerPortalPage", () => {
       }),
       createOutboundDocument({
         id: 43,
-        packingListNo: "PL-CUST-43",
+        pickingOrderNo: "PL-CUST-43",
         trackingStatus: "BO_RECEIVED"
       })
     ]);

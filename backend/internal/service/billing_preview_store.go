@@ -401,13 +401,13 @@ func (s *Store) loadBillingPreviewSourcesWithQueryer(
 			d.id AS document_id,
 			line.id AS line_id,
 			COALESCE((
-				SELECT cle.sku_master_id
-				FROM container_lifecycle_events cle
-				WHERE cle.source_document_type = 'INBOUND'
-				  AND cle.source_document_id = d.id
-				  AND cle.source_line_id = line.id
-				  AND cle.sku_master_id IS NOT NULL
-				ORDER BY cle.id
+				SELECT sl.sku_master_id
+				FROM stock_ledger sl
+				WHERE sl.source_document_type = 'INBOUND'
+				  AND sl.source_document_id = d.id
+				  AND sl.source_line_id = line.id
+				  AND sl.sku_master_id IS NOT NULL
+				ORDER BY sl.id
 				LIMIT 1
 			), sm.id, 0) AS sku_master_id,
 			COALESCE(NULLIF(UPPER(TRIM(line.storage_section)), ''), 'TEMP') AS storage_section,
@@ -430,7 +430,7 @@ func (s *Store) loadBillingPreviewSourcesWithQueryer(
 			d.id AS document_id,
 			line.id AS line_id,
 			COALESCE(line.sku_master_id, 0) AS sku_master_id,
-			COALESCE(NULLIF(TRIM(d.packing_list_no), ''), CAST(d.id AS CHAR)) AS picking_no,
+			COALESCE(NULLIF(TRIM(d.picking_order_no), ''), CAST(d.id AS CHAR)) AS picking_no,
 			line.location_id,
 			COALESCE(NULLIF(line.location_name_snapshot, ''), l.name) AS location_name,
 			COALESCE(d.actual_ship_date, DATE(d.confirmed_at), DATE(d.created_at), d.expected_ship_date) AS occurred_on,
@@ -475,50 +475,50 @@ func (s *Store) loadBillingPreviewSourcesWithQueryer(
 
 	if err := sqlx.SelectContext(ctx, queryer, &sources.Lifecycle, `
 		SELECT
-			cle.id AS event_id,
-			cle.location_id,
+			sl.id AS event_id,
+			sl.location_id,
 			l.name AS location_name,
-			COALESCE(NULLIF(UPPER(TRIM(cle.storage_section)), ''), 'TEMP') AS storage_section,
-			COALESCE(NULLIF(UPPER(TRIM(cle.container_no)), ''), 'UNASSIGNED') AS container_no,
-			COALESCE(cle.sku_master_id, 0) AS sku_master_id,
-			UPPER(TRIM(cle.event_type)) AS event_type,
-			DATE(cle.event_time) AS event_date,
-			cle.quantity_delta,
-			cle.pallet_delta,
-			UPPER(TRIM(COALESCE(cle.source_document_type, ''))) AS source_type,
-			COALESCE(cle.source_document_id, 0) AS source_id,
-			COALESCE(cle.source_line_id, 0) AS source_line_id
-		FROM container_lifecycle_events cle
-		JOIN storage_locations l ON l.id = cle.location_id
-		WHERE cle.customer_id = ?
-		  AND cle.event_time < ?
-		  AND (cle.quantity_delta <> 0 OR cle.pallet_delta <> 0)
+			COALESCE(NULLIF(UPPER(TRIM(sl.storage_section)), ''), 'TEMP') AS storage_section,
+			COALESCE(NULLIF(UPPER(TRIM(sl.container_no_snapshot)), ''), 'UNASSIGNED') AS container_no,
+			COALESCE(sl.sku_master_id, 0) AS sku_master_id,
+			UPPER(TRIM(sl.event_type)) AS event_type,
+			DATE(sl.occurred_at) AS event_date,
+			sl.quantity_change AS quantity_delta,
+			sl.pallet_change AS pallet_delta,
+			UPPER(TRIM(COALESCE(sl.source_document_type, ''))) AS source_type,
+			COALESCE(sl.source_document_id, 0) AS source_id,
+			COALESCE(sl.source_line_id, 0) AS source_line_id
+		FROM stock_ledger sl
+		JOIN storage_locations l ON l.id = sl.location_id
+		WHERE sl.customer_id = ?
+		  AND sl.occurred_at < ?
+		  AND (sl.quantity_change <> 0 OR sl.pallet_change <> 0)
 		  AND (
 			(
-			  UPPER(TRIM(COALESCE(cle.source_document_type, ''))) = 'INBOUND'
+			  UPPER(TRIM(COALESCE(sl.source_document_type, ''))) = 'INBOUND'
 			  AND EXISTS (
 				SELECT 1
 				FROM inbound_documents source_inbound
-				WHERE source_inbound.id = cle.source_document_id
-				  AND source_inbound.customer_id = cle.customer_id
+				WHERE source_inbound.id = sl.source_document_id
+				  AND source_inbound.customer_id = sl.customer_id
 				  AND UPPER(TRIM(source_inbound.status)) IN ('CONFIRMED', 'POSTED')
 				  AND source_inbound.cancelled_at IS NULL
 			  )
 			)
 			OR (
-			  UPPER(TRIM(COALESCE(cle.source_document_type, ''))) = 'OUTBOUND'
+			  UPPER(TRIM(COALESCE(sl.source_document_type, ''))) = 'OUTBOUND'
 			  AND EXISTS (
 				SELECT 1
 				FROM outbound_documents source_outbound
-				WHERE source_outbound.id = cle.source_document_id
-				  AND source_outbound.customer_id = cle.customer_id
+				WHERE source_outbound.id = sl.source_document_id
+				  AND source_outbound.customer_id = sl.customer_id
 				  AND UPPER(TRIM(source_outbound.status)) IN ('CONFIRMED', 'POSTED')
 				  AND source_outbound.cancelled_at IS NULL
 			  )
 			)
-			OR UPPER(TRIM(COALESCE(cle.source_document_type, ''))) NOT IN ('INBOUND', 'OUTBOUND')
+			OR UPPER(TRIM(COALESCE(sl.source_document_type, ''))) NOT IN ('INBOUND', 'OUTBOUND')
 		  )
-		ORDER BY UPPER(TRIM(cle.container_no)), cle.event_time, cle.id
+		ORDER BY UPPER(TRIM(sl.container_no_snapshot)), sl.occurred_at, sl.id
 	`, customerID, endExclusive); err != nil {
 		return billingPreviewSources{}, fmt.Errorf("load billing lifecycle sources: %w", err)
 	}

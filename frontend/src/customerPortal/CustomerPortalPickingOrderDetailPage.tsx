@@ -101,7 +101,7 @@ export function CustomerPortalPickingOrderDetailPage({
     <Card>
       <CardHeader>
         <PortalPanelHeader
-          title={selectedDocument ? `${t("customerPortalPickingOrderDetail")} ${selectedDocument.packingListNo || `#${selectedDocument.id}`}` : t("customerPortalPickingOrderDetail")}
+          title={selectedDocument ? `${t("customerPortalPickingOrderDetail")} ${selectedDocument.pickingOrderNo || `#${selectedDocument.id}`}` : t("customerPortalPickingOrderDetail")}
           description={t("customerPortalPickingOrderDetailDesc")}
           infoTooltip={t("customerPortalOutboundTooltip")}
           icon={<SendToBack className="h-4 w-4" />}

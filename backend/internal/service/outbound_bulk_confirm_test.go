@@ -18,7 +18,7 @@ func TestBulkConfirmOutboundDocumentsRejectsDuplicateIDs(t *testing.T) {
 }
 
 func TestOutboundConfirmationReferencePrefersPickingOrderNumber(t *testing.T) {
-	if got := outboundConfirmationReference(outboundDocumentRow{ID: 5, PackingListNo: " PICK-100 "}); got != "PO PICK-100" {
+	if got := outboundConfirmationReference(outboundDocumentRow{ID: 5, PickingOrderNo: " PICK-100 "}); got != "PO PICK-100" {
 		t.Fatalf("confirmation reference = %q, want PO PICK-100", got)
 	}
 	if got := outboundConfirmationReference(outboundDocumentRow{ID: 5}); got != "shipment 5" {
@@ -31,7 +31,7 @@ func TestValidateOutboundDocumentCanBeConfirmedRequiresActiveDraft(t *testing.T)
 		name string
 		row  outboundDocumentRow
 	}{
-		{name: "unexpected status", row: outboundDocumentRow{ID: 3, PackingListNo: "UNKNOWN-STATUS", Status: "UNKNOWN"}},
+		{name: "unexpected status", row: outboundDocumentRow{ID: 3, PickingOrderNo: "UNKNOWN-STATUS", Status: "UNKNOWN"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -40,7 +40,7 @@ func TestValidateOutboundDocumentCanBeConfirmedRequiresActiveDraft(t *testing.T)
 			}
 		})
 	}
-	if err := validateOutboundDocumentCanBeConfirmed(outboundDocumentRow{ID: 4, PackingListNo: "DRAFT", Status: DocumentStatusDraft}); err != nil {
+	if err := validateOutboundDocumentCanBeConfirmed(outboundDocumentRow{ID: 4, PickingOrderNo: "DRAFT", Status: DocumentStatusDraft}); err != nil {
 		t.Fatalf("expected active draft to be confirmable, got %v", err)
 	}
 }
@@ -91,8 +91,8 @@ func TestBulkConfirmOutboundDocumentsKeepsSuccessfulDocumentsIntegration(t *test
 	documentIDs := make([]int64, 0, 2)
 	for _, pickingOrderNo := range []string{"BULK-OUT-A-" + suffix, "BULK-OUT-B-" + suffix} {
 		document, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
-			PackingListNo: pickingOrderNo,
-			Status:        DocumentStatusDraft,
+			PickingOrderNo: pickingOrderNo,
+			Status:         DocumentStatusDraft,
 			Lines: []CreateOutboundDocumentLineInput{{
 				CustomerID:  customer.ID,
 				LocationID:  location.ID,
@@ -113,7 +113,7 @@ func TestBulkConfirmOutboundDocumentsKeepsSuccessfulDocumentsIntegration(t *test
 		t.Fatalf("bulk confirm outbound documents: %v", err)
 	}
 	if response.UpdatedDocuments != 1 || response.FailedDocuments != 1 {
-		t.Fatalf("bulk confirmation counts = %d confirmed / %d failed, want 1 / 1", response.UpdatedDocuments, response.FailedDocuments)
+		t.Fatalf("bulk confirmation counts = %d confirmed / %d failed, want 1 / 1; results: %#v", response.UpdatedDocuments, response.FailedDocuments, response.Results)
 	}
 	if len(response.Results) != 2 || !response.Results[0].Success || response.Results[1].Success {
 		t.Fatalf("unexpected per-document results: %#v", response.Results)
@@ -138,8 +138,8 @@ func TestBulkConfirmOutboundDocumentsKeepsSuccessfulDocumentsIntegration(t *test
 	}
 
 	remaining := mustFindItemByID(t, ctx, store, item.ID)
-	if remaining.Quantity != 4 || remaining.Pallets != 2 {
-		t.Fatalf("expected first shipment to leave 4 qty / 2 pallets, got %d / %d", remaining.Quantity, remaining.Pallets)
+	if remaining.Quantity != 4 || remaining.Pallets != 1 {
+		t.Fatalf("expected first shipment to release one full pallet and leave 4 qty / 1 pallet, got %d / %d", remaining.Quantity, remaining.Pallets)
 	}
 }
 
@@ -167,8 +167,8 @@ func TestBulkConfirmOutboundDocumentsRefreshesActivePalletReservationBetweenDocu
 		startingPallets := 7
 		remainingPallets := 7
 		document, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
-			PackingListNo: "BULK-PALLET-REFRESH-" + suffix + fmt.Sprintf("-%d", index+1),
-			Status:        DocumentStatusDraft,
+			PickingOrderNo: "BULK-PALLET-REFRESH-" + suffix + fmt.Sprintf("-%d", index+1),
+			Status:         DocumentStatusDraft,
 			Lines: []CreateOutboundDocumentLineInput{{
 				CustomerID:  customer.ID,
 				LocationID:  location.ID,

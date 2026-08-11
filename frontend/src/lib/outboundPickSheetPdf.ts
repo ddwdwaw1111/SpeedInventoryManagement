@@ -138,7 +138,7 @@ type PickSheetDocument = {
   fileName: string;
   rows: PickSheetRow[];
   skuGroups: PickSheetSkuGroup[];
-  packingListNo: string;
+  pickingOrderNo: string;
   orderRef: string;
   customerSummary: string;
   expectedShipDate: string;
@@ -154,7 +154,7 @@ type PickSheetDocument = {
 const LABELS = {
   title: "Warehouse Pick Sheet",
   printedAt: "Printed At",
-  packingListNo: "Picking Order No.",
+  pickingOrderNo: "Picking Order No.",
   orderRef: "Order No.",
   pickDate: "Pick Date",
   warehouse: "Warehouse",
@@ -189,10 +189,10 @@ export function buildPickSheetDocument(document: OutboundDocument): PickSheetDoc
   const skuGroups = groupRowsBySku(rows);
 
   return {
-    fileName: `warehouse-pick-sheet-${sanitizeFileName(document.packingListNo || `outbound-${document.id}`)}.pdf`,
+    fileName: `warehouse-pick-sheet-${sanitizeFileName(document.pickingOrderNo || `outbound-${document.id}`)}.pdf`,
     rows,
     skuGroups,
-    packingListNo: document.packingListNo || `OUT-${document.id}`,
+    pickingOrderNo: document.pickingOrderNo || `OUT-${document.id}`,
     orderRef: safeValue(document.orderRef),
     customerSummary: safeValue(document.customerName),
     expectedShipDate: safeValue(getOutboundExpectedShipDate(document)),
@@ -447,7 +447,7 @@ export function buildPickSheetDefinition(document: PickSheetDocument): TDocument
           {
             stack: [
               { text: LABELS.title, style: "pageTitle" },
-              { text: `${LABELS.packingListNo}: ${document.packingListNo} | ${LABELS.orderRef}: ${document.orderRef || LABELS.empty}`, style: "titleMeta", margin: [0, 2, 0, 0] }
+              { text: `${LABELS.pickingOrderNo}: ${document.pickingOrderNo} | ${LABELS.orderRef}: ${document.orderRef || LABELS.empty}`, style: "titleMeta", margin: [0, 2, 0, 0] }
             ],
             margin: [0, 0, 8, 0]
           }
@@ -474,7 +474,7 @@ export function buildPickSheetDefinition(document: PickSheetDocument): TDocument
     pageOrientation: "portrait",
     pageMargins: [18, 14, 18, 16],
     info: {
-      title: `${LABELS.title} ${document.packingListNo}`,
+      title: `${LABELS.title} ${document.pickingOrderNo}`,
       subject: LABELS.subject,
       author: "Speed Inventory Management"
     },

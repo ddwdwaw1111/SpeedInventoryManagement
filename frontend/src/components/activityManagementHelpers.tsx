@@ -198,7 +198,7 @@ export function outboundDocumentMatchesSearch(document: OutboundDocument, normal
   }
 
   const searchableFields = [
-    document.packingListNo,
+    document.pickingOrderNo,
     document.orderRef,
     document.customerName,
     document.shipToName,

@@ -27,7 +27,7 @@ func TestCancelConfirmedOutboundHardDeletesRelatedRecordsIntegration(t *testing.
 	pickingOrderNo := "OUTBOUND-AUDIT-" + suffix
 
 	document, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
-		PackingListNo:  pickingOrderNo,
+		PickingOrderNo: pickingOrderNo,
 		ActualShipDate: "2026-07-16",
 		Status:         DocumentStatusConfirmed,
 		Lines: []CreateOutboundDocumentLineInput{{
@@ -153,8 +153,8 @@ func TestCancelPickingOutboundHardDeletesAllocationsIntegration(t *testing.T) {
 	)
 
 	document, err := store.CreateOutboundDocument(ctx, CreateOutboundDocumentInput{
-		PackingListNo: "PICKING-AUDIT-" + suffix,
-		Status:        DocumentStatusDraft,
+		PickingOrderNo: "PICKING-AUDIT-" + suffix,
+		Status:         DocumentStatusDraft,
 		Lines: []CreateOutboundDocumentLineInput{{
 			CustomerID:  customer.ID,
 			LocationID:  location.ID,

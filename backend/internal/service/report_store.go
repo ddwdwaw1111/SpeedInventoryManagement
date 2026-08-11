@@ -128,7 +128,7 @@ type SKUFlowReportRow struct {
 	LocationName       string `json:"locationName"`
 	StorageSection     string `json:"storageSection"`
 	ContainerNo        string `json:"containerNo"`
-	PackingListNo      string `json:"packingListNo"`
+	PickingOrderNo     string `json:"pickingOrderNo"`
 	OrderRef           string `json:"orderRef"`
 	SourceDocumentType string `json:"sourceDocumentType"`
 	SourceDocumentID   int64  `json:"sourceDocumentId"`
@@ -162,7 +162,7 @@ type reportLedgerEntry struct {
 	ContainerNo    string       `db:"container_no_snapshot"`
 	ItemNumber     string       `db:"item_number_snapshot"`
 	Description    string       `db:"description_snapshot"`
-	PackingListNo  string       `db:"packing_list_no"`
+	PickingOrderNo string       `db:"picking_order_no"`
 	OrderRef       string       `db:"order_ref"`
 	ReferenceCode  string       `db:"reference_code"`
 	EventType      string       `db:"event_type"`
@@ -189,7 +189,7 @@ type skuFlowReportGroupKey struct {
 	LocationName       string
 	StorageSection     string
 	ContainerNo        string
-	PackingListNo      string
+	PickingOrderNo     string
 	OrderRef           string
 	SourceDocumentType string
 	SourceDocumentID   int64
@@ -209,7 +209,7 @@ type skuFlowLedgerRow struct {
 	LocationName       string       `db:"location_name"`
 	StorageSection     string       `db:"storage_section"`
 	ContainerNo        string       `db:"container_no_snapshot"`
-	PackingListNo      string       `db:"packing_list_no"`
+	PickingOrderNo     string       `db:"picking_order_no"`
 	OrderRef           string       `db:"order_ref"`
 	EventType          string       `db:"event_type"`
 	QuantityChange     int          `db:"quantity_change"`
@@ -591,7 +591,7 @@ func (s *Store) loadReportLedgerBuckets(
 			COALESCE(sl.container_no_snapshot, ''),
 			COALESCE(report_location.name, ''),
 			COALESCE(sl.storage_section, ''),
-			COALESCE(sl.packing_list_no, ''),
+			COALESCE(sl.picking_order_no, ''),
 			COALESCE(sl.order_ref, ''),
 			COALESCE(sl.reference_code, '')
 		)) LIKE ?`
@@ -706,7 +706,7 @@ func (s *Store) loadSKUFlowLedgerRows(ctx context.Context, filters SKUFlowReport
 			l.name AS location_name,
 			COALESCE(NULLIF(sl.storage_section, ''), 'TEMP') AS storage_section,
 			COALESCE(sl.container_no_snapshot, '') AS container_no_snapshot,
-			COALESCE(NULLIF(sl.packing_list_no, ''), NULLIF(odoc.packing_list_no, ''), '') AS packing_list_no,
+			COALESCE(NULLIF(sl.picking_order_no, ''), NULLIF(odoc.picking_order_no, ''), '') AS picking_order_no,
 			COALESCE(NULLIF(sl.order_ref, ''), NULLIF(odoc.order_ref, ''), '') AS order_ref,
 			sl.event_type,
 			sl.quantity_change,
@@ -813,7 +813,7 @@ func buildSKUFlowReportRows(entries []skuFlowLedgerRow) (SKUFlowReportSummary, [
 			LocationName:       entry.LocationName,
 			StorageSection:     fallbackSection(entry.StorageSection),
 			ContainerNo:        strings.TrimSpace(entry.ContainerNo),
-			PackingListNo:      strings.TrimSpace(entry.PackingListNo),
+			PickingOrderNo:     strings.TrimSpace(entry.PickingOrderNo),
 			OrderRef:           strings.TrimSpace(entry.OrderRef),
 			SourceDocumentType: strings.TrimSpace(entry.SourceDocumentType),
 			SourceDocumentID:   entry.SourceDocumentID,
@@ -831,7 +831,7 @@ func buildSKUFlowReportRows(entries []skuFlowLedgerRow) (SKUFlowReportSummary, [
 					LocationName:       key.LocationName,
 					StorageSection:     key.StorageSection,
 					ContainerNo:        key.ContainerNo,
-					PackingListNo:      key.PackingListNo,
+					PickingOrderNo:     key.PickingOrderNo,
 					OrderRef:           key.OrderRef,
 					SourceDocumentType: key.SourceDocumentType,
 					SourceDocumentID:   key.SourceDocumentID,
@@ -871,10 +871,10 @@ func buildSKUFlowReportRows(entries []skuFlowLedgerRow) (SKUFlowReportSummary, [
 			if rows[i].Direction != rows[j].Direction {
 				return rows[i].Direction == "OUTBOUND"
 			}
-			if rows[i].PackingListNo == rows[j].PackingListNo {
+			if rows[i].PickingOrderNo == rows[j].PickingOrderNo {
 				return rows[i].ContainerNo < rows[j].ContainerNo
 			}
-			return rows[i].PackingListNo < rows[j].PackingListNo
+			return rows[i].PickingOrderNo < rows[j].PickingOrderNo
 		}
 		return rows[i].Date > rows[j].Date
 	})
@@ -895,7 +895,7 @@ func matchesReportLedgerSearch(entry reportLedgerEntry, normalizedSearch string,
 		entry.ContainerNo,
 		lookups.locations[entry.LocationID],
 		entry.StorageSection,
-		entry.PackingListNo,
+		entry.PickingOrderNo,
 		entry.OrderRef,
 		entry.ReferenceCode,
 	}, " "))

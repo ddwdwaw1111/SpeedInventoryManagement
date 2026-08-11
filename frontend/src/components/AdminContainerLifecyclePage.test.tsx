@@ -256,7 +256,7 @@ describe("buildOutboundOrderGoodsRows", () => {
   it("highlights only goods fulfilled by the current container", () => {
     const rows = buildOutboundOrderGoodsRows({
       id: 20,
-      packingListNo: "PO-20",
+      pickingOrderNo: "PO-20",
       orderRef: "",
       lines: [
         {
@@ -294,7 +294,7 @@ describe("buildOutboundOrderGoodsRows", () => {
   it("falls back to highlighting all rows when old orders have no allocation data", () => {
     const rows = buildOutboundOrderGoodsRows({
       id: 21,
-      packingListNo: "PO-21",
+      pickingOrderNo: "PO-21",
       orderRef: "",
       lines: [
         {
