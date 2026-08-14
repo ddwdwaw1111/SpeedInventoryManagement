@@ -294,18 +294,48 @@ func TestGenerateAuthoritativeBillingInvoiceIntegration(t *testing.T) {
 		t.Fatalf("expected mixed invoice to block overlapping storage settlement, got %v", err)
 	}
 
-	if _, err := store.AddBillingInvoiceLine(ctx, invoice.ID, AddBillingInvoiceLineInput{
+	autoLineID := invoice.Lines[0].ID
+	deletedAutoLineID := invoice.Lines[1].ID
+	invoice, err = store.AddBillingInvoiceLine(ctx, invoice.ID, AddBillingInvoiceLineInput{
 		ChargeType: BillingChargeStorage, Description: "manual replacement", Quantity: 1, UnitRate: 1, Amount: 1,
-	}); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("authoritative invoice add-line error = %v, want ErrInvalidInput", err)
+	})
+	if err != nil {
+		t.Fatalf("add manual line to generated draft invoice: %v", err)
 	}
-	if _, err := store.UpdateBillingInvoiceLine(ctx, invoice.ID, invoice.Lines[0].ID, UpdateBillingInvoiceLineInput{
-		ChargeType: BillingChargeStorage, Description: "mutated", Quantity: 1, UnitRate: 1, Amount: 1,
-	}); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("authoritative invoice update-line error = %v, want ErrInvalidInput", err)
+	if invoice.LineCount != 5 {
+		t.Fatalf("generated draft line count after manual add = %d, want 5", invoice.LineCount)
 	}
-	if _, err := store.DeleteBillingInvoiceLine(ctx, invoice.ID, invoice.Lines[0].ID); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("authoritative invoice delete-line error = %v, want ErrInvalidInput", err)
+
+	invoice, err = store.UpdateBillingInvoiceLine(ctx, invoice.ID, autoLineID, UpdateBillingInvoiceLineInput{
+		ChargeType: BillingChargeStorage, Description: "mutated", ContainerNo: containerNo,
+		Quantity: 1, UnitRate: 1, Amount: 1,
+	})
+	if err != nil {
+		t.Fatalf("edit generated draft invoice line: %v", err)
+	}
+	var editedLine *BillingInvoiceLine
+	for index := range invoice.Lines {
+		if invoice.Lines[index].ID == autoLineID {
+			editedLine = &invoice.Lines[index]
+			break
+		}
+	}
+	if editedLine == nil {
+		t.Fatalf("edited generated line %d was not returned", autoLineID)
+	}
+	if editedLine.SourceType != "MANUAL" || editedLine.SourceDocumentType != "" || editedLine.SourceDocumentID != 0 || editedLine.SourceLineID != 0 || len(editedLine.Details) != 0 {
+		t.Fatalf("edited generated line retained stale automatic provenance: %#v", editedLine)
+	}
+
+	invoice, err = store.DeleteBillingInvoiceLine(ctx, invoice.ID, deletedAutoLineID)
+	if err != nil {
+		t.Fatalf("delete generated draft invoice line: %v", err)
+	}
+	if invoice.LineCount != 4 {
+		t.Fatalf("generated draft line count after delete = %d, want 4", invoice.LineCount)
+	}
+	if _, err := store.DeleteBillingInvoiceLine(ctx, invoice.ID, deletedAutoLineID); err == nil || !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleting the same generated draft line twice should return not found, got %v", err)
 	}
 	if err := store.DeleteBillingInvoice(ctx, invoice.ID); err != nil {
 		t.Fatalf("delete authoritative draft invoice: %v", err)

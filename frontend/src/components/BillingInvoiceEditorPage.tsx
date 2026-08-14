@@ -93,7 +93,7 @@ const emptyLineForm: LineFormState = {
   notes: ""
 };
 
-const CHARGE_TYPE_OPTIONS = ["INBOUND", "WRAPPING", "STORAGE", "DISCOUNT", "MANUAL"];
+const CHARGE_TYPE_OPTIONS = ["INBOUND", "WRAPPING", "STORAGE", "OUTBOUND", "DISCOUNT", "MANUAL"];
 
 export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToBilling }: BillingInvoiceEditorPageProps) {
   const { t } = useI18n();
@@ -136,6 +136,7 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
   const isVoidBusy = busyActionKey === "void";
   const isDeleteInvoiceBusy = busyActionKey === "delete";
   const isDeleteLineBusy = busyActionKey === "delete-line";
+  const editingLine = invoice?.lines.find((line) => line.id === editingLineId) ?? null;
 
   const loadInvoice = useCallback(async () => {
     setIsLoading(true);
@@ -929,7 +930,7 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
         </section>
 
         {/* Supporting line-level audit detail */}
-        <details className="billing-invoice-disclosure">
+        <details className="billing-invoice-disclosure" open={isDraft}>
           <summary>
             <span>
               <strong>{t("billingInvoicePreview")}</strong>
@@ -1090,6 +1091,11 @@ export function BillingInvoiceEditorPage({ invoiceId, currentUserRole, onBackToB
           <DialogTitle>{lineDialogMode === "add" ? t("billingAddLine") : t("billingEditLine")}</DialogTitle>
           <DialogContent>
             <div className="sheet-form" style={{ display: "flex", flexDirection: "column", gap: "0.75rem", paddingTop: "0.5rem" }}>
+              {lineDialogMode === "edit" && editingLine?.sourceType === "AUTO" ? (
+                <div className="sheet-note billing-manual-override-note" role="note">
+                  {t("billingAutoLineManualOverride")}
+                </div>
+              ) : null}
               <label>
                 {t("billingChargeType")}
                 <select value={lineForm.chargeType} onChange={(event) => setLineForm((f) => ({ ...f, chargeType: event.target.value }))}>
@@ -1459,7 +1465,7 @@ function confirmDialogMessage(action: string | null, t: (key: string) => string)
     case "mark-paid": return t("billingMarkPaidConfirm");
     case "void": return t("billingVoidInvoiceConfirm");
     case "delete": return t("billingDeleteInvoiceConfirm");
-    case "delete-line": return t("billingDeleteLine") + "?";
+    case "delete-line": return t("billingDeleteLineConfirm");
     default: return "";
   }
 }

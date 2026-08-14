@@ -7,6 +7,9 @@ import { renderWithProviders } from "../test/renderWithProviders";
 const {
   getBillingInvoice,
   updateBillingInvoice,
+  addBillingInvoiceLine,
+  updateBillingInvoiceLine,
+  deleteBillingInvoiceLine,
   finalizeBillingInvoice,
   downloadExcelWorkbook,
   downloadBillingInvoicePdf,
@@ -14,6 +17,9 @@ const {
 } = vi.hoisted(() => ({
   getBillingInvoice: vi.fn(),
   updateBillingInvoice: vi.fn(),
+  addBillingInvoiceLine: vi.fn(),
+  updateBillingInvoiceLine: vi.fn(),
+  deleteBillingInvoiceLine: vi.fn(),
   finalizeBillingInvoice: vi.fn(),
   downloadExcelWorkbook: vi.fn(),
   downloadBillingInvoicePdf: vi.fn(),
@@ -25,9 +31,9 @@ vi.mock("../lib/api", () => ({
   api: {
     getBillingInvoice,
     updateBillingInvoice,
-    addBillingInvoiceLine: vi.fn(),
-    updateBillingInvoiceLine: vi.fn(),
-    deleteBillingInvoiceLine: vi.fn(),
+    addBillingInvoiceLine,
+    updateBillingInvoiceLine,
+    deleteBillingInvoiceLine,
     finalizeBillingInvoice,
     markBillingInvoicePaid: vi.fn(),
     voidBillingInvoice: vi.fn(),
@@ -148,12 +154,18 @@ describe("BillingInvoiceEditorPage", () => {
   beforeEach(() => {
     getBillingInvoice.mockReset();
     updateBillingInvoice.mockReset();
+    addBillingInvoiceLine.mockReset();
+    updateBillingInvoiceLine.mockReset();
+    deleteBillingInvoiceLine.mockReset();
     finalizeBillingInvoice.mockReset();
     downloadExcelWorkbook.mockReset();
     downloadBillingInvoicePdf.mockReset();
     downloadBillingContainerZip.mockReset();
     getBillingInvoice.mockResolvedValue(invoiceFixture);
     updateBillingInvoice.mockResolvedValue(invoiceFixture);
+    addBillingInvoiceLine.mockResolvedValue(invoiceFixture);
+    updateBillingInvoiceLine.mockResolvedValue(invoiceFixture);
+    deleteBillingInvoiceLine.mockResolvedValue(invoiceFixture);
     finalizeBillingInvoice.mockResolvedValue({
       ...invoiceFixture,
       status: "FINALIZED"
@@ -668,6 +680,56 @@ describe("BillingInvoiceEditorPage", () => {
       expect(confirmButton).toBeDisabled();
       expect(confirmButton).toHaveAttribute("aria-busy", "true");
     });
+  });
+
+  it("opens draft charge lines and edits an automatically calculated line", async () => {
+    const editedInvoice = {
+      ...invoiceFixture,
+      subtotal: 605,
+      grandTotal: 605,
+      lines: invoiceFixture.lines.map((line) => line.id === 1001
+        ? {
+            ...line,
+            description: "Adjusted storage charge",
+            quantity: 125,
+            amount: 125,
+            sourceType: "MANUAL" as const,
+            details: null
+          }
+        : line)
+    };
+    updateBillingInvoiceLine.mockResolvedValue(editedInvoice);
+
+    renderWithProviders(
+      <BillingInvoiceEditorPage
+        invoiceId={42}
+        currentUserRole="admin"
+        onBackToBilling={vi.fn()}
+      />
+    );
+
+    const chargeLineDescription = await screen.findByText("Storage settlement for GCXU5817233");
+    const chargeLineDisclosure = chargeLineDescription.closest("details");
+    expect(chargeLineDisclosure).toHaveAttribute("open");
+    const lineRow = chargeLineDescription.closest("tr");
+    expect(lineRow).not.toBeNull();
+    fireEvent.click(within(lineRow as HTMLElement).getByRole("button", { name: "Edit" }));
+
+    expect(await screen.findByText(/converts this calculated line into a manual adjustment/i)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "Adjusted storage charge" } });
+    fireEvent.change(screen.getByLabelText("Quantity"), { target: { value: "125" } });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(updateBillingInvoiceLine).toHaveBeenCalledWith(42, 1001, expect.objectContaining({
+        chargeType: "STORAGE",
+        description: "Adjusted storage charge",
+        quantity: 125,
+        unitRate: 1,
+        amount: 125
+      }));
+    });
+    expect(await screen.findByText("Adjusted storage charge")).toBeInTheDocument();
   });
 
   it("does not allow an invoice with unreconciled pallet movement to be finalized", async () => {

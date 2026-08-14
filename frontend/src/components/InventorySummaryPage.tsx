@@ -90,10 +90,10 @@ const INVENTORY_SUMMARY_EXPORT_COLUMNS = [
   { key: "sku", label: "UPC" },
   { key: "description", label: "Description" },
   { key: "customerName", label: "Customer" },
-  { key: "onHand", label: "On Hand" },
+  { key: "onHand", label: "Qty", numberFormat: "number" },
   { key: "availableQty", label: "Available Qty" },
   { key: "damagedQty", label: "Damaged Qty" },
-  { key: "pallets", label: "Pallets" },
+  { key: "pallets", label: "Pallets", numberFormat: "number" },
   { key: "warehouseCount", label: "Warehouse Count" },
   { key: "containerCount", label: "Container Count" },
   { key: "lastReceipt", label: "Last Receipt" }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/rand/v2"
 	"sort"
 	"strings"
 	"time"
@@ -415,7 +416,7 @@ func prepareBillingInvoiceCreate(input CreateBillingInvoiceInput) (preparedBilli
 		return preparedBillingInvoiceCreate{}, fmt.Errorf("marshal invoice header: %w", err)
 	}
 
-	invoiceNo := generateBillingInvoiceNo(periodStart, input.CustomerID)
+	invoiceNo := generateBillingInvoiceNo(periodStart, periodEnd)
 	customerName := strings.TrimSpace(input.CustomerName)
 	if customerName == "" {
 		customerName = fmt.Sprintf("Customer #%d", input.CustomerID)
@@ -825,9 +826,6 @@ func (s *Store) AddBillingInvoiceLine(ctx context.Context, invoiceID int64, inpu
 	if invoice.Status != BillingInvoiceStatusDraft {
 		return BillingInvoice{}, fmt.Errorf("%w: only draft invoices can be edited", ErrInvalidInput)
 	}
-	if isAuthoritativeGeneratedBillingInvoice(invoice) {
-		return BillingInvoice{}, fmt.Errorf("%w: server-generated invoice lines are immutable; delete and regenerate the draft to change calculated charges", ErrInvalidInput)
-	}
 
 	chargeType := strings.TrimSpace(strings.ToUpper(input.ChargeType))
 	if chargeType == "" {
@@ -889,9 +887,6 @@ func (s *Store) UpdateBillingInvoiceLine(ctx context.Context, invoiceID int64, l
 	if invoice.Status != BillingInvoiceStatusDraft {
 		return BillingInvoice{}, fmt.Errorf("%w: only draft invoices can be edited", ErrInvalidInput)
 	}
-	if isAuthoritativeGeneratedBillingInvoice(invoice) {
-		return BillingInvoice{}, fmt.Errorf("%w: server-generated invoice lines are immutable; delete and regenerate the draft to change calculated charges", ErrInvalidInput)
-	}
 
 	found := false
 	for _, line := range invoice.Lines {
@@ -929,7 +924,12 @@ func (s *Store) UpdateBillingInvoiceLine(ctx context.Context, invoiceID int64, l
 			quantity = ?,
 			unit_rate = ?,
 			amount = ?,
-			notes = ?
+			notes = ?,
+			source_type = 'MANUAL',
+			source_document_type = NULL,
+			source_document_id = NULL,
+			source_line_id = NULL,
+			details_json = NULL
 		WHERE id = ? AND invoice_id = ?
 	`, chargeType,
 		strings.TrimSpace(input.Description),
@@ -963,9 +963,6 @@ func (s *Store) DeleteBillingInvoiceLine(ctx context.Context, invoiceID int64, l
 	if invoice.Status != BillingInvoiceStatusDraft {
 		return BillingInvoice{}, fmt.Errorf("%w: only draft invoices can be edited", ErrInvalidInput)
 	}
-	if isAuthoritativeGeneratedBillingInvoice(invoice) {
-		return BillingInvoice{}, fmt.Errorf("%w: server-generated invoice lines are immutable; delete and regenerate the draft to change calculated charges", ErrInvalidInput)
-	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -973,10 +970,18 @@ func (s *Store) DeleteBillingInvoiceLine(ctx context.Context, invoiceID int64, l
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, `
+	result, err := tx.ExecContext(ctx, `
 		DELETE FROM billing_invoice_lines WHERE id = ? AND invoice_id = ?
-	`, lineID, invoiceID); err != nil {
+	`, lineID, invoiceID)
+	if err != nil {
 		return BillingInvoice{}, mapDBError(fmt.Errorf("delete billing invoice line: %w", err))
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return BillingInvoice{}, fmt.Errorf("read deleted billing invoice line count: %w", err)
+	}
+	if rowsAffected == 0 {
+		return BillingInvoice{}, fmt.Errorf("%w: billing invoice line not found", ErrNotFound)
 	}
 
 	if err := recalcBillingInvoiceTotalsTx(ctx, tx, invoiceID); err != nil {
@@ -988,25 +993,6 @@ func (s *Store) DeleteBillingInvoiceLine(ctx context.Context, invoiceID int64, l
 	}
 
 	return s.GetBillingInvoice(ctx, invoiceID)
-}
-
-func isAuthoritativeGeneratedBillingInvoice(invoice BillingInvoice) bool {
-	for _, line := range invoice.Lines {
-		if !strings.EqualFold(strings.TrimSpace(line.SourceType), "AUTO") || len(line.Details) == 0 {
-			continue
-		}
-		var provenance struct {
-			CalculationVersion string `json:"calculationVersion"`
-			SourceFingerprint  string `json:"sourceFingerprint"`
-		}
-		if err := json.Unmarshal(line.Details, &provenance); err != nil {
-			continue
-		}
-		if strings.TrimSpace(provenance.CalculationVersion) != "" && strings.TrimSpace(provenance.SourceFingerprint) != "" {
-			return true
-		}
-	}
-	return false
 }
 
 func (s *Store) FinalizeBillingInvoice(ctx context.Context, invoiceID int64, userID int64) (BillingInvoice, error) {
@@ -1400,8 +1386,16 @@ func billingNullablePositiveInt64(value int64) any {
 	return value
 }
 
-func generateBillingInvoiceNo(periodStart time.Time, customerID int64) string {
-	return fmt.Sprintf("INV-%s-%d-%d", periodStart.Format("200601"), customerID, time.Now().UnixMilli()%100000)
+func generateBillingInvoiceNo(periodStart time.Time, periodEnd time.Time) string {
+	const randomNumberDigits = 90_000
+	randomNumber := rand.IntN(randomNumberDigits) + 10_000
+	return fmt.Sprintf(
+		"INV-%s-%s-%s-%05d",
+		periodStart.Format("2006"),
+		periodStart.Format("0102"),
+		periodEnd.Format("0102"),
+		randomNumber,
+	)
 }
 
 func detailsJSON(value sql.NullString) json.RawMessage {

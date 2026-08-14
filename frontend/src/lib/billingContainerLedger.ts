@@ -13,12 +13,12 @@ type ContainerDetailAccumulator = {
 const INVOICE_LEVEL_KEY = "\u0000INVOICE_LEVEL";
 
 /**
- * Uses the server-built snapshot ledger when available. The line-based
- * fallback keeps invoices created by an older backend readable during a
- * rolling deployment.
+ * Draft invoices are editable, so their ledger must always be derived from
+ * the current line list. Finalized invoices may use the immutable server
+ * snapshot, with a line-based fallback for older records.
  */
 export function resolveBillingInvoiceContainerDetails(invoice: BillingInvoice) {
-  if (Array.isArray(invoice.containerDetails)) {
+  if (invoice.status !== "DRAFT" && Array.isArray(invoice.containerDetails)) {
     return [...invoice.containerDetails].sort(compareContainerDetails);
   }
   return buildBillingInvoiceContainerDetails(invoice.lines);

@@ -85,12 +85,27 @@ describe("billing container ledger", () => {
     expect(sumBillingContainerDetailTotals(details)).toBe(555);
   });
 
-  it("prefers the server-generated container ledger snapshot", () => {
+  it("rebuilds draft container details from the current editable lines", () => {
     const serverDetail = {
       ...buildBillingInvoiceContainerDetails([line({ amount: 450 })])[0],
       totalAmount: 999
     };
     const invoice = {
+      status: "DRAFT",
+      containerDetails: [serverDetail],
+      lines: [line({ amount: 450 })]
+    } as BillingInvoice;
+
+    expect(resolveBillingInvoiceContainerDetails(invoice)[0].totalAmount).toBe(450);
+  });
+
+  it("uses the immutable server snapshot after finalization", () => {
+    const serverDetail = {
+      ...buildBillingInvoiceContainerDetails([line({ amount: 450 })])[0],
+      totalAmount: 999
+    };
+    const invoice = {
+      status: "FINALIZED",
       containerDetails: [serverDetail],
       lines: [line({ amount: 450 })]
     } as BillingInvoice;

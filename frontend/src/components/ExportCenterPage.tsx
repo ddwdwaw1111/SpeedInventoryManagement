@@ -46,7 +46,8 @@ const INVENTORY_SUMMARY_EXPORT_COLUMNS = [
   { key: "sku", label: "UPC" },
   { key: "description", label: "Description" },
   { key: "customerName", label: "Customer" },
-  { key: "onHand", label: "On Hand" },
+  { key: "onHand", label: "Qty", numberFormat: "number" },
+  { key: "pallets", label: "Pallets", numberFormat: "number" },
   { key: "availableQty", label: "Available Qty" },
   { key: "damagedQty", label: "Damaged Qty" },
   { key: "warehouseCount", label: "Warehouse Count" },
@@ -61,7 +62,8 @@ const INVENTORY_DETAIL_EXPORT_COLUMNS = [
   { key: "customerName", label: "Customer" },
   { key: "locationName", label: "Warehouse" },
   { key: "storageSection", label: "Pick Location" },
-  { key: "quantity", label: "On Hand" },
+  { key: "quantity", label: "Qty", numberFormat: "number" },
+  { key: "pallets", label: "Pallets", numberFormat: "number" },
   { key: "availableQty", label: "Available Qty" },
   { key: "damagedQty", label: "Damaged Qty" },
   { key: "deliveryDate", label: "Receipt Date" },
@@ -76,7 +78,8 @@ const CONTAINER_CONTENTS_EXPORT_COLUMNS = [
   { key: "customerName", label: "Customer" },
   { key: "locationName", label: "Warehouse" },
   { key: "storageSection", label: "Pick Location" },
-  { key: "onHand", label: "On Hand" },
+  { key: "onHand", label: "Qty", numberFormat: "number" },
+  { key: "pallets", label: "Pallets", numberFormat: "number" },
   { key: "availableQty", label: "Available Qty" },
   { key: "damagedQty", label: "Damaged Qty" },
   { key: "holdQty", label: "On Hold Qty" },
@@ -320,7 +323,7 @@ export function ExportCenterPage({
   );
 }
 
-function buildInventorySummaryExportRows(items: Item[]) {
+export function buildInventorySummaryExportRows(items: Item[]) {
   const rowMap = new Map<string, {
     itemNumber: string;
     sku: string;
@@ -329,6 +332,7 @@ function buildInventorySummaryExportRows(items: Item[]) {
     onHand: number;
     availableQty: number;
     damagedQty: number;
+    pallets: number;
     warehouseIds: Set<number>;
     containers: Set<string>;
     lastReceipt: string | null;
@@ -349,6 +353,7 @@ function buildInventorySummaryExportRows(items: Item[]) {
         onHand: item.quantity,
         availableQty: item.availableQty,
         damagedQty: item.damagedQty,
+        pallets: item.pallets,
         warehouseIds: new Set([item.locationId]),
         containers: new Set([containerKey]),
         lastReceipt: receiptDate
@@ -359,6 +364,7 @@ function buildInventorySummaryExportRows(items: Item[]) {
     existing.onHand += item.quantity;
     existing.availableQty += item.availableQty;
     existing.damagedQty += item.damagedQty;
+    existing.pallets += item.pallets;
     existing.warehouseIds.add(item.locationId);
     existing.containers.add(containerKey);
     existing.lastReceipt = getLatestDate(existing.lastReceipt, receiptDate);
@@ -376,6 +382,7 @@ function buildInventorySummaryExportRows(items: Item[]) {
       onHand: row.onHand,
       availableQty: row.availableQty,
       damagedQty: row.damagedQty,
+      pallets: row.pallets,
       warehouseCount: row.warehouseIds.size,
       containerCount: row.containers.size,
       lastReceipt: formatDateValue(row.lastReceipt, dateFormatter)
@@ -386,7 +393,7 @@ function buildInventorySummaryExportRows(items: Item[]) {
     });
 }
 
-function buildInventoryDetailExportRows(items: Item[]) {
+export function buildInventoryDetailExportRows(items: Item[]) {
   return [...items]
     .map((item) => ({
       itemNumber: item.itemNumber || "-",
@@ -396,6 +403,7 @@ function buildInventoryDetailExportRows(items: Item[]) {
       locationName: item.locationName,
       storageSection: normalizeStorageSection(item.storageSection),
       quantity: item.quantity,
+      pallets: item.pallets,
       availableQty: item.availableQty,
       damagedQty: item.damagedQty,
       deliveryDate: formatDateValue(item.deliveryDate, dateFormatter),
@@ -408,7 +416,7 @@ function buildInventoryDetailExportRows(items: Item[]) {
     });
 }
 
-function buildContainerContentsExportRows(items: Item[]) {
+export function buildContainerContentsExportRows(items: Item[]) {
   return [...items]
     .filter((item) => item.containerNo.trim())
     .map((item) => ({
@@ -420,6 +428,7 @@ function buildContainerContentsExportRows(items: Item[]) {
       locationName: item.locationName,
       storageSection: normalizeStorageSection(item.storageSection),
       onHand: item.quantity,
+      pallets: item.pallets,
       availableQty: item.availableQty,
       damagedQty: item.damagedQty,
       holdQty: item.holdQty,
