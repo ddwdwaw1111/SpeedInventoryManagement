@@ -892,7 +892,7 @@ function StaffWorkspaceApp({ onOpenCustomerPortal }: { onOpenCustomerPortal: (cu
                 onBack={() => handleNavigateToPage("storage-management")}
               />)
             ) : null}
-            {activePage === "settings" ? renderWithSuspense(<SettingsPage currentUserRole={currentUser.role} />) : null}
+            {activePage === "settings" ? renderWithSuspense(<SettingsPage currentUserRole={currentUser.role} onOperationalDataCleared={() => loadAppData(false)} />) : null}
             {activePage === "daily-operations" ? (
               renderWithSuspense(<DailyOperationsPage
                 selectedDate={selectedDailyOperationsDate ?? getCurrentLocalIsoDate()}

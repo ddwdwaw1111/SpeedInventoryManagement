@@ -1640,6 +1640,21 @@ export type UpdateBillingInvoiceSettingsPayload = {
   header: BillingInvoiceHeader;
 };
 
+export type ClearOperationalDataResult = {
+  inboundDocuments: number;
+  outboundDocuments: number;
+  transfers: number;
+  inventoryItems: number;
+  containers: number;
+  ledgerEntries: number;
+  adjustments: number;
+  cycleCounts: number;
+  billingInvoices: number;
+  bulkImportBatches: number;
+  documentAttachments: number;
+  clearedAt: string;
+};
+
 export type BillingInvoiceLineData = {
   id: number;
   invoiceId: number;

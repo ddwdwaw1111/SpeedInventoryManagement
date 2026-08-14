@@ -96,6 +96,19 @@ describe("api document list queries", () => {
     }));
   });
 
+  it("requires the confirmation phrase when clearing operational data", async () => {
+    fetchMock.mockResolvedValue(mockJsonResponse({ inboundDocuments: 2, outboundDocuments: 3, transfers: 1 }));
+
+    await api.clearOperationalData("confirm");
+
+    const [requestUrl, options] = fetchMock.mock.calls[0];
+    expect(new URL(String(requestUrl)).pathname).toBe("/api/maintenance/operational-data/clear");
+    expect(options).toEqual(expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ confirmation: "confirm" })
+    }));
+  });
+
   it("loads retained inbound import batches with customer scope", async () => {
     await api.getBulkImportBatches("INBOUND", 50, 12, 99);
 

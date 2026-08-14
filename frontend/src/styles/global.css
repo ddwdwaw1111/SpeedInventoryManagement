@@ -5056,6 +5056,137 @@ textarea:focus {
   margin-top: 1rem;
 }
 
+.settings-danger-zone {
+  position: relative;
+  display: grid;
+  gap: 1rem;
+  margin-top: 2rem;
+  padding: 1.15rem 1.2rem 1.25rem;
+  overflow: hidden;
+  border: 1px solid rgba(177, 54, 49, 0.34);
+  border-left: 5px solid #b13631;
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg, rgba(177, 54, 49, 0.07), transparent 48%),
+    repeating-linear-gradient(-45deg, rgba(177, 54, 49, 0.025) 0 8px, transparent 8px 16px),
+    var(--surface-low);
+}
+
+.settings-danger-zone__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.settings-danger-zone__header h3 {
+  margin: 0.18rem 0 0.28rem;
+  color: var(--ink-strong);
+}
+
+.settings-danger-zone__header p:last-child,
+.settings-danger-zone__preserved {
+  margin: 0;
+  color: var(--ink-soft);
+}
+
+.settings-danger-zone__eyebrow {
+  margin: 0;
+  color: #9d2f2b;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.settings-danger-zone__badge {
+  flex: 0 0 auto;
+  padding: 0.3rem 0.62rem;
+  border: 1px solid rgba(177, 54, 49, 0.3);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #9d2f2b;
+  font-size: 0.76rem;
+  font-weight: 750;
+}
+
+.settings-danger-zone__scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.settings-danger-zone__scope span {
+  padding: 0.38rem 0.62rem;
+  border: 1px solid rgba(177, 54, 49, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink-strong);
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.settings-danger-zone__preserved {
+  font-size: 0.86rem;
+}
+
+.settings-danger-zone__trigger {
+  width: fit-content;
+  border: 1px solid rgba(177, 54, 49, 0.26);
+}
+
+.settings-danger-dialog__content.MuiDialogContent-root {
+  display: grid;
+  gap: 1.15rem;
+  padding: 1.25rem 1.5rem;
+}
+
+.settings-danger-dialog__instruction {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem 0.9rem;
+  border-radius: 10px;
+  background: rgba(177, 54, 49, 0.07);
+  color: var(--ink-soft);
+}
+
+.settings-danger-dialog__instruction code {
+  padding: 0.3rem 0.58rem;
+  border: 1px solid rgba(177, 54, 49, 0.22);
+  border-radius: 6px;
+  background: #fff;
+  color: #8d2926;
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.settings-danger-dialog__label {
+  display: grid;
+  gap: 0.45rem;
+  color: var(--ink-strong);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.settings-danger-dialog__label input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0.72rem 0.8rem;
+  border: 1px solid rgba(177, 54, 49, 0.28);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--ink-strong);
+  font: inherit;
+}
+
+.settings-danger-dialog__label input:focus {
+  border-color: #b13631;
+  outline: 3px solid rgba(177, 54, 49, 0.13);
+}
+
 .batch-lines {
   display: grid;
   gap: 0.75rem;

@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { Alert, Button, Dialog, DialogActions, DialogContent, DialogTitle } from "@mui/material";
 
+import { api } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { useSettings } from "../lib/settings";
 import type { BillingInvoiceHeader, UserRole } from "../lib/types";
@@ -11,9 +13,10 @@ type BillingHeaderFormState = Omit<BillingInvoiceHeader, "paymentDueDays"> & {
 
 type SettingsPageProps = {
   currentUserRole?: UserRole;
+  onOperationalDataCleared?: () => void | Promise<void>;
 };
 
-export function SettingsPage({ currentUserRole = "viewer" }: SettingsPageProps) {
+export function SettingsPage({ currentUserRole = "viewer", onOperationalDataCleared }: SettingsPageProps) {
   const { language, setLanguage, t } = useI18n();
   const { showSuccess, showError, feedbackToast } = useFeedbackToast();
   const {
@@ -32,6 +35,9 @@ export function SettingsPage({ currentUserRole = "viewer" }: SettingsPageProps) 
   const [draftBillingHeader, setDraftBillingHeader] = useState<BillingHeaderFormState>(() => headerToForm(billingInvoiceHeaderDefaults));
   const [isSaving, setIsSaving] = useState(false);
   const [saveErrorMessage, setSaveErrorMessage] = useState("");
+  const [isClearDialogOpen, setIsClearDialogOpen] = useState(false);
+  const [clearConfirmation, setClearConfirmation] = useState("");
+  const [isClearingOperationalData, setIsClearingOperationalData] = useState(false);
 
   useEffect(() => {
     if (!canManageBillingDefaults) {
@@ -107,6 +113,42 @@ export function SettingsPage({ currentUserRole = "viewer" }: SettingsPageProps) 
       terms,
       paymentDueDays: option ? String(option.paymentDueDays) : current.paymentDueDays
     }));
+  }
+
+  function openClearDialog() {
+    setClearConfirmation("");
+    setIsClearDialogOpen(true);
+  }
+
+  function closeClearDialog() {
+    if (isClearingOperationalData) return;
+    setIsClearDialogOpen(false);
+    setClearConfirmation("");
+  }
+
+  async function handleClearOperationalData() {
+    if (clearConfirmation !== "confirm" || isClearingOperationalData) return;
+
+    setIsClearingOperationalData(true);
+    try {
+      const result = await api.clearOperationalData(clearConfirmation);
+      setIsClearDialogOpen(false);
+      setClearConfirmation("");
+      showSuccess(t("operationalDataClearSuccess", {
+        inbound: result.inboundDocuments,
+        outbound: result.outboundDocuments,
+        transfers: result.transfers
+      }), 5200);
+      try {
+        await onOperationalDataCleared?.();
+      } catch (refreshError) {
+        showError(refreshError instanceof Error ? refreshError.message : t("couldNotLoadReport"));
+      }
+    } catch (error) {
+      showError(error instanceof Error ? error.message : t("operationalDataClearFailed"));
+    } finally {
+      setIsClearingOperationalData(false);
+    }
   }
 
   return (
@@ -235,8 +277,75 @@ export function SettingsPage({ currentUserRole = "viewer" }: SettingsPageProps) 
               {t("cancel")}
             </button>
           </div>
+
+          {canManageBillingDefaults ? (
+            <section className="settings-danger-zone" aria-labelledby="operational-data-heading">
+              <div className="settings-danger-zone__header">
+                <div>
+                  <p className="settings-danger-zone__eyebrow">{t("dangerZone")}</p>
+                  <h3 id="operational-data-heading">{t("operationalDataClearTitle")}</h3>
+                  <p>{t("operationalDataClearDesc")}</p>
+                </div>
+                <span className="settings-danger-zone__badge">{t("adminOnly")}</span>
+              </div>
+              <div className="settings-danger-zone__scope" aria-label={t("operationalDataClearScope") as string}>
+                <span>{t("operationalDataScopeInbound")}</span>
+                <span>{t("operationalDataScopeOutbound")}</span>
+                <span>{t("operationalDataScopeTransfers")}</span>
+                <span>{t("operationalDataScopeInventory")}</span>
+                <span>{t("operationalDataScopeBilling")}</span>
+                <span>{t("operationalDataScopeImports")}</span>
+              </div>
+              <p className="settings-danger-zone__preserved">{t("operationalDataPreserved")}</p>
+              <button className="button button--danger settings-danger-zone__trigger" type="button" onClick={openClearDialog}>
+                {t("operationalDataClearAction")}
+              </button>
+            </section>
+          ) : null}
         </article>
       </section>
+
+      <Dialog
+        open={isClearDialogOpen}
+        onClose={closeClearDialog}
+        fullWidth
+        maxWidth="sm"
+        aria-labelledby="clear-operational-data-dialog-title"
+      >
+        <DialogTitle id="clear-operational-data-dialog-title">{t("operationalDataClearDialogTitle")}</DialogTitle>
+        <DialogContent dividers className="settings-danger-dialog__content">
+          <Alert severity="error" variant="outlined">
+            {t("operationalDataClearWarning")}
+          </Alert>
+          <div className="settings-danger-dialog__instruction">
+            <span>{t("operationalDataClearTypePrompt")}</span>
+            <code>confirm</code>
+          </div>
+          <label className="settings-danger-dialog__label">
+            {t("operationalDataConfirmation")}
+            <input
+              autoFocus
+              autoComplete="off"
+              spellCheck={false}
+              value={clearConfirmation}
+              onChange={(event) => setClearConfirmation(event.target.value)}
+              disabled={isClearingOperationalData}
+              placeholder="confirm"
+            />
+          </label>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 2 }}>
+          <Button onClick={closeClearDialog} disabled={isClearingOperationalData}>{t("cancel")}</Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={() => void handleClearOperationalData()}
+            disabled={clearConfirmation !== "confirm" || isClearingOperationalData}
+          >
+            {isClearingOperationalData ? t("operationalDataClearing") : t("operationalDataClearConfirm")}
+          </Button>
+        </DialogActions>
+      </Dialog>
       {feedbackToast}
     </main>
   );

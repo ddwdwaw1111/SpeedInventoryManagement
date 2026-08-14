@@ -90,6 +90,7 @@ func (s *Server) registerStaffRoutes(protected gin.IRouter) {
 	admin.PUT("/users/:id/access", s.handleUpdateUserAccess)
 	admin.PUT("/ui-preferences/:key", s.handleUpdateUIPreference)
 	admin.PUT("/billing/settings", s.handleUpdateBillingInvoiceSettings)
+	admin.POST("/maintenance/operational-data/clear", s.handleClearOperationalData)
 	admin.POST("/locations", s.handleCreateLocation)
 	admin.PUT("/locations/:id", s.handleUpdateLocation)
 	admin.DELETE("/locations/:id", s.handleDeleteLocation)

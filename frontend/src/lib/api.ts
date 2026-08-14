@@ -22,6 +22,7 @@ import type {
   ContainerRecord,
   ContainerTrackingEvent,
   ContainerTrackingEventPayload,
+  ClearOperationalDataResult,
   UpdateContainerMetadataPayload,
   CustomerPortalContainerLifecycle,
   CustomerPortalContainerSummary,
@@ -358,6 +359,13 @@ export const api = {
     return request<BillingInvoiceSettings>("/billing/settings", {
       method: "PUT",
       body: JSON.stringify(payload)
+    });
+  },
+
+  clearOperationalData(confirmation: string) {
+    return request<ClearOperationalDataResult>("/maintenance/operational-data/clear", {
+      method: "POST",
+      body: JSON.stringify({ confirmation })
     });
   },
 
