@@ -331,6 +331,11 @@ export type Item = {
   updatedAt: string;
 };
 
+export type CustomerPortalInventoryItem = Pick<
+  Item,
+  "id" | "skuMasterId" | "itemNumber" | "sku" | "name" | "description" | "unit" | "quantity" | "availableQty" | "locationId" | "locationName"
+>;
+
 export type InventoryProjectionRef = {
   customerId: number;
   locationId: number;

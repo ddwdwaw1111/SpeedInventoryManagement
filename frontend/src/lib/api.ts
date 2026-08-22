@@ -26,6 +26,7 @@ import type {
   UpdateContainerMetadataPayload,
   CustomerPortalContainerLifecycle,
   CustomerPortalContainerSummary,
+  CustomerPortalInventoryItem,
   CycleCount,
   CycleCountPayload,
   CreateUserPayload,
@@ -503,7 +504,7 @@ export const api = {
       params.set("search", search.trim());
     }
     const suffix = params.toString() ? `?${params.toString()}` : "";
-    return request<Item[]>(`${customerPortalBasePath(customerId)}/inventory${suffix}`);
+    return request<CustomerPortalInventoryItem[]>(`${customerPortalBasePath(customerId)}/inventory${suffix}`);
   },
 
   getCustomerPortalContainers(search = "", customerId?: number) {

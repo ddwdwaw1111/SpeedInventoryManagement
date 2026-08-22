@@ -9,10 +9,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { useI18n } from "../lib/i18n";
 import { PortalPanelHeader } from "./CustomerPortalTrackingShared";
 import { InlineLoadingIndicator } from "./sharedUi";
-import type { Item } from "./types";
+import type { CustomerPortalInventoryItem } from "./types";
 
 type CustomerPortalInventoryPageProps = {
-  inventory: Item[];
+  inventory: CustomerPortalInventoryItem[];
   isLoading: boolean;
   search: string;
   onSearchChange: (value: string) => void;
@@ -33,41 +33,25 @@ export function CustomerPortalInventoryPage({
   onResetSearch
 }: CustomerPortalInventoryPageProps) {
   const { t } = useI18n();
-  const [warehouseFilter, setWarehouseFilter] = useState("all");
   const [availabilityFilter, setAvailabilityFilter] = useState<InventoryAvailabilityFilter>("all");
   const [pageSize, setPageSize] = useState(PAGE_SIZE_OPTIONS[0]);
   const [page, setPage] = useState(1);
   const visibleInventory = useMemo(
-    () => inventory.filter((item) => item.availableQty > 0 || item.quantity > 0 || item.availablePallets > 0 || item.pallets > 0),
+    () => inventory.filter((item) => item.availableQty > 0 || item.quantity > 0),
     [inventory]
   );
-  const warehouseOptions = useMemo(() => {
-    const options = new Map<string, string>();
-    for (const item of visibleInventory) {
-      const key = String(item.locationId);
-      if (!options.has(key)) {
-        options.set(key, item.locationName || "-");
-      }
-    }
-    return [...options.entries()]
-      .map(([value, label]) => ({ value, label }))
-      .sort((left, right) => left.label.localeCompare(right.label));
-  }, [visibleInventory]);
   const filteredInventory = useMemo(() => visibleInventory.filter((item) => {
-    if (warehouseFilter !== "all" && String(item.locationId) !== warehouseFilter) {
-      return false;
-    }
     switch (availabilityFilter) {
       case "available":
-        return item.availableQty > 0 || item.availablePallets > 0;
+        return item.availableQty > 0;
       case "on-hand":
-        return item.quantity > 0 || item.pallets > 0;
+        return item.quantity > 0;
       case "not-available":
-        return (item.quantity > 0 || item.pallets > 0) && item.availableQty <= 0 && item.availablePallets <= 0;
+        return item.quantity > 0 && item.availableQty <= 0;
       default:
         return true;
     }
-  }), [availabilityFilter, visibleInventory, warehouseFilter]);
+  }), [availabilityFilter, visibleInventory]);
   const totalAvailable = filteredInventory.reduce((total, item) => total + Math.max(0, item.availableQty), 0);
   const pageCount = Math.max(1, Math.ceil(filteredInventory.length / pageSize));
   const activePage = Math.min(page, pageCount);
@@ -77,7 +61,7 @@ export function CustomerPortalInventoryPage({
 
   useEffect(() => {
     setPage(1);
-  }, [availabilityFilter, inventory, pageSize, search, warehouseFilter]);
+  }, [availabilityFilter, inventory, pageSize, search]);
 
   useEffect(() => {
     setPage((current) => Math.min(current, pageCount));
@@ -99,7 +83,6 @@ export function CustomerPortalInventoryPage({
   }
 
   function handleReset() {
-    setWarehouseFilter("all");
     setAvailabilityFilter("all");
     setPage(1);
     onResetSearch();
@@ -122,7 +105,7 @@ export function CustomerPortalInventoryPage({
       </CardHeader>
       <CardContent className="grid gap-4">
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-          <div className="grid gap-2 lg:grid-cols-[minmax(220px,1fr)_180px_180px_auto_auto]">
+          <div className="grid gap-2 lg:grid-cols-[minmax(260px,1fr)_200px_auto_auto]">
             <label className="sr-only" htmlFor="customer-portal-inventory-search">{t("search")}</label>
             <Input
               id="customer-portal-inventory-search"
@@ -134,17 +117,6 @@ export function CustomerPortalInventoryPage({
               placeholder={t("customerPortalInventorySearch")}
               className="bg-white"
             />
-            <NativeSelect
-              value={warehouseFilter}
-              disabled={isLoading}
-              onChange={(event) => setWarehouseFilter(event.target.value)}
-              aria-label={t("customerPortalInventoryWarehouseFilter")}
-            >
-              <option value="all">{t("customerPortalInventoryAllWarehouses")}</option>
-              {warehouseOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </NativeSelect>
             <NativeSelect
               value={availabilityFilter}
               disabled={isLoading}

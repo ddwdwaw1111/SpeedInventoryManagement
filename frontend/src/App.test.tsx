@@ -145,12 +145,12 @@ describe("App role routing", () => {
 
     renderWithProviders(<App />);
 
-    expect(await screen.findByRole("button", { name: /Inventory/i })).toBeInTheDocument();
+    expect(await screen.findByRole("table", { name: /Inventory/i })).toBeInTheDocument();
     await waitFor(() => {
       expect(window.location.pathname).toBe("/portal");
     });
     expect(screen.getAllByText("Customer Portal").length).toBeGreaterThan(0);
-    expect(screen.getByRole("navigation", { name: /Customer Portal/i })).toBeInTheDocument();
+    expect(screen.getAllByText("Read-only access").length).toBeGreaterThan(0);
     expect(document.querySelector(".app-sidebar")).toBeNull();
     expect(screen.queryByRole("button", { name: /Overview/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Packing Lists/i })).not.toBeInTheDocument();
@@ -161,10 +161,10 @@ describe("App role routing", () => {
     expect(screen.queryByRole("button", { name: /^Shipments$/i })).not.toBeInTheDocument();
     await waitFor(() => {
       expect(portalApiMocks.getInventory).toHaveBeenCalled();
-      expect(portalApiMocks.getContainers).toHaveBeenCalled();
-      expect(portalApiMocks.getPackingLists).toHaveBeenCalled();
-      expect(portalApiMocks.getPickingOrders).toHaveBeenCalled();
     });
+    expect(portalApiMocks.getContainers).not.toHaveBeenCalled();
+    expect(portalApiMocks.getPackingLists).not.toHaveBeenCalled();
+    expect(portalApiMocks.getPickingOrders).not.toHaveBeenCalled();
     for (const name of staffDataApiNames) {
       expect(apiMocks[name]).not.toHaveBeenCalled();
     }
@@ -209,22 +209,15 @@ describe("App role routing", () => {
 
     renderWithProviders(<App />);
 
-    expect(await screen.findByRole("button", { name: /Inventory/i })).toBeInTheDocument();
+    expect(await screen.findByRole("table", { name: /Inventory/i })).toBeInTheDocument();
     await waitFor(() => {
       expect(portalApiMocks.getProfile).toHaveBeenCalledWith(7);
       expect(portalApiMocks.getInventory).toHaveBeenCalledWith("", 7);
     });
-    expect(portalApiMocks.getPackingLists).toHaveBeenCalledWith(100, {
-      search: "",
-      status: "all",
-      trackingStatus: "all"
-    }, 7);
-    expect(portalApiMocks.getPickingOrders).toHaveBeenCalledWith(100, {
-      search: "",
-      status: "all",
-      trackingStatus: "all"
-    }, 7);
-    expect(screen.getByRole("navigation", { name: /Customer Portal/i })).toBeInTheDocument();
+    expect(portalApiMocks.getContainers).not.toHaveBeenCalled();
+    expect(portalApiMocks.getPackingLists).not.toHaveBeenCalled();
+    expect(portalApiMocks.getPickingOrders).not.toHaveBeenCalled();
+    expect(screen.getAllByText("Read-only access").length).toBeGreaterThan(0);
     expect(document.querySelector(".app-sidebar")).toBeNull();
     expect(screen.queryByRole("button", { name: /^Home$/i })).not.toBeInTheDocument();
   });

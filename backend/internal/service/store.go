@@ -422,9 +422,8 @@ func (s *Store) ListItems(ctx context.Context, filters ItemFilters) ([]Item, err
 	args := make([]any, 0)
 	if search := strings.TrimSpace(filters.Search); search != "" {
 		likeValue := "%" + search + "%"
-		query += " AND (COALESCE(sm.item_number, '') LIKE ? OR sm.sku LIKE ? OR sm.name LIKE ? OR sm.description LIKE ? OR sm.category LIKE ? OR c.name LIKE ? OR COALESCE(i.container_no, '') LIKE ?)"
-		args = append(args, likeValue, likeValue, likeValue, likeValue, likeValue, likeValue)
-		args = append(args, likeValue)
+		query += " AND (COALESCE(sm.item_number, '') LIKE ? OR sm.sku LIKE ? OR sm.name LIKE ? OR sm.description LIKE ? OR sm.category LIKE ? OR c.name LIKE ? OR l.name LIKE ? OR COALESCE(i.container_no, '') LIKE ?)"
+		args = append(args, likeValue, likeValue, likeValue, likeValue, likeValue, likeValue, likeValue, likeValue)
 	}
 
 	if filters.LocationID > 0 {

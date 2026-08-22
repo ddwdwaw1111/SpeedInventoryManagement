@@ -1,13 +1,11 @@
-import { ChevronDown, Container, LogOut, PackageSearch } from "lucide-react";
-import { Suspense, lazy, type ReactNode, useEffect, useState } from "react";
+import { ChevronDown, Eye, LogOut } from "lucide-react";
+import { Suspense, lazy, useEffect, useState } from "react";
 
 import { Button } from "../components/ui/button";
-import { cn } from "../lib/utils";
 import { getErrorMessage } from "../lib/errors";
 import { useI18n } from "../lib/i18n";
 import { ApiError, customerPortalApi } from "./api";
 import { CustomerPortalAuthPage } from "./CustomerPortalAuthPage";
-import type { CustomerPortalSection } from "./navigation";
 import { getCustomerPortalCustomerIdFromPath, getCustomerPortalPath } from "./routes";
 import { InlineAlert } from "./sharedUi";
 import type { LoginPayload, SignUpPayload, User } from "./types";
@@ -26,17 +24,6 @@ type PortalAccess = {
   customerName: string;
 };
 
-const sidebarParents: Record<CustomerPortalSection, CustomerPortalSection> = {
-  inventory: "inventory",
-  containers: "containers",
-  "container-detail": "containers",
-  "inbound-shipments": "inbound-shipments",
-  "inbound-shipment-detail": "inbound-shipments",
-  "outbound-orders": "outbound-orders",
-  "outbound-order-detail": "outbound-orders",
-  "new-outbound-order": "outbound-orders"
-};
-
 export function CustomerPortalApp({ onExitToAdmin }: CustomerPortalAppProps) {
   const { t } = useI18n();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -46,7 +33,6 @@ export function CustomerPortalApp({ onExitToAdmin }: CustomerPortalAppProps) {
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
   const [authErrorMessage, setAuthErrorMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
-  const [activeSection, setActiveSection] = useState<CustomerPortalSection>("inventory");
 
   useEffect(() => { void bootstrapPortal(); }, []);
 
@@ -189,6 +175,10 @@ export function CustomerPortalApp({ onExitToAdmin }: CustomerPortalAppProps) {
           </div>
 
           <div className="flex items-center justify-end gap-2">
+            <span className="hidden items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 sm:inline-flex">
+              <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+              {t("customerPortalReadOnly")}
+            </span>
             {currentUser.role === "admin" ? (
               <Button variant="outline" type="button" onClick={onExitToAdmin}>
                 {t("adminEntrance")}
@@ -199,12 +189,7 @@ export function CustomerPortalApp({ onExitToAdmin }: CustomerPortalAppProps) {
         </div>
       </header>
 
-      <div className="grid min-h-[calc(100vh-4rem)] grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)]">
-        <CustomerPortalSidebar
-          activeSection={activeSection}
-          onChangeSection={setActiveSection}
-        />
-
+      <div className="min-h-[calc(100vh-4rem)]">
         <div className="min-w-0">
           {errorMessage ? (
             <main className="mx-auto max-w-7xl p-4 lg:p-6">
@@ -215,11 +200,7 @@ export function CustomerPortalApp({ onExitToAdmin }: CustomerPortalAppProps) {
           {!errorMessage && portalAccess ? (
             <Suspense fallback={<main className="mx-auto max-w-7xl p-4 lg:p-6"><div className="rounded-lg border border-slate-200 bg-white p-8 text-center text-slate-500">{t("loadingRecords")}</div></main>}>
               <CustomerPortalPage
-                activeSection={activeSection}
-                currentUser={currentUser}
                 portalCustomerId={portalAccess.customerId}
-                portalCustomerName={portalAccess.customerName}
-                onSectionChange={setActiveSection}
               />
             </Suspense>
           ) : null}
@@ -265,48 +246,5 @@ function CustomerPortalUserMenu({
         </Button>
       </div>
     </div>
-  );
-}
-
-function CustomerPortalSidebar({
-  activeSection,
-  onChangeSection
-}: {
-  activeSection: CustomerPortalSection;
-  onChangeSection: (section: CustomerPortalSection) => void;
-}) {
-  const { t } = useI18n();
-  const sidebarActiveSection = sidebarParents[activeSection];
-  const navItems: Array<{ key: CustomerPortalSection; label: string; icon: ReactNode }> = [
-    { key: "inventory", label: t("customerPortalInventory"), icon: <PackageSearch className="h-5 w-5" /> },
-    { key: "containers", label: t("customerPortalContainers"), icon: <Container className="h-5 w-5" /> }
-  ];
-
-  return (
-    <aside className="border-b border-slate-200 bg-white p-4 lg:sticky lg:top-16 lg:h-[calc(100vh-4rem)] lg:border-b-0 lg:border-r">
-      <nav className="grid gap-2" aria-label={t("customerPortal")}>
-        {navItems.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            className={cn(
-              "flex min-h-12 w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition",
-              sidebarActiveSection === item.key
-                ? "bg-slate-950 text-white shadow-sm"
-                : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
-            )}
-            aria-current={sidebarActiveSection === item.key ? "page" : undefined}
-            onClick={() => onChangeSection(item.key)}
-          >
-            <span className={cn(sidebarActiveSection === item.key ? "text-white" : "text-slate-500")}>{item.icon}</span>
-            <span className="min-w-0">
-              <span className="flex items-center gap-1.5 text-sm font-semibold">
-                {item.label}
-              </span>
-            </span>
-          </button>
-        ))}
-      </nav>
-    </aside>
   );
 }

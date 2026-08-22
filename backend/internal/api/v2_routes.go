@@ -24,16 +24,4 @@ func (s *Server) registerV2Routes(protected gin.IRouter) {
 	operator.POST("/deliveries", s.handleV2CreateDeliveryEvent)
 	operator.POST("/deliveries/:id/bol", s.handleV2ReceiveBOL)
 
-	customerPortal := v2.Group("/customer-portal")
-	customerPortal.Use(s.requireRoles(service.RoleCustomer))
-	s.registerV2CustomerPortalEndpoints(customerPortal)
-
-	adminCustomerPortal := v2.Group("/admin/customer-portal/customers/:customerId")
-	adminCustomerPortal.Use(s.requireRoles(service.RoleAdmin))
-	s.registerV2CustomerPortalEndpoints(adminCustomerPortal)
-}
-
-func (s *Server) registerV2CustomerPortalEndpoints(router gin.IRoutes) {
-	router.GET("/containers", s.handleV2CustomerPortalContainers)
-	router.GET("/containers/:containerNo/lifecycle", s.handleV2CustomerPortalContainerLifecycle)
 }

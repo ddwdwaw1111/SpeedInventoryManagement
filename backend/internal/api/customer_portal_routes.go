@@ -19,14 +19,4 @@ func (s *Server) registerCustomerPortalRoutes(protected gin.IRouter) {
 func (s *Server) registerCustomerPortalEndpoints(router gin.IRoutes) {
 	router.GET("/profile", s.handleCustomerPortalProfile)
 	router.GET("/inventory", s.handleCustomerPortalInventory)
-	router.GET("/containers", s.handleCustomerPortalContainers)
-	router.GET("/containers/:containerNo/lifecycle", s.handleCustomerPortalContainerLifecycle)
-	router.GET("/packing-lists", s.handleCustomerPortalPackingLists)
-	router.GET("/packing-lists/:id/attachments/:attachmentId/download-url", s.handleGetCustomerPortalPackingListAttachmentDownloadURL)
-
-	router.GET("/picking-orders", s.handleCustomerPortalPickingOrders)
-	router.POST("/picking-orders", s.handleCustomerPortalCreatePickingOrder)
-	router.POST("/picking-orders/:id/attachments", s.handleUploadCustomerPortalPickingOrderAttachment)
-	router.GET("/picking-orders/:id/attachments/:attachmentId/download-url", s.handleGetCustomerPortalPickingOrderAttachmentDownloadURL)
-	router.DELETE("/picking-orders/:id/attachments/:attachmentId", s.handleDeleteCustomerPortalPickingOrderAttachment)
 }
